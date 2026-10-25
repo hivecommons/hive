@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/hivecommons/hive/crux/api/callback"
+
 	"github.com/hivecommons/hive/crux"
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
@@ -50,6 +52,10 @@ type bootAgentsDeps struct {
 	// Fakes keep the real in-process runtime (construction is pure) and
 	// substitute only when asserting the unavailable-mode exit.
 	newRuntime func(cfg cruxconfig.RuntimeConfig, opts ...cruxruntime.Option) (hostedRuntime, error)
+	// startHiveCallback serves the hive capabilities to a sidecar runtime
+	// over the callback endpoint (crux/api/callback). Only called when
+	// CRUX_MODE=sidecar; fakes record the capability set.
+	startHiveCallback func(ctx context.Context, caps callback.Capabilities, logger *slog.Logger) error
 	// exit terminates the process when no runtime can be built. os.Exit in
 	// production; fakes record it.
 	exit func(code int)
@@ -113,6 +119,7 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 		},
 		startPermissionsWatcher: func(logger *slog.Logger) { go cruxruntime.StartPermissionsWatcher(logger) },
 		newRuntime:              newHostedRuntime,
+		startHiveCallback:       startHiveCallback,
 		exit:                    os.Exit,
 	}
 }

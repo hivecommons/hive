@@ -2176,6 +2176,21 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		deps.exit(1)
 		return
 	}
+	if sh, ok := b.agentMgr.(*sidecarHost); ok {
+		sh.setLogger(b.logger)
+	}
+	// A sidecar runtime reaches hive's capabilities (token minting, PR
+	// creation, Linear credentials, scanners, conditions) over the callback
+	// endpoint instead of the Set* calls below; serve it before the runtime
+	// starts dialing. Failing to bind is as fatal as no runtime: the runtime
+	// would otherwise run with every capability reporting unavailable.
+	if rtCfg.Mode == cruxconfig.ModeSidecar {
+		if err := deps.startHiveCallback(b.ctx, b.hiveCallbackCapabilities(), b.logger); err != nil {
+			b.logger.Error("hive callback endpoint unavailable", "error", err)
+			deps.exit(1)
+			return
+		}
+	}
 	// The runtime's spans go through pkg/tracing so they carry the hive
 	// component attribute and count toward reach (#3973); the runtime itself
 	// only knows the OpenTelemetry API (#13536).
