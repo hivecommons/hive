@@ -2,18 +2,23 @@ package runtime_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/api/client"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/cruxtest"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
+	"github.com/hivecommons/hive/crux/serve"
+	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -70,15 +75,114 @@ func TestNewWithoutOptionsIsUsable(t *testing.T) {
 	}
 }
 
-func TestNewSidecarIsNotYetAvailable(t *testing.T) {
-	rt, err := cruxruntime.New(config.RuntimeConfig{Mode: config.ModeSidecar, Server: "unix:///tmp/crux.sock"})
-	if rt != nil || !errors.Is(err, cruxruntime.ErrModeUnavailable) {
-		t.Fatalf("New(sidecar) = %v, %v; want nil, ErrModeUnavailable", rt, err)
+// TestNewSidecarDrivesAServer builds the sidecar runtime against a serve
+// handler over a Recorder and checks calls land there, the Host seam is
+// absent, and the watchdog fleet composes from the wire source.
+func TestNewSidecarDrivesAServer(t *testing.T) {
+	rec := cruxtest.NewRecorder()
+	rec.Add("fixture", "fixture-id", crux.StateRunning)
+	rec.WatchdogNames = []string{"fixture"}
+	srv := serve.New(rec)
+	srv.Token = "tok"
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	rt, err := cruxruntime.New(config.RuntimeConfig{Mode: config.ModeSidecar, Server: ts.URL, Token: "tok"}, cruxruntime.WithLogger(quietLogger()))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, want := range []string{"sidecar", "unix:///tmp/crux.sock", "#14138", config.ModeEnvVar} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q should mention %q", err, want)
-		}
+	if _, ok := rt.(*client.Runtime); !ok {
+		t.Fatalf("New(sidecar) = %T, want *client.Runtime", rt)
+	}
+	if h, ok := cruxruntime.HostOf(rt); ok || h != nil {
+		t.Fatalf("HostOf(sidecar) = %v, %v; want nil, false", h, ok)
+	}
+	if err := rt.Stop("fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rec.Last("Stop"); !ok {
+		t.Fatal("Stop did not reach the server")
+	}
+	if n := len(rt.AllStatuses()); n != 1 {
+		t.Fatalf("AllStatuses over the wire = %d agents, want 1", n)
+	}
+
+	queued := 0
+	fleet, err := cruxruntime.NewWatchdogFleet(rt, cruxruntime.WatchdogHooks{
+		Queued:         func() (int, bool) { queued++; return 3, true },
+		KickSuppressed: func(string) string { return "quiet" },
+		CadencePeriod:  func(string) (time.Duration, bool) { return time.Hour, true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fleet.AgentNames(); len(got) != 1 || got[0] != "fixture" {
+		t.Fatalf("AgentNames = %v", got)
+	}
+	if fleet.IsPaused("fixture") {
+		t.Fatal("fresh agent reported paused")
+	}
+	if err := fleet.Pause("fixture", "watchdog", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if !fleet.IsPaused("fixture") {
+		t.Fatal("pause over the wire not reflected")
+	}
+	if err := fleet.Restart(context.Background(), "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rec.Last("Restart"); !ok {
+		t.Fatal("Restart did not reach the server")
+	}
+	if n, ok := fleet.QueuedWork("fixture"); !ok || n != 3 || queued != 1 {
+		t.Fatalf("QueuedWork = %d, %v (hook calls %d)", n, ok, queued)
+	}
+	if n, ok := fleet.QueuedWork("ghost"); ok || n != 0 {
+		t.Fatalf("QueuedWork(unknown) = %d, %v; want 0, false", n, ok)
+	}
+	rec.Procs["fixture"].Config.Mode = "advisory"
+	if n, ok := fleet.QueuedWork("fixture"); !ok || n != 0 || queued != 1 {
+		t.Fatalf("QueuedWork(advisory) = %d, %v (hook calls %d); want 0, true, 1", n, ok, queued)
+	}
+	if got := fleet.(watchdog.KickSuppressionReporter).KickSuppressedReason("fixture"); got != "quiet" {
+		t.Fatalf("KickSuppressedReason = %q", got)
+	}
+	if p, ok := fleet.(watchdog.KickPeriodReporter).KickPeriod("fixture"); !ok || p != time.Hour {
+		t.Fatalf("KickPeriod = %v, %v", p, ok)
+	}
+	bare, err := cruxruntime.NewWatchdogFleet(rt, cruxruntime.WatchdogHooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bare.QueuedWork("fixture"); ok {
+		t.Fatal("QueuedWork without a hook must be unknown")
+	}
+	if got := bare.(watchdog.KickSuppressionReporter).KickSuppressedReason("fixture"); got != "" {
+		t.Fatalf("KickSuppressedReason without a hook = %q", got)
+	}
+	if _, ok := bare.(watchdog.KickPeriodReporter).KickPeriod("fixture"); ok {
+		t.Fatal("KickPeriod without a hook must be unknown")
+	}
+}
+
+func TestNewSidecarRejectsBadServer(t *testing.T) {
+	rt, err := cruxruntime.New(config.RuntimeConfig{Mode: config.ModeSidecar, Server: "://nope"})
+	if rt != nil || err == nil || errors.Is(err, cruxruntime.ErrModeUnavailable) {
+		t.Fatalf("New(sidecar, bad server) = %v, %v; want an address error", rt, err)
+	}
+	if !strings.Contains(err.Error(), config.ModeEnvVar) {
+		t.Errorf("error %q should mention %s", err, config.ModeEnvVar)
+	}
+}
+
+// nilSource has the watchdog seam but nothing behind it.
+type nilSource struct{ crux.Runtime }
+
+func (nilSource) WatchdogSource() watchdog.Source { return nil }
+
+func TestNewWatchdogFleetNilSource(t *testing.T) {
+	if _, err := cruxruntime.NewWatchdogFleet(nilSource{}, cruxruntime.WatchdogHooks{}); !errors.Is(err, cruxruntime.ErrNotInProcess) {
+		t.Fatalf("NewWatchdogFleet(nil source) err = %v, want ErrNotInProcess", err)
 	}
 }
 
