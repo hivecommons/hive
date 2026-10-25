@@ -160,6 +160,7 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerSegments"),
 		jsConstLine(t, html, "STAGE_TRACKER_OPEN_STALE_DAYS"),
 		jsFunc(t, html, "stageTrackerOpenSince"),
+		jsFunc(t, html, "stageTrackerBlockedTip"),
 		jsFunc(t, html, "stageTrackerShortAgo"),
 		jsFunc(t, html, "stageTrackerRefOf"),
 		jsFunc(t, html, "stageTrackerRowToolsHtml"),

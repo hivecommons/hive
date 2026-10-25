@@ -55,6 +55,8 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`@keyframes ham-breathe-human`,
 		`function stageTrackerMotion(item)`,
 		`.ham-seg.active.ham-open-hold`,
+		`.ham-seg.active.ham-open-blocked { background: var(--yellow); color: var(--surface-0); }`,
+		`.ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔';`,
 		`@media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none;`,
 	} {
 		if !strings.Contains(html, want) {
@@ -166,6 +168,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerSegments"),
 		jsConstLine(t, html, "STAGE_TRACKER_OPEN_STALE_DAYS"),
 		jsFunc(t, html, "stageTrackerOpenSince"),
+		jsFunc(t, html, "stageTrackerBlockedTip"),
 		jsFunc(t, html, "stageTrackerShortAgo"),
 		jsFunc(t, html, "stageTrackerRefOf"),
 		jsFunc(t, html, "stageTrackerRowToolsHtml"),
@@ -288,6 +291,25 @@ assert.deepStrictEqual(stageTrackerOpenSince({}), { ms: 0, fromCreated: false })
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 23, kind: 'pr', title: 'Held', stage: 0, stage_since: new Date(now - 3 * 86400000).toISOString(), modifiers: ['hold'] }, stages, ctx);
 assert.strictEqual(openWord(row), 'Open · hold', 'Open · hold never carries the age (owner)');
 assert.deepStrictEqual(segStates(row), ['active ham-open-hold', T, T, T, T, T, 'todo cap'], 'held: no stale tint either');
+// Open · blocked (the blocked label) mirrors Open · hold but, unlike it,
+// keeps the age — a stale blocked item is what the owner wants to see
+// (hivecommons/hive#14194). hold wins when both are present.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 25, kind: 'issue', title: 'Stuck', stage: 0, stage_since: new Date(now - 7 * 3600000).toISOString(), labels: ['blocked'], modifiers: ['blocked'] }, stages, ctx);
+assert.strictEqual(openWord(row), 'Open · blocked · since 7h', row);
+assert.deepStrictEqual(segStates(row), ['active ham-open-blocked', T, T, T, T, T, 'todo cap'], 'blocked: its own class, no stale tint under the threshold');
+assert.ok(strip(row).includes(' — carries the blocked label — open since '), 'chevron tooltip names the label and the instant: ' + strip(row));
+assert.ok(tooltip(row).startsWith('Open · blocked'), tooltip(row));
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 26, kind: 'issue', title: 'Stuck long', stage: 0, stage_since: new Date(now - 3 * 86400000).toISOString(), modifiers: ['blocked'], blocked_on: 'acme/api#7' }, stages, ctx);
+assert.strictEqual(openWord(row), 'Open · blocked · since 3d');
+assert.deepStrictEqual(segStates(row), ['active ham-open-blocked ham-open-stale', T, T, T, T, T, 'todo cap'], 'blocked past STAGE_TRACKER_OPEN_STALE_DAYS: stale tint too');
+assert.ok(strip(row).includes(' — blocked on acme/api#7 — '), 'a known blocker is named: ' + strip(row));
+assert.strictEqual(stageTrackerBlockedTip({ blocked_on: ['acme/api#7', 'acme/api#8'] }), 'blocked on acme/api#7, acme/api#8');
+assert.strictEqual(stageTrackerBlockedTip({}), 'carries the blocked label');
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 27, kind: 'pr', title: 'Held and blocked', stage: 0, stage_since: new Date(now - 3 * 86400000).toISOString(), modifiers: ['blocked', 'hold'] }, stages, ctx);
+assert.strictEqual(openWord(row), 'Open · hold', 'hold is a human instruction: it wins over blocked and still carries no age');
+assert.deepStrictEqual(segStates(row), ['active ham-open-hold', T, T, T, T, T, 'todo cap']);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 28, kind: 'pr', title: 'Blocked later', stage: 50, modifiers: ['blocked'] }, stages, ctx);
+assert.ok(!row.includes('ham-open-blocked') && !row.includes('Open · blocked'), 'blocked past Open is a chip, not an Open word');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 24, kind: 'issue', title: 'Staged', stage: 10, stage_since: new Date(now - 3 * 86400000).toISOString() }, stages, ctx);
 assert.ok(!row.includes('since '), 'a staged item has no Open age');
 assert.strictEqual(stageTrackerCurrentStageHtml({ stage: 0, stage_since: new Date(now - 14 * 3600000).toISOString() }, stages, null, now), '<p class="ham-current-stage">Open · since 14h</p>', 'the compact caption carries it too');
