@@ -18,14 +18,18 @@ import (
 // adoptAPI layers the git-ref / pull-request routes the adoption needs on
 // top of stageAPI and records what the hive did.
 type adoptAPI struct {
-	mu          sync.Mutex
-	refs        map[string]string // refs/heads/x → sha
-	refUpdates  []string
-	pulls       []map[string]any
-	nextPR      int
-	superseders map[int]map[string]any // number → GET payload
-	prEdits     []string
-	commits     map[string]adoptCommit
+	permission       string
+	roleName         string
+	permissionStatus int
+	permissionReads  int
+	mu               sync.Mutex
+	refs             map[string]string // refs/heads/x → sha
+	refUpdates       []string
+	pulls            []map[string]any
+	nextPR           int
+	superseders      map[int]map[string]any // number → GET payload
+	prEdits          []string
+	commits          map[string]adoptCommit
 	// failRefs makes POST git/refs answer 500; refAttempts counts them.
 	failRefs    bool
 	refAttempts int
@@ -62,6 +66,18 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 	defer a.mu.Unlock()
 	path := r.URL.Path
 	switch {
+	case r.Method == http.MethodGet && strings.Contains(path, "/collaborators/") && strings.HasSuffix(path, "/permission"):
+		a.permissionReads++
+		if a.permissionStatus != 0 {
+			http.Error(w, "permission lookup failed", a.permissionStatus)
+			return true
+		}
+		permission := a.permission
+		if permission == "" {
+			permission = "write"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"permission": permission, "role_name": a.roleName})
+		return true
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/files"):
 		if a.failPRFiles {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -1840,11 +1856,148 @@ func TestSupersedeRevalidatesBeforeRefMutation(t *testing.T) {
 			h.adopt.heads[7] = "aaa"
 			h.adopt.refs["refs/heads/hive/adopt-7"] = "old"
 			tc.prepare(h.adopt)
-			obs := stageObservation{Owner: "acme", Repo: "widget", Display: "acme/widget", Number: 7, HeadSHA: "aaa", BaseRef: "v5"}
+			obs := stageObservation{Owner: "acme", Repo: "widget", Display: "acme/widget", Author: "mallory", Number: 7, HeadSHA: "aaa", BaseRef: "v5"}
 			n, _ := h.e.supersedeAdoptedPR(context.Background(), h.e.stageStoreOrShared(), stageKey("acme", "widget", 7), obs, stagelabels.Record{}, adoptPolicy(), AdoptReasonDCORehome, 0, false, true, h.clock.at)
 			if n != 0 || h.adopt.refAttempts != 0 || len(h.adopt.refUpdates) != 0 || h.adopt.refs["refs/heads/hive/adopt-7"] != "old" || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
 				t.Fatalf("unsafe supersession mutated repository: n=%d refs=%v updates=%v pulls=%v edits=%v", n, h.adopt.refs, h.adopt.refUpdates, h.adopt.pulls, h.adopt.prEdits)
 			}
 		})
+	}
+}
+
+func TestAdoptionAuthorPermission(t *testing.T) {
+	for _, tc := range []struct {
+		permission, role    string
+		status              int
+		maintainer, wantErr bool
+	}{
+		{permission: "admin", maintainer: true},
+		{permission: "maintain", maintainer: true},
+		{permission: "write", role: "maintain", maintainer: true},
+		{permission: "write", role: "admin", maintainer: true},
+		{permission: "write"},
+		{permission: "read"},
+		{permission: "none"},
+		{status: http.StatusForbidden, wantErr: true},
+	} {
+		t.Run(tc.permission+tc.role+http.StatusText(tc.status), func(t *testing.T) {
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+			defer done()
+			h.adopt.permission, h.adopt.roleName, h.adopt.permissionStatus = tc.permission, tc.role, tc.status
+			obs := stageObservation{Owner: "acme", Repo: "widget", Author: "mallory", Number: 7}
+			for i := 0; i < 2; i++ {
+				got, err := h.e.adoptionAuthorPermission(context.Background(), obs, h.clock.at)
+				if got != tc.maintainer || (err != nil) != tc.wantErr {
+					t.Fatalf("maintainer=%v err=%v", got, err)
+				}
+				obs.Number++ // A second PR by the same author uses the cached read.
+			}
+			if h.adopt.permissionReads != 1 {
+				t.Fatalf("reads=%d", h.adopt.permissionReads)
+			}
+			h.clock.advance(adoptCheckInterval)
+			_, _ = h.e.adoptionAuthorPermission(context.Background(), obs, h.clock.at)
+			if h.adopt.permissionReads != 2 {
+				t.Fatalf("expired cache reads=%d", h.adopt.permissionReads)
+			}
+			obs.Author = "other"
+			_, _ = h.e.adoptionAuthorPermission(context.Background(), obs, h.clock.at)
+			obs.Repo = "other"
+			_, _ = h.e.adoptionAuthorPermission(context.Background(), obs, h.clock.at)
+			if h.adopt.permissionReads != 4 {
+				t.Fatalf("cache failed to distinguish repo/author: reads=%d", h.adopt.permissionReads)
+			}
+		})
+	}
+}
+
+func TestMaintainerAdoptionStaysReturnedAndReleasesLiveAdoption(t *testing.T) {
+	for _, mode := range []string{"fresh", "in-place", "supersede"} {
+		for _, permission := range []string{"admin", "maintain"} {
+			t.Run(permission+"/"+mode, func(t *testing.T) {
+				p := adoptPolicy()
+				p.AdoptInPlace = true
+				p.DCORequired = func(string) (bool, bool) { return true, true }
+				h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+				defer done()
+				h.adopt.permission = permission
+				h.adopt.allowMaintainerEdits(7, true)
+				h.api.commits = map[int][]string{7: {"fix: unsigned contributor commit"}}
+				h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+				key := stageKey("acme", "widget", 7)
+				labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker", stagelabels.NoDCOLabel}
+				if mode != "fresh" {
+					h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+					if mode == "supersede" {
+						h.e.stageStoreOrShared().MarkAdopted(key, "aaa", 90, h.clock.at)
+						h.adopt.setSuperseder(90, "closed", true)
+					}
+					labels[0] = "stage/074-adopted-by-hive"
+				}
+				h.clock.advance(2 * time.Hour)
+				for i := 0; i < 2; i++ {
+					h.api.reset()
+					h.observe(adoptPR(7, "aaa", labels...), "check-failing:DCO")
+					rec, _ := h.e.stageStoreOrShared().Get(key)
+					if rec.Stage != stagelabels.ReturnedToContributor || rec.AdoptionLive("aaa") || rec.AdoptedHead != "" {
+						t.Fatalf("maintainer adopted: %+v", rec)
+					}
+					notes := 0
+					for _, comment := range h.api.comments {
+						if strings.HasPrefix(comment, AdoptionMaintainerMarker) {
+							notes++
+						}
+					}
+					if notes != 1-i {
+						t.Fatalf("pass %d: refusal notes=%d comments=%v", i, notes, h.api.comments)
+					}
+					if len(adoptionComments(h.api)) != 0 || len(h.adopt.refs) != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
+						t.Fatalf("maintainer takeover: comments=%v refs=%v pulls=%v edits=%v", h.api.comments, h.adopt.refs, h.adopt.pulls, h.adopt.prEdits)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAdoptionPermissionFailureDefersWithoutAttempt(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	h.adopt.permissionStatus = http.StatusForbidden
+	h.clock.advance(2 * time.Hour)
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", adoptPR(7, "aaa", "author/clanker"), "check-failing:unit", false, nil)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("permission failure was not surfaced")
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if rec.Stage != stagelabels.ReturnedToContributor || rec.AdoptedHead != "" || len(h.adopt.pulls) != 0 || h.adopt.refAttempts != 0 || len(adoptionComments(h.api)) != 0 {
+		t.Fatalf("adopted without permission evidence: %+v", rec)
+	}
+}
+
+func TestSupersedeMaintainerRefusesBeforeMutation(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	h.adopt.permission = "admin"
+	obs := stageObservation{Owner: "acme", Repo: "widget", Author: "mallory", Number: 7, HeadSHA: "aaa", BaseRef: "v5"}
+	_, err := h.e.supersedeAdoptedPR(context.Background(), h.e.stageStoreOrShared(), stageKey("acme", "widget", 7), obs, stagelabels.Record{}, adoptPolicy(), AdoptReasonDCORehome, 0, false, true, h.clock.at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
+		t.Fatal("maintainer supersession mutated repository")
+	}
+}
+
+func TestDelegatedSupersedeCannotTakeOverMaintainer(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	h.adopt.permission, h.adopt.roleName = "write", "maintain"
+	labels := []string{"stage/085-needs-decision", delegatedecision.LabelAdoptSupersede}
+	h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonNoReviewer)
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if rec.AdoptedHead != "" || h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("delegated request adopted maintainer: %+v", rec)
 	}
 }

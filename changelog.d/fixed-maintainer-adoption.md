@@ -1,0 +1,1 @@
+- Contributor adoption now leaves repository admins and maintainers in control of their PRs, releases existing adoptions, and defers takeover when author permissions cannot be read ([#14301](https://github.com/hivecommons/hive/issues/14301)).

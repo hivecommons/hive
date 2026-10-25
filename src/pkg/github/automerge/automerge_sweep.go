@@ -174,6 +174,9 @@ type Engine struct {
 	gh        *gh.Client
 	logger    *slog.Logger
 
+	adoptionPermissionsMu sync.Mutex
+	adoptionPermissions   map[string]adoptionPermission
+
 	selfSkipWarnedMu sync.Mutex
 	selfSkipWarned   map[string]struct{}
 

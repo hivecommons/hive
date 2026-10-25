@@ -539,6 +539,76 @@ func shortSHA(sha string) string {
 	return sha
 }
 
+// AdoptionMaintainerMarker identifies the once-per-head refusal to take over a
+// repository maintainer's PR, independently of author kind or relay presence.
+const AdoptionMaintainerMarker = "<!-- hive:adoption-maintainer"
+
+// Cache both verdicts and read failures for a sweep window, keyed by repository
+// and login. Expired entries are pruned on a miss so the cache stays bounded.
+type adoptionPermission struct {
+	maintainer bool
+	err        error
+	expires    time.Time
+}
+
+func (c *Engine) adoptionAuthorPermission(ctx context.Context, obs stageObservation, now time.Time) (bool, error) {
+	c.adoptionPermissionsMu.Lock()
+	defer c.adoptionPermissionsMu.Unlock()
+	key := strings.ToLower(obs.Owner + "/" + obs.Repo + "/" + obs.Author)
+	if entry, ok := c.adoptionPermissions[key]; ok && now.Before(entry.expires) {
+		return entry.maintainer, entry.err
+	}
+	if c.adoptionPermissions == nil {
+		c.adoptionPermissions = make(map[string]adoptionPermission)
+	}
+	for k, entry := range c.adoptionPermissions {
+		if !now.Before(entry.expires) {
+			delete(c.adoptionPermissions, k)
+		}
+	}
+	entry := adoptionPermission{expires: now.Add(adoptCheckInterval)}
+	if strings.TrimSpace(obs.Author) == "" {
+		entry.err = errors.New("adoption author is unknown")
+	} else {
+		level, _, err := c.gh.Repositories.GetPermissionLevel(ctx, obs.Owner, obs.Repo, obs.Author)
+		entry.err = err
+		if err == nil {
+			permission := strings.ToLower(strings.TrimSpace(level.GetPermission()))
+			role := strings.ToLower(strings.TrimSpace(level.GetRoleName()))
+			entry.maintainer = permission == "admin" || permission == "maintain" || role == "admin" || role == "maintain"
+			if permission == "" {
+				entry.err = errors.New("adoption author permission is unknown")
+			}
+		}
+	}
+	c.adoptionPermissions[key] = entry
+	return entry.maintainer, entry.err
+}
+
+// guardAdoption releases ownership before any further adoption side effects.
+// Unreadable permission also releases ownership: no takeover is safe without it.
+func (c *Engine) guardAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) (bool, int, error) {
+	maintainer, err := c.adoptionAuthorPermission(ctx, obs, now)
+	if !maintainer && err == nil {
+		return false, 0, nil
+	}
+	store.ClearAdoption(key)
+	if err != nil {
+		c.warn("stage labels: adoption deferred, author permission unreadable", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return true, 0, err
+	}
+	rec, ok := store.Get(key)
+	if !ok || obs.HeadSHA == "" || rec.AdoptionMaintainerNotedHead == obs.HeadSHA {
+		return true, 0, nil
+	}
+	body := fmt.Sprintf("%s head=%s -->\n@%s the hive will not take over a repository maintainer's PR. Any live adoption has been released; this PR stays with you for fixes and merge.", AdoptionMaintainerMarker, obs.HeadSHA, obs.Author)
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		return true, 0, err
+	}
+	store.NoteAdoptionMaintainer(key, obs.HeadSHA)
+	return true, 1, nil
+}
+
 // adoptContributorPR runs the stage-074 check for one clanker PR in stage
 // 072 and, when adoption is due, performs it: in place (the hive's fix lane
 // pushes to the PR's own branch) when GitHub permits and the policy allows,
@@ -563,6 +633,9 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	if l := adoptionBlocked(obs.Labels); l != "" {
 		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
+	}
+	if blocked, n, err := c.guardAdoption(ctx, store, key, obs, now); blocked {
+		return n, err
 	}
 	fence, err := c.adoptionDiffRefusal(ctx, obs)
 	if fence != "" && (err != nil || adoptionFenceDefers(fence)) {
@@ -639,6 +712,9 @@ func delegatedAdoptionAttempted(before, after stagelabels.Record) bool {
 }
 
 func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, grace time.Duration, online bool, dcoRehome bool, now time.Time) (int, error) {
+	if blocked, n, err := c.guardAdoption(ctx, store, key, obs, now); blocked {
+		return n, err
+	}
 	owner, repo, number := obs.Owner, obs.Repo, obs.Number
 	rec.AdoptReason = reason
 	if stored, ok := store.Get(key); ok && stored.AdoptDiffFence != "" {
@@ -729,6 +805,9 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 // most every adoptCheckInterval): merged → close the original with a note;
 // closed unmerged → forget the adoption so the original returns to 072.
 func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (int, error) {
+	if blocked, n, err := c.guardAdoption(ctx, store, key, obs, now); blocked {
+		return n, err
+	}
 	rec, ok := store.Get(key)
 	if !ok {
 		return 0, nil
@@ -1113,6 +1192,9 @@ func adoptionStalledReason(obs stageObservation, rec stagelabels.Record, policy 
 // blocker clears (hivecommons/hive#13040). Returns the decision and the
 // number of comments posted.
 func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (adoptionEscape, int, error) {
+	if blocked, n, err := c.guardAdoption(ctx, store, key, obs, now); blocked {
+		return adoptionEscape{}, n, err
+	}
 	rec, ok := store.Get(key)
 	if !ok {
 		return adoptionEscape{}, 0, nil

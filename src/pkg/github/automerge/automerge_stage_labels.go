@@ -744,6 +744,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			obs.Reason = verdict.Reason
 		}
 		prevRec, hadPrev := store.Get(key)
+		if hadPrev && (prevRec.AdoptedInPlace() || prevRec.AdoptedHead != "") {
+			_, n, err := c.guardAdoption(ctx, store, key, obs, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			prevRec, _ = store.Get(key)
+		}
+
 		// pass is what this pass learns past resolveStage; it rides on the
 		// Facts so the engine's DerivePR reproduces the stage written here.
 		pass := &stageengine.PRPassFacts{AuthorIsApp: normalizeBotLogin(obs.Author) == normalizeBotLogin(c.transport.AppBotLogin())}
