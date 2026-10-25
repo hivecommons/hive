@@ -51,6 +51,34 @@ func TestBuildReposForge14115(t *testing.T) {
 	}
 }
 
+// A repo_policies[].forge override puts that one card on its own forge while
+// the rest keep the project-wide forge (#14137).
+func TestBuildReposPerRepoForge14115(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Project.Org = "acme"
+	cfg.Project.Repos = []string{"one", "mirror", "lab", "other/two"}
+	cfg.GitLab.URL = "https://gitlab.example.com"
+	cfg.Project.RepoPolicies = []config.RepoPolicy{
+		{Repo: "mirror", Forge: "gitea", ForgeURL: "https://codeberg.org/"},
+		{Repo: "acme/lab", Forge: "gitlab"},
+	}
+	want := map[string][2]string{
+		"acme/one":    {"github", ""},
+		"acme/mirror": {"gitea", "https://codeberg.org"},
+		"acme/lab":    {"gitlab", "https://gitlab.example.com"},
+		"other/two":   {"github", ""},
+	}
+	repos := buildRepos(cfg, nil, governor.State{})
+	if len(repos) != len(want) {
+		t.Fatalf("want %d repo cards, got %d", len(want), len(repos))
+	}
+	for _, r := range repos {
+		if got := [2]string{r.Forge, r.ForgeURL}; got != want[r.Full] {
+			t.Errorf("%s: forge = %q, want %q", r.Full, got, want[r.Full])
+		}
+	}
+}
+
 func TestStatusRepoForge14115(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Project.Org = "acme"
@@ -98,10 +126,21 @@ func TestRepoCardForgeWeb14115(t *testing.T) {
 		`<a href="${esc(repoUrl + cardForge.issuesPath)}"`,
 		`<a href="${esc(repoUrl + cardForge.changesPath)}"`,
 		`data-forge="${esc(cardForge.kind)}"`,
-		"const hiveForge = repoForgeWeb(repos[0], hostLabel);",
+		"const repoForges = (repos || []).map(r => repoForgeWeb(r, hostLabel));",
+		"if (badge && forgeHosts.length > 1) {",
+		"const issueUrl = i.url || (repoUrl + cardForge.issuesPath + '/' + i.number);",
+		"primaryIssue.url || (repoUrl + cardForge.issuesPath + '/' + primaryIssue.number)",
+		"const url = p.url || (repoUrl + cardForge.changePath + '/' + p.number);",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q", snippet)
+		}
+	}
+	// Per-item fallback links follow the card's forge too: none may hard-code
+	// GitHub's issue or pull path.
+	for _, snippet := range []string{"repoUrl + '/issues/'", "repoUrl + '/pull/'"} {
+		if strings.Contains(html, snippet) {
+			t.Errorf("index.html still builds a GitHub-only fallback link with %q", snippet)
 		}
 	}
 	node, err := exec.LookPath("node")
@@ -110,14 +149,14 @@ func TestRepoCardForgeWeb14115(t *testing.T) {
 	}
 	script := "const assert = require('node:assert/strict');\nconst window = {_githubBaseUrl: 'https://ghe.example.com'};\n" +
 		jsFunc(t, html, "repoForgeWeb") + `
-const pick = f => ({kind: f.kind, name: f.name, host: f.host, base: f.base, issues: f.issuesPath, changes: f.changesPath});
+const pick = f => ({kind: f.kind, name: f.name, host: f.host, base: f.base, issues: f.issuesPath, changes: f.changesPath, change: f.changePath});
 assert.deepEqual(pick(repoForgeWeb({forge: 'gitlab', forgeUrl: 'https://gitlab.example.com/'}, 'ghe.example.com')),
-  {kind: 'gitlab', name: 'GitLab', host: 'gitlab.example.com', base: 'https://gitlab.example.com', issues: '/-/issues', changes: '/-/merge_requests'});
+  {kind: 'gitlab', name: 'GitLab', host: 'gitlab.example.com', base: 'https://gitlab.example.com', issues: '/-/issues', changes: '/-/merge_requests', change: '/-/merge_requests'});
 assert.deepEqual(pick(repoForgeWeb({forge: 'gitea', forgeUrl: 'https://codeberg.org'}, 'ghe.example.com')),
-  {kind: 'gitea', name: 'Gitea/Forgejo', host: 'codeberg.org', base: 'https://codeberg.org', issues: '/issues', changes: '/pulls'});
+  {kind: 'gitea', name: 'Gitea/Forgejo', host: 'codeberg.org', base: 'https://codeberg.org', issues: '/issues', changes: '/pulls', change: '/pulls'});
 for (const r of [undefined, {}, {forge: 'github'}, {forge: 'gitea'}]) {
   assert.deepEqual(pick(repoForgeWeb(r, 'ghe.example.com')),
-    {kind: 'github', name: 'GitHub', host: 'ghe.example.com', base: 'https://ghe.example.com', issues: '/issues', changes: '/pulls'});
+    {kind: 'github', name: 'GitHub', host: 'ghe.example.com', base: 'https://ghe.example.com', issues: '/issues', changes: '/pulls', change: '/pull'});
 }
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {

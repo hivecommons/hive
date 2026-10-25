@@ -24,7 +24,8 @@ Hosted and dashboard-managed hives can configure the same block from **Settings 
 
 `work_source` picks the **tracker**: where work items are read from. The
 **forge** — where the repositories, branches and change requests live — is a
-separate, hive-wide setting, `project.forge`:
+separate setting, `project.forge`, which a `project.repo_policies[].forge`
+entry can override for one repository:
 
 | Forge (`project.forge`) | Instance setting | Token | Status |
 | --- | --- | --- | --- |

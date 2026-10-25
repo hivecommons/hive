@@ -12,8 +12,9 @@ This page is for teams whose code lives on GitLab, Gitea or Forgejo and who want
 | --- | --- | --- | --- |
 | `governor.work_source.type` | Where the governor reads work items | `github` (default), `github_projects`, `linear`, `jira` | [Work sources](../work-sources.md) |
 | `project.forge` | Which forge adapter the hive's repositories use | `github` (default), `gitlab`, `gitea` | This page |
+| `project.repo_policies[].forge`, `forge_url` | A different forge for one repository | same values; `forge_url` is a bare instance root | This page |
 
-`project.forge` is set once per hive, so every repository in `project.repos` is on the same forge. Gitea and Forgejo share one adapter (`gitea`) because they share one REST API. Do not confuse it with `github.forge`, which names a GitHub host for the GitHub App; see [the setup page](../forge-app-setup.md#do-not-confuse-projectforge-with-githubforge).
+`project.forge` sets the forge for every repository in `project.repos`. A `project.repo_policies[]` entry can move one repository to another forge with `forge`, and to another instance with `forge_url`, which defaults to `gitlab.gitlab_url` / `gitea.gitea_url`. Unlike `project.forge`, the per-repo keys are validated at load. See [the setup page](../forge-app-setup.md#the-configuration-surface-that-exists). Gitea and Forgejo share one adapter (`gitea`) because they share one REST API. Do not confuse it with `github.forge`, which names a GitHub host for the GitHub App; see [the setup page](../forge-app-setup.md#do-not-confuse-projectforge-with-githubforge).
 
 ## Configuration
 
@@ -28,6 +29,16 @@ gitlab:
 gitea:
   gitea_url: https://codeberg.org          # no default; required for Gitea/Forgejo
   token_env: GITEA_TOKEN                   # env var NAME, never the token
+```
+
+One repository on a different forge from the rest:
+
+```yaml
+project:
+  repo_policies:
+    - repo: mirror
+      forge: gitea
+      forge_url: https://codeberg.org      # bare instance root
 ```
 
 | Key | Default | Notes |
@@ -65,7 +76,7 @@ Both are fed by the governor's enumeration, which is still `github.Client.Enumer
 ## Dashboard behavior
 
 - The **Platform** tile (in Diagnostics on v5, its own section on v6) shows the forge kind and, for a self-managed instance, its URL. See [Dashboard sections](../dashboard-sections.md#platform).
-- Each **Projects** card names its forge and host in its header, for example `🦊 GitLab · gitlab.example.com`. The card links to that instance, using GitLab's `/-/issues` and `/-/merge_requests` paths or Gitea's `/issues` and `/pulls`. A GitHub card shows its GitHub host as before. The data is the `forge` and `forgeUrl` fields of each repo in `/api/status`. See [Dashboard sections](../dashboard-sections.md#projects).
+- Each **Projects** card names its forge and host in its header, for example `🦊 GitLab · gitlab.example.com`. The card's forge is its `repo_policies[].forge` override when one is set, else `project.forge`. The card links to that instance, using GitLab's `/-/issues` and `/-/merge_requests` paths or Gitea's `/issues` and `/pulls`, including the per-item links built for an issue or change request with no URL of its own. A GitHub card shows its GitHub host as before. The section header names the hive's forge when every card agrees, and shows `N forges` when they differ. The data is the `forge` and `forgeUrl` fields of each repo in `/api/status`. See [Dashboard sections](../dashboard-sections.md#projects).
 
 ## Testing
 

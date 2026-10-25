@@ -2251,17 +2251,16 @@ func earliestRFC3339(a, b string) string {
 	}
 }
 
-// repoForge returns the forge kind every repo card carries and, for GitLab and
-// Gitea/Forgejo, the instance web root its links point at. The project forge is
-// hive-wide, so every repo in a hive shares one forge. GitHub reports no URL:
+// repoForge returns the forge kind repo's card carries and, for GitLab and
+// Gitea/Forgejo, the instance web root its links point at. A
+// per-repo forge / forge_url policy wins over the project-wide forge, so one
+// card can name a different forge from the rest. GitHub reports no URL:
 // the SPA takes the GitHub host from /api/config, as it always has.
-func repoForge(cfg *config.Config) (kind, url string) {
-	kind = cfg.Project.ForgeKind()
+func repoForge(cfg *config.Config, repo string) (kind, url string) {
+	kind = cfg.ForgeKindForRepo(repo)
 	switch kind {
-	case config.ForgeGitLab:
-		url = cfg.GitLab.InstanceURL()
-	case config.ForgeGitea:
-		url = cfg.Gitea.InstanceURL()
+	case config.ForgeGitLab, config.ForgeGitea:
+		url = cfg.ForgeURLForRepo(repo)
 	}
 	return kind, strings.TrimRight(url, "/")
 }
@@ -2281,8 +2280,6 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 		repoRows[repoName] = repoName
 		repoRows[full] = repoName
 	}
-
-	forgeKind, forgeURL := repoForge(cfg)
 
 	var watchState upstreamwatch.State
 	if len(cfg.UpstreamWatch.Repos) > 0 {
@@ -2363,6 +2360,7 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 				workBreakdown = &breakdown
 			}
 		}
+		forgeKind, forgeURL := repoForge(cfg, repoName)
 
 		r := FrontendRepo{
 			Name:                repoName,
