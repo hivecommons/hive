@@ -1,6 +1,10 @@
 package crux
 
-import "time"
+import (
+	"time"
+
+	"github.com/hivecommons/hive/crux/config"
+)
 
 // BackendAuth status values. These are the coarse states an operator or the
 // hub's fleet aggregator needs to distinguish; the runtime's finer provider
@@ -37,4 +41,28 @@ type BackendAuthState struct {
 	Status    string    `json:"status,omitempty"`
 	Since     time.Time `json:"since,omitempty"`
 	LastError string    `json:"lastError,omitempty"`
+}
+
+// interactiveAuthBackends are the CLI backends whose credentials come from an
+// INTERACTIVE login flow (OAuth / device flow) that a human must complete. Only
+// these can ever legitimately show a login badge.
+var interactiveAuthBackends = map[string]bool{
+	"claude":  true,
+	"copilot": true,
+	"codex":   true,
+	"gemini":  true,
+	"omp":     true,
+}
+
+// BackendRequiresInteractiveAuth reports whether a backend authenticates via an
+// interactive login the operator must perform. Model-gateway backends
+// (config.InferenceBackends: litellm, vllm, llm-d, watsonx) authenticate with
+// an API key supplied by config — watsonx with an IAM bearer minted from that
+// key — and therefore NEVER require a login. Showing them a 🔑 badge is always
+// a false alarm.
+func BackendRequiresInteractiveAuth(backend string) bool {
+	if config.IsInferenceBackend(backend) {
+		return false
+	}
+	return interactiveAuthBackends[backend]
 }
