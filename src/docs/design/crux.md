@@ -54,9 +54,11 @@ The name is "the point everything turns on". Hive turns on Crux.
 The same list, as directories, is `CRUX_DIRS` in
 `.github/scripts/crux-scope.sh` (CI path filter) and `cruxModulePrefixes` in
 `src/internal/testutil/crux_outbound_ratchet_test.go`; the two must agree.
-`cmd/crux`, the `crux` binary's `main`, is a host in the root module like
-`cmd/hive` (Stage 2, prerequisite 3): it holds the Hive-backed
-`cli.DefinitionLoader` and reaches the runtime only through `pkg/crux`.
+`cmd/crux`, the Hive-hosted `crux` binary's `main`, is a host in the root
+module like `cmd/hive` (Stage 2, prerequisite 3): it holds the Hive-backed
+`cli.DefinitionLoader` and reaches the runtime only through `pkg/crux`. The
+module ships its own binary too, `crux/cmd/crux`, wired to `crux/defs`
+(#14138; see [Definition loaders](#definition-loaders)).
 
 The RFC's claim that Crux's outbound coupling is "one `pkg/github` symbol and
 two `pkg/config` fields" was wrong. Measured on v5 at `437843c` (Oct 23,
@@ -435,10 +437,32 @@ Still Stage 2, in this order:
   has the detail. What remains of this record's list, in #14138's order:
   the in-process-vs-sidecar decision for `cmd/hive` (the last twelve
   inbound rows hang on it); `crux/vX.Y.Z` tags and the `go get` path
-  caveat above; moving `cmd/crux` into the nested module once config and
-  `defsrc` loading are injected; a generic tool policy for the MITM proxy
-  (the rules are GitHub-shaped today); and keeping this status section
-  current.
+  caveat above; a generic tool policy for the MITM proxy (the rules are
+  GitHub-shaped today); and keeping this status section current.
+- **Done: move `cmd/crux` into the nested module** (#14138). The module now
+  ships `crux/cmd/crux`, buildable with `GOWORK=off` from `src/crux` alone
+  (`make build` / `make smoke` there), with the same verbs, `--server`
+  remote mode and `--version`. The root `cmd/crux` remains as a thin host
+  wrapper: same `cli.Env`, Hive's loader. See
+  [Definition loaders](#definition-loaders) for the split.
+
+### Definition loaders
+
+`crux/cli` programs against `cli.DefinitionLoader` (`LoadConfig`,
+`LoadDefinitionFile`); two hosts implement it and nothing else in the module
+knows which one it got:
+
+| Host | Loader | Reads | Stays where |
+|---|---|---|---|
+| `crux/cmd/crux` (module) | `crux/defs.Loader` | `--defs` / `$CRUX_DEFS`: a directory of `*.yaml` or one file; each file a portable `AgentDefinition` (`kind: AgentDefinition`, merged through the same field allow-list as `pkg/defsrc`) or a bare `AgentConfig` overlay named by the file; defaults from `crux/config` (`id`, `role`, one replica, `enabled`, `clear_on_kick`) | in the module: stdlib + `yaml.v3` + `crux/config`, so the outbound ratchet stays empty |
+| `cmd/crux` (root) | `hiveLoader` | `--config hive.yaml` through `pkg/config.Load` (enabled agents, `ProjectContext` from the project/github/policies blocks, well-known-agent defaults); the portable format through `pkg/defsrc` | in the root module: everything about *where* a Hive's definitions come from (repo-tree definition sources, the dashboard overlay, `agents_dir`) is host knowledge |
+
+The root loader borrows the module's name rule and import defaults
+(`defs.ValidateName`, `defs.DefaultBackend`, `defs.DefaultRestartStrategy`),
+so a definition file loads to the same agent under either binary; the only
+intentional difference is the Hive-only presentation table
+(`applyKnownAgentDefaults`) and the `ProjectContext`, which a bare crux has
+no source for.
 
 **Stage 3: platform.** `crux serve` with an API, tenancy, auth, quotas; Hive
 and hub become clients; the hub-to-runtime contract becomes explicit and
@@ -635,7 +659,9 @@ cd src/crux && go test ./...      # from inside the module
 ```
 
 `./cmd/crux` is a host that builds against it, like `./cmd/hive`, and is
-tested with the rest of the root module. Both ratchets live in
+tested with the rest of the root module; `./crux/cmd/crux` is the module's
+own host and builds standalone (`cd src/crux && GOWORK=off go build
+./cmd/crux`; `make smoke` there exercises `crux serve` end to end). Both ratchets live in
 `./internal/testutil` and run with that package. In CI, a PR whose diff is
 entirely under `src/crux/` gets the `crux-only` verdict from
 `crux-scope.sh` and runs only the agent slices (Stage 1 item 5). Two

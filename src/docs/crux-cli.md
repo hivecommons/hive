@@ -11,11 +11,19 @@ nested module.
 
 ## Build
 
+Two hosts build the same CLI (`crux/cli`); they differ only in where agent
+definitions come from:
+
 ```sh
-cd src && go build -o crux ./cmd/crux
+cd src && go build -o crux ./cmd/crux          # Hive-hosted: --config hive.yaml, pkg/config + pkg/defsrc
+cd src/crux && make build                      # module's own: --defs <dir|file>, plain YAML (crux/defs)
+cd src/crux && GOWORK=off go build ./cmd/crux  # the same, proving the module builds alone
 ```
 
-The image also ships it at `/usr/local/bin/crux`.
+The image ships the Hive-hosted one at `/usr/local/bin/crux`. The module's
+binary is what a downstream checkout of `github.com/hivecommons/hive/crux`
+builds; see [`src/crux/README.md`](../crux/README.md). `--version` prints the
+version set with `-ldflags "-X main.version=…"` (`dev` otherwise).
 
 ## Commands
 
@@ -37,11 +45,12 @@ Global flags go before the subcommand:
 | Flag | Meaning |
 |---|---|
 | `--workdir DIR` | agent work dir; default `$HIVE_WORK_DIR`, then `$HOME/.crux`. Exported to the runtime as `HIVE_WORK_DIR`. |
-| `--config hive.yaml` | a hive config whose enabled `agents:` define the runtime, loaded with the same `config.Load` as `hive` itself |
+| `--config PATH`, `--defs PATH` | the definition source; synonyms, default `$CRUX_DEFS`. For the Hive-hosted binary a hive config whose enabled `agents:` define the runtime, loaded with the same `config.Load` as `hive` itself; for the module's binary a directory of `*.yaml` definition files, or one file |
 | `--socket PATH` | control socket; default `<workdir>/crux.sock` |
 | `--local` | never use a running `crux run`'s socket; build a fresh runtime in this process |
 | `--server ADDR` | drive a `crux serve` at `ADDR` (socket path, `unix:///path`, `host:port`, `http://…`) instead of an in-process runtime; default `$CRUX_SERVER` |
 | `--token T` | bearer token for `--server`; default `$CRUX_TOKEN` |
+| `--version` | print the version and exit |
 
 `run` flags: `--detach` (return after `Start`, leave the agent running),
 `--interval D` (output poll interval, default 1s), `--no-socket`.

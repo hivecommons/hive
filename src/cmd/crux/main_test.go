@@ -35,8 +35,12 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestSignalContextIsCancellable(t *testing.T) {
-	ctx, stop := signalContext()
-	stop()
-	<-ctx.Done()
+func TestRunReportsVersion(t *testing.T) {
+	var stdout bytes.Buffer
+	code := run([]string{"--version"}, strings.NewReader(""), &stdout, &bytes.Buffer{}, func() (context.Context, context.CancelFunc) {
+		return context.WithCancel(context.Background())
+	})
+	if code != cli.ExitOK || stdout.String() != "crux "+cli.DefaultVersion+"\n" {
+		t.Fatalf("code %d, stdout %q", code, stdout.String())
+	}
 }

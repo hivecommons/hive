@@ -693,3 +693,51 @@ func TestJSONAndTableWriteErrors(t *testing.T) {
 		t.Fatalf("table: code %d", code)
 	}
 }
+
+func TestVersionFlag(t *testing.T) {
+	h := newHarness(t)
+	if code := h.run("--version"); code != ExitOK {
+		t.Fatalf("--version: code %d, stderr %q", code, h.stderr)
+	}
+	if got := h.stdout.String(); got != "crux "+DefaultVersion+"\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	h = newHarness(t)
+	h.env.Version = "v1.2.3"
+	if code := h.run("--version", "ps"); code != ExitOK || h.stdout.String() != "crux v1.2.3\n" {
+		t.Fatalf("--version with a command: code %d, stdout %q", code, h.stdout)
+	}
+}
+
+func TestDefsFlagAndEnvSelectTheDefinitionSource(t *testing.T) {
+	cfg := writeFile(t, filepath.Join(t.TempDir(), "hive.yaml"), "agents:\n  fixer:\n    backend: codex\n")
+
+	h := newHarness(t)
+	if code := h.run("--local", "--defs", cfg, "ps"); code != ExitOK {
+		t.Fatalf("--defs: code %d, stderr %q", code, h.stderr)
+	}
+	if _, ok := h.defs["fixer"]; !ok {
+		t.Fatalf("--defs did not reach the loader: defs = %v", h.defs)
+	}
+
+	t.Setenv(DefsEnvVar, cfg)
+	h = newHarness(t)
+	if code := h.run("--local", "ps"); code != ExitOK {
+		t.Fatalf("%s: code %d, stderr %q", DefsEnvVar, code, h.stderr)
+	}
+	if _, ok := h.defs["fixer"]; !ok {
+		t.Fatalf("%s did not reach the loader: defs = %v", DefsEnvVar, h.defs)
+	}
+
+	// An explicit flag wins over the environment.
+	h = newHarness(t)
+	if code := h.run("--local", "--config", filepath.Join(t.TempDir(), "missing.yaml"), "ps"); code != ExitError {
+		t.Fatalf("flag over env: code %d, stderr %q", code, h.stderr)
+	}
+}
+
+func TestSignalContextIsCancellable(t *testing.T) {
+	ctx, stop := SignalContext()
+	stop()
+	<-ctx.Done()
+}
