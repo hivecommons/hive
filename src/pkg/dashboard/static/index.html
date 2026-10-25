@@ -22712,12 +22712,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // that read "GITHUB.COM" on a github.ibm.com hive.
       const hostLabel = (window._githubBaseUrl || 'https://github.com').replace(/^https?:\/\//, '').replace(/\/$/, '') || 'github.com';
       const isPublic = hostLabel === 'github.com';
-      // The project forge is hive-wide, so the first card names the hive's forge
-      // (#14115). A GitLab or Gitea/Forgejo hive gets its own host here instead
-      // of the GitHub host the badge would otherwise claim.
-      const hiveForge = repoForgeWeb(repos[0], hostLabel);
+      // Each card carries its own forge (#14115), and repo_policies[].forge can
+      // put one repo on a different forge from the rest. The badge names the
+      // hive's forge only when every card agrees; a GitLab or Gitea/Forgejo
+      // hive gets its own host here instead of the GitHub host the badge would
+      // otherwise claim, and a mixed hive says so instead of claiming one host.
+      const repoForges = (repos || []).map(r => repoForgeWeb(r, hostLabel));
+      const forgeHosts = [...new Set(repoForges.map(f => f.name + ' · ' + f.host))];
+      const hiveForge = repoForges[0] || repoForgeWeb(undefined, hostLabel);
       const badge = document.getElementById('repos-host-badge');
-      if (badge && hiveForge.kind !== 'github') {
+      if (badge && forgeHosts.length > 1) {
+        badge.textContent = forgeHosts.length + ' forges';
+        badge.style.background = 'color-mix(in srgb, var(--indigo) 15%, transparent)';
+        badge.style.color = 'var(--indigo)';
+        badge.title = 'Projects in this hive are on ' + forgeHosts.join(', ') + ' — each card names its own forge';
+      } else if (badge && hiveForge.kind !== 'github') {
         badge.textContent = hiveForge.name + ' · ' + hiveForge.host;
         badge.style.background = 'color-mix(in srgb, var(--indigo) 15%, transparent)';
         badge.style.color = 'var(--indigo)';
@@ -22821,7 +22830,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const heldClass = isHeldIssue ? ' held' : '';
           const staleClass = issueIsStale(i) ? ' stale' : '';
           const statusTip = (isHeldIssue ? heldTip + ' — band: ' : '') + issueBandTip(info.band) + (info.signals.length ? ' — ' + info.signals.map(s => s.label).join(', ') : '');
-          const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
+          const issueUrl = i.url || (repoUrl + cardForge.issuesPath + '/' + i.number);
           const rowKinds = repoIssueFilterKinds(i, info, isHeldIssue);
           const statusKind = isHeldIssue ? 'issue:held' : ('issue:' + info.band);
           return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}><button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : issueBandShortLabel(info.band))}</button><a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
@@ -22833,7 +22842,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const renderNonActionableIssuePill = (i) => {
           const spec = repoNonActionableIssueBucketSpec(i);
           const title = i.title || '';
-          const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
+          const issueUrl = i.url || (repoUrl + cardForge.issuesPath + '/' + i.number);
           const labels = (i.labels || []).map(l => String(l)).filter(Boolean).join(', ');
           const reason = i.reason || spec.tip;
           const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (labels ? ' — labels: ' + labels : '') + ' — ' + reason;
@@ -22918,9 +22927,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const primaryIssue = linkedIssues.find(i => i.state === 'open') || linkedIssues[0];
           const issueBadgeTip = 'Closes issue' + (linkedIssues.length > 1 ? 's' : '') + ': ' + linkedIssueText;
           const issueBadge = primaryIssue
-            ? `<a class="repo-pr-pill pill-icon" href="${esc(primaryIssue.url || (repoUrl + '/issues/' + primaryIssue.number))}" target="_blank" rel="noopener" data-stop="1" title="${esc(issueBadgeTip)}" aria-label="${esc('Linked issue #' + primaryIssue.number)}">🔗</a>`
+            ? `<a class="repo-pr-pill pill-icon" href="${esc(primaryIssue.url || (repoUrl + cardForge.issuesPath + '/' + primaryIssue.number))}" target="_blank" rel="noopener" data-stop="1" title="${esc(issueBadgeTip)}" aria-label="${esc('Linked issue #' + primaryIssue.number)}">🔗</a>`
             : '';
-          const url = p.url || (repoUrl + '/pull/' + p.number);
+          const url = p.url || (repoUrl + cardForge.changePath + '/' + p.number);
           const heldClass = held ? ' held' : '';
           const staleClass = prIsStale(p) ? ' stale' : '';
           // needs-human wins the pill tint over mergeable green: a PR can be
@@ -23036,12 +23045,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const kind = String((r && r.forge) || 'github').toLowerCase();
       const base = String((r && r.forgeUrl) || '').replace(/\/+$/, '');
       if (kind === 'gitlab' && base) {
-        return { kind, icon: '🦊', name: 'GitLab', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/-/issues', changesPath: '/-/merge_requests' };
+        return { kind, icon: '🦊', name: 'GitLab', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/-/issues', changesPath: '/-/merge_requests', changePath: '/-/merge_requests' };
       }
       if (kind === 'gitea' && base) {
-        return { kind, icon: '🍵', name: 'Gitea/Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls' };
+        return { kind, icon: '🍵', name: 'Gitea/Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
       }
-      return { kind: 'github', icon: '🐙', name: 'GitHub', host: githubHost, base: window._githubBaseUrl || 'https://github.com', issuesPath: '/issues', changesPath: '/pulls' };
+      return { kind: 'github', icon: '🐙', name: 'GitHub', host: githubHost, base: window._githubBaseUrl || 'https://github.com', issuesPath: '/issues', changesPath: '/pulls', changePath: '/pull' };
     }
 
     /**
