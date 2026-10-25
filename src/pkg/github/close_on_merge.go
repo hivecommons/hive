@@ -57,6 +57,12 @@ type CloseOnMergeOptions struct {
 	// backfill posts no "What to reply" notice there when it reclassifies a
 	// dedupe checklist as needs-decision. nil means no repo opts in.
 	LabelDriven func(repo string) bool
+	// RepoOnGitHub reports whether a repo lives on GitHub (its forge.Kind, via
+	// config.RepoOnGitHub). Both sweeps read and close through the GitHub API,
+	// so a claim or repo on GitLab or Gitea is skipped rather than looked up on
+	// GitHub under its slug (hivecommons/hive#14150). nil means every repo is
+	// on GitHub.
+	RepoOnGitHub func(repo string) bool
 }
 
 func (o CloseOnMergeOptions) now() time.Time {
@@ -64,6 +70,10 @@ func (o CloseOnMergeOptions) now() time.Time {
 		return o.Now()
 	}
 	return time.Now()
+}
+
+func (o CloseOnMergeOptions) onGitHub(repo string) bool {
+	return o.RepoOnGitHub == nil || o.RepoOnGitHub(repo)
 }
 
 func (o CloseOnMergeOptions) recheckAfter() time.Duration {
@@ -86,6 +96,9 @@ type CloseOnMergeSweep struct {
 	// after the merge (IssueClaim.ReopenedAfterMerge); they are never
 	// re-closed for that PR and cost no API call.
 	SkippedReopened int
+	// SkippedOtherForge counts claims whose issue or PR repo lives on GitLab
+	// or Gitea (Options.RepoOnGitHub); this GitHub sweep cannot observe them.
+	SkippedOtherForge int
 	// Marked counts claims whose settled marker this pass set or refreshed.
 	Marked int
 }
@@ -183,6 +196,10 @@ func (c *Client) CloseOnMergeLedgerSweep(ctx context.Context, ledger *ClaimLedge
 		if claim.Reference {
 			continue
 		}
+		if !opts.onGitHub(claim.Repo) || (claim.PRRepo != "" && !opts.onGitHub(claim.PRRepo)) {
+			sweep.SkippedOtherForge++
+			continue
+		}
 		// A person reopened the issue after this PR merged: never close it
 		// for this PR again, and spend no API call finding that out.
 		if claim.ReopenedAfterMerge() {
@@ -225,6 +242,9 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 	}
 	var out []CloseOnMergeResult
 	for _, repo := range c.activeRepos() {
+		if !opts.onGitHub(repo) {
+			continue
+		}
 		owner, repoName := c.splitRepo(repo)
 		issueOpts := &gh.IssueListByRepoOptions{
 			State:       "open",

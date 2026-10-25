@@ -38,6 +38,11 @@ project:
 			t.Errorf("ForgeURLForRepo(%q) = %q, want %q", tc.repo, got, tc.url)
 		}
 	}
+	for repo, want := range map[string]bool{"app": true, "lab": false, "acme/lab": false, "tea": false} {
+		if got := cfg.RepoOnGitHub(repo); got != want {
+			t.Errorf("RepoOnGitHub(%q) = %v, want %v", repo, got, want)
+		}
+	}
 	if !cfg.HasRepoForgeOverrides() {
 		t.Fatal("HasRepoForgeOverrides = false, want true")
 	}
@@ -68,9 +73,21 @@ func TestRepoForgeUnsetBehavesAsBefore(t *testing.T) {
 		t.Fatalf("inherited url = %q, want gitlab.gitlab_url", got)
 	}
 
+	if cfg.RepoOnGitHub("app") {
+		t.Fatal("RepoOnGitHub = true for a repo inheriting project.forge gitlab")
+	}
+	// An unknown kind falls back to GitHub, as the forge writer does.
+	cfg.Project.Forge = "bitbucket"
+	if !cfg.RepoOnGitHub("app") {
+		t.Fatal("RepoOnGitHub = false for an unknown forge kind, want the GitHub fallback")
+	}
+
 	var nilCfg *Config
 	if got := nilCfg.ForgeKindForRepo("app"); got != ForgeGitHub {
 		t.Fatalf("nil config forge = %q, want github", got)
+	}
+	if !nilCfg.RepoOnGitHub("app") {
+		t.Fatal("nil config RepoOnGitHub = false, want true")
 	}
 }
 

@@ -36,6 +36,19 @@ func (c *Config) ForgeKindForRepo(repo string) string {
 	return c.Project.ForgeKind()
 }
 
+// RepoOnGitHub reports whether repo's GitHub-only paths (the automerge and
+// close-on-merge sweeps, which call the GitHub API directly) may act on it. It
+// is false only for a repo that resolves to GitLab or Gitea; an unknown kind
+// is treated as GitHub, the same fallback the forge writer takes, so a typo'd
+// forge key never silently stops a GitHub hive's sweeps.
+func (c *Config) RepoOnGitHub(repo string) bool {
+	switch c.ForgeKindForRepo(repo) {
+	case ForgeGitLab, ForgeGitea:
+		return false
+	}
+	return true
+}
+
 // ForgeURLForRepo returns the instance root of repo's forge: its
 // repo_policies[].forge_url override when set, else the forge-wide setting
 // for the repo's kind (gitlab.gitlab_url, gitea.gitea_url, or GitHub's

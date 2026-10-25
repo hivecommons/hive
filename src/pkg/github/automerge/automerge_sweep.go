@@ -86,6 +86,12 @@ type Options struct {
 	// RepoAutoMergeEnabled returns the live per-repo auto-merge switch. nil
 	// preserves default-on behavior.
 	RepoAutoMergeEnabled func(repo string) bool
+	// RepoOnGitHub reports whether a repo lives on GitHub (its forge.Kind, via
+	// config.RepoOnGitHub). Every lane merges through the GitHub API, so a repo
+	// on GitLab or Gitea is left out of the sweep rather than looked up on
+	// GitHub under its slug (hivecommons/hive#14150). nil means every repo is
+	// on GitHub.
+	RepoOnGitHub func(repo string) bool
 	// TrustedBotAuthors returns the live lower-cased set of bot logins whose
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
@@ -197,6 +203,7 @@ type Engine struct {
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
+	repoOnGitHub                      func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
 	botTakeoverEnabledFn              func() bool
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
@@ -278,6 +285,7 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
+		repoOnGitHub:                      opts.RepoOnGitHub,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
 		rateLimitCautious:                 opts.RateLimitCautious,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
@@ -335,18 +343,32 @@ func (c *Engine) repoAutoMergeAllowed(repo string) bool {
 }
 
 // activeRepos is Repositories() minus the repos under an operator pause
-// (#6203). The narrowing lives behind an optional transport capability, the
-// same shape New uses for MutationBoundary: a transport that does not know
-// about pauses (the sweep's own fakes) keeps its full repository list, so
-// pause support is additive rather than a Transport-interface break.
+// (#6203) and minus the repos that live on another forge (#14150). The pause
+// narrowing lives behind an optional transport capability, the same shape New
+// uses for MutationBoundary: a transport that does not know about pauses (the
+// sweep's own fakes) keeps its full repository list, so pause support is
+// additive rather than a Transport-interface break.
 func (c *Engine) activeRepos() []string {
 	if c == nil || c.transport == nil {
 		return nil
 	}
+	var repos []string
 	if provider, ok := c.transport.(interface{ ActiveRepositories() []string }); ok {
-		return provider.ActiveRepositories()
+		repos = provider.ActiveRepositories()
+	} else {
+		repos = c.transport.Repositories()
 	}
-	return c.transport.Repositories()
+	if c.repoOnGitHub == nil {
+		return repos
+	}
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if !c.repoOnGitHub(repo) {
+			continue
+		}
+		out = append(out, repo)
+	}
+	return out
 }
 
 // SweepQueuedAutoMerges consumes queued automerge requests using a one-shot engine.
