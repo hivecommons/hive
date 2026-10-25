@@ -130,9 +130,16 @@ func TestPaneTimeoutWarnsClassifyAsAgentPaneTimeout(t *testing.T) {
 		logger.Warn("startup kick dropped: CLI never reached input prompt", "attempt", i)
 		now = now.Add(time.Minute)
 	}
+	// Evidence is keyed per message, so each of the three WARN texts yields
+	// its own entry; all of them must land under the pane-timeout class.
 	ev := tr.Evidence()
-	if len(ev) != 1 || ev[0].Class != fleetreport.ClassAgentPaneTimeout {
+	if len(ev) != 3 {
 		t.Fatalf("evidence = %+v", ev)
+	}
+	for _, e := range ev {
+		if e.Class != fleetreport.ClassAgentPaneTimeout {
+			t.Fatalf("evidence class = %q, want %q: %+v", e.Class, fleetreport.ClassAgentPaneTimeout, e)
+		}
 	}
 }
 
