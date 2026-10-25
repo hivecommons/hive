@@ -805,3 +805,117 @@ func TestSupersessionDecisionNotice(t *testing.T) {
 		})
 	}
 }
+
+// TestSweepSupersededOpenPRs_ReleasesOwnParkWhenCauseIsGone covers
+// hivecommons/hive#14155: the sweep's `needs-human` clears with its cause.
+// #13959 and #14090 sat at stage/085-needs-decision, verdict approved and CI
+// green, for a park the sweep had put on a `Part of` / `Refs` link to a
+// closed tracker, until a maintainer removed the label by hand.
+func TestSweepSupersededOpenPRs_ReleasesOwnParkWhenCauseIsGone(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	closer := supersessionCloser{Repo: org + "/" + repo, Number: 22, URL: fmt.Sprintf("https://github.com/%s/%s/pull/22", org, repo)}
+	escalation := func() string {
+		event := SupersessionSweepEvent{Repo: repo, Number: 12, Author: "contributor", IssueRepo: repo, Issue: 3, CloserPR: 22}
+		return renderSupersessionComment(event, closer, supersessionDecisionNotice(org, closer, supersessionReasonExtraFiles)+"\n\nFiles the merged PR did not touch: `pkg/c.go`.")
+	}
+	hiveApplied := []supersessionLabelEventFixture{{Event: "labeled", Label: issueNeedsHumanLabel, Actor: "hive-app[bot]"}}
+	personApplied := []supersessionLabelEventFixture{{Event: "labeled", Label: issueNeedsHumanLabel, Actor: "maintainer"}}
+	notice := func(body string) []supersessionCommentFixture {
+		return []supersessionCommentFixture{{ID: 900, Body: body, Author: "hive-app[bot]", Bot: true, CreatedAt: time.Now().Add(-time.Hour)}}
+	}
+
+	for _, tc := range []struct {
+		name        string
+		body        string
+		issueState  string
+		labels      []string
+		labelEvents []supersessionLabelEventFixture
+		comments    []supersessionCommentFixture
+		wantRelease bool
+		wantPark    bool
+	}{
+		{
+			name: "claimed issue reopened: hive park released",
+			body: "Fixes #3", issueState: "open",
+			labels: []string{issueNeedsHumanLabel}, labelEvents: hiveApplied, comments: notice(escalation()),
+			wantRelease: true,
+		},
+		{
+			name: "claimed issue reopened: a person's needs-human stays",
+			body: "Fixes #3", issueState: "open",
+			labels: []string{issueNeedsHumanLabel}, labelEvents: personApplied, comments: notice(escalation()),
+		},
+		{
+			name: "claimed issue reopened: needs-human with no sweep notice stays",
+			body: "Fixes #3", issueState: "open",
+			labels: []string{issueNeedsHumanLabel}, labelEvents: hiveApplied,
+		},
+		{
+			name: "claimed issue reopened: sweep notice that parked nothing leaves the label",
+			body: "Fixes #3", issueState: "open",
+			labels: []string{issueNeedsHumanLabel}, labelEvents: hiveApplied,
+			comments: notice(renderSupersessionComment(SupersessionSweepEvent{Repo: repo, Number: 12, IssueRepo: repo, Issue: 3, CloserPR: 22}, closer, supersessionDecisionNotice(org, closer, supersessionReasonKeptOpen))),
+		},
+		{
+			name: "claimed issue reopened: no needs-human, nothing to do",
+			body: "Fixes #3", issueState: "open",
+			comments: notice(escalation()),
+		},
+		{
+			name: "reference-only link still closed: stale park from an earlier escalation released",
+			body: "Refs #3", issueState: "closed",
+			labels: []string{issueNeedsHumanLabel}, labelEvents: hiveApplied, comments: notice(escalation()),
+			wantRelease: true,
+		},
+		{
+			name: "reference-only link still closed: a person's needs-human stays",
+			body: "Part of #3", issueState: "closed",
+			labels: []string{issueNeedsHumanLabel}, labelEvents: personApplied, comments: notice(escalation()),
+		},
+		{
+			name: "closing claim still closed: park stands",
+			body: "Fixes #3", issueState: "closed",
+			labels: []string{issueNeedsHumanLabel}, labelEvents: hiveApplied, comments: notice(escalation()),
+		},
+		{
+			name: "closing claim still closed, not yet parked: escalates",
+			body: "Closes #3", issueState: "closed",
+			wantPark: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, obs := supersessionSweepServer(t, org, repo,
+				[]supersessionPRFixture{
+					{Number: 12, Title: "fix thing", Body: tc.body, Author: "contributor", Files: []string{"pkg/a.go", "pkg/c.go"},
+						Labels: tc.labels, LabelEvents: tc.labelEvents, Comments: tc.comments},
+					{Number: 22, Title: "landed", Body: "Fixes #3", Author: "hive-app[bot]", Merged: true, Files: []string{"pkg/a.go"}},
+				},
+				[]supersessionIssueFixture{{Number: 3, State: tc.issueState, GraphQLCloserPR: 22}},
+			)
+			defer server.Close()
+
+			c, rec := newSupersessionTestClient(t, server, org, repo)
+			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+			if err != nil {
+				t.Fatalf("SweepSupersededOpenPRs: %v", err)
+			}
+			removed := obs.removedLabels[12]
+			if tc.wantRelease {
+				if len(removed) != 1 || removed[0] != issueNeedsHumanLabel {
+					t.Fatalf("removed labels = %v, want the sweep's needs-human released", removed)
+				}
+				if len(res.Resolved) != 1 || res.Resolved[0].Action != SupersessionActionReleased || res.Resolved[0].Number != 12 {
+					t.Fatalf("result = %+v, want one %q", res, SupersessionActionReleased)
+				}
+			} else if len(removed) != 0 || len(res.Resolved) != 0 {
+				t.Fatalf("label must stay: removed=%v result=%+v", removed, res)
+			}
+			if parked := parkedPRs(rec); (len(parked) == 1) != tc.wantPark {
+				t.Fatalf("Parked facts = %v, want parked=%v", parked, tc.wantPark)
+			}
+			if len(obs.closed) != 0 || len(obs.comments[12])+len(obs.edits) > 1 {
+				t.Fatalf("sweep wrote too much: closed=%v comments=%v edits=%v", obs.closed, obs.comments[12], obs.edits)
+			}
+		})
+	}
+}

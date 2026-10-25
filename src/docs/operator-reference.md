@@ -565,6 +565,13 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   the PR lands at `stage/085-needs-decision` in the same pass — never a bare
   `needs-human` beside an active lane stage (#13782 wore
   `stage/050-review-pending` + `needs-human` until the next auto-merge tick).
+  Only a closing claim (`Closes #N`) parks a contributor PR; a PR that merely
+  references the closed issue (`Refs #N`, `Part of #N`, a branch name) gets
+  the notice with the files named and no park. The sweep's own `needs-human`
+  clears with its cause: when the supersession it announced no longer holds
+  (issue reopened, claim rewritten, link downgraded to a reference) it takes
+  the label off again (`supersession-sweep-released-needs-human`); a person's
+  `needs-human` stays (hivecommons/hive#14155).
   The notice names the files the merged PR did not touch. Once the notice is
   on the PR, the sweep re-escalates only when the notice changes (a different
   merged PR or reason); clearing the label for an unchanged notice sticks.

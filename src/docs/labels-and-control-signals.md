@@ -1090,14 +1090,21 @@ depends on the author facet and on whether the PR adds anything #M did not
 |---|---|---|
 | `author/hive` at ACMM L6 | closed with `hive/superseded` | **self-resolved**: head behind base → GitHub update-branch requested, measured next pass; head current → body `Closes #N` rewritten to `Refs #N (closed by #M; this PR adds <files>)` with the `<!-- hive:supersession-resolved issue=N closer=M -->` marker, one notice, PR continues in its lane; nothing meaningful left → closed with `hive/superseded` |
 | `author/hive` below L6 | `needs-human` + `Parked` fact → `stage/085-needs-decision` | same |
-| `author/human` / `author/clanker` | notice, Review Queue decision, optional grace-window close | `needs-human` + `Parked` fact → `stage/085-needs-decision`, notice lists the files |
+| `author/human` / `author/clanker` | notice, Review Queue decision, optional grace-window close | closing claim: `needs-human` + `Parked` fact → `stage/085-needs-decision`, notice lists the files; reference only (`Refs #N`, `Part of #N`, branch name): notice lists the files, no park |
 
 The sweep never writes `needs-human` without the `Parked` fact, so the
 chevron and the label agree in the same pass; and it never parks a hive PR
-at L6 for a decision the hive can make. A `needs-human` a person applied
-to a hive PR is an instruction: the sweep leaves that PR alone. The hive's
-own `needs-human` from an earlier escalation is released when the hive takes
-the resolution over, and the stage engine re-derives the lane stage on the
+at L6 for a decision the hive can make. A contributor PR that only
+*references* the closed issue never claimed to deliver it, so its closer did
+not supersede the PR: it gets the notice, not the park (#13959 and #14090,
+`Part of` / `Refs` a closed tracker, sat at 085 for this —
+hivecommons/hive#14155). A `needs-human` a person applied is an
+instruction: the sweep leaves that PR alone. The hive's own `needs-human`
+clears with its cause: it is released when the hive takes a hive PR's
+resolution over, and on any PR when the supersession the notice announced no
+longer holds (claimed issue reopened, claim rewritten, link downgraded to a
+reference) — the sweep's "Decision needed" notice plus a hive-applied label
+is the sweep's park; the stage engine re-derives the lane stage on the
 next auto-merge pass (leaving 085 is never a regression). The body marker is
 the idempotence key: a resolved PR still references a closed issue, and
 without the marker the next sweep would treat it as a fresh supersession.

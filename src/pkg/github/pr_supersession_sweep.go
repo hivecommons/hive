@@ -159,44 +159,16 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	if labels := labelNames(pr.Labels); c.isHeld(labels) || c.isExempt(labels) {
 		return SupersessionSweepEvent{}, "", nil
 	}
-	claims := supersessionCandidateClaims(claimsFromPR(pr, prRepo, identity, now))
-	if len(claims) == 0 {
-		return SupersessionSweepEvent{}, "", nil
+	candidate, closer, detected, err := c.detectSupersession(ctx, prRepo, pr, identity, now)
+	if err != nil {
+		return SupersessionSweepEvent{}, "", err
 	}
-
-	var candidate IssueClaim
-	var closer supersessionCloser
-	for _, claim := range claims {
-		issueOwner, issueRepoName := c.splitRepo(claim.Repo)
-		issue, _, err := c.client.Issues.Get(ctx, issueOwner, issueRepoName, claim.Issue)
-		if err != nil {
-			return SupersessionSweepEvent{}, "", fmt.Errorf("checking claimed issue %s#%d for PR %s#%d: %w", claim.Repo, claim.Issue, prRepo, pr.GetNumber(), err)
-		}
-		if !strings.EqualFold(issue.GetState(), "closed") {
-			// An issue this PR claims to close is still open, so the PR is
-			// still live work whatever happened to its other claims. Before
-			// hivecommons/hive#12349 this escalated to needs-human as "also
-			// claims another issue that is still open", which flagged #12322
-			// (Fixes open #12117, Part of closed #12080) as superseded.
-			return SupersessionSweepEvent{}, "", nil
-		}
-		resolved, ok, err := c.resolveIssueClosingPR(ctx, claim.Repo, issueOwner, issueRepoName, claim.Issue, pr.GetNumber())
-		if err != nil {
-			return SupersessionSweepEvent{}, "", err
-		}
-		if ok && candidate.Issue == 0 {
-			candidate = claim
-			closer = resolved
-		}
-	}
-	if candidate.Issue == 0 {
-		return SupersessionSweepEvent{}, "", nil
-	}
-	if supersessionResolvedInBody(pr.GetBody(), candidate.Issue, closer.Number) {
-		// An earlier pass already turned this claim into a reference; the
-		// issue stays closed, so without this check the rewrite would read
-		// as a fresh supersession every tick.
-		return SupersessionSweepEvent{}, "", nil
+	if !detected {
+		// Nothing supersedes this PR (any more). A park an earlier pass
+		// put on it for a cause that has since gone — the claimed issue was
+		// reopened, the claim was rewritten — clears with that cause
+		// (hivecommons/hive#14155); a person's needs-human stays.
+		return c.releaseStaleSupersessionPark(ctx, prRepo, prOwner, prRepoName, pr)
 	}
 
 	event := SupersessionSweepEvent{
@@ -244,23 +216,77 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	if reason == "" && opts.CloseContributorPRs && level >= acmmLevelFullyAutonomous {
 		return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod)
 	}
+	notice := supersessionDecisionNotice(prOwner, closer, reason)
 	if !subset {
-		// A contributor's PR that adds files the merged PR did not: the
-		// hive cannot rebase or rewrite someone else's PR, so a person
-		// decides — parked at 085 with the files named, never a bare label.
-		notice := supersessionDecisionNotice(prOwner, closer, reason) + "\n\nFiles the merged PR did not touch: " + supersessionFilesSummary(extra) + "."
-		return c.escalateSupersededPR(ctx, prRepo, prOwner, prRepoName, pr, event, closer, notice)
+		notice += "\n\nFiles the merged PR did not touch: " + supersessionFilesSummary(extra) + "."
+		if candidate.Closing {
+			// A contributor's PR that adds files the merged PR did not: the
+			// hive cannot rebase or rewrite someone else's PR, so a person
+			// decides — parked at 085 with the files named, never a bare label.
+			return c.escalateSupersededPR(ctx, prRepo, prOwner, prRepoName, pr, event, closer, notice)
+		}
+		// The PR only references the issue (`Refs #N`, `Part of #N`, a
+		// branch name): it never claimed to deliver it, so the issue's
+		// closer cannot have superseded it. Say so, never park — #13959
+		// and #14090 (Part of / Refs a closed tracker) sat at 085 for
+		// this until a maintainer removed the label (hivecommons/hive#14155).
 	}
 	event.Action = SupersessionActionCommentedContributor
-	body := renderSupersessionComment(event, closer, supersessionDecisionNotice(prOwner, closer, reason))
+	body := renderSupersessionComment(event, closer, notice)
 	changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
 	if err != nil {
 		return event, "", err
 	}
 	if !changed {
-		return event, "", nil
+		// The notice stands from an earlier pass. If that pass parked the
+		// PR for a reason this one no longer escalates, the park goes.
+		return c.releaseStaleSupersessionPark(ctx, prRepo, prOwner, prRepoName, pr)
 	}
 	return event, "commented", nil
+}
+
+// detectSupersession finds the claim whose issue another merged PR closed.
+// detected is false when the PR is not superseded: it claims nothing, one
+// of its closing claims is still open, no closer resolves, or an earlier
+// pass already rewrote the claim into a reference.
+func (c *Client) detectSupersession(ctx context.Context, prRepo string, pr *gh.PullRequest, identity HiveIdentity, now time.Time) (candidate IssueClaim, closer supersessionCloser, detected bool, err error) {
+	claims := supersessionCandidateClaims(claimsFromPR(pr, prRepo, identity, now))
+	if len(claims) == 0 {
+		return IssueClaim{}, supersessionCloser{}, false, nil
+	}
+	for _, claim := range claims {
+		issueOwner, issueRepoName := c.splitRepo(claim.Repo)
+		issue, _, err := c.client.Issues.Get(ctx, issueOwner, issueRepoName, claim.Issue)
+		if err != nil {
+			return IssueClaim{}, supersessionCloser{}, false, fmt.Errorf("checking claimed issue %s#%d for PR %s#%d: %w", claim.Repo, claim.Issue, prRepo, pr.GetNumber(), err)
+		}
+		if !strings.EqualFold(issue.GetState(), "closed") {
+			// An issue this PR claims to close is still open, so the PR is
+			// still live work whatever happened to its other claims. Before
+			// hivecommons/hive#12349 this escalated to needs-human as "also
+			// claims another issue that is still open", which flagged #12322
+			// (Fixes open #12117, Part of closed #12080) as superseded.
+			return IssueClaim{}, supersessionCloser{}, false, nil
+		}
+		resolved, ok, err := c.resolveIssueClosingPR(ctx, claim.Repo, issueOwner, issueRepoName, claim.Issue, pr.GetNumber())
+		if err != nil {
+			return IssueClaim{}, supersessionCloser{}, false, err
+		}
+		if ok && candidate.Issue == 0 {
+			candidate = claim
+			closer = resolved
+		}
+	}
+	if candidate.Issue == 0 {
+		return IssueClaim{}, supersessionCloser{}, false, nil
+	}
+	if supersessionResolvedInBody(pr.GetBody(), candidate.Issue, closer.Number) {
+		// An earlier pass already turned this claim into a reference; the
+		// issue stays closed, so without this check the rewrite would read
+		// as a fresh supersession every tick.
+		return IssueClaim{}, supersessionCloser{}, false, nil
+	}
+	return candidate, closer, true, nil
 }
 
 // supersessionCandidateClaims picks the claims whose closure can supersede

@@ -173,6 +173,12 @@ func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bo
 	for _, label := range e.Holds {
 		actions = append(actions, "Resolve the reason for `"+label+"`, then have a maintainer remove that label; `/hive approve` does not remove it.")
 	}
+	if obs.Reason == "label:needs-human" || hasLabelFold(obs.Labels, "needs-human") {
+		// Name the label: "the lane condition named above" named nothing,
+		// and #13959 / #14090 were read as a stale 071 leftover when the
+		// supersession sweep's park was the cause (hivecommons/hive#14155).
+		actions = append(actions, "Answer the `needs-human` ask — the hive note that added the label says what it needs (a supersession decision, a workflow approval, …) — then have a maintainer remove that label; the hive takes its own `needs-human` off when the cause clears, and `/hive approve` does not remove it.")
+	}
 	if len(actions) == 0 {
 		actions = append(actions, "A maintainer must resolve the lane condition named above or review and merge manually; `/hive approve` does not override that condition.")
 	}

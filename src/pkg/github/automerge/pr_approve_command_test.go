@@ -99,7 +99,7 @@ func TestPRApproveReply(t *testing.T) {
 func TestDecisionCommentNamesLaneAction(t *testing.T) {
 	for _, tc := range []struct {
 		name, lane, reason, want string
-		holds                    []string
+		holds, labels            []string
 		manual                   bool
 	}{
 		{name: "self", lane: stageLaneSelf, want: "trusted merger can submit a GitHub **Approve** review"},
@@ -109,11 +109,13 @@ func TestDecisionCommentNamesLaneAction(t *testing.T) {
 		{name: "tests removed", lane: stageLaneContributor, reason: contributorLaneReasonTestsRemoved, want: "merge this PR manually", manual: true},
 		{name: "human path", lane: stageLaneSelf, reason: autoMergeReasonHumanMergePath, want: "merge this PR manually", manual: true},
 		{name: "label hold", lane: stageLaneSelf, holds: []string{"hold"}, want: "remove that label"},
+		{name: "label needs-human reason", lane: stageLaneTrusted, reason: "label:needs-human", want: "Answer the `needs-human` ask"},
+		{name: "label needs-human on the PR", lane: stageLaneTrusted, labels: []string{"Needs-Human"}, want: "Answer the `needs-human` ask"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := stagelabels.Evidence{Verdict: stagelabels.VerdictRequiresHuman, Holds: tc.holds}
 			route := stagelabels.RouteHuman(e)
-			route.Actions, route.ManualMerge = decisionActions(stageObservation{Lane: tc.lane, Reason: tc.reason}, e)
+			route.Actions, route.ManualMerge = decisionActions(stageObservation{Lane: tc.lane, Reason: tc.reason, Labels: tc.labels}, e)
 			body := stagelabels.DecisionComment(route)
 			if !strings.Contains(body, tc.want) || !strings.Contains(body, "**How to release it:**") || route.ManualMerge != tc.manual {
 				t.Fatalf("manual=%v body=%q", route.ManualMerge, body)

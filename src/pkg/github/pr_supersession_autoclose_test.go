@@ -281,7 +281,8 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 		{"operator kept open", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{"size/S", SupersessionKeepOpenLabel}}, autoCloseEnabled},
 		{"size/L", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{"size/L"}}, autoCloseEnabled},
 		{"large unlabeled", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{}, Additions: 400}, autoCloseEnabled},
-		{"extra files", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Files: []string{"pkg/a.go", "pkg/c.go"}}, autoCloseEnabled},
+		{"extra files", supersessionPRFixture{Body: "Fixes #3", Comments: []supersessionCommentFixture{notice}, Files: []string{"pkg/a.go", "pkg/c.go"}}, autoCloseEnabled},
+		{"extra files, reference only", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Files: []string{"pkg/a.go", "pkg/c.go"}}, autoCloseEnabled},
 		{"disabled", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}}, SupersessionSweepOptions{}},
 		{"below L6", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}},
 			SupersessionSweepOptions{CloseContributorPRs: true, ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }}},
@@ -306,6 +307,17 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 					t.Fatalf("guard %q notice does not name the extra files: %q", tc.name, got)
 				}
 				return
+			}
+			if tc.name == "extra files, reference only" {
+				// `Refs #3` never claimed to deliver #3, so its closer did
+				// not supersede the PR: the files are named, nobody is
+				// parked (hivecommons/hive#14155).
+				if len(res.Commented) != 1 || res.Commented[0].Action != SupersessionActionCommentedContributor {
+					t.Fatalf("guard %q result = %+v, want comment only", tc.name, res)
+				}
+				if got := obs.edits[900]; !strings.Contains(got, "Files the merged PR did not touch: `pkg/c.go`") {
+					t.Fatalf("guard %q notice does not name the extra files: %q", tc.name, got)
+				}
 			}
 			if len(obs.labels[12]) != 0 {
 				t.Fatalf("guard %q labeled the PR: %v", tc.name, obs.labels[12])
