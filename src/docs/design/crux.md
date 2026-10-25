@@ -1,19 +1,28 @@
-# Crux: the agent runtime boundary (#13536)
+# Crux: the agent runtime boundary (#13536, continued in #14138)
 
 Status: **Stage 1 shipped (v5); Stage 2 step 4 shipped: the ring is the
 nested Go module `github.com/hivecommons/hive/crux` at `src/crux/`
-(#13950), joined to the root module by `src/go.work`.** The boundary is named, the inbound and outbound
-architecture ratchets and the tmux funnel are live, `crux.Runtime` exists,
-the dashboard is on it, Crux owns its value types and the hub, spoke,
-dashboard and `cmd/hive` reference them as `crux.<Name>`, CI path filters
-select Crux-only shards for Crux-only PRs, and the `crux` CLI ships. The
-ring's outbound closure, about 55 Hive packages when this record began, is
-now zero, in test code too: the outbound baseline is empty (the ring's tests
-use their own `crux/internal/testutil` copy of `Eventually*` and
-`SkipUnlessRequired`); see [Outbound edges](#outbound-edges). What the
-move did and how to work in the two-module tree is under
-[Step 4: the module cut](#step-4-the-module-cut); what is left of Stage 2
-is under [After the cut](#after-the-cut). Stage 3 is design only.
+(#13950), joined to the root module by `src/go.work`; `crux.Process` is
+its own type and `crux/types` is folded into the root (#13982, #13996);
+the first cut of Stage 3's `crux serve` has landed (#13959).** The
+boundary is named, the inbound and outbound architecture ratchets and the
+tmux funnel are live, `crux.Runtime` exists, the dashboard is on it, Crux
+owns its value types and the hub, spoke, dashboard and `cmd/hive`
+reference them as `crux.<Name>`, CI path filters select Crux-only shards
+for Crux-only PRs, and the `crux` CLI ships. The inbound ratchet has one
+row left, `cmd/hive` 12, and every one of those twelve is the in-process
+manager or the host wiring it is handed (see
+[After the cut](#after-the-cut)); `pkg/dashboard`, `pkg/hub`,
+`pkg/hub/spoke`, `pkg/loginscan`, `pkg/ioscan` and `pkg/discord` no longer
+import `crux/agent` at all. The ring's outbound closure, about 55 Hive
+packages when this record began, is now zero, in test code too: the
+outbound baseline is empty (the ring's tests use their own
+`crux/internal/testutil` copy of `Eventually*` and `SkipUnlessRequired`);
+see [Outbound edges](#outbound-edges). What the move did and how to work
+in the two-module tree is under
+[Step 4: the module cut](#step-4-the-module-cut); what is left is under
+[After the cut](#after-the-cut) and tracked in #14138 (#13536 was the
+Stage 1 RFC and is closed).
 
 ## What Crux is
 
@@ -134,13 +143,15 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    Ratchet counts over that sequence: `pkg/dashboard` 68 → 51 (onto
    `crux.Runtime`) → 39 (provider status) → 19 (audit eviction);
    `pkg/hub` 18 → 1 (`AgentAvailableAtACMMLevel`); `pkg/hub/spoke` 15 → 5
-   → 3; `cmd/hive` 37 → 33 → 22; `pkg/loginscan` 7 → 4. What remains in
-   every consumer is the manager and its constructors (`Manager`,
-   `NewManager`, `ProjectContext`, `NewRingBuffer`), agent-mode and
-   capability parsing, UID maps, Copilot-token helpers and pane
+   → 3; `cmd/hive` 37 → 33 → 22; `pkg/loginscan` 7 → 4. What remained in
+   every consumer at that point was the manager and its constructors
+   (`Manager`, `NewManager`, `ProjectContext`, `NewRingBuffer`), agent-mode
+   and capability parsing, UID maps, Copilot-token helpers and pane
    classification: implementation the test-only constructors and
-   `cmd/hive`'s wiring need, not observation. `pkg/crux` and everything
-   under it is inside the boundary for the ratchet's purposes.
+   `cmd/hive`'s wiring need, not observation. Stage 2 then took every row
+   but `cmd/hive` to zero and `cmd/hive` to 12; the sequence is under
+   [After the cut](#after-the-cut). `pkg/crux` and everything under it is
+   inside the boundary for the ratchet's purposes.
 4. Agent configuration as its own struct and file (shipped):
    `AgentRuntimeConfig` and `AgentRuntimeGovernorConfig` in
    `src/pkg/config/agent_config.go`, embedded inline in `Config` and
@@ -392,8 +403,41 @@ Still Stage 2, in this order:
   constants are defined in the root and aliased by `crux/watchdog`. The
   former leaf's files are now root files, every importer names `crux.<Name>`,
   and the root imports neither `crux/agent` nor `crux/watchdog`.
-- **`crux serve`** is Stage 3, below; nothing in the module layout
-  blocks it.
+- **Inbound ratchet to one row.** After #13982 the inbound baseline was
+  `cmd/hive` 22, `pkg/dashboard` 3. #14103 moved the dashboard's last
+  three symbols into the root (`CanonicalizeCopilotModel` with its
+  CLI-accepted model table, `BackendRequiresInteractiveAuth`; the third,
+  `IsInferenceBackend`, was already `config.IsInferenceBackend` behind an
+  alias) and dropped `crux/agent` from the dashboard import allowlist:
+  dashboard 3 → 0. #14143 moved the pause vocabulary (`BreakerTrigger`,
+  `PauseCausation`, `PauseTransitionEvent`) into `crux/pause.go`, had
+  `cmd/hive` name `crux.ProjectContext` and `crux.DefaultAgentMode`
+  directly, and renamed a loop variable called `agent` in
+  `initAgentConfigDrivenSystems` that the ratchet's type-free AST walk had
+  counted as five symbols: cmd/hive 22 → 12. The baseline is now the single
+  row `cmd/hive` 12, and the twelve are classified, not pending:
+  `Manager`, `NewManager`, `LinearCredential`, `AgentMintIssuer`,
+  `StartPermissionsWatcher`, `WatchdogFleet`, `RunAgyTurn`,
+  `ResumeHandle`, `ResolveReasoningEffort`, `ErrResumeBusy`,
+  `ErrResumeSessionGone`, `PRCreator`. Each is the in-process manager
+  itself or a value `cmd/hive` hands it (credential resolvers, the token
+  minter, the PR creator, the fleet watchdog, the agy-turn subcommand);
+  none has an observation-side equivalent to re-export, and they go away
+  only if `cmd/hive` becomes a client of `crux serve` rather than the
+  process that constructs the manager. That is the open decision in
+  #14138, not a ratchet item. The `AgentProcess` method split (13 methods,
+  one mutex) that this record proposed is moot for the same reason: no
+  consumer outside `crux/agent` names `AgentProcess` any more; they hold
+  `*crux.Process` snapshots or build fixtures through `crux/cruxtest`.
+- **`crux serve`** has its first cut (#13959); the Go client, CLI remote
+  mode and the serve docs are tracked in #14138. What remains of this
+  record's list, in #14138's order: the Go client and `crux --server` /
+  `CRUX_SERVER`; the serve docs; the in-process-vs-sidecar decision for
+  `cmd/hive` (the last twelve inbound rows hang on it); `crux/vX.Y.Z`
+  tags and the `go get` path caveat above; moving `cmd/crux` into the
+  nested module once config and `defsrc` loading are injected; a generic
+  tool policy for the MITM proxy (the rules are GitHub-shaped today); and
+  keeping this status section current.
 
 **Stage 3: platform.** `crux serve` with an API (gRPC or HTTP), tenancy, auth,
 quotas; Hive and hub become clients; the hub-to-runtime contract becomes
