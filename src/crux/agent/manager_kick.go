@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -1378,24 +1379,35 @@ func countCIPollCommands(pane string) int {
 	return len(ciPollCommands(pane))
 }
 
-func ciPollCommandCounts(pane string) map[string]int {
-	seen := map[string]int{}
-	for _, cmd := range ciPollCommands(pane) {
-		seen[cmd]++
+// ciPollCommandsSinceBaseline returns the commands in current that were run
+// after baseline was taken. The pane capture holds only the newest
+// tmuxCaptureLines lines and evicts the oldest first, so baseline is a prefix
+// of the kick's full command sequence and current is a suffix of it. The
+// longest baseline tail that opens current is what is still visible; the rest
+// of current is new. Subtracting per-command counts instead let reads that had
+// scrolled out cancel genuine new ones (#14065).
+func ciPollCommandsSinceBaseline(current, baseline []string) []string {
+	for k := min(len(current), len(baseline)); k > 0; k-- {
+		if slices.Equal(baseline[len(baseline)-k:], current[:k]) {
+			return current[k:]
+		}
 	}
-	return seen
+	return current
 }
 
 // countRepeatedCIPollCommands counts CI-status commands whose command line
 // appears more than once since baseline. Waiting on one PR re-reads the same
 // target; a merge sweep or CI-repair pass reads each of many PRs once, and
-// that is the lane's work, not polling (#14016). Subtract each command's
-// baseline BEFORE deciding whether it repeats: one read in each of two kicks
-// is not repeated polling in either kick (#14061).
-func countRepeatedCIPollCommands(pane string, baseline map[string]int) int {
+// that is the lane's work, not polling (#14016). Reads already in baseline are
+// dropped BEFORE deciding whether a command repeats: one read in each of two
+// kicks is not repeated polling in either kick (#14061).
+func countRepeatedCIPollCommands(pane string, baseline []string) int {
+	counts := map[string]int{}
+	for _, cmd := range ciPollCommandsSinceBaseline(ciPollCommands(pane), baseline) {
+		counts[cmd]++
+	}
 	n := 0
-	for cmd, c := range ciPollCommandCounts(pane) {
-		c -= baseline[cmd]
+	for _, c := range counts {
 		if c > 1 {
 			n += c
 		}
@@ -1455,15 +1467,15 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	if ciPollNudgeExemptAgent(agent) {
 		return
 	}
-	count := countCIPollCommands(scrollback)
+	cmds := ciPollCommands(scrollback)
 	m.mu.Lock()
 	if agent.ciPollBaseline < 0 {
-		agent.ciPollBaseline = count
-		agent.ciPollCommandBaseline = ciPollCommandCounts(scrollback)
+		agent.ciPollBaseline = len(cmds)
+		agent.ciPollCommandBaseline = cmds
 		m.mu.Unlock()
 		return
 	}
-	newPolls := count - agent.ciPollBaseline
+	newPolls := len(ciPollCommandsSinceBaseline(cmds, agent.ciPollCommandBaseline))
 	newRepeats := countRepeatedCIPollCommands(scrollback, agent.ciPollCommandBaseline)
 	overThreshold := newRepeats > ciPollNudgeThreshold ||
 		(newPolls > 0 && !ciPollSweep(newPolls, newRepeats) && time.Since(*agent.LastKick) > ciPollNudgeWallClock)
@@ -1507,10 +1519,10 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 		m.observeCondition(crux.ClassCIPollNudge, agent.Name,
 			fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
 			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d repeated_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s",
-				agent.Name, lane, count, newPolls, newRepeats, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
+				agent.Name, lane, len(cmds), newPolls, newRepeats, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
 	}
 
-	m.logger.Warn("agent is polling CI, sending stop-polling nudge", "name", agent.Name, "polls", count)
+	m.logger.Warn("agent is polling CI, sending stop-polling nudge", "name", agent.Name, "polls", len(cmds))
 	m.tmuxSendLiteralForAgent(agent, ciPollNudgeMessage)
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)

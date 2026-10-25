@@ -396,12 +396,13 @@ type AgentProcess struct {
 	// the cooldown reset on the next kick.
 	lastTransientNudge      time.Time
 	transientNudgesThisKick int
-	// CI-poll guard (#9673): baseline is the CI-poll command count already in
-	// scrollback when the kick's first poll tick ran (-1 = not yet captured);
-	// ciPollCommandBaseline holds per-command counts from that same capture,
-	// so reads from earlier kicks cannot make a new sweep look repeated.
+	// CI-poll guard (#9673): ciPollBaseline is the CI-poll command count already
+	// in scrollback when the kick's first poll tick ran (-1 = not yet captured);
+	// ciPollCommandBaseline holds those commands in order. The capture keeps
+	// only the newest lines, so later polls match the baseline as a prefix of
+	// the kick's commands instead of subtracting counts (#14065).
 	ciPollBaseline        int
-	ciPollCommandBaseline map[string]int
+	ciPollCommandBaseline []string
 	ciPollNudgeSent       bool
 	CIPollNudges          int // total CI-polling nudges sent
 	// AwaitingCI (#9673 item 3): true while the agent has crossed the
