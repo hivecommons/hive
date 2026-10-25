@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -29,6 +30,8 @@ const (
 	feedbackMaxScreenshotBytes  = 2 << 20
 	feedbackHubIngestPath       = "/api/feedback/ingest"
 	feedbackHubIssuesPath       = "/api/feedback/issues"
+	feedbackRefreshBackoffBase  = 15 * time.Second
+	feedbackRefreshBackoffMax   = 10 * time.Minute
 	feedbackForwardTimeout      = 20 * time.Second
 	feedbackMaxHubResponseBytes = 8 << 10
 	feedbackTargetHive          = "hive"
@@ -356,13 +359,16 @@ func (s *Server) handleFeedbackMine(w http.ResponseWriter, r *http.Request) {
 	}
 	var warning string
 	if len(items) > 0 {
-		statuses, err := s.refreshFeedbackIssueStatuses(r.Context(), r, items)
-		if err != nil {
+		if s.feedbackRefreshBackoff.blocked(time.Now()) {
+			warning = "Could not refresh issue activity right now."
+		} else if statuses, err := s.refreshFeedbackIssueStatuses(r.Context(), r, items); err != nil {
+			s.feedbackRefreshBackoff.fail(time.Now())
 			warning = "Could not refresh issue activity right now."
 			if s.logger != nil {
 				s.logger.Warn("feedback: issue refresh failed", "error", err)
 			}
 		} else {
+			s.feedbackRefreshBackoff.succeed()
 			items = mergeFeedbackStatuses(items, statuses)
 		}
 	}
@@ -429,8 +435,8 @@ func (s *Server) fetchFeedbackStatusesFromHub(ctx context.Context, refs []feedba
 	}
 	defer closeHTTPBody(resp.Body)
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, feedbackMaxHubResponseBytes))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("hub answered %d", resp.StatusCode)
+	if err := checkFeedbackJSONResponse("hub", resp, body); err != nil {
+		return nil, err
 	}
 	var out struct {
 		OK    bool                  `json:"ok"`
@@ -440,6 +446,58 @@ func (s *Server) fetchFeedbackStatusesFromHub(ctx context.Context, refs []feedba
 		return nil, err
 	}
 	return out.Items, nil
+}
+
+// checkFeedbackJSONResponse rejects non-2xx and non-JSON (e.g. HTML proxy or
+// login page) responses with the status and body head, so callers never
+// surface a bare json "invalid character '<'" error.
+func checkFeedbackJSONResponse(what string, resp *http.Response, body []byte) error {
+	head := strings.TrimSpace(string(body))
+	if len(head) > 200 {
+		head = head[:200]
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("%s answered %d: %s", what, resp.StatusCode, head)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(strings.TrimSpace(string(body)), "<") || strings.Contains(strings.ToLower(ct), "text/html") {
+		return fmt.Errorf("%s: non-JSON response (status %d, content-type %q): %s", what, resp.StatusCode, ct, head)
+	}
+	return nil
+}
+
+// feedbackBackoff suspends upstream issue refreshes after consecutive
+// failures: the delay doubles from feedbackRefreshBackoffBase up to
+// feedbackRefreshBackoffMax and resets on success.
+type feedbackBackoff struct {
+	mu       sync.Mutex
+	failures int
+	until    time.Time
+}
+
+func (b *feedbackBackoff) blocked(now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return now.Before(b.until)
+}
+
+func (b *feedbackBackoff) fail(now time.Time) time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	d := feedbackRefreshBackoffBase << min(b.failures, 16)
+	if d > feedbackRefreshBackoffMax {
+		d = feedbackRefreshBackoffMax
+	}
+	b.failures++
+	b.until = now.Add(d)
+	return d
+}
+
+func (b *feedbackBackoff) succeed() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.failures = 0
+	b.until = time.Time{}
 }
 
 func loadFeedbackSubmissions() ([]feedbackSubmissionRecord, error) {
@@ -830,8 +888,8 @@ func fetchFeedbackIssueStatus(ctx context.Context, client *http.Client, apiBase,
 	}
 	defer closeHTTPBody(resp.Body)
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return feedbackIssueStatus{}, fmt.Errorf("github issue status: %d", resp.StatusCode)
+	if err := checkFeedbackJSONResponse("github issue status", resp, body); err != nil {
+		return feedbackIssueStatus{}, err
 	}
 	var got struct {
 		Title     string `json:"title"`

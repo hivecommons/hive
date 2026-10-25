@@ -98,6 +98,8 @@ const staleDropStarvationThreshold = 5
 type Server struct {
 	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
 
+	feedbackRefreshBackoff feedbackBackoff
+
 	port       int
 	authToken  string
 	statusMu   sync.RWMutex
