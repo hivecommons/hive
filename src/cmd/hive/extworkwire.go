@@ -361,14 +361,6 @@ func newExternalOMPExecutionBinding(srv *dashboard.Server, cfg *config.Config, r
 	return &externalExecutionBinding{engine: extExecEngineOMP, adapter: adapter, binding: extwork.New(adapter, store, store, extwork.NewAuditProgressSink(srv.AgentAuditSink()), mode)}, nil
 }
 
-func newExternalClaudeManagedAgentsBinding(srv *dashboard.Server, cfg *config.Config, registry *extwork.Registry, now func() time.Time) (*extwork.Binding, error) {
-	b, err := newExternalClaudeManagedAgentsExecutionBinding(srv, cfg, registry, now)
-	if err != nil {
-		return nil, err
-	}
-	return b.binding, nil
-}
-
 // newExternalClaudeManagedAgentsExecutionBinding builds the private-spoke
 // hosted binding. It is intentionally yaml-only: the API key is resolved by
 // the tagged adapter from a secret reference at request time.
