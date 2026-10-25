@@ -1,0 +1,204 @@
+name: Crux sync
+
+# Publishes src/crux (module github.com/hivecommons/hive/crux) to the public
+# hivecommons/crux repository as module github.com/hivecommons/crux (#14138).
+#
+# Hive stays the source of truth. hivecommons/crux is a published,
+# module-path-rewritten copy of the nested module: every push to v5 that
+# touches src/crux re-runs src/scripts/crux-publish.sh, which rebuilds the
+# publish tree, rewrites the module path, proves the result builds with
+# GOWORK=off, and commits it on top of hivecommons/crux `main` — one
+# fast-forward commit per sync naming the hive sha it came from (.hive-sync).
+# Hand-maintained scaffolding in hivecommons/crux (.github/, .goreleaser.yaml,
+# Dockerfile, README.md, LICENSE) is preserved; everything else is replaced.
+#
+# Releases are cut from hive: tagging hive `crux/vX.Y.Z` runs this workflow
+# too, which syncs that commit and then pushes tag `vX.Y.Z` to
+# hivecommons/crux, whose release workflow builds binaries, the container
+# image and the Homebrew inputs from it.
+#
+# Credentials: pushing to another repository needs more than the job's
+# GITHUB_TOKEN. The push uses CRUX_SYNC_TOKEN when set (a fine-grained PAT or
+# App token with Contents: write on hivecommons/crux), falling back to
+# TOPUP_PUSH_TOKEN (the PAT v5-topup/cli-pin-bump already use). If neither
+# reaches hivecommons/crux the push step fails with a 403 and the run summary
+# names the secret to provision; the publish tree is still uploaded as an
+# artifact so a maintainer can push it by hand with the recipe below.
+#
+# Manual sync (same script, same result):
+#   git clone https://github.com/hivecommons/crux crux-publish
+#   src/scripts/crux-publish.sh . crux-publish
+#   (cd crux-publish && git add -A && git commit -s -m "🌱 sync: hive@$(git -C .. rev-parse --short HEAD)" && git push)
+
+on:
+  push:
+    branches: [v5]
+    paths:
+      - 'src/crux/**'
+      - 'src/scripts/crux-publish.sh'
+      - '.github/workflows/crux-sync.yml'
+    tags:
+      - 'crux/v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Also push this tag (vX.Y.Z) to hivecommons/crux at the synced commit'
+        type: string
+        default: ''
+      dry_run:
+        description: 'Build the publish tree and upload it, but do not push'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crux-sync
+  cancel-in-progress: false
+
+env:
+  CRUX_REPO: hivecommons/crux
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out hive
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/crux/go.mod
+          cache-dependency-path: src/crux/go.sum
+
+      - name: Resolve push token
+        id: token
+        env:
+          CRUX_SYNC_TOKEN: ${{ secrets.CRUX_SYNC_TOKEN }}
+          TOPUP_PUSH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CRUX_SYNC_TOKEN" ]; then
+            echo "source=CRUX_SYNC_TOKEN" >> "$GITHUB_OUTPUT"
+            echo "token=$CRUX_SYNC_TOKEN" >> "$GITHUB_OUTPUT"
+          elif [ -n "$TOPUP_PUSH_TOKEN" ]; then
+            echo "source=TOPUP_PUSH_TOKEN" >> "$GITHUB_OUTPUT"
+            echo "token=$TOPUP_PUSH_TOKEN" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=none" >> "$GITHUB_OUTPUT"
+            echo "token=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out hivecommons/crux
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: hivecommons/crux
+          ref: main
+          path: crux-publish
+          # Falls back to the job token (read-only on another repo) when no
+          # push token is configured, so dry runs and the artifact still work.
+          token: ${{ steps.token.outputs.token || github.token }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Build the publish tree
+        run: src/scripts/crux-publish.sh "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/crux-publish"
+
+      - name: Commit
+        id: commit
+        working-directory: crux-publish
+        env:
+          HIVE_SHA: ${{ github.sha }}
+          HIVE_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name "hive-release[bot]"
+          git config user.email "hive-release@hive.kubestellar.io"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Publish tree already matches hive@${HIVE_SHA:0:12}; nothing to commit." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git commit -q -s \
+            -m "🌱 sync: hive@${HIVE_SHA:0:12} (src/crux)" \
+            -m "Source: https://github.com/hivecommons/hive/tree/${HIVE_SHA}/src/crux" \
+            -m "Ref: ${HIVE_REF}" \
+            -m "Module path rewritten github.com/hivecommons/hive/crux -> github.com/hivecommons/crux by src/scripts/crux-publish.sh. File issues and pull requests in hivecommons/hive."
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git --no-pager show --stat HEAD | head -40
+
+      - name: Upload publish tree
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crux-publish-tree
+          path: |
+            crux-publish
+            !crux-publish/.git
+          retention-days: 7
+
+      - name: Resolve release tag
+        id: tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag=""
+          if [ "$REF_TYPE" = tag ]; then
+            tag="${REF_NAME#crux/}"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          fi
+          if [ -n "$tag" ] && ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$ ]]; then
+            echo "::error::tag '$tag' is not vX.Y.Z" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Push
+        if: github.event.inputs.dry_run != 'true' && (steps.commit.outputs.changed == 'true' || steps.tag.outputs.tag != '')
+        working-directory: crux-publish
+        env:
+          TOKEN_SOURCE: ${{ steps.token.outputs.source }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          HIVE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$TOKEN_SOURCE" = none ]; then
+            {
+              echo "## Crux sync: not pushed"
+              echo
+              echo "No \`CRUX_SYNC_TOKEN\` (or \`TOPUP_PUSH_TOKEN\`) secret reaches \`$CRUX_REPO\`."
+              echo "Provision a fine-grained PAT or App token with **Contents: write** on \`$CRUX_REPO\`"
+              echo "as repository secret \`CRUX_SYNC_TOKEN\`, then re-run. The publish tree is attached as"
+              echo "the \`crux-publish-tree\` artifact; see the manual recipe at the top of crux-sync.yml."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::no push token configured for $CRUX_REPO (CRUX_SYNC_TOKEN)"
+            exit 1
+          fi
+          # Fast-forward only: the sync is one commit on top of whatever main
+          # is; if main moved under us the concurrency group has already
+          # serialised the other run, so a rejected push means a hand edit
+          # landed in the published repo and should be reconciled there.
+          if ! git push origin HEAD:main 2>push.err; then
+            cat push.err >&2
+            if grep -qi "403\|permission\|denied" push.err; then
+              echo "::error::push to $CRUX_REPO rejected (token source: $TOKEN_SOURCE lacks Contents: write on $CRUX_REPO?)"
+              echo "## Crux sync: push rejected (token source: $TOKEN_SOURCE)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 1
+          fi
+          synced="$(git rev-parse HEAD)"
+          echo "Pushed $synced to $CRUX_REPO main (hive ${HIVE_SHA:0:12})" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -n "$TAG" ]; then
+            git tag -a "$TAG" -m "crux $TAG (hive ${HIVE_SHA})" "$synced"
+            git push origin "refs/tags/$TAG"
+            echo "Pushed tag $TAG → https://github.com/$CRUX_REPO/releases/tag/$TAG" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
