@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -125,4 +126,78 @@ func (r *repoForgeRouter) AddLabels(ctx context.Context, repo string, number int
 		return err
 	}
 	return w.AddLabels(ctx, repo, number, labels)
+}
+
+// newForgeMerger builds the merge primitive for a non-GitHub forge. It is a
+// variable so tests can substitute a fake forge.
+var newForgeMerger = func(kind forge.Kind, token string, opts forge.Options) (forge.Merger, error) {
+	f, err := forge.NewForge(kind, token, opts)
+	if err != nil {
+		return nil, err
+	}
+	m, ok := f.(forge.Merger)
+	if !ok {
+		return nil, fmt.Errorf("forge %q adapter does not implement merge", kind)
+	}
+	return m, nil
+}
+
+// forgeMergerForRepo returns the forge.Merger for a repo that lives on GitLab
+// or Gitea, or (nil, nil) for a GitHub repo — and for an unknown kind, which
+// falls back to GitHub exactly as forgeForRepo does — so the GitHub merge path
+// (MergePR on the concrete client) stays byte-for-byte unchanged. Unlike the
+// comment/label writer, a GitLab/Gitea repo whose adapter cannot be built
+// returns an error rather than falling back: merging it through the GitHub
+// client could never succeed and must not be attempted.
+func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
+	var kind forge.Kind
+	var tokenID string
+	switch cfg.ForgeKindForRepo(repo) {
+	case config.ForgeGitLab:
+		kind, tokenID = forge.KindGitLab, cfg.GitLab.TokenEnvName()
+	case config.ForgeGitea:
+		kind, tokenID = forge.KindGitea, cfg.Gitea.TokenEnvName()
+	default:
+		return nil, nil
+	}
+	return newForgeMerger(kind, os.Getenv(tokenID), forge.Options{
+		BaseURL: cfg.ForgeURLForRepo(repo),
+		Org:     cfg.Project.Org,
+	})
+}
+
+// forgeMergeSelector is the merge relay's per-repo forge router: a repo whose
+// forge.Kind is GitLab or Gitea merges through that forge's Merger at the
+// pinned head; a GitHub repo gets nil and keeps the relay's GitHub path. cfg
+// is read per request so a reload takes effect without a restart. The
+// merge-eligible binding (bindMergeAuthz) has already run by the time the
+// returned function is called — it is the same gate on every forge.
+func forgeMergeSelector(cfgFn func() *config.Config, logger *slog.Logger) github.ForgeMergeSelector {
+	return func(repo string) github.ForgeMergeFunc {
+		cfg := cfgFn()
+		if cfg == nil {
+			return nil
+		}
+		kind := cfg.ForgeKindForRepo(repo)
+		if kind != config.ForgeGitLab && kind != config.ForgeGitea {
+			return nil
+		}
+		return func(ctx context.Context, repo string, number int, method, expectSHA string) error {
+			m, err := forgeMergerForRepo(cfg, repo)
+			if err != nil {
+				return fmt.Errorf("forge merge unavailable for %s (%s): %w", repo, kind, err)
+			}
+			if m == nil {
+				return fmt.Errorf("forge merge unavailable for %s (%s)", repo, kind)
+			}
+			err = m.Merge(ctx, repo, number, forge.MergeOptions{Strategy: method, HeadSHA: expectSHA})
+			if errors.Is(err, forge.ErrAlreadyMerged) {
+				// A retried request whose first attempt landed: the desired
+				// end state is reached.
+				logger.Info("forge merge: change request already merged", "repo", repo, "number", number, "forge", kind)
+				return nil
+			}
+			return err
+		}
+	}
 }

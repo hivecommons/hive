@@ -2505,6 +2505,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			// (tier, soak, min_head_age, review verdict) the sweep applies;
 			// hive-authored PRs keep the relay's existing behaviour.
 			mergePolicy: relayLanePolicyGate(autoMergeOpts),
+			// Per-repo forge (#14113): a repo on GitLab/Gitea merges through
+			// its forge.Merger after the same merge-eligible binding; GitHub
+			// repos keep the path above unchanged.
+			forgeMerge: forgeMergeSelector(func() *config.Config { return b.cfg }, b.logger),
 			// Push relay (#9771): the same forge-resistance + CanPush ACMM
 			// gate a direct `git push` is governed by, so the relay grants
 			// no privilege — it only changes which process performs the push.

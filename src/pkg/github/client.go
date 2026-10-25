@@ -392,6 +392,10 @@ type Client struct {
 	// MergeRequestPolicyGate). nil installs no gate: the relay then applies
 	// only its own authz, label and CI checks, as before the gate existed.
 	mergePolicyGate MergeRequestPolicyGate
+	// forgeMergeSelector routes a relayed merge for a repo on a non-GitHub
+	// forge to that forge's merger (see ForgeMergeSelector). nil keeps every
+	// repo on the GitHub path.
+	forgeMergeSelector ForgeMergeSelector
 	// mergeStateMu guards the merge-request watcher's per-PR+SHA wait state
 	// (merge_request_state.go). mergeStatePath is where it is persisted;
 	// empty keeps it in memory only (tests). Set by SetMergeRequestStatePath.

@@ -139,6 +139,67 @@ func (c *Client) SetMergeRequestPolicyGate(fn MergeRequestPolicyGate) {
 	c.mergePolicyGate = fn
 }
 
+// ForgeMergeFunc merges repo#number on a non-GitHub forge (GitLab, Gitea) at
+// the pinned head expectSHA with the requested method ("" = the relay default,
+// squash). It is the forge-neutral counterpart of MergePR.
+type ForgeMergeFunc func(ctx context.Context, repo string, number int, method, expectSHA string) error
+
+// ForgeMergeSelector returns the merge function for repo when it lives on a
+// non-GitHub forge, or nil when it is a GitHub repo and the relay's GitHub
+// path (CI gate, lane policy, MergePR) applies unchanged.
+type ForgeMergeSelector func(repo string) ForgeMergeFunc
+
+// SetForgeMergeSelector installs the per-repo forge router for relayed
+// merges. Call it before StartMergeRequestWatcher; nil keeps every repo on
+// the GitHub path.
+func (c *Client) SetForgeMergeSelector(fn ForgeMergeSelector) {
+	if c == nil {
+		return
+	}
+	c.forgeMergeSelector = fn
+}
+
+func (c *Client) forgeMergeFor(repo string) ForgeMergeFunc {
+	if c == nil || c.forgeMergeSelector == nil {
+		return nil
+	}
+	return c.forgeMergeSelector(repo)
+}
+
+// handleForgeMergeRequest lands an already-authorized merge request on a
+// non-GitHub forge. The GitHub-only pre-merge gates (lane policy, check-run
+// CI verification, changed-file listing) read the GitHub API and cannot be
+// evaluated here, so this path relies on the governor's merge-eligible
+// binding (enforced by the authorizer at the pinned head) and the forge's own
+// merge refusal (not mergeable, head moved). A repo with human_merge_paths
+// configured is refused outright: its changed files cannot be checked.
+func (c *Client) handleForgeMergeRequest(ctx context.Context, path string, req MergeRequest, attempts int, merge ForgeMergeFunc, nowFn func() time.Time) {
+	if len(c.humanMergePathsFor(req.Repo)) > 0 {
+		c.denyMergeRequest(path, req, fmt.Sprintf("%s is set for %s but changed files cannot be checked on a non-GitHub forge (fail closed)", HumanMergePathsConfigKey, req.Repo), nowFn)
+		return
+	}
+	method := strings.TrimSpace(req.Method)
+	if method == "" {
+		method = "squash"
+	}
+	if err := CheckIrreversible(ctx, req.Repo, req.Number, true); err != nil {
+		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
+		return
+	}
+	if err := merge(ctx, req.Repo, req.Number, method, req.ExpectSHA); err != nil {
+		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
+		return
+	}
+	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, At: nowFn().UTC().Format(time.RFC3339), OK: true, SHA: req.ExpectSHA})
+	_ = os.Remove(path)
+	c.clearMergeRequestState(req.Repo, req.Number)
+	c.logger.Info("merge-request watcher: change request merged on forge",
+		slog.String("repo", req.Repo), slog.Int("number", req.Number),
+		slog.String("head_sha", req.ExpectSHA), slog.String("agent", req.Agent))
+	c.RecordPRMergedAudit(req.Repo, req.Number, method, req.ExpectSHA, PRAuditPathRelay)
+	c.clearMergeFailureAlertsForRepo(req.Repo)
+}
+
 // isRequiredCheckMergeBlocker classifies a merge-attempt error string as
 // "blocked by a failing/pending REQUIRED status check" versus a blocker a fix
 // agent cannot resolve by pushing code (a true merge conflict or a permission
@@ -341,6 +402,13 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	// Track attempts across ticks by reading the prior result (if any) and
 	// the durable PR+SHA state, whichever has seen more.
 	attempts := max(priorMergeAttempts(path), prState.Attempts) + 1
+
+	// A repo on a non-GitHub forge (project.repo_policies[].forge) merges
+	// through that forge's adapter; the GitHub-API gates below do not apply.
+	if merge := c.forgeMergeFor(req.Repo); merge != nil {
+		c.handleForgeMergeRequest(ctx, path, req, attempts, merge, nowFn)
+		return
+	}
 
 	// Human-merge paths (#11039): a PR touching a path listed in
 	// auto_merge.human_merge_paths for its repo is never merged by the App,

@@ -57,8 +57,11 @@ type requestRelays struct {
 	// the relays run on (the auto-merge engine's RelayMergeRefusal). nil
 	// installs no gate.
 	mergePolicy func(*github.Client) github.MergeRequestPolicyGate
-	pushBranch  github.PushBranchRequestAuthorizer
-	logger      *slog.Logger
+	// forgeMerge routes a relayed merge for a repo on GitLab/Gitea through
+	// that forge's merger. nil keeps every repo on the GitHub path.
+	forgeMerge github.ForgeMergeSelector
+	pushBranch github.PushBranchRequestAuthorizer
+	logger     *slog.Logger
 }
 
 func defaultBootAgentsDeps() bootAgentsDeps {
@@ -76,6 +79,9 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 		startRequestRelays: func(ctx context.Context, c *github.Client, r requestRelays) <-chan struct{} {
 			if r.mergePolicy != nil {
 				c.SetMergeRequestPolicyGate(r.mergePolicy(c))
+			}
+			if r.forgeMerge != nil {
+				c.SetForgeMergeSelector(r.forgeMerge)
 			}
 			return joinDone(
 				startRequestWatchers(ctx, requestwatch.New(c, r.prOpen, r.issueOpen, r.holdLabel, nil), r.logger),

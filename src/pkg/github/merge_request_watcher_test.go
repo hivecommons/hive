@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -406,5 +407,79 @@ func TestMergeWatcher_ConflictBlockerReEngagesAndQuarantines(t *testing.T) {
 	}
 	if _, err := os.Stat(reqPath + ".exhausted"); err != nil {
 		t.Fatalf("conflict terminal failure should still quarantine: %v", err)
+	}
+}
+
+// A repo the forge selector claims (GitLab/Gitea) merges through the selected
+// forge merger at the pinned head and never touches the GitHub API; a repo it
+// does not claim keeps the GitHub path.
+func TestMergeRequestWatcher_RoutesNonGitHubRepoToForge(t *testing.T) {
+	var ghCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ghCalls.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+
+	type call struct {
+		repo, method, sha string
+		number            int
+	}
+	var calls []call
+	var mergeErr error
+	c.SetForgeMergeSelector(func(repo string) ForgeMergeFunc {
+		if repo != "o/tea" {
+			return nil
+		}
+		return func(_ context.Context, repo string, number int, method, expectSHA string) error {
+			calls = append(calls, call{repo: repo, method: method, sha: expectSHA, number: number})
+			return mergeErr
+		}
+	})
+
+	dir := t.TempDir()
+	mergeRequestDirForTest = dir
+	t.Cleanup(func() { mergeRequestDirForTest = "" })
+
+	reqPath, err := WriteMergeRequest(dir, MergeRequest{Repo: "o/tea", Number: 5, Agent: "scanner", ExpectSHA: "abc123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessMergeRequestsOnce(context.Background())
+
+	if len(calls) != 1 || calls[0] != (call{repo: "o/tea", method: "squash", sha: "abc123", number: 5}) {
+		t.Fatalf("forge merge calls = %+v, want one squash of o/tea#5 at abc123", calls)
+	}
+	if n := ghCalls.Load(); n != 0 {
+		t.Fatalf("GitHub API called %d times for a non-GitHub repo", n)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Error("request file should be consumed after a successful forge merge")
+	}
+	if resp := readMergeResult(t, reqPath); !resp.OK || resp.SHA != "abc123" {
+		t.Errorf("result = %+v, want ok at the pinned head", resp)
+	}
+
+	// A forge refusal goes through the normal retry path.
+	mergeErr = errors.New("forge: change request is not mergeable")
+	reqPath, _ = WriteMergeRequest(dir, MergeRequest{Repo: "o/tea", Number: 6, Agent: "scanner", ExpectSHA: "def456"})
+	c.ProcessMergeRequestsOnce(context.Background())
+	if resp := readMergeResult(t, reqPath); resp.OK || resp.Attempts != 1 {
+		t.Errorf("result = %+v, want a failed first attempt", resp)
+	}
+
+	// A repo with human_merge_paths cannot have its files checked off GitHub:
+	// refused, never merged.
+	mergeErr = nil
+	calls = nil
+	c.SetHumanMergePaths(map[string][]string{"o/tea": {"docs/**"}})
+	reqPath, _ = WriteMergeRequest(dir, MergeRequest{Repo: "o/tea", Number: 9, Agent: "scanner", ExpectSHA: "fed789"})
+	c.ProcessMergeRequestsOnce(context.Background())
+	if len(calls) != 0 {
+		t.Fatalf("human_merge_paths repo merged on forge: %+v", calls)
+	}
+	if _, err := os.Stat(reqPath + ".denied"); err != nil {
+		t.Errorf("human_merge_paths repo should be denied: %v", err)
 	}
 }
