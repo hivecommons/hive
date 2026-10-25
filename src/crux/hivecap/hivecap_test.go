@@ -210,7 +210,10 @@ func exercise(t *testing.T, s *Set) outcome {
 }
 
 func TestDirectAndSocketParity(t *testing.T) {
-	exp := time.Date(2026, 10, 25, 14, 0, 0, 0, time.UTC)
+	// Whole seconds in UTC with no monotonic reading, so the value survives
+	// the JSON round trip over the socket unchanged; in the future so the
+	// token is not already expired when the test runs.
+	exp := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	dDirect := &direct{detect: true, block: true, expiry: exp}
 	dSocket := &direct{detect: true, block: true, expiry: exp}
 	got := exercise(t, New(dDirect, 0))
