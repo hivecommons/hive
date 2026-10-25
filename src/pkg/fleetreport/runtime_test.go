@@ -804,6 +804,21 @@ func TestIsBenignMessageCopilotModelFallback(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessageKnowledgePrimerBytecap(t *testing.T) {
+	const msg = "knowledge primer: dropped facts over the byte cap"
+	if !IsBenignMessage(msg) {
+		t.Errorf("knowledge primer bytecap notice %q not benign", msg)
+	}
+	for _, m := range []string{
+		"knowledge primer failed to render",
+		"knowledge: primer render buffer exceeded",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("failure %q wrongly benign", m)
+		}
+	}
+}
+
 func TestQueueHealthClassesQualifyOnFirstObservationAndClear(t *testing.T) {
 	now, _ := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)

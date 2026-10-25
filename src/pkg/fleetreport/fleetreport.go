@@ -732,6 +732,13 @@ var benignSubstrings = []string{
 	// every agent warn once in the same boot — an operator configuration
 	// condition, not a repeated runtime defect (hivecommons/hive#14020).
 	"copilot cli substituted the configured model",
+	// The scheduler (src/pkg/scheduler/kick_priming.go) warns when the primer
+	// render exceeds knowledge.primer.max_bytes (#12124). The render already
+	// carries its own truncation marker. A hive whose vault outgrows the cap
+	// has every kick warn once — an operator configuration condition (raise
+	// the cap or tighten the scope), not a repeated runtime defect
+	// (hivecommons/hive#14173).
+	"knowledge primer: dropped facts over the byte cap",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic
