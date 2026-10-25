@@ -948,13 +948,20 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		transitions, _ = reconciler.ReconcileBatch(ctx, facts)
 	}
 	for i, p := range pending {
+		if i >= len(transitions) {
+			// A context or writer deadline stopped the batch. The tail
+			// was never attempted and must not trigger public side effects.
+			if firstErr == nil {
+				firstErr = ctx.Err()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("stage labels: batch stopped before %s#%d", p.obs.Display, p.obs.Number)
+				}
+			}
+			break
+		}
 		obs, key, role, want, tr := p.obs, p.key, p.role, p.want, p.tr
 		commentsBefore := result.Comments
-		var out stagelabels.Outcome
-		err := ctx.Err()
-		if i < len(transitions) {
-			out, err = transitions[i].Outcome, transitions[i].Err
-		}
+		out, err := transitions[i].Outcome, transitions[i].Err
 		if err != nil {
 			c.warn("stage labels: write failed", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "error", err)
 			if firstErr == nil {

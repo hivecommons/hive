@@ -102,8 +102,8 @@ func TestIssueStageWriterErrorsWhenSweepIsLive(t *testing.T) {
 		err                            error
 		calls, warnings, interruptions int
 	}{
-		{"pacer deadline", fmt.Errorf("github pacing: slot would miss request deadline: %w", context.DeadlineExceeded), 1, 0, 1},
-		{"request cancellation", fmt.Errorf("request: %w", context.Canceled), 1, 0, 1},
+		{"pacer deadline", fmt.Errorf("github pacing: slot would miss request deadline: %w", context.DeadlineExceeded), 1, 1, 1},
+		{"request cancellation", fmt.Errorf("request: %w", context.Canceled), 1, 1, 1},
 		{"ordinary failure", errors.New("permission denied"), 2, 2, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

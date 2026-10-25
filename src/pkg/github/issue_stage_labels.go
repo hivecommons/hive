@@ -532,7 +532,9 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		in, key, want, tr, covered, reason := p.in, p.key, p.want, p.tr, p.covered, p.reason
 		out, err := transitions[i].Outcome, transitions[i].Err
 		interrupted := errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
-		if err != nil && !interrupted && logger != nil {
+		// A live-context request timeout still needs one visible diagnostic;
+		// stopping the batch below prevents per-item warning fan-out.
+		if err != nil && (!interrupted || ctx.Err() == nil) && logger != nil {
 			logger.Warn("issue stage labels: write failed", "repo", in.Repo, "issue", in.Number, "stage", want.Stage.String(), "error", err)
 		}
 		res.Writes += len(out.Removed)

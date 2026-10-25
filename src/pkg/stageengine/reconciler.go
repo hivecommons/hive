@@ -210,11 +210,12 @@ func (r *reconciler) recordAnomaly(ref Ref, from, to stagelabels.Stage, reason, 
 }
 
 // ReconcileBatch implements Reconciler. The last Facts for a Ref wins; the
-// first occurrence fixes its position. Every item is attempted and every
-// attempted item has a Transition in the result, in order, so a sweep can
+// first occurrence fixes its position. Every attempted item has a
+// Transition in the result, in order, so a sweep can
 // pair them with its own per-item work; an item whose write failed carries
 // the error in Transition.Err and the first such error is also returned.
-// Context cancellation or a writer deadline stops the batch with transitions so far.
+// Context cancellation or a writer deadline stops the batch with transitions
+// so far; callers must skip per-item side effects for the unattempted tail.
 func (r *reconciler) ReconcileBatch(ctx context.Context, facts []Facts) ([]Transition, error) {
 	order := make([]string, 0, len(facts))
 	latest := make(map[string]Facts, len(facts))
