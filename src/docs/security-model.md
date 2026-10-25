@@ -184,9 +184,11 @@ metadata endpoint, RFC 1918/CGNAT cluster addresses and multicast are refused
 with `403` and counted as violations (loopback excepted — agents are handed
 `NO_PROXY` for it, so it is logged as the client misconfiguration it is). The
 check runs at dial time on the resolved address, so a hostname pointed inward
-is refused on the same evidence as a literal IP. Set
-`HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` only where a private-network plain-HTTP
-destination is intended.
+is refused on the same evidence as a literal IP, and an IPv4 address wrapped
+in a NAT64 or 6to4 prefix is classified by the address it reaches. The refusal
+carries the `plain_forward_destination` reason code like every other proxy
+denial. Set `HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` only where a
+private-network plain-HTTP destination is intended.
 
 **Hub-to-spoke channel.** Heartbeats carry a per-hive bearer key derived from
 the hub master secret and are compared in constant time. The payload is

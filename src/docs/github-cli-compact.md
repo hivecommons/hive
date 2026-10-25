@@ -101,6 +101,7 @@ The prose may be reworded; the codes are stable identifiers:
 | `repo_not_in_config` | proxy | repo filter |
 | `issue_shape` | proxy | issue/comment shape gate (#7014) |
 | `canary_egress` | proxy | canary token on egress (ADR 0008) |
+| `plain_forward_destination` | proxy | plain-HTTP forward to a non-routable address (#14082) |
 
 `HIVE_GH_DENY_VERBOSE=1` makes the wrapper append a second line pointing at the
 docs; it is never set in agent images.

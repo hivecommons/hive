@@ -58,10 +58,22 @@ func TestPlainForwardDenyReasonClassifiesDestinations(t *testing.T) {
 		"[::]:80":              plainForwardReasonUnspecified,
 		"not-an-ip:80":         plainForwardReasonUnspecified,
 		"192.168.1.1":          plainForwardReasonPrivate,
+		// IPv6 transition prefixes carrying an embedded IPv4: the gateway
+		// forwards to the inner address, so the inner address is the policy
+		// subject. Unmap does not cover these.
+		"[64:ff9b::7f00:1]:80":     plainForwardReasonLoopback,  // NAT64 127.0.0.1
+		"[64:ff9b::a9fe:a9fe]:80":  plainForwardReasonLinkLocal, // NAT64 169.254.169.254
+		"[64:ff9b:1::c0a8:101]:80": plainForwardReasonPrivate,   // RFC 8215 192.168.1.1
+		"[2002:7f00:1::]:80":       plainForwardReasonLoopback,  // 6to4 127.0.0.1
+		"[2002:a00:5::1]:80":       plainForwardReasonPrivate,   // 6to4 10.0.0.5
 		// Allowed: globally routable.
 		"93.184.216.34:80":        "",
 		"[2606:2800:220:1::1]:80": "",
 		"140.82.121.4:443":        "",
+		// A transition address wrapping a routable IPv4 stays allowed — the
+		// prefixes are decoded, not blanket-refused.
+		"[64:ff9b::5db8:d822]:80": "",
+		"[2002:5db8:d822::1]:80":  "",
 	}
 	for address, want := range cases {
 		if got := plainForwardDenyReason(address); got != want {
@@ -104,6 +116,17 @@ func TestForwardPlainDirectRefusesLoopbackDestination(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), plainForwardReasonLoopback) {
 		t.Errorf("body = %q, want the refused address class named", string(body))
+	}
+	// #12127: every proxy 403 carries its reason code in the body and the
+	// header, so a scraper can tell this gate from the others.
+	if !strings.Contains(string(body), "reason="+DenyReasonPlainForwardDest) {
+		t.Errorf("body = %q, want the reason=%s token", string(body), DenyReasonPlainForwardDest)
+	}
+	if got := resp.Header.Get(ProxyDenialHeader); got != DenyReasonPlainForwardDest {
+		t.Errorf("%s = %q, want %q", ProxyDenialHeader, got, DenyReasonPlainForwardDest)
+	}
+	if got := resp.Header.Get("X-Hive-Proxy-Blocked"); got != "true" {
+		t.Errorf("X-Hive-Proxy-Blocked = %q, want \"true\"", got)
 	}
 	select {
 	case <-reached:

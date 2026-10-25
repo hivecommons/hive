@@ -2422,9 +2422,26 @@ func (p *GitHubProxy) refusePlainForward(conn net.Conn, r *http.Request, agentNa
 			"agent", agentName, "method", r.Method, "url", r.URL.String(), "target", denied.target, "class", denied.reason)
 		p.countViolation(agentName)
 	}
-	_, _ = fmt.Fprintf(conn, "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"+
-		"the hive proxy does not forward plain HTTP to %s addresses (%s); set %s=true to allow it\n",
-		denied.reason, denied.target, plainForwardAllowPrivateEnv)
+	// Same denial shape as every other gate (#12127): one-line body ending in
+	// reason=<code>, X-Hive-Proxy-Blocked, and the code in ProxyDenialHeader.
+	// A bespoke 403 here would be indistinguishable from any other to
+	// bin/gh-wrapper.sh and to log scrapers keyed on that vocabulary.
+	detail := fmt.Sprintf("%s — plain HTTP to %s addresses (%s) is not forwarded; use NO_PROXY for loopback, or ask the operator about %s",
+		r.URL.String(), denied.reason, denied.target, plainForwardAllowPrivateEnv)
+	body := ProxyDenialBody(agentName, readAgentMode(agentName), r.Method, detail, DenyReasonPlainForwardDest)
+	resp := &http.Response{
+		StatusCode:    http.StatusForbidden,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        make(http.Header),
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+	}
+	resp.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	resp.Header.Set("X-Hive-Proxy-Blocked", "true")
+	resp.Header.Set(ProxyDenialHeader, DenyReasonPlainForwardDest)
+	_ = resp.Write(conn)
 }
 
 // isLoopbackHost reports whether a host or host:port refers to the loopback interface.

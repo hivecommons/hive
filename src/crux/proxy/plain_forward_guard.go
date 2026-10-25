@@ -67,6 +67,19 @@ const (
 // networks out of it, which is exactly the estate this guard protects.
 var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
 
+// IPv6 transition prefixes that carry an embedded IPv4 address. netip's
+// Unmap only folds ::ffff:0:0/96, so without these an inward-pointing IPv4
+// spelled as NAT64 or 6to4 — 64:ff9b::a9fe:a9fe is 169.254.169.254, the
+// metadata endpoint — matches none of the IPv6 cases and is classified as
+// globally routable. Reachable wherever the cluster has a NAT64 gateway or a
+// 6to4 relay, which is a property of the network rather than of the request,
+// so the embedded address is classified instead of trusted.
+var (
+	nat64Prefix      = netip.MustParsePrefix("64:ff9b::/96")   // RFC 6052 well-known
+	nat64LocalPrefix = netip.MustParsePrefix("64:ff9b:1::/48") // RFC 8215 local-use
+	sixToFourPrefix  = netip.MustParsePrefix("2002::/16")      // RFC 3056
+)
+
 // plainForwardDenied is the dial-time refusal, returned from the Control hook
 // so http.Transport aborts the dial. forwardPlainDirect recovers it with
 // errors.As to answer 403 (a policy refusal the agent can act on) instead of
@@ -86,6 +99,19 @@ func plainForwardDenyReasonAddr(addr netip.Addr) string {
 	// An IPv4-mapped IPv6 address (::ffff:127.0.0.1) is the same host as its
 	// IPv4 form; unmap so one rule covers both spellings.
 	addr = addr.Unmap()
+	// NAT64 and 6to4 are the same idea with a different encoding: the last
+	// four (NAT64) or the second through fifth (6to4) bytes ARE an IPv4
+	// address, and a gateway forwards to it. Classify what is actually
+	// reached rather than the wrapper.
+	if addr.Is6() {
+		b := addr.As16()
+		switch {
+		case nat64Prefix.Contains(addr), nat64LocalPrefix.Contains(addr):
+			return plainForwardDenyReasonAddr(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}))
+		case sixToFourPrefix.Contains(addr):
+			return plainForwardDenyReasonAddr(netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}))
+		}
+	}
 	switch {
 	case !addr.IsValid(), addr.IsUnspecified():
 		return plainForwardReasonUnspecified
@@ -133,13 +159,18 @@ var (
 )
 
 // newPlainForwardTransport clones the standard transport (keeping its
-// connection pooling, timeouts and ProxyFromEnvironment behaviour) and
-// replaces the dialer so every plain forward is SO_MARKed like the proxy's
-// other upstream dials — without the mark, forwarding `http://host:443` dials
-// :443 and the forced-egress redirect sends it straight back into this proxy —
-// and, when guarded, destination-checked at resolution time.
+// connection pooling and timeouts) and replaces the dialer so every plain
+// forward is SO_MARKed like the proxy's other upstream dials — without the
+// mark, forwarding `http://host:443` dials :443 and the forced-egress
+// redirect sends it straight back into this proxy — and, when guarded,
+// destination-checked at resolution time.
 func newPlainForwardTransport(guard bool) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Dial direct, like every other upstream dial here. The clone inherits
+	// Proxy: ProxyFromEnvironment, and with an upstream proxy configured the
+	// Control hook below would be handed THAT proxy's address instead of the
+	// destination the agent named — the guard would classify the wrong peer.
+	transport.Proxy = nil
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		dialer := markDialer(upstreamDialTimeout)
 		if guard {
