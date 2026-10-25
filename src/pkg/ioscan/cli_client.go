@@ -40,9 +40,20 @@ var cliToollessArgs = map[string]struct {
 		binary: "claude",
 		// --tools "" disables every built-in tool; --strict-mcp-config with no
 		// --mcp-config loads no MCP server; no permission-bypass flag is set.
-		args: []string{"-p", "--output-format", "text", "--tools", "", "--strict-mcp-config"},
+		// --settings with disableAllHooks overrides the same key in the
+		// user's settings.json for this run, so hooks configured in the
+		// host's ~/.claude (UserPromptSubmit, Stop, ...) do not run against
+		// the text being classified (#14062). Login, env and model keys in
+		// that file still load. Hooks from managed (policy) settings are the
+		// operator's own and are not affected.
+		args: []string{"-p", "--output-format", "text", "--tools", "", "--strict-mcp-config",
+			"--settings", cliClaudeHooksOffSettings},
 	},
 }
+
+// cliClaudeHooksOffSettings is the inline settings JSON passed to claude so
+// no user, project, local or plugin hook runs in the classifier session.
+const cliClaudeHooksOffSettings = `{"disableAllHooks":true}`
 
 // cliEnvAllowlist is the complete environment a classifier CLI receives:
 // enough to locate the binary and its own subscription login, and nothing
