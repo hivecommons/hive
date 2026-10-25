@@ -155,7 +155,7 @@ func (c *Client) findOverlappingBotPR(ctx context.Context, owner, repo, head, ba
 		if !strings.HasSuffix(pr.GetUser().GetLogin(), "[bot]") {
 			continue
 		}
-		if reason := unmergeableLabelReason(pr); reason != "" {
+		if reason := c.unmergeableLabelReason(pr); reason != "" {
 			c.logger.Info("duplicate guard: skipping held or stalled PR for the overlapping-files check",
 				slog.String("repo", owner+"/"+repo), slog.Int("number", pr.GetNumber()), slog.String("reason", reason))
 			continue
@@ -210,22 +210,21 @@ func (c *Client) findOverlappingBotPR(ctx context.Context, owner, repo, head, ba
 }
 
 // unmergeableLabelReason returns the label that marks pr as not the place to
-// continue new work (hold, on-hold, hold-*, */hold, do-not-merge, hive-pause/*,
-// stage/stalled, needs-rebase), or "" when none is present. Labels are carried
-// by the list-pulls payload, so this runs before any per-PR fetch.
-func unmergeableLabelReason(pr *gh.PullRequest) string {
+// continue new work, or "" when none is present. The hold class is the hive's
+// canonical one (c.isHeld: HoldLabels plus operator-configured hold labels),
+// so a PR the automerge sweep skips is skipped here too; do-not-merge,
+// hive-pause/*, stage/stalled and needs-rebase are matched explicitly. Labels
+// are carried by the list-pulls payload, so this runs before any per-PR fetch.
+func (c *Client) unmergeableLabelReason(pr *gh.PullRequest) string {
 	for _, l := range pr.Labels {
-		name := strings.ToLower(l.GetName())
-		if isHoldLabel(name) || name == "do-not-merge" || strings.HasPrefix(name, "hive-pause/") ||
-			name == "stage/stalled" || name == "needs-rebase" {
-			return l.GetName()
+		name := l.GetName()
+		lower := strings.ToLower(name)
+		if lower == "do-not-merge" || strings.HasPrefix(lower, "hive-pause/") ||
+			lower == "stage/stalled" || lower == "needs-rebase" || c.isHeld([]string{name}) {
+			return name
 		}
 	}
 	return ""
-}
-
-func isHoldLabel(name string) bool {
-	return name == "hold" || name == "on-hold" || strings.HasPrefix(name, "hold-") || strings.HasSuffix(name, "/hold")
 }
 
 // prIsDirty reports whether the PR has merge conflicts. mergeable_state is only

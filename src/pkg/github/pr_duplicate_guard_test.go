@@ -203,6 +203,7 @@ func TestCreatePR_DuplicateGuard(t *testing.T) {
 		wantReason   string
 		wantNumber   int
 		wantComments int
+		holdLabels   []string
 	}{
 		{
 			name:         "open PR already closes same issue",
@@ -247,8 +248,27 @@ func TestCreatePR_DuplicateGuard(t *testing.T) {
 			wantComments: 1,
 		},
 		{
-			name:         "label merely containing hold still overlaps",
-			g:            &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"area/stakeholder"}}}, headFiles: []string{"a.go"}},
+			name:       "label the automerge sweep treats as held does not absorb the head",
+			g:          &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"area/stakeholder"}}}, headFiles: []string{"a.go"}},
+			body:       "no keyword",
+			wantNumber: 99,
+		},
+		{
+			name:       "hold/review bot PR does not absorb the head",
+			g:          &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"hold/review"}}}, headFiles: []string{"a.go"}},
+			body:       "no keyword",
+			wantNumber: 99,
+		},
+		{
+			name:       "configured extra hold label does not absorb the head",
+			g:          &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"blocked/customer"}}}, headFiles: []string{"a.go"}},
+			body:       "no keyword",
+			wantNumber: 99,
+			holdLabels: []string{"blocked/customer"},
+		},
+		{
+			name:         "label configured as hold elsewhere still overlaps when not configured here",
+			g:            &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"blocked/customer"}}}, headFiles: []string{"a.go"}},
 			body:         "no keyword",
 			wantReason:   DuplicateReasonOverlappingFiles,
 			wantNumber:   8,
@@ -358,6 +378,7 @@ func TestCreatePR_DuplicateGuard(t *testing.T) {
 			g := tt.g
 			srv := g.start(t)
 			c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+			c.SetHoldLabels(tt.holdLabels)
 			res, err := c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", tt.body)
 			if err != nil {
 				t.Fatalf("CreatePR: %v", err)
