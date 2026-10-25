@@ -22,6 +22,9 @@ type guardPR struct {
 	Merged bool
 	Draft  bool
 	Files  []string
+	Labels []string
+	// MergeableState is reported as mergeable_state when non-empty.
+	MergeableState string
 }
 
 type guardServer struct {
@@ -61,6 +64,16 @@ func (g *guardServer) start(t *testing.T) *httptest.Server {
 		}
 		if p.Draft {
 			m["draft"] = true
+		}
+		if len(p.Labels) > 0 {
+			labels := []map[string]any{}
+			for _, l := range p.Labels {
+				labels = append(labels, map[string]any{"name": l})
+			}
+			m["labels"] = labels
+		}
+		if p.MergeableState != "" {
+			m["mergeable_state"] = p.MergeableState
 		}
 		return m
 	}
@@ -170,6 +183,40 @@ func TestCreatePR_DuplicateGuard(t *testing.T) {
 			body:         "no keyword",
 			wantReason:   DuplicateReasonOverlappingFiles,
 			wantNumber:   8,
+			wantComments: 1,
+		},
+		{
+			name:       "held bot PR containing the head's file does not absorb it",
+			g:          &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"hold"}}}, headFiles: []string{"a.go"}},
+			body:       "no keyword",
+			wantNumber: 99,
+		},
+		{
+			name:       "stalled bot PR does not absorb the head",
+			g:          &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"stage/stalled"}}}, headFiles: []string{"a.go"}},
+			body:       "no keyword",
+			wantNumber: 99,
+		},
+		{
+			name:       "dirty bot PR does not absorb the head",
+			g:          &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, MergeableState: "dirty"}}, headFiles: []string{"a.go"}},
+			body:       "no keyword",
+			wantNumber: 99,
+		},
+		{
+			name:         "unrelated label and clean state still overlap",
+			g:            &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"kind/bug"}, MergeableState: "clean"}}, headFiles: []string{"a.go"}},
+			body:         "no keyword",
+			wantReason:   DuplicateReasonOverlappingFiles,
+			wantNumber:   8,
+			wantComments: 1,
+		},
+		{
+			name:         "held PR still counts for the closes-issue check",
+			g:            &guardServer{open: []guardPR{{Number: 7, Ref: "a", Body: "Fixes #42", User: bot, Labels: []string{"hold"}}}},
+			body:         "Closes #42",
+			wantReason:   DuplicateReasonClosesIssue,
+			wantNumber:   7,
 			wantComments: 1,
 		},
 		{

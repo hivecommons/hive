@@ -152,9 +152,15 @@ func (c *Client) findDuplicatePR(ctx context.Context, owner, repo, head, base, b
 func (c *Client) findOverlappingBotPR(ctx context.Context, owner, repo, head, base string, candidates []*gh.PullRequest) (*duplicateFinding, error) {
 	var bots []*gh.PullRequest
 	for _, pr := range candidates {
-		if strings.HasSuffix(pr.GetUser().GetLogin(), "[bot]") {
-			bots = append(bots, pr)
+		if !strings.HasSuffix(pr.GetUser().GetLogin(), "[bot]") {
+			continue
 		}
+		if reason := unmergeablePRReason(pr); reason != "" {
+			c.logger.Info("duplicate guard: skipping held, stalled or dirty PR for the overlapping-files check",
+				slog.String("repo", owner+"/"+repo), slog.Int("number", pr.GetNumber()), slog.String("reason", reason))
+			continue
+		}
+		bots = append(bots, pr)
 	}
 	if len(bots) == 0 {
 		return nil, nil
@@ -196,6 +202,24 @@ func (c *Client) findOverlappingBotPR(ctx context.Context, owner, repo, head, ba
 		}
 	}
 	return nil, nil
+}
+
+// unmergeablePRReason returns why pr cannot be the place to continue new work
+// (a hold-class, stalled or needs-rebase label, or a dirty mergeable state), or
+// "" when it can. List responses may leave mergeable_state empty; that is not
+// treated as dirty.
+func unmergeablePRReason(pr *gh.PullRequest) string {
+	for _, l := range pr.Labels {
+		name := strings.ToLower(l.GetName())
+		if strings.Contains(name, "hold") || name == "do-not-merge" || strings.HasPrefix(name, "hive-pause/") ||
+			name == "stage/stalled" || name == "needs-rebase" {
+			return l.GetName()
+		}
+	}
+	if strings.EqualFold(pr.GetMergeableState(), "dirty") {
+		return "dirty"
+	}
+	return ""
 }
 
 // fileSetContained reports whether either set contains the other entirely.
