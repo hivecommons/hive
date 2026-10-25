@@ -133,13 +133,16 @@ var (
 )
 
 // newPlainForwardTransport clones the standard transport (keeping its
-// connection pooling, timeouts and ProxyFromEnvironment behaviour) and
-// replaces the dialer so every plain forward is SO_MARKed like the proxy's
+// connection pooling and timeouts), drops its ProxyFromEnvironment so an
+// HTTP_PROXY/HTTPS_PROXY on the proxy process is deliberately ignored — with
+// it the dial-time check would see the upstream proxy's address instead of the
+// agent-named destination and evaluate the wrong peer — and replaces the dialer so every plain forward is SO_MARKed like the proxy's
 // other upstream dials — without the mark, forwarding `http://host:443` dials
 // :443 and the forced-egress redirect sends it straight back into this proxy —
 // and, when guarded, destination-checked at resolution time.
 func newPlainForwardTransport(guard bool) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		dialer := markDialer(upstreamDialTimeout)
 		if guard {

@@ -250,3 +250,34 @@ func TestNewGitHubProxyWiresPlainForwardEscapeHatch(t *testing.T) {
 		t.Errorf("only the exact string \"true\" may lift the guard, not %q", "yes")
 	}
 }
+
+// TestPlainForwardTransportIgnoresProxyEnvironment pins that the plain-forward
+// transports dial the named destination directly, so the dial-time check never
+// evaluates an upstream proxy's address.
+func TestPlainForwardTransportIgnoresProxyEnvironment(t *testing.T) {
+	for _, guard := range []bool{true, false} {
+		if newPlainForwardTransport(guard).Proxy != nil {
+			t.Errorf("newPlainForwardTransport(%v).Proxy is set, want nil", guard)
+		}
+	}
+
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	t.Setenv("http_proxy", "http://127.0.0.1:1")
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer internal.Close()
+
+	req, err := http.NewRequest(http.MethodGet, internal.URL+"/secret", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp := plainForwardRoundTrip(t, newTestProxy(), req)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a loopback destination", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), plainForwardReasonLoopback) {
+		t.Errorf("body = %q, want the refused address class named", string(body))
+	}
+}
