@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+// staleDropLoggedAt reports whether the stale-drop line was emitted at the
+// given level. Unrelated WARN lines (e.g. the run-projection registry being
+// absent in a bare test server) must not influence the assertions.
+func staleDropLoggedAt(logs, level string) bool {
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.Contains(line, "dropping stale status snapshot") && strings.Contains(line, "level="+level) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestUpdateStatusIfFresh_PublishLoopConvergesAfterMidBuildMutation drives
 // the real publish loop the eval cycle runs — begin snapshot, build, publish,
 // next cycle — with a state mutation landing mid-build. The racing build must
@@ -39,7 +51,7 @@ func TestUpdateStatusIfFresh_PublishLoopConvergesAfterMidBuildMutation(t *testin
 		!strings.Contains(logBuf.String(), "staleDrops=1") {
 		t.Fatalf("drop must be logged with the counter, got:\n%s", logBuf.String())
 	}
-	if strings.Contains(logBuf.String(), "level=WARN") {
+	if staleDropLoggedAt(logBuf.String(), "WARN") {
 		t.Fatalf("a single stale drop must not log at WARN, got:\n%s", logBuf.String())
 	}
 
@@ -93,13 +105,13 @@ func TestUpdateStatusIfFresh_StarvationWarnsAfterThreshold(t *testing.T) {
 		srv.noteStatusMutation()
 		srv.UpdateStatusIfFresh(&StatusPayload{}, epoch)
 	}
-	if strings.Contains(logBuf.String(), "level=WARN") {
+	if staleDropLoggedAt(logBuf.String(), "WARN") {
 		t.Fatalf("below the threshold must not WARN, got:\n%s", logBuf.String())
 	}
 	epoch := srv.BeginStatusSnapshot()
 	srv.noteStatusMutation()
 	srv.UpdateStatusIfFresh(&StatusPayload{}, epoch)
-	if !strings.Contains(logBuf.String(), "level=WARN") {
+	if !staleDropLoggedAt(logBuf.String(), "WARN") {
 		t.Fatalf("threshold-th consecutive drop must WARN, got:\n%s", logBuf.String())
 	}
 }
