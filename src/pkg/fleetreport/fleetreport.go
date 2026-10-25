@@ -713,6 +713,15 @@ var benignSubstrings = []string{
 	// manager retries itself after a cooldown.
 	"cached; suppressing repeated fetches",
 	"token validation rate-limited by github; relaunching after cooldown",
+	// ReconcileSeededDefaults (pkg/policies/seed_reconcile.go) warns once per
+	// policy template whose on-disk copy diverges from the embedded default
+	// with no seed-manifest record, already deduped per path per process
+	// (hivecommons/hive#13825). A hive whose policy directory predates that
+	// manifest tracking (hivecommons/hive#9428) has every template diverge
+	// on its first post-upgrade reconcile — up to one WARN per template
+	// within the same boot — and a burst across unrelated templates is not
+	// a repeated runtime defect (hivecommons/hive#14005).
+	"seeded policy differs from the embedded default with no seed record",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic

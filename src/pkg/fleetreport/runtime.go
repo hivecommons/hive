@@ -59,6 +59,8 @@ const (
 	ClassAgentDirSetupFailed        = "agent_dir_setup_failed"
 	ClassReviewEvidenceWriteFail    = "review_evidence_write_failed"
 	ClassFeedbackIssueRefreshFailed = "feedback_issue_refresh_failed"
+	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
+	ClassInferenceUpstreamError     = "inference_upstream_error"
 )
 
 const (
@@ -151,6 +153,8 @@ var Classes = map[string]ClassSpec{
 	ClassAgentDirSetupFailed:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to create per-agent xdg dir", "failed to restore per-agent dir mode", "failed to restore interactive home mode"}},
 	ClassReviewEvidenceWriteFail:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"review evidence: could not write bundle"}},
 	ClassFeedbackIssueRefreshFailed: {Component: "dashboard", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"feedback: issue refresh failed"}},
+	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed"}},
+	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".

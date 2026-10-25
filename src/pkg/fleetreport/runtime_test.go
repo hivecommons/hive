@@ -350,6 +350,8 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassAgentDirSetupFailed, message: "failed to create per-agent XDG dir"},
 		{class: ClassReviewEvidenceWriteFail, message: "review evidence: could not write bundle"},
 		{class: ClassFeedbackIssueRefreshFailed, message: "feedback: issue refresh failed"},
+		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
+		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
@@ -764,6 +766,24 @@ func TestIsBenignMessageReviewPendingExpiry(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
+	const msg = "policies: seeded policy differs from the embedded default with no seed record; leaving it in place — resave it from the dashboard to take a new edit, or delete it to pick up the embedded default"
+	if !IsBenignMessage(msg) {
+		t.Errorf("seed-divergence notice %q not benign", msg)
+	}
+	for _, m := range []string{
+		"policies: failed to read embedded default",
+		"policies: failed to seed default policy",
+		"policies: failed to read seeded policy",
+		"policies: failed to save seed manifest",
+		"policies: failed to refresh stale seeded policy",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("failure %q wrongly benign", m)
+		}
+	}
+}
+
 func TestQueueHealthClassesQualifyOnFirstObservationAndClear(t *testing.T) {
 	now, _ := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)
@@ -842,6 +862,9 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"failed to create per-agent XDG dir":      ClassAgentDirSetupFailed,
 		"review evidence: could not write bundle": ClassReviewEvidenceWriteFail,
 		"feedback: issue refresh failed":          ClassFeedbackIssueRefreshFailed,
+		"proxy: CONNECT dial failed":              ClassProxyConnectDialFailed,
+		"inference upstream error":                ClassInferenceUpstreamError,
+		"inference upstream failed":               ClassInferenceUpstreamError,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {

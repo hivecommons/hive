@@ -143,6 +143,8 @@ title is `[selfreport] <class>: <short message>`.
 | `ci_poll_nudge` | the harness sent an agent the stop-polling-CI nudge (at most one per kick); a self-report fires only after the agent polled CI ≥2 times since the kick — a single nudged poll does not trigger a report. One per 24h window; message carries polls since kick / time since kick / nudges since boot, diagnostics the scrubbed pane tail (#13470, was "CI-poll nudge") | low |
 | `issue_request_stuck` | an issue/comment/label request file in the relay queue (`issue-requests/`) has failed ≥3 attempts **or** has been retrying for ≥30 min. Key is the request file name; message carries kind, attempts and age, diagnostics the last error (scrubbed). Clears when the request completes or is quarantined (`.failed`/`.bad`) | medium |
 | `effect_ledger_op_stuck` | the mutation boundary refused a retry because the journaled external effect (issue create, PR open, …) has been `Unknown`/`Planned` for ≥30 min — the caller keeps replaying the same logical op and it never resolves. Key is the op's logical ID; message carries kind, status and age, diagnostics the attempt count, repo and claim target. Clears when the op is applied, replayed as already-applied, or reconciled | medium |
+| `proxy_connect_dial_failed` | the hive proxy could not dial the upstream host of a CONNECT request (`proxy: CONNECT dial failed`, `crux/proxy/github_proxy.go`) — typically DNS or network unreachability of an agent-requested host, repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `inference_upstream_error` | a failed or non-2xx response from the configured inference backend (LiteLLM, vLLM/llm-d) on the Anthropic-to-OpenAI translator or MITM reroute path (`inference upstream error` / `inference upstream failed`, `crux/proxy/github_proxy.go`), repeated ≥5 times in 10 min — covers transport failures and statuses other than the dedicated 401/403 auth signal. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
 | `unclassified_error_repeated` | **generic catch-all**: the same WARN/ERROR log line (numbers, hashes, paths and quoted strings collapsed) repeated ≥5 times in 10 min. Fed by a `slog.Handler` tee (`pkg/fleetreport/slogfeed`) on the hive's root logger, so a repeating defect is noticed even with no hook site. Skips benign lines (read/keepalive i/o timeouts, context cancellation, the permissions watcher's `fixed …` self-healing lines) and any message that already matches another class's keywords. Clears automatically after 20 quiet minutes (2× the window), so a "cleared" comment follows once the symptom stops | low |
 
 The generic feed also skips the exact `review pending expired` message: it
@@ -150,6 +152,16 @@ records the review planner's bounded retry, and a burst across unrelated PRs
 must not become a repeated-error report. The original expiry log and its
 diagnostics remain available. `review dispatch exhausted; holding PR for a
 human` still qualifies for reporting when repeated.
+
+It also skips the constant `policies: seeded policy differs from the
+embedded default with no seed record…` warning (`ReconcileSeededDefaults`,
+`pkg/policies/seed_reconcile.go`, hivecommons/hive#13825): a hive whose
+policy directory predates the seed-manifest tracking added in
+hivecommons/hive#9428 has every embedded template diverge on its first
+post-upgrade reconcile — up to one WARN per template in the same boot — and
+a burst across unrelated templates is not a repeated runtime defect
+(hivecommons/hive#14005). The per-template warning stays in the container
+log, already deduped per path per process.
 
 Deferred to follow-ups (defined, not yet wired): `upgrade_stalled`,
 `data_disk_pressure`, `github_app_token_mint_failed`,
