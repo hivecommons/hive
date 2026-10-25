@@ -2393,7 +2393,7 @@ func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 			return
 		}
 		if isLoopbackHost(r.URL.Host) {
-			p.logger.Debug("proxy: plain HTTP forward to loopback failed (client should bypass the proxy for loopback; NO_PROXY)", "agent", agentName, "url", r.URL.String(), "error", err)
+			p.logger.Debug("proxy: plain HTTP forward to loopback failed", "agent", agentName, "url", r.URL.String(), "error", err, "hint", "client should bypass the proxy for loopback; NO_PROXY")
 		} else {
 			p.logger.Warn("proxy: plain HTTP forward failed", "agent", agentName, "url", r.URL.String(), "error", err)
 		}

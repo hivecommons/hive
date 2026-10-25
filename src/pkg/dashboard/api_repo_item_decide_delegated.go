@@ -315,6 +315,12 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		if err != nil {
 			return in, fmt.Errorf("reading PR %s#%d: %w", repoFull, number, err)
 		}
+		author = strings.TrimSpace(pr.GetUser().GetLogin())
+		in.HiveAuthored = client.IsHiveAuthorLogin(author)
+		in.TrustedAuthor = in.HiveAuthored
+		if err := s.gatherDelegatedPRContext(ctx, repoFull, pr, &in); err != nil {
+			return in, err
+		}
 		state := strings.ToLower(pr.GetMergeableState())
 		in.Conflicting = state == "dirty" || (pr.Mergeable != nil && !pr.GetMergeable())
 		in.CIGreen = !in.Conflicting && state != "unstable"
@@ -345,9 +351,6 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	in.SentinelReason = strings.TrimSpace(req.SentinelReason)
 	lowerReason := strings.ToLower(reason)
 	in.AdoptionStalled = strings.HasPrefix(lowerReason, stagelabels.LaneReasonAdoptionStalledPrefix)
-	if in.AdoptionStalled || strings.Contains(lowerReason, "offline") {
-		in.ContributorOnline = false
-	}
 	in.ReporterTrustHold = strings.Contains(lowerReason, "reporter-trust") || strings.Contains(lowerReason, "reporter trust")
 	in.DCOMissing = strings.Contains(lowerReason, "dco")
 	return in, nil

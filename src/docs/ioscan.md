@@ -162,9 +162,13 @@ exactly as before. The only accepted backend today is `claude`.
   disabled and no MCP server, in an empty temporary working directory, with
   an environment reduced to `PATH`, `HOME`, locale, terminal and the CLI's
   own login variables, so no GitHub or hive token reaches a process that
-  reads untrusted text. No permission-bypass flag is ever passed. Its reply
-  must contain exactly one valid JSON verdict; anything else is a classifier
-  error and follows `classifier.fail_mode`.
+  reads untrusted text. No permission-bypass flag is ever passed. Hooks in
+  the host's own `~/.claude/settings.json` are turned off for the run with
+  `--settings '{"disableAllHooks":true}'`, so they never see the text; login,
+  env and model keys in that file still load, and hooks from managed
+  settings are the operator's own and still run. Its reply must contain
+  exactly one valid JSON verdict; anything else is a classifier error and
+  follows `classifier.fail_mode`.
 * **Refused backends.** `copilot`, `codex` and `gemini` have no command-line
   flag that removes every tool, so boot refuses them with one log line and
   then behaves as for any classifier that cannot be built: at a closed

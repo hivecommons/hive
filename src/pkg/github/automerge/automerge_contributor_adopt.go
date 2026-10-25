@@ -120,6 +120,14 @@ const (
 // handed to a person (stage 085) for sitting past the 074 dwell.
 const AdoptionStalledMarker = "<!-- hive:adoption-stalled"
 
+// AdoptionWorkflowRefusedMarker opens the one note posted when the hive
+// refuses to publish a head carrying workflow / action edits upstream.
+const AdoptionWorkflowRefusedMarker = "<!-- hive:adoption-workflow-refused"
+
+// adoptionWorkflowRefusedReason is the stage-085 reason for that refusal. It
+// is terminal for the head: the escalation holds until the head moves.
+const adoptionWorkflowRefusedReason = stagelabels.LaneReasonAdoptionStalledPrefix + contributorLaneReasonWorkflowPath
+
 // contributorPresence asks the sink for live presence; ok is false when the
 // sink does not provide it.
 func (c *Engine) contributorPresence(ctx context.Context, login string) (ContributorPresence, bool) {
@@ -403,6 +411,19 @@ func AdoptionStalledComment(obs stageObservation, rec stagelabels.Record, reason
 	return b.String()
 }
 
+// AdoptionWorkflowRefusedComment is the one note left on a PR whose head the
+// hive will not publish upstream: supersession pushes it to a branch in the
+// base repository, where its workflow / action edits would run with
+// repository context (hivecommons/hive#14055).
+func AdoptionWorkflowRefusedComment(obs stageObservation) string {
+	return fmt.Sprintf("%s head=%s reason=%s -->\n"+
+		"The hive will not publish head `%s` upstream: it edits GitHub workflow / action files, which would run with this repository's context once pushed to a branch here. "+
+		"The hive will not re-home or supersede this head.\n\n"+
+		"**Ask:** a maintainer pushes the fix to this PR's branch and merges it, or cherry-picks the change onto a maintainer-owned branch. "+
+		"Moving to `%s` so a person sees it.",
+		AdoptionWorkflowRefusedMarker, obs.HeadSHA, adoptionWorkflowRefusedReason, shortSHA(obs.HeadSHA), stagelabels.NeedsDecision.Label())
+}
+
 // mergeCommitRefusalText is the ask in the hive-signoff-attribution stall
 // note: why the hive did not select a merge commit itself
 // (stageDetail.MergeCommitRefused) and what a person can do.
@@ -559,21 +580,40 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	}
 	grace := adoptionGrace(rec, policy)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
+	canPushInPlace := false
+	if policy.AdoptInPlace && !requested {
+		canPushInPlace = c.canPushToPRBranch(ctx, obs)
+	}
+	dcoRehome := adoptionNeedsDCORehome(obs, canPushInPlace)
 	// Record the attempt first: whatever happens below, this head is tried once.
 	store.MarkAdopted(key, obs.HeadSHA, 0, now)
 	store.NoteAdoptDiffFence(key, fence)
 	rec.AdoptDiffFence = fence
+	if fence == contributorLaneReasonWorkflowPath && !(policy.AdoptInPlace && canPushInPlace && !dcoRehome) {
+		// A terminal verdict, not a deferral: supersession would publish
+		// the workflow edits upstream. The recorded attempt clears a
+		// delegated request; the head goes to a person (085) with one note.
+		store.NoteAdoptReason(key, reason)
+		// A note for another reason (a stalled adoption) does not explain
+		// the refusal of a maintainer's explicit request, so it still posts.
+		noted := rec.AdoptionEscalationNoted(obs.HeadSHA) && !(requested && rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason)
+		store.MarkAdoptionEscalated(key, obs.HeadSHA, adoptionWorkflowRefusedReason)
+		c.warn("stage labels: refusing workflow-path supersession; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "noted", noted)
+		if noted {
+			return 0, nil
+		}
+		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(AdoptionWorkflowRefusedComment(obs))}); err != nil {
+			c.warn("stage labels: workflow-path refusal note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+			return 0, err
+		}
+		return 1, nil
+	}
 	if appLogin == "" {
 		c.warn("stage labels: cannot adopt contributor PR, App login unknown", "repo", obs.Display, "pr", obs.Number)
 		return 0, nil
 	}
 	c.info("stage labels: adopting contributor PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", reason, "registered", presence.Registered, "online", presence.Online, "lane_reason", obs.Reason, "fence", fence)
 
-	canPushInPlace := false
-	if policy.AdoptInPlace && !requested {
-		canPushInPlace = c.canPushToPRBranch(ctx, obs)
-	}
-	dcoRehome := adoptionNeedsDCORehome(obs, canPushInPlace)
 	if policy.AdoptInPlace && canPushInPlace && !dcoRehome {
 		store.MarkAdoptedInPlace(key, obs.HeadSHA, reason, now)
 		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline) + adoptionFenceNote(fence)
@@ -606,9 +646,18 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		// carries the fence the first adoption recorded.
 		rec.AdoptDiffFence = stored.AdoptDiffFence
 	}
+	// Supersession publishes the head in the upstream repository, where
+	// pull_request workflows run with repository context. A manual-merge
+	// marker cannot protect that earlier execution. Re-read evidence here
+	// so every takeover path checks the exact head before any ref mutation.
+	fence, err := c.adoptionDiffRefusal(ctx, obs)
+	if err != nil || adoptionFenceDefers(fence) || fence == contributorLaneReasonWorkflowPath {
+		c.info("stage labels: supersession deferred before publishing unsafe or unreadable head", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "reason", fence, "error", err)
+		return 0, err
+	}
 	branch := adoptBranchPrefix + strconv.Itoa(number)
 	fullRepo := owner + "/" + repo
-	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
+	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo: fullRepo, Kind: effects.KindBranchPush, Target: branch, Actor: "stage_labels",
 		Inputs: map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "adopt": "true"},
 	}, func(ctx context.Context) (effects.Result, error) {
@@ -695,6 +744,22 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 				// with a duplicate comment.
 				c.warn("stage labels: DCO re-home deferred, diff fence unreadable", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", fence, "error", err)
 				return 0, nil
+			}
+			if fence == contributorLaneReasonWorkflowPath {
+				// Terminal for this head: refuse publication, keep the
+				// in-place adoption and hand the re-home to a person (085).
+				store.NoteAdoptDiffFence(key, fence)
+				noted := rec.AdoptionEscalationNoted(obs.HeadSHA)
+				store.MarkAdoptionEscalated(key, obs.HeadSHA, adoptionWorkflowRefusedReason)
+				c.warn("stage labels: refusing workflow-path DCO re-home; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "noted", noted)
+				if noted {
+					return 0, nil
+				}
+				if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(AdoptionWorkflowRefusedComment(obs))}); err != nil {
+					c.warn("stage labels: workflow-path refusal note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+					return 0, err
+				}
+				return 1, nil
 			}
 			if fence != "" {
 				// The fence travels into the superseding PR's body; the
@@ -1062,7 +1127,9 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		rehomeReason = AdoptReasonPushRehome
 	}
 	if rec.AdoptionEscalated(obs.HeadSHA) {
-		if rehomeReason == "" && adoptionStalledReason(obs, rec, policy, now) != "" {
+		// A workflow-path refusal is a verdict on the head itself: it holds
+		// until the head moves, whatever the re-home or stall reasons say.
+		if rec.AdoptEscalatedReason == adoptionWorkflowRefusedReason || (rehomeReason == "" && adoptionStalledReason(obs, rec, policy, now) != "") {
 			return adoptionEscape{Escalated: true, Reason: rec.AdoptEscalatedReason}, 0, nil
 		}
 		store.ClearAdoptionEscalation(key)
@@ -1078,6 +1145,23 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		fence, err := c.adoptionDiffRefusal(ctx, obs)
 		if err != nil || adoptionFenceDefers(fence) {
 			return adoptionEscape{}, 0, err
+		}
+		if fence == contributorLaneReasonWorkflowPath {
+			// Terminal for this head: refuse publication, keep the in-place
+			// adoption and hand the re-home to a person (085) with one note.
+			store.NoteAdoptDiffFence(key, fence)
+			noted := rec.AdoptionEscalationNoted(obs.HeadSHA)
+			store.MarkAdoptionEscalated(key, obs.HeadSHA, adoptionWorkflowRefusedReason)
+			c.warn("stage labels: refusing workflow-path re-home; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "noted", noted)
+			esc := adoptionEscape{Escalated: true, Reason: adoptionWorkflowRefusedReason}
+			if noted {
+				return esc, 0, nil
+			}
+			if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(AdoptionWorkflowRefusedComment(obs))}); err != nil {
+				c.warn("stage labels: workflow-path refusal note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+				return esc, 0, err
+			}
+			return esc, 1, nil
 		}
 		if fence != "" {
 			store.NoteAdoptDiffFence(key, fence)

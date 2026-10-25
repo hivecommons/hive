@@ -170,7 +170,9 @@ The project is evaluating stronger isolation runtimes. One candidate is
 "safe, private runtime for fleets of autonomous AI agents" with kernel-level
 file, syscall and network policy per sandbox. AAIF's
 [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) is another.
-Nothing is decided and no integration exists today.
+[ADR-0026](adr/0026-sandbox-runtime-selection.md) (Proposed) compares both
+against the sandbox contract and recommends OpenShell, pending a prototype on
+a hive spoke. No integration exists today.
 
 | Project | Isolation unit | Checked |
 | --- | --- | --- |
@@ -189,7 +191,9 @@ Projects, Linear or Jira through one
 [provider contract](integrations/work-source-providers.md); Hive Commons
 itself runs on it. Symphony is Linear-first; Fullsend, gh-aw and Agent HQ
 are forge-first. Hive states this as a differentiator: the same fleet,
-policy and dashboard apply whichever tracker holds the work.
+policy and dashboard apply whichever tracker holds the work. The
+[integrations page](integrations.md) lists every tracker, forge and backend
+with its status.
 
 ## Related projects and vendors
 
@@ -215,7 +219,8 @@ three: open-source, self-hosted, fleet-scale, with explicit policy.
 - **Research harnesses**: evaluation and one-off repair, not operations.
 - **Hive**: operating a live agent fleet across any work source, with many
   runtimes, ACMM gates, fixed merge policy, hub/spoke provisioning,
-  contributor compute, cost visibility and proxy-level write checks.
+  contributor compute, cost visibility and proxy-level write checks. See
+  [integrations.md](integrations.md) for what Hive works with today.
 
 ## Hive claims checked against this repo
 
