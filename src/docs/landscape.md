@@ -170,7 +170,9 @@ The project is evaluating stronger isolation runtimes. One candidate is
 "safe, private runtime for fleets of autonomous AI agents" with kernel-level
 file, syscall and network policy per sandbox. AAIF's
 [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) is another.
-Nothing is decided and no integration exists today.
+[ADR-0026](adr/0026-sandbox-runtime-selection.md) (Proposed) compares both
+against the sandbox contract and recommends OpenShell, pending a prototype on
+a hive spoke. No integration exists today.
 
 | Project | Isolation unit | Checked |
 | --- | --- | --- |
