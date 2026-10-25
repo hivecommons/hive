@@ -4,7 +4,8 @@
 # (ps) and a raw GET of the health route, then stop it and check the server
 # exited cleanly. Needs no agents, tmux or network; safe in CI.
 #
-#   CRUX_BIN   binary under test (default: bin/crux next to this module)
+#   CRUX_BIN   binary under test (default: bin/crux next to this module,
+#              built here with `go build` when it does not exist yet)
 #   SMOKE_DIR  scratch dir for the socket and work dir (default: .smoke here;
 #              keep it short, a unix socket path is limited to ~100 bytes)
 set -euo pipefail
@@ -23,7 +24,10 @@ chmod 0700 "$SMOKE_DIR"
 
 fail() { echo "smoke: FAIL: $*" >&2; exit 1; }
 
-[ -x "$CRUX_BIN" ] || fail "$CRUX_BIN is not an executable; run make build"
+if [ ! -x "$CRUX_BIN" ]; then
+  echo "smoke: building $CRUX_BIN"
+  (cd "$here" && go build -o "$CRUX_BIN" ./cmd/crux) || fail "go build ./cmd/crux failed"
+fi
 
 echo "smoke: $("$CRUX_BIN" --version)"
 

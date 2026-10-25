@@ -171,12 +171,14 @@ jobs:
           go build -o /dev/null ./cmd/crux
           (cd crux && GOWORK=off go build -o /dev/null ./cmd/crux)
 
-      # `make -C crux smoke` starts `crux serve` on a private unix socket with
-      # an empty runtime, drives it with `crux --server … ps` and GET
+      # crux/scripts/smoke.sh (`make -C crux smoke` locally; the self-hosted
+      # runners have no make) starts `crux serve` on a private unix socket
+      # with an empty runtime, drives it with `crux --server … ps` and GET
       # /v1/health, then stops it. No agents or tmux involved; it fails the
       # PR if the server stops starting, listening or shutting down cleanly.
       - name: Crux module smoke (crux serve over a unix socket)
-        run: make -C crux smoke
+        working-directory: src/crux
+        run: GOWORK=off bash scripts/smoke.sh
 
       - name: CI install tool apt cache tests
         working-directory: .

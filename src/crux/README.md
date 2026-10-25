@@ -37,7 +37,7 @@ The Makefile sets `GOWORK=off`, so every target proves the module builds
 without the `src/go.work` workspace it sits in. `make test` runs the unit
 tests (the `crux/agent` tests need `tmux`), `make vet` vets, `make smoke`
 builds and exercises `crux serve` end to end on a private unix socket (no
-agents are started; it is what CI runs).
+agents are started; CI runs the same `scripts/smoke.sh`).
 
 ## Run an agent
 
