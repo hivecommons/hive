@@ -469,6 +469,40 @@ func TestIssueClaim_LegacyClaimLabelRemovedWithLease(t *testing.T) {
 	}
 }
 
+func TestIssueClaim_LedgerClaimLabelRemovedWithLeaseRevoked(t *testing.T) {
+	hub, s := covK2Hub(t)
+	enableIssueClaims(s)
+	recorder := &claimRecorder{}
+	hub.claimCommenter = recorder
+	l, err := claims.New(filepath.Join(t.TempDir(), "claims.json"), claims.DefaultPolicy(), claims.Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.deps.IssueClaims = l
+	c := issueClaimConn("contributor")
+	hub.claimIssueForContributor(c, issueClaimRepoFull, claimedNumber)
+	if _, ok := l.LookupKey(claims.Key(issueClaimRepoFull, claimedNumber)); !ok {
+		t.Fatal("ledger claim not recorded")
+	}
+
+	ref := recorder.IssueStageRef(issueClaimRepoFull, claimedNumber)
+	fact := stageengine.ClaimFact{Holder: identityOf(c), Kind: claims.KindContributor, Until: time.Now().Add(time.Hour)}
+	if err := recorder.StageFacts().Claimed(context.Background(), ref, fact); err != nil {
+		t.Fatalf("seed claim label: %v", err)
+	}
+	if got := recorder.writer.LabelsOf(ref); !slices.Contains(got, claims.LabelClaimed) {
+		t.Fatalf("labels after claim = %v, want %s", got, claims.LabelClaimed)
+	}
+
+	hub.releaseClaimForLease(identityOf(c), issueClaimRepoFull+"#353", "lease_revoked")
+	if _, ok := l.LookupKey(claims.Key(issueClaimRepoFull, claimedNumber)); ok {
+		t.Fatal("ledger claim survived the release")
+	}
+	if got := recorder.writer.LabelsOf(ref); slices.Contains(got, claims.LabelClaimed) {
+		t.Fatalf("labels after lease_revoked release = %v, want %s gone", got, claims.LabelClaimed)
+	}
+}
+
 // A failed comment post never refuses the assignment: the claim stays on the
 // lease, unposted.
 func TestIssueClaim_CommentFailureLeavesLeaseClaim(t *testing.T) {
