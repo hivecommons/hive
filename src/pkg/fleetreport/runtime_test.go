@@ -859,6 +859,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"pane content at timeout":                              ClassAgentPaneTimeout,
 		"prompt timeout — dumping pane":                        ClassAgentPaneTimeout,
 		"startup kick dropped: CLI never reached input prompt": ClassAgentPaneTimeout,
+		"kick undeliverable; busy-no-activity restart":         ClassAgentPaneTimeout,
 		"proxy client TLS handshake failed":                    ClassProxyTLSHandshakeFailed,
 		"transparent proxy TLS handshake failed":               ClassProxyTLSHandshakeFailed,
 		"failed to restore per-agent dir mode":                 ClassAgentDirSetupFailed,
