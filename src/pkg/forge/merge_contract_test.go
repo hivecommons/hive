@@ -120,9 +120,15 @@ var mergeContractAdapters = []mergeContractAdapter{
 		Pending: "gitlabForge does not implement Merger yet (child of #14096)",
 	},
 	{
-		Name:    "gitea",
-		Kind:    KindGitea,
-		Pending: "giteaForge does not implement Merger yet (child of #14096)",
+		Name: "gitea",
+		Kind: KindGitea,
+		Native: map[MergeStrategy]string{
+			MergeStrategyDefault: "merge",
+			MergeStrategySquash:  "squash",
+			MergeStrategyMerge:   "merge",
+			MergeStrategyRebase:  "rebase",
+		},
+		Start: startGiteaMergeFake,
 	},
 }
 
@@ -428,6 +434,80 @@ func startGitHubMergeFake(t *testing.T, fx *mergeFixture) Merger {
 	m, ok := f.(Merger)
 	if !ok {
 		t.Fatalf("the GitHub adapter does not implement Merger")
+	}
+	return m
+}
+
+// --- Gitea fake ---
+
+// startGiteaMergeFake serves fx as Gitea's REST API v1: the PR read the adapter
+// gates on, and the merge endpoint, which records the Do style and head_commit_id
+// it was sent.
+func startGiteaMergeFake(t *testing.T, fx *mergeFixture) Merger {
+	t.Helper()
+	owner, name := splitRepo(fx.Repo, "")
+	prPath := fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d", owner, name, fx.Number)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+prPath, func(w http.ResponseWriter, _ *http.Request) {
+		labels := make([]map[string]any, 0, len(fx.Labels))
+		for _, l := range fx.Labels {
+			labels = append(labels, map[string]any{"name": l})
+		}
+		mergeCommit := ""
+		if fx.AlreadyMerged {
+			mergeCommit = fx.MergeSHA
+		}
+		state := "open"
+		if fx.AlreadyMerged {
+			state = "closed"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"number":           fx.Number,
+			"title":            "fix: a change",
+			"state":            state,
+			"merged":           fx.AlreadyMerged,
+			"merge_commit_sha": mergeCommit,
+			"labels":           labels,
+			"head":             map[string]any{"ref": "feature/x", "sha": fx.HeadSHA},
+			"base":             map[string]any{"ref": "main"},
+		})
+	})
+	mux.HandleFunc("POST "+prPath+"/merge", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Do           string `json:"Do"`
+			HeadCommitID string `json:"head_commit_id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		fx.recordMerge(body.Do, body.HeadCommitID)
+		w.Header().Set("Content-Type", "application/json")
+		if fx.HeadMovedAtMerge {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "head commit has changed"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message":          "pull request merged",
+			"sha":              fx.MergeSHA,
+			"merge_commit_sha": fx.MergeSHA,
+		})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request to the Gitea merge fake: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	f, err := NewForge(KindGitea, "test-token", Options{BaseURL: srv.URL, Org: owner})
+	if err != nil {
+		t.Fatalf("NewForge(gitea): %v", err)
+	}
+	m, ok := f.(Merger)
+	if !ok {
+		t.Fatalf("the Gitea adapter does not implement Merger")
 	}
 	return m
 }

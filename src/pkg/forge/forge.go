@@ -10,9 +10,9 @@
 // primitive is the OPTIONAL Merger extension: MergeOptions neutralizes the
 // parts that diverge sharply across forges (strategy names, the expected head
 // commit, the label gate), and every adapter implementing it must pass the
-// shared contract in merge_contract_test.go. GitHub implements Merger today
-// over pkg/github's MergePR; GitLab and Gitea do not yet, and a caller
-// type-asserts for Merger rather than assuming it.
+// shared contract in merge_contract_test.go. GitHub and Gitea implement
+// Merger today; GitLab does not yet, and a caller type-asserts for Merger
+// rather than assuming it.
 package forge
 
 import (
@@ -127,6 +127,12 @@ var (
 	// ErrMergeStrategyUnsupported means Strategy is not a MergeStrategy this
 	// forge can express.
 	ErrMergeStrategyUnsupported = errors.New("forge: merge strategy unsupported by this forge")
+	// ErrMergeConflict means the change request cannot be integrated due to
+	// merge conflicts.
+	ErrMergeConflict = errors.New("forge: change request has merge conflicts")
+	// ErrMergeNotMergeable means the forge refuses to merge because the change
+	// request is not in a mergeable state (e.g. conflicts or failing checks).
+	ErrMergeNotMergeable = errors.New("forge: change request is not mergeable")
 )
 
 // MergeOptions is the forge-neutral input to Merger.Merge: what shape to
@@ -147,6 +153,9 @@ type MergeOptions struct {
 	// hold did not mean hold would not be forge-neutral). Matching is
 	// case-insensitive and whitespace-trimmed; an empty entry is ignored.
 	BlockingLabels []string
+	// DeleteBranch, when true, requests that the head/source branch be deleted
+	// after a successful merge on forges that support it.
+	DeleteBranch bool
 }
 
 // MergeResult is the forge-neutral outcome of a merge.
@@ -297,7 +306,7 @@ type IssueSeam interface {
 // a caller type-asserts (`m, ok := f.(Merger)`) and refuses cleanly when the
 // forge it was handed cannot merge.
 //
-// Implemented by: GitHub. Pending: GitLab, Gitea.
+// Implemented by: GitHub, Gitea. Pending: GitLab.
 //
 // Every implementation MUST pass the shared contract in merge_contract_test.go
 // — one table of forge-neutral cases run against an httptest fake per forge —
