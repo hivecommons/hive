@@ -22712,7 +22712,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // that read "GITHUB.COM" on a github.ibm.com hive.
       const hostLabel = (window._githubBaseUrl || 'https://github.com').replace(/^https?:\/\//, '').replace(/\/$/, '') || 'github.com';
       const isPublic = hostLabel === 'github.com';
-      // project.forge is hive-wide, so the first card names the hive's forge
+      // The project forge is hive-wide, so the first card names the hive's forge
       // (#14115). A GitLab or Gitea/Forgejo hive gets its own host here instead
       // of the GitHub host the badge would otherwise claim.
       const hiveForge = repoForgeWeb(repos[0], hostLabel);

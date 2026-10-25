@@ -1074,7 +1074,7 @@ type FrontendRepo struct {
 	UpstreamWatchOn   bool   `json:"upstreamWatchOn,omitempty"`
 	UpstreamLastCheck string `json:"upstreamLastCheck,omitempty"`
 	// Forge is the source forge the repo lives on — "github", "gitlab" or
-	// "gitea" (Gitea and Forgejo) — from project.forge (hivecommons/hive#14115),
+	// "gitea" (Gitea and Forgejo) — from the project forge setting (hivecommons/hive#14115),
 	// so the card names the right host instead of always reading github.com.
 	// ForgeURL is the instance web root for a GitLab or Gitea forge, used for
 	// the card's links; it is empty for GitHub, whose host the SPA already reads

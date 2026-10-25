@@ -2252,7 +2252,7 @@ func earliestRFC3339(a, b string) string {
 }
 
 // repoForge returns the forge kind every repo card carries and, for GitLab and
-// Gitea/Forgejo, the instance web root its links point at. project.forge is
+// Gitea/Forgejo, the instance web root its links point at. The project forge is
 // hive-wide, so every repo in a hive shares one forge. GitHub reports no URL:
 // the SPA takes the GitHub host from /api/config, as it always has.
 func repoForge(cfg *config.Config) (kind, url string) {
