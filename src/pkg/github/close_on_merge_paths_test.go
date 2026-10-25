@@ -579,6 +579,8 @@ func closeOnMergeCrossRepoServer(t *testing.T, sourceRepo string, patched *bool,
 			_ = json.NewEncoder(w).Encode([]map[string]any{
 				{"number": 7, "state": "open", "labels": []map[string]string{{"name": CoveredByPRLabel}}},
 			})
+		case r.Method == "GET" && r.URL.Path == "/repos/o/other/issues":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
 			_ = json.NewEncoder(w).Encode([]map[string]string{})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/timeline":
