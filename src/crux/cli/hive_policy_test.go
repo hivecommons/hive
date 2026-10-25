@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/hivecap"
+	"github.com/hivecommons/hive/crux/internal/testutil"
 )
 
 // policyTarget records what the policy applier hands the runtime.
@@ -196,20 +197,12 @@ func TestWatchPolicyOverTheCallback(t *testing.T) {
 	if !strings.Contains(out.String(), ": host policy") {
 		t.Fatalf("banner = %q", out.String())
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	explainFn := testutil.EventuallyValue(t, 5*time.Second, func() (func() string, bool) {
 		target.mu.Lock()
-		explainFn := target.explain
-		target.mu.Unlock()
-		if explainFn != nil {
-			if got := explainFn(); got != "on" {
-				t.Fatalf("explain = %q", got)
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("policy never applied over the callback")
-		}
-		time.Sleep(10 * time.Millisecond)
+		defer target.mu.Unlock()
+		return target.explain, target.explain != nil
+	}, "policy never applied over the callback")
+	if got := explainFn(); got != "on" {
+		t.Fatalf("explain = %q", got)
 	}
 }
