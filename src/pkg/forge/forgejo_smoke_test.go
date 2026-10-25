@@ -199,7 +199,11 @@ func TestForgejoSmoke(t *testing.T) {
 			break
 		}
 		t.Logf("PR #%d not mergeable yet, retrying: %v", prNum, err)
-		time.Sleep(3 * time.Second)
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context done while waiting for mergeability: %v", ctx.Err())
+		case <-time.After(3 * time.Second):
+		}
 	}
 	if err != nil {
 		t.Fatalf("Merge: %v", err)
