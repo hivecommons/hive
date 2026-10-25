@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +45,12 @@ const (
 	// token_mint_failed so an operator reading the reason knows to fix the repo
 	// list rather than the App credential.
 	taskUnavailableRepoUnmintable = "repo_unmintable"
+	// taskUnavailableAppNotInstalled: the hive's GitHub App has no installation
+	// for its org (installation_id 0), so no token can be minted for any repo
+	// (#14002). Not a repo-list problem and not a credential problem: the App
+	// has to be installed on the org. The negative-ack carries a Message naming
+	// the org and the install link so the contributor can tell the operator.
+	taskUnavailableAppNotInstalled = "app_not_installed"
 	// taskUnavailableLeasePersistFailed: the assignment's server-issued lease
 	// could not be written to the lease registry on disk (#8287). The grant is
 	// refused rather than handed out, because a lease that exists only in memory
@@ -1295,6 +1302,21 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// the item is offerable again at once and no slot, lease or cooldown
 		// records a task that never shipped.
 		h.rollbackAssignment(c, taskID)
+
+		// #14002: installation_id 0 means the App is not installed on this
+		// hive's org at all. Without this check GitHub's 404 for installation 0
+		// is read below as a repo-scope failure and the contributor is told to
+		// fix the repo list. Nothing in this pass can be minted, so do not
+		// exclude the repo or scan again; name the real cause instead.
+		if errors.Is(err, ghpkg.ErrAppNotInstalled) {
+			org, installURL := h.appOrgAndInstallURL()
+			h.logger.Warn("[contribute-ws] GitHub App is not installed on this hive's org — "+
+				"no scoped token can be minted; install the App on the org or set github.installation_id",
+				"org", org, "install_url", installURL, "error", err)
+			msg := h.taskUnavailable(taskUnavailableAppNotInstalled)
+			msg.Message = appNotInstalledMessage(org, installURL)
+			return msg
+		}
 
 		// #7869: since C4 the token is scoped to the CANDIDATE'S repository, so a
 		// 422/404 from GitHub means that repo — renamed, deleted, or removed from
