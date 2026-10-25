@@ -39,3 +39,29 @@ func warnGitHubFetchOnce(logger *slog.Logger, key, msg string, args ...any) {
 	githubWarnMu.Unlock()
 	logger.Debug(msg, args...)
 }
+
+// commitMsgBackoff is how long a SHA whose commit-message fetch failed (e.g.
+// 403 rate limit) is left alone before it is fetched again; callers carry on
+// with the SHA alone meanwhile.
+const commitMsgBackoff = 10 * time.Minute
+
+var (
+	commitMsgBackoffMu    sync.Mutex
+	commitMsgBackoffUntil = map[string]time.Time{}
+)
+
+func commitMsgBackedOff(sha string) bool {
+	commitMsgBackoffMu.Lock()
+	defer commitMsgBackoffMu.Unlock()
+	until, ok := commitMsgBackoffUntil[sha]
+	return ok && githubWarnNow().Before(until)
+}
+
+func markCommitMsgBackoff(sha string) {
+	commitMsgBackoffMu.Lock()
+	defer commitMsgBackoffMu.Unlock()
+	if len(commitMsgBackoffUntil) >= 256 {
+		commitMsgBackoffUntil = map[string]time.Time{}
+	}
+	commitMsgBackoffUntil[sha] = githubWarnNow().Add(commitMsgBackoff)
+}

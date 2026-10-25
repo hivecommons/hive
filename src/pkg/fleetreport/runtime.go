@@ -71,6 +71,7 @@ const (
 	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
 	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
 	ClassInferenceUpstreamError     = "inference_upstream_error"
+	ClassSHAPollCommitMsgUnavail    = "sha_poll_commit_message_unavailable"
 )
 
 const (
@@ -169,6 +170,7 @@ var Classes = map[string]ClassSpec{
 	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed"}},
 	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
+	ClassSHAPollCommitMsgUnavail:    {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".

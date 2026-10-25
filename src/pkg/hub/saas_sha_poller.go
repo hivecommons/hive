@@ -1056,6 +1056,9 @@ func fetchImageBuildState(client *http.Client, fullSHA string, logger *slog.Logg
 // Uses a separate endpoint that's less likely to be rate-limited since it's called
 // only once per new SHA (not every poll cycle).
 func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger) string {
+	if commitMsgBackedOff(fullSHA) {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "saas_sha_commit_message"), shaFetchTimeout)
 	defer cancel()
 	commitURL := fmt.Sprintf("%s/repos/hivecommons/hive/commits/%s", githubAPIBase, fullSHA)
@@ -1068,6 +1071,7 @@ func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		markCommitMsgBackoff(fullSHA)
 		warnGitHubFetchOnce(logger, fmt.Sprintf("sha-msg:%s:%d", fullSHA[:7], resp.StatusCode), "SHA poll: commit message fetch non-200", "sha", fullSHA[:7], "status", resp.StatusCode)
 		return ""
 	}

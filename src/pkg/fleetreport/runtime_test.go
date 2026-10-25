@@ -356,6 +356,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassGitHubAppRepoNotCovered, message: "github app recheck: installation does not cover every configured repo"},
 		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
+		{class: ClassSHAPollCommitMsgUnavail, message: "SHA poll: commit message fetch non-200"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
@@ -894,6 +895,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"proxy: CONNECT dial failed":                                            ClassProxyConnectDialFailed,
 		"inference upstream error":                                              ClassInferenceUpstreamError,
 		"inference upstream failed":                                             ClassInferenceUpstreamError,
+		"SHA poll: commit message fetch non-200":                                ClassSHAPollCommitMsgUnavail,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {

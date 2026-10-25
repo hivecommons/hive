@@ -1,10 +1,12 @@
 package hub
 
 import (
+	"bytes"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -288,4 +290,44 @@ func resetSHACaches(t *testing.T) {
 		delete(commitMsgBySHA, k)
 	}
 	latestSHAMu.Unlock()
+}
+
+func TestFetchCommitMessageBacksOffPerSHA(t *testing.T) {
+	commitMsgBackoffMu.Lock()
+	commitMsgBackoffUntil = map[string]time.Time{}
+	commitMsgBackoffMu.Unlock()
+	githubWarnMu.Lock()
+	githubWarnLast = map[string]time.Time{}
+	githubWarnMu.Unlock()
+	now := time.Now()
+	githubWarnNow = func() time.Time { return now }
+	t.Cleanup(func() { githubWarnNow = time.Now })
+
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	c := clientTo(t, srv)
+
+	for i := 0; i < 5; i++ {
+		if got := fetchCommitMessage(c, "abcdef1234567", logger); got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	}
+	if hits != 1 {
+		t.Errorf("fetches within back-off = %d, want 1", hits)
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Errorf("warns = %d, want 1", n)
+	}
+
+	now = now.Add(commitMsgBackoff + time.Second)
+	fetchCommitMessage(c, "abcdef1234567", logger)
+	if hits != 2 {
+		t.Errorf("fetches after back-off = %d, want 2", hits)
+	}
 }
