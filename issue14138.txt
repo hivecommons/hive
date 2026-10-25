@@ -1,0 +1,156 @@
+📝 Crux stage 2/3 tracker: serve API, client, ratchet to zero, release train
+----
+Continuation of #13536 (stage 1, closed). Stage 1 (in-repo boundary), stage 2 (nested module `github.com/hivecommons/hive/crux` at `src/crux/`, #13950) and the first cut of stage 3 (`crux serve`, #13959) have shipped. This issue tracks what remains; PRs should reference it with `Refs #<this>` and must not use `Closes` until the last item lands.
+
+## Remaining
+
+- [x] Go client + CLI remote mode (`crux --server` / `CRUX_SERVER`) - #14090
+- [x] Serve docs (`docs/crux-serve.md`, crux-cli.md, `cmd/crux` help)
+- [x] Inbound ratchet: dashboard 3 → 0 (#14103), cmd/hive 22 → 12 (root re-exports for `ProjectContext`, `DefaultAgentMode`, `BreakerTrigger`, `PauseCausation`, `PauseTransitionEvent`; shadowed `agent` loop var in `initAgentConfigDrivenSystems`)
+- [ ] Decision: does hive consume the serve API (sidecar `crux serve`) or stay in-process with the API for other consumers? The last 12 cmd/hive rows (`Manager`, `NewManager`, `WatchdogFleet`, `RunAgyTurn`, `ResumeHandle`, `PRCreator`, ...) only go away under the sidecar option.
+- [ ] `crux/vX.Y.Z` tags and the `go get` path caveat (module under `src/`)
+- [ ] Move `cmd/crux` into the nested module once config/defsrc loading is injected
+- [ ] Generic tool policy for the MITM proxy (rules are GitHub-shaped today)
+- [x] `AgentProcess` method split (13 methods, mutex) - now mostly behind `crux.Process`/`crux/cruxtest`, confirm nothing left (confirmed: no package outside `crux/agent` names it)
+- [x] crux.md: keep the status section current (#14147, #14157; re-open as items land)
+
+Design record: `src/docs/design/crux.md`. Ratchets: `src/internal/testutil/crux_boundary_ratchet_test.go` (inbound, exact), `crux_outbound_ratchet_test.go` (must stay empty).
+
+
+----COMMENTS----
+### hivecommons-hive 2026-10-25T03:01:39Z
+<!-- hive:issue-stage-pr-link pr=14140 -->
+PR #14140 covers this issue: https://github.com/hivecommons/hive/pull/14140
+
+The PR body says this is partial/non-closing work (`Refs`/`Part of` or leave-open wording), so Hive will not add a closing keyword. GitHub will not show its issue-list PR icon without a closing keyword; the stage comment is the link.
+
+### hivecommons-hive 2026-10-25T03:35:53Z
+<!-- hive:issue-stage-pr-link pr=14147 -->
+PR #14147 covers this issue: https://github.com/hivecommons/hive/pull/14147
+
+The PR body says this is partial/non-closing work (`Refs`/`Part of` or leave-open wording), so Hive will not add a closing keyword. GitHub will not show its issue-list PR icon without a closing keyword; the stage comment is the link.
+
+### clubanderson 2026-10-25T03:46:34Z
+Inbound-ratchet item done; three PRs merged on v5:
+
+| PR | Change | Ratchet |
+|---|---|---|
+| #14103 | `CanonicalizeCopilotModel`/`CopilotLaunchModel` and `BackendRequiresInteractiveAuth` defined in the `crux` root (aliased by `crux/agent`); dashboard uses `config.IsInferenceBackend`; `crux/agent` dropped from the dashboard import allowlist | `pkg/dashboard` 3 → 0 |
+| #14143 | `BreakerTrigger`, `PauseCausation`, `PauseTransitionEvent` in `crux/pause.go` (aliased by `crux/agent`); `cmd/hive` names `crux.ProjectContext` / `crux.DefaultAgentMode`; shadowed `agent` loop var in `initAgentConfigDrivenSystems` renamed (5 AST false positives) | `cmd/hive` 22 → 12 |
+| #14147 | 📖 `src/docs/design/crux.md`: status header, "Inbound ratchet to one row" entry, what-remains list aligned with this tracker | — |
+
+Baseline is now the single row `cmd/hive: 12`; outbound baseline still empty. The twelve (`Manager`, `NewManager`, `LinearCredential`, `AgentMintIssuer`, `StartPermissionsWatcher`, `WatchdogFleet`, `RunAgyTurn`, `ResumeHandle`, `ResolveReasoningEffort`, `ErrResumeBusy`, `ErrResumeSessionGone`, `PRCreator`) are the in-process manager and the values `cmd/hive` hands it; they hang on the in-process-vs-sidecar decision above, not on further re-exports.
+
+`AgentProcess` method split: confirmed nothing left — no package outside `crux/agent` names `AgentProcess`; consumers hold `*crux.Process` snapshots or build through `crux/cruxtest`. Suggest ticking that box and the "Inbound ratchet: dashboard 3 → 0, cmd/hive 22 → 12" box.
+
+
+### hivecommons-hive 2026-10-25T04:37:46Z
+<!-- hive:issue-stage-pr-link pr=14157 -->
+PR #14157 covers this issue: https://github.com/hivecommons/hive/pull/14157
+
+The PR body says this is partial/non-closing work (`Refs`/`Part of` or leave-open wording), so Hive will not add a closing keyword. GitHub will not show its issue-list PR icon without a closing keyword; the stage comment is the link.
+
+### clubanderson 2026-10-25T04:47:12Z
+**Step 6 complete — `crux serve`, the process boundary with an API.** Continuation of the #13536 plan; all three PRs merged on v5 through the lane.
+
+| PR | What | Merge |
+|---|---|---|
+| #13959 | ✨ `crux/api` (stdlib-only wire contract) + `crux/serve` + `crux serve` | `b093d8f2` |
+| #14090 | ✨ `api.Client` + CLI remote mode (`--server`/`CRUX_SERVER`, `--token`/`CRUX_TOKEN`) | `86afcfa1` |
+| #14157 | 📖 `docs/crux-serve.md` how-to, crux.md Stage 3 status, crux-cli.md remote mode, `cmd/crux` help | `3cc68af8` |
+| #14140 | 🐛 CI: sliced hub/agent lanes log the `ok <pkg>` line the coverage scorer keys on (#14135, surfaced by #14090) | `83b6a91c` |
+
+**Surface.** HTTP+JSON under `/v1`: `GET health`; `GET agents`; `POST agents` `{name, definition?}` (400 bad name, 409 name already defined, 422 runtime refused; loader defaults applied server-side); `GET agents/{name}`; `GET agents/{name}/logs?source=pane|buffer|full&n=` and `?follow=1` (SSE); `POST agents/{name}/kick`; `POST agents/{name}/stop`; `GET events` (SSE). Default listener is a `0600` unix socket at `$XDG_RUNTIME_DIR/crux/crux.sock` (else `<tmp>/crux-<uid>/crux.sock`) in a uid-owned private dir; `--listen` TCP only with a bearer token; a token-less server answers only its own socket. `serve` ignores `CRUX_SERVER` and always runs locally.
+
+**Coverage.** crux/api 99.5%, crux/serve 95.0%, crux/cli 97.2%, crux/config 97.8%, cmd/crux 98.3%. Inbound ratchet baseline unchanged, outbound empty, sleep ratchet unchanged. Hive itself does **not** consume the API yet.
+
+**Remaining on this tracker:** hive as a client of `crux serve` (the in-process-vs-sidecar decision; the last twelve `cmd/hive` inbound rows hang on it), `crux/vX.Y.Z` tags, `Process` as its own type, folding `crux/types`.
+
+
+### hivecommons-hive 2026-10-25T05:17:14Z
+Ticked the boxes per the comments above: Go client + remote mode (#14090), serve docs (#14157), inbound ratchet to the single `cmd/hive: 12` row (#14103, #14143), `AgentProcess` split confirmed moot, crux.md status current (#14147, #14157).
+
+Remaining items and why the hive is not picking them up on its own this cycle:
+- **in-process vs sidecar** — maintainer decision; the last twelve inbound rows and the `cmd/crux` move both hang on it.
+- **`crux/vX.Y.Z` tags** — cut by the release workflow (owner-only; workflow edits are outside the hive's push scope). The `go get` path caveat is already recorded in `src/docs/design/crux.md` (“Tags” entry).
+- **`cmd/crux` into the nested module** — the design record (crux.md, outbound table) currently argues it stays a host composition root because `hive.yaml`/`defsrc` loading has no layer to be injected from; that reverses only under the sidecar option.
+- **generic tool policy for the MITM proxy** — design work with no spec yet; say the word and the hive will file a `kind/spec` child with the open questions.
+
+Nothing in the tracker is unverified-stale; it is waiting on the decision above.
+
+---
+🐝 **Hive Agent**: `scanner` | **Instance:** `hosted-available-oke-11-placeholder-r05x` | **SHA:** `unknown`
+<!-- hive:origin hive=hosted-available-oke-11-placeholder-r05x at=2026-10-25T05:17:09Z -->
+
+— hive: agent=scanner backend=copilot model=claude-fable-5.1 copilot=1.0.88
+
+### hivecommons-hive 2026-10-25T05:56:04Z
+Parking on `stage/045-needs-decision` — every unchecked item here hangs on one maintainer call, and the hive keeps being dispatched to it with nothing it can decide alone (see the summary above).
+
+Risk: governance (the choice changes the governor's failure modes and the public `crux` module shape).
+
+**Question:** does `cmd/hive` consume the `crux serve` API, or stay in-process?
+
+- **A — sidecar:** `cmd/hive` and `pkg/dashboard` become `api.Client` consumers of a `crux serve` process. Unblocks: the last 12 `cmd/hive` inbound rows → 0, moving `cmd/crux` into the nested module (config/`defsrc` loading moves behind the API), and a `crux/vX.Y.Z` tag that is actually consumed. Cost: a runtime that can be unreachable from the governor; a new lifecycle/supervision story for the sidecar.
+- **B — in-process, API for others:** `cmd/hive` keeps constructing `*agent.Manager`; `crux serve` stays for second consumers. The 12 rows are then accepted as the permanent exact floor, `cmd/crux` stays a host composition root (as crux.md argues today), and this tracker closes once the tag/`go get` caveat is recorded — the hive can do that last step and close.
+- **C — defer:** keep the tracker open until a second consumer is real (the condition Stage 3 already states). Nothing for the hive to do here until then; it should stop being dispatched.
+
+The generic MITM tool policy is a separate spec question; on request the hive files a `kind/spec` child.
+
+Reply `/hive decision A|B|C`.
+
+---
+🐝 **Hive Agent**: `scanner` | **Instance:** `hosted-available-oke-11-placeholder-r05x` | **SHA:** `77492c3`
+<!-- hive:origin hive=hosted-available-oke-11-placeholder-r05x at=2026-10-25T05:55:55Z -->
+
+— hive: agent=scanner backend=copilot model=claude-fable-5.1 copilot=1.0.88
+
+### hivecommons-hive 2026-10-25T05:58:12Z
+<!-- hive:unpark-notice:9879 -->
+**What to reply**
+- `/hive approve`: go with the recommendation
+- `/hive decision <your instructions>`: go ahead, following your instructions
+- `/hive help`: show these again
+
+If what this issue waited on has been done (a merged fix, or an action taken outside this repository), a maintainer can reply `/fixed` to close it as completed; Hive clears its park labels.
+
+_Only a maintainer with write access can un-park; everything else is ignored. Full command reference: https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md._
+
+### github-actions 2026-10-25T06:18:11Z
+<!-- hive-post-merge-refs-sweep: issue=14138 -->
+PR #14157 has merged (https://github.com/hivecommons/hive/pull/14157) and referenced this issue with a non-closing `Refs #14138` rather than a closing keyword.
+
+This issue remains open because the merged PR did not use `Closes` / `Fixes` / `Resolves`. If the fix should close it on merge, use a closing keyword in the PR body; use the opt-in `hive: needs-confirmation` marker only when the reporter genuinely must verify before closure.
+
+### clubanderson 2026-10-25T11:56:32Z
+/hive decision Stay in-process. Hive keeps linking crux directly; `crux serve` remains the API for other consumers, not a sidecar hive depends on. Set the inbound ratchet baseline at the 12 remaining cmd/hive rows as the accepted boundary and stop pushing it to zero. Revisit the sidecar option only when a second consumer of the serve API exists. Remaining items (tags and `go get` path caveat, `cmd/crux` move, generic tool policy for the proxy) proceed as listed.
+
+
+### hivecommons-hive 2026-10-25T11:58:33Z
+<!-- hive:unpark-reply:9879 id=6397324271 -->
+Un-parked by @clubanderson. Decision: Stay in-process. Hive keeps linking crux directly; `crux serve` remains the API for other consumers, not a sidecar hive depends on. Set the inbound ratchet baseline at the 12 remaining cmd/hive rows as the accepted boundary and stop pushing it to zero. Revisit the sidecar option only when a second consumer of the serve API exists. Remaining items (tags and `go get` path caveat, `cmd/crux` move, generic tool policy for the proxy) proceed as listed.
+
+`stage/045-needs-decision` is cleared when present and `approved-direction` is applied; any `hold` label is left exactly as it was.
+
+### clubanderson 2026-10-25T12:01:43Z
+/hive decision A
+
+Hive consumes its own `crux serve` API. Separation is the goal; do it in stages so no stage breaks a hosted hive, and keep in-process the default until parity is proven.
+
+**Staging (one PR series per stage, `Refs #14138`, ratchet shrinks only when a stage flips):**
+
+1. **Runtime seam.** A `Runtime` interface in the `crux` root covering what `cmd/hive` and `pkg/dashboard` use today (the 12 host-wiring symbols plus the dashboard's process/pane/kick reads). Two implementations: the existing in-process `*agent.Manager` and `api.Client`. Selected by config (`crux.mode: inprocess|sidecar`), default `inprocess`. No behaviour change.
+
+2. **Credential direction (decide and record in crux.md before coding).** The runtime must not hold the GitHub App key. Hive provides minting via callbacks - the already-inverted `TokenScoper` / `TokenMinter` / `AgentMintIssuer` seams - over a hive-side callback endpoint the runtime calls. Same for `LinearCredential` and `PRCreator`: hive-provided capabilities, not runtime features. `crux/api` stays minimal and engine-shaped; hive-specific capabilities live in hive.
+
+3. **Endpoint families** the current API lacks: streamed turn with cancel (`RunAgyTurn`), resume with busy/gone states (`ResumeHandle`, `ErrResumeBusy`, `ErrResumeSessionGone`), watchdog fleet observe/clear (`WatchdogFleet`), permissions watcher. Each lands with the client method and a parity test asserting every `cli` verb and every `Runtime` method has an API route.
+
+4. **Failure semantics + supervision.** Define and test what governor, kicks, stall/crash-loop detection do when the socket is gone (proposal: agents enter `unknown`, no new dispatch, existing holds kept, reconnect with backoff, alarm in the fleet quadrant). Supervision: hive execs and supervises `crux serve` in the same container by default; k8s sidecar container as an option in the chart. Health on `/v1/health`.
+
+5. **Dashboard via the client.** Pane/log/kick state through SSE instead of in-memory reads; keep the existing hidden/collapsed polling guards. Measure against the #13764 baseline before flipping.
+
+6. **Flip.** Default `sidecar`, remove the in-process construction from `cmd/hive`, inbound ratchet → 0, move `cmd/crux` into the nested module, first `crux/vX.Y.Z` tag, record the `go get` path caveat. v6 top-up per stage.
+
+Guardrails: outbound ratchet stays empty throughout; no stage merges without the parity test green; in-process path is deleted only in stage 6. The generic MITM tool policy stays a separate `kind/spec` child - please file it.
+
+
