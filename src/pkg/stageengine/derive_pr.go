@@ -60,6 +60,9 @@ func FactsFromPRObservations(list []stageObservation) Facts {
 		if len(pr.BaseRedChecks) == 0 {
 			pr.BaseRedChecks = append([]string(nil), o.BaseRedChecks...)
 		}
+		if len(pr.ForkGuardChecks) == 0 {
+			pr.ForkGuardChecks = append([]string(nil), o.ForkGuardChecks...)
+		}
 		// After StageTracker.drain every lane carries the same shared
 		// detail; the first lane that knows the verdict (or any detail at
 		// all) is the one folded.
@@ -176,6 +179,7 @@ func ObservationsFromPRFacts(f Facts) []stageObservation {
 			BaseRef:          pr.BaseRef,
 			SharedCIIncident: pr.SharedCIIncident,
 			BaseRedChecks:    append([]string(nil), pr.BaseRedChecks...),
+			ForkGuardChecks:  append([]string(nil), pr.ForkGuardChecks...),
 		})
 	}
 	return out

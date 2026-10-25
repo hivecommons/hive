@@ -115,6 +115,14 @@ type StageLabelPolicy struct {
 	// reason `base-branch-red:<checks>` and never nudged: the red is the
 	// base branch's, not the author's. nil = unknown (no deferral).
 	BaseBranchRed func(repo string, number int, head string) []string
+	// ForkGuard returns the failing checks on a fork PR head (repo
+	// "owner/name", number, head SHA) that refuse it only because it is from
+	// a fork, when EVERY failing check does —
+	// hgithub.PullRequest.ForkGuardChecks. Such a PR is parked for a
+	// maintainer at 085 with reason `fork-guard:<checks>`: neither its author
+	// nor an adoption can turn the check green (hivecommons/hive#14273).
+	// nil = unknown (no park).
+	ForkGuard func(repo string, number int, head string) []string
 }
 
 // ownershipRoutingPrefix is the lane routing label family. `agent/<lane>`
@@ -402,6 +410,7 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	obs.OpenedAt = pr.GetCreatedAt().Time
 	obs.SharedCIIncident = stageSharedCIIncident(policy, owner, repo, obs.Number, obs.HeadSHA)
 	obs.BaseRedChecks = stageBaseBranchRed(policy, owner, repo, obs.Number, obs.HeadSHA)
+	obs.ForkGuardChecks = stageForkGuard(policy, owner, repo, obs.Number, obs.HeadSHA)
 	c.stageTrackerOrShared().record(obs)
 }
 

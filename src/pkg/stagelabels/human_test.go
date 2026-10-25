@@ -391,3 +391,36 @@ func TestDecisionQuestionPlaceholderMention(t *testing.T) {
 		t.Fatalf("real login flagged: %+v", r)
 	}
 }
+
+// TestRouteHumanForkGuard: a red check that refuses the PR only because it
+// is from a fork is a maintainer's, not the author's: 085 naming the check,
+// never the fixing stage, even before the reviewer answers. Any other red
+// check still sends the PR back to its author (hivecommons/hive#14273).
+func TestRouteHumanForkGuard(t *testing.T) {
+	e := readyEvidence()
+	e.Cause = CauseDecision
+	e.AuthorKind = authorkind.Clanker
+	e.Verdict = VerdictPending
+	e.Checks = CheckSummary{Total: 5, Green: 4, Red: []string{"Canary"}, Known: true}
+	e.ForkGuard = []string{"Canary"}
+	r := RouteHuman(e)
+	const want = "check `Canary` refuses pull requests from a fork, so neither the author nor the hive can turn it green: a maintainer must push this branch to the repository (or approve the run as the repository requires)"
+	if r.Stage != NeedsDecision || r.LaneReason != "" || !containsString(r.Reasons, want) {
+		t.Fatalf("fork-guard route = %+v", r)
+	}
+	if containsString(r.Reasons, "the automerge lane will not merge this unattended") {
+		t.Fatalf("fork-guard route names the generic lane rule: %+v", r)
+	}
+	if got := DecisionComment(r); !strings.Contains(got, want) {
+		t.Fatalf("DecisionComment = %q", got)
+	}
+	e.Checks.Red = []string{"Canary", "unit"}
+	if r := RouteHuman(e); r.Stage != ReturnedToContributor || r.LaneReason != "check-failing:unit" || !containsString(r.Reasons, "red checks: unit") {
+		t.Fatalf("fork-guard + other red route = %+v", r)
+	}
+	e.Checks.Red = []string{"Canary"}
+	e.ForkGuard = nil
+	if r := RouteHuman(e); r.Stage != ReturnedToContributor || r.LaneReason != "check-failing:Canary" {
+		t.Fatalf("no fork-guard evidence route = %+v", r)
+	}
+}

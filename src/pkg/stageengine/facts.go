@@ -188,7 +188,11 @@ type PRFacts struct {
 	// base branch tip; non-empty only when every failing check is (the PR
 	// is then kept out of the repair stages with reason base-branch-red).
 	BaseRedChecks []string
-	Lanes         []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
+	// ForkGuardChecks are the head's failing checks that refuse the PR only
+	// because it is from a fork; non-empty only when every failing check
+	// does (the PR is then parked for a maintainer with reason fork-guard).
+	ForkGuardChecks []string
+	Lanes           []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
 	// Pass is what the sweep's own pass learned after the lanes spoke and
 	// before the stage was written: the inputs of ApplyStageLabels' pure
 	// post-steps (author-kind split, normalized-fixing guard, human route,

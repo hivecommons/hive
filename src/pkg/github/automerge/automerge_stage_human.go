@@ -103,6 +103,9 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		// says the hive repaired it and why it still will not merge it.
 		e.CauseReason = "the hive adopted this PR to repair CI, but " + e.CauseReason
 	}
+	if strings.HasPrefix(obs.Reason, stageReasonForkGuard) {
+		e.ForkGuard = append([]string(nil), obs.ForkGuardChecks...)
+	}
 	sentinel := c.sentinelLabelName()
 	if sentinel == "" {
 		sentinel = defaultSentinelLabel
@@ -157,6 +160,9 @@ func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bo
 		return []string{"A maintainer must review and merge this PR manually; a GitHub Approve review or `/hive approve` reply cannot override this lane's manual-merge rule."}, true
 	}
 	var actions []string
+	if len(e.ForkGuard) > 0 {
+		actions = append(actions, "A maintainer must push this branch to the repository (or approve the guarded run as the repository requires); the contributor cannot clear a fork guard by pushing to the fork, and the hive does not adopt it.")
+	}
 	if e.Verdict == stagelabels.VerdictRequiresHuman {
 		action := "After reading the verdict, a trusted merger can submit a GitHub **Approve** review for the current head and the lane clears the hold on its next pass; `/hive approve` replies on a PR are acknowledged but not consumed."
 		if obs.Lane == stageLaneContributor {
@@ -214,6 +220,9 @@ func decisionCause(reason string) string {
 		return "the PR edits CI workflow / action files, which the lane never merges unattended"
 	case reason == contributorLaneReasonTestsRemoved:
 		return "the PR removes tests, which the lane never merges unattended"
+	case strings.HasPrefix(reason, stageReasonForkGuard):
+		// RouteHuman names the fork-guard checks from the evidence.
+		return ""
 	case reason == contributorLaneReasonNoReviewer, reason == stageReasonVerdictRequiresHuman, reason == stageReasonDecisionRequested:
 		// RouteHuman renders the verdict itself from the evidence.
 		return ""

@@ -100,6 +100,7 @@ func TestHumanizeStageReason(t *testing.T) {
 		"some-new-token":                                "some new token",
 		"base-branch-red:docker (hive),docker (hub)":    "waiting for the base branch's CI to recover (docker (hive), docker (hub)) — not this PR's fault",
 		"shared-ci-incident:13208":                      "deferred to shared-CI incident #13208 — not this PR's fault",
+		"fork-guard:Canary":                             "check Canary refuses fork PRs — a maintainer must push this branch to the repository",
 	}
 	for in, want := range cases {
 		if got := humanizeStageReason(in); got != want {

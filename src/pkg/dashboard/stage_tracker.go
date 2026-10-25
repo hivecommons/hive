@@ -715,6 +715,9 @@ func humanizeStageReason(reason string) string {
 	if rest, ok := strings.CutPrefix(r, "base-branch-red:"); ok {
 		return "waiting for the base branch's CI to recover (" + strings.ReplaceAll(rest, ",", ", ") + ") — not this PR's fault"
 	}
+	if rest, ok := strings.CutPrefix(r, "fork-guard:"); ok {
+		return "check " + strings.ReplaceAll(rest, ",", ", ") + " refuses fork PRs — a maintainer must push this branch to the repository"
+	}
 	if rest, ok := strings.CutPrefix(r, "shared-ci-incident:"); ok {
 		return "deferred to shared-CI incident #" + rest + " — not this PR's fault"
 	}

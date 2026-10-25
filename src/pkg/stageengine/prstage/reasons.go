@@ -40,6 +40,7 @@ const (
 	StageLaneSelf                          = "self-authored"
 	StageLaneTrusted                       = "trusted-author"
 	StageReasonBaseBranchRed               = "base-branch-red:"
+	StageReasonForkGuard                   = "fork-guard:"
 	StageReasonOptionalCheckFailing        = "optional-check-failing:"
 	StageReasonSharedCIIncident            = "shared-ci-incident:"
 	TrustedBotLaneSkipReason               = "trusted-bot-lane"

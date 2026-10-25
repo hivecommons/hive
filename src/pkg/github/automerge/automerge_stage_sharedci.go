@@ -23,6 +23,13 @@ const stageReasonSharedCIIncident = prstage.StageReasonSharedCIIncident
 // base recovers and the head is still red.
 const stageReasonBaseBranchRed = prstage.StageReasonBaseBranchRed
 
+// stageReasonForkGuard prefixes the recorded reason when every failing check
+// on a fork PR head refuses it only because it is from a fork
+// (hgithub.PullRequest.ForkGuardChecks). The checks follow, comma-separated.
+// Only a maintainer can clear such a guard, so the PR is parked at 085 and
+// never nudged or adopted (hivecommons/hive#14273).
+const stageReasonForkGuard = prstage.StageReasonForkGuard
+
 // autoMergeReasonBehindBudgetExhausted is the self-authored sweep's reason
 // for a `behind` PR it did not update only because this tick's branch-update
 // budget (selfAuthoredSweepMaxBranchUpdates) was spent. The next tick retries
@@ -45,6 +52,15 @@ func stageBaseBranchRed(policy StageLabelPolicy, owner, repo string, number int,
 		return nil
 	}
 	return policy.BaseBranchRed(owner+"/"+repo, number, head)
+}
+
+// stageForkGuard asks the policy which failing checks on the PR's head
+// refuse it only because it is from a fork; empty unless all of them do.
+func stageForkGuard(policy StageLabelPolicy, owner, repo string, number int, head string) []string {
+	if policy.ForkGuard == nil || number <= 0 {
+		return nil
+	}
+	return policy.ForkGuard(owner+"/"+repo, number, head)
 }
 
 func baseBranchRedReason(checks []string) string { return stageengine.BaseBranchRedReason(checks) }

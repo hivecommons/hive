@@ -16,6 +16,10 @@ type stageSharedCIEntry struct {
 	// baseRed names the failing checks that are also red on the base branch
 	// tip; set only when every failing check is (PullRequest.AllFailuresBaseRed).
 	baseRed []string
+	// forkGuard names the failing checks that refuse the PR only because it
+	// is from a fork; set only when every failing check does
+	// (PullRequest.ForkGuardChecks).
+	forkGuard []string
 }
 
 // stageSharedCIIndex holds, per "repo#number", the open [shared-ci] incident
@@ -41,7 +45,8 @@ func publishStageSharedCIIncidents(actionable *github.ActionableResult) {
 				if pr.AllFailuresBaseRed() {
 					e.baseRed = append([]string(nil), pr.BaseRedChecks...)
 				}
-				if e.incident > 0 || len(e.baseRed) > 0 {
+				e.forkGuard = pr.ForkGuardChecks()
+				if e.incident > 0 || len(e.baseRed) > 0 || len(e.forkGuard) > 0 {
 					idx[stageSharedCIKey(pr.Repo, pr.Number)] = e
 				}
 			}
@@ -71,6 +76,17 @@ func stageBaseBranchRed(repo string, number int, head string) []string {
 		return nil
 	}
 	return append([]string(nil), e.baseRed...)
+}
+
+// stageForkGuard answers StageLabelPolicy.ForkGuard with the same repo/head
+// matching as stageSharedCIIncident: the failing checks that refuse the PR
+// only because it is from a fork, when every failing check does.
+func stageForkGuard(repo string, number int, head string) []string {
+	e, ok := stageSharedCILookup(repo, number, head)
+	if !ok || len(e.forkGuard) == 0 {
+		return nil
+	}
+	return append([]string(nil), e.forkGuard...)
 }
 
 func stageSharedCILookup(repo string, number int, head string) (stageSharedCIEntry, bool) {

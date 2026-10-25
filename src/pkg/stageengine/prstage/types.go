@@ -121,6 +121,10 @@ type Observation struct {
 	// base branch (StageLabelPolicy.BaseBranchRed); non-empty only when
 	// every failing check is.
 	BaseRedChecks []string
+	// ForkGuardChecks are the head's failing checks that refuse the PR only
+	// because it is from a fork (StageLabelPolicy.ForkGuard); non-empty only
+	// when every failing check does.
+	ForkGuardChecks []string
 }
 
 // Verdict is a lane's opinion about a PR's stage.
