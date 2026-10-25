@@ -26,8 +26,8 @@ hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:957-96
 **What is not central — three gaps.**
 
 1. *Two derivation engines.* Issues are staged by `IssueStageFor` /
-   `SyncIssueStageLabels` (`src/pkg/github/issue_stage_labels.go:337`,
-   `IssueStageInputs`, `src/pkg/github/issue_stage_labels.go:298`) from the enumeration bucket. PRs
+   `SyncIssueStageLabels` (`src/pkg/github/issue_stage_labels.go:205`,
+   `src/pkg/github/issue_stage_labels.go:337`) from the enumeration bucket. PRs
    are staged by the automerge engine: each lane calls `recordStage`
    (`src/pkg/github/automerge/automerge_stage_labels.go:365`), observations are
    sorted by `stageLanePrecedence` (self 3 > trusted 2 > contributor 1,
