@@ -194,7 +194,9 @@ func TestCIPollSweep(t *testing.T) {
 func TestRepeatedCIPollCommandLines(t *testing.T) {
 	pane := "hive-gh pr checks 7\ngh pr checks 8\ngh pr checks 9\nhive-gh pr checks 7\ngh pr checks 9\nhive-gh pr checks 7\ngh pr view 1"
 	got := repeatedCIPollCommandLines(pane, nil)
-	want := []string{"3× hive-gh pr checks 7", "2× gh pr checks 9"}
+	// ciPollCommands captures from the regex match, so the hive-gh wrapper
+	// prefix is not part of the recorded command line.
+	want := []string{"3× gh pr checks 7", "2× gh pr checks 9"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
