@@ -471,7 +471,9 @@ second consumer is real (candidates: Nous / Experiment Lab, Spektacular,
 Dibs, external optimizer and formal-verification lanes, enterprise agent
 services).
 
-*Status: the process boundary has shipped; nothing consumes it yet.*
+*Status: the process boundary has shipped and `cmd/hive` can consume it
+behind `CRUX_MODE=sidecar` (stage 3 of the sidecar plan below); in-process
+remains the default until stage 4–6 prove parity.*
 
 - **Shipped: `crux serve` and the API** (operator page
   [crux-serve.md](../crux-serve.md)). The transport question the plan left
@@ -503,15 +505,19 @@ services).
   is a client. The per-work-dir control socket of `crux run` stays as the
   single-work-dir convenience it was. `serve` itself ignores `CRUX_SERVER`
   so a stale address in a shell profile cannot stop a server from starting.
-- **Not done, in this order** (tracked in #14138). *Hive as a client*: `cmd/hive` and
-  `pkg/dashboard` still construct `*agent.Manager` in-process; switching
-  them to `api.Client` is a separate decision because it changes the
-  failure modes of the governor (a runtime that can be unreachable) and
-  needs the `Process` type below so the wire projection and the in-process
-  snapshot stop diverging. *`Process` as its own type* and *folding
-  `crux/types`* (Stage 2 leftovers above). *Tags* (`crux/vX.Y.Z`, above).
-  *Tenancy, quotas, the hub contract, the move to `hivecommons/crux`*:
-  when the second consumer exists.
+- **Shipped: every `Runtime` family over the API, and a client that is a
+  `Runtime`** (#14138 stage 3; #14243, #14245). `api.RuntimeRoutes` maps
+  each method to its route and a parity test in `crux/api/client` keeps
+  the interface and the table equal; `crux/runtime.New` returns the client
+  for `CRUX_MODE=sidecar`. Route table in
+  [crux-serve.md](../crux-serve.md#runtime-families-14138-stage-3).
+- **Not done, in this order** (tracked in #14138). *Hive as a client*: the
+  sidecar branch of `cmd/hive` exists (stage 3) but is not the default;
+  `pkg/dashboard` still takes the in-process manager, and the failure modes
+  of the governor against an unreachable runtime are stage 4. *`Process` as
+  its own type* and *folding `crux/types`* (Stage 2 leftovers above).
+  *Tags* (`crux/vX.Y.Z`, above). *Tenancy, quotas, the hub contract, the
+  move to `hivecommons/crux`*: when the second consumer exists.
 
 ### Hive as a client: the staged sidecar plan
 
@@ -590,8 +596,9 @@ running in-process. Like `ServeConfig` it is a process-level setting, not a
 `hive.yaml` key; the key lands with stage 4, when an operator first has
 supervision to configure. `crux/runtime.New(cfg, opts...)` returns the
 in-process `*agent.Manager` as `crux.Runtime` for `inprocess` (options:
-`WithDefinitions`, `WithLogger`, `WithProject`, `WithUIDMapPath`) and
-`ErrModeUnavailable` for `sidecar` until stage 3 ships the client. The
+`WithDefinitions`, `WithLogger`, `WithProject`, `WithUIDMapPath`) and,
+since stage 3, the `crux/api/client` runtime for `sidecar`
+(`ErrModeUnavailable` is now only for a mode the build does not know). The
 package is the one place outside `crux/agent` that names the manager on
 the construction path; `crux/cli` and `crux/cruxtest` keep their own
 constructors for now. `cmd/hive` holds the result as a local
@@ -609,7 +616,7 @@ methods are exactly the `rt.<Method>` selectors in each command body
 (following helpers such as `stream`). Stage 3 adds the other half, every
 verb and every `Runtime` method against an API route.
 
-**What stage 3 needs from the API** to serve `Runtime` in full, from the
+**What stage 3 needed from the API** to serve `Runtime` in full, from the
 table above: the `Resumer` family (handle capture, resume kick with the
 busy / gone / unsupported distinction as status codes); the `Authorizer`
 gates, which sit on the relay request path and so need a synchronous
@@ -619,14 +626,76 @@ observe/restart and the dashboard's `Credentials` family; `/v1/events` for
 the observer half of `Host`; and a `crux agy-turn` subcommand so the
 `hive agy-turn` subprocess does not need the runtime linked in.
 
+#### Stage 3: the endpoint families and the sidecar client
+
+*Status: shipped in five lane-merged PRs; in-process stays the default.*
+
+- **Endpoints** (#14243). `crux/api/runtime.go` holds the paths, wire
+  types and codes for every family; `crux/serve/families.go` serves them
+  against any `crux.Runtime`. Resume refusals are status codes (`409
+  resume_busy`, `410 resume_session_gone`, `422 resume_unsupported`);
+  `POST /v1/authorize` is synchronous and a transport error is a refusal;
+  `Restorer` is one `POST /v1/agents/{name}/seed` body with optional
+  fields; `Background` is the server's own loops. The watchdog's
+  per-agent reads became a `watchdog.Source` interface (`AgentNames`,
+  `Observe`, `LastProduction`, `SetConditions`) with its own routes, `501
+  not_supported` when the runtime has none. When the runtime is a
+  `crux.Host`, the server installs the eight observers and relays them on
+  `/v1/events` with typed `data` (`agent.kick_outcome`,
+  `agent.pause_transition`, `agent.relaunch`, `agent.pause_persist`,
+  `agent.prompt`, `agent.sandbox_audit`, `runtime.audit`,
+  `runtime.condition`). `cruxtest.Recorder` fakes it all.
+- **Client** (#14245). `crux/api/client.Runtime` implements the full
+  interface over `api.Client`; `crux/runtime.New` returns it for
+  `sidecar`, dialing `$CRUX_SERVER` with `$CRUX_TOKEN`. One reconnecting
+  `/v1/events` subscription feeds `SetKickObserver` and
+  `SetEventObserver`. `Authorizer` fails closed on any error;
+  `Background` is a no-op; `crux/runtime.NewWatchdogFleet` builds the
+  fleet over any `WatchdogSourcer`, so the rotation watchdog runs
+  unchanged against a sidecar.
+  **Parity test**: `TestParityInterfaceVersusRouteTable` reflects over
+  `crux.Runtime` and asserts every method is a key of `api.RuntimeRoutes`
+  and vice versa, so a method cannot be added without a route.
+- **Callback wiring** (#14246, #14248). `crux serve --hive-callback`
+  (`$CRUX_HIVE_SOCKET`, `$CRUX_HIVE_TOKEN`) dials the hive callback
+  endpoint and feeds the manager's seams from `hivecap.New` (text
+  scanner, condition reporter, PR creator, Linear resolver, sandbox push
+  minter); `Client.Status()` is watched into the
+  `hive_callback_unavailable` condition and reported under
+  `hive_callback` on `/v1/health`. On the hive side, `cmd/hive` in sidecar
+  mode wraps the client in `sidecarHost`: the observer setters are fed
+  from the event stream, the capability setters are inert because the
+  callback carries them, and the policy setters (`SetBuildInfo`,
+  `SetGatewayBackendChecker`, `SetSandboxConfig`, `SetSpanStarter`, …) are
+  inert with a one-time log until stage 4. `bootAgents` serves
+  `cruxhost.New(deps)` on `callback.Listen` before the rest of the wiring
+  and exits if it cannot bind. `Usage` (the inference sink) stays
+  `not_configured` until the proxy moves.
+- **`crux agy-turn`** (#14247). The manager types its own executable into
+  headless agy panes; under `crux serve` that is `crux`, so the subcommand
+  exists there too.
+
+**What stage 3 leaves for stage 4.** The policy setters above as routes
+or configuration (the `hive.yaml` key for the runtime, so an operator can
+set sandbox config, the gateway checker, explain-mode defaults, repo
+auto-merge, dead-session recovery ownership); `SetAgentMint`, `SetAppAuth`
+as callback-backed cache writers in `crux/agent` (today the sidecar's
+agents have no mint issuer); the proxy move and with it the `Accounting`,
+`Usage` and `Canary` seams fed from the callback; `SetSpanStarter`
+(tracing across the boundary); the governor's behaviour against an
+unreachable runtime (reconnect, degraded state, the
+`hive_callback_unavailable` / runtime-unreachable pair of conditions);
+`pkg/dashboard` on the client (stage 5); and a soak of a hosted hive in
+sidecar mode before the flip (stage 6).
+
 ## Credentials and hive-provided capabilities
 
 Status: **Stage 2 of the #14138 sidecar plan (decision A): done.** Design
 in #14197; the callback contract (`crux/api/callback`), the runtime-side
 adapters (`crux/hivecap`) and the hive-side mount (`pkg/cruxhost`) in
-#14222 (coverage 94.8% / 99.1% / 100%, default floors). Nothing is wired
-into `cmd/hive` or `crux serve` yet; that is stage 3 (see "What stage 3
-wires" below).
+#14222 (coverage 94.8% / 99.1% / 100%, default floors). Stage 3 wired both
+ends (see "What stage 3 wires" below): `crux serve --hive-callback` and the
+sidecar branch of `cmd/hive`'s `bootAgents`.
 
 The decision this section records: **the runtime never holds the GitHub
 App private key, or any other hive-owned credential.** When hive runs the
@@ -802,15 +871,20 @@ answers are already cheap and the per-call timeout
 
 ### What stage 3 wires
 
-- `cmd/hive`: `cruxhost.New(cruxhost.Deps{...})` over the values it already
-  constructs, served on `callback.Listen(callback.DefaultSocket())` next to
-  the runtime socket, in sidecar mode only.
-- `crux serve`: a `--hive-callback` address (or `$CRUX_HIVE_SOCKET`),
-  `callback.NewClient`, `hivecap.New(client)`, and the manager and proxy
-  setters fed from it instead of nil.
-- `AppTokenMinter` → a mint-callback-backed cache writer in `crux/agent`;
-  `AgentMintIssuer` and `UsageProber` follow the same route pattern when
-  the watchdog's rotation probe moves.
+- `cmd/hive` (#14248, done): `cruxhost.New(cruxhost.Deps{...})` over the
+  values it already constructs, served on
+  `callback.Listen(callback.DefaultSocket())` next to the runtime socket,
+  in sidecar mode only. `Usage` is left `not_configured` until the proxy
+  moves; the Linear resolver is read lazily because `bootSupervision`
+  builds it after `bootAgents`.
+- `crux serve` (#14246, done): a `--hive-callback` address (or
+  `$CRUX_HIVE_SOCKET`), `callback.NewClient`, `hivecap.New(client)`, and
+  the manager setters fed from it instead of nil (`toolapprove` text
+  scanner, condition reporter, PR creator, Linear resolver, sandbox push
+  minter over the token scoper). The proxy setters follow the proxy move.
+- Stage 4: `AppTokenMinter` → a mint-callback-backed cache writer in
+  `crux/agent`; `AgentMintIssuer` and `UsageProber` follow the same route
+  pattern when the watchdog's rotation probe moves.
 
 ## CLI
 
@@ -830,6 +904,7 @@ the ratchet boundary, so it adds no baseline row.
 | `kick` | `Observer.ResolveAgent`, `Kicker.SendKick` |
 | `stop` | `Observer.ResolveAgent`, `Lifecycle.Stop` |
 | `serve` | all of the above, over the API (Stage 3; [crux-serve.md](../crux-serve.md)) |
+| `agy-turn` | none: the pane-side `agent.RunAgyTurn` subprocess the manager spawns from its own executable (#14247) |
 
 With `--server ADDR` / `CRUX_SERVER` the first five go through `api.Client`
 to a `crux serve` instead; `serve` itself is only ever local.

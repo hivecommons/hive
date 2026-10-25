@@ -31,6 +31,7 @@ runtime and every agent must arrive as a definition on `POST /v1/agents`.
 | `--socket PATH`, `CRUX_SOCKET` | unix socket to serve on. Default `$XDG_RUNTIME_DIR/crux/crux.sock`, else `<tmp>/crux-<uid>/crux.sock`. The directory is created `0700`, the socket `0600`, and it is never reachable at that path with wider permissions (it is bound under a temporary name, chmod'ed, then renamed). A socket somebody already answers on is refused; a stale one is replaced. |
 | `--listen HOST:PORT` | also serve on TCP. **Refused without a token.** |
 | `--token T`, `CRUX_TOKEN` | bearer token every request must carry. When set it gates the socket too. |
+| `--hive-callback ADDR`, `CRUX_HIVE_SOCKET` (+ `CRUX_HIVE_TOKEN`) | dial hive's callback endpoint (`crux/api/callback`) for the capabilities hive owns — scoped GitHub tokens, PR creation, Linear credentials, text/canary scanners, conditions — and feed the runtime's seams from it instead of leaving them nil. Health reports it under `hive_callback`; an unreachable endpoint raises the `hive_callback_unavailable` condition. (#14246) |
 
 `serve` does not use the per-work-dir control socket that a foreground
 `crux run` serves (`<workdir>/crux.sock`); the two are different things, see
@@ -66,7 +67,49 @@ All routes are under `/v1`. Bodies and responses are JSON; errors are
 | `GET /v1/agents/{name}/logs?follow=1` | | `GetBufferOutput`, polled | `text/event-stream` of `agent.log` records `{"agent","lines":[…]}` |
 | `POST /v1/agents/{name}/kick` | `{"message":…}` | `Kicker.SendKick` | `{"agent","process"}` |
 | `POST /v1/agents/{name}/stop` | | `Lifecycle.Stop` | `{"agent","process"}` |
-| `GET /v1/events` | | watcher + `Kicker.SetKickObserver` | `text/event-stream` of `Event` records |
+| `GET /v1/events` | | watcher + `Kicker.SetKickObserver` + the `crux.Host` observers | `text/event-stream` of `Event` records |
+
+### Runtime families (#14138 stage 3)
+
+Every method of `crux.Runtime` has a route; `api.RuntimeRoutes` is the
+method → route table and `crux/api/client`'s parity test fails when a method
+is added to the interface without an entry. The sidecar client
+(`crux/api/client.Runtime`, selected by `CRUX_MODE=sidecar`) is written
+against this table. Routes marked ⚑ are new in stage 3; the rest predate
+it or are the CLI routes above under another method.
+
+| Family | Route | Runtime method(s) | Notes |
+|---|---|---|---|
+| Lifecycle | `POST /v1/agents/{name}/start` ⚑ | `Start` | |
+| | `POST /v1/agents/{name}/restart` ⚑ | `Restart`, `RestartWithBootstrap` (`{"bootstrap":…}`) | |
+| | `POST /v1/agents/{name}/pause` ⚑ | `Pause`, `PauseBy`, `Supervisor.PauseByCause` | body selects the variant |
+| | `POST /v1/agents/{name}/resume` ⚑ | `Resume` | |
+| | `DELETE /v1/agents/{name}/restart-count` ⚑ | `ResetRestartCount` | |
+| | `GET /v1/agents/{name}` | `IsPaused`, `Observer.ResolveAgent` | |
+| Observer | `GET /v1/snapshots`, `GET /v1/agents/{name}/snapshot` ⚑ | `AllStatuses`, `GetStatus`, `GetStatusFast` | full `crux.Process` snapshot, not the wire projection |
+| Kicker | `POST /v1/agents/{name}/kick/validate` ⚑ | `ValidateKick` | `409 kick_refused` |
+| | `GET /v1/agents/{name}/kick` ⚑ | `KickDispatchState` | |
+| | `GET /v1/agents/{name}/kicklogs[/{id}]` ⚑ | `ListKickLogs`, `ReadKickLog` | |
+| Definitions | `POST /v1/definitions`, `POST /v1/definitions/reconcile` ⚑ | `AddAgent`, `ReconcileAgents` | |
+| | `DELETE /v1/agents/{name}`, `PUT /v1/agents/{name}/definition` ⚑ | `RemoveAgent`, `UpdateConfig` | |
+| | `PUT /v1/agents/{name}/overrides`, `PUT`/`DELETE /v1/agents/{name}/pins/{kind}` ⚑ | `SetModelOverride`, `SetBackendOverride`, `PinCLI`, `PinModel`, `UnpinCLI`, `UnpinModel` | |
+| | `POST /v1/fleet/modes/{clear,sync}`, `POST /v1/fleet/inference/refresh` ⚑ | `ClearModeOverrides`, `SyncModeFiles`, `RefreshInferenceRoutes` | |
+| Fleet | `GET /v1/fleet` ⚑ | `GetACMMLevel`, `SharedDevUID`, `Supervisor.ConsentWedgedAgents`, `CountAgentsWithModel` | one read |
+| | `GET`/`PUT /v1/fleet/breaker`, `POST /v1/fleet/breaker/{engage,release}` ⚑ | `BreakerState`, `Restorer.RestoreBreaker`, `EngageBreaker`, `ReleaseBreaker` | |
+| | `PUT /v1/fleet/acmm`, `POST /v1/fleet/relaunch-bob` ⚑ | `SetACMMLevel`, `RelaunchBobAgentsAwaitingKey` | |
+| Credentials | `POST /v1/agents/{name}/login-code` ⚑ | `SubmitLoginCode` | |
+| | `GET`/`PUT /v1/credentials/copilot` ⚑ | `CopilotToken`, `CopilotTokenSource`, `SetCopilotToken`, `ActivateCopilotToken` | |
+| | `GET /v1/credentials/claude`, `POST /v1/credentials/claude/reload` ⚑ | `ClaudeCredentialCandidatePaths`, `ReloadClaudeToken` | |
+| Resumer | `GET /v1/agents/{name}/session` ⚑ | `ResumeHandle`, `SessionID`, `SessionMissing` | |
+| | `POST /v1/agents/{name}/session/kick` ⚑ | `SendResumeKick` | `409 resume_busy`, `410 resume_session_gone`, `422 resume_unsupported` map back to the `crux.ErrResume*` sentinels |
+| Supervisor | `GET /v1/agents/{name}/supervision` ⚑ | `GovernorMayStart`, `AgentCredentialRefreshable`, `AgentHasValidCredential`, `AgentCapabilities`, `EffectiveBackend`, `InvocationMetadata`, `RestartTelemetry`, `StartFailureState`, `ProviderErrorBackoffRemaining`, `CrashOOMSuspected`, `AgentAuthAvailable` | one read |
+| | `POST /v1/fleet/{startup-queued,restart-crashed,tokens/refresh,kicklogs/archive}` ⚑ | `MarkStartupLaunchQueued`, `CheckAndRestartCrashedAgents`, `RefreshAgentTokens`, `ArchiveAllKickLogs` | |
+| | `POST /v1/agents/{name}/tokens/refresh`, `POST /v1/agents/{name}/nudge` ⚑ | `RefreshAgentTokenFor`, `SendGitHubAPIBudgetNudge` | |
+| | `GET /v1/backends/{backend}/auth`, `POST /v1/audit`, `GET /v1/trajectory` ⚑ | `BackendAuthAvailable`, `RecordAudit`, `TrajectoryAgents` | |
+| Restorer | `POST /v1/agents/{name}/seed` ⚑ | `SeedPauseState`, `SeedRestartTelemetry`, `SeedTurnLoss`, `SeedLastKick`, `SeedKickHistory` | one body, each field optional |
+| Background | `GET /v1/health` | `StartAgentTokenRefresh`, `StartCredentialWatchdog`, `StartCopilotSessionRefresh`, `StartTranscriptActivityRefresh` | the loops run server-side; the client's calls are no-ops |
+| Authorizer | `POST /v1/authorize` ⚑ | `AuthorizePROpen`, `AuthorizePushBranch`, `AuthorizeIssueOpen`, `AuthorizeMerge`, `AuthorizeReviewRequest` | synchronous; `{"action","agent","file_uid","kind","repo"}`; `403 forbidden` carries the refusal, any transport error is a refusal (fail closed) |
+| Watchdog | `GET /v1/watchdog/agents`, `GET /v1/agents/{name}/watchdog`, `PUT /v1/agents/{name}/watchdog/conditions` ⚑ | `watchdog.Source` (`AgentNames`, `Observe`, `LastProduction`, `SetConditions`) | `501 not_supported` when the runtime has no watchdog source; `crux/runtime.NewWatchdogFleet` builds the fleet over these in sidecar mode |
 
 `Process` is the wire projection of `crux.Process`: `name`, `id`, `state`,
 `backend`, `model`, `pid`, `paused` (+ reason, trigger, by), `started_at`,
@@ -94,13 +137,14 @@ does not kill what it started.
 
 `GET /v1/events` is a server-sent-event stream; each record is
 `event: <type>` then `data: <Event JSON>`, with `: keep-alive` comments
-every 15 s. `Event` is `{"time","type","agent","state","detail"}`.
+every 15 s. `Event` is `{"time","type","agent","state","detail","data"}`.
 
 | Type | When |
 |---|---|
 | `agent.started`, `agent.stopped`, `agent.kicked` | the API performed the action |
 | `agent.state` | the server's watcher (polls `AllStatuses` every second) saw an agent change state for any reason: crash, restart, pause; `state` is the new state, `detail` the last restart reason when there is one |
 | `agent.kick` | the runtime's kick observer fired (`Kicker.SetKickObserver`); `detail` is the observer's event name |
+| `agent.kick_outcome`, `agent.pause_transition`, `agent.relaunch`, `agent.pause_persist`, `agent.prompt`, `agent.sandbox_audit`, `runtime.audit`, `runtime.condition` | the `crux.Host` observers, relayed when the runtime is a Host; `data` carries the typed payload (`api.KickOutcome`, `api.PauseTransition`, …). A sidecar hive demuxes these into the observers its boot sequence installs (`cmd/hive`'s `sidecarHost`) |
 
 A subscriber that stops reading is dropped after 64 buffered events so one
 slow client cannot stall the others.
