@@ -1,10 +1,10 @@
 package proxy
 
 import (
-	"bytes"
-	"io"
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
