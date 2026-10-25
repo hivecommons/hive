@@ -564,6 +564,7 @@ type Manager struct {
 	uidMap                   *UIDMap
 	uidMapPath               string
 	appAuth                  AppTokenMinter
+	appNotInstalledWarned    sync.Map        // agent name -> struct{}: not-installed mint failure already logged
 	agentMint                AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
 	// bobAPIKeyResolver resolves the IBM bobshell API key at LAUNCH time (not

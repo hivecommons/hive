@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -941,7 +942,15 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 		return
 	}
 	tier := TokenTierForRole(m.agentMode(agent), agent.Config.Role)
-	if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
+	if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil && errors.Is(err, crux.ErrGitHubAppNotInstalled) {
+		// Static misconfiguration: every tick would fail identically, so log
+		// once per agent until a mint succeeds instead of every supervisor tick.
+		if _, seen := m.appNotInstalledWarned.LoadOrStore(agent.Name, struct{}{}); !seen {
+			m.logger.Warn("github app installation id is unset — per-agent scoped token NOT delivered, this agent's GitHub writes (gh + git push) will FAIL; set github.installation_id or install the App on the hive's org so discovery resolves it",
+				"agent", agent.Name, "tier", tier, "error", err)
+		}
+		m.observeCondition(crux.ClassGitHubAppNotInstalled, agent.Name, "github app installation id is unset: "+err.Error(), "")
+	} else if err != nil {
 		// Be precise about the blast radius. Since audit H3 the shared-cache
 		// fallback is GONE: gh-wrapper.sh and git-credential-hive.sh no
 		// longer fall back to /var/run/hive-metrics/gh-app-token.cache (the
@@ -954,6 +963,8 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 			"agent", agent.Name, "tier", tier, "error", err)
 		m.observeCondition(crux.ClassGitHubAppTokenMintFailed, agent.Name, "github app token mint failed: "+err.Error(), "")
 	} else {
+		m.appNotInstalledWarned.Delete(agent.Name)
+		m.clearCondition(crux.ClassGitHubAppNotInstalled, agent.Name)
 		m.clearCondition(crux.ClassGitHubAppTokenMintFailed, agent.Name)
 	}
 	// Additionally issue an opt-in short-lived mint token (no-op when the mint

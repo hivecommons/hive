@@ -354,6 +354,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassBeadFactIngestFailed, message: "failed to ingest bead fact"},
 		{class: ClassSelfReportClearedFailed, message: "fleet report: cleared comment failed"},
 		{class: ClassGitHubAppRepoNotCovered, message: "github app recheck: installation does not cover every configured repo"},
+		{class: ClassGitHubAppNotInstalled, message: "github app installation id is unset — per-agent scoped token NOT delivered"},
 		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassSHAPollCommitMsgUnavail, message: "SHA poll: commit message fetch non-200"},

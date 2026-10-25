@@ -10,6 +10,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 const (
@@ -89,7 +91,7 @@ var ErrNoInstallationForOrg = fmt.Errorf("no installation of this app covers the
 // installation ID at all (installation_id 0): the App is not installed on the
 // hive's org, or discovery never found it. No GitHub request is made. Like
 // ErrNoInstallationForOrg it is not transient; the App has to be installed.
-var ErrAppNotInstalled = fmt.Errorf("github app has no installation for this hive's org")
+var ErrAppNotInstalled = crux.ErrGitHubAppNotInstalled
 
 // DiscoverInstallationID resolves the installation ID of this App on org.
 //

@@ -1,14 +1,17 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -19,12 +22,16 @@ import (
 type fakeMinter struct {
 	calls    int
 	fail     bool
+	err      error
 	lastTier string
 }
 
 func (f *fakeMinter) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
 	f.calls++
 	f.lastTier = tier
+	if f.err != nil {
+		return f.err
+	}
 	if f.fail {
 		return context.Canceled
 	}
@@ -492,5 +499,38 @@ func TestAgentEnvPairs_OptionalEnvVars(t *testing.T) {
 		if !found[k] {
 			t.Errorf("%s should be present when env var set", k)
 		}
+	}
+}
+
+func TestMintAgentTokenUnlocked_AppNotInstalledWarnsOnce(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	m := NewManager(map[string]config.AgentConfig{"cxa": {Backend: "claude"}}, logger, ProjectContext{})
+	fm := &fakeMinter{err: fmt.Errorf("minting scoped token for cxa: %w", crux.ErrGitHubAppNotInstalled)}
+	m.SetAppAuth(fm)
+	rec := recordConditions(t, m)
+	m.mu.Lock()
+	agent := m.agents["cxa"]
+	agent.UID = 2001
+	m.mu.Unlock()
+
+	m.mintAgentTokenUnlocked(context.Background(), agent)
+	m.mintAgentTokenUnlocked(context.Background(), agent)
+
+	if got := strings.Count(buf.String(), "github app installation id is unset"); got != 1 {
+		t.Errorf("unset-installation warning logged %d times, want 1", got)
+	}
+	if got := len(rec.observations(crux.ClassGitHubAppNotInstalled)); got != 2 {
+		t.Errorf("not-installed observations = %d, want 2", got)
+	}
+	if got := len(rec.observations(crux.ClassGitHubAppTokenMintFailed)); got != 0 {
+		t.Errorf("generic mint-failed observations = %d, want 0", got)
+	}
+
+	// A successful mint re-arms the warning and clears the condition.
+	fm.err = nil
+	m.mintAgentTokenUnlocked(context.Background(), agent)
+	if len(rec.clears(crux.ClassGitHubAppNotInstalled)) != 1 {
+		t.Error("successful mint did not clear the not-installed condition")
 	}
 }
