@@ -12,23 +12,13 @@ import (
 	"github.com/hivecommons/hive/crux/claude"
 )
 
-// AppTokenMinter is implemented by the host's GitHub App auth (pkg/github.AppAuth)
-// to mint per-agent scoped tokens.
-type AppTokenMinter interface {
-	WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error
-}
-
-// AgentMintIssuer is implemented by mint.AgentMinter. It is the OPT-IN,
-// ADDITIONAL short-lived-credential path: when the mint is enabled it issues a
-// scoped OIDC/JWT for an agent (subject=agent, scopes from its tier) that the
-// agent can present ALONGSIDE its GitHub App token to a WIF broker. It never
-// replaces WriteAgentToken. Enabled() reports false (and MintAgentToken returns
-// "" with no error) when the mint is off, so wiring stays a strict no-op by
-// default.
-type AgentMintIssuer interface {
-	Enabled() bool
-	MintAgentToken(agentName, tier string) (string, error)
-}
+// AppTokenMinter and AgentMintIssuer are the host-provided credential
+// capabilities, defined in the crux root (crux.AppTokenMinter,
+// crux.AgentMintIssuer) so a host names them without importing this package.
+type (
+	AppTokenMinter  = crux.AppTokenMinter
+	AgentMintIssuer = crux.AgentMintIssuer
+)
 
 // ReloadClaudeToken re-reads the Claude credentials file and updates the
 // cached token. Called by the dashboard after a successful OAuth login.
@@ -309,19 +299,9 @@ func (m *Manager) bobAPIKey() string {
 	return (*fnp)()
 }
 
-// LinearCredential is what an agent authenticates to api.linear.app with.
-// Exactly one of the two is expected to be set: AccessToken is the installed
-// Linear agent app's OAuth token (sent as `Authorization: Bearer …`, so writes
-// are authored by the app identity — the parity of GitHub's App bot); APIKey
-// is the work-source personal API key (sent bare as `Authorization: …`), the
-// fallback when no workspace is connected. Empty means "inject nothing".
-type LinearCredential struct {
-	AccessToken string
-	APIKey      string
-}
-
-// Empty reports whether no credential is available.
-func (c LinearCredential) Empty() bool { return c.AccessToken == "" && c.APIKey == "" }
+// LinearCredential is crux.LinearCredential, the host-provided Linear
+// write credential.
+type LinearCredential = crux.LinearCredential
 
 // SetLinearCredentialResolver injects the resolver for the Linear write
 // credential. Called from main.go with a closure over the live Linear agent

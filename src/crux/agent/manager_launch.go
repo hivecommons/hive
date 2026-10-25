@@ -1196,28 +1196,10 @@ func claudeEffortFlag(effort string) string {
 	return fmt.Sprintf(" --effort %s", effort)
 }
 
-// agyLaunchEffort returns the --effort agy is launched with: the configured
-// reasoning effort when it is one agy accepts (low/medium/high), else the
-// effort encoded in agy's model id suffix, else agyDefaultEffort. The rejection
-// mirrors the contributor relay's rule — agy refuses efforts from codex's wider
-// vocabulary (e.g. xhigh), and launching with one would make agy ignore the
-// model outright, the exact failure --effort exists to prevent.
+// agyLaunchEffort is config.AgyLaunchEffort: the --effort agy is launched
+// with for a model and configured effort.
 func agyLaunchEffort(model, effort string) string {
-	for _, v := range config.ReasoningEffortsByBackend["agy"] {
-		if v == effort {
-			return effort
-		}
-	}
-	return agyEffortFromModel(model)
-}
-
-func agyEffortFromModel(model string) string {
-	for _, v := range config.ReasoningEffortsByBackend["agy"] {
-		if strings.HasSuffix(model, "-"+v) {
-			return v
-		}
-	}
-	return agyDefaultEffort
+	return config.AgyLaunchEffort(model, effort)
 }
 
 // connectionMCPFlags builds MCP-related launch flags from connection configs.

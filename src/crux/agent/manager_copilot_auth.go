@@ -2,6 +2,8 @@ package agent
 
 import (
 	"time"
+
+	"github.com/hivecommons/hive/crux/config"
 )
 
 const (
@@ -12,7 +14,7 @@ const (
 	// otherwise ignores the model entirely; "low" is the effort agy defaults
 	// to on its own, so this makes the configured model take effect without
 	// changing behaviour.
-	agyDefaultEffort = "low"
+	agyDefaultEffort = config.AgyDefaultEffort
 
 	tokenRestartCooldownSec = 60 // minimum seconds between token-triggered restarts per agent
 	// rateLimitRestartCooldownSec paces relaunches of an agent parked on the

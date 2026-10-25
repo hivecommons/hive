@@ -489,6 +489,105 @@ services).
   *Tenancy, quotas, the hub contract, the move to `hivecommons/crux`*:
   when the second consumer exists.
 
+### Hive as a client: the staged sidecar plan
+
+Decided in #14138 ("/hive decision A"): `cmd/hive` consumes its own
+`crux serve` API, in six stages so that no stage breaks a hosted hive and
+in-process stays the default until parity is proven. The stages are (1) a
+`Runtime` seam with two implementations selected by config, (2) the
+credential direction, recorded before coding, (3) the endpoint families
+the API lacks with a parity test, (4) failure semantics and supervision,
+(5) the dashboard through the client, (6) the flip. The inbound ratchet
+shrinks only when a stage flips; the outbound ratchet stays empty
+throughout; no stage merges without its parity test green.
+
+#### Stage 1: the Runtime seam
+
+*Status: the seam is in; `cmd/hive` is next.* The inventory below is what
+the host calls on the runtime today, by family. Each family is an
+interface in the `crux` root; `crux.Runtime` composes them, so a consumer
+depends on the narrowest one that serves it. `*agent.Manager` satisfies
+`Runtime` (asserted in `crux/agent`); dashboard and hub were already on
+the six dashboard families and gained nothing new to call.
+
+| Family | Methods | Consumer today |
+|---|---|---|
+| `Lifecycle` | `Start`, `Stop`, `Restart`, `RestartWithBootstrap`, `Pause`, `PauseBy`, `Resume`, `IsPaused`, `ResetRestartCount` | dashboard, cmd/hive |
+| `Observer` | `GetStatus`, `GetStatusFast`, `AllStatuses`, `ResolveAgent`, `GetOutput`, `GetBufferOutput`, `CaptureFullLog`, `FullLogHeader` | dashboard, cmd/hive, `crux` CLI |
+| `Kicker` | `SendKick`, `SendKickAsync`, `ValidateKick`, `KickDispatchState`, `ListKickLogs`, `ReadKickLog`, `SetKickObserver` | dashboard, cmd/hive, CLI |
+| `Definitions` | `AddAgent`, `RemoveAgent`, `UpdateConfig`, `ReconcileAgents`, `SetModelOverride`, `SetBackendOverride`, `PinCLI`, `PinModel`, `UnpinCLI`, `UnpinModel`, `ClearModeOverrides`, `SyncModeFiles`, `RefreshInferenceRoutes` | dashboard, cmd/hive |
+| `Fleet` | `BreakerState`, `EngageBreaker`, `ReleaseBreaker`, `SetACMMLevel`, `GetACMMLevel`, `RelaunchBobAgentsAwaitingKey`, `SharedDevUID` | dashboard, cmd/hive |
+| `Credentials` | `SubmitLoginCode`, `CopilotToken`, `CopilotTokenSource`, `SetCopilotToken`, `ActivateCopilotToken`, `ReloadClaudeToken`, `ClaudeCredentialCandidatePaths` | dashboard |
+| `Resumer` (new) | `ResumeHandle`, `SendResumeKick`, `SessionID`, `SessionMissing`; sentinels `ErrResumeBusy`, `ErrResumeSessionGone`, `ErrResumeUnsupported`; value `ResumeHandle` | cmd/hive (PR follow-up) |
+| `Supervisor` (new) | `GovernorMayStart`, `MarkStartupLaunchQueued`, `CheckAndRestartCrashedAgents`, `ConsentWedgedAgents`, `RefreshAgentTokens`, `AgentCredentialRefreshable`, `AgentCapabilities`, `EffectiveBackend`, `InvocationMetadata`, `RestartTelemetry`, `StartFailureState`, `ProviderErrorBackoffRemaining`, `PauseByCause`, `ArchiveAllKickLogs` | cmd/hive (governor, heartbeat, rotation) |
+| `Restorer` (new) | `SeedPauseState`, `SeedRestartTelemetry`, `SeedTurnLoss`, `SeedLastKick`, `SeedKickHistory`, `RestoreBreaker` | cmd/hive (snapshot restore) |
+| `Background` (new) | `StartAgentTokenRefresh`, `StartCredentialWatchdog`, `StartCopilotSessionRefresh`, `StartTranscriptActivityRefresh` | cmd/hive (boot) |
+
+Two things `cmd/hive` calls are **not** runtime-instance methods and are
+re-exported by the new `crux/runtime` package rather than put on the
+interface: `RunAgyTurn` (the `hive agy-turn` subprocess; a sidecar runs it
+as a `crux` subcommand) and `StartPermissionsWatcher` (a process-lifetime
+loop over the agent home directories). `WatchdogFleet`, which reads the
+manager's agent table under its lock, is built by
+`crux/runtime.NewWatchdogFleet(rt, hooks)` and returns `ErrNotInProcess`
+for any other implementation; its API shape is a stage 3 endpoint family.
+
+**Hive-provided capabilities, deliberately not in `Runtime`.** The
+runtime is handed these; it does not implement them, and a sidecar
+runtime will receive them over a hive-side callback endpoint (stage 2
+decides the shape) or publish them as API events (stage 3). The *types*
+moved to the `crux` root so a host names them without importing
+`crux/agent` (`crux/agent` aliases each): `AppTokenMinter`,
+`AgentMintIssuer`, `LinearCredential`, `PRCreator`, `SpanStarter`. The
+*installation* of them is `crux.Host`, a separate interface only the
+in-process implementation satisfies (`crux/runtime.HostOf`), grouped by
+what replaces it: credential capabilities (`SetAppAuth`, `SetAgentMint`,
+`SetLinearCredentialResolver`, `SetBobAPIKeyResolver`,
+`SetBobKeySourceResolver`, `SetSandboxPushMinter`, `SetSandboxPRClient`)
+→ callback endpoint; launch-time resolvers (`SetBuildInfo`,
+`SetGatewayBackendChecker`, `SetExplainModeDefaultResolver`,
+`SetRepoAutoMergeEnabledResolver`, `SetKickLogSourceResolver`,
+`SetInferenceCallbacks`, `SetSandboxConfig`, `SetSandboxMutationBoundary`,
+`SetDeadSessionRecoveryOwner`) → definition fields or a callback;
+observers (`SetKickOutcomeObserver`, `SetPauseTransitionObserver`,
+`SetRelaunchObserver`, `SetPersistPauseCallback`,
+`SetRecordPromptCallback`, `SetSandboxAuditCallback`, `SetAuditSink`,
+`SetConditionReporter`, `SetSpanStarter`) → `/v1/events`.
+`ResolveReasoningEffort` turned out to be pure (it reads only
+`config.ReasoningEffortsByBackend`), so it moved to `crux/config` with
+`AgyLaunchEffort` and `AgyDefaultEffort`; `crux/agent` forwards to it.
+
+**Selection by config.** `crux/config.Mode` is `inprocess` (default) or
+`sidecar`; `config.RuntimeConfig{Mode, Server, Token}` is read from
+`CRUX_MODE`, `CRUX_SERVER`, `CRUX_TOKEN` by `RuntimeConfigFromEnv` and
+validated at construction, so a typo fails boot rather than silently
+running in-process. Like `ServeConfig` it is a process-level setting, not a
+`hive.yaml` key; the key lands with stage 4, when an operator first has
+supervision to configure. `crux/runtime.New(cfg, opts...)` returns the
+in-process `*agent.Manager` as `crux.Runtime` for `inprocess` (options:
+`WithDefinitions`, `WithLogger`, `WithProject`, `WithUIDMapPath`) and
+`ErrModeUnavailable` for `sidecar` until stage 3 ships the client. The
+package is the one place outside `crux/agent` that names the manager on
+the construction path; `crux/cli` and `crux/cruxtest` keep their own
+constructors for now.
+
+**Parity test.** `crux/cli.RuntimeVerbs` maps each CLI verb (`run`,
+`ps`, `logs`, `kick`, `stop`) to the `Runtime` methods it calls;
+`crux/cli`'s tests assert every listed method exists on `crux.Runtime`,
+every verb the dispatcher routes to a runtime is listed, and the listed
+methods are exactly the `rt.<Method>` selectors in each command body
+(following helpers such as `stream`). Stage 3 adds the other half, every
+verb and every `Runtime` method against an API route.
+
+**What stage 3 needs from the API** to serve `Runtime` in full, from the
+table above: the `Resumer` family (handle capture, resume kick with the
+busy / gone / unsupported distinction as status codes); the `Supervisor`
+reads and actions; `Restorer` as a bulk seed on connect; `Background` as
+server-side loops (a no-op for the client); the `Fleet` watchdog
+observe/restart and the dashboard's `Credentials` family; `/v1/events` for
+the observer half of `Host`; and a `crux agy-turn` subcommand so the
+`hive agy-turn` subprocess does not need the runtime linked in.
+
 ## CLI
 
 The Stage 2 plan called for a `crux` binary; it shipped in Stage 1 instead

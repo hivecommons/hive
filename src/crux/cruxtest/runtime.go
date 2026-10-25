@@ -18,6 +18,9 @@ import (
 // rather than widening crux.Runtime with test-only setup methods.
 type Runtime interface {
 	crux.Runtime
+	// Host is the in-process wiring surface cmd/hive installs after
+	// construction; consumer tests that exercise a boot path need it too.
+	crux.Host
 	crux.ActivityObserver
 	RecordKickDispatchForTest(crux.KickDispatch)
 	SetKickLogDir(dir string)

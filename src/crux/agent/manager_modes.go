@@ -353,46 +353,10 @@ func (m *Manager) InvocationMetadata(agentName string) (backend, model, effort s
 	return backend, model, ResolveReasoningEffort(backend, model, agent.Config.ReasoningEffort), true
 }
 
-// ResolveReasoningEffort reports the reasoning effort the hive actually launches
-// a given backend/model pair with, given the agent's configured reasoning_effort.
-// Exported because the attribution trail is
-// resolved in TWO places — Manager.InvocationMetadata above for a running agent,
-// and cmd/hive's fallback that reads straight from config when the Manager does
-// not know the agent — and both must give the same answer.
-//
-// Before this existed the fallback carried its own hardcoded "low", so changing
-// agyDefaultEffort here would have left cmd/hive silently stamping PRs with an
-// effort agy was no longer being launched with. An attribution trail that
-// misreports is worse than one that says nothing.
-//
-// The rules mirror the launch path exactly:
-//   - agy REQUIRES --effort whenever --model is given, so with a model it runs
-//     at agyLaunchEffort(model, configured) and with no model at no effort at all.
-//   - codex is launched with `-c model_reasoning_effort` only when an effort
-//     is configured; unset means codex's own default, which the hive does not
-//     resolve, so the honest answer is the configured value verbatim.
-//   - claude is launched with `--effort` only when the configured effort is
-//     one Claude Code accepts (claudeEffortFlag drops anything else), so the
-//     answer is the configured value when valid and "" otherwise — never a
-//     value the CLI was not actually given (hivecommons/hive#8377).
-//   - omp is launched with `--thinking` only when an effort is configured;
-//     unset means omp's per-model default, so report the configured value.
-//   - every other backend takes its effort from its own config, which the
-//     hive does not resolve here, so the honest answer is "".
+// ResolveReasoningEffort is config.ResolveReasoningEffort: the effort the
+// launch path actually passes for a backend/model pair, shared with
+// InvocationMetadata above and cmd/hive's config-only fallback so the
+// attribution trail never disagrees with the launch.
 func ResolveReasoningEffort(backend, model, configured string) string {
-	switch backend {
-	case "agy":
-		if model != "" {
-			return agyLaunchEffort(model, configured)
-		}
-		return ""
-	case codexBackend, "omp":
-		return configured
-	case config.ClaudeBackend:
-		if config.ValidEffort(config.ClaudeBackend, configured) {
-			return configured
-		}
-		return ""
-	}
-	return ""
+	return config.ResolveReasoningEffort(backend, model, configured)
 }

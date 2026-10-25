@@ -6,12 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // Backend-native resume handles (hivecommons/hive#9606).
@@ -59,26 +60,9 @@ const (
 	gooseSessionIDKey = `"session.id":"`
 )
 
-// ResumeHandle names a backend-native conversation that can be resumed after
-// the authoring tmux pane is gone.
-type ResumeHandle struct {
-	// Backend is the CLI the handle belongs to ("claude", "copilot", ...).
-	Backend string
-	// SessionID is the backend's own conversation id.
-	SessionID string
-	// Transcript is the file the backend persists that conversation in, so a
-	// fresh session can read the reasoning even if resume itself fails. For
-	// goose, whose conversations live in a SQLite store rather than a file
-	// named by id, it is the per-launch CLI log that names the id instead.
-	Transcript string
-	// Command resumes the conversation from a shell in the agent's pane.
-	Command string
-	// LastActive is the transcript's modification time when it was captured.
-	LastActive time.Time
-	// CapturedAt is when the hive captured the handle (PR-open time); the
-	// staleness clock runs from here.
-	CapturedAt time.Time
-}
+// ResumeHandle is crux.ResumeHandle: a backend-native conversation that
+// can be resumed after the authoring tmux pane is gone.
+type ResumeHandle = crux.ResumeHandle
 
 // backendResumeLayout describes where one backend keeps its transcripts and
 // how to turn a path into a resume id and command.
@@ -577,21 +561,4 @@ func (m *Manager) ResumeHandle(name string) (ResumeHandle, bool) {
 	}
 	m.mu.RUnlock()
 	return CaptureResumeHandleIn(name, uid, backend, workDir, time.Now())
-}
-
-// String renders a handle for logs.
-func (h ResumeHandle) String() string {
-	if h.SessionID == "" {
-		return ""
-	}
-	return fmt.Sprintf("%s session %s (%s)", h.Backend, h.SessionID, h.Transcript)
-}
-
-// TranscriptExists reports whether the captured transcript is still on disk.
-func (h ResumeHandle) TranscriptExists() bool {
-	if h.Transcript == "" {
-		return false
-	}
-	_, err := os.Stat(h.Transcript)
-	return err == nil
 }
