@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -115,6 +116,26 @@ func TestRecordViolation_Basic(t *testing.T) {
 	all := p.Violations()
 	if len(all) != 2 {
 		t.Errorf("Violations() len = %d, want 2", len(all))
+	}
+}
+
+func TestRecordViolation_RepeatLogsWarnOnce(t *testing.T) {
+	var buf bytes.Buffer
+	p := &GitHubProxy{
+		logger:     slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		violations: make(map[string]int),
+	}
+
+	for i := 0; i < 5; i++ {
+		p.recordViolation("supervisor", "POST", "/copilot_internal/subscribe_limited_user")
+	}
+	p.recordViolation("supervisor", "GET", "/copilot_internal/subscribe_limited_user")
+
+	if got := strings.Count(buf.String(), "proxy request blocked"); got != 2 {
+		t.Errorf("WARN lines = %d, want 2 (one per distinct method/path)", got)
+	}
+	if got := p.AgentViolations("supervisor"); got != 6 {
+		t.Errorf("violations = %d, want 6 (every refusal still counted)", got)
 	}
 }
 

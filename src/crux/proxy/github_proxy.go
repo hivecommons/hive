@@ -234,6 +234,9 @@ type GitHubProxy struct {
 
 	mu         sync.RWMutex
 	violations map[string]int // agent name -> blocked request count
+	// blockedSeen holds the agent|method|path keys already logged at WARN so
+	// a repeated refusal logs once and then at Debug. Bounded by maxViolationLog.
+	blockedSeen map[string]struct{}
 
 	writes writeCounters
 
@@ -2149,8 +2152,30 @@ func sameLabels(a, b []string) bool {
 const internalCallerName = "hive-internal"
 
 func (p *GitHubProxy) recordViolation(agentName, method, path string) {
-	p.logger.Warn("proxy request blocked", "agent", agentName, "method", method, "path", path)
+	if p.firstBlock(agentName, method, path) {
+		p.logger.Warn("proxy request blocked", "agent", agentName, "method", method, "path", path)
+	} else {
+		p.logger.Debug("proxy request blocked (repeat)", "agent", agentName, "method", method, "path", path)
+	}
 	p.countViolation(agentName)
+}
+
+// firstBlock reports whether this (agent, method, path) refusal has not been
+// logged before. Once the set is full, new keys keep logging at WARN.
+func (p *GitHubProxy) firstBlock(agentName, method, path string) bool {
+	key := agentName + "|" + method + "|" + path
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, seen := p.blockedSeen[key]; seen {
+		return false
+	}
+	if p.blockedSeen == nil {
+		p.blockedSeen = make(map[string]struct{})
+	}
+	if len(p.blockedSeen) < maxViolationLog {
+		p.blockedSeen[key] = struct{}{}
+	}
+	return true
 }
 
 // countViolation increments the per-agent refusal counter without logging, for
