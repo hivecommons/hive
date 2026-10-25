@@ -819,6 +819,21 @@ func TestIsBenignMessageKnowledgePrimerBytecap(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessageContributorFailureStreak(t *testing.T) {
+	const msg = "[contribute-ws] refusing task: contributor failure streak"
+	if !IsBenignMessage(msg) {
+		t.Errorf("failure-streak refusal %q not benign", msg)
+	}
+	for _, m := range []string{
+		"[contribute-ws] refusing task: lease could not be persisted — try again",
+		"[contribute-ws] contributor failure streak store write failed",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("failure %q wrongly benign", m)
+		}
+	}
+}
+
 func TestQueueHealthClassesQualifyOnFirstObservationAndClear(t *testing.T) {
 	now, _ := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)

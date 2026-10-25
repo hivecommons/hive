@@ -739,6 +739,15 @@ var benignSubstrings = []string{
 	// the cap or tighten the scope), not a repeated runtime defect
 	// (hivecommons/hive#14173).
 	"knowledge primer: dropped facts over the byte cap",
+	// The contribute-ws task selector (src/pkg/dashboard/contribute_select.go)
+	// warns on every poll from an identity whose claims are paused because
+	// its recent assignments all died within seconds (#6450). The pause is
+	// the protection working as designed and the refusal is a policy
+	// outcome, re-logged for as long as the paused agent keeps polling —
+	// not a repeated runtime defect (hivecommons/hive#14178). Only this
+	// refusal is benign: "refusing task: lease could not be persisted" is a
+	// real failure and must remain reportable.
+	"refusing task: contributor failure streak",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic

@@ -1,0 +1,1 @@
+- The fleet self-report feed no longer reports the contribute-ws "refusing task: contributor failure streak" warning as a repeated runtime error: the claim pause is a policy outcome re-logged on every poll from the paused agent, not a defect ([#14178](https://github.com/hivecommons/hive/issues/14178)).
