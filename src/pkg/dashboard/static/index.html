@@ -1385,6 +1385,7 @@
     .ham-head-main { display: flex; flex: 1; align-items: flex-start; gap: var(--sp-3); min-width: 0; }
     .ham-pr-ref { display: inline-flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; max-width: 100%; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
     .ham-pr-ref:hover { color: var(--text); }
+    .ham-linked-ico { color: var(--text-faint); font-size: var(--fs-xs); margin-right: var(--sp-1); }
     .ham-pr-ref:hover .ham-pr-num { text-decoration: underline; }
     .ham-pr-num { flex: 0 0 auto; white-space: nowrap; }
     .ham-pr-title { min-width: 0; white-space: normal; overflow-wrap: anywhere; color: var(--text-faint); }
@@ -1482,6 +1483,7 @@
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
     .ham-seg.active.ham-open-hold { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
+    .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
     .ham-active-ico { display: none; }
@@ -13857,7 +13859,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Segment list for one item: path segments with done/active state plus a
     // detour badge when the item sits on a side stage, and the merged end-cap.
-    function stageTrackerSegments(item, stages) {
+    function stageTrackerSegments(item, stages, nowMs) {
       const byNum = {};
       (stages || []).forEach(st => { byNum[st.number] = st; });
       const cur = Number(item.stage) || 0;
@@ -13877,7 +13879,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         const openHold = n === 0 && state === 'active' && (Array.isArray(item.modifiers) ? item.modifiers : []).indexOf('hold') >= 0;
         if (openHold) word = 'Open · hold';
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold };
+        // A plain Open step (no stage label, not held) says how long it has
+        // sat there, from the same instant the since column shows.
+        let openSince = null;
+        if (n === 0 && state === 'active' && !openHold && !detour && nowMs) {
+          const os = stageTrackerOpenSince(item);
+          if (os.ms) { word = 'Open · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
+        }
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;
@@ -13930,6 +13939,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return role;
     }
 
+    // An Open item is tinted stale once it has sat unlabelled this long.
+    const STAGE_TRACKER_OPEN_STALE_DAYS = 2;
+    // When an item entered its current (Open) state: the payload's
+    // stage_since — the value the since column draws — else the time it was
+    // opened. fromCreated marks the fallback so the tooltip can say so.
+    function stageTrackerOpenSince(item) {
+      const since = Date.parse((item && item.stage_since) || '');
+      if (since) return { ms: since, fromCreated: false };
+      const created = Date.parse((item && item.created_at) || '');
+      return { ms: created || 0, fromCreated: !!created };
+    }
+
     function stageTrackerShortAgo(ms) {
       const sec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
       if (sec < 60) return 'now';
@@ -13956,8 +13977,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // columns outside it are invisible spacers that keep the grid aligned.
     // Only the active chevron carries hover text (stage name, description,
     // whose move it is); passed and upcoming chevrons have none.
-    function stageTrackerStripItems(item, stages, range) {
-      const segs = stageTrackerSegments(item, stages);
+    function stageTrackerStripItems(item, stages, range, nowMs) {
+      const segs = stageTrackerSegments(item, stages, nowMs);
       const curStage = Number(item.stage) || 0;
       const from = range && range.from != null ? range.from : -Infinity;
       const to = range && range.to != null ? range.to : Infinity;
@@ -13969,11 +13990,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         if (active) {
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
+          if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
           if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
@@ -13993,8 +14015,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Compact strips retain their column alignment; the current step gets a
     // full-width caption so detours and the next actor never need a hover.
-    function stageTrackerCurrentStageHtml(item, stages, range) {
-      const active = stageTrackerSegments(item, stages).find(sg => sg.state === 'active'
+    function stageTrackerCurrentStageHtml(item, stages, range, nowMs) {
+      const active = stageTrackerSegments(item, stages, nowMs).find(sg => sg.state === 'active'
         && (!range || range.from == null || sg.number >= range.from)
         && (!range || range.to == null || sg.number <= range.to));
       if (!active) return '';
@@ -14093,6 +14115,35 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<span class="ham-since${stalled ? ' ham-stalled' : ''}">${esc(sinceMs ? stageTrackerShortAgo(nowMs - sinceMs) : '')}</span>`;
     }
 
+    const STAGE_TRACKER_LINKED_TIP = "linked PR, shown on its issue's row";
+    // Issue numbers that list each covering PR, by "repo#pr", for the PRs
+    // listed by more than one open issue (so a row can say "also under #N").
+    function stageTrackerSharedPRs(items) {
+      const by = {};
+      (items || []).forEach(it => {
+        if (!it || it.kind !== 'issue') return;
+        (Array.isArray(it.linked_prs) ? it.linked_prs : []).forEach(lp => {
+          const k = (it.repo || '') + '#' + (Number(lp.number) || 0);
+          (by[k] = by[k] || []).push(Number(it.number) || 0);
+        });
+      });
+      const out = {};
+      Object.keys(by).forEach(k => { if (by[k].length > 1) out[k] = by[k].slice().sort((a, b) => a - b); });
+      return out;
+    }
+    // Hover text for a PR drawn on its issue's row (it rides the PR link:
+    // the row's hover budget allows no other titled element). Every row but
+    // the lowest-numbered issue listing the PR also names where else it shows.
+    function stageTrackerLinkedTip(issue, prNumber, ctx) {
+      const all = (ctx && ctx.sharedPRs && ctx.sharedPRs[(issue.repo || '') + '#' + (Number(prNumber) || 0)]) || [];
+      const others = all.filter(n => n !== Number(issue.number));
+      const also = others.length && all[0] !== Number(issue.number) ? ' · also under #' + others.join(', #') : '';
+      return STAGE_TRACKER_LINKED_TIP + also;
+    }
+    // "↳" ahead of such a PR, so the shared row is recognisable as the PR's
+    // place in the list (aria-label only; no title of its own).
+    const STAGE_TRACKER_LINKED_GLYPH = '<span class="ham-linked-ico" aria-label="linked PR">↳</span>';
+
     // A covering PR nested under its issue: "[author icon] #N title" at the
     // PR column, then the PR's own strip from PR in progress onwards. The
     // PR's full tooltip rides its link; the sub-row container has none.
@@ -14100,10 +14151,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
-      let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
+      let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
+      ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
@@ -14274,7 +14326,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
-          prRefs = [stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
+          const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' });
         } else if (linked.length) {
@@ -14322,9 +14375,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}
         </div>
         <div class="ham-strip-row">
-          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range)}</ol>
+          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs)}</ol>
           <span class="ham-since"></span>
-        </div>${stageTrackerCurrentStageHtml(shown, stages, range)}${subs}
+        </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${subs}
       </div>`;
     }
 
@@ -14869,6 +14922,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
     }
 
+    // The canonical tracker count (owner): rows of the default view — every
+    // item on its own row except a PR drawn on a listed issue's row.
+    function stageTrackerRowCount(items, ctx) {
+      return stageTrackerVisible(items, stageTrackerDefaultFilter(), ctx).length;
+    }
+
     // Order rows. 'furthest' is the strip order (furthest along first, then
     // longest on step); 'waiting' is longest wait first; 'newest' is most
     // recently opened first; 'number' is repo then number. dir 'asc' reverses.
@@ -14935,36 +14994,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // label facet model end
 
-    // "showing X–Y of N (M filtered out)" and the header's "N items · M need attention".
-    // With `open` ({issues, prs} — the payload's open_issues/open_prs, i.e. the
-    // canonical open-items set the Overview tile and its sidebar pill count) the
-    // header leads with "N items (I issues / P PRs)" so the three agree on the
-    // same number; the filtered row count follows when a filter is active.
+    // "showing X–Y of N (M filtered out)", the header's "N rows · M need
+    // attention" and the sidebar pill — all from one call, so they cannot
+    // disagree. The canonical count is ROWS (owner): allCount is the row
+    // count of the default view (a filter narrows page.total, never
+    // allCount), and the pill shows it. A covering PR is drawn on its
+    // issue's row rather than its own, so rows can sit below the payload's
+    // open items; `open` ({issues, prs}) lets the line footnote that gap
+    // ("2 PRs shown on their issue's row") instead of printing two totals.
     function stageTrackerCountsText(page, allCount, attention, open, attentionAll) {
       const filteredOut = Math.max(0, allCount - page.total);
       const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
       const attnText = n => n ? n + ' need' + (n === 1 ? 's' : '') + ' attention' : 'nothing needs attention';
       const attn = attnText(attention);
       const attnAll = attnText(Number.isFinite(Number(attentionAll)) ? Number(attentionAll) : attention);
+      const rowsWord = n => n === 1 ? 'row' : 'rows';
+      let note = '';
       if (open && Number.isFinite(Number(open.issues)) && Number.isFinite(Number(open.prs))) {
-        const issues = Number(open.issues), prs = Number(open.prs), total = issues + prs;
-        const lead = `${total} ${total === 1 ? 'item' : 'items'} (${issues} ${issues === 1 ? 'issue' : 'issues'} / ${prs} ${prs === 1 ? 'PR' : 'PRs'})`;
-        // Rows nest covering PRs under their issue, so the row count can be
-        // below the item count without any filter; say so rather than let
-        // "of N" look like a different total.
-        const nested = !filteredOut && allCount < total ? ` (${total - allCount} nested under ${total - allCount === 1 ? 'its issue' : 'their issues'})` : '';
-        return {
-          showing: showing + nested + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
-          header: lead + (filteredOut ? ` · ${page.total} match filters` : '') + ` · ${attn}`,
-          badge: total,
-          badgeTitle: `${lead} open · ${attnAll}`,
-        };
+        const shared = Math.max(0, Number(open.issues) + Number(open.prs) - allCount);
+        if (shared) note = `${shared} ${shared === 1 ? 'PR' : 'PRs'} shown on ${shared === 1 ? 'its' : 'their'} issue's row`;
       }
       return {
         showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
-        header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attn}`,
+        header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${rowsWord(page.total)} · ${attn}`,
         badge: allCount,
-        badgeTitle: `${allCount} ${allCount === 1 ? 'item' : 'items'} open · ${attnAll}`,
+        badgeTitle: `${allCount} ${rowsWord(allCount)} open · ${attnAll}` + (note ? ` · ${note}` : ''),
+        note,
       };
     }
 
@@ -15235,6 +15290,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerSyncToolbar(f);
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
       ctx.needsHumanLabels = stageTrackerNeedsHumanLabels(d);
+      ctx.sharedPRs = stageTrackerSharedPRs(d.items);
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
@@ -15247,14 +15303,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Attention is counted over the filtered set, nested PRs included.
       const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
       const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
-      // "N filtered out" counts against the unfiltered row list, so nesting
-      // a PR under its issue is not reported as a filter.
-      const allRows = stageTrackerFilterActive(f) ? stageTrackerVisible(d.items, Object.assign(stageTrackerDefaultFilter(), { kind: f.kind === 'pr' ? 'pr' : 'all' }), ctx).length : visible.length;
+      // "N filtered out" and the sidebar pill count against the default
+      // view's rows (stageTrackerRowCount), so drawing a PR on its issue's
+      // row is never reported as a filter and the pill holds still while
+      // the kind tabs or chips narrow the list.
+      const allRows = stageTrackerFilterActive(f) ? stageTrackerRowCount(d.items, ctx) : visible.length;
       // The sidebar pill, the header lead and the "of N" line come out of
       // one stageTrackerCountsText call per render, so they cannot
-      // disagree: the pill is the total open items (= the Overview tile's
-      // issues + PRs); needs-attention is the warn-coloured header suffix
-      // and the pill's tooltip, counted over every item regardless of filter.
+      // disagree: the pill is the default view's row count (owner: rows,
+      // not items — a covering PR shares its issue's row); needs-attention
+      // is the warn-coloured header suffix and the pill's tooltip, counted
+      // over every item regardless of filter.
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
       const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll);
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
@@ -15264,7 +15323,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f, { needsHumanLabels: ctx.needsHumanLabels })));
       stageTrackerRenderLabelDialog();
       const meta = document.getElementById('activity-monitor-meta');
-      if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
+      if (meta) setIfChanged(meta, `<span class="ham-count"${counts.note ? ` title="${esc(counts.note)}"` : ''}>${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
       const foot = document.getElementById('activity-monitor-meta-foot');
       if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
       const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
