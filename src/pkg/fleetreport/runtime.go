@@ -75,6 +75,9 @@ const (
 	ClassSHAPollCommitMsgUnavail    = "sha_poll_commit_message_unavailable"
 	ClassAgentLoginRequired         = "agent_login_required"
 	ClassIOScanClassifierUnavail    = "ioscan_classifier_unavailable"
+	ClassGitHubFetchTransient       = "github_fetch_transient"
+	ClassLabelProvisioningFailed    = "label_provisioning_failed"
+	ClassAgentCLIRestartLoop        = "agent_cli_restart_loop"
 )
 
 const (
@@ -164,7 +167,7 @@ var Classes = map[string]ClassSpec{
 	ClassIssueRequestStuck:          {Component: "github-relay", Severity: "medium", MinCount: 1, Keywords: []string{"issue-request stuck", "issue request stuck", "issue-request watcher", "relay request stuck"}},
 	ClassEffectLedgerOpStuck:        {Component: "mutation-ledger", Severity: "medium", MinCount: 1, Keywords: []string{"effect ledger stuck", "ledger op stuck", "needs reconciliation", "mutation journal unknown"}},
 	ClassTmuxSessionCheckFailed:     {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"tmux has-session failed"}},
-	ClassAgentPaneTimeout:           {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"prompt timeout — dumping pane", "pane content at timeout", "startup kick dropped", "cli never reached input prompt"}},
+	ClassAgentPaneTimeout:           {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"prompt timeout — dumping pane", "pane content at timeout", "startup kick dropped: cli never became ready", "startup kick dropped: cli never reached input prompt"}},
 	ClassProxyTLSHandshakeFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy client tls handshake failed", "transparent proxy tls handshake failed", "copilot sniff: client tls handshake failed"}},
 	ClassAgentDirSetupFailed:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to create per-agent xdg dir", "failed to restore per-agent dir mode", "failed to restore interactive home mode", "failed to tighten per-agent dir mode", "failed to tighten interactive home mode", "failed to restore inference home mode", "failed to tighten inference home mode"}},
 	ClassReviewEvidenceWriteFail:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"review evidence: could not write bundle"}},
@@ -176,7 +179,10 @@ var Classes = map[string]ClassSpec{
 	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
 	ClassSHAPollCommitMsgUnavail:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
 	ClassAgentLoginRequired:         {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"login required detected"}},
-	ClassIOScanClassifierUnavail:    {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"ioscan classifier failed closed"}},
+	ClassIOScanClassifierUnavail:    {Component: "inference-gateway", Severity: "medium", MinCount: 1, LogFed: true, Keywords: []string{"ioscan classifier failed closed"}},
+	ClassGitHubFetchTransient:       {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"channel commit date: fetch failed"}},
+	ClassLabelProvisioningFailed:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"issue stage labels: provisioning failed"}},
+	ClassAgentCLIRestartLoop:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"agent cli crashed or stuck on consent screen"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".
