@@ -116,6 +116,58 @@ func TestApplyClaimedByLabel_KeepsCoPartyLabel(t *testing.T) {
 	}
 }
 
+// A new agent claim heals a missed human-label release, even after posting
+// its own newer marker. Absence, expiry, and unrelated releases are not
+// sufficient evidence to remove a co-party's label (#14239).
+func TestApplyClaimedByLabel_ReleasedHuman(t *testing.T) {
+	const human = "<!-- hive:claim who=ann kind=contributor at=2026-10-25T12:00:00Z until=2026-10-25T12:30:00Z -->"
+	const release = "<!-- hive:release who=ann kind=contributor reason=lease_revoked at=2026-10-25T12:01:00Z -->"
+	const agent = "<!-- hive:claim who=scanner kind=agent at=2026-10-25T12:02:00Z until=2026-10-25T12:32:00Z -->"
+	for _, tc := range []struct {
+		name   string
+		bodies []string
+		remove bool
+	}{
+		{"matching release then agent", []string{human, release, agent}, true},
+		{"matching release without agent comment", []string{human, release}, true},
+		{"legacy release", []string{human, "<!-- hive:release who=ann -->", agent}, true},
+		{"no evidence", nil, false},
+		{"release alone", []string{release, agent}, false},
+		{"unreleased even if expired", []string{human, agent}, false},
+		{"different holder", []string{human, "<!-- hive:release who=bob at=2026-10-25T12:01:00Z -->", agent}, false},
+		{"older release", []string{"<!-- hive:release who=ann at=2026-10-25T11:59:00Z -->", human, agent}, false},
+		{"legacy release before claim", []string{"<!-- hive:release who=ann -->", human, agent}, false},
+		{"renewed human", []string{human, release, "<!-- hive:claim who=ann kind=human at=2026-10-25T12:01:30Z until=2026-10-25T12:31:30Z -->", agent}, false},
+		{"another human", []string{human, release, "<!-- hive:claim who=bob kind=human at=2026-10-25T12:01:30Z until=2026-10-25T12:31:30Z -->", agent}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newIssueStageServer(t)
+			c := issueStageTestClient(t, fake.srv, true)
+			fake.truth[7] = []string{"bug", claims.ClaimedByHumanLabel, "hive/claimed-by-reviewer"}
+			fake.commentBodies[7] = tc.bodies
+			removed, added, err := c.ApplyClaimedByLabel(context.Background(), "acme/widgets", 7, claims.Claim{Holder: "scanner", Kind: claims.KindAgent})
+			if err != nil || !added {
+				t.Fatalf("added=%v err=%v", added, err)
+			}
+			wantRemoved := ""
+			if tc.remove {
+				wantRemoved = claims.ClaimedByHumanLabel
+			}
+			if got := strings.Join(removed, ","); got != wantRemoved {
+				t.Fatalf("removed=%q, want %q", got, wantRemoved)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if got := strings.Join(fake.removed[7], ","); got != wantRemoved {
+				t.Fatalf("label writes removed=%q, want %q", got, wantRemoved)
+			}
+			if got := strings.Join(fake.added[7], ","); got != "hive/claimed-by-scanner" {
+				t.Fatalf("added=%q", got)
+			}
+		})
+	}
+}
+
 // Release drops only the releasing holder's labels: the generic one plus
 // the holder's retired per-login spelling; a backend-named "holder" has no
 // label to drop and an agent claim drops only its own.

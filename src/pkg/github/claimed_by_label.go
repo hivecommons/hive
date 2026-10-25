@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 // The `hive/claimed-by-<who>` "who" modifier. One rule for the suffix lives
@@ -21,8 +22,10 @@ import (
 // holder's retired per-login label are removed and the derived one is added
 // when absent. Other parties' labels are left alone — a person's label
 // survives a contributor's claim, matching healBackendClaimedByLabels and
-// RemoveClaimedByLabel; a stale holder's label is removed on release or
-// takeover. A claim with no usable holder (claims.ClaimedByLabel == "") only
+// RemoveClaimedByLabel. An agent claim also clears the generic human label
+// when the latest human-principal marker has a matching release; a missing
+// or unreleased marker is not evidence that another party's label is stale.
+// A claim with no usable holder (claims.ClaimedByLabel == "") only
 // strips backend-named labels. Returns the labels it removed and whether it
 // added one.
 func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number int, claim claims.Claim) (removed []string, added bool, err error) {
@@ -40,6 +43,25 @@ func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number in
 	if err != nil {
 		return nil, false, err
 	}
+	removeReleasedHuman := false
+	if claim.Kind == claims.KindAgent && want != "" && issueHasLabel(current, claims.ClaimedByHumanLabel) {
+		// Read comments fresh: the new agent's marker may already be the
+		// latest overall, and the claim cache may predate the human release.
+		comments, readErr := c.listIssueComments(ctx, owner, name, number)
+		if readErr != nil {
+			return nil, false, readErr
+		}
+		var bodies []string
+		for _, comment := range comments {
+			body := comment.GetBody()
+			if marker, ok := issueclaim.ParseMarker(body); ok && strings.EqualFold(marker.Kind, string(claims.KindAgent)) {
+				continue
+			}
+			bodies = append(bodies, body)
+		}
+		previous, found := issueclaim.Latest(bodies, issueclaim.DefaultTTL)
+		removeReleasedHuman = found && previous.Released
+	}
 	have := false
 	for _, l := range current {
 		if !claims.IsClaimedByLabel(l) {
@@ -49,7 +71,7 @@ func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number in
 			have = true
 			continue
 		}
-		if !claims.ClaimedByLabelIsBackend(l) && !(legacy != "" && strings.EqualFold(l, legacy)) {
+		if !claims.ClaimedByLabelIsBackend(l) && !(legacy != "" && strings.EqualFold(l, legacy)) && !(removeReleasedHuman && claims.IsClaimedByHumanLabel(l)) {
 			continue
 		}
 		if rerr := labeler.RemoveLabel(ctx, owner, name, number, l); rerr != nil {
