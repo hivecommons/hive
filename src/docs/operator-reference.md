@@ -1234,8 +1234,8 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   issue or pull request the delivery embeds: on *any* action (`labeled`,
   `unlabeled`, `created`, not only `closed`) that row leaves at once, so a
   refused or failed re-read cannot leave a closed item listed open. As a
-  backstop for deliveries that never arrived, while the tracker is being
-  viewed it also lists each repo's items closed since its last look every
+  backstop for deliveries that never arrived, on each status publish it
+  also lists each repo's items closed since its last look every
   `dashboard.stage_tracker.closed_sweep_interval_s` (default `300`; one
   list call per repo; negative disables) and evicts any still shown.
 

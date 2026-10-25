@@ -15,12 +15,14 @@ import (
 // a delivery says its item closed (evictClosedWebhookItem) and again when
 // the confirming read says so; a delivery that never arrived, or a read the
 // budget guards refused, leaves the row to the next full enumeration, which
-// a rate-limited or failing cycle can postpone indefinitely. So while the
-// tracker is being viewed, at most once per interval, the sweep asks each
-// repository for the items closed since its last look — one list call per
-// repo, newest first — and evicts any the status snapshot still lists as
-// open, through the same patch path a webhook read takes (so the governor's
-// snapshot and the replay memory see it too).
+// a rate-limited or failing cycle can postpone indefinitely. So on each
+// status publish, at most once per interval, the sweep asks each repository
+// for the items closed since its last look — one list call per repo, newest
+// first — and evicts any the status snapshot still lists as open, through
+// the same patch path a webhook read takes (so the governor's snapshot and
+// the replay memory see it too). It is deliberately not tied to GET
+// /api/stage-tracker, which never reaches GitHub (see
+// TestStageTrackerCacheServesWithoutGitHub).
 
 // closedSweepFirstLookback bounds the first sweep's `since` after start:
 // anything closed earlier than this and still listed is the enumeration's
@@ -40,6 +42,8 @@ type closedSweepState struct {
 	lastAt  time.Time
 	since   time.Time
 	running bool
+	// done is closed when the running sweep finishes; tests wait on it.
+	done chan struct{}
 	// list is the GitHub read; tests inject one.
 	list func(ctx context.Context, repo string, since time.Time) ([]github.WebhookItemSnapshot, error)
 }
@@ -53,9 +57,8 @@ func (s *Server) stageTrackerClosedSweepInterval() time.Duration {
 }
 
 // maybeSweepClosedRows starts a sweep in the background when one is due
-// and none is running; it reports whether it started one. GET
-// /api/stage-tracker calls it on every request, so the sweep runs only
-// while someone is looking.
+// and none is running; it reports whether it started one. UpdateStatusIfFresh
+// calls it on every published snapshot.
 func (s *Server) maybeSweepClosedRows(now time.Time) bool {
 	if s == nil || s.deps == nil || (s.deps.GHClient == nil && s.closedSweep.list == nil) {
 		return false
@@ -71,6 +74,8 @@ func (s *Server) maybeSweepClosedRows(now time.Time) bool {
 		return false
 	}
 	st.running = true
+	done := make(chan struct{})
+	st.done = done
 	st.mu.Unlock()
 	ctx := context.Background()
 	if s.deps.Ctx != nil {
@@ -81,6 +86,7 @@ func (s *Server) maybeSweepClosedRows(now time.Time) bool {
 			st.mu.Lock()
 			st.running = false
 			st.mu.Unlock()
+			close(done)
 		}()
 		if _, err := s.sweepClosedRows(ctx, now); err != nil {
 			s.webhookLogger().Debug("stage tracker closed sweep skipped", "error", err)

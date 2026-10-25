@@ -4616,7 +4616,7 @@ type DashboardStageTrackerConfig struct {
 	// for the repository's items closed since its last look (one list call
 	// per repo) and drops any it still shows as open: the backstop for a
 	// webhook delivery that never arrived or whose confirming read was
-	// refused. The sweep runs only while the tracker is being viewed. 0
+	// refused. Each status publish starts a sweep when one is due. 0
 	// means the default (300); a negative value disables it.
 	ClosedSweepIntervalS int `yaml:"closed_sweep_interval_s,omitempty" json:"closed_sweep_interval_s,omitempty"`
 }

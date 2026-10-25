@@ -373,18 +373,13 @@ func TestClosedSweepThrottleAndConfig(t *testing.T) {
 		t.Fatal("a running sweep must not start another")
 	}
 	close(release)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		s.closedSweep.mu.Lock()
-		running := s.closedSweep.running
-		s.closedSweep.mu.Unlock()
-		if !running {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("sweep did not finish")
-		}
-		time.Sleep(5 * time.Millisecond)
+	s.closedSweep.mu.Lock()
+	done := s.closedSweep.done
+	s.closedSweep.mu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sweep did not finish")
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("list calls = %d, want 1", calls.Load())
@@ -398,7 +393,10 @@ func TestClosedSweepThrottleAndConfig(t *testing.T) {
 }
 
 // GET /api/stage-tracker kicks the sweep.
-func TestStageTrackerHandlerStartsClosedSweep(t *testing.T) {
+// TestStatusPublishStartsClosedSweep: the sweep is driven by the governor's
+// status publish, not by GET /api/stage-tracker, which must never reach
+// GitHub (TestStageTrackerCacheServesWithoutGitHub).
+func TestStatusPublishStartsClosedSweep(t *testing.T) {
 	s := closedRowsFixture(t)
 	started := make(chan struct{}, 1)
 	s.deps = &Dependencies{Ctx: context.Background(), Logger: s.logger, Config: &config.Config{}}
@@ -413,7 +411,16 @@ func TestStageTrackerHandlerStartsClosedSweep(t *testing.T) {
 	}
 	select {
 	case <-started:
+		t.Fatal("GET /api/stage-tracker must not start the closed sweep")
+	case <-time.After(50 * time.Millisecond):
+	}
+	// The governor publishes a fresh enumeration that still lists the repo.
+	next := minimalPayload()
+	next.Repos = append([]FrontendRepo(nil), closedRowsFixture(t).status.Repos...)
+	s.UpdateStatus(next)
+	select {
+	case <-started:
 	case <-time.After(5 * time.Second):
-		t.Fatal("handler did not start the closed sweep")
+		t.Fatal("status publish did not start the closed sweep")
 	}
 }

@@ -2608,6 +2608,9 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	// body so the next GET rebuilds from this payload instead of serving the
 	// previous one for the rest of its TTL.
 	nudgeTracker := s.invalidateStageTrackerCache()
+	// Backstop for closed items whose delivery never arrived or whose
+	// confirming read was refused (hivecommons/hive#14159, #14064).
+	s.maybeSweepClosedRows(time.Now().UTC())
 
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)

@@ -1377,7 +1377,6 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "stage tracker unavailable", http.StatusInternalServerError)
 		return
 	}
-	s.maybeSweepClosedRows(now)
 	remaining := s.stageTrackerCacheTTL() - now.Sub(generatedAt)
 	if remaining < 0 {
 		remaining = 0
