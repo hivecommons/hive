@@ -20,7 +20,10 @@ func newDelegatedServer(t *testing.T, mock *repoItemDecisionMock) *Server {
 	prev := delegatedDecisionRunAsync
 	delegatedDecisionRunAsync = false
 	t.Cleanup(func() { delegatedDecisionRunAsync = prev })
-	return newRepoItemDecisionServer(t, mock)
+	srv := newRepoItemDecisionServer(t, mock)
+	// PR decisions fail closed without an enumeration snapshot.
+	srv.status = &StatusPayload{}
+	return srv
 }
 
 func postDelegated(t *testing.T, srv *Server, number int, user, body string, hdr map[string]string) *httptest.ResponseRecorder {

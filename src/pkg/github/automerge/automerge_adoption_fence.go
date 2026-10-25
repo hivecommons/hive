@@ -27,6 +27,14 @@ import (
 //     fence, and every App merge lane refuses to merge a PR carrying it
 //     (carriedFenceGate) — the same 085 route, a person merges.
 //
+// Supersession additionally refuses workflow/action edits before publishing
+// an upstream branch: merge gating alone cannot protect workflow execution
+// in the repository context (hivecommons/hive#14055). In-place adoption
+// remains available for those edits; where only supersession could finish
+// the work, the refusal is a terminal verdict for the head: the attempt is
+// recorded, one note asks a maintainer to push/merge or cherry-pick, and the
+// PR goes to 085 until the head moves.
+//
 // Only a verdict the fence could not reach — the head moved since the lane
 // recorded it, or the file list is incomplete / unreadable — still defers
 // adoption to the next sweep.

@@ -2,6 +2,7 @@ package ioscan
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -166,6 +167,15 @@ func TestCLIChatClientLaunchIsToolless(t *testing.T) {
 	joined := strings.Join(argv, "\x00")
 	if !strings.Contains(joined, "\x00--tools\x00\x00") || !strings.Contains(joined, "\x00--strict-mcp-config") {
 		t.Errorf("launch argv %q does not disable built-in tools and MCP servers", argv)
+	}
+	// #14062: user-level hooks in ~/.claude/settings.json are not covered by
+	// --tools "" and would otherwise run with the classified text available.
+	if !strings.Contains(joined, "\x00--settings\x00"+cliClaudeHooksOffSettings) {
+		t.Errorf("launch argv %q does not turn hooks off via --settings", argv)
+	}
+	var hooksOff map[string]any
+	if err := json.Unmarshal([]byte(cliClaudeHooksOffSettings), &hooksOff); err != nil || hooksOff["disableAllHooks"] != true {
+		t.Errorf("hooks-off settings %q must be JSON with disableAllHooks=true (err=%v)", cliClaudeHooksOffSettings, err)
 	}
 
 	env := readRec(t, rec, "env")

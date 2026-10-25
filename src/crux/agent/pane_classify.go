@@ -81,7 +81,7 @@ func paneShowsFatalNetworkError(lines []string) bool {
 // The CLI then silently runs the substituted model for the whole session
 // with no further indication (#9927). copilotPinnedCLIModels/
 // copilotCLIAcceptedModels (pkg/dashboard/cli_models.go,
-// pkg/agent/copilot_models.go) keep the picker from offering an id this CLI
+// crux/copilot_models.go) keep the picker from offering an id this CLI
 // rejects, but this is the defense-in-depth catch for a model that reaches
 // --model some other way — a stale stored config from before #9933/#9943, a
 // hand-edited hive.yaml, or a future CLI pin that drops support for a

@@ -1,0 +1,1 @@
+- forge(gitlab): implement `Forge.Merge` for GitLab with strategy mapping, head-SHA guard, hold label enforcement, and 405/406/409 error mapping, verified by shared contract tests.

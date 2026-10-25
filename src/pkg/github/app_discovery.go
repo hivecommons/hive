@@ -85,6 +85,12 @@ func (a *AppAuth) ForgetInstallationDiscovery(org string) {
 // untouched when they see it.
 var ErrNoInstallationForOrg = fmt.Errorf("no installation of this app covers the target org")
 
+// ErrAppNotInstalled means a token mint was asked for while this auth has no
+// installation ID at all (installation_id 0): the App is not installed on the
+// hive's org, or discovery never found it. No GitHub request is made. Like
+// ErrNoInstallationForOrg it is not transient; the App has to be installed.
+var ErrAppNotInstalled = fmt.Errorf("github app has no installation for this hive's org")
+
 // DiscoverInstallationID resolves the installation ID of this App on org.
 //
 // It prefers GET /orgs/{org}/installation — a single App-JWT-authenticated

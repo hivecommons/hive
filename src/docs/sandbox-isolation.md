@@ -169,6 +169,7 @@ Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-
 - The Job runtime is a first slice: one Job per kick, workspace shared through a PVC, no per-kick Secret minting. A clone-inside-the-Job transport for clusters without ReadWriteMany storage is future work.
 - Live Podman execution is covered by skip-when-absent tests; CI still needs a rootless-Podman runner lane for always-on integration coverage.
 - Sandboxed inference depends on an operator-provided restricted network/proxy policy. `none` is stronger but not yet usable for all model backends.
+- A stronger runtime than plain containers is under evaluation: [ADR-0026](adr/0026-sandbox-runtime-selection.md) (Proposed) compares NVIDIA OpenShell and OpenSandbox against this contract.
 
 ## Agent guardrails (defense in depth)
 

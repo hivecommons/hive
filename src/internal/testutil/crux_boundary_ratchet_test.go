@@ -72,9 +72,12 @@ import (
 // crux/agentmode leaf directly).
 // Copilot-token and pane-classification helpers moved to crux (#13962
 // slice 3): dashboard 9 → 3, loginscan 2 → 0, discord 1 → 0 (#13973).
+// CanonicalizeCopilotModel and BackendRequiresInteractiveAuth moved to crux
+// and the dashboard's backend check uses config.IsInferenceBackend:
+// dashboard 3 → 0. cmd/hive is the only consumer left; what it names is the
+// manager, its constructors and the host wiring it injects.
 var cruxSymbolBaseline = map[string]int{
-	"cmd/hive":      22,
-	"pkg/dashboard": 3,
+	"cmd/hive": 22,
 }
 
 // cruxTmuxBaseline is the per-package count of non-test files that invoke

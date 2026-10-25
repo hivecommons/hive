@@ -7990,6 +7990,37 @@ test('#5145 a docker container is unchanged, with or without the new variable', 
   } finally { teardown(withoutVar); }
 });
 
+for (const runtime of ['apptainer', 'singularity']) {
+  test(`#13976 a ${runtime} authentication banner attaches to the named instance`, () => {
+    const { relay, output } = captureStartupWithImmediateTimers({
+      backend: 'claude',
+      cliStates: ['Please run /login\n', 'Please run /login\n', 'Please run /login\n'],
+      env: {
+        HIVE_CONTAINER_NAME: 'hive-contributor-claude-9a1c',
+        HIVE_CONTAINER_RUNTIME: runtime,
+        HIVE_AGENT_SESSION: 'claude-session',
+      },
+    });
+    try {
+      const expected = `${runtime} exec instance://hive-contributor-claude-9a1c tmux attach -t claude-session`;
+      assert.strictEqual(relay.ATTACH_COMMAND, expected);
+      assert.ok(output.includes('needs authentication'), 'the login banner must fire');
+      assert.ok(output.includes(expected), `the banner must print the instance attach command; captured:\n${output}`);
+    } finally { teardown(relay); }
+  });
+
+  test(`#13976 local mode ignores ${runtime} without a container name`, () => {
+    const relay = loadRelay({ env: {
+      HIVE_CONTAINER_NAME: '',
+      HIVE_CONTAINER_RUNTIME: runtime,
+      HIVE_AGENT_SESSION: 'local-session',
+    } });
+    try {
+      assert.strictEqual(relay.ATTACH_COMMAND, 'tmux attach -t local-session');
+    } finally { teardown(relay); }
+  });
+}
+
 test('#5145 local mode names no container at all', () => {
   // HIVE_CONTAINER_NAME is set ONLY by the container arm of the recipe
   // (Justfile: `-e HIVE_CONTAINER_NAME=...`). In local mode this relay runs on

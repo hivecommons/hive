@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/paneclass"
 	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -1298,7 +1297,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// method check the auth probe already applies
 		// (BackendRequiresInteractiveAuth) so the badge and control only
 		// ever appear for a backend where a login URL is a real possibility.
-		a.NeedsLogin = proc.NeedsLogin && agent.BackendRequiresInteractiveAuth(cli)
+		a.NeedsLogin = proc.NeedsLogin && crux.BackendRequiresInteractiveAuth(cli)
 		// Per-agent probe FIRST: it resolves this agent's own per-UID HOME and
 		// answers "does this backend even have an interactive login?" before
 		// looking at any file. The backend-level probe (shared legacy path

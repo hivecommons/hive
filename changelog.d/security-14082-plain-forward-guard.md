@@ -1,0 +1,1 @@
+- The proxy's plain-HTTP forward path now identifies its caller and refuses destinations that are not globally routable — loopback, link-local (cloud instance metadata), RFC 1918, CGNAT and multicast — checked at dial time so a hostname resolving inward is refused too; set `HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` to allow them (#14082)

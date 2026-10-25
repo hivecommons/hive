@@ -2630,8 +2630,12 @@ const CONTAINER_NAME = process.env.HIVE_CONTAINER_NAME || 'hive-contributor';
 //     every podman operator a command that fails. It defaults to docker, so a
 //     bare-docker launch prints exactly what it printed before.
 const CONTAINER_RUNTIME = process.env.HIVE_CONTAINER_RUNTIME || 'docker';
+// Apptainer/Singularity use instance URIs instead of Docker's -it/name syntax.
+const CONTAINER_EXEC_TARGET = ['apptainer', 'singularity'].includes(CONTAINER_RUNTIME)
+  ? `instance://${CONTAINER_NAME}`
+  : `-it ${CONTAINER_NAME}`;
 const ATTACH_COMMAND = process.env.HIVE_CONTAINER_NAME
-  ? `${CONTAINER_RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t ${TMUX_SESSION}`
+  ? `${CONTAINER_RUNTIME} exec ${CONTAINER_EXEC_TARGET} tmux attach -t ${TMUX_SESSION}`
   : `tmux attach -t ${TMUX_SESSION}`;
 
 // detectCapabilities builds the OPTIONAL, client-declared capability object the
@@ -8957,6 +8961,10 @@ function handleMessage(data, hub) {
       // on a guessed timeout — means we never sit idle on a hub with no work
       // while a different configured hub has some.
       console.log(`No task assigned on ${hub.url} — reason: ${sanitizeHubText(msg.reason) || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
+      // #14002: some refusals carry a plain-language explanation (for example
+      // app_not_installed names the org and the install link the operator must
+      // use). Print it so the contributor knows whether the fix is theirs.
+      if (msg.message) console.log(sanitizeHubText(msg.message));
       scheduleReadyRetry(hub, 'task_unavailable');
       break;
 

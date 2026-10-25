@@ -50,13 +50,13 @@ func TestAdoptedNeedsRebaseSupersedesInsteadOfStalling(t *testing.T) {
 }
 
 func TestAdoptionRebaseRehomeRespectsEvidenceAndHold(t *testing.T) {
-	for _, mode := range []string{"head-moved", "hold", "pending", "fence"} {
+	for _, mode := range []string{"head-moved", "hold", "pending", "fence", "push-fence"} {
 		t.Run(mode, func(t *testing.T) {
 			p := adoptPolicy()
 			p.AdoptInPlace = true
 			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
 			defer done()
-			adoptInPlaceAt(h, "aaa", "label:needs-rebase")
+			key := adoptInPlaceAt(h, "aaa", "label:needs-rebase")
 			labels := append([]string{}, adoptedLabels...)
 			reason := "label:needs-rebase"
 			switch mode {
@@ -67,23 +67,39 @@ func TestAdoptionRebaseRehomeRespectsEvidenceAndHold(t *testing.T) {
 			case "pending":
 				labels = append(labels, "needs-rebase")
 				reason = "check-pending"
+			case "push-fence":
+				reason = "check-pending"
+				h.adopt.allowMaintainerEdits(7, false)
+				fallthrough
 			case "fence":
 				h.adopt.prFiles = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1}}
 			}
 			h.clock.advance(adoptedDwell + time.Minute)
 			h.observe(adoptPR(7, "aaa", labels...), reason)
-			if mode != "fence" {
-				if h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 {
-					t.Fatalf("unsafe re-home: refs=%v pulls=%v", h.adopt.refs, h.adopt.pulls)
+			if h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
+				t.Fatalf("unsafe re-home: refs=%v pulls=%v edits=%v comments=%v", h.adopt.refs, h.adopt.pulls, h.adopt.prEdits, h.api.comments)
+			}
+			rec, _ := h.e.stageStoreOrShared().Get(key)
+			if !rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonGrace {
+				t.Fatalf("refused re-home changed the adoption: %+v", rec)
+			}
+			if mode != "fence" && mode != "push-fence" {
+				if rec.AdoptDiffFence != "" || len(workflowRefusedComments(h.api)) != 0 {
+					t.Fatalf("deferred re-home recorded a verdict: rec=%+v comments=%v", rec, h.api.comments)
 				}
 				return
 			}
-			if len(h.adopt.pulls) != 1 {
-				t.Fatalf("fenced work must re-home with manual merge: %v", h.adopt.pulls)
+			// A workflow-path refusal is terminal for the head: one note,
+			// routed to 085, and the next sweep neither re-reads nor re-posts.
+			if rec.AdoptDiffFence != contributorLaneReasonWorkflowPath || !rec.AdoptionEscalated("aaa") || rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason || rec.Stage != stagelabels.NeedsDecision || len(workflowRefusedComments(h.api)) != 1 {
+				t.Fatalf("workflow refusal not terminal: rec=%+v comments=%v", rec, h.api.comments)
 			}
-			body, _ := h.adopt.pulls[0]["body"].(string)
-			if !strings.Contains(body, "**Merge stays manual**") || !strings.Contains(body, CarriedFenceMarkerPrefix) {
-				t.Fatalf("lost merge fence: %s", body)
+			h.api.reset()
+			h.clock.advance(time.Minute)
+			h.observe(adoptPR(7, "aaa", append([]string{stagelabels.NeedsDecision.Label()}, labels[1:]...)...), reason)
+			rec, _ = h.e.stageStoreOrShared().Get(key)
+			if h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 || len(workflowRefusedComments(h.api)) != 0 || len(stalledComments(h.api)) != 0 || rec.Stage != stagelabels.NeedsDecision {
+				t.Fatalf("refused re-home looped: rec=%+v refs=%d comments=%v", rec, h.adopt.refAttempts, h.api.comments)
 			}
 		})
 	}

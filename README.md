@@ -132,6 +132,10 @@ Moved to [src/docs/quickstart-podman.md](src/docs/quickstart-podman.md).
 
 Moved to [src/docs/kubernetes-deployment.md](src/docs/kubernetes-deployment.md).
 
+## Works with
+
+Hive drives Claude Code, GitHub Copilot CLI, Codex, Goose, Antigravity and OpenAI-compatible gateways; reads work from GitHub Issues, GitHub Projects, Linear and Jira; and runs on GitHub today with GitLab and Gitea/Forgejo planned. See the [integrations page](src/docs/integrations.md) for the full logo grid with status.
+
 ## Related projects
 
 - [Goose](https://github.com/aaif-goose/goose), an agent backend whose upstream moved to the [Agentic AI Foundation (AAIF)](https://aaif.io/). Hive integrates Goose as an independent CNCF project; Hive does not join AAIF, seek AAIF membership, or rely on AAIF to host or govern Hive. See [unattended Goose with Hive](docs/goose-at-scale.md) and [Goose upstream tracking](src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).

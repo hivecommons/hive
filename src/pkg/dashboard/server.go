@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/compliance"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/crux"
@@ -4245,7 +4244,7 @@ func agentCLIUnauthenticated(proc *crux.Process, authFn func(backend string) (av
 	// probe stops a shared-credential miss from flagging an inference-backed
 	// agent that is running fine. See pkg/agent/authprobe.go for the full
 	// precedence rule.
-	if agent.IsInferenceBackend(backend) {
+	if config.IsInferenceBackend(backend) {
 		return false
 	}
 	// POSITIVE EVIDENCE beats absence-of-file: a running agent that the pane

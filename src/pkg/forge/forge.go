@@ -6,15 +6,14 @@
 //
 // The read path (enumerate open issues / merge requests, get a repo) and the
 // core write path (comment on an issue/CR, add/remove labels, set a hold gate)
-// are implemented and tested for GitHub, GitLab and Gitea/Forgejo. A full merge
-// primitive is left as a clearly-marked TODO on the interface (Merge) rather
-// than half-implemented, because merge semantics diverge sharply across forges
-// (strategy names, gate checks, MR-vs-PR); callers that need to merge today
-// continue to use the forge-specific client directly.
+// are implemented and tested for GitHub, GitLab and Gitea/Forgejo. The optional
+// Merger extension interface defines the merge primitive; concrete adapters
+// implement it as their forge-specific merge semantics are integrated.
 package forge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -35,6 +34,24 @@ const (
 	// holdLabel is the forge-neutral label used by SetHold to gate a change from
 	// merging. It matches the "hold" convention already used by the GitHub client.
 	holdLabel = "hold"
+)
+
+var (
+	// ErrHoldActive is returned when a change request carries the hold gate label.
+	ErrHoldActive = errors.New("forge: merge refused: hold label is active")
+
+	// ErrNotMergeable is returned when the forge refuses to merge because the
+	// change request is not in a mergeable state (HTTP 405: e.g. conflicts,
+	// draft/WIP, pending approvals or CI checks).
+	ErrNotMergeable = errors.New("forge: change request is not mergeable")
+
+	// ErrAlreadyMerged is returned when the change request has already been
+	// merged (HTTP 406 on GitLab; or inspected state).
+	ErrAlreadyMerged = errors.New("forge: change request is already merged")
+
+	// ErrConflict is returned when the merge encounters a conflict or head SHA
+	// mismatch (HTTP 409).
+	ErrConflict = errors.New("forge: merge conflict or head SHA mismatch")
 )
 
 // Repo is a forge-neutral description of a repository / project.
@@ -89,14 +106,36 @@ type ChangeRequest struct {
 	HeadSHA string `json:"head_sha,omitempty"`
 }
 
-// MergeOptions is a placeholder for the (not-yet-implemented) Merge primitive.
-// Merge semantics diverge across forges — GitHub squash/rebase/merge, GitLab MR
-// merge with fast-forward/semi-linear options, Gitea merge styles — so the
-// concrete shape is intentionally left for the caller that first needs it.
+// MergeStrategy represents a forge-neutral merge strategy.
+type MergeStrategy string
+
+const (
+	// MergeStrategyMerge creates a merge commit preserving full branch history.
+	MergeStrategyMerge MergeStrategy = "merge"
+	// MergeStrategySquash combines all commits in the change request into a single commit.
+	MergeStrategySquash MergeStrategy = "squash"
+	// MergeStrategyRebase rebases the change request commits onto the target branch.
+	MergeStrategyRebase MergeStrategy = "rebase"
+)
+
+// MergeOptions configures a change-request merge operation.
+//
+// Semantics are forge-neutral: concrete adapters translate these options into
+// their native wire parameters (e.g. GitHub merge_method, GitLab squash/rebase,
+// Gitea Do).
 type MergeOptions struct {
-	// Strategy is the forge-specific merge strategy (e.g. "squash", "merge",
-	// "rebase"). Empty means "use the forge default".
+	// Strategy is the forge-neutral merge strategy (MergeStrategyMerge,
+	// MergeStrategySquash, MergeStrategyRebase). Empty string uses the forge
+	// or repository default.
 	Strategy string
+
+	// HeadSHA, when non-empty, specifies the expected commit SHA at the tip of
+	// the change request. If the head has moved since eligibility was checked,
+	// the merge fails cleanly with ErrConflict.
+	HeadSHA string
+
+	// DeleteBranch requests removing the source branch after merging.
+	DeleteBranch bool
 }
 
 // IssueWriter is the narrow write seam production callers are typed against.
@@ -137,9 +176,9 @@ type IssueWriter interface {
 //   - RemoveLabel
 //   - SetHold (add/remove the hold gate label — a forge-neutral merge gate)
 //
-// A full Merge primitive is deliberately NOT on this interface yet: its options
-// (strategy, gate checks) diverge too much across forges to neutralize cleanly.
-// See MergeOptions and the TODO on Merger below.
+// A full Merge primitive is kept off this core interface: callers that need to
+// merge type-assert against the optional Merger interface. See MergeOptions
+// and Merger below.
 type Forge interface {
 	// The forge-neutral write seam (CreateIssueComment, AddLabels). Embedded so
 	// any Forge can be handed to a caller typed against IssueWriter alone.
@@ -209,11 +248,9 @@ type IssueSeam interface {
 }
 
 // Merger is an OPTIONAL extension interface for the merge primitive. It is kept
-// off the core Forge interface because merge options are not yet forge-neutral.
-// No adapter implements it today; it exists to pin the intended shape.
-//
-//	// TODO(forge merge path): implement Merge on each adapter once MergeOptions
-//	// stabilizes across GitHub/GitLab/Gitea.
+// off the core Forge interface so callers that only need read/write operations
+// do not require every adapter to support merging. Adapters that support
+// merging implement this interface.
 type Merger interface {
 	Merge(ctx context.Context, repo string, number int, opts MergeOptions) error
 }
