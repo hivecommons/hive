@@ -36,6 +36,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 const (
@@ -72,6 +73,10 @@ const networkKey ctxKey = iota
 type Server struct {
 	// Runtime is what every route acts on.
 	Runtime crux.Runtime
+	// Watchdog is the fleet the watchdog routes observe and publish
+	// conditions on; nil answers them 404 not_configured. `crux serve` sets
+	// it from crux/runtime.NewWatchdogFleet for the in-process manager.
+	Watchdog watchdog.Fleet
 	// Token, when non-empty, is required as a bearer token on every request.
 	Token string
 	// Logger receives request errors; nil discards.
@@ -132,6 +137,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/kick", s.handleKick)
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/stop", s.handleStop)
 	mux.HandleFunc("GET "+api.PathEvents, s.handleEvents)
+	mux.HandleFunc("GET "+api.PathWatchdog, s.handleWatchdogAgents)
+	mux.HandleFunc("GET "+api.WatchdogPath("{name}"), s.handleWatchdogObserve)
+	mux.HandleFunc("PUT "+api.WatchdogConditionsPath("{name}"), s.handleWatchdogSetConditions)
+	mux.HandleFunc("DELETE "+api.WatchdogConditionsPath("{name}"), s.handleWatchdogClearConditions)
 	return s.authenticate(mux)
 }
 
@@ -580,6 +589,134 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// ---- watchdog fleet ----
+
+// watchdogFleet returns the server's fleet, or answers 404 not_configured
+// when it has none.
+func (s *Server) watchdogFleet(w http.ResponseWriter) (watchdog.Fleet, bool) {
+	if s.Watchdog == nil {
+		s.writeError(w, http.StatusNotFound, api.CodeNotConfigured, "this server has no watchdog fleet")
+		return nil, false
+	}
+	return s.Watchdog, true
+}
+
+func (s *Server) handleWatchdogAgents(w http.ResponseWriter, _ *http.Request) {
+	fleet, ok := s.watchdogFleet(w)
+	if !ok {
+		return
+	}
+	names := append([]string{}, fleet.AgentNames()...)
+	sort.Strings(names)
+	s.writeJSON(w, http.StatusOK, api.WatchdogFleet{Agents: names})
+}
+
+func (s *Server) handleWatchdogObserve(w http.ResponseWriter, r *http.Request) {
+	fleet, ok := s.watchdogFleet(w)
+	if !ok {
+		return
+	}
+	name := s.Runtime.ResolveAgent(r.PathValue("name"))
+	obs, err := fleet.Observe(name)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, api.CodeNotFound, fmt.Sprintf("watchdog observe %s: %v", name, err))
+		return
+	}
+	out := api.WatchdogObservation{
+		Agent:              name,
+		Backend:            obs.Backend,
+		SessionExists:      obs.SessionExists,
+		Pane:               obs.Pane,
+		HasCLIMarker:       obs.HasCLIMarker,
+		ShowsLoginPrompt:   obs.ShowsLoginPrompt,
+		LastChange:         knownTime(obs.LastChange),
+		StartedAt:          knownTime(obs.StartedAt),
+		AuthAvailable:      obs.AuthAvailable,
+		AuthKnown:          obs.AuthKnown,
+		CredentialProven:   obs.CredentialProven,
+		ProviderErrorClass: obs.ProviderErrorClass,
+		ProviderErrorLine:  obs.ProviderErrorLine,
+		Paused:             fleet.IsPaused(name),
+	}
+	if t, ok := fleet.LastProduction(name); ok {
+		out.LastProduction = knownTime(t)
+	}
+	s.writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleWatchdogSetConditions(w http.ResponseWriter, r *http.Request) {
+	fleet, ok := s.watchdogFleet(w)
+	if !ok {
+		return
+	}
+	name := s.Runtime.ResolveAgent(r.PathValue("name"))
+	var req api.WatchdogConditions
+	if !s.readJSON(w, r, &req) {
+		return
+	}
+	conds := make([]watchdog.Condition, 0, len(req.Conditions))
+	for i, c := range req.Conditions {
+		status := crux.ConditionStatus(c.Status)
+		if strings.TrimSpace(c.Type) == "" {
+			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, fmt.Sprintf("conditions[%d]: type is required", i))
+			return
+		}
+		if status != crux.ConditionTrue && status != crux.ConditionFalse && status != crux.ConditionUnknown {
+			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest,
+				fmt.Sprintf("conditions[%d]: status must be %s, %s or %s", i, crux.ConditionTrue, crux.ConditionFalse, crux.ConditionUnknown))
+			return
+		}
+		conds = append(conds, watchdog.Condition{
+			Type:               crux.ConditionType(c.Type),
+			Status:             status,
+			Reason:             c.Reason,
+			Message:            c.Message,
+			LastTransitionTime: c.LastTransitionTime,
+		})
+	}
+	s.setWatchdogConditions(w, fleet, name, conds)
+}
+
+// handleWatchdogClearConditions is the "clear" half of the family: an
+// empty condition set, so the dashboard falls back to the state echo.
+func (s *Server) handleWatchdogClearConditions(w http.ResponseWriter, r *http.Request) {
+	fleet, ok := s.watchdogFleet(w)
+	if !ok {
+		return
+	}
+	s.setWatchdogConditions(w, fleet, s.Runtime.ResolveAgent(r.PathValue("name")), nil)
+}
+
+// setWatchdogConditions publishes conds for a known agent. The fleet's
+// SetConditions is silent about an unknown name, so the runtime is asked
+// first and an unknown agent is a 404 rather than a 200 that did nothing.
+func (s *Server) setWatchdogConditions(w http.ResponseWriter, fleet watchdog.Fleet, name string, conds []watchdog.Condition) {
+	if p, err := s.Runtime.GetStatus(name); err != nil || p == nil {
+		s.writeError(w, http.StatusNotFound, api.CodeNotFound, fmt.Sprintf("agent %q not found", name))
+		return
+	}
+	fleet.SetConditions(name, conds)
+	out := api.WatchdogConditions{Agent: name, Conditions: make([]api.WatchdogCondition, 0, len(conds))}
+	for _, c := range conds {
+		out.Conditions = append(out.Conditions, api.WatchdogCondition{
+			Type:               string(c.Type),
+			Status:             string(c.Status),
+			Reason:             c.Reason,
+			Message:            c.Message,
+			LastTransitionTime: c.LastTransitionTime,
+		})
+	}
+	s.writeJSON(w, http.StatusOK, out)
+}
+
+// knownTime is nil for the zero time, which the runtime uses for "unknown".
+func knownTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }
 
 // ---- events ----

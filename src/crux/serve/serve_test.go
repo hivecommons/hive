@@ -21,6 +21,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // fakeRuntime answers the Runtime methods the server uses from canned state
@@ -1091,6 +1092,218 @@ func TestIsTrueAndNewTail(t *testing.T) {
 	for _, c := range cases {
 		if got := newTail(c.prev, c.cur); strings.Join(got, ",") != strings.Join(c.want, ",") {
 			t.Errorf("newTail(%v,%v) = %v, want %v", c.prev, c.cur, got, c.want)
+		}
+	}
+}
+
+// fakeFleet answers the watchdog.Fleet methods the watchdog routes use from
+// canned state. Restart, Pause and QueuedWork are not routed and panic
+// through the embedded nil interface.
+type fakeFleet struct {
+	watchdog.Fleet
+
+	mu       sync.Mutex
+	names    []string
+	obs      map[string]watchdog.Observation
+	paused   map[string]bool
+	produced map[string]time.Time
+	conds    map[string][]watchdog.Condition
+}
+
+func newFakeFleet() *fakeFleet {
+	return &fakeFleet{
+		obs:      map[string]watchdog.Observation{},
+		paused:   map[string]bool{},
+		produced: map[string]time.Time{},
+		conds:    map[string][]watchdog.Condition{},
+	}
+}
+
+func (f *fakeFleet) AgentNames() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.names...)
+}
+
+func (f *fakeFleet) Observe(name string) (watchdog.Observation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.obs[name]
+	if !ok {
+		return watchdog.Observation{}, fmt.Errorf("agent %s not found", name)
+	}
+	return o, nil
+}
+
+func (f *fakeFleet) IsPaused(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.paused[name]
+}
+
+func (f *fakeFleet) LastProduction(name string) (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t, ok := f.produced[name]
+	return t, ok
+}
+
+func (f *fakeFleet) SetConditions(name string, conds []watchdog.Condition) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.conds[name] = conds
+}
+
+func (f *fakeFleet) conditions(name string) ([]watchdog.Condition, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.conds[name]
+	return c, ok
+}
+
+// startWatchdogServer serves a runtime with fleet over httptest TCP behind
+// a token and returns an api.Client for it, so the routes are exercised
+// end to end through the client.
+func startWatchdogServer(t *testing.T, fleet watchdog.Fleet) (*fakeRuntime, *api.Client) {
+	t.Helper()
+	rt := newFakeRuntime()
+	srv := New(rt)
+	srv.Token = "s3cret"
+	srv.Watchdog = fleet
+	hs := httptest.NewServer(srv.Handler())
+	t.Cleanup(hs.Close)
+	c, err := api.NewClient(hs.URL, srv.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rt, c
+}
+
+func TestWatchdogFleetRoutes(t *testing.T) {
+	fleet := newFakeFleet()
+	rt, c := startWatchdogServer(t, fleet)
+	ctx := context.Background()
+	rt.add("fixer", "f1", crux.StateRunning)
+	rt.add("idle", "i1", crux.StateStopped)
+	started := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	produced := started.Add(time.Hour)
+	fleet.mu.Lock()
+	fleet.names = []string{"fixer", "alpha"}
+	fleet.obs["fixer"] = watchdog.Observation{
+		Backend: "claude", SessionExists: true, Pane: "❯", HasCLIMarker: true,
+		StartedAt: started, AuthAvailable: true, AuthKnown: true, CredentialProven: true,
+		ProviderErrorClass: "rate_limit", ProviderErrorLine: "429",
+	}
+	fleet.paused["fixer"] = true
+	fleet.produced["fixer"] = produced
+	fleet.obs["idle"] = watchdog.Observation{Backend: "codex"}
+	fleet.mu.Unlock()
+
+	names, err := c.WatchdogAgents(ctx)
+	if err != nil || strings.Join(names, ",") != "alpha,fixer" {
+		t.Fatalf("watchdog agents = %v, %v; want sorted alpha,fixer", names, err)
+	}
+
+	obs, err := c.WatchdogObserve(ctx, "f1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.Agent != "fixer" || obs.Backend != "claude" || !obs.SessionExists || obs.Pane != "❯" || !obs.HasCLIMarker ||
+		obs.ShowsLoginPrompt || !obs.AuthAvailable || !obs.AuthKnown || !obs.CredentialProven ||
+		obs.ProviderErrorClass != "rate_limit" || obs.ProviderErrorLine != "429" || !obs.Paused {
+		t.Fatalf("observe fixer = %+v", obs)
+	}
+	if obs.StartedAt == nil || !obs.StartedAt.Equal(started) || obs.LastProduction == nil || !obs.LastProduction.Equal(produced) {
+		t.Fatalf("observe fixer times: started %v produced %v", obs.StartedAt, obs.LastProduction)
+	}
+	if obs.LastChange != nil {
+		t.Fatalf("a zero LastChange is unknown and must be omitted, got %v", obs.LastChange)
+	}
+	// No production evidence is unknown (nil), never a zero time.
+	if obs, err = c.WatchdogObserve(ctx, "idle"); err != nil || obs.LastProduction != nil || obs.StartedAt != nil || obs.Paused {
+		t.Fatalf("observe idle = %+v, %v", obs, err)
+	}
+	if _, err := c.WatchdogObserve(ctx, "ghost"); !api.IsNotFound(err) {
+		t.Fatalf("observe ghost: %v", err)
+	}
+
+	at := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	set, err := c.SetWatchdogConditions(ctx, "f1", []api.WatchdogCondition{
+		{Type: string(crux.ConditionReady), Status: string(crux.ConditionFalse), Reason: "NoSession", Message: "tmux session gone", LastTransitionTime: at},
+		{Type: string(crux.ConditionProducing), Status: string(crux.ConditionUnknown), LastTransitionTime: at},
+	})
+	if err != nil || set.Agent != "fixer" || len(set.Conditions) != 2 || set.Conditions[0].Reason != "NoSession" {
+		t.Fatalf("set = %+v, %v", set, err)
+	}
+	got, _ := fleet.conditions("fixer")
+	want := []watchdog.Condition{
+		{Type: crux.ConditionReady, Status: crux.ConditionFalse, Reason: "NoSession", Message: "tmux session gone", LastTransitionTime: at},
+		{Type: crux.ConditionProducing, Status: crux.ConditionUnknown, LastTransitionTime: at},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("fleet conditions = %+v", got)
+	}
+	for i := range want {
+		if got[i].Type != want[i].Type || got[i].Status != want[i].Status || got[i].Reason != want[i].Reason ||
+			got[i].Message != want[i].Message || !got[i].LastTransitionTime.Equal(want[i].LastTransitionTime) {
+			t.Fatalf("fleet condition %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	cleared, err := c.ClearWatchdogConditions(ctx, "fixer")
+	if err != nil || cleared.Agent != "fixer" || cleared.Conditions == nil || len(cleared.Conditions) != 0 {
+		t.Fatalf("clear = %+v, %v", cleared, err)
+	}
+	if got, ok := fleet.conditions("fixer"); !ok || got != nil {
+		t.Fatalf("clear left %+v (recorded %v)", got, ok)
+	}
+
+	// Unknown agents are 404s: the fleet's SetConditions would silently do
+	// nothing for them.
+	if _, err := c.SetWatchdogConditions(ctx, "ghost", nil); !api.IsNotFound(err) {
+		t.Fatalf("set ghost: %v", err)
+	}
+	if _, err := c.ClearWatchdogConditions(ctx, "ghost"); !api.IsNotFound(err) {
+		t.Fatalf("clear ghost: %v", err)
+	}
+	if _, ok := fleet.conditions("ghost"); ok {
+		t.Fatal("a 404 still reached the fleet")
+	}
+}
+
+func TestWatchdogSetConditionsRejectsBadConditions(t *testing.T) {
+	fleet := newFakeFleet()
+	rt, c := startWatchdogServer(t, fleet)
+	rt.add("fixer", "f1", crux.StateRunning)
+	for _, bad := range []api.WatchdogCondition{
+		{Type: "", Status: string(crux.ConditionTrue)},
+		{Type: string(crux.ConditionReady), Status: "Maybe"},
+	} {
+		_, err := c.SetWatchdogConditions(context.Background(), "fixer", []api.WatchdogCondition{bad})
+		var se *api.StatusError
+		if !errors.As(err, &se) || se.Status != http.StatusBadRequest || se.Body.Code != api.CodeBadRequest {
+			t.Fatalf("set %+v: %v", bad, err)
+		}
+	}
+	if _, ok := fleet.conditions("fixer"); ok {
+		t.Fatal("a rejected condition set reached the fleet")
+	}
+}
+
+func TestWatchdogRoutesWithoutAFleet(t *testing.T) {
+	rt, c := startWatchdogServer(t, nil)
+	rt.add("fixer", "f1", crux.StateRunning)
+	ctx := context.Background()
+	calls := map[string]func() error{
+		"agents":  func() error { _, err := c.WatchdogAgents(ctx); return err },
+		"observe": func() error { _, err := c.WatchdogObserve(ctx, "fixer"); return err },
+		"set":     func() error { _, err := c.SetWatchdogConditions(ctx, "fixer", nil); return err },
+		"clear":   func() error { _, err := c.ClearWatchdogConditions(ctx, "fixer"); return err },
+	}
+	for name, call := range calls {
+		var se *api.StatusError
+		if err := call(); !errors.As(err, &se) || se.Status != http.StatusNotFound || se.Body.Code != api.CodeNotConfigured {
+			t.Errorf("%s without a fleet: %v", name, err)
 		}
 	}
 }

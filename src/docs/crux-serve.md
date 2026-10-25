@@ -67,6 +67,10 @@ All routes are under `/v1`. Bodies and responses are JSON; errors are
 | `POST /v1/agents/{name}/kick` | `{"message":…}` | `Kicker.SendKick` | `{"agent","process"}` |
 | `POST /v1/agents/{name}/stop` | | `Lifecycle.Stop` | `{"agent","process"}` |
 | `GET /v1/events` | | watcher + `Kicker.SetKickObserver` | `text/event-stream` of `Event` records |
+| `GET /v1/watchdog` | | `watchdog.Fleet.AgentNames` | `{"agents":[…]}`, sorted; `404 not_configured` without a fleet (all four watchdog routes) |
+| `GET /v1/agents/{name}/watchdog` | | `Fleet.Observe`, `IsPaused`, `LastProduction` | `WatchdogObservation`; unknown times omitted |
+| `PUT /v1/agents/{name}/watchdog/conditions` | `{"conditions":[{"type","status","reason","message","lastTransitionTime"}…]}` | `Fleet.SetConditions` | `{"agent","conditions":[…]}`; `400` empty type or status not `True`/`False`/`Unknown` |
+| `DELETE /v1/agents/{name}/watchdog/conditions` | | `Fleet.SetConditions` (empty set) | `{"agent","conditions":[]}` |
 
 `Process` is the wire projection of `crux.Process`: `name`, `id`, `state`,
 `backend`, `model`, `pid`, `paused` (+ reason, trigger, by), `started_at`,

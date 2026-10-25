@@ -135,6 +135,29 @@ func (f *fakeServer) handler() http.Handler {
 			}
 		}
 	}))
+	mux.HandleFunc("GET "+PathWatchdog, auth(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, WatchdogFleet{Agents: []string{"a", "b"}})
+	}))
+	mux.HandleFunc("GET "+WatchdogPath("{name}"), auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("name") == "ghost" {
+			w.WriteHeader(http.StatusNotFound)
+			writeJSON(w, Error{Error: "agent ghost not found", Code: CodeNotFound})
+			return
+		}
+		writeJSON(w, WatchdogObservation{Agent: r.PathValue("name"), Backend: "claude", SessionExists: true, Paused: true})
+	}))
+	mux.HandleFunc("PUT "+WatchdogConditionsPath("{name}"), auth(func(w http.ResponseWriter, r *http.Request) {
+		var req WatchdogConditions
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		data, _ := json.Marshal(req.Conditions)
+		f.mu.Lock()
+		f.bodies = append(f.bodies, string(data))
+		f.mu.Unlock()
+		writeJSON(w, WatchdogConditions{Agent: r.PathValue("name"), Conditions: req.Conditions})
+	}))
+	mux.HandleFunc("DELETE "+WatchdogConditionsPath("{name}"), auth(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, WatchdogConditions{Agent: r.PathValue("name"), Conditions: []WatchdogCondition{}})
+	}))
 	return mux
 }
 
@@ -223,6 +246,50 @@ func TestClientVerbsOverUnixSocket(t *testing.T) {
 	bodies := strings.Join(f.bodies, "|")
 	f.mu.Unlock()
 	if bodies != `{"backend":"claude"}|go` {
+		t.Fatalf("bodies %q", bodies)
+	}
+}
+
+func TestClientWatchdogFleet(t *testing.T) {
+	f := &fakeServer{}
+	c := startUnix(t, f, "")
+	ctx := context.Background()
+
+	names, err := c.WatchdogAgents(ctx)
+	if err != nil || strings.Join(names, ",") != "a,b" {
+		t.Fatalf("watchdog agents %v %v", names, err)
+	}
+	obs, err := c.WatchdogObserve(ctx, "a b")
+	if err != nil || obs.Agent != "a b" || obs.Backend != "claude" || !obs.SessionExists || !obs.Paused {
+		t.Fatalf("observe %+v %v", obs, err)
+	}
+	if _, err := c.WatchdogObserve(ctx, "ghost"); !IsNotFound(err) {
+		t.Fatalf("observe ghost: %v", err)
+	}
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	set, err := c.SetWatchdogConditions(ctx, "a", []WatchdogCondition{{Type: "Ready", Status: "False", Reason: "NoSession", LastTransitionTime: at}})
+	if err != nil || set.Agent != "a" || len(set.Conditions) != 1 || !set.Conditions[0].LastTransitionTime.Equal(at) {
+		t.Fatalf("set %+v %v", set, err)
+	}
+	// A nil set is sent as an empty list, never as null.
+	if _, err := c.SetWatchdogConditions(ctx, "a", nil); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := c.ClearWatchdogConditions(ctx, "a")
+	if err != nil || cleared.Agent != "a" || len(cleared.Conditions) != 0 {
+		t.Fatalf("clear %+v %v", cleared, err)
+	}
+
+	seen := strings.Join(f.seen(), "\n") + "\n"
+	for _, want := range []string{"GET /v1/watchdog\n", "GET /v1/agents/a%20b/watchdog\n", "PUT /v1/agents/a/watchdog/conditions\n", "DELETE /v1/agents/a/watchdog/conditions\n"} {
+		if !strings.Contains(seen, want) {
+			t.Errorf("missing %q in\n%s", want, seen)
+		}
+	}
+	f.mu.Lock()
+	bodies := strings.Join(f.bodies, "|")
+	f.mu.Unlock()
+	if bodies != `[{"type":"Ready","status":"False","reason":"NoSession","lastTransitionTime":"2026-01-02T03:04:05Z"}]|[]` {
 		t.Fatalf("bodies %q", bodies)
 	}
 }

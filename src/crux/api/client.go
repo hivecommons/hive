@@ -165,6 +165,40 @@ func (c *Client) Stop(ctx context.Context, name string) (AgentResponse, error) {
 	return out, err
 }
 
+// WatchdogAgents is GET /v1/watchdog: the agents the watchdog reconciles.
+func (c *Client) WatchdogAgents(ctx context.Context) ([]string, error) {
+	var out WatchdogFleet
+	if err := c.do(ctx, http.MethodGet, PathWatchdog, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Agents, nil
+}
+
+// WatchdogObserve is GET /v1/agents/{name}/watchdog.
+func (c *Client) WatchdogObserve(ctx context.Context, name string) (WatchdogObservation, error) {
+	var out WatchdogObservation
+	err := c.do(ctx, http.MethodGet, WatchdogPath(url.PathEscape(name)), nil, &out)
+	return out, err
+}
+
+// SetWatchdogConditions is PUT /v1/agents/{name}/watchdog/conditions: it
+// replaces the agent's condition set and returns the set the server holds.
+func (c *Client) SetWatchdogConditions(ctx context.Context, name string, conds []WatchdogCondition) (WatchdogConditions, error) {
+	if conds == nil {
+		conds = []WatchdogCondition{}
+	}
+	var out WatchdogConditions
+	err := c.do(ctx, http.MethodPut, WatchdogConditionsPath(url.PathEscape(name)), WatchdogConditions{Conditions: conds}, &out)
+	return out, err
+}
+
+// ClearWatchdogConditions is DELETE /v1/agents/{name}/watchdog/conditions.
+func (c *Client) ClearWatchdogConditions(ctx context.Context, name string) (WatchdogConditions, error) {
+	var out WatchdogConditions
+	err := c.do(ctx, http.MethodDelete, WatchdogConditionsPath(url.PathEscape(name)), nil, &out)
+	return out, err
+}
+
 // Events is GET /v1/events: fn is called with each runtime event until ctx
 // ends, the server closes the stream, or fn returns an error.
 func (c *Client) Events(ctx context.Context, fn func(Event) error) error {

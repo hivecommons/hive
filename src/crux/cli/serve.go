@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/crux/config"
+	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 	"github.com/hivecommons/hive/crux/serve"
 )
 
@@ -56,6 +57,13 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 	}
 	srv := serve.New(rt)
 	srv.Token = cfg.Token
+	// The governor-side watchdog hooks (queue depth, kick suppression,
+	// cadence) are the host's; served alone they are unknown, which the
+	// reconciler reports as such. A runtime that is not the in-process
+	// manager has no fleet and the watchdog routes answer not_configured.
+	if fleet, err := cruxruntime.NewWatchdogFleet(rt, cruxruntime.WatchdogHooks{}); err == nil {
+		srv.Watchdog = fleet
+	}
 	srv.Logger = slog.New(slog.NewTextHandler(e.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	fmt.Fprintf(e.Stdout, "serving %d agent definition(s) on %s\n", len(defs), strings.Join(ls.Addrs(), " and "))
 	if err := srv.Serve(ctx, ls); err != nil {

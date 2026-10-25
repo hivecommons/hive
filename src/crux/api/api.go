@@ -25,11 +25,24 @@
 //	POST /v1/agents/{name}/stop            stop      Lifecycle.Stop
 //	GET  /v1/events                        —         runtime events as SSE
 //
+// The watchdog fleet family (hivecommons/hive#14138, stage 3) serves the
+// watchdog.Fleet the self-healing reconciler runs against, so a host can
+// observe agents and publish or clear their conditions across the process
+// boundary:
+//
+//	GET    /v1/watchdog                          Fleet.AgentNames
+//	GET    /v1/agents/{name}/watchdog            Fleet.Observe / IsPaused / LastProduction
+//	PUT    /v1/agents/{name}/watchdog/conditions Fleet.SetConditions
+//	DELETE /v1/agents/{name}/watchdog/conditions Fleet.SetConditions (empty set)
+//
 // {name} is a name or ID; the server resolves it with Observer.ResolveAgent.
+// Routes is the same table as data; the parity tests hold it to the server,
+// the client, crux.Runtime and the CLI's verb table.
 package api
 
 import (
 	"encoding/json"
+	"net/http"
 	"time"
 )
 
@@ -42,6 +55,8 @@ const (
 	PathHealth = "/" + Version + "/health"
 	PathAgents = "/" + Version + "/agents"
 	PathEvents = "/" + Version + "/events"
+	// PathWatchdog lists the agents the watchdog fleet reconciles.
+	PathWatchdog = "/" + Version + "/watchdog"
 )
 
 // AgentPath is the route of one agent.
@@ -55,6 +70,48 @@ func KickPath(name string) string { return AgentPath(name) + "/kick" }
 
 // StopPath is the route that stops one agent.
 func StopPath(name string) string { return AgentPath(name) + "/stop" }
+
+// WatchdogPath is the route that observes one agent for the watchdog.
+func WatchdogPath(name string) string { return AgentPath(name) + "/watchdog" }
+
+// WatchdogConditionsPath is the route that sets (PUT) or clears (DELETE) one
+// agent's watchdog conditions.
+func WatchdogConditionsPath(name string) string { return WatchdogPath(name) + "/conditions" }
+
+// Route is one endpoint of the API as data: the HTTP method and ServeMux
+// path pattern, the `crux` verb it serves (empty when no verb maps onto
+// it), the *Client methods that call it, and the runtime methods the server
+// answers it with. Runtime names crux.Runtime methods; Fleet names
+// watchdog.Fleet methods, the watchdog family that is not on crux.Runtime.
+type Route struct {
+	Method  string
+	Pattern string
+	Verb    string
+	Client  []string
+	Runtime []string
+	Fleet   []string
+}
+
+// Routes is every endpoint the server registers. It is the API's half of
+// the parity contract in hivecommons/hive#14138: crux/serve asserts each is
+// registered and that every crux.Runtime and watchdog.Fleet method is routed
+// here or named in its unrouted allowlist; crux/cli asserts every runtime
+// verb has a route. A new endpoint family adds its rows here and removes its
+// methods from those allowlists.
+var Routes = []Route{
+	{Method: http.MethodGet, Pattern: PathHealth, Client: []string{"Health", "WaitReady"}, Runtime: []string{"AllStatuses"}},
+	{Method: http.MethodGet, Pattern: PathAgents, Verb: "ps", Client: []string{"List"}, Runtime: []string{"AllStatuses"}},
+	{Method: http.MethodPost, Pattern: PathAgents, Verb: "run", Client: []string{"Run"}, Runtime: []string{"ResolveAgent", "GetStatus", "AddAgent", "Start"}},
+	{Method: http.MethodGet, Pattern: AgentPath("{name}"), Client: []string{"Get"}, Runtime: []string{"ResolveAgent", "GetStatus"}},
+	{Method: http.MethodGet, Pattern: LogsPath("{name}"), Verb: "logs", Client: []string{"Logs", "FollowLogs"}, Runtime: []string{"ResolveAgent", "GetOutput", "GetBufferOutput", "CaptureFullLog", "FullLogHeader"}},
+	{Method: http.MethodPost, Pattern: KickPath("{name}"), Verb: "kick", Client: []string{"Kick"}, Runtime: []string{"ResolveAgent", "SendKick", "GetStatus"}},
+	{Method: http.MethodPost, Pattern: StopPath("{name}"), Verb: "stop", Client: []string{"Stop"}, Runtime: []string{"ResolveAgent", "Stop", "GetStatus"}},
+	{Method: http.MethodGet, Pattern: PathEvents, Client: []string{"Events"}, Runtime: []string{"AllStatuses", "SetKickObserver"}},
+	{Method: http.MethodGet, Pattern: PathWatchdog, Client: []string{"WatchdogAgents"}, Fleet: []string{"AgentNames"}},
+	{Method: http.MethodGet, Pattern: WatchdogPath("{name}"), Client: []string{"WatchdogObserve"}, Runtime: []string{"ResolveAgent"}, Fleet: []string{"Observe", "IsPaused", "LastProduction"}},
+	{Method: http.MethodPut, Pattern: WatchdogConditionsPath("{name}"), Client: []string{"SetWatchdogConditions"}, Runtime: []string{"ResolveAgent", "GetStatus"}, Fleet: []string{"SetConditions"}},
+	{Method: http.MethodDelete, Pattern: WatchdogConditionsPath("{name}"), Client: []string{"ClearWatchdogConditions"}, Runtime: []string{"ResolveAgent", "GetStatus"}, Fleet: []string{"SetConditions"}},
+}
 
 // Log sources, the `source` query parameter of the logs route. They are the
 // three readers `crux logs` has: the live pane (default), the ring buffer
@@ -198,6 +255,57 @@ const (
 	EventLog = "agent.log"
 )
 
+// WatchdogFleet is the body of GET /v1/watchdog: the agents the watchdog
+// reconciles (those the runtime believes are running), sorted by name.
+type WatchdogFleet struct {
+	Agents []string `json:"agents"`
+}
+
+// WatchdogObservation is the body of GET /v1/agents/{name}/watchdog: the
+// wire form of watchdog.Observation plus the pause state and production
+// evidence the reconciler reads alongside it. A nil time is one the runtime
+// does not know (no launch timestamp, no pane change seen, no readable
+// production evidence), never a zero value standing in for "healthy".
+type WatchdogObservation struct {
+	Agent            string `json:"agent"`
+	Backend          string `json:"backend"`
+	SessionExists    bool   `json:"session_exists"`
+	Pane             string `json:"pane,omitempty"`
+	HasCLIMarker     bool   `json:"has_cli_marker"`
+	ShowsLoginPrompt bool   `json:"shows_login_prompt"`
+
+	LastChange *time.Time `json:"last_change,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+
+	AuthAvailable      bool   `json:"auth_available"`
+	AuthKnown          bool   `json:"auth_known"`
+	CredentialProven   bool   `json:"credential_proven"`
+	ProviderErrorClass string `json:"provider_error_class,omitempty"`
+	ProviderErrorLine  string `json:"provider_error_line,omitempty"`
+
+	Paused         bool       `json:"paused"`
+	LastProduction *time.Time `json:"last_production,omitempty"`
+}
+
+// WatchdogCondition is one observed-health axis, the wire form of
+// crux.Condition (same JSON shape). Type is Ready, Authenticated or
+// Producing; Status is True, False or Unknown.
+type WatchdogCondition struct {
+	Type               string    `json:"type"`
+	Status             string    `json:"status"`
+	Reason             string    `json:"reason,omitempty"`
+	Message            string    `json:"message,omitempty"`
+	LastTransitionTime time.Time `json:"lastTransitionTime"`
+}
+
+// WatchdogConditions is the body of PUT /v1/agents/{name}/watchdog/conditions
+// and the response of both the PUT and the DELETE: the agent's condition set
+// after the call. Agent is ignored on the request; the path names the agent.
+type WatchdogConditions struct {
+	Agent      string              `json:"agent,omitempty"`
+	Conditions []WatchdogCondition `json:"conditions"`
+}
+
 // Error is the body of every non-2xx response.
 type Error struct {
 	// Error is the message.
@@ -215,4 +323,7 @@ const (
 	// holds; the runtime does not replace definitions.
 	CodeConflict = "conflict"
 	CodeRuntime  = "runtime_error"
+	// CodeNotConfigured is a route whose family the server was built
+	// without (a watchdog route on a runtime that has no watchdog fleet).
+	CodeNotConfigured = "not_configured"
 )

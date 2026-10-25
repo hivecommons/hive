@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/api"
 )
 
 // nonRuntimeVerbs are dispatch cases that do not operate on a runtime: serve
@@ -26,6 +27,34 @@ func TestVerbsHaveRuntimeMethods(t *testing.T) {
 		for _, m := range methods {
 			if _, ok := rt.MethodByName(m); !ok {
 				t.Errorf("verb %q calls %s, which is not a crux.Runtime method", verb, m)
+			}
+		}
+	}
+}
+
+// TestVerbsHaveAPIRoutes is the stage-3 half of the parity contract: every
+// runtime verb has an api.Routes entry, so `crux --server` can run it, and
+// every runtime method the verb calls is answered by some route.
+func TestVerbsHaveAPIRoutes(t *testing.T) {
+	routedVerbs, routedMethods := map[string]bool{}, map[string]bool{}
+	for _, r := range api.Routes {
+		if r.Verb != "" {
+			if _, ok := RuntimeVerbs[r.Verb]; !ok {
+				t.Errorf("api.Routes maps %s %s to verb %q, which RuntimeVerbs does not list", r.Method, r.Pattern, r.Verb)
+			}
+			routedVerbs[r.Verb] = true
+		}
+		for _, m := range r.Runtime {
+			routedMethods[m] = true
+		}
+	}
+	for verb, methods := range RuntimeVerbs {
+		if !routedVerbs[verb] {
+			t.Errorf("verb %q has no API route: add one to api.Routes with Verb %q", verb, verb)
+		}
+		for _, m := range methods {
+			if !routedMethods[m] {
+				t.Errorf("verb %q calls %s, which no api.Routes entry answers", verb, m)
 			}
 		}
 	}

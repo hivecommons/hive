@@ -607,7 +607,8 @@ row went 12 → 0 and the baseline map is empty.
 every verb the dispatcher routes to a runtime is listed, and the listed
 methods are exactly the `rt.<Method>` selectors in each command body
 (following helpers such as `stream`). Stage 3 adds the other half, every
-verb and every `Runtime` method against an API route.
+verb and every `Runtime` method against an API route (landed; see
+[Stage 3: endpoint families](#stage-3-endpoint-families)).
 
 **What stage 3 needs from the API** to serve `Runtime` in full, from the
 table above: the `Resumer` family (handle capture, resume kick with the
@@ -618,6 +619,41 @@ server-side loops (a no-op for the client); the `Fleet` watchdog
 observe/restart and the dashboard's `Credentials` family; `/v1/events` for
 the observer half of `Host`; and a `crux agy-turn` subcommand so the
 `hive agy-turn` subprocess does not need the runtime linked in.
+
+#### Stage 3: endpoint families
+
+*Status: in progress.* Landed so far:
+
+- **Parity ratchet.** `api.Routes` is the API's route table as data: per
+  route the HTTP method and pattern, the CLI verb it serves, the
+  `api.Client` methods that call it, and the `crux.Runtime` (or
+  `watchdog.Fleet`) methods the server answers it with. `crux/serve`'s
+  `parity_test.go` asserts every route is registered on the server and
+  every `api.Client` method is on a route, and holds every `crux.Runtime`
+  and `watchdog.Fleet` method to "routed, or named in an exact allowlist"
+  (`unroutedRuntimeMethods`, `unroutedFleetMethods`). The allowlists fail
+  in both directions: an unrouted method that is not listed fails, and a
+  listed method that is now routed (or no longer declared) fails until the
+  entry is deleted, so each family PR shrinks them and nothing grows them.
+  `crux/cli` asserts every `RuntimeVerbs` verb has a route and every method
+  a verb calls is routed.
+- **Watchdog fleet** (`watchdog.Fleet` observe and clear):
+  `GET /v1/watchdog` (`AgentNames`), `GET /v1/agents/{name}/watchdog`
+  (`Observe`, `IsPaused`, `LastProduction`; unknown times are omitted,
+  never zero), `PUT` / `DELETE /v1/agents/{name}/watchdog/conditions`
+  (`SetConditions`, set or clear; an unknown agent is a 404), with the
+  matching `api.Client` methods. `crux serve` serves the in-process fleet
+  from `crux/runtime.NewWatchdogFleet` with no governor hooks (queue depth,
+  kick suppression and cadence stay host-side and read as unknown); a
+  server without a fleet answers `404 not_configured`. `Restart` and
+  `Pause` remain on the allowlist for the lifecycle routes, `QueuedWork`
+  as the host's hook. There is no sidecar `crux.Runtime` yet
+  (`crux/runtime.New` still returns `ErrModeUnavailable` for `sidecar`),
+  so `NewWatchdogFleet` stays in-process only until one exists.
+
+Still open: streamed turn with cancel (`RunAgyTurn`), resume with busy /
+gone states (`Resumer`), the permissions watcher, and the remaining
+families on the allowlist.
 
 ## Credentials and hive-provided capabilities
 
