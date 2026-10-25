@@ -95,6 +95,25 @@ type Health struct {
 	// Background lists the crux.Background loops the server runs in-process
 	// (the Background method names); empty when it runs none.
 	Background []string `json:"background,omitempty"`
+	// HiveCallback is the hive callback endpoint's reachability when the
+	// server was started with one (`crux serve --hive-callback`); absent
+	// otherwise. The same state is the hive_callback_unavailable condition
+	// on the event stream.
+	HiveCallback *HiveCallback `json:"hive_callback,omitempty"`
+}
+
+// HiveCallback is the wire form of the callback client's status.
+type HiveCallback struct {
+	Address   string `json:"address"`
+	Reachable bool   `json:"reachable"`
+	// LastError is the most recent failure, "" when reachable.
+	LastError string `json:"last_error,omitempty"`
+	// Since is when the current outage began; absent when reachable.
+	Since *time.Time `json:"since,omitempty"`
+	// FailedCalls counts calls that failed closed during the current outage.
+	FailedCalls int `json:"failed_calls,omitempty"`
+	// LastSuccess is when a call last reached hive; absent if never.
+	LastSuccess *time.Time `json:"last_success,omitempty"`
 }
 
 // Process is the wire projection of one agent: what `crux ps --json` prints,

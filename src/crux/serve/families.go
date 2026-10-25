@@ -1027,6 +1027,13 @@ func (t auditTee) Record(actor, action, agentName string, fields map[string]any)
 
 type conditionTee struct{ s *Server }
 
+// Conditions is the server's own condition reporter: every report reaches
+// the event stream (EventCondition) and ConditionReporter when set. It is
+// how a condition about the serving process itself, rather than one the
+// runtime raises, gets onto the same path (hivecap.Watch uses it for
+// hive_callback_unavailable).
+func (s *Server) Conditions() crux.ConditionReporter { return conditionTee{s} }
+
 func (t conditionTee) Observe(class, key, message, diagnostics string) {
 	t.s.publishData(api.EventCondition, "", api.ConditionEvent{Action: api.ConditionObserve, Class: class, Key: key, Message: message, Diagnostics: diagnostics})
 	if t.s.ConditionReporter != nil {

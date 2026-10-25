@@ -94,6 +94,9 @@ type Server struct {
 	// always carries them (EventAudit, EventCondition).
 	AuditSink         crux.AuditSink
 	ConditionReporter crux.ConditionReporter
+	// HiveCallback, when set, is reported on Health: the hive callback
+	// endpoint's reachability as `crux serve --hive-callback` sees it.
+	HiveCallback func() api.HiveCallback
 
 	now func() time.Time
 
@@ -347,7 +350,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	background := append([]string(nil), s.background...)
 	s.mu.Unlock()
-	s.writeJSON(w, http.StatusOK, api.Health{Version: api.Version, Agents: len(s.Runtime.AllStatuses()), Background: background})
+	h := api.Health{Version: api.Version, Agents: len(s.Runtime.AllStatuses()), Background: background}
+	if s.HiveCallback != nil {
+		hc := s.HiveCallback()
+		h.HiveCallback = &hc
+	}
+	s.writeJSON(w, http.StatusOK, h)
 }
 
 func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {

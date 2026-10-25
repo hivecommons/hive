@@ -443,3 +443,72 @@ func TestRateLimitHeadersFilter(t *testing.T) {
 		t.Errorf("filtered = %v", got)
 	}
 }
+
+type watchReporter struct {
+	mu       sync.Mutex
+	observed []string
+	cleared  []string
+	seen     chan struct{}
+}
+
+func (r *watchReporter) Observe(class, key, message, diagnostics string) {
+	r.mu.Lock()
+	r.observed = append(r.observed, class+"/"+key+": "+message+" ["+diagnostics+"]")
+	r.mu.Unlock()
+	r.seen <- struct{}{}
+}
+
+func (r *watchReporter) Clear(class, key string) {
+	r.mu.Lock()
+	r.cleared = append(r.cleared, class+"/"+key)
+	r.mu.Unlock()
+	r.seen <- struct{}{}
+}
+
+func TestWatchReportsTransitionsOnly(t *testing.T) {
+	var mu sync.Mutex
+	st := callback.Status{Reachable: true}
+	set := func(s callback.Status) { mu.Lock(); st = s; mu.Unlock() }
+	source := func() callback.Status { mu.Lock(); defer mu.Unlock(); return st }
+	rep := &watchReporter{seen: make(chan struct{}, 8)}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { Watch(ctx, source, rep, time.Millisecond); close(done) }()
+
+	since := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	set(callback.Status{LastError: "dial: refused", Since: since, FailedCalls: 3, LastSuccess: since.Add(-time.Hour)})
+	<-rep.seen
+	set(callback.Status{LastError: "dial: refused", Since: since, FailedCalls: 9})
+	// Still down: a second Observe must not follow; wait a few polls.
+	settle := time.NewTimer(20 * time.Millisecond)
+	select {
+	case <-rep.seen:
+		t.Fatal("repeated Observe while still unreachable")
+	case <-settle.C:
+	}
+	set(callback.Status{Reachable: true})
+	<-rep.seen
+	cancel()
+	<-done
+
+	rep.mu.Lock()
+	defer rep.mu.Unlock()
+	if len(rep.observed) != 1 || len(rep.cleared) != 1 {
+		t.Fatalf("observed %v cleared %v", rep.observed, rep.cleared)
+	}
+	want := callback.ConditionClassUnavailable + "/" + WatchConditionKey + ": hive callback endpoint unreachable [error=dial: refused failed_calls=3 since=2026-01-02T03:04:05Z last_success=2026-01-02T02:04:05Z]"
+	if rep.observed[0] != want {
+		t.Errorf("observe\n got %s\nwant %s", rep.observed[0], want)
+	}
+	if rep.cleared[0] != callback.ConditionClassUnavailable+"/"+WatchConditionKey {
+		t.Errorf("clear %s", rep.cleared[0])
+	}
+}
+
+func TestWatchNilArgumentsReturn(t *testing.T) {
+	Watch(context.Background(), nil, &watchReporter{}, 0)
+	Watch(context.Background(), func() callback.Status { return callback.Status{} }, nil, 0)
+	if unavailableDiagnostics(callback.Status{LastError: "x"}) != "error=x failed_calls=0" {
+		t.Fatal("diagnostics")
+	}
+}

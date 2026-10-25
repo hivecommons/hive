@@ -346,3 +346,60 @@ func (l LinearCredentials) Resolve() (accessToken, apiKey string) {
 	}
 	return cred.AccessToken, cred.APIKey
 }
+
+// StatusSource is callback.Client.Status: the endpoint's reachability as
+// the client last saw it.
+type StatusSource func() callback.Status
+
+// Watch turns a StatusSource into the callback.ConditionClassUnavailable
+// condition: it polls every interval until ctx ends, reporting Observe on
+// the transition to unreachable and Clear on recovery. The reporter is the
+// serving process's own (its event stream), not the callback: the condition
+// describes the callback being down, so it cannot travel over it. The
+// first poll happens at once so a dead endpoint is reported without
+// waiting an interval; non-positive interval selects DefaultWatchInterval.
+func Watch(ctx context.Context, status StatusSource, reporter crux.ConditionReporter, interval time.Duration) {
+	if status == nil || reporter == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = DefaultWatchInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	down := false
+	for {
+		st := status()
+		switch {
+		case !st.Reachable && !down:
+			down = true
+			reporter.Observe(callback.ConditionClassUnavailable, WatchConditionKey, "hive callback endpoint unreachable", unavailableDiagnostics(st))
+		case st.Reachable && down:
+			down = false
+			reporter.Clear(callback.ConditionClassUnavailable, WatchConditionKey)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// DefaultWatchInterval is how often Watch samples the status.
+const DefaultWatchInterval = 10 * time.Second
+
+// WatchConditionKey is the condition key Watch reports under; one endpoint
+// per runtime, so one key.
+const WatchConditionKey = "endpoint"
+
+func unavailableDiagnostics(st callback.Status) string {
+	parts := []string{"error=" + st.LastError, fmt.Sprintf("failed_calls=%d", st.FailedCalls)}
+	if !st.Since.IsZero() {
+		parts = append(parts, "since="+st.Since.UTC().Format(time.RFC3339))
+	}
+	if !st.LastSuccess.IsZero() {
+		parts = append(parts, "last_success="+st.LastSuccess.UTC().Format(time.RFC3339))
+	}
+	return strings.Join(parts, " ")
+}

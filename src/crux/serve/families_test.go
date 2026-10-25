@@ -901,3 +901,51 @@ func TestPublishDataSkipsUnencodable(t *testing.T) {
 	default:
 	}
 }
+
+// TestServerConditionsAndHiveCallbackHealth covers the server's own
+// condition reporter (event stream plus the tee) and the hive callback
+// status on the health route.
+func TestServerConditionsAndHiveCallbackHealth(t *testing.T) {
+	srv := New(cruxtest.NewRecorder())
+	sink := &recSink{}
+	srv.ConditionReporter = sink
+	since := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	srv.HiveCallback = func() api.HiveCallback {
+		return api.HiveCallback{Address: "unix:///run/hive.sock", LastError: "refused", Since: &since, FailedCalls: 2}
+	}
+	ch := srv.subscribe()
+	srv.Conditions().Observe("hive_callback_unavailable", "endpoint", "down", "d")
+	srv.Conditions().Clear("hive_callback_unavailable", "endpoint")
+	for i, want := range []string{api.ConditionObserve, api.ConditionClear} {
+		var ce api.ConditionEvent
+		select {
+		case ev := <-ch:
+			if ev.Type != api.EventCondition || json.Unmarshal(ev.Data, &ce) != nil || ce.Action != want || ce.Class != "hive_callback_unavailable" {
+				t.Fatalf("event %d: %+v", i, ev)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("event %d not published", i)
+		}
+	}
+	if sink.observed != 1 || sink.cleared != 1 {
+		t.Fatalf("tee: %+v", sink)
+	}
+
+	srv.Token = "t"
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+api.PathHealth, nil)
+	req.Header.Set("Authorization", "Bearer t")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var h api.Health
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
+		t.Fatal(err)
+	}
+	if h.HiveCallback == nil || h.HiveCallback.Reachable || h.HiveCallback.LastError != "refused" || h.HiveCallback.FailedCalls != 2 || h.HiveCallback.Since == nil || !h.HiveCallback.Since.Equal(since) {
+		t.Fatalf("health: %+v", h.HiveCallback)
+	}
+}
