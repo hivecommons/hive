@@ -91,6 +91,10 @@ func isOwnerRole(role string) bool {
 // A WRONG proof header is ALWAYS rejected regardless of this setting.
 var proxyProofRequired = true
 
+// staleDropStarvationThreshold is the number of consecutive stale-snapshot
+// drops (no publish between) at which the drop is logged at Warn.
+const staleDropStarvationThreshold = 5
+
 type Server struct {
 	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
 
@@ -246,6 +250,9 @@ type Server struct {
 	// a mutation landed mid-build. Published on the payload so a dashboard
 	// whose snapshot stops advancing shows whether the guard is the reason.
 	statusStaleDrops uint64
+	// statusConsecutiveStaleDrops resets on every publish; reaching
+	// staleDropStarvationThreshold means publishing is starved.
+	statusConsecutiveStaleDrops uint64
 
 	// fact/cost histories were migrated to the generic timeSeries store (#2041);
 	// the trend history (#2039) remains a dedicated buffer for now.
@@ -2544,9 +2551,17 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		curEpoch := s.statusMutationEpoch
 		s.statusStaleDrops++
 		drops := s.statusStaleDrops
+		s.statusConsecutiveStaleDrops++
+		consecutive := s.statusConsecutiveStaleDrops
 		s.statusMu.Unlock()
-		s.logger.Warn("dropping stale status snapshot built before a mutation",
-			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops)
+		// A single drop is normal optimistic-concurrency self-healing; only a
+		// run of drops with no publish in between is an anomaly.
+		level := slog.LevelInfo
+		if consecutive >= staleDropStarvationThreshold {
+			level = slog.LevelWarn
+		}
+		s.logger.Log(context.Background(), level, "dropping stale status snapshot built before a mutation",
+			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
 		return false
 	}
 
@@ -2565,6 +2580,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	// with; webhook re-reads that landed since (a PR closed mid-cycle) are
 	// re-applied so the publish cannot bring a gone row back.
 	s.replayWebhookPatchesLocked(status, time.Now())
+	s.statusConsecutiveStaleDrops = 0
 	s.statusSeq++
 	status.StatusSeq = s.statusSeq
 	status.StatusStaleDrops = s.statusStaleDrops
