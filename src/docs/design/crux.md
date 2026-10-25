@@ -621,11 +621,12 @@ the observer half of `Host`; and a `crux agy-turn` subcommand so the
 
 ## Credentials and hive-provided capabilities
 
-Status: **Stage 2 of the #14138 sidecar plan (decision A). Design
-recorded here first; the callback contract (`crux/api/callback`), the
-runtime-side adapters (`crux/hivecap`) and the hive-side mount
-(`pkg/cruxhost`) follow in the next PR. Nothing is wired into `cmd/hive`
-or `crux serve` yet; that is stage 3.**
+Status: **Stage 2 of the #14138 sidecar plan (decision A): done.** Design
+in #14197; the callback contract (`crux/api/callback`), the runtime-side
+adapters (`crux/hivecap`) and the hive-side mount (`pkg/cruxhost`) in
+#14222 (coverage 94.8% / 99.1% / 100%, default floors). Nothing is wired
+into `cmd/hive` or `crux serve` yet; that is stage 3 (see "What stage 3
+wires" below).
 
 The decision this section records: **the runtime never holds the GitHub
 App private key, or any other hive-owned credential.** When hive runs the
@@ -733,7 +734,7 @@ it links nothing of hive.
   | Core rate-limit snapshot | `GET /v1/github/rate-limit` | — | remaining, reset, ok |
   | Inference usage | `POST /v1/usage` | agent, model, kind (`gateway` / `copilot` / `copilot_cache`), input, output, cache read, cache creation | `204` |
   | Canary scan | `POST /v1/scan/canary` | agent, text, source | detected, agent, source (**never the canary token**) |
-  | Text scan | `POST /v1/scan/text` | direction (`input` / `output`), text | blocked, critical_injection, findings (kind, masked snippet, rule) |
+  | Text scan | `POST /v1/scan/text` | direction (`input` / `output`), text | blocked, critical_injection, findings (kind, masked snippet, rule, high) |
   | Condition | `POST /v1/conditions` | action (`observe` / `clear`), class, key, message, diagnostics | `204` |
   | Linear credential | `GET /v1/linear/credential` | — | access_token or api_key |
   | Create PR | `POST /v1/pulls` | repo, head, base, title, body | `crux.PRResult`'s fields |
