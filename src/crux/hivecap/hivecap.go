@@ -4,7 +4,8 @@
 // proxy.GitHubRESTAccounting, proxy.UsageSink, proxy.CanaryScanner,
 // toolapprove.TextScanner, crux.ConditionReporter and agent.PRCreator
 // (hivecommons/hive#14138 stage 2; src/docs/design/crux.md "Credentials and
-// hive-provided capabilities").
+// hive-provided capabilities"), and caches hive's crux.Host policy snapshot
+// for the runtime's policy resolvers (Policy, stage 4).
 //
 // Every adapter fails closed. The seams that can return an error return one
 // wrapping callback.ErrUnavailable or callback.ErrUnauthorized; the seams
@@ -19,11 +20,14 @@
 package hivecap
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -54,6 +58,7 @@ type Set struct {
 	Conditions  ConditionReporter
 	PullRequest PRCreator
 	Linear      LinearCredentials
+	Policy      *Policy
 }
 
 // New builds the adapters over caps. timeout bounds the calls made from
@@ -71,6 +76,7 @@ func New(caps callback.Capabilities, timeout time.Duration) *Set {
 	s.Conditions = ConditionReporter{caps: caps, timeout: timeout}
 	s.PullRequest = PRCreator{caps: caps}
 	s.Linear = LinearCredentials{caps: caps, timeout: timeout}
+	s.Policy = NewPolicy(caps, timeout)
 	return s
 }
 
@@ -402,4 +408,152 @@ func unavailableDiagnostics(st callback.Status) string {
 		parts = append(parts, "last_success="+st.LastSuccess.UTC().Format(time.RFC3339))
 	}
 	return strings.Join(parts, " ")
+}
+
+// Policy caches hive's crux.Host policy snapshot (GET /v1/policy) for the
+// runtime's policy resolvers. The manager reads several of them while
+// holding its own lock, so they never call out: they answer from the last
+// snapshot WatchPolicy fetched, and keep answering from it while hive is
+// unreachable. The one exception is RepoAutoMergeEnabled, read only on the
+// merge-authorisation path, which asks hive per repository and fails closed.
+type Policy struct {
+	src     callback.PolicySource
+	timeout time.Duration
+
+	mu  sync.RWMutex
+	cur callback.Policy
+	ok  bool
+}
+
+// NewPolicy builds the cache over caps; a caps that is not a
+// callback.PolicySource never has a snapshot. Non-positive timeout selects
+// callback.DefaultTimeout.
+func NewPolicy(caps callback.Capabilities, timeout time.Duration) *Policy {
+	if timeout <= 0 {
+		timeout = callback.DefaultTimeout
+	}
+	src, _ := caps.(callback.PolicySource)
+	return &Policy{src: src, timeout: timeout}
+}
+
+// Refresh fetches the snapshot and, on success, makes it current.
+func (p *Policy) Refresh(ctx context.Context) (callback.Policy, error) {
+	if p == nil || p.src == nil {
+		return callback.Policy{}, callback.ErrNotConfigured
+	}
+	if _, has := ctx.Deadline(); !has {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.timeout)
+		defer cancel()
+	}
+	pol, err := p.src.Policy(ctx)
+	if err != nil {
+		return callback.Policy{}, err
+	}
+	p.mu.Lock()
+	p.cur, p.ok = pol, true
+	p.mu.Unlock()
+	return pol, nil
+}
+
+// Snapshot is the current snapshot; ok is false before the first
+// successful Refresh.
+func (p *Policy) Snapshot() (callback.Policy, bool) {
+	if p == nil {
+		return callback.Policy{}, false
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.cur, p.ok
+}
+
+// BuildInfo is the SetBuildInfo source: hive's version and commit, or
+// "unknown" (the manager's own default) without a snapshot.
+func (p *Policy) BuildInfo() (version, commit string) {
+	if pol, _ := p.Snapshot(); pol.Build != nil {
+		return pol.Build.Version, pol.Build.Commit
+	}
+	return "unknown", "unknown"
+}
+
+// ExplainModeDefault is the SetExplainModeDefaultResolver resolver; "" (no
+// hive-wide default) without a snapshot.
+func (p *Policy) ExplainModeDefault() string {
+	if pol, _ := p.Snapshot(); pol.ExplainModeDefault != nil {
+		return *pol.ExplainModeDefault
+	}
+	return ""
+}
+
+// KickLogSource is the SetKickLogSourceResolver resolver; "" without a
+// snapshot (the manager normalises it to its default source).
+func (p *Policy) KickLogSource() string {
+	if pol, _ := p.Snapshot(); pol.KickLogSource != nil {
+		return *pol.KickLogSource
+	}
+	return ""
+}
+
+// GatewayBackend is the SetGatewayBackendChecker predicate: backend names a
+// gateway hive has configured. The empty backend is the default, never a
+// named gateway, matching hive's own predicate.
+func (p *Policy) GatewayBackend(backend string) bool {
+	if backend == "" {
+		return false
+	}
+	pol, _ := p.Snapshot()
+	if pol.GatewayBackends == nil {
+		return false
+	}
+	for _, name := range *pol.GatewayBackends {
+		if strings.EqualFold(name, backend) {
+			return true
+		}
+	}
+	return false
+}
+
+// RepoAutoMergeEnabled is the SetRepoAutoMergeEnabledResolver predicate. It
+// asks hive; any failure is false, so an unreachable hive refuses the merge
+// rather than allowing it.
+func (p *Policy) RepoAutoMergeEnabled(repo string) bool {
+	if p == nil || p.src == nil {
+		return false
+	}
+	ctx, cancel := background(p.timeout)
+	defer cancel()
+	ok, err := p.src.RepoAutoMergeEnabled(ctx, repo)
+	return err == nil && ok
+}
+
+// DefaultPolicyInterval is how often WatchPolicy re-reads the snapshot, so a
+// hive config reload reaches the runtime within it.
+const DefaultPolicyInterval = 15 * time.Second
+
+// WatchPolicy refreshes p every interval until ctx ends and calls apply with
+// each snapshot that differs from the last one applied (the first
+// successful one included). A failed refresh keeps the previous snapshot.
+func WatchPolicy(ctx context.Context, p *Policy, interval time.Duration, apply func(callback.Policy)) {
+	if p == nil || p.src == nil || apply == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = DefaultPolicyInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	var last []byte
+	for {
+		if pol, err := p.Refresh(ctx); err == nil {
+			if b, err := json.Marshal(pol); err == nil && (last == nil || !bytes.Equal(b, last)) {
+				last = b
+				apply(pol)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

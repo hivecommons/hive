@@ -45,6 +45,8 @@ type fakeCaps struct {
 	snap    RateLimitSnapshot
 	detect  bool
 	blocked bool
+	policy  Policy
+	merge   []string
 }
 
 func (f *fakeCaps) Configured(c string) bool { return !f.absent[c] }
@@ -125,7 +127,23 @@ func (f *fakeCaps) CreatePR(_ context.Context, req CreatePRRequest) (CreatePRRes
 	return CreatePRResponse{Number: 42, URL: "https://github.com/o/r/pull/42", Author: "hive[bot]", AlreadyExisted: true, DuplicateTree: true, DuplicateReason: "same-tree"}, nil
 }
 
-var _ Capabilities = (*fakeCaps)(nil)
+func (f *fakeCaps) Policy(context.Context) (Policy, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.policy, f.fail
+}
+
+func (f *fakeCaps) RepoAutoMergeEnabled(_ context.Context, repo string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.merge = append(f.merge, repo)
+	return repo == "o/merge", f.fail
+}
+
+var (
+	_ Capabilities = (*fakeCaps)(nil)
+	_ PolicySource = (*fakeCaps)(nil)
+)
 
 // shortSocketDir returns a private directory whose socket paths fit in
 // sun_path on macOS (t.TempDir is too long there).
@@ -787,14 +805,73 @@ func TestNotConfiguredSentinelStringAndCodes(t *testing.T) {
 	}
 }
 
-// bareCaps has no Configured method: the server assumes every capability.
+// bareCaps has no Configured method: the server assumes every capability
+// except policy, which also needs a PolicySource.
 type bareCaps struct{ Capabilities }
 
 func TestCapabilitiesWithoutConfiguredHaveAll(t *testing.T) {
 	c, _ := serveUnix(t, NewServer(bareCaps{&fakeCaps{}}, ""), "")
 	h, err := c.Health(context.Background())
-	if err != nil || len(h.Capabilities) != len(allCapabilities) {
+	if err != nil || len(h.Capabilities) != len(allCapabilities)-1 {
 		t.Errorf("health = %+v, %v", h, err)
+	}
+	for _, name := range h.Capabilities {
+		if name == CapabilityPolicy {
+			t.Errorf("health lists policy for a Capabilities without PolicySource")
+		}
+	}
+	if _, err := c.Policy(context.Background()); !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("Policy without PolicySource = %v, want ErrNotConfigured", err)
+	}
+}
+
+// The policy routes carry the snapshot verbatim and answer the per-repo
+// auto-merge question; an absent policy capability is not_configured.
+func TestPolicyRoutes(t *testing.T) {
+	explain, owned := "on", true
+	gateways := []string{"litellm-eu"}
+	want := Policy{
+		Build:                             &BuildInfo{Version: "v5.1.0", Commit: "abc123"},
+		ExplainModeDefault:                &explain,
+		GatewayBackends:                   &gateways,
+		RepoAutoMerge:                     true,
+		DeadSessionRecoveryOwnedElsewhere: &owned,
+		Sandbox:                           json.RawMessage(`{"enabled":true,"image":"img"}`),
+	}
+	caps := &fakeCaps{policy: want}
+	c, _ := serveUnix(t, NewServer(caps, ""), "")
+	ctx := context.Background()
+	got, err := c.Policy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Build == nil || *got.Build != *want.Build || got.ExplainModeDefault == nil || *got.ExplainModeDefault != "on" ||
+		got.KickLogSource != nil || got.GatewayBackends == nil || len(*got.GatewayBackends) != 1 || !got.RepoAutoMerge ||
+		got.DeadSessionRecoveryOwnedElsewhere == nil || !*got.DeadSessionRecoveryOwnedElsewhere || string(got.Sandbox) != string(want.Sandbox) {
+		t.Fatalf("Policy = %+v", got)
+	}
+	if ok, err := c.RepoAutoMergeEnabled(ctx, "o/merge"); err != nil || !ok {
+		t.Fatalf("RepoAutoMergeEnabled(o/merge) = %v, %v", ok, err)
+	}
+	if ok, err := c.RepoAutoMergeEnabled(ctx, "o/other"); err != nil || ok {
+		t.Fatalf("RepoAutoMergeEnabled(o/other) = %v, %v", ok, err)
+	}
+	if _, err := c.RepoAutoMergeEnabled(ctx, ""); err == nil || errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("RepoAutoMergeEnabled(\"\") = %v, want bad request", err)
+	}
+
+	absent := &fakeCaps{absent: map[string]bool{CapabilityPolicy: true}}
+	c2, _ := serveUnix(t, NewServer(absent, ""), "")
+	if _, err := c2.Policy(ctx); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("absent Policy = %v, want ErrNotConfigured", err)
+	}
+	if _, err := c2.RepoAutoMergeEnabled(ctx, "o/r"); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("absent RepoAutoMergeEnabled = %v, want ErrNotConfigured", err)
+	}
+	for _, p := range []string{PathPolicy, PathRepoAutoMerge} {
+		if !strings.HasPrefix(p, "/"+Version+"/") {
+			t.Errorf("route %s is not under /%s", p, Version)
+		}
 	}
 }
 

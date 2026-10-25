@@ -688,6 +688,34 @@ unreachable runtime (reconnect, degraded state, the
 `pkg/dashboard` on the client (stage 5); and a soak of a hosted hive in
 sidecar mode before the flip (stage 6).
 
+**Stage 4 progress.**
+
+- [x] Policy setters carried over the hive callback: `SetBuildInfo`,
+  `SetGatewayBackendChecker`, `SetExplainModeDefaultResolver`,
+  `SetRepoAutoMergeEnabledResolver`, `SetKickLogSourceResolver`,
+  `SetSandboxConfig`, `SetDeadSessionRecoveryOwner`. The callback contract
+  gained `GET /v1/policy` (a `callback.Policy` snapshot) and
+  `POST /v1/policy/repo-auto-merge` behind the optional
+  `callback.PolicySource` interface and the `policy` capability.
+  `sidecarHost` records each setter's value and `cruxhost.Deps.Policy`
+  serves it; `crux serve --hive-callback` polls the snapshot
+  (`hivecap.WatchPolicy`) and installs the resolvers on the manager the
+  first time hive reports each value, re-setting the sandbox config and
+  dead-session owner on change. Chosen over a `hive.yaml` runtime key
+  because every value is already resolved hive-side from the live config
+  (a reload reaches the runtime on its next poll) and the pattern is the
+  existing callback's. See [crux-serve.md](../crux-serve.md#host-policy-from-hive-14138-stage-4).
+- [ ] `SetInferenceCallbacks`: configures hive's inference proxy; moves
+  with the proxy.
+- [ ] `SetSandboxMutationBoundary`: wraps runtime-side GitHub mutations
+  (`effects.Boundary`); needs a claim/commit callback, not a value.
+- [ ] `SetSpanStarter`: tracing across the boundary.
+- [ ] `SetAgentMint` / `SetAppAuth` / Bob key resolvers as
+  callback-backed writers in `crux/agent`.
+- [ ] The proxy move with `Accounting` / `Usage` / `Canary` from the
+  callback.
+- [ ] Governor behaviour against an unreachable runtime.
+
 ## Credentials and hive-provided capabilities
 
 Status: **Stage 2 of the #14138 sidecar plan (decision A): done.** Design

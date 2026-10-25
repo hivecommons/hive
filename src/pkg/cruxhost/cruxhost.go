@@ -96,6 +96,14 @@ type PRCreator interface {
 	CreatePR(ctx context.Context, repo, head, base, title, body string) (crux.PRResult, error)
 }
 
+// PolicyResolver returns the crux.Host policy snapshot hive would hand an
+// in-process runtime through the policy setters; it is read on every
+// GET /v1/policy so a config reload shows on the runtime's next poll.
+type PolicyResolver func() callback.Policy
+
+// RepoAutoMergeResolver is the SetRepoAutoMergeEnabledResolver predicate.
+type RepoAutoMergeResolver func(repo string) bool
+
 // Deps is what hive has. Nil fields are capabilities this hive does not
 // provide.
 type Deps struct {
@@ -107,6 +115,11 @@ type Deps struct {
 	Conditions   ConditionReporter
 	Linear       LinearResolver
 	PullRequests PRCreator
+	// Policy and RepoAutoMerge back the policy routes (#14138 stage 4);
+	// Policy nil means the capability is absent. RepoAutoMerge nil with a
+	// Policy answers the per-repo call not_configured.
+	Policy        PolicyResolver
+	RepoAutoMerge RepoAutoMergeResolver
 }
 
 // Capabilities is callback.Capabilities over Deps. It also implements
@@ -118,6 +131,7 @@ type Capabilities struct {
 var (
 	_ callback.Capabilities = (*Capabilities)(nil)
 	_ callback.Configured   = (*Capabilities)(nil)
+	_ callback.PolicySource = (*Capabilities)(nil)
 )
 
 // New builds the capability set over deps.
@@ -142,6 +156,8 @@ func (c *Capabilities) Configured(capability string) bool {
 		return c.deps.Linear != nil
 	case callback.CapabilityPulls:
 		return c.deps.PullRequests != nil
+	case callback.CapabilityPolicy:
+		return c.deps.Policy != nil
 	}
 	return false
 }
@@ -313,4 +329,23 @@ func (c *Capabilities) CreatePR(ctx context.Context, req callback.CreatePRReques
 		DuplicateTree:   res.DuplicateTree,
 		DuplicateReason: res.DuplicateReason,
 	}, nil
+}
+
+// Policy returns the policy snapshot. RepoAutoMerge is reported from
+// whether the per-repo resolver exists, whatever the resolver says.
+func (c *Capabilities) Policy(context.Context) (callback.Policy, error) {
+	if c.deps.Policy == nil {
+		return callback.Policy{}, callback.ErrNotConfigured
+	}
+	p := c.deps.Policy()
+	p.RepoAutoMerge = c.deps.RepoAutoMerge != nil
+	return p, nil
+}
+
+// RepoAutoMergeEnabled answers the per-repository auto-merge switch.
+func (c *Capabilities) RepoAutoMergeEnabled(_ context.Context, repo string) (bool, error) {
+	if c.deps.Policy == nil || c.deps.RepoAutoMerge == nil {
+		return false, callback.ErrNotConfigured
+	}
+	return c.deps.RepoAutoMerge(repo), nil
 }

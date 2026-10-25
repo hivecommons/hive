@@ -126,7 +126,7 @@ func (d *direct) CreatePR(_ context.Context, req callback.CreatePRRequest) (call
 
 // overSocket serves d on a unix socket and returns a client for it: the
 // sidecar mode's end of the contract.
-func overSocket(t *testing.T, d *direct) *callback.Client {
+func overSocket(t *testing.T, d callback.Capabilities) *callback.Client {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "hcap")
 	if err != nil {
@@ -510,5 +510,160 @@ func TestWatchNilArgumentsReturn(t *testing.T) {
 	Watch(context.Background(), func() callback.Status { return callback.Status{} }, nil, 0)
 	if unavailableDiagnostics(callback.Status{LastError: "x"}) != "error=x failed_calls=0" {
 		t.Fatal("diagnostics")
+	}
+}
+
+// policyDirect is direct plus the policy half of the contract.
+type policyDirect struct {
+	*direct
+	pmu    sync.Mutex
+	policy callback.Policy
+	pfail  error
+}
+
+func (p *policyDirect) Policy(context.Context) (callback.Policy, error) {
+	p.pmu.Lock()
+	defer p.pmu.Unlock()
+	return p.policy, p.pfail
+}
+
+func (p *policyDirect) RepoAutoMergeEnabled(_ context.Context, repo string) (bool, error) {
+	p.pmu.Lock()
+	defer p.pmu.Unlock()
+	return repo == "o/merge", p.pfail
+}
+
+func (p *policyDirect) set(pol callback.Policy, fail error) {
+	p.pmu.Lock()
+	defer p.pmu.Unlock()
+	p.policy, p.pfail = pol, fail
+}
+
+// The policy resolvers answer from the cached snapshot in both modes, keep
+// the last snapshot through an outage, and fail the auto-merge question
+// closed.
+func TestPolicyResolvers(t *testing.T) {
+	explain, kick := "on", "transcript"
+	gateways := []string{"LiteLLM-EU"}
+	pol := callback.Policy{
+		Build:              &callback.BuildInfo{Version: "v5.2", Commit: "abc"},
+		ExplainModeDefault: &explain,
+		KickLogSource:      &kick,
+		GatewayBackends:    &gateways,
+		RepoAutoMerge:      true,
+	}
+	d := &policyDirect{direct: &direct{}, policy: pol}
+	for name, caps := range map[string]callback.Capabilities{"direct": d, "socket": overSocket(t, d)} {
+		p := New(caps, time.Second).Policy
+		if v, c := p.BuildInfo(); v != "unknown" || c != "unknown" || p.ExplainModeDefault() != "" || p.KickLogSource() != "" || p.GatewayBackend("litellm-eu") {
+			t.Fatalf("%s: resolvers before the first refresh answered from nothing", name)
+		}
+		if _, err := p.Refresh(context.Background()); err != nil {
+			t.Fatalf("%s: Refresh: %v", name, err)
+		}
+		if v, c := p.BuildInfo(); v != "v5.2" || c != "abc" {
+			t.Errorf("%s: BuildInfo = %s %s", name, v, c)
+		}
+		if p.ExplainModeDefault() != "on" || p.KickLogSource() != "transcript" {
+			t.Errorf("%s: explain=%q kick=%q", name, p.ExplainModeDefault(), p.KickLogSource())
+		}
+		if !p.GatewayBackend("litellm-eu") || p.GatewayBackend("other") || p.GatewayBackend("") {
+			t.Errorf("%s: gateway predicate wrong", name)
+		}
+		if !p.RepoAutoMergeEnabled("o/merge") || p.RepoAutoMergeEnabled("o/other") {
+			t.Errorf("%s: auto-merge predicate wrong", name)
+		}
+		d.set(pol, errors.New("hive down"))
+		if _, err := p.Refresh(context.Background()); err == nil {
+			t.Errorf("%s: Refresh through an outage succeeded", name)
+		}
+		if p.ExplainModeDefault() != "on" {
+			t.Errorf("%s: outage dropped the last snapshot", name)
+		}
+		if p.RepoAutoMergeEnabled("o/merge") {
+			t.Errorf("%s: auto-merge allowed while hive is down", name)
+		}
+		d.set(pol, nil)
+	}
+}
+
+// A Capabilities without the policy half never yields a snapshot, and its
+// auto-merge answer is a refusal.
+func TestPolicyWithoutSource(t *testing.T) {
+	p := New(&direct{}, time.Second).Policy
+	if _, err := p.Refresh(context.Background()); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Fatalf("Refresh = %v, want ErrNotConfigured", err)
+	}
+	if _, ok := p.Snapshot(); ok {
+		t.Fatal("snapshot without a source")
+	}
+	if p.RepoAutoMergeEnabled("o/merge") {
+		t.Fatal("auto-merge allowed without a source")
+	}
+	WatchPolicy(context.Background(), p, time.Millisecond, func(callback.Policy) { t.Fatal("applied without a source") })
+}
+
+// WatchPolicy applies the first snapshot and each change, not repeats.
+func TestWatchPolicyAppliesChanges(t *testing.T) {
+	owned := false
+	d := &policyDirect{direct: &direct{}, policy: callback.Policy{DeadSessionRecoveryOwnedElsewhere: &owned}}
+	p := New(d, time.Second).Policy
+	ctx, cancel := context.WithCancel(context.Background())
+	applied := make(chan callback.Policy, 16)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		WatchPolicy(ctx, p, time.Millisecond, func(pol callback.Policy) { applied <- pol })
+	}()
+	first := <-applied
+	if first.DeadSessionRecoveryOwnedElsewhere == nil || *first.DeadSessionRecoveryOwnedElsewhere {
+		t.Fatalf("first = %+v", first)
+	}
+	nowOwned := true
+	d.set(callback.Policy{DeadSessionRecoveryOwnedElsewhere: &nowOwned}, nil)
+	second := <-applied
+	if second.DeadSessionRecoveryOwnedElsewhere == nil || !*second.DeadSessionRecoveryOwnedElsewhere {
+		t.Fatalf("second = %+v", second)
+	}
+	cancel()
+	<-done
+	select {
+	case extra := <-applied:
+		t.Fatalf("unchanged snapshot re-applied: %+v", extra)
+	default:
+	}
+}
+
+// The zero and nil forms of Policy are safe and answer the defaults.
+func TestPolicyEdges(t *testing.T) {
+	if p := NewPolicy(nil, 0); p.timeout != callback.DefaultTimeout || p.src != nil {
+		t.Fatalf("NewPolicy(nil, 0) = %+v", p)
+	}
+	var nilPolicy *Policy
+	if _, err := nilPolicy.Refresh(context.Background()); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Fatalf("nil Refresh = %v", err)
+	}
+	if _, ok := nilPolicy.Snapshot(); ok || nilPolicy.RepoAutoMergeEnabled("o/merge") || nilPolicy.GatewayBackend("x") {
+		t.Fatal("nil policy answered")
+	}
+	if v, c := nilPolicy.BuildInfo(); v != "unknown" || c != "unknown" {
+		t.Fatalf("nil BuildInfo = %s %s", v, c)
+	}
+	WatchPolicy(context.Background(), nilPolicy, 0, func(callback.Policy) { t.Fatal("nil policy applied") })
+
+	d := &policyDirect{direct: &direct{}}
+	p := NewPolicy(d, time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := p.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh with a deadline: %v", err)
+	}
+	WatchPolicy(context.Background(), p, 0, nil)
+	done, stop := context.WithCancel(context.Background())
+	stop()
+	applied := 0
+	WatchPolicy(done, p, 0, func(callback.Policy) { applied++ })
+	if applied != 1 {
+		t.Fatalf("applied %d times before a cancelled watch returned, want 1", applied)
 	}
 }

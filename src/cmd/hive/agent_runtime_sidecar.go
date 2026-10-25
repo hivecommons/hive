@@ -33,9 +33,11 @@ type eventObservable interface {
 // fed from the event stream. The capability setters are no-ops because the
 // runtime reaches those capabilities through the hive callback endpoint
 // (cruxhost over callback.Listen, started by bootAgents). The policy setters
-// are no-ops too, each logged once: they are the "runtime features configured
-// by the host" row of crux.md's seam table and become API routes or config in
-// stage 4; until then a sidecar runtime runs on its own configuration.
+// the callback carries (#14138 stage 4) record their value here and the
+// endpoint serves it as the GET /v1/policy snapshot the runtime polls; the
+// rest (inference routes, mutation boundary, span starter) are still no-ops,
+// each logged once, and a sidecar runtime runs on its own configuration for
+// them.
 type sidecarHost struct {
 	crux.Runtime
 	logger *slog.Logger
@@ -51,6 +53,15 @@ type sidecarHost struct {
 	audit        crux.AuditSink
 	conditions   crux.ConditionReporter
 	noted        map[string]bool
+
+	// Policy setter values, served to the runtime by policy().
+	buildInfo     func() (string, string)
+	gatewayCheck  func(string) bool
+	explainMode   func() string
+	autoMerge     func(string) bool
+	kickLogSource func() string
+	sandboxConfig *cruxconfig.AgentSandboxConfig
+	deadOwner     *bool
 }
 
 var _ hostedRuntime = (*sidecarHost)(nil)
@@ -220,32 +231,103 @@ func (h *sidecarHost) SetSandboxPushMinter(pushbroker.TokenMinter) {
 }
 func (h *sidecarHost) SetSandboxPRClient(crux.PRCreator) { h.callbackCarried("SetSandboxPRClient") }
 
-// ---- policy: the runtime's own configuration until stage 4 ----
+// ---- policy: carried to the runtime as the callback's policy snapshot ----
 
-func (h *sidecarHost) SetBuildInfo(func() (string, string)) { h.notCarried("SetBuildInfo") }
-func (h *sidecarHost) SetGatewayBackendChecker(func(string) bool) {
-	h.notCarried("SetGatewayBackendChecker")
+func (h *sidecarHost) SetBuildInfo(fn func() (string, string)) {
+	h.setPolicy("SetBuildInfo", func() { h.buildInfo = fn })
 }
-func (h *sidecarHost) SetExplainModeDefaultResolver(func() string) {
-	h.notCarried("SetExplainModeDefaultResolver")
+func (h *sidecarHost) SetGatewayBackendChecker(fn func(string) bool) {
+	h.setPolicy("SetGatewayBackendChecker", func() { h.gatewayCheck = fn })
 }
-func (h *sidecarHost) SetRepoAutoMergeEnabledResolver(func(string) bool) {
-	h.notCarried("SetRepoAutoMergeEnabledResolver")
+func (h *sidecarHost) SetExplainModeDefaultResolver(fn func() string) {
+	h.setPolicy("SetExplainModeDefaultResolver", func() { h.explainMode = fn })
 }
-func (h *sidecarHost) SetKickLogSourceResolver(func() string) {
-	h.notCarried("SetKickLogSourceResolver")
+func (h *sidecarHost) SetRepoAutoMergeEnabledResolver(fn func(string) bool) {
+	h.setPolicy("SetRepoAutoMergeEnabledResolver", func() { h.autoMerge = fn })
 }
+func (h *sidecarHost) SetKickLogSourceResolver(fn func() string) {
+	h.setPolicy("SetKickLogSourceResolver", func() { h.kickLogSource = fn })
+}
+func (h *sidecarHost) SetSandboxConfig(cfg cruxconfig.AgentSandboxConfig) {
+	h.setPolicy("SetSandboxConfig", func() { h.sandboxConfig = &cfg })
+}
+func (h *sidecarHost) SetDeadSessionRecoveryOwner(ownedElsewhere bool) {
+	h.setPolicy("SetDeadSessionRecoveryOwner", func() { h.deadOwner = &ownedElsewhere })
+}
+
+// Not carried yet: the inference routes configure hive's proxy and move
+// with it; the mutation boundary and span starter wrap runtime-side calls
+// and have no serialisable form.
 func (h *sidecarHost) SetInferenceCallbacks(func(string, string, string), func(string)) {
 	h.notCarried("SetInferenceCallbacks")
-}
-func (h *sidecarHost) SetSandboxConfig(cruxconfig.AgentSandboxConfig) {
-	h.notCarried("SetSandboxConfig")
 }
 func (h *sidecarHost) SetSandboxMutationBoundary(effects.Boundary) {
 	h.notCarried("SetSandboxMutationBoundary")
 }
-func (h *sidecarHost) SetDeadSessionRecoveryOwner(bool) { h.notCarried("SetDeadSessionRecoveryOwner") }
-func (h *sidecarHost) SetSpanStarter(crux.SpanStarter)  { h.notCarried("SetSpanStarter") }
+func (h *sidecarHost) SetSpanStarter(crux.SpanStarter) { h.notCarried("SetSpanStarter") }
+
+func (h *sidecarHost) setPolicy(setter string, store func()) {
+	h.mu.Lock()
+	store()
+	h.mu.Unlock()
+	h.callbackCarried(setter)
+}
+
+// policy is the GET /v1/policy snapshot: one field per policy setter boot
+// has called, resolved now. gateways lists the configured gateway names;
+// the stored checker decides which of them the runtime may route to.
+func (h *sidecarHost) policy(gateways func() []string) callback.Policy {
+	h.mu.Lock()
+	build, gw, explain, kick, sandbox, owner := h.buildInfo, h.gatewayCheck, h.explainMode, h.kickLogSource, h.sandboxConfig, h.deadOwner
+	h.mu.Unlock()
+	var p callback.Policy
+	if build != nil {
+		v, c := build()
+		p.Build = &callback.BuildInfo{Version: v, Commit: c}
+	}
+	if explain != nil {
+		v := explain()
+		p.ExplainModeDefault = &v
+	}
+	if kick != nil {
+		v := kick()
+		p.KickLogSource = &v
+	}
+	if gw != nil {
+		names := []string{}
+		if gateways != nil {
+			for _, name := range gateways() {
+				if gw(name) {
+					names = append(names, name)
+				}
+			}
+		}
+		p.GatewayBackends = &names
+	}
+	if owner != nil {
+		v := *owner
+		p.DeadSessionRecoveryOwnedElsewhere = &v
+	}
+	if sandbox != nil {
+		if b, err := json.Marshal(sandbox); err == nil {
+			p.Sandbox = b
+		}
+	}
+	return p
+}
+
+// repoAutoMergeEnabled answers the per-repo auto-merge call with the stored
+// resolver, default-on (the manager's nil-resolver behaviour) until boot
+// sets one.
+func (h *sidecarHost) repoAutoMergeEnabled(repo string) bool {
+	h.mu.Lock()
+	fn := h.autoMerge
+	h.mu.Unlock()
+	if fn == nil {
+		return true
+	}
+	return fn(repo)
+}
 
 func (h *sidecarHost) callbackCarried(setter string) {
 	h.note(setter, "sidecar runtime: setter is served by the hive callback endpoint instead")
@@ -299,7 +381,25 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 	if b.ghClient != nil {
 		deps.PullRequests = b.ghClient
 	}
+	if sh, ok := b.agentMgr.(*sidecarHost); ok {
+		deps.Policy = func() callback.Policy { return sh.policy(b.gatewayNames) }
+		deps.RepoAutoMerge = sh.repoAutoMergeEnabled
+	}
 	return cruxhost.New(deps)
+}
+
+// gatewayNames lists the configured model gateway names off the live config.
+func (b *boot) gatewayNames() []string {
+	if b.cfg == nil {
+		return nil
+	}
+	var names []string
+	for _, gw := range b.cfg.Governor.ResolvedGateways() {
+		if gw.Name != "" {
+			names = append(names, gw.Name)
+		}
+	}
+	return names
 }
 
 // startHiveCallback serves caps on the callback socket ($CRUX_HIVE_SOCKET,

@@ -68,6 +68,7 @@ func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) i
 	srv.Logger = slog.New(slog.NewTextHandler(e.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	if hive != nil {
 		hive.install(ctx, rt, srv, e.Stdout)
+		hive.watchPolicy(ctx, rt, e.Stdout, e.Stderr)
 	}
 
 	ls, err := serve.Listen(cfg)

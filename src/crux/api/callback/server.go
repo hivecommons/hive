@@ -87,6 +87,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathConditions, s.capability(CapabilityConditions, s.handleCondition))
 	mux.HandleFunc("GET "+PathLinearCredential, s.capability(CapabilityLinear, s.handleLinear))
 	mux.HandleFunc("POST "+PathPulls, s.capability(CapabilityPulls, s.handleCreatePR))
+	mux.HandleFunc("GET "+PathPolicy, s.capability(CapabilityPolicy, s.handlePolicy))
+	mux.HandleFunc("POST "+PathRepoAutoMerge, s.capability(CapabilityPolicy, s.handleRepoAutoMerge))
 	return s.authenticate(mux)
 }
 
@@ -118,6 +120,11 @@ func (s *Server) configured(capability string) bool {
 	if s.Caps == nil {
 		return false
 	}
+	if capability == CapabilityPolicy {
+		if _, ok := s.Caps.(PolicySource); !ok {
+			return false
+		}
+	}
 	if c, ok := s.Caps.(Configured); ok {
 		return c.Configured(capability)
 	}
@@ -138,6 +145,7 @@ func (s *Server) capability(name string, h http.HandlerFunc) http.HandlerFunc {
 var allCapabilities = []string{
 	CapabilityTokens, CapabilityGitHubREST, CapabilityUsage, CapabilityCanary,
 	CapabilityText, CapabilityConditions, CapabilityLinear, CapabilityPulls,
+	CapabilityPolicy,
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +299,32 @@ func (s *Server) handleCreatePR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (s *Server) handlePolicy(w http.ResponseWriter, r *http.Request) {
+	p, err := s.Caps.(PolicySource).Policy(r.Context())
+	if err != nil {
+		s.writeCapabilityError(w, r, "reading policy", err)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, p)
+}
+
+func (s *Server) handleRepoAutoMerge(w http.ResponseWriter, r *http.Request) {
+	var req RepoAutoMergeRequest
+	if !s.readJSON(w, r, &req) {
+		return
+	}
+	if req.Repo == "" {
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "repo is required")
+		return
+	}
+	enabled, err := s.Caps.(PolicySource).RepoAutoMergeEnabled(r.Context(), req.Repo)
+	if err != nil {
+		s.writeCapabilityError(w, r, "resolving repo auto-merge", err)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, RepoAutoMergeResponse{Enabled: enabled})
 }
 
 // writeCapabilityError maps a Capabilities error: ErrNotConfigured → 404,

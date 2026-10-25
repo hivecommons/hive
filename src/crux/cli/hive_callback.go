@@ -1,14 +1,18 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/api/callback"
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/hivecap"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/crux/serve"
@@ -23,6 +27,70 @@ type hiveCapTarget interface {
 	SetSandboxPRClient(agent.PRCreator)
 	SetLinearCredentialResolver(func() agent.LinearCredential)
 	SetSandboxPushMinter(pushbroker.TokenMinter)
+}
+
+// hivePolicyTarget is the subset of crux.Host policy setters the hive
+// callback's policy snapshot feeds (hivecommons/hive#14138 stage 4): the
+// values an in-process hive hands the manager directly.
+type hivePolicyTarget interface {
+	SetBuildInfo(func() (version, commit string))
+	SetGatewayBackendChecker(func(backend string) bool)
+	SetExplainModeDefaultResolver(func() string)
+	SetRepoAutoMergeEnabledResolver(func(repo string) bool)
+	SetKickLogSourceResolver(func() string)
+	SetSandboxConfig(config.AgentSandboxConfig)
+	SetDeadSessionRecoveryOwner(ownedElsewhere bool)
+}
+
+// policyApplier turns each new policy snapshot into setter calls. Resolvers
+// are installed once, the first time hive reports the value, and then read
+// the live snapshot; the pushed values (sandbox config, dead-session owner)
+// are set again whenever they change. A value hive does not report leaves
+// the runtime's own default in place.
+type policyApplier struct {
+	target hivePolicyTarget
+	policy *hivecap.Policy
+	errw   io.Writer
+
+	mu        sync.Mutex
+	installed map[string]bool
+	sandbox   []byte
+	owner     *bool
+}
+
+func newPolicyApplier(target hivePolicyTarget, policy *hivecap.Policy, errw io.Writer) *policyApplier {
+	return &policyApplier{target: target, policy: policy, errw: errw, installed: map[string]bool{}}
+}
+
+func (a *policyApplier) apply(pol callback.Policy) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	once := func(name string, present bool, install func()) {
+		if present && !a.installed[name] {
+			a.installed[name] = true
+			install()
+		}
+	}
+	p := a.policy
+	once("build", pol.Build != nil, func() { a.target.SetBuildInfo(p.BuildInfo) })
+	once("explain_mode_default", pol.ExplainModeDefault != nil, func() { a.target.SetExplainModeDefaultResolver(p.ExplainModeDefault) })
+	once("kick_log_source", pol.KickLogSource != nil, func() { a.target.SetKickLogSourceResolver(p.KickLogSource) })
+	once("gateway_backends", pol.GatewayBackends != nil, func() { a.target.SetGatewayBackendChecker(p.GatewayBackend) })
+	once("repo_auto_merge", pol.RepoAutoMerge, func() { a.target.SetRepoAutoMergeEnabledResolver(p.RepoAutoMergeEnabled) })
+	if v := pol.DeadSessionRecoveryOwnedElsewhere; v != nil && (a.owner == nil || *a.owner != *v) {
+		owned := *v
+		a.owner = &owned
+		a.target.SetDeadSessionRecoveryOwner(owned)
+	}
+	if len(pol.Sandbox) > 0 && !bytes.Equal(pol.Sandbox, a.sandbox) {
+		var cfg config.AgentSandboxConfig
+		if err := json.Unmarshal(pol.Sandbox, &cfg); err != nil {
+			fmt.Fprintf(a.errw, "crux: hive policy: undecodable sandbox config, keeping the previous one: %v\n", err)
+			return
+		}
+		a.sandbox = append([]byte(nil), pol.Sandbox...)
+		a.target.SetSandboxConfig(cfg)
+	}
 }
 
 // hiveCallback is `crux serve --hive-callback`: the hive capability endpoint
@@ -72,6 +140,19 @@ func (h *hiveCallback) install(ctx context.Context, rt crux.Runtime, srv *serve.
 	// hive_callback_unavailable describes the callback being down, so it
 	// goes to the stream only and never over the callback.
 	go hivecap.Watch(ctx, h.client.Status, srv.StreamConditions(), 0)
+}
+
+// watchPolicy polls hive's policy snapshot (GET /v1/policy) until ctx ends
+// and feeds it to rt's crux.Host policy setters (#14138 stage 4). A runtime
+// without them is left alone; a hive without the policy capability answers
+// not_configured and the runtime keeps its own configuration.
+func (h *hiveCallback) watchPolicy(ctx context.Context, rt crux.Runtime, w, errw io.Writer) {
+	m, ok := rt.(hivePolicyTarget)
+	if !ok {
+		return
+	}
+	go hivecap.WatchPolicy(ctx, h.set.Policy, 0, newPolicyApplier(m, h.set.Policy, errw).apply)
+	fmt.Fprintf(w, "hive callback %s: host policy\n", addressString(h.client.Address()))
 }
 
 // health is the status Health reports.

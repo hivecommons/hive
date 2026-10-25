@@ -241,9 +241,9 @@ func TestSidecarHost_NilObserverAndNoStream(t *testing.T) {
 	}
 }
 
-// Capability and policy setters are inert in sidecar mode and say so once
-// per setter: capabilities travel over the callback endpoint, policy is the
-// runtime's own configuration until stage 4.
+// Capability and policy setters say once per setter how they reach a
+// sidecar runtime: capabilities and the carried policy setters over the
+// callback endpoint; the rest not at all yet.
 func TestSidecarHost_CapabilityAndPolicySettersLogOnce(t *testing.T) {
 	var log bytes.Buffer
 	h := newSidecarHost(newSidecarRuntimeFake(), slog.New(slog.NewTextHandler(&log, nil)))
@@ -269,11 +269,60 @@ func TestSidecarHost_CapabilityAndPolicySettersLogOnce(t *testing.T) {
 	if n := strings.Count(out, "setter=SetAppAuth"); n != 1 {
 		t.Fatalf("SetAppAuth noted %d times, want once:\n%s", n, out)
 	}
-	if strings.Count(out, "served by the hive callback") != 4 {
-		t.Errorf("callback-carried setters = %d, want 4:\n%s", strings.Count(out, "served by the hive callback"), out)
+	if strings.Count(out, "served by the hive callback") != 11 {
+		t.Errorf("callback-carried setters = %d, want 11:\n%s", strings.Count(out, "served by the hive callback"), out)
 	}
-	if strings.Count(out, "not carried") != 13 {
-		t.Errorf("not-carried setters = %d, want 13:\n%s", strings.Count(out, "not carried"), out)
+	if strings.Count(out, "not carried") != 6 {
+		t.Errorf("not-carried setters = %d, want 6:\n%s", strings.Count(out, "not carried"), out)
+	}
+}
+
+// The policy snapshot carries exactly the setters boot has called, resolved
+// at read time, and follows later calls (a config reload re-sets them).
+func TestSidecarHost_PolicySnapshot(t *testing.T) {
+	h := newSidecarHost(newSidecarRuntimeFake(), slog.New(slog.DiscardHandler))
+	if p := h.policy(nil); p.Build != nil || p.ExplainModeDefault != nil || p.KickLogSource != nil || p.GatewayBackends != nil ||
+		p.DeadSessionRecoveryOwnedElsewhere != nil || p.Sandbox != nil {
+		t.Fatalf("policy before any setter = %+v", p)
+	}
+	if !h.repoAutoMergeEnabled("o/r") {
+		t.Fatal("auto-merge before the resolver is set must be default-on")
+	}
+	explain := "on"
+	h.SetBuildInfo(func() (string, string) { return "v5.3", "deadbeef" })
+	h.SetExplainModeDefaultResolver(func() string { return explain })
+	h.SetKickLogSourceResolver(func() string { return "transcript" })
+	h.SetGatewayBackendChecker(func(b string) bool { return b == "gw-a" })
+	h.SetRepoAutoMergeEnabledResolver(func(repo string) bool { return repo == "o/yes" })
+	h.SetDeadSessionRecoveryOwner(true)
+	h.SetSandboxConfig(cruxconfig.AgentSandboxConfig{Enabled: true, Image: "sandbox:1"})
+
+	p := h.policy(func() []string { return []string{"gw-a", "gw-b"} })
+	if p.Build == nil || p.Build.Version != "v5.3" || p.Build.Commit != "deadbeef" {
+		t.Errorf("build = %+v", p.Build)
+	}
+	if p.ExplainModeDefault == nil || *p.ExplainModeDefault != "on" || p.KickLogSource == nil || *p.KickLogSource != "transcript" {
+		t.Errorf("explain/kick = %v/%v", p.ExplainModeDefault, p.KickLogSource)
+	}
+	if p.GatewayBackends == nil || len(*p.GatewayBackends) != 1 || (*p.GatewayBackends)[0] != "gw-a" {
+		t.Errorf("gateways = %v", p.GatewayBackends)
+	}
+	if p.DeadSessionRecoveryOwnedElsewhere == nil || !*p.DeadSessionRecoveryOwnedElsewhere {
+		t.Errorf("dead-session owner = %v", p.DeadSessionRecoveryOwnedElsewhere)
+	}
+	var sb cruxconfig.AgentSandboxConfig
+	if err := json.Unmarshal(p.Sandbox, &sb); err != nil || !sb.Enabled || sb.Image != "sandbox:1" {
+		t.Errorf("sandbox = %s (%v)", p.Sandbox, err)
+	}
+	if !h.repoAutoMergeEnabled("o/yes") || h.repoAutoMergeEnabled("o/no") {
+		t.Error("auto-merge resolver not used")
+	}
+
+	explain = "off"
+	h.SetDeadSessionRecoveryOwner(false)
+	p = h.policy(nil)
+	if *p.ExplainModeDefault != "off" || *p.DeadSessionRecoveryOwnedElsewhere || p.GatewayBackends == nil || len(*p.GatewayBackends) != 0 {
+		t.Errorf("policy after re-set = %+v", p)
 	}
 }
 
@@ -319,6 +368,18 @@ func TestBootAgentsWith_SidecarServesHiveCallback(t *testing.T) {
 	b.linearCredentialResolver = func() crux.LinearCredential { return crux.LinearCredential{AccessToken: "tok", APIKey: "key"} }
 	if cred, err := served.LinearCredential(context.Background()); err != nil || cred.AccessToken != "tok" || cred.APIKey != "key" {
 		t.Fatalf("Linear after bootSupervision = (%v, %v)", cred, err)
+	}
+	// The policy setters boot called are served as the policy snapshot.
+	ps, ok := served.(callback.PolicySource)
+	if !ok {
+		t.Fatalf("served capabilities %T have no policy half", served)
+	}
+	pol, err := ps.Policy(context.Background())
+	if err != nil {
+		t.Fatalf("Policy: %v", err)
+	}
+	if pol.Build == nil || pol.ExplainModeDefault == nil || pol.GatewayBackends == nil || !pol.RepoAutoMerge || pol.Sandbox == nil {
+		t.Fatalf("boot policy snapshot missing setters: %+v", pol)
 	}
 }
 

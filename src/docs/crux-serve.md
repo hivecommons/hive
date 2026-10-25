@@ -31,7 +31,7 @@ runtime and every agent must arrive as a definition on `POST /v1/agents`.
 | `--socket PATH`, `CRUX_SOCKET` | unix socket to serve on. Default `$XDG_RUNTIME_DIR/crux/crux.sock`, else `<tmp>/crux-<uid>/crux.sock`. The directory is created `0700`, the socket `0600`, and it is never reachable at that path with wider permissions (it is bound under a temporary name, chmod'ed, then renamed). A socket somebody already answers on is refused; a stale one is replaced. |
 | `--listen HOST:PORT` | also serve on TCP. **Refused without a token.** |
 | `--token T`, `CRUX_TOKEN` | bearer token every request must carry. When set it gates the socket too. |
-| `--hive-callback ADDR`, `CRUX_HIVE_SOCKET` (+ `CRUX_HIVE_TOKEN`) | dial hive's callback endpoint (`crux/api/callback`) for the capabilities hive owns — scoped GitHub tokens, PR creation, Linear credentials, text/canary scanners, conditions — and feed the runtime's seams from it instead of leaving them nil. Health reports it under `hive_callback`; an unreachable endpoint raises the `hive_callback_unavailable` condition. (#14246) |
+| `--hive-callback ADDR`, `CRUX_HIVE_SOCKET` (+ `CRUX_HIVE_TOKEN`) | dial hive's callback endpoint (`crux/api/callback`) for the capabilities hive owns — scoped GitHub tokens, PR creation, Linear credentials, text/canary scanners, conditions — and feed the runtime's seams from it instead of leaving them nil. Health reports it under `hive_callback`; an unreachable endpoint raises the `hive_callback_unavailable` condition. (#14246) When the runtime is a manager it also polls hive's host policy from the same endpoint; see [Host policy from hive](#host-policy-from-hive-14138-stage-4). |
 
 `serve` does not use the per-work-dir control socket that a foreground
 `crux run` serves (`<workdir>/crux.sock`); the two are different things, see
@@ -148,6 +148,25 @@ every 15 s. `Event` is `{"time","type","agent","state","detail","data"}`.
 
 A subscriber that stops reading is dropped after 64 buffered events so one
 slow client cannot stall the others.
+
+### Host policy from hive (#14138 stage 4)
+
+With `--hive-callback`, `serve` also reads the values an in-process hive
+hands the manager through the `crux.Host` policy setters. They travel on
+the hive callback endpoint (`crux/api/callback`, runtime → hive), not on
+this API:
+
+| Callback route | Feeds |
+|---|---|
+| `GET /v1/policy` | a `callback.Policy` snapshot, polled every 15 s (`hivecap.WatchPolicy`): `build` → `SetBuildInfo`, `explain_mode_default` → `SetExplainModeDefaultResolver`, `kick_log_source` → `SetKickLogSourceResolver`, `gateway_backends` → `SetGatewayBackendChecker`, `dead_session_recovery_owned_elsewhere` → `SetDeadSessionRecoveryOwner`, `sandbox` (the `agent_sandbox` block) → `SetSandboxConfig`; `repo_auto_merge: true` installs the next row |
+| `POST /v1/policy/repo-auto-merge` | `{"repo"}` → `{"enabled"}` for `SetRepoAutoMergeEnabledResolver`, asked per merge authorisation |
+
+The resolvers answer from the last snapshot (the manager reads them under
+its own lock, so they never call out) and keep it through a hive outage;
+the auto-merge call fails closed, refusing the merge. A value hive does not
+report, or a hive without the `policy` capability (`404 not_configured`),
+leaves the runtime's own default in place. `SetInferenceCallbacks`,
+`SetSandboxMutationBoundary` and `SetSpanStarter` are not carried yet.
 
 ## Drive it with curl
 

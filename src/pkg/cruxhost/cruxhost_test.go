@@ -285,6 +285,64 @@ func TestNilDepsAreNotConfigured(t *testing.T) {
 	}
 }
 
+// The policy capability serves the resolver's snapshot live, stamps
+// RepoAutoMerge from whether a per-repo resolver exists, and is absent
+// without a Policy resolver.
+func TestPolicyOverSocket(t *testing.T) {
+	ctx := context.Background()
+	var mu sync.Mutex
+	explain, calls := "off", 0
+	deps := Deps{
+		Policy: func() callback.Policy {
+			mu.Lock()
+			defer mu.Unlock()
+			calls++
+			e := explain
+			return callback.Policy{Build: &callback.BuildInfo{Version: "v5", Commit: "c"}, ExplainModeDefault: &e}
+		},
+		RepoAutoMerge: func(repo string) bool { return repo == "o/yes" },
+	}
+	c, _ := serve(t, deps)
+	p, err := c.Policy(ctx)
+	if err != nil || p.Build == nil || p.Build.Version != "v5" || p.ExplainModeDefault == nil || *p.ExplainModeDefault != "off" || !p.RepoAutoMerge {
+		t.Fatalf("Policy = %+v, %v", p, err)
+	}
+	mu.Lock()
+	explain = "on"
+	mu.Unlock()
+	p, err = c.Policy(ctx)
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if err != nil || *p.ExplainModeDefault != "on" || n != 2 {
+		t.Fatalf("Policy not live: %+v, %v (calls %d)", p, err, n)
+	}
+	if ok, err := c.RepoAutoMergeEnabled(ctx, "o/yes"); err != nil || !ok {
+		t.Fatalf("RepoAutoMergeEnabled(o/yes) = %v, %v", ok, err)
+	}
+	if ok, err := c.RepoAutoMergeEnabled(ctx, "o/no"); err != nil || ok {
+		t.Fatalf("RepoAutoMergeEnabled(o/no) = %v, %v", ok, err)
+	}
+
+	noMerge := New(Deps{Policy: deps.Policy})
+	if p, err := noMerge.Policy(ctx); err != nil || p.RepoAutoMerge {
+		t.Fatalf("Policy without RepoAutoMerge = %+v, %v", p, err)
+	}
+	if _, err := noMerge.RepoAutoMergeEnabled(ctx, "o/yes"); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Fatalf("RepoAutoMergeEnabled without resolver = %v", err)
+	}
+	none := New(Deps{})
+	if none.Configured(callback.CapabilityPolicy) {
+		t.Error("policy configured with no deps")
+	}
+	if _, err := none.Policy(ctx); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Errorf("Policy with no deps = %v", err)
+	}
+	if _, err := none.RepoAutoMergeEnabled(ctx, "o/r"); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Errorf("RepoAutoMergeEnabled with no deps = %v", err)
+	}
+}
+
 func TestMintFailures(t *testing.T) {
 	ctx := context.Background()
 	f := &fakeDeps{mintErr: errors.New("app not installed")}

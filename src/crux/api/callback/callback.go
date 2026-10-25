@@ -28,10 +28,13 @@
 //	POST /v1/conditions             observe or clear a runtime condition
 //	GET  /v1/linear/credential      the Linear credential to inject
 //	POST /v1/pulls                  open a pull request as the hive's App
+//	GET  /v1/policy                 the host policy snapshot (stage 4)
+//	POST /v1/policy/repo-auto-merge whether auto-merge is enabled for a repo
 package callback
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -54,6 +57,8 @@ const (
 	PathConditions       = "/" + Version + "/conditions"
 	PathLinearCredential = "/" + Version + "/linear/credential"
 	PathPulls            = "/" + Version + "/pulls"
+	PathPolicy           = "/" + Version + "/policy"
+	PathRepoAutoMerge    = "/" + Version + "/policy/repo-auto-merge"
 )
 
 // Environment variables.
@@ -159,6 +164,9 @@ const (
 	CapabilityConditions = "conditions"
 	CapabilityLinear     = "linear"
 	CapabilityPulls      = "pulls"
+	// CapabilityPolicy covers both policy routes. It is served only by a
+	// Capabilities that also implements PolicySource.
+	CapabilityPolicy = "policy"
 )
 
 // MintTokenRequest is the body of POST /v1/tokens. Tier is the permission
@@ -394,4 +402,59 @@ type LinearCredentials interface {
 // PRCreator opens a pull request as the hive's App.
 type PRCreator interface {
 	CreatePR(ctx context.Context, req CreatePRRequest) (CreatePRResponse, error)
+}
+
+// Policy is the body of GET /v1/policy: the values hive hands an in-process
+// runtime through the crux.Host policy setters (SetBuildInfo,
+// SetExplainModeDefaultResolver, SetKickLogSourceResolver,
+// SetGatewayBackendChecker, SetRepoAutoMergeEnabledResolver,
+// SetDeadSessionRecoveryOwner, SetSandboxConfig), as one snapshot a sidecar
+// runtime polls. An absent (nil / false) field is a setter hive has not
+// called; the runtime leaves its own default in place for it.
+type Policy struct {
+	Build *BuildInfo `json:"build,omitempty"`
+	// ExplainModeDefault is the hive-wide default explain mode, already
+	// resolved against hive's environment fallback.
+	ExplainModeDefault *string `json:"explain_mode_default,omitempty"`
+	// KickLogSource is the kick log source in force, already resolved
+	// against hive's environment override.
+	KickLogSource *string `json:"kick_log_source,omitempty"`
+	// GatewayBackends names the configured model gateways the runtime treats
+	// as inference-routable backends (matched case-insensitively).
+	GatewayBackends *[]string `json:"gateway_backends,omitempty"`
+	// RepoAutoMerge says hive answers POST /v1/policy/repo-auto-merge; the
+	// per-repository answer is a call, not part of the snapshot.
+	RepoAutoMerge bool `json:"repo_auto_merge,omitempty"`
+	// DeadSessionRecoveryOwnedElsewhere is SetDeadSessionRecoveryOwner's
+	// argument: true when hive's watchdog owns dead-session restarts.
+	DeadSessionRecoveryOwnedElsewhere *bool `json:"dead_session_recovery_owned_elsewhere,omitempty"`
+	// Sandbox is the agent_sandbox block (crux/config.AgentSandboxConfig)
+	// as JSON. It stays raw so this package keeps importing only the
+	// standard library and crux/api.
+	Sandbox json.RawMessage `json:"sandbox,omitempty"`
+}
+
+// BuildInfo is the hive version and commit recorded in kick log headers.
+type BuildInfo struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+}
+
+// RepoAutoMergeRequest is the body of POST /v1/policy/repo-auto-merge.
+type RepoAutoMergeRequest struct {
+	Repo string `json:"repo"`
+}
+
+// RepoAutoMergeResponse is its answer.
+type RepoAutoMergeResponse struct {
+	Enabled bool `json:"enabled"`
+}
+
+// PolicySource is the policy half of the callback contract. It is separate
+// from Capabilities so existing implementations stay valid: the server
+// answers the policy routes only when its Caps also implement it (404
+// CodeNotConfigured otherwise); *Client always does.
+type PolicySource interface {
+	Policy(ctx context.Context) (Policy, error)
+	RepoAutoMergeEnabled(ctx context.Context, repo string) (bool, error)
 }

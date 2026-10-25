@@ -166,7 +166,24 @@ func (c *Client) CreatePR(ctx context.Context, req CreatePRRequest) (CreatePRRes
 	return out, err
 }
 
-var _ Capabilities = (*Client)(nil)
+// Policy is GET /v1/policy.
+func (c *Client) Policy(ctx context.Context) (Policy, error) {
+	var out Policy
+	err := c.do(ctx, http.MethodGet, PathPolicy, nil, &out)
+	return out, err
+}
+
+// RepoAutoMergeEnabled is POST /v1/policy/repo-auto-merge.
+func (c *Client) RepoAutoMergeEnabled(ctx context.Context, repo string) (bool, error) {
+	var out RepoAutoMergeResponse
+	err := c.do(ctx, http.MethodPost, PathRepoAutoMerge, RepoAutoMergeRequest{Repo: repo}, &out)
+	return out.Enabled, err
+}
+
+var (
+	_ Capabilities = (*Client)(nil)
+	_ PolicySource = (*Client)(nil)
+)
 
 // do performs one call. Transport failures, timeouts and 5xx become
 // ErrUnavailable; 401 becomes ErrUnauthorized; 404 CodeNotConfigured becomes
