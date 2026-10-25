@@ -48,8 +48,14 @@ var agyTurnStatusInterval = 10 * time.Second
 // Ctrl+C before the runner kills it.
 const agyTurnInterruptGrace = 5 * time.Second
 
+// AgyTurnSubcommand is the subcommand the manager types into a headless agy
+// pane, on whichever binary hosts the manager: `hive agy-turn` in-process,
+// `crux agy-turn` under `crux serve` (#14138 stage 3). crux/cli dispatches
+// it to RunAgyTurn.
+const AgyTurnSubcommand = "agy-turn"
+
 const (
-	agyTurnSubcommand = "agy-turn"
+	agyTurnSubcommand = AgyTurnSubcommand
 
 	// agyTurnToolOutputLines caps how much of each tool's output is echoed
 	// into the pane. The agent sees the full output; the pane only needs

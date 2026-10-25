@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/config"
 )
@@ -153,9 +154,10 @@ func (e *Env) Run(ctx context.Context, args []string) int {
 	}
 	if opts.remoteSelected() {
 		switch rest[0] {
-		case "help", "-h", "--help", "serve":
+		case "help", "-h", "--help", "serve", agent.AgyTurnSubcommand:
 			// serve is where the runtime lives; a CRUX_SERVER left in a shell
-			// profile must not stop a local server from starting.
+			// profile must not stop a local server from starting. agy-turn is
+			// the pane-side subprocess the serving runtime itself spawns.
 		default:
 			return e.remote(ctx, opts, rest[0], rest[1:])
 		}
@@ -180,6 +182,14 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 			return ExitUsage
 		}
 		return e.cmdServe(ctx, opts, args)
+	case agent.AgyTurnSubcommand:
+		if remote {
+			fmt.Fprintf(e.Stderr, "crux: %s is not available over the control socket\n", name)
+			return ExitUsage
+		}
+		// The manager types `<own executable> agy-turn …` into a headless agy
+		// pane; under `crux serve` that executable is crux.
+		return agent.RunAgyTurn(args, e.Stdout, e.Stderr)
 	case "ps", "logs", "kick", "stop":
 		if !remote && !opts.local {
 			if code, ok := e.forward(ctx, opts, append([]string{name}, args...)); ok {
@@ -313,6 +323,8 @@ Commands (each maps onto crux.Runtime):
   stop <agent>                    Lifecycle.Stop
   serve                           expose the runtime over the Crux API (HTTP+JSON
                                   on a unix socket; --listen adds TCP with --token)
+  agy-turn                        one headless agy turn; typed into a pane by the
+                                  runtime that spawned it, not run by hand
 
 While 'crux run' is in the foreground it serves <workdir>/crux.sock; ps, logs,
 kick and stop use that socket when present so they act on the live runtime.
