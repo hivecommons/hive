@@ -381,3 +381,17 @@ func TestAgentGitHubBudgetLogsWithoutFleetReport(t *testing.T) {
 		t.Fatalf("budget accounting failure must remain reportable: %+v", *seen)
 	}
 }
+
+func TestCommitFetchWarningsLogWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 8; i++ {
+		logger.Warn("SHA poll: commit message fetch non-200", "sha", "4831d9e", "status", 403)
+		logger.Warn("channel commit date: fetch failed — the row will render without a timestamp", "sha", "4831d9e", "error", "commit 4831d9e: HTTP 403")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected commit fetch 403 warnings produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 16 {
+		t.Fatalf("wrapped handler saw %d records, want 16: %s", n, out.String())
+	}
+}

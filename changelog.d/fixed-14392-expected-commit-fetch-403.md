@@ -1,0 +1,1 @@
+- Expected GitHub 403 commit message and commit date fetch warnings no longer open repeated-error fleet self-reports; the diagnostic logs remain unchanged (#14392, #14393).

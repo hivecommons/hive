@@ -785,8 +785,13 @@ func IsBenignMessage(msg string) bool {
 	// Per-agent quota enforcement is expected backpressure, not a runtime
 	// defect. Different agents/windows can cross the repeat threshold even
 	// though the proxy already warns only once per agent per window (#14346).
+	// GitHub 403/429 on the commit message and commit date fetches is expected
+	// quota exhaustion for a busy App token; the warn is already deduplicated
+	// per key and the row degrades gracefully (#14392, #14393).
 	switch strings.TrimSpace(m) {
-	case "agent github api hourly cap reached", "agent github api hourly budget above soft threshold":
+	case "agent github api hourly cap reached", "agent github api hourly budget above soft threshold",
+		"sha poll: commit message fetch non-200",
+		"channel commit date: fetch failed — the row will render without a timestamp":
 		return true
 	}
 	if benignIOTimeout(m, m) {
