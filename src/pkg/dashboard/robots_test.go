@@ -83,8 +83,10 @@ func TestNoIndexTagsAuthenticatedResponses(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer shared-secret-token")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("authenticated GET /api/health = %d, want 200", rec.Code)
+	// A fresh server has no status snapshot yet, so health may answer 503; the
+	// point here is only that the request cleared the auth gate.
+	if rec.Code == http.StatusUnauthorized || rec.Code == http.StatusForbidden {
+		t.Fatalf("authenticated GET /api/health = %d, want it to clear the auth gate", rec.Code)
 	}
 	if got := rec.Header().Get(xRobotsTagHeader); got != xRobotsTagNoIndex {
 		t.Fatalf("authenticated response X-Robots-Tag = %q, want %q", got, xRobotsTagNoIndex)
