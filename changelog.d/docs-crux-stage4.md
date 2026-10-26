@@ -1,0 +1,1 @@
+- Crux stage 4 docs: Host-setter disposition table, callback families for credentials and proxy seams, and the failure-semantics decisions in `docs/design/crux.md`, `docs/crux-serve.md` and `crux/README.md` (#14138).
