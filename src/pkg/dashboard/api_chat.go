@@ -204,12 +204,6 @@ func chatIntentTokens(query string) map[string]bool {
 	return tokens
 }
 
-// chatLocalIntentAnswerFor answers the identity-aware and bare local
-// intents through the router; grounded routes return false.
-func (s *Server) chatLocalIntentAnswerFor(r *http.Request, query string) (string, bool) {
-	return s.chatRouteLocalAnswer(r, chatParseRoute(query))
-}
-
 // chatPresenceIntent is true for `/jam who is online?`-style questions: the
 // jam scope prefix, or an explicit online/presence word alongside "who".
 func chatPresenceIntent(tokens map[string]bool) bool {
@@ -258,20 +252,6 @@ func (s *Server) chatPresenceAnswer(viewer string) string {
 		lines = append(lines, line)
 	}
 	return fmt.Sprintf("%d online (%d active, %d idle):\n%s", len(users), active, len(users)-active, strings.Join(lines, "\n"))
-}
-
-// chatLocalIntentAnswer answers the bare command scopes and help for a
-// message with no caller identity. Questions with arguments return false:
-// they are grounded, never collapsed to the bare dump.
-func (s *Server) chatLocalIntentAnswer(query string) (string, bool) {
-	route := chatParseRoute(query)
-	switch route.Kind {
-	case chatRouteHelp:
-		return chatHelpAnswer, true
-	case chatRouteBare:
-		return s.chatBareAnswer(route.Scope)
-	}
-	return "", false
 }
 
 func (s *Server) chatStatusSnapshot() *StatusPayload {

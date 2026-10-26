@@ -109,7 +109,7 @@ type chatEvalCase struct {
 var chatEvalCases = []chatEvalCase{
 	// The four failures observed on hive's own spoke, 2026-10-26.
 	{query: "prs: waiting on review", kind: chatRouteGrounded, scope: "prs", question: "waiting on review", snapshotHas: []string{"hivecommons/hive#14001", "review_state", "\"draft\":true"}, snapshotLacks: []string{"\"name\":\"scanner\""}},
-	{query: "agents: stuck", kind: chatRouteGrounded, scope: "agents", question: "stuck", snapshotHas: []string{"reviewer-2", "awaiting_ci", "inference budget exhausted", "needs_login"}, snapshotLacks: []string{"\"open_prs\"", "\"actionable_issues\":["}},
+	{query: "agents: stuck", kind: chatRouteGrounded, scope: "agents", question: "stuck", snapshotHas: []string{"reviewer-2", "awaiting_ci", "inference budget exhausted", "needs_login"}, snapshotLacks: []string{"\"open_prs\":[", "\"actionable_issues\":["}},
 	{query: "Which agent completed last?", kind: chatRouteGrounded, scope: "agents", question: "Which agent completed last?", snapshotHas: []string{"last_completed", "opened PR hivecommons/hive#14001"}},
 	{query: "agents: scanner status", kind: chatRouteGrounded, scope: "agents", question: "scanner status", snapshotHas: []string{"\"name\":\"scanner\"", "last_kick_outcome"}},
 	// Typed slash form (not forwarded by the frontend) routes identically.

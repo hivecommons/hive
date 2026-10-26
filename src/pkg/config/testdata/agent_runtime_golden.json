@@ -690,6 +690,9 @@
   "decisions": {
     "delegate": {}
   },
+  "chat": {
+    "grounded_answers": {}
+  },
   "duplicate_sweep": {},
   "good_first_issue": {},
   "supersession_sweep": {},
