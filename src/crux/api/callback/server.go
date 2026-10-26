@@ -372,20 +372,28 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, 
 type ListenConfig struct {
 	// Socket is the unix socket path; empty selects DefaultSocket().
 	Socket string
-	// Listen is an optional TCP host:port; it requires Token.
+	// Listen is an optional loopback TCP host:port; it requires Token.
 	Listen string
 	// Token is the bearer token Serve will require. It is here only so
-	// Validate can refuse TCP without one; the Server carries it too.
+	// Validate can refuse TCP without one or off loopback; the Server
+	// carries it too.
 	Token string
 }
 
-// Validate fills defaults and refuses TCP without a token.
+// Validate fills defaults and applies the fail-closed rules shared with
+// crux/config.ServeConfig.Validate: no TCP without a token, and no TCP off
+// loopback. The listener is plain http, so a routable bind would carry the
+// bearer token and every installation token PathTokens mints across the
+// network in cleartext.
 func (c *ListenConfig) Validate() error {
 	if c.Socket == "" {
 		c.Socket = DefaultSocket()
 	}
 	if c.Listen != "" && c.Token == "" {
 		return fmt.Errorf("a TCP callback listener on %s needs a bearer token (%s); refusing to serve hive capabilities unauthenticated", c.Listen, TokenEnvVar)
+	}
+	if c.Listen != "" && !api.LoopbackHost(c.Listen) {
+		return fmt.Errorf("listen %s: a TCP callback listener must bind a loopback address (127.0.0.1, [::1] or localhost); the listener is plain http and the bearer token and minted installation tokens would cross the network in cleartext — put a TLS-terminating proxy in front for remote access", c.Listen)
 	}
 	return nil
 }
