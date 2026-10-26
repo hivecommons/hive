@@ -1,0 +1,1 @@
+- Immediately remove PRs merged or closed by the hive from the stage tracker and governor snapshot, without waiting for a webhook or sweep ([#14420](https://github.com/hivecommons/hive/issues/14420)).
