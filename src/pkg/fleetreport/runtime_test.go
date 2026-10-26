@@ -801,6 +801,71 @@ func TestIsBenignMessageCopilotModelFallback(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessageKnowledgePrimerBytecap(t *testing.T) {
+	const msg = "knowledge primer: dropped facts over the byte cap"
+	if !IsBenignMessage(msg) {
+		t.Errorf("knowledge primer bytecap notice %q not benign", msg)
+	}
+	for _, m := range []string{
+		"knowledge primer failed to render",
+		"knowledge: primer render buffer exceeded",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("failure %q wrongly benign", m)
+		}
+	}
+}
+
+func TestIsBenignMessageContributorFailureStreak(t *testing.T) {
+	const msg = "[contribute-ws] refusing task: contributor failure streak"
+	if !IsBenignMessage(msg) {
+		t.Errorf("failure-streak refusal %q not benign", msg)
+	}
+	for _, m := range []string{
+		"[contribute-ws] refusing task: lease could not be persisted — try again",
+		"[contribute-ws] contributor failure streak store write failed",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("failure %q wrongly benign", m)
+		}
+	}
+}
+
+func TestIsBenignMessageRequiredChecksOverrideMismatch(t *testing.T) {
+	for _, msg := range []string{
+		"automerge required_checks override does not match repo protection",
+		"AUTOMERGE REQUIRED_CHECKS OVERRIDE DOES NOT MATCH REPO PROTECTION",
+	} {
+		if !IsBenignMessage(msg) {
+			t.Errorf("configuration notice %q not benign", msg)
+		}
+	}
+	for _, msg := range []string{
+		"automerge required_checks lookup failed",
+		"automerge failed to read repo protection",
+		"automerge required check has not succeeded",
+	} {
+		if IsBenignMessage(msg) {
+			t.Errorf("failure %q wrongly benign", msg)
+		}
+	}
+}
+
+func TestIsBenignMessageShadowFence(t *testing.T) {
+	const msg = "shadow fence would have denied external mutation"
+	if !IsBenignMessage(msg) {
+		t.Errorf("shadow-mode notice %q not benign", msg)
+	}
+	for _, m := range []string{
+		"mutation boundary: denied external mutation",
+		"effects: ledger acquire failed",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("failure %q wrongly benign", m)
+		}
+	}
+}
+
 func TestQueueHealthClassesQualifyOnFirstObservationAndClear(t *testing.T) {
 	now, _ := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)
@@ -901,6 +966,11 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"github REST 404 cached; suppressing repeated fetches",
 		"copilot token validation rate-limited by GitHub; relaunching after cooldown",
 		"permissions watcher: fixed file permissions",
+		"review-request watcher: DENIED (policy)",
+		"issue-request watcher: DENIED (policy)",
+		"merge-request watcher: DENIED (policy)",
+		"pr-request watcher: DENIED (policy)",
+		"push-branch-request watcher: DENIED (policy)",
 	} {
 		if !IsBenignMessage(m) {
 			t.Errorf("%q not benign", m)

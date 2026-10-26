@@ -1,0 +1,1 @@
+- Fleet reports on v6 no longer self-report expected policy denials, shadow-fence would-have-denied warnings, or CI-gate merge refusals as repeated runtime errors (#14449, #14450, #14451).

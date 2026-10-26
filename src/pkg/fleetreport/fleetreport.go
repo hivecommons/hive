@@ -708,6 +708,9 @@ var benignSubstrings = []string{
 	// permissions, ownership) record a repair that already succeeded:
 	// self-healing housekeeping, whatever level the producer logs at.
 	"permissions watcher: fixed ",
+	// Request watchers log a policy denial (e.g. repo not allowlisted) as an
+	// expected outcome, not a runtime error.
+	"request watcher: denied (policy)",
 	// Self-healing, informational lines: a cached GitHub 404 suppressing
 	// repeat fetches, and a rate-limited Copilot token validation that the
 	// manager retries itself after a cooldown.
@@ -729,6 +732,34 @@ var benignSubstrings = []string{
 	// every agent warn once in the same boot — an operator configuration
 	// condition, not a repeated runtime defect (hivecommons/hive#14020).
 	"copilot cli substituted the configured model",
+	// The scheduler (src/pkg/scheduler/kick_priming.go) warns when the primer
+	// render exceeds knowledge.primer.max_bytes (#12124). The render already
+	// carries its own truncation marker. A hive whose vault outgrows the cap
+	// has every kick warn once — an operator configuration condition (raise
+	// the cap or tighten the scope), not a repeated runtime defect
+	// (hivecommons/hive#14173).
+	"knowledge primer: dropped facts over the byte cap",
+	// The contribute-ws task selector (src/pkg/dashboard/contribute_select.go)
+	// warns on every poll from an identity whose claims are paused because
+	// its recent assignments all died within seconds (#6450). The pause is
+	// the protection working as designed and the refusal is a policy
+	// outcome, re-logged for as long as the paused agent keeps polling —
+	// not a repeated runtime defect (hivecommons/hive#14178). Only this
+	// refusal is benign: "refusing task: lease could not be persisted" is a
+	// real failure and must remain reportable.
+	"refusing task: contributor failure streak",
+	// Both automerge CI gates warn when configured fallback checks are stale,
+	// while continuing to use the repository's actual protection checks.
+	// This is operator configuration drift, not a runtime defect (#14351).
+	"automerge required_checks override does not match repo protection",
+	// The mutation boundary (src/pkg/convergence/mutation/boundary.go) warns
+	// in shadow mode (fencing disabled) when the ledger Acquire would have
+	// denied an external mutation. Shadow mode observes rather than denies:
+	// nothing was blocked and Stats.IncFenced() is the telemetry channel. A
+	// burst from concurrent agents on one repo is expected observational
+	// output, not a repeated runtime defect (hivecommons/hive#14377). The
+	// enforce-mode denial (effects.ErrDenied) stays reportable.
+	"shadow fence would have denied external mutation",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic
@@ -737,6 +768,12 @@ var benignSubstrings = []string{
 // review planner's pending-expiry retry notification.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
+	// A CI gate refusal is the merge safety policy working as designed, even
+	// when a required check remains unsuccessful across repeated polls (#14364).
+	// Keep the operator warning, but do not turn it into a runtime defect.
+	if strings.TrimSpace(m) == "merge-request watcher: refused to merge, ci not confirmed" {
+		return true
+	}
 	// Pending expiry is a bounded retry, logged per perspective/PR. A burst
 	// across unrelated reviews is not a repeated runtime defect (#13850).
 	// Match only the retry notification: "review dispatch exhausted; holding
