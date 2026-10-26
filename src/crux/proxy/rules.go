@@ -339,23 +339,52 @@ var gitPathPrefix = regexp.MustCompile(`^/([^/]+/[^/]+)\.git/`)
 
 // gitLabProjectPathPrefix captures everything after /projects/ in a GitLab API
 // path. GitLab addresses a project either by its URL-encoded "namespace%2Fproject"
-// path (one segment) or by its numeric id. The proxy sees the %2F-decoded path,
-// so a project may span any number of segments (nested groups); ExtractRepo
-// takes segments up to the first project sub-resource in gitLabProjectResources.
+// path (one segment) or by its numeric id. The proxy's gates hand ExtractRepo
+// the request's escaped path, so a well-formed client keeps the project in a
+// single %2F segment and is resolved exactly. A decoded (unencoded) spelling
+// may span any number of segments (nested groups); ExtractRepo then takes
+// segments up to the first project sub-resource in gitLabProjectResources.
 var gitLabProjectPathPrefix = regexp.MustCompile(`^(?:/api/v4)?/projects/(.+)$`)
 
 // gitLabProjectResources are the segments that follow a project path in the
-// GitLab REST API (and "-" for its /-/ routes); they end the project path.
+// GitLab REST API (and "-" for its /-/ routes); they end the project path when
+// ExtractRepo has to scan a decoded "group/sub/repo/..." spelling.
+//
+// This is a heuristic with two known failure modes, both bounded:
+//
+//   - A sub-resource missing from this map is absorbed into the repo slug
+//     ("org/repo/foo"), which matches no allowlist, scope or pause entry, so
+//     writes fail CLOSED with a misleading slug. Keep the map complete — every
+//     project route that accepts a write must be here.
+//   - A namespace or project literally named like a resource word
+//     ("acme/releases") is cut short. ExtractRepo never returns "" for such a
+//     path: it falls back to the first two segments so the write is still
+//     gated against SOME repo rather than skipping every gate.
+//
+// Neither applies to the %2F-encoded form every GitLab client emits.
 var gitLabProjectResources = map[string]bool{
-	"-": true, "access_tokens": true, "approvals": true, "archive": true, "badges": true,
-	"boards": true, "branches": true, "cluster_agents": true, "commits": true, "deploy_keys": true,
-	"deploy_tokens": true, "deployments": true, "discussions": true, "environments": true,
-	"events": true, "fork": true, "forks": true, "hooks": true, "issues": true, "jobs": true,
-	"labels": true, "members": true, "merge_requests": true, "milestones": true, "notes": true,
-	"packages": true, "pipelines": true, "protected_branches": true, "protected_tags": true,
-	"releases": true, "repository": true, "runners": true, "search": true, "share": true,
-	"snippets": true, "star": true, "statuses": true, "tags": true, "unarchive": true,
-	"unstar": true, "variables": true, "wikis": true,
+	"-": true, "access_requests": true, "access_tokens": true, "alert_management_alerts": true,
+	"approval_rules": true, "approval_settings": true, "approvals": true, "archive": true,
+	"audit_events": true, "avatar": true, "badges": true, "boards": true, "branches": true,
+	"ci": true, "cluster_agents": true, "clusters": true, "commits": true, "custom_attributes": true,
+	"debian_distributions": true, "deploy_keys": true, "deploy_tokens": true, "deployments": true,
+	"discussions": true, "environments": true, "error_tracking": true, "events": true,
+	"export": true, "feature_flags": true, "feature_flags_user_lists": true, "fork": true,
+	"forks": true, "freeze_periods": true, "groups": true, "hooks": true, "housekeeping": true,
+	"import": true, "integrations": true, "invitations": true, "issues": true,
+	"issues_statistics": true, "iterations": true, "job_token_scope": true, "jobs": true,
+	"labels": true, "languages": true, "members": true, "merge_requests": true,
+	"merge_trains": true, "milestones": true, "mirror": true, "notes": true,
+	"notification_settings": true, "packages": true, "pages": true, "pages_access": true,
+	"pipeline": true, "pipeline_schedules": true, "pipelines": true, "protected_branches": true,
+	"protected_environments": true, "protected_tags": true, "push_rule": true, "ref": true,
+	"registry": true, "releases": true, "remote_mirrors": true, "repository": true,
+	"repository_size": true, "resource_groups": true, "restore": true, "runners": true,
+	"search": true, "secure_files": true, "services": true, "share": true, "snapshot": true,
+	"snippets": true, "star": true, "starrers": true, "statistics": true, "statuses": true,
+	"storage": true, "tags": true, "templates": true, "transfer": true, "trigger": true,
+	"triggers": true, "unarchive": true, "unstar": true, "uploads": true, "users": true,
+	"variables": true, "vulnerabilities": true, "vulnerability_findings": true, "wikis": true,
 }
 
 var gitLabNumericProjectID = regexp.MustCompile(`^\d+$`)
@@ -398,6 +427,13 @@ func ExtractRepo(path string) string {
 		}
 		if n >= 2 {
 			return strings.Join(segs[:n], "/")
+		}
+		// The scan stopped on a resource word before a namespace/project pair
+		// was complete: the group or project is itself named like a resource.
+		// Fail closed on the plain two-segment reading rather than return ""
+		// (which every gate treats as "no repo in path" and lets through).
+		if len(segs) >= 2 && segs[0] != "" && segs[1] != "" {
+			return segs[0] + "/" + segs[1]
 		}
 	}
 	return ""

@@ -126,7 +126,15 @@ func TestExtractRepo(t *testing.T) {
 		{"/api/v4/projects/group%2Fsub%2Frepo/issues", "group/sub/repo"},
 		{"/projects/group/sub/repo/repository/branches", "group/sub/repo"},
 		{"/api/v4/projects/group/sub/repo", "group/sub/repo"},
-		{"/api/v4/projects/org/issues", ""},
+		{"/api/v4/projects/group/repo/pipeline", "group/repo"},
+		{"/api/v4/projects/group/repo/pipeline_schedules/7/play", "group/repo"},
+		{"/api/v4/projects/group/repo/uploads", "group/repo"},
+		{"/api/v4/projects/group/repo/-/packages", "group/repo"},
+		// Group or project named like a resource word: gated on the plain
+		// two-segment reading, never "" (which would skip every repo gate).
+		{"/api/v4/projects/acme/releases/merge_requests", "acme/releases"},
+		{"/api/v4/projects/org/issues", "org/issues"},
+		{"/api/v4/projects/org/", ""},
 		{"/api/v4/projects/123/issues", ""},
 		{"/user", ""},
 		{"/rate_limit", ""},
