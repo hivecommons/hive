@@ -557,7 +557,6 @@ func (p *GitHubProxy) SetRepoPausedFunc(fn func(repo string) bool) {
 	p.pausedMu.Unlock()
 }
 
-// repoPauseRefusal is RepoPauseRefusal against this proxy's current predicate.
 // repoScopePath is the request path handed to the per-repo write gates (pause,
 // agent scope, auto-merge, per-repo ACMM mode, repo filter). It keeps the
 // client's own escaping rather than the decoded req.URL.Path so a GitLab
@@ -568,6 +567,7 @@ func repoScopePath(req *http.Request) string {
 	return req.URL.EscapedPath()
 }
 
+// repoPauseRefusal is RepoPauseRefusal against this proxy's current predicate.
 func (p *GitHubProxy) repoPauseRefusal(method, path string) (string, bool) {
 	p.pausedMu.RLock()
 	paused := p.repoPaused
