@@ -1559,7 +1559,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			}
 			p.recordViolation(agentName, req.Method, detail)
 			if writeSurfaceKind != "" {
-				p.auditWriteRefused(agentName, writeSurfaceKind, req.Method, req.URL.Path)
+				p.auditWriteRefused(agentName, writeSurfaceKind, req.Method, repoScopePath(req))
 			}
 
 			if blockCode == "" {

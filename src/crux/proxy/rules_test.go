@@ -118,6 +118,17 @@ func TestExtractRepo(t *testing.T) {
 		{"/repos/org/repo/contents/README.md", "org/repo"},
 		{"/org/repo.git/git-receive-pack", "org/repo"},
 		{"/org/repo.git/git-upload-pack", "org/repo"},
+		{"/group/sub/repo.git/git-receive-pack", "group/sub/repo"},
+		{"/group/sub/sub2/repo.git/git-upload-pack", "group/sub/sub2/repo"},
+		{"/repo.git/git-receive-pack", ""},
+		// Percent-escaped slug letters decode to the slug the forge sees, so
+		// deny-list gates (pause, agent scope) cannot be evaded by escaping.
+		{"/repos/o%72g/repo/issues", "org/repo"},
+		{"/repos/org/r%65po/pulls/1/merge", "org/repo"},
+		{"/o%72g/repo.git/git-receive-pack", "org/repo"},
+		{"/api/v4/projects/o%72g/repo/issues", "org/repo"},
+		{"/api/v4/projects/o%72g%2Frepo/issues", "org/repo"},
+		{"/api/v4/projects/org/repo/iss%75es", "org/repo"},
 		{"/api/v1/repos/org/repo/issues", "org/repo"},
 		{"/api/v4/projects/org%2Frepo/issues", "org/repo"},
 		{"/api/v4/projects/org/repo/issues", "org/repo"},

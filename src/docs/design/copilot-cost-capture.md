@@ -179,7 +179,7 @@ The proxy *can* extract a repo from a URL path — `ExtractRepo`
    `github_proxy.go:882-885` repeats it at the CONNECT seam. Such a connection
    falls to `tunnelDirect` (`github_proxy.go:887`) or the raw relay
    (`:484`), so the proxy sees only SNI `github.com` (`extractSNI`, `:660`) and
-   never a `/owner/repo.git/info/refs` path. The `gitPathPrefix` branch of
+   never a `/owner/repo.git/info/refs` path. The `gitPathRepo` branch of
    `ExtractRepo` therefore cannot fire on real clone traffic, and the proxy
    cannot learn the repo the agent cloned.
 
