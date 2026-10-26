@@ -399,3 +399,37 @@ func TestPostRestartKickHoldLogsWithoutFleetReport(t *testing.T) {
 		t.Fatalf("other kick failures must remain reportable: %+v", *seen)
 	}
 }
+
+func TestMergeCIRefusalLogsWithoutFleetReport(t *testing.T) {
+	now := time.Date(2026, 10, 26, 14, 30, 19, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "merge-request watcher: REFUSED to merge, CI not confirmed"
+	const reason = "ci gate: required status check has not succeeded (required-check-pending:build-gate)"
+	// Reproduce the issue's twelve refusals in ten minutes without changing
+	// the gate decision or losing its operator-facing diagnostics.
+	for i := 0; i < 12; i++ {
+		logger.Warn(msg, "repo", "kubestellar/console", "number", 24617,
+			"agent", "scanner", "verdict", "red", "reason", reason)
+		now = now.Add(30 * time.Second)
+	}
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("CI safety refusals produced fleet evidence: %+v", ev)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 12 {
+		t.Fatalf("wrapped handler saw %d records, want 12: %s", n, out.String())
+	}
+	if !strings.Contains(out.String(), `"msg":"`+msg+`"`) ||
+		!strings.Contains(out.String(), `"verdict":"red"`) ||
+		!strings.Contains(out.String(), `"reason":"`+reason+`"`) {
+		t.Fatalf("CI refusal warning lost its diagnostics: %s", out.String())
+	}
+	const failure = "merge-request watcher: failed to read request"
+	for i := 0; i < 5; i++ {
+		logger.Warn(failure)
+	}
+	if ev := tr.Evidence(); len(ev) != 1 || ev[0].Class != fleetreport.ClassUnclassifiedRepeated || ev[0].Message != failure || ev[0].Count != 5 {
+		t.Fatalf("watcher failure should still produce fleet evidence: %+v", ev)
+	}
+}

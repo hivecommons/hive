@@ -775,6 +775,12 @@ var benignSubstrings = []string{
 // review planner's pending-expiry retry notification.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
+	// A CI gate refusal is the merge safety policy working as designed, even
+	// when a required check remains unsuccessful across repeated polls (#14364).
+	// Keep the operator warning, but do not turn it into a runtime defect.
+	if strings.TrimSpace(m) == "merge-request watcher: refused to merge, ci not confirmed" {
+		return true
+	}
 	// Pending expiry is a bounded retry, logged per perspective/PR. A burst
 	// across unrelated reviews is not a repeated runtime defect (#13850).
 	// Match only the retry notification: "review dispatch exhausted; holding
