@@ -18,6 +18,10 @@ func TestBobLaunchCmdRunsBehindEnvPrefix(t *testing.T) {
 		t.Skip("bash not available")
 	}
 
+	if _, err := os.Stat("../../../config/backends.conf"); err != nil {
+		t.Skip("monorepo file config/backends.conf not present (standalone crux checkout)")
+	}
+
 	cases := []struct {
 		version  string
 		wantArgs string
@@ -65,8 +69,14 @@ func TestBobLaunchCmdRunsBehindEnvPrefix(t *testing.T) {
 // Run the real contributor startup key check without starting tmux or a relay.
 func TestContributorBobKeyCompatibility(t *testing.T) {
 	startup, err := os.ReadFile("../../../bin/contributor-agent.sh")
+	if os.IsNotExist(err) {
+		t.Skip("monorepo file bin/contributor-agent.sh not present (standalone crux checkout)")
+	}
 	if err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat("../../../config/backends.conf"); err != nil {
+		t.Skip("monorepo file config/backends.conf not present (standalone crux checkout)")
 	}
 	start := strings.Index(string(startup), "# Fail before an unattended Bob")
 	end := strings.Index(string(startup), "# Ensure metrics directory")
