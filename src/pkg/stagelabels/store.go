@@ -133,8 +133,6 @@ type Record struct {
 	// adoption on (the author pushed again); the yield note is posted once
 	// per head.
 	YieldedHead string `json:"yielded_head,omitempty"`
-	// AdoptionMaintainerNotedHead deduplicates the refusal note across sweeps and restarts.
-	AdoptionMaintainerNotedHead string `json:"adoption_maintainer_noted_head,omitempty"`
 	// HivePushedHeads are heads the hive recorded pushing to this adopted PR.
 	// They are trusted local evidence for in-place adoption attribution when
 	// the later GitHub commit object cannot link the commit to the App.
@@ -1066,19 +1064,6 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
-	s.items[key] = r
-	s.dirty = true
-}
-
-// NoteAdoptionMaintainer records a successfully posted maintainer refusal note.
-func (s *Store) NoteAdoptionMaintainer(key, head string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r, ok := s.items[key]
-	if !ok || head == "" || r.AdoptionMaintainerNotedHead == head {
-		return
-	}
-	r.AdoptionMaintainerNotedHead = head
 	s.items[key] = r
 	s.dirty = true
 }

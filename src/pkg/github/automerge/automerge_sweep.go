@@ -174,14 +174,17 @@ type Engine struct {
 	gh        *gh.Client
 	logger    *slog.Logger
 
-	adoptionPermissionsMu sync.Mutex
-	adoptionPermissions   map[string]adoptionPermission
-
 	selfSkipWarnedMu sync.Mutex
 	selfSkipWarned   map[string]struct{}
 
 	mergerAuthzMu sync.RWMutex
 	mergerAuthz   MergerAuthorizer
+
+	// maintainerPerm caches whether a PR author holds admin or maintain on
+	// the PR's repository (authorMaintainsRepo): adoption never takes over
+	// a maintainer's own PR.
+	maintainerPermMu sync.Mutex
+	maintainerPerm   map[string]maintainerPermEntry
 
 	requiredChecksMu      sync.RWMutex
 	requiredChecks        map[string]bool
