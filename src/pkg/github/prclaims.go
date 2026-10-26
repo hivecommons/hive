@@ -1799,8 +1799,15 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 	// The in-memory copy says "covered" for the dashboard and the kick;
 	// the forge label itself is the issue stage sweep's to write, so it is
 	// told when this is a synthesised label rather than one GitHub returned
-	// (hivecommons/hive#13316).
-	synthesized := !issueHasLabel(issue.Labels, CoveredByPRLabel)
+	// (hivecommons/hive#13316). The annotation runs twice per cycle
+	// (SyncIssuePRClaimLabels, then FilterClaimedIssues on the same
+	// payload): the second pass finds the label the first one synthesised
+	// and must not re-grade it as GitHub's, or the sweep plans against a
+	// payload that already "has" 040 and never writes it — which left
+	// hivecommons/hive#14372 and #14371 at 010 under an open `Fixes` PR
+	// (hivecommons/hive#14397).
+	synthesized := !issueHasLabel(issue.Labels, CoveredByPRLabel) ||
+		(issue.ClaimContext != nil && issue.ClaimContext.CoveredLabelSynthesized)
 	issue.Labels = addIssueLabel(issue.Labels, CoveredByPRLabel)
 	issue.ClaimContext = claimContext(claim, ClaimDecisionCoveredByOpenPR)
 	issue.ClaimContext.CoveredLabelSynthesized = synthesized
