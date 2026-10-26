@@ -49,9 +49,8 @@ type Supervisor struct {
 	lookPath func(string) (string, error)
 	start    func(*exec.Cmd) error
 
-	mu     sync.Mutex
-	state  SupervisorState
-	cancel context.CancelFunc
+	mu    sync.Mutex
+	state SupervisorState
 }
 
 // Supervisor defaults.
