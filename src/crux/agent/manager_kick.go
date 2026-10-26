@@ -1364,6 +1364,9 @@ var ciPollCommandRe = regexp.MustCompile(`\bgh (?:run (?:watch|view|list)\b|pr c
 // polling commands exactly this way.
 var ciPollProhibitionRe = regexp.MustCompile("(?i)\\b(?:no|not|never|don't|avoid|without)\\s+(?:\\w+\\s+)?[`'\"]*$")
 
+// ciLogReadRe identifies diagnostic log reads, rather than CI-status polls.
+var ciLogReadRe = regexp.MustCompile(`^gh run view\b[^\n;|&]*\s--log(?:-failed)?(?:=true)?(?:\s|$)`)
+
 // ciPollCommands returns each CI-status command in pane as its normalized
 // command line (from the command name to end of line), skipping mentions
 // that are prohibitions quoted from the kick prompt or policy: those landed
@@ -1377,6 +1380,11 @@ func ciPollCommands(pane string) []string {
 			continue
 		}
 		line, _, _ := strings.Cut(pane[loc[0]:], "\n")
+		// Failure diagnosis can revisit the same log while comparing jobs or
+		// extracting evidence. It does not wait for a check to finish (#14382).
+		if ciLogReadRe.MatchString(line) {
+			continue
+		}
 		cmds = append(cmds, strings.Join(strings.Fields(strings.TrimRight(line, " \t┃│")), " "))
 	}
 	return cmds
