@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -244,7 +245,7 @@ func TestSidecarHost_NilObserverAndNoStream(t *testing.T) {
 
 // Capability and policy setters say once per setter how they reach a
 // sidecar runtime: capabilities and the carried policy setters over the
-// callback endpoint; the rest not at all yet.
+// callback endpoint; the span starter in-process-only.
 func TestSidecarHost_CapabilityAndPolicySettersLogOnce(t *testing.T) {
 	var log bytes.Buffer
 	h := newSidecarHost(newSidecarRuntimeFake(), slog.New(slog.NewTextHandler(&log, nil)))
@@ -270,14 +271,68 @@ func TestSidecarHost_CapabilityAndPolicySettersLogOnce(t *testing.T) {
 	if n := strings.Count(out, "setter=SetAppAuth"); n != 1 {
 		t.Fatalf("SetAppAuth noted %d times, want once:\n%s", n, out)
 	}
-	if strings.Count(out, "served by the hive callback") != 13 {
-		t.Errorf("callback-carried setters = %d, want 13:\n%s", strings.Count(out, "served by the hive callback"), out)
+	if strings.Count(out, "served by the hive callback") != 16 {
+		t.Errorf("callback-carried setters = %d, want 16:\n%s", strings.Count(out, "served by the hive callback"), out)
 	}
-	if strings.Count(out, "not carried") != 3 {
-		t.Errorf("not-carried setters = %d, want 3:\n%s", strings.Count(out, "not carried"), out)
+	if strings.Count(out, "not carried") != 0 {
+		t.Errorf("not-carried setters = %d, want 0:\n%s", strings.Count(out, "not carried"), out)
 	}
 	if strings.Count(out, "in-process-only") != 1 || !strings.Contains(out, "setter=SetSpanStarter") {
 		t.Errorf("in-process-only setters:\n%s", out)
+	}
+}
+
+type sidecarMintIssuer struct {
+	enabled bool
+	calls   []string
+}
+
+func (f *sidecarMintIssuer) Enabled() bool { return f.enabled }
+func (f *sidecarMintIssuer) MintAgentToken(agent, tier string) (string, error) {
+	f.calls = append(f.calls, agent+"@"+tier)
+	return "mint-" + agent, nil
+}
+
+// The stored mint issuer and Bob resolvers are what the agent_mint and bob
+// callback families serve: unset or disabled is the empty credential, as
+// in-process when neither is configured.
+func TestSidecarHost_MintAndBobAreServed(t *testing.T) {
+	h := newSidecarHost(newSidecarRuntimeFake(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if h.Enabled() {
+		t.Fatal("mint enabled before SetAgentMint")
+	}
+	if tok, err := h.MintAgentToken("a", "t"); tok != "" || err != nil {
+		t.Fatalf("unset mint = %q, %v", tok, err)
+	}
+	if key, src := h.bobCredential(); key != "" || src != "" {
+		t.Fatalf("unset bob = %q/%q", key, src)
+	}
+	off := &sidecarMintIssuer{}
+	h.SetAgentMint(off)
+	if tok, err := h.MintAgentToken("a", "t"); tok != "" || err != nil || len(off.calls) != 0 || h.Enabled() {
+		t.Fatalf("disabled mint = %q, %v, calls %v", tok, err, off.calls)
+	}
+	on := &sidecarMintIssuer{enabled: true}
+	h.SetAgentMint(on)
+	if tok, err := h.MintAgentToken("a", "trusted"); tok != "mint-a" || err != nil || strings.Join(on.calls, ",") != "a@trusted" || !h.Enabled() {
+		t.Fatalf("mint = %q, %v, calls %v", tok, err, on.calls)
+	}
+	h.SetBobAPIKeyResolver(func() string { return "bob-key" })
+	h.SetBobKeySourceResolver(func() string { return "env:BOB_API_KEY" })
+	if key, src := h.bobCredential(); key != "bob-key" || src != "env:BOB_API_KEY" {
+		t.Fatalf("bob = %q/%q", key, src)
+	}
+	caps := (&boot{agentMgr: h}).hiveCallbackCapabilities()
+	if !caps.Configured(callback.CapabilityAgentMint) || !caps.Configured(callback.CapabilityBob) {
+		t.Fatal("capabilities not served")
+	}
+	resp, err := caps.MintAgentToken(context.Background(), callback.AgentMintRequest{Agent: "b", Tier: "t"})
+	if err != nil || resp.Token != "mint-b" {
+		t.Fatalf("caps mint = %+v, %v", resp, err)
+	}
+	cred, err := caps.BobCredential(context.Background())
+	if err != nil || cred.APIKey != "bob-key" {
+		t.Fatalf("caps bob = %+v, %v", cred, err)
 	}
 }
 

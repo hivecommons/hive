@@ -34,6 +34,8 @@
 //	DELETE /v1/inference/routes/{agent}  clear that route
 //	POST /v1/effects                begin a journaled external mutation (stage 4)
 //	POST /v1/effects/{id}/end       report how it ended
+//	POST /v1/tokens/mint            issue an agent's short-lived mint credential (stage 4)
+//	GET  /v1/bob/credential         the Bob API key and where it came from (stage 4)
 package callback
 
 import (
@@ -66,6 +68,8 @@ const (
 	PathRepoAutoMerge    = "/" + Version + "/policy/repo-auto-merge"
 	PathInferenceRoutes  = "/" + Version + "/inference/routes"
 	PathEffects          = "/" + Version + "/effects"
+	PathAgentMint        = "/" + Version + "/tokens/mint"
+	PathBobCredential    = "/" + Version + "/bob/credential"
 )
 
 // InferenceRoutePath is the route for one agent's inference route.
@@ -203,6 +207,12 @@ const (
 	// CapabilityEffects covers the effect routes; served only by a
 	// Capabilities that also implements EffectBoundary.
 	CapabilityEffects = "effects"
+	// CapabilityAgentMint covers POST /v1/tokens/mint; served only by a
+	// Capabilities that also implements AgentMinter (hive's opt-in mint).
+	CapabilityAgentMint = "agent_mint"
+	// CapabilityBob covers GET /v1/bob/credential; served only by a
+	// Capabilities that also implements BobCredentials.
+	CapabilityBob = "bob"
 )
 
 // MintTokenRequest is the body of POST /v1/tokens. Tier is the permission
@@ -557,4 +567,59 @@ type EndEffectResponse struct {
 type EffectBoundary interface {
 	BeginEffect(ctx context.Context, claim EffectClaim) (BeginEffectResponse, error)
 	EndEffect(ctx context.Context, id string, req EndEffectRequest) (EndEffectResponse, error)
+}
+
+// AgentMintRequest is the body of POST /v1/tokens/mint: the arguments of
+// crux.AgentMintIssuer.MintAgentToken. Tier is the agent's trust tier, the
+// same one its App token is scoped to.
+type AgentMintRequest struct {
+	Agent string `json:"agent"`
+	Tier  string `json:"tier,omitempty"`
+}
+
+// AgentMintResponse is the body of a successful POST /v1/tokens/mint. An
+// empty Token with a nil error is how a hive whose mint is configured but
+// disabled answers (crux.AgentMintIssuer's "" contract); a hive without the
+// mint at all answers 404 not_configured.
+type AgentMintResponse struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+}
+
+// String prints the response with the token redacted.
+func (r AgentMintResponse) String() string {
+	return fmt.Sprintf("callback.AgentMintResponse{Token: %s, ExpiresAt: %s}", redactedIf(r.Token), r.ExpiresAt.Format(time.RFC3339))
+}
+
+// GoString is String, for %#v.
+func (r AgentMintResponse) GoString() string { return r.String() }
+
+// AgentMinter is the mint half of the contract, optional like PolicySource:
+// the server answers POST /v1/tokens/mint only when its Caps implements it;
+// *Client always does. It is crux.AgentMintIssuer with a context.
+type AgentMinter interface {
+	MintAgentToken(ctx context.Context, req AgentMintRequest) (AgentMintResponse, error)
+}
+
+// BobCredential is the body of GET /v1/bob/credential: the IBM Bob API key
+// hive resolved from its config (SetBobAPIKeyResolver) and the loggable
+// source it came from ("file:<path>", "env:<NAME>", "" when unconfigured;
+// SetBobKeySourceResolver). APIKey is never logged.
+type BobCredential struct {
+	APIKey string `json:"api_key,omitempty"`
+	Source string `json:"source,omitempty"`
+}
+
+// String prints the credential with the key redacted.
+func (c BobCredential) String() string {
+	return fmt.Sprintf("callback.BobCredential{APIKey: %s, Source: %q}", redactedIf(c.APIKey), c.Source)
+}
+
+// GoString is String, for %#v.
+func (c BobCredential) GoString() string { return c.String() }
+
+// BobCredentials is the Bob half of the contract, optional like
+// PolicySource.
+type BobCredentials interface {
+	BobCredential(ctx context.Context) (BobCredential, error)
 }

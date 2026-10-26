@@ -321,3 +321,17 @@ func (c *Client) observe(err error) {
 	c.status.FailedCalls = 0
 	c.status.LastSuccess = now
 }
+
+// MintAgentToken is POST /v1/tokens/mint.
+func (c *Client) MintAgentToken(ctx context.Context, req AgentMintRequest) (AgentMintResponse, error) {
+	var out AgentMintResponse
+	err := c.do(ctx, http.MethodPost, PathAgentMint, req, &out)
+	return out, err
+}
+
+// BobCredential is GET /v1/bob/credential.
+func (c *Client) BobCredential(ctx context.Context) (BobCredential, error) {
+	var out BobCredential
+	err := c.do(ctx, http.MethodGet, PathBobCredential, nil, &out)
+	return out, err
+}

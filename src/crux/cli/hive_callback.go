@@ -30,6 +30,11 @@ type hiveCapTarget interface {
 	SetSandboxPushMinter(pushbroker.TokenMinter)
 	SetInferenceCallbacks(setRoute func(agentName, backend, model string), clearRoute func(agentName string))
 	SetSandboxMutationBoundary(effects.Boundary)
+	// Credential writers (hivecommons/hive#14138 stage 4).
+	SetAppAuth(agent.AppTokenMinter)
+	SetAgentMint(agent.AgentMintIssuer)
+	SetBobAPIKeyResolver(func() string)
+	SetBobKeySourceResolver(func() string)
 }
 
 // hivePolicyTarget is the subset of crux.Host policy setters the hive
@@ -142,7 +147,14 @@ func (h *hiveCallback) install(ctx context.Context, rt crux.Runtime, srv *serve.
 		m.SetInferenceCallbacks(h.set.Inference.Set, h.set.Inference.Clear)
 		go h.set.Inference.Run(ctx, 0)
 		m.SetSandboxMutationBoundary(h.set.Mutation)
-		seams += ", pull requests, Linear credential, push tokens, inference routes, mutation boundary"
+		// Credential writers: App tokens and the opt-in mint are minted by
+		// hive and only cached here; Bob's key is read through hive. All
+		// fail closed (no credential) when hive is away.
+		m.SetAppAuth(h.set.AppTokens)
+		m.SetAgentMint(h.set.Mint)
+		m.SetBobAPIKeyResolver(h.set.Bob.Key)
+		m.SetBobKeySourceResolver(h.set.Bob.Source)
+		seams += ", pull requests, Linear credential, push tokens, inference routes, mutation boundary, App tokens, agent mint, Bob credential"
 	}
 	fmt.Fprintf(w, "hive callback %s: %s\n", addressString(h.client.Address()), seams)
 	// hive_callback_unavailable describes the callback being down, so it

@@ -61,6 +61,11 @@ type Set struct {
 	Policy      *Policy
 	Inference   *InferenceRoutes
 	Mutation    MutationBoundary
+	// AppTokens, Mint and Bob are the stage-4 credential writers: the
+	// sidecar's SetAppAuth, SetAgentMint and SetBob*Resolver arguments.
+	AppTokens *AppTokenWriter
+	Mint      AgentMint
+	Bob       *BobCredentials
 }
 
 // New builds the adapters over caps. timeout bounds the calls made from
@@ -78,6 +83,9 @@ func New(caps callback.Capabilities, timeout time.Duration) *Set {
 	s.Conditions = ConditionReporter{caps: caps, timeout: timeout}
 	s.PullRequest = PRCreator{caps: caps}
 	s.Linear = LinearCredentials{caps: caps, timeout: timeout}
+	s.AppTokens = NewAppTokenWriter(caps)
+	s.Mint = NewAgentMint(caps, timeout)
+	s.Bob = NewBobCredentials(caps, timeout)
 	s.Policy = NewPolicy(caps, timeout)
 	s.Inference = NewInferenceRoutes(caps, timeout)
 	s.Mutation = NewMutationBoundary(caps)

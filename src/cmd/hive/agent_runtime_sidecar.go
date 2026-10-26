@@ -35,9 +35,9 @@ type eventObservable interface {
 // (cruxhost over callback.Listen, started by bootAgents). The policy setters
 // the callback carries (#14138 stage 4) record their value here and the
 // endpoint serves it as the GET /v1/policy snapshot the runtime polls; the
-// rest (inference routes, mutation boundary, span starter) are still no-ops,
-// each logged once, and a sidecar runtime runs on its own configuration for
-// them.
+// inference routes, mutation boundary, mint issuer and Bob resolvers are
+// stored and served by their own callback families. Only the span starter
+// is in-process-only, logged once.
 type sidecarHost struct {
 	crux.Runtime
 	logger *slog.Logger
@@ -68,6 +68,13 @@ type sidecarHost struct {
 	setRoute   func(agentName, backend, model string)
 	clearRoute func(agentName string)
 	mutation   effects.Boundary
+	// Credential writers served over the callback (#14138 stage 4): the
+	// mint issuer behind POST /v1/tokens/mint and the Bob resolvers behind
+	// GET /v1/bob/credential. App tokens need no field: the callback's
+	// token family mints them from b.appAuth directly.
+	mint         crux.AgentMintIssuer
+	bobKey       func() string
+	bobKeySource func() string
 }
 
 var _ hostedRuntime = (*sidecarHost)(nil)
@@ -225,10 +232,54 @@ func (h *sidecarHost) SetConditionReporter(r crux.ConditionReporter) {
 
 // ---- capabilities: served to the runtime over the hive callback ----
 
-func (h *sidecarHost) SetAppAuth(crux.AppTokenMinter)        { h.callbackCarried("SetAppAuth") }
-func (h *sidecarHost) SetAgentMint(crux.AgentMintIssuer)     { h.notCarried("SetAgentMint") }
-func (h *sidecarHost) SetBobAPIKeyResolver(func() string)    { h.notCarried("SetBobAPIKeyResolver") }
-func (h *sidecarHost) SetBobKeySourceResolver(func() string) { h.notCarried("SetBobKeySourceResolver") }
+// SetAppAuth needs no storage: the sidecar's App token writer mints over
+// POST /v1/tokens, whose scoper is hive's AppAuth itself. The mint issuer
+// and Bob resolvers are stored and served by the agent_mint and bob
+// callback families.
+func (h *sidecarHost) SetAppAuth(crux.AppTokenMinter) { h.callbackCarried("SetAppAuth") }
+func (h *sidecarHost) SetAgentMint(issuer crux.AgentMintIssuer) {
+	h.setPolicy("SetAgentMint", func() { h.mint = issuer })
+}
+func (h *sidecarHost) SetBobAPIKeyResolver(fn func() string) {
+	h.setPolicy("SetBobAPIKeyResolver", func() { h.bobKey = fn })
+}
+func (h *sidecarHost) SetBobKeySourceResolver(fn func() string) {
+	h.setPolicy("SetBobKeySourceResolver", func() { h.bobKeySource = fn })
+}
+
+// Enabled and MintAgentToken are cruxhost.AgentMintIssuer over the stored
+// issuer: mint off (or never set, as in-process when the mint is not
+// configured) is an empty token.
+func (h *sidecarHost) Enabled() bool {
+	h.mu.Lock()
+	m := h.mint
+	h.mu.Unlock()
+	return m != nil && m.Enabled()
+}
+
+func (h *sidecarHost) MintAgentToken(agentName, tier string) (string, error) {
+	h.mu.Lock()
+	m := h.mint
+	h.mu.Unlock()
+	if m == nil || !m.Enabled() {
+		return "", nil
+	}
+	return m.MintAgentToken(agentName, tier)
+}
+
+// bobCredential is cruxhost.BobResolver over the stored resolvers.
+func (h *sidecarHost) bobCredential() (apiKey, source string) {
+	h.mu.Lock()
+	key, src := h.bobKey, h.bobKeySource
+	h.mu.Unlock()
+	if key != nil {
+		apiKey = key()
+	}
+	if src != nil {
+		source = src()
+	}
+	return apiKey, source
+}
 func (h *sidecarHost) SetLinearCredentialResolver(func() crux.LinearCredential) {
 	h.callbackCarried("SetLinearCredentialResolver")
 }
@@ -437,6 +488,8 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 		deps.RepoAutoMerge = sh.repoAutoMergeEnabled
 		deps.Inference = sh
 		deps.Mutation = sh
+		deps.Mint = sh
+		deps.Bob = sh.bobCredential
 	}
 	return cruxhost.New(deps)
 }

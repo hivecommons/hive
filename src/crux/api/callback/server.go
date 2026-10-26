@@ -93,6 +93,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE "+PathInferenceRoutes+"/{agent}", s.capability(CapabilityInferenceRoutes, s.handleClearInferenceRoute))
 	mux.HandleFunc("POST "+PathEffects, s.capability(CapabilityEffects, s.handleBeginEffect))
 	mux.HandleFunc("POST "+PathEffects+"/{id}/end", s.capability(CapabilityEffects, s.handleEndEffect))
+	mux.HandleFunc("POST "+PathAgentMint, s.capability(CapabilityAgentMint, s.handleAgentMint))
+	mux.HandleFunc("GET "+PathBobCredential, s.capability(CapabilityBob, s.handleBobCredential))
 	return s.authenticate(mux)
 }
 
@@ -137,6 +139,14 @@ func (s *Server) configured(capability string) bool {
 		if _, ok := s.Caps.(EffectBoundary); !ok {
 			return false
 		}
+	case CapabilityAgentMint:
+		if _, ok := s.Caps.(AgentMinter); !ok {
+			return false
+		}
+	case CapabilityBob:
+		if _, ok := s.Caps.(BobCredentials); !ok {
+			return false
+		}
 	}
 	if c, ok := s.Caps.(Configured); ok {
 		return c.Configured(capability)
@@ -159,6 +169,7 @@ var allCapabilities = []string{
 	CapabilityTokens, CapabilityGitHubREST, CapabilityUsage, CapabilityCanary,
 	CapabilityText, CapabilityConditions, CapabilityLinear, CapabilityPulls,
 	CapabilityPolicy, CapabilityInferenceRoutes, CapabilityEffects,
+	CapabilityAgentMint, CapabilityBob,
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -637,4 +648,30 @@ func (s *Server) Serve(ctx context.Context, ls *Listeners) error {
 // token-less rule to admit it. Use it as the http.Server's BaseContext.
 func WithUnixNetwork(ctx context.Context) context.Context {
 	return context.WithValue(ctx, networkKey, networkUnix)
+}
+
+func (s *Server) handleAgentMint(w http.ResponseWriter, r *http.Request) {
+	var req AgentMintRequest
+	if !s.readJSON(w, r, &req) {
+		return
+	}
+	if req.Agent == "" {
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "agent is required")
+		return
+	}
+	resp, err := s.Caps.(AgentMinter).MintAgentToken(r.Context(), req)
+	if err != nil {
+		s.writeCapabilityError(w, r, "minting agent token", err)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (s *Server) handleBobCredential(w http.ResponseWriter, r *http.Request) {
+	cred, err := s.Caps.(BobCredentials).BobCredential(r.Context())
+	if err != nil {
+		s.writeCapabilityError(w, r, "reading bob credential", err)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, cred)
 }

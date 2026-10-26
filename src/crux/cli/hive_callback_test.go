@@ -31,6 +31,34 @@ type managerLike struct {
 	route  func(agentName, backend, model string)
 	clear  func(agentName string)
 	bound  effects.Boundary
+	app    agent.AppTokenMinter
+	mint   agent.AgentMintIssuer
+	bobKey func() string
+	bobSrc func() string
+}
+
+func (m *managerLike) SetAppAuth(a agent.AppTokenMinter) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.app = a
+}
+
+func (m *managerLike) SetAgentMint(i agent.AgentMintIssuer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mint = i
+}
+
+func (m *managerLike) SetBobAPIKeyResolver(fn func() string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bobKey = fn
+}
+
+func (m *managerLike) SetBobKeySourceResolver(fn func() string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bobSrc = fn
 }
 
 func (m *managerLike) SetInferenceCallbacks(set func(agentName, backend, model string), clear func(agentName string)) {
@@ -86,9 +114,13 @@ func TestServeHiveCallbackFeedsTheManagerSeams(t *testing.T) {
 
 	m.mu.Lock()
 	linear, prs, minter, route, clear, bound := m.linear, m.prs, m.minter, m.route, m.clear, m.bound
+	app, mint, bobKey, bobSrc := m.app, m.mint, m.bobKey, m.bobSrc
 	m.mu.Unlock()
 	if linear == nil || prs == nil || minter == nil || route == nil || clear == nil || bound == nil {
 		t.Fatalf("seams not fed: linear=%v prs=%v minter=%v route=%v clear=%v boundary=%v", linear != nil, prs != nil, minter != nil, route != nil, clear != nil, bound != nil)
+	}
+	if app == nil || mint == nil || bobKey == nil || bobSrc == nil {
+		t.Fatalf("credential seams not fed: app=%v mint=%v bobKey=%v bobSrc=%v", app != nil, mint != nil, bobKey != nil, bobSrc != nil)
 	}
 	if toolapprove.DefaultTextScanner() == nil {
 		t.Fatal("text scanner not installed")
@@ -116,6 +148,16 @@ func TestServeHiveCallbackFeedsTheManagerSeams(t *testing.T) {
 	if _, err := minter.MintPushToken(ctx, "repo"); err == nil {
 		t.Fatal("mint over a dead socket must fail")
 	}
+	// Credential writers fail closed: no token written, no mint, no Bob key.
+	if err := app.WriteAgentToken(ctx, "a", "t", 0); err == nil {
+		t.Fatal("App token over a dead socket must fail")
+	}
+	if tok, err := mint.MintAgentToken("a", "t"); tok != "" || err == nil {
+		t.Fatalf("agent mint over a dead socket = %q, %v", tok, err)
+	}
+	if bobKey() != "" || bobSrc() != "" {
+		t.Fatal("Bob credential over a dead socket must be empty")
+	}
 	// The route callbacks return at once even with hive away; the boundary
 	// refuses the effect rather than running it unjournaled.
 	route("a", "litellm", "m")
@@ -131,7 +173,7 @@ func TestServeHiveCallbackFeedsTheManagerSeams(t *testing.T) {
 	}
 	cancel()
 	<-done
-	if !strings.Contains(h.stdout.String(), "hive callback unix://"+hiveSocket+": text scanner, conditions, pull requests, Linear credential, push tokens, inference routes, mutation boundary") {
+	if !strings.Contains(h.stdout.String(), "hive callback unix://"+hiveSocket+": text scanner, conditions, pull requests, Linear credential, push tokens, inference routes, mutation boundary, App tokens, agent mint, Bob credential") {
 		t.Fatalf("stdout = %q", h.stdout.String())
 	}
 }

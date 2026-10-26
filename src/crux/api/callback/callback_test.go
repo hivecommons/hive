@@ -51,6 +51,8 @@ type fakeCaps struct {
 	effects []EffectClaim
 	ends    map[string]EndEffectRequest
 	deny    bool
+	mints   []AgentMintRequest
+	bob     BobCredential
 }
 
 func (f *fakeCaps) Configured(c string) bool { return !f.absent[c] }
@@ -135,6 +137,25 @@ func (f *fakeCaps) Policy(context.Context) (Policy, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.policy, f.fail
+}
+
+func (f *fakeCaps) MintAgentToken(_ context.Context, req AgentMintRequest) (AgentMintResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.mints = append(f.mints, req)
+	if f.fail != nil {
+		return AgentMintResponse{}, f.fail
+	}
+	if req.Tier == "disabled" {
+		return AgentMintResponse{}, nil
+	}
+	return AgentMintResponse{Token: "mint-" + req.Agent, ExpiresAt: time.Unix(1_800_000_000, 0).UTC()}, nil
+}
+
+func (f *fakeCaps) BobCredential(context.Context) (BobCredential, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.bob, f.fail
 }
 
 func (f *fakeCaps) RepoAutoMergeEnabled(_ context.Context, repo string) (bool, error) {
@@ -872,7 +893,7 @@ type bareCaps struct{ Capabilities }
 func TestCapabilitiesWithoutConfiguredHaveAll(t *testing.T) {
 	c, _ := serveUnix(t, NewServer(bareCaps{&fakeCaps{}}, ""), "")
 	h, err := c.Health(context.Background())
-	if err != nil || len(h.Capabilities) != len(allCapabilities)-3 {
+	if err != nil || len(h.Capabilities) != len(allCapabilities)-5 {
 		t.Errorf("health = %+v, %v", h, err)
 	}
 	for _, name := range h.Capabilities {
@@ -1033,5 +1054,54 @@ func TestListenUnbindablePath(t *testing.T) {
 	}
 	if _, err := Listen(ListenConfig{Socket: filepath.Join(file, "sub", "s.sock")}); err == nil {
 		t.Error("uncreatable directory accepted")
+	}
+}
+
+func TestAgentMintAndBobOverTheWire(t *testing.T) {
+	caps := &fakeCaps{bob: BobCredential{APIKey: "bob-secret", Source: "file:/run/secrets/bob"}}
+	c, logs := serveUnix(t, NewServer(caps, ""), "")
+	ctx := context.Background()
+
+	got, err := c.MintAgentToken(ctx, AgentMintRequest{Agent: "fixer", Tier: "staff"})
+	if err != nil || got.Token != "mint-fixer" || got.ExpiresAt.IsZero() {
+		t.Fatalf("MintAgentToken = %+v, %v", got, err)
+	}
+	if len(caps.mints) != 1 || caps.mints[0].Tier != "staff" {
+		t.Fatalf("mint requests = %+v", caps.mints)
+	}
+	// A configured-but-disabled mint answers an empty token without error.
+	if got, err := c.MintAgentToken(ctx, AgentMintRequest{Agent: "fixer", Tier: "disabled"}); err != nil || got.Token != "" {
+		t.Fatalf("disabled mint = %+v, %v", got, err)
+	}
+	if _, err := c.MintAgentToken(ctx, AgentMintRequest{}); err == nil || errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("MintAgentToken without agent = %v, want bad request", err)
+	}
+	bob, err := c.BobCredential(ctx)
+	if err != nil || bob.APIKey != "bob-secret" || bob.Source != "file:/run/secrets/bob" {
+		t.Fatalf("BobCredential = %+v, %v", bob, err)
+	}
+	if s := fmt.Sprint(bob, got); strings.Contains(s, "bob-secret") || strings.Contains(s, "mint-fixer") {
+		t.Fatalf("secret printed: %s", s)
+	}
+	if l := logs.String(); strings.Contains(l, "bob-secret") || strings.Contains(l, "mint-fixer") {
+		t.Fatalf("secret logged:\n%s", l)
+	}
+
+	absent := &fakeCaps{absent: map[string]bool{CapabilityAgentMint: true, CapabilityBob: true}}
+	c2, _ := serveUnix(t, NewServer(absent, ""), "")
+	if _, err := c2.MintAgentToken(ctx, AgentMintRequest{Agent: "a"}); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("absent mint = %v", err)
+	}
+	if _, err := c2.BobCredential(ctx); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("absent bob = %v", err)
+	}
+	// Upstream failures map to the standard sentinel.
+	failing := &fakeCaps{fail: errors.New("key store down")}
+	c3, _ := serveUnix(t, NewServer(failing, ""), "")
+	if _, err := c3.BobCredential(ctx); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("failing bob = %v", err)
+	}
+	if _, err := c3.MintAgentToken(ctx, AgentMintRequest{Agent: "a"}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("failing mint = %v", err)
 	}
 }

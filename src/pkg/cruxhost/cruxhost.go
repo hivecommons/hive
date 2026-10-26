@@ -128,7 +128,25 @@ type Deps struct {
 	Inference InferenceRouter
 	Mutation  effects.Boundary
 	EffectTTL time.Duration
+	// Mint is the opt-in agent mint issuer (SetAgentMint) and Bob the Bob
+	// key resolvers (SetBobAPIKeyResolver/SetBobKeySourceResolver), both
+	// #14138 stage 4 credential writers; nil means the capability is
+	// absent. A Mint whose Enabled is false answers an empty token, the
+	// in-process "mint off" contract.
+	Mint AgentMintIssuer
+	Bob  BobResolver
 }
+
+// AgentMintIssuer is crux.AgentMintIssuer restated so cruxhost does not
+// import crux/agent.
+type AgentMintIssuer interface {
+	Enabled() bool
+	MintAgentToken(agentName, tier string) (string, error)
+}
+
+// BobResolver returns the Bob API key and its source ("file:<path>",
+// "env:<NAME>", "" when unset).
+type BobResolver func() (apiKey, source string)
 
 // Capabilities is callback.Capabilities over Deps. It also implements
 // callback.Configured.
@@ -143,6 +161,8 @@ var (
 	_ callback.PolicySource    = (*Capabilities)(nil)
 	_ callback.InferenceRouter = (*Capabilities)(nil)
 	_ callback.EffectBoundary  = (*Capabilities)(nil)
+	_ callback.AgentMinter     = (*Capabilities)(nil)
+	_ callback.BobCredentials  = (*Capabilities)(nil)
 )
 
 // New builds the capability set over deps.
@@ -178,6 +198,10 @@ func (c *Capabilities) Configured(capability string) bool {
 		return c.deps.Inference != nil
 	case callback.CapabilityEffects:
 		return c.deps.Mutation != nil
+	case callback.CapabilityAgentMint:
+		return c.deps.Mint != nil
+	case callback.CapabilityBob:
+		return c.deps.Bob != nil
 	}
 	return false
 }
@@ -330,6 +354,32 @@ func (c *Capabilities) LinearCredential(context.Context) (callback.LinearCredent
 	}
 	tok, key := c.deps.Linear()
 	return callback.LinearCredential{AccessToken: tok, APIKey: key}, nil
+}
+
+// MintAgentToken issues req.Agent's mint credential at req.Tier. Mint off
+// (Enabled false) is an empty token with no error, as in-process; the
+// expiry is advisory (the issuer does not report one) and left zero.
+func (c *Capabilities) MintAgentToken(_ context.Context, req callback.AgentMintRequest) (callback.AgentMintResponse, error) {
+	if c.deps.Mint == nil {
+		return callback.AgentMintResponse{}, callback.ErrNotConfigured
+	}
+	if !c.deps.Mint.Enabled() {
+		return callback.AgentMintResponse{}, nil
+	}
+	tok, err := c.deps.Mint.MintAgentToken(req.Agent, req.Tier)
+	if err != nil {
+		return callback.AgentMintResponse{}, fmt.Errorf("mint agent token for %q: %w", req.Agent, err)
+	}
+	return callback.AgentMintResponse{Token: tok}, nil
+}
+
+// BobCredential returns the Bob key hive would inject and where it came from.
+func (c *Capabilities) BobCredential(context.Context) (callback.BobCredential, error) {
+	if c.deps.Bob == nil {
+		return callback.BobCredential{}, callback.ErrNotConfigured
+	}
+	key, source := c.deps.Bob()
+	return callback.BobCredential{APIKey: key, Source: source}, nil
 }
 
 // CreatePR opens (or finds) the PR as the App.

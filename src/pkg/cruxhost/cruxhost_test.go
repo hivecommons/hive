@@ -438,3 +438,61 @@ type recorder struct {
 func (r *recorder) Header() http.Header         { return r.header }
 func (r *recorder) Write(b []byte) (int, error) { return r.body.Write(b) }
 func (r *recorder) WriteHeader(s int)           { r.status = s }
+
+type fakeMint struct {
+	enabled bool
+	calls   []string
+	err     error
+}
+
+func (f *fakeMint) Enabled() bool { return f.enabled }
+func (f *fakeMint) MintAgentToken(agent, tier string) (string, error) {
+	f.calls = append(f.calls, agent+"@"+tier)
+	if f.err != nil {
+		return "", f.err
+	}
+	return "mint-" + agent, nil
+}
+
+// The agent_mint and bob capabilities (#14138 stage 4) are absent without
+// deps, answer the in-process "mint off" empty token when disabled, and
+// carry the credential over the socket without logging it.
+func TestAgentMintAndBobCapabilities(t *testing.T) {
+	ctx := context.Background()
+	none := New(Deps{})
+	if none.Configured(callback.CapabilityAgentMint) || none.Configured(callback.CapabilityBob) {
+		t.Fatal("configured without deps")
+	}
+	if _, err := none.MintAgentToken(ctx, callback.AgentMintRequest{Agent: "a"}); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Errorf("mint = %v", err)
+	}
+	if _, err := none.BobCredential(ctx); !errors.Is(err, callback.ErrNotConfigured) {
+		t.Errorf("bob = %v", err)
+	}
+
+	off := &fakeMint{}
+	if resp, err := New(Deps{Mint: off}).MintAgentToken(ctx, callback.AgentMintRequest{Agent: "a", Tier: "t"}); err != nil || resp.Token != "" || len(off.calls) != 0 {
+		t.Errorf("disabled mint = %+v, %v, calls %v", resp, err, off.calls)
+	}
+
+	on := &fakeMint{enabled: true}
+	deps := Deps{Mint: on, Bob: func() (string, string) { return "bob-secret", "env:BOB_API_KEY" }}
+	c, logBuf := serve(t, deps)
+	resp, err := c.MintAgentToken(ctx, callback.AgentMintRequest{Agent: "a", Tier: "trusted"})
+	if err != nil || resp.Token != "mint-a" || strings.Join(on.calls, ",") != "a@trusted" {
+		t.Errorf("mint over socket = %+v, %v, calls %v", resp, err, on.calls)
+	}
+	bob, err := c.BobCredential(ctx)
+	if err != nil || bob.APIKey != "bob-secret" || bob.Source != "env:BOB_API_KEY" {
+		t.Errorf("bob over socket = %+v, %v", bob, err)
+	}
+	on.err = errors.New("boom")
+	if _, err := c.MintAgentToken(ctx, callback.AgentMintRequest{Agent: "a", Tier: "trusted"}); err == nil || errors.Is(err, callback.ErrNotConfigured) {
+		t.Errorf("mint failure = %v", err)
+	}
+	for _, s := range []string{"mint-a", "bob-secret"} {
+		if strings.Contains(logBuf.String(), s) {
+			t.Errorf("server log leaked %q:\n%s", s, logBuf.String())
+		}
+	}
+}
