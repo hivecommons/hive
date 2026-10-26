@@ -52,8 +52,8 @@ func TestHandleDashboardAnswersMatchingIfNoneMatchWith304(t *testing.T) {
 
 func TestServeStaticSetsNoCacheAndETag(t *testing.T) {
 	s := &HubServer{}
-	handler := s.serveStatic("static/robots.txt")
-	req := httptest.NewRequest(http.MethodGet, "/robots.txt", nil)
+	handler := s.serveStatic("static/llms.txt")
+	req := httptest.NewRequest(http.MethodGet, "/llms.txt", nil)
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
@@ -69,7 +69,7 @@ func TestServeStaticSetsNoCacheAndETag(t *testing.T) {
 	}
 
 	// A second request presenting that ETag back gets a 304 with an empty body.
-	req2 := httptest.NewRequest(http.MethodGet, "/robots.txt", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/llms.txt", nil)
 	req2.Header.Set("If-None-Match", etag)
 	rec2 := httptest.NewRecorder()
 	handler(rec2, req2)
@@ -85,7 +85,7 @@ func TestServeStaticETagDiffersForDifferentFiles(t *testing.T) {
 	s := &HubServer{}
 
 	rec1 := httptest.NewRecorder()
-	s.serveStatic("static/robots.txt")(rec1, httptest.NewRequest(http.MethodGet, "/robots.txt", nil))
+	s.serveStatic("static/llms.txt")(rec1, httptest.NewRequest(http.MethodGet, "/llms.txt", nil))
 
 	rec2 := httptest.NewRecorder()
 	s.serveStatic("static/tokens.css")(rec2, httptest.NewRequest(http.MethodGet, "/tokens.css", nil))

@@ -135,6 +135,7 @@ func writeLinkPreview(w http.ResponseWriter) {
 	publicURL := hubPublicURL()
 	previewHTML := `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
+` + robotsMetaNoIndex + `
 <title>Hive — AI agents that maintain your repo</title>
 <meta name="description" content="Hive is a co-maintainer system for your GitHub projects: AI agents (Claude, Copilot, Codex, Antigravity, Goose) do the chores. You decide how much they may do.">
 <meta property="og:site_name" content="Hive">
@@ -686,6 +687,7 @@ func (s *HubServer) writeProviderPicker(w http.ResponseWriter, providers []*auth
 			html.EscapeString(p.Name), html.EscapeString(p.Name), rd, providerGlyph(p.Name), html.EscapeString(p.DisplayName)))
 	}
 	page := `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+` + robotsMetaNoIndex + `
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in — Hive</title>
 <style>

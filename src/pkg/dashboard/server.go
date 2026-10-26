@@ -1544,7 +1544,7 @@ func (s *Server) Start() error {
 
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
-	handler := s.withServerTiming(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))
+	handler := s.withServerTiming(s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))))
 
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
@@ -2294,6 +2294,7 @@ func isPublicPath(path string) bool {
 const loginPage = `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + dashboardRobotsMetaTag + `
 <title>Hive — Sign In</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -2414,7 +2415,7 @@ async function poll(interval,flowId){
 </script></body></html>`
 
 func (s *Server) Handler() http.Handler {
-	return s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))
+	return s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))
 }
 
 func (s *Server) roleEnforcement(next http.Handler) http.Handler {

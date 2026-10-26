@@ -1722,7 +1722,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /components.css", s.serveStatic("static/components.css"))
 	s.mux.HandleFunc("GET /api/reading-list", s.handleReadingList)
 	s.mux.HandleFunc("GET /reading", s.serveStatic("static/reading.html"))
-	s.mux.HandleFunc("GET /robots.txt", s.serveStatic("static/robots.txt"))
+	s.mux.HandleFunc("GET /robots.txt", s.handleRobotsTxt)
 	s.mux.HandleFunc("GET /sitemap.xml", s.serveStatic("static/sitemap.xml"))
 	s.mux.HandleFunc("GET /llms.txt", s.serveStatic("static/llms.txt"))
 	s.mux.HandleFunc("GET "+hubErrorPagePath+"{code}", s.handleHubErrorPage)
@@ -1776,7 +1776,7 @@ func (s *HubServer) Start(port int) error {
 	s.logger.Info("hub server starting", "addr", addr)
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      s.mux,
+		Handler:      s.Handler(),
 		ReadTimeout:  hubReadTimeout,
 		WriteTimeout: hubWriteTimeout,
 		IdleTimeout:  hubIdleTimeout,
