@@ -722,6 +722,13 @@ var benignSubstrings = []string{
 	// within the same boot — and a burst across unrelated templates is not
 	// a repeated runtime defect (hivecommons/hive#14005).
 	"seeded policy differs from the embedded default with no seed record",
+	// The agent poller (src/pkg/agent/manager_poll.go) warns once per agent
+	// per (requested, running) tuple when the Copilot CLI rejects --model and
+	// runs another model (#13659), and surfaces it on the agent's LastError.
+	// A hive whose copilot agents share one model the account cannot use has
+	// every agent warn once in the same boot — an operator configuration
+	// condition, not a repeated runtime defect (hivecommons/hive#14020).
+	"copilot cli substituted the configured model",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic

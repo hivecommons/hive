@@ -62,6 +62,7 @@ const (
 	ClassFeedbackIssueRefreshFailed = "feedback_issue_refresh_failed"
 	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
 	ClassInferenceUpstreamError     = "inference_upstream_error"
+	ClassIOScanClassifierUnavail    = "ioscan_classifier_unavailable"
 )
 
 const (
@@ -157,6 +158,7 @@ var Classes = map[string]ClassSpec{
 	ClassFeedbackIssueRefreshFailed: {Component: "dashboard", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"feedback: issue refresh failed"}},
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed"}},
 	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
+	ClassIOScanClassifierUnavail:    {Component: "inference-gateway", Severity: "medium", MinCount: 1, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"ioscan classifier failed closed", "ioscan fail-closed blocked kick"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".

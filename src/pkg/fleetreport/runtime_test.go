@@ -353,6 +353,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassFeedbackIssueRefreshFailed, message: "feedback: issue refresh failed"},
 		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
+		{class: ClassIOScanClassifierUnavail, message: "ioscan fail-closed blocked kick"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
@@ -785,6 +786,21 @@ func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessageCopilotModelFallback(t *testing.T) {
+	const msg = "copilot CLI substituted the configured model"
+	if !IsBenignMessage(msg) {
+		t.Errorf("copilot model-substitution notice %q not benign", msg)
+	}
+	for _, m := range []string{
+		"copilot token validation failed",
+		"copilot CLI failed to start",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("failure %q wrongly benign", m)
+		}
+	}
+}
+
 func TestQueueHealthClassesQualifyOnFirstObservationAndClear(t *testing.T) {
 	now, _ := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)
@@ -870,6 +886,8 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"proxy: CONNECT dial failed":                           ClassProxyConnectDialFailed,
 		"inference upstream error":                             ClassInferenceUpstreamError,
 		"inference upstream failed":                            ClassInferenceUpstreamError,
+		"ioscan classifier failed closed":                      ClassIOScanClassifierUnavail,
+		"ioscan fail-closed blocked kick":                      ClassIOScanClassifierUnavail,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {
