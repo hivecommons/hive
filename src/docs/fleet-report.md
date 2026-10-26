@@ -146,6 +146,7 @@ title is `[selfreport] <class>: <short message>`.
 | `agent_pane_timeout` | the agent-readiness wait timed out and the harness dumped the tmux pane (`prompt timeout — dumping pane` / `pane content at timeout`, `pkg/agent/manager.go`; also `startup kick dropped` / `cli never reached input prompt`; `busy_visibility.go`: `kick undeliverable`, `pkg/agent/manager_kick.go`). Log-fed: same ≥5-in-10-min repeat threshold and 20-min idle clear as the catch-all below; pane excerpts are scrubbed and bounded before storage | low |
 | `proxy_connect_dial_failed` | the hive proxy could not dial the upstream host of a CONNECT request (`proxy: CONNECT dial failed`, `crux/proxy/github_proxy.go`) — typically DNS or network unreachability of an agent-requested host, repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
 | `inference_upstream_error` | a failed or non-2xx response from the configured inference backend (LiteLLM, vLLM/llm-d) on the Anthropic-to-OpenAI translator or MITM reroute path (`inference upstream error` / `inference upstream failed`, `crux/proxy/github_proxy.go`), repeated ≥5 times in 10 min — covers transport failures and statuses other than the dedicated 401/403 auth signal. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `ioscan_classifier_unavailable` | the ioscan model classifier failed closed (`ioscan classifier failed closed; text withheld`, `pkg/scheduler/ioscan_enforce.go`) — typically no model endpoint resolved — so untrusted text is withheld. The scheduler logs `ioscan fail-closed blocked kick` (`pkg/scheduler/templates.go`) when it withholds a kick for the same reason, which maps to this class too. The WARN is already deduped per failure by `warnOnce` (once per process), so it is reported on the first observation (`MinCount` 1) with the normal idle clear; this is a real degradation, not noise. Log-fed | medium |
 | `unclassified_error_repeated` | **generic catch-all**: the same WARN/ERROR log line (numbers, hashes, paths and quoted strings collapsed) repeated ≥5 times in 10 min. Fed by a `slog.Handler` tee (`pkg/fleetreport/slogfeed`) on the hive's root logger, so a repeating defect is noticed even with no hook site. Skips benign lines (read/keepalive i/o timeouts, context cancellation, the permissions watcher's `fixed …` self-healing lines) and any message that already matches another class's keywords. Clears automatically after 20 quiet minutes (2× the window), so a "cleared" comment follows once the symptom stops | low |
 
 The generic feed also skips the exact `review pending expired` message: it
@@ -163,6 +164,15 @@ post-upgrade reconcile — up to one WARN per template in the same boot — and
 a burst across unrelated templates is not a repeated runtime defect
 (hivecommons/hive#14005). The per-template warning stays in the container
 log, already deduped per path per process.
+
+It also skips `copilot CLI substituted the configured model`
+(`logCopilotModelFallback`, `src/pkg/agent/manager_poll.go`): each copilot
+agent warns once per (requested, running) model tuple (hivecommons/hive#13659)
+and shows the substitution on its dashboard `LastError`, so a hive whose
+copilot agents share one model id the account's Copilot CLI rejects emits one
+WARN per agent in the same boot. That is an operator configuration condition —
+change the agents' model — not a repeated runtime defect
+(hivecommons/hive#14020).
 
 Deferred to follow-ups (defined, not yet wired): `upgrade_stalled`,
 `data_disk_pressure`, `github_app_token_mint_failed`,
