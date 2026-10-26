@@ -1349,6 +1349,7 @@
     .ham-meta:empty { display: none; }
     .ham-meta .ham-count { color: var(--muted); }
     .ham-meta .ham-updated.ham-stale { color: var(--amber); }
+    .ham-meta .ham-updated .ham-poll-failing { font-weight: 600; }
     .ham-engine { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--font-mono); }
     .ham-engine > span { padding: 0 var(--sp-1); border: var(--line-width) solid var(--line-subtle); border-radius: var(--radius-sm); }
     .ham-engine .ham-engine-mode { color: var(--muted); }
@@ -13728,6 +13729,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTracker = null;
     var _stageTrackerSig = '';
     var _stageTrackerEtag = '';
+    // Last poll outcome: '' while polls succeed, else a short reason ('HTTP
+    // 504', 'unreachable'). Without it a payload that was "fresh" when it
+    // arrived keeps saying so while every later poll fails — the operator
+    // reads "updated 8m ago · fresh" and cannot tell a quiet hive from a
+    // dashboard that has lost the server (#14416).
+    var _stageTrackerPollError = '';
+    var _stageTrackerPollErrorSince = 0;
     // Filter / sort / paging state. Everything but the page survives a reload
     // (localStorage, like the Review window) so a maintainer's view sticks.
     const STAGE_TRACKER_FILTER_KEY = 'hive-activity-monitor-filter';
@@ -15258,15 +15266,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // "updated 12s ago · cache" — re-stamped every STAGE_TRACKER_CLOCK_MS
-    // without a fetch; amber once the payload is older than two TTLs.
-    function stageTrackerUpdatedHtml(d, nowMs) {
+    // without a fetch; amber once the payload is older than two TTLs or
+    // once the poll itself is failing (pollError = short reason, '' = ok).
+    // A failing poll also demotes "fresh" to "cache": the payload was built
+    // for a request long gone, and the server has not answered since.
+    function stageTrackerUpdatedHtml(d, nowMs, pollError, pollErrorSinceMs) {
       const at = Date.parse((d && d.generated_at) || '') || 0;
       if (!at) return '';
       const ageMs = Math.max(0, nowMs - at);
       const ttlMs = (Number(d.cache_ttl_s) || 0) * 1000;
-      const stale = ttlMs > 0 && ageMs > 2 * ttlMs;
-      const src = d.source === 'fresh' ? 'built for this request' : 'from the server cache';
-      return `<span class="ham-updated${stale ? ' ham-stale' : ''}" title="${esc('Payload built ' + agentNowClockTime(at, nowMs) + ' ' + src + (ttlMs ? '; the server rebuilds it at most every ' + Math.round(ttlMs / 1000) + 's and makes no GitHub call per request' : ''))}">updated ${esc(stageTrackerShortAgo(ageMs) === 'now' ? Math.floor(ageMs / 1000) + 's' : stageTrackerShortAgo(ageMs))} ago · ${esc(d.source || 'cache')}</span>`;
+      const failing = !!pollError;
+      const stale = failing || (ttlMs > 0 && ageMs > 2 * ttlMs);
+      const source = failing ? 'cache' : (d.source || 'cache');
+      const src = source === 'fresh' ? 'built for this request' : 'from the server cache';
+      const failTip = failing ? '. Polling is failing (' + pollError + (pollErrorSinceMs ? ', since ' + agentNowClockTime(pollErrorSinceMs, nowMs) : '') + '): the dashboard keeps showing this payload until the server answers again' : '';
+      const failTag = failing ? ` · <span class="ham-poll-failing">poll failing (${esc(pollError)})</span>` : '';
+      return `<span class="ham-updated${stale ? ' ham-stale' : ''}" title="${esc('Payload built ' + agentNowClockTime(at, nowMs) + ' ' + src + (ttlMs ? '; the server rebuilds it at most every ' + Math.round(ttlMs / 1000) + 's and makes no GitHub call per request' : '') + failTip)}">updated ${esc(stageTrackerShortAgo(ageMs) === 'now' ? Math.floor(ageMs / 1000) + 's' : stageTrackerShortAgo(ageMs))} ago · ${esc(source)}${failTag}</span>`;
     }
     // The ADR-0025 central stage engine's status strip: mode and admission
     // anomalies (governor.labels.stage.engine.mode). Hover text on the
@@ -15285,8 +15300,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const el = document.querySelector('#activity-monitor-meta .ham-updated');
       if (!el || !_stageTracker) return;
       const wrap = document.createElement('span');
-      wrap.innerHTML = stageTrackerUpdatedHtml(_stageTracker, Date.now());
+      wrap.innerHTML = stageTrackerUpdatedHtml(_stageTracker, Date.now(), _stageTrackerPollError, _stageTrackerPollErrorSince);
       if (wrap.firstChild) el.replaceWith(wrap.firstChild);
+    }
+    function stageTrackerPollFailed(reason) {
+      if (!_stageTrackerPollError) _stageTrackerPollErrorSince = Date.now();
+      _stageTrackerPollError = reason;
+      stageTrackerTickClock();
+    }
+    function stageTrackerPollOk() {
+      _stageTrackerPollError = '';
+      _stageTrackerPollErrorSince = 0;
     }
 
     function renderStageTracker(data) {
@@ -15343,7 +15367,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f, { needsHumanLabels: ctx.needsHumanLabels })));
       stageTrackerRenderLabelDialog();
       const meta = document.getElementById('activity-monitor-meta');
-      if (meta) setIfChanged(meta, `<span class="ham-count"${counts.note ? ` title="${esc(counts.note)}"` : ''}>${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
+      if (meta) setIfChanged(meta, `<span class="ham-count"${counts.note ? ` title="${esc(counts.note)}"` : ''}>${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs, _stageTrackerPollError, _stageTrackerPollErrorSince)}${stageTrackerPagerHtml(page)}`);
       const foot = document.getElementById('activity-monitor-meta-foot');
       if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
       const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
@@ -15432,17 +15456,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (at) _stageTracker.generated_at = at;
             if (src) _stageTracker.source = src;
           }
+          stageTrackerPollOk();
           stageTrackerTickClock();
           return;
         }
-        if (!r.ok) return;
+        if (!r.ok) { stageTrackerPollFailed('HTTP ' + r.status); return; }
         _stageTrackerEtag = r.headers.get('ETag') || '';
         const text = await r.text();
+        stageTrackerPollOk();
         if (text === _stageTrackerSig) { stageTrackerTickClock(); return; }
         _stageTrackerSig = text;
         renderStageTracker(JSON.parse(text));
         dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS);
-      } catch (e) { /* keep the previous render */ }
+      } catch (e) {
+        // Network failure or an aborted body: keep the previous render but
+        // say so in the "updated" chip instead of letting it read "fresh".
+        stageTrackerPollFailed('unreachable');
+      }
     }
 
     /* ---- Row actions: context menu + multi-select -------------------------

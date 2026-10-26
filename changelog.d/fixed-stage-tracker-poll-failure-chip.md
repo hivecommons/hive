@@ -1,0 +1,1 @@
+- Activity tracker: the "updated … ago" chip now reports when its 30s poll is failing (`poll failing (HTTP 504)` / `(unreachable)`), goes amber at once and demotes `fresh` to `cache`, instead of counting up "updated 8m ago · fresh" from the last good payload while the server is unreachable (#14416).
