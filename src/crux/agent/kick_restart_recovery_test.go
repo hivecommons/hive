@@ -61,6 +61,15 @@ func forceFastPaneShell(t *testing.T) {
 // so the goroutine is drained before the test's env restores run.
 func quiesceThenMarkReady(t *testing.T, m *Manager, name string) (wait func()) {
 	t.Helper()
+	// TestMain's 5s readiness budget leaves less than 1s after the 4s
+	// quiesce below for tmux to render the marker on a loaded runner.
+	// These tests cover restart/kick delivery, not readiness timeouts.
+	// No tests in this package run in parallel; restore the budget so
+	// negative-path tests keep TestMain's shorter timeout.
+	origReadyTimeout := cliReadyTimeout
+	cliReadyTimeout = 15 * time.Second
+	t.Cleanup(func() { cliReadyTimeout = origReadyTimeout })
+
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
