@@ -76,7 +76,7 @@
       "kick_template": "Supervise {{.Repo}}",
       "include_repos": true,
       "bead_role": "supervisor",
-      "mode": "full-autonomy",
+      "mode": "autonomous",
       "explain_mode": "brief",
       "sandbox": {
         "enabled": true,

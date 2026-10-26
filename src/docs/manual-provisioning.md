@@ -382,7 +382,7 @@ data:
       ai_author: your-bot-login        # GitHub login agents use when authoring PRs
       primary_repo: your-repo          # must appear in repos: above
 
-    acmm_level: 2                      # 2 = plan+approve gating; 3 = fully autonomous
+    acmm_level: 2                      # 2 = plan+approve gating; 3 = autonomous
 
     hub:
       enabled: false                   # standalone; no hub connection

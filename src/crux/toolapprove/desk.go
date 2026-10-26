@@ -115,7 +115,7 @@ type RuleMatch struct {
 //
 //	L0-L2  operator-approve — nothing side-effectful resolves without a human
 //	L3-L5  security-scan    — may reach auto-approve only via a green scan
-//	L6+    auto-approve     — full autonomy; the desk is an audit record, not a gate
+//	L6+    auto-approve     — autonomous; the desk is an audit record, not a gate
 //
 // An unknown/negative level clamps to the most restrictive lane, so a
 // mis-parsed or absent level can never widen authority.

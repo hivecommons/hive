@@ -10,7 +10,7 @@ The biggest mistake new users make: seeing agent output and either (a) panicking
 
 ## Trust > Level. Always.
 
-> You do not need to reach L6. Ever. L6 is full automation — agents merging code without human review. Some teams run at L4 or L5 indefinitely and that is completely fine. The number doesn't matter. What matters is whether you trust what the agents are producing. A team that runs at L3 with high confidence is in a better place than a team that jumped to L6 and is now drowning in agent change requests they don't understand.
+> You do not need to reach L6. Ever. L6 is Autonomous — agents merge code on green CI without per-PR human review. Some teams run at L4 or L5 indefinitely and that is completely fine. The number doesn't matter. What matters is whether you trust what the agents are producing. A team that runs at L3 with high confidence is in a better place than a team that jumped to L6 and is now drowning in agent change requests they don't understand.
 >
 > **The goal is trust, not level.**
 
@@ -295,7 +295,7 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 **When to move up:** Only when you **genuinely trust the agents' judgment** — meaning you've reviewed enough of their PRs to know they're consistently doing the right thing, and your test suite is strong enough that passing checks genuinely means "safe to ship." There's no calendar for this one.
 
-## L6 — Full Automation
+## L6 — Autonomous
 
 **The level:** Full trust. Auto-merge is off below L6; when you switch to L6, Hive enables auto-merge for every active repo, then agents open PRs and merge them automatically when CI goes green. Owners can toggle individual repos off or back on afterward. No level hold, except outreach PRs into repositories the hive does not manage, which remain held for human review; outreach PRs into the hive's own repos auto-merge like any other.
 
@@ -314,7 +314,7 @@ Telemetry and operations don't auto-enable just because you reached L6 — they 
 
 **Be patient:** Trust the loop. If a bad PR merges, that's a signal to add a test, not to panic and drop levels.
 
-> 💡 **Tip: L6 doesn't mean you're done reviewing.** Even at full automation, read the merged PRs weekly. Not to intervene — to calibrate. If you see a pattern you don't like (agents always touching the same file, tests that are too shallow), update the policy template and the next run corrects course.
+> 💡 **Tip: L6 doesn't mean you're done reviewing.** Even at L6, read the merged PRs weekly. Not to intervene — to calibrate. If you see a pattern you don't like (agents always touching the same file, tests that are too shallow), update the policy template and the next run corrects course.
 
 **When to move up:** There is no up. You made it. 🐝
 

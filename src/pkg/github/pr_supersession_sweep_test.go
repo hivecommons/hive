@@ -395,7 +395,7 @@ func TestSweepSupersededOpenPRs_ClosedByPullRequestReferenceClosesOwnAtL6(t *tes
 
 	c := newTestClient(t, server, org, []string{repo})
 	c.SetAppBotLogin("hive-app[bot]")
-	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous }})
 	if err != nil {
 		t.Fatalf("SweepSupersededOpenPRs: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestSweepSupersededOpenPRs_ClosedByCommitYieldsCandidate(t *testing.T) {
 
 	c := newTestClient(t, server, org, []string{repo})
 	c.SetAppBotLogin("hive-app[bot]")
-	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous }})
 	if err != nil {
 		t.Fatalf("SweepSupersededOpenPRs: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestSweepSupersededOpenPRs_ContributorCommentOnly(t *testing.T) {
 
 	c := newTestClient(t, server, org, []string{repo})
 	c.SetAppBotLogin("hive-app[bot]")
-	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous }})
 	if err != nil {
 		t.Fatalf("SweepSupersededOpenPRs: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestSweepSupersededOpenPRs_BelowL6LabelsOwnPR(t *testing.T) {
 	defer server.Close()
 
 	c, rec := newSupersessionTestClient(t, server, org, repo)
-	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }})
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous - 1 }})
 	if err != nil {
 		t.Fatalf("SweepSupersededOpenPRs: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestSweepSupersededOpenPRs_HeldOwnPRIsLeftAlone(t *testing.T) {
 
 	c := newTestClient(t, server, org, []string{repo})
 	c.SetAppBotLogin("hive-app[bot]")
-	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous }})
 	if err != nil {
 		t.Fatalf("SweepSupersededOpenPRs: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestSweepSupersededOpenPRs_DoNotMergeContributorPRIsLeftAlone(t *testing.T)
 
 	c := newTestClient(t, server, org, []string{repo})
 	c.SetAppBotLogin("hive-app[bot]")
-	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{CloseContributorPRs: true, ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{CloseContributorPRs: true, ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous }})
 	if err != nil {
 		t.Fatalf("SweepSupersededOpenPRs: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestSweepSupersededOpenPRs_HivePauseLabelIsLeftAlone(t *testing.T) {
 	c := newTestClient(t, server, org, []string{repo})
 	c.SetAppBotLogin("hive-app[bot]")
 	c.SetHoldLabels([]string{CanonicalHiveHoldLabel("abc123")})
-	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous }})
 	if err != nil {
 		t.Fatalf("SweepSupersededOpenPRs: %v", err)
 	}
@@ -589,7 +589,7 @@ func TestSweepSupersededOpenPRs_OpenClosingClaimKeepsPRLive(t *testing.T) {
 
 			c := newTestClient(t, server, org, []string{repo})
 			c.SetAppBotLogin("hive-app[bot]")
-			for _, level := range []int{acmmLevelFullyAutonomous - 1, acmmLevelFullyAutonomous} {
+			for _, level := range []int{acmmLevelAutonomous - 1, acmmLevelAutonomous} {
 				res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return level }})
 				if err != nil {
 					t.Fatalf("SweepSupersededOpenPRs: %v", err)
@@ -642,7 +642,7 @@ func TestSweepSupersededOpenPRs_AllClosingClaimsClosedEscalates(t *testing.T) {
 			defer server.Close()
 
 			c, rec := newSupersessionTestClient(t, server, org, repo)
-			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }})
+			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous - 1 }})
 			if err != nil {
 				t.Fatalf("SweepSupersededOpenPRs: %v", err)
 			}
@@ -694,7 +694,7 @@ func TestSweepSupersededOpenPRs_DoesNotReapplyNeedsHumanAfterClear(t *testing.T)
 			defer server.Close()
 
 			c, rec := newSupersessionTestClient(t, server, org, repo)
-			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }})
+			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous - 1 }})
 			if err != nil {
 				t.Fatalf("SweepSupersededOpenPRs: %v", err)
 			}
@@ -895,7 +895,7 @@ func TestSweepSupersededOpenPRs_ReleasesOwnParkWhenCauseIsGone(t *testing.T) {
 			defer server.Close()
 
 			c, rec := newSupersessionTestClient(t, server, org, repo)
-			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous }})
+			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous }})
 			if err != nil {
 				t.Fatalf("SweepSupersededOpenPRs: %v", err)
 			}

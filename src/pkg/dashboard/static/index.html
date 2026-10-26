@@ -6860,7 +6860,7 @@
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="approvals-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Approvals section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> ✋ Approvals <span id="approvals-badge" title="Pending operator approvals" style="display:none;font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:var(--sp-3);background:color-mix(in srgb, var(--yellow) 25%, transparent);color:var(--text)">0</span></h2>
     <div class="section-body">
       <div id="approvals-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">
-        <!-- Policy-bug banner: an inbox accumulating on a full-autonomy hive is
+        <!-- Policy-bug banner: an inbox accumulating on an L6 (Autonomous) hive is
              a misconfiguration signal, not a normal wait (#4000 requirement 4). -->
         <div id="approvals-policy-bug" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:var(--r);background:color-mix(in srgb, var(--red) 12%, transparent);border:1px solid color-mix(in srgb, var(--red) 40%, transparent);font-size:var(--fs-sm)"></div>
         <div id="approvals-chips" style="display:flex;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:10px;font-size:0.72rem"></div>
@@ -7137,7 +7137,7 @@
             <li><strong>L3 — Quality-Gated (Measured):</strong> quality may open hold-gated test/CI PRs; ci-maintainer watches build health. The reviewer agent works the hold-gated PR queue every 30 minutes and comments for the human who lifts the hold; it never approves or merges.</li>
             <li><strong>L4 — Security-Aware (Adaptive):</strong> sec-check joins; delivery agents may file issues; only quality, sec-check, and ci-maintainer may open hold-gated PRs. The reviewer agent works the hold-gated PR queue every 30 minutes and comments for the human who lifts the hold; it never approves or merges.</li>
             <li><strong>L5 — Semi-Autonomous:</strong> most lanes may open issues and hold-gated PRs; humans batch-review and remove holds. The reviewer keeps working the queue every 30 minutes; adjudicator and dedupe join and recommend, never merge or close.</li>
-            <li><strong>L6 — Fully Autonomous:</strong> eligible App-authored PRs auto-merge when checks pass. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos afterward. The reviewer still never merges — and its <code>requires_human</code> / <code>reject</code> verdicts do <em>not</em> stop the App auto-merge sweep; use a <code>hold</code> label or a GitHub branch rule when merging must stop.</li>
+            <li><strong>L6 — Autonomous:</strong> eligible App-authored PRs auto-merge when checks pass. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos afterward. The reviewer still never merges — and its <code>requires_human</code> / <code>reject</code> verdicts do <em>not</em> stop the App auto-merge sweep; use a <code>hold</code> label or a GitHub branch rule when merging must stop.</li>
           </ul>
           <p>Promotion adds agents and capability; demotion narrows them again. Hive removes only level-owned holds when the level no longer calls for them — a hold you applied is never removed automatically. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/running-at-level-6.md#does-the-hive-reviewer-stop-a-merge" target="_blank" rel="noopener noreferrer">Running at Level 6</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>.</p>
         </details>
@@ -8753,7 +8753,7 @@
     function acmmCollapsedLevelLabel(level) {
       if (!Number.isFinite(level) || level <= 0) return 'not yet evaluated';
       if (typeof acmmLevelLabel === 'function') return acmmLevelLabel(level).replace(' ', ' · ');
-      const levelNames = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
+      const levelNames = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Autonomous'};
       return `L${level}${levelNames[level] ? ' · ' + levelNames[level] : ''}`;
     }
     function acmmCollapsedGapDetail(data, level, dims, total, met) {
@@ -28251,12 +28251,12 @@ function burnAreaChart() {
         badge.style.display = (dto.count > 0) ? '' : 'none';
       }
 
-      // Requirement 4: items queued at full autonomy are probable policy bugs.
+      // Requirement 4: items queued at L6 (Autonomous) are probable policy bugs.
       const bug = document.getElementById('approvals-policy-bug');
       if (bug) {
         if (dto.policy_bug_count > 0) {
           bug.style.display = '';
-          bug.innerHTML = '⚠️ <strong>' + dto.policy_bug_count + '</strong> item(s) are waiting on a hive at ACMM L6 (full autonomy). ' +
+          bug.innerHTML = '⚠️ <strong>' + dto.policy_bug_count + '</strong> item(s) are waiting on a hive at ACMM L6 (Autonomous). ' +
             'An inbox that accumulates at L6 usually means a policy rule is over-restrictive, not that a human is needed.';
         } else {
           bug.style.display = 'none';
@@ -29226,7 +29226,7 @@ function burnAreaChart() {
         const titles = {
           observe: 'Data collection only — no changes proposed',
           suggest: 'Experiments require your approval',
-          evolve: 'Fully autonomous experimentation',
+          evolve: 'Autonomous experimentation',
         };
         html += `<button class="nous-mode-btn${active}" title="${titles[m]}" data-action="nousSetMode" data-mode="${m}">${m.charAt(0).toUpperCase() + m.slice(1)}</button>`;
       }
@@ -29575,7 +29575,7 @@ function burnAreaChart() {
       const trustSteps = [
         { id: 'observe', label: 'Observe', desc: 'Data collection only' },
         { id: 'suggest', label: 'Suggest', desc: 'Experiments need approval' },
-        { id: 'evolve', label: 'Evolve', desc: 'Fully autonomous' },
+        { id: 'evolve', label: 'Evolve', desc: 'Autonomous' },
       ];
       for (const step of trustSteps) {
         const isCurrent = step.id === mode;
@@ -37726,7 +37726,7 @@ function burnAreaChart() {
 
     // ACMM Evaluation
     const ACMM_EVAL_INTERVAL_MS = 3600000; // 1 hour
-    const ACMM_LEVEL_NAMES = {0:'Prerequisites not met',1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
+    const ACMM_LEVEL_NAMES = {0:'Prerequisites not met',1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Autonomous'};
     const ACMM_LEVEL_DESCRIPTIONS = {
       0: 'Foundational tooling: test suites, CI/CD, templates, and code style enforcement.',
       2: 'AI agents receive explicit instructions via CLAUDE.md, copilot-instructions, cursor rules, and prompt catalogs.',
@@ -38273,7 +38273,7 @@ function burnAreaChart() {
         3: 'Observability in place — metrics, dashboards, and review rubrics track agent quality.',
         4: 'Self-tuning — agents adapt their behavior based on feedback loops and compliance checks.',
         5: 'Semi-autonomous — CI/CD triggers agents, auto-QA self-tunes, policies enforced as code.',
-        6: 'Fully autonomous — multi-agent orchestration, auto issue generation, strategic oversight.'
+        6: 'Autonomous — multi-agent orchestration, auto issue generation, strategic oversight.'
       };
       const desc = opsDescriptions[d.operational_level] || 'Level not recognized.';
       acmmShowDialog('Operational Autonomy — L' + d.operational_level + ' ' + escapeHtml(name),
@@ -40315,7 +40315,7 @@ function burnAreaChart() {
     // row carrying data-setting-key (webstatic TestSettingsSearchIndexResolvesToControls).
     // `lazy: true` marks controls that a tab fills in after its own fetch.
     const SETTINGS_SEARCH_STATIC_HITS = [
-      { tab: 'General', section: 'Governor', label: 'Maturity Level', key: 'acmm_level', text: 'ACMM maturity level agent packs advisory fully autonomous' },
+      { tab: 'General', section: 'Governor', label: 'Maturity Level', key: 'acmm_level', text: 'ACMM maturity level agent packs advisory autonomous' },
       { tab: 'General', section: 'Governor', label: 'Eval loop pacing', key: 'governor.eval_interval_max_s', text: 'eval interval max cap webhook wake debounce gap conserve multiplier optional sweep every n cycles provider spend limit budget probe threshold ownership pack governor.eval_interval_s governor.eval_interval_max_s governor.eval_interval_webhook_s governor.webhook_wake_debounce_s governor.webhook_wake_min_gap_s governor.conserve_interval_multiplier governor.optional_sweep_every_n_cycles governor.provider_budget.probe_interval_s governor.thresholds_source governor.explain_mode' },
       { tab: 'Labels', section: 'Labels', label: 'Auto-merge queue label', key: 'governor.labels.automerge', text: 'auto merge queue label lgtm merger governor.labels.automerge' },
       { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled role tier author kind human clanker hive governor.labels.stage.enabled' },
@@ -41165,7 +41165,7 @@ function burnAreaChart() {
     // Short "L3 Quality-Gated"-style label for an ACMM pack level. Shared by the
     // badges, the level dialog subtitle, and the Governor config General tab.
     function acmmLevelLabel(level) {
-      const levelNames = ['', 'L1 Inception', 'L2 Advisory', 'L3 Quality-Gated', 'L4 Security-Aware', 'L5 Semi-Autonomous', 'L6 Fully Autonomous'];
+      const levelNames = ['', 'L1 Inception', 'L2 Advisory', 'L3 Quality-Gated', 'L4 Security-Aware', 'L5 Semi-Autonomous', 'L6 Autonomous'];
       return levelNames[level] || 'L' + level;
     }
 
@@ -46426,7 +46426,7 @@ function burnAreaChart() {
           <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">${hiveIdEditable ? 'Format: hive-adjective-noun (e.g. hive-bold-hawk). Lowercase letters, digits and hyphens only. Changes take effect immediately.' : esc(hiveIdLockReason)}</span>
         </div>
         <div class="config-field" data-setting-key="acmm_level">
-          <label>Maturity Level ${settingHelpMark('agent-configuration', 'acmm-levels-agent-rosters-as-packs', 'Maturity Level', `ACMM (AI Codebase Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).`)}</label>
+          <label>Maturity Level ${settingHelpMark('agent-configuration', 'acmm-levels-agent-rosters-as-packs', 'Maturity Level', `ACMM (AI Codebase Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to autonomous (L6).`)}</label>
           <div style="display:flex;gap:10px;align-items:center">
             <span style="display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:var(--fs-sm);font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber)">${currentACMMLevel > 0 ? acmmLevelLabel(currentACMMLevel) : 'Not set'}</span>
             <button class="hv-btn btn-secondary btn" data-action="gh41" title="Open the ACMM maturity level selector">Change&hellip;</button>
@@ -46870,7 +46870,7 @@ function burnAreaChart() {
           ${activeScope === 'per_repo' ? '<p style="font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Scaling is ignored when cadence mode scope is per repo.</p>' : ''}
         </div>
         <div class="config-field mb-7">
-          <label>Coverage goal (%) ${settingHelpMark('governor-thresholds', '', 'Coverage goal', `Test-coverage percentage the quality card, ci-maintainer bar, agent coverage preamble, and ACMM full-autonomy gate measure against (1-100, default 91).`)}</label>
+          <label>Coverage goal (%) ${settingHelpMark('governor-thresholds', '', 'Coverage goal', `Test-coverage percentage the quality card, ci-maintainer bar, agent coverage preamble, and ACMM L6 gate measure against (1-100, default 91).`)}</label>
           <input type="number" min="1" max="100" id="cfg-coverage-target" value="${activeCoverageTarget}" data-input-action="markDirty" data-arg0="coverage-target" data-arg1="coverageTarget" data-arg-types="s,s,N">
         </div>
         <p class="fs-sm text-muted mb-7">Drag the handles to set issue-count thresholds for governor mode transitions.</p>
@@ -48591,7 +48591,7 @@ function burnAreaChart() {
     function securityWarningsHtml(sec) {
       const level = (window._lastStatus || {}).acmmLevel || 0;
       const warnings = [];
-      if (level >= 6 && !sec.intentEnforce) warnings.push('L6 is fully autonomous; intent enforcement is recommended before merge automation.');
+      if (level >= 6 && !sec.intentEnforce) warnings.push('L6 is autonomous; intent enforcement is recommended before merge automation.');
       if (level >= 5 && (sec.ioscanFailMode || 'open') === 'open') warnings.push('L5+ with ioscan fail-open keeps work flowing, but fail-closed gives stronger prompt-injection protection.');
       if (sec.reviewRequireApproval && (sec.reviewCapableAgents || 0) === 0) warnings.push('Review approval is required, but no enabled review-capable agents were detected.');
       // #4918: the sandbox opt-in is two-gated (global agent_sandbox.enabled AND
@@ -55442,7 +55442,7 @@ function burnAreaChart() {
         id: 'acmm',
         title: 'Set your ACMM level',
         auto: (data) => !!(data && data.acmmLevelConfigured === true),
-        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>. ACMM (AI Codebase Maturity Model) is the dial for how much the agents may do on their own: L1 (advise only — agents report, never change anything) → L6 (fully autonomous — agents may merge on green CI), each level adding to the last. A default is preset — confirm it matches how much autonomy you want.',
+        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>. ACMM (AI Codebase Maturity Model) is the dial for how much the agents may do on their own: L1 (advise only — agents report, never change anything) → L6 (autonomous — agents may merge on green CI), each level adding to the last. A default is preset — confirm it matches how much autonomy you want.',
         autoNote: 'Checks itself once an ACMM level is explicitly saved on the hive.',
         actions: [{ label: 'Show me', action: 'welcomeShowACMM' }]
       }

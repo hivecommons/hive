@@ -1539,7 +1539,7 @@ type GovernorConfig struct {
 
 	// CoverageTarget is the test-coverage goal, in percent (1–100), that the
 	// quality card, the ci-maintainer pct-bar, the agent coverage preamble, and
-	// the ACMM advisor's full-autonomy coverage gate measure against. 0 means
+	// the ACMM advisor's L6 coverage gate measure against. 0 means
 	// unset and resolves to DefaultCoverageTarget — see EffectiveCoverageTarget.
 	CoverageTarget int `yaml:"coverage_target,omitempty" json:"coverage_target,omitempty"`
 

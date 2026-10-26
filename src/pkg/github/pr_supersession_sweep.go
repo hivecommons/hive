@@ -213,7 +213,7 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 			opts.Audit(event)
 		}
 	}
-	if reason == "" && opts.CloseContributorPRs && level >= acmmLevelFullyAutonomous {
+	if reason == "" && opts.CloseContributorPRs && level >= acmmLevelAutonomous {
 		return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod)
 	}
 	notice := supersessionDecisionNotice(prOwner, closer, reason)

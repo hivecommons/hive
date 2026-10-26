@@ -122,7 +122,7 @@ func evidenceHiveName(h EvidenceHive) string {
 // scale: only L6 has a short plain name.
 func evidenceLevelName(level int) string {
 	if level == 6 {
-		return "full autonomy (L6)"
+		return "autonomous (L6)"
 	}
 	return fmt.Sprintf("autonomy level L%d", level)
 }

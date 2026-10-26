@@ -247,7 +247,7 @@ func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo
 		// A person parked it; the hive does not resolve over them.
 		return event, "", nil
 	}
-	if level < acmmLevelFullyAutonomous {
+	if level < acmmLevelAutonomous {
 		return c.escalateSupersededPR(ctx, prRepo, owner, repo, pr, event, closer,
 			"this hive is below ACMM L6, so the sweep will not close or update PRs automatically. A human should decide whether to close this PR.")
 	}

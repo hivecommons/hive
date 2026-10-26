@@ -93,18 +93,18 @@ for (const [section, text] of Object.entries(fixtures)) {
 _acmmEvalData = { overall_level: 0, operational_level: 6, levels: [
   { level: 0, name: 'Prerequisites not met', passed: false, matched: 0, total: 8 },
   { level: 1, name: 'Inception', passed: true, matched: 3, total: 3 },
-  { level: 6, name: 'Fully Autonomous', passed: false, matched: 8, total: 10 }
+  { level: 6, name: 'Autonomous', passed: false, matched: 8, total: 10 }
 ] };
 window._lastStatus.acmmLevel = 6;
 let acmm = visualSectionSummary('acmm-eval-section', 'L6 · last eval now');
-if (!acmm.includes('L6 · Fully Autonomous') || acmm.includes('>L0<') || acmm.includes('L0 Prerequisites')) throw new Error('ACMM collapsed pill must show the current level, not the lowest evaluated level: ' + acmm);
+if (!acmm.includes('L6 · Autonomous') || acmm.includes('>L0<') || acmm.includes('L0 Prerequisites')) throw new Error('ACMM collapsed pill must show the current level, not the lowest evaluated level: ' + acmm);
 if (!acmm.includes('2 gaps')) throw new Error('ACMM collapsed pill should report current-level gaps when no next level exists: ' + acmm);
-if (!acmm.includes('current level L6 · Fully Autonomous')) throw new Error('ACMM collapsed tooltip should identify current level: ' + acmm);
+if (!acmm.includes('current level L6 · Autonomous')) throw new Error('ACMM collapsed tooltip should identify current level: ' + acmm);
 _acmmEvalData = null;
 acmm = visualSectionSummary('acmm-eval-section', 'L6 · last eval pending');
-if (!acmm.includes('L6 · Fully Autonomous') || !acmm.includes('not yet evaluated')) throw new Error('ACMM collapsed pill should prefer navbar level and show unevaluated placeholder: ' + acmm);
+if (!acmm.includes('L6 · Autonomous') || !acmm.includes('not yet evaluated')) throw new Error('ACMM collapsed pill should prefer navbar level and show unevaluated placeholder: ' + acmm);
 window._lastStatus.acmmLevel = 5;
-_acmmEvalData = { overall_level: 0, operational_level: 6, levels: [{ level: 5, name: 'Semi-Autonomous', passed: true, matched: 4, total: 4 }, { level: 6, name: 'Fully Autonomous', passed: false, matched: 7, total: 10 }] };
+_acmmEvalData = { overall_level: 0, operational_level: 6, levels: [{ level: 5, name: 'Semi-Autonomous', passed: true, matched: 4, total: 4 }, { level: 6, name: 'Autonomous', passed: false, matched: 7, total: 10 }] };
 acmm = visualSectionSummary('acmm-eval-section', 'L5 · last eval now');
 if (!acmm.includes('L5 · Semi-Autonomous') || acmm.includes('>L6<')) throw new Error('ACMM collapsed pill should agree with navbar level instead of eval overall/next level: ' + acmm);
 if (!acmm.includes('3 gaps to L6')) throw new Error('ACMM collapsed pill should count gaps toward next level when present: ' + acmm);

@@ -10,7 +10,7 @@ This guide walks through preparation, a weekly routine, and recovery. Start with
 
 ## Read this before enabling unattended merges
 
-**ACMM** is Hive's AI-native Capability Maturity Model: levels determine permitted automation. Level 6 (L6) is Fully Autonomous, not a release-branch name. An **agent** is a configured AI worker; a **pack** supplies a level's roster, modes and defaults. The **governor** schedules workers according to workload modes; a **cadence** is an agent's wake interval in one mode. These definitions and the shipped roster are grounded in the [Level 6 pack](../pkg/config/packs/level-6.yaml). Only `scanner` has `ISSUES_PRS_MERGE`; other delivery agents create PRs but the App can merge them independently.
+**ACMM** is Hive's AI-native Capability Maturity Model: levels determine permitted automation. Level 6 (L6) is Autonomous, not a release-branch name. An **agent** is a configured AI worker; a **pack** supplies a level's roster, modes and defaults. The **governor** schedules workers according to workload modes; a **cadence** is an agent's wake interval in one mode. These definitions and the shipped roster are grounded in the [Level 6 pack](../pkg/config/packs/level-6.yaml). Only `scanner` has `ISSUES_PRS_MERGE`; other delivery agents create PRs but the App can merge them independently.
 
 **Auto-merge** here means Hive initiating a merge without a person doing it, not GitHub's similarly named feature. A **hold** is a label-based exclusion from work/merging, including literal `hold` and the dashboard's `hive-pause/<hive-id>` item hold. See [labels and control signals](labels-and-control-signals.md); the enforcing predicates are `HasHoldLabel`, `IsHeldLabels` and `HasExemptLabel` in [GitHub client](../pkg/github/client.go).
 

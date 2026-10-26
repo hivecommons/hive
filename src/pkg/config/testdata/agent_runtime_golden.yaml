@@ -21,7 +21,7 @@ agents:
     launch_cmd: "agent-launch.sh --backend claude --model claude-sonnet-4-6"
     display_name: supervisor
     role: coordinator
-    mode: full-autonomy
+    mode: autonomous
     kick_template: "Supervise {{.Repo}}"
     github_api_hourly_cap: 60
     reasoning_effort: high

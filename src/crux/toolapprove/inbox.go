@@ -452,12 +452,12 @@ func (i *Inbox) ResolveMany(ids []string, approved bool, operator, rationale str
 	return out
 }
 
-// PendingAtFullAutonomy returns the pending items queued at an ACMM level that
-// claims full autonomy. Per requirement 4 of the throughput contract, these are
+// PendingAtAutonomousLevel returns the pending items queued at an ACMM level that
+// is Autonomous (L6). Per requirement 4 of the throughput contract, these are
 // surfaced as PROBABLE POLICY BUGS rather than silently waiting: an inbox that
-// accumulates on a hive whose level says "full autonomy" is a misconfiguration
+// accumulates on a hive whose level says "Autonomous" is a misconfiguration
 // signal. The API marks them and the dashboard renders them distinctly.
-func (i *Inbox) PendingAtFullAutonomy() []PendingItem {
+func (i *Inbox) PendingAtAutonomousLevel() []PendingItem {
 	var out []PendingItem
 	for _, p := range i.List() {
 		if p.ACMMLevel >= 6 {

@@ -25,7 +25,7 @@
 #   L1: (local tooling only — no hive needed)
 #   L2: supervisor scanner reviewer (analysis + issue filing, NO PRs)
 #   L3: supervisor scanner reviewer architect (opens PRs)
-#   L4: supervisor scanner reviewer architect outreach sec-check (full autonomy)
+#   L4: supervisor scanner reviewer architect outreach sec-check (autonomous)
 #   L5+: supervisor scanner reviewer architect outreach sec-check strategist quality
 
 set -euo pipefail

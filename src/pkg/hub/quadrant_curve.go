@@ -56,7 +56,7 @@ func (c curve) score(v float64) int {
 // native unit. Named so that docs, tests and the explainer all cite the same
 // number.
 const (
-	// ACMM autonomy: L1 is the floor every hive starts at, L6 full autonomy.
+	// ACMM autonomy: L1 is the floor every hive starts at, L6 autonomous.
 	curveAutonomyWorst, curveAutonomyBest = 1, 6
 	// Merge acceptance: half of agent PRs rejected is the floor; all merged
 	// is the ceiling.

@@ -2183,7 +2183,7 @@
       return 'the ' + ((w && w.label) || 'last 90d');
     }
     function evidenceHiveName(h) { return (h && (h.name || h.id)) || ''; }
-    function evidenceLevelName(level) { return Number(level) === 6 ? 'full autonomy (L6)' : 'autonomy level L' + evidenceCount(level); }
+    function evidenceLevelName(level) { return Number(level) === 6 ? 'autonomous (L6)' : 'autonomy level L' + evidenceCount(level); }
 
     function evidenceFindingsByKey(v) {
       v = v || {};
@@ -3197,15 +3197,15 @@
       e.stopPropagation();
     });
 
-    var ACMM_LABELS = {1:'L1 Inception',2:'L2 Advisory',3:'L3 Quality-Gated',4:'L4 Security-Aware',5:'L5 Semi-Autonomous',6:'L6 Fully Autonomous'};
+    var ACMM_LABELS = {1:'L1 Inception',2:'L2 Advisory',3:'L3 Quality-Gated',4:'L4 Security-Aware',5:'L5 Semi-Autonomous',6:'L6 Autonomous'};
     /* One-line "what this level actually does" per ACMM level, hoisted out of
        acmmBadge so the badge tooltip and the Request-a-Hive level picker read
        from the SAME strings. They used to be a local inside acmmBadge, and the
        request modal carried its own hand-written copy that had drifted into
-       plain wrong ("L3 CI/CD", "L4 Auto PR", "L6 Fully Autonomous") — L4 in
-       particular is NOT fully autonomous, it opens hold-gated PRs for human
+       plain wrong ("L3 CI/CD", "L4 Auto PR") — L4 in
+       particular is NOT autonomous, it opens hold-gated PRs for human
        review. Anything describing a level must use this object. */
-    var ACMM_TIPS = {1:'L1 Inception — Advisory only.',2:'L2 Advisory — Advisory beads, no GitHub writes.',3:'L3 Quality-Gated — Hold-gated PRs, CI gates.',4:'L4 Security-Aware — Agents open issues, sec-check.',5:'L5 Semi-Autonomous — PRs with hold label, batch review.',6:'L6 Fully Autonomous — Auto-merge on green CI.'};
+    var ACMM_TIPS = {1:'L1 Inception — Advisory only.',2:'L2 Advisory — Advisory beads, no GitHub writes.',3:'L3 Quality-Gated — Hold-gated PRs, CI gates.',4:'L4 Security-Aware — Agents open issues, sec-check.',5:'L5 Semi-Autonomous — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
     /* The tip strings above lead with the level label; the picker renders the
        label separately, so strip the redundant "Lx Name — " prefix there. */
     function acmmTipDetail(level) {
@@ -14106,7 +14106,7 @@
             <option value="3" selected>L3 — Quality-Gated (Measured)</option>
             <option value="4">L4 — Security-Aware (Adaptive)</option>
             <option value="5">L5 — Semi-Autonomous (Semi-Automated)</option>
-            <option value="6">L6 — Fully Autonomous</option>
+            <option value="6">L6 — Autonomous</option>
           </select>
         </div>
         <div style="flex:1">

@@ -513,7 +513,7 @@ func (c *Config) SetLabelDrivenForRepos(values map[string]*LabelDrivenRepoSettin
 // RepoAutoMergeEnabled resolves the effective per-repo auto-merge switch.
 // Auto-merge is fail-closed below L6, regardless of the stored per-repo
 // override. At L6, an unset repo override means enabled so hives keep their
-// prior fully-autonomous behavior until an owner switches a repo off.
+// prior autonomous behavior until an owner switches a repo off.
 func (c *Config) RepoAutoMergeEnabled(repo string) bool {
 	if c == nil || c.ACMMLevelOrZero() < SelfMergeMinACMMLevel {
 		return false

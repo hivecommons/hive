@@ -18,7 +18,7 @@ The advisor evaluates a fixed set of six signals (`Signals` struct, `src/pkg/acm
 | `HoldCount` | Count of open PRs still carrying a `hold` label awaiting human review. |
 | `HasQualityAgent` | Whether an active quality/coverage agent is present in the config. |
 
-Levels run L1 (Assisted) through L6 (Fully Autonomous), matching the level pack files and the dashboard's 1–6 bound (`src/pkg/acmmadvisor/acmmadvisor.go:34-42`). The advisor never proposes a target more than one level above the current level — advancement is always incremental (`levelStep = 1`, same file).
+Levels run L1 (Assisted) through L6 (Autonomous), matching the level pack files and the dashboard's 1–6 bound (`src/pkg/acmmadvisor/acmmadvisor.go:34-42`). The advisor never proposes a target more than one level above the current level — advancement is always incremental (`levelStep = 1`, same file).
 
 ### Where the live signals come from
 
@@ -42,7 +42,7 @@ The advisor computes the checklist for advancing to the level **one above** the 
 | L3 (Measured) | required | ≥ 40% | ≥ 3 | — | — | — |
 | L4 (Adaptive) | required | ≥ 60% | ≥ 5 | ≥ 70% | — | — |
 | L5 (Semi-Automated) | required | ≥ 75% | ≥ 8 | ≥ 85% | ≤ 25 | ≤ 15 |
-| L6 (Fully Autonomous) | required | ≥ 90% | ≥ 12 | ≥ 95% | ≤ 10 | ≤ 5 |
+| L6 (Autonomous) | required | ≥ 90% | ≥ 12 | ≥ 95% | ≤ 10 | ≤ 5 |
 
 The L2 pack includes a COMMENT-only `reviewer` as the review-first entry point, and the reviewer ships in every pack from L2 up (L3/L4 review the `hold`-gated queue with no merge power; L5/L6 per [#8023](https://github.com/hivecommons/hive/issues/8023)); the advisor criteria above are unchanged by it. Decision taken by hive: review is part of L2 proper (COMMENT-only); no L2.5 level — a new level would ripple through level enums, advisor and dashboard; keeping L2 triage+review preserves the review-first entry point the vote asked for.
 

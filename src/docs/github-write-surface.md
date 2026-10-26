@@ -252,7 +252,7 @@ write_surface:
 ```
 
 - **Default off.** With no `enforce` list nothing changes: every lane keeps
-  its direct access, and an ACMM L6 hive stays fully autonomous. Enforcement
+  its direct access, and an ACMM L6 hive stays autonomous. Enforcement
   starts only when an operator lists a lane, at any ACMM level.
 - **Per lane.** Listing one lane does not affect the others. A replica
   (`scanner-2`) follows its base agent; `"*"` enforces every lane. Names are
@@ -391,7 +391,7 @@ them survives.
 ## Not yet done
 
 These are deliberately out of scope so far. They change what an agent can do,
-so they need operator sign-off first. ACMM L6 is full autonomy by design: none
+so they need operator sign-off first. ACMM L6 is autonomous by design: none
 of them may reduce what an L6 hive can do by default.
 
 - **Removing direct write access by default.** The per-lane opt-in has landed

@@ -70,7 +70,7 @@ type ApprovalRow struct {
 	// RuleAction is what that rule asks for.
 	RuleAction string `json:"rule_action,omitempty"`
 	// PolicyBug marks an item queued on a hive at ACMM L6+. Per requirement 4
-	// of the throughput contract, an inbox accumulating at full autonomy is a
+	// of the throughput contract, an inbox accumulating at L6 (Autonomous) is a
 	// misconfiguration signal, not a normal wait — the UI renders these
 	// distinctly rather than letting them sit politely.
 	PolicyBug bool `json:"policy_bug,omitempty"`

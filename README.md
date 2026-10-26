@@ -81,7 +81,7 @@ Hive uses an **AI Codebase Maturity Model** (ACMM) with six levels that control 
 | L3 | Quality-Gated (Measured) | Quality agent opens issues and PRs gated by the literal `hold` level-gate label. Others remain advisory. |
 | L4 | Security-Aware (Adaptive) | All agents file issues. Quality, sec-check, and CI open PRs gated by `hold`. |
 | L5 | Semi-Autonomous (Semi-Automated) | All agents open PRs gated by `hold`. Humans batch-review and approve. |
-| L6 | Fully Autonomous | Agents open PRs and auto-merge when checks pass. Non-outreach PRs have no level hold; outreach PRs remain held. |
+| L6 | Autonomous | Agents open PRs and auto-merge when checks pass. Non-outreach PRs have no level hold; outreach PRs remain held. |
 
 See [src/docs/acmm-policy-matrix.md](src/docs/acmm-policy-matrix.md) for the full matrix and [src/docs/labels-and-control-signals.md](src/docs/labels-and-control-signals.md) for label behavior.
 

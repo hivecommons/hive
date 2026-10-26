@@ -146,9 +146,9 @@ func TestL6RuleAutoApproveNeverQueues(t *testing.T) {
 	}
 }
 
-// TestPendingAtFullAutonomyIsFlagged pins requirement 4: an item queued on a
+// TestPendingAtAutonomousLevelIsFlagged pins requirement 4: an item queued on a
 // hive at L6 is surfaced as a probable policy bug rather than silently waiting.
-func TestPendingAtFullAutonomyIsFlagged(t *testing.T) {
+func TestPendingAtAutonomousLevelIsFlagged(t *testing.T) {
 	inbox := NewInbox(filepath.Join(t.TempDir(), "inbox.json"))
 
 	if _, err := inbox.Enqueue(sideEffectfulRequest(), Verdict{
@@ -156,9 +156,9 @@ func TestPendingAtFullAutonomyIsFlagged(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	bugs := inbox.PendingAtFullAutonomy()
+	bugs := inbox.PendingAtAutonomousLevel()
 	if len(bugs) != 1 {
-		t.Fatalf("PendingAtFullAutonomy returned %d items, want 1 — an inbox accumulating at L6 "+
+		t.Fatalf("PendingAtAutonomousLevel returned %d items, want 1 — an inbox accumulating at L6 "+
 			"is a misconfiguration signal that must be surfaced, not queued politely", len(bugs))
 	}
 
@@ -172,8 +172,8 @@ func TestPendingAtFullAutonomyIsFlagged(t *testing.T) {
 	if _, err := inbox.Enqueue(other, Verdict{Decision: DecisionOperatorApprove, ACMMLevel: 3}); err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if got := len(inbox.PendingAtFullAutonomy()); got != 1 {
-		t.Errorf("an L3 pending item was flagged as a policy bug: PendingAtFullAutonomy=%d, want 1", got)
+	if got := len(inbox.PendingAtAutonomousLevel()); got != 1 {
+		t.Errorf("an L3 pending item was flagged as a policy bug: PendingAtAutonomousLevel=%d, want 1", got)
 	}
 }
 

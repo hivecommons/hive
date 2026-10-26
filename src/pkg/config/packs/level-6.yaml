@@ -1,6 +1,6 @@
 level: 6
-name: Fully Autonomous
-description: 'Fully autonomous operation. Fifteen agents run the complete roster: existing autonomous lanes can open issues, create PRs, and auto-merge on green CI, while outreach handles community engagement. Reviewer remains advisory, adjudicator repairs or closes escalated hive PRs without merging, dedupe posts a daily consolidation checklist of duplicate and overlapping issues and PRs, brainstorm stays advisory, and telemetry/operations remain opt-in/paused and never merge their own PRs.
+name: Autonomous
+description: 'Autonomous operation. Fifteen agents run the complete roster: existing autonomous lanes can open issues, create PRs, and auto-merge on green CI, while outreach handles community engagement. Reviewer remains advisory, adjudicator repairs or closes escalated hive PRs without merging, dedupe posts a daily consolidation checklist of duplicate and overlapping issues and PRs, brainstorm stays advisory, and telemetry/operations remain opt-in/paused and never merge their own PRs.
 
   '
 governor:
@@ -102,7 +102,7 @@ agents:
 - name: supervisor
   display_name: Supervisor
   role: supervisor
-  description: 'Full autonomous oversight. Self-healing: restarts stalled agents,
+  description: 'Autonomous oversight. Self-healing: restarts stalled agents,
     triggers rollbacks on deploy failures.
 
     '
@@ -117,7 +117,7 @@ agents:
   include_repos: true
   clear_on_kick: false
   stale_timeout: 600
-  interactions: 'Full autonomous oversight of all agents. Triggers self-healing actions
+  interactions: 'Autonomous oversight of all agents. Triggers self-healing actions
     without human intervention.
 
     '
@@ -230,7 +230,7 @@ agents:
 - name: sec-check
   display_name: security
   role: sec-check
-  description: 'Full autonomous security scanning with auto-patch for known CVEs.
+  description: 'Autonomous security scanning with auto-patch for known CVEs.
 
     '
   emoji: 🛡
@@ -257,7 +257,7 @@ agents:
 - name: architect
   display_name: architect
   role: architect
-  description: 'Full autonomous architecture. Implements RFCs and auto-merges structural
+  description: 'Autonomous architecture. Implements RFCs and auto-merges structural
     changes.
 
     '
@@ -277,7 +277,7 @@ agents:
   - rfc
   - design
   - feature
-  interactions: 'Full autonomous design and implementation.
+  interactions: 'Autonomous design and implementation.
 
     '
   knowledge_use: 'Full architecture knowledge access.
@@ -286,7 +286,7 @@ agents:
 - name: strategist
   display_name: strategist
   role: strategist
-  description: 'Full autonomous strategic planning with roadmap execution.
+  description: 'Autonomous strategic planning with roadmap execution.
 
     '
   emoji: 🧠
@@ -303,7 +303,7 @@ agents:
   - strategy
   - roadmap
   - planning
-  interactions: 'Full autonomous strategic planning and priority setting.
+  interactions: 'Autonomous strategic planning and priority setting.
 
     '
   knowledge_use: 'Full cross-agent knowledge synthesis.
@@ -312,7 +312,7 @@ agents:
 - name: outreach
   display_name: outreach
   role: outreach
-  description: 'Full autonomous outreach. Files issues on partner projects and manages
+  description: 'Autonomous outreach. Files issues on partner projects and manages
     community engagement. Highest trust — external-facing.
 
     '
@@ -331,7 +331,7 @@ agents:
   - adopters
   - outreach
   - ecosystem
-  interactions: 'Fully autonomous community engagement.
+  interactions: 'Autonomous community engagement.
 
     '
   knowledge_use: 'Full community knowledge access.

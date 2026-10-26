@@ -165,11 +165,11 @@ func Decide(ctx context.Context, req ToolRequest, acmmLevel int, agentId AgentId
 			Agent:     agentName,
 		}
 
-	default: // L6 Full Autonomy
-		// L6 Full: side-effectful tools route through security scan, auto-approve on green
+	default: // L6 Autonomous
+		// L6 Autonomous: side-effectful tools route through security scan, auto-approve on green
 		return Verdict{
 			Decision:  DecisionSecurityScan,
-			Rationale: "ACMM L6 (full autonomy): side-effectful tool routes through pre-execution security scan; auto-approves on green",
+			Rationale: "ACMM L6 (Autonomous): side-effectful tool routes through pre-execution security scan; auto-approves on green",
 			Tool:      toolName,
 			ACMMLevel: acmmLevel,
 			Agent:     agentName,
@@ -213,7 +213,7 @@ func Resolve(ctx context.Context, req ToolRequest, acmmLevel int, agentId AgentI
 	switch {
 	case acmmLevel >= 6:
 		v.Decision = DecisionAutoApprove
-		v.Rationale = "ACMM L6 full autonomy: auto-approved on green security scan"
+		v.Rationale = "ACMM L6 (Autonomous): auto-approved on green security scan"
 	case acmmLevel == 5:
 		v.Decision = DecisionAutoApprove
 		v.Rationale = "ACMM L5 hold-gated: auto-approved on green security scan"

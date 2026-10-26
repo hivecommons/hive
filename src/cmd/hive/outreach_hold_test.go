@@ -16,8 +16,8 @@ func TestShouldHoldAgentPR(t *testing.T) {
 		ownsRepo func(agent, repo string) bool
 		want     bool
 	}{
-		{name: "cross-repo outreach is held at full autonomy", agent: "outreach", repo: "someone-else/awesome-list", level: 6, ownsRepo: ownsRepo, want: true},
-		{name: "same-repo outreach is not held at full autonomy", agent: "outreach", repo: "hive", level: 6, ownsRepo: ownsRepo, want: false},
+		{name: "cross-repo outreach is held at L6", agent: "outreach", repo: "someone-else/awesome-list", level: 6, ownsRepo: ownsRepo, want: true},
+		{name: "same-repo outreach is not held at L6", agent: "outreach", repo: "hive", level: 6, ownsRepo: ownsRepo, want: false},
 		{name: "same-repo outreach accepts an org-qualified target", agent: "outreach", repo: "hivecommons/hive", level: 6, ownsRepo: ownsRepo, want: false},
 		{name: "same-repo outreach still follows the level gate", agent: "outreach", repo: "console", level: 4, ownsRepo: ownsRepo, want: true},
 		{name: "outreach identity is normalized", agent: " Outreach ", repo: "other/repo", level: 6, ownsRepo: ownsRepo, want: true},

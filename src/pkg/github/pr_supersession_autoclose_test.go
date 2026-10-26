@@ -142,7 +142,7 @@ func runAutoCloseSweep(t *testing.T, open supersessionPRFixture, opts Supersessi
 	c.SetAppBotLogin(autoCloseBot)
 	c.SetStageFactSink(&stageenginetest.Recorder{})
 	if opts.ACMMLevelForRepo == nil {
-		opts.ACMMLevelForRepo = func(string) int { return acmmLevelFullyAutonomous }
+		opts.ACMMLevelForRepo = func(string) int { return acmmLevelAutonomous }
 	}
 	res, err := c.SweepSupersededOpenPRs(context.Background(), opts)
 	if err != nil {
@@ -285,7 +285,7 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 		{"extra files, reference only", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Files: []string{"pkg/a.go", "pkg/c.go"}}, autoCloseEnabled},
 		{"disabled", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}}, SupersessionSweepOptions{}},
 		{"below L6", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}},
-			SupersessionSweepOptions{CloseContributorPRs: true, ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }}},
+			SupersessionSweepOptions{CloseContributorPRs: true, ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous - 1 }}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

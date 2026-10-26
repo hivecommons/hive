@@ -119,7 +119,7 @@ project:
 #   min_focus_window: 30m
 
 # GitHub App / PR policy. The #5117 self-authorization hold defaults on through
-# ACMM L5 and off at ACMM L6 Fully Autonomous. App-authored PRs whose only
+# ACMM L5 and off at ACMM L6 (Autonomous). App-authored PRs whose only
 # tracked rationale is an unacknowledged hive-filed issue receive `hold` until a
 # human signs off on the direction. Set true to keep that hold at L6; set false
 # below L6 only for hives that are allowed to act on their own findings.
