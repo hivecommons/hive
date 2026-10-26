@@ -759,6 +759,14 @@ var benignSubstrings = []string{
 	// while continuing to use the repository's actual protection checks.
 	// This is operator configuration drift, not a runtime defect (#14351).
 	"automerge required_checks override does not match repo protection",
+	// The mutation boundary (src/pkg/convergence/mutation/boundary.go) warns
+	// in shadow mode (fencing disabled) when the ledger Acquire would have
+	// denied an external mutation. Shadow mode observes rather than denies:
+	// nothing was blocked and Stats.IncFenced() is the telemetry channel. A
+	// burst from concurrent agents on one repo is expected observational
+	// output, not a repeated runtime defect (hivecommons/hive#14377). The
+	// enforce-mode denial (effects.ErrDenied) stays reportable.
+	"shadow fence would have denied external mutation",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic
