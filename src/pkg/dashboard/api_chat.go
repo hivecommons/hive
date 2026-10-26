@@ -171,7 +171,7 @@ func (s *Server) chatScopedLocalAnswer(route chatRoute, viewer string) (string, 
 	return "", false
 }
 
-const chatHelpAnswer = "Try `beads` for bead counts, `agents` for agent status, `prs` for open pull requests, or `status` for a hive summary. Add arguments or ask a question in plain words (`/agents stuck`, `/prs waiting on review`, `which agent completed last?`) and Hive Chat answers from the live hive state. Commands beginning with `!` or `/` still use their command handlers."
+const chatHelpAnswer = "Try `beads` for bead counts, `agents` for the agent roster, `prs` for open pull requests, or `status` for a hive summary. Agent questions: `/agents stuck|paused|running|idle|failed`, `/agents <name> [status|why|last|history]`, or ask \"which agent completed last?\", \"why is scanner blocked?\". Any other arguments or plain-words question (`/prs waiting on review`, `what's waiting on my decision`) are answered from the live hive state. Commands beginning with `!` or `/` still use their command handlers."
 
 // chatBareAnswer is the deterministic summary for a bare command scope.
 func (s *Server) chatBareAnswer(scope string) (string, bool) {
