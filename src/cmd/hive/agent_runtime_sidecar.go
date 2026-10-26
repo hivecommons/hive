@@ -431,10 +431,6 @@ func (h *sidecarHost) callbackCarried(setter string) {
 	h.note(setter, "sidecar runtime: setter is served by the hive callback endpoint instead")
 }
 
-func (h *sidecarHost) notCarried(setter string) {
-	h.note(setter, "sidecar runtime: setter not carried; the runtime runs on its own configuration (#14138 stage 4)")
-}
-
 func (h *sidecarHost) inProcessOnly(setter string) {
 	h.note(setter, "sidecar runtime: setter is in-process-only; the runtime uses its own in-process equivalent")
 }
