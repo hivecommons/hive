@@ -312,7 +312,14 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 			err = c.graphQL(ctx, query, vars, &resp)
 		}
 		if err != nil {
-			c.logger.Warn("failed to fetch PR review decisions", "repo", repo, "error", err)
+			// Transient forge outages leave reviews unknown until the next poll.
+			// Keep them out of the WARN-fed fleet defect reporter while retaining
+			// warnings for permission, schema and other persistent failures.
+			if isTransientEnumerationError(err) || errors.Is(err, context.Canceled) {
+				c.logger.Debug("failed to fetch PR review decisions", "repo", repo, "error", err)
+			} else {
+				c.logger.Warn("failed to fetch PR review decisions", "repo", repo, "error", err)
+			}
 			return nil
 		}
 		for _, n := range resp.Repository.PullRequests.Nodes {
