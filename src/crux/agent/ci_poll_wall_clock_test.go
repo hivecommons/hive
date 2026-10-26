@@ -185,6 +185,7 @@ func TestNudgeIfPollingCISelfReportGate(t *testing.T) {
 		wantEvidence int
 	}{
 		{name: "one poll past wall clock: nudged, not reported", kickAge: 11 * time.Minute, polls: 1, wantEvidence: 0},
+		{name: "two polls past wall clock: nudged, not reported (#14327)", kickAge: 11 * time.Minute, polls: 2, wantEvidence: 0},
 		{name: "repeated polls past wall clock: nudged and reported", kickAge: 11 * time.Minute, polls: ciPollReportMinPolls, wantEvidence: 1},
 		{name: "count threshold crossed: nudged and reported", kickAge: 2 * time.Minute, polls: ciPollNudgeThreshold + 1, wantEvidence: 1},
 	} {

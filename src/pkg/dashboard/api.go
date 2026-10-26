@@ -1,14 +1,19 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -614,15 +619,34 @@ func upstreamBranch() string {
 func jsonResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		slog.Warn("jsonResponse encode failed", "error", err)
+		logEncodeFailure("jsonResponse encode failed", err)
 	}
+}
+
+// isClientDisconnect reports a write error caused by the client going away
+// (broken pipe, reset, cancelled request, handler timeout): an expected
+// condition on a dashboard behind probes and restarts, not a hive defect.
+func isClientDisconnect(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, http.ErrHandlerTimeout) || errors.Is(err, io.ErrClosedPipe)
+}
+
+// logEncodeFailure logs client disconnects at DEBUG and genuine encode
+// failures at WARN.
+func logEncodeFailure(msg string, err error) {
+	if isClientDisconnect(err) {
+		slog.Debug(msg+" (client disconnected)", "error", err)
+		return
+	}
+	slog.Warn(msg, "error", err)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": msg}); err != nil {
-		slog.Warn("jsonError encode failed", "error", err)
+		logEncodeFailure("jsonError encode failed", err)
 	}
 }
 
@@ -638,7 +662,7 @@ func jsonStatusResponse(w http.ResponseWriter, code int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		slog.Warn("jsonStatusResponse encode failed", "error", err)
+		logEncodeFailure("jsonStatusResponse encode failed", err)
 	}
 }
 

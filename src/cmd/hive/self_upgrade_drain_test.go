@@ -133,10 +133,77 @@ func TestAgentKicksInFlight(t *testing.T) {
 		"nil-proc":   nil,
 	}
 
-	got := agentKicksInFlight(statuses, processStart)
+	got, wedged := agentKicksInFlight(statuses, processStart, kick.Add(5*time.Minute), nil)
 	want := []string{"architect", "quality"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("agentKicksInFlight = %v, want %v", got, want)
+	}
+	if len(wedged) != 0 {
+		t.Fatalf("wedged = %+v, want none for fresh kicks", wedged)
+	}
+}
+
+// TestAgentKicksInFlight_IgnoresWedgedKickPastCeiling pins #14323: a kick whose
+// turn-end signal never arrives stops holding the drain once it is older than
+// the agent's continuous turn ceiling (default when unset or disabled).
+func TestAgentKicksInFlight_IgnoresWedgedKickPastCeiling(t *testing.T) {
+	processStart := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	now := processStart.Add(72 * time.Hour)
+	wedgedAt := processStart.Add(time.Minute)
+	recent := now.Add(-10 * time.Minute)
+	shortAt := now.Add(-20 * time.Minute)
+	disabledAt := now.Add(-50 * time.Minute)
+
+	statuses := map[string]*crux.Process{
+		"brainstorm": {State: crux.StateRunning, LastKick: &wedgedAt},
+		"architect":  {State: crux.StateRunning, LastKick: &recent},
+		"short":      {State: crux.StateRunning, LastKick: &shortAt},
+		"disabled":   {State: crux.StateRunning, LastKick: &disabledAt},
+	}
+	ceilings := map[string]time.Duration{"short": 15 * time.Minute, "disabled": 0}
+
+	inFlight, wedged := agentKicksInFlight(statuses, processStart, now, func(name string) time.Duration {
+		return ceilings[name]
+	})
+	if want := []string{"architect"}; !reflect.DeepEqual(inFlight, want) {
+		t.Fatalf("inFlight = %v, want %v", inFlight, want)
+	}
+	want := []wedgedKick{
+		{Agent: "brainstorm", KickAt: wedgedAt, Age: now.Sub(wedgedAt), Ceiling: config.DefaultContinuousTurnCeiling},
+		{Agent: "disabled", KickAt: disabledAt, Age: 50 * time.Minute, Ceiling: config.DefaultContinuousTurnCeiling},
+		{Agent: "short", KickAt: shortAt, Age: 20 * time.Minute, Ceiling: 15 * time.Minute},
+	}
+	if !reflect.DeepEqual(wedged, want) {
+		t.Fatalf("wedged = %+v, want %+v", wedged, want)
+	}
+	if got := wedgedKickAgents(wedged); !reflect.DeepEqual(got, []string{"brainstorm", "disabled", "short"}) {
+		t.Fatalf("wedgedKickAgents = %v", got)
+	}
+
+	// With only the wedged kick left, the drain proceeds immediately instead
+	// of waiting out the full drain window.
+	var d upgradeDrain
+	onlyWedged := map[string]*crux.Process{"brainstorm": statuses["brainstorm"]}
+	inFlight, _ = agentKicksInFlight(onlyWedged, processStart, now, nil)
+	if dec := d.decide("feedbeef", inFlight, 45*time.Minute, now); !dec.Proceed || dec.TimedOut {
+		t.Fatalf("decision = %+v, want immediate proceed past a wedged kick", dec)
+	}
+}
+
+func TestWedgedKickNotices_LogsEachKickOnce(t *testing.T) {
+	var n wedgedKickNotices
+	k1 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	k2 := k1.Add(time.Hour)
+	w := []wedgedKick{{Agent: "brainstorm", KickAt: k1}}
+
+	if got := n.fresh(w); len(got) != 1 {
+		t.Fatalf("first fresh = %+v, want the wedged kick", got)
+	}
+	if got := n.fresh(w); len(got) != 0 {
+		t.Fatalf("repeat fresh = %+v, want nothing", got)
+	}
+	if got := n.fresh([]wedgedKick{{Agent: "brainstorm", KickAt: k2}}); len(got) != 1 {
+		t.Fatalf("new kick fresh = %+v, want it reported again", got)
 	}
 }
 

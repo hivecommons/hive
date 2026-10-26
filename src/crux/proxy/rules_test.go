@@ -153,6 +153,11 @@ func TestExtractRepo(t *testing.T) {
 		// two-segment reading, never "" (which would skip every repo gate).
 		{"/api/v4/projects/acme/releases/merge_requests", "acme/releases"},
 		{"/api/v4/projects/org/issues", "org/issues"},
+		// Documented limitation: an unencoded subgroup named like a resource
+		// word cuts the slug short (the real project is "group/packages/repo");
+		// the %2F-encoded spelling resolves exactly.
+		{"/api/v4/projects/group/packages/repo/issues", "group/packages"},
+		{"/api/v4/projects/group%2Fpackages%2Frepo/issues", "group/packages/repo"},
 		{"/api/v4/projects/org/", ""},
 		{"/api/v4/projects/123/issues", ""},
 		{"/user", ""},
@@ -248,8 +253,9 @@ func TestRepoGatesEscapedStructuralSegments(t *testing.T) {
 
 func TestRepoFilterAllowed(t *testing.T) {
 	allowed := map[string]bool{
-		"myorg/console": true,
-		"myorg/docs":    true,
+		"myorg/console":     true,
+		"myorg/docs":        true,
+		"myorg/sub/console": true,
 	}
 
 	tests := []struct {
@@ -270,6 +276,8 @@ func TestRepoFilterAllowed(t *testing.T) {
 		{"POST user endpoint passes", "POST", "/user", true},
 		{"git push allowed repo passes", "POST", "/myorg/console.git/git-receive-pack", true},
 		{"git push disallowed repo blocked", "POST", "/myorg/other.git/git-receive-pack", false},
+		{"nested-group git push disallowed blocked", "POST", "/myorg/sub/other.git/git-receive-pack", false},
+		{"nested-group git push allowed passes", "POST", "/myorg/sub/console.git/git-receive-pack", true},
 	}
 
 	for _, tt := range tests {

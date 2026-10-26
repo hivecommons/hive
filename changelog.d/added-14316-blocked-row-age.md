@@ -1,0 +1,1 @@
+- **Dashboard activity monitor: blocked rows show their age in the since column too.** A blocked issue without `stage_since` now falls back to `created_at` there, matching the Open chevron (#14316).

@@ -691,6 +691,14 @@ func TestListenRefusals(t *testing.T) {
 	if _, err := Listen(cfg); err == nil || !strings.Contains(err.Error(), "bearer token") {
 		t.Errorf("tcp without token = %v", err)
 	}
+	// TCP off loopback, even with a token: plain http would carry the
+	// token and minted installation tokens in cleartext.
+	for _, addr := range []string{"0.0.0.0:0", "[::]:0", "10.0.0.1:0", "example.invalid:0"} {
+		cfg := ListenConfig{Socket: filepath.Join(dir, "c.sock"), Listen: addr, Token: "t"}
+		if _, err := Listen(cfg); err == nil || !strings.Contains(err.Error(), "loopback") {
+			t.Errorf("tcp off loopback %s = %v", addr, err)
+		}
+	}
 	// TCP with a token binds both.
 	ls, err := Listen(ListenConfig{Socket: filepath.Join(dir, "b.sock"), Listen: "127.0.0.1:0", Token: "t"})
 	if err != nil {

@@ -156,14 +156,18 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 			// idle, and the storm breaker bounds repeat restarts.
 			hungSessions = append(hungSessions, sessionRestart{name: name, reason: reason, busyNoActivity: true})
 		}
-		if IsInferenceBackend(effectiveBackend(agent)) {
+		// Plain claude agents launch with --dangerously-skip-permissions too,
+		// so they can park on the same bypass consent screen (#14307).
+		if backend := effectiveBackend(agent); claudeConsentBackend(backend) {
 			if paneShowsConsentScreen(pane) {
 				consentStuck = append(consentStuck, name)
 			} else {
 				if !agent.consentSeenAt.IsZero() {
 					consentCleared = append(consentCleared, name)
 				}
-				stallChecks = append(stallChecks, inferencePaneCheck{name: name, pane: pane})
+				if IsInferenceBackend(backend) {
+					stallChecks = append(stallChecks, inferencePaneCheck{name: name, pane: pane})
+				}
 			}
 		}
 	}

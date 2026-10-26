@@ -70,8 +70,10 @@ const (
 	// Optional on the socket (the file mode is the credential), required
 	// for TCP.
 	TokenEnvVar = "CRUX_HIVE_TOKEN"
-	// ListenEnvVar is an optional TCP address hive also serves on (the k8s
-	// sidecar-container option). It always requires TokenEnvVar.
+	// ListenEnvVar is an optional loopback TCP address hive also serves on
+	// (the k8s sidecar-container option, where the containers share the
+	// pod's network namespace). It always requires TokenEnvVar and is
+	// refused off loopback: the listener is plain http.
 	ListenEnvVar = "CRUX_HIVE_LISTEN"
 	// SocketName is the socket file name; it sits next to the runtime's
 	// crux.sock in the same private directory.

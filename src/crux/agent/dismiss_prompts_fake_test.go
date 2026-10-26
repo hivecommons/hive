@@ -75,3 +75,56 @@ func runDismissPromptScript(t *testing.T, m *Manager, agent *AgentProcess, scrip
 		t.Fatalf("dismissInferencePrompts keys = %v, want %v", got, wantKeys)
 	}
 }
+
+const bypassConsentKickPane = "WARNING: Claude Code running in Bypass Permissions mode\n❯ 1. No, exit\n  2. Yes, I accept\nEnter to confirm · Esc to exit"
+
+// TestAcceptBypassConsentForKick_AnswersScreen is the #14307 guard: a kick that
+// finds the bypass consent screen accepts it in place, instead of restarting
+// the CLI into the same screen forever.
+func TestAcceptBypassConsentForKick_AnswersScreen(t *testing.T) {
+	m, agent, script := newDismissPromptHarness(t, "kickconsent", bypassConsentKickPane, 2)
+	script.afterDownPane = "WARNING: Claude Code running in Bypass Permissions mode\n  1. No, exit\n❯ 2. Yes, I accept\nEnter to confirm · Esc to exit"
+
+	if !m.acceptBypassConsentForKick(agent, bypassConsentKickPane) {
+		t.Fatal("acceptBypassConsentForKick should answer the bypass consent screen")
+	}
+	if got, want := script.keySnapshot(), []string{"Down", "Enter"}; !slices.Equal(got, want) {
+		t.Fatalf("keys = %v, want %v", got, want)
+	}
+}
+
+// TestAcceptBypassConsentForKick_LeavesOtherScreensToRestart: only the bypass
+// consent screen is answered here; a bare shell or another menu keeps the
+// existing restart recovery and receives no keystrokes.
+func TestAcceptBypassConsentForKick_LeavesOtherScreensToRestart(t *testing.T) {
+	for name, pane := range map[string]string{
+		"bare shell":    "dev@hive:~$ ",
+		"other menu":    ": Enter to confirm\n❯ 1. No, exit",
+		"title only":    "Bypass Permissions mode\n❯ No, exit",
+		"empty capture": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, agent, script := newDismissPromptHarness(t, "kickother", pane, 99)
+			if m.acceptBypassConsentForKick(agent, pane) {
+				t.Fatal("acceptBypassConsentForKick should decline a non-bypass screen")
+			}
+			if got := script.keySnapshot(); len(got) != 0 {
+				t.Fatalf("keys = %v, want none", got)
+			}
+		})
+	}
+}
+
+// TestAcceptBypassConsentForKick_FallsBackWhenNotAccepted: if the accept option
+// is never reached the helper reports failure so the caller restarts as before.
+func TestAcceptBypassConsentForKick_FallsBackWhenNotAccepted(t *testing.T) {
+	m, agent, script := newDismissPromptHarness(t, "kickstuck", bypassConsentKickPane, 99)
+	if m.acceptBypassConsentForKick(agent, bypassConsentKickPane) {
+		t.Fatal("acceptBypassConsentForKick should report failure when the screen never clears")
+	}
+	for _, k := range script.keySnapshot() {
+		if k == "Enter" {
+			t.Fatal("must never confirm while \"No, exit\" is still selected")
+		}
+	}
+}

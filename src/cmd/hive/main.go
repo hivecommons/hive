@@ -5109,7 +5109,21 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// heartbeat) and withhold new kicks; proceed once the turns end or
 				// hub.upgrade_drain_timeout_s elapses.
 				if b.agentMgr != nil {
-					inFlight := agentKicksInFlight(b.agentMgr.AllStatuses(), b.startTime)
+					inFlight, wedged := agentKicksInFlight(b.agentMgr.AllStatuses(), b.startTime, selfUpgradeDrainNow(), func(name string) time.Duration {
+						if ac, ok := b.cfg.Agents[name]; ok {
+							return ac.EffectiveContinuousTurnCeiling()
+						}
+						return 0
+					})
+					for _, w := range selfUpgradeWedgedKicks.fresh(wedged) {
+						b.logger.Warn("self-upgrade drain: ignoring wedged agent kick that never reported a turn end",
+							"agent", w.Agent,
+							"kick_at", w.KickAt.UTC().Format(time.RFC3339),
+							"age", w.Age.Round(time.Second),
+							"ceiling", w.Ceiling,
+						)
+					}
+					ignoredWedged := wedgedKickAgents(wedged)
 					drainTimeout := b.cfg.Hub.EffectiveUpgradeDrainTimeout()
 					dec := selfUpgradeDrain.decide(targetSHA, inFlight, drainTimeout, selfUpgradeDrainNow())
 					switch {
@@ -5121,6 +5135,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 							"waited", dec.Waited.Round(time.Second),
 							"max_wait_remaining", dec.Remaining.Round(time.Second),
 							"drain_timeout", drainTimeout,
+							"ignored_wedged", ignoredWedged,
 						)
 						return
 					case dec.TimedOut:
@@ -5130,12 +5145,14 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 							"cut_kicks", dec.InFlight,
 							"waited", dec.Waited.Round(time.Second),
 							"drain_timeout", drainTimeout,
+							"ignored_wedged", ignoredWedged,
 						)
-					case dec.Waited > 0:
+					case dec.Waited > 0 || len(ignoredWedged) > 0:
 						b.logger.Info("self-upgrade drain complete: no agent kicks in flight",
 							"target", targetSHA,
 							"current", gitShort,
 							"waited", dec.Waited.Round(time.Second),
+							"ignored_wedged", ignoredWedged,
 						)
 					}
 				}
