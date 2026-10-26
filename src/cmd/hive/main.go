@@ -5248,9 +5248,30 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// UpgradeSelfToSHA patches the image instead when we are pinned.
 				needsRestart, err := spoke.UpgradeSelfToSHA(b.logger, targetSHA)
 				if err != nil {
+					// The patch did not go through. When the Deployment tracks a
+					// floating tag that the kubelet re-pulls on container start,
+					// a plain process exit still lands the upgrade — so skip the
+					// RolloutRestartSelf PATCH (same API, same admission webhook,
+					// same failure, another timeout wait) and exit NOW, reporting
+					// pending-restart rather than failed. On vllm-d a Kyverno
+					// webhook timed out every Deployment patch; the upgrade
+					// landed on each restart yet the hub showed "failed 3
+					// attempts" with a floating-tag hint (#14385).
+					fb := spoke.RestartFallbackForPatchFailure(b.logger, err)
+					recordUpgradeError(upgradeMarkerPath, fmt.Errorf("%s: %w", fb.Hint, err), b.logger)
+					if fb.RestartLands {
+						b.logger.Warn("self-upgrade: Deployment patch failed, exiting so the kubelet re-pulls the floating tag",
+							"target", targetSHA,
+							"current", gitShort,
+							"kind", string(fb.Kind),
+							"hint", fb.Hint,
+							"error", err,
+						)
+						spoke.ReportUpgradePendingRestart(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, fb.Hint, b.logger)
+						os.Exit(selfUpgradePendingRestartExitCode)
+					}
 					b.logger.Warn("pinned-image upgrade failed, falling back to rolling restart",
-						"target", targetSHA, "error", err)
-					recordUpgradeError(upgradeMarkerPath, err, b.logger)
+						"target", targetSHA, "kind", string(fb.Kind), "hint", fb.Hint, "error", err)
 					needsRestart = true
 				}
 				if needsRestart {
@@ -5261,14 +5282,15 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						// the spoke lacks patch on its own Deployment) must be both
 						// persisted for the next attempt and reported to the hub so
 						// the UI stops showing a permanent "Upgrading".
+						hint := spoke.PatchFailureHint(spoke.ClassifyPatchFailure(err))
 						b.logger.Error("self-upgrade FAILED: could not patch own Deployment, restarting onto the same image",
 							"target", targetSHA,
 							"current", gitShort,
 							"error", err,
-							"hint", "grant get/patch on deployments/hive in this namespace (hive-self-upgrade Role/RoleBinding)",
+							"hint", hint,
 						)
 						recordUpgradeError(upgradeMarkerPath, err, b.logger)
-						spoke.ReportUpgradeFailure(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, err.Error(), b.logger)
+						spoke.ReportUpgradeFailure(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, hint+": "+err.Error(), b.logger)
 						// Exit NON-ZERO. Exiting 0 on a failed upgrade told Kubernetes
 						// the process had completed successfully, so the restart looked
 						// routine and nothing — not the pod's exit code, not an event,

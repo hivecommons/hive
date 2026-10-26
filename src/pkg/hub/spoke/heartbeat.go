@@ -876,6 +876,12 @@ type HeartbeatPayload struct {
 	// "Upgrading" spinner that is simply a lie.
 	UpgradeFailed bool   `json:"upgrade_failed,omitempty"`
 	UpgradeError  string `json:"upgrade_error,omitempty"`
+	// UpgradePendingRestart tells the hub that the spoke could NOT patch its
+	// own Deployment (UpgradeError carries why — typically an admission
+	// webhook rejecting or timing out the patch) but is exiting so the kubelet
+	// re-pulls its floating tag. The upgrade is still in flight, not failed:
+	// the hub must keep the latch and the hint, and not spend a failed attempt.
+	UpgradePendingRestart bool `json:"upgrade_pending_restart,omitempty"`
 	// UpgradeDrain tells the hub that an instructed upgrade is being HELD by
 	// the spoke on purpose: it is waiting for in-flight agent kicks to finish
 	// (hub.upgrade_drain_timeout_s). Without it a draining spoke looks exactly
@@ -2493,16 +2499,32 @@ func SendUpgradingHeartbeat(hubURL string, collect StatusCollector, targetSHA st
 // Best-effort and non-fatal: the caller is usually seconds from exiting, and a
 // failure to report must never mask the upgrade failure itself.
 func ReportUpgradeFailure(hubURL, hiveID, targetSHA, currentSHA, cause string, logger *slog.Logger) {
+	reportUpgradeOutcome(hubURL, hiveID, targetSHA, currentSHA, cause, false, logger)
+}
+
+// ReportUpgradePendingRestart tells the hub that the Deployment patch failed
+// (hint says why) but the spoke is restarting its process so the kubelet
+// re-pulls the floating tag and the upgrade lands anyway. Unlike
+// ReportUpgradeFailure this keeps the hub's "Upgrading" latch and does not
+// count as a failed attempt — the admission-webhook incident on vllm-d showed
+// "failed 3 attempts" for an upgrade that landed on every restart.
+func ReportUpgradePendingRestart(hubURL, hiveID, targetSHA, currentSHA, hint string, logger *slog.Logger) {
+	reportUpgradeOutcome(hubURL, hiveID, targetSHA, currentSHA, hint, true, logger)
+}
+
+func reportUpgradeOutcome(hubURL, hiveID, targetSHA, currentSHA, cause string, pendingRestart bool, logger *slog.Logger) {
 	if hubURL == "" || hiveID == "" {
 		return
 	}
 	payload := HeartbeatPayload{
-		HiveID:           hiveID,
-		GitHash:          currentSHA,
-		UpgradeTargetSHA: targetSHA,
-		UpgradeFailed:    true,
-		UpgradeError:     cause,
-		Timestamp:        time.Now().UTC().Format(time.RFC3339),
+		HiveID:                hiveID,
+		GitHash:               currentSHA,
+		UpgradeTargetSHA:      targetSHA,
+		UpgradeFailed:         !pendingRestart,
+		Upgrading:             pendingRestart,
+		UpgradePendingRestart: pendingRestart,
+		UpgradeError:          cause,
+		Timestamp:             time.Now().UTC().Format(time.RFC3339),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -2523,10 +2545,14 @@ func ReportUpgradeFailure(hubURL, hiveID, targetSHA, currentSHA, cause string, l
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		logger.Warn("could not report upgrade failure to hub", "error", err)
+		logger.Warn("could not report upgrade outcome to hub", "pending_restart", pendingRestart, "error", err)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if pendingRestart {
+		logger.Info("reported upgrade pending-restart to hub", "target", targetSHA, "hint", cause)
+		return
+	}
 	logger.Info("reported upgrade failure to hub", "target", targetSHA, "cause", cause)
 }
 

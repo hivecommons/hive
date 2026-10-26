@@ -306,6 +306,7 @@ type HeartbeatPayload struct {
 	UpgradeTargetSHA             string                          `json:"upgrade_target_sha,omitempty"`
 	UpgradeFailed                bool                            `json:"upgrade_failed,omitempty"`
 	UpgradeError                 string                          `json:"upgrade_error,omitempty"`
+	UpgradePendingRestart        bool                            `json:"upgrade_pending_restart,omitempty"`
 	UpgradeDrain                 *UpgradeDrainReport             `json:"upgrade_drain,omitempty"`
 	PendingGitHubAppInstall      bool                            `json:"pending_github_app_install,omitempty"`
 	ClusterHealth                *HeartbeatClusterHealthReport   `json:"cluster_health,omitempty"`

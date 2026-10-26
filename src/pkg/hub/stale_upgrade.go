@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"strings"
 	"time"
 )
 
@@ -449,6 +450,11 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 				// kicks, not at the image tag.
 				h.UpgradeError += " The spoke kept reporting an upgrade drain on in-flight agent kicks (" +
 					orDash(joinNames(d.InFlight)) + ") that never finished — check for a kick that never settles."
+			} else if fb := strings.TrimSpace(h.UpgradeRestartFallback); fb != "" {
+				// The spoke told us why: its Deployment patch was refused and
+				// it fell back to a process restart. Name that cause rather
+				// than guessing at the image tag (vllm-d Kyverno incident).
+				h.UpgradeError += " The spoke could not patch its own Deployment: " + fb + "."
 			} else {
 				h.UpgradeError += " If its Deployment tracks a floating tag, the pod may be " +
 					"re-pulling that tag and landing on a build other than the target."

@@ -593,10 +593,13 @@ type alertHive struct {
 	UpgradeDrain     *UpgradeDrainReport
 	UpgradeFailed    bool
 	UpgradeError     string
-	TotalTokens24h   int64
-	Health           map[string]any
-	ProvStatus       string
-	ProvError        string
+	// UpgradeRestartFallback mirrors RegistryEntry's field: the spoke's reason
+	// for falling back to a process restart after a refused Deployment patch.
+	UpgradeRestartFallback string
+	TotalTokens24h         int64
+	Health                 map[string]any
+	ProvStatus             string
+	ProvError              string
 	// AdvisoryStale / AdvisoryStaleReason are carried through verbatim from
 	// the entry rather than recomputed. advisoryStale() owns the threshold and
 	// the advisory-mode + app-can-write gating; duplicating either here is
@@ -659,24 +662,25 @@ type alertHive struct {
 // alertHiveFromEntry projects a MyHiveEntry into the evaluator's view.
 func alertHiveFromEntry(h MyHiveEntry) alertHive {
 	return alertHive{
-		ID:               h.ID,
-		Name:             h.Name,
-		IsPlaceholder:    isPlaceholderEntry(h),
-		Online:           h.Online,
-		LastHeartbeat:    h.LastHeartbeat,
-		OfflineSince:     h.OfflineSince,
-		StartedAt:        h.StartedAt,
-		RegisteredAt:     h.RegisteredAt,
-		Upgrading:        h.Upgrading,
-		UpgradeStartedAt: h.UpgradeStartedAt,
-		UpgradeTarget:    h.UpgradeTarget,
-		UpgradeDrain:     h.UpgradeDrain,
-		UpgradeFailed:    h.UpgradeFailed,
-		UpgradeError:     h.UpgradeError,
-		TotalTokens24h:   h.TotalTokens24h,
-		Health:           h.Health,
-		ProvStatus:       h.ProvStatus,
-		ProvError:        h.ProvError,
+		ID:                     h.ID,
+		Name:                   h.Name,
+		IsPlaceholder:          isPlaceholderEntry(h),
+		Online:                 h.Online,
+		LastHeartbeat:          h.LastHeartbeat,
+		OfflineSince:           h.OfflineSince,
+		StartedAt:              h.StartedAt,
+		RegisteredAt:           h.RegisteredAt,
+		Upgrading:              h.Upgrading,
+		UpgradeStartedAt:       h.UpgradeStartedAt,
+		UpgradeTarget:          h.UpgradeTarget,
+		UpgradeDrain:           h.UpgradeDrain,
+		UpgradeFailed:          h.UpgradeFailed,
+		UpgradeError:           h.UpgradeError,
+		UpgradeRestartFallback: h.UpgradeRestartFallback,
+		TotalTokens24h:         h.TotalTokens24h,
+		Health:                 h.Health,
+		ProvStatus:             h.ProvStatus,
+		ProvError:              h.ProvError,
 
 		AdvisoryStale:       h.AdvisoryStale,
 		AdvisoryStaleReason: h.AdvisoryStaleReason,
@@ -1117,6 +1121,9 @@ func evaluateAlertsInFleet(state *alertState, hives, fleet []alertHive, driftAle
 					reason += "; the spoke is draining in-flight agent kicks (" +
 						orDash(joinNames(d.InFlight)) + "), at most " +
 						roundedDuration(time.Duration(d.RemainingS)*time.Second) + " more"
+				}
+				if fb := strings.TrimSpace(h.UpgradeRestartFallback); fb != "" {
+					reason += "; the spoke could not patch its own Deployment: " + fb
 				}
 				add(h.ID, h.Name, AlertTypeStuckUpgrade, AlertSeverityWarning, reason)
 			}
