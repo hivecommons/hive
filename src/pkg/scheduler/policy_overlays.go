@@ -26,9 +26,9 @@ func (s *Scheduler) addHeldPRCoordination(agentName string, actionable *github.A
 	}
 	claims, failClosed := s.formatHeldPRClaimsWithPolicy(actionable)
 	if failClosed {
-		if s.logger != nil {
-			s.logger.Warn("ioscan fail-closed blocked held-PR coordination kick", "agent", agentName)
-		}
+		// Persists every tick while the held PR stays open; warn once per agent
+		// like the main fail-closed kick path, then demote repeats to Debug.
+		s.warnOnce("blocked-held-pr-kick:"+agentName, "ioscan fail-closed blocked held-PR coordination kick", "agent", agentName)
 		return ""
 	}
 
