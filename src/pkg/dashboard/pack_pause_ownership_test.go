@@ -215,7 +215,9 @@ func TestSyncAgentVisibility_StartupDoesNotResumeSameLevelPackPause(t *testing.T
 		t.Fatalf("re-pause: %v", err)
 	}
 	_, _ = s.syncAgentVisibilityWith(level, false)
-	if deps.AgentMgr.IsPaused("reviewer") {
-		t.Fatal("reviewer paused at level 1 stayed paused at level 2; a real level change must still resume pack-paused agents")
+	// Resume clears the pause marker even when the test manager cannot relaunch
+	// the agent (no tmux), leaving State paused, so assert on the marker.
+	if proc, err := deps.AgentMgr.GetStatus("reviewer"); err != nil || proc.PausedTrigger != "" {
+		t.Fatalf("reviewer paused at level 1 stayed paused at level 2; a real level change must still resume pack-paused agents")
 	}
 }
