@@ -1051,12 +1051,13 @@ func TestSyncIssueStageLabels_CoveredStageSurvivesDoubleAnnotation(t *testing.T)
 			}
 
 			res := syncSeeded(t, fake, c, result, store, now)
+			forgeWrites := fake.writes()
 			fake.mu.Lock()
 			defer fake.mu.Unlock()
 			if got := strings.Join(fake.added[issue], ","); got != tc.wantAdded {
 				t.Fatalf("added %q, want %q (writes=%d)", got, tc.wantAdded, res.Writes)
 			}
-			if tc.wantAdded == "" && (res.Writes != 0 || fake.writes() != 0) {
+			if tc.wantAdded == "" && (res.Writes != 0 || forgeWrites != 0) {
 				t.Fatalf("unchanged covered issue produced writes: %+v (%v / %v)", res, fake.added, fake.removed)
 			}
 		})
