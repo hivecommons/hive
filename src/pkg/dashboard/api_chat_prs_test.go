@@ -210,6 +210,18 @@ func TestRenderChatPRListCapsAndFooter(t *testing.T) {
 	}
 }
 
+func TestRenderChatPRListReadsJSONShapedRows(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	repo := FrontendRepo{Name: "repo", Full: "myorg/repo", OpenPrs: []any{
+		map[string]any{"number": 7, "title": "From JSON", "author": "erin", "ci_status": "failure", "labels": []any{"stage/085-needs-decision"}},
+	}}
+	got := renderChatPRList([]FrontendRepo{repo}, chatPRFilter{}, now)
+	want := "- myorg/repo#7 — From JSON (@erin · stage/085-needs-decision · ❌ CI · needs decision)"
+	if !strings.Contains(got, want) {
+		t.Fatalf("missing %q in:\n%s", want, got)
+	}
+}
+
 func TestRenderChatPRListEmpty(t *testing.T) {
 	got := renderChatPRList([]FrontendRepo{{Name: "hive"}}, chatPRFilter{}, time.Now())
 	if got != "No open pull requests are currently reported." {

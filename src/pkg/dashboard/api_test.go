@@ -830,7 +830,7 @@ func TestHandleChat_LocalStatusAgentsAndPRs(t *testing.T) {
 		want  string
 	}{
 		{query: "AGENTS!!!", want: "brainstorm: idle (paused)"},
-		{query: "prs?", want: "myorg/repo: 1 open PR"},
+		{query: "prs?", want: "myorg/repo#7"},
 		{query: "status", want: "Hive status: ready"},
 		{query: "help", want: "Try `beads`"},
 	} {
