@@ -45,12 +45,14 @@ func ReviewEvidenceDir(root, repo string, number int) string {
 }
 
 // ListReviewEvidence returns every readable bundle for repo#number, oldest
-// first. A PR with no directory has no bundles and is not an error. Files
-// that do not parse, or that belong to a different PR, are skipped: the list
-// is what the reader can stand behind.
+// first, including bundles a writer put in a <pr>.uid<N> fallback sibling
+// because it could not write the PR directory (#13836). A PR with no
+// directory has no bundles and is not an error. Files that do not parse, or
+// that belong to a different PR, are skipped: the list is what the reader can
+// stand behind.
 func ListReviewEvidence(root, repo string, number int) ([]ReviewEvidenceEntry, error) {
 	dir := ReviewEvidenceDir(root, repo, number)
-	dirEntries, err := os.ReadDir(dir)
+	names, err := reviewEvidenceFileNames(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -58,11 +60,8 @@ func ListReviewEvidence(root, repo string, number int) ([]ReviewEvidenceEntry, e
 		return nil, fmt.Errorf("reading %s: %w", dir, err)
 	}
 	var out []ReviewEvidenceEntry
-	for _, e := range dirEntries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
+	for _, name := range names {
+		path := resolveReviewEvidencePath(filepath.Join(dir, name))
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -137,6 +136,31 @@ func reviewEvidenceMissing(root, repo string, number int, head string, entries [
 		return ReviewEvidenceLookup{Reason: "no review evidence was recorded for this PR"}
 	}
 	return ReviewEvidenceLookup{Reason: fmt.Sprintf("no review evidence was recorded for head %s", head)}
+}
+
+// reviewEvidenceFileNames lists the distinct bundle file names (<head>.json)
+// in the PR directory dir and its fallback siblings. The error is the PR
+// directory's own read error; an unreadable sibling is skipped.
+func reviewEvidenceFileNames(dir string) ([]string, error) {
+	seen := map[string]bool{}
+	var names []string
+	for i, d := range reviewEvidenceDirs(dir) {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			if i == 0 {
+				return nil, err
+			}
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || filepath.Ext(e.Name()) != ".json" || seen[e.Name()] {
+				continue
+			}
+			seen[e.Name()] = true
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
 }
 
 // ReviewEvidencePublicKey is the hex Ed25519 public key for the signing key
