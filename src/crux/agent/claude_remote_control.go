@@ -21,10 +21,20 @@ const remoteControlUsedKey = "hasUsedRemoteControl"
 // claudeRemoteControlSeed returns the key hive pins into the shared Claude
 // user settings for interactive claude-backend agents. Kept minimal on
 // purpose: the shared /data/home/.claude/settings.json also carries
-// fleet-critical keys hive does not own (skipDangerousModePermissionPrompt,
-// enabledPlugins, ...), and the seed must never be a reason to touch them.
+// fleet-critical keys hive does not own (enabledPlugins, ...), and the seed
+// must never be a reason to touch them.
 func claudeRemoteControlSeed() map[string]any {
 	return map[string]any{remoteControlSettingKey: false}
+}
+
+// claudeBypassConsentSeed returns the key that suppresses Claude Code's
+// "Bypass Permissions mode" consent screen (see inferenceSettingsSeed for how
+// it was verified). Interactive claude agents launch with
+// --dangerously-skip-permissions too, and nothing else provisions this key in
+// the shared settings, so without it every launch stops on a menu whose
+// default answer is "No, exit" (#14307).
+func claudeBypassConsentSeed() map[string]any {
+	return map[string]any{"skipDangerousModePermissionPrompt": true}
 }
 
 // sharedClaudeSettingsFile is the userSettings file every interactive
@@ -39,7 +49,8 @@ func sharedClaudeSettingsFile() string {
 // that Remote Control does not auto-start for the fleet. Called on EVERY
 // launch so a relaunch can never fall back to the server-side rollout default,
 // and so an out-of-band deletion of the key self-heals on the next launch —
-// the same posture as ensureBobAuthSettings for bob's shared settings.
+// the same posture as ensureBobAuthSettings for bob's shared settings. The
+// bypass-consent suppressor (claudeBypassConsentSeed) is seeded the same way.
 //
 // Semantics:
 //   - key absent  -> written as false (the pin; this is the whole fix)
@@ -63,6 +74,7 @@ func (m *Manager) ensureClaudeRemoteControlDefault(agent *AgentProcess) {
 		return
 	}
 	m.seedJSONFile(agent.Name, path, claudeRemoteControlSeed())
+	m.seedJSONFile(agent.Name, path, claudeBypassConsentSeed())
 	if enabled, explicit := readRemoteControlSetting(path); explicit && enabled {
 		// Receipt, not an error: the operator opted in and hive honored it.
 		m.logger.Info("claude remote control left ON by explicit operator setting",

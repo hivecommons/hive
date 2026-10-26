@@ -145,3 +145,37 @@ func TestCheckAndRestartCrashedAgents_ConsentStuck(t *testing.T) {
 		t.Error("consent-stuck path should record when the screen was first observed")
 	}
 }
+
+// TestCheckAndRestartCrashedAgents_ClaudeConsentStuck: a plain claude agent
+// launches with --dangerously-skip-permissions too, so when it parks on the
+// bypass consent screen it must go through the same consent-stuck dismissal
+// as inference agents instead of waiting forever (#14307).
+func TestCheckAndRestartCrashedAgents_ClaudeConsentStuck(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{"cxc": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	origExists := tmuxSessionExists
+	tmuxSessionExists = func(*Manager, *AgentProcess) bool { return true }
+	t.Cleanup(func() { tmuxSessionExists = origExists })
+
+	m.mu.RLock()
+	agent := m.agents["cxc"]
+	m.mu.RUnlock()
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string {
+		return "WARNING: Claude Code running in Bypass Permissions mode\n❯ 1. No, exit\n  2. Yes, I accept\nEnter to confirm · Esc to exit\n"
+	}
+
+	old := time.Now().Add(-2 * time.Minute)
+	m.mu.Lock()
+	agent.State = StateRunning
+	agent.StartedAt = &old
+	m.mu.Unlock()
+
+	if restarted := m.CheckAndRestartCrashedAgents(context.Background()); len(restarted) != 0 {
+		t.Errorf("consent-stuck claude agent should not restart, got %v", restarted)
+	}
+	m.mu.RLock()
+	seen := agent.consentSeenAt
+	m.mu.RUnlock()
+	if seen.IsZero() {
+		t.Error("claude agent on the bypass consent screen should enter the consent-stuck path")
+	}
+}

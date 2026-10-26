@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
@@ -152,13 +153,39 @@ func (d *upgradeDrain) releaseLocked(target string, now time.Time) {
 	d.released = true
 }
 
+// wedgedKick is a kick agentKicksInFlight stopped counting as in flight
+// because it has gone unsettled for longer than the agent's turn bound.
+type wedgedKick struct {
+	Agent   string
+	KickAt  time.Time
+	Age     time.Duration
+	Ceiling time.Duration
+}
+
+// inFlightKickCeiling is the age past which an unsettled kick no longer holds
+// the drain: the agent's continuous_turn_ceiling (the same bound continuous
+// mode uses to presume a silent turn over), or DefaultContinuousTurnCeiling
+// when the agent is unknown or the ceiling is disabled. The drain needs a
+// bound either way — a turn-end signal that is never observed would otherwise
+// hold every upgrade for the full drain window (#14323).
+func inFlightKickCeiling(ceiling func(agent string) time.Duration, agent string) time.Duration {
+	if ceiling != nil {
+		if c := ceiling(agent); c > 0 {
+			return c
+		}
+	}
+	return config.DefaultContinuousTurnCeiling
+}
+
 // agentKicksInFlight names the running, unpaused agents whose most recent kick was
 // delivered by THIS process and whose turn has not been classified as ended
 // (crux.KickOutcome is settled by the pane poller / stall watchdog when the
 // CLI returns to its prompt). Kicks seeded from persisted state predate
-// processStart and cannot still be running here, so they are ignored.
-func agentKicksInFlight(statuses map[string]*crux.Process, processStart time.Time) []string {
-	var names []string
+// processStart and cannot still be running here, so they are ignored. A kick
+// left unsettled for longer than its agent's turn ceiling (see
+// inFlightKickCeiling) is presumed wedged: it is returned in wedged instead of
+// inFlight so a lost turn-end signal cannot hold the upgrade drain (#14323).
+func agentKicksInFlight(statuses map[string]*crux.Process, processStart, now time.Time, ceiling func(agent string) time.Duration) (inFlight []string, wedged []wedgedKick) {
 	for name, proc := range statuses {
 		if proc == nil || proc.State != crux.StateRunning || proc.Paused || proc.LastKick == nil {
 			continue
@@ -169,8 +196,55 @@ func agentKicksInFlight(statuses map[string]*crux.Process, processStart time.Tim
 		if proc.KickOutcome.Settled(proc.LastKick) {
 			continue
 		}
-		names = append(names, name)
+		bound := inFlightKickCeiling(ceiling, name)
+		if age := now.Sub(*proc.LastKick); age >= bound {
+			wedged = append(wedged, wedgedKick{Agent: name, KickAt: *proc.LastKick, Age: age, Ceiling: bound})
+			continue
+		}
+		inFlight = append(inFlight, name)
 	}
-	sort.Strings(names)
+	sort.Strings(inFlight)
+	sort.Slice(wedged, func(i, j int) bool { return wedged[i].Agent < wedged[j].Agent })
+	return inFlight, wedged
+}
+
+// wedgedKickNotices remembers which wedged kicks were already logged, so the
+// per-heartbeat upgrade check warns once per kick instead of every beat.
+type wedgedKickNotices struct {
+	mu     sync.Mutex
+	logged map[string]time.Time
+}
+
+// selfUpgradeWedgedKicks is the process-wide wedged-kick log de-duplicator.
+var selfUpgradeWedgedKicks = &wedgedKickNotices{}
+
+// fresh returns the wedged kicks not reported before (keyed on agent and
+// kick time, so a later kick that also wedges is reported again).
+func (n *wedgedKickNotices) fresh(wedged []wedgedKick) []wedgedKick {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.logged == nil {
+		n.logged = make(map[string]time.Time)
+	}
+	var out []wedgedKick
+	for _, w := range wedged {
+		if at, ok := n.logged[w.Agent]; ok && at.Equal(w.KickAt) {
+			continue
+		}
+		n.logged[w.Agent] = w.KickAt
+		out = append(out, w)
+	}
+	return out
+}
+
+// wedgedKickAgents names the agents in wedged, for log attributes.
+func wedgedKickAgents(wedged []wedgedKick) []string {
+	if len(wedged) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(wedged))
+	for _, w := range wedged {
+		names = append(names, w.Agent)
+	}
 	return names
 }

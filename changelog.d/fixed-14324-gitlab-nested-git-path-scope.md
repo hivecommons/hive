@@ -1,0 +1,1 @@
+- GitLab project paths with a subgroup or project named like a resource word (for example `group/packages/repo`) are documented as ambiguous in the unencoded spelling, with a test pinning the behaviour; nested-group git smart-HTTP pushes are covered by the repo filter tests (#14324, #14321).

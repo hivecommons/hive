@@ -149,16 +149,21 @@ func (m *Manager) SendKick(name string, message string) error {
 	// (observed live: "-bash: NEVER: command not found").
 	pane := m.captureVisiblePaneForAgent(agent)
 	if !paneHasCLIMarker(pane) || paneShowsConsentScreen(pane) {
-		m.logger.Warn("agent CLI crashed or stuck on consent screen, restarting before kick",
-			"name", name, "consent_screen", paneShowsConsentScreen(pane))
+		consentScreen := paneShowsConsentScreen(pane)
 		m.mu.Unlock()
-		if err := m.restartForKick(context.Background(), name); err != nil {
-			m.mu.Lock()
-			return fmt.Errorf("failed to restart crashed agent %s: %w", name, err)
-		}
-		if !m.waitForCLIReadyForAgent(agent) {
-			m.mu.Lock()
-			return fmt.Errorf("agent %s CLI did not become ready after restart", name)
+		// Answer the bypass consent screen in place: a restart relaunches
+		// into the same screen and the kick never lands (#14307).
+		if !consentScreen || !m.acceptBypassConsentForKick(agent, pane) {
+			m.logger.Warn("agent CLI crashed or stuck on consent screen, restarting before kick",
+				"name", name, "consent_screen", consentScreen)
+			if err := m.restartForKick(context.Background(), name); err != nil {
+				m.mu.Lock()
+				return fmt.Errorf("failed to restart crashed agent %s: %w", name, err)
+			}
+			if !m.waitForCLIReadyForAgent(agent) {
+				m.mu.Lock()
+				return fmt.Errorf("agent %s CLI did not become ready after restart", name)
+			}
 		}
 		m.mu.Lock()
 		agent, ok = m.agents[name]
@@ -1322,8 +1327,11 @@ const (
 	// have run before the nudge is also self-reported to the fleet (#13863).
 	// A lone poll past the wall clock is a normal post-push check: the agent
 	// is still nudged in-session, but the fleet only hears about repeated
-	// polling.
-	ciPollReportMinPolls = 2
+	// polling. The kick text allows up to two status checks on the same run
+	// (e.g. diagnosing a failed check), so two polls followed by stopping is
+	// permitted behaviour, not a loop; report from 3, matching
+	// ciPollNudgeThreshold (#14327).
+	ciPollReportMinPolls = 3
 	ciPollNudgeMessage   = "Stop polling CI. Do not run gh run watch/view, gh pr checks, or gh pr view --json statusCheckRollup again this turn: leave the PR as is and move to the next work-list item. The automerge sweep handles green PRs."
 )
 

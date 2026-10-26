@@ -305,6 +305,11 @@ assert.deepStrictEqual(segStates(row), ['active ham-open-blocked ham-open-stale'
 assert.ok(strip(row).includes(' — blocked on acme/api#7 — '), 'a known blocker is named: ' + strip(row));
 assert.strictEqual(stageTrackerBlockedTip({ blocked_on: ['acme/api#7', 'acme/api#8'] }), 'blocked on acme/api#7, acme/api#8');
 assert.strictEqual(stageTrackerBlockedTip({}), 'carries the blocked label');
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 29, kind: 'issue', title: 'Blocked no since', stage: 0, created_at: new Date(now - 3 * 86400000).toISOString(), modifiers: ['blocked'] }, stages, ctx);
+assert.strictEqual(openWord(row), 'Open · blocked · since 3d', 'created_at fallback in the chevron');
+assert.ok(row.includes('<span class="ham-since">3d</span>'), 'created_at fallback in the since column: ' + row);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 30, kind: 'issue', title: 'Plain no since', stage: 0, created_at: new Date(now - 3 * 86400000).toISOString() }, stages, ctx);
+assert.ok(!row.includes('<span class="ham-since">3d</span>'), 'only blocked rows borrow created_at for the since column');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 27, kind: 'pr', title: 'Held and blocked', stage: 0, stage_since: new Date(now - 3 * 86400000).toISOString(), modifiers: ['blocked', 'hold'] }, stages, ctx);
 assert.strictEqual(openWord(row), 'Open · hold', 'hold is a human instruction: it wins over blocked and still carries no age');
 assert.deepStrictEqual(segStates(row), ['active ham-open-hold', T, T, T, T, T, 'todo cap']);
