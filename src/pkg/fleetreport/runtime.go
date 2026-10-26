@@ -56,6 +56,12 @@ const (
 	// so the class itself fires on the first observation.
 	ClassIssueRequestStuck   = "issue_request_stuck"
 	ClassEffectLedgerOpStuck = "effect_ledger_op_stuck"
+	// ClassCruxRuntimeUnavailable: the sidecar `crux serve` the hive was
+	// built against is unreachable (hivecommons/hive#14138 stage 4). Raised
+	// by cmd/hive's runtime watcher on the first failed probe and cleared
+	// on the first success; while it holds, kicks are refused with
+	// crux.ErrRuntimeUnavailable rather than queued.
+	ClassCruxRuntimeUnavailable = crux.ClassRuntimeUnavailable
 )
 
 // Log-fed classes: faults that have no dedicated hook site and are recognised
@@ -168,6 +174,7 @@ var Classes = map[string]ClassSpec{
 	ClassAgentCrashLoop:             {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"crash loop", "crash-loop", "crash looping"}},
 	ClassCIPollNudge:                {Component: "agent-runtime", Severity: "low", MinCount: 1, Window: ciPollNudgeWindow, Keywords: []string{"ci-poll nudge", "polling ci", "stop-polling nudge"}},
 	ClassIssueRequestStuck:          {Component: "github-relay", Severity: "medium", MinCount: 1, Keywords: []string{"issue-request stuck", "issue request stuck", "issue-request watcher", "relay request stuck"}},
+	ClassCruxRuntimeUnavailable:     {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"crux runtime unavailable", "crux server unreachable"}},
 	ClassEffectLedgerOpStuck:        {Component: "mutation-ledger", Severity: "medium", MinCount: 1, Keywords: []string{"effect ledger stuck", "ledger op stuck", "needs reconciliation", "mutation journal unknown"}},
 	ClassTmuxSessionCheckFailed:     {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"tmux has-session failed"}},
 	ClassStartupKickInterrupted:     {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"startup kick dropped: agent restarted or stopped while waiting"}},

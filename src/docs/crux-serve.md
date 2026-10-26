@@ -168,6 +168,34 @@ report, or a hive without the `policy` capability (`404 not_configured`),
 leaves the runtime's own default in place. `SetInferenceCallbacks`,
 `SetSandboxMutationBoundary` and `SetSpanStarter` are not carried yet.
 
+### Supervision and failure semantics (#14138 stage 4)
+
+In sidecar mode hive decides who keeps `crux serve` alive:
+
+| Env | Values | Meaning |
+|---|---|---|
+| `CRUX_SUPERVISE` | `child` (default), `external` | `child`: hive spawns `crux serve` itself (`crux/runtime.Supervisor`), waits for `/v1/health`, and restarts it with exponential backoff (1 s → 1 min, reset after 5 min healthy). `external`: systemd / a pod sidecar runs it; hive only reconnects. |
+| `CRUX_BINARY` | path or name | the executable `child` runs; default `crux` on `$PATH`. A missing binary is logged loudly and hive behaves as `external`. |
+
+The child inherits hive's environment plus `CRUX_TOKEN`; its listen flags
+are derived from `CRUX_SERVER` (`unix://` → `--socket`, host:port →
+`--listen`). `/v1/health` now carries `started_at` and `uptime_seconds`
+next to `hive_callback`.
+
+When the socket is gone, whichever way it is supervised:
+
+| Surface | Behaviour |
+|---|---|
+| governor loop | keeps ticking; nothing in hive blocks on the socket |
+| writes with an error return (kick, stop, resume, …) | **refused** with `crux.ErrRuntimeUnavailable` (wraps `api.ErrUnreachable`). Kicks are not queued or replayed: the governor re-derives what is due on its next tick, so a replay buffer would only duplicate work after a long outage |
+| observer reads | answer zero / unknown (unchanged from stage 3) |
+| fleet report | `crux_runtime_unavailable` (component `agent-runtime`, severity high) raised on the first failed probe (every 15 s, or any failed call) and cleared on the first success; the dashboard renders it like every other runtime condition |
+| hive `/api/health` | `crux_runtime: {mode, reachable, last_error, since, supervise, child{running, ready, pid, starts, last_exit}}`; `status` becomes `degraded` while unreachable |
+| client `Status()` | `{reachable, last_error, since, failed_calls, last_success}` on `api.Client`/`client.Runtime`; a caller that cancelled its own context is not counted, an expired deadline is |
+
+In-process mode is untouched: there is no socket, the condition never
+fires, and `/api/health` carries no `crux_runtime` member.
+
 ## Drive it with curl
 
 ```sh

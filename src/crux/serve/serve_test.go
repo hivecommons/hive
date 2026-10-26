@@ -481,7 +481,7 @@ func TestAuthRefusalOnTCPAndWithToken(t *testing.T) {
 	// The health body names the version.
 	var h api.Health
 	s.expect(http.MethodGet, api.PathHealth, nil, http.StatusOK, &h)
-	if h.Version != api.Version {
+	if h.Version != api.Version || h.StartedAt.IsZero() || h.UptimeSeconds < 0 || h.StartedAt.After(time.Now()) {
 		t.Fatalf("health = %+v", h)
 	}
 }

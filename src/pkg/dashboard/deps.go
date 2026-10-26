@@ -37,10 +37,14 @@ type Dependencies struct {
 	// AgentMgr is the agent runtime (hivecommons/hive#13536). The dashboard
 	// programs against the crux.Runtime surface, not *agent.Manager; tests that
 	// need manager-only seams unwrap it with agentManager.
-	AgentMgr  crux.Runtime
-	Governor  *governor.Governor
-	GHClient  *ghpkg.Client
-	GHAppAuth *ghpkg.AppAuth
+	AgentMgr crux.Runtime
+	// CruxRuntimeHealth reports the agent runtime's reachability for
+	// /api/health (hivecommons/hive#14138 stage 4). nil (in-process, or a
+	// test without a runtime) leaves the field out of the body.
+	CruxRuntimeHealth func() CruxRuntimeHealth
+	Governor          *governor.Governor
+	GHClient          *ghpkg.Client
+	GHAppAuth         *ghpkg.AppAuth
 	// GHTokenScopes is the boot-time PAT scope probe result (see
 	// ghpkg.CheckTokenScopes). It is set only on the token-auth path; the App
 	// path leaves it at ScopeStatusSkipped because Apps carry permissions, not

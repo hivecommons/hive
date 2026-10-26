@@ -365,6 +365,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassLabelProvisioningFailed, message: "issue stage labels: provisioning failed"},
 		{class: ClassAgentCLIRestartLoop, message: "agent CLI crashed or stuck on consent screen, restarting before kick"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
+		{class: ClassCruxRuntimeUnavailable, message: "crux runtime unavailable: crux server unreachable at /run/hive/crux.sock"},
 	}
 	seen := map[string]bool{}
 	for _, tc := range cases {

@@ -98,7 +98,8 @@ type Server struct {
 	// endpoint's reachability as `crux serve --hive-callback` sees it.
 	HiveCallback func() api.HiveCallback
 
-	now func() time.Time
+	now     func() time.Time
+	started time.Time
 
 	mu          sync.Mutex
 	subscribers map[chan api.Event]struct{}
@@ -125,6 +126,9 @@ func (s *Server) defaults() {
 	}
 	if s.now == nil {
 		s.now = time.Now
+	}
+	if s.started.IsZero() {
+		s.started = s.now()
 	}
 	if s.subscribers == nil {
 		s.subscribers = map[chan api.Event]struct{}{}
@@ -350,7 +354,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
 	background := append([]string(nil), s.background...)
 	s.mu.Unlock()
-	h := api.Health{Version: api.Version, Agents: len(s.Runtime.AllStatuses()), Background: background}
+	now := s.now()
+	h := api.Health{Version: api.Version, Agents: len(s.Runtime.AllStatuses()), Background: background, StartedAt: s.started, UptimeSeconds: now.Sub(s.started).Seconds()}
 	if s.HiveCallback != nil {
 		hc := s.HiveCallback()
 		h.HiveCallback = &hc

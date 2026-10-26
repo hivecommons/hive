@@ -438,3 +438,49 @@ func TestClientSetHTTPClientAndWaitReady(t *testing.T) {
 		t.Fatalf("wrong token wait: %v", err)
 	}
 }
+
+func TestClientStatusTracksReachability(t *testing.T) {
+	f := &fakeServer{}
+	c := startUnix(t, f, "")
+	if st := c.Status(); !st.Reachable || st.FailedCalls != 0 {
+		t.Fatalf("fresh client status = %+v, want reachable", st)
+	}
+	dead, _ := NewClient(filepath.Join(os.TempDir(), "crux-no-such.sock"), "")
+	if _, err := dead.Health(context.Background()); !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("dead Health = %v, want ErrUnreachable", err)
+	}
+	if _, err := dead.Health(context.Background()); !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("dead Health again = %v", err)
+	}
+	st := dead.Status()
+	if st.Reachable || st.FailedCalls != 2 || st.Since.IsZero() || !strings.Contains(st.LastError, "crux-no-such.sock") {
+		t.Fatalf("dead status = %+v", st)
+	}
+	// Streams record the same way.
+	if err := dead.Events(context.Background(), func(Event) error { return nil }); !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("dead Events = %v", err)
+	}
+	if st := dead.Status(); st.FailedCalls != 3 {
+		t.Fatalf("stream failure not counted: %+v", st)
+	}
+	// A caller cancelling its own context is not a reachability signal.
+	cctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.Health(cctx); err == nil {
+		t.Fatal("cancelled ctx must fail")
+	}
+	if st := c.Status(); !st.Reachable {
+		t.Fatalf("cancelled call flipped status: %+v", st)
+	}
+	// Protocol errors from a live server are not transport failures.
+	if _, err := startUnix(t, &fakeServer{token: "t"}, "bad").Health(context.Background()); !IsUnauthorized(err) {
+		t.Fatalf("want unauthorized, got %v", err)
+	}
+	// Success resets.
+	if _, err := c.Health(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st := c.Status(); !st.Reachable || st.LastSuccess.IsZero() || st.LastError != "" {
+		t.Fatalf("status after success = %+v", st)
+	}
+}

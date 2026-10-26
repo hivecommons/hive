@@ -1445,8 +1445,9 @@ func (b *boot) wireBootClosures() {
 			auditJournal = boundary.Executor.Journal
 		}
 		return &dashboard.Dependencies{
-			Config:   b.cfg,
-			AgentMgr: b.agentMgr,
+			Config:            b.cfg,
+			AgentMgr:          b.agentMgr,
+			CruxRuntimeHealth: cruxRuntimeHealthFunc(b.cruxSupervision),
 			// Provider gateways (#5565 slice 3): concrete openrouter/watsonx/
 			// linearagent adapters behind the dashboard's consumer-defined
 			// interfaces — this composition root is the only non-test place that
@@ -2189,6 +2190,13 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			b.logger.Error("hive callback endpoint unavailable", "error", err)
 			deps.exit(1)
 			return
+		}
+		// Stage 4: spawn/supervise `crux serve` (CRUX_SUPERVISE=child) and
+		// keep the crux_runtime_unavailable condition in step with the
+		// socket. The callback endpoint is up first so a child's first
+		// capability call lands.
+		if b.cruxSupervision = newCruxRuntimeSupervision(rtCfg, b.agentMgr, b.logger); b.cruxSupervision != nil {
+			deps.superviseRuntime(b.ctx, b.cruxSupervision)
 		}
 	}
 	// The runtime's spans go through pkg/tracing so they carry the hive

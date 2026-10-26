@@ -3041,7 +3041,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"status": "starting"})
 		return
 	}
-	jsonResponse(w, map[string]string{"status": "ok"})
+	body := map[string]any{"status": "ok"}
+	if s.deps != nil && s.deps.CruxRuntimeHealth != nil {
+		rt := s.deps.CruxRuntimeHealth()
+		body["crux_runtime"] = rt
+		if !rt.Reachable {
+			body["status"] = "degraded"
+		}
+	}
+	jsonResponse(w, body)
 }
 
 const (

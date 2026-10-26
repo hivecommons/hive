@@ -32,6 +32,40 @@ const (
 // DefaultMode is the mode an empty RuntimeConfig resolves to.
 const DefaultMode = ModeInProcess
 
+// Supervision says who keeps the sidecar's `crux serve` process alive
+// (hivecommons/hive#14138 stage 4).
+type Supervision string
+
+const (
+	// SuperviseChild: the host spawns `crux serve` itself, waits for its
+	// health route, and restarts it with backoff when it exits. The
+	// default for ModeSidecar.
+	SuperviseChild Supervision = "child"
+	// SuperviseExternal: something else (systemd, a pod sidecar container)
+	// runs `crux serve`; the host only reconnects.
+	SuperviseExternal Supervision = "external"
+
+	// SuperviseEnvVar selects the Supervision; empty means SuperviseChild.
+	SuperviseEnvVar = "CRUX_SUPERVISE"
+	// BinaryEnvVar names the `crux` executable SuperviseChild spawns;
+	// empty means DefaultBinary looked up on PATH.
+	BinaryEnvVar = "CRUX_BINARY"
+	// DefaultBinary is the executable name SuperviseChild looks up.
+	DefaultBinary = "crux"
+)
+
+// ParseSupervision normalises s to a Supervision; empty is SuperviseChild.
+func ParseSupervision(s string) (Supervision, error) {
+	switch v := Supervision(strings.ToLower(strings.TrimSpace(s))); v {
+	case "":
+		return SuperviseChild, nil
+	case SuperviseChild, SuperviseExternal:
+		return v, nil
+	default:
+		return "", fmt.Errorf("unknown crux supervision %q (want %s or %s)", s, SuperviseChild, SuperviseExternal)
+	}
+}
+
 // Modes lists the recognised modes, in documentation order.
 func Modes() []Mode { return []Mode{ModeInProcess, ModeSidecar} }
 
@@ -68,6 +102,12 @@ type RuntimeConfig struct {
 	Server string
 	// Token is the bearer token for Server. Ignored in-process.
 	Token string
+	// Supervise says whether the host spawns `crux serve` (SuperviseChild,
+	// the default) or expects it run externally. Ignored in-process.
+	Supervise Supervision
+	// Binary is the `crux` executable SuperviseChild spawns; empty means
+	// DefaultBinary on PATH. Ignored in-process and under SuperviseExternal.
+	Binary string
 }
 
 // Validate applies the defaults and rejects an unknown mode. It is the one
@@ -82,16 +122,26 @@ func (c *RuntimeConfig) Validate() error {
 	if c.Mode == ModeSidecar && c.Server == "" {
 		c.Server = DefaultServeSocket()
 	}
+	sv, err := ParseSupervision(string(c.Supervise))
+	if err != nil {
+		return err
+	}
+	c.Supervise = sv
+	if c.Binary == "" {
+		c.Binary = DefaultBinary
+	}
 	return nil
 }
 
-// RuntimeConfigFromEnv reads ModeEnvVar, ServerEnvVar and ServeTokenEnvVar.
-// It does not validate; callers pass the result to crux/runtime.New, which
-// does.
+// RuntimeConfigFromEnv reads ModeEnvVar, ServerEnvVar, ServeTokenEnvVar,
+// SuperviseEnvVar and BinaryEnvVar. It does not validate; callers pass the
+// result to crux/runtime.New, which does.
 func RuntimeConfigFromEnv() RuntimeConfig {
 	return RuntimeConfig{
-		Mode:   Mode(os.Getenv(ModeEnvVar)),
-		Server: os.Getenv(ServerEnvVar),
-		Token:  os.Getenv(ServeTokenEnvVar),
+		Mode:      Mode(os.Getenv(ModeEnvVar)),
+		Server:    os.Getenv(ServerEnvVar),
+		Token:     os.Getenv(ServeTokenEnvVar),
+		Supervise: Supervision(os.Getenv(SuperviseEnvVar)),
+		Binary:    os.Getenv(BinaryEnvVar),
 	}
 }

@@ -31,6 +31,9 @@ import (
 type bootAgentsFake struct {
 	deps bootAgentsDeps
 	log  bytes.Buffer
+	// supervised is the sidecar supervision bootAgentsWith handed to the
+	// superviseRuntime seam; nil in-process.
+	supervised *cruxRuntimeSupervision
 
 	// relayMu guards the relay/sweep fields: since #9621 the relay
 	// supervisor starts them on its own goroutine. sweepStarted receives once
@@ -80,8 +83,9 @@ func newBootAgentsFake() *bootAgentsFake {
 		startPermissionsWatcher: func(*slog.Logger) { f.permWatcherRuns++ },
 		// Construction is pure, so the real in-process runtime is used: the
 		// tests assert on the wiring installed on it.
-		newRuntime: newHostedRuntime,
-		exit:       func(code int) { f.exitCodes = append(f.exitCodes, code) },
+		newRuntime:       newHostedRuntime,
+		superviseRuntime: func(_ context.Context, s *cruxRuntimeSupervision) { f.supervised = s },
+		exit:             func(code int) { f.exitCodes = append(f.exitCodes, code) },
 	}
 	return f
 }
@@ -283,7 +287,7 @@ func TestDefaultBootAgentsDeps_IsFullyWired(t *testing.T) {
 	d := defaultBootAgentsDeps()
 	if d.startAgentLoops == nil || d.prepareRequestDirs == nil || d.startTokenAccessAudit == nil ||
 		d.startRequestRelays == nil || d.startSelfAuthoredSweep == nil || d.buildMinter == nil ||
-		d.startPermissionsWatcher == nil {
+		d.startPermissionsWatcher == nil || d.superviseRuntime == nil {
 		t.Fatal("defaultBootAgentsDeps left a seam nil; production boot would panic")
 	}
 	// buildMinter's adapter must not smuggle a typed-nil pointer into the

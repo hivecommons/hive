@@ -2,6 +2,14 @@ package crux
 
 import "errors"
 
+// ErrRuntimeUnavailable marks a Runtime call that could not reach the
+// runtime at all (a sidecar whose `crux serve` is gone), as opposed to one
+// the runtime answered with an error. The in-process runtime never returns
+// it. A kick that fails with it was REFUSED, not queued: the host's governor
+// re-evaluates on its next tick and the kick is re-derived from current
+// state rather than replayed stale (hivecommons/hive#14138 stage 4).
+var ErrRuntimeUnavailable = errors.New("crux runtime unavailable")
+
 // ErrGitHubAppNotInstalled means a token mint was asked for while the GitHub
 // App has no installation ID (installation_id 0). It is a static operator
 // configuration condition, not a transient failure; pkg/github aliases it as
@@ -32,4 +40,8 @@ const (
 	ClassAgentStall               = "agent_stall"
 	ClassAgentCrashLoop           = "agent_crash_loop"
 	ClassCIPollNudge              = "ci_poll_nudge"
+	// ClassRuntimeUnavailable is raised by the HOST, not the runtime: a
+	// sidecar host whose runtime API stopped answering (hivecommons/hive#14138
+	// stage 4). The runtime cannot report its own absence.
+	ClassRuntimeUnavailable = "crux_runtime_unavailable"
 )

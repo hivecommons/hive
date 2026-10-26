@@ -74,14 +74,32 @@ func TestRuntimeConfigValidate(t *testing.T) {
 	if err := bad.Validate(); err == nil {
 		t.Fatal("unknown mode must fail Validate")
 	}
+	if explicit.Supervise != SuperviseChild || explicit.Binary != DefaultBinary {
+		t.Fatalf("supervision defaults = %q %q, want child/crux", explicit.Supervise, explicit.Binary)
+	}
+	ext := RuntimeConfig{Mode: ModeSidecar, Server: "127.0.0.1:9", Supervise: " External ", Binary: "/opt/crux"}
+	if err := ext.Validate(); err != nil || ext.Supervise != SuperviseExternal || ext.Binary != "/opt/crux" {
+		t.Fatalf("explicit supervision = %+v, %v", ext, err)
+	}
+	badSv := RuntimeConfig{Supervise: "systemd"}
+	if err := badSv.Validate(); err == nil || !strings.Contains(err.Error(), "systemd") {
+		t.Fatalf("unknown supervision = %v", err)
+	}
+	for _, s := range []string{"", "child", "CHILD ", "external"} {
+		if _, err := ParseSupervision(s); err != nil {
+			t.Errorf("ParseSupervision(%q) = %v", s, err)
+		}
+	}
 }
 
 func TestRuntimeConfigFromEnv(t *testing.T) {
 	t.Setenv(ModeEnvVar, "sidecar")
 	t.Setenv(ServerEnvVar, "unix:///tmp/x.sock")
 	t.Setenv(ServeTokenEnvVar, "secret")
+	t.Setenv(SuperviseEnvVar, "external")
+	t.Setenv(BinaryEnvVar, "/opt/crux")
 	got := RuntimeConfigFromEnv()
-	want := RuntimeConfig{Mode: "sidecar", Server: "unix:///tmp/x.sock", Token: "secret"}
+	want := RuntimeConfig{Mode: "sidecar", Server: "unix:///tmp/x.sock", Token: "secret", Supervise: "external", Binary: "/opt/crux"}
 	if got != want {
 		t.Fatalf("RuntimeConfigFromEnv() = %+v, want %+v", got, want)
 	}

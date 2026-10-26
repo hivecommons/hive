@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,56 @@ type Client struct {
 	addr  Address
 	token string
 	http  *http.Client
+
+	mu     sync.Mutex
+	status Status
+}
+
+// ErrUnreachable marks a call that never got an answer from the server:
+// the dial or the request failed at the transport. A host distinguishes
+// it from a route that answered with an error (*StatusError): the runtime
+// is gone, not disagreeing.
+var ErrUnreachable = errors.New("crux runtime unreachable")
+
+// Status is the client's view of the server's reachability, updated by
+// every call and stream.
+type Status struct {
+	Reachable bool
+	// LastError is the most recent transport failure, "" when Reachable.
+	LastError string
+	// Since is when the current outage began (zero when Reachable).
+	Since time.Time
+	// FailedCalls counts calls that failed at the transport during the
+	// current outage.
+	FailedCalls int
+	// LastSuccess is when the server last answered (zero if never).
+	LastSuccess time.Time
+}
+
+// Status returns the reachability as of the last call. A client that has
+// never called reports Reachable (nothing is known against it).
+func (c *Client) Status() Status {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.status
+}
+
+// observe records the outcome of one transport attempt.
+func (c *Client) observe(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if err != nil {
+		if c.status.Reachable {
+			c.status.Since = now
+			c.status.FailedCalls = 0
+		}
+		c.status.Reachable = false
+		c.status.FailedCalls++
+		c.status.LastError = err.Error()
+		return
+	}
+	c.status = Status{Reachable: true, LastSuccess: now}
 }
 
 // NewClient parses server (see ParseAddress) and returns a client that
@@ -32,7 +83,7 @@ func NewClient(server, token string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{addr: addr, token: token, http: &http.Client{}}
+	c := &Client{addr: addr, token: token, http: &http.Client{}, status: Status{Reachable: true}}
 	if addr.Network == "unix" {
 		path := addr.Path
 		c.http.Transport = &http.Transport{
@@ -208,8 +259,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("crux server %s: %w", c.addr.target(), err)
+		return c.unreachable(ctx, err)
 	}
+	c.observe(nil)
 	defer func() { _ = resp.Body.Close() }()
 	if err := checkStatus(resp); err != nil {
 		return err
@@ -232,8 +284,9 @@ func (c *Client) stream(ctx context.Context, path string, fn func(typ string, da
 	req.Header.Set("Accept", ContentTypeEvent)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("crux server %s: %w", c.addr.target(), err)
+		return c.unreachable(ctx, err)
 	}
+	c.observe(nil)
 	defer func() { _ = resp.Body.Close() }()
 	if err := checkStatus(resp); err != nil {
 		return err
@@ -245,6 +298,19 @@ func (c *Client) stream(ctx context.Context, path string, fn func(typ string, da
 		return nil
 	}
 	return err
+}
+
+// unreachable wraps a transport failure as ErrUnreachable and records it,
+// unless the caller cancelled its own context first (a cancelled caller is
+// not evidence about the server; an expired deadline is).
+func (c *Client) unreachable(ctx context.Context, err error) error {
+	wrapped := fmt.Errorf("%w: crux server %s: %w", ErrUnreachable, c.addr.target(), err)
+	// A caller that cancelled its own request learned nothing about the
+	// server; one whose deadline expired waiting on the transport did.
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		c.observe(wrapped)
+	}
+	return wrapped
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {

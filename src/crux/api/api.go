@@ -100,6 +100,11 @@ type Health struct {
 	// otherwise. The same state is the hive_callback_unavailable condition
 	// on the event stream.
 	HiveCallback *HiveCallback `json:"hive_callback,omitempty"`
+	// StartedAt is when the server started and UptimeSeconds how long ago
+	// that was at the time of the answer (#14138 stage 4): a supervisor
+	// that restarted the server sees the uptime reset.
+	StartedAt     time.Time `json:"started_at"`
+	UptimeSeconds float64   `json:"uptime_seconds"`
 }
 
 // HiveCallback is the wire form of the callback client's status.

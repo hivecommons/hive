@@ -455,6 +455,21 @@ func TestUnreachableServerAnswersZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt.Timeout = 2 * time.Second
+	// Writes with an error return refuse with crux.ErrRuntimeUnavailable
+	// (hivecommons/hive#14138 stage 4: kicks are not queued) and the
+	// client's Status says the runtime is gone.
+	if err := rt.SendKick("a", "m"); !errors.Is(err, crux.ErrRuntimeUnavailable) || !errors.Is(err, api.ErrUnreachable) {
+		t.Fatalf("SendKick on dead runtime = %v", err)
+	}
+	if st := rt.Status(); st.Reachable || st.FailedCalls == 0 || st.LastError == "" {
+		t.Fatalf("Status after failures = %+v", st)
+	}
+	if err := rt.Stop("a"); !errors.Is(err, crux.ErrRuntimeUnavailable) {
+		t.Fatalf("Stop = %v", err)
+	}
+	if err := rt.Resume(context.Background(), "a", "t", "r"); !errors.Is(err, crux.ErrRuntimeUnavailable) {
+		t.Fatalf("Resume = %v", err)
+	}
 	if rt.IsPaused("a") || rt.AllStatuses() != nil || rt.ResolveAgent("a") != "a" || rt.FullLogHeader("a") != "" {
 		t.Error("observer reads must be zero")
 	}

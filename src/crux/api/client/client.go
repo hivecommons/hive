@@ -101,13 +101,25 @@ func (r *Runtime) logger() *slog.Logger {
 func (r *Runtime) call(method, path string, in, out any) error {
 	ctx, cancel := r.ctx()
 	defer cancel()
-	return r.c.Do(ctx, method, path, in, out)
+	return unavailable(r.c.Do(ctx, method, path, in, out))
 }
 
 // callCtx is one request under the caller's context.
 func (r *Runtime) callCtx(ctx context.Context, method, path string, in, out any) error {
-	return r.c.Do(ctx, method, path, in, out)
+	return unavailable(r.c.Do(ctx, method, path, in, out))
 }
+
+// unavailable marks a transport failure as crux.ErrRuntimeUnavailable so a
+// host that only knows crux can tell "runtime gone" from "runtime said no".
+func unavailable(err error) error {
+	if err != nil && errors.Is(err, api.ErrUnreachable) {
+		return fmt.Errorf("%w: %w", crux.ErrRuntimeUnavailable, err)
+	}
+	return err
+}
+
+// Status is the server's reachability as of the last call.
+func (r *Runtime) Status() api.Status { return r.c.Status() }
 
 // drop logs a failed write whose method has no error return.
 func (r *Runtime) drop(method string, err error, attrs ...any) {

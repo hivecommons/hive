@@ -267,6 +267,9 @@ type boot struct {
 	// read and sweepTrigger their webhook trigger over it (#13377).
 	forgeView    *github.ForgeStateView
 	sweepTrigger *automerge.SweepTrigger
+	// cruxSupervision is the sidecar runtime's child supervisor and probe
+	// loop (hivecommons/hive#14138 stage 4); nil in-process.
+	cruxSupervision *cruxRuntimeSupervision
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

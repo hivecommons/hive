@@ -56,6 +56,10 @@ type bootAgentsDeps struct {
 	// over the callback endpoint (crux/api/callback). Only called when
 	// CRUX_MODE=sidecar; fakes record the capability set.
 	startHiveCallback func(ctx context.Context, caps callback.Capabilities, logger *slog.Logger) error
+	// superviseRuntime starts the sidecar's child supervisor and probe
+	// loop (agent_runtime_supervise.go; hivecommons/hive#14138 stage 4).
+	// Only called when CRUX_MODE=sidecar; fakes record it.
+	superviseRuntime func(ctx context.Context, s *cruxRuntimeSupervision)
 	// exit terminates the process when no runtime can be built. os.Exit in
 	// production; fakes record it.
 	exit func(code int)
@@ -120,6 +124,7 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 		startPermissionsWatcher: func(logger *slog.Logger) { go cruxruntime.StartPermissionsWatcher(logger) },
 		newRuntime:              newHostedRuntime,
 		startHiveCallback:       startHiveCallback,
+		superviseRuntime:        func(ctx context.Context, s *cruxRuntimeSupervision) { s.start(ctx) },
 		exit:                    os.Exit,
 	}
 }
