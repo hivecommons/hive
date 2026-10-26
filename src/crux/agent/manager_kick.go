@@ -1327,8 +1327,11 @@ const (
 	// have run before the nudge is also self-reported to the fleet (#13863).
 	// A lone poll past the wall clock is a normal post-push check: the agent
 	// is still nudged in-session, but the fleet only hears about repeated
-	// polling.
-	ciPollReportMinPolls = 2
+	// polling. The kick text allows up to two status checks on the same run
+	// (e.g. diagnosing a failed check), so two polls followed by stopping is
+	// permitted behaviour, not a loop; report from 3, matching
+	// ciPollNudgeThreshold (#14327).
+	ciPollReportMinPolls = 3
 	ciPollNudgeMessage   = "Stop polling CI. Do not run gh run watch/view, gh pr checks, or gh pr view --json statusCheckRollup again this turn: leave the PR as is and move to the next work-list item. The automerge sweep handles green PRs."
 )
 
