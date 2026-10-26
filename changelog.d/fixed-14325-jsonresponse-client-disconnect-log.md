@@ -1,0 +1,1 @@
+- The dashboard's `jsonResponse`/`jsonError` no longer log a WARN when the client went away mid-response (broken pipe, connection reset, cancelled request, handler timeout); those are logged at DEBUG, and WARN is kept for genuine encode failures ([#14325](https://github.com/hivecommons/hive/issues/14325)).

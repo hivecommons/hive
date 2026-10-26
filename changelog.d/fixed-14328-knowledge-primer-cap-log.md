@@ -1,0 +1,1 @@
+- The knowledge primer's "dropped facts over the byte cap" notice is now logged at INFO once per agent and cap (again only when the omitted fact count changes) and at DEBUG otherwise, instead of at WARN on every kick; the fleet self-report classifier already treats it as benign ([#14328](https://github.com/hivecommons/hive/issues/14328)).

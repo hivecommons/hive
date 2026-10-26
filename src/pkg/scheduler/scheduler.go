@@ -21,6 +21,7 @@ type Scheduler struct {
 	inception            *knowledge.InceptionEngine
 	lastActionable       *github.ActionableResult
 	logger               *slog.Logger
+	primerCapLogged      sync.Map // agent|cap_bytes -> omitted fact count last logged at INFO
 	promptResolver       *promptsrc.Resolver
 	auditFunc            AuditFunc
 	advisoryFunc         AdvisoryFunc
