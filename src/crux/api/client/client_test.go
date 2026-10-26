@@ -16,6 +16,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api"
+	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/crux/serve"
@@ -76,6 +77,73 @@ func TestParityInterfaceVersusRouteTable(t *testing.T) {
 		if _, ok := rtType.MethodByName(m); !ok {
 			t.Errorf("*client.Runtime lacks %s", m)
 		}
+	}
+}
+
+// TestParityHostVersusSetterTable holds crux.Host and api.HostSetters to
+// each other: every setter has a disposition (route | callback | event |
+// config | in-process-only) and every row names a setter. Callback rows
+// must name a callback endpoint route the callback package registers
+// (or one the stage-4 credential-writer PR is about to), event rows an
+// event type the runtime emits.
+func TestParityHostVersusSetterTable(t *testing.T) {
+	typ := reflect.TypeOf((*crux.Host)(nil)).Elem()
+	setters := map[string]bool{}
+	for i := 0; i < typ.NumMethod(); i++ {
+		name := typ.Method(i).Name
+		if !strings.HasPrefix(name, "Set") {
+			continue
+		}
+		setters[name] = true
+		if _, ok := api.HostSetters[name]; !ok {
+			t.Errorf("crux.Host.%s has no entry in api.HostSetters: say how a sidecar runtime is served", name)
+		}
+	}
+	callbackPaths := map[string]bool{
+		callback.PathTokens: true, callback.PathPolicy: true, callback.PathRepoAutoMerge: true,
+		callback.PathLinearCredential: true, callback.PathPulls: true, callback.PathConditions: true,
+		callback.PathInferenceRoutes + "/{agent}": true, callback.PathEffects: true, callback.PathEffects + "/{id}/end": true,
+		// Stage-4 credential writers (hivecommons/hive#14138) add these;
+		// their PR replaces the literals with the callback constants.
+		"/v1/tokens/mint": true, "/v1/bob/credential": true,
+	}
+	events := map[string]bool{api.EventKickOutcome: true, api.EventPauseTransition: true, api.EventRelaunch: true, api.EventPausePersist: true, api.EventPrompt: true, api.EventSandboxAudit: true, api.EventAudit: true, api.EventCondition: true}
+	for name, row := range api.HostSetters {
+		if !setters[name] {
+			t.Errorf("api.HostSetters[%q] names no crux.Host setter", name)
+		}
+		if row.Via == "" {
+			t.Errorf("api.HostSetters[%q] has no Via", name)
+		}
+		switch row.Kind {
+		case api.HostSetterCallback:
+			for _, part := range strings.Split(row.Via, ", ") {
+				fields := strings.Fields(part)
+				if len(fields) != 2 || !callbackPaths[fields[1]] {
+					t.Errorf("api.HostSetters[%q] names unknown callback route %q", name, part)
+				}
+			}
+		case api.HostSetterEvent:
+			if !events[strings.Split(row.Via, ",")[0]] {
+				t.Errorf("api.HostSetters[%q] names unknown event %q", name, row.Via)
+			}
+		case api.HostSetterRoute:
+			found := false
+			for _, r := range api.RuntimeRoutes {
+				if r.Method+" "+r.Path == row.Via {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("api.HostSetters[%q] names unknown runtime route %q", name, row.Via)
+			}
+		case api.HostSetterConfig, api.HostSetterInProcessOnly:
+		default:
+			t.Errorf("api.HostSetters[%q] has unknown kind %q", name, row.Kind)
+		}
+	}
+	if api.HostSetters["SetSpanStarter"].Kind != api.HostSetterInProcessOnly {
+		t.Error("SetSpanStarter is the one in-process-only setter")
 	}
 }
 

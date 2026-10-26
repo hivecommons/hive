@@ -30,6 +30,10 @@
 //	POST /v1/pulls                  open a pull request as the hive's App
 //	GET  /v1/policy                 the host policy snapshot (stage 4)
 //	POST /v1/policy/repo-auto-merge whether auto-merge is enabled for a repo
+//	PUT  /v1/inference/routes/{agent}    route an agent's inference traffic (stage 4)
+//	DELETE /v1/inference/routes/{agent}  clear that route
+//	POST /v1/effects                begin a journaled external mutation (stage 4)
+//	POST /v1/effects/{id}/end       report how it ended
 package callback
 
 import (
@@ -37,6 +41,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -59,7 +64,19 @@ const (
 	PathPulls            = "/" + Version + "/pulls"
 	PathPolicy           = "/" + Version + "/policy"
 	PathRepoAutoMerge    = "/" + Version + "/policy/repo-auto-merge"
+	PathInferenceRoutes  = "/" + Version + "/inference/routes"
+	PathEffects          = "/" + Version + "/effects"
 )
+
+// InferenceRoutePath is the route for one agent's inference route.
+func InferenceRoutePath(agent string) string {
+	return PathInferenceRoutes + "/" + url.PathEscape(agent)
+}
+
+// EffectEndPath is the route that ends the effect begun as id.
+func EffectEndPath(id string) string {
+	return PathEffects + "/" + url.PathEscape(id) + "/end"
+}
 
 // Environment variables.
 const (
@@ -104,6 +121,13 @@ const (
 	CodeUpstream = "upstream_error"
 	// CodeHive is an unexpected hive-side failure.
 	CodeHive = "hive_error"
+	// CodeEffectDenied is POST /v1/effects refused by hive's mutation
+	// boundary (the fence or the journal said no); the runtime maps it to
+	// effects.ErrDenied.
+	CodeEffectDenied = "effect_denied"
+	// CodeEffectUnknown is an end for an id hive is not holding: it was
+	// never begun, or already ended, or hive restarted in between.
+	CodeEffectUnknown = "effect_unknown"
 )
 
 // ConditionClassUnavailable is the runtime condition class reserved for
@@ -126,6 +150,10 @@ var (
 	ErrUnauthorized = errors.New("hive callback endpoint rejected the bearer token")
 	// ErrNotConfigured wraps a 404 CodeNotConfigured.
 	ErrNotConfigured = errors.New("capability not configured on this hive")
+	// ErrEffectDenied wraps a 403 CodeEffectDenied.
+	ErrEffectDenied = errors.New("hive mutation boundary denied the effect")
+	// ErrEffectUnknown wraps a 404 CodeEffectUnknown.
+	ErrEffectUnknown = errors.New("hive is not holding that effect")
 )
 
 // DefaultSocket is the socket path hive and the runtime agree on when
@@ -169,6 +197,12 @@ const (
 	// CapabilityPolicy covers both policy routes. It is served only by a
 	// Capabilities that also implements PolicySource.
 	CapabilityPolicy = "policy"
+	// CapabilityInferenceRoutes covers the inference route routes; served
+	// only by a Capabilities that also implements InferenceRouter.
+	CapabilityInferenceRoutes = "inference_routes"
+	// CapabilityEffects covers the effect routes; served only by a
+	// Capabilities that also implements EffectBoundary.
+	CapabilityEffects = "effects"
 )
 
 // MintTokenRequest is the body of POST /v1/tokens. Tier is the permission
@@ -459,4 +493,68 @@ type RepoAutoMergeResponse struct {
 type PolicySource interface {
 	Policy(ctx context.Context) (Policy, error)
 	RepoAutoMergeEnabled(ctx context.Context, repo string) (bool, error)
+}
+
+// InferenceRoute is the body of PUT /v1/inference/routes/{agent}: the
+// backend and model the manager resolved for the agent at launch, which
+// hive's inference proxy turns into the upstream it forwards that agent's
+// API traffic to (the in-process SetInferenceCallbacks setRoute arguments).
+type InferenceRoute struct {
+	Backend string `json:"backend"`
+	Model   string `json:"model"`
+}
+
+// InferenceRouter is the inference-route half of the callback contract,
+// optional like PolicySource: the server answers the routes only when its
+// Caps implements it; *Client always does. Set replaces the agent's route;
+// Clear removes it (the clearRoute callback).
+type InferenceRouter interface {
+	SetInferenceRoute(ctx context.Context, agent string, route InferenceRoute) error
+	ClearInferenceRoute(ctx context.Context, agent string) error
+}
+
+// EffectClaim is the body of POST /v1/effects: the fields of effects.Claim.
+// The runtime is about to perform one external mutation (today: a sandbox
+// branch push) and asks hive's mutation boundary to journal it, exactly as
+// an in-process SetSandboxMutationBoundary would wrap it.
+type EffectClaim struct {
+	Repo   string            `json:"repo"`
+	Kind   string            `json:"kind"`
+	Target string            `json:"target"`
+	Actor  string            `json:"actor,omitempty"`
+	Inputs map[string]string `json:"inputs,omitempty"`
+}
+
+// BeginEffectResponse is the body of a successful POST /v1/effects: hive
+// admitted the effect and is holding the claim until EffectEndPath(ID) is
+// called. A denial is 403 CodeEffectDenied, not a body.
+type BeginEffectResponse struct {
+	ID string `json:"id"`
+}
+
+// EndEffectRequest is the body of POST /v1/effects/{id}/end: the result of
+// the runtime-side effect. Error is the effect's own error text, "" when it
+// succeeded; hive journals it and releases the claim.
+type EndEffectRequest struct {
+	Provenance string `json:"provenance,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// EndEffectResponse is the body of a successful end: what hive's boundary
+// returned around the effect. Error is non-empty when the boundary itself
+// failed after the effect ran (the journal could not record it); the
+// runtime surfaces it like the in-process boundary's return.
+type EndEffectResponse struct {
+	Provenance string `json:"provenance,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// EffectBoundary is the mutation-boundary half of the contract, optional
+// like PolicySource. Begin blocks until hive's boundary has admitted or
+// denied the claim; End delivers the effect's outcome and returns the
+// boundary's. A runtime that begins and never ends (it died) leaves hive to
+// time the claim out on its own TTL.
+type EffectBoundary interface {
+	BeginEffect(ctx context.Context, claim EffectClaim) (BeginEffectResponse, error)
+	EndEffect(ctx context.Context, id string, req EndEffectRequest) (EndEffectResponse, error)
 }

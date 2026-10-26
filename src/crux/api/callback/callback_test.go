@@ -47,6 +47,10 @@ type fakeCaps struct {
 	blocked bool
 	policy  Policy
 	merge   []string
+	routes  map[string]InferenceRoute
+	effects []EffectClaim
+	ends    map[string]EndEffectRequest
+	deny    bool
 }
 
 func (f *fakeCaps) Configured(c string) bool { return !f.absent[c] }
@@ -140,9 +144,57 @@ func (f *fakeCaps) RepoAutoMergeEnabled(_ context.Context, repo string) (bool, e
 	return repo == "o/merge", f.fail
 }
 
+func (f *fakeCaps) SetInferenceRoute(_ context.Context, agent string, route InferenceRoute) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.routes == nil {
+		f.routes = map[string]InferenceRoute{}
+	}
+	f.routes[agent] = route
+	return f.fail
+}
+
+func (f *fakeCaps) ClearInferenceRoute(_ context.Context, agent string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.routes, agent)
+	return f.fail
+}
+
+func (f *fakeCaps) BeginEffect(_ context.Context, claim EffectClaim) (BeginEffectResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.effects = append(f.effects, claim)
+	if f.fail != nil {
+		return BeginEffectResponse{}, f.fail
+	}
+	if f.deny {
+		return BeginEffectResponse{}, fmt.Errorf("%w: fence held by other", ErrEffectDenied)
+	}
+	return BeginEffectResponse{ID: fmt.Sprintf("e%d", len(f.effects))}, nil
+}
+
+func (f *fakeCaps) EndEffect(_ context.Context, id string, req EndEffectRequest) (EndEffectResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return EndEffectResponse{}, f.fail
+	}
+	if id != "e1" {
+		return EndEffectResponse{}, ErrEffectUnknown
+	}
+	if f.ends == nil {
+		f.ends = map[string]EndEffectRequest{}
+	}
+	f.ends[id] = req
+	return EndEffectResponse{Provenance: req.Provenance, Error: req.Error}, nil
+}
+
 var (
-	_ Capabilities = (*fakeCaps)(nil)
-	_ PolicySource = (*fakeCaps)(nil)
+	_ Capabilities    = (*fakeCaps)(nil)
+	_ PolicySource    = (*fakeCaps)(nil)
+	_ InferenceRouter = (*fakeCaps)(nil)
+	_ EffectBoundary  = (*fakeCaps)(nil)
 )
 
 // shortSocketDir returns a private directory whose socket paths fit in
@@ -814,22 +866,107 @@ func TestNotConfiguredSentinelStringAndCodes(t *testing.T) {
 }
 
 // bareCaps has no Configured method: the server assumes every capability
-// except policy, which also needs a PolicySource.
+// except the optional-interface ones (policy, inference routes, effects).
 type bareCaps struct{ Capabilities }
 
 func TestCapabilitiesWithoutConfiguredHaveAll(t *testing.T) {
 	c, _ := serveUnix(t, NewServer(bareCaps{&fakeCaps{}}, ""), "")
 	h, err := c.Health(context.Background())
-	if err != nil || len(h.Capabilities) != len(allCapabilities)-1 {
+	if err != nil || len(h.Capabilities) != len(allCapabilities)-3 {
 		t.Errorf("health = %+v, %v", h, err)
 	}
 	for _, name := range h.Capabilities {
-		if name == CapabilityPolicy {
-			t.Errorf("health lists policy for a Capabilities without PolicySource")
+		if name == CapabilityPolicy || name == CapabilityInferenceRoutes || name == CapabilityEffects {
+			t.Errorf("health lists %s for a Capabilities without the optional interface", name)
 		}
 	}
-	if _, err := c.Policy(context.Background()); !errors.Is(err, ErrNotConfigured) {
+	ctx := context.Background()
+	if _, err := c.Policy(ctx); !errors.Is(err, ErrNotConfigured) {
 		t.Errorf("Policy without PolicySource = %v, want ErrNotConfigured", err)
+	}
+	if err := c.SetInferenceRoute(ctx, "a", InferenceRoute{Backend: "litellm"}); !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("SetInferenceRoute without InferenceRouter = %v, want ErrNotConfigured", err)
+	}
+	if _, err := c.BeginEffect(ctx, EffectClaim{Repo: "o/r", Kind: "k", Target: "t"}); !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("BeginEffect without EffectBoundary = %v, want ErrNotConfigured", err)
+	}
+}
+
+// The inference route routes carry the per-agent route to hive's proxy and
+// validate the agent and backend.
+func TestInferenceRouteRoutes(t *testing.T) {
+	caps := &fakeCaps{}
+	c, _ := serveUnix(t, NewServer(caps, ""), "")
+	ctx := context.Background()
+	if err := c.SetInferenceRoute(ctx, "agent one", InferenceRoute{Backend: "litellm", Model: "gpt"}); err != nil {
+		t.Fatal(err)
+	}
+	caps.mu.Lock()
+	got := caps.routes["agent one"]
+	caps.mu.Unlock()
+	if got != (InferenceRoute{Backend: "litellm", Model: "gpt"}) {
+		t.Fatalf("route = %+v", got)
+	}
+	if err := c.SetInferenceRoute(ctx, "a", InferenceRoute{}); err == nil || errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("SetInferenceRoute without backend = %v, want bad request", err)
+	}
+	if err := c.ClearInferenceRoute(ctx, "agent one"); err != nil {
+		t.Fatal(err)
+	}
+	caps.mu.Lock()
+	_, still := caps.routes["agent one"]
+	caps.mu.Unlock()
+	if still {
+		t.Fatal("route not cleared")
+	}
+	caps.fail = errors.New("proxy down")
+	if err := c.ClearInferenceRoute(ctx, "a"); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("failing clear = %v, want ErrUnavailable (502 upstream)", err)
+	}
+}
+
+// The effect routes begin and end a journaled mutation; a denial is
+// ErrEffectDenied, an unknown id ErrEffectUnknown.
+func TestEffectRoutes(t *testing.T) {
+	caps := &fakeCaps{}
+	c, _ := serveUnix(t, NewServer(caps, ""), "")
+	ctx := context.Background()
+	claim := EffectClaim{Repo: "o/r", Kind: "branch_push", Target: "feat", Actor: "agent", Inputs: map[string]string{"commit": "abc"}}
+	begun, err := c.BeginEffect(ctx, claim)
+	if err != nil || begun.ID != "e1" {
+		t.Fatalf("BeginEffect = %+v, %v", begun, err)
+	}
+	caps.mu.Lock()
+	gotClaim := caps.effects[0]
+	caps.mu.Unlock()
+	if gotClaim.Repo != claim.Repo || gotClaim.Kind != claim.Kind || gotClaim.Target != claim.Target || gotClaim.Actor != claim.Actor || gotClaim.Inputs["commit"] != "abc" {
+		t.Fatalf("claim = %+v", gotClaim)
+	}
+	ended, err := c.EndEffect(ctx, "e1", EndEffectRequest{Provenance: "abc", Error: "push failed"})
+	if err != nil || ended.Provenance != "abc" || ended.Error != "push failed" {
+		t.Fatalf("EndEffect = %+v, %v", ended, err)
+	}
+	if _, err := c.EndEffect(ctx, "nope", EndEffectRequest{}); !errors.Is(err, ErrEffectUnknown) {
+		t.Fatalf("EndEffect(unknown) = %v, want ErrEffectUnknown", err)
+	}
+	if _, err := c.BeginEffect(ctx, EffectClaim{Repo: "o/r"}); err == nil || errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("BeginEffect(incomplete) = %v, want bad request", err)
+	}
+	caps.deny = true
+	if _, err := c.BeginEffect(ctx, claim); !errors.Is(err, ErrEffectDenied) {
+		t.Fatalf("denied BeginEffect = %v, want ErrEffectDenied", err)
+	}
+	if st := c.Status(); !st.Reachable {
+		t.Fatal("a denial is hive answering, not an outage")
+	}
+	caps.deny, caps.fail = false, errors.New("journal broken")
+	if _, err := c.BeginEffect(ctx, claim); err == nil || errors.Is(err, ErrEffectDenied) || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("failing BeginEffect = %v, want ErrUnavailable (502 upstream)", err)
+	}
+	for _, p := range []string{InferenceRoutePath("a b"), EffectEndPath("x/y"), PathEffects, PathInferenceRoutes} {
+		if !strings.HasPrefix(p, "/"+Version+"/") || strings.Contains(p, " ") || strings.Contains(p, "x/y") {
+			t.Errorf("route %s is malformed", p)
+		}
 	}
 }
 

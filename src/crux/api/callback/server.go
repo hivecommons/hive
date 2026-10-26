@@ -89,6 +89,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+PathPulls, s.capability(CapabilityPulls, s.handleCreatePR))
 	mux.HandleFunc("GET "+PathPolicy, s.capability(CapabilityPolicy, s.handlePolicy))
 	mux.HandleFunc("POST "+PathRepoAutoMerge, s.capability(CapabilityPolicy, s.handleRepoAutoMerge))
+	mux.HandleFunc("PUT "+PathInferenceRoutes+"/{agent}", s.capability(CapabilityInferenceRoutes, s.handleSetInferenceRoute))
+	mux.HandleFunc("DELETE "+PathInferenceRoutes+"/{agent}", s.capability(CapabilityInferenceRoutes, s.handleClearInferenceRoute))
+	mux.HandleFunc("POST "+PathEffects, s.capability(CapabilityEffects, s.handleBeginEffect))
+	mux.HandleFunc("POST "+PathEffects+"/{id}/end", s.capability(CapabilityEffects, s.handleEndEffect))
 	return s.authenticate(mux)
 }
 
@@ -120,8 +124,17 @@ func (s *Server) configured(capability string) bool {
 	if s.Caps == nil {
 		return false
 	}
-	if capability == CapabilityPolicy {
+	switch capability {
+	case CapabilityPolicy:
 		if _, ok := s.Caps.(PolicySource); !ok {
+			return false
+		}
+	case CapabilityInferenceRoutes:
+		if _, ok := s.Caps.(InferenceRouter); !ok {
+			return false
+		}
+	case CapabilityEffects:
+		if _, ok := s.Caps.(EffectBoundary); !ok {
 			return false
 		}
 	}
@@ -145,7 +158,7 @@ func (s *Server) capability(name string, h http.HandlerFunc) http.HandlerFunc {
 var allCapabilities = []string{
 	CapabilityTokens, CapabilityGitHubREST, CapabilityUsage, CapabilityCanary,
 	CapabilityText, CapabilityConditions, CapabilityLinear, CapabilityPulls,
-	CapabilityPolicy,
+	CapabilityPolicy, CapabilityInferenceRoutes, CapabilityEffects,
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -325,6 +338,79 @@ func (s *Server) handleRepoAutoMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, r, http.StatusOK, RepoAutoMergeResponse{Enabled: enabled})
+}
+
+func (s *Server) handleSetInferenceRoute(w http.ResponseWriter, r *http.Request) {
+	agent := r.PathValue("agent")
+	var route InferenceRoute
+	if !s.readJSON(w, r, &route) {
+		return
+	}
+	if agent == "" || route.Backend == "" {
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "agent and backend are required")
+		return
+	}
+	if err := s.Caps.(InferenceRouter).SetInferenceRoute(r.Context(), agent, route); err != nil {
+		s.writeCapabilityError(w, r, "setting inference route", err)
+		return
+	}
+	s.writeNoContent(w, r)
+}
+
+func (s *Server) handleClearInferenceRoute(w http.ResponseWriter, r *http.Request) {
+	agent := r.PathValue("agent")
+	if agent == "" {
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "agent is required")
+		return
+	}
+	if err := s.Caps.(InferenceRouter).ClearInferenceRoute(r.Context(), agent); err != nil {
+		s.writeCapabilityError(w, r, "clearing inference route", err)
+		return
+	}
+	s.writeNoContent(w, r)
+}
+
+func (s *Server) handleBeginEffect(w http.ResponseWriter, r *http.Request) {
+	var claim EffectClaim
+	if !s.readJSON(w, r, &claim) {
+		return
+	}
+	if claim.Repo == "" || claim.Kind == "" || claim.Target == "" {
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "repo, kind and target are required")
+		return
+	}
+	resp, err := s.Caps.(EffectBoundary).BeginEffect(r.Context(), claim)
+	if err != nil {
+		if errors.Is(err, ErrEffectDenied) {
+			s.writeError(w, r, http.StatusForbidden, CodeEffectDenied, "beginning effect: "+err.Error())
+			return
+		}
+		s.writeCapabilityError(w, r, "beginning effect", err)
+		return
+	}
+	if resp.ID == "" {
+		s.writeError(w, r, http.StatusBadGateway, CodeUpstream, "beginning effect: boundary returned no id")
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (s *Server) handleEndEffect(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req EndEffectRequest
+	if !s.readJSON(w, r, &req) {
+		return
+	}
+	resp, err := s.Caps.(EffectBoundary).EndEffect(r.Context(), id, req)
+	if err != nil {
+		if errors.Is(err, ErrEffectUnknown) {
+			s.writeError(w, r, http.StatusNotFound, CodeEffectUnknown, "ending effect: "+err.Error())
+			return
+		}
+		s.writeCapabilityError(w, r, "ending effect", err)
+		return
+	}
+	s.writeJSON(w, r, http.StatusOK, resp)
 }
 
 // writeCapabilityError maps a Capabilities error: ErrNotConfigured → 404,

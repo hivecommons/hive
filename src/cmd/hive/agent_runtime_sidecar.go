@@ -62,6 +62,12 @@ type sidecarHost struct {
 	kickLogSource func() string
 	sandboxConfig *cruxconfig.AgentSandboxConfig
 	deadOwner     *bool
+
+	// Call-shaped setters, served to the runtime by the inference-route and
+	// effect callback families (#14138 stage 4).
+	setRoute   func(agentName, backend, model string)
+	clearRoute func(agentName string)
+	mutation   effects.Boundary
 }
 
 var _ hostedRuntime = (*sidecarHost)(nil)
@@ -255,16 +261,57 @@ func (h *sidecarHost) SetDeadSessionRecoveryOwner(ownedElsewhere bool) {
 	h.setPolicy("SetDeadSessionRecoveryOwner", func() { h.deadOwner = &ownedElsewhere })
 }
 
-// Not carried yet: the inference routes configure hive's proxy and move
-// with it; the mutation boundary and span starter wrap runtime-side calls
-// and have no serialisable form.
-func (h *sidecarHost) SetInferenceCallbacks(func(string, string, string), func(string)) {
-	h.notCarried("SetInferenceCallbacks")
+// The inference routes configure hive's proxy: the sidecar manager pushes
+// each agent's route over PUT/DELETE /v1/inference/routes/{agent} and the
+// stored closures land it in the proxy. The mutation boundary is reached
+// two-phase over POST /v1/effects; hive's journaling boundary runs here.
+func (h *sidecarHost) SetInferenceCallbacks(setRoute func(agentName, backend, model string), clearRoute func(agentName string)) {
+	h.setPolicy("SetInferenceCallbacks", func() { h.setRoute, h.clearRoute = setRoute, clearRoute })
 }
-func (h *sidecarHost) SetSandboxMutationBoundary(effects.Boundary) {
-	h.notCarried("SetSandboxMutationBoundary")
+
+func (h *sidecarHost) SetSandboxMutationBoundary(boundary effects.Boundary) {
+	h.setPolicy("SetSandboxMutationBoundary", func() { h.mutation = boundary })
 }
-func (h *sidecarHost) SetSpanStarter(crux.SpanStarter) { h.notCarried("SetSpanStarter") }
+
+// SetSpanStarter is in-process-only: a span is a Go value wrapping a call
+// in the same address space. The sidecar's manager starts its spans on the
+// OpenTelemetry global tracer (a no-op without an exporter configured in
+// the runtime's own process); trajectory events do not depend on it.
+func (h *sidecarHost) SetSpanStarter(crux.SpanStarter) { h.inProcessOnly("SetSpanStarter") }
+
+// SetInferenceRoute and ClearInferenceRoute are cruxhost.InferenceRouter:
+// the callback's end of SetInferenceCallbacks. A route that arrives before
+// boot has installed the closures is dropped and logged; the runtime's
+// periodic resync pushes it again.
+func (h *sidecarHost) SetInferenceRoute(agentName, backend, model string) {
+	h.mu.Lock()
+	fn := h.setRoute
+	h.mu.Unlock()
+	if fn == nil {
+		h.logger.Warn("sidecar runtime: inference route arrived before the proxy callbacks were installed", "agent", agentName)
+		return
+	}
+	fn(agentName, backend, model)
+}
+
+func (h *sidecarHost) ClearInferenceRoute(agentName string) {
+	h.mu.Lock()
+	fn := h.clearRoute
+	h.mu.Unlock()
+	if fn != nil {
+		fn(agentName)
+	}
+}
+
+// Execute is effects.Boundary: hive's journaling boundary once boot has
+// set it, the nil boundary (the effect runs unjournaled, as in-process)
+// before.
+func (h *sidecarHost) Execute(ctx context.Context, claim effects.Claim, effect func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	h.mu.Lock()
+	b := h.mutation
+	h.mu.Unlock()
+	return effects.Execute(ctx, b, claim, effect)
+}
 
 func (h *sidecarHost) setPolicy(setter string, store func()) {
 	h.mu.Lock()
@@ -337,6 +384,10 @@ func (h *sidecarHost) notCarried(setter string) {
 	h.note(setter, "sidecar runtime: setter not carried; the runtime runs on its own configuration (#14138 stage 4)")
 }
 
+func (h *sidecarHost) inProcessOnly(setter string) {
+	h.note(setter, "sidecar runtime: setter is in-process-only; the runtime uses its own in-process equivalent")
+}
+
 func (h *sidecarHost) note(setter, msg string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -384,6 +435,8 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 	if sh, ok := b.agentMgr.(*sidecarHost); ok {
 		deps.Policy = func() callback.Policy { return sh.policy(b.gatewayNames) }
 		deps.RepoAutoMerge = sh.repoAutoMergeEnabled
+		deps.Inference = sh
+		deps.Mutation = sh
 	}
 	return cruxhost.New(deps)
 }

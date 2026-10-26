@@ -41,6 +41,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/api/callback"
+	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
@@ -120,22 +121,37 @@ type Deps struct {
 	// Policy answers the per-repo call not_configured.
 	Policy        PolicyResolver
 	RepoAutoMerge RepoAutoMergeResolver
+	// Inference is the proxy's route table (SetInferenceCallbacks) and
+	// Mutation hive's journaling boundary (SetSandboxMutationBoundary),
+	// both #14138 stage 4; nil means the capability is absent. EffectTTL
+	// bounds a begun effect without its end (zero: DefaultEffectTTL).
+	Inference InferenceRouter
+	Mutation  effects.Boundary
+	EffectTTL time.Duration
 }
 
 // Capabilities is callback.Capabilities over Deps. It also implements
 // callback.Configured.
 type Capabilities struct {
-	deps Deps
+	deps    Deps
+	effects *EffectBroker
 }
 
 var (
-	_ callback.Capabilities = (*Capabilities)(nil)
-	_ callback.Configured   = (*Capabilities)(nil)
-	_ callback.PolicySource = (*Capabilities)(nil)
+	_ callback.Capabilities    = (*Capabilities)(nil)
+	_ callback.Configured      = (*Capabilities)(nil)
+	_ callback.PolicySource    = (*Capabilities)(nil)
+	_ callback.InferenceRouter = (*Capabilities)(nil)
+	_ callback.EffectBoundary  = (*Capabilities)(nil)
 )
 
 // New builds the capability set over deps.
-func New(deps Deps) *Capabilities { return &Capabilities{deps: deps} }
+func New(deps Deps) *Capabilities {
+	return &Capabilities{deps: deps, effects: NewEffectBroker(deps.Mutation, deps.EffectTTL)}
+}
+
+// Effects exposes the broker (for Pending in tests and health).
+func (c *Capabilities) Effects() *EffectBroker { return c.effects }
 
 // Configured reports whether the named capability has a backing Dep.
 func (c *Capabilities) Configured(capability string) bool {
@@ -158,6 +174,10 @@ func (c *Capabilities) Configured(capability string) bool {
 		return c.deps.PullRequests != nil
 	case callback.CapabilityPolicy:
 		return c.deps.Policy != nil
+	case callback.CapabilityInferenceRoutes:
+		return c.deps.Inference != nil
+	case callback.CapabilityEffects:
+		return c.deps.Mutation != nil
 	}
 	return false
 }
@@ -348,4 +368,33 @@ func (c *Capabilities) RepoAutoMergeEnabled(_ context.Context, repo string) (boo
 		return false, callback.ErrNotConfigured
 	}
 	return c.deps.RepoAutoMerge(repo), nil
+}
+
+// SetInferenceRoute is callback.InferenceRouter.SetInferenceRoute: the
+// sidecar manager's route for agent lands in hive's proxy.
+func (c *Capabilities) SetInferenceRoute(_ context.Context, agent string, route callback.InferenceRoute) error {
+	if c.deps.Inference == nil {
+		return callback.ErrNotConfigured
+	}
+	c.deps.Inference.SetInferenceRoute(agent, route.Backend, route.Model)
+	return nil
+}
+
+// ClearInferenceRoute is callback.InferenceRouter.ClearInferenceRoute.
+func (c *Capabilities) ClearInferenceRoute(_ context.Context, agent string) error {
+	if c.deps.Inference == nil {
+		return callback.ErrNotConfigured
+	}
+	c.deps.Inference.ClearInferenceRoute(agent)
+	return nil
+}
+
+// BeginEffect is callback.EffectBoundary.BeginEffect over the broker.
+func (c *Capabilities) BeginEffect(ctx context.Context, claim callback.EffectClaim) (callback.BeginEffectResponse, error) {
+	return c.effects.BeginEffect(ctx, claim)
+}
+
+// EndEffect is callback.EffectBoundary.EndEffect over the broker.
+func (c *Capabilities) EndEffect(ctx context.Context, id string, req callback.EndEffectRequest) (callback.EndEffectResponse, error) {
+	return c.effects.EndEffect(ctx, id, req)
 }

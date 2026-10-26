@@ -180,9 +180,40 @@ func (c *Client) RepoAutoMergeEnabled(ctx context.Context, repo string) (bool, e
 	return out.Enabled, err
 }
 
+// SetInferenceRoute is PUT /v1/inference/routes/{agent}.
+func (c *Client) SetInferenceRoute(ctx context.Context, agent string, route InferenceRoute) error {
+	return c.do(ctx, http.MethodPut, InferenceRoutePath(agent), route, nil)
+}
+
+// ClearInferenceRoute is DELETE /v1/inference/routes/{agent}.
+func (c *Client) ClearInferenceRoute(ctx context.Context, agent string) error {
+	return c.do(ctx, http.MethodDelete, InferenceRoutePath(agent), nil, nil)
+}
+
+// BeginEffect is POST /v1/effects.
+func (c *Client) BeginEffect(ctx context.Context, claim EffectClaim) (BeginEffectResponse, error) {
+	var out BeginEffectResponse
+	if err := c.do(ctx, http.MethodPost, PathEffects, claim, &out); err != nil {
+		return BeginEffectResponse{}, err
+	}
+	if out.ID == "" {
+		return BeginEffectResponse{}, fmt.Errorf("%w: hive returned no effect id", ErrUnavailable)
+	}
+	return out, nil
+}
+
+// EndEffect is POST /v1/effects/{id}/end.
+func (c *Client) EndEffect(ctx context.Context, id string, req EndEffectRequest) (EndEffectResponse, error) {
+	var out EndEffectResponse
+	err := c.do(ctx, http.MethodPost, EffectEndPath(id), req, &out)
+	return out, err
+}
+
 var (
-	_ Capabilities = (*Client)(nil)
-	_ PolicySource = (*Client)(nil)
+	_ Capabilities    = (*Client)(nil)
+	_ PolicySource    = (*Client)(nil)
+	_ InferenceRouter = (*Client)(nil)
+	_ EffectBoundary  = (*Client)(nil)
 )
 
 // do performs one call. Transport failures, timeouts and 5xx become
@@ -258,6 +289,10 @@ func (c *Client) checkStatus(resp *http.Response, method, path string) error {
 		return fmt.Errorf("%w: %s %s", ErrUnauthorized, method, path)
 	case resp.StatusCode == http.StatusNotFound && se.Body.Code == CodeNotConfigured:
 		return fmt.Errorf("%w: %s %s", ErrNotConfigured, method, path)
+	case resp.StatusCode == http.StatusForbidden && se.Body.Code == CodeEffectDenied:
+		return fmt.Errorf("%w: %s", ErrEffectDenied, se.Body.Error)
+	case resp.StatusCode == http.StatusNotFound && se.Body.Code == CodeEffectUnknown:
+		return fmt.Errorf("%w: %s %s", ErrEffectUnknown, method, path)
 	case resp.StatusCode >= 500:
 		return fmt.Errorf("%w: %s %s: HTTP %d %s: %w", ErrUnavailable, method, path, resp.StatusCode, se.Body.Code, se)
 	}

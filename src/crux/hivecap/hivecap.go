@@ -59,6 +59,8 @@ type Set struct {
 	PullRequest PRCreator
 	Linear      LinearCredentials
 	Policy      *Policy
+	Inference   *InferenceRoutes
+	Mutation    MutationBoundary
 }
 
 // New builds the adapters over caps. timeout bounds the calls made from
@@ -77,6 +79,8 @@ func New(caps callback.Capabilities, timeout time.Duration) *Set {
 	s.PullRequest = PRCreator{caps: caps}
 	s.Linear = LinearCredentials{caps: caps, timeout: timeout}
 	s.Policy = NewPolicy(caps, timeout)
+	s.Inference = NewInferenceRoutes(caps, timeout)
+	s.Mutation = NewMutationBoundary(caps)
 	return s
 }
 

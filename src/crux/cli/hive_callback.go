@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/hivecap"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/crux/serve"
@@ -27,6 +28,8 @@ type hiveCapTarget interface {
 	SetSandboxPRClient(agent.PRCreator)
 	SetLinearCredentialResolver(func() agent.LinearCredential)
 	SetSandboxPushMinter(pushbroker.TokenMinter)
+	SetInferenceCallbacks(setRoute func(agentName, backend, model string), clearRoute func(agentName string))
+	SetSandboxMutationBoundary(effects.Boundary)
 }
 
 // hivePolicyTarget is the subset of crux.Host policy setters the hive
@@ -134,7 +137,12 @@ func (h *hiveCallback) install(ctx context.Context, rt crux.Runtime, srv *serve.
 			return agent.LinearCredential{AccessToken: tok, APIKey: key}
 		})
 		m.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: h.set.TokenScoper("", 0)})
-		seams += ", pull requests, Linear credential, push tokens"
+		// Routes are pushed by a worker so the manager's launch path never
+		// waits on hive; the boundary fails closed when hive is away.
+		m.SetInferenceCallbacks(h.set.Inference.Set, h.set.Inference.Clear)
+		go h.set.Inference.Run(ctx, 0)
+		m.SetSandboxMutationBoundary(h.set.Mutation)
+		seams += ", pull requests, Linear credential, push tokens, inference routes, mutation boundary"
 	}
 	fmt.Fprintf(w, "hive callback %s: %s\n", addressString(h.client.Address()), seams)
 	// hive_callback_unavailable describes the callback being down, so it

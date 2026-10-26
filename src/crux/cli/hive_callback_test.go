@@ -14,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/cruxtest"
+	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/crux/serve"
 	"github.com/hivecommons/hive/crux/toolapprove"
@@ -27,6 +28,21 @@ type managerLike struct {
 	prs    agent.PRCreator
 	linear func() agent.LinearCredential
 	minter pushbroker.TokenMinter
+	route  func(agentName, backend, model string)
+	clear  func(agentName string)
+	bound  effects.Boundary
+}
+
+func (m *managerLike) SetInferenceCallbacks(set func(agentName, backend, model string), clear func(agentName string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.route, m.clear = set, clear
+}
+
+func (m *managerLike) SetSandboxMutationBoundary(b effects.Boundary) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bound = b
 }
 
 func (m *managerLike) SetSandboxPRClient(c agent.PRCreator) {
@@ -69,10 +85,10 @@ func TestServeHiveCallbackFeedsTheManagerSeams(t *testing.T) {
 	waitForSocket(t, socket)
 
 	m.mu.Lock()
-	linear, prs, minter := m.linear, m.prs, m.minter
+	linear, prs, minter, route, clear, bound := m.linear, m.prs, m.minter, m.route, m.clear, m.bound
 	m.mu.Unlock()
-	if linear == nil || prs == nil || minter == nil {
-		t.Fatalf("seams not fed: linear=%v prs=%v minter=%v", linear != nil, prs != nil, minter != nil)
+	if linear == nil || prs == nil || minter == nil || route == nil || clear == nil || bound == nil {
+		t.Fatalf("seams not fed: linear=%v prs=%v minter=%v route=%v clear=%v boundary=%v", linear != nil, prs != nil, minter != nil, route != nil, clear != nil, bound != nil)
 	}
 	if toolapprove.DefaultTextScanner() == nil {
 		t.Fatal("text scanner not installed")
@@ -100,12 +116,22 @@ func TestServeHiveCallbackFeedsTheManagerSeams(t *testing.T) {
 	if _, err := minter.MintPushToken(ctx, "repo"); err == nil {
 		t.Fatal("mint over a dead socket must fail")
 	}
+	// The route callbacks return at once even with hive away; the boundary
+	// refuses the effect rather than running it unjournaled.
+	route("a", "litellm", "m")
+	clear("a")
+	if _, err := bound.Execute(ctx, effects.Claim{Repo: "o/r", Kind: effects.KindBranchPush, Target: "b"}, func(context.Context) (effects.Result, error) {
+		t.Fatal("effect ran with hive unreachable")
+		return effects.Result{}, nil
+	}); err == nil {
+		t.Fatal("boundary over a dead socket must refuse")
+	}
 	if hc := health().HiveCallback; hc == nil || hc.Reachable || hc.LastError == "" || hc.FailedCalls < 2 || hc.Since == nil {
 		t.Fatalf("health after failed calls: %+v", hc)
 	}
 	cancel()
 	<-done
-	if !strings.Contains(h.stdout.String(), "hive callback unix://"+hiveSocket+": text scanner, conditions, pull requests, Linear credential, push tokens") {
+	if !strings.Contains(h.stdout.String(), "hive callback unix://"+hiveSocket+": text scanner, conditions, pull requests, Linear credential, push tokens, inference routes, mutation boundary") {
 		t.Fatalf("stdout = %q", h.stdout.String())
 	}
 }

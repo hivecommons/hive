@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/crux/api/callback"
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/cruxtest"
+	"github.com/hivecommons/hive/crux/effects"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 )
 
@@ -269,12 +270,65 @@ func TestSidecarHost_CapabilityAndPolicySettersLogOnce(t *testing.T) {
 	if n := strings.Count(out, "setter=SetAppAuth"); n != 1 {
 		t.Fatalf("SetAppAuth noted %d times, want once:\n%s", n, out)
 	}
-	if strings.Count(out, "served by the hive callback") != 11 {
-		t.Errorf("callback-carried setters = %d, want 11:\n%s", strings.Count(out, "served by the hive callback"), out)
+	if strings.Count(out, "served by the hive callback") != 13 {
+		t.Errorf("callback-carried setters = %d, want 13:\n%s", strings.Count(out, "served by the hive callback"), out)
 	}
-	if strings.Count(out, "not carried") != 6 {
-		t.Errorf("not-carried setters = %d, want 6:\n%s", strings.Count(out, "not carried"), out)
+	if strings.Count(out, "not carried") != 3 {
+		t.Errorf("not-carried setters = %d, want 3:\n%s", strings.Count(out, "not carried"), out)
 	}
+	if strings.Count(out, "in-process-only") != 1 || !strings.Contains(out, "setter=SetSpanStarter") {
+		t.Errorf("in-process-only setters:\n%s", out)
+	}
+}
+
+// The inference-route closures and the mutation boundary boot installs are
+// what the callback's route and effect families reach; before boot sets
+// them a route is dropped (and logged once per agent) and an effect runs
+// unjournaled, the nil boundary in-process also tolerates.
+func TestSidecarHost_InferenceRoutesAndMutationBoundary(t *testing.T) {
+	var log bytes.Buffer
+	h := newSidecarHost(newSidecarRuntimeFake(), slog.New(slog.NewTextHandler(&log, nil)))
+	ctx := context.Background()
+	h.SetInferenceRoute("a", "litellm", "m")
+	h.ClearInferenceRoute("a")
+	if !strings.Contains(log.String(), "before the proxy callbacks were installed") {
+		t.Fatalf("early route not logged:\n%s", log.String())
+	}
+	ran := 0
+	claim := effects.Claim{Repo: "o/r", Kind: effects.KindBranchPush, Target: "b"}
+	if _, err := h.Execute(ctx, claim, func(context.Context) (effects.Result, error) { ran++; return effects.Result{}, nil }); err != nil || ran != 1 {
+		t.Fatalf("effect before boundary = %v ran=%d", err, ran)
+	}
+
+	var routes []string
+	h.SetInferenceCallbacks(func(agent, backend, model string) { routes = append(routes, "set "+agent+" "+backend+" "+model) }, func(agent string) { routes = append(routes, "clear "+agent) })
+	h.SetInferenceRoute("a", "litellm", "m")
+	h.ClearInferenceRoute("a")
+	if strings.Join(routes, ";") != "set a litellm m;clear a" {
+		t.Fatalf("routes = %v", routes)
+	}
+	h.SetSandboxMutationBoundary(denyBoundary{})
+	if _, err := h.Execute(ctx, claim, func(context.Context) (effects.Result, error) { ran++; return effects.Result{}, nil }); !errors.Is(err, effects.ErrDenied) || ran != 1 {
+		t.Fatalf("effect through boundary = %v ran=%d", err, ran)
+	}
+	// Served to the runtime through the callback capability set.
+	b := &boot{agentMgr: h}
+	caps := b.hiveCallbackCapabilities()
+	if !caps.Configured(callback.CapabilityInferenceRoutes) || !caps.Configured(callback.CapabilityEffects) {
+		t.Fatal("route/effect capabilities not served from the sidecar host")
+	}
+	if err := caps.SetInferenceRoute(ctx, "b", callback.InferenceRoute{Backend: "gw"}); err != nil || routes[len(routes)-1] != "set b gw " {
+		t.Fatalf("route via caps = %v %v", err, routes)
+	}
+	if _, err := caps.BeginEffect(ctx, callback.EffectClaim{Repo: "o/r", Kind: "k", Target: "t"}); !errors.Is(err, callback.ErrEffectDenied) {
+		t.Fatalf("effect via caps = %v", err)
+	}
+}
+
+type denyBoundary struct{}
+
+func (denyBoundary) Execute(context.Context, effects.Claim, func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	return effects.Result{}, effects.ErrDenied
 }
 
 // The policy snapshot carries exactly the setters boot has called, resolved
