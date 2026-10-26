@@ -232,6 +232,48 @@ matcher does not recognise is handed to the configured chat responder with
 the agent state attached as context; without a responder the chat says what
 it does understand instead of printing the roster.
 
+### How a message is answered
+
+The server routes every message (`pkg/dashboard/api_chat_router.go`) into
+one of three paths, and never discards a message's arguments:
+
+- **Bare command** — `/agents`, `/prs`, `/beads`, `/status` with no
+  arguments (or a one-word keyword such as `agents` or `prs?`) prints the
+  deterministic summary: the agent roster, per-repo open PR counts, bead
+  counts per store, the hive health line.
+- **Deterministic argument handlers** — the `/agents` matcher above (and
+  the `/prs` filters, #14408) answer the argument vocabularies they
+  recognise without a model turn.
+- **Grounded answer** — any other command with arguments or plain-words
+  question (`/agents what should the hive do next`, `what's waiting on my
+  decision`, `which PRs have failing CI`, `what version are we on`) is answered
+  by one read-only model turn over a compact snapshot of the hive state the
+  dashboard already holds in memory: agents (state, paused/blocked reason,
+  awaiting-CI, last kick and outcome, last completed action, last error),
+  open PRs (stage labels, review state, requested reviewers, CI and failing
+  checks, mergeability, merge verdict, age), actionable issues (stage,
+  priority, assignees, age), items parked for a decision, governor mode and
+  next kick, system alerts, release/commit and the last landed upgrade. The
+  snapshot is scoped to the command's dataset (`/prs …` carries no agents),
+  capped at 40 items per list and 24 KiB overall. The model is instructed to
+  answer from the snapshot only, to say *"I don't have that data"* rather
+  than guess, to cite the agents and `owner/repo#N` items it used, and that
+  chat cannot take actions. The turn runs on the governor reviewer endpoint
+  (`governor.trajectory`, falling back to `governor.litellm`) with a 25 s
+  timeout and at most two turns in flight per dashboard; each attempt writes
+  one `chat_grounded_answer` audit line (scope, question, snapshot size,
+  outcome). Nothing on this path can mutate hive state.
+- **Fallback** — when grounding cannot run (setting off, no reviewer
+  endpoint, timeout, backend error, too many in flight) a scoped question
+  gets the command's usage naming the reason; it is never answered with the
+  bare dump. Unscoped free text falls through to the configured
+  `ChatResponder` when one exists, else the "guide agent unavailable"
+  message.
+
+**Setting.** `chat.grounded_answers.enabled` (default **true**) gates the
+grounded path hive-wide; `chat.grounded_answers.model` overrides the reviewer
+model for the grounding turn. See [operator-reference.md](operator-reference.md).
+
 Markdown is rendered from escaped input only: bold, inline code, code fences,
 links, GitHub-style `@mentions`, and `#issue` / `owner/repo#N` references are
 decorated after escaping. Repeated or long `Status heartbeat` output is folded

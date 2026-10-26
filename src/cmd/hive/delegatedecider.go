@@ -23,6 +23,9 @@ import (
 type delegateDeciderRunner struct {
 	cfg  func() *config.Config
 	http *http.Client
+	// model returns the per-feature model override ("" keeps the reviewer
+	// model); nil means the "Let hive decide" override.
+	model func(*config.Config) string
 }
 
 const (
@@ -35,6 +38,17 @@ var errDelegateDeciderUnconfigured = errors.New("owner-delegate decider: no revi
 
 func newDelegateDeciderRunner(cfg func() *config.Config) delegatedecision.TurnRunner {
 	return &delegateDeciderRunner{cfg: cfg, http: &http.Client{Timeout: delegateDeciderTimeout}}
+}
+
+// newChatGroundingRunner is the same reviewer-endpoint turn for the
+// dashboard's grounded chat answers (chat.grounded_answers), with that
+// block's model override instead of the decider's.
+func newChatGroundingRunner(cfg func() *config.Config) delegatedecision.TurnRunner {
+	return &delegateDeciderRunner{
+		cfg:   cfg,
+		http:  &http.Client{Timeout: delegateDeciderTimeout},
+		model: func(c *config.Config) string { return c.Chat.GroundedAnswersModel() },
+	}
 }
 
 type delegateDeciderMessage struct {
@@ -63,7 +77,11 @@ func (r *delegateDeciderRunner) RunDeciderTurn(ctx context.Context, profile, sys
 		return "", errDelegateDeciderUnconfigured
 	}
 	endpoint, apiKey, model := cfg.Governor.ResolveReviewer()
-	if m := cfg.Decisions.Delegate.LLMModel(); m != "" {
+	override := cfg.Decisions.Delegate.LLMModel
+	if r.model != nil {
+		override = func() string { return r.model(cfg) }
+	}
+	if m := override(); m != "" {
 		model = m
 	}
 	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
