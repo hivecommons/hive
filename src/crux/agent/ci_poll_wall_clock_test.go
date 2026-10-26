@@ -183,10 +183,12 @@ func TestNudgeIfPollingCISelfReportGate(t *testing.T) {
 		kickAge      time.Duration
 		polls        int
 		wantEvidence int
+		sweepReads   int
 	}{
 		{name: "one poll past wall clock: nudged, not reported", kickAge: 11 * time.Minute, polls: 1, wantEvidence: 0},
 		{name: "two polls past wall clock: nudged, not reported (#14327)", kickAge: 11 * time.Minute, polls: 2, wantEvidence: 0},
 		{name: "repeated polls past wall clock: nudged and reported", kickAge: 11 * time.Minute, polls: ciPollReportMinPolls, wantEvidence: 1},
+		{name: "sweep plus repeated target", kickAge: 11 * time.Minute, polls: ciPollReportMinPolls, sweepReads: 3, wantEvidence: 1},
 		{name: "count threshold crossed: nudged and reported", kickAge: 2 * time.Minute, polls: ciPollNudgeThreshold + 1, wantEvidence: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -200,6 +202,9 @@ func TestNudgeIfPollingCISelfReportGate(t *testing.T) {
 			for i := 0; i < tt.polls; i++ {
 				scrollback += "gh pr checks 123\n"
 			}
+			for i := 0; i < tt.sweepReads; i++ {
+				scrollback += fmt.Sprintf("gh pr checks %d\n", 200+i)
+			}
 			m.nudgeIfPollingCI(a, scrollback, ciPollIdlePane)
 
 			if !a.ciPollNudgeSent || sent != 1 {
@@ -210,7 +215,10 @@ func TestNudgeIfPollingCISelfReportGate(t *testing.T) {
 				t.Fatalf("ci_poll_nudge evidence = %d, want %d: %#v", len(ev), tt.wantEvidence, ev)
 			}
 			if tt.wantEvidence == 1 {
-				for _, want := range []string{"agent=scanner", fmt.Sprintf("polls_since_kick=%d", tt.polls), fmt.Sprintf("report_min_polls=%d", ciPollReportMinPolls)} {
+				if strings.Contains(ev[0].Message, "own PR") || !strings.Contains(ev[0].Message, fmt.Sprintf("%d repeated of %d", tt.polls, tt.polls+tt.sweepReads)) {
+					t.Errorf("report must describe observed commands without inferring ownership: %s", ev[0].Message)
+				}
+				for _, want := range []string{"agent=scanner", fmt.Sprintf("polls_since_kick=%d", tt.polls+tt.sweepReads), fmt.Sprintf("report_min_polls=%d", ciPollReportMinPolls)} {
 					if !strings.Contains(ev[0].Diagnostics, want) {
 						t.Errorf("diagnostics missing %q:\n%s", want, ev[0].Diagnostics)
 					}

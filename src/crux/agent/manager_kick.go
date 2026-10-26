@@ -1557,7 +1557,7 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 		repeated := repeatedCIPollCommandLines(scrollback, agent.ciPollCommandBaseline)
 		m.mu.Unlock()
 		m.observeCondition(crux.ClassCIPollNudge, agent.Name,
-			fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
+			fmt.Sprintf("repeated CI-status commands observed after the kick: stop-polling nudge sent (%d repeated of %d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newRepeats, newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
 			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d repeated_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s\n--- repeated poll commands ---\n%s",
 				agent.Name, lane, len(cmds), newPolls, newRepeats, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines), strings.Join(repeated, "\n")))
 	}
