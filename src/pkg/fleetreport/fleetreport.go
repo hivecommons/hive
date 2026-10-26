@@ -770,6 +770,13 @@ func IsBenignMessage(msg string) bool {
 	if strings.TrimSpace(m) == "review pending expired" {
 		return true
 	}
+	// Per-agent quota enforcement is expected backpressure, not a runtime
+	// defect. Different agents/windows can cross the repeat threshold even
+	// though the proxy already warns only once per agent per window (#14346).
+	switch strings.TrimSpace(m) {
+	case "agent github api hourly cap reached", "agent github api hourly budget above soft threshold":
+		return true
+	}
 	if benignIOTimeout(m, m) {
 		return true
 	}

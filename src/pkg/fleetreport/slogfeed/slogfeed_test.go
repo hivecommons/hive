@@ -324,3 +324,29 @@ func TestStartupKickInterruptedFeedThresholdAndClear(t *testing.T) {
 		t.Fatalf("cleared interruptions = %+v", cleared)
 	}
 }
+
+func TestAgentGitHubBudgetLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for _, msg := range []string{
+		"agent GitHub API hourly cap reached",
+		"agent GitHub API hourly budget above soft threshold",
+	} {
+		for i := 0; i < 8; i++ {
+			logger.Warn(msg, "agent", "reviewer", "count", 300, "cap", 300, "retry_after", 83, "reason", "cap")
+		}
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected quota backpressure produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 16 {
+		t.Fatalf("wrapped handler saw %d budget records, want 16: %s", n, out.String())
+	}
+	if !strings.Contains(out.String(), `"retry_after":83`) || !strings.Contains(out.String(), `"reason":"cap"`) {
+		t.Fatalf("budget log lost its diagnostics: %s", out.String())
+	}
+	// Suppress only the known enforcement notifications, not budget failures.
+	logger.Error("agent GitHub API hourly budget accounting failed")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("budget accounting failure must remain reportable: %+v", *seen)
+	}
+}
