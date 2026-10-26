@@ -9,9 +9,9 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
-	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 const fleetReportRepo = "hivecommons/hive"
@@ -40,6 +40,13 @@ type FleetReportOptions struct {
 	// and its error aborts the create. The publisher uses it to apply the
 	// per-day cap / min gap to creates only, so joins keep working.
 	CreateGate func() error
+	// ClosedCooldown, when > 0, bounds how long a closed fingerprint match
+	// blocks a new filing: an issue closed longer ago than this is treated
+	// as no match (the condition came back after a quiet period — a
+	// regression worth a fresh issue). Zero keeps every closed match
+	// blocking. The publisher's own state decides whether the condition
+	// ever went quiet (fleetreport.ClosedSuppressed) before it gets here.
+	ClosedCooldown time.Duration
 }
 
 func (o FleetReportOptions) repo() string {
@@ -110,7 +117,10 @@ func (c *Client) EnsureFleetReportWithOptions(ctx context.Context, report fleetr
 		if closedAt.IsZero() {
 			closedAt = opts.now()
 		}
-		return FleetReportResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ClosedAt: closedAt}, nil
+		if opts.ClosedCooldown <= 0 || opts.now().Sub(closedAt) < opts.ClosedCooldown {
+			return FleetReportResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ClosedAt: closedAt}, nil
+		}
+		existing = nil
 	}
 	if existing == nil && opts.JoinExisting && report.Class != "" {
 		existing, err = c.findSimilarSelfReportIssue(ctx, repo, report)
@@ -209,11 +219,26 @@ func (c *Client) findSimilarSelfReportIssue(ctx context.Context, repo string, re
 	if class == "" {
 		return nil, nil
 	}
+	spec := fleetreport.Classes[class]
 	q := fmt.Sprintf("repo:%s is:issue is:open label:%s %q", repo, fleetreport.LabelSelfReport, class)
+	if len(spec.Keywords) == 0 {
+		// A class without keywords (the catch-all unclassified_error_repeated)
+		// says nothing about the defect: matching on the class alone joined
+		// unrelated messages onto whichever such issue was oldest and then
+		// posted their "also seen"/"cleared" comments there (#14256). Scope
+		// the match to the message's title phrase, or do not join at all.
+		phrase := ""
+		if len(report.Evidence) > 0 {
+			phrase = fleetreport.SimilarityPhrase(report.Evidence[0].Message)
+		}
+		if phrase == "" {
+			return nil, nil
+		}
+		q += fmt.Sprintf(" in:title %q", phrase)
+	}
 	if issue, err := c.firstIssueMatching(ctx, q); err != nil || issue != nil {
 		return issue, err
 	}
-	spec := fleetreport.Classes[class]
 	if len(spec.Keywords) == 0 {
 		return nil, nil
 	}
@@ -261,13 +286,41 @@ func (c *Client) PostFleetReportRollup(ctx context.Context, repo string, issueNu
 	return nil
 }
 
-// PostFleetReportCleared posts the one-time "cleared on <hive>" comment.
+// FleetReportClosedError is returned by PostFleetReportCleared when the
+// target issue is already closed: nothing was written, and the caller
+// records ClosedAt so the fingerprint stays silent (#14256).
+type FleetReportClosedError struct {
+	Number   int
+	ClosedAt time.Time
+}
+
+func (e *FleetReportClosedError) Error() string {
+	return fmt.Sprintf("fleet report issue #%d is closed (since %s)", e.Number, e.ClosedAt.UTC().Format(time.RFC3339))
+}
+
+// PostFleetReportCleared posts the "cleared on <hive>" comment. The issue's
+// state is read first: a closed issue gets no comment and a
+// *FleetReportClosedError instead, so a spoke never keeps writing "Cleared
+// on …" under an issue a maintainer already closed (hivecommons/hive#14255
+// collected four after its close).
 func (c *Client) PostFleetReportCleared(ctx context.Context, repo string, issueNumber int, body string) error {
 	if c == nil || c.client == nil {
 		return ErrNoGitHubClient
 	}
 	if strings.TrimSpace(repo) == "" {
 		repo = fleetReportRepo
+	}
+	owner, name := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, name, issueNumber)
+	if err != nil {
+		return fmt.Errorf("reading fleet report issue: %w", err)
+	}
+	if issue.GetState() == "closed" {
+		closedAt := issue.GetClosedAt().Time
+		if closedAt.IsZero() {
+			closedAt = time.Now()
+		}
+		return &FleetReportClosedError{Number: issueNumber, ClosedAt: closedAt}
 	}
 	return c.CreateIssueComment(ctx, repo, issueNumber, body)
 }

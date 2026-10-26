@@ -189,8 +189,18 @@ func TestPublishFleetReportsHonoursClosedCooldownAndClearedComment(t *testing.T)
 	if calls != 1 || st.Open["fp-closed"].ClosedAt.IsZero() || st.Open["fp-closed"].OpenedByHive || len(st.Filings) != 0 {
 		t.Fatalf("closed cooldown: calls=%d state=%#v", calls, st.Open["fp-closed"])
 	}
-	// After the 7-day cooldown the fingerprint is searched again.
+	if len(w.ensures) == 0 || w.ensures[0].ClosedCooldown != deps.limits.ClosedCooldown {
+		t.Fatalf("writer not told the closed cooldown: %#v", w.ensures)
+	}
+	// The cooldown runs from the last tick that still observed the
+	// condition (#14256), so it is searched again only once the condition
+	// has been absent for the whole 7 days.
 	now = now.Add(6 * 24 * time.Hour)
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
+	if calls != 1 {
+		t.Fatalf("re-searched while still inside the cooldown: calls=%d", calls)
+	}
+	now = now.Add(8 * 24 * time.Hour)
 	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
 	if calls != 2 {
 		t.Fatalf("cooldown expiry did not re-search: calls=%d", calls)
@@ -590,5 +600,178 @@ func TestSelfReportClearedPermanent(t *testing.T) {
 		if got := selfReportClearedPermanent(err); got != want {
 			t.Fatalf("selfReportClearedPermanent(%v) = %v want %v", err, got, want)
 		}
+	}
+}
+
+// The weekend loop William hit (#14256, #14255, #14270): a spoke files a
+// selfreport, a maintainer closes it, the condition is still there on the
+// spoke's build at the next tick (and the next daily build), and a new
+// issue appears. Once closed, the reporter must stay quiet for that
+// fingerprint for as long as the condition keeps being observed, through
+// version bumps, and must not pile "Cleared on" comments onto the closed
+// issue when the condition flaps.
+func TestPublishFleetReportsNeverRefilesAClosedFingerprintWhileConditionPersists(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 10, 25, 17, 10, 0, 0, time.UTC)
+	closedAt := time.Time{}
+	searches := 0
+	w := &fakeSelfReportWriter{}
+	w.ensure = func(report fleetreport.Report, opts github.FleetReportOptions) (github.FleetReportResult, error) {
+		searches++
+		if closedAt.IsZero() {
+			return github.FleetReportResult{Number: 14256, URL: "u", Created: true}, nil
+		}
+		return github.FleetReportResult{Number: 14256, URL: "u", ClosedAt: closedAt}, nil
+	}
+	deps := selfReportDeps(w, &now)
+	deps.limits = fleetreport.DefaultFilingLimits
+	report := runtimeReport("fp-seed", fleetreport.ClassUnclassifiedRepeated)
+	res := &fleetreport.Result{Reports: []fleetreport.Report{report}}
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
+	if searches != 1 || !srv.FleetReportState().Open["fp-seed"].OpenedByHive {
+		t.Fatalf("initial filing: searches=%d state=%#v", searches, srv.FleetReportState().Open["fp-seed"])
+	}
+
+	// The scanner closes it as "already fixed on v5" two hours later; the
+	// spoke learns of the close on its next report attempt (its state still
+	// says open, so it re-searches once).
+	now = now.Add(2 * time.Hour)
+	closedAt = now
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		o := st.Open["fp-seed"]
+		o.PostedAt = time.Time{}
+		st.Open["fp-seed"] = o
+	})
+	now = now.Add(time.Minute)
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
+	o := srv.FleetReportState().Open["fp-seed"]
+	if searches != 2 || !o.ClosedAt.Equal(closedAt) || !o.ClosedObservedAt.Equal(now) {
+		t.Fatalf("close not recorded: searches=%d state=%#v", searches, o)
+	}
+
+	// Three weeks of daily channel rollouts, each restarting the spoke on a
+	// new build with the condition still firing every tick: no search, no
+	// create, no relay — and the suppression keeps sliding forward.
+	for day := 1; day <= 21; day++ {
+		now = now.Add(24 * time.Hour)
+		deps.version = "5.186.4-" + string(rune('a'+day))
+		publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
+	}
+	o = srv.FleetReportState().Open["fp-seed"]
+	if searches != 2 || !o.ClosedObservedAt.Equal(now) || len(srv.FleetReportState().Filings) != 1 {
+		t.Fatalf("closed fingerprint was re-filed: searches=%d filings=%d state=%#v", searches, len(srv.FleetReportState().Filings), o)
+	}
+
+	// A flap while closed: the condition clears and comes back. Nothing is
+	// written under the closed issue.
+	rec := &fleetreport.Result{Recoveries: []fleetreport.Report{{Fingerprint: "fp-seed", Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassUnclassifiedRepeated, Body: "recovered"}}}
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, rec, deps)
+	if w.clearCalls != 0 || len(w.recovered) != 0 {
+		t.Fatalf("wrote under a closed issue: cleared=%d recovered=%d", w.clearCalls, len(w.recovered))
+	}
+
+	// Only once the condition has been gone for the whole cooldown does a
+	// recurrence count as a regression and get searched (and, with the
+	// upstream issue still closed but stale, re-filed by the writer).
+	now = now.Add(8 * 24 * time.Hour)
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
+	if searches != 3 {
+		t.Fatalf("regression after a quiet cooldown was not re-searched: searches=%d", searches)
+	}
+}
+
+// A "Cleared on" comment is posted at most once per seen-gap for a flapping
+// condition, and a comment attempt that finds the issue closed records the
+// close instead of retrying (#13825 drew 79 such comments in a day).
+func TestPublishFleetReportsPacesClearedCommentsAndLearnsOfClose(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 10, 23, 17, 10, 0, 0, time.UTC)
+	w := &fakeSelfReportWriter{}
+	deps := selfReportDeps(w, &now)
+	deps.limits = fleetreport.DefaultFilingLimits
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		st.Open["fp-flap"] = fleetreport.OpenIssue{Number: 13825, OpenedByHive: true, Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassUnclassifiedRepeated, PostedAt: now}
+	})
+	rec := &fleetreport.Result{Recoveries: []fleetreport.Report{{Fingerprint: "fp-flap", Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassUnclassifiedRepeated, Body: "recovered"}}}
+	for i := 0; i < 6; i++ {
+		now = now.Add(20 * time.Minute)
+		// Evaluate flips Recovered back to false when the condition re-fires.
+		srv.UpdateFleetReportState(func(st *fleetreport.State) {
+			o := st.Open["fp-flap"]
+			o.Recovered = false
+			st.Open["fp-flap"] = o
+		})
+		publishFleetReportsWith(context.Background(), slog.Default(), srv, rec, deps)
+	}
+	if len(w.cleared) != 1 || !srv.FleetReportState().Open["fp-flap"].Recovered {
+		t.Fatalf("flapping condition posted %d cleared comments", len(w.cleared))
+	}
+	now = now.Add(deps.limits.SeenGap)
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		o := st.Open["fp-flap"]
+		o.Recovered = false
+		st.Open["fp-flap"] = o
+	})
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, rec, deps)
+	if len(w.cleared) != 2 {
+		t.Fatalf("cleared comment refused after the seen gap: %d", len(w.cleared))
+	}
+
+	// The maintainer closed it meanwhile: the writer reports the close, the
+	// publisher records it and stops.
+	closedAt := now.Add(-5 * time.Minute)
+	w.clearedErr = func() error { return &github.FleetReportClosedError{Number: 13825, ClosedAt: closedAt} }
+	now = now.Add(deps.limits.SeenGap)
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		o := st.Open["fp-flap"]
+		o.Recovered = false
+		st.Open["fp-flap"] = o
+	})
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, rec, deps)
+	o := srv.FleetReportState().Open["fp-flap"]
+	if len(w.cleared) != 2 || !o.ClosedAt.Equal(closedAt) || !o.Recovered {
+		t.Fatalf("close via cleared comment not recorded: cleared=%d state=%#v", len(w.cleared), o)
+	}
+	before := w.clearCalls
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		o := st.Open["fp-flap"]
+		o.Recovered = false
+		st.Open["fp-flap"] = o
+	})
+	now = now.Add(deps.limits.SeenGap)
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, rec, deps)
+	if w.clearCalls != before {
+		t.Fatal("kept trying to comment under a closed issue")
+	}
+}
+
+// The hub relay answers closed_upstream for a recently closed fingerprint;
+// the spoke records the close like a direct closed match and does not retry.
+func TestPublishFleetReportsRecordsCloseFromRelay(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 10, 25, 17, 10, 0, 0, time.UTC)
+	w := &fakeSelfReportWriter{ensure: func(fleetreport.Report, github.FleetReportOptions) (github.FleetReportResult, error) {
+		return github.FleetReportResult{}, &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusForbidden}, Message: "Resource not accessible by integration"}
+	}}
+	closedAt := now.Add(-time.Hour)
+	relays := 0
+	deps := selfReportDeps(w, &now)
+	deps.limits = fleetreport.DefaultFilingLimits
+	deps.relay = func(_ context.Context, req selfReportRelayRequest) (selfReportRelayResponse, error) {
+		relays++
+		return selfReportRelayResponse{OK: true, Number: 14256, URL: "u", Reason: "closed_upstream", ClosedAt: closedAt}, nil
+	}
+	res := &fleetreport.Result{Reports: []fleetreport.Report{runtimeReport("fp-relay-closed", fleetreport.ClassUnclassifiedRepeated)}}
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
+	o := srv.FleetReportState().Open["fp-relay-closed"]
+	if relays != 1 || o.Number != 14256 || !o.ClosedAt.Equal(closedAt) || o.OpenedByHive || !o.ClosedObservedAt.Equal(now) {
+		t.Fatalf("relay close not recorded: relays=%d state=%#v", relays, o)
+	}
+	for i := 0; i < 3; i++ {
+		now = now.Add(24 * time.Hour)
+		publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
+	}
+	if relays != 1 || len(w.ensures) != 1 {
+		t.Fatalf("closed fingerprint retried: relays=%d ensures=%d", relays, len(w.ensures))
 	}
 }

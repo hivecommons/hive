@@ -1038,7 +1038,8 @@ governor:
 
 Rate limits: `max_per_day` new issues per hive per 24h, at least 1h between
 new filings of different classes, no re-filing of a fingerprint closed
-within 7 days, deferred while the GitHub API budget is not normal. Issues
+upstream while the hive keeps observing the condition (7-day cooldown from
+the last observation), deferred while the GitHub API budget is not normal. Issues
 are never auto-closed; the hive posts one "cleared" comment when the
 condition stops. Hub-managed hives that cannot write to the report repo relay
 through the hub (`POST /api/selfreport/ingest`, heartbeat bearer). The

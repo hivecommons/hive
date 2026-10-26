@@ -135,6 +135,9 @@ type selfReportRelayResponse struct {
 	URL    string `json:"url"`
 	Joined bool   `json:"joined"`
 	Reason string `json:"reason,omitempty"`
+	// ClosedAt is set when the hub found the fingerprint's issue closed and
+	// wrote nothing; the spoke records it like a direct closed match.
+	ClosedAt time.Time `json:"closed_at,omitempty"`
 }
 
 type selfReportPublishDeps struct {
@@ -252,7 +255,14 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 		if isObservation && open.Recovered {
 			open = fleetreport.OpenIssue{}
 		}
-		if fleetreport.ClosedRecently(open.ClosedAt, now, deps.limits) {
+		if fleetreport.ClosedSuppressed(open, now, deps.limits) {
+			// Still observed on this build while the issue is closed: refresh
+			// the suppression so it outlives the build (#14256).
+			dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
+				o := st.Open[report.Fingerprint]
+				o.ClosedObservedAt = now.UTC()
+				st.Open[report.Fingerprint] = o
+			})
 			continue
 		}
 		seenAllowed := fleetreport.AllowSeenComment(open, now, deps.limits)
@@ -312,7 +322,7 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 		} else {
 			opts := github.FleetReportOptions{
 				Repo: deps.repo, HiveSlug: deps.hiveSlug, Version: deps.version, Cluster: deps.cluster,
-				Now: deps.now, JoinExisting: true, SeenCommentAllowed: seenAllowed,
+				Now: deps.now, JoinExisting: true, SeenCommentAllowed: seenAllowed, ClosedCooldown: deps.limits.ClosedCooldown,
 			}
 			// The cap and gap apply to NEW issues only; joining never counts.
 			// We cannot know before the search whether this will be a create, so
@@ -342,7 +352,7 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 					HiveName: report.HiveName, SpokeURL: report.SpokeURL,
 				})
 				if err == nil {
-					write = github.FleetReportResult{Number: relayed.Number, URL: relayed.URL, Created: !relayed.Joined, Joined: relayed.Joined, Commented: relayed.Joined}
+					write = github.FleetReportResult{Number: relayed.Number, URL: relayed.URL, Created: !relayed.Joined, Joined: relayed.Joined, Commented: relayed.Joined, ClosedAt: relayed.ClosedAt}
 				}
 			}
 		}
@@ -352,10 +362,10 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 		}
 		clearSelfReportFailure(selfReportWriteFailedMsg, report.Fingerprint)
 		if !write.ClosedAt.IsZero() {
-			logger.Info("fleet report: fingerprint closed upstream recently; not re-filing", "fingerprint", report.Fingerprint, "issue", write.Number, "closed_at", write.ClosedAt)
+			logger.Info("fleet report: fingerprint closed upstream; not re-filing", "fingerprint", report.Fingerprint, "issue", write.Number, "closed_at", write.ClosedAt)
 			dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
 				o := st.Open[report.Fingerprint]
-				o.Number, o.URL, o.ClosedAt = write.Number, write.URL, write.ClosedAt
+				o.Number, o.URL, o.ClosedAt, o.ClosedObservedAt = write.Number, write.URL, write.ClosedAt, now.UTC()
 				st.Open[report.Fingerprint] = o
 			})
 			continue
@@ -451,7 +461,28 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 			if open.Recovered || (!open.ClearedNextAttemptAt.IsZero() && now.Before(open.ClearedNextAttemptAt)) {
 				continue
 			}
+			if !fleetreport.AllowClearedComment(open, now, deps.limits) {
+				// Closed upstream, or a cleared comment went out inside the
+				// gap: the condition is recovered either way, silently.
+				dashSrv.MarkFleetReportRecovered(report.Fingerprint)
+				continue
+			}
 			if err := deps.gh.PostFleetReportCleared(ctx, deps.repo, open.Number, fleetreport.ClearedComment(report.Fingerprint, hive, deps.version, now)); err != nil {
+				var closed *github.FleetReportClosedError
+				if errors.As(err, &closed) {
+					logger.Info("fleet report: issue closed upstream; cleared comment withheld", "fingerprint", report.Fingerprint, "issue", open.Number, "closed_at", closed.ClosedAt)
+					clearSelfReportFailure(selfReportClearedFailedMsg, report.Fingerprint)
+					dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
+						o, ok := st.Open[report.Fingerprint]
+						if !ok {
+							return
+						}
+						o.ClosedAt, o.Recovered = closed.ClosedAt, true
+						o.ClearedAttempts, o.ClearedNextAttemptAt, o.ClearedNotifyFailed = 0, time.Time{}, ""
+						st.Open[report.Fingerprint] = o
+					})
+					continue
+				}
 				recordSelfReportClearedFailure(logger, dashSrv, report.Fingerprint, open, err, now)
 				continue
 			}
@@ -462,6 +493,7 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 					return
 				}
 				o.ClearedAttempts, o.ClearedNextAttemptAt, o.ClearedNotifyFailed = 0, time.Time{}, ""
+				o.ClearedPostedAt = now.UTC()
 				st.Open[report.Fingerprint] = o
 			})
 			dashSrv.MarkFleetReportRecovered(report.Fingerprint)

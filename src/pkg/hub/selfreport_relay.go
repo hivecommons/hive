@@ -72,7 +72,17 @@ type selfReportRelayResponse struct {
 	URL    string `json:"url,omitempty"`
 	Joined bool   `json:"joined,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// ClosedAt is set with Reason "closed_upstream" when the fingerprint's
+	// issue is closed inside selfReportClosedCooldown: the hub wrote
+	// nothing and the spoke records the close like a direct match (#14256).
+	ClosedAt time.Time `json:"closed_at,omitempty"`
 }
+
+// selfReportClosedCooldown mirrors fleetreport.DefaultFilingLimits.ClosedCooldown
+// on the hub side: a relayed fingerprint whose issue closed more recently
+// than this is not filed again. The hub never saw the spoke's state, so this
+// is the fleet-wide floor; the spoke's own ClosedSuppressed gate runs first.
+const selfReportClosedCooldown = 7 * 24 * time.Hour
 
 func validateSelfReportRelayRequest(req *selfReportRelayRequest) error {
 	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
@@ -306,9 +316,24 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	existing, err := findSelfReportIssueByFingerprint(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Fingerprint)
+	existing, err := findSelfReportIssueByFingerprintAnyState(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Fingerprint)
 	if err != nil && s.logger != nil {
 		s.logger.Warn("selfreport relay: fingerprint search failed; will create", "hive", req.HiveID, "error", err)
+	}
+	if existing.Number > 0 && existing.Closed {
+		// The issue for this defect was closed (maintainer, scanner,
+		// close-on-merge). Before #14256 the search was open-only, so the
+		// next relayed report created a fresh issue right after every close
+		// — the daily re-file loop William's hive produced. Inside the
+		// cooldown: write nothing, tell the spoke. Past it: a fresh filing.
+		if time.Since(existing.ClosedAt) < selfReportClosedCooldown {
+			if s.logger != nil {
+				s.logger.Info("selfreport relay: fingerprint closed upstream; not re-filing", "hive", req.HiveID, "issue", existing.Number, "closed_at", existing.ClosedAt)
+			}
+			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{OK: true, Number: existing.Number, URL: existing.URL, Reason: "closed_upstream", ClosedAt: existing.ClosedAt})
+			return
+		}
+		existing = feedbackIssueResult{}
 	}
 	if existing.Number <= 0 && fleetreport.IsLegacyStandaloneTitle(req.Title) {
 		// A spoke still on a pre-#13470 build asking the hub to file a
@@ -540,9 +565,24 @@ func containsString(xs []string, want string) bool {
 // findSelfReportIssueByFingerprint searches open issues for the fingerprint
 // marker. Returns zero Number when nothing matches.
 func findSelfReportIssueByFingerprint(ctx context.Context, client *http.Client, apiBase, token, owner, repo, fingerprint string) (feedbackIssueResult, error) {
+	return findSelfReportIssueByFingerprintIn(ctx, client, apiBase, token, owner, repo, fingerprint, true)
+}
+
+// findSelfReportIssueByFingerprintAnyState is findSelfReportIssueByFingerprint
+// over open and closed issues: an open match wins; otherwise the most
+// recently closed one is returned with Closed/ClosedAt set.
+func findSelfReportIssueByFingerprintAnyState(ctx context.Context, client *http.Client, apiBase, token, owner, repo, fingerprint string) (feedbackIssueResult, error) {
+	return findSelfReportIssueByFingerprintIn(ctx, client, apiBase, token, owner, repo, fingerprint, false)
+}
+
+func findSelfReportIssueByFingerprintIn(ctx context.Context, client *http.Client, apiBase, token, owner, repo, fingerprint string, openOnly bool) (feedbackIssueResult, error) {
 	ctx = hubGitHubCallerContext(ctx, "selfreport_search")
-	q := fmt.Sprintf("repo:%s/%s is:issue is:open in:body %q", owner, repo, "hive-fleet-fingerprint:"+fingerprint)
-	u := strings.TrimRight(apiBase, "/") + "/search/issues?per_page=5&q=" + url.QueryEscape(q)
+	state := " is:open"
+	if !openOnly {
+		state = ""
+	}
+	q := fmt.Sprintf("repo:%s/%s is:issue%s in:body %q", owner, repo, state, "hive-fleet-fingerprint:"+fingerprint)
+	u := strings.TrimRight(apiBase, "/") + "/search/issues?per_page=10&sort=updated&order=desc&q=" + url.QueryEscape(q)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return feedbackIssueResult{}, err
@@ -560,10 +600,12 @@ func findSelfReportIssueByFingerprint(ctx context.Context, client *http.Client, 
 	}
 	var out struct {
 		Items []struct {
-			Number  int    `json:"number"`
-			HTMLURL string `json:"html_url"`
-			Body    string `json:"body"`
-			Labels  []struct {
+			Number   int        `json:"number"`
+			HTMLURL  string     `json:"html_url"`
+			Body     string     `json:"body"`
+			State    string     `json:"state"`
+			ClosedAt *time.Time `json:"closed_at"`
+			Labels   []struct {
 				Name string `json:"name"`
 			} `json:"labels"`
 		} `json:"items"`
@@ -571,16 +613,34 @@ func findSelfReportIssueByFingerprint(ctx context.Context, client *http.Client, 
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return feedbackIssueResult{}, err
 	}
+	var closed feedbackIssueResult
 	for _, it := range out.Items {
-		if strings.Contains(it.Body, "hive-fleet-fingerprint:"+fingerprint) {
-			labels := make([]string, 0, len(it.Labels))
-			for _, l := range it.Labels {
-				labels = append(labels, l.Name)
-			}
-			return feedbackIssueResult{Number: it.Number, URL: it.HTMLURL, Body: it.Body, Labels: labels}, nil
+		if !strings.Contains(it.Body, "hive-fleet-fingerprint:"+fingerprint) {
+			continue
 		}
+		labels := make([]string, 0, len(it.Labels))
+		for _, l := range it.Labels {
+			labels = append(labels, l.Name)
+		}
+		res := feedbackIssueResult{Number: it.Number, URL: it.HTMLURL, Body: it.Body, Labels: labels}
+		if it.State == "closed" {
+			if openOnly {
+				continue
+			}
+			res.Closed = true
+			if it.ClosedAt != nil {
+				res.ClosedAt = it.ClosedAt.UTC()
+			} else {
+				res.ClosedAt = time.Now().UTC()
+			}
+			if closed.Number == 0 || res.ClosedAt.After(closed.ClosedAt) {
+				closed = res
+			}
+			continue
+		}
+		return res, nil
 	}
-	return feedbackIssueResult{}, nil
+	return closed, nil
 }
 
 func postHubGitHubIssueComment(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, body string) (int, error) {

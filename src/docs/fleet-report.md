@@ -275,9 +275,14 @@ with none. Observation issues additionally carry `hive-observation` and
 
 ## Deduplication, comments, and recovery
 
-Every report gets a deterministic **fingerprint**: a SHA-256 over the error
-class, component, version, and (for shortfalls) the criterion key. The same
-fault on the same version always produces the same fingerprint.
+Every report gets a deterministic **fingerprint**. A `runtime-error`
+fingerprint is a SHA-256 over the error class and the normalised message
+(numbers, hashes, paths and quoted strings collapsed) — it names the defect,
+not the build, so the same fault on every version and every hive produces
+the same fingerprint and a close by a maintainer keeps suppressing it across
+the daily channel rollout (#14256 was the case where a per-version
+fingerprint produced one new issue per build). An ACMM shortfall
+fingerprint covers the class, component, version and criterion key.
 
 Before filing, the hive searches upstream for an existing issue carrying that
 fingerprint:
@@ -294,8 +299,12 @@ For `runtime-error` reports the hive goes further and **joins first**. If no
 fingerprint match exists it looks for an open issue labelled
 `hive/selfreport` for the same class, then for a human-filed issue whose
 title or body mentions the class keywords (for example "restart storm",
-"model discovery degraded", "LiteLLM 401"). When any of those matches, the
-hive adds itself to that issue instead of opening a new one:
+"model discovery degraded", "LiteLLM 401"). The catch-all
+`unclassified_error_repeated` class says nothing about the defect, so its
+class search is additionally scoped to the leading words of the message in
+the title; with no usable message it does not join by class at all. When
+any of those matches, the hive adds itself to that issue instead of opening
+a new one:
 
 - one comment `Also seen on **<hive>** (v<version>, <cluster>) at <time>`
   carrying a `<!-- hive:selfreport-seen hive=<slug> fp=… -->` marker and its
@@ -426,9 +435,15 @@ the body as built, so the switch governs relayed reports too.
 A new issue is opened only when nothing matches. Rate limits apply to **new**
 filings only: at most `max_per_day` per hive per 24h, at least 1h between
 new filings of different classes, and a fingerprint that was closed upstream
-within the last 7 days is never re-filed (treated as known / fixed pending
-rollout). Filing is also deferred while the GitHub API budget is not
-`normal`. Hub-managed hives whose credential is refused by the report repo
+is never re-filed by the same hive while the hive keeps observing the
+condition — a close by anyone (maintainer, scanner, close-on-merge) is an
+instruction to that reporter to be quiet about that fingerprint. The 7-day
+cooldown runs from the later of the close and the last tick that still saw
+the condition, so it only expires once the condition has been absent for a
+whole week; a recurrence after that is a regression and gets a fresh issue.
+The hub relay applies the same rule for relayed reports (a recently closed
+fingerprint answers `closed_upstream` and writes nothing). Filing is also
+deferred while the GitHub API budget is not `normal`. Hub-managed hives whose credential is refused by the report repo
 (403/404) relay the report to the hub's `POST /api/selfreport/ingest` with
 their heartbeat bearer, and the hub files or joins under the App identity.
 
@@ -443,9 +458,10 @@ it; if a human opened the issue, the hive comments but **leaves it open** —
 it will not close someone else's issue.
 
 `runtime-error` issues are never auto-closed, even by the hive that opened
-them: when the condition clears for that hive it posts a single
-`cleared on <hive> at <time>` comment and leaves the issue for a human to
-confirm the fix.
+them: when the condition clears for that hive it posts a
+`cleared on <hive> at <time>` comment — at most one per 24h when the
+condition flaps, and none once the issue is closed — and leaves the issue
+for a human to confirm the fix.
 
 ## State
 

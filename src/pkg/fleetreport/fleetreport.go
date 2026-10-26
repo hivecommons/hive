@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/hivestate"
-	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 const (
@@ -176,8 +176,15 @@ type OpenIssue struct {
 	// LastSeenCommentAt is when this hive last posted an "also seen" comment.
 	LastSeenCommentAt time.Time `json:"last_seen_comment_at,omitempty"`
 	// ClosedAt is set when the upstream issue was found closed; such a
-	// fingerprint is not re-filed inside the closed cooldown.
-	ClosedAt time.Time `json:"closed_at,omitempty"`
+	// fingerprint is not re-filed while ClosedSuppressed holds.
+	// ClosedObservedAt is the last time this hive observed the condition
+	// while the issue was closed; it keeps the suppression alive for as long
+	// as the condition persists (#14256).
+	ClosedAt         time.Time `json:"closed_at,omitempty"`
+	ClosedObservedAt time.Time `json:"closed_observed_at,omitempty"`
+	// ClearedPostedAt is when this hive last posted a runtime "cleared"
+	// comment; AllowClearedComment paces the next one.
+	ClearedPostedAt time.Time `json:"cleared_posted_at,omitempty"`
 	// Deferred is the last reason a filing was held back (rate limit etc).
 	Deferred string `json:"deferred,omitempty"`
 	// ClearedAttempts / ClearedNextAttemptAt pace retries of a runtime
@@ -377,7 +384,7 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		if ev.Class == "" || !IsKnownClass(ev.Class) {
 			continue
 		}
-		fp := RuntimeFingerprint(ev.Class, ev.Message, version)
+		fp := RuntimeFingerprint(ev.Class, ev.Message)
 		report := BuildRuntimeReport(obs, ev, fp, instance, obs.HiveSlug, version, commit, now)
 		active[fp] = true
 		open := state.Open[fp]

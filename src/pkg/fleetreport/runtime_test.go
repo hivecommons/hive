@@ -84,18 +84,17 @@ func TestNormalizeMessageAndFingerprintStable(t *testing.T) {
 	if strings.Contains(a, "quality") || strings.Contains(a, "9f86d081") || strings.Contains(a, "/data/agents") {
 		t.Fatalf("normalised message leaks specifics: %s", a)
 	}
-	fp1 := RuntimeFingerprint(ClassKickFailedRepeatedly, a, "v5.1.0")
-	fp2 := RuntimeFingerprint(ClassKickFailedRepeatedly, b, "v5.1.0")
-	fp3 := RuntimeFingerprint(ClassKickFailedRepeatedly, a, "v5.2.0")
-	if fp1 != fp2 || fp1 == fp3 || len(fp1) == 0 {
-		t.Fatalf("fingerprints: %s %s %s", fp1, fp2, fp3)
+	fp1 := RuntimeFingerprint(ClassKickFailedRepeatedly, a)
+	fp2 := RuntimeFingerprint(ClassKickFailedRepeatedly, b)
+	if fp1 != fp2 || len(fp1) == 0 {
+		t.Fatalf("fingerprints: %s %s", fp1, fp2)
 	}
 }
 
 func TestBuildRuntimeReportCarriesMarkersAndLabels(t *testing.T) {
 	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 	ev := Evidence{Class: ClassRestartStorm, Component: "agent-runtime", Severity: "high", Count: 4, Window: 10 * time.Minute, Message: "restart storm: agent quality restarted 4 times in 10m", Diagnostics: "line1\ntoken=ghp_abcdefghijklmnopqrstuvwxyz0123456789\nline3", Attributable: true}
-	fp := RuntimeFingerprint(ev.Class, NormalizeMessage(ev.Message), "v5.1.0")
+	fp := RuntimeFingerprint(ev.Class, NormalizeMessage(ev.Message))
 	r := BuildRuntimeReport(Observation{HiveID: "hive-a", Version: "v5.1.0", HiveSlug: "hosted-aslom", Cluster: "oke-11"}, ev, fp, "inst", "hosted-aslom", "v5.1.0", "abcdef1", now)
 	if !strings.HasPrefix(r.Title, "[selfreport] restart_storm: ") {
 		t.Fatalf("title = %q", r.Title)
@@ -487,7 +486,7 @@ func TestFoldedDefectClassesThresholdDedupAndScrubbing(t *testing.T) {
 		t.Fatalf("stall message lost its context: %q", ev[0].Message)
 	}
 	// Per-event numbers (count, kick time, pane hash) never fork the issue.
-	if RuntimeFingerprint(ClassAgentStall, NormalizeMessage(msg(3)), "v5") != RuntimeFingerprint(ClassAgentStall, NormalizeMessage(msg(7)), "v5") {
+	if RuntimeFingerprint(ClassAgentStall, NormalizeMessage(msg(3))) != RuntimeFingerprint(ClassAgentStall, NormalizeMessage(msg(7))) {
 		t.Fatal("stall fingerprint varies with the nudge count")
 	}
 	// Two agents stalling are two conditions on one fingerprint, not two issues.
@@ -553,17 +552,14 @@ func TestRuntimeFingerprintIgnoresIDsTimestampsAndPorts(t *testing.T) {
 		if NormalizeMessage(p[0]) != NormalizeMessage(p[1]) {
 			t.Fatalf("volatile parts split the message:\n%q\n%q", NormalizeMessage(p[0]), NormalizeMessage(p[1]))
 		}
-		if RuntimeFingerprint(ClassUnexpectedHub5xx, p[0], "v5.1.0") != RuntimeFingerprint(ClassUnexpectedHub5xx, p[1], "v5.1.0") {
+		if RuntimeFingerprint(ClassUnexpectedHub5xx, p[0]) != RuntimeFingerprint(ClassUnexpectedHub5xx, p[1]) {
 			t.Fatalf("volatile parts changed the fingerprint: %q vs %q", p[0], p[1])
 		}
-		if RuntimeFingerprint(ClassUnexpectedHub5xx, p[0], "v5.1.0") == RuntimeFingerprint(ClassUnexpectedHub5xx, p[0], "v5.1.1") {
-			t.Fatalf("version change did not change the fingerprint for %q", p[0])
-		}
-		if RuntimeFingerprint(ClassUnexpectedHub5xx, p[0], "v5.1.0") == RuntimeFingerprint(ClassUpgradeStalled, p[0], "v5.1.0") {
+		if RuntimeFingerprint(ClassUnexpectedHub5xx, p[0]) == RuntimeFingerprint(ClassUpgradeStalled, p[0]) {
 			t.Fatalf("class change did not change the fingerprint for %q", p[0])
 		}
 	}
-	if RuntimeFingerprint(ClassPanicRecovered, "panic in handler: nil map", "v5") == RuntimeFingerprint(ClassPanicRecovered, "panic in handler: index out of range", "v5") {
+	if RuntimeFingerprint(ClassPanicRecovered, "panic in handler: nil map") == RuntimeFingerprint(ClassPanicRecovered, "panic in handler: index out of range") {
 		t.Fatal("different messages collapsed to one fingerprint")
 	}
 }
@@ -601,7 +597,7 @@ func TestRuntimeDiagnosticsNeverCarryTokens(t *testing.T) {
 		if len(ev.Diagnostics) > maxDiagnosticsBytes+4 {
 			t.Fatalf("%s diagnostics not size-bounded: %d bytes", ev.Class, len(ev.Diagnostics))
 		}
-		fp := RuntimeFingerprint(ev.Class, ev.Message, "v5.1.0")
+		fp := RuntimeFingerprint(ev.Class, ev.Message)
 		r := BuildRuntimeReport(Observation{}, ev, fp, "inst", "hosted-x", "v5.1.0", "abc", now)
 		comment := SeenComment(fp, "hosted-x", "v5.1.0", "oke", ev, now)
 		for _, s := range secrets {
@@ -627,7 +623,7 @@ func logscrubTokenLike(s string) bool {
 func TestBuildRuntimeReportCarriesReposOwnersAndItem(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	ev := Evidence{Class: ClassAdvisoryPostFailed, Component: "github-client", Severity: "medium", Count: 1, Message: "advisory digest post failed: 403", Repo: "Acme/Widgets", Ref: "#42"}
-	fp := RuntimeFingerprint(ev.Class, ev.Message, "v5.1.0")
+	fp := RuntimeFingerprint(ev.Class, ev.Message)
 	obs := Observation{HiveID: "hive-a", Version: "v5.1.0", HiveSlug: "hosted-aslom", Repos: []string{"hivecommons/hive", "HiveCommons/pluk", "hivecommons/hive", "not a repo", "https://github.com/acme/tools.git"}}
 	r := BuildRuntimeReport(obs, ev, fp, "inst", "hosted-aslom", "v5.1.0", "abcdef1", now)
 	for _, want := range []string{
@@ -706,7 +702,7 @@ func TestAffectedBlockReposUnionAcrossHivesIsIdempotent(t *testing.T) {
 func TestRuntimeFingerprintIgnoresReposAndItem(t *testing.T) {
 	// Repos and the triggering item live outside the fingerprint, so two hives
 	// watching different repos still land on one issue.
-	fp := RuntimeFingerprint(ClassAdvisoryPostFailed, "advisory digest post failed: 403", "v5.1.0")
+	fp := RuntimeFingerprint(ClassAdvisoryPostFailed, "advisory digest post failed: 403")
 	a := BuildRuntimeReport(Observation{Repos: []string{"acme/widgets"}}, Evidence{Class: ClassAdvisoryPostFailed, Message: "advisory digest post failed: 403", Repo: "acme/widgets", Ref: "#1"}, fp, "inst-a", "hive-a", "v5.1.0", "c", time.Time{})
 	b := BuildRuntimeReport(Observation{Repos: []string{"hivecommons/hive", "hivecommons/pluk"}}, Evidence{Class: ClassAdvisoryPostFailed, Message: "advisory digest post failed: 403", Repo: "hivecommons/hive"}, fp, "inst-b", "hive-b", "v5.1.0", "c", time.Time{})
 	if a.Fingerprint != b.Fingerprint || a.Fingerprint != fp {
@@ -965,5 +961,78 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		if !IsBenignMessage(m) {
 			t.Errorf("%q not benign", m)
 		}
+	}
+}
+
+// A fingerprint names a defect, not a build (#14256): the same class and
+// message on two versions is the same fingerprint, so a closed issue's
+// suppression and the join-first search survive an upgrade.
+func TestRuntimeFingerprintIgnoresVersionAndVolatileParts(t *testing.T) {
+	msg := "policies: seeded policy differs from the embedded default with no seed record; leaving it in place"
+	ev := Evidence{Class: ClassUnclassifiedRepeated, Component: "agent-runtime", Message: msg, Count: 29, Window: 10 * time.Minute}
+	a := Evaluate(Observation{HiveID: "h", Version: "5.186.4-438-g3b4c451f8", Evidence: []Evidence{ev}}, State{}, true)
+	b := Evaluate(Observation{HiveID: "h", Version: "5.186.4-1481-g92878cabe", Evidence: []Evidence{ev}}, State{}, true)
+	if len(a.Reports) != 1 || len(b.Reports) != 1 || a.Reports[0].Fingerprint != b.Reports[0].Fingerprint {
+		t.Fatalf("version split the fingerprint: %+v vs %+v", a.Reports, b.Reports)
+	}
+	if RuntimeFingerprint(ClassUnclassifiedRepeated, msg) == RuntimeFingerprint(ClassUnclassifiedRepeated, "tmux has-session failed") {
+		t.Fatal("different messages share a fingerprint")
+	}
+}
+
+func TestSimilarityPhrase(t *testing.T) {
+	cases := map[string]string{
+		"policies: seeded policy differs from the embedded default with no seed record; leaving it in place — resave it": "policies seeded policy differs from the embedded default",
+		"tmux has-session failed":          "tmux has-session failed",
+		"prompt timeout — dumping pane":    "prompt timeout",
+		`proxy: CONNECT dial failed "x:1"`: "proxy CONNECT dial failed x 1",
+		"":                                 "",
+		"   ":                              "",
+	}
+	for in, want := range cases {
+		if got := SimilarityPhrase(in); got != want {
+			t.Errorf("SimilarityPhrase(%q) = %q want %q", in, got, want)
+		}
+	}
+}
+
+// Whoever closes the issue silences this reporter for the fingerprint: the
+// suppression runs from the later of the close and the last observation
+// while closed, so a condition that persists across builds never re-files,
+// and only one absent for the whole cooldown comes back as a new issue.
+func TestClosedSuppressedFollowsLastObservation(t *testing.T) {
+	now := time.Date(2026, 10, 25, 19, 1, 11, 0, time.UTC)
+	limits := DefaultFilingLimits
+	if ClosedSuppressed(OpenIssue{Number: 14256}, now, limits) {
+		t.Fatal("open issue suppressed")
+	}
+	closed := OpenIssue{Number: 14256, ClosedAt: now}
+	if !ClosedSuppressed(closed, now.Add(6*24*time.Hour), limits) || ClosedSuppressed(closed, now.Add(8*24*time.Hour), limits) {
+		t.Fatal("plain cooldown from the close is wrong")
+	}
+	closed.ClosedObservedAt = now.Add(10 * 24 * time.Hour)
+	if !ClosedSuppressed(closed, now.Add(16*24*time.Hour), limits) {
+		t.Fatal("a condition observed 6 days ago while closed was re-filed")
+	}
+	if ClosedSuppressed(closed, now.Add(18*24*time.Hour), limits) {
+		t.Fatal("a condition absent for the whole cooldown stayed suppressed")
+	}
+}
+
+func TestAllowClearedCommentPacesAndRespectsClose(t *testing.T) {
+	now := time.Date(2026, 10, 25, 19, 0, 0, 0, time.UTC)
+	limits := DefaultFilingLimits
+	if !AllowClearedComment(OpenIssue{Number: 1}, now, limits) {
+		t.Fatal("first cleared comment refused")
+	}
+	if AllowClearedComment(OpenIssue{Number: 1, ClosedAt: now.Add(-time.Hour)}, now, limits) {
+		t.Fatal("cleared comment allowed under a closed issue")
+	}
+	posted := OpenIssue{Number: 1, ClearedPostedAt: now.Add(-20 * time.Minute)}
+	if AllowClearedComment(posted, now, limits) {
+		t.Fatal("a flap 20 minutes after the last cleared comment posted again")
+	}
+	if !AllowClearedComment(posted, now.Add(limits.SeenGap), limits) {
+		t.Fatal("cleared comment refused after the gap")
 	}
 }

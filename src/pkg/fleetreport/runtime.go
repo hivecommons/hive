@@ -574,10 +574,39 @@ func runOfHex(runes []rune, i int) int {
 	return n
 }
 
-// RuntimeFingerprint is class + normalised message + hive version.
-func RuntimeFingerprint(class, message, version string) string {
-	h := sha256.Sum256([]byte(strings.Join([]string{TriggerRuntimeError, strings.ToLower(strings.TrimSpace(class)), NormalizeMessage(message), strings.ToLower(strings.TrimSpace(version))}, "|")))
+// RuntimeFingerprint is class + normalised message. The hive version is
+// deliberately NOT part of it: a fingerprint names a defect, not a build.
+// When it did include the version (before #14256), every spoke on a
+// different build, and the same spoke after every upgrade, got a fresh
+// fingerprint for the same message — so a closed issue's cooldown never
+// applied, the join-first search never matched, and a hive on a daily
+// channel re-filed the same warning as a brand-new issue each day.
+func RuntimeFingerprint(class, message string) string {
+	h := sha256.Sum256([]byte(strings.Join([]string{TriggerRuntimeError, strings.ToLower(strings.TrimSpace(class)), NormalizeMessage(message)}, "|")))
 	return hex.EncodeToString(h[:])[:24]
+}
+
+// SimilarityPhrase is the title phrase the join-first search uses when the
+// class alone does not identify the defect (the catch-all
+// unclassified_error_repeated and any other class without keywords): the
+// leading words of the short message, cut at the first clause separator
+// and bounded so GitHub's search accepts it as one quoted phrase. Empty
+// when the message has no usable words.
+func SimilarityPhrase(message string) string {
+	msg := ShortMessage(message)
+	if msg == "unusual error" {
+		return ""
+	}
+	if i := strings.IndexAny(msg, ";—…\n"); i >= 0 {
+		msg = msg[:i]
+	}
+	msg = strings.NewReplacer("\"", " ", "`", " ", "'", " ", ":", " ", "(", " ", ")", " ", "[", " ", "]", " ").Replace(msg)
+	words := strings.Fields(msg)
+	const maxWords = 8
+	if len(words) > maxWords {
+		words = words[:maxWords]
+	}
+	return strings.Join(words, " ")
 }
 
 // ShortMessage trims a message for an issue title.
@@ -918,8 +947,10 @@ type FilingLimits struct {
 }
 
 // DefaultFilingLimits: 5 new issues per hive per day, 1h between filings of
-// different classes, closed fingerprints are not re-filed for 7 days, and a
-// hive adds itself to an existing issue at most once per 24h.
+// different classes, a fingerprint whose issue was closed upstream is not
+// re-filed until the condition has been absent for 7 days (see
+// ClosedSuppressed), and a hive adds itself to an existing issue — or posts
+// a "cleared" comment on it — at most once per 24h.
 var DefaultFilingLimits = FilingLimits{MaxPerDay: 5, MinGap: time.Hour, ClosedCooldown: 7 * 24 * time.Hour, SeenGap: 24 * time.Hour}
 
 // WithMaxPerDay returns limits with MaxPerDay overridden when n > 0.
@@ -974,6 +1005,38 @@ func AllowSeenComment(open OpenIssue, now time.Time, limits FilingLimits) bool {
 // cooldown: treat as known/fixed-pending-rollout and do not re-file.
 func ClosedRecently(closedAt time.Time, now time.Time, limits FilingLimits) bool {
 	return !closedAt.IsZero() && now.Sub(closedAt) < limits.ClosedCooldown
+}
+
+// ClosedSuppressed reports whether a fingerprint whose issue was found
+// closed upstream must not be re-filed now. The cooldown runs from the later
+// of the close and the last time THIS hive observed the condition while the
+// issue was closed (OpenIssue.ClosedObservedAt): a condition that persists on
+// this build keeps the suppression alive for as long as it persists, however
+// many builds the hive moves through, and only a condition that was absent
+// for the whole cooldown and then came back — a regression, not the same
+// unfixed instance — is filed again. Whoever closed the issue (maintainer,
+// scanner, close-on-merge) therefore silences this reporter for it.
+func ClosedSuppressed(open OpenIssue, now time.Time, limits FilingLimits) bool {
+	if open.ClosedAt.IsZero() {
+		return false
+	}
+	since := open.ClosedAt
+	if open.ClosedObservedAt.After(since) {
+		since = open.ClosedObservedAt
+	}
+	return now.Sub(since) < limits.ClosedCooldown
+}
+
+// AllowClearedComment reports whether a runtime "cleared" comment may be
+// posted for open now: never on an issue known to be closed, and at most
+// once per SeenGap so a condition that flaps between observed and cleared
+// does not post "Cleared on …" every cycle (hivecommons/hive#13825 collected
+// 79 of them in a day).
+func AllowClearedComment(open OpenIssue, now time.Time, limits FilingLimits) bool {
+	if !open.ClosedAt.IsZero() {
+		return false
+	}
+	return open.ClearedPostedAt.IsZero() || now.Sub(open.ClearedPostedAt) >= limits.SeenGap
 }
 
 // displayVersion renders a version with exactly one leading "v".

@@ -367,6 +367,11 @@ func TestEnsureFleetReportWithOptionsSurfacesForbiddenForRelay(t *testing.T) {
 func TestPostFleetReportClearedCommentsOnConfiguredRepo(t *testing.T) {
 	var path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// The state read that precedes the comment (#14256).
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 12, "state": "open"})
+			return
+		}
 		path = r.Method + " " + r.URL.Path
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
@@ -447,5 +452,102 @@ func TestPostFleetReportRollupCommentsOnTargetIssue(t *testing.T) {
 	var nilClient *Client
 	if err := nilClient.PostFleetReportRollup(context.Background(), "", 1, report); !errors.Is(err, ErrNoGitHubClient) {
 		t.Fatalf("nil client err=%v", err)
+	}
+}
+
+// A "cleared" comment is never written under a closed issue: the state is
+// read first and a *FleetReportClosedError carries the close time back so
+// the publisher records it (#14256 — #14255 collected four "Cleared on …"
+// after a maintainer closed it).
+func TestPostFleetReportClearedWithholdsOnClosedIssue(t *testing.T) {
+	var comments int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 14, "state": "closed", "closed_at": "2026-10-25T18:50:25Z"})
+			return
+		}
+		comments++
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	err := c.PostFleetReportCleared(context.Background(), "", 14, "Cleared on **h**")
+	var closed *FleetReportClosedError
+	if !errors.As(err, &closed) || closed.Number != 14 || !closed.ClosedAt.Equal(time.Date(2026, 10, 25, 18, 50, 25, 0, time.UTC)) {
+		t.Fatalf("err = %v", err)
+	}
+	if comments != 0 {
+		t.Fatalf("comment written under a closed issue: %d", comments)
+	}
+}
+
+// The catch-all class says nothing about the defect, so its join-first
+// search is scoped to the message's title phrase; without one it does not
+// join at all. Before #14256 the class-only match joined unrelated messages
+// onto whichever unclassified_error_repeated issue was oldest.
+func TestEnsureFleetReportWithOptionsCatchAllJoinIsScopedToMessage(t *testing.T) {
+	other := map[string]any{"number": 7, "state": "open", "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "<!-- hive-fleet-fingerprint:fp-other -->\nbody", "user": map[string]any{"login": "bot"}}
+	f := &selfReportFakeGitHub{t: t, labelHit: &other}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	report := selfReportTestReport("fp-catchall")
+	report.Class = fleetreport.ClassUnclassifiedRepeated
+	report.Title = "[selfreport] unclassified_error_repeated: policies: seeded policy differs from the embedded default with no seed record; leaving it"
+	report.Evidence = []fleetreport.Evidence{{Class: fleetreport.ClassUnclassifiedRepeated, Count: 29, Message: "policies: seeded policy differs from the embedded default with no seed record; leaving it in place"}}
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), report, selfReportTestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Joined || res.Number != 7 || len(f.searches) != 2 {
+		t.Fatalf("res=%#v searches=%q", res, f.searches)
+	}
+	if !strings.Contains(f.searches[1], `label:hive/selfreport "unclassified_error_repeated" in:title "policies seeded policy differs from the embedded default"`) {
+		t.Fatalf("catch-all search is not scoped to the message: %q", f.searches[1])
+	}
+
+	// No usable message phrase: no class-only join, a new issue instead.
+	f2 := &selfReportFakeGitHub{t: t, labelHit: &other}
+	srv2 := httptest.NewServer(f2.handler())
+	defer srv2.Close()
+	c2 := NewClientForTest(srv2.URL, "hivecommons", nil, slog.Default())
+	c2.appBotLogin = "hive-app[bot]"
+	report.Evidence = []fleetreport.Evidence{{Class: fleetreport.ClassUnclassifiedRepeated, Count: 29}}
+	res, err = c2.EnsureFleetReportWithOptions(context.Background(), report, selfReportTestOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Joined || !res.Created || f2.creates.Load() != 1 || len(f2.searches) != 1 {
+		t.Fatalf("class-only join still happens: res=%#v searches=%q", res, f2.searches)
+	}
+}
+
+// A closed fingerprint match older than ClosedCooldown is no match: the
+// condition came back after a quiet period and gets a fresh issue. Inside
+// the cooldown (or with no cooldown configured) it still blocks.
+func TestEnsureFleetReportWithOptionsClosedCooldownBoundsTheBlock(t *testing.T) {
+	closed := map[string]any{"number": 5, "state": "closed", "closed_at": "2026-09-01T10:00:00Z", "html_url": "https://github.com/hivecommons/hive/issues/5", "body": "<!-- hive-fleet-fingerprint:fp-closed -->", "user": map[string]any{"login": "bot"}}
+	f := &selfReportFakeGitHub{t: t, fingerprintHit: &closed}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	c.appBotLogin = "hive-app[bot]"
+	opts := selfReportTestOptions()
+	opts.ClosedCooldown = 7 * 24 * time.Hour
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-closed"), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.ClosedAt.IsZero() || !res.Created || f.creates.Load() != 1 {
+		t.Fatalf("stale closed match still blocked: %#v", res)
+	}
+	opts.ClosedCooldown = 60 * 24 * time.Hour
+	res, err = c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-closed"), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ClosedAt.IsZero() || res.Created || f.creates.Load() != 1 {
+		t.Fatalf("recent closed match did not block: %#v", res)
 	}
 }

@@ -132,7 +132,7 @@ Steps:
 1. git worktree add /tmp/scanner-fix-<lowest-number> -b scanner/fix-<lowest-number> origin/<target-branch> (the branch the PR will target — the base this repository requires per its AGENTS.md, CONTRIBUTING or pull-request template, falling back to its default branch only when nothing names one; never assume `main`)
 2. Read each issue: gh issue view <number> --repo <org>/<repo>
 3. Verify the bugs exist in code — read files, confirm the patterns
-4. If any issue is invalid or already fixed: comment with evidence, close as "not planned"
+4. If any issue is invalid or already fixed: comment with evidence, close as "not planned". For a `[selfreport]` issue, "already fixed" means the fix is in a build the reporting hive runs — the body names its version; if the fix is only on the base branch and the reporter's build predates it, say so once in the comment (name the fixing PR) and still close: the reporting hive honours the close and does not re-file that fingerprint while it keeps seeing the condition, so do not comment again on later ticks
 5. Before changing anything, read the surrounding code and nearby files to understand the project's patterns and conventions. Use existing utilities, follow established naming and style — do not introduce new abstractions or deviate from how the codebase already solves similar problems. The existing code is the reference model.
 6. Implement all fixes in the worktree
 7. git add the changed files
