@@ -1307,13 +1307,17 @@ jobs:
           # is the floor now that pkg/dashboard and pkg/scheduler are sliced
           # (test-sliced above): the widest bucket can never be faster than
           # it. pkg/dashboard and pkg/scheduler are listed so a stale
-          # exclusion above still yields a sane partition.
+          # exclusion above still yields a sane partition. pkg/github is
+          # ~1s with ~1% coverage on push runs but 70s on pull requests (PR
+          # 14407's run 40387365403), where it is weighed — measure it from a
+          # PR run, not a push run.
           weight() {
             case "$1" in
               */pkg/dashboard)  echo 219 ;;
               */pkg/scheduler)  echo 199 ;;
               */pkg/hub/spoke)  echo 85 ;;
               */pkg/config)     echo 82 ;;
+              */pkg/github)     echo 70 ;;
               */cmd/hive)       echo 69 ;;
               */crux/proxy)     echo 56 ;;
               */pkg/dashboard/webstatic) echo 35 ;;
