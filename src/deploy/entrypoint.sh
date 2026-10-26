@@ -119,7 +119,7 @@ hive_run_uid_isolation_migration() {
 
   if [ "${HIVE_HOME_MIGRATION_NEEDED:-false}" = "true" ]; then
     echo "[entrypoint] UID isolation: repairing shared home in background"
-    chown -R dev:node /data/home/.claude /data/home/.codex /data/home/.bob 2>/dev/null \
+    chown -R dev:node /data/home/.claude /data/home/.codex /data/home/.gemini /data/home/.bob 2>/dev/null \
       || echo "[entrypoint] WARN: shared-home chown was incomplete; continuing with the existing fail-open permission policy"
     if [ "${HIVE_HOME_MODE_REPAIR_NEEDED:-false}" = "true" ]; then
       chmod -R g+rwX /data/home 2>/dev/null \
@@ -1425,8 +1425,15 @@ if [ "$(id -u)" = "0" ]; then
   # pre-create it group-writable + setgid so every agent UID (node group) can
   # init it, matching .claude/.copilot. Without this, switching an agent to the
   # codex backend fails with "Permission denied" initializing state_N.sqlite.
+  #
+  # Only the directory itself is re-owned here. The recursive pass over the
+  # existing tree (tens of thousands of session/sqlite files on a mature spoke)
+  # runs in hive_run_uid_isolation_migration, off PID 1's startup path: on a
+  # shared NFS server a synchronous `chown -R` here held the fleet's daily
+  # rollout at ~3 min per boot, past the stale 160s startup budget, and 40 LKE
+  # spokes crash-looped in lock-step (2026-10-26).
   chmod 2775 /data/home/.codex 2>/dev/null || true
-  chown -R dev:node /data/home/.codex 2>/dev/null || true
+  chown dev:node /data/home/.codex 2>/dev/null || true
   # Antigravity (`agy`) persists its OAuth session to
   # $HOME/.gemini/antigravity-cli/antigravity-oauth-token. Pre-create the tree
   # group-writable + setgid for the same reason as .codex above.
@@ -1450,7 +1457,9 @@ if [ "$(id -u)" = "0" ]; then
   # watch. Creating it here removes that dependency entirely: the directory is
   # on disk, with the right mode, before any watch is set up.
   chmod 2770 /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
-  chown -R dev:node /data/home/.gemini 2>/dev/null || true
+  # Non-recursive for the same reason as .codex above; the tree is re-owned in
+  # the background worker.
+  chown dev:node /data/home/.gemini /data/home/.gemini/antigravity-cli /data/home/.gemini/antigravity-cli/cache 2>/dev/null || true
   # bob writes installation_id, settings.json, trustedFolders.json and tmp/ under
   # $HOME/.bob, plus custom modes under $HOME/.bob/settings. Pre-create both
   # group-writable + setgid so the FIRST agent to launch (a 2001+ UID in group
