@@ -1,0 +1,1 @@
+- `hive-open-issue --no-consolidate <reason>` lets a caller file a separate issue instead of being folded into an open one; the watcher records the reason as `consolidation_skipped_reason` (#14360)

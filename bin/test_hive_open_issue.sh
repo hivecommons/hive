@@ -316,6 +316,28 @@ check "--needs-decision refusal writes no request" "" "$(find_req needsdecisionc
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# --no-consolidate <reason> carries the reason; an empty reason or a non-create is refused.
+run_script "noconsolbot" --repo "hiveorg/widgets" --title "Unrelated" --body "b" --no-consolidate "different work"
+REQ_FILE="$(find_req noconsolbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('no_consolidate_reason'))" "$REQ_FILE")"
+  check "--no-consolidate sets no_consolidate_reason" "different work" "$GOT"
+else
+  echo "  FAIL: request file not created for --no-consolidate test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
+set +e
+run_script "noconsolemptybot" --repo "hiveorg/widgets" --title "t" --body "b" --no-consolidate "" >/dev/null 2>&1
+BAD_RC=$?
+set -e
+check "--no-consolidate with an empty reason is refused (exit 2)" "2" "$BAD_RC"
+check "--no-consolidate empty refusal writes no request" "" "$(find_req noconsolemptybot)"
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # --parent=value style also works.
 run_script "eqparentbot" --repo=hiveorg/widgets --title="Eq parent" --body="body" --parent=42
 
