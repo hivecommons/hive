@@ -858,7 +858,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// adoption; a head the contributor pushed yields it.
 				// Settled on every head change whatever the lane sees —
 				// the hive's fix going green must not hide the yield.
-				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec, policy)
+				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec, policy, now)
 				result.Comments += n
 				if err != nil && firstErr == nil {
 					firstErr = err

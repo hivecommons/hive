@@ -1011,9 +1011,9 @@ func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservat
 // the contributor is back, so the hive yields once and the ordinary 072 flow
 // re-arms.
 // Returns the number of comments posted.
-func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, prev stagelabels.Record, policy StageLabelPolicy) (int, error) {
+func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, prev stagelabels.Record, policy StageLabelPolicy, now time.Time) (int, error) {
 	if prev.AdoptedInPlace() {
-		maintainer, err := c.authorMaintainsRepo(ctx, obs, c.now())
+		maintainer, err := c.authorMaintainsRepo(ctx, obs, now)
 		if err != nil {
 			// No evidence either way: keep the adoption as it is.
 			return 0, nil
