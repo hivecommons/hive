@@ -17,12 +17,12 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/issueclaim"
-	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -373,7 +373,8 @@ type Client struct {
 	// they are archived (hivecommons/hive#14026); the sweep skips them.
 	stageArchived coveredByPRLabelState
 	// legacyDecisionLabels memoises repos whose retired needs-decision /
-	// needs-direction definitions were deleted (hivecommons/hive#12683).
+	// needs-direction definitions were deleted (hivecommons/hive#12683), or
+	// whose definition cleanup was denied integration permission (#14372).
 	legacyDecisionLabels coveredByPRLabelState
 	// issueStage resolves the live `governor.labels.stage` policy for the
 	// issue stage reconciler; nil disables it.

@@ -189,3 +189,63 @@ func TestRetireLegacyDecisionLabelDefinitions_DeadlineIsQuietDeferral(t *testing
 		t.Fatal("repo marked done after a deadline; the next cycle would never retry")
 	}
 }
+
+// Permission denial is permanent for this client, but rate limits and server
+// failures must remain retryable. A denied repo must not disable other repos.
+func TestRetireLegacyDecisionLabelDefinitions_DeleteFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   int
+		message  string
+		disabled bool
+	}{
+		{"integration permission", http.StatusForbidden, "Resource not accessible by integration", true},
+		{"rate limit", http.StatusForbidden, "API rate limit exceeded", false},
+		{"server failure", http.StatusInternalServerError, "Internal Server Error", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(ResetRateLimitPacingForTest)
+			ResetRateLimitPacingForTest()
+			var deletes int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodDelete {
+					deletes++
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(`{"message":"` + tc.message + `"}`))
+					return
+				}
+				_, _ = w.Write([]byte("[]"))
+			}))
+			t.Cleanup(srv.Close)
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, nil))
+			c := NewClientForTest(srv.URL, "acme", []string{"widgets"}, logger)
+			for i := 0; i < 2; i++ {
+				ResetRateLimitPacingForTest()
+				if got := c.retireLegacyDecisionLabelDefinitions(context.Background(), "acme/widgets", logger); got != 0 {
+					t.Fatalf("deleted = %d, want 0", got)
+				}
+			}
+			want := 2
+			if tc.disabled {
+				want = 1
+			}
+			if deletes != want {
+				t.Fatalf("delete attempts = %d, want %d", deletes, want)
+			}
+			if got := c.legacyDecisionLabels.has("acme/widgets"); got != tc.disabled {
+				t.Fatalf("repo disabled = %v, want %v", got, tc.disabled)
+			}
+			if tc.disabled {
+				if strings.Contains(buf.String(), "level=WARN") {
+					t.Fatalf("permission denial logged as warning: %s", buf.String())
+				}
+				c.retireLegacyDecisionLabelDefinitions(context.Background(), "acme/other", logger)
+				if deletes != 2 {
+					t.Fatalf("other repo did not attempt cleanup: deletes = %d", deletes)
+				}
+			}
+		})
+	}
+}

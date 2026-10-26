@@ -1,0 +1,1 @@
+- Stop repeatedly retrying optional legacy decision label definition cleanup when GitHub denies the integration permission; retry after the client restarts.

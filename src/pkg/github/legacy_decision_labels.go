@@ -81,7 +81,9 @@ func removeLegacyDecisionLabels(ctx context.Context, client *Client, in IssueSta
 // caller's sync deadline, or a pacing slot that would miss either — is the
 // same stand-down, logged at Debug: it is expected under pacing pressure and
 // once warned 42 times in ten minutes (hivecommons/hive#14171). Either way
-// the retirement retries next cycle.
+// the retirement retries next cycle. An explicit integration permission denial
+// on deletion instead disables this optional cleanup for the repo until the
+// client restarts; retrying with the same credentials cannot repair it.
 func (c *Client) retireLegacyDecisionLabelDefinitions(ctx context.Context, repo string, logger *slog.Logger) int {
 	if c == nil || c.client == nil {
 		return 0
@@ -126,6 +128,13 @@ func (c *Client) retireLegacyDecisionLabelDefinitions(ctx context.Context, repo 
 		}
 		ok, err := c.deleteLabelDefinition(ctx, owner, name, label)
 		if err != nil {
+			if isWriteForbiddenError(err) {
+				c.legacyDecisionLabels.mark(key)
+				if logger != nil {
+					logger.Info("legacy decision label: definition retirement disabled for repository; integration lacks permission", "repo", repo, "label", label, "error", err)
+				}
+				return deleted
+			}
 			if isLegacyDecisionDeferral(err) {
 				if logger != nil {
 					logger.Debug("legacy decision label: retirement deferred by deadline", "repo", repo, "label", label, "error", err)
