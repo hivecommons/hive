@@ -876,6 +876,13 @@ func codexAppServerRequest(ctx context.Context, method string, params any) (json
 			return m.Result, nil
 		}
 	}
+	// CommandContext kills the server on cancellation; WaitDelay can then
+	// close stdout while Scanner is reading if a helper inherited the pipe.
+	// Preserve the deadline instead of reporting that cleanup artifact as
+	// an unclassified "file already closed" failure (or a missing response).
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
