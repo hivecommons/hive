@@ -813,6 +813,39 @@ func restartsLast24h(proc *crux.Process, now time.Time) (int, string) {
 	return count, reason
 }
 
+// firstRestartSince is the earliest restart event at or after cutoff — the
+// "since" of a crash-loop BLOCKED verdict (#14409). Zero when none.
+func firstRestartSince(proc *crux.Process, cutoff time.Time) time.Time {
+	var first time.Time
+	for _, ev := range proc.RestartEvents {
+		if ev.At.IsZero() || ev.At.Before(cutoff) {
+			continue
+		}
+		if first.IsZero() || ev.At.Before(first) {
+			first = ev.At
+		}
+	}
+	return first
+}
+
+// blockedReasonFromEvidence derives FrontendAgent.BlockedReason: the
+// StatusEvidence prose minus its "blocked:" prefix, only while the structured
+// status is BLOCKED. Empty evidence yields "reason not recorded" so a consumer
+// never has to special-case a BLOCKED agent with no WHY.
+func blockedReasonFromEvidence(structuredStatus, evidence string) string {
+	if structuredStatus != "BLOCKED" {
+		return ""
+	}
+	reason := strings.TrimSpace(evidence)
+	if lower := strings.ToLower(reason); strings.HasPrefix(lower, "blocked:") {
+		reason = strings.TrimSpace(reason[len("blocked:"):])
+	}
+	if reason == "" {
+		return "reason not recorded"
+	}
+	return reason
+}
+
 // HiddenAgentInfo names an entry that IS present in the agent manager's
 // runtime status map but was left out of the Agents cards, and the stable
 // reason category why. It exists so an operator staring at an empty (or
@@ -1179,8 +1212,10 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		if proc.KickOutcome.Settled(proc.LastKick) {
 			a.KickOutcome = proc.KickOutcome.Kind
 			a.KickOutcomeReason = proc.KickOutcome.Reason
+			a.KickOutcomeAt = formatOptionalTime(proc.KickOutcome.At)
 			if proc.KickOutcome.Kind == crux.KickOutcomeStandDown {
 				a.StructuredStatus = "BLOCKED"
+				a.BlockedSince = a.KickOutcomeAt
 				a.StatusEvidence = "blocked: policy stand-down"
 				if r := strings.TrimSpace(proc.KickOutcome.Reason); r != "" {
 					a.StatusEvidence += ": " + r
@@ -1209,6 +1244,10 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		}
 		if proc.ProviderErrorClass != "" && time.Now().Before(proc.ProviderErrorBackoffUntil) {
 			a.StructuredStatus = "BLOCKED"
+			a.BlockedSince = formatOptionalTime(proc.BackendAuth.Since)
+			if a.BlockedSince == "" && hasInferenceLastErr {
+				a.BlockedSince = formatOptionalTime(inferenceLastErrAt)
+			}
 			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"
 			line := strings.TrimSpace(proc.ProviderErrorLine)
 			if hasInferenceLastErr {
@@ -1251,6 +1290,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// relaunching carries the more specific reason, so it wins.
 		if n, reason := restartsLast24h(proc, time.Now()); n >= spoke.AgentRestartProblemThreshold() {
 			a.StructuredStatus = "BLOCKED"
+			a.BlockedSince = formatOptionalTime(firstRestartSince(proc, time.Now().Add(-24*time.Hour)))
 			a.StatusEvidence = fmt.Sprintf("blocked: crash-looping (%d restarts in 24h)", n)
 			if reason != "" {
 				a.StatusEvidence += ": " + reason
@@ -1264,11 +1304,13 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// and it is the one the operator has to act on first.
 		if proc.StartBlocked {
 			a.StructuredStatus = "BLOCKED"
+			a.BlockedSince = formatOptionalTime(proc.StartFailureLastAt)
 			a.StatusEvidence = "blocked: " + strings.TrimSpace(proc.StartFailureReason)
 			if proc.StartFailureCount > 0 {
 				a.StatusEvidence += fmt.Sprintf(" (%d consecutive failed starts)", proc.StartFailureCount)
 			}
 		}
+		a.BlockedReason = blockedReasonFromEvidence(a.StructuredStatus, a.StatusEvidence)
 
 		acmmLevel := 0
 		if cfg.ACMMLevel != nil {
@@ -1417,6 +1459,7 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 			return "BLOCKED"
 		}(),
 		StatusEvidence: evidence,
+		BlockedReason:  blockedReasonFromEvidence("BLOCKED", evidence),
 		LastError:      evidence,
 		Enabled:        agentCfg.Enabled,
 

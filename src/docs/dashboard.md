@@ -214,6 +214,24 @@ is collapsible with copy buttons on fenced code blocks. There is no server-side
 per-user chat persistence yet because dashboard user settings are not a
 general-purpose cross-browser preferences API.
 
+Agent questions are answered from the hive's own agent state (`/api/status`
+→ `agents[]`), not by dumping the roster (#14409). Bare `/agents` (or "list
+agents") prints the roster, with the block reason inline for every `BLOCKED`
+agent. `/agents stuck|blocked|paused|running|idle|failed` filters it: blocked
+agents show WHY (`blockedReason`: rate-limit cap, inference auth, policy
+stand-down, crash loop, failed starts…) and since when (`blockedSince`);
+paused agents show who paused them and why. `/agents <name> [status|why|last|
+history]`, `/agents status <name>`, or plain "scanner status" / "status of
+scanner" return only that agent's card — state, block reason + since, current
+task, last completed turn and its outcome, last kick, last PR/issue acted on,
+restart count; an unknown name answers `No agent named X; agents: …`. Natural
+language such as "which agent completed last?", "what is scanner doing?",
+"why is reviewer-2 blocked?", "when did scanner last run?" and "which agents
+are idle?" goes through the same table-driven matcher. An agent question the
+matcher does not recognise is handed to the configured chat responder with
+the agent state attached as context; without a responder the chat says what
+it does understand instead of printing the roster.
+
 Markdown is rendered from escaped input only: bold, inline code, code fences,
 links, GitHub-style `@mentions`, and `#issue` / `owner/repo#N` references are
 decorated after escaping. Repeated or long `Status heartbeat` output is folded

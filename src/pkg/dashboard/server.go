@@ -873,6 +873,18 @@ type FrontendAgent struct {
 	// in surge".
 	UnscheduledInMode bool     `json:"unscheduledInMode"`
 	CadenceModes      []string `json:"cadenceModes,omitempty"`
+
+	// BlockedReason is the operator-facing WHY behind StructuredStatus ==
+	// "BLOCKED" (#14409): StatusEvidence with its "blocked:" prefix stripped,
+	// so Hive Chat and the Agents page read the same reason from the same
+	// payload. BlockedSince is when that block was first observed, where the
+	// underlying record carries a timestamp (auth canary, inference error,
+	// policy stand-down, first restart of a crash loop); empty otherwise.
+	BlockedReason string `json:"blockedReason,omitempty"`
+	BlockedSince  string `json:"blockedSince,omitempty"`
+	// KickOutcomeAt is when the last kicked turn was observed to END — the
+	// "last completed run" the chat answers "which agent completed last" from.
+	KickOutcomeAt string `json:"kickOutcomeAt,omitempty"`
 }
 
 // FrontendConfiguredAgent is the secret-free config inventory used by the

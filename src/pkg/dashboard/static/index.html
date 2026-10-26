@@ -53473,7 +53473,7 @@ function burnAreaChart() {
       { name:'retry', aliases:['again'], usage:'/retry', description:'Retry the last sent dialog.', example:'/retry', details:'Resends the last user prompt without you retyping it.', run: chatCommandRetry },
       { name:'edit', aliases:['revise'], usage:'/edit', description:'Put the last prompt back in the input for editing.', example:'/edit', details:'Restores the last sent prompt as a persistent draft.', run: chatCommandEdit },
       { name:'who', aliases:['presence'], usage:'/who', description:'Show who is online/idle in this hive.', example:'/who', details:'Uses `/api/presence`; unauthenticated local dashboards only show `local`.', run: chatCommandWho },
-      { name:'agents', aliases:['agent'], usage:'/agents <question>', description:'Ask about agent status, runs and blockers.', example:'/agents stuck', details:'Forwards a focused agent question to Hive Chat search.', run: chatForwardCommand('agents') },
+      { name:'agents', aliases:['agent'], usage:'/agents [stuck|paused|running|idle|failed] | /agents <name> [status|why|last|history]', description:'Agent roster, filters and per-agent detail cards.', example:'/agents scanner why', details:'Bare `/agents` lists every agent (BLOCKED ones with the reason inline). `/agents stuck|blocked|paused|running|idle|failed` filters the roster with the reason and since-when. `/agents <name> [status|why|last|history]` (or `/agents status <name>`) shows only that agent: state, block reason, current task, last completed turn, last kick, last PR/issue, restarts. Natural language works too: "which agent completed last?", "why is scanner blocked?", "which agents are idle?". Anything else is forwarded to Hive Chat search with the agent state attached.', run: chatForwardCommand('agents') },
       { name:'beads', aliases:['issues','issue'], usage:'/beads <query>', description:'Ask about beads/issues and queue state.', example:'/beads high priority', details:'Forwards a focused bead/issue question to Hive Chat search.', run: chatForwardCommand('beads') },
       { name:'prs', aliases:['pr'], usage:'/prs <query>', description:'Ask about pull requests, merges and reviews.', example:'/prs waiting on review', details:'Forwards a focused PR question to Hive Chat search.', run: chatForwardCommand('prs') },
       { name:'governor', aliases:['gov'], usage:'/governor <query>', description:'Ask about governor cadence, kicks and policy.', example:'/governor next kick', details:'Forwards a focused governor question to Hive Chat search.', run: chatForwardCommand('governor') },
@@ -53485,7 +53485,7 @@ function burnAreaChart() {
     CHAT_COMMANDS.forEach(c => [c.name].concat(c.aliases || []).forEach(n => CHAT_COMMAND_BY_NAME.set(n, c)));
 
     const CHAT_CHEATS = [
-      { group:'Agents', items:['/agents stuck', '/agents scanner status', 'Which agent completed last?'] },
+      { group:'Agents', items:['/agents stuck', '/agents scanner status', '/agents scanner why', 'Which agent completed last?', 'Which agents are idle?'] },
       { group:'Beads / Issues / PRs', items:['/beads high priority', '/prs waiting on review', 'Summarize open release blockers'] },
       { group:'Governor', items:['/governor next kick', 'Why is the governor paused?', 'Show recent kick failures'] },
       { group:'Knowledge', items:['/knowledge work sources', 'Search docs for relay setup', 'What changed in v5?'] },

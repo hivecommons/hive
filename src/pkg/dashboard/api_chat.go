@@ -29,7 +29,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.deps != nil && s.deps.ChatResponder != nil {
-		answer, err := s.deps.ChatResponder(r.Context(), body.Query, body.History)
+		query := body.Query
+		// An agent question no local intent matched (#14409) still goes to
+		// the responder, but WITH the live agent state it needs to answer.
+		if _, inScope, _ := parseChatAgentIntent(query, s.chatAgentsSnapshot()); inScope {
+			if ctxText := s.chatAgentStateContext(); ctxText != "" {
+				query = strings.TrimSpace(query) + "\n\n" + ctxText
+			}
+		}
+		answer, err := s.deps.ChatResponder(r.Context(), query, body.History)
 		if err != nil {
 			msg := "The configured chat responder is unavailable: " + strings.TrimSpace(err.Error())
 			jsonResponse(w, map[string]interface{}{
@@ -129,13 +137,27 @@ func (s *Server) chatPresenceAnswer(viewer string) string {
 
 func (s *Server) chatLocalIntentAnswer(query string) (string, bool) {
 	tokens := chatIntentTokens(query)
+	if tokens["help"] {
+		return "Try `beads` for bead counts, `agents` for the agent roster, `prs` for open pull requests, or `status` for a hive summary. Agent questions: `/agents stuck|paused|running|idle|failed`, `/agents <name> [status|why|last|history]`, or ask \"which agent completed last?\", \"why is scanner blocked?\". Commands beginning with `!` or `/` still use their command handlers.", true
+	}
+	// Agent questions first (#14409): a query that NAMES an agent ("scanner
+	// status") must reach the agent card before the generic `status` intent
+	// claims it. An agent-scoped query with no matching intent is left for
+	// the configured responder (with agent state as context); without a
+	// responder, say what the local matcher understands instead of dumping
+	// the roster.
+	if answer, inScope, ok := s.chatAgentsAnswer(query); inScope {
+		if ok {
+			return answer, true
+		}
+		if s.deps != nil && s.deps.ChatResponder != nil {
+			return "", false
+		}
+		return "I couldn't match that agent question locally. Try `/agents stuck`, `/agents <name> status`, `/agents <name> why`, \"which agent completed last?\" or \"which agents are idle?\" — or bare `/agents` for the roster.", true
+	}
 	switch {
-	case tokens["help"]:
-		return "Try `beads` for bead counts, `agents` for agent status, `prs` for open pull requests, or `status` for a hive summary. Commands beginning with `!` or `/` still use their command handlers.", true
 	case tokens["bead"] || tokens["beads"]:
 		return s.chatBeadsAnswer(), true
-	case tokens["agent"] || tokens["agents"]:
-		return s.chatAgentsAnswer(), true
 	case tokens["pr"] || tokens["prs"] || tokens["pull"] || tokens["pulls"]:
 		return s.chatPRsAnswer(), true
 	case tokens["status"] || tokens["health"]:
@@ -176,36 +198,13 @@ func (s *Server) chatBeadsAnswer() string {
 	return "Bead data is not available yet."
 }
 
-func (s *Server) chatAgentsAnswer() string {
-	status := s.chatStatusSnapshot()
-	if status == nil {
-		return "Agent status is still initializing."
+// chatAgentsSnapshot is the agent slice of the current status, nil while the
+// status is still initializing.
+func (s *Server) chatAgentsSnapshot() []FrontendAgent {
+	if status := s.chatStatusSnapshot(); status != nil {
+		return status.Agents
 	}
-	if len(status.Agents) == 0 {
-		return "No agents are currently reported in the hive status."
-	}
-	agents := append([]FrontendAgent(nil), status.Agents...)
-	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
-	lines := make([]string, 0, len(agents)+1)
-	for _, a := range agents {
-		state := strings.TrimSpace(a.State)
-		if state == "" {
-			state = "unknown"
-		}
-		if a.Paused {
-			state += " (paused)"
-		}
-		detail := strings.TrimSpace(a.Doing)
-		if detail == "" {
-			detail = strings.TrimSpace(a.StructuredStatus)
-		}
-		if detail != "" {
-			lines = append(lines, fmt.Sprintf("- %s: %s — %s", a.Name, state, detail))
-		} else {
-			lines = append(lines, fmt.Sprintf("- %s: %s", a.Name, state))
-		}
-	}
-	return fmt.Sprintf("Agents (%d):\n%s", len(agents), strings.Join(lines, "\n"))
+	return nil
 }
 
 func (s *Server) chatPRsAnswer() string {
