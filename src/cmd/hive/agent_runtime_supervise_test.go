@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -60,7 +59,7 @@ func liveServe(t *testing.T) (*cruxtest.Recorder, *httptest.Server) {
 	return rec, ts
 }
 
-func newSupervisionFor(t *testing.T, server string, supervise cruxconfig.Supervision) (*cruxRuntimeSupervision, *conditionLog, *bytes.Buffer) {
+func newSupervisionFor(t *testing.T, server string, supervise cruxconfig.Supervision) (*cruxRuntimeSupervision, *conditionLog, *syncLogBuffer) {
 	t.Helper()
 	cfg := cruxconfig.RuntimeConfig{Mode: cruxconfig.ModeSidecar, Server: server, Token: "tok", Supervise: supervise, Binary: filepath.Join(t.TempDir(), "no-such-crux")}
 	if err := cfg.Validate(); err != nil {
@@ -71,7 +70,9 @@ func newSupervisionFor(t *testing.T, server string, supervise cruxconfig.Supervi
 		t.Fatal(err)
 	}
 	rt.Timeout = 2 * time.Second
-	var log bytes.Buffer
+	// The supervisor logs from a background goroutine; a bare bytes.Buffer
+	// races with the test's log.String() reads under -race.
+	var log syncLogBuffer
 	logger := slog.New(slog.NewTextHandler(&log, nil))
 	hr, err := hostRuntime(cfg, rt, logger)
 	if err != nil {

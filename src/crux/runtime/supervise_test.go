@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -134,21 +135,21 @@ func TestSupervisorKillsChildThatNeverBecomesReady(t *testing.T) {
 }
 
 func TestSupervisorStartFailureBacksOff(t *testing.T) {
-	calls := 0
+	var calls atomic.Int32
 	s := &Supervisor{
 		Config:     config.RuntimeConfig{Server: "127.0.0.1:1", Binary: fakeCrux(t)},
 		Logger:     quietLogger(),
 		MinBackoff: 5 * time.Millisecond,
 		MaxBackoff: 10 * time.Millisecond,
 		start: func(*exec.Cmd) error {
-			calls++
+			calls.Add(1)
 			return errors.New("boom")
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
-	waitFor(t, "retries", func() bool { return calls >= 3 })
+	waitFor(t, "retries", func() bool { return calls.Load() >= 3 })
 	if st := s.State(); st.LastExit != "boom" || st.Starts != 0 || st.NextStart.IsZero() {
 		t.Fatalf("state = %+v", st)
 	}
