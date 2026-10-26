@@ -1,0 +1,1 @@
+- An agent the ACMM pack paused as "not in pack level N" is no longer resumed by the startup pack apply at that same level when an upgrade ships a pack that now lists it (e.g. `reviewer` joining the L2–L4 packs); it stays paused until the operator resumes it or explicitly re-applies the pack ([#14368](https://github.com/hivecommons/hive/issues/14368)).

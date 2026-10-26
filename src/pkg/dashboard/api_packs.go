@@ -525,7 +525,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// restart — clearing it here silently promoted `mode: ADVISORY` to the L5
 	// default ISSUES_AND_PRS on the projectbluefin spoke (#7503).
 	s.deps.AgentMgr.ClearModeOverrides(config.ACMMPackManagedAgentNames())
-	paused, resumed := s.syncAgentVisibility(level)
+	paused, resumed := s.syncAgentVisibilityWith(level, forceGovernor)
 	s.deps.AgentMgr.SyncModeFiles(level)
 
 	s.persistOnly()
@@ -965,7 +965,29 @@ func crossesSelfMergeLevel(cfg *config.Config, prev, next int) bool {
 	return !cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&prev) && cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(&next)
 }
 
+// packVisibilityPauseReason is the PausedReason syncAgentVisibility stamps on
+// an agent it pauses for not being in the level's pack. It records the level
+// the pause was made AT, which is what lets a later non-explicit sweep tell
+// "the level changed" apart from "the shipped pack definition changed".
+func packVisibilityPauseReason(level int) string {
+	return fmt.Sprintf("agent not in pack level %d", level)
+}
+
+// syncAgentVisibility is the explicit-operator sweep (level change / pack
+// apply): pack-paused agents now in the level's roster are resumed.
 func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
+	return s.syncAgentVisibilityWith(level, true)
+}
+
+// syncAgentVisibilityWith runs the sweep. explicit=false is the startup
+// ApplyPack that runs on every pod roll: it does NOT resume an agent the pack
+// paused at this SAME level. At an unchanged level the only way such an agent
+// joins the roster is a pack definition shipped in a new image (e.g. reviewer
+// joining the L2-L4 packs), and resuming it then silently undid a pause the
+// operator had been living with — the agent came back running and was kicked
+// after an unattended upgrade (#14368). The operator's explicit apply, or a
+// resume from the dashboard, still brings it back.
+func (s *Server) syncAgentVisibilityWith(level int, explicit bool) (paused, resumed []string) {
 	pack, err := config.ACMMPackByLevel(level)
 	if err != nil {
 		return nil, nil
@@ -985,6 +1007,7 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 	// Collect agents to resume and agents to pause.
 	var toResume []string
 	var leftRunning []string
+	var leftPaused []string
 	for name, ac := range s.deps.Config.Agents {
 		if packAgents[name] {
 			// On-demand agents (e.g. brainstorm) should never auto-resume;
@@ -995,6 +1018,10 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 			if s.deps.AgentMgr.IsPaused(name) {
 				proc, err := s.deps.AgentMgr.GetStatus(name)
 				if err == nil && proc.PausedTrigger == "acmm-pack" {
+					if !explicit && proc.PausedReason == packVisibilityPauseReason(level) {
+						leftPaused = append(leftPaused, name)
+						continue
+					}
 					toResume = append(toResume, name)
 				}
 			}
@@ -1015,7 +1042,7 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 				leftRunning = append(leftRunning, name)
 				continue
 			}
-			if err := s.deps.AgentMgr.Pause(name, "acmm-pack", fmt.Sprintf("agent not in pack level %d", level)); err == nil {
+			if err := s.deps.AgentMgr.Pause(name, "acmm-pack", packVisibilityPauseReason(level)); err == nil {
 				paused = append(paused, name)
 			}
 		}
@@ -1026,6 +1053,11 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 		// is indistinguishable from a sweep that never considered them.
 		s.logger.Info("ACMM pack: non-pack agents left running (operator owns their pause state)",
 			"level", level, "agents", strings.Join(leftRunning, ", "))
+	}
+	if len(leftPaused) > 0 {
+		sort.Strings(leftPaused)
+		s.logger.Info("ACMM pack: agents now in the pack left paused (paused by the pack at this same level; resume from the dashboard or re-apply the pack)",
+			"level", level, "agents", strings.Join(leftPaused, ", "))
 	}
 
 	// Resume agents in parallel — each Resume() call takes ~2s,
