@@ -1961,10 +1961,10 @@ func TestMaintainerAdoptionStaysReturnedAndReleasesLiveAdoption(t *testing.T) {
 					// An open hive superseder is closed with a note on the
 					// first pass only; the original PR is never edited.
 					wantEdits, wantSuperseder := []string(nil), 0
-					if mode == "supersede-open" {
+					if mode == "supersede-open" && i == 0 {
 						wantSuperseder = 1
 						wantEdits = []string{"90:closed"}
-						if notes == 1 && !strings.Contains(h.api.comments[len(h.api.comments)-1], "#90 has been closed") {
+						if !strings.Contains(h.api.comments[len(h.api.comments)-1], "#90 has been closed") {
 							t.Fatalf("refusal note does not name the closed superseder: %v", h.api.comments)
 						}
 					}
