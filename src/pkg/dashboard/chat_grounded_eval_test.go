@@ -180,7 +180,7 @@ func TestHandleChat_GroundedEval(t *testing.T) {
 			if res["grounded"] != true {
 				// The deterministic /agents matcher (#14409) recognised the
 				// question and answered without a model turn.
-				if tc.scope != "agents" || len(g.calls) != 0 || answer == "" {
+				if len(g.calls) != 0 || answer == "" {
 					t.Fatalf("result = %#v, want grounded ok or a deterministic agent answer", res)
 				}
 				return
@@ -250,7 +250,7 @@ func TestHandleChat_ScopedQuestionNeverFallsBackToDump(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, deps := chatEvalServer(t, nil)
 			tc.setup(s, deps)
-			for _, query := range []string{"agents: stuck", "agents: scanner status", "prs: waiting on review", "/agents stuck"} {
+			for _, query := range []string{"agents: what should the hive do next", "/agents what should the hive do next", "prs: waiting on review", "which PRs have failing CI"} {
 				res := chatEvalAsk(t, s, query)
 				answer, _ := res["answer"].(string)
 				if res["status"] != "grounding_unavailable" {

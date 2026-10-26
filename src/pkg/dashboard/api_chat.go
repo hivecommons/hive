@@ -149,10 +149,15 @@ func (s *Server) chatRouteLocalAnswer(r *http.Request, route chatRoute) (string,
 		return chatHelpAnswer, true
 	case chatRoutePresence:
 		return s.chatPresenceAnswer(chatViewer(s, r)), true
-	case chatRouteBare:
-		return s.chatBareAnswer(route.Scope)
-	case chatRouteGrounded:
-		return s.chatScopedLocalAnswer(route, chatViewer(s, r))
+	case chatRouteBare, chatRouteGrounded:
+		// Deterministic argument handlers first: "scanner status" names an
+		// agent and must reach its card before the bare `status` summary.
+		if answer, ok := s.chatScopedLocalAnswer(route, chatViewer(s, r)); ok {
+			return answer, true
+		}
+		if route.Kind == chatRouteBare {
+			return s.chatBareAnswer(route.Scope)
+		}
 	}
 	return "", false
 }
@@ -283,15 +288,6 @@ func (s *Server) chatBeadsAnswer() string {
 		return fmt.Sprintf("Bead summary: %d worker bead(s), %d supervisor bead(s).", status.Beads.Workers, status.Beads.Supervisor)
 	}
 	return "Bead data is not available yet."
-}
-
-// chatAgentsSnapshot is the agent slice of the current status, nil while the
-// status is still initializing.
-func (s *Server) chatAgentsSnapshot() []FrontendAgent {
-	if status := s.chatStatusSnapshot(); status != nil {
-		return status.Agents
-	}
-	return nil
 }
 
 func (s *Server) chatPRsAnswer() string {
