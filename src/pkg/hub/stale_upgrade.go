@@ -210,6 +210,23 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 		return ev
 	}
 
+	// The spoke is alive and still on its old build — but if its latest beat
+	// says it is DRAINING, the attempt is not gone, it is being held on purpose
+	// until in-flight agent kicks finish (#11876). Judged by liveness alone a
+	// draining spoke is indistinguishable from an orphan, and the arithmetic
+	// made the two collide on every daily-mode hive with a long turn in
+	// flight: orphanedUpgradeClearAfter is 2x staleUpgradeTimeout, the spoke's
+	// default drain is more than twice that, so the sweep abandoned the attempt
+	// — three days running, then declared a permanent UpgradeFailed blaming a
+	// floating tag — while the spoke was still politely waiting and would have
+	// rolled on its own. Hold the latch while the spoke says it is draining;
+	// the spoke's own deadline (plus the sweep's usual grace) bounds the hold,
+	// so a report that never counts down cannot wedge the latch forever.
+	if hold, reason := drainingUpgradeHold(entry.UpgradeDrain, ev.elapsed); hold {
+		ev.reason = reason
+		return ev
+	}
+
 	ev.orphaned = true
 	if zeroStart {
 		// No trustworthy start time to report an elapsed from — the flag itself is
@@ -223,6 +240,47 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 			", no upgrade attempt in flight"
 	}
 	return ev
+}
+
+// upgradeDrainOverrun is how far past the drain window the spoke itself
+// reported (waited + remaining, measured from the instruction) the sweep keeps
+// believing a drain report. The spoke proceeds — and so stops reporting, then
+// restarts — the moment its remaining time hits zero, so a report still
+// arriving this long after that is not a drain any more; it is a spoke that
+// cannot act on its own verdict, and the orphan path must get it.
+const upgradeDrainOverrun = orphanedUpgradeClearAfter
+
+// drainingUpgradeHold reports whether a latched upgrade should be left alone
+// because the spoke's latest heartbeat says it is draining in-flight agent
+// kicks before restarting, with the reason the sweep logs. elapsed is the time
+// since the hub instructed the upgrade (0 when the start clock is lost).
+func drainingUpgradeHold(d *UpgradeDrainReport, elapsed time.Duration) (bool, string) {
+	if d == nil || d.RemainingS <= 0 {
+		return false, ""
+	}
+	window := time.Duration(d.WaitedS+d.RemainingS) * time.Second
+	if elapsed > window+upgradeDrainOverrun {
+		return false, ""
+	}
+	reason := "spoke is draining in-flight agent kicks before restarting"
+	if len(d.InFlight) > 0 {
+		reason += " (" + joinNames(d.InFlight) + ")"
+	}
+	reason += " — waited " + roundedDuration(time.Duration(d.WaitedS)*time.Second) +
+		", at most " + roundedDuration(time.Duration(d.RemainingS)*time.Second) + " more"
+	return true, reason
+}
+
+// joinNames renders a short agent list for log and timeline text.
+func joinNames(names []string) string {
+	out := ""
+	for i, n := range names {
+		if i > 0 {
+			out += ", "
+		}
+		out += n
+	}
+	return out
 }
 
 // evaluateSilentUpgrade decides the fate of a latched upgrade whose spoke has
@@ -384,9 +442,17 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 			h.UpgradeFailed = true
 			h.UpgradeError = "upgrade to " + orDash(h.UpgradeTarget) +
 				" never landed after " + itoa(h.OrphanedUpgradeSweeps) +
-				" attempts — hive is still on " + orDash(h.GitHash) +
-				". If its Deployment tracks a floating tag, the pod may be " +
-				"re-pulling that tag and landing on a build other than the target."
+				" attempts — hive is still on " + orDash(h.GitHash) + "."
+			if d := h.UpgradeDrain; d != nil {
+				// The spoke told us why: it has been draining past its own
+				// deadline and never restarted. Point the operator at the
+				// kicks, not at the image tag.
+				h.UpgradeError += " The spoke kept reporting an upgrade drain on in-flight agent kicks (" +
+					orDash(joinNames(d.InFlight)) + ") that never finished — check for a kick that never settles."
+			} else {
+				h.UpgradeError += " If its Deployment tracks a floating tag, the pod may be " +
+					"re-pulling that tag and landing on a build other than the target."
+			}
 			h.UpgradeFailedAt = now
 			// Drop any armed instruction so no path keeps re-delivering it.
 			delete(s.heartbeatUpgrade, h.ID)

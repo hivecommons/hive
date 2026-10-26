@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 func TestUpgradeDrain_ProceedsImmediatelyWithNoKicksInFlight(t *testing.T) {
@@ -151,5 +152,43 @@ func TestHubConfigEffectiveUpgradeDrainTimeout(t *testing.T) {
 		if got := (config.HubConfig{UpgradeDrainTimeoutS: tc.in}).EffectiveUpgradeDrainTimeout(); got != tc.want {
 			t.Errorf("EffectiveUpgradeDrainTimeout(%d) = %v, want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestUpgradeDrain_ReportReflectsDeferralForHub pins the heartbeat view of the
+// drain: nil until a deferral starts, the in-flight kicks and remaining budget
+// while deferring, nil again once the drain releases or goes stale. The hub's
+// orphan sweep relies on this to tell a deliberate hold from a dead attempt.
+func TestUpgradeDrain_ReportReflectsDeferralForHub(t *testing.T) {
+	d := &upgradeDrain{}
+	start := time.Date(2026, 10, 23, 17, 16, 0, 0, time.UTC)
+	timeout := 45 * time.Minute
+
+	if r := d.Report(start); r != nil {
+		t.Fatalf("no drain yet, Report = %+v, want nil", r)
+	}
+
+	// Re-confirmed every heartbeat, as the hub re-delivers the instruction.
+	at := start
+	for i := 0; i <= 5; i++ {
+		at = start.Add(time.Duration(i) * 2 * time.Minute)
+		d.decide("4f8be0b", []string{"brainstorm"}, timeout, at)
+	}
+	r := d.Report(at)
+	if r == nil {
+		t.Fatal("deferring drain must report")
+	}
+	want := &spoke.UpgradeDrainReport{Target: "4f8be0b", InFlight: []string{"brainstorm"}, WaitedS: 600, RemainingS: 2100}
+	if !reflect.DeepEqual(r, want) {
+		t.Fatalf("Report = %+v, want %+v", r, want)
+	}
+
+	if r := d.Report(at.Add(selfUpgradeDrainStaleAfter)); r != nil {
+		t.Fatalf("stale drain must report nil, got %+v", r)
+	}
+
+	d.decide("4f8be0b", nil, timeout, at.Add(time.Minute))
+	if r := d.Report(at.Add(time.Minute)); r != nil {
+		t.Fatalf("released drain must report nil, got %+v", r)
 	}
 }

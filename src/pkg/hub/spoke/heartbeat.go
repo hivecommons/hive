@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
@@ -565,6 +565,18 @@ type LeaderboardEntry struct {
 	HiveName       string `json:"hive_name,omitempty"`
 }
 
+// UpgradeDrainReport is the spoke's account of a self-upgrade it is
+// deliberately holding while kicked agent turns finish (#11876). Target is the
+// SHA being drained toward, InFlight names the agents whose turns are still
+// running, and WaitedS / RemainingS bound the hold: the spoke proceeds — cutting
+// whatever is still in flight — once RemainingS reaches zero.
+type UpgradeDrainReport struct {
+	Target     string   `json:"target"`
+	InFlight   []string `json:"in_flight,omitempty"`
+	WaitedS    int      `json:"waited_s"`
+	RemainingS int      `json:"remaining_s"`
+}
+
 // HeartbeatClusterHealthReport contains cluster node and GPU metrics
 // collected by the spoke in-cluster and sent to the hub via heartbeat.
 // This allows the hub to display health data for firewalled clusters
@@ -862,8 +874,15 @@ type HeartbeatPayload struct {
 	// upgrade did NOT land. Without them a failed upgrade is indistinguishable
 	// from a slow one: the hub keeps re-instructing and the UI shows a permanent
 	// "Upgrading" spinner that is simply a lie.
-	UpgradeFailed           bool                          `json:"upgrade_failed,omitempty"`
-	UpgradeError            string                        `json:"upgrade_error,omitempty"`
+	UpgradeFailed bool   `json:"upgrade_failed,omitempty"`
+	UpgradeError  string `json:"upgrade_error,omitempty"`
+	// UpgradeDrain tells the hub that an instructed upgrade is being HELD by
+	// the spoke on purpose: it is waiting for in-flight agent kicks to finish
+	// (hub.upgrade_drain_timeout_s). Without it a draining spoke looks exactly
+	// like one whose attempt vanished — alive, heartbeating, still on the old
+	// SHA — and the hub's orphan sweep abandons the attempt before the drain
+	// can ever end. Nil when no drain is open.
+	UpgradeDrain            *UpgradeDrainReport           `json:"upgrade_drain,omitempty"`
 	PendingGitHubAppInstall bool                          `json:"pending_github_app_install,omitempty"`
 	ClusterHealth           *HeartbeatClusterHealthReport `json:"cluster_health,omitempty"`
 	// Fleet contribution counts — the spoke's AI-author PR activity across its

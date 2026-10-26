@@ -4928,6 +4928,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				GitHubAppHTTPStatus:      ghAppHTTPStatus,
 				PendingGitHubAppInstall:  b.dashSrv.IsPendingGitHubAppInstall(),
 				AutoUpgrade:              b.cfg.Hub.AutoUpgrade,
+				UpgradeDrain:             selfUpgradeDrain.Report(selfUpgradeDrainNow()),
 				ClusterHealth: spoke.TimedSection("cluster_health", func() *spoke.HeartbeatClusterHealthReport {
 					if !shouldCollectHeartbeatClusterHealth(b.cfg.Hub.ClusterID) {
 						return nil

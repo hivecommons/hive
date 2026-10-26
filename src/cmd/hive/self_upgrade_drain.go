@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // selfUpgradeDrainStaleAfter bounds how long a drain stays latched without a
@@ -30,6 +31,10 @@ type upgradeDrain struct {
 	target    string
 	startedAt time.Time
 	checkedAt time.Time
+	// inFlight and timeout are the last decide inputs, kept so Report can
+	// tell the hub WHAT the drain is waiting on and for how much longer.
+	inFlight []string
+	timeout  time.Duration
 	// released is set once decide lets the upgrade proceed. Every path after
 	// that point exits the process or blocks until SIGTERM, so kicks stay
 	// withheld for good: a kick started now would be cut by the restart.
@@ -61,6 +66,7 @@ func (d *upgradeDrain) decide(target string, inFlight []string, timeout time.Dur
 
 	if timeout <= 0 {
 		d.target, d.startedAt, d.checkedAt = "", time.Time{}, time.Time{}
+		d.inFlight, d.timeout = nil, 0
 		return upgradeDrainDecision{Proceed: true}
 	}
 	if len(inFlight) == 0 {
@@ -77,6 +83,8 @@ func (d *upgradeDrain) decide(target string, inFlight []string, timeout time.Dur
 	}
 	d.target = target
 	d.checkedAt = now
+	d.inFlight = append([]string(nil), inFlight...)
+	d.timeout = timeout
 
 	waited := now.Sub(d.startedAt)
 	if waited >= timeout {
@@ -99,9 +107,39 @@ func (d *upgradeDrain) Active(now time.Time) (target string, active bool) {
 	}
 	if now.Sub(d.checkedAt) >= selfUpgradeDrainStaleAfter {
 		d.target, d.startedAt, d.checkedAt = "", time.Time{}, time.Time{}
+		d.inFlight, d.timeout = nil, 0
 		return "", false
 	}
 	return d.target, true
+}
+
+// Report describes the open drain for the hub heartbeat, or nil when no
+// upgrade is being held. The hub's orphan sweep otherwise cannot tell a
+// deliberately draining spoke from one whose attempt died: both are alive,
+// heartbeating and still on the old SHA. A released drain reports nil too —
+// the process is about to exit and the hub sees the restart directly. The
+// same staleness rule as Active applies, so a drain the hub stopped asking
+// about is not reported either.
+func (d *upgradeDrain) Report(now time.Time) *spoke.UpgradeDrainReport {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.released || d.target == "" || d.startedAt.IsZero() {
+		return nil
+	}
+	if now.Sub(d.checkedAt) >= selfUpgradeDrainStaleAfter {
+		return nil
+	}
+	waited := now.Sub(d.startedAt)
+	remaining := d.timeout - waited
+	if remaining < 0 {
+		remaining = 0
+	}
+	return &spoke.UpgradeDrainReport{
+		Target:     d.target,
+		InFlight:   append([]string(nil), d.inFlight...),
+		WaitedS:    int(waited / time.Second),
+		RemainingS: int(remaining / time.Second),
+	}
 }
 
 // releaseLocked closes the drain window and latches the kick hold until the
@@ -110,6 +148,7 @@ func (d *upgradeDrain) releaseLocked(target string, now time.Time) {
 	d.target = target
 	d.startedAt = time.Time{}
 	d.checkedAt = now
+	d.inFlight, d.timeout = nil, 0
 	d.released = true
 }
 

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/nous"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -171,6 +171,16 @@ type LeaderboardEntry struct {
 	HiveName       string `json:"hive_name,omitempty"`
 }
 
+// UpgradeDrainReport mirrors spoke.UpgradeDrainReport: the spoke is holding an
+// instructed upgrade on purpose until its in-flight agent kicks finish, and
+// will proceed on its own once RemainingS reaches zero.
+type UpgradeDrainReport struct {
+	Target     string   `json:"target"`
+	InFlight   []string `json:"in_flight,omitempty"`
+	WaitedS    int      `json:"waited_s"`
+	RemainingS int      `json:"remaining_s"`
+}
+
 // HeartbeatClusterHealthReport contains cluster node and GPU metrics
 // collected by the spoke in-cluster and sent to the hub via heartbeat.
 // This allows the hub to display health data for firewalled clusters
@@ -296,6 +306,7 @@ type HeartbeatPayload struct {
 	UpgradeTargetSHA             string                          `json:"upgrade_target_sha,omitempty"`
 	UpgradeFailed                bool                            `json:"upgrade_failed,omitempty"`
 	UpgradeError                 string                          `json:"upgrade_error,omitempty"`
+	UpgradeDrain                 *UpgradeDrainReport             `json:"upgrade_drain,omitempty"`
 	PendingGitHubAppInstall      bool                            `json:"pending_github_app_install,omitempty"`
 	ClusterHealth                *HeartbeatClusterHealthReport   `json:"cluster_health,omitempty"`
 	PRsMerged90d                 *int                            `json:"prs_merged_90d,omitempty"`

@@ -590,6 +590,7 @@ type alertHive struct {
 	Upgrading        bool
 	UpgradeStartedAt time.Time
 	UpgradeTarget    string
+	UpgradeDrain     *UpgradeDrainReport
 	UpgradeFailed    bool
 	UpgradeError     string
 	TotalTokens24h   int64
@@ -669,6 +670,7 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 		Upgrading:        h.Upgrading,
 		UpgradeStartedAt: h.UpgradeStartedAt,
 		UpgradeTarget:    h.UpgradeTarget,
+		UpgradeDrain:     h.UpgradeDrain,
 		UpgradeFailed:    h.UpgradeFailed,
 		UpgradeError:     h.UpgradeError,
 		TotalTokens24h:   h.TotalTokens24h,
@@ -1110,6 +1112,11 @@ func evaluateAlertsInFleet(state *alertState, hives, fleet []alertHive, driftAle
 					" (limit " + staleUpgradeTimeout.String() + ")"
 				if t := strings.TrimSpace(h.UpgradeTarget); t != "" {
 					reason += ", target " + t
+				}
+				if d := h.UpgradeDrain; d != nil && d.RemainingS > 0 {
+					reason += "; the spoke is draining in-flight agent kicks (" +
+						orDash(joinNames(d.InFlight)) + "), at most " +
+						roundedDuration(time.Duration(d.RemainingS)*time.Second) + " more"
 				}
 				add(h.ID, h.Name, AlertTypeStuckUpgrade, AlertSeverityWarning, reason)
 			}

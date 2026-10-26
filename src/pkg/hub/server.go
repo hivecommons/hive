@@ -25,12 +25,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/auth"
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/openrouter"
+	"github.com/hivecommons/hive/pkg/auth"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/delegation"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
-	"github.com/hivecommons/hive/crux/openrouter"
 	"github.com/hivecommons/hive/pkg/reach"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
@@ -352,6 +352,12 @@ type RegistryEntry struct {
 	UpgradeFailed   bool      `json:"upgradeFailed,omitempty"`
 	UpgradeError    string    `json:"upgradeError,omitempty"`
 	UpgradeFailedAt time.Time `json:"upgradeFailedAt,omitempty"`
+	// UpgradeDrain is the spoke's latest heartbeat account of an upgrade it is
+	// deliberately holding until in-flight agent kicks finish. Rebuilt from
+	// every beat (nil when the spoke reports no drain), so a non-nil value
+	// means the MOST RECENT beat was still draining. The orphan sweep reads it
+	// to keep a draining attempt latched instead of abandoning it.
+	UpgradeDrain *UpgradeDrainReport `json:"upgradeDrain,omitempty"`
 	// OrphanedUpgradeSweeps counts how many times the orphan sweep has cleared
 	// and re-armed an upgrade for this hive without it ever landing. A spoke
 	// that cannot advance (it restarts, comes back on a SHA that is neither the
@@ -2260,6 +2266,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if payload.Upgrading {
 		entry.Upgrading = true
 	}
+	entry.UpgradeDrain = payload.UpgradeDrain
 
 	// A spoke that explicitly reports a FAILED upgrade must not be left showing
 	// the "Upgrading" spinner, and must not be re-instructed on a loop. Record
