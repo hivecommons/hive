@@ -381,3 +381,21 @@ func TestAgentGitHubBudgetLogsWithoutFleetReport(t *testing.T) {
 		t.Fatalf("budget accounting failure must remain reportable: %+v", *seen)
 	}
 }
+
+func TestPostRestartKickHoldLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 8; i++ {
+		logger.Warn("failed to send kick", "agent", "reviewer-2", "error", "kick held after restart: agent reviewer-2 was restarted while producing a turn; kicks are held for 40s more (#7363)")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected post-restart kick hold produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 8 {
+		t.Fatalf("wrapped handler saw %d hold records, want 8", n)
+	}
+	// Other kick send failures must remain reportable.
+	logger.Warn("failed to send kick", "agent", "reviewer-2", "error", "tmux send-keys exit 1")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("other kick failures must remain reportable: %+v", *seen)
+	}
+}
