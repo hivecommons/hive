@@ -18,14 +18,12 @@ import (
 
 const (
 	selfUpgradeDeployName = "hive"
-	// selfUpgradeTimeout bounds the read-only GETs against the in-cluster API.
-	selfUpgradeTimeout = 10 * time.Second
 	// selfUpgradePatchTimeout bounds a Deployment PATCH. Patches pass through
 	// the cluster's validating admission webhooks, whose own default timeout
 	// is 10s each; an apiserver waiting on a slow or restart-looping webhook
 	// (Kyverno, observed live on vllm-d) does not return the webhook's error
-	// until AFTER that, so a 10s client deadline cut every patch off with
-	// "context deadline exceeded" and hid the real cause.
+	// until AFTER that, so the previous 10s client deadline cut every patch
+	// off with "context deadline exceeded" and hid the real cause.
 	selfUpgradePatchTimeout = 45 * time.Second
 	// selfUpgradePatchAttempts is the total number of PATCH tries (first
 	// attempt plus one retry) before the caller falls back.
