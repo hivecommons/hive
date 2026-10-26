@@ -240,6 +240,30 @@ func (m *Manager) confirmMenuOption(agent *AgentProcess, title, want, navKey str
 	return false
 }
 
+// acceptBypassConsentForKick answers a "Bypass Permissions mode" consent
+// screen that a kick found in front of the CLI. Restarting instead lands on
+// the same screen every time, so kicks never arrive (#14307). Returns true
+// once the screen was accepted and the pane no longer shows a consent screen;
+// false leaves recovery to the caller's restart. The caller must not hold
+// m.mu: menu navigation pauses between keystrokes.
+func (m *Manager) acceptBypassConsentForKick(agent *AgentProcess, pane string) bool {
+	if !strings.Contains(pane, bypassConsentTitle) || !strings.Contains(pane, bypassConsentAcceptOption) {
+		return false
+	}
+	m.logger.Info("accepting bypass-permissions consent before kick", "agent", agent.Name)
+	if !m.confirmMenuOption(agent, bypassConsentTitle, bypassConsentAcceptOption, "Down") {
+		return false
+	}
+	return !paneShowsConsentScreen(m.captureVisiblePaneForAgent(agent))
+}
+
+// claudeConsentBackend reports whether an agent's backend runs Claude Code
+// with --dangerously-skip-permissions and so can land on the bypass consent
+// screen: the claude CLI backend itself and every inference backend.
+func claudeConsentBackend(backend string) bool {
+	return backend == "claude" || IsInferenceBackend(backend)
+}
+
 const (
 	// consentStuckGracePeriod is how long a consent screen must stay visible
 	// across watcher passes before the agent counts as stuck. The launch-time
@@ -262,7 +286,8 @@ func (m *Manager) clearConsentTracking(name string) {
 	}
 }
 
-// dismissConsentIfStuck re-runs dismissInferencePrompts for an inference agent
+// dismissConsentIfStuck re-runs dismissInferencePrompts for a Claude Code agent
+// (claude or inference backend)
 // whose pane has shown a consent screen for longer than the grace period,
 // subject to a per-agent cooldown. Called from the watcher loop
 // (CheckAndRestartCrashedAgents) so an agent that lands on a consent screen
@@ -289,7 +314,7 @@ func (m *Manager) dismissConsentIfStuck(name string) {
 	agent.lastConsentDismiss = now
 	m.mu.Unlock()
 
-	m.logger.Warn("inference agent stuck on consent screen, re-running prompt dismissal",
+	m.logger.Warn("agent stuck on consent screen, re-running prompt dismissal",
 		"name", name, "stuck_seconds", int(stuckFor.Seconds()))
 	go m.dismissInferencePrompts(agent)
 }

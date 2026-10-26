@@ -149,16 +149,21 @@ func (m *Manager) SendKick(name string, message string) error {
 	// (observed live: "-bash: NEVER: command not found").
 	pane := m.captureVisiblePaneForAgent(agent)
 	if !paneHasCLIMarker(pane) || paneShowsConsentScreen(pane) {
-		m.logger.Warn("agent CLI crashed or stuck on consent screen, restarting before kick",
-			"name", name, "consent_screen", paneShowsConsentScreen(pane))
+		consentScreen := paneShowsConsentScreen(pane)
 		m.mu.Unlock()
-		if err := m.restartForKick(context.Background(), name); err != nil {
-			m.mu.Lock()
-			return fmt.Errorf("failed to restart crashed agent %s: %w", name, err)
-		}
-		if !m.waitForCLIReadyForAgent(agent) {
-			m.mu.Lock()
-			return fmt.Errorf("agent %s CLI did not become ready after restart", name)
+		// Answer the bypass consent screen in place: a restart relaunches
+		// into the same screen and the kick never lands (#14307).
+		if !consentScreen || !m.acceptBypassConsentForKick(agent, pane) {
+			m.logger.Warn("agent CLI crashed or stuck on consent screen, restarting before kick",
+				"name", name, "consent_screen", consentScreen)
+			if err := m.restartForKick(context.Background(), name); err != nil {
+				m.mu.Lock()
+				return fmt.Errorf("failed to restart crashed agent %s: %w", name, err)
+			}
+			if !m.waitForCLIReadyForAgent(agent) {
+				m.mu.Lock()
+				return fmt.Errorf("agent %s CLI did not become ready after restart", name)
+			}
 		}
 		m.mu.Lock()
 		agent, ok = m.agents[name]

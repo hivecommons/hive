@@ -273,18 +273,22 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 	pane := m.captureVisiblePaneForAgent(agent)
 	if !paneHasCLIMarker(pane) || paneShowsConsentScreen(pane) {
 		consentScreen := paneShowsConsentScreen(pane)
-		if consentScreen {
-			// Same wedge bookkeeping as SendKick — see noteConsentWedge.
-			m.noteConsentWedge(name)
-		}
-		m.logger.Warn("agent CLI crashed or stuck on consent screen, restarting before kick",
-			"name", name, "consent_screen", consentScreen)
 		m.mu.Unlock()
-		if err := m.restartForKick(context.Background(), name); err != nil {
-			return fmt.Errorf("failed to restart crashed agent %s: %w", name, err)
-		}
-		if !m.waitForCLIReadyForAgent(agent) {
-			return fmt.Errorf("agent %s CLI did not become ready after restart", name)
+		// Answer the bypass consent screen in place: a restart relaunches
+		// into the same screen and the kick never lands (#14307).
+		if !consentScreen || !m.acceptBypassConsentForKick(agent, pane) {
+			if consentScreen {
+				// Same wedge bookkeeping as SendKick — see noteConsentWedge.
+				m.noteConsentWedge(name)
+			}
+			m.logger.Warn("agent CLI crashed or stuck on consent screen, restarting before kick",
+				"name", name, "consent_screen", consentScreen)
+			if err := m.restartForKick(context.Background(), name); err != nil {
+				return fmt.Errorf("failed to restart crashed agent %s: %w", name, err)
+			}
+			if !m.waitForCLIReadyForAgent(agent) {
+				return fmt.Errorf("agent %s CLI did not become ready after restart", name)
+			}
 		}
 		m.mu.Lock()
 		agent, ok = m.agents[name]

@@ -99,6 +99,28 @@ func TestEnsureClaudeRemoteControlDefault_SeedsFalse(t *testing.T) {
 	assertRemoteControlOff(t, path)
 }
 
+// TestEnsureClaudeRemoteControlDefault_SeedsBypassConsentSuppressor is the
+// #14307 guard: interactive claude agents launch with
+// --dangerously-skip-permissions, so the shared settings must carry the key
+// that keeps Claude Code's "Bypass Permissions mode" screen from appearing.
+func TestEnsureClaudeRemoteControlDefault_SeedsBypassConsentSuppressor(t *testing.T) {
+	path := withSharedClaudeDir(t)
+	if err := os.WriteFile(path, []byte(`{"theme":"dark"}`), 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	quietManager().ensureClaudeRemoteControlDefault(rcTestAgent())
+
+	parsed := readSettingsMap(t, path)
+	if parsed["skipDangerousModePermissionPrompt"] != true {
+		t.Fatalf("skipDangerousModePermissionPrompt = %v, want true", parsed["skipDangerousModePermissionPrompt"])
+	}
+	if parsed["theme"] != "dark" {
+		t.Fatalf("sibling key clobbered: theme = %v", parsed["theme"])
+	}
+	assertRemoteControlOff(t, path)
+}
+
 func TestEnsureClaudeRemoteControlDefault_PreservesOperatorTrue(t *testing.T) {
 	path := withSharedClaudeDir(t)
 	if err := os.WriteFile(path, []byte(`{"remoteControlAtStartup":true,"theme":"dark"}`), 0o666); err != nil {
