@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -263,35 +262,13 @@ func chatPRRows(repos []FrontendRepo) []chatPRRow {
 				source = repo.HeldPrs
 			}
 			for _, raw := range source {
-				if item, ok := chatPRFromEntry(raw); ok {
-					rows = append(rows, chatPRRow{Repo: name, PR: item.pr, Verdict: item.verdict, Held: held})
+				if pr, verdict, ok := chatPRFromEntry(raw); ok {
+					rows = append(rows, chatPRRow{Repo: name, PR: pr, Verdict: verdict, Held: held})
 				}
 			}
 		}
 	}
 	return rows
-}
-
-// chatPRFromEntry reads a snapshot PR entry: the typed FrontendPR /
-// github.PullRequest forms frontendPullRequest knows, plus the generic
-// map a JSON round-trip (a restored snapshot) leaves behind.
-func chatPRFromEntry(raw any) (frontendPR, bool) {
-	if item, ok := frontendPullRequest(raw); ok {
-		return item, true
-	}
-	m, ok := raw.(map[string]any)
-	if !ok {
-		return frontendPR{}, false
-	}
-	encoded, err := json.Marshal(m)
-	if err != nil {
-		return frontendPR{}, false
-	}
-	var fp FrontendPR
-	if err := json.Unmarshal(encoded, &fp); err != nil {
-		return frontendPR{}, false
-	}
-	return frontendPR{pr: fp.PullRequest, verdict: fp.MergeVerdict}, true
 }
 
 // chatPRNeedsDecision is true for a PR parked on a needs-decision stage label
