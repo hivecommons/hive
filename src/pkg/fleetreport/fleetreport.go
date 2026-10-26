@@ -772,7 +772,7 @@ var benignSubstrings = []string{
 // IsBenignMessage reports whether a raw log message is noise the generic
 // repeated-error feed must not report: the read/keepalive i/o timeout rule
 // above applied to the whole line, every benignSubstrings entry, and the
-// review planner's pending-expiry retry notification.
+// exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
 	// A CI gate refusal is the merge safety policy working as designed, even
