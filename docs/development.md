@@ -91,14 +91,17 @@ workflow that publishes the required `test` check — uses the same three flags:
 
 ```bash
 cd src
-go test ./pkg/hub     -short -race -count=1 -run '<1/3 slice>'   # test (hub i/3)
-go test ./crux/agent  -short -race -count=1 -run '<1/5 slice>'   # test (agent i/5)
-go test $PKGS         -short -race -count=1                      # test (rest i/3)
+go test ./pkg/hub       -short -race -count=1 -run '<1/4 slice>'   # test (hub i/4)
+go test ./pkg/dashboard -short -race -count=1 -run '<1/4 slice>'   # test (dashboard i/4)
+go test ./pkg/scheduler -short -race -count=1 -run '<1/3 slice>'   # test (scheduler i/3)
+go test ./crux/agent    -short -race -count=1 -run '<1/5 slice>'   # test (agent i/5)
+go test $PKGS           -short -race -count=1                      # test (rest i/4)
 ```
 
-The workflow shards for wall-clock only: `pkg/hub` and `crux/agent` are each
-sliced across several jobs by test *function* (they are single packages too
-slow to run whole), and everything else from
+The workflow shards for wall-clock only: `pkg/hub`, `pkg/dashboard`,
+`pkg/scheduler` and `crux/agent` are each sliced across several jobs by test
+*function* (they are single packages too slow to run whole), and everything
+else from
 `go list ./pkg/... ./cmd/... ./internal/... ./crux/...` is
 partitioned into balanced buckets. Every shard also runs with `-v` and posts
 its slowest test functions to the job's step summary — look there before

@@ -103,15 +103,29 @@ concurrency:
 #                                             monolith; package-level sharding
 #                                             cannot help it) — starts
 #                                             immediately, self-partitions
-#   list-packages      go list minus hub/agent, greedily bucketed by measured
-#                      weight into R balanced groups (job outputs → matrix)
+#   test (dashboard i/D) ./pkg/dashboard      D jobs; same function slicing
+#   test (scheduler i/S) ./pkg/scheduler      S jobs; same function slicing
+#                                             (one test-sliced job with an
+#                                             include matrix; both packages
+#                                             had grown into unsplittable
+#                                             ~200s+ rest-bucket floors —
+#                                             see the job comment)
+#   list-packages      go list minus hub/agent/dashboard/scheduler, greedily
+#                      bucketed by measured weight into R balanced groups
+#                      (job outputs → matrix)
 #   test (rest i/R)    one bucket each
 #
 # Shard counts (H=4, N=5, R=5) were re-tuned on 2026-09-25 once the self-hosted
 # runner fleet dropped per-shard setup overhead to ~25s: at H=3/R=4 the gate
 # was bounded by hub 2/3 (185s) and rest 2/4 (180s) against a 4.0-minute run,
 # so one more slice of each shaves ~1 minute off the critical path at the cost
-# of two runner pods. Re-tune when the slowest shard drifts past ~150s.
+# of two runner pods. Re-tuned again on 2026-10-26 (D=4, S=3, R=4): the gate
+# had drifted to `test (rest 1/5)` at 325s because pkg/dashboard alone ran
+# 224s inside it (the weight table said 123s) and pkg/scheduler 194s (table:
+# 74s). Slicing both out of the rest partition caps every rest bucket near its
+# next-heaviest package (pkg/hub/spoke, ~85s) and makes the dashboard shuffle
+# lane (~190s) the expected critical path. Re-tune when the slowest shard
+# drifts past ~150s; the per-job step summary ranks each shard's slowest tests.
 #
 # Every shard uses the exact same flags: -short -race -count=1 (untouched),
 # plus -coverprofile for the parse-only coverage gate below, plus:
@@ -133,14 +147,15 @@ concurrency:
 #    test-dashboard-shuffle below for why both bounds are load-bearing.
 #
 # Completeness invariants (nothing can be silently untested):
-#  - rest buckets are computed by EXCLUDING exactly pkg/hub and crux/agent from
-#    the full `go list` and PARTITIONING the remainder — a new package always
-#    lands in a bucket (a future subpackage of either sliced package included,
-#    since the slices run the bare package path), a removed one just
-#    disappears from its bucket.
-#  - hub and agent slices partition the sorted `go test -list` output round-robin —
-#    a new test function always lands in a slice. Anchored full-name regexes
-#    (^(A|B|...)$) make slices pairwise disjoint and jointly exhaustive.
+#  - rest buckets are computed by EXCLUDING exactly pkg/hub, crux/agent,
+#    pkg/dashboard and pkg/scheduler from the full `go list` and PARTITIONING
+#    the remainder — a new package always lands in a bucket (a future
+#    subpackage of any sliced package included, since the slices run the bare
+#    package path), a removed one just disappears from its bucket.
+#  - hub, dashboard, scheduler and agent slices partition the sorted
+#    `go test -list` output round-robin — a new test function always lands in
+#    a slice. Anchored full-name regexes (^(A|B|...)$) make slices pairwise
+#    disjoint and jointly exhaustive.
 #  - the aggregate `test` job (the required-check name) fails closed: it
 #    requires list-packages AND every shard to succeed.
 #
@@ -162,9 +177,10 @@ concurrency:
 #   crux-only  every change is inside the set: the agent slices run, the rest
 #              buckets keep only the selected Crux packages plus the
 #              always-on tree-scanning packages (internal/..., pkg/config,
-#              pkg/rotation), and the hub slices and the dashboard shuffle
-#              lane report success without testing. The inbound consumers of
-#              crux/agent (dashboard, hub, cmd/hive, ...) are deliberately NOT
+#              pkg/rotation), and the hub, dashboard and scheduler slices and
+#              the dashboard shuffle lane report success without testing.
+#              The inbound consumers of crux/agent (dashboard, hub,
+#              cmd/hive, ...) are deliberately NOT
 #              run on such a PR; v2-ci.yml still builds and vets the whole
 #              tree, and the push/scheduled full runs are the behavioural net.
 #   none       no change touches the set: the agent slices report success
@@ -504,6 +520,293 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+  # Function-sliced lanes for the two root-module packages whose serial
+  # -short -race wall clock is the rest lane's floor: pkg/dashboard (~220s,
+  # ~7,300 test functions) and pkg/scheduler (~200s, mostly serial; one
+  # 75s test). Measured 2026-10-26 (v5 push runs 40383615331, 40382244011):
+  # `test (rest 1/5)` took 325s with pkg/dashboard alone running 224s of it,
+  # `test (rest 3/5)` 253s with pkg/scheduler at 194s, every other rest
+  # bucket ≤ 154s. A rest bucket's wall clock is its heaviest package (the
+  # packages run concurrently under one go test), so package-level
+  # rebalancing cannot move either floor. Both are sliced exactly like
+  # pkg/hub above and EXCLUDED from the rest partition (their subpackages —
+  # pkg/dashboard/webstatic, pkg/dashboard/collect, pkg/dashboard/theme —
+  # stay in the rest buckets). The context name is `test (<lane> i/N)`; the
+  # coverage job merges the N partial profiles exactly as for hub and
+  # agent. Adding a lane = one include row per slice below plus a
+  # run-<lane> flag in list-packages and the aggregate `test` allowlist.
+  test-sliced:
+    needs: [required-context-scope, list-packages]
+    if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    name: test (${{ matrix.lane }} ${{ matrix.idx }}/${{ matrix.total }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { lane: dashboard, pkg: pkg/dashboard, idx: 1, total: 4 }
+          - { lane: dashboard, pkg: pkg/dashboard, idx: 2, total: 4 }
+          - { lane: dashboard, pkg: pkg/dashboard, idx: 3, total: 4 }
+          - { lane: dashboard, pkg: pkg/dashboard, idx: 4, total: 4 }
+          - { lane: scheduler, pkg: pkg/scheduler, idx: 1, total: 3 }
+          - { lane: scheduler, pkg: pkg/scheduler, idx: 2, total: 3 }
+          - { lane: scheduler, pkg: pkg/scheduler, idx: 3, total: 3 }
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: src
+    steps:
+      # Affected-package selection (#12454): when this lane has nothing to
+      # test on a PR it still runs and reports success, so no context the
+      # aggregates or branch protection wait on can go missing. Anything but
+      # an explicit "nothing selected" runs the lane (fail toward testing).
+      - name: Affected-package selection
+        id: select
+        working-directory: .
+        env:
+          SELECTION: ${{ needs.list-packages.outputs.selection }}
+          LANE: ${{ matrix.lane }}
+          PKG: ${{ matrix.pkg }}
+          RUN_DASHBOARD: ${{ needs.list-packages.outputs.run-dashboard }}
+          RUN_SCHEDULER: ${{ needs.list-packages.outputs.run-scheduler }}
+        run: |
+          case "$LANE" in
+            dashboard) RUN_LANE=$RUN_DASHBOARD ;;
+            scheduler) RUN_LANE=$RUN_SCHEDULER ;;
+            *) RUN_LANE=true ;;
+          esac
+          if [ "$SELECTION" = partial ] && [ "$RUN_LANE" = false ]; then
+            echo "Affected-package selection: $PKG is not affected by this diff; reporting success without running tests. Push and scheduled runs test it in full."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.select.outputs.run == 'true'
+
+      # Populate the shared node-local Go tool cache under the runner pods'
+      # node-wide lock before setup-go, so parallel jobs on a cold cache (a
+      # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
+      # #10234). Never fails the job.
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        if: steps.select.outputs.run == 'true'
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.select.outputs.run == 'true'
+        with:
+          cache: false
+          go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        if: steps.select.outputs.run == 'true'
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+
+      - name: Install gotestsum
+        if: steps.select.outputs.run == 'true'
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install gotest.tools/gotestsum@v1.13.0
+          "$(go env GOPATH)/bin/gotestsum" --version
+
+      # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
+      # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed
+      # by SHA; PR jobs restore the nearest ancestor via the prefix restore-key,
+      # turning the ~2-minute per-job -race recompile into an incremental one.
+      # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
+      - name: Restore warm Go build cache
+        if: ${{ steps.select.outputs.run == 'true' && (!contains(vars.HIVE_RUNNER_LABELS, 'hive-runners')) }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: hive-go-build-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            hive-go-build-${{ runner.os }}-${{ runner.arch }}-
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.select.outputs.run == 'true'
+        with:
+          node-version: '22'
+      - name: Guard shared node tool cache (repair a half-written entry)
+        # setup-node reports "Found in cache" for a node/<ver>/x64 entry whose
+        # .complete marker exists but bin/npm does not (#10505, #10518). The
+        # canary repairs this too, but its cron is starved to a ~5h cadence, so
+        # heal the node from the hot path: drop the marker (never the directory,
+        # a sibling job may be mid-run) so the next job re-extracts.
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
+        run: |
+          set -u
+          command -v npm >/dev/null 2>&1 && exit 0
+          for marker in "${RUNNER_TOOL_CACHE:-/nonexistent}"/node/*/x64.complete; do
+            [ -e "$marker" ] || continue
+            dir="${marker%.complete}"
+            [ -x "$dir/bin/npm" ] && continue
+            echo "::warning::node tool cache $dir has a .complete marker but no executable bin/npm; removing the marker so the next job on $RUNNER_NAME rebuilds it"
+            rm -f "$marker"
+          done
+          echo "::error::npm is not on PATH after actions/setup-node on $RUNNER_NAME (half-written shared tool cache, see #10518); marker removed, re-run this job"
+          exit 1
+
+      - name: Restore cgo toolchain package cache
+        if: steps.select.outputs.run == 'true'
+        id: restore-cgo-apt-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
+          restore-keys: |
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-
+            hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-
+            hive-cgo-race-apt-
+
+      # Bounded + annotated by .github/scripts/ci-install-tool.sh (#6648/#6870/#6935):
+      # skip apt when the tool already exists, install restored .debs offline
+      # when possible, retry short egress flakes with backoff, and fail loudly
+      # with a ::error:: if neither cache nor mirrors can provide the tool.
+      - name: Prepare cgo toolchain for race tests
+        if: steps.select.outputs.run == 'true'
+        id: prepare-cgo-toolchain
+        env:
+          HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
+          HIVE_CI_MISSING_TOOLCHAIN_SOFT_FAIL: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+        run: |
+          bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
+            --require gcc --for '-race tests' \
+            --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
+
+      - name: Save cgo toolchain package cache
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true') }}
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci/apt-cache/cgo-race
+          key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
+
+      - name: Test slice of ${{ matrix.pkg }}
+        if: ${{ steps.select.outputs.run == 'true' && (steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true') }}
+        env:
+          IDX: ${{ matrix.idx }}
+          # Per-lane slice count: strategy.job-total would be the size of the
+          # whole include matrix, not of this package's slices.
+          TOTAL: ${{ matrix.total }}
+          LANE: ${{ matrix.lane }}
+          PKG: ${{ matrix.pkg }}
+          # The converted skips in these packages gate on repo files being
+          # present in the checkout — a precondition
+          # actions/checkout above GUARANTEES here, so a skip at a converted
+          # site means the test broke, not that the environment is unsuitable
+          # (#5388). Only testutil.SkipUnlessRequired sites become fatal;
+          # plain t.Skip capability gates are unaffected.
+          HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
+        run: |
+          set -o pipefail
+          ROOT="$PWD"
+          export LC_ALL=C # Regex length guards below must count bytes.
+          export TEST_PACKAGE="github.com/hivecommons/hive/$PKG"
+          export TEST_DIR="$ROOT/$PKG"
+          export TEST_BINARY="$ROOT/$LANE.test"
+          go test -c -race -cover -o "$TEST_BINARY" "./$PKG"
+          (cd "$TEST_DIR" && "$TEST_BINARY" -test.short -test.list '.*') | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
+          if [ ! -s all-tests.txt ]; then
+            echo "::error::go test -list produced no test functions for $PKG — refusing to run an empty slice (fail closed)"
+            exit 1
+          fi
+          awk -v n="$TOTAL" -v i="$IDX" 'NR % n == i - 1' all-tests.txt > slice.txt
+          echo "slice $IDX/$TOTAL: $(wc -l < slice.txt) of $(wc -l < all-tests.txt) test functions"
+          if [ ! -s slice.txt ]; then
+            echo "::error::empty $LANE slice — failing closed"
+            exit 1
+          fi
+          export CHUNK_DIR TEST_SHUFFLE=off
+          CHUNK_DIR=$(mktemp -d "$ROOT/test-chunks.XXXXXX")
+          split -l 1000 slice.txt "$CHUNK_DIR/chunk-"
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then TEST_SHUFFLE=on; fi
+          # raw-command preserves one JUnit/flake report across all chunks.
+          # gotestsum appends -test.run and package arguments on reruns.
+          cat > "$CHUNK_DIR/run.sh" <<'RUNNER'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          cd "$TEST_DIR" || exit 1
+          run_chunk() {
+            local RUN="$1" PROFILE="$2"
+            # MAX_ARG_STRLEN is 131072 bytes; never approach it, even if a
+            # future test has an exceptionally long name. Guard before exec.
+            if [ "${#RUN}" -gt 120000 ]; then
+              echo "::error::chunk regex exceeds 120000 bytes; reduce chunk size" >&2
+              return 1
+            fi
+            go tool test2json -t -p "$TEST_PACKAGE" "$TEST_BINARY" \
+              -test.short -test.count=1 -test.v=test2json -test.timeout=10m \
+              -test.shuffle="$TEST_SHUFFLE" "$RUN" -test.coverprofile="$PROFILE"
+          }
+          if [ "$#" -gt 0 ]; then
+            # Reruns must not overwrite the first-pass coverage.
+            run_chunk "$1" "$CHUNK_DIR/rerun.out"
+            exit $?
+          fi
+          status=0
+          for chunk in "$CHUNK_DIR"/chunk-*; do
+            RUN="-test.run=^($(paste -sd'|' "$chunk"))$"
+            run_chunk "$RUN" "$chunk.out" || status=1
+          done
+          exit "$status"
+          RUNNER
+          status=0
+          if gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
+            --rerun-fails-report=flaky-tests-"$LANE"-"$IDX".txt \
+            --junitfile junit-"$LANE"-"$IDX".xml --raw-command -- bash "$CHUNK_DIR/run.sh" \
+            2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-"$LANE"-"$IDX".log; then
+            :
+          else
+            status=1
+          fi
+          # The test binary runs under test2json, not the `go test` driver, so
+          # nothing prints the `ok <pkg>` / `FAIL <pkg>` summary line the
+          # coverage scorer classifies packages by (#14135). Append it.
+          if [ "$status" -eq 0 ]; then
+            printf 'ok  \t%s\t(slice %s/%s)\n' "$TEST_PACKAGE" "$IDX" "$TOTAL" >> test-"$LANE"-"$IDX".log
+          else
+            printf 'FAIL\t%s\t(slice %s/%s)\n' "$TEST_PACKAGE" "$IDX" "$TOTAL" >> test-"$LANE"-"$IDX".log
+          fi
+          # Sum first-pass counters for identical blocks; never count reruns.
+          # Do this even after test failure so the coverage gate has evidence.
+          awk 'FNR == 1 { next } { key=$1 " " $2; hits[key]+=$3 }
+            END { print "mode: atomic"; for (key in hits) print key, hits[key] }' \
+            "$CHUNK_DIR"/chunk-*.out > coverage-"$LANE"-"$IDX".out
+          exit "$status"
+
+      - name: Surface flaky reruns
+        id: flaky-reruns
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-${{ matrix.lane }}-${{ matrix.idx }}.txt" "${{ matrix.lane }} ${{ matrix.idx }}/${{ matrix.total }}"
+
+      - name: Upload flaky rerun report
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.flaky-reruns.outputs.has-flakes == 'true') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flaky-tests-${{ matrix.lane }}-${{ matrix.idx }}
+          path: src/flaky-tests-${{ matrix.lane }}-${{ matrix.idx }}.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Slowest tests in this slice
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "${{ matrix.lane }} ${{ matrix.idx }}/${{ matrix.total }}" test-${{ matrix.lane }}-${{ matrix.idx }}.log
+
+      # Uploaded even on failure so the coverage job (and humans) can inspect
+      # the raw `go test` output. `warn` not `error`: on a compile failure the
+      # coverprofile is never written, and this upload must not mask the real
+      # test failure with an artifact error.
+      - name: Upload shard coverage artifacts
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-shard-${{ matrix.lane }}-${{ matrix.idx }}
+          path: |
+            src/coverage-${{ matrix.lane }}-${{ matrix.idx }}.out
+            src/test-${{ matrix.lane }}-${{ matrix.idx }}.log
+          if-no-files-found: warn
+          retention-days: 1
+
   # crux/agent (the Crux module's manager package, pkg/agent before the
   # module cut) is a single package whose tests take ~429s serially on CI — it
   # was the entire "rest" shard's wall clock. Package-granular sharding cannot
@@ -759,12 +1062,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  # Partition everything EXCEPT pkg/hub and crux/agent (which have dedicated
-  # jobs above) into R balanced buckets, published as a matrix for test-rest.
-  # Greedy longest-processing-time assignment over static weight hints
-  # (measured seconds on CI under -short -race; unlisted packages default to
-  # 3s — they are all ≤ 8s). The hints only affect BALANCE, never MEMBERSHIP:
-  # a stale weight makes a bucket slower, not a package untested.
+  # Partition everything EXCEPT pkg/hub, crux/agent, pkg/dashboard and
+  # pkg/scheduler (which have dedicated sliced jobs above) into R balanced
+  # buckets, published as a matrix for test-rest. Greedy
+  # longest-processing-time assignment over static weight hints (measured
+  # seconds on CI under -short -race; unlisted packages default to 1s — they
+  # are all ≤ 5s). The hints only affect BALANCE, never MEMBERSHIP: a stale
+  # weight makes a bucket slower, not a package untested.
   list-packages:
     needs: required-context-scope
     if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
@@ -778,6 +1082,7 @@ jobs:
       run-hub: ${{ steps.select.outputs.run-hub }}
       run-agent: ${{ steps.select.outputs.run-agent }}
       run-dashboard: ${{ steps.select.outputs.run-dashboard }}
+      run-scheduler: ${{ steps.select.outputs.run-scheduler }}
       # Crux boundary filter (#13536): crux-only | none | mixed | full.
       crux-scope: ${{ steps.select.outputs.crux-scope }}
     defaults:
@@ -887,11 +1192,11 @@ jobs:
           crux_scope=full
           if [ "$(head -n1 "$sel")" = all ]; then
             selection=full
-            run_hub=true run_agent=true run_dashboard=true
+            run_hub=true run_agent=true run_dashboard=true run_scheduler=true
           else
             selection=partial
             has() { grep -Fxq "$mod/$1" "$sel" && echo true || echo false; }
-            run_hub=$(has pkg/hub) run_agent=$(has crux/agent) run_dashboard=$(has pkg/dashboard)
+            run_hub=$(has pkg/hub) run_agent=$(has crux/agent) run_dashboard=$(has pkg/dashboard) run_scheduler=$(has pkg/scheduler)
             # Crux boundary filter (#13536) — see the header comment. Only a
             # partial selection is ever narrowed; the script answers `full`
             # for every fail-safe path and for anything it cannot read, and
@@ -900,7 +1205,7 @@ jobs:
             crux_scope=$(bash "$GITHUB_WORKSPACE/.github/scripts/crux-scope.sh" 'HEAD^1' HEAD) || crux_scope=full
             case "$crux_scope" in
               crux-only)
-                run_hub=false run_dashboard=false run_agent=true
+                run_hub=false run_dashboard=false run_scheduler=false run_agent=true
                 # Rest buckets: the selected Crux packages plus the always-on
                 # tree-scanning packages (mirrors ALWAYS_PATTERNS in
                 # affected-go-packages.sh); a failure here falls back to the
@@ -909,7 +1214,7 @@ jobs:
                      ./internal/... ./pkg/config ./pkg/rotation > ../crux-pkgs.txt 2>/dev/null \
                    && [ -s ../crux-pkgs.txt ]; then
                   grep -Fx -f ../crux-pkgs.txt "$sel" > "$sel.crux" || true
-                  echo "crux-only diff: narrowing $(grep -c . "$sel" || true) selected packages to $(grep -c . "$sel.crux" || true) Crux/always-on packages; hub slices and dashboard shuffle lane will not run"
+                  echo "crux-only diff: narrowing $(grep -c . "$sel" || true) selected packages to $(grep -c . "$sel.crux" || true) Crux/always-on packages; hub, dashboard and scheduler slices and the dashboard shuffle lane will not run"
                   mv "$sel.crux" "$sel"
                 else
                   echo "::warning::crux-only diff but go list of the Crux set failed; keeping the unnarrowed selection"
@@ -938,6 +1243,7 @@ jobs:
             echo "run-hub=$run_hub"
             echo "run-agent=$run_agent"
             echo "run-dashboard=$run_dashboard"
+            echo "run-scheduler=$run_scheduler"
             echo "crux-scope=$crux_scope"
           } >> "$GITHUB_OUTPUT"
           {
@@ -946,28 +1252,32 @@ jobs:
             if [ "$selection" = full ]; then
               echo "Full suite."
             else
-              echo "Affected packages only ($(grep -c . "$sel" || true)); crux-scope=$crux_scope; hub=$run_hub agent=$run_agent dashboard-shuffle=$run_dashboard."
+              echo "Affected packages only ($(grep -c . "$sel" || true)); crux-scope=$crux_scope; hub=$run_hub agent=$run_agent dashboard=$run_dashboard scheduler=$run_scheduler."
               echo ""
               sed 's/^/- /' "$sel"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "selection=$selection crux-scope=$crux_scope hub=$run_hub agent=$run_agent dashboard=$run_dashboard"
+          echo "selection=$selection crux-scope=$crux_scope hub=$run_hub agent=$run_agent dashboard=$run_dashboard scheduler=$run_scheduler"
 
       - name: Partition packages into balanced buckets
         id: partition
         run: |
-          R=5
-          # Drop only the monolithic pkg/hub package: the hub job shards it
-          # by test function. All hub subpackages belong in the rest buckets
+          R=4
+          # Drop only the monolithic packages that have function-sliced jobs
+          # of their own: pkg/hub (test-hub), pkg/dashboard and pkg/scheduler
+          # (test-sliced). All their subpackages belong in the rest buckets
           # so coverage floors and the no-test-files gate apply to them too.
-          # pkg/hubbackup et al. stay here.
+          # pkg/hubbackup, pkg/dashboard/webstatic et al. stay here.
           # ./internal/... carries the shared test helpers (internal/testutil)
           # and their contract tests, such as the time.Sleep ratchet in
           # sleep_ratchet_test.go. ./crux/... is the nested Crux module
           # (#13536), reachable from src/ through src/go.work; its manager
           # package crux/agent has the dedicated agent slices.
           go list ./pkg/... ./cmd/... ./internal/... ./crux/... \
-            | awk '$0 == "github.com/hivecommons/hive/pkg/hub" { next } { print }' \
+            | awk '$0 == "github.com/hivecommons/hive/pkg/hub" { next }
+                   $0 == "github.com/hivecommons/hive/pkg/dashboard" { next }
+                   $0 == "github.com/hivecommons/hive/pkg/scheduler" { next }
+                   { print }' \
             | grep -Ev '^github\.com/hivecommons/hive/crux/agent$' \
             | LC_ALL=C sort > rest-pkgs.txt
           if [ ! -s rest-pkgs.txt ]; then
@@ -985,38 +1295,47 @@ jobs:
           fi
 
           # Weights = measured -short -race package wall seconds on the
-          # hive-runners fleet, v5 push cfb64d5 (run 36079964584, 2026-09-25).
-          # Re-measure with: for each `test (rest i/R)` job log, grep the
+          # hive-runners fleet, mean of two v5 push runs (40383615331 and
+          # 40382244011, 2026-10-26, rounded). Re-measure with: for each
+          # `test (rest i/R)` job log, grep the
           # `ok  github.com/hivecommons/hive/<pkg>  <N>s` lines. Anything
-          # under ~5s is noise and takes the 1s default. Packages inside a bucket
-          # run concurrently under one go test, so a bucket's wall clock tracks
-          # its heaviest package — the table mainly has to keep the big ones apart. pkg/dashboard is the
-          # floor: one unsplittable package, so the widest bucket can never
-          # be faster than it.
+          # under ~5s is noise and takes the 1s default. Packages inside a
+          # bucket run concurrently under one go test, so a bucket's wall
+          # clock is its heaviest package plus compile time — the table
+          # mainly has to keep the big ones apart, and the sum-based greedy
+          # below does that while spreading the compile load. pkg/hub/spoke
+          # is the floor now that pkg/dashboard and pkg/scheduler are sliced
+          # (test-sliced above): the widest bucket can never be faster than
+          # it. pkg/dashboard and pkg/scheduler are listed so a stale
+          # exclusion above still yields a sane partition.
           weight() {
             case "$1" in
-              */pkg/dashboard)  echo 123 ;;
+              */pkg/dashboard)  echo 219 ;;
+              */pkg/scheduler)  echo 199 ;;
               */pkg/hub/spoke)  echo 85 ;;
-              */pkg/scheduler)  echo 74 ;;
-              */pkg/github)     echo 62 ;;
-              */pkg/config)     echo 57 ;;
-              */crux/proxy)     echo 55 ;;
-              */cmd/hive)       echo 30 ;;
-              */pkg/hubbackup)  echo 29 ;;
-              */pkg/ioscan)     echo 22 ;;
-              */pkg/hivectl)    echo 19 ;;
-              */pkg/discord)    echo 13 ;;
-              */pkg/tui)        echo 13 ;;
-              */pkg/apphealth)  echo 10 ;;
-              */pkg/dashboard/webstatic) echo 9 ;;
-              */pkg/advisory)   echo 9 ;;
-              */internal/testutil) echo 9 ;;
-              */pkg/rotation)   echo 8 ;;
-              */pkg/hivectl/commands) echo 7 ;;
+              */pkg/config)     echo 82 ;;
+              */cmd/hive)       echo 69 ;;
+              */crux/proxy)     echo 56 ;;
+              */pkg/dashboard/webstatic) echo 35 ;;
+              */pkg/hubbackup)  echo 30 ;;
+              */pkg/advisory)   echo 29 ;;
+              */internal/testutil) echo 22 ;;
+              */pkg/ioscan)     echo 16 ;;
+              */pkg/hivectl)    echo 15 ;;
+              */pkg/tui)        echo 14 ;;
+              */pkg/discord)    echo 12 ;;
+              */pkg/fleetreport) echo 11 ;;
+              */pkg/hivectl/commands) echo 10 ;;
+              */pkg/stageengine) echo 10 ;;
+              */pkg/apphealth)  echo 9 ;;
+              */pkg/rotation)   echo 9 ;;
+              */pkg/beads)      echo 8 ;;
+              */pkg/github/automerge) echo 8 ;;
+              */crux/api/callback) echo 6 ;;
               */crux/inference) echo 6 ;;
-              */pkg/auth)       echo 6 ;;
-              */pkg/appkey)     echo 5 ;;
               */cmd/hive-backup) echo 5 ;;
+              */pkg/mint)       echo 5 ;;
+              */pkg/policies)   echo 5 ;;
               *)                echo 1  ;;
             esac
           }
@@ -1202,8 +1521,9 @@ jobs:
             echo "::error::empty package bucket — failing closed"
             exit 1
           fi
-          # -timeout=20m: pkg/dashboard alone nearly exhausts go test's default
-          # 10m on loaded PR runners (#12113) though each test runs seconds.
+          # -timeout=20m: kept from when pkg/dashboard lived in these buckets
+          # and nearly exhausted go test's default 10m on loaded PR runners
+          # (#12113); a loaded runner can still stretch pkg/hub/spoke.
           SHUFFLE=""
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then SHUFFLE="-shuffle=on"; fi
           # shellcheck disable=SC2086 # PKGS and SHUFFLE are deliberate word-split lists
@@ -1259,7 +1579,8 @@ jobs:
   #    fresh seed each run, and without the seed a real order-dependence
   #    finding is unreproducible.
   # No -coverprofile here: pkg/dashboard's coverage floor is scored from the
-  # rest-bucket profile; this lane exists only to vary the execution order.
+  # merged test-sliced `test (dashboard i/D)` profiles; this lane exists only
+  # to vary the execution order.
   test-dashboard-shuffle:
     needs: [required-context-scope, list-packages]
     if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
@@ -1504,12 +1825,13 @@ jobs:
     # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
-    needs: [required-context-scope, list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
+    needs: [required-context-scope, list-packages, test-hub, test-sliced, test-agent, test-rest, test-dashboard-shuffle]
     steps:
       - name: Check shard results
         env:
           LIST_PACKAGES_RESULT: ${{ needs.list-packages.result }}
           TEST_HUB_RESULT: ${{ needs.test-hub.result }}
+          TEST_SLICED_RESULT: ${{ needs.test-sliced.result }}
           TEST_AGENT_RESULT: ${{ needs.test-agent.result }}
           TEST_REST_RESULT: ${{ needs.test-rest.result }}
           TEST_DASHBOARD_SHUFFLE_RESULT: ${{ needs.test-dashboard-shuffle.result }}
@@ -1520,6 +1842,7 @@ jobs:
           RUN_HUB: ${{ needs.list-packages.outputs.run-hub }}
           RUN_AGENT: ${{ needs.list-packages.outputs.run-agent }}
           RUN_DASHBOARD: ${{ needs.list-packages.outputs.run-dashboard }}
+          RUN_SCHEDULER: ${{ needs.list-packages.outputs.run-scheduler }}
         run: |
           set -euo pipefail
 
@@ -1547,13 +1870,15 @@ jobs:
             allow=()
             [ "${RUN_HUB:-true}" = false ] && allow+=(test-hub)
             [ "${RUN_AGENT:-true}" = false ] && allow+=(test-agent)
-            [ "${RUN_DASHBOARD:-true}" = false ] && allow+=(test-dashboard-shuffle)
+            [ "${RUN_DASHBOARD:-true}" = false ] && allow+=(test-dashboard-shuffle "test-sliced (dashboard)")
+            [ "${RUN_SCHEDULER:-true}" = false ] && allow+=("test-sliced (scheduler)")
             echo "Crux scope: ${CRUX_SCOPE:-<missing>}; lanes allowed to succeed without testing: ${allow[*]:-<none>}"
           fi
 
           shard_names=(
             list-packages
             test-hub
+            test-sliced
             test-agent
             test-rest
             test-dashboard-shuffle
@@ -1561,6 +1886,7 @@ jobs:
           shard_results=(
             "${LIST_PACKAGES_RESULT:-}"
             "${TEST_HUB_RESULT:-}"
+            "${TEST_SLICED_RESULT:-}"
             "${TEST_AGENT_RESULT:-}"
             "${TEST_REST_RESULT:-}"
             "${TEST_DASHBOARD_SHUFFLE_RESULT:-}"
@@ -1644,20 +1970,20 @@ jobs:
     # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
-    needs: [required-context-scope, list-packages, test-hub, test-agent, test-rest]
+    needs: [required-context-scope, list-packages, test-hub, test-sliced, test-agent, test-rest]
     steps:
       - name: Report coverage not required for this diff
         if: ${{ needs.required-context-scope.result == 'success' && needs.required-context-scope.outputs.run-tests != 'true' }}
         run: echo "No v2 coverage paths changed; reporting required coverage context success."
 
       - name: Fail if scope failed or a required test shard did not complete
-        if: ${{ needs.required-context-scope.result != 'success' || (needs.required-context-scope.outputs.run-tests == 'true' && (needs.test-hub.result != 'success' || needs.test-agent.result != 'success' || needs.test-rest.result != 'success')) }}
+        if: ${{ needs.required-context-scope.result != 'success' || (needs.required-context-scope.outputs.run-tests == 'true' && (needs.test-hub.result != 'success' || needs.test-sliced.result != 'success' || needs.test-agent.result != 'success' || needs.test-rest.result != 'success')) }}
         run: |
           if [ "${{ needs.required-context-scope.result }}" != success ]; then
             echo "::error::required-context-scope failed; refusing to report coverage success without a diff verdict"
             exit 1
           fi
-          echo "::error::Coverage requires successful test shards (hub=${{ needs.test-hub.result }}, agent=${{ needs.test-agent.result }}, rest=${{ needs.test-rest.result }})"
+          echo "::error::Coverage requires successful test shards (hub=${{ needs.test-hub.result }}, sliced=${{ needs.test-sliced.result }}, agent=${{ needs.test-agent.result }}, rest=${{ needs.test-rest.result }})"
           exit 1
 
       # Affected-package selection (#12454). On a partial PR run only the
@@ -2110,7 +2436,7 @@ jobs:
     if: (failure() || cancelled()) && github.event_name == 'schedule'
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
-    needs: [list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
+    needs: [list-packages, test-hub, test-sliced, test-agent, test-rest, test-dashboard-shuffle]
     permissions:
       contents: read
       issues: write
@@ -2127,6 +2453,7 @@ jobs:
             const branch = context.ref.replace('refs/heads/', '');
             const results = [
               '${{ needs.test-hub.result }}',
+              '${{ needs.test-sliced.result }}',
               '${{ needs.test-agent.result }}',
               '${{ needs.test-rest.result }}',
               '${{ needs.test-dashboard-shuffle.result }}',
@@ -2163,10 +2490,10 @@ jobs:
             });
 
   create-issues-on-flakes:
-    if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/v5' || github.ref == 'refs/heads/v6') && needs.test-hub.result == 'success' && needs.test-agent.result == 'success' && needs.test-rest.result == 'success' && needs.test-dashboard-shuffle.result == 'success'
+    if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/v5' || github.ref == 'refs/heads/v6') && needs.test-hub.result == 'success' && needs.test-sliced.result == 'success' && needs.test-agent.result == 'success' && needs.test-rest.result == 'success' && needs.test-dashboard-shuffle.result == 'success'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 10
-    needs: [test-hub, test-agent, test-rest, test-dashboard-shuffle]
+    needs: [test-hub, test-sliced, test-agent, test-rest, test-dashboard-shuffle]
     permissions:
       actions: read
       contents: read
