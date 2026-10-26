@@ -662,7 +662,7 @@ func jsonStatusResponse(w http.ResponseWriter, code int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		slog.Warn("jsonStatusResponse encode failed", "error", err)
+		logEncodeFailure("jsonStatusResponse encode failed", err)
 	}
 }
 
