@@ -433,3 +433,36 @@ func TestMergeCIRefusalLogsWithoutFleetReport(t *testing.T) {
 		t.Fatalf("watcher failure should still produce fleet evidence: %+v", ev)
 	}
 }
+
+func TestHandlerSkipsContributorTierLimits(t *testing.T) {
+	for _, msg := range []string{
+		"[contribute-ws] refusing task: concurrency limit reached",
+		"[contribute-ws] refusing task: hourly rate limit reached",
+		"[contribute-ws] refusing task: daily rate limit reached",
+		"  [CONTRIBUTE-WS] REFUSING TASK: HOURLY RATE LIMIT REACHED  ",
+	} {
+		t.Run(msg, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 5; i++ {
+				logger.Warn(msg, "tier", "newcomer", "assigned_last_hour", 3, "max_per_hour", 3)
+			}
+			if len(*seen) != 0 {
+				t.Fatalf("policy refusals observed as runtime errors: %+v", *seen)
+			}
+			if n := strings.Count(out.String(), "\n"); n != 5 {
+				t.Fatalf("wrapped handler saw %d records, want 5", n)
+			}
+		})
+	}
+	for _, msg := range []string{
+		"[contribute-ws] refusing task: lease could not be persisted — try again",
+		"[contribute-ws] hourly rate limit store write failed",
+		"[contribute-ws] refusing task: hourly rate limit reached: enforcement failed",
+	} {
+		logger, seen, _ := newFeed(t)
+		logger.Warn(msg)
+		if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+			t.Errorf("failure %q should remain reportable: %+v", msg, *seen)
+		}
+	}
+}

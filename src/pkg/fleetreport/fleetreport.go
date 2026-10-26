@@ -795,6 +795,15 @@ func IsBenignMessage(msg string) bool {
 	case "agent github api hourly cap reached", "agent github api hourly budget above soft threshold":
 		return true
 	}
+	// Contributor tier limits are normal policy enforcement on each poll,
+	// not runtime failures (#14414). Match the complete notices so failures
+	// to enforce or persist a limit remain reportable.
+	switch strings.TrimSpace(m) {
+	case "[contribute-ws] refusing task: concurrency limit reached",
+		"[contribute-ws] refusing task: hourly rate limit reached",
+		"[contribute-ws] refusing task: daily rate limit reached":
+		return true
+	}
 	if benignIOTimeout(m, m) {
 		return true
 	}
