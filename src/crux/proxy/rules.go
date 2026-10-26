@@ -335,17 +335,31 @@ func DeniedMessage(method, path string) (string, bool) {
 
 var repoPathPrefix = regexp.MustCompile(`^(?:/api/v1)?/repos/([^/]+/[^/]+)`)
 
+// gitSmartHTTPEndpoints are the only things that may follow "<slug>.git/" for
+// gitPathRepo to treat the path as a git smart-HTTP request. Anchoring on the
+// remainder keeps a ".git/" that merely appears inside some other API path
+// (GitLab /repository/files/foo.git/raw) from yielding a bogus slug.
+var gitSmartHTTPEndpoints = map[string]bool{
+	"info/refs":        true,
+	"git-upload-pack":  true,
+	"git-receive-pack": true,
+}
+
 // gitPathRepo returns the repo slug of a git smart-HTTP path ("/org/repo.git/
 // git-receive-pack"), or "" if the path is not one. The slug ends at the FIRST
 // ".git/" and must be two or more segments, so GitLab nested groups
 // ("/group/sub/repo.git/...") are gated on the full project path instead of
-// extracting no repo at all.
+// extracting no repo at all. The remainder after ".git/" must be one of the
+// smart-HTTP endpoints in gitSmartHTTPEndpoints.
 func gitPathRepo(path string) string {
 	if !strings.HasPrefix(path, "/") {
 		return ""
 	}
 	i := strings.Index(path, ".git/")
 	if i < 0 {
+		return ""
+	}
+	if !gitSmartHTTPEndpoints[path[i+len(".git/"):]] {
 		return ""
 	}
 	slug := path[1:i]
@@ -435,6 +449,33 @@ func unescapeSlug(slug string) string {
 		if u, err := url.PathUnescape(seg); err == nil {
 			segs[i] = u
 		}
+	}
+	return strings.Join(segs, "/")
+}
+
+// CanonicalGatePath normalizes an escaped request path (req.URL.EscapedPath())
+// into the one spelling the per-repo gates and ExtractRepo understand. Every
+// segment is percent-decoded exactly as the forge will decode it, then only
+// the two characters that carry structure are re-escaped: "/" as %2F so a
+// GitLab "namespace%2Fproject" stays one segment, and "%" as %25 so a later
+// unescapeSlug decodes each segment once, never twice.
+//
+// Without this, a client could spell a literal prefix with an escape —
+// /r%65pos/org/repo, /org/repo%2Egit/git-receive-pack,
+// /api/v4/pro%6Aects/org%2Frepo — and Go's URL parser would hand the gates the
+// escaped bytes verbatim. ExtractRepo only decodes slug segments, so it would
+// return "" and pause, agent scope, repo filter and per-repo ACMM would all
+// fail OPEN while the forge decoded the relayed request to the real repo.
+// A segment that fails to decode is kept verbatim.
+func CanonicalGatePath(escaped string) string {
+	segs := strings.Split(escaped, "/")
+	for i, seg := range segs {
+		u, err := url.PathUnescape(seg)
+		if err != nil {
+			continue
+		}
+		u = strings.ReplaceAll(u, "%", "%25")
+		segs[i] = strings.ReplaceAll(u, "/", "%2F")
 	}
 	return strings.Join(segs, "/")
 }

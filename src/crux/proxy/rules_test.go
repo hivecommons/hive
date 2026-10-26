@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/hivecommons/hive/crux/agent"
@@ -120,7 +121,14 @@ func TestExtractRepo(t *testing.T) {
 		{"/org/repo.git/git-upload-pack", "org/repo"},
 		{"/group/sub/repo.git/git-receive-pack", "group/sub/repo"},
 		{"/group/sub/sub2/repo.git/git-upload-pack", "group/sub/sub2/repo"},
+		{"/group/sub/repo.git/info/refs", "group/sub/repo"},
 		{"/repo.git/git-receive-pack", ""},
+		// ".git/" that is not followed by a smart-HTTP endpoint is some other
+		// API path, not a git request: no slug.
+		{"/api/v4/projects/org%2Frepo/repository/files/foo.git/raw", "org/repo"},
+		{"/org/repo.git/", ""},
+		{"/org/repo.git/foo", ""},
+		{"/org/repo.git/git-receive-pack/extra", ""},
 		// Percent-escaped slug letters decode to the slug the forge sees, so
 		// deny-list gates (pause, agent scope) cannot be evaded by escaping.
 		{"/repos/o%72g/repo/issues", "org/repo"},
@@ -160,6 +168,81 @@ func TestExtractRepo(t *testing.T) {
 				t.Errorf("ExtractRepo(%q) = %q, want %q", tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestCanonicalGatePath covers the escaped-structural-segment seam: the gates
+// receive the client's escaped path so %2F keeps a GitLab project in one
+// segment, which means every OTHER escape must be decoded first or the literal
+// prefixes ExtractRepo anchors on (/repos/, .git/, /projects/) can be hidden
+// and the write slips every per-repo gate.
+func TestCanonicalGatePath(t *testing.T) {
+	tests := []struct {
+		escaped  string
+		want     string
+		wantRepo string
+	}{
+		{"/repos/org/repo/issues", "/repos/org/repo/issues", "org/repo"},
+		{"/r%65pos/org/repo/issues", "/repos/org/repo/issues", "org/repo"},
+		{"/org/repo%2Egit/git-receive-pack", "/org/repo.git/git-receive-pack", "org/repo"},
+		{"/org/repo.git/git-receive-p%61ck", "/org/repo.git/git-receive-pack", "org/repo"},
+		{"/api/v4/pro%6Aects/org%2Frepo/issues", "/api/v4/projects/org%2Frepo/issues", "org/repo"},
+		{"/api/v4/projects/group%2Fsub%2Frepo/issues", "/api/v4/projects/group%2Fsub%2Frepo/issues", "group/sub/repo"},
+		{"/api/v4/projects/o%72g%2Frepo/iss%75es", "/api/v4/projects/org%2Frepo/issues", "org/repo"},
+		{"/repos/org/repo/pulls/1/merg%65", "/repos/org/repo/pulls/1/merge", "org/repo"},
+		// A doubly-escaped slash decodes once, as the forge decodes it: the
+		// segment is the literal "org%2Frepo", not a namespace/project pair,
+		// and ExtractRepo's resource-word fallback yields a slug that matches
+		// no real repo — the write fails CLOSED rather than skipping the gates.
+		{"/api/v4/projects/org%252Frepo/issues", "/api/v4/projects/org%252Frepo/issues", "org%2Frepo/issues"},
+		// Undecodable segments are kept verbatim.
+		{"/repos/org/re%zzpo/issues", "/repos/org/re%zzpo/issues", "org/re%zzpo"},
+		{"/graphql", "/graphql", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.escaped, func(t *testing.T) {
+			got := CanonicalGatePath(tt.escaped)
+			if got != tt.want {
+				t.Errorf("CanonicalGatePath(%q) = %q, want %q", tt.escaped, got, tt.want)
+			}
+			if repo := ExtractRepo(got); repo != tt.wantRepo {
+				t.Errorf("ExtractRepo(CanonicalGatePath(%q)) = %q, want %q", tt.escaped, repo, tt.wantRepo)
+			}
+		})
+	}
+}
+
+// TestRepoGatesEscapedStructuralSegments is the end-to-end assertion that an
+// escaped prefix cannot turn a gated write into an ungated one.
+func TestRepoGatesEscapedStructuralSegments(t *testing.T) {
+	paused := func(repo string) bool { return repo == "org/repo" }
+	serves := func(agent, repo string) bool { return repo == "other/repo" }
+	allowed := map[string]bool{"other/repo": true}
+	autoMerge := func(repo string) bool { return repo != "org/repo" }
+
+	for _, escaped := range []string{
+		"/r%65pos/org/repo/issues",
+		"/org/repo%2Egit/git-receive-pack",
+		"/api/v4/pro%6Aects/org%2Frepo/issues",
+		"/api/v4/projects/o%72g%2Frepo/merge_requests",
+	} {
+		t.Run(escaped, func(t *testing.T) {
+			path := CanonicalGatePath(escaped)
+			if _, refused := RepoPauseRefusal(paused, "POST", path); !refused {
+				t.Errorf("RepoPauseRefusal let %q through", escaped)
+			}
+			if _, refused := AgentRepoScopeRefusal(serves, "reviewer", "POST", path); !refused {
+				t.Errorf("AgentRepoScopeRefusal let %q through", escaped)
+			}
+			if RepoFilterAllowed(allowed, "POST", path) {
+				t.Errorf("RepoFilterAllowed let %q through", escaped)
+			}
+		})
+	}
+
+	path := CanonicalGatePath("/repos/org/repo/pulls/1/merg%65")
+	if _, refused := RepoAutoMergeRefusal(autoMerge, http.MethodPut, path); !refused {
+		t.Errorf("RepoAutoMergeRefusal let escaped merge path through")
 	}
 }
 

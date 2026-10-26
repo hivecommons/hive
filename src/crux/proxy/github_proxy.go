@@ -558,13 +558,15 @@ func (p *GitHubProxy) SetRepoPausedFunc(fn func(repo string) bool) {
 }
 
 // repoScopePath is the request path handed to the per-repo write gates (pause,
-// agent scope, auto-merge, per-repo ACMM mode, repo filter). It keeps the
-// client's own escaping rather than the decoded req.URL.Path so a GitLab
+// agent scope, auto-merge, per-repo ACMM mode, repo filter). It starts from
+// the client's own escaping rather than the decoded req.URL.Path so a GitLab
 // "namespace%2Fproject" stays one segment and ExtractRepo resolves the exact
 // project — including nested groups — instead of guessing where the project
-// path ends from the sub-resource that follows it.
+// path ends from the sub-resource that follows it. CanonicalGatePath then
+// decodes every OTHER escape so an escaped structural segment (/r%65pos/,
+// repo%2Egit, pro%6Aects, merg%65) cannot hide the repo from the gates.
 func repoScopePath(req *http.Request) string {
-	return req.URL.EscapedPath()
+	return CanonicalGatePath(req.URL.EscapedPath())
 }
 
 // repoPauseRefusal is RepoPauseRefusal against this proxy's current predicate.

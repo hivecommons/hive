@@ -285,11 +285,43 @@ type testBufConn struct {
 	Writer io.Writer
 }
 
-func (c *testBufConn) Read([]byte) (int, error)          { return 0, io.EOF }
-func (c *testBufConn) Write(b []byte) (int, error)       { return c.Writer.Write(b) }
-func (c *testBufConn) Close() error                      { return nil }
-func (c *testBufConn) LocalAddr() net.Addr               { return &net.TCPAddr{} }
-func (c *testBufConn) RemoteAddr() net.Addr              { return &net.TCPAddr{} }
-func (c *testBufConn) SetDeadline(_ time.Time) error     { return nil }
-func (c *testBufConn) SetReadDeadline(_ time.Time) error { return nil }
+func (c *testBufConn) Read([]byte) (int, error)           { return 0, io.EOF }
+func (c *testBufConn) Write(b []byte) (int, error)        { return c.Writer.Write(b) }
+func (c *testBufConn) Close() error                       { return nil }
+func (c *testBufConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
+func (c *testBufConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
+func (c *testBufConn) SetDeadline(_ time.Time) error      { return nil }
+func (c *testBufConn) SetReadDeadline(_ time.Time) error  { return nil }
 func (c *testBufConn) SetWriteDeadline(_ time.Time) error { return nil }
+
+// TestRepoScopePathCanonicalizesEscapes pins the proxy-level contract: the
+// path handed to the per-repo gates keeps %2F (GitLab project separator) but
+// decodes every other escape, so an escaped structural segment resolves to
+// the same repo the forge will act on.
+func TestRepoScopePathCanonicalizesEscapes(t *testing.T) {
+	tests := []struct {
+		rawURL   string
+		wantPath string
+		wantRepo string
+	}{
+		{"https://api.github.com/r%65pos/org/repo/issues", "/repos/org/repo/issues", "org/repo"},
+		{"https://github.com/org/repo%2Egit/git-receive-pack", "/org/repo.git/git-receive-pack", "org/repo"},
+		{"https://gitlab.com/api/v4/pro%6Aects/org%2Frepo/issues", "/api/v4/projects/org%2Frepo/issues", "org/repo"},
+		{"https://gitlab.com/api/v4/projects/group%2Fsub%2Frepo/issues", "/api/v4/projects/group%2Fsub%2Frepo/issues", "group/sub/repo"},
+		{"https://api.github.com/repos/org/repo/pulls/1/merg%65", "/repos/org/repo/pulls/1/merge", "org/repo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.rawURL, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, tt.rawURL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := repoScopePath(req); got != tt.wantPath {
+				t.Errorf("repoScopePath = %q, want %q", got, tt.wantPath)
+			}
+			if got := ExtractRepo(repoScopePath(req)); got != tt.wantRepo {
+				t.Errorf("ExtractRepo(repoScopePath) = %q, want %q", got, tt.wantRepo)
+			}
+		})
+	}
+}
