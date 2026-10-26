@@ -242,3 +242,67 @@ func TestCreateIssueComment_ExpiredUnknownPermitsRetry(t *testing.T) {
 		t.Fatalf("POST comment ran %d times, want 2", got)
 	}
 }
+
+// An ambiguous PR create POST leaves the pull_request_create op Unknown; the
+// next create must settle it from the open PR for the head instead of
+// refusing forever (hivecommons/hive#14366), without opening a duplicate.
+func TestCreatePR_ReconcilesUnknownByObservedHead(t *testing.T) {
+	tests := []struct {
+		name         string
+		landedAtList int32
+		wantPosts    int32
+		wantExisted  bool
+		wantPRNumber int
+	}{
+		{"PR landed: applied, no duplicate", 3, 1, true, 7},
+		{"PR absent: not applied, create retries", 0, 2, false, 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var posts, headLists atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/org/repo/pulls":
+					// Lists by head: 1 = first dedupe, 2 = second dedupe,
+					// 3 = the reconciling observation.
+					if r.URL.Query().Get("head") != "" && tt.landedAtList > 0 && headLists.Add(1) >= tt.landedAtList {
+						_ = json.NewEncoder(w).Encode([]any{map[string]any{"number": 7, "html_url": "https://github.com/org/repo/pull/7"}})
+						return
+					}
+					_ = json.NewEncoder(w).Encode([]any{})
+				case r.Method == http.MethodPost && r.URL.Path == "/repos/org/repo/pulls":
+					if posts.Add(1) == 1 {
+						w.WriteHeader(http.StatusBadGateway)
+						_ = json.NewEncoder(w).Encode(map[string]any{"message": "bad gateway"})
+						return
+					}
+					w.WriteHeader(http.StatusCreated)
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "html_url": "https://github.com/org/repo/pull/8"})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			c := NewClientForTest(srv.URL, "org", nil, prTestLogger())
+			c.SetMutationBoundary(replayTestBoundary(t))
+
+			if _, err := c.CreatePR(context.Background(), "repo", "feature", "main", "Add tests", "body"); err == nil {
+				t.Fatal("first create must fail on 502")
+			}
+			got, err := c.CreatePR(context.Background(), "repo", "feature", "main", "Add tests", "body")
+			if err != nil {
+				t.Fatalf("second create err = %v, want reconciled success", err)
+			}
+			if errors.Is(err, effects.ErrNeedsReconciliation) {
+				t.Fatal("second create must not be refused pending reconciliation")
+			}
+			if got.Number != tt.wantPRNumber || got.AlreadyExisted != tt.wantExisted {
+				t.Fatalf("second create = %+v, want number %d AlreadyExisted=%v", got, tt.wantPRNumber, tt.wantExisted)
+			}
+			if n := posts.Load(); n != tt.wantPosts {
+				t.Fatalf("POST /pulls ran %d times, want %d", n, tt.wantPosts)
+			}
+		})
+	}
+}

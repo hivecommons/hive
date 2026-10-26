@@ -303,12 +303,17 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	}
 
 	var pr *gh.PullRequest
-	res, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	// ExecuteReconciling, not Execute: an ambiguous POST failure journals the
+	// op Unknown, and without an observation every later create for the same
+	// head was refused forever (hivecommons/hive#14366).
+	res, err := effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestCreate,
 		Target: head,
 		Inputs: map[string]string{"head": head, "base": base, "title": effects.StableDigest(title), "body": effects.StableDigest(body)},
-	}, func(ctx context.Context) (effects.Result, error) {
+	}, func(ctx context.Context) (effects.ExternalState, error) {
+		return c.observePullRequestCreate(ctx, owner, repo, head)
+	}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
 		pr, _, apiErr = c.client.PullRequests.Create(ctx, owner, repo, &gh.NewPullRequest{
 			Title: gh.Ptr(title),
@@ -317,6 +322,10 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 			Body:  gh.Ptr(body),
 		})
 		if apiErr != nil {
+			if isDefiniteIssueRefusal(apiErr) {
+				// The PR was not opened; recording Unknown would fence retries.
+				return effects.Result{}, effects.NotApplied(apiErr)
+			}
 			return effects.Result{}, apiErr
 		}
 		return effects.Result{Provenance: pr.GetHTMLURL()}, nil
@@ -582,6 +591,23 @@ func BranchUpdateState(pr *gh.PullRequest, expectedHeadSHA, provenance string) e
 		return effects.ExternalState{Applied: true, Provenance: provenance}
 	}
 	return effects.ExternalState{}
+}
+
+// observePullRequestCreate is the authoritative observation of a PR create the
+// mutation journal holds as unresolved: the earlier attempt applied when an
+// open PR already exists for the head branch, and its URL is the provenance.
+func (c *Client) observePullRequestCreate(ctx context.Context, owner, repo, head string) (effects.ExternalState, error) {
+	if c == nil || c.client == nil {
+		return effects.ExternalState{}, ErrNoGitHubClient
+	}
+	pr, err := c.findOpenPRForHead(ctx, owner, repo, head)
+	if err != nil {
+		return effects.ExternalState{}, err
+	}
+	if pr == nil {
+		return effects.ExternalState{}, nil
+	}
+	return effects.ExternalState{Applied: true, Provenance: pr.GetHTMLURL()}, nil
 }
 
 // findOpenPRForHead returns the open PR whose head branch matches, or nil. The
