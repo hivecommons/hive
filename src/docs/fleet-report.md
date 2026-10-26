@@ -442,7 +442,11 @@ cooldown runs from the later of the close and the last tick that still saw
 the condition, so it only expires once the condition has been absent for a
 whole week; a recurrence after that is a regression and gets a fresh issue.
 The hub relay applies the same rule for relayed reports (a recently closed
-fingerprint answers `closed_upstream` and writes nothing). Filing is also
+fingerprint answers `closed_upstream` and writes nothing). For the scanner
+and maintainers this means "already fixed on v5" is a safe reason to close a
+self-report even when the reporting hive's build (named in the body)
+predates the fix: cite the fixing PR once and close; the reporter will not
+re-file or comment again, and picks the fix up on its next build. Filing is also
 deferred while the GitHub API budget is not `normal`. Hub-managed hives whose credential is refused by the report repo
 (403/404) relay the report to the hub's `POST /api/selfreport/ingest` with
 their heartbeat bearer, and the hub files or joins under the App identity.
