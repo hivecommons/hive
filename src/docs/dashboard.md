@@ -195,6 +195,20 @@ autocomplete and argument hints. Current commands are `/help`, `/clear`,
 `/search`, `/history`, `/retry`, `/edit`, `/who`, `/agents`, `/beads`,
 `/prs`, `/governor`, `/knowledge`, `/jam`, and `/spek`.
 
+`/prs` answers locally from the status snapshot (the same cached rows
+`/api/prs` serves, so it costs no GitHub call): the open pull requests grouped
+by repo, one row each — `owner/repo#N — title (@author · stage labels · age ·
+✅/❌/⏳ CI · approved / changes requested · needs decision · hold · mergeable)`
+— under the aggregate count, capped at 25 rows with an "… and N more" footer.
+The remainder of the command narrows the list and every filter is a
+conjunct: `waiting on review` / `needs review` (not a draft, no approving
+review), `needs decision` (`stage/085-needs-decision` or
+`stage/045-needs-decision`), `hold` (held set or a hold label), `failing ci`,
+`mine` (the signed-in viewer) / `by <login>` / `@login`, `repo <owner/repo>` or
+a bare `owner/repo` token (the short repo name also works), and `stale`
+(untouched for 7 days) / `older than 3d` (`h`, `d`, `w`). Words the parser does
+not recognise are reported and ignored, and the list is still printed.
+
 The prompt behaves like a small terminal: `Enter` sends, `Shift+Enter` inserts a
 newline, `Tab` completes slash commands, Up/Down cycle prior commands while
 preserving the draft, `?` opens the shortcut overlay, `Esc` closes the overlay

@@ -250,7 +250,7 @@ func TestHandleChat_ScopedQuestionNeverFallsBackToDump(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, deps := chatEvalServer(t, nil)
 			tc.setup(s, deps)
-			for _, query := range []string{"agents: what should the hive do next", "/agents what should the hive do next", "prs: waiting on review", "which PRs have failing CI"} {
+			for _, query := range []string{"agents: what should the hive do next", "/agents what should the hive do next", "prs: which should merge first", "which PRs have failing CI"} {
 				res := chatEvalAsk(t, s, query)
 				answer, _ := res["answer"].(string)
 				if res["status"] != "grounding_unavailable" {
@@ -301,7 +301,7 @@ func TestHandleChat_BareCommandsStayDeterministic(t *testing.T) {
 	for query, want := range map[string]string{
 		"agents: status": "Agents (16):",
 		"/agents":        "- fixer: stopped (paused)",
-		"prs: status":    "hivecommons/hive: 4 open PR(s)",
+		"prs: status":    "There are 4 open pull request(s)",
 		"status":         "Hive status: ready",
 		"help":           "/agents stuck",
 	} {
@@ -321,7 +321,7 @@ func TestHandleChat_GroundedAudited(t *testing.T) {
 	s, deps := chatEvalServer(t, &fakeChatGrounder{answer: "ok\nSources: scanner"})
 	chatEvalAsk(t, s, "agents: what should the hive do next")
 	deps.ChatGrounder = &fakeChatGrounder{err: errors.New("boom")}
-	chatEvalAsk(t, s, "prs: waiting on review")
+	chatEvalAsk(t, s, "prs: which should merge first")
 	entries := s.audit.Recent(0)
 	var seen []string
 	for _, e := range entries {

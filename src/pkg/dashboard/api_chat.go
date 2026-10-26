@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 )
@@ -169,14 +170,21 @@ func (s *Server) chatRouteLocalAnswer(r *http.Request, route chatRoute) (string,
 // Anything they do not recognise returns false and is grounded instead of
 // collapsing to the bare dump.
 func (s *Server) chatScopedLocalAnswer(route chatRoute, viewer string) (string, bool) {
-	_ = viewer
 	if answer, inScope, ok := s.chatAgentsAnswer(route.Raw); inScope && ok {
 		return answer, true
+	}
+	// A PR question made only of the filters parseChatPRFilter knows is
+	// answered from the snapshot without a model turn (hivecommons/hive#14408);
+	// anything with words it cannot place goes to the grounded path.
+	if route.Scope == "prs" {
+		if f := parseChatPRFilter(route.Raw, viewer); route.Kind == chatRouteBare || len(f.Unknown) == 0 {
+			return s.chatPRsAnswer(route.Raw, viewer), true
+		}
 	}
 	return "", false
 }
 
-const chatHelpAnswer = "Try `beads` for bead counts, `agents` for the agent roster, `prs` for open pull requests, or `status` for a hive summary. Agent questions: `/agents stuck|paused|running|idle|failed`, `/agents <name> [status|why|last|history]`, or ask \"which agent completed last?\", \"why is scanner blocked?\". Any other arguments or plain-words question (`/prs waiting on review`, `what's waiting on my decision`) are answered from the live hive state. Commands beginning with `!` or `/` still use their command handlers."
+const chatHelpAnswer = "Try `beads` for bead counts, `agents` for the agent roster, `prs` for the open pull requests (filters: " + chatPRFilterHint + "), or `status` for a hive summary. Agent questions: `/agents stuck|paused|running|idle|failed`, `/agents <name> [status|why|last|history]`, or ask \"which agent completed last?\", \"why is scanner blocked?\". Any other arguments or plain-words question (`/prs waiting on review`, `what's waiting on my decision`) are answered from the live hive state. Commands beginning with `!` or `/` still use their command handlers."
 
 // chatBareAnswer is the deterministic summary for a bare command scope.
 func (s *Server) chatBareAnswer(scope string) (string, bool) {
@@ -189,7 +197,7 @@ func (s *Server) chatBareAnswer(scope string) (string, bool) {
 		}
 		return "Agent status is still initializing.", true
 	case "prs":
-		return s.chatPRsAnswer(), true
+		return s.chatPRsAnswer("", ""), true
 	case "status":
 		return s.chatStatusAnswer(), true
 	}
@@ -290,29 +298,15 @@ func (s *Server) chatBeadsAnswer() string {
 	return "Bead data is not available yet."
 }
 
-func (s *Server) chatPRsAnswer() string {
+// chatPRsAnswer lists the snapshot's open pull requests, narrowed by the
+// filters in the query remainder (parseChatPRFilter). It reads the same
+// cached FrontendPR rows /api/prs serves — no GitHub call (hivecommons/hive#14408).
+func (s *Server) chatPRsAnswer(query, viewer string) string {
 	status := s.chatStatusSnapshot()
 	if status == nil {
 		return "Pull request data is still initializing."
 	}
-	total := 0
-	lines := []string{}
-	for _, repo := range status.Repos {
-		count := len(repo.OpenPrs)
-		total += count
-		if count > 0 {
-			name := repo.Full
-			if name == "" {
-				name = repo.Name
-			}
-			lines = append(lines, fmt.Sprintf("- %s: %d open PR(s)", name, count))
-		}
-	}
-	if total == 0 {
-		return "No open pull requests are currently reported."
-	}
-	sort.Strings(lines)
-	return fmt.Sprintf("There are %d open pull request(s):\n%s", total, strings.Join(lines, "\n"))
+	return renderChatPRList(status.Repos, parseChatPRFilter(query, viewer), time.Now())
 }
 
 func (s *Server) chatStatusAnswer() string {

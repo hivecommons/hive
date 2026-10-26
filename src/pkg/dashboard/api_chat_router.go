@@ -188,7 +188,7 @@ func chatScopeUsage(scope, question, reason string) string {
 	case "agents":
 		b.WriteString("Bare `/agents` lists every agent with its state. ")
 	case "prs":
-		b.WriteString("Bare `/prs` gives open pull request counts per repository. ")
+		b.WriteString("Bare `/prs` lists the open pull requests per repository; filters " + chatPRFilterHint + " are answered from the snapshot without a model. ")
 	case "beads":
 		b.WriteString("Bare `/beads` gives bead counts per store. ")
 	case "status":
