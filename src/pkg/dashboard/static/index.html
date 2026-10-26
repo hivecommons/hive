@@ -14127,8 +14127,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
-      const sinceMs = Date.parse(item.stage_since || '');
-      const stalled = (Array.isArray(item.modifiers) ? item.modifiers : []).indexOf('stalled') >= 0;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      let sinceMs = Date.parse(item.stage_since || '');
+      // A blocked row without stage_since still shows its age, from created_at.
+      if (!sinceMs && mods.indexOf('blocked') >= 0) sinceMs = stageTrackerOpenSince(item).ms;
+      const stalled = mods.indexOf('stalled') >= 0;
       return `<span class="ham-since${stalled ? ' ham-stalled' : ''}">${esc(sinceMs ? stageTrackerShortAgo(nowMs - sinceMs) : '')}</span>`;
     }
 
