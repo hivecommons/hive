@@ -671,8 +671,8 @@ the observer half of `Host`; and a `crux agy-turn` subcommand so the
   `SetGatewayBackendChecker`, `SetSandboxConfig`, `SetSpanStarter`, …) are
   inert with a one-time log until stage 4. `bootAgents` serves
   `cruxhost.New(deps)` on `callback.Listen` before the rest of the wiring
-  and exits if it cannot bind. `Usage` (the inference sink) stays
-  `not_configured` until the proxy moves.
+  and exits if it cannot bind. `Usage` (the inference sink) stayed
+  `not_configured` until #14405 wired it.
 - **`crux agy-turn`** (#14247). The manager types its own executable into
   headless agy panes; under `crux serve` that is `crux`, so the subcommand
   exists there too.
@@ -690,33 +690,80 @@ unreachable runtime (reconnect, degraded state, the
 `pkg/dashboard` on the client (stage 5); and a soak of a hosted hive in
 sidecar mode before the flip (stage 6).
 
-**Stage 4 progress.**
+**Stage 4 progress.** *Status: shipped* (#14394 policy setters, #14400
+failure semantics and supervision, #14404 credential writers, #14405
+proxy seams). Every `crux.Host` setter now has a disposition in
+`api.HostSetters`, and `TestParityHostVersusSetterTable` fails when a
+setter is added without one.
 
-- [x] Policy setters carried over the hive callback: `SetBuildInfo`,
-  `SetGatewayBackendChecker`, `SetExplainModeDefaultResolver`,
-  `SetRepoAutoMergeEnabledResolver`, `SetKickLogSourceResolver`,
-  `SetSandboxConfig`, `SetDeadSessionRecoveryOwner`. The callback contract
-  gained `GET /v1/policy` (a `callback.Policy` snapshot) and
-  `POST /v1/policy/repo-auto-merge` behind the optional
-  `callback.PolicySource` interface and the `policy` capability.
-  `sidecarHost` records each setter's value and `cruxhost.Deps.Policy`
-  serves it; `crux serve --hive-callback` polls the snapshot
-  (`hivecap.WatchPolicy`) and installs the resolvers on the manager the
-  first time hive reports each value, re-setting the sandbox config and
-  dead-session owner on change. Chosen over a `hive.yaml` runtime key
-  because every value is already resolved hive-side from the live config
-  (a reload reaches the runtime on its next poll) and the pattern is the
-  existing callback's. See [crux-serve.md](../crux-serve.md#host-policy-from-hive-14138-stage-4).
-- [ ] `SetInferenceCallbacks`: configures hive's inference proxy; moves
-  with the proxy.
-- [ ] `SetSandboxMutationBoundary`: wraps runtime-side GitHub mutations
-  (`effects.Boundary`); needs a claim/commit callback, not a value.
-- [ ] `SetSpanStarter`: tracing across the boundary.
-- [ ] `SetAgentMint` / `SetAppAuth` / Bob key resolvers as
-  callback-backed writers in `crux/agent`.
-- [ ] The proxy move with `Accounting` / `Usage` / `Canary` from the
-  callback.
-- [ ] Governor behaviour against an unreachable runtime.
+| Setter | Disposition | Via |
+|---|---|---|
+| `SetBuildInfo`, `SetGatewayBackendChecker`, `SetExplainModeDefaultResolver`, `SetKickLogSourceResolver`, `SetSandboxConfig`, `SetDeadSessionRecoveryOwner` | callback | `GET /v1/policy` snapshot (`hivecap.WatchPolicy`, polled every 15 s) |
+| `SetRepoAutoMergeEnabledResolver` | callback | `POST /v1/policy/repo-auto-merge`, fail closed (merge refused) |
+| `SetInferenceCallbacks` | callback | `PUT`/`DELETE` `/v1/inference/routes/{agent}`: the sidecar manager pushes each agent's route into hive's proxy |
+| `SetSandboxMutationBoundary` | callback | `POST /v1/effects`, `POST /v1/effects/{id}/end`: two-phase claim/end over hive's journaling boundary, fail closed |
+| `SetAppAuth` | callback | `POST /v1/tokens` with `{agent, tier}` and no repos (installation-wide, what `AppAuth.ScopedToken(tier)` mints in-process); `hivecap.AppTokenWriter` writes the token in place to the agent's cache file |
+| `SetAgentMint` | callback | `POST /v1/tokens/mint` (`agent_mint` capability); mint off is `""`, the in-process contract |
+| `SetBobAPIKeyResolver`, `SetBobKeySourceResolver` | callback | `GET /v1/bob/credential` (`bob` capability), cached 1 min runtime-side |
+| `SetLinearCredentialResolver`, `SetSandboxPushMinter`, `SetSandboxPRClient` | callback | `GET /v1/linear/credential`, `POST /v1/tokens`, `POST /v1/pulls` (stage 2) |
+| observers (`SetKickOutcomeObserver`, `SetPauseTransitionObserver`, `SetRelaunchObserver`, `SetPersistPauseCallback`, `SetRecordPromptCallback`, `SetSandboxAuditCallback`, `SetAuditSink`, `SetConditionReporter`) | event | the `/v1/events` stream (stage 3); conditions also `POST /v1/conditions` |
+| `SetSpanStarter` | in-process-only | a span is a Go value wrapping a call in one address space. The sidecar's manager starts spans on the OpenTelemetry global tracer (a no-op without an exporter in the runtime's process); trajectory events do not depend on it |
+
+No setter is served from a `runtime:` config key: every value is already
+resolved hive-side from the live config, so a reload reaches the runtime
+on its next poll, and the callback pattern was already there.
+
+- [x] Policy setters over `GET /v1/policy` / `POST /v1/policy/repo-auto-merge`
+  (#14394). See [crux-serve.md](../crux-serve.md#host-policy-from-hive-14138-stage-4).
+- [x] `SetInferenceCallbacks` over the `inference_routes` family and
+  `SetSandboxMutationBoundary` over the `effects` family (#14394).
+- [x] `SetSpanStarter` documented as in-process-only (#14394).
+- [x] `SetAgentMint` / `SetAppAuth` / Bob key resolvers as callback-backed
+  writers (`crux/hivecap/credentials.go`, #14404). Tokens are never logged
+  and go only to the existing per-agent cache path; all three fail closed
+  (no credential) when hive is away. `HIVE_PROXY_INJECT_GH_AUTH` is
+  refused in sidecar mode rather than silently writing the real token:
+  the proxy-inject registry lives in `pkg/github` (stage 5).
+- [x] The proxy seams from the callback (#14405): hive serves the
+  inference usage ledger (`usage` was `not_configured` since stage 3) and
+  a proxy on `hivecap.Set.{Accounting,Usage,Canary}` refuses writes while
+  hive is away and resumes when it returns (tested over a real socket).
+  The proxy *process* still runs in hive; the move proper is stage 5.
+- [x] Failure semantics and supervision (#14400), below.
+
+**Failure semantics decided in stage 4** (full table in
+[crux-serve.md](../crux-serve.md#supervision-and-failure-semantics-14138-stage-4)):
+
+- *Runtime socket gone.* The governor keeps its loop. `client.Runtime`
+  methods return `crux.ErrRuntimeUnavailable` (wrapping
+  `api.ErrUnreachable`); kicks are **refused, not queued** — a kick is a
+  prompt about the state of the world when it was issued, and replaying
+  a stale one after a long outage is worse than the governor's next
+  cycle re-deriving it. `cmd/hive` probes the runtime every 15 s and
+  raises `crux_runtime_unavailable` (fleetreport class, severity high,
+  key `sidecar`) on the first failure, clearing it on the first success;
+  `/api/health` carries `crux_runtime` and reports `degraded`.
+- *Supervision.* `CRUX_SUPERVISE=child` (default) spawns and supervises
+  `crux serve` as a child with exponential backoff (1 s → 1 min) and a
+  readiness check on `/v1/health`; `external` only reconnects. A missing
+  binary logs loudly and behaves as `external`.
+- *Health.* `/v1/health` includes `hive_callback`, `started_at` and
+  `uptime_seconds`; hive's `/api/health` includes `crux_runtime`.
+
+**What stage 4 leaves for stage 5** (the dashboard through the client):
+
+- `pkg/dashboard` on `client.Runtime`; render `crux_runtime_unavailable`
+  on the fleet card and the condition list (the class exists; the
+  rendering path has not been exercised in sidecar mode).
+- The proxy move proper: the MITM proxy in the runtime process on the
+  callback seams (CA distribution, agent env), and with it
+  `HIVE_PROXY_INJECT_GH_AUTH` for sidecar agents (today refused).
+- Kick replay revisit once the dashboard shows the condition: a bounded
+  queue is a one-line change in `client.Runtime` if operators want it.
+- Supervisor pidfile and `SIGTERM` propagation on hive shutdown; today the
+  child's context is hive's and it is killed with it.
+- The watchdog's rotation probe (`UsageProber`) as a callback family.
+- A soak of a hosted hive in sidecar mode before the flip (stage 6).
 
 ## Credentials and hive-provided capabilities
 
@@ -894,9 +941,10 @@ redacted so an accidental `%v` cannot leak it.
 The outage is a runtime condition. `callback.Client.Status()` reports
 `Reachable`, the last error, when it began and how many calls failed
 closed; the class name `hive_callback_unavailable` is reserved for it.
-Stage 4 surfaces it on `GET /v1/health` and as an `api.Event`, and defines
-the governor's reaction (no new dispatch, holds kept) alongside the other
-"socket is gone" cases. Recovery is per call: the next successful callback
+Stage 4 surfaced it on `GET /v1/health` (`hive_callback`) and as a
+condition on the event stream, and defined the governor's reaction to
+the other "socket is gone" case (`crux_runtime_unavailable`, kicks
+refused, loop kept; see "Failure semantics decided in stage 4" above). Recovery is per call: the next successful callback
 clears the condition; there is no circuit breaker, because the fail-closed
 answers are already cheap and the per-call timeout
 (`callback.DefaultTimeout`, 5 s) bounds the cost of a dead socket.
@@ -906,17 +954,19 @@ answers are already cheap and the per-call timeout
 - `cmd/hive` (#14248, done): `cruxhost.New(cruxhost.Deps{...})` over the
   values it already constructs, served on
   `callback.Listen(callback.DefaultSocket())` next to the runtime socket,
-  in sidecar mode only. `Usage` is left `not_configured` until the proxy
-  moves; the Linear resolver is read lazily because `bootSupervision`
-  builds it after `bootAgents`.
+  in sidecar mode only. The Linear resolver and the usage ledger are read
+  lazily because `bootSupervision` and `bootProxy` build them after
+  `bootAgents`.
 - `crux serve` (#14246, done): a `--hive-callback` address (or
   `$CRUX_HIVE_SOCKET`), `callback.NewClient`, `hivecap.New(client)`, and
   the manager setters fed from it instead of nil (`toolapprove` text
   scanner, condition reporter, PR creator, Linear resolver, sandbox push
   minter over the token scoper). The proxy setters follow the proxy move.
-- Stage 4: `AppTokenMinter` → a mint-callback-backed cache writer in
-  `crux/agent`; `AgentMintIssuer` and `UsageProber` follow the same route
-  pattern when the watchdog's rotation probe moves.
+- Stage 4 (done): `AppTokenMinter` → `hivecap.AppTokenWriter` over
+  `POST /v1/tokens`; `AgentMintIssuer` → `hivecap.AgentMint` over
+  `POST /v1/tokens/mint`; the Bob resolvers → `hivecap.BobCredentials`
+  over `GET /v1/bob/credential`. `UsageProber` follows when the watchdog's
+  rotation probe moves (stage 5).
 
 ## CLI
 
