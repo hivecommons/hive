@@ -838,6 +838,26 @@ func TestIsBenignMessageContributorFailureStreak(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessageRequiredChecksOverrideMismatch(t *testing.T) {
+	for _, msg := range []string{
+		"automerge required_checks override does not match repo protection",
+		"AUTOMERGE REQUIRED_CHECKS OVERRIDE DOES NOT MATCH REPO PROTECTION",
+	} {
+		if !IsBenignMessage(msg) {
+			t.Errorf("configuration notice %q not benign", msg)
+		}
+	}
+	for _, msg := range []string{
+		"automerge required_checks lookup failed",
+		"automerge failed to read repo protection",
+		"automerge required check has not succeeded",
+	} {
+		if IsBenignMessage(msg) {
+			t.Errorf("failure %q wrongly benign", msg)
+		}
+	}
+}
+
 func TestQueueHealthClassesQualifyOnFirstObservationAndClear(t *testing.T) {
 	now, _ := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)

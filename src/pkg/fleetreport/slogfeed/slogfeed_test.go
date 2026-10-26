@@ -211,6 +211,37 @@ func TestCopilotModelFallbackLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestRequiredChecksOverrideMismatchLogsWithoutFleetReport(t *testing.T) {
+	now := time.Date(2026, 10, 26, 6, 22, 45, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "automerge required_checks override does not match repo protection"
+	// Reproduce the reported five warnings in ten minutes. The notice must
+	// stay visible to operators without qualifying as a runtime defect.
+	for i := 0; i < 5; i++ {
+		logger.Warn(msg, "repo", "kubestellar/console-kb", "declared", "[build-gate]",
+			"actual", "[]", "using", "actual", "mismatch", "[build-gate]")
+		now = now.Add(time.Minute)
+	}
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("configuration drift produced fleet evidence: %+v", ev)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 5 {
+		t.Fatalf("wrapped handler saw %d records, want 5: %s", n, out.String())
+	}
+	if !strings.Contains(out.String(), `"msg":"`+msg+`"`) || !strings.Contains(out.String(), `"using":"actual"`) || !strings.Contains(out.String(), `"mismatch":"[build-gate]"`) {
+		t.Fatalf("configuration warning lost its diagnostics: %s", out.String())
+	}
+	const failure = "automerge failed to read repo protection"
+	for i := 0; i < 5; i++ {
+		logger.Warn(failure)
+	}
+	if ev := tr.Evidence(); len(ev) != 1 || ev[0].Class != fleetreport.ClassUnclassifiedRepeated || ev[0].Message != failure || ev[0].Count != 5 {
+		t.Fatalf("protection lookup failure should still produce fleet evidence: %+v", ev)
+	}
+}
+
 func TestFeedLogFedPath(t *testing.T) {
 	tests := []struct {
 		name      string

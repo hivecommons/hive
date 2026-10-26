@@ -755,6 +755,10 @@ var benignSubstrings = []string{
 	// refusal is benign: "refusing task: lease could not be persisted" is a
 	// real failure and must remain reportable.
 	"refusing task: contributor failure streak",
+	// Both automerge CI gates warn when configured fallback checks are stale,
+	// while continuing to use the repository's actual protection checks.
+	// This is operator configuration drift, not a runtime defect (#14351).
+	"automerge required_checks override does not match repo protection",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic
