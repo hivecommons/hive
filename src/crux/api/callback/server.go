@@ -372,20 +372,24 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, 
 type ListenConfig struct {
 	// Socket is the unix socket path; empty selects DefaultSocket().
 	Socket string
-	// Listen is an optional TCP host:port; it requires Token.
+	// Listen is an optional loopback TCP host:port; it requires Token.
+	// Remote access requires a TLS-terminating proxy.
 	Listen string
 	// Token is the bearer token Serve will require. It is here only so
 	// Validate can refuse TCP without one; the Server carries it too.
 	Token string
 }
 
-// Validate fills defaults and refuses TCP without a token.
+// Validate fills defaults and refuses TCP without a token or off loopback.
 func (c *ListenConfig) Validate() error {
 	if c.Socket == "" {
 		c.Socket = DefaultSocket()
 	}
 	if c.Listen != "" && c.Token == "" {
 		return fmt.Errorf("a TCP callback listener on %s needs a bearer token (%s); refusing to serve hive capabilities unauthenticated", c.Listen, TokenEnvVar)
+	}
+	if c.Listen != "" && !api.LoopbackHost(c.Listen) {
+		return fmt.Errorf("listen %s: a TCP callback listener must bind a loopback address (127.0.0.1, [::1] or localhost); the listener is plain http and the bearer token and minted installation tokens would cross the network in cleartext — put a TLS-terminating proxy in front for remote access", c.Listen)
 	}
 	return nil
 }

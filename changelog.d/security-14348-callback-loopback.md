@@ -1,0 +1,1 @@
+- Refuse non-loopback `CRUX_HIVE_LISTEN` addresses so callback bearer tokens and minted GitHub App installation tokens cannot cross the network over plain HTTP; remote access requires a TLS-terminating proxy.

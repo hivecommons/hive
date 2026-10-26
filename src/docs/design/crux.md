@@ -821,7 +821,10 @@ it links nothing of hive.
   The two processes run as one uid in one container by default (stage 4
   supervision), so the file mode is the credential, exactly as for
   `crux.sock`. `$CRUX_HIVE_TOKEN` adds a bearer token; `$CRUX_HIVE_LISTEN`
-  (TCP, for the k8s sidecar-container option) requires one.
+  (TCP, for the k8s sidecar-container option) requires one and must bind
+  loopback (`127.0.0.1`, `[::1]` or `localhost`). The listener is plain HTTP;
+  remote access requires a TLS-terminating proxy to protect the bearer
+  token and minted installation tokens in transit.
 - **Routes** (`callback.Path*`), one per capability, request and response
   bodies as the `callback.<Name>Request/Response` types:
 

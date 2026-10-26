@@ -691,6 +691,25 @@ func TestListenRefusals(t *testing.T) {
 	if _, err := Listen(cfg); err == nil || !strings.Contains(err.Error(), "bearer token") {
 		t.Errorf("tcp without token = %v", err)
 	}
+	// A token must not allow cleartext credentials on a non-loopback bind.
+	for _, addr := range []string{"0.0.0.0:0", "[::]:0", ":0", "192.0.2.1:0", "example.com:0"} {
+		t.Run(addr, func(t *testing.T) {
+			ls, err := Listen(ListenConfig{Socket: filepath.Join(dir, "remote.sock"), Listen: addr, Token: "t"})
+			if ls != nil {
+				ls.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), "must bind a loopback address") {
+				t.Errorf("non-loopback TCP with token = %v", err)
+			}
+		})
+	}
+	// All supported loopback forms remain valid without requiring IPv6 support.
+	for _, addr := range []string{"127.0.0.1:0", "[::1]:0", "localhost:0"} {
+		cfg := ListenConfig{Listen: addr, Token: "t"}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("loopback %s: %v", addr, err)
+		}
+	}
 	// TCP with a token binds both.
 	ls, err := Listen(ListenConfig{Socket: filepath.Join(dir, "b.sock"), Listen: "127.0.0.1:0", Token: "t"})
 	if err != nil {

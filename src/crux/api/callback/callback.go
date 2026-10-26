@@ -15,8 +15,8 @@
 //
 // Transport follows crux/api: HTTP+JSON under /v1, api.Error bodies with
 // stable codes, a 0600 unix socket in a uid-owned 0700 directory, optional
-// TCP only behind a bearer token, and a token-less server that answers only
-// requests it saw arrive on its own socket.
+// loopback TCP only behind a bearer token, and a token-less server that
+// answers only requests it saw arrive on its own socket.
 //
 //	GET  /v1/health                 server is up; which capabilities exist
 //	POST /v1/tokens                 mint a scoped GitHub token
@@ -70,8 +70,9 @@ const (
 	// Optional on the socket (the file mode is the credential), required
 	// for TCP.
 	TokenEnvVar = "CRUX_HIVE_TOKEN"
-	// ListenEnvVar is an optional TCP address hive also serves on (the k8s
-	// sidecar-container option). It always requires TokenEnvVar.
+	// ListenEnvVar is an optional loopback TCP address hive also serves on
+	// (the k8s sidecar-container option). It always requires TokenEnvVar.
+	// Remote access requires a TLS-terminating proxy.
 	ListenEnvVar = "CRUX_HIVE_LISTEN"
 	// SocketName is the socket file name; it sits next to the runtime's
 	// crux.sock in the same private directory.
