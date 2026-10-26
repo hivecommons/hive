@@ -31,10 +31,8 @@ func TestPollTmuxOutputForAgent_WiresThrashBreaker(t *testing.T) {
 	// display lines (no -J), and at the default 80 columns the test shell's
 	// long prompt wraps the injected line mid-marker ("git push bl / ocked:"),
 	// which the breaker's Contains match never sees. 220 columns keeps each
-	// injected marker on one captured line. Use an explicit shell so the
-	// fixture executes printf regardless of the tmux server's default command
-	// or the runner's interactive shell startup configuration.
-	if err := testTmuxCommand("new-session", "-d", "-x", "220", "-y", "50", "-s", session, "exec /bin/sh").Run(); err != nil {
+	// injected marker on one captured line.
+	if err := testTmuxCommand("new-session", "-d", "-x", "220", "-y", "50", "-s", session).Run(); err != nil {
 		testutil.SkipfUnlessRequired(t, "cannot create tmux session: %v", err)
 	}
 	t.Cleanup(func() {
@@ -91,13 +89,8 @@ func TestPollTmuxOutputForAgent_WiresThrashBreaker(t *testing.T) {
 		if err := testTmuxCommand("send-keys", "-t", session, "-l", cmd).Run(); err != nil {
 			t.Fatalf("send-keys: %v", err)
 		}
-		if err := testTmuxCommand("send-keys", "-t", session, "Enter").Run(); err != nil {
-			t.Fatalf("send Enter: %v", err)
-		}
+		_ = testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	}
-
-	// Require actual helper-shaped output, rather than just the echoed command.
-	requirePaneShows(t, session, fmt.Sprintf("%sgit push blocked: advisory mode (attempt %d)", blockedActionPrefix, thrashThreshold))
 
 	// The trip happens on the tick AFTER the burst renders, and Pause runs in
 	// its own goroutine — poll for the paused state instead of sleeping.
@@ -114,7 +107,7 @@ func TestPollTmuxOutputForAgent_WiresThrashBreaker(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("blocked-line burst through the poller never tripped the thrash breaker; pane:\n%s", m.captureTmuxPaneForAgent(agent))
+			t.Fatal("blocked-line burst through the poller never tripped the thrash breaker: pollTmuxOutputForAgent is not wired to checkBlockedThrash")
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

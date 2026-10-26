@@ -1548,7 +1548,8 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 
 	// Self-report (#13470, was the hive-code-defect "CI-poll nudge" counter):
 	// the harness caps the nudge at one per kick, so every observation is a
-	// distinct kick the agent spent polling its own CI.
+	// distinct kick in which the agent repeated CI-status commands; whether
+	// the target was its own PR cannot be inferred from pane text (#14384).
 	// A lone poll past the wall clock is a normal post-push check, and one
 	// read each of several PRs is a sweep, so only repeated polling of the
 	// same target reaches the fleet; the in-session nudge is unchanged.
