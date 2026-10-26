@@ -331,6 +331,10 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// #10927/#10933: the agent card's "what is it on" and stale warning
 		// read each agent's last hive-mediated write.
 		dashboard.RecordAgentLastAction(rec, time.Now())
+		// A PR the hive merged or closed itself leaves the tracker and the
+		// governor's cached snapshot now, instead of waiting for GitHub's
+		// `closed` delivery to come back round through the hub.
+		evictHiveClosedPR(b.dashSrv, rec, time.Now())
 	})
 	client.SetPRTerminalObservedHook(func(obs github.PRTerminalObservation) {
 		ts := obs.ObservedAt.UTC().Format(time.RFC3339)
@@ -428,4 +432,21 @@ func holdMigrationFailedAlertMessage(hiveID, reportPath string) string {
 		msg += " Migration report: " + reportPath
 	}
 	return msg
+}
+
+// evictHiveClosedPR removes a pull request from the tracker and the cached
+// actionable snapshot the moment the hive records having merged or closed it
+// (AuditActionPRMerged / AuditActionPRClosed). The audit record is the one
+// point every merge path (sweep, queue, relay, forge) passes through, so it
+// is where the hive's own write stops depending on the webhook round-trip.
+func evictHiveClosedPR(srv *dashboard.Server, rec github.AuditRecord, now time.Time) {
+	if srv == nil || rec.Target <= 0 || rec.Repo == "" {
+		return
+	}
+	switch rec.Action {
+	case github.AuditActionPRMerged:
+		srv.EvictHiveClosedItem(rec.Repo, rec.Target, true, true, rec.Action, now)
+	case github.AuditActionPRClosed:
+		srv.EvictHiveClosedItem(rec.Repo, rec.Target, true, false, rec.Action, now)
+	}
 }
