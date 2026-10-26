@@ -207,6 +207,11 @@ type boot struct {
 
 	// bootProxy
 	githubProxy *proxy.GitHubProxy
+	// inferenceSink is the one per-agent inference usage ledger; the proxy
+	// records into it in-process and the hive callback's usage capability
+	// records into it for a sidecar runtime (#14138 stage 4).
+	inferenceSink   *tokens.InferenceSink
+	inferenceSinkMu sync.Mutex
 
 	// bootHeartbeat
 	reporterName     string

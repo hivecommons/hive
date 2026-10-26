@@ -4289,6 +4289,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// instance on the same dir would clobber the first's numbers.
 		inferenceSink := tokens.NewInferenceSink(b.cfg.Data.MetricsDir, b.logger)
 		b.githubProxy.SetTokenSink(inferenceSink)
+		b.setInferenceSink(inferenceSink)
 		// Live Linear credential for agent requests — see
 		// spokeWire.linearCredentialResolver and proxy.injectLinearCredential.
 		b.githubProxy.SetLinearCredentialResolver(b.linearCredentialResolver)

@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/crux/effects"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // sidecarRuntimeFake is a crux.Runtime with the sidecar client's event
@@ -504,5 +505,39 @@ func TestStartHiveCallback_BindsConfiguredSocket(t *testing.T) {
 	}
 	if err := startHiveCallback(ctx, caps, slog.Default()); err == nil {
 		t.Fatal("second bind on the same socket succeeded")
+	}
+}
+
+// The callback's usage capability is served from boot and records into the
+// proxy's ledger once bootProxy has built it; a record before that is
+// dropped and logged once, never a typed-nil dereference.
+func TestHiveCallbackCapabilities_UsageReachesTheInferenceSink(t *testing.T) {
+	var log bytes.Buffer
+	b := &boot{logger: slog.New(slog.NewTextHandler(&log, nil))}
+	caps := b.hiveCallbackCapabilities()
+	if !caps.Configured(callback.CapabilityUsage) {
+		t.Fatal("usage must be configured from boot")
+	}
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if err := caps.RecordUsage(ctx, callback.UsageRecord{Agent: "a", Model: "m", Kind: callback.UsageKindGateway, InputTokens: 1, OutputTokens: 2}); err != nil {
+			t.Fatalf("record before proxy: %v", err)
+		}
+	}
+	if n := strings.Count(log.String(), "record dropped"); n != 1 {
+		t.Fatalf("early-record warning logged %d times, want once:\n%s", n, log.String())
+	}
+	dir := t.TempDir()
+	b.setInferenceSink(tokens.NewInferenceSink(dir, b.logger))
+	rec := callback.UsageRecord{Agent: "a", Model: "m", InputTokens: 10, OutputTokens: 20}
+	for _, kind := range []string{callback.UsageKindGateway, callback.UsageKindCopilot, callback.UsageKindCopilotCache} {
+		rec.Kind = kind
+		if err := caps.RecordUsage(ctx, rec); err != nil {
+			t.Fatalf("record %s: %v", kind, err)
+		}
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*a.jsonl"))
+	if len(files) == 0 {
+		t.Fatalf("no ledger file written under %s", dir)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/cruxhost"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // eventObservable is the sidecar client's event subscription
@@ -429,6 +430,9 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 	if b.appAuth != nil {
 		deps.Tokens = b.appAuth
 	}
+	// The usage ledger is built by bootProxy, after this; the capability is
+	// served from the start and records into the ledger once it exists.
+	deps.Usage = lateUsageSink{get: b.inferenceSinkRef, logger: b.logger, once: &sync.Once{}}
 	if b.ghClient != nil {
 		deps.PullRequests = b.ghClient
 	}
@@ -439,6 +443,64 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 		deps.Mutation = sh
 	}
 	return cruxhost.New(deps)
+}
+
+// setInferenceSink publishes the proxy's usage ledger for the callback.
+func (b *boot) setInferenceSink(s *tokens.InferenceSink) {
+	b.inferenceSinkMu.Lock()
+	defer b.inferenceSinkMu.Unlock()
+	b.inferenceSink = s
+}
+
+// inferenceSinkRef is the ledger as a cruxhost.UsageSink, nil until bootProxy
+// built it (a typed-nil pointer must not escape into the interface).
+func (b *boot) inferenceSinkRef() cruxhost.UsageSink {
+	b.inferenceSinkMu.Lock()
+	defer b.inferenceSinkMu.Unlock()
+	if b.inferenceSink == nil {
+		return nil
+	}
+	return b.inferenceSink
+}
+
+// lateUsageSink is cruxhost.UsageSink over a ledger that may not exist yet:
+// a record arriving before bootProxy is dropped and logged once. The sidecar
+// runtime's agents cannot launch before boot completes, so in practice the
+// window is empty; the guard is for the ordering, not a steady state.
+type lateUsageSink struct {
+	get    func() cruxhost.UsageSink
+	logger *slog.Logger
+	once   *sync.Once
+}
+
+func (l lateUsageSink) sink() cruxhost.UsageSink {
+	s := l.get()
+	if s == nil && l.once != nil {
+		l.once.Do(func() {
+			if l.logger != nil {
+				l.logger.Warn("sidecar runtime: inference usage arrived before the proxy's usage ledger was built; record dropped")
+			}
+		})
+	}
+	return s
+}
+
+func (l lateUsageSink) Record(agent, model string, in, out int64) {
+	if s := l.sink(); s != nil {
+		s.Record(agent, model, in, out)
+	}
+}
+
+func (l lateUsageSink) RecordCopilot(agent, model string, in, out int64) {
+	if s := l.sink(); s != nil {
+		s.RecordCopilot(agent, model, in, out)
+	}
+}
+
+func (l lateUsageSink) RecordCopilotWithCache(agent, model string, in, out, cacheRead, cacheCreation int64) {
+	if s := l.sink(); s != nil {
+		s.RecordCopilotWithCache(agent, model, in, out, cacheRead, cacheCreation)
+	}
 }
 
 // gatewayNames lists the configured model gateway names off the live config.
