@@ -14,6 +14,7 @@ A terminal agent is a power tool: you hold it, aim it, and it stops when you sto
 
 - [Manual provisioning](manual-provisioning.md) — heartbeat-only cluster provisioning, hub access roles, and common gotchas.
 - [Hosted Hive Hub onboarding](hosted-hub.md) — signing in at `https://hive.hivecommons.dev`, requesting a hosted hive, installing the GitHub App, configuring model gateways and Copilot login, reading `/fleet`, and fixing common setup problems.
+- [Hub login token](hub-login-token.md) — who consumes the stored GitHub user token from the Hub's browser sign-in, its lifetime, and the empty-scope caveat.
 - [Self-hosted hub deployment](hub-deployment.md) — `HIVE_MODE=hub`, hub storage, heartbeat secrets, and SaaS spoke registration.
 - [`CAP_NET_ADMIN` and self-hosted spokes](net-admin-requirement.md) — the container runs with or without `NET_ADMIN`; granting it (`--cap-add NET_ADMIN` / `securityContext.capabilities.add`) enables the full forced-proxy-egress gate, and what the degraded best-effort mode means without it.
 - [Config layering](config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.

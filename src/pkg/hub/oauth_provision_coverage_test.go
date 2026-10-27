@@ -452,3 +452,60 @@ func TestF11_LoginIssuesStateNonceCookieAndParameter(t *testing.T) {
 		t.Errorf("F11: the redirect target was lost from state: %q", state)
 	}
 }
+
+func TestExchangeGitHubLoginSendsFormPost(t *testing.T) {
+	t.Setenv("HIVE_HUB_OAUTH_CLIENT_ID", "cid-123")
+	t.Setenv("HIVE_HUB_OAUTH_CLIENT_SECRET", "sekret-456")
+
+	var gotMethod, gotQuery, gotRawURL, gotContentType, gotAccept string
+	var gotForm url.Values
+	tok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotQuery, gotRawURL = r.Method, r.URL.RawQuery, r.URL.String()
+		gotContentType, gotAccept = r.Header.Get("Content-Type"), r.Header.Get("Accept")
+		_ = r.ParseForm()
+		gotForm = r.PostForm
+		_, _ = w.Write([]byte(`{"access_token":"gho_test"}`))
+	}))
+	defer tok.Close()
+	usr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"login":"octocat","avatar_url":"https://x/a.png"}`))
+	}))
+	defer usr.Close()
+	oldTok, oldUsr := defaultGHTokenURL, defaultGHUserURL
+	defaultGHTokenURL, defaultGHUserURL = tok.URL, usr.URL
+	defer func() { defaultGHTokenURL, defaultGHUserURL = oldTok, oldUsr }()
+
+	s := &HubServer{logger: slog.Default()}
+	rec := httptest.NewRecorder()
+	if _, _, _, ok := s.exchangeGitHubLogin(rec, "code-789"); !ok {
+		t.Fatalf("exchange failed: %d %s", rec.Code, rec.Body.String())
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotQuery != "" {
+		t.Errorf("token request URL query = %q, want empty", gotQuery)
+	}
+	for _, secret := range []string{"cid-123", "sekret-456", "code-789"} {
+		if strings.Contains(gotRawURL, secret) {
+			t.Errorf("token request URL %q leaks %q", gotRawURL, secret)
+		}
+	}
+	if !strings.HasPrefix(gotContentType, "application/x-www-form-urlencoded") {
+		t.Errorf("Content-Type = %q, want form-encoded", gotContentType)
+	}
+	if gotAccept != "application/json" {
+		t.Errorf("Accept = %q, want application/json", gotAccept)
+	}
+	want := map[string]string{
+		"client_id":     "cid-123",
+		"client_secret": "sekret-456",
+		"code":          "code-789",
+		"redirect_uri":  oauthRedirectURI(),
+	}
+	for k, v := range want {
+		if got := gotForm.Get(k); got != v {
+			t.Errorf("form %s = %q, want %q", k, got, v)
+		}
+	}
+}

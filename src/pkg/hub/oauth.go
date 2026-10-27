@@ -935,12 +935,15 @@ func (s *HubServer) exchangeGitHubLogin(w http.ResponseWriter, code string) (log
 	clientID := os.Getenv("HIVE_HUB_OAUTH_CLIENT_ID")
 	clientSecret := os.Getenv("HIVE_HUB_OAUTH_CLIENT_SECRET")
 
-	tokenReq, _ := http.NewRequest("POST", defaultGHTokenURL, nil)
-	q := tokenReq.URL.Query()
-	q.Set("client_id", clientID)
-	q.Set("client_secret", clientSecret)
-	q.Set("code", code)
-	tokenReq.URL.RawQuery = q.Encode()
+	// Credentials and code go in the form body, never the URL, so proxy and
+	// request logs cannot retain them. See src/docs/hub-login-token.md.
+	form := url.Values{}
+	form.Set("client_id", clientID)
+	form.Set("client_secret", clientSecret)
+	form.Set("code", code)
+	form.Set("redirect_uri", oauthRedirectURI())
+	tokenReq, _ := http.NewRequest("POST", defaultGHTokenURL, strings.NewReader(form.Encode()))
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	tokenReq.Header.Set("Accept", "application/json")
 
 	client := &http.Client{Timeout: oauthTimeout}
