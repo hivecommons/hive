@@ -90,6 +90,10 @@ done < <(find "$DEST" -name '*.go' -not -path "$DEST/.git/*" -print0)
 for f in "$DEST/Makefile" "$DEST/docs/MODULE.md"; do
   [ -f "$f" ] && sed -i.bak "s#${OLD_MODULE}#${NEW_MODULE}#g" "$f" && rm -f "$f.bak"
 done
+# Rewrite relative ../docs/ links in MODULE.md to absolute hive URLs pinned to the synced commit.
+if [ -f "$DEST/docs/MODULE.md" ]; then
+  sed -i.bak "s#](\.\./docs/#](https://github.com/hivecommons/hive/blob/${hive_sha}/src/docs/#g" "$DEST/docs/MODULE.md" && rm -f "$DEST/docs/MODULE.md.bak"
+fi
 if grep -rn --include='*.go' "\"${OLD_MODULE}" "$DEST" | grep -q .; then
   echo "::error::module path rewrite incomplete:" >&2
   grep -rn --include='*.go' "\"${OLD_MODULE}" "$DEST" >&2
