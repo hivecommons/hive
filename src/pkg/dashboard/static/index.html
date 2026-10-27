@@ -14217,6 +14217,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actorKind = stageTrackerActorKind(item);
       if (actorKind) lines.push('Next move: ' + actorKind);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
+      const stale = stageTrackerStaleLabelsText(item);
+      if (stale) lines.push(stale);
       if (item.sentinel_alert) lines.push(stageTrackerSentinelTip(item));
       const regressed = stageTrackerRegressionText(item, nowMs);
       if (regressed) lines.push(regressed.charAt(0).toUpperCase() + regressed.slice(1));
@@ -15631,8 +15633,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       open: 'Open on GitHub', copy: 'Copy link',
     };
     // Accept triage shows on an issue the chevron calls "Triage needed":
-    // stage 015, or the needs-triage pill on another stage (a claimed or
-    // covered issue the reporter-trust gate still holds). Never on a PR.
+    // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
+    // 045). A needs-triage left on a claimed or covered issue is reported
+    // as stale_labels, not a modifier, so no action is offered for it
+    // (hivecommons/hive#14586). Never on a PR.
     const STAGE_TRACKER_TRIAGE_STAGE = 15;
     const STAGE_TRACKER_ACTIONABLE_STAGE = 10;
     const STAGE_TRACKER_WHY_WRITE = 'Sign in with write access to this repo';
@@ -15772,6 +15776,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
       out.push({ id: 'decide:close-wontfix', label: "Close as won't-fix…", enabled, why, danger: true });
       return out;
+    }
+    // Pure: the operator note for labels the row's stage has outrun
+    // (stale_labels: a needs-triage still on a claimed issue, which the
+    // reconciler removes on its next pass — hivecommons/hive#14586). '' when none.
+    function stageTrackerStaleLabelsText(item) {
+      const stale = item && Array.isArray(item.stale_labels) ? item.stale_labels.filter(Boolean) : [];
+      if (!stale.length) return '';
+      return 'Stale label' + (stale.length > 1 ? 's' : '') + ': ' + stale.join(', ') + ' (stage has moved on; the hive removes it on its next pass)';
     }
     // Pure: whether a row is an issue waiting on a maintainer's triage.
     function stageTrackerTriageNeeded(item) {

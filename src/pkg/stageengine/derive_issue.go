@@ -58,7 +58,25 @@ func deriveIssue(f Facts) Decision {
 		// label as found and the next sweep re-judges it from the restarted
 		// clock.
 		Stalled: f.Issue.Stalled && stage != stagelabels.None,
+		Clear:   issueTriageClear(f, stage),
 	}
+}
+
+// issueTriageClear names the reporter-trust awaiting label the issue still
+// wears once its stage has settled triage (020 claimed and later), so the
+// writer removes it in the same label write as the stage. 015 is a tracking
+// state, not a gate: the scanner claims an untriaged issue exactly as a
+// triaged one, which left hive-filed self-reports (fleetreport stamps
+// `needs-triage` at filing) claimed, closed and still "needing triage"
+// (hivecommons/hive#14586). Nil at 010/015/017/045 and when the label is
+// absent, so an issue before the claim keeps the label and nothing else
+// churns.
+func issueTriageClear(f Facts, stage stagelabels.Stage) []string {
+	label := strings.TrimSpace(f.Issue.TriageAwaitingLabel)
+	if label == "" || !stage.SettlesTriage() {
+		return nil
+	}
+	return []string{label}
 }
 
 // issueStage is the bucket → stage mapping. covered reports whether an open

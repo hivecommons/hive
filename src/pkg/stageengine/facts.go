@@ -155,6 +155,13 @@ type IssueFacts struct {
 	// the reporter-trust awaiting label it carries or the gate's
 	// reporter_triage bucket.
 	TriageAwaiting string
+	// TriageAwaitingLabel is the reporter-trust awaiting label the issue
+	// actually wears (`needs-triage` / `reporter_trust.awaiting_label`),
+	// "" when it carries none. Separate from TriageAwaiting because a
+	// claimed issue still wearing it derives 020, not 015, and the deriver
+	// then asks the writer to clear the stale label in the same write
+	// (hivecommons/hive#14586).
+	TriageAwaitingLabel string
 }
 
 // ClaimFact is the live claim on an issue.

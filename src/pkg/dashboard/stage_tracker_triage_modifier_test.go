@@ -24,8 +24,11 @@ func TestStageTrackerModifiers_NeedsTriage(t *testing.T) {
 
 // An issue at 015-triage-needed lights the Actionable column with its own
 // word, so the redundant needs-triage chip is dropped there (as the
-// needs-decision chip is on 045); on any other stage the chip stays. The
-// caption names the maintainer as the next mover (hivecommons/hive#13268).
+// needs-decision chip is on 045). On a claimed issue the label is stale —
+// 015 is not a gate and the stage word is the truth — so the chip is
+// dropped too and the label is reported as stale_labels for the operator
+// tooltip (hivecommons/hive#14586). The caption names the maintainer as
+// the next mover (hivecommons/hive#13268).
 func TestStageTracker_TriageNeededStage(t *testing.T) {
 	now := time.Date(2026, 10, 16, 22, 35, 0, 0, time.UTC)
 	s := newTestServer()
@@ -57,8 +60,14 @@ func TestStageTracker_TriageNeededStage(t *testing.T) {
 		t.Fatalf("caption %q must carry the derivation reason", issue21.Caption)
 	}
 	issue22 := trackerItem(t, resp, "issue", 22)
-	if issue22.Stage != trackerNumberClaimed || !hasMod(issue22, modNeedsTriage) {
-		t.Fatalf("needs-triage chip must survive on other stages: %+v", issue22)
+	if issue22.Stage != trackerNumberClaimed || hasMod(issue22, modNeedsTriage) {
+		t.Fatalf("a claimed issue must not read as triage needed: %+v", issue22)
+	}
+	if !slices.Equal(issue22.StaleLabels, []string{modNeedsTriage}) {
+		t.Fatalf("stale needs-triage must be reported for the operator tooltip: %+v", issue22.StaleLabels)
+	}
+	if len(issue21.StaleLabels) != 0 {
+		t.Fatalf("015 wears needs-triage legitimately; stale_labels = %v", issue21.StaleLabels)
 	}
 	var short string
 	for _, st := range resp.Stages {
@@ -68,5 +77,50 @@ func TestStageTracker_TriageNeededStage(t *testing.T) {
 	}
 	if short != "Triage needed" {
 		t.Fatalf("stage 015 short = %q", short)
+	}
+}
+
+// The needs-triage chip is kept before the claim: at 010 and on the 045
+// park it still tells the operator something, and nothing is reported
+// stale. Past the claim (020, 030, 040, and an issue mirroring its covering
+// PR's stage) the chip goes and stale_labels names it.
+func TestStageTracker_NeedsTriageStaleOnlyPastClaim(t *testing.T) {
+	now := time.Date(2026, 10, 27, 17, 40, 0, 0, time.UTC)
+	s := newTestServer()
+	store := stagelabels.NewStore("", func() time.Time { return now })
+	s.stageStore = store
+	cases := []struct {
+		number int
+		stage  stagelabels.Stage
+		stale  bool
+	}{
+		{31, stagelabels.Actionable, false},
+		{32, stagelabels.IssueNeedsDecision, false},
+		{33, stagelabels.Claimed, true},
+		{34, stagelabels.PRInProgress, true},
+		{35, stagelabels.CoveredByPR, true},
+		{36, stagelabels.ReviewPending, true},
+	}
+	var issues []any
+	for _, c := range cases {
+		store.Observe(stagelabels.Key("acme/console", c.number), c.stage, "test")
+		issues = append(issues, github.Issue{Number: c.number, Title: "n", Author: "newcomer", AuthorIsHuman: true, Labels: []string{c.stage.Label(), "needs-triage"}})
+	}
+	status := minimalPayload()
+	status.HiveID = "hv-test"
+	status.Repos = []FrontendRepo{{Name: "console", Full: "acme/console", ActionableIssues: issues}}
+	s.UpdateStatus(status)
+	resp := s.buildStageTracker(s.status, store, now)
+	for _, c := range cases {
+		it := trackerItem(t, resp, "issue", c.number)
+		if it.Stage != c.stage.Number() {
+			t.Fatalf("#%d stage = %d, want %d", c.number, it.Stage, c.stage.Number())
+		}
+		if hasMod(it, modNeedsTriage) == c.stale {
+			t.Fatalf("#%d at %s: needs-triage modifier present=%v, want %v", c.number, c.stage, hasMod(it, modNeedsTriage), !c.stale)
+		}
+		if gotStale := slices.Contains(it.StaleLabels, modNeedsTriage); gotStale != c.stale {
+			t.Fatalf("#%d at %s: stale_labels = %v, want stale=%v", c.number, c.stage, it.StaleLabels, c.stale)
+		}
 	}
 }

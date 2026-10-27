@@ -99,6 +99,10 @@ func resolveIssueLabelFacts(in IssueStageInput, f *stageengine.Facts) {
 	if untriaged, why := issueUntriaged(in); untriaged {
 		is.TriageAwaiting = why
 	}
+	is.TriageAwaitingLabel = ""
+	if issueHasLabel(in.Labels, triageAwaitingLabel) {
+		is.TriageAwaitingLabel = triageAwaitingLabel
+	}
 }
 
 // issueInputFrom rebuilds the label/bucket view of an out-of-cycle Facts

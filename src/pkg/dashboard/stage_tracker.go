@@ -307,11 +307,17 @@ type StageTrackerItem struct {
 	// reason; the gate cell reads "Awaiting human: <step>". Unauthorized
 	// is the pill's tooltip naming the permission and the human action
 	// (hivecommons/hive#14589).
-	UnauthorizedStep string     `json:"unauthorized_step,omitempty"`
-	Unauthorized     string     `json:"unauthorized,omitempty"`
-	NudgeCount       int        `json:"nudge_count,omitempty"`
-	LastNudgeAt      *time.Time `json:"last_nudge_at,omitempty"`
-	AdoptedBy        int        `json:"adopted_by,omitempty"`
+	UnauthorizedStep string `json:"unauthorized_step,omitempty"`
+	Unauthorized     string `json:"unauthorized,omitempty"`
+	// StaleLabels are control labels the row still wears that its stage
+	// has outrun, so they are not read as modifiers: `needs-triage` on an
+	// issue at 020 or later (015 is not a gate; the reconciler removes the
+	// label on its next pass, hivecommons/hive#14586). Rendered as a muted
+	// operator tooltip, never as the stage word.
+	StaleLabels []string   `json:"stale_labels,omitempty"`
+	NudgeCount  int        `json:"nudge_count,omitempty"`
+	LastNudgeAt *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy   int        `json:"adopted_by,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -1167,10 +1173,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if stage == stagelabels.NeedsDecision || stage == stagelabels.IssueNeedsDecision {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
 		}
-		// Likewise 015 says "Triage needed" itself; the needs-triage chip
-		// only adds information on another stage (a claimed or covered
-		// issue the gate is still holding).
-		if stage == stagelabels.TriageNeeded {
+		// Likewise 015 says "Triage needed" itself, and a needs-triage left
+		// on a claimed / covered issue is stale, not a signal: 015 is not a
+		// gate, the stage word is the truth, and the reconciler removes the
+		// label on its next pass (hivecommons/hive#14586). The chip stays
+		// only before the claim (010 / 017 / 045).
+		if stage == stagelabels.TriageNeeded || stage.SettlesTriage() {
+			if stage != stagelabels.TriageNeeded && slices.Contains(it.Modifiers, modNeedsTriage) {
+				it.StaleLabels = append(it.StaleLabels, modNeedsTriage)
+			}
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
