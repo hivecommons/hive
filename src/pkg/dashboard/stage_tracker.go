@@ -1670,6 +1670,7 @@ func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl ti
 		build = s.stageTrackerBuildFn
 	}
 	resp := build(status, s.stageStoreOrShared(), now)
+	s.stageTrackerEnrichSoftLinks(resp.Items, stageTrackerRepoQualifier(status))
 	resp.CacheTTLSeconds = int64(ttl / time.Second)
 	// The encoded body carries source=cache: that is what every later hit
 	// serves verbatim, and what the ETag validates. The building request
@@ -1846,6 +1847,49 @@ func stageTrackerSameRepo(a, b string) bool {
 // rather than a closing one.
 func stageTrackerLinkSoft(li StageTrackerLinkedIssue) bool {
 	return li.Via != "" && li.Via != github.PRLinkViaFixes
+}
+
+// stageTrackerEnrichSoftLinks gives the soft links (refs / title / mention)
+// that no listed issue or closing reference titled a title and state, one
+// issues GET per distinct same-repo number. It runs only when the tracker is
+// rebuilt, so the lookups are cached with the payload for the tracker TTL. A
+// failed lookup leaves the link as it was.
+func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify func(string) string) {
+	if s == nil || s.deps == nil || s.deps.GHClient == nil {
+		return
+	}
+	type ref struct {
+		repo   string
+		number int
+	}
+	type info struct{ title, state string }
+	got := map[ref]info{}
+	for i := range items {
+		pr := &items[i]
+		if pr.Kind != "pr" {
+			continue
+		}
+		owner, name, ok := strings.Cut(qualify(pr.Repo), "/")
+		if !ok {
+			continue
+		}
+		for j := range pr.LinkedIssues {
+			li := &pr.LinkedIssues[j]
+			if !stageTrackerLinkSoft(*li) || li.Title != "" || li.State != "" {
+				continue
+			}
+			key := ref{owner + "/" + name, li.Number}
+			in, done := got[key]
+			if !done {
+				title, state, err := s.deps.GHClient.IssueTitleState(github.WithRESTCaller(context.Background(), stageTrackerRESTCaller), owner, name, li.Number)
+				if err == nil {
+					in = info{title, state}
+				}
+				got[key] = in
+			}
+			li.Title, li.State = in.title, in.state
+		}
+	}
 }
 
 // stageTrackerPruneSoftLinks drops, from a PR's links, every soft link whose
