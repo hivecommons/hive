@@ -62,6 +62,11 @@ safe-outputs:
     post-to-discord:
       description: "Post the finished report to the Hive Commons Discord channel #related-research. Call this once with the Discord-formatted report."
       runs-on: ubuntu-latest
+      # Runs after the add-comment handler so the Discord message ids can be
+      # appended to the same tracking-issue comment.
+      needs: safe_outputs
+      permissions:
+        issues: write
       output: "Report queued for Discord #related-research."
       inputs:
         message:
@@ -70,6 +75,7 @@ safe-outputs:
           type: string
       steps:
         - name: Post report to Discord via channel webhook
+          id: discord
           env:
             DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELATED_RESEARCH_WEBHOOK }}
             RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -153,19 +159,55 @@ safe-outputs:
                 parts.extend(chunk(suppress_embeds(message)))
             parts.extend(chunk(footer))
 
+            message_ids = []
             for index, part in enumerate(parts, 1):
                 payload = json.dumps({"content": part, "allowed_mentions": {"parse": []}})
+                # ?wait=true makes Discord return the created message, so we get its id.
                 result = subprocess.run(
-                    ["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST",
+                    ["curl", "-sS", "-w", "\n%{http_code}", "-X", "POST",
                      "-H", "Content-Type: application/json", "--data-binary", "@-", webhook],
                     input=payload, text=True, capture_output=True, check=False)
-                code = result.stdout.strip()
+                body, _, code = result.stdout.rpartition("\n")
+                code = code.strip()
                 if result.returncode != 0 or not code.startswith("2"):
                     print(f"::error::Discord post {index}/{len(parts)} failed: HTTP {code} {result.stderr.strip()}")
                     sys.exit(1)
-                print(f"Posted chunk {index}/{len(parts)} ({len(part)} chars)")
+                try:
+                    message_id = str(json.loads(body).get("id", ""))
+                except ValueError:
+                    message_id = ""
+                message_ids.append(message_id or "unknown")
+                print(f"Posted chunk {index}/{len(parts)} ({len(part)} chars) id={message_id or 'unknown'}")
                 time.sleep(PAUSE_SECONDS)
+
+            ids_csv = ",".join(message_ids)
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+                out.write(f"message_ids={ids_csv}\n")
+            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                summary.write("## Discord messages posted to #related-research\n\n")
+                summary.write(f"{len(message_ids)} chunk(s). Message ids (delete with `DELETE <webhook>/messages/<id>`):\n\n")
+                for index, message_id in enumerate(message_ids, 1):
+                    summary.write(f"- chunk {index}: `{message_id}`\n")
             PY
+        - name: Append Discord message ids to the tracking-issue comment
+          if: steps.discord.outputs.message_ids != ''
+          env:
+            GH_TOKEN: ${{ github.token }}
+            MESSAGE_IDS: ${{ steps.discord.outputs.message_ids }}
+            COMMENT_ID: ${{ needs.safe_outputs.outputs.comment_id }}
+            TRACKING_ISSUE: "14613"
+            RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          run: |
+            set -euo pipefail
+            note="$(printf '\n\n-----\n\nDiscord message ids in #related-research (one per 2000-char chunk, for later delete or replace): `%s`. Run: %s' "$MESSAGE_IDS" "$RUN_URL")"
+            if [ -n "${COMMENT_ID:-}" ]; then
+              current="$(gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" --jq .body)"
+              printf '%s%s' "$current" "$note" | gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" -F body=@- --silent
+              echo "Appended message ids to comment ${COMMENT_ID}"
+            else
+              printf 'Weekly competitor report run %s posted to Discord.%s' "$RUN_URL" "$note" | gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${TRACKING_ISSUE}/comments" -F body=@- --silent
+              echo "No add_comment id from safe_outputs; posted a separate note on #${TRACKING_ISSUE}"
+            fi
 ---
 
 # Weekly competitor report for Hive

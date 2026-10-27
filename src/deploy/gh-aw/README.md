@@ -60,7 +60,10 @@ compiles without model credentials, and tests admission and the actual classifie
   SWOT with filler banned, one thing to watch, and a "Top 5 this week - stay
   ahead and stay integrated" action list with a concrete first step per item.
   URLs are wrapped in `<...>` in the Discord step so they do not expand into
-  link cards. The `open_issues` dispatch input (default off) lets the agent
+  link cards; each chunk is posted with `?wait=true` and the returned Discord
+  message ids are logged, written to the step summary, and appended to the
+  tracking-issue comment so a report can be deleted or replaced later. The
+  `open_issues` dispatch input (default off) lets the agent
   also file the Top 5 as `help wanted` + `competitor-watch` issues. It appends
   the report as a comment to tracking issue
   [#14613](https://github.com/hivecommons/hive/issues/14613), and posts it to the
