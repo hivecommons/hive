@@ -26,8 +26,10 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 				probeJSON := probe.json
 				var patched []byte
 				patches := 0
+				gets := 0
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == http.MethodGet {
+						gets++
 						fmt.Fprintf(w, `{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/hivecommons/hive:stable"%s},{"name":"sidecar","image":"ghcr.io/hivecommons/hive:stable","startupProbe":{"failureThreshold":30}}],"initContainers":[{"name":"init","image":"ghcr.io/hivecommons/hive:stable"}]}}}}`, probeJSON)
 						return
 					}
@@ -62,6 +64,13 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 				}
 				if err != nil {
 					t.Fatal(err)
+				}
+				wantGets := 1
+				if operation == "same-image" {
+					wantGets = 2
+				}
+				if gets != wantGets {
+					t.Fatalf("got %d Deployment GETs; want %d (one per call)", gets, wantGets)
 				}
 				wantPatches := 1
 				if operation == "same-image" && !probe.want {

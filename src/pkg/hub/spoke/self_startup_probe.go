@@ -25,6 +25,13 @@ func k8sUpgradePatch(path string, body []byte) error {
 	if err != nil {
 		return fmt.Errorf("reading startup probe before upgrade: %w", err)
 	}
+	return k8sUpgradePatchWithDeployment(path, body, current)
+}
+
+// k8sUpgradePatchWithDeployment reuses a Deployment already read by the caller
+// so image switching derives container names and probe settings from one GET.
+func k8sUpgradePatchWithDeployment(path string, body, current []byte) error {
+	var err error
 	var dep struct {
 		Spec struct {
 			Template struct {

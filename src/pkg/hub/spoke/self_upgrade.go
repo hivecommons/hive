@@ -104,7 +104,11 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 	}
 	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
 
-	names, err := k8sDeploymentContainerNames(path)
+	current, err := k8sAPIGet(path)
+	if err != nil {
+		return fmt.Errorf("reading deployment before image switch: %w", err)
+	}
+	names, err := deploymentContainerNamesFromJSON(current)
 	if err != nil {
 		return fmt.Errorf("listing deployment containers: %w", err)
 	}
@@ -126,7 +130,7 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 	// rollout is in flight — only backfill a stale startup probe, without
 	// re-stamping the restart annotation. Subsequent calls leave it alone.
 	if names.allAt(image) {
-		if err := k8sUpgradePatch(path, nil); err != nil {
+		if err := k8sUpgradePatchWithDeployment(path, nil, current); err != nil {
 			return fmt.Errorf("backfilling deployment startup probe: %w", err)
 		}
 		rememberSelfImage(image)
@@ -146,7 +150,7 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 		`{"spec":{"template":{"spec":{"containers":[%s],"initContainers":[%s]},"metadata":{"annotations":{"hive.hivecommons.dev/restart-at":%q}}}}}`,
 		strings.Join(cs, ","), strings.Join(ics, ","), time.Now().UTC().Format(time.RFC3339),
 	)
-	if err := k8sUpgradePatch(path, []byte(patch)); err != nil {
+	if err := k8sUpgradePatchWithDeployment(path, []byte(patch), current); err != nil {
 		return fmt.Errorf("patching deployment image: %w", err)
 	}
 	rememberSelfImage(image)
@@ -454,11 +458,15 @@ func (d deploymentContainerNames) allAt(image string) bool {
 // k8sDeploymentContainerNames GETs the deployment and returns its container +
 // init-container names, so a strategic-merge image patch targets them by name.
 func k8sDeploymentContainerNames(path string) (deploymentContainerNames, error) {
-	var out deploymentContainerNames
 	body, err := k8sAPIGet(path)
 	if err != nil {
-		return out, err
+		return deploymentContainerNames{}, err
 	}
+	return deploymentContainerNamesFromJSON(body)
+}
+
+func deploymentContainerNamesFromJSON(body []byte) (deploymentContainerNames, error) {
+	var out deploymentContainerNames
 	var dep struct {
 		Spec struct {
 			Template struct {
