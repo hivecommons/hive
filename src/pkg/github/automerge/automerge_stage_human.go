@@ -142,19 +142,12 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	return e
 }
 
-// manualMergeRuleReason reports whether a lane reason is a rule no review
-// or reply overrides: the hive never merges the head unattended, a person
-// clicks merge. The workflow-path fence is counted as such a rule here;
-// manualMergeRuleReasonFor refines it for a hive whose owner approval
-// releases the fence (hivecommons/hive#14664).
-func manualMergeRuleReason(reason string) bool {
-	return manualMergeRuleReasonFor(reason, true)
-}
-
-// manualMergeRuleReasonFor is manualMergeRuleReason with the workflow-path
-// fence's standing supplied: workflowManual is true when the hive will not
-// merge the head itself even once approved (toggle off, or the App lacks
-// `workflows: write` for this head).
+// manualMergeRuleReasonFor reports whether a lane reason is a rule no
+// review or reply overrides: the hive never merges the head unattended, a
+// person clicks merge. workflowManual supplies the workflow-path fence's
+// standing: true when the hive will not merge the head itself even once
+// approved (toggle off, or the App lacks `workflows: write` for this head);
+// false when owner approval releases it (hivecommons/hive#14664).
 func manualMergeRuleReasonFor(reason string, workflowManual bool) bool {
 	switch reason {
 	case contributorLaneReasonWorkflowPath:
