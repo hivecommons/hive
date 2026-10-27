@@ -40,6 +40,28 @@ The sample is not installed as an active workflow in Hive. The
 [compile CI](../../../.github/workflows/gh-aw-compile.yml) stages it temporarily,
 compiles without model credentials, and tests admission and the actual classifier.
 
+## Active gh-aw workflows in this repository
+
+- [`weekly-competitor-report.md`](../../../.github/workflows/weekly-competitor-report.md)
+  (compiled to `weekly-competitor-report.lock.yml`): every Monday at 13:00 UTC,
+  and on manual dispatch, the Copilot engine researches projects adjacent to
+  Hive (OpenHands, SWE-agent, Devin, Copilot coding agent, Codex, Claude Code,
+  Sweep, Factory, Jules, Gastown, Dagger, Kilo, Cline/Roo, Mentat, Aider,
+  GPT-Engineer, Potpie, Agentless, public fleet-orchestrator write-ups) with
+  read-only GitHub tools and proxy-aware `curl` inside a network allowlist. It
+  writes a 600-900 word plain-language report plus a SWOT for Hive, appends it
+  as a comment to tracking issue
+  [#14613](https://github.com/hivecommons/hive/issues/14613), and posts it to the
+  Hive Commons Discord channel `#related-research` through a custom safe-output
+  job. Inference uses `permissions: copilot-requests: write` (org-billed, no
+  PAT). The Discord post needs one repository secret,
+  `DISCORD_RELATED_RESEARCH_WEBHOOK`: in Discord, open the channel settings ->
+  Integrations -> Webhooks -> New Webhook, copy the webhook URL, then
+  `gh secret set DISCORD_RELATED_RESEARCH_WEBHOOK -R hivecommons/hive`. Without
+  the secret the Discord job fails with a clear message and the GitHub comment
+  still lands. Recompile after edits with the pinned compiler:
+  `gh aw compile weekly-competitor-report`, and commit both files (#14612).
+
 ## Graduate to Hive without rewriting workflows
 
 Keep existing gh-aw workflows for per-repo reports and CI tasks. Add the
