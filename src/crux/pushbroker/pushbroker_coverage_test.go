@@ -121,6 +121,7 @@ func TestValidateRejectsUnusableConfigurations(t *testing.T) {
 // remote-ref default or the broker diffs the wrong range and can miss a
 // secret or a protected path introduced earlier in the branch.
 func TestRunPrefersAnExplicitBaseRef(t *testing.T) {
+	fixed := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	git := &scriptedGit{replies: map[string]string{
 		"rev-parse HEAD":                         "cafebabe\n",
 		"rev-parse --verify origin/main":         "deadbeef\n",
@@ -130,6 +131,7 @@ func TestRunPrefersAnExplicitBaseRef(t *testing.T) {
 	res, err := (&Broker{
 		Workspace: fakeGitWorkspace(t), Branch: "work", BaseRef: "origin/main",
 		Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_tok"}, Runner: git,
+		Now: func() time.Time { return fixed },
 	}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("Run: %v (res=%+v)", err, res)
@@ -139,6 +141,9 @@ func TestRunPrefersAnExplicitBaseRef(t *testing.T) {
 	}
 	if slices.Contains(git.calls, "diff --name-only -z refs/remotes/origin/work...HEAD") {
 		t.Fatalf("broker diffed against the remote ref despite an explicit BaseRef: %v", git.calls)
+	}
+	if !res.StartedAt.Equal(fixed) || !res.FinishedAt.Equal(fixed) {
+		t.Fatalf("timestamps = %v/%v, want the injected clock %v", res.StartedAt, res.FinishedAt, fixed)
 	}
 }
 

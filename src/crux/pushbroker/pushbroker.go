@@ -303,8 +303,8 @@ type Result struct {
 	FinishedAt      time.Time `json:"finished_at"`
 }
 
-func (b *Broker) Run(ctx context.Context) (Result, error) {
-	res := Result{Workspace: b.Workspace, Repo: b.Repo, Branch: b.Branch, Remote: b.remote(), StartedAt: b.now()}
+func (b *Broker) Run(ctx context.Context) (res Result, err error) {
+	res = Result{Workspace: b.Workspace, Repo: b.Repo, Branch: b.Branch, Remote: b.remote(), StartedAt: b.now()}
 	defer func() { res.FinishedAt = b.now() }()
 	if err := b.validate(); err != nil {
 		res.Error = err.Error()
