@@ -145,6 +145,9 @@ type Config struct {
 	// `delegate` block gates the activity monitor's "Let hive decide"
 	// action (default on).
 	Decisions DecisionsConfig `yaml:"decisions,omitempty" json:"decisions,omitempty"`
+	// Chat tunes the dashboard Hive Chat panel; its `grounded_answers`
+	// block gates the model-backed answer path (default on).
+	Chat ChatConfig `yaml:"chat,omitempty" json:"chat,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.

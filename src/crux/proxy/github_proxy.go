@@ -1177,26 +1177,85 @@ func (p *GitHubProxy) fallbackAgentName(r *http.Request) string {
 // identifyAgentByUID reads /proc/net/tcp to find the UID of the process
 // that owns the socket connected to the proxy, then looks up the agent name.
 func (p *GitHubProxy) identifyAgentByUID(remoteAddr string) string {
-	_, portStr, err := net.SplitHostPort(remoteAddr)
+	uid, err := uidForRemoteAddr(remoteAddr)
 	if err != nil {
 		return ""
+	}
+	return p.uidMap.LookupByUID(uid)
+}
+
+// uidForRemoteAddr resolves the UID of the process that owns the local socket
+// behind remoteAddr ("host:port" as http.Server and net.Conn report it) via
+// /proc/net/tcp. It is the shared first half of every UID-attribution path.
+func uidForRemoteAddr(remoteAddr string) (int, error) {
+	_, portStr, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return -1, err
 	}
 	port := 0
 	const maxPort = 65535
 	for _, c := range portStr {
 		if c < '0' || c > '9' {
-			return ""
+			return -1, fmt.Errorf("remote port %q is not numeric", portStr)
 		}
 		port = port*10 + int(c-'0')
 		if port > maxPort {
-			return ""
+			return -1, fmt.Errorf("remote port %q out of range", portStr)
 		}
 	}
-	uid, err := LookupUIDByLocalPort(port)
-	if err != nil {
-		return ""
+	return LookupUIDByLocalPort(port)
+}
+
+// inferenceAPIKeyPrefix is what the manager prepends to the agent's name to
+// form the ANTHROPIC_API_KEY it hands each inference-routed agent
+// (agent/manager_env.go). The suffix is the agent's NAME, not a secret.
+const inferenceAPIKeyPrefix = "sk-hive-"
+
+// translatorAgentName names the caller of the inference translator.
+//
+// The x-api-key header the Claude CLI sends is "sk-hive-<agent>", and the
+// agent name is public inside the pod: every agent knows every other agent's
+// name. Trusting the header alone lets any process on the loopback borrow
+// another agent's inference route — its backend, model, upstream credential
+// and usage attribution — which is exactly the self-asserted-identity hole
+// closed for the GitHub path in fallbackAgentName and for the decision
+// endpoint in IdentifyAgentByUID. So the socket owner's UID decides:
+//
+//   - a UID mapped to an agent is authoritative; a header naming someone else
+//     is logged and overridden;
+//   - an internal UID (the hive's own control plane, UIDMap.IsInternalUID)
+//     keeps the header name — the hive is the party that issues these keys;
+//   - an unmapped UID, or no UID map at all, accepts the header only under
+//     HIVE_PROXY_ADVISORY_OK, the same operator escape hatch the GitHub path
+//     honours for deployments without per-agent UID separation.
+//
+// The second return is false when the caller could not be identified and the
+// request must be refused.
+func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
+	claimed := strings.TrimPrefix(r.Header.Get("x-api-key"), inferenceAPIKeyPrefix)
+	if p.uidMap == nil {
+		if p.proxyAdvisoryOK {
+			return claimed, true
+		}
+		return "", false
 	}
-	return p.uidMap.LookupByUID(uid)
+	uid, err := uidForRemoteAddr(r.RemoteAddr)
+	if err == nil {
+		if name := p.uidMap.LookupByUID(uid); name != "" {
+			if claimed != "" && claimed != name {
+				p.logger.Warn("inference identity: x-api-key names another agent; using the socket owner",
+					"agent", name, "claimed", claimed, "uid", uid)
+			}
+			return name, true
+		}
+		if p.uidMap.IsInternalUID(uid) {
+			return claimed, true
+		}
+	}
+	if p.proxyAdvisoryOK {
+		return claimed, true
+	}
+	return "", false
 }
 
 // handleConnectDirect handles CONNECT requests on a raw connection (no http.Server).
@@ -3013,8 +3072,13 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.Header.Get("x-api-key")
-		agentName := strings.TrimPrefix(apiKey, "sk-hive-")
+		agentName, ok := p.translatorAgentName(r)
+		if !ok {
+			p.logger.Warn("inference request from unidentified caller refused",
+				"remote", r.RemoteAddr, "method", r.Method, "path", r.URL.Path)
+			http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"caller could not be identified"}}`, http.StatusUnauthorized)
+			return
+		}
 
 		p.logger.Info("inference request",
 			"agent", agentName,
@@ -3203,7 +3267,11 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 func (p *GitHubProxy) StartInferenceTranslator() error {
 	addr := fmt.Sprintf("127.0.0.1:%d", InferenceTranslatePort)
 	p.logger.Info("inference translation server starting", "addr", addr)
-	server := &http.Server{Addr: addr, Handler: p.inferenceTranslatorHandler()}
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           p.inferenceTranslatorHandler(),
+		ReadHeaderTimeout: httpReadTimeout,
+	}
 	return server.ListenAndServe()
 }
 

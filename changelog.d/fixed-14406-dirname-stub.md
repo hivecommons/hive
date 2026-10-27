@@ -1,0 +1,1 @@
+- hive-open-pr.sh stub-PATH test now provides dirname, which the script's SCRIPT_DIR line requires, so it passes on runner images that do not resolve it implicitly ([#14406](https://github.com/hivecommons/hive/issues/14406)).

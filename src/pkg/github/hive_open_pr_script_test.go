@@ -317,7 +317,7 @@ func TestHiveOpenPRScript_MultilineBodyIsValidJSONWithoutPython3(t *testing.T) {
 	if err := os.MkdirAll(stubBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range []string{"bash", "awk", "cat", "date", "mkdir", "tr"} {
+	for _, tool := range []string{"bash", "awk", "cat", "date", "dirname", "mkdir", "tr"} {
 		real, lookErr := exec.LookPath(tool)
 		if lookErr != nil {
 			t.Skipf("%s not available: %v", tool, lookErr)

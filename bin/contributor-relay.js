@@ -4518,7 +4518,7 @@ const BACKEND_LOGIN_HELP = {
     steps: () => [
       'bob authenticates with an API key, not an interactive login.',
       'Stop the relay, set the key, and start it again:',
-      '  export BOBSHELL_API_KEY=<your-bob-api-key>',
+      '  export BOB_API_KEY=<your-bob-api-key>',
       '  just contribute-hive bob',
     ],
     // The generic closing line would be a lie here: no login is coming, and the

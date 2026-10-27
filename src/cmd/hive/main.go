@@ -1457,6 +1457,7 @@ func (b *boot) wireBootClosures() {
 			NewLinearAgent:       newLinearAgentGateway(b.logger),
 			LinearStoredViewerID: linearStoredViewerID,
 			DelegateDecider:      newDelegateDeciderRunner(func() *config.Config { return b.cfg }),
+			ChatGrounder:         newChatGroundingRunner(func() *config.Config { return b.cfg }),
 			Governor:             b.gov,
 			GHClient:             b.ghClient,
 			StageEngineStatus:    func() stageengine.Status { return stageEngineStatus(b.cfg, b.ghClient, b.logger) },

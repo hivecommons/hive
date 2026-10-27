@@ -136,6 +136,10 @@ type IssueRequest struct {
 	// maintainer to choose gets the "What to reply" notice and stays out of
 	// the actionable queue whatever labels the agent named.
 	NeedsDecision bool `json:"needs_decision,omitempty"` // issue only
+	// NoConsolidateReason is the caller's escape hatch from open-issue
+	// consolidation (#14360): when set, the watcher files a new issue instead
+	// of folding the request into an existing one, and records the reason.
+	NoConsolidateReason string `json:"no_consolidate_reason,omitempty"` // issue only
 	// BlockedOnPR parks the issue on an open PR in the same repo
 	// (hivecommons/hive#13093). On a "comment" request the watcher prefixes
 	// the note with the blocked-on marker, strips @-mentions so the note
@@ -160,6 +164,9 @@ type IssueResponse struct {
 	// "subject", "file_set", or "component:<path>" (#14360), so the agent can
 	// tell a true twin from a weak shared-path fold.
 	ConsolidatedReason string `json:"consolidated_reason,omitempty"`
+	// ConsolidationSkippedReason echoes the request's no_consolidate_reason
+	// when the watcher skipped consolidation because the caller asked.
+	ConsolidationSkippedReason string `json:"consolidation_skipped_reason,omitempty"`
 	// RejectedDuplicate reports that no issue was created because a maintainer
 	// recently closed an agent-filed issue covering the same file set as
 	// not-planned or duplicate (#6463). Number/URL point at that closed issue
@@ -723,7 +730,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if d.Active {
 			issueDecisionDowngrade = d
 		}
-		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: createBody, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: true})
+		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: createBody, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: req.NoConsolidateReason == ""})
+		if req.NoConsolidateReason != "" {
+			resp.ConsolidationSkippedReason = req.NoConsolidateReason
+			c.logger.Info("issue-request watcher: consolidation skipped at the caller's request",
+				slog.String("repo", req.Repo), slog.String("reason", req.NoConsolidateReason), slog.String("agent", req.Agent))
+		}
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
 			// finding, and no amount of retrying changes their verdict

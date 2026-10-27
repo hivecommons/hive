@@ -101,6 +101,9 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
+	if expectedKickHold(r) {
+		return
+	}
 	class := fleetreport.ClassUnclassifiedRepeated
 	key := Key(r.Message)
 	if key == "" {
@@ -117,6 +120,25 @@ func (h *Handler) feed(r slog.Record) {
 		}
 	}
 	h.observe(class, key, r.Message, diagnostics(r, h.attrs))
+}
+
+// expectedKickHold reports whether a "failed to send kick" record carries the
+// deliberate post-restart kick cooldown refusal (#7363). The hold is the
+// breaker working as designed, not a repeated runtime defect (#14422); other
+// kick send failures stay reportable.
+func expectedKickHold(r slog.Record) bool {
+	if strings.TrimSpace(r.Message) != "failed to send kick" {
+		return false
+	}
+	held := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" && strings.Contains(a.Value.String(), "kick held after restart") {
+			held = true
+			return false
+		}
+		return true
+	})
+	return held
 }
 
 // diagnostics renders "level attr=value …" from the bound and record

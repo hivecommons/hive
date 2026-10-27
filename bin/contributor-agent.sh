@@ -901,17 +901,12 @@ case "$STATUS" in
     ;;
 esac
 
-# bob is launched with --auth-method api-key (see backend_perm_flag in
-# config/backends.conf), which makes BOBSHELL_API_KEY mandatory: without it bob
-# comes up sitting at "Enter Bob-Shell API Key" and simply waits. Nobody is
-# attached to an unattended relay, so that is an indefinite silent hang rather
-# than a failure anyone can see. Fail loudly at startup instead.
-# Only the presence of the key is tested — never its value, and it is never
-# echoed.
-if [[ "$AGENT_BACKEND" == "bob" ]] && [[ -z "${BOBSHELL_API_KEY:-}" ]]; then
-  echo "ERROR: backend 'bob' requires BOBSHELL_API_KEY to be set."
+# Fail before an unattended Bob waits indefinitely for a key. Export both
+# names for Bob 1.x/2.x compatibility without printing either value.
+if [[ "$AGENT_BACKEND" == "bob" ]] && ! backend_bob_prepare_env; then
+  echo "ERROR: backend 'bob' requires BOB_API_KEY (or legacy BOBSHELL_API_KEY) to be set."
   echo "  Get a key at https://bob.ibm.com (Scope: Inference), then:"
-  echo "    export BOBSHELL_API_KEY=..."
+  echo "    export BOB_API_KEY=..."
   echo "  The key stays on your machine and is never sent to the hive."
   exit 1
 fi

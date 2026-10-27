@@ -100,6 +100,11 @@ type Server struct {
 
 	feedbackRefreshBackoff feedbackBackoff
 
+	// chatGroundedInflight caps concurrent grounded chat turns
+	// (api_chat_grounded.go); created lazily by chatGroundedSlots.
+	chatGroundedOnce     sync.Once
+	chatGroundedInflight chan struct{}
+
 	port       int
 	authToken  string
 	statusMu   sync.RWMutex

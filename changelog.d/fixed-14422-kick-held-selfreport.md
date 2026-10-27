@@ -1,0 +1,1 @@
+- Stop reporting the expected post-restart kick hold (`failed to send kick` with `kick held after restart`, #7363) as an `unclassified_error_repeated` self-report; other kick send failures still report (#14422).

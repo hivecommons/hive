@@ -191,6 +191,10 @@ func TestK8sAPIPatchNoToken(t *testing.T) {
 
 func TestRolloutRestartSelfSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive"}]}}}}`))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()

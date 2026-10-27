@@ -165,8 +165,27 @@ The resolvers answer from the last snapshot (the manager reads them under
 its own lock, so they never call out) and keep it through a hive outage;
 the auto-merge call fails closed, refusing the merge. A value hive does not
 report, or a hive without the `policy` capability (`404 not_configured`),
-leaves the runtime's own default in place. `SetInferenceCallbacks`,
-`SetSandboxMutationBoundary` and `SetSpanStarter` are not carried yet.
+leaves the runtime's own default in place.
+
+Every `crux.Host` setter has a disposition in `api.HostSetters`, and
+`TestParityHostVersusSetterTable` fails when one is added without an
+entry. The remaining setters, all on the same callback endpoint:
+
+| Setter | Callback route (capability) | Fail-closed behaviour |
+|---|---|---|
+| `SetInferenceCallbacks` | `PUT`/`DELETE /v1/inference/routes/{agent}` (`inference_routes`): the manager pushes each agent's inference route into hive's proxy | route not installed; the agent runs without a per-agent route |
+| `SetSandboxMutationBoundary` | `POST /v1/effects`, `POST /v1/effects/{id}/end` (`effects`): two-phase claim/end over hive's journaling boundary | mutation refused |
+| `SetAppAuth` | `POST /v1/tokens` with `{agent, tier}` and no repos (installation-wide, what `AppAuth.ScopedToken(tier)` mints in-process); `hivecap.AppTokenWriter` writes the token in place (`O_TRUNC`, `0600`) to the agent's existing cache file and nowhere else, never logging it. `HIVE_PROXY_INJECT_GH_AUTH` is refused in sidecar mode (`ErrProxyInjectionUnsupported`) rather than writing the real token | cache file untouched; the agent keeps its last token or runs read-only |
+| `SetAgentMint` | `POST /v1/tokens/mint` (`agent_mint`); a hive with mint disabled answers `404 not_configured`, which the writer maps to the in-process "mint off" contract (`""`, no error) | no mint token |
+| `SetBobAPIKeyResolver`, `SetBobKeySourceResolver` | `GET /v1/bob/credential` (`bob`); cached 1 min runtime-side, a failed refresh serves the stale value for at most 2 min | empty key and source |
+| `SetSpanStarter` | — in-process-only: a span is a Go value wrapping a call in one address space. The sidecar's manager starts spans on the OpenTelemetry global tracer (a no-op without an exporter in the runtime's process); trajectory events do not depend on it | n/a |
+
+The proxy seams are carried the same way: `hivecap.Set.{Accounting,
+Usage, Canary}` come from `GET /v1/github/rate-limit`, `POST /v1/usage`
+and `POST /v1/scan/canary`, so a proxy built on them refuses writes while
+hive is away and resumes on the next successful call. No setter is served
+from a `runtime:` config key: every value is already resolved hive-side
+from the live config, so a reload reaches the runtime on its next poll.
 
 ### Supervision and failure semantics (#14138 stage 4)
 

@@ -108,6 +108,12 @@ type Dependencies struct {
 	// (decisions.delegate.llm.enabled). Nil keeps the rules-first decider
 	// alone.
 	DelegateDecider delegatedecision.TurnRunner
+	// ChatGrounder runs the read-only grounding turn behind Hive Chat's
+	// grounded answers (chat.grounded_answers.enabled, api_chat_grounded.go):
+	// the question plus a compact hive-state snapshot in, the answer out.
+	// Nil means no inference backend is wired, so chat falls back to the
+	// deterministic handlers / command usage.
+	ChatGrounder delegatedecision.TurnRunner
 	// BeadStoreLoadFailures counts configured bead stores that failed to open at
 	// startup and were therefore LEFT OUT of BeadStores entirely. The dependency
 	// admission gate (contribute_admission_deps.go) needs this because it cannot

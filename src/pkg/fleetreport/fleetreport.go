@@ -772,9 +772,15 @@ var benignSubstrings = []string{
 // IsBenignMessage reports whether a raw log message is noise the generic
 // repeated-error feed must not report: the read/keepalive i/o timeout rule
 // above applied to the whole line, every benignSubstrings entry, and the
-// review planner's pending-expiry retry notification.
+// exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
+	// A CI gate refusal is the merge safety policy working as designed, even
+	// when a required check remains unsuccessful across repeated polls (#14364).
+	// Keep the operator warning, but do not turn it into a runtime defect.
+	if strings.TrimSpace(m) == "merge-request watcher: refused to merge, ci not confirmed" {
+		return true
+	}
 	// Pending expiry is a bounded retry, logged per perspective/PR. A burst
 	// across unrelated reviews is not a repeated runtime defect (#13850).
 	// Match only the retry notification: "review dispatch exhausted; holding

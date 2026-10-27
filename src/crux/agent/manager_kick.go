@@ -1364,6 +1364,9 @@ var ciPollCommandRe = regexp.MustCompile(`\bgh (?:run (?:watch|view|list)\b|pr c
 // polling commands exactly this way.
 var ciPollProhibitionRe = regexp.MustCompile("(?i)\\b(?:no|not|never|don't|avoid|without)\\s+(?:\\w+\\s+)?[`'\"]*$")
 
+// ciLogReadRe identifies diagnostic log reads, rather than CI-status polls.
+var ciLogReadRe = regexp.MustCompile(`^gh run view\b[^\n;|&]*\s--log(?:-failed)?(?:=true)?(?:\s|$)`)
+
 // ciPollCommands returns each CI-status command in pane as its normalized
 // command line (from the command name to end of line), skipping mentions
 // that are prohibitions quoted from the kick prompt or policy: those landed
@@ -1377,6 +1380,11 @@ func ciPollCommands(pane string) []string {
 			continue
 		}
 		line, _, _ := strings.Cut(pane[loc[0]:], "\n")
+		// Failure diagnosis can revisit the same log while comparing jobs or
+		// extracting evidence. It does not wait for a check to finish (#14382).
+		if ciLogReadRe.MatchString(line) {
+			continue
+		}
 		cmds = append(cmds, strings.Join(strings.Fields(strings.TrimRight(line, " \t┃│")), " "))
 	}
 	return cmds
@@ -1548,7 +1556,8 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 
 	// Self-report (#13470, was the hive-code-defect "CI-poll nudge" counter):
 	// the harness caps the nudge at one per kick, so every observation is a
-	// distinct kick the agent spent polling its own CI.
+	// distinct kick in which the agent repeated CI-status commands; whether
+	// the target was its own PR cannot be inferred from pane text (#14384).
 	// A lone poll past the wall clock is a normal post-push check, and one
 	// read each of several PRs is a sweep, so only repeated polling of the
 	// same target reaches the fleet; the in-session nudge is unchanged.
@@ -1557,7 +1566,7 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 		repeated := repeatedCIPollCommandLines(scrollback, agent.ciPollCommandBaseline)
 		m.mu.Unlock()
 		m.observeCondition(crux.ClassCIPollNudge, agent.Name,
-			fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
+			fmt.Sprintf("repeated CI-status commands observed after the kick: stop-polling nudge sent (%d repeated of %d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newRepeats, newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
 			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d repeated_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s\n--- repeated poll commands ---\n%s",
 				agent.Name, lane, len(cmds), newPolls, newRepeats, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines), strings.Join(repeated, "\n")))
 	}

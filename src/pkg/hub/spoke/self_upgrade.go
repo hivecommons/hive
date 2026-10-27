@@ -63,7 +63,7 @@ func RolloutRestartSelf(logger *slog.Logger) error {
 	)
 
 	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
-	if err := k8sAPIPatch(path, []byte(restartAnnotation)); err != nil {
+	if err := k8sUpgradePatch(path, []byte(restartAnnotation)); err != nil {
 		return fmt.Errorf("patching deployment %s/%s: %w", namespace, selfUpgradeDeployName, err)
 	}
 
@@ -142,7 +142,7 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 		`{"spec":{"template":{"spec":{"containers":[%s],"initContainers":[%s]},"metadata":{"annotations":{"hive.hivecommons.dev/restart-at":%q}}}}}`,
 		strings.Join(cs, ","), strings.Join(ics, ","), time.Now().UTC().Format(time.RFC3339),
 	)
-	if err := k8sAPIPatch(path, []byte(patch)); err != nil {
+	if err := k8sUpgradePatch(path, []byte(patch)); err != nil {
 		return fmt.Errorf("patching deployment image: %w", err)
 	}
 	rememberSelfImage(image)
@@ -357,7 +357,7 @@ func upgradeSelfMutableToSHA(logger *slog.Logger, current, targetSHA string) (ne
 		time.Now().UTC().Format(time.RFC3339),
 	)
 	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
-	if err := k8sAPIPatch(path, []byte(patch)); err != nil {
+	if err := k8sUpgradePatch(path, []byte(patch)); err != nil {
 		// Report the failure rather than swallowing it: the caller turns a
 		// non-nil error into a recorded, hub-visible upgrade failure instead of
 		// a permanent spinner.

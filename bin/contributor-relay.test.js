@@ -7847,7 +7847,7 @@ test('#6437 bob is told about its API key, not to type /login', () => {
   const relay = loadRelay({ backend: 'bob' });
   try {
     const text = relay.loginBannerLines('bob', 'podman exec -it c tmux attach -t contributor').join('\n');
-    assert.ok(/BOBSHELL_API_KEY/.test(text), 'bob needs its API key named');
+    assert.ok(/BOB_API_KEY/.test(text), 'bob needs its API key named');
     assert.ok(!/\/login/.test(text), 'typing /login cannot authenticate bob');
     assert.ok(!/tmux attach/.test(text),
       'attaching to the pane cannot fix a missing API key, so the banner must not send the operator there');
@@ -7913,7 +7913,7 @@ test('#6437 waitForCLI prints the blocked backend\'s own banner, not Claude Code
   try {
     assert.ok(/needs authentication/.test(output),
       'the needs-login banner should have been printed during startup');
-    assert.ok(/BOBSHELL_API_KEY/.test(output),
+    assert.ok(/BOB_API_KEY/.test(output),
       'bob was told to authenticate some other way than with its API key');
     assert.ok(!/Claude Code/.test(output),
       'a blocked bob is announced as Claude Code');

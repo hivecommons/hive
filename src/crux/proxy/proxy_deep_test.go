@@ -1115,6 +1115,7 @@ func TestHandleConnectDirectAnthropicReroute(t *testing.T) {
 func TestStartInferenceTranslator(t *testing.T) {
 	p := newTestProxy()
 	p.inference = newInferenceRouter()
+	p.proxyAdvisoryOK = true // no UID map in tests; exercise routing, not identity
 
 	// Start a mock vLLM backend
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

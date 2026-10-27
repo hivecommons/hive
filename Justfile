@@ -127,8 +127,8 @@ contribute-check-backend backend="claude":
       bob)
         if command -v bob &>/dev/null; then
           # Bob's browser SSO flow cannot complete in a container, so the
-          # containerized path needs BOBSHELL_API_KEY exported in your shell.
-          echo "Bob CLI detected — export BOBSHELL_API_KEY for containerized runs."
+          # containerized path needs BOB_API_KEY (or BOBSHELL_API_KEY) exported in your shell.
+          echo "Bob CLI detected — export BOB_API_KEY for containerized runs."
         else
           echo "ERROR: Bob CLI not found."
           exit 1
@@ -944,9 +944,9 @@ contribute-hive backend="" mode="docker": check-version
     export AGENT_BACKEND="$BACKEND"
     # Bob has no headless credential other than its API key — without it the
     # agent would launch and sit at Bob's key prompt forever. Fail fast.
-    if [[ "$BACKEND" == "bob" && -z "${BOBSHELL_API_KEY:-}" ]]; then
-      echo "ERROR: BOBSHELL_API_KEY not set — Bob cannot authenticate."
-      echo "  export BOBSHELL_API_KEY=your-bob-api-key"
+    if [[ "$BACKEND" == "bob" && -z "${BOB_API_KEY:-}" && -z "${BOBSHELL_API_KEY:-}" ]]; then
+      echo "ERROR: BOB_API_KEY (or legacy BOBSHELL_API_KEY) not set — Bob cannot authenticate."
+      echo "  export BOB_API_KEY=your-bob-api-key"
       echo "  then re-run: just contribute-hive bob"
       exit 1
     fi
@@ -1833,7 +1833,7 @@ contribute-hive backend="" mode="docker": check-version
           if [[ -n "$name" ]]; then add_provider_env "$name"; fi
         done < <(node bin/pi-backend.js --env-names "${AGENT_MODEL}")
       else
-        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GEMINI_API_KEY DATABRICKS_TOKEN OMNIGENT_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY LLM_API_KEY LLM_BASE_URL LLM_MODEL; do
+        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GEMINI_API_KEY DATABRICKS_TOKEN OMNIGENT_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOB_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY LLM_API_KEY LLM_BASE_URL LLM_MODEL; do
           add_provider_env "$name"
         done
       fi
