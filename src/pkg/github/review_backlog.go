@@ -319,11 +319,11 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 			}
 			title := reviewBacklogIssueTitle(report.Perspective, finding)
 			missing := baseProbe.FileMissingOnBase(ctx, finding.File)
-			touched, known := false, true
+			touched, filesKnown := false, true
 			if !missing {
-				touched, known = changedFiles(ctx, finding.File)
+				touched, filesKnown = changedFiles(ctx, finding.File)
 			}
-			blocked := missing || touched || !known
+			blocked := missing || touched || !filesKnown
 			itemLabels := labels
 			if blocked {
 				itemLabels = blockedBacklogLabels(labels)
@@ -333,7 +333,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 				body = blockedBacklogNote(req.Repo, req.Number, finding.File, baseProbe.BaseRef(ctx)) + body
 			} else if blocked {
 				note := blockedOnReviewedPRNote(req.Repo, req.Number)
-				if !known {
+				if !filesKnown {
 					note = strings.Replace(note, "is about code that PR is changing", "could not be checked against the PR's changed files", 1)
 				}
 				body = note + body
