@@ -601,3 +601,32 @@ func TestOptionsValidateAcceptsMinimal(t *testing.T) {
 		t.Errorf("Validate = %v", err)
 	}
 }
+
+func TestManifestCopiesAllowlistedEnv(t *testing.T) {
+	t.Setenv("HIVE_TEST_FOO", "bar")
+	t.Setenv("HIVE_TEST_OVERRIDE", "from-process")
+	t.Setenv("HIVE_TEST_UNLISTED", "nope")
+	t.Setenv("HIVE_TEST_API_TOKEN", "leak")
+	api := newFakeAPI()
+	api.statuses = []string{statusComplete}
+	srv := httptest.NewServer(api.handler(t))
+	defer srv.Close()
+	l := newLauncher(srv, Options{})
+	spec := specFor("/data/agents/sandbox/deps-123")
+	spec.Env = map[string]string{"HIVE_TEST_OVERRIDE": "explicit", "GITHUB_TOKEN": "leak"}
+	spec.EnvAllowlist = []string{"HIVE_TEST_FOO", "HIVE_TEST_OVERRIDE", "HIVE_TEST_API_TOKEN"}
+	if _, err := l.Run(context.Background(), spec); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	raw, _ := json.Marshal(api.created)
+	m := string(raw)
+	want := `"env":[{"name":"HIVE_TEST_FOO","value":"bar"},{"name":"HIVE_TEST_OVERRIDE","value":"explicit"}]`
+	if !strings.Contains(m, want) {
+		t.Errorf("manifest missing %s\n%s", want, m)
+	}
+	for _, leak := range []string{"HIVE_TEST_UNLISTED", "HIVE_TEST_API_TOKEN", "GITHUB_TOKEN", "leak", "from-process"} {
+		if strings.Contains(m, leak) {
+			t.Errorf("%q reached the Job manifest:\n%s", leak, m)
+		}
+	}
+}
