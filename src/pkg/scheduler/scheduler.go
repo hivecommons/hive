@@ -3,6 +3,7 @@ package scheduler
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -47,6 +48,7 @@ type Scheduler struct {
 	deferredKicks            map[string]func(string)
 	firstScanDeferred        map[string]bool
 	ioscanWarned             sync.Map
+	lastClassifierErr        atomic.Value // string: latest fail-closed classifier error
 	mu                       sync.RWMutex
 }
 
