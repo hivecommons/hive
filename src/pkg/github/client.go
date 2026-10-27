@@ -1016,13 +1016,16 @@ type PullRequest struct {
 
 // PRLinkedIssue is an issue GitHub reports a PR will close on merge
 // (closingIssuesReferences) — the PR-side mirror of IssueLinkedPR. State is
-// GitHub's issue state lower-cased ("open" / "closed"), as on Issue.State.
+// GitHub's issue state lower-cased ("open" / "closed"), as on Issue.State;
+// StateReason is its stateReason lower-cased ("completed" / "not_planned" /
+// "duplicate" / "reopened"), "" when unknown.
 type PRLinkedIssue struct {
-	Number int    `json:"number"`
-	Title  string `json:"title,omitempty"`
-	Repo   string `json:"repo,omitempty"`
-	State  string `json:"state,omitempty"`
-	URL    string `json:"url,omitempty"`
+	Number      int    `json:"number"`
+	Title       string `json:"title,omitempty"`
+	Repo        string `json:"repo,omitempty"`
+	State       string `json:"state,omitempty"`
+	StateReason string `json:"state_reason,omitempty"`
+	URL         string `json:"url,omitempty"`
 	// Via is how the link was found: "" for GitHub's closing reference,
 	// else one of the PRLinkVia* values (pr_reference_links.go).
 	Via string `json:"via,omitempty"`

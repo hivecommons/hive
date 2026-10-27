@@ -44,7 +44,7 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
             }
           }
         }
-        closingIssuesReferences(first: 10) { nodes { number title state url repository { nameWithOwner } } }
+        closingIssuesReferences(first: 10) { nodes { number title state stateReason url repository { nameWithOwner } } }
       }
     }
   }
@@ -108,11 +108,12 @@ type graphQLPRBatchNode struct {
 	} `json:"commits"`
 	ClosingIssuesReferences struct {
 		Nodes []struct {
-			Number     int    `json:"number"`
-			Title      string `json:"title"`
-			State      string `json:"state"`
-			URL        string `json:"url"`
-			Repository struct {
+			Number      int    `json:"number"`
+			Title       string `json:"title"`
+			State       string `json:"state"`
+			StateReason string `json:"stateReason"`
+			URL         string `json:"url"`
+			Repository  struct {
 				NameWithOwner string `json:"nameWithOwner"`
 			} `json:"repository"`
 		} `json:"nodes"`
@@ -359,11 +360,12 @@ func (c *Client) storeGraphQLPRBatchReview(repo string, n graphQLPRBatchNode) {
 	for _, li := range n.ClosingIssuesReferences.Nodes {
 		if li.Number > 0 {
 			st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{
-				Number: li.Number,
-				Title:  li.Title,
-				Repo:   li.Repository.NameWithOwner,
-				State:  strings.ToLower(strings.TrimSpace(li.State)),
-				URL:    li.URL,
+				Number:      li.Number,
+				Title:       li.Title,
+				Repo:        li.Repository.NameWithOwner,
+				State:       strings.ToLower(strings.TrimSpace(li.State)),
+				StateReason: strings.ToLower(strings.TrimSpace(li.StateReason)),
+				URL:         li.URL,
 			})
 		}
 	}

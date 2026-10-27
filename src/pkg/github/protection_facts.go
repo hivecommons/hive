@@ -230,7 +230,7 @@ const reviewSignalsQuery = `query($owner:String!,$name:String!,$cursor:String){
         latestOpinionatedReviews(first:50){nodes{state submittedAt authorAssociation author{__typename login}}}
         comments(first:1){totalCount}
         reviewThreads(first:1){totalCount}
-        closingIssuesReferences(first:20){nodes{number title state url repository{nameWithOwner}}}
+        closingIssuesReferences(first:20){nodes{number title state stateReason url repository{nameWithOwner}}}
       }
     }
   }
@@ -265,11 +265,12 @@ type reviewDecisionResponse struct {
 				} `json:"reviewThreads"`
 				ClosingIssuesReferences struct {
 					Nodes []struct {
-						Number     int    `json:"number"`
-						Title      string `json:"title"`
-						State      string `json:"state"`
-						URL        string `json:"url"`
-						Repository struct {
+						Number      int    `json:"number"`
+						Title       string `json:"title"`
+						State       string `json:"state"`
+						StateReason string `json:"stateReason"`
+						URL         string `json:"url"`
+						Repository  struct {
 							NameWithOwner string `json:"nameWithOwner"`
 						} `json:"repository"`
 					} `json:"nodes"`
@@ -333,11 +334,12 @@ func (c *Client) fetchReviewDecisions(ctx context.Context, repo string) map[int]
 					continue
 				}
 				st.linkedIssues = append(st.linkedIssues, PRLinkedIssue{
-					Number: li.Number,
-					Title:  li.Title,
-					Repo:   li.Repository.NameWithOwner,
-					State:  strings.ToLower(strings.TrimSpace(li.State)),
-					URL:    li.URL,
+					Number:      li.Number,
+					Title:       li.Title,
+					Repo:        li.Repository.NameWithOwner,
+					State:       strings.ToLower(strings.TrimSpace(li.State)),
+					StateReason: strings.ToLower(strings.TrimSpace(li.StateReason)),
+					URL:         li.URL,
 				})
 			}
 			for _, r := range n.LatestOpinionatedReviews.Nodes {

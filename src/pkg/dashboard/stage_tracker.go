@@ -334,7 +334,14 @@ type StageTrackerItem struct {
 	// works towards an issue joins its row instead of standing as an
 	// orphan (hivecommons/hive#13544).
 	LinkedIssues []StageTrackerLinkedIssue `json:"linked_issues,omitempty"`
-	History      []StageTrackerHop         `json:"history"`
+	// ClosedIssue is set on a PR that stands as its own row because every
+	// issue it closes is already closed: the row is anchored on the PR (its
+	// number and title lead, its stage drives the strip, its timestamps
+	// sort it) and the closed issue is a secondary `closes #N · closed`
+	// chip. StateReason "not_planned" adds an "issue closed (not planned)"
+	// chip so the reader can tell the PR may be moot (hivecommons/hive#14655).
+	ClosedIssue *StageTrackerLinkedIssue `json:"closed_issue,omitempty"`
+	History     []StageTrackerHop        `json:"history"`
 }
 
 // StageTrackerLinkedIssue is one issue a PR closes, as its row's issue
@@ -344,6 +351,9 @@ type StageTrackerLinkedIssue struct {
 	Title  string `json:"title,omitempty"`
 	URL    string `json:"url,omitempty"`
 	State  string `json:"state,omitempty"`
+	// StateReason is GitHub's stateReason for a closed issue, lower-cased
+	// ("completed", "not_planned", "duplicate"); "" when unknown.
+	StateReason string `json:"state_reason,omitempty"`
 	// Listed is true when the issue has its own row in this response; the
 	// PR is then nested under it and never drawn as a top-level row.
 	Listed bool `json:"listed,omitempty"`
@@ -1549,7 +1559,8 @@ func stageTrackerPRLinkedIssues(pr github.PullRequest, repoName, baseURL string)
 		seen[li.Number] = true
 		out = append(out, StageTrackerLinkedIssue{
 			Number: li.Number, Title: li.Title, State: strings.ToLower(strings.TrimSpace(li.State)),
-			URL: overviewItemURL(li.URL, full, li.Number, "issue", baseURL), Via: via,
+			StateReason: strings.ToLower(strings.TrimSpace(li.StateReason)),
+			URL:         overviewItemURL(li.URL, full, li.Number, "issue", baseURL), Via: via,
 		})
 	}
 	for _, li := range pr.LinkedIssues {
@@ -1709,4 +1720,45 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 		}
 		it.LinkedPRs = out
 	}
+	for i := range items {
+		if items[i].Kind == "pr" {
+			items[i].ClosedIssue = stageTrackerClosedIssueAnchor(items[i])
+		}
+	}
+}
+
+// stageTrackerClosedIssueAnchor returns the closed issue a standalone PR
+// row re-anchors around, or nil. A PR nested under a listed issue, a PR
+// with an open closing link, and a PR whose links are all soft (`Refs #N`)
+// or of unknown state keep the issue slot as is; only a PR whose every
+// closing link names a closed issue is drawn as the row's own headline,
+// with the first closed issue as its secondary chip
+// (hivecommons/hive#14655). The PR's stage, modifiers and timestamps are
+// untouched: the issue closing is not a regression of the PR.
+func stageTrackerClosedIssueAnchor(pr StageTrackerItem) *StageTrackerLinkedIssue {
+	if pr.Kind != "pr" || pr.NestedUnder != 0 {
+		return nil
+	}
+	var closed *StageTrackerLinkedIssue
+	for i := range pr.LinkedIssues {
+		li := &pr.LinkedIssues[i]
+		if li.Listed || stageTrackerLinkSoft(*li) {
+			continue
+		}
+		switch li.State {
+		case "closed":
+			if closed == nil {
+				closed = li
+			}
+		default:
+			// An open (or unknown-state) closing link still anchors the row
+			// on the issue.
+			return nil
+		}
+	}
+	if closed == nil {
+		return nil
+	}
+	out := *closed
+	return &out
 }

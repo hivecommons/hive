@@ -1431,6 +1431,11 @@
     .ham-issue-closed .ham-ref, .ham-issue-closed .ham-title { color: var(--text-faint); text-decoration: line-through; }
     .ham-issue-closed .ham-no-issue-t { text-decoration: none; }
     .ham-issue-closed-chip { flex: 0 0 auto; margin-left: var(--sp-1); }
+    /* PR-anchored row (every issue it closes is closed, PR still open): the PR leads at full width; the closed issue is a muted chip. */
+    .ham-head-pr-anchor .ham-ref { display: inline-flex; align-items: center; gap: var(--sp-1); }
+    .ham-head-pr-anchor .ham-closed-issue-ref { color: var(--text-faint); text-decoration: none; }
+    .ham-head-pr-anchor .ham-closed-issue-ref:hover { color: var(--text); }
+    .ham-head-pr-anchor .ham-closed-not-planned { color: var(--text-faint); font-style: italic; }
     /* Issue slot naming an issue the PR only refers to (`Refs #N`, a `(#N, part 1)` title): a muted "refs" chip tells it from a closing link. */
     .ham-issue-refs-chip { flex: 0 0 auto; margin-left: var(--sp-1); font-style: italic; }
     /* Repo chip before the number: monospace, tinted per repo from the
@@ -14501,10 +14506,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       // Invariant (owner): the issue slot on the left never holds a PR. A
       // PR whose issue is listed is nested under it; a PR seen on its own
-      // (no issue, a closed issue, or the Pull requests view) puts the issue
-      // it closes — or a muted "no linked issue" placeholder — on the left
-      // and names itself in the PR column, exactly where a covering PR sits
-      // on an issue row.
+      // (no issue, or the Pull requests view) puts the issue it closes — or
+      // a muted "no linked issue" placeholder — on the left and names
+      // itself in the PR column, exactly where a covering PR sits on an
+      // issue row. The one exception is a PR whose every closing link is a
+      // closed issue (closed_issue set): that row is the PR's, so the PR
+      // leads at full width and the closed issue is a chip.
       // The repo chip (when on) leads the row, before the issue slot's #N.
       const chip = ctx.repoChips ? stageTrackerRepoChipHtml(item.repo, ctx) : '';
       let leadHtml;
@@ -14515,6 +14522,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
             ${item.claim_reference ? `<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}
             ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
+          </div>`;
+      } else if (item.closed_issue && Number(item.closed_issue.number) > 0) {
+        // Every issue the PR closes is already closed, yet the PR is open:
+        // the row is live work anchored on the PR. The PR leads (its own
+        // icon, number and title, full width) and the closed issue is a
+        // secondary muted chip, so the row never reads as stale
+        // (hivecommons/hive#14655). A not-planned close adds a chip saying
+        // the PR may be moot.
+        const ci = item.closed_issue;
+        const notPlanned = String(ci.state_reason || '').toLowerCase() === 'not_planned';
+        const ciTip = (ci.title || STAGE_TRACKER_CLOSED_ISSUE_TITLE) + ' · closed' + (notPlanned ? ' (not planned)' : '') + ' · PR still open';
+        const ak = item.author_kind || 'hive';
+        leadHtml = `<div class="ham-head-main ham-head-pr-anchor">
+            ${stageTrackerIcon('pr', 'ham-kind-ico')}${chip}
+            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc((title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), ak + (item.author ? ' · @' + item.author : ''))}#${Number(item.number) || 0}</a>
+            <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
+            <a class="ham-badge ham-issue-closed-chip ham-closed-issue-ref" href="${esc(ci.url || '#')}" target="_blank" rel="noopener" title="${esc(ciTip)}">closes <s>#${Number(ci.number)}</s> · closed</a>${notPlanned ? ' <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned" title="The issue this PR closes was closed as not planned; the PR may be moot.">issue closed (not planned)</span>' : ''}
           </div>`;
       } else {
         const li = stageTrackerPRIssueSlot(item);
