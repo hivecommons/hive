@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -26,17 +28,22 @@ func TestPollTmuxOutputForAgent_WiresThrashBreaker(t *testing.T) {
 	if !tmuxAvailable() {
 		t.Skip("tmux not available")
 	}
+	// Keep server options and lifecycle independent of co-sharded tests.
+	socket := fmt.Sprintf("hthrash%d", os.Getpid())
+	tmux := func(args ...string) *exec.Cmd {
+		return testTmuxCommandOnSocket(socket, args...)
+	}
 	session := "hive-thrashwire"
 	// A WIDE session, not newRawTmuxSession: capture-pane returns wrapped
 	// display lines (no -J), and at the default 80 columns the test shell's
 	// long prompt wraps the injected line mid-marker ("git push bl / ocked:"),
 	// which the breaker's Contains match never sees. 220 columns keeps each
 	// injected marker on one captured line.
-	if err := testTmuxCommand("new-session", "-d", "-x", "220", "-y", "50", "-s", session).Run(); err != nil {
+	if err := tmux("new-session", "-d", "-x", "220", "-y", "50", "-s", session, "env ENV= PS1= PS2= /bin/sh").Run(); err != nil {
 		testutil.SkipfUnlessRequired(t, "cannot create tmux session: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = testTmuxCommand("kill-session", "-t", session).Run()
+		_ = tmux("kill-server").Run()
 	})
 	m := NewManager(map[string]config.AgentConfig{
 		"thrashwire": {Backend: "copilot"},
@@ -46,21 +53,30 @@ func TestPollTmuxOutputForAgent_WiresThrashBreaker(t *testing.T) {
 	agent := m.agents["thrashwire"]
 	m.mu.RUnlock()
 	agent.tmuxSession = session
+	agent.tmuxSocket = socket
 
 	// Seed the pane BEFORE the poller starts: checkBlockedThrash only runs on
 	// lines that are NEW relative to the poller's first capture (prevLines),
 	// so the first tick must consume benign content and the blocked burst must
 	// arrive strictly after it.
-	paneInject(t, session, "thrashwire pane seeded")
-	requirePaneShows(t, session, "thrashwire pane seeded")
+	if err := tmux("send-keys", "-t", session, "printf 'thrashwire pane seeded\\n'", "Enter").Run(); err != nil {
+		t.Fatalf("seed pane: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	pollerDone := make(chan struct{})
 	go func() {
 		m.pollTmuxOutputForAgent(agent, ctx)
 		close(pollerDone)
 	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-pollerDone:
+		case <-time.After(10 * time.Second):
+			t.Error("poller goroutine did not exit after cancel")
+		}
+	})
 
 	// Wait for the poller's first capture (3s tick) so prevLines is set.
 	firstCapture := time.Now().Add(15 * time.Second)
@@ -86,10 +102,12 @@ func TestPollTmuxOutputForAgent_WiresThrashBreaker(t *testing.T) {
 	// command ASCII while the rendered output carries the glyph.
 	for i := 0; i < thrashThreshold+1; i++ {
 		cmd := fmt.Sprintf(`printf '\342\233\224 git push blocked: advisory mode (attempt %d)\n'`, i)
-		if err := testTmuxCommand("send-keys", "-t", session, "-l", cmd).Run(); err != nil {
+		if err := tmux("send-keys", "-t", session, "-l", cmd).Run(); err != nil {
 			t.Fatalf("send-keys: %v", err)
 		}
-		_ = testTmuxCommand("send-keys", "-t", session, "Enter").Run()
+		if err := tmux("send-keys", "-t", session, "Enter").Run(); err != nil {
+			t.Fatalf("send Enter: %v", err)
+		}
 	}
 
 	// The trip happens on the tick AFTER the burst renders, and Pause runs in
@@ -110,12 +128,5 @@ func TestPollTmuxOutputForAgent_WiresThrashBreaker(t *testing.T) {
 			t.Fatal("blocked-line burst through the poller never tripped the thrash breaker: pollTmuxOutputForAgent is not wired to checkBlockedThrash")
 		}
 		time.Sleep(200 * time.Millisecond)
-	}
-
-	cancel()
-	select {
-	case <-pollerDone:
-	case <-time.After(10 * time.Second):
-		t.Fatal("poller goroutine did not exit after cancel")
 	}
 }
