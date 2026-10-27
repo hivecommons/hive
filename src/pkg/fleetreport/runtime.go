@@ -63,6 +63,7 @@ const (
 	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
 	ClassInferenceUpstreamError     = "inference_upstream_error"
 	ClassIOScanClassifierUnavail    = "ioscan_classifier_unavailable"
+	ClassAgentGitHubCapReached      = "agent_github_api_cap_reached"
 )
 
 const (
@@ -159,6 +160,7 @@ var Classes = map[string]ClassSpec{
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed"}},
 	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
 	ClassIOScanClassifierUnavail:    {Component: "inference-gateway", Severity: "medium", MinCount: 1, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"ioscan classifier failed closed", "ioscan fail-closed blocked kick"}},
+	ClassAgentGitHubCapReached:      {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"agent github api hourly cap reached"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".

@@ -354,6 +354,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassIOScanClassifierUnavail, message: "ioscan fail-closed blocked kick"},
+		{class: ClassAgentGitHubCapReached, message: "agent GitHub API hourly cap reached"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
@@ -953,6 +954,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"inference upstream failed":                            ClassInferenceUpstreamError,
 		"ioscan classifier failed closed":                      ClassIOScanClassifierUnavail,
 		"ioscan fail-closed blocked kick":                      ClassIOScanClassifierUnavail,
+		"agent GitHub API hourly cap reached":                  ClassAgentGitHubCapReached,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {
