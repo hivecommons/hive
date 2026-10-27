@@ -7055,7 +7055,7 @@
         <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
         <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person">Needs attention</button>
-        <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
+        <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
         <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
@@ -13870,6 +13870,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // labels follow when at least two items carry them.
     const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/', 'hold', 'on-hold', 'do-not-merge', 'hive-pause/'];
     const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number'];
+    // Attention tiers within a column (stageTrackerAttentionTier; same
+    // values as Go): the pills that sink a row, and the direction button's
+    // note that the arrow never flips the tier.
+    const STAGE_TRACKER_TIER_ATTENTION = 0;
+    const STAGE_TRACKER_TIER_NORMAL = 1;
+    const STAGE_TRACKER_TIER_SUNK = 2;
+    const STAGE_TRACKER_SUNK_MODS = ['hold', 'draft'];
+    const STAGE_TRACKER_DIR_TIER_NOTE = ' · Attention-first within each column; arrow flips age order';
     // Repo chip + group-by-repo. The chip before an item's number names its
     // repo (short name; owner/repo in the tooltip; click = the Repo filter)
     // and is shown always / only when the payload spans several repos
@@ -14351,11 +14359,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </div>`;
     }
 
-    // Covering PRs of an issue, furthest along first.
+    // Covering PRs of an issue, furthest along first, attention-first
+    // within a stage (stageTrackerAttentionTier), then longest on step.
     function stageTrackerLinkedSorted(item, stages) {
       const linked = Array.isArray(item.linked_prs) ? item.linked_prs.slice() : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
-      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr') - stageTrackerAnchor(x.stage, stages, 'pr')) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
+      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr') - stageTrackerAnchor(x.stage, stages, 'pr')) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
 
     // List order: furthest along the strip first — a covered issue counts as
@@ -14989,6 +14998,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return mods.length > 0 || STAGE_TRACKER_ATTENTION_STAGES.indexOf(n) >= 0;
     }
 
+    // Ordering tier of a row within its column (mirrors Go
+    // stageTrackerAttentionTier): rows parked on a person first, then the
+    // rest, then rows nobody should act on — hold (incl. do-not-merge/*),
+    // draft, and a PR standing in for a closed issue. Only the pills a row
+    // shows count (deferred_modifiers never promote it); the direction
+    // toggle leaves the tier order alone.
+    function stageTrackerAttentionTier(row) {
+      const mods = Array.isArray(row.modifiers) ? row.modifiers : [];
+      if (STAGE_TRACKER_SUNK_MODS.some(m => mods.indexOf(m) >= 0) || (row.closed_issue && Number(row.closed_issue.number) > 0)) return STAGE_TRACKER_TIER_SUNK;
+      return stageTrackerNeedsAttention(row) ? STAGE_TRACKER_TIER_ATTENTION : STAGE_TRACKER_TIER_NORMAL;
+    }
+
     // The instant an item's current wait began: when it entered its step,
     // else when it was opened (an item with no step yet is waiting since then).
     function stageTrackerWaitSince(item) {
@@ -15114,22 +15135,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Order rows. 'furthest' is the strip order (furthest along first, then
     // longest on step); 'waiting' is longest wait first; 'newest' is most
-    // recently opened first; 'number' is repo then number. dir 'asc' reverses.
+    // recently opened first; 'number' is repo then number. Under 'furthest'
+    // and 'waiting' rows tier attention-first within a column
+    // (stageTrackerAttentionTier); dir 'asc' reverses the strip / age /
+    // repo / number keys but never the tier.
     function stageTrackerSort(rows, stages, f) {
       f = stageTrackerNormalizeFilter(f);
       const byRepoNumber = (x, y) => ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0));
+      const sign = f.dir === 'asc' ? -1 : 1;
+      const byTier = (x, y) => stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y);
       let cmp;
       switch (f.sort) {
-        case 'waiting': cmp = (x, y) => ((stageTrackerWaitSince(x) || Infinity) - (stageTrackerWaitSince(y) || Infinity)) || byRepoNumber(x, y); break;
-        case 'newest': cmp = (x, y) => ((Date.parse(y.created_at || '') || 0) - (Date.parse(x.created_at || '') || 0)) || byRepoNumber(y, x); break;
-        case 'number': cmp = (x, y) => byRepoNumber(y, x); break;
+        case 'waiting': cmp = (x, y) => byTier(x, y) || sign * (((stageTrackerWaitSince(x) || Infinity) - (stageTrackerWaitSince(y) || Infinity)) || byRepoNumber(x, y)); break;
+        case 'newest': cmp = (x, y) => sign * (((Date.parse(y.created_at || '') || 0) - (Date.parse(x.created_at || '') || 0)) || byRepoNumber(y, x)); break;
+        case 'number': cmp = (x, y) => sign * byRepoNumber(y, x); break;
         default: {
           const keyOf = it => stageTrackerSortKey(it, stages);
-          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return (b.anchor - a.anchor) || (a.since - b.since) || byRepoNumber(x, y); };
+          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return sign * (b.anchor - a.anchor) || byTier(x, y) || sign * ((a.since - b.since) || byRepoNumber(x, y)); };
         }
       }
-      const out = (rows || []).slice().sort(cmp);
-      return f.dir === 'asc' ? out.reverse() : out;
+      return (rows || []).slice().sort(cmp);
     }
 
     // One page of rows plus the numbers the "showing X–Y of N" line needs.
@@ -15323,7 +15348,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const att = document.getElementById('activity-monitor-attention');
       if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
       const dir = document.getElementById('activity-monitor-dir');
-      if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'); }
+      if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
       const reset = document.getElementById('activity-monitor-reset');
       if (reset) reset.hidden = !stageTrackerFilterActive(f);
     }

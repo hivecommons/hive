@@ -157,6 +157,7 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerLinkedTip"),
 		jsConstLine(t, html, "STAGE_TRACKER_LINKED_GLYPH"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
+		stageTrackerTierJS(t, html),
 		jsFunc(t, html, "stageTrackerSortKey"),
 		jsFunc(t, html, "esc"),
 		jsFunc(t, html, "agentNowAgo"),

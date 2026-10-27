@@ -1373,12 +1373,85 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
-	sort.SliceStable(resp.Items, func(i, j int) bool {
-		a, b := resp.Items[i], resp.Items[j]
+	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
+	return resp
+}
+
+// Ordering tiers within a stage (stageTrackerAttentionTier; the dashboard's
+// STAGE_TRACKER_TIER_* carry the same values).
+const (
+	stageTrackerTierAttention = 0
+	stageTrackerTierNormal    = 1
+	stageTrackerTierSunk      = 2
+)
+
+// stageTrackerAttentionStages are the stages that park an item on a person
+// (dashboard STAGE_TRACKER_ATTENTION_STAGES): issue needs-decision, PR
+// needs-author / returned-to-contributor, PR needs-decision and
+// ready-for-human-merge.
+var stageTrackerAttentionStages = []int{stagelabels.IssueNeedsDecision.Number(), stagelabels.NeedsAuthor.Number(), stagelabels.ReturnedToContributor.Number(), stagelabels.NeedsDecision.Number(), stagelabels.ReadyForHumanMerge.Number()}
+
+// stageTrackerHumanMods are the modifiers that park an item on a person
+// (dashboard STAGE_TRACKER_HUMAN_MODS).
+var stageTrackerHumanMods = []string{modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsRebase, modBlocked, modStalled}
+
+// stageTrackerSunkMods are the modifiers that sink a row to the bottom of
+// its stage (dashboard STAGE_TRACKER_SUNK_MODS): a person parked it, or it
+// is a draft nobody should act on yet.
+var stageTrackerSunkMods = []string{modHold, modDraft}
+
+// stageTrackerRegressionHandled mirrors the dashboard's
+// stageTrackerRegressionHandled: a regressed item with no human-gate
+// modifier on a hive-driven stage is the hive's to work through.
+func stageTrackerRegressionHandled(it StageTrackerItem) bool {
+	if !slices.Contains(it.Modifiers, modRegressed) {
+		return false
+	}
+	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerHumanMods, m) }) {
+		return false
+	}
+	return !slices.Contains(stageTrackerAttentionStages, it.Stage)
+}
+
+// stageTrackerNeedsAttention mirrors the dashboard's
+// stageTrackerNeedsAttention: the item shows a pill or sits on a stage
+// parked on a person. Only the shown Modifiers count, so a merge-gate pill
+// held back until the gate never promotes a row.
+func stageTrackerNeedsAttention(it StageTrackerItem) bool {
+	if stageTrackerRegressionHandled(it) {
+		return false
+	}
+	return len(it.Modifiers) > 0 || slices.Contains(stageTrackerAttentionStages, it.Stage)
+}
+
+// stageTrackerAttentionTier is the item's ordering tier within its stage
+// (the dashboard's stageTrackerAttentionTier agrees): rows parked on a
+// person first, then the rest, then rows nobody should act on — hold
+// (incl. do-not-merge/*) and draft. The direction toggle never flips it.
+func stageTrackerAttentionTier(it StageTrackerItem) int {
+	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerSunkMods, m) }) {
+		return stageTrackerTierSunk
+	}
+	if stageTrackerNeedsAttention(it) {
+		return stageTrackerTierAttention
+	}
+	return stageTrackerTierNormal
+}
+
+// stageTrackerLess orders the payload: stage descending, then
+// attention-first within the stage (stageTrackerAttentionTier), then the
+// item that has waited longest, then repo and number — the dashboard's
+// default view, so chat and hub consumers read the same order.
+func stageTrackerLess(items []StageTrackerItem) func(i, j int) bool {
+	return func(i, j int) bool {
+		a, b := items[i], items[j]
 		if a.Stage != b.Stage {
 			return a.Stage > b.Stage
 		}
-		// Within a stage the item that has waited longest comes first: it is
+		if ta, tb := stageTrackerAttentionTier(a), stageTrackerAttentionTier(b); ta != tb {
+			return ta < tb
+		}
+		// Within a tier the item that has waited longest comes first: it is
 		// the one most likely to need a human.
 		at, bt := trackerSince(a), trackerSince(b)
 		if at.IsZero() != bt.IsZero() {
@@ -1391,8 +1464,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			return a.Repo < b.Repo
 		}
 		return a.Number < b.Number
-	})
-	return resp
+	}
 }
 
 func trackerSince(it StageTrackerItem) time.Time {

@@ -165,6 +165,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerLinkedTip"),
 		jsConstLine(t, html, "STAGE_TRACKER_LINKED_GLYPH"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
+		stageTrackerTierJS(t, html),
 		jsFunc(t, html, "stageTrackerSortKey"),
 		jsFunc(t, html, "esc"),
 		jsFunc(t, html, "agentNowAgo"),
@@ -736,6 +737,7 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
 		jsFunc(t, html, "stageTrackerAnchor"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
+		stageTrackerTierJS(t, html),
 		jsFunc(t, html, "stageTrackerSortKey"),
 		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MODS"),
 		jsConstLine(t, html, "STAGE_TRACKER_HANDLED_TEXT"),
@@ -842,7 +844,8 @@ assert.deepStrictEqual(stageTrackerNormalizeFilter({ labels: ['Author/Human'] })
 // Sorting: furthest along first (then longest on step); waiting; newest; number; direction flips.
 assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'furthest' }))), [4, 3, 2, 5, 1]);
 assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'furthest', dir: 'asc' }))), [1, 5, 2, 3, 4]);
-assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'waiting' }))), [4, 1, 5, 2, 3], 'longest wait first; an unstaged item waits since it was opened');
+assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'waiting' }))), [5, 3, 4, 1, 2], 'attention rows (stalled #5, needs-rebase #3) first, then longest wait; an unstaged item waits since it was opened');
+assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'waiting', dir: 'asc' }))), [3, 5, 2, 1, 4], 'ascending flips the wait order but keeps attention on top');
 assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'newest' }))), [3, 5, 1, 2, 4], 'newest first; equal ages fall back to the higher number');
 assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'number' }))), [5, 4, 3, 2, 1], 'number sort descends by repo then number');
 assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'number', dir: 'asc' }))), [1, 2, 3, 4, 5]);
