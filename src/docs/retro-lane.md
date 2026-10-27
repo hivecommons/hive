@@ -86,3 +86,13 @@ When analysis succeeds, advisory bead notes include a clearly marked “Model-ge
 If the model marks a lesson generalizable, Hive quality-gates it before ingestion: length bounds are enforced and secret-like token patterns are rejected with the shared log-scrub detector. Accepted lessons are stored as `pattern` facts tagged `retro` and `lesson`, attributed to source `retro` with the source bead and PR reference. Existing knowledge search/vault deduplication is checked first; when no matching fact exists, the normalized lesson hash keys the fact slug to avoid duplicates.
 
 If a graph store is attached (`/data/graph/knowledge.db`), the fact gets a `derived_from` edge to the retro source reference. The fact is then available to the primer like other knowledge entries.
+
+### Repeat lessons
+
+When a new lesson matches a retro lesson Hive already has (same normalized text, or one contained in the other), the new evidence is recorded on the existing lesson instead of being thrown away. A retro lesson is a fact whose slug starts with `retro-lesson-` and that carries both the `retro` and `lesson` tags; a match against any other fact leaves it untouched. On each recorded repeat:
+
+- the source bead and PR join the lesson's `sources:` front-matter list, which keeps the newest 20 entries;
+- `observations:` (how many times the lesson has been seen) rises by one. A lesson without the field — anything written before repeats were counted — counts as seen once, and its existing `source:` becomes the first `sources:` entry;
+- the stored `confidence:` rises by `retro.lesson_confidence_step` (default `0.05`) from the starting `0.7`, never above `retro.lesson_confidence_cap` (default `0.9`), so a lesson that keeps coming back ranks above one-offs.
+
+Only those three lines change: the body, lifecycle state and every other front-matter line stay byte-for-byte as they were, so a repeat of a `draft` lesson is counted on the draft and it stays a draft. A repeat whose source bead is already listed changes nothing, and a match against a superseded or deprecated lesson writes nothing. Repeats are serialized with a lock file in the lesson directory. When retro lessons go to a remote project knowledge layer, which cannot update a page atomically, the repeat is skipped and logged (`retro: lesson repeat skipped`). Nothing is superseded automatically: replacing a lesson stays a human decision (`hivectl knowledge state <id> superseded --superseded-by <id>`).

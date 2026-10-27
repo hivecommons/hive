@@ -142,6 +142,11 @@ type RetroConfig struct {
 	LongStallDays       int    `yaml:"long_stall_days,omitempty" json:"long_stall_days,omitempty"`
 	RecentClosedWindowS int    `yaml:"recent_closed_window_s,omitempty" json:"recent_closed_window_s,omitempty"`
 	AnalysisModel       string `yaml:"analysis_model,omitempty" json:"analysis_model,omitempty"`
+	// LessonConfidenceStep is how much each recorded repeat raises a retro
+	// lesson's stored confidence; LessonConfidenceCap bounds it. Zero selects
+	// the knowledge package defaults (0.05 and 0.9).
+	LessonConfidenceStep float64 `yaml:"lesson_confidence_step,omitempty" json:"lesson_confidence_step,omitempty"`
+	LessonConfidenceCap  float64 `yaml:"lesson_confidence_cap,omitempty" json:"lesson_confidence_cap,omitempty"`
 }
 
 const (

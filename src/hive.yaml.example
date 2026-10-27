@@ -786,6 +786,8 @@ governor:
 #   long_stall_days: 7
 #   recent_closed_window_s: 604800
 #   analysis_model: ""   # empty disables all LLM calls (default)
+#   lesson_confidence_step: 0.05   # confidence added per recorded repeat of a retro lesson
+#   lesson_confidence_cap: 0.9     # repeats never raise a lesson above this
 
 # Planning intelligence — the `plan`/`epic` issue-label trigger that auto-mints
 # an epic bead and requests architect decomposition (see docs/planning-intelligence.md).

@@ -6345,15 +6345,17 @@ func (b *boot) bootLanes() {
 			escalationStore = escalation.Load(escalation.DefaultLedgerPath)
 		})
 		b.retroLane = retro.NewLane(b.beadStores, retroStore, b.dashSrv.LifecycleTimeline(), escalationStore, retro.Config{
-			Enabled:             b.cfg.Retro.Enabled,
-			ScanIntervalS:       b.cfg.Retro.ScanIntervalS,
-			MaxFixAttempts:      b.cfg.Retro.MaxFixAttempts,
-			MaxKicks:            b.cfg.Retro.MaxKicks,
-			LongStallDays:       b.cfg.Retro.LongStallDays,
-			RecentClosedWindowS: b.cfg.Retro.RecentClosedWindowS,
-			AnalysisModel:       b.cfg.Retro.AnalysisModel,
-			AnalysisEndpoint:    b.cfg.Governor.LiteLLM.ResolveEndpoint(),
-			AnalysisAPIKey:      b.cfg.Governor.LiteLLM.ResolveAPIKey(),
+			Enabled:              b.cfg.Retro.Enabled,
+			ScanIntervalS:        b.cfg.Retro.ScanIntervalS,
+			MaxFixAttempts:       b.cfg.Retro.MaxFixAttempts,
+			MaxKicks:             b.cfg.Retro.MaxKicks,
+			LongStallDays:        b.cfg.Retro.LongStallDays,
+			RecentClosedWindowS:  b.cfg.Retro.RecentClosedWindowS,
+			AnalysisModel:        b.cfg.Retro.AnalysisModel,
+			AnalysisEndpoint:     b.cfg.Governor.LiteLLM.ResolveEndpoint(),
+			AnalysisAPIKey:       b.cfg.Governor.LiteLLM.ResolveAPIKey(),
+			LessonConfidenceStep: b.cfg.Retro.LessonConfidenceStep,
+			LessonConfidenceCap:  b.cfg.Retro.LessonConfidenceCap,
 		}, b.logger)
 		if b.knowledgeAPI != nil {
 			b.retroLane.SetKnowledgeSink(b.knowledgeAPI)
