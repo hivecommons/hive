@@ -444,8 +444,11 @@ func TestSwitchImageSelf_GetFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when GET deployment fails")
 	}
-	if !strings.Contains(err.Error(), "listing deployment containers") {
-		t.Errorf("error should mention listing containers, got: %v", err)
+	if !strings.Contains(err.Error(), "reading deployment before image switch") {
+		t.Errorf("error should mention reading deployment, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("error should preserve the API failure, got: %v", err)
 	}
 }
 
