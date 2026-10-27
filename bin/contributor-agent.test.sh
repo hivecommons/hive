@@ -1388,4 +1388,42 @@ if ! grep -q "tmux set-option -s -a terminal-overrides ',\*:Tc'" "$agent_src"; t
   exit 1
 fi
 
+# 6. Retired hosted-hive domain: a contributor.env written before the
+#    *.hive.kubestellar.io -> *.hive.hivecommons.dev move must dial the live
+#    host (label intact), warn once naming the file, and leave current URLs
+#    alone. Table-driven over the saved-value shapes contribute-setup has written.
+run_relocate() {
+  env -i \
+    PATH="${PATH}" \
+    HOME="$HOME_DIR" \
+    HIVE_REGISTRATION_TOKEN="test-token" \
+    HIVE_HUB="$1" \
+    HIVE_CONTRIBUTOR_AGENT_TEST_RELOCATE_HUB=1 \
+    bash "${ROOT_DIR}/bin/contributor-agent.sh" 2>"${WORK_DIR}/relocate.err"
+}
+while IFS='|' read -r saved want warns; do
+  got="$(run_relocate "$saved")"
+  if [[ "$got" != "HIVE_HUB=${want}" ]]; then
+    echo "retired-domain relocation: for HIVE_HUB=${saved} expected HIVE_HUB=${want}; got: ${got}" >&2
+    exit 1
+  fi
+  if [[ "$warns" == "yes" ]]; then
+    if ! grep -q "retired hive.kubestellar.io domain" "${WORK_DIR}/relocate.err" || ! grep -q "contributor.env" "${WORK_DIR}/relocate.err"; then
+      echo "retired-domain relocation: HIVE_HUB=${saved} must warn and name contributor.env; stderr was:" >&2
+      cat "${WORK_DIR}/relocate.err" >&2
+      exit 1
+    fi
+  elif grep -q "retired" "${WORK_DIR}/relocate.err"; then
+    echo "retired-domain relocation: HIVE_HUB=${saved} must not warn; stderr was:" >&2
+    cat "${WORK_DIR}/relocate.err" >&2
+    exit 1
+  fi
+done <<'CASES'
+wss://hosted-kubestellar-hive-ojv6.hive.kubestellar.io/contribute|wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute|yes
+wss://hive.kubestellar.io/contribute|wss://hive.hivecommons.dev/contribute|yes
+wss://a.hive.kubestellar.io/contribute,wss://b.hive.hivecommons.dev/contribute|wss://a.hive.hivecommons.dev/contribute,wss://b.hive.hivecommons.dev/contribute|yes
+wss://hosted-x.hive.hivecommons.dev/contribute|wss://hosted-x.hive.hivecommons.dev/contribute|no
+wss://hive.example.org/contribute|wss://hive.example.org/contribute|no
+CASES
+
 echo "contributor-agent codex + claude contract tests passed"

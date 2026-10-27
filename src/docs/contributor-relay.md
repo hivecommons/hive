@@ -1932,6 +1932,25 @@ If the session cannot be recreated (tmux binary gone, server socket unwritable),
 
 Note that this is different from the poisoned-server case above: a recreated session inherits the server's working directory, so if `pane_current_path` shows `(deleted)` you still need `tmux kill-server`.
 
+## Troubleshooting: `Hostname/IP does not match certificate's altnames`
+
+Symptom: every connect attempt logs
+
+```
+Connecting to wss://hosted-<slug>.hive.kubestellar.io/api/contribute/ws...
+WebSocket error: Hostname/IP does not match certificate's altnames: Host: hosted-<slug>.hive.kubestellar.io. is not in the cert's altnames: DNS:*.hive.hivecommons.dev, …
+Connection closed (code=1006 …) Reconnecting in 16000ms...
+```
+
+Cause: the hosted fleet moved apex from `*.hive.kubestellar.io` to `*.hive.hivecommons.dev` on 2026-09-04. A `~/.config/hive/contributor.env` written by `just contribute-setup` before that date still carries the old host on its `HIVE_HUB` line. The old apex answers HTTP with a 301, but a WebSocket handshake does not follow redirects, and the hosted subdomains are outside the current certificate, so the TLS handshake fails before any redirect could be seen.
+
+What the relay does now:
+
+- **Known retired apex** — `contribute-hive` (and the relay itself, including on a `SIGUSR1` reload) rewrites `*.hive.kubestellar.io` to `*.hive.hivecommons.dev` in memory, keeping the per-hive label, and warns once naming the file to edit. Nothing is written back to `contributor.env`; update the `HIVE_HUB` line there (or re-run `just contribute-setup`) to silence the warning.
+- **Any other hostname mismatch** — the relay stops redialing that URL (no more `Reconnecting in …` loop), prints one remediation line naming `contributor.env`, and, for a hosted hive, asks the hub's `/api/registry` for the hive's current `dashboardUrl` and retries there **once**. `relay-status.json` reports the parked hub as `readiness: hive-moved`. A standalone hive (no hub to ask) is parked immediately.
+
+Fix: `export HIVE_HUB=wss://<current hive host>/contribute` for this run, and change the `HIVE_HUB` line in `~/.config/hive/contributor.env` to match; or `just contribute-setup <cli>` to pick the hive again from the hub's listing. Your registration token is unchanged by the move.
+
 ## Protocol compatibility
 
 Both sides state a contributor-protocol version: the hub advertises its own on `auth_ok`, and the relay declares `relay_protocol_version` in `auth_response`. Since [#2547](https://github.com/hivecommons/hive/issues/2547) both sides also **compare** them, so an old relay against a new hub is something you are told about rather than something you infer from misbehaviour:

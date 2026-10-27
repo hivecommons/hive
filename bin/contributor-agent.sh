@@ -36,6 +36,29 @@ fi
 
 # Docker -e takes precedence over config file
 export HIVE_HUB="${HIVE_HUB:-wss://hive.hivecommons.dev/contribute}"
+# The hosted fleet moved apex from *.hive.kubestellar.io to
+# *.hive.hivecommons.dev (2026-09-04); the old wildcard is no longer in the
+# served certificate, so a contributor.env written before the move fails every
+# TLS handshake. Relocate the apex in-memory (the per-hive label is kept) so
+# the knowledge-export fetch below and the relay dial the live host, and say
+# where the stale value lives. bin/contributor-relay.js applies the same rule.
+relocate_retired_hive_hosts() {
+  local hubs="$1"
+  hubs="${hubs//.hive.kubestellar.io/.hive.hivecommons.dev}"
+  hubs="${hubs//\/\/hive.kubestellar.io\//\/\/hive.hivecommons.dev\/}"
+  printf '%s' "$hubs"
+}
+_RELOCATED_HUB="$(relocate_retired_hive_hosts "$HIVE_HUB")"
+if [[ "$_RELOCATED_HUB" != "$HIVE_HUB" ]]; then
+  echo "WARNING: HIVE_HUB=${HIVE_HUB} uses the retired hive.kubestellar.io domain; connecting to ${_RELOCATED_HUB} instead." >&2
+  echo "         Update the HIVE_HUB line in ${CONFIG_FILE} (or re-run 'just contribute-setup') to silence this." >&2
+  export HIVE_HUB="$_RELOCATED_HUB"
+fi
+unset _RELOCATED_HUB
+if [[ "${HIVE_CONTRIBUTOR_AGENT_TEST_RELOCATE_HUB:-}" == "1" ]]; then
+  echo "HIVE_HUB=${HIVE_HUB}"
+  exit 0
+fi
 export HIVE_REGISTRATION_TOKEN="${HIVE_REGISTRATION_TOKEN:?Not registered — run 'just contribute-setup' first}"
 # Export the commons routing strategy so a relay started here (not just one
 # reloaded via SIGUSR1) honors HIVE_COMMONS_STRATEGY / HIVE_CONTRIBUTOR_STRATEGY

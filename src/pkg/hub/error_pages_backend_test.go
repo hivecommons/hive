@@ -201,3 +201,35 @@ func TestHiveIngressStillRoutesErrorsToThisBackend(t *testing.T) {
 			"statuses fall through to the cluster default backend")
 	}
 }
+
+// TestErrorBackendNamesNoRetiredDomain pins that the custom-error documents
+// never link a contributor to the retired hive.kubestellar.io apex.
+//
+// The error backend is the one page every hosted hive and the hub itself show
+// when a route is missing or a spoke is restarting, so a hard-coded "Login" or
+// "Go to Hive Hub" link there is the first stale URL a contributor meets. A
+// pre-move copy of exactly this ConfigMap was found still serving
+// https://hive.kubestellar.io links long after the apex moved to
+// hive.hivecommons.dev; the manifest must stay relative or on the current
+// apex so a re-apply can never reintroduce the retired one.
+func TestErrorBackendNamesNoRetiredDomain(t *testing.T) {
+	docs, conf := errorPagesConfigMaps(t)
+	cases := []struct {
+		name string
+		data map[string]string
+	}{
+		{name: "documents", data: docs},
+		{name: "nginx config", data: conf},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for file, body := range tc.data {
+				for i, line := range strings.Split(body, "\n") {
+					if strings.Contains(strings.ToLower(line), "kubestellar.io") {
+						t.Errorf("%s line %d names the retired hive.kubestellar.io apex: %q", file, i+1, strings.TrimSpace(line))
+					}
+				}
+			}
+		})
+	}
+}
