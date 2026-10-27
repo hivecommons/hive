@@ -6,6 +6,7 @@ import (
 	"html"
 	"math"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -26,7 +27,7 @@ type Story struct {
 	// ReviewURL is the posted review that carried the changes_requested
 	// verdict.
 	ReviewURL string `json:"review_url"`
-	// Caught is the plain-English description of what the reviewer found.
+	// Caught is the plain-English description of what the review agent found.
 	Caught string `json:"caught"`
 	// OpenedAt, CaughtAt, FixApprovedAt and MergedAt come from the evidence
 	// bundles: PR opened, first changes_requested verdict, first approve on
@@ -41,6 +42,9 @@ type Story struct {
 func (s Story) URL() string { return fmt.Sprintf("https://github.com/%s/pull/%d", s.Repo, s.Number) }
 
 // FixMinutes is how long after the catch the fixed head was approved.
+// CaughtMinutes is how long after opening the review agent sent it back.
+func (s Story) CaughtMinutes() int { return int(math.Round(s.CaughtAt.Sub(s.OpenedAt).Minutes())) }
+
 func (s Story) FixMinutes() int { return int(math.Round(s.FixApprovedAt.Sub(s.CaughtAt).Minutes())) }
 
 // MergeMinutes is open-to-merge for the whole PR.
@@ -232,8 +236,22 @@ func (r Report) windowLabel() string {
 	return monthLabel(t)
 }
 
-// monthLabel is "Aug 2026".
-func monthLabel(t time.Time) string { return t.UTC().Format("Jan 2006") }
+// monthLabel is "(oct '26)": lowercase month, apostrophe year, in
+// parentheses. No ISO dates appear in the README or its cards.
+func monthLabel(t time.Time) string { return "(" + shortMonth(t) + " '" + t.UTC().Format("06") + ")" }
+
+// rangeLabel is "(aug–oct '26)", or monthLabel when both fall in one month.
+func rangeLabel(a, b time.Time) string {
+	if a.UTC().Year() == b.UTC().Year() && a.UTC().Month() == b.UTC().Month() {
+		return monthLabel(b)
+	}
+	if a.UTC().Year() == b.UTC().Year() {
+		return "(" + shortMonth(a) + "–" + shortMonth(b) + " '" + b.UTC().Format("06") + ")"
+	}
+	return "(" + shortMonth(a) + " '" + a.UTC().Format("06") + "–" + shortMonth(b) + " '" + b.UTC().Format("06") + ")"
+}
+
+func shortMonth(t time.Time) string { return strings.ToLower(t.UTC().Format("Jan")) }
 
 // commas formats 11571 as 11,571.
 func commas(n int) string {
@@ -329,7 +347,15 @@ func (c *card) lines(x, y, px, lineH int, fill string, lines []string) int {
 
 // eyebrow is the tracked uppercase line at the top: section, base, window.
 func (c *card) eyebrow(y int, s string) {
-	c.text(cardPad, y, eyebrowPx, c.th.Muted, ` font-weight="500" letter-spacing="2.2"`, strings.ToUpper(s))
+	c.text(cardPad, y, eyebrowPx, c.th.Muted, ` font-weight="500" letter-spacing="2.2"`, upperKeepDates(s))
+}
+
+var reDateLabel = regexp.MustCompile(`\([A-Z]{3}(?: '\d\d)?(?:–[A-Z]{3})? '\d\d\)`)
+
+// upperKeepDates uppercases an eyebrow but leaves the "(oct '26)" date
+// labels lowercase, as the README style requires.
+func upperKeepDates(s string) string {
+	return reDateLabel.ReplaceAllStringFunc(strings.ToUpper(s), strings.ToLower)
 }
 
 // headline is the finding in one plain sentence; the biggest text after
@@ -413,26 +439,22 @@ func (r Report) accuracyCard(th cardTheme) (string, bool) {
 	if !fa.Reported || fa.K <= 0 || fa.N < r.MinBase() {
 		return "", false
 	}
-	stats := []stat{{share(fa.Rate), fmt.Sprintf("came back fixed and were approved, of %s sent back.", commas(fa.N))}}
-	title := fmt.Sprintf("%s pull requests the reviewer sent back came back fixed and were approved", share(fa.Rate))
-	head := fmt.Sprintf("The reviewer sent %s pull requests back. %s came back fixed.", commas(fa.N), strings.ToUpper(shareWords(fa.Rate)[:1])+shareWords(fa.Rate)[1:])
+	words := strings.ToUpper(shareWords(fa.Rate)[:1]) + shareWords(fa.Rate)[1:]
+	stats := []stat{{share(fa.Rate), "came back fixed"}}
+	title := fmt.Sprintf("%s pull requests the review agent sent back came back fixed and were approved", share(fa.Rate))
+	head := fmt.Sprintf("The review agent sent %s pull requests back. %s came back fixed.", commas(fa.N), words)
 	if ta.Reported && ta.N >= r.MinBase() {
-		stats = append(stats, stat{fmt.Sprintf("%d min", minutes(ta.Value)), fmt.Sprintf("typical, from the change request to approval of the fix. Of %s fixed.", commas(ta.N))})
-		title += fmt.Sprintf("; %d minutes typical from change request to approval of the fix", minutes(ta.Value))
-		head = fmt.Sprintf("The reviewer sent %s back. %s came back fixed, typically in %d minutes.", commas(fa.N), strings.ToUpper(shareWords(fa.Rate)[:1])+shareWords(fa.Rate)[1:], minutes(ta.Value))
+		stats = append(stats, stat{fmt.Sprintf("%d min", minutes(ta.Value)), "typical time to fix"})
+		title += fmt.Sprintf("; %d minutes typical from sent back to approved", minutes(ta.Value))
+		head = fmt.Sprintf("The review agent sent %s pull requests back. %s came back fixed, typically in %d minutes.", commas(fa.N), words, minutes(ta.Value))
 	}
-	var foot []string
+	foot := fmt.Sprintf("%s sent back %s", commas(fa.N), r.windowLabel())
 	if f.MergedSameHead > 0 {
-		foot = append(foot, fmt.Sprintf("%s merged unchanged after another review pass approved the same version", commas(f.MergedSameHead)))
-	}
-	if f.Unresolved > 0 {
-		foot = append(foot, fmt.Sprintf("%s did not merge", commas(f.Unresolved)))
+		foot += fmt.Sprintf("; %s merged as-is after a second review", commas(f.MergedSameHead))
 	}
 	return statCard(th, title,
 		fmt.Sprintf("Accuracy · %s pull requests sent back · %s", commas(fa.N), r.windowLabel()),
-		head,
-		stats,
-		strings.Join(foot, "; ")+". Times and verdicts from the review records Hive keeps.",
+		head, stats, foot+".",
 	), true
 }
 
@@ -446,8 +468,8 @@ func (r Report) checksGreenCard(th cardTheme) (string, bool) {
 		fmt.Sprintf("%d in 100 reviewed pull requests merged with every check passing", pass),
 		fmt.Sprintf("Accuracy · %s reviewed merges · %s", commas(c.CIFailureAtHead.N), r.windowLabel()),
 		fmt.Sprintf("%d in 100 reviewed pull requests merged with every check green.", pass),
-		[]stat{{fmt.Sprintf("%d in 100", pass), fmt.Sprintf("merged with every check passing, of %s with a recorded check result.", commas(c.CIFailureAtHead.N))}},
-		"Check results as recorded on the merged version.",
+		[]stat{{fmt.Sprintf("%d in 100", pass), "merged with every check green"}},
+		fmt.Sprintf("%s reviewed merges with a recorded check result %s.", commas(c.CIFailureAtHead.N), r.windowLabel()),
 	), true
 }
 
@@ -462,14 +484,14 @@ func (r Report) promptInjectionCard(th cardTheme) (string, bool) {
 		fa = "0"
 	}
 	return statCard(th,
-		fmt.Sprintf("%d%% of prompt-injection attempts were caught before reaching an agent, with %d false alarm in %d harmless requests", pct, rt.FalseAlarms, rt.Benign),
+		fmt.Sprintf("%d%% of planted text that tries to redirect an agent (prompt injection) was screened out before an agent read it, with %d false alarm in %d harmless texts", pct, rt.FalseAlarms, rt.Benign),
 		fmt.Sprintf("Security · Hive's own test set · %s", monthLabel(rt.RunAt)),
-		fmt.Sprintf("We planted %d prompt-injection attacks in our own test set. The scanner caught %d.", rt.Attacks, rt.Caught),
+		fmt.Sprintf("We hid %d texts that try to redirect an agent (prompt injection) in issues and files. Hive screened out %d before an agent read them.", rt.Attacks, rt.Caught),
 		[]stat{
-			{fmt.Sprintf("%d%%", pct), fmt.Sprintf("of the planted attacks were caught before an agent read them. Of %d.", rt.Attacks)},
-			{fa, fmt.Sprintf("harmless texts wrongly flagged. Of %d.", rt.Benign)},
+			{fmt.Sprintf("%d%%", pct), "screened out before an agent read it"},
+			{fa, "harmless texts wrongly flagged"},
 		},
-		"Hive's own test set, not production traffic. A planted attack is text in an issue or file that tries to redirect the agent.",
+		fmt.Sprintf("Hive's own test set of %d texts %s; not production traffic.", rt.Attacks+rt.Benign, monthLabel(rt.RunAt)),
 	), true
 }
 
@@ -482,66 +504,69 @@ func (r Report) costCard(th cardTheme) (string, bool) {
 	if per < 1 {
 		big = fmt.Sprintf("about %d¢", int(math.Round(per*100)))
 	}
-	window := fmt.Sprintf("%s to %s", monthLabel(r.Spend.WindowStart), monthLabel(r.Spend.WindowEnd))
+	window := rangeLabel(r.Spend.WindowStart, r.Spend.WindowEnd)
 	return statCard(th,
 		big+" of agent spend per merged pull request",
 		fmt.Sprintf("Cost · %s merged pull requests · %s", commas(r.Spend.MergedPRs), window),
-		fmt.Sprintf("Agents spent about $%s to merge %s pull requests. That is %s each.", commas(int(math.Round(r.Spend.USD))), commas(r.Spend.MergedPRs), big),
+		fmt.Sprintf("Agents spent about $%s to merge %s pull requests, %s each. It is tracked like CI minutes.", commas(int(math.Round(r.Spend.USD))), commas(r.Spend.MergedPRs), big),
 		[]stat{
-			{strings.TrimPrefix(big, "about "), fmt.Sprintf("%s per merged pull request, %s.", big, window)},
-			{"$" + commas(int(math.Round(r.Spend.USD))), fmt.Sprintf("estimated agent spend across %s merged pull requests.", commas(r.Spend.MergedPRs))},
+			{strings.TrimPrefix(big, "about "), "per merged pull request"},
+			{"$" + commas(int(math.Round(r.Spend.USD))), "total agent spend"},
 		},
-		"Estimate from provider list prices; some models are unpriced. Each agent card in the dashboard shows what its task has cost so far.",
+		fmt.Sprintf("Estimate from provider list prices %s; some models unpriced.", window),
 	), true
 }
 
-// storiesCard shows up to two real PRs side by side: what was caught, how
-// long the fix took, when it merged.
+// storiesCard is the before/after scenario: the left column is the familiar
+// path without Hive, in plain words and without invented numbers; the right
+// column is one real pull request with its recorded timings. A second real
+// pull request, if present, is summarised in the footnote.
 func (r Report) storiesCard(th cardTheme) (string, bool) {
 	if len(r.Stories) == 0 {
 		return "", false
 	}
-	stories := r.Stories
-	if len(stories) > 2 {
-		stories = stories[:2]
-	}
-	c := &card{th: th, title: "Two real pull requests where the reviewer caught a problem before merge"}
+	s := r.Stories[0]
+	c := &card{th: th, title: fmt.Sprintf("Before and after: %s #%d was sent back once and merged %d minutes after opening", s.Repo, s.Number, s.MergeMinutes())}
 	y := cardPad + eyebrowPx
-	c.eyebrow(y, fmt.Sprintf("Accuracy · two real pull requests · %s", r.windowLabel()))
-	y = c.headline(y+eyebrowGap, "The reviewer caught it. The author fixed it in minutes.") + 4
+	c.eyebrow(y, fmt.Sprintf("Before / after · one real pull request · %s", r.windowLabel()))
+	y = c.headline(y+eyebrowGap, fmt.Sprintf("A coding agent opened a pull request. The review agent sent it back once. It merged, green, %d minutes after opening.", s.MergeMinutes())) + 4
 	colW := (colX - cardPad) / 2
-	chars := halfChars
-	if len(stories) == 1 {
-		colW, chars = colX, wideChars
-	}
-	caught := make([][]string, len(stories))
-	maxLines := 0
-	for i, s := range stories {
-		caught[i] = wrap(s.Caught, chars)
-		if len(caught[i]) > maxLines {
-			maxLines = len(caught[i])
-		}
-	}
 	top := y + 8
-	bottom := top
-	for i, s := range stories {
+	col := func(i int, label, labelFill string, steps [][2]string, dot []string) int {
 		x := cardPad + i*(colW+cardPad)
-		fmt.Fprintf(&c.b, `<a href="%s"><text x="%d" y="%d" fill="%s" font-size="%d" font-weight="700">%s #%d</text></a>`+"\n", esc(s.URL()), x, top, th.Brand, bodyPx+2, esc(s.Repo), s.Number)
+		c.text(x, top, bodyPx+2, labelFill, ` font-weight="700"`, label)
 		yy := top + 36
-		step := func(label string, lines []string, fill string) {
-			fmt.Fprintf(&c.b, `<circle cx="%d" cy="%d" r="4" fill="%s"/>`+"\n", x+4, yy-4, fill)
-			c.text(x+18, yy, eyebrowPx, th.Muted, ` font-weight="500" letter-spacing="2.2"`, strings.ToUpper(label))
-			yy = c.lines(x+18, yy+bodyLineH, bodyPx, bodyLineH, th.Text, lines) + 12
+		for j, st := range steps {
+			fmt.Fprintf(&c.b, `<circle cx="%d" cy="%d" r="4" fill="%s"/>`+"\n", x+4, yy-4, dot[j])
+			c.text(x+18, yy, eyebrowPx, th.Muted, ` font-weight="500" letter-spacing="2.2"`, strings.ToUpper(st[0]))
+			yy = c.lines(x+18, yy+bodyLineH, bodyPx, bodyLineH, th.Text, wrap(st[1], halfChars)) + 12
 		}
-		step("Caught", caught[i], th.Brand)
-		yy = top + 36 + bodyLineH + maxLines*bodyLineH + 12
-		step("Fixed", wrap(fmt.Sprintf("The author fixed it; the new version was approved %d minutes later.", s.FixMinutes()), chars), th.OK)
-		step("Merged", wrap(fmt.Sprintf("Merged %d minutes after the pull request was opened.", s.MergeMinutes()), chars), th.OK)
-		if yy > bottom {
-			bottom = yy
-		}
+		return yy
 	}
-	y = c.foot(bottom, "Times from the review records Hive keeps. Click a title to open the pull request.") - footLineH
+	left := col(0, "Without Hive", th.Muted, [][2]string{
+		{"Issue", "A failing check or an open issue waits for someone to pick it up."},
+		{"Pull request", "Someone writes the fix when they have time."},
+		{"Review", "Someone else reads it when they have time."},
+		{"Merge", "Thursday, maybe."},
+	}, []string{th.Neutral, th.Neutral, th.Neutral, th.Neutral})
+	right := col(1, fmt.Sprintf("With Hive: %s #%d", s.Repo, s.Number), th.Brand, [][2]string{
+		{"Pull request", "A coding agent opened it."},
+		{fmt.Sprintf("Sent back at %d min", s.CaughtMinutes()), s.Caught},
+		{fmt.Sprintf("Fixed at %d min", s.CaughtMinutes()+s.FixMinutes()), "The coding agent pushed a fix; the review agent approved it."},
+		{fmt.Sprintf("Merged at %d min", s.MergeMinutes()), "CI green, a human merged it."},
+	}, []string{th.Brand, th.Brand, th.OK, th.OK})
+	bottom := left
+	if right > bottom {
+		bottom = right
+	}
+	x := cardPad + colW + cardPad
+	fmt.Fprintf(&c.b, `<a href="%s"><rect x="%d" y="%d" width="%d" height="%d" fill="transparent"/></a>`+"\n", esc(s.URL()), x, top-20, colW, right-top+20)
+	foot := "Times from Hive's review records; the right column links to the pull request."
+	if len(r.Stories) > 1 {
+		t := r.Stories[1]
+		foot = fmt.Sprintf("Same shape: %s #%d, sent back at %d min, fixed at %d, merged at %d. Times from Hive's review records.", t.Repo, t.Number, t.CaughtMinutes(), t.CaughtMinutes()+t.FixMinutes(), t.MergeMinutes())
+	}
+	y = c.foot(bottom, foot) - footLineH
 	return c.String(y + cardPad - 4), true
 }
 
@@ -552,9 +577,9 @@ type tile struct{ Head, Big, Text string }
 // from the report; the others are plain statements of how Hive works.
 func (r Report) alsoTiles() []tile {
 	return []tile{
-		{"Consistent", commas(r.Verdicts), "review verdicts, each against the same checklist and one house style file."},
-		{"Readable", "4 parts", "to every verdict: what this is, the problem, the fix, what happens if skipped."},
-		{"Efficient", "On demand", "agents start when there is work and stop when it is done; capacity is shared across repositories."},
+		{"Consistent", commas(r.Verdicts), "reviews, one checklist, one shared style guide"},
+		{"Readable", "4 parts", "to every review: what, problem, fix, if skipped"},
+		{"Efficient", "On demand", "jobs start on work and stop when done"},
 	}
 }
 
@@ -576,9 +601,9 @@ func (r Report) alsoCard(th cardTheme) (string, bool) {
 	c := &card{th: th, title: "Also: consistent, readable, efficient, fast"}
 	y := cardPad + eyebrowPx
 	c.eyebrow(y, "Also · "+r.windowLabel())
-	head := "Every pull request gets the same reviewer, and the verdict is written for people."
+	head := "Every pull request gets the same AI review, written for people."
 	if with, without, ok := r.speedBars(); ok && with > without {
-		head = fmt.Sprintf("Every pull request gets the same reviewer. It costs about %d minutes.", with-without)
+		head = fmt.Sprintf("Every pull request gets the same AI review. It adds about %d minutes.", with-without)
 	}
 	y = c.headline(y+eyebrowGap, head) + 8
 	tiles := r.alsoTiles()
@@ -613,16 +638,16 @@ func (r Report) alsoCard(th cardTheme) (string, bool) {
 		bar(top+28, "merged without review", without, th.Neutral)
 		bar(top+68, "reviewed by Hive", with, "url(#amber)")
 		d := with - without
-		note := "typical minutes from open to merge."
+		note := "typical minutes, open to merge"
 		if d > 0 {
-			note = fmt.Sprintf("typical minutes from open to merge; review adds about %d.", d)
+			note = fmt.Sprintf("review adds about %d minutes", d)
 		}
 		yy := c.lines(x, top+112, bodyPx-1, bodyLineH-2, th.Text, wrap(note, tileChars))
 		if yy > bottom {
 			bottom = yy
 		}
 	} else {
-		yy := c.lines(x, top+28, bodyPx-1, bodyLineH-2, th.Text, wrap("Time to merge is reported once enough reviewed pull requests are on record.", tileChars))
+		yy := c.lines(x, top+28, bodyPx-1, bodyLineH-2, th.Text, wrap("Time to merge is reported once enough pull requests are on record.", tileChars))
 		if yy > bottom {
 			bottom = yy
 		}
@@ -635,19 +660,19 @@ type rung struct{ Step, What, Outcome string }
 
 // hiveLoop is the loop every task goes through, in order.
 var hiveLoop = []rung{
-	{"Scan", "Hive reads your open issues, pull requests and failing checks.", "Work comes from your backlog"},
-	{"Claim", "One agent claims one task, so nothing is done twice.", "No duplicate work"},
-	{"Work", "A fresh, short-lived agent does the job and then stops.", "Nothing runs for hours unattended"},
-	{"Verify", "CI runs, a separate reviewer checks the change, and planted instructions are screened out.", "Problems are found before merge"},
-	{"Merge", "Trust level decides: hold for a human, or merge once every check passes.", "Humans keep the decisions"},
-	{"Credit", "The person who opened the issue is credited on the merge.", "The asker is credited"},
+	{"Scan", "Reads open issues, pull requests, failing checks.", "like a webhook trigger"},
+	{"Claim", "One agent takes one task.", "one job per task"},
+	{"Work", "A short-lived agent does it, then stops.", "ephemeral runner"},
+	{"Verify", "AI review plus your CI must pass.", "both are required checks"},
+	{"Merge", "Held for a human, or merged on green.", "PRs only → merge on green"},
+	{"Credit", "The issue opener is named on the merge.", "co-author trailer"},
 }
 
 func howItWorksCard(th cardTheme) string {
 	c := &card{th: th, title: "How Hive works: scan, claim, work, verify, merge, credit"}
 	y := cardPad + eyebrowPx
 	c.eyebrow(y, "How it works · every task")
-	y = c.headline(y+eyebrowGap, "An agent does the work. A reviewer checks it before it merges.")
+	y = c.headline(y+eyebrowGap, "A coding agent does the work. A review agent and your CI gate the merge.")
 	const stepX, textX = cardPad + 48, cardPad + 48 + 96
 	y += 6
 	for i, r := range hiveLoop {

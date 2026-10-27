@@ -15,7 +15,7 @@ import (
 // vocabulary creeps back in. Lower the baselines when the README shrinks;
 // do not raise them without the maintainers' agreement.
 const (
-	readmeMaxProseWords = 600
+	readmeMaxProseWords = 300
 	readmeMaxSections   = 10
 )
 
@@ -93,6 +93,19 @@ var readmeForbiddenWords = []string{
 	"powerful", "seamless", "seamlessly", "blazing", "revolutionary", "best-in-class",
 	"effortless", "effortlessly", "supercharge", "game-changing", "cutting-edge",
 	"world-class", "unleash", "amazing", "incredible", "never sleeps",
+	// insider nouns: a first-time reader does not know them. The two actor
+	// names are "the coding agent" and "the review agent".
+	"reviewer", "reviewers", "scanner", "author", "authors", "verdict", "verdicts",
+	"change request", "change requests", "changes requested", "house style", "agent card",
+	"acmm", "trust level", "trust tier", "hub and spoke", "hosted hub", "spoke", "spokes",
+	"contributor relay", "kick", "kicks", "ioscan", "instruction-override",
+}
+
+// Dates in the README and cards are "(oct '26)" or "(aug–oct '26)"; never
+// ISO dates or bare four-digit years.
+var readmeForbiddenDates = []*regexp.Regexp{
+	regexp.MustCompile(`\d{4}-\d{2}-\d{2}`),
+	regexp.MustCompile(`\b20\d\d\b`),
 }
 
 func TestReadmeVocabulary(t *testing.T) {
@@ -112,6 +125,11 @@ func TestReadmeVocabulary(t *testing.T) {
 			re := regexp.MustCompile(`(^|[^a-z0-9-])` + regexp.QuoteMeta(w) + `($|[^a-z0-9-])`)
 			if re.MatchString(text) {
 				t.Errorf("%s contains %q; keep statistical and marketing vocabulary out of the README and its cards", name, w)
+			}
+		}
+		for _, re := range readmeForbiddenDates {
+			if m := re.FindString(text); m != "" {
+				t.Errorf("%s contains date %q; write dates as (oct '26)", name, m)
 			}
 		}
 		if strings.Contains(text, "!") && name == "README prose" {

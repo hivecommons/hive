@@ -43,59 +43,46 @@ func (r Report) ReadmeBlock(docDir string) string {
 
 	add("## Accuracy", "")
 	if r.HasCard(CardAccuracy) || r.HasCard(CardStories) {
-		add("A separate reviewer reads every pull request an agent opens and can send it back before it merges. The question is whether its objections hold up.", "")
 		cards(cardW, CardAccuracy, CardChecksGreen)
+		add(fmt.Sprintf("Humans still merge; what reaches them has passed review and CI. Start at \"open PRs only\"; once you trust it, turn the [setting](%s/acmm-policy-matrix.md) up to merge on green, like a merge queue.", strings.TrimSuffix(docDir, "/benchmarks")), "")
 		cards(cardW, CardStories)
-		add(r.followupCaveat(), "")
 	} else {
 		add("Not enough reviewed pull requests are on record yet to report accuracy figures.", "")
 	}
 
 	add("## Security", "")
-	add("Agents work with short-lived, task-scoped access; pull requests from untrusted authors are held for a human; every merge is signed off and credits the issue author.", "")
+	add("Hidden instructions in issues or files are screened out before an agent reads them; agents run as a GitHub App, not your PAT.", "")
 	cards(cardW, CardPromptInjection)
 
 	add("## Cost", "")
 	if r.HasCard(CardCost) {
-		add("Each agent card in the dashboard shows what the current task has cost so far. The figure below is an estimate from provider pricing; some models are unpriced.", "")
+		add("Tracked like CI minutes; each job's cost is on the dashboard.", "")
 		cards(cardW, CardCost)
 	} else {
-		add("Cost per merged pull request is reported once enough hive-attributed merges are on record.", "")
+		add("Cost per merged pull request is reported once enough Hive-attributed merges are on record.", "")
 	}
 
 	add("## Also", "")
 	cards(cardW, CardAlso)
 
-	add(fmt.Sprintf("Production data, not a lab run. Every count above is regenerated from live records by `src/scripts/outcome-benchmark.sh`; bases, dates, exclusions and the full tables are in [how we count →](%s).", report))
+	add(fmt.Sprintf("Production data, not a lab run; counts regenerate from live records. %s [How we count →](%s)", r.followupCaveat(), report))
 	add(ReadmeEnd)
 	return strings.Join(lines, "\n")
 }
 
-// followupCaveat is the one honest sentence under the Accuracy cards: what
-// happened to the rest, and why shipped-code outcomes are not shown yet.
+// followupCaveat is the one honest clause under the cards: shipped-code
+// outcomes (reverts) are not shown because reviewed merges are too new.
 func (r Report) followupCaveat() string {
-	f := r.Followup
-	var parts []string
-	if f.MergedSameHead > 0 {
-		parts = append(parts, fmt.Sprintf("%s of the sent-back pull requests merged unchanged, %s of them after another review pass approved the same version", commas(f.MergedSameHead), commas(f.MergedSameHeadApproved)))
-	}
-	if f.Unresolved > 0 {
-		parts = append(parts, fmt.Sprintf("%s did not merge", commas(f.Unresolved)))
-	}
-	s := ""
-	if len(parts) > 0 {
-		s = strings.Join(parts, "; ") + ". "
-	}
-	return s + fmt.Sprintf("Whether reviewed code later had to be reverted needs merges at least %d days old; reviewed merges only began %s, so those figures are in the report, not here.", int(Maturation.Hours()/24), monthLabel(r.FirstMediatedMerge))
+	return "Reverts are too new to report."
 }
 
 // HeroLine is the one sentence of scale at the top of the README.
 func (r Report) HeroLine() string {
-	s := fmt.Sprintf("Measured on %s pull requests across %d repositories", commas(r.PRs), len(r.Repos))
+	s := fmt.Sprintf("Numbers below: %s pull requests, %d repositories", commas(r.PRs), len(r.Repos))
 	if r.Verdicts > 0 {
-		s += fmt.Sprintf(" and %s review verdicts", commas(r.Verdicts))
+		s += fmt.Sprintf(", %s AI reviews", commas(r.Verdicts))
 	}
-	return s + fmt.Sprintf(", as of %s.", day(r.GeneratedAt))
+	return s + " " + monthLabel(r.GeneratedAt) + "."
 }
 
 // picture is the GitHub-flavoured <picture> that swaps the card SVG with

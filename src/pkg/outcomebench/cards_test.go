@@ -44,7 +44,7 @@ func TestCardsRespectMinimumBase(t *testing.T) {
 		t.Error("checks-green drawn with CI coverage below the floor")
 	}
 	svg, _ := rep.Card(CardAccuracy, cardThemes[0])
-	for _, want := range []string{"<title>", `<text`, "ACCURACY · 15 PULL REQUESTS SENT BACK", "The reviewer sent 15 back.", "Three in four", ">3 in 4<", ">20 min<", "of 15", "Of 11 fixed", "4 merged unchanged", `filter="url(#glow)"`, `width="1760"`, `viewBox="0 0 880 `} {
+	for _, want := range []string{"<title>", `<text`, "ACCURACY · 15 PULL REQUESTS SENT BACK · (oct &#39;26)", "The review agent sent 15 pull requests", "Three in four", ">3 in 4<", ">20 min<", "15 sent back (oct &#39;26); 4 merged as-is", `filter="url(#glow)"`, `width="1760"`, `viewBox="0 0 880 `} {
 		if !strings.Contains(svg, want) {
 			t.Errorf("accuracy card missing %q:\n%s", want, svg)
 		}
@@ -111,7 +111,7 @@ func TestLoadStoriesAndRedTeam(t *testing.T) {
 	}
 	rep := Report{RedTeam: rt, GeneratedAt: now}
 	svg, ok := rep.Card(CardPromptInjection, cardThemes[1])
-	if !ok || !strings.Contains(svg, ">97%<") || !strings.Contains(svg, ">1 in 12<") || !strings.Contains(svg, "We planted 63 prompt-injection") || !strings.Contains(svg, "TEST SET · OCT 2026") || !strings.Contains(svg, "not production traffic") {
+	if !ok || !strings.Contains(svg, ">97%<") || !strings.Contains(svg, ">1 in 12<") || !strings.Contains(svg, "We hid 63 texts that try to redirect an") || !strings.Contains(svg, "TEST SET · (oct &#39;26)") || !strings.Contains(svg, "75 texts (oct &#39;26)") || !strings.Contains(svg, "not production traffic") {
 		t.Fatalf("prompt-injection card:\n%s", svg)
 	}
 }
