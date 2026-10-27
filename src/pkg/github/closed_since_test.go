@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -69,9 +70,20 @@ func TestHandleWebhookEventCarriesItemStateHint(t *testing.T) {
 // ListClosedSince: one list call per page over state=closed&since, both
 // kinds, newest first, closed snapshots only.
 func TestListClosedSince(t *testing.T) {
-	var paths []string
+	// ListClosedSince refuses while the process-wide REST budget is critical
+	// or the rate-limit caution window is engaged; isolate from state another
+	// test left behind.
+	resetRESTAccountingForTest(t, time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC))
+	ResetRateLimitPacingForTest()
+	t.Cleanup(ResetRateLimitPacingForTest)
+	var (
+		pathsMu sync.Mutex
+		paths   []string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pathsMu.Lock()
 		paths = append(paths, r.URL.String())
+		pathsMu.Unlock()
 		q := r.URL.Query()
 		if q.Get("state") != "closed" || q.Get("since") != "2026-10-25T11:50:00Z" || q.Get("sort") != "updated" || q.Get("direction") != "desc" || q.Get("per_page") != "100" {
 			t.Errorf("query = %v", q)
@@ -117,7 +129,9 @@ func TestListClosedSince(t *testing.T) {
 		t.Fatalf("snapshots = %+v", got)
 	}
 
+	pathsMu.Lock()
 	paths = nil
+	pathsMu.Unlock()
 	if _, err := c.ListClosedSince(context.Background(), "acme/console", since, 1); err != nil || len(paths) != 1 {
 		t.Fatalf("maxPages=1: err=%v calls=%v", err, paths)
 	}
