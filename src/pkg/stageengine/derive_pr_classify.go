@@ -330,6 +330,14 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		}
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}
+	if o.Detail.VerdictKnown && o.Detail.Verdict.DecisionRequested {
+		// A posted decision question outranks mergeability: no fixer is kicked
+		// for a decision-requested head, and a conflict is moot if the answer
+		// is to close it (hivecommons/hive#14607).
+		if v, ok := RequiresHumanStage(o, stageRankOwned); ok {
+			return v
+		}
+	}
 	if stageFixingReasons[reason] || strings.HasPrefix(reason, "label:") && strings.Contains(reason, "rebase") {
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 	}

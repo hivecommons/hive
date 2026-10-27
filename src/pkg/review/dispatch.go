@@ -37,6 +37,11 @@ const (
 	// pending reviews expire before the planner stops re-kicking and hands
 	// the PR to a human (review.max_redispatch).
 	DefaultMaxRedispatch = 3
+	// DefaultPendingFixTTL is how long a dispatched fix may sit without a new
+	// head before its pending row expires and the next bounded attempt is
+	// dispatched. A fixer turn that never pushes leaves no signal, so without
+	// an expiry the row excluded the PR forever (hivecommons/hive#14604).
+	DefaultPendingFixTTL = 2 * time.Hour
 	// HoldReasonDispatchExhausted prefixes the requires_human reason recorded
 	// when a head's reviews expired DefaultMaxRedispatch times.
 	HoldReasonDispatchExhausted = "review-dispatch-exhausted"
@@ -218,6 +223,11 @@ type DispatchOptions struct {
 	// before the PR is held for a human instead of re-kicked. Zero means
 	// DefaultMaxRedispatch.
 	MaxRedispatch int
+	// PendingFixTTL is how long a pending fix row stays authoritative with
+	// no new head before the next bounded attempt replaces it. Zero means
+	// DefaultPendingFixTTL; negative disables expiry. Attempts are capped by
+	// escalation.MaxReEngagements.
+	PendingFixTTL time.Duration
 	// HeadMaxRetries caps how many times one review head's expired review of a
 	// perspective is re-sent (review.head_max_retries). Zero means
 	// MaxRedispatch.
@@ -1178,7 +1188,7 @@ func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchO
 	idx := fixIndex(p.State.Fixes, pr.Repo, pr.Number, pr.HeadSHA)
 	pendingAttempts := 0
 	if idx >= 0 {
-		if !adoptedHiveOwnedFix(pr, opts) {
+		if !adoptedHiveOwnedFix(pr, opts) && !pendingFixExpired(p.State.Fixes[idx], opts, now) {
 			p.recordFixExclusion(pr, FixDispatchExcludedPending, p.State.Fixes[idx].Attempts)
 			return
 		}
@@ -1207,6 +1217,19 @@ func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchO
 	msg := BuildFixPrompt(pr, agg, attempts, escalation.MaxReEngagements)
 	p.FixKicks = append(p.FixKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "fix", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA})
 	p.State.Fixes = append(p.State.Fixes, PendingFix{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Agent: agent, Attempts: attempts, Dispatched: now})
+}
+
+// pendingFixExpired reports whether a pending fix outlived PendingFixTTL with
+// no head change. A row with no dispatched_at has no measurable age.
+func pendingFixExpired(f PendingFix, opts DispatchOptions, now time.Time) bool {
+	ttl := opts.PendingFixTTL
+	if ttl < 0 || f.Dispatched.IsZero() {
+		return false
+	}
+	if ttl == 0 {
+		ttl = DefaultPendingFixTTL
+	}
+	return now.Sub(f.Dispatched) >= ttl
 }
 
 func adoptedHiveOwnedFix(pr PullRequest, opts DispatchOptions) bool {

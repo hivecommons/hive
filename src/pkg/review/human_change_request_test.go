@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
 
@@ -207,5 +208,46 @@ func TestBuildFixPromptQuotesMaintainerInstructionVerbatim(t *testing.T) {
 	}
 	if !strings.Contains(got, "primary instruction") || !strings.Contains(got, "Aggregated review findings:") {
 		t.Fatalf("prompt lacks the instruction framing or the swarm findings:\n%s", got)
+	}
+}
+
+// TestPlanDispatchPendingFixExpires covers #14604: a pending fix whose head
+// never moved is replaced by the next bounded attempt after PendingFixTTL.
+func TestPlanDispatchPendingFixExpires(t *testing.T) {
+	dispatched := time.Date(2026, 10, 9, 17, 29, 0, 0, time.UTC)
+	pr := liveCasePR()
+	req := liveCaseRequest()
+	pr.HumanChangeRequest = &req
+	opts := humanRequestOpts()
+	for _, tc := range []struct {
+		name      string
+		age       time.Duration
+		ttl       time.Duration
+		attempts  int
+		wantKicks int
+		wantExcl  string
+	}{
+		{name: "fresh", age: time.Hour, attempts: 1, wantExcl: FixDispatchExcludedPending},
+		{name: "expired", age: 3 * time.Hour, attempts: 1, wantKicks: 1},
+		{name: "custom ttl", age: 10 * time.Minute, ttl: 5 * time.Minute, attempts: 1, wantKicks: 1},
+		{name: "expiry disabled", age: 48 * time.Hour, ttl: -1, attempts: 1, wantExcl: FixDispatchExcludedPending},
+		{name: "expired at cap", age: 3 * time.Hour, attempts: escalation.MaxReEngagements, wantExcl: FixDispatchExcludedAttemptsExhausted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := opts
+			o.Now = dispatched.Add(tc.age)
+			o.PendingFixTTL = tc.ttl
+			state := DispatchState{Fixes: []PendingFix{{Repo: liveCaseRepo, Number: liveCaseNumber, HeadSHA: liveCaseHead, Agent: "scanner", Attempts: tc.attempts, Dispatched: dispatched}}}
+			plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{liveCaseAggregate()}}, state, o)
+			if len(plan.FixKicks) != tc.wantKicks {
+				t.Fatalf("fix kicks = %+v, want %d", plan.FixKicks, tc.wantKicks)
+			}
+			if tc.wantExcl != "" && (len(plan.FixExclusions) != 1 || plan.FixExclusions[0].Reason != tc.wantExcl) {
+				t.Fatalf("exclusions = %+v, want %s", plan.FixExclusions, tc.wantExcl)
+			}
+			if tc.wantKicks == 1 && plan.State.Fixes[len(plan.State.Fixes)-1].Attempts != tc.attempts+1 {
+				t.Fatalf("pending fixes = %+v, want attempts %d", plan.State.Fixes, tc.attempts+1)
+			}
+		})
 	}
 }

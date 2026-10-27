@@ -456,6 +456,7 @@ used to admit the PR:
 | `contributor-lane:no-verdict`, `review-gate:no-review-bundle`, `review-gate:awaiting-review-approval`, CI pending with no verdict | `050-review-pending` |
 | CI pending, verdict approve | `060-reviewed` |
 | CI green, verdict approve, no modifier, yet the lane stopped on a reason no stage claims or tripped on a transient error (`review-state-check`, …) | `080-awaiting-merge-admission` (weak opinion: any lane's definite stage wins) |
+| a posted reviewer decision question (`decision_requested`) on a conflicting / not-mergeable / changes-requested head | `085-needs-decision`, reason `contributor-lane:decision-requested` — no fixer is kicked for such a head, and a conflict is moot if the answer is to close it ([#14607](https://github.com/hivecommons/hive/issues/14607)) |
 | CI red (`check-failing:*`, `required-check-failing:*`, `status-*`), `conflicting`, `not-mergeable`, `changes-requested`, verdict changes_requested/reject, `needs-rebase` present | `070-fixing` (self-authored lane or `author/hive`) / `071-needs-author` (`author/human`) / `072-returned-to-contributor` (`author/clanker`) — see [Stage 07x by author kind](#stage-07x-by-author-kind). A head whose App-linked commits carry a `Signed-off-by` the squash would misattribute to the PR author (`hive-signoff-attribution`) follows the same split: the branch owner is the only one who can rewrite them. |
 | `contributor-lane:soaking(...)` — and no red check on the head | `095-pre-merge-soak` |
 | `head-changed-since-eval`, `merge-failed`, `merge-queue-required` (the base branch's ruleset only accepts merges through GitHub's merge queue, so the direct REST merge is refused; logged as a skip rather than a merge error, [#14018](https://github.com/hivecommons/hive/issues/14018); the self-authored sweep then skips the direct merge on that base for 30 minutes and logs the skip once per PR head, [#14068](https://github.com/hivecommons/hive/issues/14068); the trusted-author, queued and contributor-lane sweeps skip it the same way), `required-checks-expected`, `behind`, `updated-branch`, `behind-update-budget-exhausted` (a behind self-authored PR the sweep did not update only because this tick's branch-update budget was spent; retried next tick, waits on the hive, [#12607](https://github.com/hivecommons/hive/issues/12607)), `release-hold*` — and no red check on the head | `100-merge-queue` |
@@ -782,7 +783,9 @@ does not bump itself.
   in-place `stage/074-adopted-by-hive` contributor branch — is not waiting for
   a maintainer `/lgtm` or `/approve`. A review verdict of `changes_requested`
   keeps an adopted PR in the fixer's work list every cycle until a new head
-  lands. Existing pending fix rows are replaced with the next bounded attempt;
+  lands. Existing pending fix rows are replaced with the next bounded attempt
+  (adopted PRs at once; any other hive-owned PR once the row is older than
+  `PendingFixTTL`, default 2h, with the head unchanged);
   once the attempt cap is exhausted the PR is visibly parked for a human at
   085 with reason `fix-attempts-exhausted`, not left silent.
 - **Cleared at once on any activity.** The next cycle that sees a new head,

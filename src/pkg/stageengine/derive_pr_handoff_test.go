@@ -42,3 +42,19 @@ func TestResolveStageAppAuthoredHandoffsAttributeToSelfLane(t *testing.T) {
 		t.Fatalf("attributed to lane %q, want %q", obs.Lane, stageLaneSelf)
 	}
 }
+
+// hivecommons/hive#14607: a posted decision question must not be masked by a
+// conflicting lane reason that no fixer is kicked for.
+func TestClassifyStageDecisionRequestedOutranksConflict(t *testing.T) {
+	detail := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true}}
+	for _, reason := range []string{"conflicting", "not-mergeable", "changes-requested"} {
+		v := ClassifyStage(stageObservation{Lane: stageLaneSelf, Reason: reason, HeadSHA: goldenHead, Detail: detail})
+		if v.Stage != stagelabels.NeedsDecision || !v.Human || v.Reason != StageReasonDecisionRequested {
+			t.Fatalf("%q classified as %+v, want needs-decision with %s", reason, v, StageReasonDecisionRequested)
+		}
+	}
+	plain := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}}
+	if v := ClassifyStage(stageObservation{Lane: stageLaneSelf, Reason: "conflicting", HeadSHA: goldenHead, Detail: plain}); v.Stage != FixingStage(stageObservation{Lane: stageLaneSelf}) {
+		t.Fatalf("conflicting without a decision request classified as %+v, want fixing", v)
+	}
+}
