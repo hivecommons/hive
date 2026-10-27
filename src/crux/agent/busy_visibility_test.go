@@ -548,3 +548,42 @@ func TestNewestCopilotTranscriptActivityCachedSkipsColdSessions(t *testing.T) {
 		t.Fatalf("cache after full rescan = %+v, want no-events dropped and lastFull=%v", cache, full)
 	}
 }
+
+// A pass over many agents must walk several at once; sequential walks are what
+// pushed a 15-agent pass to 13 s against a 10 s interval.
+func TestScanTranscriptActivityWalksAgentsConcurrently(t *testing.T) {
+	orig := scanAgentTranscript
+	t.Cleanup(func() { scanAgentTranscript = orig })
+
+	started := make(chan struct{}, transcriptScanConcurrency)
+	release := make(chan struct{})
+	scanAgentTranscript = func(scan transcriptActivityScan, _ *transcriptSessionCache, _ time.Time) (time.Time, bool) {
+		started <- struct{}{}
+		<-release
+		return time.Unix(int64(scan.uid), 0), true
+	}
+	var scans []transcriptActivityScan
+	for i := range 2 * transcriptScanConcurrency {
+		scans = append(scans, transcriptActivityScan{name: string(rune('a' + i)), uid: i + 1})
+	}
+	done := make(chan []transcriptActivityResult)
+	go func() { done <- scanTranscriptActivity(scans, map[string]*transcriptSessionCache{}, time.Time{}) }()
+
+	for range transcriptScanConcurrency {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("agent walks did not overlap")
+		}
+	}
+	close(release)
+	results := <-done
+	if len(results) != len(scans) {
+		t.Fatalf("got %d results, want %d", len(results), len(scans))
+	}
+	for i, r := range results {
+		if r.name != scans[i].name || !r.ok || r.at.Unix() != int64(scans[i].uid) {
+			t.Fatalf("result %d = %+v, want agent %s", i, r, scans[i].name)
+		}
+	}
+}

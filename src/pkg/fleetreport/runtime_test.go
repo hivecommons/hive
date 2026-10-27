@@ -351,6 +351,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassAgentDirSetupFailed, message: "failed to create per-agent XDG dir"},
 		{class: ClassReviewEvidenceWriteFail, message: "review evidence: could not write bundle"},
 		{class: ClassFeedbackIssueRefreshFailed, message: "feedback: issue refresh failed"},
+		{class: ClassTranscriptScanSlow, message: "copilot transcript activity scan outlived its interval; agent liveness reads may lag"},
 		{class: ClassBeadFactIngestFailed, message: "failed to ingest bead fact"},
 		{class: ClassSelfReportClearedFailed, message: "fleet report: cleared comment failed"},
 		{class: ClassGitHubAppRepoNotCovered, message: "github app recheck: installation does not cover every configured repo"},
@@ -961,6 +962,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"github app recheck: installation does not cover every configured repo":                        ClassGitHubAppRepoNotCovered,
 		"proxy: CONNECT dial failed":                                                                   ClassProxyConnectDialFailed,
 		"inference upstream error":                                                                     ClassInferenceUpstreamError,
+		"copilot transcript activity scan outlived its interval; agent liveness reads may lag":         ClassTranscriptScanSlow,
 		"inference upstream failed":                                                                    ClassInferenceUpstreamError,
 	}
 	for msg, want := range fed {
