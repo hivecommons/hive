@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1545,7 +1546,28 @@ type stageTrackerCache struct {
 	body        []byte
 	etag        string
 	generatedAt time.Time
+	// stale is set by invalidateStageTrackerCache: the body is still served
+	// while the next request rebuilds, so an invalidation never blocks and a
+	// reader never waits behind a build it did not start.
+	stale bool
 }
+
+// stageTrackerBuild is the single in-flight /api/stage-tracker rebuild. done
+// is closed when the cache has been updated (or the build failed).
+type stageTrackerBuild struct {
+	done chan struct{}
+}
+
+// stageTrackerSource values for the X-Hive-Stage-Tracker-Source header and
+// the payload's source field.
+const (
+	stageTrackerSourceFreshName = "fresh"
+	stageTrackerSourceCacheName = "cache"
+	// stageTrackerSourceStaleName marks a body served from the cache while a
+	// rebuild is in flight or after an invalidation: still the last complete
+	// tracker, just older than the status it will be rebuilt from.
+	stageTrackerSourceStaleName = "stale"
+)
 
 func (s *Server) stageTrackerCacheTTL() time.Duration {
 	if s != nil && s.deps != nil && s.deps.Config != nil {
@@ -1555,22 +1577,94 @@ func (s *Server) stageTrackerCacheTTL() time.Duration {
 }
 
 // stageTrackerPayload returns the cached body when it is younger than the
-// TTL, else builds, encodes and caches a new one. fresh reports a rebuild.
+// TTL and not invalidated, else builds, encodes and caches a new one. fresh
+// reports a rebuild by this call.
+//
+// The build runs OUTSIDE stageTrackerCacheMu and at most one runs at a time:
+// the mutex only guards the cached fields, so invalidateStageTrackerCache
+// (every webhook, every status publish) returns at once instead of queueing
+// behind a build that walks the evidence tree on NFS. Requests that arrive
+// while a build is in flight are served the previous body as "stale"; only a
+// request with no body to fall back on waits, and only until the in-flight
+// build finishes or its own context ends. Before this, the mutex was held
+// across the build, so every webhook handler, the governor's publish and
+// every tracker poll queued behind it in FIFO order — and because each
+// publish and webhook re-invalidated the cache, the queue never drained
+// (hivecommons/hive#14681: unbounded blocked handlers, connections and
+// threads).
 func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body []byte, etag string, generatedAt time.Time, fresh bool) {
+	var source string
+	body, etag, generatedAt, source = s.stageTrackerPayloadSource(context.Background(), status, now)
+	return body, etag, generatedAt, source == stageTrackerSourceFreshName
+}
+
+// stageTrackerPayloadSource is stageTrackerPayload reporting where the body
+// came from (stageTrackerSource*Name; "" with a nil body when the build
+// failed or ctx ended while waiting on an in-flight build).
+func (s *Server) stageTrackerPayloadSource(ctx context.Context, status *StatusPayload, now time.Time) (body []byte, etag string, generatedAt time.Time, source string) {
 	ttl := s.stageTrackerCacheTTL()
 	s.stageTrackerCacheMu.Lock()
-	defer s.stageTrackerCacheMu.Unlock()
 	s.stageTrackerServed = true
-	c := &s.stageTrackerCache
-	if len(c.body) > 0 && now.Sub(c.generatedAt) < ttl {
-		return c.body, c.etag, c.generatedAt, false
+	c := s.stageTrackerCache
+	if len(c.body) > 0 && !c.stale && now.Sub(c.generatedAt) < ttl {
+		s.stageTrackerCacheMu.Unlock()
+		return c.body, c.etag, c.generatedAt, stageTrackerSourceCacheName
 	}
-	resp := s.buildStageTracker(status, s.stageStoreOrShared(), now)
+	if inflight := s.stageTrackerBuild; inflight != nil {
+		s.stageTrackerCacheMu.Unlock()
+		if len(c.body) > 0 {
+			return c.body, c.etag, c.generatedAt, stageTrackerSourceStaleName
+		}
+		select {
+		case <-inflight.done:
+		case <-ctx.Done():
+			return nil, "", now, ""
+		}
+		s.stageTrackerCacheMu.Lock()
+		c = s.stageTrackerCache
+		s.stageTrackerCacheMu.Unlock()
+		if len(c.body) == 0 {
+			return nil, "", now, ""
+		}
+		return c.body, c.etag, c.generatedAt, stageTrackerSourceCacheName
+	}
+	inflight := &stageTrackerBuild{done: make(chan struct{})}
+	s.stageTrackerBuild = inflight
+	gen := s.stageTrackerGen
+	s.stageTrackerCacheMu.Unlock()
+
+	built, ok := s.encodeStageTracker(status, now, ttl)
+
+	s.stageTrackerCacheMu.Lock()
+	if ok {
+		// An invalidation that landed during the build means newer status
+		// exists; keep serving this body but let the next request rebuild.
+		built.stale = s.stageTrackerGen != gen
+		s.stageTrackerCache = built
+	}
+	s.stageTrackerBuild = nil
+	close(inflight.done)
+	s.stageTrackerCacheMu.Unlock()
+	if !ok {
+		return nil, "", now, ""
+	}
+	return built.body, built.etag, built.generatedAt, stageTrackerSourceFreshName
+}
+
+// encodeStageTracker builds and encodes the tracker for status. It holds no
+// server lock: this is the slow part (one evidence read per PR, on NFS in
+// hosted hives).
+func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl time.Duration) (stageTrackerCache, bool) {
+	build := s.buildStageTracker
+	if s.stageTrackerBuildFn != nil {
+		build = s.stageTrackerBuildFn
+	}
+	resp := build(status, s.stageStoreOrShared(), now)
 	resp.CacheTTLSeconds = int64(ttl / time.Second)
 	// The encoded body carries source=cache: that is what every later hit
 	// serves verbatim, and what the ETag validates. The building request
 	// alone rewrites the marker to fresh on its way out (handleStageTracker).
-	resp.Source = "cache"
+	resp.Source = stageTrackerSourceCacheName
 	// The ETag hashes the body with generated_at zeroed: the timestamp moves
 	// on every rebuild, so including it would turn an unchanged tracker into
 	// a 200 each time (the client revalidates with this ETag and gets a 304).
@@ -1579,26 +1673,29 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 	hashResp.GeneratedAt = time.Time{}
 	if err := json.NewEncoder(&hashBuf).Encode(hashResp); err != nil {
 		slogWarnOverviewEncode(err)
-		return nil, "", now, true
+		return stageTrackerCache{}, false
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
 		slogWarnOverviewEncode(err)
-		return nil, "", now, true
+		return stageTrackerCache{}, false
 	}
-	c.body, c.etag, c.generatedAt = buf.Bytes(), webstatic.ETagFor(hashBuf.Bytes()), now
-	return c.body, c.etag, c.generatedAt, true
+	return stageTrackerCache{body: buf.Bytes(), etag: webstatic.ETagFor(hashBuf.Bytes()), generatedAt: now}, true
 }
 
-// invalidateStageTrackerCache forgets the memoised payload. UpdateStatusIfFresh
-// calls it on every status publish so tracker freshness follows the eval
-// cycle rather than the cache TTL alone. It reports whether the tracker has
-// ever been served: only then is an SSE nudge worth sending, which also keeps
-// the /api/events stream free of extra frames for clients that never asked
-// for the tracker.
+// invalidateStageTrackerCache marks the memoised payload stale.
+// UpdateStatusIfFresh calls it on every status publish, and every webhook
+// re-read that changed a row calls it too, so tracker freshness follows the
+// eval cycle and the webhook stream rather than the cache TTL alone. It only
+// flips a flag under the cache mutex — it never waits for a build in
+// progress — so callers on the webhook and publish paths return at once. It
+// reports whether the tracker has ever been served: only then is an SSE
+// nudge worth sending, which also keeps the /api/events stream free of extra
+// frames for clients that never asked for the tracker.
 func (s *Server) invalidateStageTrackerCache() (served bool) {
 	s.stageTrackerCacheMu.Lock()
-	s.stageTrackerCache = stageTrackerCache{}
+	s.stageTrackerCache.stale = true
+	s.stageTrackerGen++
 	served = s.stageTrackerServed
 	s.stageTrackerCacheMu.Unlock()
 	return served
@@ -1613,6 +1710,7 @@ func stageTrackerSSEFrame(seq uint64) string {
 
 var stageTrackerSourceCache = []byte(`"source":"cache"`)
 var stageTrackerSourceFresh = []byte(`"source":"fresh"`)
+var stageTrackerSourceStale = []byte(`"source":"stale"`)
 
 // handleStageTracker serves GET /api/stage-tracker from the memoised payload.
 func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
@@ -1625,18 +1723,22 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	body, etag, generatedAt, fresh := s.stageTrackerPayload(status, now)
+	body, etag, generatedAt, source := s.stageTrackerPayloadSource(r.Context(), status, now)
 	if body == nil {
+		if r.Context().Err() != nil {
+			jsonError(w, "stage tracker build still in progress", http.StatusServiceUnavailable)
+			return
+		}
 		jsonError(w, "stage tracker unavailable", http.StatusInternalServerError)
 		return
 	}
 	remaining := s.stageTrackerCacheTTL() - now.Sub(generatedAt)
-	if remaining < 0 {
+	if remaining < 0 || source == stageTrackerSourceStaleName {
 		remaining = 0
 	}
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "private, max-age="+strconv.FormatInt(int64(remaining/time.Second), 10))
-	w.Header().Set("X-Hive-Stage-Tracker-Source", map[bool]string{true: "fresh", false: "cache"}[fresh])
+	w.Header().Set("X-Hive-Stage-Tracker-Source", source)
 	w.Header().Set("X-Hive-Stage-Tracker-Generated-At", generatedAt.UTC().Format(time.RFC3339Nano))
 	w.Header().Set("Last-Modified", generatedAt.UTC().Format(http.TimeFormat))
 	if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, etag) {
@@ -1645,8 +1747,11 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	github.RecordLocalServe(stageTrackerRESTCaller, r.URL.Path, http.StatusOK)
-	if fresh {
+	switch source {
+	case stageTrackerSourceFreshName:
 		body = bytes.Replace(body, stageTrackerSourceCache, stageTrackerSourceFresh, 1)
+	case stageTrackerSourceStaleName:
+		body = bytes.Replace(body, stageTrackerSourceCache, stageTrackerSourceStale, 1)
 	}
 	if _, err := w.Write(body); err != nil {
 		slogWarnOverviewEncode(err)

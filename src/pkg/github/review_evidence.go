@@ -542,7 +542,10 @@ func writeReviewEvidence(path string, b *evidence.Bundle) error {
 		return err
 	}
 	fallback := reviewEvidenceFallbackPath(path)
-	if ferr := writeEvidenceBundleFile(fallback, data); ferr != nil {
+	ferr := writeEvidenceBundleFile(fallback, data)
+	// The sibling may be new: the memoised listing of its parent is stale.
+	forgetEvidenceSiblings(reviewEvidenceCanonicalDir(filepath.Dir(fallback)))
+	if ferr != nil {
 		return fmt.Errorf("%w (fallback %s: %v)", err, fallback, ferr)
 	}
 	return nil
@@ -594,19 +597,87 @@ func reviewEvidenceCanonicalDir(dir string) string {
 }
 
 // reviewEvidenceDirs is dir followed by its <dir>.uid<N> fallback siblings.
+//
+// The siblings are found by listing dir's parent (the repo directory), which
+// in a hosted hive holds one entry per PR ever reviewed — thousands, on NFS.
+// A Glob per lookup made every tracker build, which looks up one bundle per
+// open PR, re-read that directory once per PR (hivecommons/hive#14681). The
+// listing is memoised per parent for evidenceSiblingListTTL and dropped when
+// this process creates a sibling itself; a sibling another writer creates
+// becomes visible within the TTL.
 func reviewEvidenceDirs(dir string) []string {
 	dirs := []string{dir}
-	matches, _ := filepath.Glob(dir + evidenceFallbackDirMarker + "*")
-	sort.Strings(matches)
-	for _, m := range matches {
-		if _, err := strconv.Atoi(strings.TrimPrefix(m, dir+evidenceFallbackDirMarker)); err != nil {
+	base := filepath.Base(dir)
+	for _, name := range evidenceSiblingNames(filepath.Dir(dir)) {
+		rest, ok := strings.CutPrefix(name, base+evidenceFallbackDirMarker)
+		if !ok {
 			continue
 		}
+		if _, err := strconv.Atoi(rest); err != nil {
+			continue
+		}
+		m := filepath.Join(filepath.Dir(dir), name)
 		if info, err := os.Stat(m); err == nil && info.IsDir() {
 			dirs = append(dirs, m)
 		}
 	}
 	return dirs
+}
+
+// evidenceSiblingListTTL bounds how long a repo directory's list of
+// <pr>.uid<N> fallback siblings is reused before it is read again.
+const evidenceSiblingListTTL = 60 * time.Second
+
+// evidenceSiblingListMaxParents caps the memo; past it the whole memo is
+// dropped rather than evicted entry by entry (a hive has tens of repos).
+const evidenceSiblingListMaxParents = 512
+
+type evidenceSiblingList struct {
+	names []string // entries containing evidenceFallbackDirMarker, sorted
+	at    time.Time
+}
+
+var (
+	evidenceSiblingMu    sync.Mutex
+	evidenceSiblingLists = map[string]evidenceSiblingList{}
+	// evidenceSiblingNow is the clock the memo ages by; tests replace it.
+	evidenceSiblingNow = time.Now
+)
+
+// evidenceSiblingNames is the sorted names under parent that contain the
+// fallback marker, from the memo when it is younger than the TTL.
+func evidenceSiblingNames(parent string) []string {
+	now := evidenceSiblingNow()
+	evidenceSiblingMu.Lock()
+	if l, ok := evidenceSiblingLists[parent]; ok && now.Sub(l.at) < evidenceSiblingListTTL {
+		evidenceSiblingMu.Unlock()
+		return l.names
+	}
+	evidenceSiblingMu.Unlock()
+	var names []string
+	if entries, err := os.ReadDir(parent); err == nil {
+		for _, e := range entries {
+			if strings.Contains(e.Name(), evidenceFallbackDirMarker) {
+				names = append(names, e.Name())
+			}
+		}
+	}
+	sort.Strings(names)
+	evidenceSiblingMu.Lock()
+	if len(evidenceSiblingLists) >= evidenceSiblingListMaxParents {
+		evidenceSiblingLists = map[string]evidenceSiblingList{}
+	}
+	evidenceSiblingLists[parent] = evidenceSiblingList{names: names, at: now}
+	evidenceSiblingMu.Unlock()
+	return names
+}
+
+// forgetEvidenceSiblings drops the memoised sibling list for the parent of
+// dir; called when this process creates a fallback sibling.
+func forgetEvidenceSiblings(dir string) {
+	evidenceSiblingMu.Lock()
+	delete(evidenceSiblingLists, filepath.Dir(dir))
+	evidenceSiblingMu.Unlock()
 }
 
 // resolveReviewEvidencePath is the most recently written copy of the bundle

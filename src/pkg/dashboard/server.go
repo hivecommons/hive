@@ -121,6 +121,15 @@ type Server struct {
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache
 	stageTrackerCacheMu sync.Mutex
+	// stageTrackerBuild is the one rebuild in flight, nil when none; it is
+	// guarded by stageTrackerCacheMu, which is never held across the build.
+	stageTrackerBuild *stageTrackerBuild
+	// stageTrackerGen counts invalidations so a build can tell whether the
+	// status it rendered was superseded while it ran.
+	stageTrackerGen uint64
+	// stageTrackerBuildFn replaces buildStageTracker in tests that need a
+	// build they can hold open; nil in production.
+	stageTrackerBuildFn func(status *StatusPayload, store *stagelabels.Store, now time.Time) StageTrackerResponse
 	// evidenceHB is the background-refreshed evidence aggregate the hub
 	// heartbeat reads (evidence_heartbeat.go); zero value is ready to use.
 	evidenceHB evidenceHeartbeatCache

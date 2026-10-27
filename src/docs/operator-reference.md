@@ -1222,7 +1222,14 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
 - Every status publish (cadence or wake) invalidates the `/api/stage-tracker`
   cache and sends a `stage-tracker` event on `/api/events`, so the dashboard's
   activity monitor refetches at once instead of waiting out
-  `dashboard.stage_tracker.cache_ttl_s` plus its poll.
+  `dashboard.stage_tracker.cache_ttl_s` plus its poll. Invalidation only
+  marks the cached body stale: the publish, and every webhook below, returns
+  at once even while a tracker rebuild is running. The next poll starts
+  **one** rebuild outside any lock; polls that land during it get the
+  previous body with `source: stale` and `max-age=0` rather than queueing,
+  so a slow build (one sentinel evidence read per open PR, on NFS in hosted
+  hives) can never back up webhook handlers, the governor's publish, or an
+  unbounded line of dashboard requests (hivecommons/hive#14681).
 - **The activity monitor row moves without waiting for a cycle.** A delivery
   that names a PR or issue this hive tracks (`pull_request*`,
   `check_suite`/`check_run`, `status`, `push` to a PR branch, `issue_comment`,
