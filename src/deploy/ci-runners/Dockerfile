@@ -48,7 +48,7 @@
 ARG RUNNER_BASE_IMAGE=summerwind/actions-runner:v2.337.0-ubuntu-24.04
 FROM ${RUNNER_BASE_IMAGE}
 
-ARG GITHUB_CLI_VERSION=2.103.2
+ARG GITHUB_CLI_VERSION=2.103.3
 ARG GITHUB_CLI_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
 
 # The base image runs as uid 1001 (`runner`), which does not own /etc/apt.

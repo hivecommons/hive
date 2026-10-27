@@ -73,6 +73,11 @@ ARG OMP_SHA256_AMD64=66666666666666666666666666666666666666666666666666666666666
 ARG OMP_SHA256_ARM64=7777777777777777777777777777777777777777777777777777777777777777
 ARG PI_CODING_AGENT_VERSION=0.84.1
 DF
+  cat > "$TMP/runner.Dockerfile" <<'DF'
+FROM scratch
+ARG GITHUB_CLI_VERSION=2.101.0
+ARG GITHUB_CLI_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
+DF
   cat > "$TMP/pi_test.go" <<'GO'
 	for _, want := range []string{
 		"ARG PI_CODING_AGENT_VERSION=0.84.1",
@@ -83,7 +88,7 @@ GO
 run() {
   # run <args...>: the script against the fixtures; stdout to $OUT, rc in $RC
   OUT="$(HIVE_PIN_DOCKERFILE="$TMP/Dockerfile" HIVE_PIN_CONTRIB_DOCKERFILE="$TMP/Dockerfile.contributor" \
-         HIVE_PIN_PI_TEST="$TMP/pi_test.go" HIVE_PIN_WORKDIR="$TMP/work" \
+         HIVE_PIN_PI_TEST="$TMP/pi_test.go" HIVE_PIN_RUNNER_DOCKERFILE="$TMP/runner.Dockerfile" HIVE_PIN_WORKDIR="$TMP/work" \
          HIVE_PIN_INCLUDE_PATCH="${HIVE_PIN_INCLUDE_PATCH:-}" \
          STUB_CLAUDE_VERSION="${STUB_CLAUDE_VERSION:-}" \
          STUB_AGY_VERSION="${STUB_AGY_VERSION:-}" \
@@ -125,6 +130,9 @@ run apply gh "$TMP/gh.kv"
 [ $RC -eq 0 ] && [ "$(arg Dockerfile GH_VERSION)" = "2.102.0" ] && [ "$(arg Dockerfile GH_SHA256_ARM64)" = "$SHA256_B" ] \
   && ! grep -q GH_VERSION "$TMP/Dockerfile.contributor" \
   && pass "gh is hub-only" || fail "gh apply" "$ERR"
+[ "$(arg runner.Dockerfile GITHUB_CLI_VERSION)" = "2.102.0" ] \
+  && grep -q '^ARG GITHUB_CLI_KEYRING_SHA256=6084d5d7' "$TMP/runner.Dockerfile" \
+  && pass "gh also bumps the runner image GITHUB_CLI_VERSION and leaves the keyring sha" || fail "gh runner apply" "$ERR"
 printf 'VERSION=1.2.9\nBUILD=5905287731871744\nSHA256_AMD64=%s\nSHA256_ARM64=%s\nSHA512_AMD64=%s\nSHA512_ARM64=%s\n' \
   "$SHA256_A" "$SHA256_B" "$SHA512_C" "$SHA512_D" > "$TMP/agy.kv"
 run apply agy "$TMP/agy.kv"

@@ -13,7 +13,7 @@ Every agent CLI hive drives is baked into the images at a fixed version:
 | Oh My Pi (omp) | `OMP_VERSION`, `OMP_SHA256_*` | GitHub releases `can1357/oh-my-pi` | SHA-256 per arch, cross-checked with `SHA256SUMS.txt` |
 | Muse Code | `MUSE_VERSION`, `MUSE_SHA256_*` | `api.meta.ai/muse-code/channels/muse-stable` and its release manifest | SHA-256 per arch, cross-checked with the manifest |
 | bobshell (bob) | `BOBSHELL_VERSION`, `BOBSHELL_SHA256_*` | `bobshell2-version.txt` on IBM COS | SHA-256, cross-checked with the vendor `.tgz.sha256` |
-| gh | `GH_VERSION`, `GH_SHA256_*` (hub only) | GitHub releases `cli/cli` | SHA-256 per arch, cross-checked with `gh_<v>_checksums.txt` |
+| gh | `GH_VERSION`, `GH_SHA256_*` (hub only); also `GITHUB_CLI_VERSION` in `src/deploy/ci-runners/Dockerfile` | GitHub releases `cli/cli` | SHA-256 per arch, cross-checked with `gh_<v>_checksums.txt` |
 
 The pins live in `src/Dockerfile` (hub and spoke image) and
 `src/Dockerfile.contributor` (containerized contributors), and the two must

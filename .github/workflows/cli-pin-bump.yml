@@ -68,6 +68,7 @@ on:
       - 'src/scripts/test-check-cli-model-lists.sh'
       - 'src/scripts/cli-model-requirements.txt'
       - 'src/Dockerfile'
+      - 'src/deploy/ci-runners/Dockerfile'
       - 'src/pkg/dashboard/cli_models.go'
 
 permissions:
@@ -250,7 +251,7 @@ jobs:
           git config user.name "hive-release[bot]"
           git config user.email "hive-release@hive.kubestellar.io"
           git checkout -B "$HEAD_BRANCH"
-          git add src/Dockerfile src/Dockerfile.contributor src/pkg/config/dockerfile_contributor_test.go
+          git add src/Dockerfile src/Dockerfile.contributor src/deploy/ci-runners/Dockerfile src/pkg/config/dockerfile_contributor_test.go
           {
             echo "🌱 images: bump ${CLI} ${OLD} -> ${NEW}"
             echo
