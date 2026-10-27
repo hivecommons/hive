@@ -148,7 +148,8 @@
           "AfterOffline": "",
           "AfterUnregistered": "",
           "InPlace": null,
-          "StrictAttribution": null
+          "StrictAttribution": null,
+          "AutoMerge": null
         },
         "Stalled": {
           "RequireQuiet": null

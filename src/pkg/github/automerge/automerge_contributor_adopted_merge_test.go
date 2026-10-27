@@ -156,6 +156,12 @@ func TestTrySweepContributorLanePRAdoptedByHiveAdmission(t *testing.T) {
 				StageTracker:            NewStageTracker(),
 				StageLabelPolicy:        func() StageLabelPolicy { return stagePolicy },
 			})
+			if tc.wantRedCI {
+				// The fixture's base is unprotected; declare the check
+				// required so a failing run is a definite red rather than
+				// the unknown-required-set "ci-unverified" hold.
+				engine.SetRequiredChecks(map[string]bool{"build": true})
+			}
 			event, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
 			if err != nil {
 				t.Fatalf("err = %v", err)
