@@ -393,6 +393,9 @@ project.repos[] # TODO #11854
 providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
 review.backlog.labels[] # TODO #11854
+review.bot_author_full_review_paths[] # TODO #14625
+review.bot_author_model # TODO #14625
+review.bot_authors[] # TODO #14625
 review.perspective_models.<key>.backend # TODO #13243
 review.perspective_models.<key>.model # TODO #13243
 review.perspective_prompts.<key> # TODO #11854
