@@ -232,6 +232,13 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 	if !ok || v.Blocked {
 		return sanitized, v
 	}
+	// A classifier that could not be constructed never makes a model call, so
+	// it must not consume the per-eval budget: otherwise the first N strings
+	// are withheld and every later one passes on as "budget_exhausted",
+	// turning fail-closed into a render-order lottery.
+	if u, isUnavailable := classifier.(ioscan.UnavailableClassifier); isUnavailable {
+		return s.classifierErrored(sanitized, v, u.Err)
+	}
 	if !s.consumeClassifierBudget() {
 		s.recordClassifierSkip("budget_exhausted")
 		return sanitized, v
@@ -250,27 +257,7 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		return sanitized, v
 	}
 	if err != nil {
-		if s.classifierFailClosed() {
-			s.recordClassifierSkip("error_fail_closed")
-			s.classifierUnavailable(err)
-			if s.logger != nil {
-				if strings.Contains(err.Error(), "no model endpoint resolved") {
-					s.warnOnce("classifier-no-endpoint", "ioscan classifier failed closed; text withheld",
-						"error", err,
-						"fix", "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open")
-				} else {
-					s.warnOnce("classifier-error:"+err.Error(), "ioscan classifier failed closed; text withheld", "error", err)
-				}
-			}
-			cv := ioscan.UnavailableVerdict(err.Error())
-			s.recordIoscanFailClosed(cv)
-			return ioscan.UnavailableRedactionMarker("error"), cv
-		}
-		s.recordClassifierSkip("error")
-		if s.logger != nil {
-			s.logger.Warn("ioscan classifier failed open", "error", err)
-		}
-		return sanitized, v
+		return s.classifierErrored(sanitized, v, err)
 	}
 	s.classifierUnavailable(nil)
 	action := ioscan.ActionForScore(score, thresholds, s.classifierFailClosed())
@@ -288,6 +275,36 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		return ioscan.SemanticRedactionMarker(score), cv
 	case ioscan.ClassifierActionWarn:
 		s.recordClassifierAdvisory(score, action)
+	}
+	return sanitized, v
+}
+
+// classifierErrored applies the fail mode when the classifier could not score
+// sanitized: fail-closed withholds the text, fail-open passes it on. Both
+// branches log at most once per distinct error so a dead backend does not
+// emit one WARN per string per eval.
+func (s *Scheduler) classifierErrored(sanitized string, v ioscan.Verdict, err error) (string, ioscan.Verdict) {
+	if s.classifierFailClosed() {
+		s.recordClassifierSkip("error_fail_closed")
+		s.classifierUnavailable(err)
+		if s.logger != nil {
+			if strings.Contains(err.Error(), "no model endpoint resolved") {
+				s.warnOnce("classifier-no-endpoint", "ioscan classifier failed closed; text withheld",
+					"error", err,
+					"fix", "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open")
+			} else {
+				s.warnOnce("classifier-error:"+err.Error(), "ioscan classifier failed closed; text withheld", "error", err)
+			}
+		}
+		cv := ioscan.UnavailableVerdict(err.Error())
+		s.recordIoscanFailClosed(cv)
+		return ioscan.UnavailableRedactionMarker("error"), cv
+	}
+	s.recordClassifierSkip("error")
+	if s.logger != nil {
+		s.warnOnce("classifier-open-error:"+err.Error(), "ioscan classifier failed open; text passes on unclassified",
+			"error", err,
+			"fix", "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false")
 	}
 	return sanitized, v
 }
