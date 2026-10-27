@@ -1372,14 +1372,20 @@
     .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
     .ham-cols .ham-since { color: var(--text-faint); font-family: inherit; }
     .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-5) var(--sp-2); }
+    /* Each entry is fenced by a hairline above it and lights up as a whole
+       on hover, so a tall row (wrapped title, ↳ PR line) still reads as one
+       block: its chip and age can only belong to the strip they sit beside. */
+    .ham-row + .ham-row { border-top: var(--line-width) solid var(--line-subtle); }
+    .ham-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); border-radius: var(--r-sm); }
     /* Title line = a ghost strip with the same column widths as the chevrons
        below: a lead cell spanning Open..Claimed carries the number + title, a
        PR cell spanning PR in progress..Merge gate carries "[icon] #N title",
-       the cap column is kept for the modifier chip and the since column for
-       the time on step. Both cells truncate with an ellipsis rather than
-       wrap or collide; the lead keeps a clear gap before the PR column. The
-       spanning cells' flex-basis absorbs the gaps they cover so the PR cell
-       starts exactly at the PR in progress chevron. */
+       the cap column is kept for the modifier chip and the since column is
+       an empty spacer (the time on step rides the strip row's since cell, in
+       line with the chevrons). Both cells wrap rather than collide; the lead
+       keeps a clear gap before the PR column. The spanning cells' flex-basis
+       absorbs the gaps they cover so the PR cell starts exactly at the PR in
+       progress chevron. */
     .ham-row-head { position: relative; display: flex; align-items: flex-start; gap: var(--sp-3); font-size: var(--fs-sm); min-width: 0; line-height: 1.3; }
     .ham-head-cols { flex: 1 1 auto; min-width: 0; min-height: 1.3em; align-items: flex-start; }
     .ham-head-cols .ham-strip { height: auto; }
@@ -1391,7 +1397,11 @@
     .ham-head-cols .ham-seg.ham-head-lead { flex: 0 0 calc((100% - 4em - 6 * var(--sp-1)) / 2 + 2 * var(--sp-1)); padding: 0 var(--sp-6) 0 0; }
     .ham-head-cols .ham-seg.ham-head-lead.ham-head-wide { flex: 1 1 0; }
     .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; flex-direction: column; }
-    .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; justify-content: flex-end; padding: 0; }
+    /* The chip hugs the bottom of the title block (align-items: flex-end
+       inside the stretched cap cell): on a two-line title it sits on the
+       second line, directly over the strip it describes, never up at the
+       previous entry's edge. */
+    .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; align-items: flex-end; justify-content: flex-end; padding: 0; }
     .ham-head-cols .ham-seg.cap .ham-badges { position: static; }
     .ham-head-main { display: flex; flex: 1; align-items: flex-start; gap: var(--sp-3); min-width: 0; }
     .ham-pr-ref { display: inline-flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; max-width: 100%; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
@@ -1558,12 +1568,11 @@
       .ham-head-cols > .ham-strip { display: contents; }
       .ham-head-cols .ham-seg.ham-head-lead, .ham-head-cols .ham-seg.ham-head-pr { grid-column: 1 / -1; padding: 0; }
       .ham-head-cols .ham-head-lead:empty { display: none; }
-      .ham-head-cols .ham-seg.cap { grid-column: 1; min-width: 0; justify-content: flex-start; }
-      .ham-head-cols > .ham-since { grid-column: 2; }
-      .ham-row .ham-strip-row:not(.ham-head-cols) > .ham-since { display: none; }
+      .ham-head-cols .ham-seg.cap { grid-column: 1 / -1; min-width: 0; justify-content: flex-start; }
+      .ham-head-cols > .ham-since { display: none; }
       .ham-row .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-row .ham-seg.cap { flex-basis: 2em; }
-      .ham-cols .ham-since { display: none; }
+      .ham-since { width: 3em; }
       .ham-cols .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-cols .ham-seg.cap { flex-basis: 2em; }
     }
@@ -14248,11 +14257,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
     // the item's own number + title, the PR cell (PR in progress..Merge gate)
-    // the given refs, and the since column the time on the current step
-    // (the chip sits in the cap cell, to its left).
-    function stageTrackerHeadColsHtml(prRefs, sinceHtml, leadHtml, chipsHtml) {
+    // the given refs, and the cap cell the modifier chip, bottom-aligned so
+    // it sits on the last title line, directly over the strip's right end.
+    // The since column is an empty spacer here (same width as the strip
+    // row's, which carries the time on step): a wrapped title must not float
+    // the age away from the chevrons it describes.
+    function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml) {
       const wide = !(prRefs && prRefs.length);
-      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr">${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol>${sinceHtml || '<span class="ham-since"></span>'}</div>`;
+      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr">${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
@@ -14307,11 +14319,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerChipsHtml(pr))}
           </div>
           <div class="ham-strip-row">
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}</ol>
-            <span class="ham-since"></span>
+            ${stageTrackerSinceHtml(pr, nowMs)}
           </div>
           ${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}
         </div>`;
@@ -14521,11 +14533,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-row" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerChipsHtml(shown))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs)}</ol>
-          <span class="ham-since"></span>
+          ${stageTrackerSinceHtml(shown, nowMs)}
         </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${subs}
       </div>`;
     }
