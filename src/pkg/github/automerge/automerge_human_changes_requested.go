@@ -78,15 +78,24 @@ func (c *Engine) latestTrustedHumanChangesRequested(ctx context.Context, owner, 
 // request already standing in the store for this head — a `/hive decision`
 // the un-park sweep recorded (pr_unpark_decision.go) — counts the same way,
 // so the text path reaches 070 through the lane reason like a review does.
+// A bare `/hive decision approve` recorded there is not a change request
+// (hivecommons/hive#14679). Either way the requester is noted on the stage
+// detail so the reviewer's decision-requested verdict on this head stops
+// deriving 085.
 func (c *Engine) humanChangesRequestedForHead(ctx context.Context, owner, repo string, number int, head string) bool {
 	rv, ok := c.latestTrustedHumanChangesRequested(ctx, owner, repo, number, head)
 	if !ok {
 		if c.humanChangeRequests == nil || strings.TrimSpace(head) == "" {
 			return false
 		}
-		_, standing := c.humanChangeRequests.For(owner+"/"+repo, number, strings.TrimSpace(head))
-		return standing
+		standing, found := c.humanChangeRequests.For(owner+"/"+repo, number, strings.TrimSpace(head))
+		if !found || standing.IsApproval() {
+			return false
+		}
+		c.noteStageHumanChangeRequest(owner, repo, number, head, standing.Actor)
+		return true
 	}
+	c.noteStageHumanChangeRequest(owner, repo, number, head, hgithub.SafeGetLogin(rv.GetUser()))
 	if c.humanChangeRequests == nil {
 		return true
 	}

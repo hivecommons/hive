@@ -100,6 +100,9 @@ func ReviewFactsFrom(d stageDetail, head string) ReviewFacts {
 	if approver := strings.TrimSpace(d.HumanApprover); approver != "" && strings.TrimSpace(d.HumanApprovalHead) != "" && strings.TrimSpace(d.HumanApprovalHead) == strings.TrimSpace(head) {
 		r.HumanApprover = approver
 	}
+	if requester := strings.TrimSpace(d.HumanChangeRequester); requester != "" && strings.TrimSpace(d.HumanChangeRequestHead) != "" && strings.TrimSpace(d.HumanChangeRequestHead) == strings.TrimSpace(head) {
+		r.HumanChangeRequester = requester
+	}
 	r.State = VerdictStateFrom(d)
 	return r
 }
@@ -152,6 +155,9 @@ func ObservationsFromPRFacts(f Facts) []stageObservation {
 	}
 	if pr.Review.HumanApprover != "" && pr.HeadSHA != "" {
 		detail.HumanApprover, detail.HumanApprovalHead = pr.Review.HumanApprover, pr.HeadSHA
+	}
+	if pr.Review.HumanChangeRequester != "" && pr.HeadSHA != "" {
+		detail.HumanChangeRequester, detail.HumanChangeRequestHead = pr.Review.HumanChangeRequester, pr.HeadSHA
 	}
 	if pr.DCOGate {
 		detail.DCOGateHead = pr.HeadSHA

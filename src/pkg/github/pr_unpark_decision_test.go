@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
 )
 
 // Reproduces hivecommons/hive#12968, the live case behind #13041: a
@@ -52,7 +54,24 @@ func newUnparkPRClient(t *testing.T, issues []unparkWireIssue, permissions map[s
 	server, rec := newUnparkServer(t, "org", "repo", issues, permissions)
 	c := newTestClient(t, server, "org", []string{"repo"})
 	c.SetAppBotLogin("hive[bot]")
+	c.SetStageFactSink(&stageenginetest.Recorder{})
 	return c, rec
+}
+
+// prDecisionFacts returns the PRDecided facts the client submitted.
+func prDecisionFacts(t *testing.T, c *Client) []stageengine.PRDecisionFact {
+	t.Helper()
+	rec, ok := c.StageFacts().(*stageenginetest.Recorder)
+	if !ok {
+		t.Fatalf("stage sink is %T, want the test recorder", c.StageFacts())
+	}
+	var out []stageengine.PRDecisionFact
+	for _, f := range rec.All() {
+		if f.Method == "PRDecided" && f.Decision != nil {
+			out = append(out, *f.Decision)
+		}
+	}
+	return out
 }
 
 func TestSweepIssueUnparkCommandsDecisionOnHivePRRoutesFixKick(t *testing.T) {
@@ -93,7 +112,12 @@ func TestSweepIssueUnparkCommandsDecisionOnHivePRRoutesFixKick(t *testing.T) {
 		}
 	}
 	if len(rec.added[liveDecisionPR]) != 0 || len(rec.removed[liveDecisionPR]) != 0 {
-		t.Fatalf("labels touched on a PR: added %v removed %v", rec.added[liveDecisionPR], rec.removed[liveDecisionPR])
+		t.Fatalf("labels touched on a PR outside the stage engine: added %v removed %v", rec.added[liveDecisionPR], rec.removed[liveDecisionPR])
+	}
+	// The stage moves in the same breath as the reply, through the engine.
+	facts := prDecisionFacts(t, c)
+	if len(facts) != 1 || facts[0] != (stageengine.PRDecisionFact{Head: liveDecisionHead, By: "clubanderson", Instruction: true, SelfAuthored: true}) {
+		t.Fatalf("stage facts = %+v, want one PRDecided with the instruction", facts)
 	}
 
 	// The planner kicks the fix lane from the record, with the text verbatim.
@@ -114,8 +138,187 @@ func TestSweepIssueUnparkCommandsDecisionOnHivePRRoutesFixKick(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second sweep: %v", err)
 	}
-	if len(result2.PRDecisions) != 0 || len(rec2.posted[liveDecisionPR]) != 0 || store.Len() != 1 {
+	if len(result2.PRDecisions) != 0 || len(rec2.posted[liveDecisionPR]) != 0 || store.Len() != 1 || len(prDecisionFacts(t, c2)) != 0 {
 		t.Fatalf("second sweep repeated: %+v posted=%v store=%d", result2, rec2.posted[liveDecisionPR], store.Len())
+	}
+}
+
+// hivecommons/hive#14679, the live case on #14628: `/hive decision approve`
+// followed by numbered instructions is a change request carrying the whole
+// text — recorded verbatim, stage 070 submitted, fix kick quoting every
+// line — while a bare `/hive decision approve` is an approval: recorded as
+// such, no fix kick, the lanes release requires_human from it.
+func TestSweepIssueUnparkCommandsDecisionApproveModes(t *testing.T) {
+	const instructions = "/hive decision approve\n\nBefore merging:\n\n1. Change `Closes #14605` to `Refs #14605`.\n2. Keep #14605 open.\n3. Merge on green."
+	cases := []struct {
+		name         string
+		body         string
+		wantMode     string
+		wantKind     string
+		wantFixKick  bool
+		wantReply    []string
+		wantInstruct bool
+	}{
+		{
+			name: "approve with instructions → changes_requested", body: instructions,
+			wantMode: "changes_requested", wantKind: review.HumanChangeRequestKindChanges, wantFixKick: true, wantInstruct: true,
+			wantReply: []string{"Decision recorded by @clubanderson", "changes requested", prDecisionHeadMarkerLine(liveDecisionHead, prDecisionChangesRequested)},
+		},
+		{
+			name: "bare approve → approve", body: "/hive decision approve",
+			wantMode: "approve", wantKind: review.HumanChangeRequestKindApprove,
+			wantReply: []string{"Approval recorded by @clubanderson", "merge path", prDecisionHeadMarkerLine(liveDecisionHead, prDecisionApprove)},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issues := []unparkWireIssue{hiveParkedPR(humanComment(4242, "clubanderson", tc.body))}
+			c, rec := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+			store := review.NewHumanChangeRequests("")
+			result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("clubanderson")})
+			if err != nil {
+				t.Fatalf("sweep: %v", err)
+			}
+			if len(result.PRDecisions) != 1 || result.PRDecisions[0].Mode != tc.wantMode {
+				t.Fatalf("decisions = %+v, want one in mode %s", result.PRDecisions, tc.wantMode)
+			}
+			req, ok := store.For("org/repo", liveDecisionPR, liveDecisionHead)
+			if !ok || req.Kind != tc.wantKind || req.Actor != "clubanderson" {
+				t.Fatalf("recorded = %+v, %v", req, ok)
+			}
+			if tc.wantInstruct {
+				for _, want := range []string{"1. Change `Closes #14605` to `Refs #14605`.", "2. Keep #14605 open.", "3. Merge on green."} {
+					if !strings.Contains(req.Body, want) || !strings.Contains(result.PRDecisions[0].Decision, want) {
+						t.Fatalf("instruction %q lost: body=%q", want, req.Body)
+					}
+				}
+			}
+			if len(rec.posted[liveDecisionPR]) != 1 {
+				t.Fatalf("posted = %v", rec.posted[liveDecisionPR])
+			}
+			for _, want := range tc.wantReply {
+				if !strings.Contains(rec.posted[liveDecisionPR][0], want) {
+					t.Fatalf("reply missing %q:\n%s", want, rec.posted[liveDecisionPR][0])
+				}
+			}
+			facts := prDecisionFacts(t, c)
+			if len(facts) != 1 || facts[0].Instruction != tc.wantInstruct || facts[0].Head != liveDecisionHead || !facts[0].SelfAuthored {
+				t.Fatalf("stage facts = %+v", facts)
+			}
+			pr := review.PullRequest{Repo: "org/repo", Number: liveDecisionPR, Author: "hive[bot]", HeadSHA: liveDecisionHead, Labels: []string{PRNeedsDecisionStageLabel, "author/hive"}}
+			pr.HumanChangeRequest = review.HumanChangeRequestFor(store, pr.Repo, pr.Number, pr.HeadSHA)
+			plan := review.PlanDispatch([]review.PullRequest{pr}, review.Artifact{}, review.DispatchState{}, review.DispatchOptions{
+				RequireApproval: true, FanOut: true, ProjectOrg: "org",
+				Agents: []review.AgentCapability{{Name: review.DefaultFixerAgent, Enabled: true, UsesKick: true, Role: "reviewer"}},
+			})
+			if got := len(plan.FixKicks) == 1; got != tc.wantFixKick {
+				t.Fatalf("fix kicks = %+v, want kick=%v", plan.FixKicks, tc.wantFixKick)
+			}
+			if tc.wantFixKick && !strings.Contains(plan.FixKicks[0].Message, "3. Merge on green.") {
+				t.Fatalf("fix kick does not quote the instructions:\n%s", plan.FixKicks[0].Message)
+			}
+		})
+	}
+}
+
+// hivecommons/hive#14679: the decision on #14628 was acknowledged by one pod
+// and the stage never moved before the next pod came up. An answered
+// decision (reply marker present) whose record is missing for the live
+// head is rebuilt from the thread — no second reply, the same stage fact —
+// and one answered for an older head is left alone.
+func TestSweepIssueUnparkCommandsReconcilesAnsweredDecisionAfterRestart(t *testing.T) {
+	const body = "/hive decision approve\n\n1. Change `Closes #14605` to `Refs #14605`.\n2. Keep #14605 open."
+	replyFor := func(head string) unparkWireComment {
+		return unparkWireComment{ID: 9001, Body: unparkReplyMarkerPrefix + "4242 -->\n" + renderPRDecisionRecordedReply("clubanderson", head), User: wireUser{Login: "hive[bot]"}, CreatedAt: unparkNow(), UpdatedAt: unparkNow()}
+	}
+	t.Run("answered for the live head → re-recorded, no reply", func(t *testing.T) {
+		issues := []unparkWireIssue{hiveParkedPR(humanComment(4242, "clubanderson", body), replyFor(liveDecisionHead))}
+		c, rec := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+		store := review.NewHumanChangeRequests("")
+		result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("clubanderson")})
+		if err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if len(rec.posted[liveDecisionPR]) != 0 || len(result.PRDecisions) != 0 {
+			t.Fatalf("reconciliation replied again: posted=%v decisions=%+v", rec.posted[liveDecisionPR], result.PRDecisions)
+		}
+		req, ok := store.For("org/repo", liveDecisionPR, liveDecisionHead)
+		if !ok || req.SourceID != 4242 || req.Kind != review.HumanChangeRequestKindChanges || !strings.Contains(req.Body, "2. Keep #14605 open.") {
+			t.Fatalf("re-recorded = %+v, %v", req, ok)
+		}
+		facts := prDecisionFacts(t, c)
+		if len(facts) != 1 || !facts[0].Instruction || facts[0].Head != liveDecisionHead {
+			t.Fatalf("stage facts = %+v", facts)
+		}
+		// Idempotent: the record now stands, so the next sweep is a no-op.
+		c2, rec2 := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+		if _, err := c2.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("clubanderson")}); err != nil {
+			t.Fatal(err)
+		}
+		if len(rec2.posted[liveDecisionPR]) != 0 || len(prDecisionFacts(t, c2)) != 0 || store.Len() != 1 {
+			t.Fatalf("second reconciliation acted: posted=%v store=%d", rec2.posted[liveDecisionPR], store.Len())
+		}
+	})
+	t.Run("record kept only the first line → repaired with the whole text", func(t *testing.T) {
+		issues := []unparkWireIssue{hiveParkedPR(humanComment(4242, "clubanderson", body), replyFor(liveDecisionHead))}
+		c, rec := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+		store := review.NewHumanChangeRequests("")
+		if err := store.Record(review.HumanChangeRequest{Repo: "org/repo", Number: liveDecisionPR, HeadSHA: liveDecisionHead, Source: review.HumanChangeRequestSourceDecision, SourceID: 4242, Actor: "clubanderson", Body: "approve"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("clubanderson")}); err != nil {
+			t.Fatal(err)
+		}
+		req, ok := store.For("org/repo", liveDecisionPR, liveDecisionHead)
+		if !ok || store.Len() != 1 || !strings.Contains(req.Body, "1. Change `Closes #14605` to `Refs #14605`.") || len(rec.posted[liveDecisionPR]) != 0 {
+			t.Fatalf("repaired = %+v (len %d), posted=%v", req, store.Len(), rec.posted[liveDecisionPR])
+		}
+	})
+	t.Run("pre-marker reply matched by short head", func(t *testing.T) {
+		old := replyFor(liveDecisionHead)
+		old.Body = unparkReplyMarkerPrefix + "4242 -->\nDecision recorded by @clubanderson for head `" + liveDecisionHead[:7] + "`. The hive is treating it as a *changes requested* review."
+		issues := []unparkWireIssue{hiveParkedPR(humanComment(4242, "clubanderson", body), old)}
+		c, _ := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+		store := review.NewHumanChangeRequests("")
+		if _, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("clubanderson")}); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := store.For("org/repo", liveDecisionPR, liveDecisionHead); !ok || len(prDecisionFacts(t, c)) != 1 {
+			t.Fatalf("pre-marker reply not reconciled: store=%d", store.Len())
+		}
+	})
+	t.Run("answered for an older head → ignored", func(t *testing.T) {
+		issues := []unparkWireIssue{hiveParkedPR(humanComment(4242, "clubanderson", body), replyFor("0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0"))}
+		c, rec := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+		store := review.NewHumanChangeRequests("")
+		if _, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("clubanderson")}); err != nil {
+			t.Fatal(err)
+		}
+		if store.Len() != 0 || len(rec.posted[liveDecisionPR]) != 0 || len(prDecisionFacts(t, c)) != 0 {
+			t.Fatalf("stale decision acted on: store=%d posted=%v", store.Len(), rec.posted[liveDecisionPR])
+		}
+	})
+}
+
+func TestParsePRDecisionHeadMarker(t *testing.T) {
+	head := liveDecisionHead
+	cases := []struct {
+		reply    string
+		wantMode prDecisionMode
+		wantOK   bool
+	}{
+		{renderPRDecisionRecordedReply("ann", head), prDecisionChangesRequested, true},
+		{renderPRDecisionApprovedReply("ann", head), prDecisionApprove, true},
+		{renderPRDecisionRecordedReply("ann", "0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0ld0"), "", false},
+		{"Decision recorded by @ann for head `" + head[:7] + "`.", prDecisionChangesRequested, true},
+		{"Decision recorded by @ann for head `0ld0ld0`.", "", false},
+		{renderPRHelpReply(true, head), "", false},
+	}
+	for _, tc := range cases {
+		mode, ok := parsePRDecisionHeadMarker(tc.reply, head)
+		if ok != tc.wantOK || mode != tc.wantMode {
+			t.Errorf("parsePRDecisionHeadMarker(%q) = %s, %v; want %s, %v", tc.reply, mode, ok, tc.wantMode, tc.wantOK)
+		}
 	}
 }
 

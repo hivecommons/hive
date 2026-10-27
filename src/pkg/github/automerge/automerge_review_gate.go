@@ -355,5 +355,26 @@ func (c *Engine) trustedHumanApprovalForRequiresHuman(ctx context.Context, owner
 	if !verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true}) {
 		return "", false
 	}
-	return c.latestTrustedHumanApproval(ctx, owner, repo, number, head)
+	if login, ok := c.latestTrustedHumanApproval(ctx, owner, repo, number, head); ok {
+		return login, true
+	}
+	return c.recordedHumanApprovalForHead(owner, repo, number, head)
+}
+
+// recordedHumanApprovalForHead is a bare `/hive decision approve` the un-park
+// sweep recorded against head (pr_unpark_decision.go): the owner answered the
+// swarm's question with "yes" in a comment rather than a GitHub review. It
+// releases requires_human the way an APPROVED review on the head does
+// (hivecommons/hive#14679).
+func (c *Engine) recordedHumanApprovalForHead(owner, repo string, number int, head string) (string, bool) {
+	if c == nil || c.humanChangeRequests == nil || strings.TrimSpace(head) == "" {
+		return "", false
+	}
+	req, ok := c.humanChangeRequests.For(owner+"/"+repo, number, strings.TrimSpace(head))
+	if !ok || !req.IsApproval() || strings.TrimSpace(req.Actor) == "" {
+		return "", false
+	}
+	login := strings.ToLower(strings.TrimSpace(req.Actor))
+	c.noteStageTrustedHumanApproval(owner, repo, number, head, login)
+	return login, true
 }

@@ -74,6 +74,17 @@ delivered ahead of the governor's own kick to the same agent in that eval
 cycle, so it does not time out behind routine queue work; a kick that still
 cannot be sent is logged as `review swarm kick not delivered` with the PR and
 audited as `review_kick_undelivered`, and the planner re-plans it next cycle.
+The whole comment after `/hive decision` is the instruction — numbered points
+on the lines below the command are kept and quoted verbatim — and the
+decision on the current head outranks the swarm's decision-requested verdict
+on that head, so the stage moves in the same pass as the acknowledgement
+rather than waiting on a re-review. A bare `/hive decision approve` (nothing
+beyond the approval word) is recorded as your answer to the swarm's question
+instead: no fix is kicked, requires_human is released for that head and the
+PR follows the normal merge path. An acknowledged decision whose record did
+not survive a pod restart is rebuilt from the comment thread; a decision
+answered for an older head is left alone
+([#14679](https://github.com/hivecommons/hive/issues/14679)).
 The 085 entry comment names both actions. The commenter must hold `write` or better on the
 repo *and* be in the hive's trusted-merger set (the bar a human approval
 already meets). `/hive decision` on a PR the hive did **not** open, or `/hive
