@@ -353,8 +353,15 @@ func TestContributorLaneUnauthorizedWhenApproveForbidden(t *testing.T) {
 			if step := engine.unauthorizedStep("acme", "widget", 7, "sha7"); step != "" {
 				t.Fatalf("unauthorizedStep after clear = %q, want empty", step)
 			}
-			if fx.comments != wantComments {
-				t.Fatalf("comments after clear = %d, want %d (no clear note)", fx.comments, wantComments)
+			// The lane goes on (here: to the merge note); clearing posts no
+			// note of its own and never a second unauthorized one.
+			for _, body := range fx.allComments {
+				if strings.HasPrefix(body, unauthorizedMarkerPrefix) && !strings.HasPrefix(body, wantMarker) {
+					t.Fatalf("unexpected unauthorized note after clear: %q", body)
+				}
+			}
+			if n := strings.Count(strings.Join(fx.allComments, "\n"), wantMarker); n != wantComments {
+				t.Fatalf("unauthorized notes posted = %d, want %d", n, wantComments)
 			}
 		})
 	}
