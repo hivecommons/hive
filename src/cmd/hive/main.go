@@ -4647,6 +4647,9 @@ func (b *boot) bootHeartbeat() { b.bootHeartbeatWith(defaultBootHeartbeatDeps())
 // bootHeartbeatWith is bootHeartbeat with its long-lived effects injected;
 // see bootHeartbeatDeps.
 func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
+	// The hub re-pushes its project config every beat, so a refused
+	// misconfiguration is logged at ERROR once and at DEBUG while unchanged.
+	var refusedProjectConfig atomic.Value // string key of the last refused push
 	// Hive-self scheduler (#12397): default off; restores durable reverts
 	// before the first heartbeat can apply a self-experiment flag.
 	startNousSelfScheduler(b.ctx, b.cfg, b.logger)
@@ -5679,7 +5682,12 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					return
 				}
 				if issue := config.ValidateProjectRepoTargets(pc.Org, pc.Repos, pc.PrimaryRepo, b.cfg.GitHub.HostLabel()); issue != nil {
-					b.logger.Error("REFUSING hub project config: repo target is misconfigured — project left unchanged",
+					key := fmt.Sprintf("%q|%q|%q|%s", pc.Org, pc.Repos, pc.PrimaryRepo, issue.Message)
+					logRefusal := b.logger.Error
+					if prev, _ := refusedProjectConfig.Swap(key).(string); prev == key {
+						logRefusal = b.logger.Debug
+					}
+					logRefusal("REFUSING hub project config: repo target is misconfigured — project left unchanged",
 						"error", issue.Message,
 						"pushed_org", pc.Org,
 						"pushed_repos", pc.Repos,
