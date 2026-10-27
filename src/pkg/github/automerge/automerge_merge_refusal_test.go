@@ -37,6 +37,7 @@ func TestMergeRefusalReason(t *testing.T) {
 		{name: "one approving review", err: resp(http.StatusMethodNotAllowed, reviewRequiredTestMessage), want: autoMergeReasonMergeRefusedReview},
 		{name: "two approving reviews", err: resp(http.StatusMethodNotAllowed, "At least 2 approving reviews are required by reviewers with write access."), want: autoMergeReasonMergeRefusedReview},
 		{name: "ruleset approving review", err: resp(http.StatusMethodNotAllowed, "Repository rule violations found\n\nAt least 1 approving review is required by reviewers with write access."), want: autoMergeReasonMergeRefusedReview},
+		{name: "ruleset review requesting changes", err: resp(http.StatusMethodNotAllowed, "Repository rule violations found\n\n1 review requesting changes by reviewers with write access.\n\n"), want: autoMergeReasonMergeRefusedReview},
 		{name: "approving review wrapped not-applied", err: effects.NotApplied(resp(http.StatusMethodNotAllowed, reviewRequiredTestMessage)), want: autoMergeReasonMergeRefusedReview},
 		{name: "merge commits not allowed", err: resp(http.StatusMethodNotAllowed, mergeCommitsTestMessage), want: autoMergeReasonMergeRefusedMethod},
 		{name: "squash not allowed", err: resp(http.StatusMethodNotAllowed, "Squash merges are not allowed on this repository."), want: autoMergeReasonMergeRefusedMethod},
