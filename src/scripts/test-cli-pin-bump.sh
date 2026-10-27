@@ -188,7 +188,11 @@ case "$url" in
   "https://github.com/aaif-goose/goose/releases/download/v1.53.0/goose-x86_64-unknown-linux-gnu.tar.gz") printf 'goose-amd64' > "$out" ;;
   "https://github.com/aaif-goose/goose/releases/download/v1.53.0/goose-aarch64-unknown-linux-gnu.tar.gz") printf 'goose-arm64' > "$out" ;;
   "https://api.github.com/repos/cli/cli/releases/latest") printf '{"tag_name":"v%s"}' "${STUB_GH_VERSION:-2.101.1}" > "$out" ;;
-  *"/github.com/cli/cli/releases/download/"*"/gh_"*"_checksums.txt") printf 'gh-amd64' > "$out"; printf ' gh_*_linux_amd64.tar.gz\n' >> "$out"; printf 'gh-arm64' > "$out"; printf ' gh_*_linux_arm64.tar.gz\n' >> "$out" ;;
+  *"/github.com/cli/cli/releases/download/v"*"/gh_"*"_checksums.txt")
+    v="${url##*/download/v}"; v="${v%%/*}"
+    amd64="$(printf 'gh-amd64' | shasum -a 256 | cut -d' ' -f1)"
+    arm64="$(printf 'gh-arm64' | shasum -a 256 | cut -d' ' -f1)"
+    printf '%s  gh_%s_linux_amd64.tar.gz\n%s  gh_%s_linux_arm64.tar.gz\n' "$amd64" "$v" "$arm64" "$v" > "$out" ;;
   *"/github.com/cli/cli/releases/download/"*"/gh_"*"_linux_amd64.tar.gz") printf 'gh-amd64' > "$out" ;;
   *"/github.com/cli/cli/releases/download/"*"/gh_"*"_linux_arm64.tar.gz") printf 'gh-arm64' > "$out" ;;
   *"/api/cask/antigravity-cli.json")
@@ -257,6 +261,7 @@ GH_AMD64="$(printf 'gh-amd64' | shasum -a 256 | cut -d' ' -f1)"
 GH_ARM64="$(printf 'gh-arm64' | shasum -a 256 | cut -d' ' -f1)"
 [ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.101.0\nNEW=2.101.1\nMAJOR=false\nCHANGED=true')" ] \
   && [ "$(arg Dockerfile GH_VERSION)" = "2.101.1" ] \
+  && [ "$(arg Dockerfile GH_SHA256_AMD64)" = "$GH_AMD64" ] && [ "$(arg Dockerfile GH_SHA256_ARM64)" = "$GH_ARM64" ] \
   && [ "$(arg runner.Dockerfile GITHUB_CLI_VERSION)" = "2.101.1" ] \
   && pass "gh patch-only bump (2.101.0 -> 2.101.1) applies by default because gh is now patch-eligible" || fail "gh patch-eligible" "$OUT $ERR"
 
