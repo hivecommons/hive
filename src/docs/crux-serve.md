@@ -107,7 +107,7 @@ it or are the CLI routes above under another method.
 | | `POST /v1/agents/{name}/tokens/refresh`, `POST /v1/agents/{name}/nudge` ⚑ | `RefreshAgentTokenFor`, `SendGitHubAPIBudgetNudge` | |
 | | `GET /v1/backends/{backend}/auth`, `POST /v1/audit`, `GET /v1/trajectory` ⚑ | `BackendAuthAvailable`, `RecordAudit`, `TrajectoryAgents` | |
 | Restorer | `POST /v1/agents/{name}/seed` ⚑ | `SeedPauseState`, `SeedRestartTelemetry`, `SeedTurnLoss`, `SeedLastKick`, `SeedKickHistory` | one body, each field optional |
-| Background | `GET /v1/health` | `StartAgentTokenRefresh`, `StartCredentialWatchdog`, `StartCopilotSessionRefresh`, `StartTranscriptActivityRefresh` | the loops run server-side; the client's calls are no-ops |
+| Background | `GET /v1/health` | `StartAgentTokenRefresh`, `StartCredentialWatchdog`, `StartCopilotSessionRefresh`, `StartTranscriptActivityRefresh`, `StartRepeatFailureMonitor` | the loops run server-side; the client's calls are no-ops |
 | Authorizer | `POST /v1/authorize` ⚑ | `AuthorizePROpen`, `AuthorizePushBranch`, `AuthorizeIssueOpen`, `AuthorizeMerge`, `AuthorizeReviewRequest` | synchronous; `{"action","agent","file_uid","kind","repo"}`; `403 forbidden` carries the refusal, any transport error is a refusal (fail closed) |
 | Watchdog | `GET /v1/watchdog/agents`, `GET /v1/agents/{name}/watchdog`, `PUT /v1/agents/{name}/watchdog/conditions` ⚑ | `watchdog.Source` (`AgentNames`, `Observe`, `LastProduction`, `SetConditions`) | `501 not_supported` when the runtime has no watchdog source; `crux/runtime.NewWatchdogFleet` builds the fleet over these in sidecar mode |
 

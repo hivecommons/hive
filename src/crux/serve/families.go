@@ -966,7 +966,7 @@ func (s *Server) handleWatchdogConditions(w http.ResponseWriter, r *http.Request
 
 // backgroundLoops are the crux.Background methods, in the order Serve starts
 // them and Health reports them.
-var backgroundLoops = []string{"StartAgentTokenRefresh", "StartCredentialWatchdog", "StartCopilotSessionRefresh", "StartTranscriptActivityRefresh"}
+var backgroundLoops = []string{"StartAgentTokenRefresh", "StartCredentialWatchdog", "StartCopilotSessionRefresh", "StartTranscriptActivityRefresh", "StartRepeatFailureMonitor"}
 
 // publishData publishes an event whose Data is v's JSON.
 func (s *Server) publishData(typ, agent string, v any) {
@@ -1081,6 +1081,7 @@ func (s *Server) startBackground(ctx context.Context) {
 	go rt.StartCredentialWatchdog(ctx)
 	go rt.StartCopilotSessionRefresh(ctx)
 	go rt.StartTranscriptActivityRefresh(ctx)
+	go rt.StartRepeatFailureMonitor(ctx)
 	s.mu.Lock()
 	s.background = append([]string(nil), backgroundLoops...)
 	s.mu.Unlock()

@@ -50,6 +50,10 @@ type Host interface {
 	// SetRepeatFailureEnabledResolver feeds the neutral BASH_ENV route for
 	// repeat-failure capture (#14574): whether the monitor is on at launch.
 	SetRepeatFailureEnabledResolver(fn func() bool)
+	// SetRepeatFailureConfigResolver feeds the repeat-failure monitor (#14558)
+	// the live repeat_failure block so threshold and window changes apply on
+	// the next tick.
+	SetRepeatFailureConfigResolver(fn func() *config.RepeatFailureConfig)
 	SetKickLogSourceResolver(fn func() string)
 	SetInferenceCallbacks(setRoute func(agentName, backend, model string), clearRoute func(agentName string))
 	SetSandboxConfig(cfg config.AgentSandboxConfig)
