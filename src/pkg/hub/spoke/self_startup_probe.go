@@ -19,6 +19,7 @@ const (
 // the image/restart annotation, avoiding a second rollout. Only raise an existing
 // hive probe: sidecars, init containers and deployments without a probe keep
 // their configuration. Strategic merge preserves the handler and other timings.
+// A nil body requests only a probe backfill and skips PATCH when none is needed.
 func k8sUpgradePatch(path string, body []byte) error {
 	current, err := k8sAPIGet(path)
 	if err != nil {
@@ -41,9 +42,13 @@ func k8sUpgradePatch(path string, body []byte) error {
 	if err := json.Unmarshal(current, &dep); err != nil {
 		return fmt.Errorf("decoding startup probe before upgrade: %w", err)
 	}
+	probeOnly := body == nil
 	for _, c := range dep.Spec.Template.Spec.Containers {
 		if c.Name != selfUpgradeDeployName || c.StartupProbe == nil || c.StartupProbe.FailureThreshold >= HostedStartupProbeFailureThreshold {
 			continue
+		}
+		if probeOnly {
+			body = []byte(`{"spec":{"template":{}}}`)
 		}
 		var patch map[string]any
 		if err := json.Unmarshal(body, &patch); err != nil {
@@ -77,6 +82,9 @@ func k8sUpgradePatch(path string, body []byte) error {
 			return fmt.Errorf("encoding upgrade startup probe: %w", err)
 		}
 		break
+	}
+	if body == nil {
+		return nil
 	}
 	return k8sAPIPatch(path, body)
 }

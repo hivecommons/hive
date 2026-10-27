@@ -123,8 +123,12 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 	// ReplicaSets in 8 minutes for one hive, none reaching Ready, while a
 	// neighbour with the image already cached on its node won the race in
 	// 31s). When every container already carries the target image, the
-	// rollout is in flight — say so and leave the template alone.
+	// rollout is in flight — only backfill a stale startup probe, without
+	// re-stamping the restart annotation. Subsequent calls leave it alone.
 	if names.allAt(image) {
+		if err := k8sUpgradePatch(path, nil); err != nil {
+			return fmt.Errorf("backfilling deployment startup probe: %w", err)
+		}
 		rememberSelfImage(image)
 		logger.Info("deployment already at target image — rollout in flight, not re-stamping",
 			"namespace", namespace, "deployment", selfUpgradeDeployName, "image", image)

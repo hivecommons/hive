@@ -12,7 +12,7 @@ import (
 )
 
 func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
-	for _, operation := range []string{"image", "restart", "mutable"} {
+	for _, operation := range []string{"image", "restart", "mutable", "same-image"} {
 		for _, probe := range []struct {
 			name, json string
 			want       bool
@@ -23,11 +23,12 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 			{"absent", ``, false},
 		} {
 			t.Run(operation+"/"+probe.name, func(t *testing.T) {
+				probeJSON := probe.json
 				var patched []byte
 				patches := 0
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == http.MethodGet {
-						fmt.Fprintf(w, `{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/hivecommons/hive:old"%s},{"name":"sidecar","image":"ghcr.io/hivecommons/hive:old","startupProbe":{"failureThreshold":30}}],"initContainers":[{"name":"init","image":"ghcr.io/hivecommons/hive:old"}]}}}}`, probe.json)
+						fmt.Fprintf(w, `{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/hivecommons/hive:stable"%s},{"name":"sidecar","image":"ghcr.io/hivecommons/hive:stable","startupProbe":{"failureThreshold":30}}],"initContainers":[{"name":"init","image":"ghcr.io/hivecommons/hive:stable"}]}}}}`, probeJSON)
 						return
 					}
 					if r.Method != http.MethodPatch {
@@ -37,6 +38,7 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 						t.Error("expected strategic merge")
 					}
 					patches++
+					probeJSON = `,"startupProbe":{"failureThreshold":118}`
 					patched, _ = io.ReadAll(r.Body)
 					w.WriteHeader(http.StatusOK)
 				}))
@@ -44,6 +46,13 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 				withFakeK8sAPI(t, srv)
 				var err error
 				switch operation {
+				case "same-image":
+					for i := 0; i < 2; i++ {
+						err = SwitchImageSelf(slog.Default(), "ghcr.io/hivecommons/hive:stable")
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
 				case "image":
 					err = SwitchImageSelf(slog.Default(), "ghcr.io/hivecommons/hive:candidate")
 				case "restart":
@@ -54,8 +63,15 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if patches != 1 {
-					t.Fatalf("got %d patches; want a single atomic rollout", patches)
+				wantPatches := 1
+				if operation == "same-image" && !probe.want {
+					wantPatches = 0
+				}
+				if patches != wantPatches {
+					t.Fatalf("got %d patches; want %d", patches, wantPatches)
+				}
+				if patches == 0 {
+					return
 				}
 				var patch struct {
 					Spec struct {
@@ -86,6 +102,9 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 						if operation == "image" && c.Image != "ghcr.io/hivecommons/hive:candidate" {
 							t.Error("lost image update")
 						}
+						if operation == "same-image" && c.Image != "" {
+							t.Error("probe-only backfill must not change images")
+						}
 					} else if c.Probe != nil {
 						t.Errorf("modified sidecar probe: %v", c.Probe)
 					}
@@ -93,7 +112,11 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 				if found != probe.want {
 					t.Errorf("probe backfill = %v, want %v; patch %s", found, probe.want, patched)
 				}
-				if patch.Spec.Template.Metadata.Annotations["hive.hivecommons.dev/restart-at"] == "" {
+				if operation == "same-image" {
+					if len(patch.Spec.Template.Metadata.Annotations) != 0 {
+						t.Error("probe-only backfill must not re-stamp restart annotation")
+					}
+				} else if patch.Spec.Template.Metadata.Annotations["hive.hivecommons.dev/restart-at"] == "" {
 					t.Error("lost restart annotation")
 				}
 				if operation == "mutable" && !strings.Contains(string(patched), "abcdef1") {
