@@ -130,6 +130,36 @@ type Evidence struct {
 	// the author's to fix: only a maintainer can clear them, so they route
 	// to 085 instead of the fixing stage (hivecommons/hive#14273).
 	ForkGuard []string
+	// HumanApprover is the trusted merger whose GitHub APPROVED review sits
+	// on exactly Head ("" when none). It is the human decision on a
+	// requires_human verdict and on a manual-merge lane rule: the person
+	// read the reviewer's objection and ruled the head lands as-is.
+	HumanApprover string
+	// ManualMergeRule is true when CauseReason names a lane rule no
+	// approval can override — the hive never merges the head unattended
+	// (CI workflow / action edits, removed tests, a human-merge path). With
+	// HumanApprover set and nothing else outstanding the PR is at 090:
+	// the only step left is the merge click, not an open-ended decision.
+	ManualMergeRule bool
+	// LaneReason is the lane's raw reason token behind CauseReason
+	// ("contributor-lane:workflow-path"); the 090 route for an approved
+	// manual-merge rule records it suffixed with the approver.
+	LaneReason string
+}
+
+// HumanApprovedReasonSuffix joins a lane reason to the trusted merger who
+// approved the head: "contributor-lane:workflow-path:human-approved@octocat".
+const HumanApprovedReasonSuffix = ":human-approved@"
+
+// HumanApprovedReason splits a reason carrying HumanApprovedReasonSuffix
+// into the bare lane reason and the approver's login ("" when none).
+func HumanApprovedReason(reason string) (base, approver string) {
+	reason = strings.TrimSpace(reason)
+	i := strings.LastIndex(reason, HumanApprovedReasonSuffix)
+	if i < 0 {
+		return reason, ""
+	}
+	return reason[:i], strings.TrimSpace(reason[i+len(HumanApprovedReasonSuffix):])
 }
 
 // HoldLabels are the modifier labels that turn a human hand-off into a
@@ -164,7 +194,9 @@ type Route struct {
 	// ManualMerge means this lane has no unattended way past its rule.
 	ManualMerge bool
 	// Reasons explains the stage: what the author must fix (072/070), what
-	// a person must decide (085), what is still running (060). Empty for 090.
+	// a person must decide (085), what is still running (060). Empty for a
+	// trust-blocked 090; an approved manual-merge 090 names the rule and
+	// the approver.
 	Reasons []string
 	// LaneReason is a reason in the lanes' vocabulary for the 072/070 case
 	// ("check-failing:<name>", "conflicting", …) so the contributor nudge
@@ -179,6 +211,9 @@ type Route struct {
 	Head         string
 	SelfAuthored bool
 	Verdict      VerdictState
+	// HumanApprover is the trusted merger whose approval on Head settled
+	// the requires_human verdict / manual-merge rule ("" when none).
+	HumanApprover string
 }
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
@@ -244,10 +279,16 @@ func RouteHuman(e Evidence) Route {
 		}
 		decide = append(decide, subject+" `"+strings.Join(e.ForkGuard, "`, `")+"` "+verb+" pull requests from a fork, so neither the author nor the hive can turn "+it+" green: a maintainer must push this branch to the repository (or approve the run as the repository requires)")
 	}
+	approver := strings.TrimSpace(e.HumanApprover)
 	switch e.Verdict {
 	case VerdictUnavailable:
 		decide = append(decide, "no reviewer agent is configured, so this head will never get a swarm verdict")
 	case VerdictRequiresHuman:
+		if approver != "" {
+			// The person the reviewer deferred to has approved this very
+			// head: the decision is made, not owed.
+			break
+		}
 		decide = append(decide, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
 		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
 			if decisionQuestionPlaceholderMention(q) {
@@ -268,13 +309,14 @@ func RouteHuman(e Evidence) Route {
 	for _, h := range e.Holds {
 		decide = append(decide, "the `"+h+"` label is set")
 	}
-	if e.Cause == CauseDecision && strings.TrimSpace(e.CauseReason) != "" {
+	manualMergeApproved := e.Cause == CauseDecision && e.ManualMergeRule && approver != "" && strings.TrimSpace(e.CauseReason) != "" && len(decide) == 0
+	if e.Cause == CauseDecision && strings.TrimSpace(e.CauseReason) != "" && !manualMergeApproved {
 		decide = append(decide, e.CauseReason)
-	} else if e.Cause == CauseDecision && len(e.ForkGuard) == 0 {
+	} else if e.Cause == CauseDecision && len(e.ForkGuard) == 0 && !manualMergeApproved {
 		decide = append(decide, "the automerge lane will not merge this unattended")
 	}
 	if len(decide) > 0 {
-		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict}
+		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict, HumanApprover: approver}
 	}
 	var wait []string
 	switch {
@@ -290,9 +332,21 @@ func RouteHuman(e Evidence) Route {
 		wait = append(wait, fmt.Sprintf("soak %s remaining", (e.Soak-e.SoakElapsed).Round(time.Minute)))
 	}
 	if len(wait) > 0 {
-		return Route{Stage: Reviewed, Reasons: wait, Summary: summary}
+		return Route{Stage: Reviewed, Reasons: wait, Summary: summary, HumanApprover: approver}
 	}
-	return Route{Stage: ReadyForHumanMerge, Summary: summary}
+	if manualMergeApproved {
+		// A manual-merge lane rule the trusted merger has ruled on: the
+		// hive still never merges the head itself, so the PR is ready for
+		// the person's merge click — a 090 with one named step, not an
+		// open-ended 085 (hivecommons/hive#14568, rationguard#401).
+		route := Route{Stage: ReadyForHumanMerge, ManualMerge: true, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict, HumanApprover: approver,
+			Reasons: []string{e.CauseReason + "; @" + approver + " approved this head, so the only step left is the merge"}}
+		if lane := strings.TrimSpace(e.LaneReason); lane != "" {
+			route.LaneReason = lane + HumanApprovedReasonSuffix + approver
+		}
+		return route
+	}
+	return Route{Stage: ReadyForHumanMerge, Summary: summary, HumanApprover: approver}
 }
 
 // decisionQuestionPlaceholderMentionRE matches the policy example's
@@ -329,6 +383,9 @@ func summarize(e Evidence) string {
 		parts = append(parts, "verdict requires_human @"+ShortSHA(e.Head))
 	default:
 		parts = append(parts, "verdict pending @"+ShortSHA(e.Head))
+	}
+	if approver := strings.TrimSpace(e.HumanApprover); approver != "" {
+		parts = append(parts, "approved by @"+approver)
 	}
 	switch {
 	case !e.Checks.Known:
@@ -394,12 +451,33 @@ const (
 //	require_tiers).
 //
 // blockedBy is the prose for the trust cause ("" when unknown).
+//
+// An approved manual-merge route (r.ManualMerge) names the lane rule and
+// the approver instead of a trust cause, and tells the person the one step
+// left — the merge click — since no review or reply can make the hive
+// merge CI workflow edits itself:
+//
+//	Ready for a human merge: verdict requires_human @abc1234, approved by
+//	@octocat, 55/55 checks green, DCO yes. The PR edits CI workflow /
+//	action files, which the lane never merges unattended; @octocat approved
+//	this head, so the only step left is the merge.
 func ReadyComment(r Route, blockedBy string) string {
 	var b strings.Builder
 	b.WriteString(ReadyCommentMarker)
 	b.WriteString("\nReady for a human merge: ")
 	b.WriteString(r.Summary)
 	b.WriteString(".")
+	if r.ManualMerge {
+		for _, reason := range r.Reasons {
+			if reason = strings.TrimSpace(reason); reason != "" {
+				b.WriteString(" ")
+				b.WriteString(strings.ToUpper(reason[:1]) + reason[1:])
+				b.WriteString(".")
+			}
+		}
+		b.WriteString("\n\n<sub>The hive never merges this lane's changes itself: click **Merge** (or `/lgtm` + `/approve` for tide) to land it.</sub>")
+		return b.String()
+	}
 	if blockedBy = strings.TrimSpace(blockedBy); blockedBy != "" {
 		b.WriteString(" Blocked only by ")
 		b.WriteString(blockedBy)

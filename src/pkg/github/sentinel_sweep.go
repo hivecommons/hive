@@ -375,7 +375,7 @@ func (c *Client) sentinelEvaluatePR(ctx context.Context, result *SentinelSweepRe
 		return
 	}
 	event.Repo = repo
-	c.recordReviewEvidenceSentinel(repo, pr, event.Findings, time.Now())
+	c.recordReviewEvidenceSentinel(repo, pr, event.Findings, event.Blocked, time.Now())
 	if event.Blocked {
 		result.Flagged = append(result.Flagged, event)
 	} else if prHasLabel(pr, label) {

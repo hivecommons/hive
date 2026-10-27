@@ -26,7 +26,7 @@ func delegatedCompetingNumbers(items []StageTrackerItem, repo string, pr *gh.Pul
 	// The requested head may be newer than the enumeration's link evidence.
 	refs := github.PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber())
 	livePR := github.PullRequest{Repo: repo, Number: pr.GetNumber(), ReferencedIssues: refs}
-	live := StageTrackerItem{Repo: repo, Kind: "pr", Number: pr.GetNumber(), LinkedIssues: stageTrackerPRLinkedIssues(livePR, "")}
+	live := StageTrackerItem{Repo: repo, Kind: "pr", Number: pr.GetNumber(), LinkedIssues: stageTrackerPRLinkedIssues(livePR, repo, "")}
 	found := false
 	for i := range items {
 		if items[i].Repo == repo && items[i].Kind == "pr" && items[i].Number == live.Number {

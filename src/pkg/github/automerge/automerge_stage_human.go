@@ -97,6 +97,15 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		HumanSummaries:   append([]string(nil), contributorVerdict.HumanSummaries...),
 		SelfAuthored:     obs.Lane == stageLaneSelf,
 		AuthorKind:       obs.AuthorKind,
+		LaneReason:       obs.Reason,
+		ManualMergeRule:  manualMergeRuleReason(obs.Reason),
+	}
+	// A trusted merger's APPROVED review on exactly this head is the human
+	// decision the lane noted (latestTrustedHumanApproval): it settles a
+	// requires_human verdict and a manual-merge lane rule, so the route
+	// must not keep asking for a decision already made (hivecommons/hive#14568).
+	if approver := strings.TrimSpace(obs.Detail.HumanApprover); approver != "" && obs.HeadSHA != "" && strings.TrimSpace(obs.Detail.HumanApprovalHead) == obs.HeadSHA {
+		e.HumanApprover = approver
 	}
 	if rec, ok := c.stageStoreOrShared().Get(key); ok && rec.AdoptedHead != "" && rec.AdoptDiffFence != "" && rec.AdoptDiffFence == obs.Reason && e.CauseReason != "" {
 		// An adopted head whose diff fence is the blocker: the 085 note
@@ -132,6 +141,17 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	return e
 }
 
+// manualMergeRuleReason reports whether a lane reason is a rule no review
+// or reply overrides: the hive never merges the head unattended, a person
+// clicks merge.
+func manualMergeRuleReason(reason string) bool {
+	switch reason {
+	case contributorLaneReasonWorkflowPath, contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath:
+		return true
+	}
+	return false
+}
+
 // routeHuman refines a lane's human hand-off into the stage the evidence
 // supports. It returns the route (with the lane-vocabulary reason to
 // record) and the evidence it was decided on, which the stage pass hands
@@ -155,9 +175,12 @@ func (c *Engine) routeHuman(ctx context.Context, tracker *StageTracker, key stri
 // consume `/hive approve` on a PR: the release lever for `requires_human` is
 // a trusted merger's GitHub Approve review on the current head.
 func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bool) {
-	switch obs.Reason {
-	case contributorLaneReasonWorkflowPath, contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath:
-		return []string{"A maintainer must review and merge this PR manually; a GitHub Approve review or `/hive approve` reply cannot override this lane's manual-merge rule."}, true
+	if manualMergeRuleReason(obs.Reason) {
+		action := "The hive never merges this change itself: a maintainer must click **Merge** on GitHub (or comment `/lgtm` + `/approve` for tide). A GitHub Approve review records the decision but does not merge, and `/hive approve` cannot override this lane's manual-merge rule."
+		if approver := strings.TrimSpace(e.HumanApprover); approver != "" {
+			action = "@" + approver + " has approved this head; the only step left is the merge. " + action
+		}
+		return []string{action}, true
 	}
 	var actions []string
 	if len(e.ForkGuard) > 0 {

@@ -81,6 +81,7 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_PR_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
+		stageTrackerManualMergeJS(t, html),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_CLOSED_ISSUE_TITLE"),
 		jsConstLine(t, html, "STAGE_TRACKER_UNTITLED_ISSUE"),
@@ -198,6 +199,7 @@ const stages = [
   { number: 50, label: 'Review pending', short: 'CI / Review' }, { number: 60, label: 'Reviewed', short: 'Reviewed' },
   { number: 70, label: 'Fixing', short: 'Fixing', branch_from: 50 }, { number: 71, label: 'Needs author', short: 'Needs author', branch_from: 50 },
   { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' }, { number: 85, label: 'Needs human decision', short: 'Needs human decision', branch_from: 80 },
+  { number: 90, label: 'Ready for human merge', short: 'Ready for human merge', branch_from: 80 },
   { number: 100, label: 'Merge queue', short: 'Merge queue' }, { number: 110, label: 'Merged', short: 'Merged' },
 ];
 const P = (repo, n, stage, extra) => Object.assign({ kind: 'pr', repo, number: n, stage, title: 'PR ' + n, url: 'https://x/' + n, author: 'ann', author_kind: 'human', stage_since: '2026-01-01T11:00:00Z', created_at: '2026-01-01T10:00:00Z', modifiers: [] }, extra || {});

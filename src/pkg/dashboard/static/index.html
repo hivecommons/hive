@@ -13646,6 +13646,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MERGE_COLUMN = 80;
     const STAGE_TRACKER_NEEDS_DECISION = 85;
     const STAGE_TRACKER_ISSUE_NEEDS_DECISION = 45;
+    // 090 under a manual-merge lane rule (payload manual_merge: CI workflow /
+    // action edits, removed tests, a human-merge path): the hive never merges
+    // it itself, so the lit chevron says what is actually owed — the
+    // maintainer's merge click — and names who already approved the head
+    // (payload human_approver) instead of the generic stage word.
+    const STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90;
+    const STAGE_TRACKER_MANUAL_MERGE_WORD = 'Awaiting human merge';
+    function stageTrackerManualMergeWord(item) {
+      const approver = String((item && item.human_approver) || '').trim();
+      return STAGE_TRACKER_MANUAL_MERGE_WORD + (approver ? ' · approved by @' + approver : '');
+    }
     // Issue-slot placeholders for a closing reference whose title the server
     // could not resolve (the issue is closed and unreadable, or of unknown state).
     const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';
@@ -13887,7 +13898,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur)), sentinel: sentinelLane } : null;
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';

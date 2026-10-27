@@ -74,6 +74,7 @@ func TestStageTrackerRegressedPillExplainsItself(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
 		jsFunc(t, html, "stageTrackerStageWord"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
+		stageTrackerManualMergeJS(t, html),
 		stageTrackerSentinelJS(t, html),
 		jsFunc(t, html, "stageTrackerRegressionText"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),

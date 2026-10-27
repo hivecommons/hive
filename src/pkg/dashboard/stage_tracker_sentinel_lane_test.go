@@ -31,6 +31,18 @@ func stageTrackerSentinelJS(t *testing.T, html string) string {
 	}, "\n")
 }
 
+// stageTrackerManualMergeJS is the 090 manual-merge surface (the stage
+// number, the word and its builder) every harness that runs
+// stageTrackerSegments needs beside the sentinel one.
+func stageTrackerManualMergeJS(t *testing.T, html string) string {
+	t.Helper()
+	return strings.Join([]string{
+		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE"),
+		jsConstLine(t, html, "STAGE_TRACKER_MANUAL_MERGE_WORD"),
+		jsFunc(t, html, "stageTrackerManualMergeWord"),
+	}, "\n")
+}
+
 func writeSentinelBundle(t *testing.T, root, repo string, number int, head string, findings []evidence.SentinelFinding) {
 	t.Helper()
 	path := github.ReviewEvidencePath(root, repo, number, head)
@@ -68,8 +80,8 @@ func TestStageTrackerSentinelFlag(t *testing.T) {
 	const headEvidence = "feedface0123456789abcdef0123456789abcdef"
 	const headClean = "0badf00d0123456789abcdef0123456789abcdef"
 	writeSentinelBundle(t, root, "acme/console", 110, headEvidence, []evidence.SentinelFinding{
-		{Rule: "sensitive_path", Summary: "touches OWNERS", Paths: []string{"OWNERS"}},
-		{Rule: "workflow_permissions", Summary: "widens workflow permissions"},
+		{Rule: "sensitive_path", Summary: "touches OWNERS", Paths: []string{"OWNERS"}, Notice: true},
+		{Rule: "workflow_permissions", Summary: "widens workflow permissions", Notice: true},
 	})
 	// A bundle for a superseded head says nothing about the current one.
 	writeSentinelBundle(t, root, "acme/console", 111, "0ld0ld0ld", []evidence.SentinelFinding{{Rule: "test_removal", Summary: "deletes tests"}})
@@ -158,6 +170,56 @@ func TestStageTrackerSentinelFlag(t *testing.T) {
 	}
 	if got := trackerItem(t, after, "pr", 110); got.SentinelAlert || got.Head != headClean {
 		t.Fatalf("a new head without findings (and no label) clears the evidence-backed alert: alert %v head %q", got.SentinelAlert, got.Head)
+	}
+}
+
+// TestStageTrackerSentinelLabelClearsBlockingBundle pins the fix for the
+// stale "Sentinel alert · needs human" pill: a blocking finding (the
+// sweep applied the label) whose label a maintainer has since removed is
+// cleared — alert follows the live label, the bundle only fills the count
+// and reason — while a notice-only finding (trusted author, no label ever)
+// keeps flagging on the bundle alone, and a notice-only finding beside a
+// blocking one still flags.
+func TestStageTrackerSentinelLabelClearsBlockingBundle(t *testing.T) {
+	prev := github.ReviewEvidenceRoot
+	root := filepath.Join(t.TempDir(), "evidence")
+	github.ReviewEvidenceRoot = root
+	t.Cleanup(func() { github.ReviewEvidenceRoot = prev })
+	s := newTestServer()
+	verifier := &github.ReviewEvidenceVerifier{}
+	const head = "d7fde650a3992abad2a2a2c55076ac18afeb5540"
+	blocking := []evidence.SentinelFinding{
+		{Rule: "sensitive_path", Summary: "changes 1 sensitive path(s)", Paths: []string{".github/workflows/mutation.yml"}},
+		{Rule: "workflow_permissions", Summary: "widens workflow permissions"},
+	}
+	notice := []evidence.SentinelFinding{{Rule: "sensitive_path", Summary: "touches OWNERS", Notice: true}}
+	mixed := []evidence.SentinelFinding{blocking[0], notice[0]}
+
+	tests := []struct {
+		name         string
+		number       int
+		findings     []evidence.SentinelFinding
+		labels       []string
+		wantAlert    bool
+		wantFindings int
+		wantReason   string
+	}{
+		{name: "blocking bundle, label still on", number: 401, findings: blocking, labels: []string{"lgtm", config.DefaultSentinelLabel}, wantAlert: true, wantFindings: 2, wantReason: "changes 1 sensitive path(s) (+1 more)"},
+		{name: "blocking bundle, label removed by maintainer", number: 402, findings: blocking, labels: []string{"lgtm", "stage/085-needs-decision"}, wantAlert: false, wantFindings: 2, wantReason: "changes 1 sensitive path(s) (+1 more)"},
+		{name: "notice-only bundle, never labelled", number: 403, findings: notice, labels: []string{"stage/050-review-pending"}, wantAlert: true, wantFindings: 1, wantReason: "touches OWNERS"},
+		{name: "notice beside blocking, label removed", number: 404, findings: mixed, labels: nil, wantAlert: true, wantFindings: 2, wantReason: "changes 1 sensitive path(s) (+1 more)"},
+		{name: "no bundle, no label", number: 405, labels: []string{"lgtm"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.findings != nil {
+				writeSentinelBundle(t, root, "acme/console", tt.number, head, tt.findings)
+			}
+			alert, findings, reason := s.stageTrackerSentinel(verifier, "acme/console", tt.number, head, tt.labels)
+			if alert != tt.wantAlert || findings != tt.wantFindings || reason != tt.wantReason {
+				t.Fatalf("stageTrackerSentinel = alert %v findings %d reason %q, want %v %d %q", alert, findings, reason, tt.wantAlert, tt.wantFindings, tt.wantReason)
+			}
+		})
 	}
 }
 
@@ -307,6 +369,16 @@ assert.strictEqual(subs.length, 2);
 assert.ok(subs[0].includes('Sentinel alert · needs human') && subs[0].includes('data-ham-sub-key="o/r/pr#115"'), subs[0]);
 assert.ok(!subs[1].includes('entinel'), subs[1]);
 assert.ok(!multi.slice(0, multi.indexOf('<div class="ham-sub"')).includes('entinel'), 'the issue line itself is clean');
+
+// 090 under a manual-merge rule a trusted merger approved: the merge-gate
+// chevron says what is owed and who approved, with no sentinel word left.
+assert.strictEqual(stageTrackerManualMergeWord({ human_approver: 'clubanderson' }), 'Awaiting human merge · approved by @clubanderson');
+assert.strictEqual(stageTrackerManualMergeWord({}), 'Awaiting human merge');
+const manual = stageTrackerRowHtml(P('o/r', 401, 90, { manual_merge: true, human_approver: 'clubanderson', reason: 'contributor-lane:workflow-path:human-approved@clubanderson' }), stages, ctx);
+assert.ok(manual.includes('<span class="ham-detour">Awaiting human merge · approved by @clubanderson</span>'), 'manual-merge 090 lane word: ' + manual);
+assert.ok(!manual.includes('entinel') && !manual.includes('Needs human decision'), manual);
+const plain090 = stageTrackerRowHtml(P('o/r', 402, 90, { reason: 'untrusted-author-role' }), stages, ctx);
+assert.ok(!plain090.includes('Awaiting human merge') && plain090.includes('<span class="ham-detour">Ready for human merge</span>'), 'a trust-blocked 090 keeps the stage word: ' + plain090);
 
 // Decide… preface: one line per flagged PR, nothing for clean ones.
 assert.strictEqual(stageTrackerSentinelPreface([P('o/r', 109, 85, flagged), P('o/r', 104, 85)]), '⚠ o/r#109 — ' + TIP);

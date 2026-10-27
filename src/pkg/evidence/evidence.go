@@ -162,11 +162,17 @@ type Check struct {
 	URL        string `json:"url,omitempty"`
 }
 
-// SentinelFinding records why the sentinel sweep flagged the PR.
+// SentinelFinding records why the sentinel sweep flagged the PR. Notice
+// marks a notice-only finding: the sweep commented but never applied the
+// alert label (a trusted author's PR), so the finding is the only record
+// of the alert. A finding without Notice was announced through the label,
+// and the live label — not this record — says whether it still stands:
+// a maintainer removing the label is the sweep's clearance signal.
 type SentinelFinding struct {
 	Rule    string   `json:"rule"`
 	Summary string   `json:"summary"`
 	Paths   []string `json:"paths,omitempty"`
+	Notice  bool     `json:"notice,omitempty"`
 }
 
 // Action is a human action on the PR: approval, label change, hold lift.

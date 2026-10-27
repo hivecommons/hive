@@ -235,12 +235,14 @@ func TestRecordReviewEvidenceSentinel(t *testing.T) {
 		{Rule: "", Summary: "no rule, dropped"},
 	}
 	want := []evidence.SentinelFinding{{Rule: sentinel.RuleSensitivePath, Summary: "touches OWNERS", Paths: []string{"OWNERS", "z.yml"}}}
+	wantNotice := []evidence.SentinelFinding{{Rule: sentinel.RuleSensitivePath, Summary: "touches OWNERS", Paths: []string{"OWNERS", "z.yml"}, Notice: true}}
 
 	tests := []struct {
 		name         string
 		settings     *ReviewEvidenceSettings
 		seed         bool
 		corrupt      bool
+		notice       bool
 		pr           *gh.PullRequest
 		findings     []sentinel.Finding
 		wantSentinel []evidence.SentinelFinding
@@ -259,6 +261,10 @@ func TestRecordReviewEvidenceSentinel(t *testing.T) {
 		{
 			name: "starts a bundle from the listed PR", settings: &ReviewEvidenceSettings{Enabled: true},
 			pr: evidenceSentinelPR("h1"), findings: findings, wantSentinel: want,
+		},
+		{
+			name: "notice-only pass marks the finding", settings: &ReviewEvidenceSettings{Enabled: true}, notice: true,
+			pr: evidenceSentinelPR("h1"), findings: findings, wantSentinel: wantNotice,
 		},
 		{
 			name: "unreadable bundle left alone", settings: &ReviewEvidenceSettings{Enabled: true}, corrupt: true,
@@ -282,7 +288,7 @@ func TestRecordReviewEvidenceSentinel(t *testing.T) {
 			}
 			c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, tt.settings)
 
-			c.recordReviewEvidenceSentinel("o/r", tt.pr, tt.findings, now)
+			c.recordReviewEvidenceSentinel("o/r", tt.pr, tt.findings, !tt.notice, now)
 
 			if tt.wantNoBundle {
 				if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -311,7 +317,7 @@ func TestRecordReviewEvidenceSentinel(t *testing.T) {
 			}
 
 			// The same finding flagged again is not duplicated and the file is untouched.
-			c.recordReviewEvidenceSentinel("o/r", tt.pr, tt.findings, now.Add(time.Hour))
+			c.recordReviewEvidenceSentinel("o/r", tt.pr, tt.findings, !tt.notice, now.Add(time.Hour))
 			if again := mustLoadBundle(t, root, "h1"); again.Hash != b.Hash || len(again.Sentinel) != len(tt.wantSentinel) {
 				t.Fatalf("re-flag changed the bundle: %+v", again.Sentinel)
 			}

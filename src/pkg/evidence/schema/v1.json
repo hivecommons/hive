@@ -188,7 +188,8 @@
       "properties": {
         "rule": {"type": "string", "minLength": 1},
         "summary": {"type": "string"},
-        "paths": {"type": "array", "items": {"type": "string"}}
+        "paths": {"type": "array", "items": {"type": "string"}},
+        "notice": {"type": "boolean"}
       }
     },
     "shadow_review_gate": {
