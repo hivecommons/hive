@@ -129,6 +129,7 @@ For sandboxed agents, a kick now follows this path:
 3. The manager marks the agent busy while the sandbox runs and returns it to idle or failed when the timeout/completion path finishes. Dashboard status uses the existing agent status structures.
 4. Hive collects the transcript at `.hive/sandbox-transcript.log` and any `agent-report*.json` artifact following `pkg/outputschema` conventions.
 5. If the sandbox produced commits, `pkg/pushbroker.Broker` scans the committed diff for token-like secrets and protected-path edits, mints a short-lived scoped GitHub App token outside the sandbox, pushes the branch, and opens a PR through the existing App-authored GitHub client. Broker rejection records audit detail and nothing is pushed.
+   The PR title and body come from `.hive/pr-title.txt` (first line) and `.hive/pr-body.md` if the agent wrote them in the workspace, otherwise from the HEAD commit's subject and body; a generic `[<agent>] sandbox changes` placeholder is used only when neither exists. Kick templates for sandboxed agents should ask the agent to write those two files.
 
 ## Running sandboxed kicks as Kubernetes Jobs
 
