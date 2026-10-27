@@ -50,10 +50,11 @@ const (
 	// pprofReadHeaderTimeout bounds a slow client on the debug listener; the
 	// handlers themselves stream for as long as the profile asks (seconds=).
 	pprofReadHeaderTimeout = 10 * time.Second
-
-	// procSelfStatus is where the OS thread count comes from on Linux.
-	procSelfStatus = "/proc/self/status"
 )
+
+// procSelfStatus is where the OS thread count comes from on Linux; a
+// variable so tests can point it at a missing file.
+var procSelfStatus = "/proc/self/status"
 
 // Snapshot is one reading of the process-level runtime counters. Every field
 // comes from runtime/metrics (no stop-the-world) except Threads, which is

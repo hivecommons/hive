@@ -6,7 +6,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -184,4 +187,65 @@ func (h *signallingHandler) Handle(ctx context.Context, r slog.Record) error {
 	err := h.Handler.Handle(ctx, r)
 	h.done <- struct{}{}
 	return err
+}
+
+func TestStartLoggerDefaultsAndStopsOnCancel(t *testing.T) {
+	before := runtime.NumGoroutine()
+	ctx, cancel := context.WithCancel(context.Background())
+	StartLogger(ctx, nil, nil)
+	cancel()
+	deadline := time.After(5 * time.Second)
+	for runtime.NumGoroutine() > before {
+		select {
+		case <-deadline:
+			t.Fatalf("logger goroutine did not stop: %d goroutines, baseline %d", runtime.NumGoroutine(), before)
+		default:
+			runtime.Gosched()
+		}
+	}
+}
+
+func TestStartPprofEmptyAddrIsDisabled(t *testing.T) {
+	bound, stop, err := StartPprof("", nil)
+	if err != nil || bound != "" || stop == nil {
+		t.Fatalf("StartPprof(\"\") = %q, %v, stop nil=%v", bound, err, stop == nil)
+	}
+	stop()
+}
+
+func TestStartPprofReportsListenError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("no loopback listener:", err)
+	}
+	defer ln.Close()
+	if _, _, err := StartPprof(ln.Addr().String(), nil); err == nil {
+		t.Fatal("StartPprof on an occupied port must fail")
+	}
+}
+
+func TestThreadCountWithoutProcStatus(t *testing.T) {
+	saved := procSelfStatus
+	procSelfStatus = filepath.Join(t.TempDir(), "missing")
+	t.Cleanup(func() { procSelfStatus = saved })
+	if got := threadCount(); got != 0 {
+		t.Fatalf("threadCount without /proc = %d, want 0", got)
+	}
+	if s := Take(); s.Threads != 0 {
+		t.Fatalf("Take().Threads without /proc = %d, want 0", s.Threads)
+	}
+}
+
+func TestApplyMemoryLimitUsesProcessDefaults(t *testing.T) {
+	saved := debug.SetMemoryLimit(-1)
+	t.Cleanup(func() { debug.SetMemoryLimit(saved) })
+	out := ApplyMemoryLimit(nil, nil)
+	switch out.Source {
+	case "env", "none", "cgroup":
+	default:
+		t.Fatalf("unexpected source %q: %+v", out.Source, out)
+	}
+	if out.Limit <= 0 {
+		t.Fatalf("effective limit must be positive: %+v", out)
+	}
 }
