@@ -129,9 +129,8 @@ func TestBlockedBacklogLabels(t *testing.T) {
 
 // hivecommons/hive#13093: a finding whose file the PR introduces (absent on
 // the base branch) is filed blocked — marker in the body, `blocked` label,
-// no `help wanted` — while a finding on a file the base already has files
-// as before.
-func TestReviewBacklogFilesEveryItemBlockedOnItsPR(t *testing.T) {
+// no `help wanted` — as is a finding on an existing file changed by the PR.
+func TestReviewBacklogFilesIntroducedAndTouchedItemsBlockedOnItsPR(t *testing.T) {
 	withReviewBacklogState(t)
 	var issues []struct {
 		Body   string   `json:"body"`
@@ -144,6 +143,8 @@ func TestReviewBacklogFilesEveryItemBlockedOnItsPR(t *testing.T) {
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/5":
 			_, _ = io.WriteString(w, `{"number":5,"state":"open","base":{"ref":"v5"}}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/5/files":
+			_, _ = io.WriteString(w, `[{"filename":"pkg/old.go","status":"modified"}]`)
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/contents/pkg/new.go":
 			if r.URL.Query().Get("ref") != "v5" {
 				t.Errorf("contents probe ref = %q, want v5", r.URL.Query().Get("ref"))
@@ -191,9 +192,8 @@ func TestReviewBacklogFilesEveryItemBlockedOnItsPR(t *testing.T) {
 	if len(issues) != 2 {
 		t.Fatalf("issues = %d, want 2", len(issues))
 	}
-	// Every item is parked on the reviewed PR (#13833); only the note's
-	// reason differs between a file the PR introduces and one already on
-	// the base branch.
+	// Introduced and touched files are parked on the reviewed PR; the note's
+	// reason distinguishes a missing base file from a changed existing file.
 	var missing, onBase int
 	for _, is := range issues {
 		if _, pr, ok := ParseBlockedOnMarker(is.Body); !ok || pr != 5 {
