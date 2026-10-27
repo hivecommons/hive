@@ -12,7 +12,7 @@ import (
 // #14550 (C11, C12, C14): the agent row carries the repeat-failure check
 // state and note, and nothing at all while the check is off.
 
-func repeatFailureProc(status agent.RepeatFailureStatus) *crux.Process {
+func repeatFailureProc(status crux.RepeatFailureStatus) *crux.Process {
 	return &crux.Process{
 		Name:          "scanner",
 		Config:        config.AgentConfig{Backend: "claude", Enabled: true},
@@ -23,7 +23,7 @@ func repeatFailureProc(status agent.RepeatFailureStatus) *crux.Process {
 }
 
 func TestBuildAgents_RepeatFailureOffShowsNothing(t *testing.T) {
-	a := buildOneAgent(t, repeatFailureProc(agent.RepeatFailureStatus{}))
+	a := buildOneAgent(t, repeatFailureProc(crux.RepeatFailureStatus{}))
 	if a.RepeatFailureCheck != "" || a.RepeatFailureCheckMessage != "" || a.RepeatFailureNote != "" {
 		t.Fatalf("check off: row shows %q / %q / %q, want nothing", a.RepeatFailureCheck, a.RepeatFailureCheckMessage, a.RepeatFailureNote)
 	}
@@ -31,20 +31,20 @@ func TestBuildAgents_RepeatFailureOffShowsNothing(t *testing.T) {
 
 func TestBuildAgents_RepeatFailureStates(t *testing.T) {
 	for _, tc := range []struct {
-		check agent.RepeatFailureCheckState
+		check crux.RepeatFailureCheckState
 		msg   string
 	}{
-		{agent.RepeatFailureCheckOn, "repeat-failure check on"},
-		{agent.RepeatFailureCheckNotCovered, "repeat-failure check not available for this backend"},
-		{agent.RepeatFailureCheckNoData, "repeat-failure check not receiving data"},
+		{crux.RepeatFailureCheckOn, "repeat-failure check on"},
+		{crux.RepeatFailureCheckNotCovered, "repeat-failure check not available for this backend"},
+		{crux.RepeatFailureCheckNoData, "repeat-failure check not receiving data"},
 	} {
-		a := buildOneAgent(t, repeatFailureProc(agent.RepeatFailureStatus{Check: tc.check}))
+		a := buildOneAgent(t, repeatFailureProc(crux.RepeatFailureStatus{Check: tc.check}))
 		if a.RepeatFailureCheck != string(tc.check) || a.RepeatFailureCheckMessage != tc.msg {
 			t.Errorf("check %q: row = %q / %q, want %q", tc.check, a.RepeatFailureCheck, a.RepeatFailureCheckMessage, tc.msg)
 		}
 	}
 	note := "Repeating failure: `false` failed 5 times in 10 min (exit 1)"
-	a := buildOneAgent(t, repeatFailureProc(agent.RepeatFailureStatus{Check: agent.RepeatFailureCheckOn, Note: note}))
+	a := buildOneAgent(t, repeatFailureProc(crux.RepeatFailureStatus{Check: crux.RepeatFailureCheckOn, Note: note}))
 	if a.RepeatFailureNote != note {
 		t.Errorf("note = %q, want %q", a.RepeatFailureNote, note)
 	}

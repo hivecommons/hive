@@ -11026,7 +11026,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const nowEl = detail.querySelector('[data-agent-now]');
         if (nowEl) nowEl.outerHTML = agentNowHtml(a);
         const blockersEl = detail.querySelector('.oc-detail-blockers');
-        if (blockersEl) blockersEl.innerHTML = agentBlockerLineHtml(a) + neverScheduledChipHtml(a, a.name) + repeatFailureLineHtml(a);
+        if (blockersEl) {
+          blockersEl.innerHTML = agentBlockerLineHtml(a) + neverScheduledChipHtml(a, a.name);
+          blockersEl.insertAdjacentHTML('beforeend', repeatFailureLineHtml(a));
+        }
         const fieldsEl = detail.querySelector('.oc-detail-fields');
         if (fieldsEl) fieldsEl.outerHTML = ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand);
         const indEl = detail.querySelector('.oc-detail-indicators');

@@ -112,6 +112,21 @@ type TurnInterruption = types.TurnInterruption
 // see Process.TurnLoss. cmd/hive: state persistence.
 type TurnLoss = types.TurnLoss
 
+// RepeatFailureCheckState is an agent's repeat-failure check state; see
+// Process.RepeatFailure. Empty means the check is off.
+type RepeatFailureCheckState = types.RepeatFailureCheckState
+
+// Repeat-failure check states.
+const (
+	RepeatFailureCheckOn         = types.RepeatFailureCheckOn
+	RepeatFailureCheckNotCovered = types.RepeatFailureCheckNotCovered
+	RepeatFailureCheckNoData     = types.RepeatFailureCheckNoData
+)
+
+// RepeatFailureStatus is the repeat-failure check's row note and check
+// state; see Process.RepeatFailure.
+type RepeatFailureStatus = types.RepeatFailureStatus
+
 // FatalNetworkErrorPatterns returns the pane substrings the runtime treats
 // as a fatal startup network failure and restarts the agent on. Hosts that
 // compose prompts echoed into the pane assert their text never contains one
