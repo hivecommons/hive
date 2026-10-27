@@ -1087,8 +1087,10 @@ func TestAlreadyAdoptedInPlaceDCOFailureRehomesFromCachedSplitWithoutStageLabel(
 	h.clock.advance(time.Minute)
 	reads := h.api.commitReads
 	h.observe(adoptPR(7, "aaa", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
-	if h.api.commitReads != reads {
-		t.Fatalf("commit reads=%d, want cached decision (%d)", h.api.commitReads, reads)
+	// The cached split spares the DCO decision a commit read; the re-sign
+	// replay needs the commit trees and messages, so it lists them exactly once.
+	if h.api.commitReads != reads+1 {
+		t.Fatalf("commit reads=%d, want cached decision plus one re-sign listing (%d)", h.api.commitReads, reads+1)
 	}
 	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 {
 		t.Fatalf("expected re-home from cached split: pulls=%v edits=%v", h.adopt.pulls, h.adopt.prEdits)
