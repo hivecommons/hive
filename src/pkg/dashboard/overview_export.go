@@ -3,7 +3,6 @@ package dashboard
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
@@ -97,7 +96,7 @@ func (s *Server) handleOverviewExport(w http.ResponseWriter, r *http.Request, ki
 
 func slogWarnOverviewEncode(err error) {
 	if err != nil {
-		slog.Warn("overview export encode failed", "error", err)
+		logEncodeFailure("overview export encode failed", err)
 	}
 }
 
