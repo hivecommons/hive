@@ -140,6 +140,46 @@ file nobody answers on (a `run` that died without cleanup) is reported and
 treated as absent. `--detach` leaves an agent running in tmux with no
 supervisor; use it when something else will own the session.
 
+## Telemetry
+
+The runtime opens OpenTelemetry spans (for example `agent.send_kick`) and
+records two kick instruments through the OTel API
+([hivecommons/crux#19](https://github.com/hivecommons/crux/issues/19)):
+
+| Instrument | Type | Attributes |
+|---|---|---|
+| `crux.agent.kick.duration` | histogram, seconds | `agent.role`, `outcome` |
+| `crux.agent.kick.outcomes` | counter | `agent.role`, `outcome` |
+
+`agent.role` is the configured agent name (`unknown` when the kicked name is
+not a configured agent); `outcome` is `ok`, `cancelled` (the agent restarted
+mid-kick) or `error`. No issue or PR numbers, run ids or free text are ever
+attributes.
+
+Export is off by default. Both `crux` builds install an OTLP/HTTP trace and
+metric pipeline at startup only when the standard OpenTelemetry environment
+names an endpoint, and leave the no-op providers in place otherwise:
+
+| Variable | Effect |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | base collector URL for both signals (e.g. `http://collector:4318`) |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | enable and address one signal only |
+| `OTEL_TRACES_EXPORTER=none` / `OTEL_METRICS_EXPORTER=none` | turn one signal off |
+| `OTEL_SDK_DISABLED=true` | turn both off |
+| `OTEL_EXPORTER_OTLP_HEADERS`, `…_CERTIFICATE`, `…_TIMEOUT`, `…_COMPRESSION` | read by the exporters as usual |
+| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | override the resource (`service.name` defaults to `crux`; `service.version` is the build version) |
+
+Only the `http/protobuf` protocol is built in: setting
+`OTEL_EXPORTER_OTLP_PROTOCOL` (or a per-signal variant) to anything else
+makes crux print `crux: telemetry disabled: …` and run without export rather
+than fail the command. There is no `/metrics` endpoint and no Prometheus
+dependency; scrape or forward from an OpenTelemetry Collector instead. Spans
+and metrics are flushed on exit, bounded to five seconds: with an endpoint set
+and the collector unreachable, each `crux` invocation can take up to that long
+to exit after its work is done — that is the flush timing out, not a hang.
+Unset the endpoint (or set `OTEL_SDK_DISABLED=true`) to avoid it. Inside Hive the
+same instruments flow through Hive's own `tracing:` configuration instead.
+
 ## What this is not
 
 The CLI reaches `*agent.Manager` only to construct it

@@ -118,6 +118,17 @@ crux logs -f scout                       # follows over SSE
 `crux --version` prints the version embedded at build time
 (`-ldflags "-X main.version=…"`, `dev` otherwise).
 
+## Telemetry
+
+The runtime records OpenTelemetry spans (`agent.send_kick`, …) and two kick
+metrics through the OTel API. The `crux` binary exports them over OTLP/HTTP
+only when the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (or a per-signal
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`)
+is set; with none set nothing is installed and nothing is sent. There is no
+`/metrics` endpoint: point crux at an OpenTelemetry Collector and export from
+there. Variables and instruments are listed in
+[`crux-cli.md`](../docs/crux-cli.md#telemetry).
+
 ## Using Crux from Go
 
 ```go

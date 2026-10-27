@@ -387,6 +387,9 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// claims ledger is on.
 		recordStarted(b.dashSrv, b.cfg.Project.Org, agentName, repo, issue, signal)
 	})
+	// hivecommons/hive#14705: a recorded dispatched verdict frees its head,
+	// so the governor re-plans now instead of at the next eval cycle.
+	client.SetReviewVerdictHook(b.wakeForReviewVerdict)
 	// PR follow-up session resume (#9583, default off): remember which live
 	// CLI session authored this PR, and the PR's handoff note, so its
 	// follow-ups can resume that conversation or brief a fresh one. The

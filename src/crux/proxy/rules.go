@@ -31,6 +31,12 @@ type ProxyRule struct {
 	Capability func(agent.AgentCapabilities) bool
 }
 
+// canonicalHost normalizes a hostname for comparison: DNS names are
+// case-insensitive and may carry a trailing dot.
+func canonicalHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+}
+
 // githubHosts are the hostnames the proxy inspects.
 var githubHostsMu sync.RWMutex
 var githubHosts = map[string]bool{
@@ -43,6 +49,7 @@ var githubHosts = map[string]bool{
 // register hosts while proxy goroutines are already serving, so the map is
 // mutex-guarded.
 func RegisterGitHubHost(host string) {
+	host = canonicalHost(host)
 	if host == "" {
 		return
 	}
@@ -53,6 +60,7 @@ func RegisterGitHubHost(host string) {
 
 // unregisterGitHubHost removes a hostname from the allowlist (test cleanup).
 func unregisterGitHubHost(host string) {
+	host = canonicalHost(host)
 	githubHostsMu.Lock()
 	delete(githubHosts, host)
 	githubHostsMu.Unlock()
@@ -60,6 +68,7 @@ func unregisterGitHubHost(host string) {
 
 // IsGitHubHost returns true if the host should be subject to mode enforcement.
 func IsGitHubHost(host string) bool {
+	host = canonicalHost(host)
 	githubHostsMu.RLock()
 	defer githubHostsMu.RUnlock()
 	return githubHosts[host]
@@ -78,6 +87,7 @@ func IsGitHubHost(host string) bool {
 // is why the IsGitHubHost checks at the CONNECT seams could no longer double as
 // the "should I inspect this?" test; see NeedsInspection.
 func NeedsMITM(host string) bool {
+	host = canonicalHost(host)
 	return host == "api.github.com" || IsLinearHost(host)
 }
 
@@ -112,6 +122,7 @@ const copilotAPIHostExact = "githubcopilot.com"
 // otherwise forwarded verbatim; no content is altered beyond an optional
 // stream_options.include_usage hint on streaming completion requests.
 func IsCopilotAPIHost(host string) bool {
+	host = canonicalHost(host)
 	if host == "" {
 		return false
 	}

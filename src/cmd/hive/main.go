@@ -6371,6 +6371,13 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			tick(evalSourceCached)
 			armContinuousWake()
 			armWebhookHealthRecheck()
+		case batch := <-b.verdictWakeChan():
+			b.logger.Info("review verdict wake: running an early eval cycle from the cached snapshot",
+				"pr", batch.Reason, "last_pr", batch.LastRe, "verdicts", batch.Count,
+				"coalesced", batch.Coalesced.Round(time.Millisecond).String())
+			tick(evalSourceCached)
+			armContinuousWake()
+			armWebhookHealthRecheck()
 		case batch := <-b.webhookWakeChan():
 			now := healthNow()
 			// Apply the delivery's targeted re-reads first so this cycle
