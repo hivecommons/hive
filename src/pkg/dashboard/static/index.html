@@ -13558,6 +13558,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? `${r.filesChanged} file${r.filesChanged === 1 ? '' : 's'}` : '– files';
       return `<div class="oc-run-line" data-agent-run="${esc(a.name)}" title="${esc(RUN_LINE_HELP)}"><span class="rl-cost">${cost}</span>${sep}<span class="rl-tokens">${toks}</span>${sep}<span class="rl-elapsed">${fmtRunElapsed(r.elapsedS)}</span>${sep}${tests}${sep}<span class="rl-files">${files}</span></div>`;
     }
+    // fleetRunStatHtml is the Governor-section twin of fleetRunStripHtml: the
+    // compact strip it first landed in is display:none while the full
+    // Governor section stays visible in focus mode, so without this stat the
+    // fleet figure was never on screen.
+    function fleetRunStatHtml() {
+      const f = window._lastStatus?.fleetRun;
+      if (!f) return '';
+      const hour = f.hourPriced ? fmtUSD(f.hourUSD || 0) : '$–';
+      return `<div class="gov-stat" title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet in the current clock hour (token × list price; $– when a running agent's model is unpriced).&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run">${f.running || 0} · ${hour} this hour</div></div>`;
+    }
     function fleetRunStripHtml() {
       const f = window._lastStatus?.fleetRun;
       if (!f) return '';
@@ -19121,6 +19131,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="gov-stat" aria-label="${escapeHtml(issueEquationTitle)}"><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div>${issueEquationHTML ? `<div class="overview-kpi-subline">${issueEquationHTML}</div>` : ''}</div>
           <div class="gov-stat" aria-label="${escapeHtml(prEquationTitle)}"><div class="label">actionable PRs</div><div class="spark-row"><span class="val">${prCount}</span>${prsSpark}</div>${prEquationHTML ? `<div class="overview-kpi-subline">${prEquationHTML}</div>` : ''}</div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
+          ${fleetRunStatHtml()}
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           ${(() => {
             // Planning tile: active plan-trees, with plans-awaiting-review highlighted

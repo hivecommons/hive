@@ -1,0 +1,1 @@
+- Governor section shows the fleet `running N · $X this hour` figure as a visible stat; it previously rendered only inside the hidden compact governor strip
