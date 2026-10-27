@@ -775,9 +775,9 @@ type FrontendAgent struct {
 	Pinned          bool   `json:"pinned"`
 	LastKick        string `json:"lastKick,omitempty"`
 	LastKickAt      string `json:"lastKickAt,omitempty"`
-	// StyleSource is which house style the last kick carried: "repo"
-	// (HIVE_STYLE.md in the managed repo), "hive" (project.style /
-	// style_file) or "built-in"; empty when the agent has not been kicked
+	// StyleSource is which house style the last kick carried: repo
+	// (HIVE_STYLE.md in the managed repo), hive (project.style /
+	// style_file) or built-in; empty when the agent has not been kicked
 	// since the feature landed.
 	StyleSource       string `json:"styleSource,omitempty"`
 	NextKick          string `json:"nextKick,omitempty"`
