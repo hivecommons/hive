@@ -62,7 +62,7 @@ func withJournal(t *testing.T, c *github.Client) {
 func TestMaintainHeldPRMergeabilityAsksGitHubAgainAfterAJournaledUpdate(t *testing.T) {
 	store := newTestHoldGuardStore(t)
 	fake := &holdGuardServer{commits: map[int][]map[string]any{
-		7: {ghCommit("c1", "contributor", "fix: scan"), ghCommit("m1", "hive-bot", "Merge branch 'main' into fix")},
+		7: {ghCommit("c1", "contributor", "fix: scan"), ghMergeCommit("m1", "hive-bot", "Merge branch 'main' into fix", "c1", "b1")},
 	}}
 	client := newHoldGuardClient(t, fake)
 	withJournal(t, client)
@@ -76,8 +76,8 @@ func TestMaintainHeldPRMergeabilityAsksGitHubAgainAfterAJournaledUpdate(t *testi
 	}
 
 	// Main moves again; the PR is behind at the hive's own merge commit.
-	fake.setCommits(7, ghCommit("c1", "contributor", "fix: scan"), ghCommit("m1", "hive-bot", "Merge branch 'main' into fix"),
-		ghCommit("m2", "hive-bot", "Merge branch 'main' into fix"))
+	fake.setCommits(7, ghCommit("c1", "contributor", "fix: scan"), ghMergeCommit("m1", "hive-bot", "Merge branch 'main' into fix", "c1", "b1"),
+		ghMergeCommit("m2", "hive-bot", "Merge branch 'main' into fix", "m1", "b2"))
 	_ = enforceHoldGuard(context.Background(), cfg, client, client,
 		heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "m1", BaseSHA: "b2", MergeableState: "behind"}), discardLogger())
 	if rec, _ := store.Recorded("acme/widgets", 7); fake.updateCalls(7) != 2 || rec.HeadSHA != "m2" {

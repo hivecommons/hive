@@ -22,7 +22,7 @@ func heldPRsActionable(prs ...github.PullRequest) *github.ActionableResult {
 func TestMaintainHeldPRMergeabilityUpdatesBehindBranchAndAdvancesBaseline(t *testing.T) {
 	store := newTestHoldGuardStore(t)
 	fake := &holdGuardServer{commits: map[int][]map[string]any{
-		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("c2", "hive-bot", "Merge branch 'main' into feature")},
+		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghMergeCommit("c2", "hive-bot", "Merge branch 'main' into feature", "c1", "b1")},
 	}}
 	client := newHoldGuardClient(t, fake)
 	cfg := escalationTestConfig()
@@ -31,7 +31,7 @@ func TestMaintainHeldPRMergeabilityUpdatesBehindBranchAndAdvancesBaseline(t *tes
 		t.Fatal("test setup: snapshot must record")
 	}
 
-	held := heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "c1", MergeableState: "behind"})
+	held := heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "c1", BaseSHA: "b1", MergeableState: "behind"})
 	if got := enforceHoldGuard(context.Background(), cfg, client, client, held, discardLogger()); len(got) != 0 {
 		t.Fatalf("keeping a held PR mergeable must not flag it for re-review, got %v", got)
 	}
@@ -48,6 +48,111 @@ func TestMaintainHeldPRMergeabilityUpdatesBehindBranchAndAdvancesBaseline(t *tes
 	}
 	if len(fake.comments) != 0 {
 		t.Fatalf("a successful hygiene push must not comment, saw %v", fake.comments)
+	}
+}
+
+// ghMergeCommit is ghCommit with explicit parent SHAs, first parent first, so
+// a test can serve the merge-from-base GitHub's update-branch produces.
+func ghMergeCommit(sha, login, msg string, parents ...string) map[string]any {
+	c := ghCommit(sha, login, msg)
+	ps := make([]map[string]string, 0, len(parents))
+	for _, p := range parents {
+		ps = append(ps, map[string]string{"sha": p})
+	}
+	c["parents"] = ps
+	return c
+}
+
+// #14534: a head that moved after the update request but is not the merge of
+// the base into the requested head (a contributor push racing the refetch, or
+// a merge of some other branch) must not become the baseline.
+func TestMaintainHeldPRMergeabilityKeepsBaselineWhenNewHeadIsNotTheHygieneMerge(t *testing.T) {
+	tests := []struct {
+		name string
+		head map[string]any
+	}{
+		{"contributor push on top of the held head", ghMergeCommit("c2", "contributor", "feat: sneak in", "c1")},
+		{"merge of a non-base commit into the held head", ghMergeCommit("c2", "contributor", "Merge branch 'evil'", "c1", "x9")},
+		{"merge into a head other than the requested one", ghMergeCommit("c2", "contributor", "Merge branch 'main'", "x8", "b1")},
+		{"head with no parent information", ghCommit("c2", "contributor", "Merge branch 'main'")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestHoldGuardStore(t)
+			fake := &holdGuardServer{commits: map[int][]map[string]any{
+				7: {ghCommit("c1", "strategist-bot", "docs: plan"), tt.head},
+			}}
+			client := newHoldGuardClient(t, fake)
+			cfg := escalationTestConfig()
+			if !store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}}) {
+				t.Fatal("test setup: snapshot must record")
+			}
+
+			held := heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "c1", BaseSHA: "b1", BaseRef: "main", MergeableState: "behind"})
+			_ = enforceHoldGuard(context.Background(), cfg, client, client, held, discardLogger())
+
+			fake.mu.Lock()
+			calls := fake.updateBranchCalls[7]
+			fake.mu.Unlock()
+			if calls != 1 {
+				t.Fatalf("update-branch calls for PR 7 = %d, want 1", calls)
+			}
+			rec, ok := store.Recorded("acme/widgets", 7)
+			if !ok || rec.HeadSHA != "c1" {
+				t.Fatalf("baseline = %+v ok=%v, want it left pinned at c1: c2 is not proven to be the hive's merge", rec, ok)
+			}
+			if drift := holdguard.Diff(rec, "c2", nil); !drift.Moved {
+				t.Fatal("the unproven head must still read as drift at lift time")
+			}
+		})
+	}
+}
+
+// #14534 review: update-branch merges the base tip at call time, which may be
+// newer than the enumerated BaseSHA, and the polling enumeration may not carry
+// a BaseSHA at all. The hive's own merge must still advance the baseline when
+// the live base branch contains the merged parent.
+func TestMaintainHeldPRMergeabilityAdvancesWhenMergedBaseIsNewerThanEnumerated(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseSHA string
+	}{
+		{"base moved after enumeration", "b1"},
+		{"base SHA not enumerated", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestHoldGuardStore(t)
+			fake := &holdGuardServer{
+				commits: map[int][]map[string]any{
+					7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghMergeCommit("c2", "hive-bot", "Merge branch 'main' into feature", "c1", "b2")},
+				},
+				baseContains: map[string]bool{"b1": true, "b2": true},
+			}
+			client := newHoldGuardClient(t, fake)
+			cfg := escalationTestConfig()
+			if !store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}}) {
+				t.Fatal("test setup: snapshot must record")
+			}
+
+			held := heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "c1", BaseSHA: tt.baseSHA, BaseRef: "main", MergeableState: "behind"})
+			if got := enforceHoldGuard(context.Background(), cfg, client, client, held, discardLogger()); len(got) != 0 {
+				t.Fatalf("keeping a held PR mergeable must not flag it for re-review, got %v", got)
+			}
+			rec, ok := store.Recorded("acme/widgets", 7)
+			if !ok || rec.HeadSHA != "c2" {
+				t.Fatalf("baseline = %+v ok=%v, want it advanced to the hive's merge c2", rec, ok)
+			}
+			fake.mu.Lock()
+			compares := fake.compareCalls
+			fake.mu.Unlock()
+			if compares != 1 {
+				t.Fatalf("compare calls = %d, want 1 live base-membership check", compares)
+			}
+			if len(fake.comments) != 0 {
+				t.Fatalf("a successful hygiene push must not comment, saw %v", fake.comments)
+			}
+		})
 	}
 }
 
@@ -93,7 +198,7 @@ func TestMaintainHeldPRMergeabilityNotesUnresolvableConflictOnce(t *testing.T) {
 	// succeeds, and the stale conflict notice must clear.
 	fake.mu.Lock()
 	fake.failUpdateBranch = false
-	fake.commits[7] = append(fake.commits[7], ghCommit("c2", "hive-bot", "Merge branch 'main' into feature"))
+	fake.commits[7] = append(fake.commits[7], ghMergeCommit("c2", "hive-bot", "Merge branch 'main' into feature", "c1", "b2"))
 	fake.mu.Unlock()
 	heldResolved := heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "c1", BaseSHA: "b2", MergeableState: "behind"})
 	_ = enforceHoldGuard(context.Background(), cfg, client, client, heldResolved, discardLogger())

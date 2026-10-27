@@ -981,8 +981,11 @@ type PullRequest struct {
 	// true merge-base of an ancestry walk. For an up-to-date PR the two are
 	// the same commit, and for a stale one the base tip is the more useful
 	// tree to read anyway (it is what the change will actually land on). It is
-	// an ADVISORY grounding anchor, never a merge-safety input — nothing gates
-	// a merge on this field.
+	// an advisory grounding anchor for reviews; nothing gates a merge on it.
+	// The hold guard keys its branch-update attempts on it and uses it as a
+	// fast path when proving a post-update head is its own merge-from-base (holdguard.IsHygieneMerge, #14534): a
+	// stale or empty value falls back to a live base-branch membership check
+	// and, failing that, keeps the held baseline pinned, so it fails closed.
 	BaseSHA string `json:"base_sha,omitempty"`
 	// ReviewClass is the presentational triage class (fix / refactor-docs /
 	// tests) the queue snapshot is ordered by — see review_priority.go and
@@ -2489,6 +2492,9 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 		pr.Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
 		pr.MergeableState = full.GetMergeableState()
 		pr.MaintainerCanModify = full.GetMaintainerCanModify()
+		if base := full.GetBase().GetSHA(); base != "" {
+			pr.BaseSHA = base
+		}
 	}
 
 	var allCheckRuns []*gh.CheckRun
@@ -3807,6 +3813,23 @@ func (c *Client) CompareAheadBy(ctx context.Context, owner, repo, base, head str
 		return 0, fmt.Errorf("comparing commits %s/%s %s...%s: %w", owner, repo, base, head, err)
 	}
 	return cmp.GetAheadBy(), nil
+}
+
+// CommitOnBranch reports whether sha is reachable from the tip of branch, i.e.
+// GitHub's compare of branch...sha is "identical" or "behind". The hold guard
+// uses it to confirm the second parent of an update-branch merge is a base
+// commit even when the base moved after enumeration (#14534).
+func (c *Client) CommitOnBranch(ctx context.Context, repo, branch, sha string) (bool, error) {
+	if c == nil || c.client == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	cmp, _, err := c.client.Repositories.CompareCommits(WithRESTCaller(ctx, "hive:hold_guard_base_parent"), owner, repoName, branch, sha, &gh.ListOptions{PerPage: 1})
+	if err != nil {
+		return false, fmt.Errorf("comparing %s %s...%s: %w", repo, branch, sha, err)
+	}
+	st := cmp.GetStatus()
+	return st == "identical" || st == "behind", nil
 }
 
 // CommitMessage returns the first line of the commit message for the given SHA.
