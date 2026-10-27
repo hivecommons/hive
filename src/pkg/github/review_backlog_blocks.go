@@ -12,14 +12,11 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
-// Review backlog items are parked on the PR they were filed from
-// (hivecommons/hive#13833). A below-line or out-of-scope finding is almost
-// always about lines the PR itself changes, so working it on the base branch
-// before the PR lands is wrong or conflicts. Every item the review backlog
-// creates carries the blocked-on marker and the `blocked` label, and the
-// ledger records the PR it waits on. ReconcileReviewBacklogBlocks, run from
-// the governor every cycle, resolves the block in the item's own destination
-// (GitHub issue, Linear, Jira, GitHub Projects):
+// Review backlog items in files changed by the reviewed PR (or missing on
+// its base) wait for that PR (#13833, #14473). Untouched-file findings are
+// immediately actionable. Failed changed-file lookups conservatively keep
+// the block. ReconcileReviewBacklogBlocks resolves parked items in their own
+// destination (GitHub issue, Linear, Jira, GitHub Projects):
 //
 //   - the PR merged: the block is lifted with a one-line note telling the
 //     worker to check the finding still applies and to close the item without
@@ -351,7 +348,7 @@ func reviewFollowUpsSection(listed []reviewBacklogFiled, capped int) string {
 	var b strings.Builder
 	b.WriteString(reviewFollowUpsMarker)
 	b.WriteString("\n### Follow-ups filed\n")
-	b.WriteString("Non-blocking findings from this review are tracked as backlog items, so they are not filed again. New items wait on this PR: fix them here, or leave them and they unblock when it merges (if it closes unmerged they are unblocked for re-triage, not closed).\n\n")
+	b.WriteString("Non-blocking findings from this review are tracked as backlog items, so they are not filed again. Items in files changed by this PR wait on it: fix them here, or leave them and they unblock when it merges (if it closes unmerged they are unblocked for re-triage, not closed). Findings in untouched files are actionable immediately.\n\n")
 	seen := map[string]bool{}
 	for _, it := range sorted {
 		ref := it.key
@@ -376,4 +373,43 @@ func reviewFollowUpsSection(listed []reviewBacklogFiled, capped int) string {
 		fmt.Fprintf(&b, "\n%d more held back by the per-PR daily cap; they are filed on a later review.\n", capped)
 	}
 	return b.String()
+}
+
+// newReviewBacklogChangedFilesProbe caches a bounded, paginated lookup per
+// filing pass. A partial list cannot prove a file untouched, so errors and
+// exhausted budgets report unknown rather than releasing potentially blocked work.
+func (c *Client) newReviewBacklogChangedFilesProbe(repo string, pr int) func(context.Context, string) (bool, bool) {
+	loaded, complete := false, false
+	files := map[string]bool{}
+	return func(ctx context.Context, file string) (bool, bool) {
+		if !loaded {
+			loaded = true
+			owner, name := c.splitRepo(repo)
+			opts := &gh.ListOptions{PerPage: 100}
+			count := 0
+			for n := 0; n < reviewBacklogBlockLookups; n++ {
+				changed, resp, err := c.client.PullRequests.ListFiles(ctx, owner, name, pr, opts)
+				if err != nil {
+					break
+				}
+				count += len(changed)
+				for _, f := range changed {
+					files[f.GetFilename()] = true
+					if old := f.GetPreviousFilename(); old != "" {
+						files[old] = true
+					}
+				}
+				if resp.NextPage == 0 {
+					// GitHub caps this endpoint at 3000 files.
+					complete = count < 3000
+					break
+				}
+				opts.Page = resp.NextPage
+			}
+		}
+		if files[strings.TrimSpace(file)] {
+			return true, true
+		}
+		return false, complete && strings.TrimSpace(file) != ""
+	}
 }

@@ -193,10 +193,9 @@ func (l *reviewBacklogLedger) save(path string, now time.Time) error {
 // updated counts toward the per-PR daily cap, and each pass that wrote
 // anything leaves one batch audit entry.
 //
-// Every item filed from a review of an open PR is parked on that PR
-// (hivecommons/hive#13833): a below-line or out-of-scope finding is almost
-// always about lines the PR changes, so fixing it on the base branch before
-// the PR lands is wrong or conflicts. ReconcileReviewBacklogBlocks lifts the
+// Findings in files changed by the PR or missing on its base are parked on
+// that PR; findings in untouched files can be worked immediately (#14473).
+// ReconcileReviewBacklogBlocks lifts the
 // block when the PR merges, and unblocks the item for re-triage (never closes
 // it) when the PR closes unmerged.
 func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequest, now time.Time) error {
@@ -242,6 +241,7 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 	// hivecommons/hive#13093: a finding whose evidence file the PR introduces
 	// is parked on the PR, not offered as work.
 	baseProbe := c.newReviewBacklogBaseProbe(req.Repo, req.Number)
+	changedFiles := c.newReviewBacklogChangedFilesProbe(req.Repo, req.Number)
 	var filedIssues []reviewBacklogFiled
 	// listed is every item this pass's findings map to — filed, re-raised
 	// onto an existing item, or already tracked for this PR — for the
@@ -318,16 +318,25 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 				continue
 			}
 			title := reviewBacklogIssueTitle(report.Perspective, finding)
-			// Every item is parked on the reviewed PR (#13833). The note
-			// says why: the cited file only exists in the PR (#13093), or
-			// the finding is about code the PR is changing.
-			blocked := true
-			itemLabels := blockedBacklogLabels(labels)
+			missing := baseProbe.FileMissingOnBase(ctx, finding.File)
+			touched, known := false, true
+			if !missing {
+				touched, known = changedFiles(ctx, finding.File)
+			}
+			blocked := missing || touched || !known
+			itemLabels := labels
+			if blocked {
+				itemLabels = blockedBacklogLabels(labels)
+			}
 			body := c.reviewBacklogIssueBody(req, report.Perspective, finding, headSHA, routing.Severity.BlockAt, fp)
-			if baseProbe.FileMissingOnBase(ctx, finding.File) {
+			if missing {
 				body = blockedBacklogNote(req.Repo, req.Number, finding.File, baseProbe.BaseRef(ctx)) + body
-			} else {
-				body = blockedOnReviewedPRNote(req.Repo, req.Number) + body
+			} else if blocked {
+				note := blockedOnReviewedPRNote(req.Repo, req.Number)
+				if !known {
+					note = strings.Replace(note, "is about code that PR is changing", "could not be checked against the PR's changed files", 1)
+				}
+				body = note + body
 			}
 			ref, err := sink.CreateItem(ctx, ReviewBacklogItem{
 				Repo:        req.Repo,
@@ -384,10 +393,12 @@ func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now t
 			}
 			if !ref.Reused {
 				// A filing folded into an open twin keeps the twin's own
-				// state (#13364); only an item this pass created waits on
-				// the PR.
+				// state (#13364). Keep source provenance for new items,
+				// but only park findings related to the PR.
 				fpRecord.BlockedOnPR = req.Number
-				fpRecord.BlockState = reviewBacklogBlockBlocked
+				if blocked {
+					fpRecord.BlockState = reviewBacklogBlockBlocked
+				}
 			}
 			ledger.setFingerprint(req.Repo, fp, fpRecord)
 			if outOfScope {
