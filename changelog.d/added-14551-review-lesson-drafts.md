@@ -1,0 +1,1 @@
+- Retro lessons derived from human review feedback are now stored as drafts tagged `review-feedback` in the hive's local knowledge store, hidden from agents until the owner approves them; repeats of an approved or draft lesson are counted without changing its state (#14551).

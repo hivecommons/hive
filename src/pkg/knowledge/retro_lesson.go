@@ -34,6 +34,10 @@ const (
 	// DefaultRetroLessonConfidenceCap bounds the stored confidence repeats can
 	// raise a retro lesson to.
 	DefaultRetroLessonConfidenceCap = 0.9
+
+	// ReviewFeedbackTag marks retro lessons derived from human review
+	// feedback. Such lessons are stored as drafts until the owner approves them.
+	ReviewFeedbackTag = "review-feedback"
 )
 
 // retroLessonRepeatMu serializes repeat updates inside one process; the flock
@@ -52,6 +56,11 @@ type RetroLesson struct {
 	// DefaultRetroLessonConfidenceStep and DefaultRetroLessonConfidenceCap.
 	ConfidenceStep float64
 	ConfidenceCap  float64
+	// FromReviewFeedback marks a lesson derived from human review feedback. It
+	// is stored as a draft tagged ReviewFeedbackTag in the hive's local store
+	// even when other retro lessons route to a remote layer, and stays local
+	// after approval.
+	FromReviewFeedback bool
 }
 
 // IngestRetroLesson quality-gates, deduplicates, and stores one retro lesson
@@ -94,6 +103,15 @@ func (k *KnowledgeAPI) IngestRetroLesson(ctx context.Context, lesson RetroLesson
 		fact.SourceDate = time.Now().UTC()
 	}
 
+	if lesson.FromReviewFeedback {
+		fact.Tags = append(fact.Tags, ReviewFeedbackTag)
+		if err := k.writeRetroLessonFileState(slug, fact, StateDraft); err != nil {
+			return "", false, err
+		}
+		k.addRetroGraphTriple(slug, lesson)
+		return slug, true, nil
+	}
+
 	if client := k.clientForLayer(LayerType(retroLessonLayer)); client != nil {
 		if err := client.IngestFacts(ctx, []ExtractedFact{fact}); err != nil {
 			return "", false, err
@@ -121,20 +139,23 @@ func (k *KnowledgeAPI) recordRetroLessonRepeat(slug string, lesson RetroLesson) 
 	if !strings.HasPrefix(slug, retroLessonSlugPrefix) {
 		return
 	}
+	dir := filepath.Join(knowledgeBaseDir, retroLessonLayer)
+	path := filepath.Join(dir, strings.ReplaceAll(slug+".md", "/", "_"))
 	if client := k.clientForLayer(LayerType(retroLessonLayer)); client != nil {
-		// The remote page API has no conditional or partial update, so a repeat
-		// could overwrite a concurrent change or drop front matter it does not
-		// carry. Skip rather than risk a partly written lesson.
-		k.logger.Info("retro: lesson repeat skipped: remote knowledge layer cannot update the lesson atomically",
-			"slug", slug, "source_bead", lesson.SourceBead, "source_pr", lesson.SourcePR)
-		return
+		// A lesson held in the local store (review-derived drafts always are)
+		// is updated in place. Remote lessons are skipped: the remote page API
+		// has no conditional or partial update, so a repeat could overwrite a
+		// concurrent change or drop front matter it does not carry.
+		if _, err := os.Stat(path); err != nil {
+			k.logger.Info("retro: lesson repeat skipped: remote knowledge layer cannot update the lesson atomically",
+				"slug", slug, "source_bead", lesson.SourceBead, "source_pr", lesson.SourcePR)
+			return
+		}
 	}
 	entry := retroRepeatSource(lesson)
 	if entry == "" {
 		return
 	}
-	dir := filepath.Join(knowledgeBaseDir, retroLessonLayer)
-	path := filepath.Join(dir, strings.ReplaceAll(slug+".md", "/", "_"))
 	if _, err := os.Stat(path); err != nil {
 		return
 	}
@@ -390,6 +411,12 @@ func ValidRetroLesson(lesson string) bool {
 }
 
 func (k *KnowledgeAPI) writeRetroLessonFile(slug string, fact ExtractedFact) error {
+	return k.writeRetroLessonFileState(slug, fact, "")
+}
+
+// writeRetroLessonFileState writes the lesson file; a non-empty state adds a
+// lifecycle `state:` line, and an empty one leaves the file as it always was.
+func (k *KnowledgeAPI) writeRetroLessonFileState(slug string, fact ExtractedFact, state LifecycleState) error {
 	dir := filepath.Join(knowledgeBaseDir, retroLessonLayer)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating retro lesson dir: %w", err)
@@ -402,6 +429,9 @@ func (k *KnowledgeAPI) writeRetroLessonFile(slug string, fact ExtractedFact) err
 	fmt.Fprintf(&buf, "layer: %s\n", retroLessonLayer)
 	fmt.Fprintf(&buf, "confidence: %.2f\n", fact.Confidence)
 	fmt.Fprintf(&buf, "tags: [%s]\n", sanitizeFrontmatterList(fact.Tags))
+	if state != "" {
+		fmt.Fprintf(&buf, "state: %s\n", state)
+	}
 	fmt.Fprintf(&buf, "source: %s\n", sanitizeFrontmatterValue(fact.SourcePR))
 	fmt.Fprintf(&buf, "synthesized: %s\n", fact.SourceDate.UTC().Format(time.RFC3339))
 	buf.WriteString("---\n\n")
