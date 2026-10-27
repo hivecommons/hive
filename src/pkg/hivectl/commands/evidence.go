@@ -102,11 +102,12 @@ func newEvidenceCommand(env *commandEnv) *cobra.Command {
 		Use:     "evidence",
 		Short:   "Per-PR review evidence: export stored bundles or backfill them from forge history",
 		Long:    "Work with the review evidence bundles Hive stores under the evidence root (default /data/evidence).\nexport reads the local filesystem only; backfill talks to the GitHub API. Neither contacts a hive and nothing here\ninfluences a merge.",
-		Example: "  hivectl evidence export --since 168h --format csv --out evidence.csv\n  hivectl evidence export --since 2026-10-01T00:00:00Z --repo hivecommons/hive\n  hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run",
+		Example: "  hivectl evidence export --since 168h --format csv --out evidence.csv\n  hivectl evidence export --since 2026-10-01T00:00:00Z --repo hivecommons/hive\n  hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run\n  hivectl evidence benchmark --month 2026-10 --out-dir src/docs/benchmarks --readme README.md",
 	}
 	cmd.AddCommand(newEvidenceExportCommand(env))
 	cmd.AddCommand(newEvidenceBackfillCommand(env))
 	cmd.AddCommand(newEvidenceBackfillIssuesCommand(env))
+	cmd.AddCommand(newEvidenceBenchmarkCommand(env))
 	return cmd
 }
 
