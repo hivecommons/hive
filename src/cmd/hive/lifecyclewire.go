@@ -111,12 +111,24 @@ func recordMergedOnLinkedIssues(store *timeline.Store, prRef, agent string, at i
 	}
 }
 
+func hasJourney(store *timeline.Store, ref string) bool {
+	if store == nil || ref == "" {
+		return false
+	}
+	_, ok := store.Journey(ref)
+	return ok
+}
+
 // recordObservedMerge records a merge the PR-claim ledger OBSERVED (a human
 // merged outside the hive, or the governor's merge arrived via the sync) at
 // the instant it was seen, on the PR's journey and the issues it fixes. The
 // audit bridge covers hive-driven merges; this covers the rest, so pr→merge
 // has a sample whoever pressed the button. Dedupe makes overlap a refresh.
-func recordObservedMerge(rec lifecycleRecorder, org, repo string, number int, observedAt time.Time, actor, attribution string) {
+//
+// reworkCommits is the count of commits pushed after the first review; when
+// reworkObserved it is stamped on the merged stage (and the linked issues'
+// copies) so the retro lane's review-rework autonomy signals can read it.
+func recordObservedMerge(rec lifecycleRecorder, org, repo string, number int, observedAt time.Time, actor, attribution string, reworkCommits int, reworkObserved bool) {
 	if rec == nil {
 		return
 	}
@@ -129,6 +141,9 @@ func recordObservedMerge(rec lifecycleRecorder, org, repo string, number int, ob
 		return
 	}
 	attrs := map[string]string{"pr_ref": ref, "source": "observed", "actor": actor, "path": attribution}
+	if reworkObserved {
+		attrs["pr_rework_commits_after_review"] = strconv.Itoa(reworkCommits)
+	}
 	event := timeline.Event{IssueRef: ref, Kind: timeline.KindMerged, Attrs: attrs}
 	if !observedAt.IsZero() {
 		event.At = observedAt.UnixMilli()

@@ -417,7 +417,13 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 			// merged_at), so issues started before issue-side recording
 			// existed close instead of lingering as stale in-progress.
 			backfillMergedPROnIssues(b.dashSrv, b.cfg.Project.Org, obs)
-			recordObservedMerge(b.dashSrv, b.cfg.Project.Org, obs.Repo, obs.Number, obs.ObservedAt, obs.Actor, path)
+			reworkCommits, reworkObserved := 0, false
+			// Only PRs the hive already journeys are measured, which keeps
+			// the extra GitHub reads off merges the hive never worked.
+			if store := b.dashSrv.LifecycleTimeline(); store != nil && hasJourney(store, timelineRef(b.cfg.Project.Org, obs.Repo, obs.Number)) {
+				reworkCommits, reworkObserved = client.MergedPRReworkCommits(b.ctx, obs.Repo, obs.Number, obs.ObservedAt)
+			}
+			recordObservedMerge(b.dashSrv, b.cfg.Project.Org, obs.Repo, obs.Number, obs.ObservedAt, obs.Actor, path, reworkCommits, reworkObserved)
 		case github.PRStateClosed:
 			path := obs.Attribution
 			if path == "" {

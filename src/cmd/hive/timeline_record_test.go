@@ -418,7 +418,7 @@ func TestRecordObservedMerge_UsesObservedInstant(t *testing.T) {
 	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
 	recordPROpenedForIssues(rec, "acme", "bee", "acme/widgets", 41, "", []int{7})
 	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
-	recordObservedMerge(rec, "acme", "acme/widgets", 41, at, "alice", "human")
+	recordObservedMerge(rec, "acme", "acme/widgets", 41, at, "alice", "human", 0, false)
 
 	for _, ref := range []string{"widgets#41", "widgets#7"} {
 		j, ok := rec.store.Journey(ref)
@@ -430,8 +430,31 @@ func TestRecordObservedMerge_UsesObservedInstant(t *testing.T) {
 			t.Fatalf("%s merged = %+v", ref, st)
 		}
 	}
-	recordObservedMerge(nil, "acme", "acme/widgets", 41, at, "", "")
+	recordObservedMerge(nil, "acme", "acme/widgets", 41, at, "", "", 0, false)
 	recordPROpenedForIssues(&fakeLifecycleRecorder{}, "acme", "bee", "acme/widgets", 41, "", []int{7})
+}
+
+func TestRecordObservedMerge_StampsReworkCommits(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordPROpenedForIssues(rec, "acme", "bee", "acme/widgets", 41, "", []int{7})
+	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	recordObservedMerge(rec, "acme", "acme/widgets", 41, at, "alice", "hive", 0, true)
+	recordObservedMerge(rec, "acme", "acme/widgets", 42, at, "alice", "hive", 3, true)
+	recordObservedMerge(rec, "acme", "acme/widgets", 43, at, "alice", "hive", 0, false)
+
+	for ref, want := range map[string]string{"widgets#41": "0", "widgets#7": "0", "widgets#42": "3"} {
+		j, ok := rec.store.Journey(ref)
+		if !ok {
+			t.Fatalf("%s missing", ref)
+		}
+		if got := j.Stages[timeline.KindMerged].Attrs["pr_rework_commits_after_review"]; got != want {
+			t.Errorf("%s rework = %q, want %q", ref, got, want)
+		}
+	}
+	j, _ := rec.store.Journey("widgets#43")
+	if _, has := j.Stages[timeline.KindMerged].Attrs["pr_rework_commits_after_review"]; has {
+		t.Error("unobserved rework must not be stamped")
+	}
 }
 
 func TestRecordEnumeratedIssues_RetainsCreatedAt(t *testing.T) {
