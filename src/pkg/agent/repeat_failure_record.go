@@ -54,6 +54,9 @@ const (
 
 	repeatFailureRecordDirMode  = 0o700
 	repeatFailureRecordFileMode = 0o600
+	// repeatFailureRecordParentMode is used for parents EnsureRepeatFailureRecordDir
+	// has to create (normally ~/.hive): the agent must be able to traverse them.
+	repeatFailureRecordParentMode = 0o755
 	// repeatFailureCollectingSuffix names the renamed file being collected.
 	repeatFailureCollectingSuffix = ".collecting"
 	// repeatFailureWriteAttempts bounds how often a writer reopens after
@@ -96,17 +99,75 @@ func RepeatFailureRecordPath(home string) string {
 // EnsureRepeatFailureRecordDir creates the directory holding an agent's raw
 // record file at mode 0700 and, when uid > 0, gives it to the agent's user,
 // so only that user and Hive can read the records inside it.
+//
+// Hive runs as root while the agent runs under uid, so any parent this
+// helper has to create (normally ~/.hive) is made traversable at
+// repeatFailureRecordParentMode and also given to uid; only the leaf is
+// 0700. Otherwise a root-owned 0700 parent would stop the agent from ever
+// reaching its record file.
+//
+// SECURITY (audit F12): os.MkdirAll, os.Chown and os.Chmod all follow
+// symlinks, so every component below the first existing directory is
+// Lstat-verified as a real directory before it is created or acted on. A
+// planted link fails loudly instead of having root chown its target.
 func EnsureRepeatFailureRecordDir(recordPath string, uid int) error {
-	dir := filepath.Dir(recordPath)
-	if err := os.MkdirAll(dir, repeatFailureRecordDirMode); err != nil {
-		return err
+	dir := filepath.Clean(filepath.Dir(recordPath))
+
+	// Walk up to the first existing component; everything below it is ours
+	// to create. The existing ancestor is only checked for being a real
+	// directory, never modified.
+	var missing []string
+	current := dir
+	for {
+		exists, err := lstatNoFollow(current)
+		if err != nil {
+			return err
+		}
+		if exists {
+			break
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return fmt.Errorf("repeat-failure record dir %s has no existing ancestor", dir)
+		}
+		missing = append(missing, current)
+		current = parent
 	}
-	if uid > 0 {
-		if err := os.Chown(dir, uid, -1); err != nil {
+
+	for i := len(missing) - 1; i >= 0; i-- {
+		path := missing[i]
+		mode := os.FileMode(repeatFailureRecordParentMode)
+		if path == dir {
+			mode = repeatFailureRecordDirMode
+		}
+		if err := os.Mkdir(path, mode); err != nil && !os.IsExist(err) {
+			return err
+		}
+		// Re-check: EEXIST means something raced us into place, and that
+		// something may be a symlink.
+		if _, err := lstatNoFollow(path); err != nil {
+			return err
+		}
+		if err := ownRepeatFailureDir(path, uid, mode); err != nil {
 			return err
 		}
 	}
-	return os.Chmod(dir, repeatFailureRecordDirMode)
+	if len(missing) == 0 || missing[0] != dir {
+		// dir already existed: still enforce ownership and mode on the leaf.
+		return ownRepeatFailureDir(dir, uid, repeatFailureRecordDirMode)
+	}
+	return nil
+}
+
+// ownRepeatFailureDir gives path (already Lstat-verified by the caller) to
+// uid when uid > 0 and sets mode on it.
+func ownRepeatFailureDir(path string, uid int, mode os.FileMode) error {
+	if uid > 0 {
+		if err := os.Chown(path, uid, -1); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(path, mode)
 }
 
 // AppendRepeatFailureRecord appends one record to a raw record file in a

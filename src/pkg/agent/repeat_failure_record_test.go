@@ -396,3 +396,69 @@ func TestRepeatFailureCollectorRefusesSymlinkedRecordFile(t *testing.T) {
 		t.Fatal("a writer must not follow a symlinked record file")
 	}
 }
+
+// Hive runs as root and the agent under its own UID: parents the helper
+// creates (~/.hive) must stay traversable, only the leaf is 0700, and the
+// helper never has to see ~/.hive pre-exist.
+func TestEnsureRepeatFailureRecordDirParentsTraversable(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.Mkdir(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := RepeatFailureRecordPath(home)
+	if err := EnsureRepeatFailureRecordDir(path, -1); err != nil {
+		t.Fatal(err)
+	}
+	leaf := filepath.Dir(path)
+	if info, err := os.Lstat(leaf); err != nil || info.Mode().Perm() != repeatFailureRecordDirMode {
+		t.Fatalf("leaf %s: info=%v err=%v, want mode %o", leaf, info, err, repeatFailureRecordDirMode)
+	}
+	parent := filepath.Dir(leaf)
+	if info, err := os.Lstat(parent); err != nil || info.Mode().Perm() != repeatFailureRecordParentMode {
+		t.Fatalf("parent %s: info=%v err=%v, want mode %o", parent, info, err, repeatFailureRecordParentMode)
+	}
+	if info, err := os.Lstat(home); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("existing ancestor %s must be untouched: info=%v err=%v", home, info, err)
+	}
+	// Idempotent on an existing tree.
+	if err := EnsureRepeatFailureRecordDir(path, -1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Audit F12: a symlink planted at any component the helper would chown/chmod
+// is refused instead of followed.
+func TestEnsureRepeatFailureRecordDirRefusesSymlink(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	target := filepath.Join(root, "elsewhere")
+	for _, d := range []string{filepath.Join(home, ".hive"), target} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := RepeatFailureRecordPath(home)
+	if err := os.Symlink(target, filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	}
+	err := EnsureRepeatFailureRecordDir(path, -1)
+	if !errors.Is(err, errInferenceHomeSymlink) {
+		t.Fatalf("leaf symlink: err = %v, want errInferenceHomeSymlink", err)
+	}
+
+	// Parent component is the link this time.
+	home2 := filepath.Join(root, "home2")
+	if err := os.Mkdir(home2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(home2, ".hive")); err != nil {
+		t.Fatal(err)
+	}
+	err = EnsureRepeatFailureRecordDir(RepeatFailureRecordPath(home2), -1)
+	if !errors.Is(err, errInferenceHomeSymlink) {
+		t.Fatalf("parent symlink: err = %v, want errInferenceHomeSymlink", err)
+	}
+	if _, err := os.Lstat(filepath.Join(target, "repeat-failure")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("nothing may be created through the link, stat err = %v", err)
+	}
+}
