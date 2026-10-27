@@ -1284,6 +1284,8 @@
     .agent-error { font-size: 0.72rem; color: var(--red); margin-top: var(--sp-2); text-align: right; word-break: break-word; }
     /* "Now:" line (#10934): what the agent is on, under its state line. Not
        aria-live — it changes every update and would flood screen readers. */
+    .oc-style-source { font-size: var(--fs-xs); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--sp-1); }
+    .oc-style-source[data-source="repo"] { color: var(--fg); border-color: var(--accent); }
     .agent-now { text-align: right; font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-2); word-break: break-word; }
     .agent-now .an-lead { font-weight: 600; color: var(--text); }
     .agent-now.outdated { color: var(--yellow); }
@@ -10588,6 +10590,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
           <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentCadenceDisplay(a))}</div></div>
           <div class="oc-detail-field"><div class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">Last Kick</div><div class="value">${esc(agentKickDisplay(a.lastKick, a.lastKickAt))}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Which house style the last kick carried: repo (HIVE_STYLE.md in the managed repo), hive (project.style / style_file) or built-in.">Style</div><div class="value">${styleSourceHtml(a)}</div></div>
           <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input dialog.">Next Kick</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentKickDisplay(a.nextKick, a.nextKickAt))}</div></div>
           <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability.">Restarts</div><div class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts ?? 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? ` <button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></div></div>
@@ -13526,6 +13529,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ghBase: window._githubBaseUrl || 'https://github.com',
         claims: _agentNowClaims,
       };
+    }
+
+    // House style (docs/house-style.md): which source the last kick's
+    // "HOUSE STYLE" section came from. Empty until the agent is kicked.
+    const STYLE_SOURCE_HELP = {
+      'repo': 'HIVE_STYLE.md from the managed repository (overrides the hive default)',
+      'hive': 'Hive-wide default from project.style / project.style_file in hive.yaml',
+      'built-in': 'Built-in default: no repo HIVE_STYLE.md and no hive default configured',
+    };
+    function styleSourceHtml(a) {
+      const src = a && a.styleSource;
+      if (!src || !STYLE_SOURCE_HELP[src]) return '—';
+      return `<span class="oc-style-source" data-source="${esc(src)}" title="${esc(STYLE_SOURCE_HELP[src])}">${esc(src)}</span>`;
     }
 
     function agentNowHtml(a) {
@@ -17837,6 +17853,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="agent-field"><span class="label" title="Number of HTTP requests blocked by the ACMM proxy for this agent. Non-zero means the agent attempted actions above its mode.">proxy</span><span class="value">${a.proxyViolations > 0 ? '<span style="color:var(--danger)">⛔ ' + a.proxyViolations + ' blocked</span>' : '✓ clean'}</span></div>
           <div class="agent-field"><span class="label" title="Time between governor kicks for this agent in the current mode. Configured per governor mode (idle/quiet/busy/surge).">interval</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentCadenceDisplay(a))}</span></div>
           <div class="agent-field"><span class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">last kick</span><span class="value">${esc(agentKickDisplay(a.lastKick, a.lastKickAt))}</span></div>
+          <div class="agent-field"><span class="label" title="Which house style the last kick carried: repo (HIVE_STYLE.md), hive (project.style) or built-in.">style</span><span class="value">${styleSourceHtml(a)}</span></div>
           <div class="agent-field"><span class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input dialog.">next kick</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentKickDisplay(a.nextKick, a.nextKickAt))}</span></div>
           ${agentTokenRow(a.name, a.cadence)}
           ${agentSpendRow(a.name)}

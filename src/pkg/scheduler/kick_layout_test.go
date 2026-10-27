@@ -138,6 +138,7 @@ func TestKickLayoutStaticPrefixIsCacheable(t *testing.T) {
 	// Static content in the prefix, in the documented order.
 	static := []string{
 		"[agent:scanner]",
+		"HOUSE STYLE (source: built-in)",
 		governorWorkSourceRule,
 		"## Independent review",
 		"## Workflow files are out of reach at this mode",

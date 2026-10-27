@@ -21,6 +21,14 @@ project:
   # keep no clones, so without this AGENTS.md injection stays a no-op — which is
   # the default. An absent directory or a repo with no AGENTS.md is also a no-op.
   # checkouts_dir: /data/checkouts
+  # Optional: hive-wide house style — a short how-to-change rule list that
+  # opens every kick on every backend (src/docs/house-style.md). A repo's root
+  # HIVE_STYLE.md (read from checkouts_dir) overrides it; unset both and the
+  # built-in text applies. `style` (inline) wins over `style_file`.
+  # style: |
+  #   - Prefer table-driven tests.
+  # style_file: /etc/hive/HIVE_STYLE.md
+  # style_max_bytes: 4096                # min 512; oversize candidates are skipped, not clipped
   # Optional: quiet ONE repo without stopping the hive (src/docs/repo-pause.md).
   # A paused repo stays in `repos` above — it keeps its dashboard card and its
   # ACMM eval — but agents cannot write to it and are handed no work on it. Only

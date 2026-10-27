@@ -757,24 +757,29 @@ type FrontendAgent struct {
 	PausedBy      string `json:"pausedBy,omitempty"`
 	// OperatorStopped is true when the agent was stopped explicitly (not by a
 	// crash), so the governor will not revive it.
-	OperatorStopped   bool   `json:"operatorStopped,omitempty"`
-	OffByCadence      bool   `json:"offByCadence"`
-	NoCadence         bool   `json:"noCadence"`
-	NeedsLogin        bool   `json:"needsLogin"`
-	LoginURL          string `json:"loginURL,omitempty"`
-	AuthAvailable     bool   `json:"authAvailable"`
-	AuthKnown         bool   `json:"authKnown"`
-	CLI               string `json:"cli"`
-	Model             string `json:"model"`
-	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
-	Cadence           string `json:"cadence"`
-	Doing             string `json:"doing"`
-	PinnedCli         bool   `json:"pinnedCli"`
-	PinnedModel       bool   `json:"pinnedModel"`
-	PinnedBoth        bool   `json:"pinnedBoth"`
-	Pinned            bool   `json:"pinned"`
-	LastKick          string `json:"lastKick,omitempty"`
-	LastKickAt        string `json:"lastKickAt,omitempty"`
+	OperatorStopped bool   `json:"operatorStopped,omitempty"`
+	OffByCadence    bool   `json:"offByCadence"`
+	NoCadence       bool   `json:"noCadence"`
+	NeedsLogin      bool   `json:"needsLogin"`
+	LoginURL        string `json:"loginURL,omitempty"`
+	AuthAvailable   bool   `json:"authAvailable"`
+	AuthKnown       bool   `json:"authKnown"`
+	CLI             string `json:"cli"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	Cadence         string `json:"cadence"`
+	Doing           string `json:"doing"`
+	PinnedCli       bool   `json:"pinnedCli"`
+	PinnedModel     bool   `json:"pinnedModel"`
+	PinnedBoth      bool   `json:"pinnedBoth"`
+	Pinned          bool   `json:"pinned"`
+	LastKick        string `json:"lastKick,omitempty"`
+	LastKickAt      string `json:"lastKickAt,omitempty"`
+	// StyleSource is which house style the last kick carried: "repo"
+	// (HIVE_STYLE.md in the managed repo), "hive" (project.style /
+	// style_file) or "built-in"; empty when the agent has not been kicked
+	// since the feature landed.
+	StyleSource       string `json:"styleSource,omitempty"`
 	NextKick          string `json:"nextKick,omitempty"`
 	NextKickAt        string `json:"nextKickAt,omitempty"`
 	NextKickIn        string `json:"nextKickIn,omitempty"`
