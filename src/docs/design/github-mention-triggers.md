@@ -345,7 +345,7 @@ the decision follows each one, with the code on `v6` that now carries it.
 - `src/pkg/linearagent/responder.go` — ack-first, resolve, kick, track.
 - `src/pkg/linearagent/oauth.go:56` — `app:mentionable`.
 - `src/crux/agent/capabilities.go:32` — `Converse`, documented for mentions.
-- `src/crux/proxy/rules.go:160,189` — where `Converse` is enforced.
+- `src/crux/proxy/rules.go:171,200` — where `Converse` is enforced.
 - `src/pkg/config/config.go:1716` — `linear.session_agent` resolution rule.
 - `src/pkg/config/config.go:5538` — the removed declarative channel types (#5591).
 - `src/pkg/config/review_bots.go:33` — `classification.review_bots`, the loop
