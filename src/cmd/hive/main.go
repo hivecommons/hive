@@ -27,6 +27,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux"
+	cruxagent "github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/inference"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/proxy"
@@ -2192,10 +2193,25 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		b.logger.Warn("cleared invalid inference launch_cmd; inference and gateway backends launch through claude", "agent", name)
 	}
 	rtCfg := cruxconfig.RuntimeConfigFromEnv()
-	b.agentMgr, err = deps.newRuntime(rtCfg,
+	runtimeOptions := []cruxruntime.Option{
 		cruxruntime.WithDefinitions(b.cfg.EnabledAgents()),
 		cruxruntime.WithLogger(b.logger),
-		cruxruntime.WithProject(b.projectCtx))
+		cruxruntime.WithProject(b.projectCtx),
+	}
+	if sharedAgentPoolEnabled() {
+		hubURL := strings.TrimSpace(os.Getenv("HIVE_HUB_URL"))
+		if hubURL == "" {
+			hubURL = b.cfg.Hub.URL
+		}
+		pool, poolErr := cruxagent.NewSharedSessionPoolClient(hubURL, b.cfg.HiveID, hub.SpokeHeartbeatKey())
+		if poolErr != nil {
+			b.logger.Error("shared agent pool is enabled but cannot be configured", "error", poolErr)
+			deps.exit(1)
+			return
+		}
+		runtimeOptions = append(runtimeOptions, cruxruntime.WithSharedSessionPool(pool))
+	}
+	b.agentMgr, err = deps.newRuntime(rtCfg, runtimeOptions...)
 	if err != nil {
 		b.logger.Error("crux runtime unavailable", "mode", rtCfg.Mode, "error", err)
 		deps.exit(1)
@@ -4638,7 +4654,12 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	// shutdown the ctx-aware stagger returns immediately instead of leaking a
 	// goroutine parked in a bare time.Sleep.
 	enabledAgents := b.cfg.EnabledAgents()
-	startupAgents := startupLaunchNames(enabledAgents, b.onDemandFromPack)
+	startupAgents := []string{}
+	if sharedAgentPoolEnabled() {
+		b.logger.Info("shared agent pool enabled; persistent agents will start on demand")
+	} else {
+		startupAgents = startupLaunchNames(enabledAgents, b.onDemandFromPack)
+	}
 	b.agentMgr.MarkStartupLaunchQueued(startupAgents)
 	deps.spawn("agent-launch", func() {
 		agentIndex := 0

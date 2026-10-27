@@ -1,0 +1,243 @@
+package hub
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+var sharedAgentPoolPath = "/data/saas/shared-agent-pool.json"
+
+const defaultSharedAgentLeaseTTL = 90 * time.Second
+
+type sharedAgentLease struct {
+	ID        string    `json:"id"`
+	HiveID    string    `json:"hive_id"`
+	AgentName string    `json:"agent_name"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type sharedAgentPoolState struct {
+	Version int                `json:"version"`
+	Leases  []sharedAgentLease `json:"leases"`
+}
+
+type sharedAgentPool struct {
+	mu           sync.Mutex
+	path         string
+	max          int
+	ttl          time.Duration
+	leases       map[string]sharedAgentLease
+	waitingHives map[string]struct{}
+	loadError    error
+}
+
+func newSharedAgentPool() *sharedAgentPool {
+	max, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("HIVE_SHARED_AGENT_POOL_MAX_SESSIONS")))
+	ttl := defaultSharedAgentLeaseTTL
+	if seconds, err := strconv.Atoi(strings.TrimSpace(os.Getenv("HIVE_SHARED_AGENT_POOL_LEASE_SECONDS"))); err == nil && seconds >= 30 {
+		ttl = time.Duration(seconds) * time.Second
+	}
+	p := &sharedAgentPool{
+		path:         sharedAgentPoolPath,
+		max:          max,
+		ttl:          ttl,
+		leases:       make(map[string]sharedAgentLease),
+		waitingHives: make(map[string]struct{}),
+	}
+	p.load()
+	return p
+}
+
+func sharedPoolOwnerKey(hiveID, agentName string) string { return hiveID + "\x00" + agentName }
+
+func (p *sharedAgentPool) load() {
+	data, err := os.ReadFile(p.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		p.loadError = err
+		return
+	}
+	var state sharedAgentPoolState
+	if err := json.Unmarshal(data, &state); err != nil || state.Version != 1 {
+		p.loadError = fmt.Errorf("invalid shared agent pool state")
+		return
+	}
+	now := time.Now()
+	for _, lease := range state.Leases {
+		if lease.ID == "" || lease.HiveID == "" || lease.AgentName == "" || !lease.ExpiresAt.After(now) {
+			continue
+		}
+		p.leases[sharedPoolOwnerKey(lease.HiveID, lease.AgentName)] = lease
+	}
+}
+
+func (p *sharedAgentPool) saveLocked() error {
+	state := sharedAgentPoolState{Version: 1, Leases: make([]sharedAgentLease, 0, len(p.leases))}
+	for _, lease := range p.leases {
+		state.Leases = append(state.Leases, lease)
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p.path), 0o755); err != nil {
+		return err
+	}
+	tmpPath := p.path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, p.path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+func (p *sharedAgentPool) hasOtherWaitingHive(hiveID string) bool {
+	for waitingHive := range p.waitingHives {
+		if waitingHive != hiveID {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *sharedAgentPool) handle(w http.ResponseWriter, r *http.Request, s *HubServer) {
+	if p == nil || p.max < 1 {
+		http.Error(w, "shared agent pool is disabled", http.StatusServiceUnavailable)
+		return
+	}
+	if p.loadError != nil {
+		s.logger.Error("shared agent pool state is untrusted; refusing leases", "error", p.loadError)
+		http.Error(w, "shared agent pool state unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "POST, PUT, DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		HiveID     string `json:"hive_id"`
+		AgentName  string `json:"agent_name"`
+		LeaseID    string `json:"lease_id"`
+		CancelWait bool   `json:"cancel_wait"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.HiveID == "" {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if !s.verifyHeartbeatBearer(strings.TrimPrefix(auth, "Bearer "), req.HiveID) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+	for key, lease := range p.leases {
+		if !lease.ExpiresAt.After(now) {
+			delete(p.leases, key)
+		}
+	}
+	switch r.Method {
+	case http.MethodPost:
+		if req.AgentName == "" || len(req.AgentName) > 128 {
+			http.Error(w, "invalid agent name", http.StatusBadRequest)
+			return
+		}
+		key := sharedPoolOwnerKey(req.HiveID, req.AgentName)
+		if lease, ok := p.leases[key]; ok {
+			lease.ExpiresAt = now.Add(p.ttl)
+			p.leases[key] = lease
+			delete(p.waitingHives, req.HiveID)
+			if err := p.saveLocked(); err != nil {
+				http.Error(w, "shared agent pool persistence failed", http.StatusServiceUnavailable)
+				return
+			}
+			writeSharedPoolLease(w, lease.ID)
+			return
+		}
+		if len(p.leases) >= p.max || p.hasOtherWaitingHive(req.HiveID) {
+			if p.waitingHives == nil {
+				p.waitingHives = make(map[string]struct{})
+			}
+			p.waitingHives[req.HiveID] = struct{}{}
+			w.Header().Set("Retry-After", "3")
+			http.Error(w, "shared agent pool is busy", http.StatusConflict)
+			return
+		}
+		var raw [16]byte
+		if _, err := rand.Read(raw[:]); err != nil {
+			http.Error(w, "lease generation failed", http.StatusInternalServerError)
+			return
+		}
+		lease := sharedAgentLease{ID: hex.EncodeToString(raw[:]), HiveID: req.HiveID, AgentName: req.AgentName, ExpiresAt: now.Add(p.ttl)}
+		p.leases[key] = lease
+		delete(p.waitingHives, req.HiveID)
+		if err := p.saveLocked(); err != nil {
+			delete(p.leases, key)
+			http.Error(w, "shared agent pool persistence failed", http.StatusServiceUnavailable)
+			return
+		}
+		writeSharedPoolLease(w, lease.ID)
+	case http.MethodPut, http.MethodDelete:
+		if r.Method == http.MethodDelete && req.CancelWait {
+			delete(p.waitingHives, req.HiveID)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if req.LeaseID == "" {
+			http.Error(w, "lease ID required", http.StatusBadRequest)
+			return
+		}
+		var key string
+		for candidate, lease := range p.leases {
+			if lease.ID == req.LeaseID && lease.HiveID == req.HiveID {
+				key = candidate
+				break
+			}
+		}
+		if key == "" {
+			http.Error(w, "lease not found", http.StatusNotFound)
+			return
+		}
+		if r.Method == http.MethodPut {
+			lease := p.leases[key]
+			lease.ExpiresAt = now.Add(p.ttl)
+			p.leases[key] = lease
+		} else {
+			delete(p.leases, key)
+		}
+		if err := p.saveLocked(); err != nil {
+			http.Error(w, "shared agent pool persistence failed", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.Header().Set("Allow", "POST, PUT, DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func writeSharedPoolLease(w http.ResponseWriter, leaseID string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"lease_id": leaseID})
+}

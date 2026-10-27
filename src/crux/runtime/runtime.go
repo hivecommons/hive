@@ -55,6 +55,7 @@ type options struct {
 	logger     *slog.Logger
 	project    crux.ProjectContext
 	uidMapPath *string
+	sharedPool agent.SharedSessionPool
 }
 
 // WithDefinitions supplies the agent definitions the runtime manages. The
@@ -81,6 +82,13 @@ func WithUIDMapPath(path string) Option {
 	return func(o *options) { o.uidMapPath = &path }
 }
 
+// WithSharedSessionPool coordinates heavyweight CLI sessions through the Hub.
+// It affects only the in-process Manager; sidecar mode must implement the same
+// lease contract before it can opt in.
+func WithSharedSessionPool(pool agent.SharedSessionPool) Option {
+	return func(o *options) { o.sharedPool = pool }
+}
+
 // New validates cfg and returns the runtime its Mode selects. Options are
 // applied in order; a nil option is ignored.
 func New(cfg config.RuntimeConfig, opts ...Option) (crux.Runtime, error) {
@@ -92,6 +100,9 @@ func New(cfg config.RuntimeConfig, opts ...Option) (crux.Runtime, error) {
 		if opt != nil {
 			opt(&o)
 		}
+	}
+	if o.sharedPool != nil && cfg.Mode != config.ModeInProcess {
+		return nil, fmt.Errorf("shared session pool is not supported by runtime mode %q", cfg.Mode)
 	}
 	switch cfg.Mode {
 	case config.ModeInProcess:
@@ -121,6 +132,9 @@ func newInProcess(o options) crux.Runtime {
 	var mopts []agent.ManagerOption
 	if o.uidMapPath != nil {
 		mopts = append(mopts, agent.WithUIDMapPath(*o.uidMapPath))
+	}
+	if o.sharedPool != nil {
+		mopts = append(mopts, agent.WithSharedSessionPool(o.sharedPool))
 	}
 	return agent.AsRuntime(agent.NewManagerWithOptions(o.defs, o.logger, o.project, mopts...))
 }
