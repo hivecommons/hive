@@ -4,8 +4,10 @@
 # self-contained (hivecommons/hive#14138).
 #
 #   make build   -> bin/crux (version from `git describe`, or VERSION=...)
-#   make test    -> go test ./... (crux/agent needs tmux; see AGENTS.md before
-#                   running it from inside an agent pane)
+#   make test    -> go test ./... (crux/agent runs tmux tests; never run it
+#                   from inside an agent pane — parts of crux/agent exercise
+#                   tmux process management and can kill the agent's own session;
+#                   see https://github.com/hivecommons/hive/blob/v5/AGENTS.md)
 #   make vet     -> go vet ./...
 #   make smoke   -> build, start `crux serve` on a private unix socket, drive
 #                   it with `crux --server`, stop it (scripts/smoke.sh)
