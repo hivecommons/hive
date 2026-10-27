@@ -7443,7 +7443,7 @@ func runEvalCycle(
 	dueBeforeDeferral := append([]string(nil), agentsDue...)
 	agentsDue = sched.FilterFirstScanDeferredAgents(agentsDue)
 	agentsSkipped = append(agentsSkipped, firstScanDeferredSkips(dueBeforeDeferral, agentsDue)...)
-	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, beadStores, logger)
+	reviewPlan := planReviewDispatchWith(ctx, cfg, actionable, agentMgr, beadStores, reviewChangedFilesListerFor(ghClient), logger)
 	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
 	if ghClient != nil {
 		postReviewAcknowledgements(ctx, ghClient, reviewPlan, logger)
@@ -10561,10 +10561,46 @@ func parseReviseCutoff(raw string, logger *slog.Logger) time.Time {
 	return cutoff
 }
 
+// reviewChangedFilesLister is the slice of the GitHub client the bot-author
+// model route needs (review.bot_author_full_review_paths): a PR's changed
+// paths.
+type reviewChangedFilesLister interface {
+	ReviewPRChangedFiles(ctx context.Context, repo string, number int) ([]string, bool)
+}
+
 func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult, agentMgr crux.Runtime, beadStores map[string]*beads.Store, logger *slog.Logger) review.DispatchPlan {
+	return planReviewDispatchWith(context.Background(), cfg, actionable, agentMgr, beadStores, nil, logger)
+}
+
+// reviewBotAuthorRoute is review.bot_authors / bot_author_model /
+// bot_author_full_review_paths resolved for the planner.
+func reviewBotAuthorRoute(cfg *config.Config) review.BotAuthorRoute {
+	backend, model := cfg.Review.BotAuthorModelRef()
+	return review.BotAuthorRoute{Authors: cfg.Review.EffectiveBotAuthors(), Backend: backend, Model: model, FullReviewPaths: cfg.Review.EffectiveBotAuthorFullReviewPaths()}
+}
+
+// reviewBotRouteFilesFor fetches a PR's changed paths when the bot-author
+// route may apply to it: route on, author a listed bot, no verdict at this
+// head and no review in flight (one listing per head, not per cycle). nil,
+// false otherwise, which the planner reads as unknown: no downgrade.
+func reviewBotRouteFilesFor(ctx context.Context, cfg *config.Config, lister reviewChangedFilesLister, route review.BotAuthorRoute, artifact review.Artifact, state review.DispatchState, repo string, number int, author, headSHA, bodyDigest string) ([]string, bool) {
+	if lister == nil || !route.Enabled() || !review.IsBotAuthor(author, route.Authors, cfg.EffectiveAIAuthor()) {
+		return nil, false
+	}
+	if _, judged := artifact.AggregateForBody(repo, number, headSHA, bodyDigest); judged {
+		return nil, false
+	}
+	if !state.PendingSince(repo, number, headSHA).IsZero() {
+		return nil, false
+	}
+	return lister.ReviewPRChangedFiles(ctx, repo, number)
+}
+
+func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable *github.ActionableResult, agentMgr crux.Runtime, beadStores map[string]*beads.Store, lister reviewChangedFilesLister, logger *slog.Logger) review.DispatchPlan {
 	if cfg == nil || actionable == nil || !cfg.Review.RequireApproval || !cfg.Review.FanOut {
 		return review.DispatchPlan{}
 	}
+	botRoute := reviewBotAuthorRoute(cfg)
 	state, err := review.LoadDispatchState("")
 	if err != nil && !os.IsNotExist(err) {
 		logger.Warn("review dispatch state unavailable; starting fresh", "error", err)
@@ -10609,7 +10645,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	for _, pr := range candidates {
 		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
 		fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
-		prs = append(prs, review.PullRequest{
+		item := review.PullRequest{
 			Repo:       pr.Repo,
 			Number:     pr.Number,
 			Title:      pr.Title,
@@ -10649,7 +10685,12 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			// on this head (hivecommons/hive#13041): the planner kicks the
 			// fix lane with it instead of reviewing the head again.
 			HumanChangeRequest: review.HumanChangeRequestFor(review.DefaultHumanChangeRequests(), fullRepo, pr.Number, pr.HeadSHA),
-		})
+		}
+		// Changed paths for the bot-author model route's path exceptions
+		// (review.bot_author_full_review_paths); fetched only for a listed
+		// bot's PR that is about to be reviewed.
+		item.ChangedFiles, item.ChangedFilesKnown = reviewBotRouteFilesFor(ctx, cfg, lister, botRoute, artifact, state, fullRepo, pr.Number, pr.Author, pr.HeadSHA, pr.BodyDigest)
+		prs = append(prs, item)
 	}
 	// PRs a review webhook just fired for go first, so the early eval cycle
 	// it triggered spends its review budget on them (hivecommons/hive#11091).
@@ -10688,7 +10729,13 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		ReviewBotLogins:       reviewBotLogins,
 		ReviewBotMinPriority:  reviewBots.MinPriority,
 		PerspectiveModels:     cfg.Review.PerspectiveModels,
+		BotAuthorRoute:        botRoute,
 	})
+	for _, k := range plan.ReviewKicks {
+		if k.BotAuthorRouted {
+			logger.Info("review routed bot-authored PR to bot_author_model", "repo", k.Repo, "pr", k.Number, "head", k.HeadSHA, "agent", k.Agent, "review_model", k.ReviewModel, "review_backend", k.ReviewBackend)
+		}
+	}
 	for _, sk := range plan.SkippedReviewModels {
 		logger.Info("review model fallback skipped perspective", "repo", sk.Repo, "pr", sk.Number, "head", sk.HeadSHA, "perspective", sk.Perspective, "agent", sk.Agent, "author_model", sk.AuthorModel)
 	}
@@ -10707,6 +10754,16 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))
 	}
 	return plan
+}
+
+// reviewChangedFilesListerFor returns the GitHub client as a
+// reviewChangedFilesLister, or nil for a nil client: a typed nil in the
+// interface would not read as nil.
+func reviewChangedFilesListerFor(c *github.Client) reviewChangedFilesLister {
+	if c == nil {
+		return nil
+	}
+	return c
 }
 
 func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {

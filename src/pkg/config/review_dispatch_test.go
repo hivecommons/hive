@@ -112,3 +112,27 @@ func TestEffectiveSelfAuthoredDecisionPolicy(t *testing.T) {
 		t.Fatalf("unknown policy = %q, want resolve", got)
 	}
 }
+
+func TestReviewBotAuthorRouteConfig(t *testing.T) {
+	var r ReviewConfig
+	if got := r.EffectiveBotAuthors(); len(got) != len(DefaultReviewBotAuthors) || got[0] != "dependabot[bot]" || got[len(got)-1] != "*[bot]" {
+		t.Fatalf("default bot_authors = %v", got)
+	}
+	if got := r.EffectiveBotAuthorFullReviewPaths(); len(got) != len(DefaultReviewBotAuthorFullReviewPaths) || got[0] != ".github/workflows/**" {
+		t.Fatalf("default full-review paths = %v", got)
+	}
+	r.BotAuthors = []string{" dependabot[bot] ", ""}
+	r.BotAuthorFullReviewPaths = []string{}
+	if got := r.EffectiveBotAuthors(); len(got) != 1 || got[0] != "dependabot[bot]" {
+		t.Fatalf("explicit bot_authors = %v", got)
+	}
+	if got := r.EffectiveBotAuthorFullReviewPaths(); len(got) != 0 {
+		t.Fatalf("explicit empty full-review paths = %v, want none (no exceptions)", got)
+	}
+	for in, want := range map[string][2]string{"": {"", ""}, "gpt-6-luna": {"", "gpt-6-luna"}, " copilot/gemini-flash-3-5 ": {"copilot", "gemini-flash-3-5"}} {
+		b, m := (ReviewConfig{BotAuthorModel: in}).BotAuthorModelRef()
+		if b != want[0] || m != want[1] {
+			t.Fatalf("bot_author_model %q -> %q/%q, want %q/%q", in, b, m, want[0], want[1])
+		}
+	}
+}

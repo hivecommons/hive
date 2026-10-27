@@ -97,3 +97,55 @@ func (r ReviewConfig) ValidatePendingReviewTTL() error {
 	}
 	return nil
 }
+
+// DefaultReviewBotAuthors is review.bot_authors unset: the dependency and
+// automation bots, plus any other `[bot]` login that is not the hive's own.
+var DefaultReviewBotAuthors = []string{"dependabot[bot]", "renovate[bot]", "github-actions[bot]", "*[bot]"}
+
+// DefaultReviewBotAuthorFullReviewPaths is review.bot_author_full_review_paths
+// unset: a bot PR that edits CI workflows or container builds is reviewed at
+// full strength. Lockfiles are deliberately not here: they are the bulk of
+// bot PRs and the reason the route exists.
+var DefaultReviewBotAuthorFullReviewPaths = []string{".github/workflows/**", "Dockerfile*", "**/Dockerfile*"}
+
+// EffectiveBotAuthors resolves review.bot_authors, trimmed; unset means the
+// default list.
+func (r ReviewConfig) EffectiveBotAuthors() []string {
+	if r.BotAuthors == nil {
+		return append([]string(nil), DefaultReviewBotAuthors...)
+	}
+	return trimmedNonEmpty(r.BotAuthors)
+}
+
+// EffectiveBotAuthorFullReviewPaths resolves
+// review.bot_author_full_review_paths; unset means the default list.
+func (r ReviewConfig) EffectiveBotAuthorFullReviewPaths() []string {
+	if r.BotAuthorFullReviewPaths == nil {
+		return append([]string(nil), DefaultReviewBotAuthorFullReviewPaths...)
+	}
+	return trimmedNonEmpty(r.BotAuthorFullReviewPaths)
+}
+
+// BotAuthorModelRef splits review.bot_author_model into backend and model:
+// `gpt-6-luna` is a model with no backend, `copilot/gpt-6-luna` names both.
+// Both empty when the route is off.
+func (r ReviewConfig) BotAuthorModelRef() (backend, model string) {
+	raw := strings.TrimSpace(r.BotAuthorModel)
+	if raw == "" {
+		return "", ""
+	}
+	if i := strings.Index(raw, "/"); i >= 0 {
+		return strings.TrimSpace(raw[:i]), strings.TrimSpace(raw[i+1:])
+	}
+	return "", raw
+}
+
+func trimmedNonEmpty(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}

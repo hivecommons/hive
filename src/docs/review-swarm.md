@@ -183,6 +183,9 @@ review:
   priority_labels: false                    # optional; mirror the PR review queue rank onto review-priority/* labels (default off)
   pending_ttl: 45m                          # optional; re-dispatch a review that has posted no verdict after this long (default 45m)
   max_redispatch: 3                         # optional; expiries per head before the PR is held for a human (default 3)
+  bot_author_model: ""                      # optional; model (or backend/model) that reviews PRs opened by bot_authors, e.g. gpt-6-luna (default empty = off)
+  bot_authors: [dependabot[bot], renovate[bot], github-actions[bot], "*[bot]"]  # optional; logins routed to bot_author_model; the hive's own App never matches
+  bot_author_full_review_paths: [".github/workflows/**", "Dockerfile*", "**/Dockerfile*"]  # optional; a bot PR touching these keeps the full-strength model
   severity:
     block_at: P2                            # optional; P1 | P2 | P3, see "Blocking line" below
     comment_below: true                     # default true
@@ -402,6 +405,16 @@ Before every fix kick the planner checks authorship. A PR may be pushed to only 
 When the check refuses, the `changes_requested` verdict still stands and the review is still published (`post_comments`). The reviewer's kick for such a PR carries an extra instruction: no agent will push to this branch, so every fix it wants goes into the review comment as a ```` ```suggestion ```` block or a ```` ```diff ```` patch the author can apply, and the reviewer must not check out or push to the branch itself. The refusal is recorded once per PR head in dispatch state (`withheld_fixes`) and on the audit log as `review_fix_withheld`, with the PR, its author, and the setting's value at the time (`setting=review.fix_human_prs=<value>`; a reason naming the squash sign-off gate when it was on), so a fix that did not happen can be traced rather than guessed at. A new push to the PR is a new decision.
 
 **Upgrading.** Older configs may still show `fix_human_prs: true` because a prior compatibility rule promoted `all_authors: true`. Both values are left in config for audit/UI continuity — `all_authors` no longer does anything, and branch-push fix kicks still require hive authorship.
+
+### Cheaper model for bot-authored PRs (`review.bot_author_model`)
+
+PRs opened by other bots (Dependabot, Renovate, github-actions) are mostly lockfile and version bumps, and over Oct 13-27 2026 they cost $38.61/day across three hosted hives ($30.60/day on the busiest), every one reviewed on the frontier model. Setting `review.bot_author_model` routes those reviews to a cheaper model:
+
+- `review.bot_authors` is the login list. Entries match case-insensitively; a leading `*` matches a suffix, so the default `*[bot]` catches any GitHub App. The hive's own App login (`project.ai_author`, or the App's `[bot]` login when it authors PRs) never matches, whatever the list says: the hive's own PRs are reviewed as before.
+- `review.bot_author_model` is `model` or `backend/model` (`gpt-6-luna`, `copilot/gemini-flash-3-5`). It replaces whatever the reviewer's `review_models` pool or `perspective_models` chose for that kick, the same way: the kick's independent-review instruction names it and the reviewer runs the review in a sub-agent with that `model`, so **the reviewer agent's engine must be able to launch it**. A pool decision to skip or hold for a human is kept. Recommended values from `pkg/tokens/pricing.go`: `gemini-flash-3-5` ($0.075/$0.30 per MTok) or `gpt-6-luna` ($0.10/$0.50), against `claude-fable-5.1` at $10/$50. Empty (the default) leaves the route off.
+- `review.bot_author_full_review_paths` are globs (`**` spans directories; a pattern without `/` also matches the base name) that keep a bot PR on the full-strength model when any changed file matches. The default is CI workflows and Dockerfiles only; lockfiles are deliberately not excepted, since they are the bulk of bot PRs. Set it to `[]` for no exceptions. The planner lists the PR's files once per head (only for a listed bot's PR about to be reviewed) and a PR whose files could not be listed is **not** downgraded.
+
+Routed kicks carry `bot_author_routed` on the dispatch kick and the model lands in the verdict's `review_model` as usual; the governor logs `review routed bot-authored PR to bot_author_model`. The route applies to the swarm's per-perspective and combined kicks; the cadence (queue-mode) kick's `review_with=` annotation still comes from the agent's `review_models` pool alone.
 
 ## Revising a recorded verdict
 

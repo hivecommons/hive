@@ -7377,6 +7377,20 @@ type ReviewConfig struct {
 	// may be re-sent when it posts no verdict (agents.<name>.review_heads,
 	// hivecommons/hive#13542). 0 means max_redispatch applies.
 	HeadMaxRetries int `yaml:"head_max_retries,omitempty" json:"head_max_retries,omitempty"`
+	// BotAuthors lists PR author logins whose PRs are reviewed with
+	// BotAuthorModel instead of the reviewer's usual model. Entries match
+	// case-insensitively; a leading `*` matches any login with that suffix
+	// (`*[bot]`). The hive's own GitHub App login never matches. Unset means
+	// DefaultReviewBotAuthors.
+	BotAuthors []string `yaml:"bot_authors,omitempty" json:"bot_authors,omitempty"`
+	// BotAuthorModel is the model (or backend/model) a review of a
+	// BotAuthors PR runs with. Empty (the default) leaves the route off. The
+	// reviewer agent's engine must be able to run the model.
+	BotAuthorModel string `yaml:"bot_author_model,omitempty" json:"bot_author_model,omitempty"`
+	// BotAuthorFullReviewPaths are path globs (`**` spans directories) that
+	// keep a bot-authored PR on the full-strength model when it touches any of
+	// them. Unset means DefaultReviewBotAuthorFullReviewPaths.
+	BotAuthorFullReviewPaths []string `yaml:"bot_author_full_review_paths,omitempty" json:"bot_author_full_review_paths,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the

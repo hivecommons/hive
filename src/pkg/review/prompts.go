@@ -12,13 +12,18 @@ import (
 )
 
 type PullRequest struct {
-	Repo      string
-	Number    int
-	Title     string
-	Author    string
-	Labels    []string
-	HeadSHA   string
-	UpdatedAt time.Time
+	Repo   string
+	Number int
+	Title  string
+	Author string
+	Labels []string
+	// ChangedFiles are the PR's changed paths when the caller fetched them
+	// (ChangedFilesKnown), for the bot-author model route's path exceptions.
+	// Unknown means no downgrade.
+	ChangedFiles      []string
+	ChangedFilesKnown bool
+	HeadSHA           string
+	UpdatedAt         time.Time
 	// BodyDigest fingerprints the PR title/body that the reviewer judged.
 	// The body itself deliberately stays out of review.PullRequest (see
 	// grounding tests); this opaque digest lets a body-only remediation make

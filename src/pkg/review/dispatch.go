@@ -184,6 +184,10 @@ type DispatchOptions struct {
 	// replaces the reviewer's review_models pool for the named perspective.
 	// The reviewer's exclusions and fallback still apply to it.
 	PerspectiveModels map[string]config.ReviewModelPoolEntry
+	// BotAuthorRoute is review.bot_authors / bot_author_model /
+	// bot_author_full_review_paths: the cheaper model a review of a PR opened
+	// by a listed bot runs with. Off when its Model is empty.
+	BotAuthorRoute BotAuthorRoute
 	// AllAuthors is a no-op kept for configs that still set
 	// review.all_authors. Every open PR is reviewed regardless of author
 	// (hivecommons/hive#12974); the planner never reads this field.
@@ -391,6 +395,9 @@ type DispatchKick struct {
 	ReviewBackend       string
 	ReviewModel         string
 	ReviewModelFallback bool
+	// BotAuthorRouted is true when ReviewModel came from review.bot_author_model
+	// because the PR's author is a listed bot.
+	BotAuthorRouted bool
 }
 
 // SkippedReviewModel is a perspective kick the planner withheld because the
@@ -668,6 +675,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				overridePerspective = missing[0]
 			}
 			choice := chooseReviewModel(reviewer, overridePerspective, pr.AuthorModel, opts.PerspectiveModels)
+			choice, botRouted := applyBotAuthorRoute(choice, pr, opts)
 			if choice.Skip {
 				for _, p := range missing {
 					plan.SkippedReviewModels = append(plan.SkippedReviewModels, SkippedReviewModel{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: p, Agent: agent, AuthorModel: pr.AuthorModel})
@@ -690,7 +698,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewBackend:         choice.Backend,
 				ReviewModel:           choice.Model,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted})
 			for _, p := range missing {
 				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), Dispatched: now})
 			}
@@ -735,6 +743,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			agent := reviewer.Name
 			perspective := missing[i]
 			choice := chooseReviewModel(reviewer, perspective, pr.AuthorModel, opts.PerspectiveModels)
+			choice, botRouted := applyBotAuthorRoute(choice, pr, opts)
 			if choice.Skip {
 				plan.SkippedReviewModels = append(plan.SkippedReviewModels, SkippedReviewModel{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorModel: pr.AuthorModel})
 				continue
@@ -755,7 +764,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewBackend:         choice.Backend,
 				ReviewModel:           choice.Model,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted})
 			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), Dispatched: now})
 			availableSlots--
 		}
