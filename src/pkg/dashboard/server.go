@@ -33,6 +33,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -487,6 +488,9 @@ type StatusPayload struct {
 	// (governor.labels.stage.engine.mode). Filled at serve time from
 	// Dependencies.StageEngineStatus; absent when the hive has no engine.
 	StageEngine *stageengine.Status `json:"stageEngine,omitempty"`
+	// ReviewerAutoscale is the reviewer-lane autoscaler's snapshot
+	// (hivecommons/hive#14685); absent when autoscale is off.
+	ReviewerAutoscale *autoscale.Status `json:"reviewerAutoscale,omitempty"`
 	// SLA is the fleet-wide Delivery SLA roll-up (spans, 30-day history,
 	// stale in-progress issues, targets); per-repo blocks sit on each repo.
 	SLA *FrontendSLA `json:"sla,omitempty"`

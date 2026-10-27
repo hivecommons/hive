@@ -93,6 +93,52 @@ agents:
       - not-a-head
 YAML
 
+# #14685: review.reviewers.autoscale grows the lane's base agent up to `max`
+# at runtime, so the entrypoint pre-creates those names (mirrors
+# config.ReviewerAutoscaleAgent and DefaultReviewerAutoscaleMax).
+expect "autoscale expands the role:reviewer lane to max" "reviewer reviewer-2 reviewer-3 scanner" <<'YAML'
+agents:
+  scanner: {backend: codex}
+  reviewer: {backend: claude, role: reviewer, replicas: 2}
+review:
+  reviewers:
+    autoscale: {enabled: true, max: 3}
+YAML
+
+expect "autoscale default max is 4, declared replicas above it still win" "reviewer reviewer-2 reviewer-3 reviewer-4 reviewer-5" <<'YAML'
+agents:
+  reviewer: {backend: claude, role: reviewer, replicas: 5}
+review:
+  reviewers:
+    autoscale: {enabled: true}
+YAML
+
+expect "autoscale honours an explicit lane agent and the replica cap" "critic critic-2 critic-3 critic-4 critic-5 reviewer" <<'YAML'
+agents:
+  reviewer: {backend: claude, role: reviewer}
+  critic: {backend: codex}
+review:
+  reviewers:
+    autoscale: {enabled: true, agent: critic, max: 9}
+YAML
+
+expect "autoscale falls back to review.reviewer_agents[0]" "qa qa-2 qa-3 qa-4" <<'YAML'
+agents:
+  qa: {backend: claude}
+review:
+  reviewer_agents: [qa]
+  reviewers:
+    autoscale: {enabled: true}
+YAML
+
+expect "autoscale off expands nothing extra" "reviewer reviewer-2" <<'YAML'
+agents:
+  reviewer: {backend: claude, role: reviewer, replicas: 2}
+review:
+  reviewers:
+    autoscale: {enabled: false, max: 4}
+YAML
+
 expect "an empty config prints nothing" "" <<'YAML'
 YAML
 

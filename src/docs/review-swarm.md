@@ -381,6 +381,36 @@ Phase 2 adds dispatch state in `/data/review-dispatch-state.json`. Pending revie
 
 **One kick in flight per agent.** An agent's CLI works one prompt at a time, so the planner never sends a review kick (per-perspective, head, combined or decision) to an agent that still has one pending, i.e. dispatched and not yet answered or expired. It picks the first reviewer in name order that is free; when every eligible reviewer (or every replica of a head) is busy, that work waits for a later cycle. Waiting records nothing, so it costs no `max_redispatch` or `head_max_retries`, and `pending_ttl` starts when the kick actually goes to an idle agent. Load is counted in kicks, not PR heads: counting PR heads let replicas holding the same PR tie, and one PR's remaining perspectives all went to the first replica, four kicks typed into one Claude session within three minutes, three of whose verdicts never arrived.
 
+### Reviewer autoscale (`review.reviewers.autoscale`)
+
+By default the reviewer lane is a fixed pool: `agents.reviewer.replicas: 2` runs `reviewer` and `reviewer-2`, and when both have a kick in flight every other PR waits. `review.reviewers.autoscale` ([#14685](https://github.com/hivecommons/hive/issues/14685)) instead lets the lane grow and shrink with that wait. It is off by default.
+
+```yaml
+review:
+  reviewers:
+    autoscale:
+      enabled: true
+      agent: reviewer              # optional; default: first role:reviewer agent, else reviewer_agents[0]
+      min: 1
+      max: 4                       # capped at the replicas limit (5)
+      target_backlog_per_reviewer: 2
+      scale_up_cycles: 2
+      scale_down_cycles: 5
+      cooldown: 5m
+      cpu_per_reviewer: 1.0
+      mem_per_reviewer_mb: 2048
+```
+
+**Demand.** Each governor cycle the planner records the PRs it left *waiting*: PRs with perspectives still to review on their current head for which every eligible reviewer was busy (`no-free-reviewer`) or the `max_parallel_reviews` budget was spent (`no-parallel-slot`). Drafts, held PRs and PRs whose review is already dispatched are not waiting. The controller ages each wait across cycles, keyed on repo, number and head, so a push restarts the clock.
+
+**Scale-up.** The lane is *behind* when the backlog exceeds `target_backlog_per_reviewer` × active reviewers, or when the oldest wait is older than the `stage/050-review-pending` dwell (`governor.labels.stage.dwell` overrides apply). Behind for `scale_up_cycles` consecutive cycles adds one replica. Guards refuse a wanted scale-up, in this order, and the refusal is logged with the guard's name: `at-max`; `cooldown` (less than `cooldown` since the last action); `saturated` (half or more of the active reviewers' last kicks were undeliverable — `CLI did not reach input prompt` — which is a saturated pod, not demand); `provider-budget` (the inference budget latch is on); `provider-headroom` (any provider under 10% remaining, when rotation publishes readings); `max-parallel-reviews` (more reviewers than slots is pointless); `cpu` / `memory` (the pod cgroup — `cpu.max`, `cpu.stat`, `memory.max`, `memory.current` — has less free than one reviewer's reservation; a host without cgroup limits never blocks). A refused scale-up keeps its streak, so it fires as soon as the guard clears.
+
+**Scale-down.** The lane is *idle* when nothing is waiting and at least one reviewer has no kick in flight. Idle for `scale_down_cycles` consecutive cycles, with more than `min` replicas active and the cooldown elapsed, marks the highest-numbered replica *draining*: the planner and the cadence kick both skip it (the eval log shows `reviewer-3 (reviewer-autoscale draining)`), and it is retired — its tmux session ended and its config entry dropped — only once its turn has ended and it has no review pending. A reviewer is never interrupted mid-turn. If demand returns while a replica is draining it is simply un-drained rather than a fresh replica being added.
+
+**What a dynamic replica is.** Nothing new: the controller raises or lowers the lane's materialised replica count and the ordinary `ExpandAgentReplicas` path creates `reviewer-3`, `reviewer-4` … with the same role, prompt, beads directory, scoped token, tmux pane and cadence key as a configured `reviewer-2`. The planner, kick governor, dashboard agent list and token cache cannot tell them apart. The entrypoint pre-creates the per-agent user and token cache for every name up to `max`, so a replica added at 03:00 can read its token. The declared `replicas:` only seeds the initial count (clamped into `[min, max]`) and is what is persisted; the live count survives a config reload and is never written to `hive.yaml`.
+
+**Observability.** One log line per decision — `reviewer autoscale: 2→3 reason=backlog=7 oldest=41m0s`, `reviewer autoscale: 3→2 drain reviewer-3 reason=idle for 5 cycles`, `reviewer autoscale: 3→2 retire reviewer-3 reason=idle`, `reviewer autoscale: 2→3 blocked by cpu`. `/api/status.reviewerAutoscale` carries `enabled`, `agent`, `min`, `max`, `current`, `target`, `draining`, `backlog`, `oldestWait`, the streaks and `lastDecision`; the Agents section shows the lane's reviewer count with an *auto* badge (replicas show *auto* / *draining*) whose tooltip carries the last decision. The knobs live in Settings → Review Gate → Reviewers → *Scale reviewers with the backlog* (owner only; `PUT /api/config/review` sub-object `reviewer_autoscale`).
+
 ### Pending-review expiry (`review.pending_ttl`, `review.max_redispatch`)
 
 A pending entry is the planner's only record that a perspective was asked, so a reviewer whose kick turn dies — model timeout, proxy read timeout, pod restart — leaves entries that post no verdict and, with no expiry, made every perspective look covered until someone pushed a new commit (hivecommons/hive#12045 and #12025 sat at queue position 1 for hours with CI green and the contributor lane stuck at `no-verdict`). Each cycle the planner therefore expires pending entries older than `pending_ttl` (Go duration string, default `45m`; a negative value disables expiry) whose head still has no verdict in the artifact: the expired perspectives are dropped from state and re-dispatched in the same cycle, the governor logs `review pending expired repo=… pr=… head=… perspective=… age=… expiries=N`, and the state file's `redispatches[]` counts expiries per head. Entries younger than the TTL are left alone, so a review genuinely in flight is never re-kicked, and a verdict for the head settles it however old the entries are. The same expiry releases a `revise_verdicts_before` revisit whose reviewer died.

@@ -370,7 +370,7 @@ Presets map onto modes (`advisory` denies issue and PR creation, `issues-only` d
 
 ### Replicated agents
 
-Set `replicas: N` on a declared agent to run a small pool with the same prompt, backend, model, mode, channel, tool, and metadata settings. `N` defaults to `1` and is capped at `5`; config load fails if it is outside `1..5`. Hive materializes derived names as `<base>-2`, `<base>-3`, ... (`scanner`, `scanner-2`, `scanner-3`). Do not declare those derived names yourself: a real `scanner-2` entry collides with `scanner: { replicas: 2 }` and is rejected. Derived replicas get their own IDs and bead directories (`/data/beads/scanner-2`) but inherit the base agent's kick template/prompt selection. Runtime-derived replicas are stripped before saving and recreated on the next load.
+Set `replicas: N` on a declared agent to run a small pool with the same prompt, backend, model, mode, channel, tool, and metadata settings. `N` defaults to `1` and is capped at `5`; config load fails if it is outside `1..5`. Hive materializes derived names as `<base>-2`, `<base>-3`, ... (`scanner`, `scanner-2`, `scanner-3`). Do not declare those derived names yourself: a real `scanner-2` entry collides with `scanner: { replicas: 2 }` and is rejected. Derived replicas get their own IDs and bead directories (`/data/beads/scanner-2`) but inherit the base agent's kick template/prompt selection. Runtime-derived replicas are stripped before saving and recreated on the next load. For the reviewer lane, `review.reviewers.autoscale` can raise and lower the materialised count at runtime between `min` and `max`; the declared `replicas` then only seeds the initial size. See [review-swarm.md](review-swarm.md#reviewer-autoscale-reviewreviewersautoscale).
 
 ### Trigger channels
 

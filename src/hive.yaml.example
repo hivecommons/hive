@@ -835,6 +835,18 @@ governor:
 #   fan_out: false
 #   max_parallel_reviews: 5
 #   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
+#   reviewers:
+#     autoscale:        # size the reviewer lane to its backlog (#14685); off by default
+#       enabled: false
+#       agent: ""       # base reviewer to scale; default: first role:reviewer agent, else reviewer_agents[0]
+#       min: 1          # floor of active replicas (the base agent is never retired)
+#       max: 4          # ceiling; capped at the agents.<name>.replicas limit (5)
+#       target_backlog_per_reviewer: 2 # PRs waiting per reviewer before the lane is "behind"
+#       scale_up_cycles: 2   # consecutive behind cycles before adding a reviewer
+#       scale_down_cycles: 5 # consecutive idle cycles before draining the top replica
+#       cooldown: 5m         # minimum gap between scaling actions
+#       cpu_per_reviewer: 1.0     # cgroup CPU (cores) reserved per added reviewer
+#       mem_per_reviewer_mb: 2048 # cgroup memory (MiB) reserved per added reviewer
 #   combined_perspectives: true # RECOMMENDED (#12126): one session + one comment covering every
 #                               # perspective; shared review boilerplate is sent once instead of once
 #                               # per perspective. Verdicts stay per-perspective. Default false.

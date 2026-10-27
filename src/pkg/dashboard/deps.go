@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/celtrigger"
 	"github.com/hivecommons/hive/pkg/claims"
@@ -15,7 +17,6 @@ import (
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/outcome"
 	"github.com/hivecommons/hive/pkg/convergence/proof"
-	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -24,12 +25,12 @@ import (
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/nous"
+	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 type Dependencies struct {
@@ -56,12 +57,16 @@ type Dependencies struct {
 	// counters for /api/status.stageEngine and the activity tracker's
 	// status strip. nil leaves the block out of /api/status.
 	StageEngineStatus func() stageengine.Status
-	Tokens            *tokens.Collector
-	Knowledge         *knowledge.KnowledgeAPI
-	Inception         *knowledge.InceptionEngine
-	Nous              *NousState
-	Scheduler         SchedulerControl
-	MetricsCollector  *MetricsCollector
+	// ReviewerAutoscaleStatus reports the reviewer-lane autoscaler
+	// (hivecommons/hive#14685) for /api/status.reviewerAutoscale. nil, or a
+	// Status with Enabled=false, leaves the block out.
+	ReviewerAutoscaleStatus func() autoscale.Status
+	Tokens                  *tokens.Collector
+	Knowledge               *knowledge.KnowledgeAPI
+	Inception               *knowledge.InceptionEngine
+	Nous                    *NousState
+	Scheduler               SchedulerControl
+	MetricsCollector        *MetricsCollector
 	// KnowledgePrimer builds, publishes and reports the scheduler's kick
 	// primer — the one thing knowledge.enabled actually gates (#9231). Nil
 	// (bare test deps) means the toggle can only persist the flag, so it

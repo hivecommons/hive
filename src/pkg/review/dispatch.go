@@ -97,6 +97,10 @@ type AgentCapability struct {
 	ReviewHead     string
 	ReviewHeadOf   string
 	HasReviewHeads bool
+	// Draining marks a reviewer the autoscaler is retiring
+	// (hivecommons/hive#14685): it finishes what it has but is handed no
+	// new review, exactly as if it were paused.
+	Draining bool
 }
 
 // CapabilityFromConfig builds the dispatcher's view of one configured lane
@@ -500,7 +504,42 @@ type DispatchPlan struct {
 	// ForcedFixes are the changes_requested heads whose fix kick was forced
 	// this cycle after RevisitStarvationCycles revisit-suppressed cycles.
 	ForcedFixes []ForcedFix
-	State       DispatchState
+	// Waiting are the PRs that needed a review kick this cycle and got none
+	// because every eligible reviewer was busy or the parallel budget was
+	// spent. They are the reviewer autoscaler's demand signal
+	// (hivecommons/hive#14685): one entry per PR, on its current head.
+	Waiting []ReviewWait
+	State   DispatchState
+}
+
+// ReviewWait is one PR left waiting for a reviewer this cycle.
+type ReviewWait struct {
+	Repo    string
+	Number  int
+	HeadSHA string
+	Reason  string
+}
+
+// Key identifies the wait across cycles: a push to the PR starts a new wait.
+func (w ReviewWait) Key() string { return fmt.Sprintf("%s#%d@%s", w.Repo, w.Number, w.HeadSHA) }
+
+const (
+	// ReviewWaitNoFreeReviewer: every reviewer eligible for the PR has a
+	// review kick in flight.
+	ReviewWaitNoFreeReviewer = "no-free-reviewer"
+	// ReviewWaitNoParallelSlot: review.max_parallel_reviews is spent.
+	ReviewWaitNoParallelSlot = "no-parallel-slot"
+)
+
+// recordWait notes a PR that still has perspectives to review but could not
+// be dispatched this cycle. Idempotent per PR.
+func (plan *DispatchPlan) recordWait(pr PullRequest, reason string) {
+	for _, w := range plan.Waiting {
+		if w.Repo == pr.Repo && w.Number == pr.Number {
+			return
+		}
+	}
+	plan.Waiting = append(plan.Waiting, ReviewWait{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: reason})
 }
 
 type FixDispatchExclusion struct {
@@ -747,6 +786,9 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			}
 		}
 		if availableSlots <= 0 {
+			if len(pendingMissingPerspectives(plan.State, pr, opts.Perspectives.List(), delivered)) > 0 {
+				plan.recordWait(pr, ReviewWaitNoParallelSlot)
+			}
 			continue
 		}
 		authorBase := prAuthorBase(pr, opts.Agents)
@@ -762,11 +804,15 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		// validateReviewHeads with heads on) take the perspectives the heads
 		// left unasked, on the ordinary path.
 		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent, authorBase)
-		if len(prReviewers) == 0 || availableSlots <= 0 {
+		if len(prReviewers) == 0 {
 			continue
 		}
 		missing := pendingMissingPerspectives(plan.State, pr, opts.Perspectives.List(), delivered)
 		if len(missing) == 0 {
+			continue
+		}
+		if availableSlots <= 0 {
+			plan.recordWait(pr, ReviewWaitNoParallelSlot)
 			continue
 		}
 		// One kick, every outstanding perspective, one comment. The per-PR cap
@@ -777,6 +823,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		if opts.CombinedPerspectives {
 			reviewer, free := freeReviewer(prReviewers, plan.inFlight(opts, now))
 			if !free {
+				plan.recordWait(pr, ReviewWaitNoFreeReviewer)
 				continue
 			}
 			agent := reviewer.Name
@@ -851,6 +898,9 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		for i := 0; i < limit; i++ {
 			reviewer, free := freeReviewer(prReviewers, plan.inFlight(opts, now))
 			if !free {
+				if i == 0 {
+					plan.recordWait(pr, ReviewWaitNoFreeReviewer)
+				}
 				break
 			}
 			agent := reviewer.Name
@@ -1683,7 +1733,7 @@ func reviewCapableAgents(opts DispatchOptions) []AgentCapability {
 	allowed := ReviewerAgentSet(opts.ReviewerAgents)
 	var out []AgentCapability
 	for _, a := range opts.Agents {
-		if a.Name == "" || !a.Enabled || a.Paused || a.OnDemand || !a.UsesKick {
+		if a.Name == "" || !a.Enabled || a.Paused || a.Draining || a.OnDemand || !a.UsesKick {
 			continue
 		}
 		if ReviewCapable(a, allowed) {

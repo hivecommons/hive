@@ -17889,7 +17889,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         const indEl = agentIndicators(a.name);
         const compactCls = isAgentCompact(a.name) ? ' compact' : '';
-        const replicaBadge = (a.replicaBase && a.replicaIndex > 1) ? ` <span class="status-badge" title="Replica ${a.replicaIndex} of ${a.replicaCount} for ${esc(a.replicaBase)}">${esc(a.replicaBase)} · replica ${a.replicaIndex} of ${a.replicaCount}</span>` : '';
+        const autoscale = (window._lastStatus || {}).reviewerAutoscale;
+        const autoLane = autoscale && autoscale.enabled && autoscale.agent === (a.replicaBase || a.name);
+        const autoTitle = autoLane ? ` — reviewer autoscale: ${autoscale.current} active, target ${autoscale.target}, band ${autoscale.min}–${autoscale.max}${autoscale.lastDecision ? '; last ' + reviewerAutoscaleDecisionText(autoscale.lastDecision) : ''}` : '';
+        const autoDraining = autoLane && Array.isArray(autoscale.draining) && autoscale.draining.includes(a.name);
+        const replicaBadge = (a.replicaBase && a.replicaIndex > 1)
+          ? ` <span class="status-badge" title="Replica ${a.replicaIndex} of ${a.replicaCount} for ${esc(a.replicaBase)}${esc(autoTitle)}">${esc(a.replicaBase)} · replica ${a.replicaIndex} of ${a.replicaCount}${autoLane ? ' · auto' : ''}${autoDraining ? ' · draining' : ''}</span>`
+          : (autoLane ? ` <span class="status-badge" title="Reviewer lane sized by backlog${esc(autoTitle)}">${autoscale.current} reviewer${autoscale.current === 1 ? '' : 's'} · auto</span>` : '');
         const configTarget = a.replicaBase || a.name;
         /* Says why the card is grey. Without it the only visible difference
            between "switched off" and "crashed" is the absence of a session,
@@ -50166,6 +50172,7 @@ function burnAreaChart() {
             <div class="config-field"><label>Max reviews per head ${yamlHint('review.max_reviews_per_head')} ${settingHelpMark('review-swarm', 'configuration', 'Max reviews per head', `Caps how many top-level hive reviews one PR head may receive before the relay refuses more (revisions and thread replies excepted). 0 or empty derives the cap: 1 with combined perspectives, one per perspective otherwise. A negative value disables the backstop.`)}</label><input type="number" step="1" value="${esc(String(rv.max_reviews_per_head || ''))}" placeholder="0 — derived" data-change-action="markDirty" data-arg0="review" data-arg1="max_reviews_per_head" data-arg-types="s,s,N"></div>
             <div class="config-field"><label>Re-review verdicts before ${yamlHint('review.revise_verdicts_before')} ${settingHelpMark('review-swarm', 'configuration', 'Re-review verdicts before', `RFC 3339 instant, e.g. 2026-09-19T14:00:00Z. PRs in the revise repos whose verdict was recorded before it are reviewed once more even though the head has not moved, for when the reviewer itself was wrong. Each PR is revisited at most once per bump. The revise repo list (review.revise_repos) is yaml-only. Empty clears it.`)}</label><input type="text" value="${esc(rv.revise_verdicts_before || '')}" placeholder="not set" spellcheck="false" data-change-action="markDirty" data-arg0="review" data-arg1="revise_verdicts_before" data-arg-types="s,s,w"></div>
           </div>
+          ${renderReviewerAutoscale(rv)}
           <div class="config-subgroup">Dispatch</div>
           <div class="config-field-row">
             <div class="config-field"><label>Webhook-triggered dispatch ${yamlHint('review.event_driven')} ${settingHelpMark('review-swarm', 'configuration', 'Webhook-triggered dispatch', `Lets pull_request webhooks start a review early instead of waiting for the next governor cycle. auto (the default) is on exactly when this hive receives signed GitHub webhooks. Always off while the review swarm itself is off (require approval and fan-out).`)}</label><select data-change-action="markDirty" data-arg0="review" data-arg1="event_driven_mode" data-arg-types="s,s,v">${['auto', 'on', 'off'].map(v => `<option value="${v}"${(rv.event_driven === true ? 'on' : rv.event_driven === false ? 'off' : 'auto') === v ? ' selected' : ''}>${v}</option>`).join('')}</select></div>
@@ -52331,6 +52338,78 @@ function burnAreaChart() {
     function setReviewBacklogDestination(value) {
       markDirtyReviewBacklog('destination', value || 'github_issue');
       rerenderReviewSeverityBacklog();
+    }
+
+    // review.reviewers.autoscale (hivecommons/hive#14685) is a sub-object on
+    // PUT /api/config/review, sent as reviewer_autoscale with only the edited
+    // keys so an absent key leaves the file's value alone.
+    const REVIEWER_AUTOSCALE_DEFAULTS = { min: 1, max: 4, target_backlog_per_reviewer: 2, scale_up_cycles: 2, scale_down_cycles: 5, cooldown: '5m', cpu_per_reviewer: 1, mem_per_reviewer_mb: 2048 };
+    function reviewerAutoscaleState() {
+      const d = _configState.data || (_configState.data = {});
+      d.review = d.review || {};
+      d.review.reviewers = d.review.reviewers || {};
+      d.review.reviewers.autoscale = d.review.reviewers.autoscale || {};
+      return d.review.reviewers.autoscale;
+    }
+    function markDirtyReviewerAutoscale(key, value) {
+      const a = reviewerAutoscaleState();
+      if (['min', 'max', 'target_backlog_per_reviewer', 'scale_up_cycles', 'scale_down_cycles', 'mem_per_reviewer_mb'].includes(key)) {
+        value = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+      } else if (key === 'cpu_per_reviewer') {
+        value = Number.isFinite(value) && value > 0 ? value : 0;
+      }
+      a[key] = value;
+      markDirty('review', 'reviewer_autoscale', Object.assign({}, (_configState.dirty.review || {}).reviewer_autoscale, { [key]: value }));
+    }
+    function toggleReviewerAutoscaleEnabled() {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return;
+      const a = reviewerAutoscaleState();
+      markDirtyReviewerAutoscale('enabled', !a.enabled);
+      const host = document.getElementById('review-reviewer-autoscale');
+      if (host) host.outerHTML = renderReviewerAutoscale((_configState.data || {}).review);
+    }
+    function renderReviewerAutoscale(rv) {
+      const a = (rv && rv.reviewers && rv.reviewers.autoscale) || {};
+      const canEdit = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const dis = canEdit ? '' : ' disabled';
+      const live = (window._lastStatus || {}).reviewerAutoscale;
+      const liveLine = live && live.enabled
+        ? `<p class="am-trusted-authors-note">Now: <strong>${live.current}</strong> reviewer${live.current === 1 ? '' : 's'} (target ${live.target}, band ${live.min}–${live.max})${live.draining && live.draining.length ? ', draining ' + live.draining.map(esc).join(', ') : ''}; backlog ${live.backlog}${live.oldestWait ? ', oldest ' + esc(live.oldestWait) : ''}${live.lastDecision ? ' — last: ' + esc(reviewerAutoscaleDecisionText(live.lastDecision)) : ''}</p>`
+        : '';
+      const num = (key, label, help, step) => `<div class="config-field"><label>${label} ${yamlHint('review.reviewers.autoscale.' + key)} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', label, help)}</label>
+              <input type="number" min="0"${step ? ' step="' + step + '"' : ''} value="${esc(String(a[key] || ''))}" placeholder="${esc(String(REVIEWER_AUTOSCALE_DEFAULTS[key]))}" data-change-action="markDirtyReviewerAutoscale" data-arg0="${key}" data-arg-types="s,N"${dis}></div>`;
+      const fields = a.enabled ? `
+            <div class="config-field-row mt-3">
+              ${num('min', 'Min reviewers', 'The floor of active reviewer replicas. The base reviewer agent is never retired.')}
+              ${num('max', 'Max reviewers', 'The ceiling of active reviewer replicas; capped at the fleet replica limit (5). Each replica is an ordinary reviewer-N agent with its own pane, token and cadence.')}
+              ${num('target_backlog_per_reviewer', 'Target backlog per reviewer', 'How many PRs may wait for a reviewer, per active reviewer, before the lane is behind. A PR counts as waiting when it has perspectives to review and every eligible reviewer is busy.')}
+            </div>
+            <div class="config-field-row mt-3">
+              ${num('scale_up_cycles', 'Scale-up cycles', 'Consecutive governor cycles the lane must be behind (backlog over target, or the oldest wait past the review-pending stage dwell) before a reviewer is added.')}
+              ${num('scale_down_cycles', 'Scale-down cycles', 'Consecutive idle cycles (nothing waiting and at least one reviewer free) before the highest replica is drained. A draining reviewer gets no new work and is retired only once its turn ends.')}
+              <div class="config-field"><label>Cooldown ${yamlHint('review.reviewers.autoscale.cooldown')} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Cooldown', 'Minimum gap between two scaling actions in either direction, e.g. 5m.')}</label>
+                <input type="text" value="${esc(a.cooldown || '')}" placeholder="5m" data-change-action="markDirtyReviewerAutoscale" data-arg0="cooldown" data-arg-types="s,w"${dis}></div>
+            </div>
+            <div class="config-field-row mt-3">
+              ${num('cpu_per_reviewer', 'CPU per reviewer (cores)', 'The CPU one reviewer is assumed to need. A scale-up is refused when the pod cgroup has less than this free; unknown limits (no cgroup) never block.', '0.1')}
+              ${num('mem_per_reviewer_mb', 'Memory per reviewer (MiB)', 'The memory one reviewer is assumed to need. A scale-up is refused when the pod cgroup has less than this free.')}
+              <div class="config-field"><label>Lane agent ${yamlHint('review.reviewers.autoscale.agent')} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Lane agent', 'The base reviewer agent whose replicas scale. Empty picks the first agent with role reviewer, then review.reviewer_agents[0].')}</label>
+                <input type="text" value="${esc(a.agent || '')}" placeholder="reviewer" data-change-action="markDirtyReviewerAutoscale" data-arg0="agent" data-arg-types="s,w"${dis}></div>
+            </div>` : '';
+      return `<div id="review-reviewer-autoscale" class="config-toggle mt-4" style="display:block">
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${a.enabled ? 'on' : ''}${canEdit ? '' : ' disabled'}" data-action="toggleReviewerAutoscaleEnabled" role="switch" aria-checked="${a.enabled ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Scale reviewers with the backlog ${yamlHint('review.reviewers.autoscale.enabled')} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Scale reviewers with the backlog', `Off by default. On, the reviewer lane grows from Min to Max replicas while PRs wait for a free reviewer, and drains back when idle. Replicas added this way are ordinary reviewer-N agents (same role, prompt, scoped token, pane and cadence as a configured replica). Scale-ups are refused when the pod cgroup lacks CPU or memory for another reviewer, when the provider budget latch is on or provider headroom is under 10%, or when reviewer kicks are failing to reach the CLI prompt (a saturated pod, not demand). Each decision is logged as &quot;reviewer autoscale: 2→3 reason=…&quot;. Owner only.`)}</span>
+            </div>
+            ${liveLine}${fields}
+          </div>`;
+    }
+    function reviewerAutoscaleDecisionText(d) {
+      if (!d) return '';
+      const when = d.at ? ' at ' + new Date(d.at).toLocaleTimeString() : '';
+      if (d.action === 'blocked') return `${d.from}→${d.to} blocked by ${d.reason}${when}`;
+      if (d.agent) return `${d.from}→${d.to} ${d.action} ${d.agent} (${d.reason})${when}`;
+      return `${d.from}→${d.to} ${d.action} (${d.reason})${when}`;
     }
 
     // review_bots is a sub-object on PUT /api/config/review; only

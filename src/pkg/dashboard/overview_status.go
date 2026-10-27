@@ -42,6 +42,11 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		st := s.deps.StageEngineStatus()
 		out.StageEngine = &st
 	}
+	if s.deps != nil && s.deps.ReviewerAutoscaleStatus != nil {
+		if st := s.deps.ReviewerAutoscaleStatus(); st.Enabled {
+			out.ReviewerAutoscale = &st
+		}
+	}
 	out.Repos = append([]FrontendRepo(nil), status.Repos...)
 	issues := func(items []any, held bool, repoName string) []any {
 		if items == nil {
