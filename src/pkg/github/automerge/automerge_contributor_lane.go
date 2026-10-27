@@ -205,6 +205,13 @@ type ContributorLanePolicy struct {
 	// (auto_merge.contributor_lane.approve_held_runs_for_registry_trusted).
 	// See automerge_contributor_held_runs.go.
 	ApproveHeldRunsForRegistryTrusted bool
+	// OwnerApprovalReleasesWorkflowFence lets a trusted merger's explicit
+	// approval on the current head (a GitHub APPROVED review, or a
+	// dashboard / `/hive decision approve` comment) release the
+	// workflow-path fence so the lane merges the PR itself
+	// (auto_merge.contributor_lane.owner_approval_releases_workflow_fence,
+	// default on). See automerge_contributor_workflow_approval.go.
+	OwnerApprovalReleasesWorkflowFence bool
 }
 
 // Contributor-lane auto-promotion scopes; mirrors
@@ -1139,6 +1146,9 @@ type contributorLaneEval struct {
 	verdict    ContributorLaneVerdict
 	method     string
 	mergeClaim effects.Claim
+	// workflowApprover is the trusted merger whose approval released the
+	// workflow-path fence for headSHA ("" when the fence did not trip).
+	workflowApprover string
 }
 
 // evaluateContributorLanePR runs every contributor-lane gate except the
@@ -1206,7 +1216,11 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return eval, contributorLaneReasonFilesEvidence, err
 	}
 	if reason := contributorLaneDiffReason(files); reason != "" {
-		return eval, reason, nil
+		approver, released := c.workflowFenceReleased(ctx, displayRepo, owner, repo, pr, number, headSHA, reason, policy)
+		if !released {
+			return eval, reason, nil
+		}
+		eval.workflowApprover = approver
 	}
 	if held, err := c.hasReporterTrustHold(ctx, owner, repo, number); err != nil {
 		return eval, "reporter-trust-check", err
@@ -1337,6 +1351,9 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if err != nil {
 		if requiredChecksExpectedMergeError(err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(eval.pr))
+		}
+		if reason := c.workflowFenceMergeUnauthorized(ctx, displayRepo, owner, repo, eval, err); reason != "" {
+			return AutoMergeSweepEvent{}, reason, nil
 		}
 		if refused := c.refusedMerge(attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil

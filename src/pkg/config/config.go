@@ -7826,6 +7826,17 @@ type ContributorLaneAutoMergeConfig struct {
 	// write permission; without it the approve call fails and the lane keeps
 	// waiting for a person.
 	ApproveHeldRunsForRegistryTrusted *bool `yaml:"approve_held_runs_for_registry_trusted,omitempty" json:"approve_held_runs_for_registry_trusted,omitempty"`
+	// OwnerApprovalReleasesWorkflowFence lets a hive owner / trusted
+	// merger's explicit approval on the current head — a GitHub APPROVED
+	// review, or a dashboard / `/hive decision approve` — release the
+	// contributor lane's workflow-path fence, so the lane merges a PR that
+	// edits `.github/workflows/**` or `.github/actions/**` itself once the
+	// other gates are clear (hivecommons/hive#14664). Approval on an earlier
+	// head does not count. nil/unset means ON. Merging such a PR needs the
+	// App's Workflows: Read and write permission; without it the lane marks
+	// the PR hive:unauthorized and parks it for a person's merge click.
+	// false keeps every workflow-path PR a person's merge.
+	OwnerApprovalReleasesWorkflowFence *bool `yaml:"owner_approval_releases_workflow_fence,omitempty" json:"owner_approval_releases_workflow_fence,omitempty"`
 }
 
 // Contributor-lane auto-promotion scopes
@@ -7918,6 +7929,13 @@ func (c ContributorLaneAutoMergeConfig) EffectiveRegistryTiersSufficient() bool 
 // lane may approve held workflow runs for registry-admitted authors (default on).
 func (c ContributorLaneAutoMergeConfig) EffectiveApproveHeldRunsForRegistryTrusted() bool {
 	return c.ApproveHeldRunsForRegistryTrusted == nil || *c.ApproveHeldRunsForRegistryTrusted
+}
+
+// EffectiveOwnerApprovalReleasesWorkflowFence reports whether a trusted
+// merger's explicit approval on the current head lets the contributor lane
+// merge a workflow-path PR (default on).
+func (c ContributorLaneAutoMergeConfig) EffectiveOwnerApprovalReleasesWorkflowFence() bool {
+	return c.OwnerApprovalReleasesWorkflowFence == nil || *c.OwnerApprovalReleasesWorkflowFence
 }
 
 func (c ContributorLaneAutoMergeConfig) RepoSet() map[string]bool {

@@ -50,8 +50,72 @@ type PullRequestApprovalEvent struct {
 	Actor   string
 }
 
-func renderPRApprovalCommandComment(command, actor string) string {
-	return fmt.Sprintf("%s\n\nPosted by @%s from the Hive dashboard; the merge gate decides from here.", command, strings.TrimSpace(actor))
+// prApprovalCommentMarkerPrefix opens the hidden marker a dashboard approval
+// comment carries so a later reader can bind the decision to the head it was
+// made on (hivecommons/hive#14664).
+const prApprovalCommentMarkerPrefix = "<!-- hive:pr-approval"
+
+// prApprovalCommentSuffix is the attribution line of a dashboard approval.
+const prApprovalCommentSuffix = " from the Hive dashboard; the merge gate decides from here."
+
+func renderPRApprovalCommandComment(command, actor, head string) string {
+	body := fmt.Sprintf("%s\n\nPosted by @%s%s", command, strings.TrimSpace(actor), prApprovalCommentSuffix)
+	if head = strings.ToLower(strings.TrimSpace(head)); head != "" {
+		body += "\n" + prApprovalCommentMarkerPrefix + " head=" + head + " by=" + strings.ToLower(strings.TrimSpace(actor)) + " -->"
+	}
+	return body
+}
+
+// ParsePRApprovalCommandComment reads a comment the dashboard posted on a
+// maintainer's behalf (renderPRApprovalCommandComment). It returns the
+// command (`/lgtm` or `/approve`), the actor the comment is attributed to,
+// and the head SHA the marker bound it to ("" for comments posted before
+// the marker existed). ok is false for any other comment.
+func ParsePRApprovalCommandComment(body string) (command, actor, head string, ok bool) {
+	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	var rest []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if command == "" {
+			command = line
+			continue
+		}
+		rest = append(rest, line)
+	}
+	if len(rest) == 0 {
+		return "", "", "", false
+	}
+	known := false
+	for _, want := range PRApprovalCommands {
+		if command == want {
+			known = true
+		}
+	}
+	if !known {
+		return "", "", "", false
+	}
+	attribution := rest[0]
+	if !strings.HasPrefix(attribution, "Posted by @") || !strings.HasSuffix(attribution, prApprovalCommentSuffix) {
+		return "", "", "", false
+	}
+	actor = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(attribution, "Posted by @"), prApprovalCommentSuffix))
+	if actor == "" || strings.ContainsAny(actor, " \t") {
+		return "", "", "", false
+	}
+	for _, line := range rest[1:] {
+		if !strings.HasPrefix(line, prApprovalCommentMarkerPrefix) {
+			continue
+		}
+		for _, field := range strings.Fields(strings.TrimSuffix(strings.TrimPrefix(line, prApprovalCommentMarkerPrefix), "-->")) {
+			if v, found := strings.CutPrefix(field, "head="); found {
+				head = strings.ToLower(strings.TrimSpace(v))
+			}
+		}
+	}
+	return command, actor, head, true
 }
 
 // openPullRequestHead returns the PR's head SHA and whether the hive opened
@@ -107,7 +171,7 @@ func (c *Client) RecordOperatorPullRequestApproval(ctx context.Context, repo str
 		return PullRequestApprovalEvent{}, err
 	}
 	for _, command := range PRApprovalCommands {
-		if err := c.CreateIssueComment(ctx, owner+"/"+name, number, renderPRApprovalCommandComment(command, actor)); err != nil {
+		if err := c.CreateIssueComment(ctx, owner+"/"+name, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
 			return PullRequestApprovalEvent{}, fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
 		}
 	}

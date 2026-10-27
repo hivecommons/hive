@@ -2946,7 +2946,7 @@ func mergeAPIErrorNotApplied(err error) error {
 		return err
 	}
 	switch ghErr.Response.StatusCode {
-	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
+	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusForbidden:
 		return effects.NotApplied(err)
 	}
 	return err

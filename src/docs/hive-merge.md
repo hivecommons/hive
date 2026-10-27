@@ -484,9 +484,29 @@ A PR merges through this tier only when all of the following hold:
   skipping every cycle (#12344; #12195, #12290). An unmarked, unregistered
   first-timer is still never admitted.
 - The diff does not touch `.github/workflows/**` or `.github/actions/**`
-  (`contributor-lane:workflow-path`) and does not delete a test file or remove
-  25+ test lines while deleting at least 3× what it adds
-  (`contributor-lane:tests-removed`).
+  (`contributor-lane:workflow-path`) — **or** a hive owner / trusted merger
+  has explicitly approved the current head
+  (`owner_approval_releases_workflow_fence`, default `true`,
+  [#14664](https://github.com/hivecommons/hive/issues/14664)). Explicit
+  approval is a GitHub pull-request review in state `APPROVED` whose commit
+  is the current head by a login the hive's merger authorizer trusts (the
+  same bar that releases a `requires_human` verdict), or a dashboard
+  approval (`/hive decision approve`, which posts `/lgtm` + `/approve`
+  attributed to the maintainer and bound to the head) or a trusted merger's
+  own `/hive decision approve` comment posted after the head. Approval on an
+  earlier head never counts: a new push re-arms the fence and the 085 note
+  reads "awaiting owner approval … re-approve after a push". When released
+  the lane logs `workflow-path fence released by owner approval login=…
+  head=…`, leaves one `<!-- hive:workflow-approval head=… by=… -->` audit
+  comment per head, and the PR goes through every other gate below like any
+  other. Merging such a PR needs the App's **Workflows: Read and write**;
+  when GitHub refuses the merge for want of it the lane marks the PR
+  `hive:unauthorized` (step `merge-workflow-path`), stops retrying that
+  head, and the approved head parks at `090-ready-for-human-merge` for a
+  person's **Merge** click as before. With the toggle off, or with no
+  approval, a workflow-path PR is never merged by the hive.
+- The diff does not delete a test file or remove 25+ test lines while
+  deleting at least 3× what it adds (`contributor-lane:tests-removed`).
 - Required CI is green on the current head, using the same merge-CI gate as
   the App self-merge tier.
 - A reviewer agent is configured (otherwise `contributor-lane:no-reviewer`:
@@ -533,6 +553,7 @@ auto_merge:
     registry_tiers_sufficient: true   # a require_tiers tier on the author's registry profile admits without a claim marker
     auto_promotion_scope: hive        # count clean merged PRs across every hive repo (repo = this repository only)
     approve_held_runs_for_registry_trusted: true   # approve action_required runs once per head for registry-admitted authors
+    owner_approval_releases_workflow_fence: true   # a trusted merger's approval on the current head lets the lane merge .github/workflows/** PRs
   contributor_tier:
     auto_promote_after_merged: 5      # clean merged PRs before the lane trusts an author on its own; negative disables
 ```

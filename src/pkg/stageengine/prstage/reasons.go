@@ -53,7 +53,11 @@ const (
 	// UnauthorizedStepApproveWorkflowRuns: approving held `action_required`
 	// workflow runs needs `actions: write`.
 	UnauthorizedStepApproveWorkflowRuns = "approve-workflow-runs"
-	TrustedAuthorReasonAppAuthored      = "trusted-author:app-authored"
-	TrustedBotLaneSkipReason            = "trusted-bot-lane"
-	WorkflowApprovalRequiredPrefix      = "workflow-approval-required:"
+	// UnauthorizedStepMergeWorkflowPath: merging an owner-approved PR that
+	// edits `.github/workflows/**` needs `workflows: write`; without it the
+	// lane parks the PR for a person's merge click (hivecommons/hive#14664).
+	UnauthorizedStepMergeWorkflowPath = "merge-workflow-path"
+	TrustedAuthorReasonAppAuthored    = "trusted-author:app-authored"
+	TrustedBotLaneSkipReason          = "trusted-bot-lane"
+	WorkflowApprovalRequiredPrefix    = "workflow-approval-required:"
 )
