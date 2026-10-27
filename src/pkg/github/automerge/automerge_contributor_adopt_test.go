@@ -533,7 +533,7 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 		t.Fatal("signed head does not need DCO re-home")
 	}
 	obs.Detail.DCOUnsigned = 2
-	body := AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true)
+	body := AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true, "")
 	for _, want := range []string{
 		"**DCO repair required:**",
 		"cherry-pick each original commit with `git cherry-pick -s`",
@@ -547,6 +547,17 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+	// A successful re-sign replay names the new tip and drops the manual
+	// re-home steps the hive already performed.
+	body = AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true, "5e5e5e5e5e5e5e5e")
+	if !strings.Contains(body, "re-signed as `"+shortSHA("5e5e5e5e5e5e5e5e")+"`") || strings.Contains(body, ", unchanged.") {
+		t.Fatalf("re-signed body must name the re-signed tip:\n%s", body)
+	}
+	for _, unwanted := range []string{"**DCO repair required:**", "git cherry-pick -s"} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("re-signed body still carries %q:\n%s", unwanted, body)
 		}
 	}
 }
@@ -1062,6 +1073,13 @@ func TestDCORehomeBranchCarriesResignedCommits(t *testing.T) {
 	}
 	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "signed1" {
 		t.Fatalf("rehome branch sha=%q, want the re-signed tip; refs=%v", got, h.adopt.refs)
+	}
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("pulls=%v", h.adopt.pulls)
+	}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	if !strings.Contains(body, "re-signed as `signed1`") || strings.Contains(body, "**DCO repair required:**") || strings.Contains(body, "git cherry-pick -s") {
+		t.Fatalf("re-signed rehome body must name the new tip and omit the manual DCO repair block:\n%s", body)
 	}
 }
 

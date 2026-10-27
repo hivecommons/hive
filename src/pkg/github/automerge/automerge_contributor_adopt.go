@@ -329,8 +329,10 @@ func AdoptionDCORehomeComment(obs stageObservation, hiveID string, superseding i
 		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), AdoptReasonDCORehome, stagelabels.AdoptModeSupersede, superseding, obs.HeadSHA, obs.Author, superseding)
 }
 
-// AdoptionPRBody is the superseding App PR's body.
-func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool) string {
+// AdoptionPRBody is the superseding App PR's body. resignedTip is the head of
+// the re-signed replay the branch points at, or "" when the branch carries the
+// contributor's head unchanged.
+func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool, resignedTip string) string {
 	var b strings.Builder
 	if rec.AdoptDiffFence != "" {
 		// Read back by carriedFenceGate: the App lanes never merge this
@@ -350,7 +352,11 @@ func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool
 	if obs.HeadRepo != "" && !strings.EqualFold(obs.HeadRepo, obs.Display) {
 		fmt.Fprintf(&b, " (fork `%s`)", obs.HeadRepo)
 	}
-	b.WriteString(", unchanged. Last lane reason on the original: `")
+	if resignedTip != "" {
+		fmt.Fprintf(&b, ", re-signed as `%s` (content unchanged, `Signed-off-by` added). Last lane reason on the original: `", shortSHA(resignedTip))
+	} else {
+		b.WriteString(", unchanged. Last lane reason on the original: `")
+	}
 	b.WriteString(nonEmpty(rec.Reason, obs.Reason))
 	b.WriteString("`.\n\n")
 	b.WriteString("**Hive fix agent:** rebase this branch on `")
@@ -369,7 +375,7 @@ func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool
 	if rec.AdoptReason == AdoptReasonSignoffRehome {
 		b.WriteString("\n**Sign-off attribution:** the original PR would squash the App's signed fixes as the contributor. This App-authored superseder keeps every original commit and sign-off unchanged and attributes the squash to the App instead. DCO and all merge gates still apply here.\n")
 	}
-	if dcoRehome {
+	if dcoRehome && resignedTip == "" {
 		b.WriteString("\n**DCO repair required:** this adoption has unsigned non-merge commits and the hive cannot repair them by amending the contributor branch. Re-home the work onto a hive-owned branch from `")
 		b.WriteString(nonEmpty(obs.BaseRef, "the base branch"))
 		b.WriteString("`: cherry-pick each original commit with `git cherry-pick -s` (or squash with `git commit --author` preserving the original author), ensure every replacement commit has `Signed-off-by`, push the DCO-clean branch, open/keep one superseding PR with the same title, then comment on and close #")
@@ -673,6 +679,9 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	}
 	branch := adoptBranchPrefix + strconv.Itoa(number)
 	fullRepo := owner + "/" + repo
+	// resignedTip stays "" when the branch falls back to the unsigned
+	// contributor head; the body then keeps the manual DCO repair steps.
+	var resignedTip string
 	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo: fullRepo, Kind: effects.KindBranchPush, Target: branch, Actor: "stage_labels",
 		Inputs: map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "adopt": "true"},
@@ -683,6 +692,7 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 				c.warn("stage labels: re-signing adopted commits failed; branching from the unsigned head", "repo", obs.Display, "pr", number, "error", signErr)
 			} else if signed != "" {
 				tip = signed
+				resignedTip = signed
 			}
 		}
 		_, _, apiErr := c.gh.Git.CreateRef(ctx, owner, repo, &gh.Reference{
@@ -716,7 +726,7 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 			Title: gh.Ptr(nonEmpty(strings.TrimSpace(obs.Title), fmt.Sprintf("Adopt #%d", number))),
 			Head:  gh.Ptr(branch),
 			Base:  gh.Ptr(obs.BaseRef),
-			Body:  gh.Ptr(AdoptionPRBody(obs, rec, dcoRehome)),
+			Body:  gh.Ptr(AdoptionPRBody(obs, rec, dcoRehome, resignedTip)),
 		})
 		if apiErr != nil {
 			return effects.Result{}, effects.NotApplied(apiErr)
