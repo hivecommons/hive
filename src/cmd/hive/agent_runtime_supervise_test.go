@@ -199,7 +199,19 @@ func TestBootAgentsWith_SidecarStartsSupervision(t *testing.T) {
 	t.Setenv(cruxconfig.ServeTokenEnvVar, "tok")
 	f := newBootAgentsFake()
 	f.deps.newRuntime = func(cfg cruxconfig.RuntimeConfig, opts ...cruxruntime.Option) (hostedRuntime, error) {
-		return newHostedRuntime(cfg, opts...)
+		hr, err := newHostedRuntime(cfg, opts...)
+		if err == nil {
+			// Cleanups run LIFO, so this unsubscribes (and joins the stream
+			// goroutine) before liveServe's httptest server is closed.
+			t.Cleanup(func() {
+				if sh, ok := hr.(*sidecarHost); ok {
+					if src, ok := sh.Runtime.(eventObservable); ok {
+						src.SetEventObserver(nil)
+					}
+				}
+			})
+		}
+		return hr, err
 	}
 	f.deps.startHiveCallback = func(context.Context, callback.Capabilities, *slog.Logger) error { return nil }
 	b := newBootAgentsBoot(t, f, bootAgentsConfig())
