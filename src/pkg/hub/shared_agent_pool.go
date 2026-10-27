@@ -19,6 +19,10 @@ var sharedAgentPoolPath = "/data/saas/shared-agent-pool.json"
 
 const defaultSharedAgentLeaseTTL = 90 * time.Second
 
+// A waiter that has not retried within this window is treated as gone so a
+// crashed spoke cannot starve the fleet.
+const sharedPoolWaiterStaleAfter = 15 * time.Second
+
 type sharedAgentLease struct {
 	ID        string    `json:"id"`
 	HiveID    string    `json:"hive_id"`
@@ -37,7 +41,8 @@ type sharedAgentPool struct {
 	max          int
 	ttl          time.Duration
 	leases       map[string]sharedAgentLease
-	waitingHives map[string]struct{}
+	waitingHives map[string]time.Time // hive_id -> first 409 (FIFO position)
+	lastSeen     map[string]time.Time // hive_id -> last retry
 	loadError    error
 }
 
@@ -52,7 +57,8 @@ func newSharedAgentPool() *sharedAgentPool {
 		max:          max,
 		ttl:          ttl,
 		leases:       make(map[string]sharedAgentLease),
-		waitingHives: make(map[string]struct{}),
+		waitingHives: make(map[string]time.Time),
+		lastSeen:     make(map[string]time.Time),
 	}
 	p.load()
 	return p
@@ -106,9 +112,27 @@ func (p *sharedAgentPool) saveLocked() error {
 	return nil
 }
 
-func (p *sharedAgentPool) hasOtherWaitingHive(hiveID string) bool {
-	for waitingHive := range p.waitingHives {
-		if waitingHive != hiveID {
+// hasEarlierWaitingHive reports whether another hive has been waiting longer
+// than hiveID (which may not be waiting yet). Stale waiters are pruned first.
+func (p *sharedAgentPool) hasEarlierWaitingHive(hiveID string, now time.Time) bool {
+	if p.waitingHives == nil {
+		p.waitingHives = make(map[string]time.Time)
+	}
+	if p.lastSeen == nil {
+		p.lastSeen = make(map[string]time.Time)
+	}
+	for h := range p.waitingHives {
+		if now.Sub(p.lastSeen[h]) > sharedPoolWaiterStaleAfter {
+			delete(p.waitingHives, h)
+			delete(p.lastSeen, h)
+		}
+	}
+	mySince, waiting := p.waitingHives[hiveID]
+	if !waiting {
+		mySince = now
+	}
+	for h, since := range p.waitingHives {
+		if h != hiveID && since.Before(mySince) {
 			return true
 		}
 	}
@@ -123,11 +147,6 @@ func (p *sharedAgentPool) handle(w http.ResponseWriter, r *http.Request, s *HubS
 	if p.loadError != nil {
 		s.logger.Error("shared agent pool state is untrusted; refusing leases", "error", p.loadError)
 		http.Error(w, "shared agent pool state unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
-		w.Header().Set("Allow", "POST, PUT, DELETE")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	auth := r.Header.Get("Authorization")
@@ -168,6 +187,7 @@ func (p *sharedAgentPool) handle(w http.ResponseWriter, r *http.Request, s *HubS
 			lease.ExpiresAt = now.Add(p.ttl)
 			p.leases[key] = lease
 			delete(p.waitingHives, req.HiveID)
+			delete(p.lastSeen, req.HiveID)
 			if err := p.saveLocked(); err != nil {
 				http.Error(w, "shared agent pool persistence failed", http.StatusServiceUnavailable)
 				return
@@ -175,11 +195,17 @@ func (p *sharedAgentPool) handle(w http.ResponseWriter, r *http.Request, s *HubS
 			writeSharedPoolLease(w, lease.ID)
 			return
 		}
-		if len(p.leases) >= p.max || p.hasOtherWaitingHive(req.HiveID) {
+		if len(p.leases) >= p.max || p.hasEarlierWaitingHive(req.HiveID, now) {
 			if p.waitingHives == nil {
-				p.waitingHives = make(map[string]struct{})
+				p.waitingHives = make(map[string]time.Time)
 			}
-			p.waitingHives[req.HiveID] = struct{}{}
+			if p.lastSeen == nil {
+				p.lastSeen = make(map[string]time.Time)
+			}
+			if _, ok := p.waitingHives[req.HiveID]; !ok {
+				p.waitingHives[req.HiveID] = now
+			}
+			p.lastSeen[req.HiveID] = now
 			w.Header().Set("Retry-After", "3")
 			http.Error(w, "shared agent pool is busy", http.StatusConflict)
 			return
@@ -192,6 +218,7 @@ func (p *sharedAgentPool) handle(w http.ResponseWriter, r *http.Request, s *HubS
 		lease := sharedAgentLease{ID: hex.EncodeToString(raw[:]), HiveID: req.HiveID, AgentName: req.AgentName, ExpiresAt: now.Add(p.ttl)}
 		p.leases[key] = lease
 		delete(p.waitingHives, req.HiveID)
+		delete(p.lastSeen, req.HiveID)
 		if err := p.saveLocked(); err != nil {
 			delete(p.leases, key)
 			http.Error(w, "shared agent pool persistence failed", http.StatusServiceUnavailable)
@@ -201,6 +228,7 @@ func (p *sharedAgentPool) handle(w http.ResponseWriter, r *http.Request, s *HubS
 	case http.MethodPut, http.MethodDelete:
 		if r.Method == http.MethodDelete && req.CancelWait {
 			delete(p.waitingHives, req.HiveID)
+			delete(p.lastSeen, req.HiveID)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -231,9 +259,6 @@ func (p *sharedAgentPool) handle(w http.ResponseWriter, r *http.Request, s *HubS
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	default:
-		w.Header().Set("Allow", "POST, PUT, DELETE")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 

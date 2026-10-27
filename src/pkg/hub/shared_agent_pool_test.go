@@ -114,3 +114,83 @@ func TestSharedAgentPoolHTTPSerializesTwoHives(t *testing.T) {
 		t.Fatalf("reef acquire after school release: %v", err)
 	}
 }
+
+func TestSharedAgentPoolFIFOWaitersAndStaleExpiry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shared-agent-pool.json")
+	pool := &sharedAgentPool{
+		path:         path,
+		max:          1,
+		ttl:          time.Minute,
+		leases:       make(map[string]sharedAgentLease),
+		waitingHives: make(map[string]time.Time),
+		lastSeen:     make(map[string]time.Time),
+	}
+	s := &HubServer{logger: slog.Default()}
+	s.setHubSecret("test-fifo-waiters-master")
+
+	h0 := map[string]string{"hive_id": "h0", "agent_name": "a"}
+	h1 := map[string]string{"hive_id": "h1", "agent_name": "b"}
+	h2 := map[string]string{"hive_id": "h2", "agent_name": "c"}
+
+	// h0 acquires the slot.
+	r0 := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h0", h0)
+	if r0.Code != http.StatusOK {
+		t.Fatalf("h0 acquire status = %d", r0.Code)
+	}
+	var lease0 struct {
+		LeaseID string `json:"lease_id"`
+	}
+	_ = json.Unmarshal(r0.Body.Bytes(), &lease0)
+
+	// h1 tries and gets 409, becomes first waiter.
+	r1 := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h1", h1)
+	if r1.Code != http.StatusConflict {
+		t.Fatalf("h1 status = %d, want 409", r1.Code)
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// h2 tries and gets 409, becomes second waiter.
+	r2 := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h2", h2)
+	if r2.Code != http.StatusConflict {
+		t.Fatalf("h2 status = %d, want 409", r2.Code)
+	}
+
+	// h0 releases.
+	rel := map[string]string{"hive_id": "h0", "lease_id": lease0.LeaseID}
+	rRel := serveSharedPoolRequest(t, pool, s, http.MethodDelete, "h0", rel)
+	if rRel.Code != http.StatusNoContent {
+		t.Fatalf("h0 release status = %d", rRel.Code)
+	}
+
+	// h2 tries to acquire before h1, but h1 is earlier in queue -> 409.
+	r2Blocked := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h2", h2)
+	if r2Blocked.Code != http.StatusConflict {
+		t.Fatalf("h2 status = %d, want 409 (h1 was earlier waiter)", r2Blocked.Code)
+	}
+
+	// h1 acquires -> 200 OK.
+	r1Acq := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h1", h1)
+	if r1Acq.Code != http.StatusOK {
+		t.Fatalf("h1 acquire status = %d, want 200", r1Acq.Code)
+	}
+	var lease1 struct {
+		LeaseID string `json:"lease_id"`
+	}
+	_ = json.Unmarshal(r1Acq.Body.Bytes(), &lease1)
+
+	// h1 releases.
+	rel1 := map[string]string{"hive_id": "h1", "lease_id": lease1.LeaseID}
+	serveSharedPoolRequest(t, pool, s, http.MethodDelete, "h1", rel1)
+
+	// Now make h2 stale (simulate h2 crashing and not retrying for > 15s).
+	pool.mu.Lock()
+	pool.lastSeen["h2"] = time.Now().Add(-20 * time.Second)
+	pool.mu.Unlock()
+
+	// Fresh hive h3 can acquire because h2 is stale and pruned!
+	h3 := map[string]string{"hive_id": "h3", "agent_name": "d"}
+	r3 := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h3", h3)
+	if r3.Code != http.StatusOK {
+		t.Fatalf("h3 acquire status = %d, want 200 after stale waiter pruned", r3.Code)
+	}
+}
