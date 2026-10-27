@@ -155,7 +155,8 @@ func NewEmbedded(opts Options) (*Embedded, error) {
 
 // Index validates every document before writing anything, then publishes one
 // new snapshot per affected repo. A repo whose new image exceeds the size
-// budget keeps its previous snapshot and reports a *CoverageError.
+// budget, or whose existing index cannot be read, keeps its previous snapshot
+// and reports a *CoverageError.
 func (e *Embedded) Index(ctx context.Context, docs []Document) error {
 	byRepo := map[string][]Document{}
 	for _, d := range docs {
@@ -203,7 +204,16 @@ func (e *Embedded) update(ctx context.Context, byRepo map[string][]Document, app
 			return errors.Join(append(errs, err)...)
 		}
 		cur := map[string]Document{}
-		if sh := e.current(repo); sh != nil {
+		sh, err := e.current(repo)
+		if err != nil {
+			ce := &CoverageError{Repo: repo, Err: err}
+			e.mu.Lock()
+			e.coverage[repo] = ce
+			e.mu.Unlock()
+			errs = append(errs, ce)
+			continue
+		}
+		if sh != nil {
 			for _, d := range sh.docs {
 				cur[d.ID] = d
 			}
@@ -218,17 +228,21 @@ func (e *Embedded) update(ctx context.Context, byRepo map[string][]Document, app
 	return errors.Join(errs...)
 }
 
-// current returns the repo's snapshot, loading it if needed. An unreadable
-// or corrupt file is ignored so the next publish rebuilds it from scratch.
-func (e *Embedded) current(repo string) *shard {
+// current returns the repo's snapshot, loading it if needed. A corrupt file
+// is ignored so the next publish rebuilds it from scratch; any other read
+// error is returned so the on-disk snapshot is never overwritten blindly.
+func (e *Embedded) current(repo string) (*shard, error) {
 	e.mu.Lock()
 	l := e.shards[repo]
 	e.mu.Unlock()
 	if l != nil {
-		return l.sh
+		return l.sh, nil
 	}
-	sh, _ := readShard(e.dir, repo)
-	return sh
+	sh, err := readShard(e.dir, repo)
+	if err != nil && !errors.Is(err, ErrCorruptIndex) {
+		return nil, err
+	}
+	return sh, nil
 }
 
 func (e *Embedded) publish(repo string, byID map[string]Document) error {

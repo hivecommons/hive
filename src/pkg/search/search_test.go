@@ -401,6 +401,46 @@ func TestUnreadableIndexIsCoverageError(t *testing.T) {
 	}
 }
 
+func TestUnreadableIndexIsNotOverwritten(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod 0 does not block root")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	seed := newBackend(t, Options{Dir: dir})
+	if err := seed.Index(ctx, []Document{doc("org/a", "1", "bead", t0, "old", "", nil)}); err != nil {
+		t.Fatal(err)
+	}
+	path := indexPath(dir, "org/a")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	e := newBackend(t, Options{Dir: dir})
+	err = e.Index(ctx, []Document{doc("org/a", "2", "bead", t0, "new", "", nil)})
+	var ce *CoverageError
+	if !errors.As(err, &ce) || ce.Repo != "org/a" || errors.Is(ce, ErrCorruptIndex) {
+		t.Fatalf("err=%v", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("unreadable index was overwritten")
+	}
+	res := query(t, newBackend(t, Options{Dir: dir}), Query{Filters: map[string][]string{"repo": {"org/a"}}})
+	if got := ids(res); !reflect.DeepEqual(got, []string{"org/a#1"}) {
+		t.Fatalf("hits=%v", got)
+	}
+}
+
 func TestMemoryCapEvictsLeastRecentlyQueried(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
