@@ -143,7 +143,7 @@ func TestStageTrackerManualMergeApproved(t *testing.T) {
 		},
 		{
 			name: "trust-blocked 090 unchanged", stage: stagelabels.ReadyForHumanMerge, reason: "untrusted-author-role",
-			wantCaption: "Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself — untrusted author role", wantActor: "maintainer",
+			wantCaption: "Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself — author's role is not trusted for unattended merge", wantActor: "maintainer",
 		},
 		{
 			name: "requires_human approved at 090", stage: stagelabels.ReadyForHumanMerge, reason: "reviewer-verdict:requires_human:human-approved@octocat",
