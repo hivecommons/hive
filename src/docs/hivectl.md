@@ -288,6 +288,23 @@ Columns: `repo`, `pr`, `head_sha`, `bundle_id`, `author_login`, `author_kind`, `
 Reporting only: nothing here reads into or alters merge eligibility. See
 [Review evidence bundle](review-evidence.md#exporting).
 
+### evidence — outcome benchmark report
+
+```bash
+hivectl evidence benchmark --since 2026-10-01T00:00:00Z --until 2026-11-01T00:00:00Z --out outcomes.md
+hivectl evidence benchmark --since 720h --repo hivecommons/hive --fleet-spend-usd 412.50   # Markdown on stdout
+src/scripts/outcome-benchmark.sh 2026-10        # one UTC month into src/docs/benchmarks/outcomes-2026-10.md
+```
+
+`evidence benchmark` folds the same bundles as `evidence export` and renders a Markdown report comparing PRs Hive
+mediated (at least one Hive reviewer verdict or posted review) with unmediated ones: revert rate, change-failure rate
+(reverts + issue reopens), CI failure at the merged head, Hive `changes_requested` verdict rate (mediated only), median
+time to merge and, with `--fleet-spend-usd`, cost per merged mediated PR. `control_window` on/off is a secondary cut
+when bundles carry it. Rates carry 95% Wilson intervals and any cell with n < 10 reads `not reported`. `--since` and
+`--until` (RFC3339 or a Go duration back from now) window PRs on open time, `since <= opened_at < until`; with
+absolute bounds the output depends only on the bundles, so a re-run reproduces it byte for byte. Local filesystem only,
+reporting only. See [Outcome benchmark](review-evidence.md#outcome-benchmark) and [benchmarks/](benchmarks/README.md).
+
 ### evidence — backfill bundles from GitHub history
 
 ```bash

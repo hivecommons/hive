@@ -100,11 +100,12 @@ var evidenceExportColumns = []string{
 func newEvidenceCommand(env *commandEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "evidence",
-		Short:   "Per-PR review evidence: export stored bundles or backfill them from forge history",
-		Long:    "Work with the review evidence bundles Hive stores under the evidence root (default /data/evidence).\nexport reads the local filesystem only; backfill talks to the GitHub API. Neither contacts a hive and nothing here\ninfluences a merge.",
-		Example: "  hivectl evidence export --since 168h --format csv --out evidence.csv\n  hivectl evidence export --since 2026-10-01T00:00:00Z --repo hivecommons/hive\n  hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run",
+		Short:   "Per-PR review evidence: export or benchmark stored bundles, or backfill them from forge history",
+		Long:    "Work with the review evidence bundles Hive stores under the evidence root (default /data/evidence).\nexport and benchmark read the local filesystem only; backfill talks to the GitHub API. None contacts a hive and nothing here\ninfluences a merge.",
+		Example: "  hivectl evidence export --since 168h --format csv --out evidence.csv\n  hivectl evidence export --since 2026-10-01T00:00:00Z --repo hivecommons/hive\n  hivectl evidence benchmark --since 2026-10-01T00:00:00Z --until 2026-11-01T00:00:00Z --out outcomes.md\n  hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run",
 	}
 	cmd.AddCommand(newEvidenceExportCommand(env))
+	cmd.AddCommand(newEvidenceBenchmarkCommand(env))
 	cmd.AddCommand(newEvidenceBackfillCommand(env))
 	cmd.AddCommand(newEvidenceBackfillIssuesCommand(env))
 	return cmd
@@ -213,6 +214,32 @@ func parseEvidenceSince(s string, now time.Time) (time.Time, error) {
 // time), and returns rows ordered by repo then PR number plus the unreadable
 // count.
 func exportEvidenceRows(root string, cutoff time.Time, repo string) ([]evidenceExportRow, int, error) {
+	bundles, unreadable, err := loadEvidenceBundles(root)
+	if err != nil {
+		return nil, unreadable, err
+	}
+	prs := evidence.FoldPRs(bundles, repo, "")
+	rows := make([]evidenceExportRow, 0, len(prs))
+	for _, p := range prs {
+		if !cutoff.IsZero() && p.OpenedAt.Before(cutoff) {
+			continue
+		}
+		rows = append(rows, evidenceRowFromPR(p))
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		ri, rj := strings.ToLower(rows[i].Repo), strings.ToLower(rows[j].Repo)
+		if ri != rj {
+			return ri < rj
+		}
+		return rows[i].PR < rows[j].PR
+	})
+	return rows, unreadable, nil
+}
+
+// loadEvidenceBundles walks root and returns every readable schema v1 bundle
+// plus the count of .json files that did not parse or are not v1. A missing
+// root is empty, not an error.
+func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
 	var bundles []*evidence.Bundle
 	unreadable := 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -236,22 +263,7 @@ func exportEvidenceRows(root string, cutoff time.Time, repo string) ([]evidenceE
 	if err != nil {
 		return nil, unreadable, fmt.Errorf("reading evidence under %s: %w", root, err)
 	}
-	prs := evidence.FoldPRs(bundles, repo, "")
-	rows := make([]evidenceExportRow, 0, len(prs))
-	for _, p := range prs {
-		if !cutoff.IsZero() && p.OpenedAt.Before(cutoff) {
-			continue
-		}
-		rows = append(rows, evidenceRowFromPR(p))
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		ri, rj := strings.ToLower(rows[i].Repo), strings.ToLower(rows[j].Repo)
-		if ri != rj {
-			return ri < rj
-		}
-		return rows[i].PR < rows[j].PR
-	})
-	return rows, unreadable, nil
+	return bundles, unreadable, nil
 }
 
 // evidenceRowFromPR flattens one folded PR: the newest bundle's verdicts,
