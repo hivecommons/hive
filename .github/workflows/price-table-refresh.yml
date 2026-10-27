@@ -129,8 +129,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$HEAD_BRANCH"
-          # One fragment per refresh; drop any earlier unmerged one on this branch.
-          git rm -q --ignore-unmatch 'changelog.d/changed-price-table-*.md' || true
+          # One fragment per refresh; drop earlier ones on this branch that are
+          # not on the base branch (merged fragments must stay).
+          for f in changelog.d/changed-price-table-*.md; do
+            [ -e "$f" ] || continue
+            git cat-file -e "origin/$BASE_BRANCH:$f" 2>/dev/null || git rm -q -- "$f"
+          done
           changes="$(sed -n 's/^### Changes (\([0-9]*\)).*/\1/p' "$RUNNER_TEMP/report.md")"
           if [ "${changes:-0}" -gt 0 ]; then
             printf -- '- Refreshed the model list-price table from OpenRouter (%s rows moved; list prices as of %s); the Cost panel estimate now uses the new rates.\n' "$changes" "$DATE" \
