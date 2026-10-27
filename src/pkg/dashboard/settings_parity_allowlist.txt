@@ -385,6 +385,11 @@ project.repo_policies[].self_authorization_hold # TODO #11854
 project.repos[] # TODO #11854
 providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
+repeat_failure.enabled # yaml-only until the check reaches the dashboard (#14550)
+repeat_failure.exclude[] # yaml-only until the check reaches the dashboard (#14550)
+repeat_failure.no_data_after_s # yaml-only until the check reaches the dashboard (#14550)
+repeat_failure.threshold # yaml-only until the check reaches the dashboard (#14550)
+repeat_failure.window_s # yaml-only until the check reaches the dashboard (#14550)
 retro.lesson_confidence_cap # TODO #11854
 retro.lesson_confidence_step # TODO #11854
 review.backlog.labels[] # TODO #11854

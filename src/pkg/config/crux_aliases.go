@@ -27,6 +27,7 @@ type (
 	ProviderStatusConfig       = cruxconfig.ProviderStatusConfig
 	ProvidersConfig            = cruxconfig.ProvidersConfig
 	ReentrantTurnConfig        = cruxconfig.ReentrantTurnConfig
+	RepeatFailureConfig        = cruxconfig.RepeatFailureConfig
 	ReviewHead                 = cruxconfig.ReviewHead
 	ReviewModelPoolEntry       = cruxconfig.ReviewModelPoolEntry
 	ReviewModelsConfig         = cruxconfig.ReviewModelsConfig
@@ -97,6 +98,9 @@ const (
 	DefaultMaxIssuesPerKick             = cruxconfig.DefaultMaxIssuesPerKick
 	DefaultMaxPRsPerKick                = cruxconfig.DefaultMaxPRsPerKick
 	DefaultProviderBudgetProbeIntervalS = cruxconfig.DefaultProviderBudgetProbeIntervalS
+	DefaultRepeatFailureNoDataAfterS    = cruxconfig.DefaultRepeatFailureNoDataAfterS
+	DefaultRepeatFailureThreshold       = cruxconfig.DefaultRepeatFailureThreshold
+	DefaultRepeatFailureWindowS         = cruxconfig.DefaultRepeatFailureWindowS
 	ExplainLinePrefix                   = cruxconfig.ExplainLinePrefix
 	ExplainModeBrief                    = cruxconfig.ExplainModeBrief
 	ExplainModeEnvVar                   = cruxconfig.ExplainModeEnvVar
@@ -236,3 +240,5 @@ const (
 )
 
 var NormalizeStandbyTier = cruxconfig.NormalizeStandbyTier
+
+var DefaultRepeatFailureExclude = cruxconfig.DefaultRepeatFailureExclude

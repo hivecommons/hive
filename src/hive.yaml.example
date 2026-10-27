@@ -452,6 +452,19 @@ agents:
     on_demand: true
     stale_timeout: 7200
 
+# Repeat-failure check (#14550): notice an agent running the same failing shell
+# command again and again. Monitor only — it never pauses the agent. Off by
+# default; while off Hive collects no command records and adds nothing to an
+# agent's environment or home. Values shown are the defaults.
+# repeat_failure:
+#   enabled: false
+#   threshold: 5          # same command, same result, this many times...
+#   window_s: 600         # ...within this many seconds raises a note
+#   no_data_after_s: 900  # shell activity but no record this long = "not receiving data"
+#   exclude:              # command prefixes that fail by design while waiting
+#     - gh pr checks
+#     - gh run watch
+
 # Hub — hive-wide contributor settings. Shown here only for the standby keys
 # (RFC #7629); the contribute admission filters live on the dashboard's
 # Operations tab and are written back here.

@@ -143,6 +143,9 @@ type AgentRuntimeConfig struct {
 	// Turn gates the re-entrant conversation-as-state rollout (#5799). Default
 	// off leaves every agent on the legacy tmux loop until an operator opts in.
 	Turn TurnConfig `yaml:"turn,omitempty" json:"turn,omitempty"`
+	// RepeatFailure switches on the monitor-only repeated-failing-command
+	// check (#14550). Nil or enabled false leaves it off.
+	RepeatFailure *RepeatFailureConfig `yaml:"repeat_failure,omitempty" json:"repeat_failure,omitempty"`
 }
 
 // AgentRuntimeGovernorConfig is the slice of `governor:` the agent runtime
