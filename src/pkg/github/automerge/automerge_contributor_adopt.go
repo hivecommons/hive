@@ -1331,7 +1331,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	}
 	noted := rec.AdoptionEscalationNoted(obs.HeadSHA)
 	store.MarkAdoptionEscalated(key, obs.HeadSHA, reason)
-	c.warn("stage labels: adopted PR sits with nothing the hive can push; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "head_since", rec.AdoptedHeadSince(), "noted", noted)
+	c.info("stage labels: adopted PR sits with nothing the hive can push; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "head_since", rec.AdoptedHeadSince(), "noted", noted)
 	if noted {
 		// The blocker flapped on a head already noted: re-escalate silently.
 		return adoptionEscape{Escalated: true, Reason: reason}, comments, firstErr
