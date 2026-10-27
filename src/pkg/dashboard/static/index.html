@@ -13735,9 +13735,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // (payload human_approver) instead of the generic stage word.
     const STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90;
     const STAGE_TRACKER_MANUAL_MERGE_WORD = 'Awaiting human merge';
+    // Every 090 word also says WHY a person merges (payload
+    // human_merge_reason, a prstage.HumanMergeReason* code such as
+    // "workflow-files" / "untrusted-author" / "branch-protection", falling
+    // back to "policy"); the tooltip carries the payload's one-sentence
+    // human_merge_reason_text (hivecommons/hive#14658).
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'policy': 'policy' };
+    function stageTrackerHumanMergeReasonWord(item) {
+      const code = String((item && item.human_merge_reason) || '').trim();
+      if (!code) return '';
+      return STAGE_TRACKER_HUMAN_MERGE_REASON_WORD[code] || code.replace(/-/g, ' ');
+    }
     function stageTrackerManualMergeWord(item) {
       const approver = String((item && item.human_approver) || '').trim();
-      return STAGE_TRACKER_MANUAL_MERGE_WORD + (approver ? ' · approved by @' + approver : '');
+      const why = stageTrackerHumanMergeReasonWord(item);
+      return STAGE_TRACKER_MANUAL_MERGE_WORD + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
+    }
+    // The plain 090 word (no manual-merge rule): the stage's short word
+    // plus the reason, "Ready for human merge · untrusted author".
+    function stageTrackerReadyForHumanWord(item, fallback) {
+      const why = stageTrackerHumanMergeReasonWord(item);
+      return why ? fallback + ' · ' + why : '';
     }
     // 085 under hive:unauthorized (payload unauthorized_step, e.g. "approve
     // workflow runs"): the hive's GitHub App lacks the permission for that
@@ -13910,7 +13928,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 74: return 'Hive took it over' + viaPR;
         case 80: return 'Not yet admitted to auto merge' + viaPR;
         case 85: return 'Needs a human decision' + viaPR;
-        case 90: return 'Ready for a human merge' + viaPR;
+        case 90: return 'Ready for a human merge' + (stageTrackerHumanMergeReasonWord(item) ? ' · ' + stageTrackerHumanMergeReasonWord(item) : '') + viaPR;
         case 95: return 'Pre-merge soak' + stageTrackerSoakLeft(item) + viaPR;
         case 100: return 'Admitted — merging' + viaPR;
         case 110: return 'Merged';
@@ -13990,7 +14008,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
@@ -14128,6 +14146,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
+          // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
+          else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = sg.label + ' — ' + String(item.human_merge_reason_text).trim() + (sg.description ? ' — ' + sg.description : '');
           if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.

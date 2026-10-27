@@ -609,7 +609,16 @@ carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
 hold / sentinel alert → `stage/085-needs-decision`, untrusted author with an approve verdict at the
 current head, green checks, DCO and soak done →
 `stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
-missing), merged → no stage), plus one `role/*` label saying
+missing; the dashboard derives a compact **human-merge reason code** from the
+090 record's lane reason — `prstage.HumanMergeReason` — so the gate cell says
+why a person merges: `workflow-files` (`contributor-lane:workflow-path`),
+`tests-removed`, `manual-merge-policy` (`human-merge-path`), `branch-protection`,
+`merge-method`, `auto-merge-off` (`repo-auto-merge-disabled`), `untrusted-author`
+(every trust reason: `untrusted-author-role`, `claim-tier-untrusted`, `no-claim`,
+`no-linked-issue`, `claim-unverified`, `claim-author-mismatch`, `claim-other-hive`,
+`author-association`), `unauthorized` (the App's 403, #14595), `reviewer-deferred`
+(`reviewer-verdict:requires_human` a trusted merger approved), and `policy` for
+any other lane reason, quoted in the tooltip; #14658), merged → no stage), plus one `role/*` label saying
 which admission tier the lane actually used, one `author/*` label saying who
 wrote the PR (`human`, `clanker` = a contributor's hive, `hive` = this repo's
 own; #12581) and `stage/stalled` when nobody

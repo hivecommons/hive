@@ -301,6 +301,15 @@ type StageTrackerItem struct {
 	// the maintainer's merge click.
 	HumanApprover string `json:"human_approver,omitempty"`
 	ManualMerge   bool   `json:"manual_merge,omitempty"`
+	// HumanMergeReason is, at 090, the compact code naming why a person
+	// and not the hive merges this PR (prstage.HumanMergeReason*:
+	// "workflow-files", "untrusted-author", "branch-protection", …;
+	// "policy" when the lane reason has no more specific code), and
+	// HumanMergeReasonText the one-sentence tooltip for it, so the gate
+	// cell reads "Ready for human merge · workflow files" rather than
+	// leaving the owner to ask why (hivecommons/hive#14658).
+	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
+	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
 	// UnauthorizedStep is set when the item wears hive:unauthorized: the
 	// step the hive's GitHub App is not permitted to take, in words
 	// ("approve workflow runs"), from the `unauthorized:<step>` stage
@@ -376,7 +385,14 @@ type StageTrackerLinkedPR struct {
 	// so a sub-row under an issue names the alert too.
 	SentinelAlert  bool   `json:"sentinel_alert,omitempty"`
 	SentinelReason string `json:"sentinel_reason,omitempty"`
-	Head           string `json:"head,omitempty"`
+	// HumanApprover / ManualMerge / HumanMergeReason(Text) mirror the
+	// nested PR's 090 fields so a sub-row's gate cell says why a person
+	// merges it, as the top-level row would (hivecommons/hive#14658).
+	HumanApprover        string `json:"human_approver,omitempty"`
+	ManualMerge          bool   `json:"manual_merge,omitempty"`
+	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
+	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
+	Head                 string `json:"head,omitempty"`
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -856,6 +872,36 @@ func stageTrackerManualMergeReason(reason string) bool {
 	return false
 }
 
+// Gate-cell words and tooltips per prstage.HumanMergeReason* code: why a
+// person, not the hive, merges a PR parked at 090 (hivecommons/hive#14658).
+var stageTrackerHumanMergeReasonWords = map[string][2]string{
+	stageengineprstage.HumanMergeReasonWorkflowFiles:     {"workflow files", "Changes .github/workflows/** (or action files) — the hive never merges workflow changes and its GitHub App lacks the workflows permission; click Merge on GitHub"},
+	stageengineprstage.HumanMergeReasonTestsRemoved:      {"tests removed", "Deletes tests — the hive never merges a PR that removes tests unattended; a maintainer reviews the deletion and clicks Merge"},
+	stageengineprstage.HumanMergeReasonManualMergePolicy: {"manual-merge policy", "Touches a path listed in auto_merge.human_merge_paths — the hive never merges it unattended; click Merge on GitHub"},
+	stageengineprstage.HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection or a ruleset requires an approving review the hive's GitHub App cannot give; approve on GitHub (or let the App bypass) and the hive merges, or click Merge"},
+	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repository disallows the merge method this PR needs (a forward merge or merge-commit PR is never squashed); merge by hand with an allowed method or allow it in the repository settings"},
+	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is switched off for this repository or lane, so every merge is a person's; click Merge on GitHub"},
+	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "No lane can vouch for the author (trust tier below require_tiers, no verified claim, or no trusted role), so the hive does not merge; a maintainer's /lgtm + /approve (or Merge) lands it"},
+	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "The hive's GitHub App is not permitted to take the merge step (GitHub answered 403); a maintainer merges by hand — see the hive:unauthorized note on the PR"},
+	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "The reviewer swarm returned requires_human on this head and a trusted merger approved it; the hive leaves the merge itself to a person"},
+}
+
+// stageTrackerHumanMergeReason derives, from a 090 stage reason, the
+// compact code, the gate-cell word and the tooltip saying why a person
+// must merge. An unrecognised lane reason falls back to the "policy" code
+// with the raw reason in the tooltip; an empty reason yields "".
+func stageTrackerHumanMergeReason(reason string) (code, word, tip string) {
+	code = stageengineprstage.HumanMergeReason(reason)
+	if code == "" {
+		return "", "", ""
+	}
+	if w, ok := stageTrackerHumanMergeReasonWords[code]; ok {
+		return code, w[0], w[1]
+	}
+	base, _ := stagelabels.HumanApprovedReason(reason)
+	return stageengineprstage.HumanMergeReasonPolicy, "policy", "The merge lane will not merge this unattended (lane reason `" + strings.TrimSpace(base) + "`); a maintainer merges by hand"
+}
+
 // trackerSoakRemainingRE pulls the time left out of the lane's
 // `contributor-lane:soaking(remaining=12m0s)` reason.
 var trackerSoakRemainingRE = regexp.MustCompile(`remaining=([0-9hms.]+)`)
@@ -1188,6 +1234,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
+		if stage == stagelabels.ReadyForHumanMerge {
+			it.HumanMergeReason, _, it.HumanMergeReasonText = stageTrackerHumanMergeReason(it.Reason)
+		}
 		if slices.Contains(it.Modifiers, modUnauthorized) {
 			it.UnauthorizedStep, it.Unauthorized = stageTrackerUnauthorized(it.Reason)
 		}
@@ -1690,6 +1739,8 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
+				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
+				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)

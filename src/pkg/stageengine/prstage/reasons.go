@@ -1,5 +1,11 @@
 package prstage
 
+import (
+	"strings"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
+)
+
 // Lane reasons are shared by the producers and the stage classifier.
 const (
 	ReviewGateOutcomeAwaiting              = "awaiting-review-approval"
@@ -57,3 +63,82 @@ const (
 	TrustedBotLaneSkipReason            = "trusted-bot-lane"
 	WorkflowApprovalRequiredPrefix      = "workflow-approval-required:"
 )
+
+// HumanMergeReason codes: why a PR parked at 090 ready-for-human-merge
+// needs a person's merge click rather than the hive's. Derived from the
+// lane reason the stage record already carries, so the dashboard, the
+// comments and the logs name the same cause (hivecommons/hive#14658).
+const (
+	// HumanMergeReasonWorkflowFiles: the PR edits .github/workflows/** or
+	// action files; the hive never merges those (and its App lacks the
+	// `workflows` permission).
+	HumanMergeReasonWorkflowFiles = "workflow-files"
+	// HumanMergeReasonTestsRemoved: the PR deletes tests.
+	HumanMergeReasonTestsRemoved = "tests-removed"
+	// HumanMergeReasonManualMergePolicy: the PR touches a configured
+	// human-merge path (auto_merge.human_merge_paths).
+	HumanMergeReasonManualMergePolicy = "manual-merge-policy"
+	// HumanMergeReasonBranchProtection: GitHub's branch protection or
+	// rulesets want an approving review the App cannot give.
+	HumanMergeReasonBranchProtection = "branch-protection"
+	// HumanMergeReasonMergeMethod: the repository disallows the merge
+	// method the hive must use for this PR.
+	HumanMergeReasonMergeMethod = "merge-method"
+	// HumanMergeReasonAutoMergeOff: auto-merge is switched off for the
+	// repository or the lane.
+	HumanMergeReasonAutoMergeOff = "auto-merge-off"
+	// HumanMergeReasonUntrustedAuthor: no lane can vouch for the author
+	// (tier below require_tiers, no verified claim, no trusted role).
+	HumanMergeReasonUntrustedAuthor = "untrusted-author"
+	// HumanMergeReasonUnauthorized: the hive's GitHub App lacks the
+	// permission for the merge or its intent could not be authorized.
+	HumanMergeReasonUnauthorized = "unauthorized"
+	// HumanMergeReasonReviewerDeferred: the reviewer swarm returned
+	// requires_human and a trusted merger approved the head; the hive
+	// leaves the merge itself to a person.
+	HumanMergeReasonReviewerDeferred = "reviewer-deferred"
+	// HumanMergeReasonPolicy: a lane rule no more specific code names.
+	HumanMergeReasonPolicy = "policy"
+)
+
+// humanMergeReasonTrust are the admission reasons that mean no lane can
+// vouch for the author (see stageengine.stageAdmissionReasons).
+var humanMergeReasonTrust = map[string]bool{
+	"untrusted-author-role": true, "author-permission-missing": true, "fork-non-member": true, "untrusted-merger": true,
+	ContributorLaneReasonNoClaim: true, ContributorLaneReasonClaimAuthor: true, ContributorLaneReasonClaimOtherHive: true,
+	ContributorLaneReasonNoLinkedIssue: true, ContributorLaneReasonClaimTier: true, ContributorLaneReasonClaimUnverified: true,
+	ContributorLaneReasonAuthorAssociation: true,
+}
+
+// HumanMergeReason maps a 090 stage reason (with or without the
+// `:human-approved@login` suffix) to its HumanMergeReason* code. An empty
+// reason yields "" — the caller has nothing to explain; anything else is at
+// least HumanMergeReasonPolicy.
+func HumanMergeReason(reason string) string {
+	base, _ := stagelabels.HumanApprovedReason(reason)
+	base = strings.ToLower(strings.TrimSpace(base))
+	switch {
+	case base == "":
+		return ""
+	case base == ContributorLaneReasonWorkflowPath:
+		return HumanMergeReasonWorkflowFiles
+	case base == ContributorLaneReasonTestsRemoved:
+		return HumanMergeReasonTestsRemoved
+	case base == AutoMergeReasonHumanMergePath, base == AutoMergeReasonHumanMergePathEvidence:
+		return HumanMergeReasonManualMergePolicy
+	case base == AutoMergeReasonMergeRefusedReview, strings.HasPrefix(base, AutoMergeReasonReviewGatePrefix):
+		return HumanMergeReasonBranchProtection
+	case base == AutoMergeReasonMergeRefusedMethod:
+		return HumanMergeReasonMergeMethod
+	case base == "repo-auto-merge-disabled", base == StageLaneContributor+":disabled", base == "disabled":
+		return HumanMergeReasonAutoMergeOff
+	case humanMergeReasonTrust[base]:
+		return HumanMergeReasonUntrustedAuthor
+	case strings.HasPrefix(base, StageReasonUnauthorizedPrefix), base == AutoMergeReasonIntentUnauthorized,
+		base == AutoMergeReasonIntentEvidence, base == "no-merger-authorizer":
+		return HumanMergeReasonUnauthorized
+	case strings.HasPrefix(base, "reviewer-verdict:requires_human"):
+		return HumanMergeReasonReviewerDeferred
+	}
+	return HumanMergeReasonPolicy
+}
