@@ -203,8 +203,16 @@ func issueUntriaged(in IssueStageInput) (untriaged bool, why string) {
 // current stage from the shared store. A decomposed parent's reason
 // carries the "waiting on N open child issue(s)" suffix.
 func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) stagelabels.Stage) (stage stagelabels.Stage, covered bool, reason string) {
-	d := stageengine.DeriveIssue(issueFactsFrom(in, prStage))
+	d := issueStageDecision(in, prStage)
 	return d.Stage, d.Covered, d.Reason
+}
+
+// issueStageDecision is IssueStageFor with the whole Decision: the sweep
+// also needs Progress, which tells the store that a 040 → 010 fall came
+// from the covering PR merging (hive/partially-addressed) rather than
+// closing unmerged.
+func issueStageDecision(in IssueStageInput, prStage func(repo string, number int) stagelabels.Stage) stageengine.Decision {
+	return stageengine.DeriveIssue(issueFactsFrom(in, prStage))
 }
 
 // issueHoldLabel returns the hold-class label that pauses the issue, or "".
@@ -454,13 +462,14 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			in.ClaimedBy = ""
 			in.PRStarted = false
 		}
-		stage, covered, reason := IssueStageFor(in, prStage)
+		d := issueStageDecision(in, prStage)
+		stage, covered, reason := d.Stage, d.Covered, d.Reason
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
 		if stage == stagelabels.None {
 			store.Forget(key)
 		} else {
-			tr = store.Observe(key, stage, reason)
+			tr = store.ObserveProgress(key, stage, reason, d.Progress)
 			noteIssueCoveringPR(client, store, key, in, stage)
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{Stage: stage}

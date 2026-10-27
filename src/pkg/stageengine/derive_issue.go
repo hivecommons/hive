@@ -52,6 +52,7 @@ func deriveIssue(f Facts) Decision {
 		Stage:    stage,
 		Reason:   reason,
 		Covered:  covered,
+		Progress: issueProgress(f, stage),
 		Terminal: stage == stagelabels.None && f.Issue.LikelyDone,
 		// The dwell verdict is the sweep's: an out-of-cycle fact carries the
 		// label as found and the next sweep re-judges it from the restarted
@@ -130,6 +131,19 @@ func issueStage(f Facts) (stage stagelabels.Stage, covered bool, reason string) 
 		return stagelabels.CoveredByPR, false, reasonIssueOpenPR
 	}
 	return stagelabels.None, false, "outside the pipeline: " + string(is.Bucket)
+}
+
+// issueProgress reports whether an issue back at an actionable stage got
+// there by a PR landing: close-on-merge labels the issue partially-addressed
+// when the merged PR covered only part of it and leaves the remainder at
+// 010. Seen from the stage number alone that is 040 → 010, a fall; seen
+// from the label it is work that merged, so the Store must not book a
+// regression for it.
+func issueProgress(f Facts, stage stagelabels.Stage) bool {
+	if stage != stagelabels.Actionable && stage != stagelabels.TriageNeeded {
+		return false
+	}
+	return HasLabelFold(f.Labels, stagelabels.PartiallyAddressedLabel)
 }
 
 // actionableIssueStage is 010-actionable or, for an untriaged issue, 015.

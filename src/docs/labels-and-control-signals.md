@@ -269,15 +269,15 @@ stateDiagram-v2
     s045 --> s015: park label removed by hand on an untriaged issue (approved-direction itself counts as triage, so /hive approve lands on 010)
     s020 --> s030: PR under way (hive-open-pr request or start marker naming a branch)
     s020 --> s040: PR opened straight from the claim
-    s020 --> s010: claim released or lapsed with no PR
-    s020 --> s015: claim released or lapsed with no PR on an untriaged issue
+    s020 --> s010: claim released or lapsed with no PR (not a regression: 020 is a reservation, nothing was built)
+    s020 --> s015: claim released or lapsed with no PR on an untriaged issue (not a regression)
     s030 --> s040: PR opened
     s030 --> s010: PR request failed / start mark lapsed with no PR
     s030 --> s015: PR request failed / start mark lapsed with no PR on an untriaged issue
     s030 --> s020: PR evidence lapsed while the claim is still held (backward hop, commented)
-    s040 --> s010: covering PR closed unmerged with no live claim or start marker (backward hop, narrated on the PR)
+    s040 --> s010: covering PR closed unmerged with no live claim or start marker (backward hop, narrated on the PR; not a regression when the PR merged and left hive/partially-addressed)
     s040 --> s015: covering PR closed unmerged on an untriaged issue (backward hop, narrated on the PR)
-    s040 --> s030: covering PR closed while a PR request / start marker is still live (backward hop, narrated on the PR)
+    s040 --> s030: the agent is back on the covering PR (live claim with the PR under way; not a regression)
     s040 --> s020: covering PR closed while the claim is still held (backward hop, narrated on the PR)
     s040 --> s050: the PR takes over (issue stays 040)
     s050 --> s060: swarm approve
@@ -317,6 +317,45 @@ stateDiagram-v2
     s090 --> [*]: maintainer lgtm+approve → merged
     s100 --> [*]: merged (labels removed)
 ```
+
+#### The regressed marker: when it is set, when it clears
+
+The dashboard's `regressed` chip and the `<!-- hive:stage-regressed -->`
+stage comment both come from one per-item flag in the stage store
+(`Record.RegressedFrom`, `src/pkg/stagelabels/store.go`), never from a GitHub
+label (`stage/regressed` is retired and stripped on sight). Its lifecycle:
+
+- **Set** by `Store.Observe` when a hop is a regression under
+  `IsRegression(from, to)`: a numerically backward hop *except* the drawn
+  exceptions above. Leaving a reservation is never a regression (020 → 010 /
+  015 on a lapsed or released claim — nothing was built); 030 → 020 is the
+  claim's PR evidence flickering (the issue is still claimed), not a fall;
+  040 → 030 is the agent back on its PR; leaving 015, 045, 085, 090 and
+  100 → 095 are reclassifications. A fall that is **progress** — 040 → 010
+  because the covering PR merged and left `hive/partially-addressed` — is
+  never booked either (`Decision.Progress`, `Store.ObserveProgress`).
+- **Kept** across a same-stage re-observation and across a backward hop that
+  is itself not a regression (a 040 → 020 fall followed by 020 → 010 stays
+  regressed: the item has not moved ahead yet).
+- **Cleared** by the first forward hop of any size (not only by climbing back
+  to the stage it fell from), by a progress fall, or when the rule changes so
+  the recorded fall no longer counts (old records heal on their next
+  observation). The clear happens in the same tick that applies the new
+  stage label, and the dashboard stops drawing the chip on its next
+  `GET /api/stage-tracker` (`regressed_from` is absent, the modifier gone).
+
+How the chip renders depends on whether a person is in the loop. On a
+hive-driven stage with no human-gate modifier (`hold`, `needs-human`,
+`needs-decision`, `needs-rebase`, `blocked`, `stalled`) and off the
+human-gated stages (045 / 071 / 072 / 085 / 090), it draws as a muted,
+dashed `stage ↓` pill whose hover text names the fall and ends "the hive is
+handling it — no action needed; clears on the next forward step", and the
+row stays out of **Needs attention** and keeps its ordinary headline. Only a
+regression on a human-gated row keeps the red `regressed` pill and the
+"Sent back" headline — red means someone has to act
+([#14570](https://github.com/hivecommons/hive/issues/14570): freshly
+filed issues whose claim lapsed wore a red `regressed` that read as a call to
+action).
 
 ### How an issue's stage is decided
 

@@ -153,7 +153,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 		tr.Anomaly = a
 		r.recordAnomaly(f.Ref, tr.From, tr.To, d.Reason, a)
 	}
-	r.opts.Store.Observe(key, d.Stage, d.Reason)
+	r.opts.Store.ObserveProgress(key, d.Stage, d.Reason, d.Progress)
 	noteCoveringPR(r.opts.Store, key, f, d.Stage)
 
 	out, err := r.opts.Writer.Apply(ctx, f.Ref, f.Labels, d.Desired())

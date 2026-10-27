@@ -124,8 +124,9 @@ const (
 	// PartiallyAddressedLabel marks an open issue whose merged PR covered only
 	// part of it (no closing keyword, a remainder paragraph, or none of the
 	// cited paths changed). It suppresses likely-done and keeps the issue
-	// actionable (#11931).
-	PartiallyAddressedLabel = "hive/partially-addressed"
+	// actionable (#11931). Spelled in stagelabels so the stage engine can
+	// read it without importing this package.
+	PartiallyAddressedLabel = stagelabels.PartiallyAddressedLabel
 	// PartiallyAddressedLabelColor is the amber label colour used for partially-addressed.
 	PartiallyAddressedLabelColor = "fbca04"
 	// PartiallyAddressedLabelDescription is the description hive creates PartiallyAddressedLabel with.

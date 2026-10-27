@@ -475,6 +475,16 @@ func (s *Store) Get(key string) (Record, bool) {
 // transition. A None stage is terminal: the record is dropped and the
 // transition carries Prev so the caller can clear labels.
 func (s *Store) Observe(key string, stage Stage, reason string) Transition {
+	return s.ObserveProgress(key, stage, reason, false)
+}
+
+// ObserveProgress is Observe with the caller's knowledge of WHY the stage
+// moved. progress reports that whatever took the item to stage was forward
+// motion even if the stage number fell — an issue leaving 040 for 010
+// because the PR covering it merged and addressed part of it. A fall that
+// is progress books no regression and resolves one already open: the work
+// landed, so nothing was lost.
+func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress bool) Transition {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
@@ -499,19 +509,27 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 		tr.Changed = true
 	}
 	switch {
-	case had && prev.Stage != None && IsRegression(prev.Stage, stage):
-		// Backwards. A fall while already regressed keeps the ORIGINAL
-		// high-water mark so recovery means getting all the way back.
+	case had && prev.Stage != None && !progress && IsRegression(prev.Stage, stage):
+		// Backwards. A second fall while still regressed keeps the ORIGINAL
+		// high-water mark so the narration names where the item first fell
+		// from.
 		if !prev.Regressed() || prev.RegressedFrom.Before(prev.Stage) {
 			next.RegressedFrom = prev.Stage
 		}
 		next.RegressedAt = now
 		next.RegressionCommented = false
 		tr.Regressed = true
-	case prev.Regressed() && (!stage.Before(prev.RegressedFrom) || !IsRegression(prev.RegressedFrom, stage)):
-		// Back at (or past) the high-water mark, or the mark was a stage a
-		// fall from is no longer counted (records written before the rule
-		// changed heal here).
+	case prev.Regressed() && (progress || prev.Stage.Before(stage) || !IsRegression(prev.RegressedFrom, stage)):
+		// The regression is resolved the moment the item moves ahead: any
+		// forward hop, a fall that is progress (the covering PR merged), or
+		// a mark that a fall from is no longer counted (records written
+		// before the rule changed heal here). A non-regression backward hop
+		// (020 → 010 after a 040 → 020 fall, 072 → 070) neither books nor
+		// clears. The owner's reading (hivecommons/hive#14570):
+		// "regressed" on something that is moving ahead asks a person to
+		// act on nothing, so the badge comes off with the first forward
+		// step rather than waiting for the climb back to the high-water
+		// mark.
 		next.RegressedFrom = None
 		next.RegressedAt = time.Time{}
 		next.RegressionCommented = false
@@ -608,7 +626,8 @@ func (s *Store) CountOwnComments(key string, n int) {
 }
 
 // IsRegression reports whether moving from → to is a backward transition
-// worth flagging. A lower number is backward, except leaving a repair stage
+// worth flagging. A lower number is backward, except leaving a claim (020 is
+// a reservation with nothing built behind it), leaving a repair stage
 // (fixing, needs-author, returned-to-contributor, adopted-by-hive) for review of the new
 // head, which is the repair route itself, not a second regression, and
 // leaving the human stages: 045, 085 and 090 are parking stages ("the hive
@@ -622,6 +641,29 @@ func IsRegression(from, to Stage) bool {
 		return false
 	}
 	switch from {
+	case Claimed:
+		// 020 is a reservation, not progress: a claim or start mark with
+		// no PR behind it. Releasing it, letting it lapse or the prior-art
+		// gate parking the issue (→ 010 / 015 / 017) puts the issue back in
+		// the pool exactly as it was before the claim; nothing anyone built
+		// was lost, so there is nothing to have regressed from. The
+		// scanner's split-out issues wore a red "regressed" badge minutes
+		// after being filed because of this edge alone.
+		return false
+	case PRInProgress:
+		// 030 → 020 is the same claim, still held, with the PR-under-way
+		// evidence behind it gone quiet for a tick: hivecommons/hive#14525
+		// and rationguard#396 flapped 030 ↔ 020 every renewal and wore a
+		// red "regressed" badge for it. Nothing enumerated existed at 030
+		// (an open PR would be 040), so the holder lost no ground. Losing
+		// the claim itself (→ 010 / 015) stays a fall: an agent announced a
+		// PR and vanished.
+		return to != Claimed
+	case CoveredByPR:
+		// 040 → 030 is the agent going back to work on the PR that covers
+		// the issue (a live claim with the PR under way): the PR is still
+		// open, so the issue has not lost ground.
+		return to != PRInProgress
 	case AdoptedByHive:
 		// 074 → 072 is an adoption that was declined (superseder closed
 		// unmerged): the PR is handed back, not knocked back.

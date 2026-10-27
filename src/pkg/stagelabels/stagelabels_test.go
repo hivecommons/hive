@@ -386,9 +386,14 @@ func TestStoreObserveRegressRecoverAndStalled(t *testing.T) {
 		t.Fatalf("second fall: tr=%+v rec=%+v", tr, rec)
 	}
 	// Red CI then a fixed head back to review is the repair route: the
-	// move to fixing regresses, leaving fixing for review does not.
-	if tr = st.Observe(key, Fixing, "check-failing:unit"); tr.Regressed || tr.Recovered {
-		t.Fatalf("50→70 is forward: %+v", tr)
+	// move to fixing is forward (and, being a forward step, resolves the
+	// open regression — the badge comes off as soon as the item moves on),
+	// leaving fixing for review does not regress.
+	if tr = st.Observe(key, Fixing, "check-failing:unit"); tr.Regressed || !tr.Recovered {
+		t.Fatalf("50→70 is forward and resolves the regression: %+v", tr)
+	}
+	if rec, _ = st.Get(key); rec.Regressed() {
+		t.Fatalf("forward step must clear the regression: %+v", rec)
 	}
 	if tr = st.Observe(key, ReviewPending, "check-pending"); tr.Regressed || tr.Recovered {
 		t.Fatalf("fixing→review-pending must not regress: %+v", tr)
@@ -408,13 +413,20 @@ func TestStoreObserveRegressRecoverAndStalled(t *testing.T) {
 			}
 		}
 	}
-	if tr = st.Observe(key, Reviewed, "y"); tr.Recovered {
-		t.Fatal("not yet back to the regressed-from stage")
+	// Fall again from 100 so a plain forward step can be watched clearing
+	// it: 050 → 060 is not back at the high-water mark but it is moving
+	// ahead, and that is enough.
+	st.Observe(key, MergeQueue, "soaking")
+	if tr = st.Observe(key, ReviewPending, "head-changed"); !tr.Regressed {
+		t.Fatalf("fall again: %+v", tr)
 	}
-	tr = st.Observe(key, MergeQueue, "z")
+	tr = st.Observe(key, Reviewed, "y")
 	rec, _ = st.Get(key)
 	if !tr.Recovered || rec.Regressed() {
-		t.Fatalf("recovery: tr=%+v rec=%+v", tr, rec)
+		t.Fatalf("first forward step must resolve the regression: tr=%+v rec=%+v", tr, rec)
+	}
+	if tr = st.Observe(key, MergeQueue, "z"); tr.Recovered || tr.Regressed {
+		t.Fatalf("nothing left to recover: %+v", tr)
 	}
 	tr = st.Observe(key, None, "")
 	if _, ok := st.Get(key); ok || tr.Prev != MergeQueue {

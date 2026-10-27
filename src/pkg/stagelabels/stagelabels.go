@@ -127,6 +127,13 @@ const RolePrefix = "role/"
 // spellings are LegacyRoleLabels now and the reconciler replaces them.
 const AuthorPrefix = authorkind.Prefix
 
+// PartiallyAddressedLabel marks an open issue whose merged PR covered only
+// part of it; close-on-merge adds it instead of likely-done and the issue
+// returns to 010 with the remainder still actionable (hivecommons/hive#11931).
+// The stage engine reads it to tell that fall from a regression: the PR
+// landed, so leaving 040 for 010 is progress.
+const PartiallyAddressedLabel = "hive/partially-addressed"
+
 // StalledLabel is the health label; it coexists with the stage label.
 const StalledLabel = Prefix + "stalled"
 
