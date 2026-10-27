@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 type fakeChangedFilesLister struct {
@@ -14,6 +16,10 @@ type fakeChangedFilesLister struct {
 func (f *fakeChangedFilesLister) ReviewPRChangedFiles(context.Context, string, int) ([]string, bool) {
 	f.calls++
 	return f.files, f.known
+}
+
+func (f *fakeChangedFilesLister) ReviewDeltaDiff(_ context.Context, _, previousHead, _ string) review.DeltaDiff {
+	return review.DeltaDiff{PreviousHead: previousHead}
 }
 
 func TestPlanReviewDispatch_BotAuthorRouteUsesCheapModel(t *testing.T) {

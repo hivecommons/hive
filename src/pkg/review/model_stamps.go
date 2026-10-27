@@ -9,6 +9,9 @@ import "strings"
 type ModelStamp struct {
 	AuthorModel  string
 	ReviewModels map[perspectiveStampKey]string
+	// DeltaPreviousHead is the head a delta re-review of this PR head was
+	// judged against (review.delta_rereview); empty for a full review.
+	DeltaPreviousHead string
 }
 
 // perspectiveStampKey is one review_model stamp's slot: the perspective, and
@@ -32,10 +35,10 @@ type ModelStamps map[string]ModelStamp
 func ModelStampsFromState(state DispatchState) ModelStamps {
 	out := ModelStamps{}
 	for _, r := range state.Recent {
-		out.record(r.Repo, r.Number, r.HeadSHA, r.Perspective, r.Head, r.AuthorModel, r.ReviewModel)
+		out.record(r.Repo, r.Number, r.HeadSHA, r.Perspective, r.Head, r.AuthorModel, r.ReviewModel, r.DeltaPreviousHead)
 	}
 	for _, p := range state.Pending {
-		out.record(p.Repo, p.Number, p.HeadSHA, p.Perspective, p.Head, p.AuthorModel, p.ReviewModel)
+		out.record(p.Repo, p.Number, p.HeadSHA, p.Perspective, p.Head, p.AuthorModel, p.ReviewModel, p.DeltaPreviousHead)
 	}
 	if len(out) == 0 {
 		return nil
@@ -43,15 +46,18 @@ func ModelStampsFromState(state DispatchState) ModelStamps {
 	return out
 }
 
-func (m ModelStamps) record(repo string, number int, head string, perspective Perspective, reviewHead, authorModel, reviewModel string) {
-	authorModel, reviewModel = strings.TrimSpace(authorModel), strings.TrimSpace(reviewModel)
-	if authorModel == "" && reviewModel == "" {
+func (m ModelStamps) record(repo string, number int, head string, perspective Perspective, reviewHead, authorModel, reviewModel, deltaPreviousHead string) {
+	authorModel, reviewModel, deltaPreviousHead = strings.TrimSpace(authorModel), strings.TrimSpace(reviewModel), strings.TrimSpace(deltaPreviousHead)
+	if authorModel == "" && reviewModel == "" && deltaPreviousHead == "" {
 		return
 	}
 	key := reviewKey(repo, number, head, "")
 	stamp := m[key]
 	if authorModel != "" {
 		stamp.AuthorModel = authorModel
+	}
+	if deltaPreviousHead != "" {
+		stamp.DeltaPreviousHead = deltaPreviousHead
 	}
 	if reviewModel != "" {
 		if stamp.ReviewModels == nil {
@@ -79,5 +85,8 @@ func (m ModelStamps) apply(report *PerspectiveReport) {
 	}
 	if strings.TrimSpace(report.ReviewModel) == "" {
 		report.ReviewModel = stamp.ReviewModels[perspectiveStampKey{report.Perspective, strings.TrimSpace(report.Head)}]
+	}
+	if strings.TrimSpace(report.DeltaPreviousHead) == "" {
+		report.DeltaPreviousHead = stamp.DeltaPreviousHead
 	}
 }

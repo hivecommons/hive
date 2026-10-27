@@ -173,6 +173,11 @@ type PerspectiveReport struct {
 	// "permission"/"privilege" escalation terms) for this report; every other
 	// risk class still parks the PR (hivecommons/hive#13068).
 	PermissionsTighteningOnly bool `json:"permissions_tightening_only,omitempty"`
+	// DeltaPreviousHead is the head SHA this report was judged as a delta
+	// against (review.delta_rereview), stamped by the collector from the
+	// dispatch record (ModelStamps), never from the reviewer's JSON. Empty
+	// for a full review.
+	DeltaPreviousHead string `json:"delta_previous_head,omitempty"`
 }
 
 type AggregateOptions struct {
@@ -264,6 +269,11 @@ type Aggregate struct {
 	// PermissionsTighteningOnly mirrors the reports' flag so Normalize judges
 	// risk escalation with the same carve-out AggregateReports did.
 	PermissionsTighteningOnly bool `json:"permissions_tightening_only,omitempty"`
+	// Delta is set when this verdict came from a delta re-review against an
+	// earlier head (review.delta_rereview): either a session that read only
+	// the diff between the two heads, or (Trivial) the earlier verdict
+	// re-stamped without a session. nil is a full review.
+	Delta *DeltaReviewInfo `json:"delta,omitempty"`
 }
 
 type PerspectiveFinding struct {
@@ -397,6 +407,9 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		}
 		if agg.ReviewModel == "" {
 			agg.ReviewModel = r.ReviewModel
+		}
+		if agg.Delta == nil && strings.TrimSpace(r.DeltaPreviousHead) != "" {
+			agg.Delta = &DeltaReviewInfo{PreviousHead: strings.TrimSpace(r.DeltaPreviousHead)}
 		}
 		recordAggregateHead(&agg, r)
 		if r.NotApplicable {

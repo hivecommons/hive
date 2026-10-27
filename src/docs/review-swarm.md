@@ -186,6 +186,9 @@ review:
   bot_author_model: ""                      # optional; model (or backend/model) that reviews PRs opened by bot_authors, e.g. gpt-6-luna (default empty = off)
   bot_authors: [dependabot[bot], renovate[bot], github-actions[bot], "*[bot]"]  # optional; logins routed to bot_author_model; the hive's own App never matches
   bot_author_full_review_paths: [".github/workflows/**", "Dockerfile*", "**/Dockerfile*"]  # optional; a bot PR touching these keeps the full-strength model
+  delta_rereview: true                      # optional; re-review a PR already judged at an earlier head by its diff since that head (default on)
+  delta_trivial_lines: 20                   # optional; a delta under this many lines in files the prior verdict passed re-stamps it without a model call (default 20; negative disables)
+  delta_max_age: 72h                        # optional; a changes_requested verdict with findings older than this anchors no delta, the PR is reviewed in full (default 72h)
   severity:
     block_at: P2                            # optional; P1 | P2 | P3, see "Blocking line" below
     comment_below: true                     # default true
@@ -415,6 +418,15 @@ PRs opened by other bots (Dependabot, Renovate, github-actions) are mostly lockf
 - `review.bot_author_full_review_paths` are globs (`**` spans directories; a pattern without `/` also matches the base name) that keep a bot PR on the full-strength model when any changed file matches. The default is CI workflows and Dockerfiles only; lockfiles are deliberately not excepted, since they are the bulk of bot PRs. Set it to `[]` for no exceptions. The planner lists the PR's files once per head (only for a listed bot's PR about to be reviewed) and a PR whose files could not be listed is **not** downgraded.
 
 Routed kicks carry `bot_author_routed` on the dispatch kick and the model lands in the verdict's `review_model` as usual; the governor logs `review routed bot-authored PR to bot_author_model`. The route applies to the swarm's per-perspective and combined kicks; the cadence (queue-mode) kick's `review_with=` annotation still comes from the agent's `review_models` pool alone.
+### Delta re-review (`review.delta_rereview`, `review.delta_trivial_lines`, `review.delta_max_age`)
+
+A re-review is a review of a PR the hive already judged at an earlier head SHA. Over Oct 13-27 2026 re-reviews were 28% of hive's attributed reviewer spend and 53% of Bluefin's, because every one re-read the whole PR. With `review.delta_rereview` on (the default) the planner looks for the most recent verdict for the same PR at another head within the artifact's retention and, when it finds one, builds the kick differently:
+
+- The prompt opens with a **`DELTA RE-REVIEW`** block naming the previous head, when it was judged, the aggregate and per-perspective verdicts, and the exact `gh api repos/O/R/compare/<prev>...<new>` commands for the file list and the unified diff. It tells the reviewer to read only the hunks in that compare (and enough of their surroundings to judge them), to re-check each previous finding by file and line and say whether it is fixed, still present or no longer applies, and that its verdict is still for the whole PR at the new head. When the governor fetched the compare itself, the block also lists the changed files and line count.
+- When the compare is known and the delta is **empty** (a force-push or rebase with the same tree), or under `review.delta_trivial_lines` changed lines (default 20) touching no file the previous verdict recorded a finding in, no reviewer is kicked: the previous aggregate is **re-stamped** onto the new head with the new `head_sha`, `body_digest` and `recorded_at`, a `delta` block (`previous_head`, `trivial: true`, `changed_lines`, `note`) and a `delta re-review: …` reason, and the governor logs `review delta re-stamped verdict without a session`. A negative `delta_trivial_lines` keeps the re-stamp for identical trees only. A head that already has a review in flight is never re-stamped.
+- The **full** review stays for a first review (no prior verdict at another head), when the prior verdict was `reject` or `incomplete`, and when it was `changes_requested` with findings recorded more than `review.delta_max_age` ago (default `72h`): the flagged code has had time to move on and the record of it is stale. A verdict at the current head is never treated as a prior.
+
+Every delta aggregate records `delta.previous_head` (and `delta_previous_head` on each perspective report, stamped from the dispatch state like `review_model`), so the cost dashboard can split delta reviews, re-stamps and full reviews. The compare is fetched once per candidate head (no verdict, no pending entry, a prior at another head) with one 300-file page; a bigger or failed compare still gets the delta instruction, just without the file list and never the re-stamp.
 
 ## Revising a recorded verdict
 

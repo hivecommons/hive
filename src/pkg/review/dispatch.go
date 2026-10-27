@@ -236,8 +236,18 @@ type DispatchOptions struct {
 	// perspective is re-sent (review.head_max_retries). Zero means
 	// MaxRedispatch.
 	HeadMaxRetries int
-	Agents         []AgentCapability
-	Now            time.Time
+	// DeltaRereview is review.delta_rereview: a PR with a verdict at an
+	// earlier head is re-reviewed against the diff between that head and the
+	// current one (planDelta), and a trivial delta re-stamps the earlier
+	// verdict instead of running a session. DeltaTrivialLines is the
+	// threshold for that skip (0 means DefaultDeltaTrivialLines, negative
+	// disables it); DeltaMaxAge is how old a changes_requested verdict with
+	// findings may be and still anchor a delta (0 means DefaultDeltaMaxAge).
+	DeltaRereview     bool
+	DeltaTrivialLines int
+	DeltaMaxAge       time.Duration
+	Agents            []AgentCapability
+	Now               time.Time
 }
 
 type DispatchState struct {
@@ -330,25 +340,30 @@ type PendingReview struct {
 	// the PR's attribution-trailer model, and the model the kick told the
 	// reviewer to run with (empty when no pool applied). Collect uses them
 	// to stamp a verdict whose report omitted either (ModelStamps).
-	AuthorModel string    `json:"author_model,omitempty"`
-	ReviewModel string    `json:"review_model,omitempty"`
-	Dispatched  time.Time `json:"dispatched_at"`
+	AuthorModel string `json:"author_model,omitempty"`
+	ReviewModel string `json:"review_model,omitempty"`
+	// DeltaPreviousHead is the head this dispatch was a delta re-review
+	// against (review.delta_rereview); empty for a full review. Collect
+	// stamps it onto the verdict (ModelStamps) so the artifact says so.
+	DeltaPreviousHead string    `json:"delta_previous_head,omitempty"`
+	Dispatched        time.Time `json:"dispatched_at"`
 }
 
 type RecentReview struct {
-	Repo        string      `json:"repo"`
-	Number      int         `json:"number"`
-	HeadSHA     string      `json:"head_sha,omitempty"`
-	BodyDigest  string      `json:"body_digest,omitempty"`
-	Perspective Perspective `json:"perspective"`
-	Agent       string      `json:"agent"`
-	Head        string      `json:"head,omitempty"`
-	Decision    bool        `json:"decision,omitempty"`
-	AuthorAgent string      `json:"author_agent,omitempty"`
-	AuthorModel string      `json:"author_model,omitempty"`
-	ReviewModel string      `json:"review_model,omitempty"`
-	Dispatched  time.Time   `json:"dispatched_at,omitempty"`
-	Confirmed   time.Time   `json:"confirmed_at"`
+	Repo              string      `json:"repo"`
+	Number            int         `json:"number"`
+	HeadSHA           string      `json:"head_sha,omitempty"`
+	BodyDigest        string      `json:"body_digest,omitempty"`
+	Perspective       Perspective `json:"perspective"`
+	Agent             string      `json:"agent"`
+	Head              string      `json:"head,omitempty"`
+	Decision          bool        `json:"decision,omitempty"`
+	AuthorAgent       string      `json:"author_agent,omitempty"`
+	AuthorModel       string      `json:"author_model,omitempty"`
+	ReviewModel       string      `json:"review_model,omitempty"`
+	DeltaPreviousHead string      `json:"delta_previous_head,omitempty"`
+	Dispatched        time.Time   `json:"dispatched_at,omitempty"`
+	Confirmed         time.Time   `json:"confirmed_at"`
 }
 
 type PendingFix struct {
@@ -408,6 +423,9 @@ type DispatchKick struct {
 	// BotAuthorRouted is true when ReviewModel came from review.bot_author_model
 	// because the PR's author is a listed bot.
 	BotAuthorRouted bool
+	// DeltaPreviousHead is set when this kick is a delta re-review against
+	// that head (review.delta_rereview); empty for a full review.
+	DeltaPreviousHead string
 }
 
 // SkippedReviewModel is a perspective kick the planner withheld because the
@@ -448,7 +466,12 @@ type DispatchPlan struct {
 	// heads the review-heads skip rule settled (every head clean), when
 	// review.acknowledge_no_findings is on. The caller posts them.
 	Acknowledgements []ReviewAcknowledgement
-	State            DispatchState
+	// DeltaRestamps are verdicts carried from an earlier head onto the
+	// current head without a session this cycle (review.delta_rereview,
+	// trivial delta). The caller records them in the verdict artifact
+	// (RecordDeltaRestamps) and logs each one.
+	DeltaRestamps []DeltaRestamp
+	State         DispatchState
 }
 
 type FixDispatchExclusion struct {
@@ -644,12 +667,32 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			}
 			plan.expirePending(pr, opts, now)
 		}
+		// Delta re-review: a head whose PR was judged at an earlier head is
+		// reviewed against the diff from that head, and a trivial delta
+		// carries the earlier verdict forward without a session. Not on a
+		// same-head revisit (the prior verdict is the one being redone) and
+		// not once this head already has dispatch entries (a review is in
+		// flight or partly delivered; the restamp would race it).
+		var delta *DeltaContext
+		if !revisiting && delivered == nil {
+			mode, ctx, prior := planDelta(pr, artifact, opts, now)
+			switch mode {
+			case deltaModeTrivial:
+				if !plan.hasPendingForHead(pr) {
+					plan.DeltaRestamps = append(plan.DeltaRestamps, DeltaRestamp{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, PreviousHead: ctx.PreviousHead, Aggregate: restampAggregate(prior, pr, *ctx, now)})
+					continue
+				}
+				delta = ctx
+			case deltaModeDelta:
+				delta = ctx
+			}
+		}
 		if availableSlots <= 0 {
 			continue
 		}
 		authorBase := prAuthorBase(pr, opts.Agents)
 		if prHeads := reviewersForPR(heads, pr.AuthorAgent, authorBase); len(prHeads) > 0 {
-			availableSlots = plan.dispatchHeads(pr, prHeads, opts, delivered, deliveredHeads, revisiting, availableSlots, now)
+			availableSlots = plan.dispatchHeads(pr, prHeads, opts, delivered, deliveredHeads, revisiting, delta, availableSlots, now)
 			// Once every head has settled, the base reviews the heads'
 			// reports and records the decided verdict (#13542).
 			if awaiting != nil {
@@ -707,10 +750,11 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
 				ReviewBackend:         choice.Backend,
 				ReviewModel:           choice.Model,
+				Delta:                 delta,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
 			for _, p := range missing {
-				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), Dispatched: now})
+				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 			}
 			availableSlots--
 			continue
@@ -773,13 +817,34 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
 				ReviewBackend:         choice.Backend,
 				ReviewModel:           choice.Model,
+				Delta:                 delta,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted})
-			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), Dispatched: now})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
+			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 			availableSlots--
 		}
 	}
 	return plan
+}
+
+// deltaPreviousHead is the head a delta kick is judged against, "" for a
+// full review.
+func deltaPreviousHead(d *DeltaContext) string {
+	if d == nil {
+		return ""
+	}
+	return strings.TrimSpace(d.PreviousHead)
+}
+
+// hasPendingForHead reports whether any dispatch entry exists for this PR
+// head: a review in flight, or one already answered in part.
+func (p *DispatchPlan) hasPendingForHead(pr PullRequest) bool {
+	for _, e := range p.State.Pending {
+		if samePRHead(e.Repo, e.Number, e.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			return true
+		}
+	}
+	return false
 }
 
 // stampedReviewModel is the model a pending review is attributed to when its
@@ -1292,7 +1357,7 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 			// first perspective alone would leave every other verdict in the
 			// array with nothing to bind to once its pending entry is gone.
 			for _, p := range kickPerspectives(k) {
-				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, Confirmed: now})
+				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, DeltaPreviousHead: k.DeltaPreviousHead, Confirmed: now})
 			}
 		}
 	}

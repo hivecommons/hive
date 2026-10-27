@@ -149,3 +149,60 @@ func trimmedNonEmpty(in []string) []string {
 	}
 	return out
 }
+
+const (
+	// DefaultReviewDeltaTrivialLines is review.delta_trivial_lines unset: a
+	// re-review delta under this many changed lines, touching only files the
+	// previous verdict found nothing in, re-stamps that verdict without a
+	// model call.
+	DefaultReviewDeltaTrivialLines = 20
+	// DefaultReviewDeltaMaxAge is review.delta_max_age unset: a
+	// changes_requested verdict with findings older than this anchors no
+	// delta re-review.
+	DefaultReviewDeltaMaxAge = 72 * time.Hour
+)
+
+// DeltaRereviewEnabled resolves review.delta_rereview; unset means on.
+func (r ReviewConfig) DeltaRereviewEnabled() bool {
+	return r.DeltaRereview == nil || *r.DeltaRereview
+}
+
+// EffectiveDeltaTrivialLines resolves review.delta_trivial_lines: 0 is the
+// default, a negative value disables the trivial-delta skip (returned as 0).
+func (r ReviewConfig) EffectiveDeltaTrivialLines() int {
+	switch {
+	case r.DeltaTrivialLines == 0:
+		return DefaultReviewDeltaTrivialLines
+	case r.DeltaTrivialLines < 0:
+		return 0
+	default:
+		return r.DeltaTrivialLines
+	}
+}
+
+// EffectiveDeltaMaxAge resolves review.delta_max_age; empty or unparsable
+// means DefaultReviewDeltaMaxAge.
+func (r ReviewConfig) EffectiveDeltaMaxAge() time.Duration {
+	raw := strings.TrimSpace(r.DeltaMaxAge)
+	if raw == "" {
+		return DefaultReviewDeltaMaxAge
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return DefaultReviewDeltaMaxAge
+	}
+	return d
+}
+
+// ValidateDeltaMaxAge rejects a review.delta_max_age that is not a Go
+// duration string.
+func (r ReviewConfig) ValidateDeltaMaxAge() error {
+	raw := strings.TrimSpace(r.DeltaMaxAge)
+	if raw == "" {
+		return nil
+	}
+	if _, err := time.ParseDuration(raw); err != nil {
+		return fmt.Errorf("review: delta_max_age %q is not a duration (e.g. 72h); unset means the default %s", r.DeltaMaxAge, DefaultReviewDeltaMaxAge)
+	}
+	return nil
+}

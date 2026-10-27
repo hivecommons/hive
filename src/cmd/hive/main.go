@@ -7443,7 +7443,7 @@ func runEvalCycle(
 	dueBeforeDeferral := append([]string(nil), agentsDue...)
 	agentsDue = sched.FilterFirstScanDeferredAgents(agentsDue)
 	agentsSkipped = append(agentsSkipped, firstScanDeferredSkips(dueBeforeDeferral, agentsDue)...)
-	reviewPlan := planReviewDispatchWith(ctx, cfg, actionable, agentMgr, beadStores, reviewChangedFilesListerFor(ghClient), logger)
+	reviewPlan := planReviewDispatchWith(ctx, cfg, actionable, agentMgr, beadStores, reviewPlannerGitHubFor(ghClient), logger)
 	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
 	if ghClient != nil {
 		postReviewAcknowledgements(ctx, ghClient, reviewPlan, logger)
@@ -10561,11 +10561,14 @@ func parseReviseCutoff(raw string, logger *slog.Logger) time.Time {
 	return cutoff
 }
 
-// reviewChangedFilesLister is the slice of the GitHub client the bot-author
-// model route needs (review.bot_author_full_review_paths): a PR's changed
-// paths.
-type reviewChangedFilesLister interface {
+// reviewPlannerGitHub is the slice of the GitHub client the review planner
+// reads: a PR's changed paths for the bot-author model route
+// (review.bot_author_full_review_paths) and the compare between the head
+// the hive last judged and the current one for the delta re-review
+// (review.delta_rereview).
+type reviewPlannerGitHub interface {
 	ReviewPRChangedFiles(ctx context.Context, repo string, number int) ([]string, bool)
+	ReviewDeltaDiff(ctx context.Context, repo, previousHead, head string) review.DeltaDiff
 }
 
 func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult, agentMgr crux.Runtime, beadStores map[string]*beads.Store, logger *slog.Logger) review.DispatchPlan {
@@ -10583,7 +10586,7 @@ func reviewBotAuthorRoute(cfg *config.Config) review.BotAuthorRoute {
 // route may apply to it: route on, author a listed bot, no verdict at this
 // head and no review in flight (one listing per head, not per cycle). nil,
 // false otherwise, which the planner reads as unknown: no downgrade.
-func reviewBotRouteFilesFor(ctx context.Context, cfg *config.Config, lister reviewChangedFilesLister, route review.BotAuthorRoute, artifact review.Artifact, state review.DispatchState, repo string, number int, author, headSHA, bodyDigest string) ([]string, bool) {
+func reviewBotRouteFilesFor(ctx context.Context, cfg *config.Config, lister reviewPlannerGitHub, route review.BotAuthorRoute, artifact review.Artifact, state review.DispatchState, repo string, number int, author, headSHA, bodyDigest string) ([]string, bool) {
 	if lister == nil || !route.Enabled() || !review.IsBotAuthor(author, route.Authors, cfg.EffectiveAIAuthor()) {
 		return nil, false
 	}
@@ -10596,7 +10599,30 @@ func reviewBotRouteFilesFor(ctx context.Context, cfg *config.Config, lister revi
 	return lister.ReviewPRChangedFiles(ctx, repo, number)
 }
 
-func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable *github.ActionableResult, agentMgr crux.Runtime, beadStores map[string]*beads.Store, lister reviewChangedFilesLister, logger *slog.Logger) review.DispatchPlan {
+// reviewDeltaDiffFor fetches the delta compare for one PR when it is a
+// delta re-review candidate: delta mode on, no verdict yet at this head, no
+// dispatch entry for it (a compare per cycle for a review in flight would be
+// API spend for nothing), and a prior verdict at another head to diff from.
+// nil otherwise, which the planner reads as "not fetched".
+func reviewDeltaDiffFor(ctx context.Context, cfg *config.Config, differ reviewPlannerGitHub, artifact review.Artifact, state review.DispatchState, repo string, number int, headSHA, bodyDigest string) *review.DeltaDiff {
+	if differ == nil || !cfg.Review.DeltaRereviewEnabled() || strings.TrimSpace(headSHA) == "" {
+		return nil
+	}
+	if _, judged := artifact.AggregateForBody(repo, number, headSHA, bodyDigest); judged {
+		return nil
+	}
+	if !state.PendingSince(repo, number, headSHA).IsZero() {
+		return nil
+	}
+	prior, ok := artifact.PriorAggregateFor(repo, number, headSHA)
+	if !ok {
+		return nil
+	}
+	diff := differ.ReviewDeltaDiff(ctx, repo, prior.HeadSHA, headSHA)
+	return &diff
+}
+
+func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable *github.ActionableResult, agentMgr crux.Runtime, beadStores map[string]*beads.Store, ghr reviewPlannerGitHub, logger *slog.Logger) review.DispatchPlan {
 	if cfg == nil || actionable == nil || !cfg.Review.RequireApproval || !cfg.Review.FanOut {
 		return review.DispatchPlan{}
 	}
@@ -10685,11 +10711,14 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 			// on this head (hivecommons/hive#13041): the planner kicks the
 			// fix lane with it instead of reviewing the head again.
 			HumanChangeRequest: review.HumanChangeRequestFor(review.DefaultHumanChangeRequests(), fullRepo, pr.Number, pr.HeadSHA),
+			// The compare from the last judged head, for the delta
+			// re-review and its trivial skip (review.delta_rereview).
+			DeltaDiff: reviewDeltaDiffFor(ctx, cfg, ghr, artifact, state, fullRepo, pr.Number, pr.HeadSHA, pr.BodyDigest),
 		}
 		// Changed paths for the bot-author model route's path exceptions
 		// (review.bot_author_full_review_paths); fetched only for a listed
 		// bot's PR that is about to be reviewed.
-		item.ChangedFiles, item.ChangedFilesKnown = reviewBotRouteFilesFor(ctx, cfg, lister, botRoute, artifact, state, fullRepo, pr.Number, pr.Author, pr.HeadSHA, pr.BodyDigest)
+		item.ChangedFiles, item.ChangedFilesKnown = reviewBotRouteFilesFor(ctx, cfg, ghr, botRoute, artifact, state, fullRepo, pr.Number, pr.Author, pr.HeadSHA, pr.BodyDigest)
 		prs = append(prs, item)
 	}
 	// PRs a review webhook just fired for go first, so the early eval cycle
@@ -10730,7 +10759,11 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		ReviewBotMinPriority:  reviewBots.MinPriority,
 		PerspectiveModels:     cfg.Review.PerspectiveModels,
 		BotAuthorRoute:        botRoute,
+		DeltaRereview:         cfg.Review.DeltaRereviewEnabled(),
+		DeltaTrivialLines:     cfg.Review.EffectiveDeltaTrivialLines(),
+		DeltaMaxAge:           cfg.Review.EffectiveDeltaMaxAge(),
 	})
+	recordReviewDeltaRestamps(plan, logger)
 	for _, k := range plan.ReviewKicks {
 		if k.BotAuthorRouted {
 			logger.Info("review routed bot-authored PR to bot_author_model", "repo", k.Repo, "pr", k.Number, "head", k.HeadSHA, "agent", k.Agent, "review_model", k.ReviewModel, "review_backend", k.ReviewBackend)
@@ -10756,10 +10789,29 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 	return plan
 }
 
-// reviewChangedFilesListerFor returns the GitHub client as a
-// reviewChangedFilesLister, or nil for a nil client: a typed nil in the
-// interface would not read as nil.
-func reviewChangedFilesListerFor(c *github.Client) reviewChangedFilesLister {
+// recordReviewDeltaRestamps writes the verdicts the planner carried forward
+// onto a new head without a session (trivial delta, review.delta_rereview)
+// into the verdict artifact, and logs each one. A write failure is logged,
+// not fatal: the next cycle plans the same restamp again.
+func recordReviewDeltaRestamps(plan review.DispatchPlan, logger *slog.Logger) {
+	if len(plan.DeltaRestamps) == 0 {
+		return
+	}
+	for _, r := range plan.DeltaRestamps {
+		note := ""
+		if r.Aggregate.Delta != nil {
+			note = r.Aggregate.Delta.Note
+		}
+		logger.Info("review delta re-stamped verdict without a session", "repo", r.Repo, "pr", r.Number, "head", r.HeadSHA, "previous_head", r.PreviousHead, "verdict", r.Aggregate.Verdict, "note", note)
+	}
+	if _, err := review.RecordDeltaRestamps("", plan.DeltaRestamps, time.Now().UTC()); err != nil {
+		logger.Warn("failed to record review delta re-stamps", "error", err, "count", len(plan.DeltaRestamps))
+	}
+}
+
+// reviewPlannerGitHubFor returns the GitHub client as a reviewPlannerGitHub,
+// or nil for a nil client: a typed nil in the interface would not read as nil.
+func reviewPlannerGitHubFor(c *github.Client) reviewPlannerGitHub {
 	if c == nil {
 		return nil
 	}

@@ -7406,6 +7406,29 @@ type ReviewConfig struct {
 	// keep a bot-authored PR on the full-strength model when it touches any of
 	// them. Unset means DefaultReviewBotAuthorFullReviewPaths.
 	BotAuthorFullReviewPaths []string `yaml:"bot_author_full_review_paths,omitempty" json:"bot_author_full_review_paths,omitempty"`
+	// DeltaRereview scopes a re-review to what changed since the head the
+	// hive last judged. When a PR already carries a verdict for an earlier
+	// head SHA, the new head's kick carries that verdict and its findings
+	// and tells the reviewer to read `git diff <prev_head>..<new_head>` plus
+	// re-check the flagged items, not the whole PR again. Re-reviews were
+	// 53% of one hosted hive's reviewer spend over two weeks (Oct 13-27
+	// 2026). nil means on; `delta_rereview: false` turns it off. First
+	// reviews, a prior `reject`, and a prior `changes_requested` whose
+	// findings are older than delta_max_age stay full reviews.
+	DeltaRereview *bool `yaml:"delta_rereview,omitempty" json:"delta_rereview,omitempty"`
+	// DeltaTrivialLines is the delta size (added plus deleted lines) under
+	// which a re-review skips the model call: when the diff between the
+	// reviewed head and the new head is empty, or touches only files the
+	// previous verdict had no finding in and is smaller than this, the
+	// previous verdict is re-stamped onto the new head with a note. 0 means
+	// DefaultReviewDeltaTrivialLines; negative disables the skip.
+	DeltaTrivialLines int `yaml:"delta_trivial_lines,omitempty" json:"delta_trivial_lines,omitempty"`
+	// DeltaMaxAge is how old a `changes_requested` verdict with findings may
+	// be and still anchor a delta re-review (Go duration string). Older than
+	// this the new head gets a full review, since the flagged code and the
+	// reviewer's memory of it have both moved on. Empty means
+	// DefaultReviewDeltaMaxAge.
+	DeltaMaxAge string `yaml:"delta_max_age,omitempty" json:"delta_max_age,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the
