@@ -165,28 +165,35 @@ func encodeRepeatFailureRecord(rec RepeatFailureRecord) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	avail := RepeatFailureRecordMaxLine - len(base)
-	if avail <= 0 {
-		return nil, errors.New("repeat-failure record does not fit one line without its command")
+	// The bare line omits the empty "command" key (omitempty), so its size
+	// is only a first estimate: re-encode and shrink the room by whatever
+	// the encoded line still overshoots until the whole line fits.
+	raw, norm := rec.RawCommand, rec.Command
+	rawLen, normLen := jsonStringLen(raw), jsonStringLen(norm)
+	for avail := RepeatFailureRecordMaxLine - len(base); avail > 0; {
+		// Split the room evenly; a command shorter than its half gives the
+		// rest to the other.
+		rawBudget := avail / 2
+		normBudget := avail - rawBudget
+		switch {
+		case normLen < normBudget:
+			rawBudget, normBudget = avail-normLen, normLen
+		case rawLen < rawBudget:
+			rawBudget, normBudget = rawLen, avail-rawLen
+		}
+		rec.RawCommand = cutJSONString(raw, rawBudget)
+		rec.Command = cutJSONString(norm, normBudget)
+		line, err = marshalRepeatFailureLine(rec)
+		if err != nil {
+			return nil, err
+		}
+		excess := len(line) - RepeatFailureRecordMaxLine
+		if excess <= 0 {
+			return line, nil
+		}
+		avail -= excess
 	}
-	// Split the room evenly; a command shorter than its half gives the rest
-	// to the other.
-	rawLen, normLen := jsonStringLen(rec.RawCommand), jsonStringLen(rec.Command)
-	rawBudget := avail / 2
-	normBudget := avail - rawBudget
-	switch {
-	case normLen < normBudget:
-		rawBudget, normBudget = avail-normLen, normLen
-	case rawLen < rawBudget:
-		rawBudget, normBudget = rawLen, avail-rawLen
-	}
-	rec.RawCommand = cutJSONString(rec.RawCommand, rawBudget)
-	rec.Command = cutJSONString(rec.Command, normBudget)
-	line, err = marshalRepeatFailureLine(rec)
-	if err == nil && len(line) > RepeatFailureRecordMaxLine {
-		return nil, errors.New("repeat-failure record does not fit one line")
-	}
-	return line, err
+	return nil, errors.New("repeat-failure record does not fit one line without its command")
 }
 
 func marshalRepeatFailureLine(rec RepeatFailureRecord) ([]byte, error) {
