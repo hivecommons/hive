@@ -1171,9 +1171,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 			agent.poolLeaseID = leaseID
 			launchSucceeded = true
 			if !hasLeaseWatcher {
-				leaseCtx, cancel := context.WithCancel(context.Background())
-				agent.poolLeaseCancel = cancel
-				go m.watchSharedPoolLease(leaseCtx, name, leaseID)
+				m.startSharedPoolLeaseWatcherLocked(agent, name, leaseID)
 			}
 		}
 		return nil
@@ -1186,12 +1184,18 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	if err == nil && leaseID != "" {
 		launchSucceeded = true
 		if !hasLeaseWatcher {
-			leaseCtx, cancel := context.WithCancel(context.Background())
-			agent.poolLeaseCancel = cancel
-			go m.watchSharedPoolLease(leaseCtx, name, leaseID)
+			m.startSharedPoolLeaseWatcherLocked(agent, name, leaseID)
 		}
 	}
 	return err
+}
+
+func (m *Manager) startSharedPoolLeaseWatcherLocked(agent *AgentProcess, name, leaseID string) {
+	if agent.poolLeaseCancel == nil {
+		leaseCtx, cancel := context.WithCancel(context.Background())
+		agent.poolLeaseCancel = cancel
+		go m.watchSharedPoolLease(leaseCtx, name, leaseID)
+	}
 }
 
 // kickOutcomePollEvery throttles the post-kick turn-ended check to one visible

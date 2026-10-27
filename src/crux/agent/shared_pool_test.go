@@ -2,11 +2,11 @@ package agent
 
 import (
 	"context"
+	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/internal/testutil"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/hivecommons/hive/crux/config"
 )
 
 type recordingSharedSessionPool struct {
@@ -110,25 +110,11 @@ func TestSharedPoolKickOutcomeEvictsSession(t *testing.T) {
 
 	m.notifyKickOutcome("scanner", outcome)
 
-	// Wait briefly for the asynchronous eviction goroutine to complete.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.EventuallyEvery(t, 2*time.Second, 10*time.Millisecond, func() bool {
 		m.mu.RLock()
-		st := a.State
-		lease := a.poolLeaseID
-		m.mu.RUnlock()
-		if st == StateStopped && lease == "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	m.mu.RLock()
-	if a.State != StateStopped || a.poolLeaseID != "" {
-		t.Fatalf("after outcome: state=%q lease=%q, want stopped/empty", a.State, a.poolLeaseID)
-	}
-	m.mu.RUnlock()
-
+		defer m.mu.RUnlock()
+		return a.State == StateStopped && a.poolLeaseID == ""
+	}, "session was not evicted after kick outcome")
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 	if len(pool.released) != 1 || pool.released[0] != "lease-outcome" {
