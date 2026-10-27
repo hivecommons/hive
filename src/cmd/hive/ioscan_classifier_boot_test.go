@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
@@ -42,11 +43,11 @@ func ioscanBootLogger() (*slog.Logger, *bytes.Buffer) {
 
 var ioscanBootNow = func() time.Time { return time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) }
 
-// A backend that cannot run tool-less (copilot, codex, gemini) is refused
+// A backend that cannot run tool-less (codex, gemini) is refused
 // with one log line. At a fail-closed level the unavailable classifier is
 // installed so untrusted text is withheld; at fail-open nothing is installed.
 func TestInstallIoscanClassifier_RefusesNonToollessBackend(t *testing.T) {
-	for _, backend := range []string{"copilot", "codex", "gemini"} {
+	for _, backend := range []string{"codex", "gemini"} {
 		t.Run(backend+" fail closed", func(t *testing.T) {
 			sink := &fakeClassifierSink{}
 			logger, logs := ioscanBootLogger()
@@ -123,5 +124,48 @@ func TestInstallIoscanClassifier_DisabledInstallsNothing(t *testing.T) {
 	installIoscanClassifier(sink, ioscanBootConfig(1, "copilot", ""), logger, ioscanBootNow)
 	if sink.sets != 0 || logs.Len() != 0 {
 		t.Fatalf("classifier off at L1 still acted: sets=%d logs=%q", sink.sets, logs.String())
+	}
+}
+
+func TestInstallIoscanClassifierAgentFallbackAndAlert(t *testing.T) {
+	for _, tc := range []struct {
+		name, agent, explicit, endpoint, failMode string
+		cli, alert                                bool
+	}{
+		{name: "endpoint wins", agent: "copilot", endpoint: "https://classifier.invalid"},
+		{name: "explicit wins", agent: "copilot", explicit: "claude", endpoint: "https://classifier.invalid", cli: true},
+		{name: "copilot fallback", agent: "copilot", cli: true},
+		{name: "claude fallback", agent: "claude", cli: true},
+		{name: "explicit copilot", explicit: "copilot", cli: true},
+		{name: "unsupported fallback", agent: "codex", alert: true},
+		{name: "missing backend", alert: true},
+		{name: "explicit refusal", agent: "copilot", explicit: "gemini", alert: true},
+		{name: "fail open", agent: "gemini", failMode: "open"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := ioscanBootConfig(6, tc.explicit, tc.failMode)
+			cfg.Agents = map[string]config.AgentConfig{"reviewer": {Backend: tc.agent}}
+			cfg.Governor.Trajectory.Endpoint = tc.endpoint
+			sink := &fakeClassifierSink{}
+			logger, _ := ioscanBootLogger()
+			srv := dashboard.NewServer(0, logger)
+			installIoscanClassifier(sink, cfg, logger, ioscanBootNow, srv)
+			if (sink.budget > 0) != tc.cli {
+				t.Fatalf("CLI budget = %d", sink.budget)
+			}
+			alert, ok := alertByID(publishedAlerts(t, srv), ioscanClassifierUnavailableAlertID)
+			if ok != tc.alert {
+				t.Fatalf("alert present = %v, want %v", ok, tc.alert)
+			}
+			if ok && (!strings.Contains(alert.Message, "kicks are being blocked") || !strings.Contains(alert.Message, "fail_mode: open")) {
+				t.Fatalf("unhelpful alert: %+v", alert)
+			}
+			disabled := false
+			cfg.Ioscan.Classifier.Enabled = &disabled
+			installIoscanClassifier(sink, cfg, logger, ioscanBootNow, srv)
+			if _, ok := alertByID(publishedAlerts(t, srv), ioscanClassifierUnavailableAlertID); ok {
+				t.Fatal("stale alert after disabling classifier")
+			}
+		})
 	}
 }

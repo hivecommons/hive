@@ -502,8 +502,8 @@ type IoscanConfig struct {
 // Read both via EnabledAtLevel / FailClosedAtLevel, never raw.
 //
 // Backend names a subscription CLI (e.g. "claude") that runs the classifier
-// tool-less instead of the OpenAI-compatible HTTP endpoint; empty keeps the
-// HTTP path. Boot refuses a backend ioscan.SupportsToolless rejects. With a
+// tool-less instead of the OpenAI-compatible HTTP endpoint; empty prefers
+// HTTP, then falls back to a tool-less configured agent CLI. Boot refuses a backend ioscan.SupportsToolless rejects. With a
 // CLI backend, CLIBudgetPerEval replaces the per-pass budget and
 // CLIDailyQuota caps calls per UTC day; zero uses the defaults. Read them
 // via CLIBudgetPerEvalOrDefault / CLIDailyQuotaOrDefault.

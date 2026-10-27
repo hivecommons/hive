@@ -29,13 +29,18 @@ const (
 // this package, so it cannot be called from here without an import cycle.
 //
 // Only backends whose CLI can disable all built-in tools and all MCP servers
-// from the command line are listed. copilot, codex and gemini expose no flag
-// that removes every tool (their non-interactive modes still run read-only
-// shell/file tools), so SupportsToolless reports false for them.
+// from the command line are listed. Codex and Gemini have no verified
+// tool-disable flags, so SupportsToolless reports false for them.
 var cliToollessArgs = map[string]struct {
 	binary string
 	args   []string
 }{
+	"copilot": {
+		binary: "copilot",
+		// An empty allowlist is ignored; an unknown sentinel disables all tools.
+		args: []string{"--available-tools", "hive_ioscan_no_tools", "--disable-builtin-mcps",
+			"--no-custom-instructions", "--no-ask-user", "--no-auto-update", "--no-color", "--silent"},
+	},
 	"claude": {
 		binary: "claude",
 		// --tools "" disables every built-in tool; --strict-mcp-config with no
@@ -60,8 +65,9 @@ const cliClaudeHooksOffSettings = `{"disableAllHooks":true}`
 // else, so hive tokens (GH_TOKEN, GITHUB_TOKEN, HIVE_GITHUB_TOKEN, ...) never
 // reach a process that reads untrusted text.
 var cliEnvAllowlist = map[string][]string{
-	"":       {"PATH", "HOME", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME"},
-	"claude": {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN"},
+	"":        {"PATH", "HOME", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME"},
+	"claude":  {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN"},
+	"copilot": {"COPILOT_HOME", "COPILOT_GITHUB_TOKEN"},
 }
 
 // SupportsToolless reports whether backend can be launched as a classifier
@@ -130,7 +136,7 @@ func (c *CLIChatClient) env() []string {
 	return env
 }
 
-// Complete runs the CLI once with the rendered prompt on stdin and returns
+// Complete runs the CLI once with the rendered prompt as data and returns
 // the single JSON verdict object it printed. Timeouts, nonzero exits, and
 // replies that are not exactly one valid verdict are errors.
 func (c *CLIChatClient) Complete(ctx context.Context, messages []chatMessage, _ int) (string, error) {
@@ -143,10 +149,15 @@ func (c *CLIChatClient) Complete(ctx context.Context, messages []chatMessage, _ 
 	runCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	argv := c.argv()
+	if c.backend == "copilot" {
+		argv = append(argv, "-p", renderCLIPrompt(messages))
+	}
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Env = c.env()
-	cmd.Stdin = strings.NewReader(renderCLIPrompt(messages))
+	if c.backend != "copilot" {
+		cmd.Stdin = strings.NewReader(renderCLIPrompt(messages))
+	}
 	stdout := &cappedBuffer{max: cliClassifierMaxOutput}
 	cmd.Stdout = stdout
 	cmd.Stderr = &cappedBuffer{max: cliClassifierMaxOutput}

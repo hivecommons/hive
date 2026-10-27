@@ -1,0 +1,1 @@
+- Copilot-only hives can use a tool-less semantic classifier automatically when no model endpoint is configured; a persistent dashboard alert explains when an unavailable required classifier blocks kicks ([#14499](https://github.com/hivecommons/hive/issues/14499)).
