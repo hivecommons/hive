@@ -1,0 +1,1 @@
+- The crux proxy now treats hostnames case-insensitively and ignores a trailing dot when classifying hosts for inspection.

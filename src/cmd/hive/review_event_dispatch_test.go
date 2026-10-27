@@ -63,8 +63,12 @@ func TestInstallReviewEventsIsIdempotent(t *testing.T) {
 	if d == nil || wake == nil || activeReviewEvents.Load() != d {
 		t.Fatal("dispatcher not installed")
 	}
+	verdicts := b.verdictWaker
+	if verdicts == nil {
+		t.Fatal("verdict waker not installed")
+	}
 	b.installReviewEvents()
-	if b.reviewEvents != d || b.reviewWake != wake {
+	if b.reviewEvents != d || b.reviewWake != wake || b.verdictWaker != verdicts {
 		t.Fatal("reinstall replaced the dispatcher")
 	}
 	t.Cleanup(func() { activeReviewEvents.Store(nil) })
@@ -137,6 +141,72 @@ func TestRunLoopWithRunsAnEarlyCycleOnReviewWake(t *testing.T) {
 		t.Fatalf("evals = %d, want first + webhook + cadence", len(h.evals))
 	}
 	if !strings.Contains(log.String(), "review webhook wake") {
+		t.Fatalf("log = %s", log.String())
+	}
+}
+
+// hivecommons/hive#14705: the first recorded verdict wakes the loop at once;
+// the verdicts that follow inside governor.webhook_wake_min_gap_s fold into
+// one wake at the end of the gap.
+func TestWakeForReviewVerdictCoalescesInsideMinGap(t *testing.T) {
+	w, f := newTestWebhookWaker(0, 30*time.Second)
+	b := &boot{verdictWaker: w}
+
+	b.wakeForReviewVerdict("o/r", 1)
+	if len(f.delays) != 1 || f.delays[0] != 0 {
+		t.Fatalf("first verdict should wake at once, armed %v", f.delays)
+	}
+	f.fire(t)
+	if got := <-b.verdictWakeChan(); got.Count != 1 || got.Reason != "o/r#1" {
+		t.Fatalf("first wake = %+v", got)
+	}
+
+	f.now = f.now.Add(5 * time.Second)
+	b.wakeForReviewVerdict("o/r", 2)
+	b.wakeForReviewVerdict("o/r", 3)
+	if len(f.delays) != 2 || f.delays[1] != 25*time.Second {
+		t.Fatalf("verdicts inside the gap should arm one timer for the rest of it, armed %v", f.delays)
+	}
+	select {
+	case got := <-b.verdictWakeChan():
+		t.Fatalf("woke inside the min gap: %+v", got)
+	default:
+	}
+	f.fire(t)
+	if got := <-b.verdictWakeChan(); got.Count != 2 || got.Reason != "o/r#2" || got.LastRe != "o/r#3" {
+		t.Fatalf("coalesced wake = %+v", got)
+	}
+}
+
+func TestWakeForReviewVerdictWithoutWakerIsNoop(t *testing.T) {
+	var nilBoot *boot
+	nilBoot.wakeForReviewVerdict("o/r", 1)
+	b := &boot{}
+	b.wakeForReviewVerdict("o/r", 1)
+	if b.verdictWakeChan() != nil {
+		t.Fatal("uninstalled waker should leave the loop case nil")
+	}
+}
+
+func TestRunLoopWithRunsAnEarlyCycleOnVerdictWake(t *testing.T) {
+	b, log, cancel := newLoopBoot(t, 60, 0)
+	b.verdictWaker, _ = newTestWebhookWaker(0, 30*time.Second)
+	gov := newFakeTicker()
+	h := &loopHarness{startupOK: true, pending: []*fakeTicker{gov}, persisted: make(chan struct{}, 8)}
+	done := runLoopAsync(b, h.deps())
+	<-h.persisted // first cycle done
+
+	b.verdictWaker.out <- webhookWakeBatch{Reason: "o/r#1", LastRe: "o/r#2", Count: 2}
+	<-h.persisted // early cycle done
+	gov.fire()
+	<-h.persisted // cadence cycle still runs
+	cancel()
+	waitDone(t, done)
+
+	if len(h.evals) != 3 {
+		t.Fatalf("evals = %d, want first + verdict + cadence", len(h.evals))
+	}
+	if !strings.Contains(log.String(), "review verdict wake") || !strings.Contains(log.String(), "verdicts=2") {
 		t.Fatalf("log = %s", log.String())
 	}
 }

@@ -92,6 +92,7 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 	prSnapshot := c.reviewedPRSnapshotFunc(ctx, req)
 	prHead := func() string { return prSnapshot().Head }
 	var recorded []review.PerspectiveReport
+	wake := false
 	for _, report := range reports {
 		if decisionRequested {
 			report.DecisionRequested = true
@@ -100,9 +101,17 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 			report.Verdict = review.VerdictRequiresHuman
 		}
 		report.PermissionsTighteningOnly = tightening
-		if written, ok := c.writeOneVerdict(ctx, req, report, dir, prHead, prSnapshot); ok {
+		if written, ok, dispatched := c.writeOneVerdict(ctx, req, report, dir, prHead, prSnapshot); ok {
 			recorded = append(recorded, written)
+			wake = wake || dispatched
 		}
+	}
+	// One wake per request, however many perspectives a combined review
+	// answered: the head that wrote them is free, and the PR may be ready
+	// for its next head or its decision kick. An advisory verdict freed no
+	// dispatch slot, so it wakes nothing (hivecommons/hive#14705).
+	if wake {
+		c.notifyReviewVerdict(req.Repo, req.Number)
 	}
 	return recorded
 }
@@ -339,8 +348,9 @@ func maintainerCallQuestion(body string) string {
 // will find it. One file per perspective, which is what the collector has
 // always read — a combined review changes how verdicts arrive, not how they
 // are stored, so nothing downstream needs to know the difference. It returns
-// the report as stored and whether it was.
-func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report review.PerspectiveReport, dir string, prHead func() string, prSnapshot func() reviewedPRSnapshot) (review.PerspectiveReport, bool) {
+// the report as stored, whether it was, and whether it was bound to a review
+// dispatch rather than admitted as advisory.
+func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report review.PerspectiveReport, dir string, prHead func() string, prSnapshot func() reviewedPRSnapshot) (review.PerspectiveReport, bool, bool) {
 	// The verdict must be about the PR that was actually reviewed. Without this
 	// an agent authorized to comment on one PR could record a binding
 	// requires_human/reject verdict against any other PR in the fleet.
@@ -349,7 +359,7 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 			slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
 			slog.String("claimed", fmt.Sprintf("%s#%d", report.Repo, report.Number)),
 			slog.String("agent", req.Agent))
-		return report, false
+		return report, false, false
 	}
 	// Bind to a real dispatch record. A combined review answers one kick with
 	// several verdicts, so each element is checked on its own: the dispatch is
@@ -362,7 +372,7 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 			slog.String("perspective", string(report.Perspective)),
 			slog.String("agent", req.Agent),
 			slog.String("reason", auth.Reason))
-		return report, false
+		return report, false, false
 	}
 	// A dispatched verdict is stored under the head its dispatch record names,
 	// whatever the reviewer wrote: the match above already proved the two
@@ -429,7 +439,7 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 	if err != nil {
 		c.logger.Warn("review-request watcher: could not serialize verdict",
 			slog.String("perspective", string(report.Perspective)), slog.String("error", err.Error()))
-		return report, false
+		return report, false, false
 	}
 
 	// One file per perspective, and per review head when the perspective was
@@ -454,20 +464,20 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
 		c.logger.Warn("review-request watcher: could not write verdict",
 			slog.String("path", path), slog.String("error", err.Error()))
-		return report, false
+		return report, false, false
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		c.logger.Warn("review-request watcher: could not commit verdict",
 			slog.String("path", path), slog.String("error", err.Error()))
-		return report, false
+		return report, false, false
 	}
 	c.logger.Info("review-request watcher: verdict recorded",
 		slog.String("repo", report.Repo), slog.Int("number", report.Number),
 		slog.String("perspective", string(report.Perspective)),
 		slog.String("verdict", string(report.Verdict)),
 		slog.String("path", path))
-	return report, true
+	return report, true, auth.Dispatched
 }
 
 // verdictAuthorization is what admitting a verdict establishes about it:

@@ -34,7 +34,7 @@ ones to:
 2. **Truncation must preserve the prioritization signal, not cut an arbitrary slice.**
    This holds today and is easy to assume backwards:
    - Issues are sorted by actionable rank tier, then **oldest first** within each tier before any cap is applied
-     (`RankActionableIssues`, `src/pkg/github/client.go:4676-4693`, descending `AgeMinutes`).
+     (`RankActionableIssues`, `src/pkg/github/client.go:4679-4696`, descending `AgeMinutes`).
    - PRs are sorted by **review class then oldest-first within class**
      (`SortPullRequestsForReview`, `src/pkg/github/review_priority.go:334`;
      fixes → refactors/docs → tests).
