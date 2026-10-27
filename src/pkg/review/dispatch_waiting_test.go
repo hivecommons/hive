@@ -19,6 +19,7 @@ func TestPlanDispatchReportsPRsWaitingForAFreeReviewer(t *testing.T) {
 	prs := []PullRequest{dispatchPRNum(1, "sha1"), dispatchPRNum(2, "sha2"), dispatchPRNum(3, "sha3")}
 	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
 		RequireApproval:      true,
+		FanOut:               true,
 		CombinedPerspectives: true,
 		MaxParallelReviews:   10,
 		ProjectOrg:           "acme",
@@ -40,6 +41,7 @@ func TestPlanDispatchReportsPRsWaitingForAParallelSlot(t *testing.T) {
 	prs := []PullRequest{dispatchPRNum(1, "sha1"), dispatchPRNum(2, "sha2")}
 	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
 		RequireApproval:      true,
+		FanOut:               true,
 		CombinedPerspectives: true,
 		MaxParallelReviews:   1,
 		ProjectOrg:           "acme",
@@ -57,6 +59,7 @@ func TestPlanDispatchNothingWaitingWhenReviewersCover(t *testing.T) {
 	prs := []PullRequest{dispatchPRNum(1, "sha1")}
 	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
 		RequireApproval:      true,
+		FanOut:               true,
 		CombinedPerspectives: true,
 		MaxParallelReviews:   10,
 		ProjectOrg:           "acme",
@@ -73,6 +76,7 @@ func TestDrainingReviewerGetsNoNewReview(t *testing.T) {
 	prs := []PullRequest{dispatchPRNum(1, "sha1"), dispatchPRNum(2, "sha2")}
 	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
 		RequireApproval:      true,
+		FanOut:               true,
 		CombinedPerspectives: true,
 		MaxParallelReviews:   10,
 		ProjectOrg:           "acme",
