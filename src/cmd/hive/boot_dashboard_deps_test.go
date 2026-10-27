@@ -205,8 +205,15 @@ func TestBootDashboardWithAdvisoryHookNoStoresIsNoop(t *testing.T) {
 }
 
 func TestBootDashboardWithClassifier(t *testing.T) {
-	t.Run("no endpoint logs and skips", func(t *testing.T) {
+	t.Run("no endpoint or supported agent logs and skips", func(t *testing.T) {
 		cfg := bootDashboardConfig()
+		// Keep this case on the unavailable path despite automatic CLI fallback.
+		for name, agent := range cfg.Agents {
+			agent.Backend = "codex"
+			cfg.Agents[name] = agent
+		}
+		// Leave only an agent that cannot supply a tool-less classifier.
+		cfg.Agents["scanner"] = config.AgentConfig{Enabled: true, Backend: "codex"}
 		on := true
 		cfg.Ioscan.Enabled = &on
 		cfg.Ioscan.Classifier.Enabled = &on
@@ -220,14 +227,21 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 		b.bootDashboardWith(newBootDashboardFake().deps)
 
 		if _, _, installed := b.sched.IoscanHooksForTest(); installed {
-			t.Fatal("classifier must not install without an endpoint")
+			t.Fatal("classifier must not install without an endpoint or supported CLI or supported agent")
 		}
 		if !strings.Contains(log.String(), "ioscan classifier enabled but not running") {
 			t.Fatalf("log:\n%s", log.String())
 		}
 	})
-	t.Run("L5 default on, no endpoint installs fail-closed classifier", func(t *testing.T) {
+	t.Run("L5 default on, no endpoint or supported agent installs fail-closed classifier", func(t *testing.T) {
 		cfg := bootDashboardConfig()
+		// Keep this case on the unavailable path despite automatic CLI fallback.
+		for name, agent := range cfg.Agents {
+			agent.Backend = "codex"
+			cfg.Agents[name] = agent
+		}
+		// Leave only an agent that cannot supply a tool-less classifier.
+		cfg.Agents["scanner"] = config.AgentConfig{Enabled: true, Backend: "codex"}
 		on := true
 		cfg.Ioscan.Enabled = &on
 		level := 5
@@ -246,6 +260,26 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 			t.Fatalf("log:\n%s", log.String())
 		}
 	})
+	t.Run("L5 default on, no endpoint uses Copilot agent", func(t *testing.T) {
+		cfg := bootDashboardConfig()
+		on, level := true, 5
+		cfg.Ioscan.Enabled = &on
+		cfg.ACMMLevel = &level
+		b := newBootDashboardBoot(t, cfg)
+		var log syncLogBuffer
+		b.logger = slog.New(slog.NewTextHandler(&log, nil))
+		b.sched = scheduler.New(cfg, b.logger)
+
+		b.bootDashboardWith(newBootDashboardFake().deps)
+
+		if _, _, installed := b.sched.IoscanHooksForTest(); !installed {
+			t.Fatal("configured Copilot agent must supply the classifier without an endpoint")
+		}
+		if !strings.Contains(log.String(), "ioscan semantic classifier enabled") || !strings.Contains(log.String(), "backend=copilot") {
+			t.Fatalf("log:\n%s", log.String())
+		}
+	})
+
 	t.Run("L5 with classifier disabled explicitly skips", func(t *testing.T) {
 		cfg := bootDashboardConfig()
 		on, off := true, false
