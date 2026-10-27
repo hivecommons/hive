@@ -33,9 +33,8 @@ func (r Report) ReadmeBlock(docDir string) string {
 			}
 		}
 		if len(shown) > 0 {
-			add(`<p align="center">`)
 			add(shown...)
-			add("</p>", "")
+			add("")
 		}
 	}
 	add(ReadmeStart)
@@ -43,10 +42,10 @@ func (r Report) ReadmeBlock(docDir string) string {
 	add(r.HeroLine(), "")
 
 	add("## Accuracy", "")
-	if r.HasCard(CardCameBack) || r.HasCard(CardStories) {
+	if r.HasCard(CardAccuracy) || r.HasCard(CardStories) {
 		add("A separate reviewer reads every pull request an agent opens and can send it back before it merges. The question is whether its objections hold up.", "")
-		cards(cardW, CardCameBack, CardTimeToApproval)
-		cards(cardWideW, CardStories)
+		cards(cardW, CardAccuracy, CardChecksGreen)
+		cards(cardW, CardStories)
 		add(r.followupCaveat(), "")
 	} else {
 		add("Not enough reviewed pull requests are on record yet to report accuracy figures.", "")
@@ -65,7 +64,7 @@ func (r Report) ReadmeBlock(docDir string) string {
 	}
 
 	add("## Also", "")
-	cards(cardWideW, CardAlso)
+	cards(cardW, CardAlso)
 
 	add(fmt.Sprintf("Production data, not a lab run. Every count above is regenerated from live records by `src/scripts/outcome-benchmark.sh`; bases, dates, exclusions and the full tables are in [how we count →](%s).", report))
 	add(ReadmeEnd)
@@ -114,7 +113,7 @@ func (r Report) picture(docDir, card string, width int) string {
 
 // HowItWorksPicture is the ladder card for the README's own section.
 func (r Report) HowItWorksPicture(docDir string) string {
-	return r.picture(docDir, CardHowItWorks, cardWideW)
+	return r.picture(docDir, CardHowItWorks, cardW)
 }
 
 // UpdateReadme replaces the marker block in readme with block. The block is

@@ -240,13 +240,13 @@ func (r Report) readmeDecisions() []string {
 	var out []string
 	f := r.Followup
 	fa := f.FixedAndApproved
-	if r.HasCard(CardCameBack) {
+	if r.HasCard(CardAccuracy) {
 		out = append(out, fmt.Sprintf("**Sent back, then fixed** is shown: %d of %d PRs that received a changes_requested verdict in the window pushed a new head that was then approved (%d pushed a new head at all; %d merged on the same head, %d of those because another perspective approved it; %d were unresolved at observation time).", fa.K, fa.N, f.NewHead, f.MergedSameHead, f.MergedSameHeadApproved, f.Unresolved))
 	} else {
 		out = append(out, fmt.Sprintf("**Sent back, then fixed** is not shown: base %d is below the README minimum of %d.", fa.N, min))
 	}
 	ta := f.TimeToApproval
-	if r.HasCard(CardTimeToApproval) {
+	if r.HasCard(CardAccuracy) && ta.Reported && ta.N >= min {
 		out = append(out, fmt.Sprintf("**Time to fix** is shown: %d minutes is the median from the first changes_requested verdict to the first approve verdict on a later head, over %d PRs.", minutes(ta.Value), ta.N))
 	} else {
 		out = append(out, fmt.Sprintf("**Time to fix** is not shown: base %d is below the README minimum of %d.", ta.N, min))

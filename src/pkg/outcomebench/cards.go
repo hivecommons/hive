@@ -118,41 +118,52 @@ func (r Report) MinBase() int {
 // describes a sample the footer cannot explain in one line.
 const minCICardCoverage = 0.8
 
-// cardTheme mirrors the dashboard's design tokens (src/pkg/dashboard/static/
-// tokens.css): surface-2 panels, amber brand, muted slate text. One SVG is
-// written per theme and the README picks one with <picture>.
+// cardTheme is the card palette: a warm near-black surface with hairline
+// rules, warm off-white text, the dashboard's amber for every numeral and
+// for "with Hive" bars, a flat warm gray for "without", and green only for
+// pass/merged dots. One SVG is written per theme and the README picks one
+// with <picture>. The numeral glow is the only decoration and only the dark
+// theme has it.
 type cardTheme struct {
-	Name, BG, Border, Text, Muted, Brand, Neutral, OK string
+	Name, BG, Border, Rule, Head, Text, Muted, Brand, Brand2, Neutral, OK string
+	Glow                                                                  bool
 }
 
 var cardThemes = []cardTheme{
-	{Name: "dark", BG: "#121922", Border: "#263545", Text: "#f6f8fb", Muted: "#a8b3c2", Brand: "#f4c75f", Neutral: "#56657a", OK: "#74df9a"},
-	{Name: "light", BG: "#ffffff", Border: "#d9dee5", Text: "#1f2937", Muted: "#4b5563", Brand: "#9a5f0b", Neutral: "#9aa5b4", OK: "#16a34a"},
+	{Name: "dark", BG: "#0f0d0a", Border: "#2a251f", Rule: "#1c1814", Head: "#fffaf0", Text: "#ece5d8", Muted: "#8b949e", Brand: "#f0b429", Brand2: "#ffd166", Neutral: "#3a342c", OK: "#2da44e", Glow: true},
+	{Name: "light", BG: "#fbf8f2", Border: "#ddd6c8", Rule: "#e8e2d6", Head: "#1a1612", Text: "#2b2620", Muted: "#6b6459", Brand: "#9a5f0b", Brand2: "#b8741a", Neutral: "#d9d2c5", OK: "#1a7f37"},
 }
 
+// Layout constants. Every card spans the README content column and is
+// declared at twice its display size so GitHub downsamples it crisp; the
+// coordinates below are display pixels (the viewBox). Character budgets
+// assume a monospace glyph about 0.6 em wide.
 const (
-	cardFont    = "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
-	cardW       = 280
-	cardH       = 210
-	cardWideW   = 880
-	cardPad     = 20
-	cardRadius  = 12
-	eyebrowPx   = 10
-	claimPx     = 14
-	footerPx    = 10
-	bigPx       = 52
-	claimLineH  = 19
-	claimChars  = 32 // characters per claim line at claimPx in a 280px card
-	footChars   = 46 // characters per footer line at footerPx in a 280px card
-	wideChars   = 58 // characters per line in a two-column wide card
-	tileChars   = 28 // characters per line in a four-tile strip
-	ladderChars = 70
+	cardFont   = "'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+	cardW      = 880
+	cardScale  = 2
+	cardPad    = 40
+	cardRadius = 16
+	colX       = cardW - 2*cardPad // usable width
+	eyebrowPx  = 11
+	eyebrowGap = 40 // eyebrow baseline to headline baseline
+	headPx     = 32
+	headLineH  = 42
+	headChars  = 41
+	bigPx      = 88
+	bigPxTight = 64 // three or more stats on one row
+	bodyPx     = 15
+	bodyLineH  = 22
+	footPx     = 12
+	footLineH  = 18
+	wideChars  = 88
+	halfChars  = 40 // two columns
+	tileChars  = 20 // four columns
 )
 
 // Card names; the asset file is <AssetBase>-card-<name>-<theme>.svg.
 const (
-	CardCameBack        = "came-back-fixed"
-	CardTimeToApproval  = "time-to-approval"
+	CardAccuracy        = "accuracy"
 	CardChecksGreen     = "checks-green"
 	CardStories         = "stories"
 	CardPromptInjection = "prompt-injection"
@@ -163,7 +174,7 @@ const (
 
 // CardNames lists every card the generator knows, in README order.
 func CardNames() []string {
-	return []string{CardCameBack, CardTimeToApproval, CardChecksGreen, CardStories, CardPromptInjection, CardCost, CardAlso, CardHowItWorks}
+	return []string{CardAccuracy, CardChecksGreen, CardStories, CardPromptInjection, CardCost, CardAlso, CardHowItWorks}
 }
 
 // CardFile is the asset filename for a card in a theme.
@@ -188,10 +199,8 @@ func (r Report) Cards() map[string]string {
 // Card renders one named card; ok is false when its data is not shown.
 func (r Report) Card(name string, th cardTheme) (string, bool) {
 	switch name {
-	case CardCameBack:
-		return r.cameBackCard(th)
-	case CardTimeToApproval:
-		return r.timeToApprovalCard(th)
+	case CardAccuracy:
+		return r.accuracyCard(th)
 	case CardChecksGreen:
 		return r.checksGreenCard(th)
 	case CardStories:
@@ -262,6 +271,16 @@ func share(rate float64) string {
 	return fmt.Sprintf("%d in 10", int(math.Round(rate*10)))
 }
 
+// shareWords is share() in words for a headline: "two in three".
+func shareWords(rate float64) string {
+	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+	var k, d int
+	if _, err := fmt.Sscanf(share(rate), "%d in %d", &k, &d); err != nil || k > 10 || d > 10 {
+		return share(rate)
+	}
+	return words[k] + " in " + words[d]
+}
+
 // minutes rounds hours to whole minutes.
 func minutes(hours float64) int { return int(math.Round(60 * hours)) }
 
@@ -288,77 +307,132 @@ func wrap(s string, width int) []string {
 
 func esc(s string) string { return html.EscapeString(s) }
 
-func cardOpen(b *strings.Builder, th cardTheme, w, h int, title string) {
-	fmt.Fprintf(b, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d" role="img" aria-label="%s" font-family="%s">
-<title>%s</title>
-<rect x="0.5" y="0.5" width="%d" height="%d" rx="%d" fill="%s" stroke="%s"/>
-`, w, h, w, h, esc(title), cardFont, esc(title), w-1, h-1, cardRadius, th.BG, th.Border)
+// card is the shared builder: it collects the body, then wraps it in the
+// surface once the height is known.
+type card struct {
+	th    cardTheme
+	title string
+	b     strings.Builder
 }
 
-func eyebrow(b *strings.Builder, th cardTheme, x, y int, s string) {
-	fmt.Fprintf(b, `<text x="%d" y="%d" fill="%s" font-size="%d" font-weight="600" letter-spacing="1.2">%s</text>`+"\n", x, y, th.Muted, eyebrowPx, esc(strings.ToUpper(s)))
+func (c *card) text(x, y, px int, fill, extra, s string) {
+	fmt.Fprintf(&c.b, `<text x="%d" y="%d" fill="%s" font-size="%d"%s>%s</text>`+"\n", x, y, fill, px, extra, esc(s))
 }
 
-func textLines(b *strings.Builder, th cardTheme, x, y, px, lineH int, fill string, lines []string) int {
+// lines writes wrapped lines and returns the baseline after the last one.
+func (c *card) lines(x, y, px, lineH int, fill string, lines []string) int {
 	for i, l := range lines {
-		fmt.Fprintf(b, `<text x="%d" y="%d" fill="%s" font-size="%d">%s</text>`+"\n", x, y+i*lineH, fill, px, esc(l))
+		c.text(x, y+i*lineH, px, fill, "", l)
 	}
 	return y + len(lines)*lineH
 }
 
-// footer writes the base statement bottom-aligned, up to two lines.
-func footer(b *strings.Builder, th cardTheme, x, bottom, chars int, s string) {
-	lines := wrap(s, chars)
-	y := bottom - (len(lines)-1)*(footerPx+3)
-	textLines(b, th, x, y, footerPx, footerPx+3, th.Muted, lines)
+// eyebrow is the tracked uppercase line at the top: section, base, window.
+func (c *card) eyebrow(y int, s string) {
+	c.text(cardPad, y, eyebrowPx, c.th.Muted, ` font-weight="500" letter-spacing="2.2"`, strings.ToUpper(s))
 }
 
-// numberCard is the shared layout: eyebrow, big number, sentence, base.
-func numberCard(th cardTheme, title, eye, big, claim, base string) string {
-	claimLines := wrap(claim, claimChars)
-	baseLines := wrap(base, footChars)
-	// Height grows with the text so nothing overlaps; cardH is the minimum.
-	h := 126 + len(claimLines)*claimLineH + 14 + len(baseLines)*(footerPx+3) + cardPad - 8
-	if h < cardH {
-		h = cardH
+// headline is the finding in one plain sentence; the biggest text after
+// the numerals. Returns the baseline after it.
+func (c *card) headline(y int, s string) int {
+	return c.lines(cardPad, y, headPx, headLineH, c.th.Head, wrap(s, headChars))
+}
+
+// numeral draws one big amber figure; in the dark theme a blurred copy
+// underneath gives it a soft glow.
+func (c *card) numeral(x, y, px int, s string) {
+	if c.th.Glow {
+		fmt.Fprintf(&c.b, `<text x="%d" y="%d" fill="%s" font-size="%d" font-weight="700" filter="url(#glow)" opacity="0.35">%s</text>`+"\n", x, y, c.th.Brand, px, esc(s))
 	}
-	var b strings.Builder
-	cardOpen(&b, th, cardW, h, title)
-	eyebrow(&b, th, cardPad, 32, eye)
-	fmt.Fprintf(&b, `<text x="%d" y="%d" fill="%s" font-size="%d" font-weight="700">%s</text>`+"\n", cardPad, 96, th.Brand, bigPx, esc(big))
-	textLines(&b, th, cardPad, 126, claimPx, claimLineH, th.Text, claimLines)
-	footer(&b, th, cardPad, h-cardPad+4, footChars, base)
-	b.WriteString("</svg>\n")
-	return b.String()
+	c.text(x, y, px, "url(#amber)", ` font-weight="700"`, s)
 }
 
-func (r Report) cameBackCard(th cardTheme) (string, bool) {
+func (c *card) rule(x1, x2, y int) {
+	fmt.Fprintf(&c.b, `<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s"/>`+"\n", x1, y, x2, y, c.th.Rule)
+}
+
+// foot writes the muted footnote above a hairline; y is the hairline.
+func (c *card) foot(y int, s string) int {
+	c.rule(cardPad, cardW-cardPad, y)
+	return c.lines(cardPad, y+footLineH+4, footPx, footLineH, c.th.Muted, wrap(s, wideChars))
+}
+
+// String closes the card at height h.
+func (c *card) String(h int) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d" role="img" aria-label="%s" font-family="%s">
+<title>%s</title>
+<defs>
+<linearGradient id="amber" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="%s"/><stop offset="1" stop-color="%s"/></linearGradient>
+<filter id="glow" x="-20%%" y="-40%%" width="140%%" height="180%%"><feGaussianBlur stdDeviation="5"/></filter>
+</defs>
+<rect x="0.5" y="0.5" width="%d" height="%d" rx="%d" fill="%s" stroke="%s"/>
+`, cardW*cardScale, h*cardScale, cardW, h, esc(c.title), cardFont, esc(c.title), c.th.Brand, c.th.Brand2, cardW-1, h-1, cardRadius, c.th.BG, c.th.Border)
+	out.WriteString(c.b.String())
+	out.WriteString("</svg>\n")
+	return out.String()
+}
+
+// stat is one numeral with the words under it.
+type stat struct{ Big, Under string }
+
+// statCard is the shared anatomy: eyebrow, headline, a row of numerals
+// each with its base under it, footnote.
+func statCard(th cardTheme, title, eye, head string, stats []stat, foot string) string {
+	c := &card{th: th, title: title}
+	y := cardPad + eyebrowPx
+	c.eyebrow(y, eye)
+	y = c.headline(y+eyebrowGap, head)
+	px := bigPx
+	if len(stats) > 2 {
+		px = bigPxTight
+	}
+	colW := colX / len(stats)
+	underChars := (colW - 28) / 9 // 15px mono ≈ 9px per glyph, with a gutter
+	base := y - headLineH + 36 + px
+	maxUnder := 0
+	for i, st := range stats {
+		x := cardPad + i*colW
+		c.numeral(x, base, px, st.Big)
+		under := wrap(st.Under, underChars)
+		c.lines(x, base+30, bodyPx, bodyLineH, th.Text, under)
+		if len(under) > maxUnder {
+			maxUnder = len(under)
+		}
+	}
+	y = base + 30 + maxUnder*bodyLineH + 12
+	if foot != "" {
+		y = c.foot(y, foot) - footLineH
+	}
+	return c.String(y + cardPad - 4)
+}
+
+func (r Report) accuracyCard(th cardTheme) (string, bool) {
 	f := r.Followup
-	fa := f.FixedAndApproved
+	fa, ta := f.FixedAndApproved, f.TimeToApproval
 	if !fa.Reported || fa.K <= 0 || fa.N < r.MinBase() {
 		return "", false
 	}
-	return numberCard(th,
-		fmt.Sprintf("%s pull requests the reviewer sent back came back fixed and were approved", share(fa.Rate)),
-		"Accuracy · sent back, then fixed",
-		share(fa.Rate),
-		"pull requests the reviewer sent back came back fixed and were approved.",
-		fmt.Sprintf("from %s pull requests sent back for fixes, %s", commas(fa.N), r.windowLabel()),
-	), true
-}
-
-func (r Report) timeToApprovalCard(th cardTheme) (string, bool) {
-	m := r.Followup.TimeToApproval
-	if !m.Reported || m.N < r.MinBase() {
-		return "", false
+	stats := []stat{{share(fa.Rate), fmt.Sprintf("came back fixed and were approved, of %s sent back.", commas(fa.N))}}
+	title := fmt.Sprintf("%s pull requests the reviewer sent back came back fixed and were approved", share(fa.Rate))
+	head := fmt.Sprintf("The reviewer sent %s pull requests back. %s came back fixed.", commas(fa.N), strings.ToUpper(shareWords(fa.Rate)[:1])+shareWords(fa.Rate)[1:])
+	if ta.Reported && ta.N >= r.MinBase() {
+		stats = append(stats, stat{fmt.Sprintf("%d min", minutes(ta.Value)), fmt.Sprintf("typical, from the change request to approval of the fix. Of %s fixed.", commas(ta.N))})
+		title += fmt.Sprintf("; %d minutes typical from change request to approval of the fix", minutes(ta.Value))
+		head = fmt.Sprintf("The reviewer sent %s back. %s came back fixed, typically in %d minutes.", commas(fa.N), strings.ToUpper(shareWords(fa.Rate)[:1])+shareWords(fa.Rate)[1:], minutes(ta.Value))
 	}
-	mins := minutes(m.Value)
-	return numberCard(th,
-		fmt.Sprintf("%d minutes, typically, from the reviewer's change request to approval of the fixed version", mins),
-		"Accuracy · time to fix",
-		fmt.Sprintf("%d min", mins),
-		"typically, from the reviewer's change request to approval of the fixed version.",
-		fmt.Sprintf("from %s pull requests that were sent back and then approved, %s", commas(m.N), r.windowLabel()),
+	var foot []string
+	if f.MergedSameHead > 0 {
+		foot = append(foot, fmt.Sprintf("%s merged unchanged after another review pass approved the same version", commas(f.MergedSameHead)))
+	}
+	if f.Unresolved > 0 {
+		foot = append(foot, fmt.Sprintf("%s did not merge", commas(f.Unresolved)))
+	}
+	return statCard(th, title,
+		fmt.Sprintf("Accuracy · %s pull requests sent back · %s", commas(fa.N), r.windowLabel()),
+		head,
+		stats,
+		strings.Join(foot, "; ")+". Times and verdicts from the review records Hive keeps.",
 	), true
 }
 
@@ -368,12 +442,12 @@ func (r Report) checksGreenCard(th cardTheme) (string, bool) {
 		return "", false
 	}
 	pass := int(math.Round(100 * (1 - c.CIFailureAtHead.Rate)))
-	return numberCard(th,
+	return statCard(th,
 		fmt.Sprintf("%d in 100 reviewed pull requests merged with every check passing", pass),
-		"Accuracy · checks at merge",
-		fmt.Sprintf("%d in 100", pass),
-		"reviewed pull requests merged with every check passing.",
-		fmt.Sprintf("from %s reviewed merges with a recorded check result, %s", commas(c.CIFailureAtHead.N), r.windowLabel()),
+		fmt.Sprintf("Accuracy · %s reviewed merges · %s", commas(c.CIFailureAtHead.N), r.windowLabel()),
+		fmt.Sprintf("%d in 100 reviewed pull requests merged with every check green.", pass),
+		[]stat{{fmt.Sprintf("%d in 100", pass), fmt.Sprintf("merged with every check passing, of %s with a recorded check result.", commas(c.CIFailureAtHead.N))}},
+		"Check results as recorded on the merged version.",
 	), true
 }
 
@@ -383,12 +457,19 @@ func (r Report) promptInjectionCard(th cardTheme) (string, bool) {
 		return "", false
 	}
 	pct := int(math.Round(100 * float64(rt.Caught) / float64(rt.Attacks)))
-	return numberCard(th,
+	fa := fmt.Sprintf("%d in %d", rt.FalseAlarms, rt.Benign)
+	if rt.FalseAlarms == 0 {
+		fa = "0"
+	}
+	return statCard(th,
 		fmt.Sprintf("%d%% of prompt-injection attempts were caught before reaching an agent, with %d false alarm in %d harmless requests", pct, rt.FalseAlarms, rt.Benign),
-		"Security · prompt injection",
-		fmt.Sprintf("%d%%", pct),
-		fmt.Sprintf("of prompt-injection attempts were caught; %d false alarm in %d harmless requests.", rt.FalseAlarms, rt.Benign),
-		fmt.Sprintf("Hive's own test set: %d attacks, %d harmless texts, %s. Not production traffic.", rt.Attacks, rt.Benign, monthLabel(rt.RunAt)),
+		fmt.Sprintf("Security · Hive's own test set · %s", monthLabel(rt.RunAt)),
+		fmt.Sprintf("We planted %d prompt-injection attacks in our own test set. The scanner caught %d.", rt.Attacks, rt.Caught),
+		[]stat{
+			{fmt.Sprintf("%d%%", pct), fmt.Sprintf("of the planted attacks were caught before an agent read them. Of %d.", rt.Attacks)},
+			{fa, fmt.Sprintf("harmless texts wrongly flagged. Of %d.", rt.Benign)},
+		},
+		"Hive's own test set, not production traffic. A planted attack is text in an issue or file that tries to redirect the agent.",
 	), true
 }
 
@@ -401,12 +482,16 @@ func (r Report) costCard(th cardTheme) (string, bool) {
 	if per < 1 {
 		big = fmt.Sprintf("about %d¢", int(math.Round(per*100)))
 	}
-	return numberCard(th,
+	window := fmt.Sprintf("%s to %s", monthLabel(r.Spend.WindowStart), monthLabel(r.Spend.WindowEnd))
+	return statCard(th,
 		big+" of agent spend per merged pull request",
-		"Cost · per merged pull request",
-		big,
-		"of agent spend per merged pull request, estimated from provider pricing.",
-		fmt.Sprintf("from %s merged pull requests, %s to %s", commas(r.Spend.MergedPRs), monthLabel(r.Spend.WindowStart), monthLabel(r.Spend.WindowEnd)),
+		fmt.Sprintf("Cost · %s merged pull requests · %s", commas(r.Spend.MergedPRs), window),
+		fmt.Sprintf("Agents spent about $%s to merge %s pull requests. That is %s each.", commas(int(math.Round(r.Spend.USD))), commas(r.Spend.MergedPRs), big),
+		[]stat{
+			{strings.TrimPrefix(big, "about "), fmt.Sprintf("%s per merged pull request, %s.", big, window)},
+			{"$" + commas(int(math.Round(r.Spend.USD))), fmt.Sprintf("estimated agent spend across %s merged pull requests.", commas(r.Spend.MergedPRs))},
+		},
+		"Estimate from provider list prices; some models are unpriced. Each agent card in the dashboard shows what its task has cost so far.",
 	), true
 }
 
@@ -420,96 +505,129 @@ func (r Report) storiesCard(th cardTheme) (string, bool) {
 	if len(stories) > 2 {
 		stories = stories[:2]
 	}
-	colW := (cardWideW - 3*cardPad) / 2
-	// Lay out each column first so the card height follows the longest one.
-	type col struct {
-		s     Story
-		lines []string
+	c := &card{th: th, title: "Two real pull requests where the reviewer caught a problem before merge"}
+	y := cardPad + eyebrowPx
+	c.eyebrow(y, fmt.Sprintf("Accuracy · two real pull requests · %s", r.windowLabel()))
+	y = c.headline(y+eyebrowGap, "The reviewer caught it. The author fixed it in minutes.") + 4
+	colW := (colX - cardPad) / 2
+	chars := halfChars
+	if len(stories) == 1 {
+		colW, chars = colX, wideChars
 	}
-	cols := make([]col, 0, len(stories))
+	caught := make([][]string, len(stories))
 	maxLines := 0
-	for _, s := range stories {
-		l := wrap(s.Caught, wideChars)
-		if len(l) > maxLines {
-			maxLines = len(l)
+	for i, s := range stories {
+		caught[i] = wrap(s.Caught, chars)
+		if len(caught[i]) > maxLines {
+			maxLines = len(caught[i])
 		}
-		cols = append(cols, col{s, l})
 	}
-	const stepGap = 30
-	h := 84 + 16 + maxLines*(claimLineH-2) + 2*stepGap + 10 + cardPad + 28
-	var b strings.Builder
-	cardOpen(&b, th, cardWideW, h, "Two real pull requests where the reviewer caught a problem before merge")
-	eyebrow(&b, th, cardPad, 32, "Accuracy · two real pull requests")
-	for i, c := range cols {
-		s := c.s
+	top := y + 8
+	bottom := top
+	for i, s := range stories {
 		x := cardPad + i*(colW+cardPad)
-		fmt.Fprintf(&b, `<a href="%s"><text x="%d" y="%d" fill="%s" font-size="%d" font-weight="700">%s #%d</text></a>`+"\n", esc(s.URL()), x, 62, th.Brand, claimPx+1, esc(s.Repo), s.Number)
-		y := 84
+		fmt.Fprintf(&c.b, `<a href="%s"><text x="%d" y="%d" fill="%s" font-size="%d" font-weight="700">%s #%d</text></a>`+"\n", esc(s.URL()), x, top, th.Brand, bodyPx+2, esc(s.Repo), s.Number)
+		yy := top + 36
 		step := func(label string, lines []string, fill string) {
-			fmt.Fprintf(&b, `<circle cx="%d" cy="%d" r="4" fill="%s"/>`+"\n", x+4, y-4, fill)
-			fmt.Fprintf(&b, `<text x="%d" y="%d" fill="%s" font-size="%d" font-weight="600">%s</text>`+"\n", x+16, y, th.Muted, footerPx, esc(strings.ToUpper(label)))
-			y = textLines(&b, th, x+16, y+16, claimPx-1, claimLineH-2, th.Text, lines) + 10
+			fmt.Fprintf(&c.b, `<circle cx="%d" cy="%d" r="4" fill="%s"/>`+"\n", x+4, yy-4, fill)
+			c.text(x+18, yy, eyebrowPx, th.Muted, ` font-weight="500" letter-spacing="2.2"`, strings.ToUpper(label))
+			yy = c.lines(x+18, yy+bodyLineH, bodyPx, bodyLineH, th.Text, lines) + 12
 		}
-		step("Caught", c.lines, th.Brand)
-		y = 84 + 16 + maxLines*(claimLineH-2) + 10
-		step("Fixed", []string{fmt.Sprintf("The author fixed it; the new version was approved %d minutes later.", s.FixMinutes())}, th.OK)
-		step("Merged", []string{fmt.Sprintf("Merged %d minutes after the pull request was opened.", s.MergeMinutes())}, th.OK)
+		step("Caught", caught[i], th.Brand)
+		yy = top + 36 + bodyLineH + maxLines*bodyLineH + 12
+		step("Fixed", wrap(fmt.Sprintf("The author fixed it; the new version was approved %d minutes later.", s.FixMinutes()), chars), th.OK)
+		step("Merged", wrap(fmt.Sprintf("Merged %d minutes after the pull request was opened.", s.MergeMinutes()), chars), th.OK)
+		if yy > bottom {
+			bottom = yy
+		}
 	}
-	footer(&b, th, cardPad, h-cardPad+4, 120, "Times from the review records Hive keeps. Click a title to open the pull request.")
-	b.WriteString("</svg>\n")
-	return b.String(), true
+	y = c.foot(bottom, "Times from the review records Hive keeps. Click a title to open the pull request.") - footLineH
+	return c.String(y + cardPad - 4), true
 }
 
-// tile is one cell of the "also" strip.
+// tile is one column of the "also" strip.
 type tile struct{ Head, Big, Text string }
 
 // alsoTiles are the four secondary properties. Tiles with a number take it
 // from the report; the others are plain statements of how Hive works.
 func (r Report) alsoTiles() []tile {
-	tiles := []tile{
-		{"Consistency", commas(r.Verdicts), "review verdicts, each against the same checklist; one house style file for every task."},
-		{"Readability", "", "Every verdict is written as what this is, the problem, the fix, and what happens if it is skipped."},
-		{"Efficiency", "", "Agents run only when there is work; capacity is shared fairly across repositories."},
+	return []tile{
+		{"Consistent", commas(r.Verdicts), "review verdicts, each against the same checklist and one house style file."},
+		{"Readable", "4 parts", "to every verdict: what this is, the problem, the fix, what happens if skipped."},
+		{"Efficient", "On demand", "agents start when there is work and stop when it is done; capacity is shared across repositories."},
 	}
+}
+
+// speedBars is the one two-bar comparison with a base above MinBase on
+// both sides: typical minutes from open to merge, with and without review.
+// ok is false when either side is missing, and the card says so instead.
+func (r Report) speedBars() (with, without int, ok bool) {
 	m, u := r.Mediated.TimeToMerge, r.Unmediated.TimeToMerge
-	if r.SplitSupported() && m.Reported && u.Reported && m.N >= r.MinBase() && u.N >= r.MinBase() {
-		d := minutes(m.Value) - minutes(u.Value)
-		text := fmt.Sprintf("minutes from open to merge for a typical reviewed pull request; review adds about %d.", d)
-		if d <= 0 {
-			text = "minutes from open to merge for a typical reviewed pull request."
-		}
-		tiles = append(tiles, tile{"Speed", fmt.Sprint(minutes(m.Value)), text})
-	} else {
-		tiles = append(tiles, tile{"Speed", "", "Time to merge is reported once enough reviewed pull requests are on record."})
+	if !r.SplitSupported() || !m.Reported || !u.Reported || m.N < r.MinBase() || u.N < r.MinBase() {
+		return 0, 0, false
 	}
-	return tiles
+	return minutes(m.Value), minutes(u.Value), true
 }
 
 func (r Report) alsoCard(th cardTheme) (string, bool) {
 	if r.Verdicts < r.MinBase() {
 		return "", false
 	}
-	const h = 190
+	c := &card{th: th, title: "Also: consistent, readable, efficient, fast"}
+	y := cardPad + eyebrowPx
+	c.eyebrow(y, "Also · "+r.windowLabel())
+	head := "Every pull request gets the same reviewer, and the verdict is written for people."
+	if with, without, ok := r.speedBars(); ok && with > without {
+		head = fmt.Sprintf("Every pull request gets the same reviewer. It costs about %d minutes.", with-without)
+	}
+	y = c.headline(y+eyebrowGap, head) + 8
 	tiles := r.alsoTiles()
-	var b strings.Builder
-	cardOpen(&b, th, cardWideW, h, "Also: consistency, readability, efficiency, speed")
-	eyebrow(&b, th, cardPad, 32, "Also · "+r.windowLabel())
-	tileW := (cardWideW - 2*cardPad) / len(tiles)
+	cols := len(tiles) + 1
+	tileW := colX / cols
+	top := y
+	bottom := top
 	for i, t := range tiles {
 		x := cardPad + i*tileW
-		if i > 0 {
-			fmt.Fprintf(&b, `<line x1="%d" y1="48" x2="%d" y2="%d" stroke="%s"/>`+"\n", x-10, x-10, h-cardPad-8, th.Border)
+		c.text(x, top, bodyPx, th.Muted, ` font-weight="500" letter-spacing="2.2"`, strings.ToUpper(t.Head))
+		c.numeral(x, top+52, 30, t.Big)
+		yy := c.lines(x, top+80, bodyPx-1, bodyLineH-2, th.Text, wrap(t.Text, tileChars))
+		if yy > bottom {
+			bottom = yy
 		}
-		fmt.Fprintf(&b, `<text x="%d" y="%d" fill="%s" font-size="%d" font-weight="700">%s</text>`+"\n", x, 62, th.Text, claimPx, esc(t.Head))
-		y := 84
-		if t.Big != "" {
-			fmt.Fprintf(&b, `<text x="%d" y="%d" fill="%s" font-size="30" font-weight="700">%s</text>`+"\n", x, 94, th.Brand, esc(t.Big))
-			y = 114
-		}
-		textLines(&b, th, x, y, footerPx+2, 15, th.Muted, wrap(t.Text, tileChars))
 	}
-	b.WriteString("</svg>\n")
-	return b.String(), true
+	// Fourth column: the speed comparison as two thin bars.
+	x := cardPad + 3*tileW
+	c.text(x, top, bodyPx, th.Muted, ` font-weight="500" letter-spacing="2.2"`, "FAST")
+	if with, without, ok := r.speedBars(); ok {
+		barW := tileW - 76 // room for the value at the bar end
+		longest := with
+		if without > longest {
+			longest = without
+		}
+		bar := func(yy int, label string, val int, fill string) {
+			w := barW * val / longest
+			c.text(x, yy, footPx, th.Muted, "", label)
+			fmt.Fprintf(&c.b, `<rect x="%d" y="%d" width="%d" height="8" rx="4" fill="%s"/>`+"\n", x, yy+9, w, fill)
+			c.text(x+w+8, yy+17, footPx+1, th.Head, ` font-weight="700"`, fmt.Sprintf("%d min", val))
+		}
+		bar(top+28, "merged without review", without, th.Neutral)
+		bar(top+68, "reviewed by Hive", with, "url(#amber)")
+		d := with - without
+		note := "typical minutes from open to merge."
+		if d > 0 {
+			note = fmt.Sprintf("typical minutes from open to merge; review adds about %d.", d)
+		}
+		yy := c.lines(x, top+112, bodyPx-1, bodyLineH-2, th.Text, wrap(note, tileChars))
+		if yy > bottom {
+			bottom = yy
+		}
+	} else {
+		yy := c.lines(x, top+28, bodyPx-1, bodyLineH-2, th.Text, wrap("Time to merge is reported once enough reviewed pull requests are on record.", tileChars))
+		if yy > bottom {
+			bottom = yy
+		}
+	}
+	return c.String(bottom + cardPad - 8), true
 }
 
 // rung is one step of the Hive loop for the how-it-works card.
@@ -526,28 +644,24 @@ var hiveLoop = []rung{
 }
 
 func howItWorksCard(th cardTheme) string {
-	const baseRowH, lineH = 44, 14
-	rows := make([][]string, len(hiveLoop))
-	h := 72
+	c := &card{th: th, title: "How Hive works: scan, claim, work, verify, merge, credit"}
+	y := cardPad + eyebrowPx
+	c.eyebrow(y, "How it works · every task")
+	y = c.headline(y+eyebrowGap, "An agent does the work. A reviewer checks it before it merges.")
+	const stepX, textX = cardPad + 48, cardPad + 48 + 96
+	y += 6
 	for i, r := range hiveLoop {
-		rows[i] = wrap(r.What, ladderChars)
-		h += baseRowH + (len(rows[i])-1)*lineH
-	}
-	var b strings.Builder
-	cardOpen(&b, th, cardWideW, h, "How Hive works: scan, claim, work, verify, merge, credit")
-	eyebrow(&b, th, cardPad, 32, "How it works · every task")
-	y := 64
-	for i, r := range hiveLoop {
-		rowH := baseRowH + (len(rows[i])-1)*lineH
-		fmt.Fprintf(&b, `<circle cx="%d" cy="%d" r="12" fill="%s"/><text x="%d" y="%d" fill="%s" font-size="12" font-weight="700" text-anchor="middle">%d</text>`+"\n", cardPad+12, y-4, th.Brand, cardPad+12, y, th.BG, i+1)
-		fmt.Fprintf(&b, `<text x="%d" y="%d" fill="%s" font-size="%d" font-weight="700">%s</text>`+"\n", cardPad+36, y, th.Text, claimPx+1, esc(r.Step))
-		textLines(&b, th, cardPad+36, y+17, footerPx+2, lineH, th.Muted, rows[i])
-		fmt.Fprintf(&b, `<text x="%d" y="%d" fill="%s" font-size="%d" font-weight="600" text-anchor="end">%s</text>`+"\n", cardWideW-cardPad, y, th.OK, footerPx+2, esc(r.Outcome))
-		if i < len(hiveLoop)-1 {
-			fmt.Fprintf(&b, `<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s"/>`+"\n", cardPad+12, y+10, cardPad+12, y+rowH-18, th.Border)
-		}
+		what := wrap(r.What, 42)
+		rowH := 20 + len(what)*bodyLineH + 14
+		base := y + 26
+		c.numeral(cardPad, base, 24, fmt.Sprintf("%02d", i+1))
+		c.text(stepX, base, bodyPx, th.Head, ` font-weight="700"`, r.Step)
+		c.lines(textX, base, bodyPx, bodyLineH, th.Text, what)
+		c.text(cardW-cardPad, base, footPx+1, th.Muted, ` text-anchor="end"`, r.Outcome)
 		y += rowH
+		if i < len(hiveLoop)-1 {
+			c.rule(cardPad, cardW-cardPad, y)
+		}
 	}
-	b.WriteString("</svg>\n")
-	return b.String()
+	return c.String(y + cardPad - 10)
 }

@@ -17,14 +17,9 @@ Measured on 11,571 pull requests across 10 repositories and 15,054 review verdic
 
 A separate reviewer reads every pull request an agent opens and can send it back before it merges. The question is whether its objections hold up.
 
-<p align="center">
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-came-back-fixed-dark.svg"><img alt="2 in 3 pull requests the reviewer sent back came back fixed and were approved" width="280" src="src/docs/benchmarks/assets/outcomes-2026-10-card-came-back-fixed-light.svg"></picture>
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-time-to-approval-dark.svg"><img alt="24 minutes, typically, from the reviewer&#39;s change request to approval of the fixed version" width="280" src="src/docs/benchmarks/assets/outcomes-2026-10-card-time-to-approval-light.svg"></picture>
-</p>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-accuracy-dark.svg"><img alt="2 in 3 pull requests the reviewer sent back came back fixed and were approved; 24 minutes typical from change request to approval of the fix" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-accuracy-light.svg"></picture>
 
-<p align="center">
 <picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-stories-dark.svg"><img alt="Two real pull requests where the reviewer caught a problem before merge" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-stories-light.svg"></picture>
-</p>
 
 140 of the sent-back pull requests merged unchanged, 133 of them after another review pass approved the same version; 19 did not merge. Whether reviewed code later had to be reverted needs merges at least 14 days old; reviewed merges only began Oct 2026, so those figures are in the report, not here.
 
@@ -32,23 +27,17 @@ A separate reviewer reads every pull request an agent opens and can send it back
 
 Agents work with short-lived, task-scoped access; pull requests from untrusted authors are held for a human; every merge is signed off and credits the issue author.
 
-<p align="center">
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-prompt-injection-dark.svg"><img alt="97% of prompt-injection attempts were caught before reaching an agent, with 1 false alarm in 12 harmless requests" width="280" src="src/docs/benchmarks/assets/outcomes-2026-10-card-prompt-injection-light.svg"></picture>
-</p>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-prompt-injection-dark.svg"><img alt="97% of prompt-injection attempts were caught before reaching an agent, with 1 false alarm in 12 harmless requests" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-prompt-injection-light.svg"></picture>
 
 ## Cost
 
 Each agent card in the dashboard shows what the current task has cost so far. The figure below is an estimate from provider pricing; some models are unpriced.
 
-<p align="center">
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-cost-dark.svg"><img alt="about $2 of agent spend per merged pull request" width="280" src="src/docs/benchmarks/assets/outcomes-2026-10-card-cost-light.svg"></picture>
-</p>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-cost-dark.svg"><img alt="about $2 of agent spend per merged pull request" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-cost-light.svg"></picture>
 
 ## Also
 
-<p align="center">
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-also-dark.svg"><img alt="Also: consistency, readability, efficiency, speed" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-also-light.svg"></picture>
-</p>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-also-dark.svg"><img alt="Also: consistent, readable, efficient, fast" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-also-light.svg"></picture>
 
 Production data, not a lab run. Every count above is regenerated from live records by `src/scripts/outcome-benchmark.sh`; bases, dates, exclusions and the full tables are in [how we count →](src/docs/benchmarks/outcomes-2026-10.md).
 <!-- outcomes:end -->

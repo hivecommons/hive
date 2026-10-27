@@ -1,30 +1,43 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="269" viewBox="0 0 880 269" role="img" aria-label="Two real pull requests where the reviewer caught a problem before merge" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1118" viewBox="0 0 880 559" role="img" aria-label="Two real pull requests where the reviewer caught a problem before merge" font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
 <title>Two real pull requests where the reviewer caught a problem before merge</title>
-<rect x="0.5" y="0.5" width="879" height="268" rx="12" fill="#121922" stroke="#263545"/>
-<text x="20" y="32" fill="#a8b3c2" font-size="10" font-weight="600" letter-spacing="1.2">ACCURACY · TWO REAL PULL REQUESTS</text>
-<a href="https://github.com/hivecommons/hive/pull/13523"><text x="20" y="62" fill="#f4c75f" font-size="15" font-weight="700">hivecommons/hive #13523</text></a>
-<circle cx="24" cy="80" r="4" fill="#f4c75f"/>
-<text x="36" y="84" fill="#a8b3c2" font-size="10" font-weight="600">CAUGHT</text>
-<text x="36" y="100" fill="#f6f8fb" font-size="13">The changelog note was written as a sentence, not a list</text>
-<text x="36" y="117" fill="#f6f8fb" font-size="13">entry, so the release build would have rejected it; a</text>
-<text x="36" y="134" fill="#f6f8fb" font-size="13">second, duplicate note was also added.</text>
-<circle cx="24" cy="157" r="4" fill="#74df9a"/>
-<text x="36" y="161" fill="#a8b3c2" font-size="10" font-weight="600">FIXED</text>
-<text x="36" y="177" fill="#f6f8fb" font-size="13">The author fixed it; the new version was approved 4 minutes later.</text>
-<circle cx="24" cy="200" r="4" fill="#74df9a"/>
-<text x="36" y="204" fill="#a8b3c2" font-size="10" font-weight="600">MERGED</text>
-<text x="36" y="220" fill="#f6f8fb" font-size="13">Merged 16 minutes after the pull request was opened.</text>
-<a href="https://github.com/hivecommons/pluk/pull/328"><text x="450" y="62" fill="#f4c75f" font-size="15" font-weight="700">hivecommons/pluk #328</text></a>
-<circle cx="454" cy="80" r="4" fill="#f4c75f"/>
-<text x="466" y="84" fill="#a8b3c2" font-size="10" font-weight="600">CAUGHT</text>
-<text x="466" y="100" fill="#f6f8fb" font-size="13">An apostrophe inside a quoted message ended the string</text>
-<text x="466" y="117" fill="#f6f8fb" font-size="13">early, so the project would not compile and no tests could</text>
-<text x="466" y="134" fill="#f6f8fb" font-size="13">run.</text>
-<circle cx="454" cy="157" r="4" fill="#74df9a"/>
-<text x="466" y="161" fill="#a8b3c2" font-size="10" font-weight="600">FIXED</text>
-<text x="466" y="177" fill="#f6f8fb" font-size="13">The author fixed it; the new version was approved 10 minutes later.</text>
-<circle cx="454" cy="200" r="4" fill="#74df9a"/>
-<text x="466" y="204" fill="#a8b3c2" font-size="10" font-weight="600">MERGED</text>
-<text x="466" y="220" fill="#f6f8fb" font-size="13">Merged 23 minutes after the pull request was opened.</text>
-<text x="20" y="253" fill="#a8b3c2" font-size="10">Times from the review records Hive keeps. Click a title to open the pull request.</text>
+<defs>
+<linearGradient id="amber" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#f0b429"/><stop offset="1" stop-color="#ffd166"/></linearGradient>
+<filter id="glow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="5"/></filter>
+</defs>
+<rect x="0.5" y="0.5" width="879" height="558" rx="16" fill="#0f0d0a" stroke="#2a251f"/>
+<text x="40" y="51" fill="#8b949e" font-size="11" font-weight="500" letter-spacing="2.2">ACCURACY · TWO REAL PULL REQUESTS · OCT 2026</text>
+<text x="40" y="91" fill="#fffaf0" font-size="32">The reviewer caught it. The author fixed</text>
+<text x="40" y="133" fill="#fffaf0" font-size="32">it in minutes.</text>
+<a href="https://github.com/hivecommons/hive/pull/13523"><text x="40" y="187" fill="#f0b429" font-size="17" font-weight="700">hivecommons/hive #13523</text></a>
+<circle cx="44" cy="219" r="4" fill="#f0b429"/>
+<text x="58" y="223" fill="#8b949e" font-size="11" font-weight="500" letter-spacing="2.2">CAUGHT</text>
+<text x="58" y="245" fill="#ece5d8" font-size="15">The changelog note was written as a</text>
+<text x="58" y="267" fill="#ece5d8" font-size="15">sentence, not a list entry, so the</text>
+<text x="58" y="289" fill="#ece5d8" font-size="15">release build would have rejected it; a</text>
+<text x="58" y="311" fill="#ece5d8" font-size="15">second, duplicate note was also added.</text>
+<circle cx="44" cy="341" r="4" fill="#2da44e"/>
+<text x="58" y="345" fill="#8b949e" font-size="11" font-weight="500" letter-spacing="2.2">FIXED</text>
+<text x="58" y="367" fill="#ece5d8" font-size="15">The author fixed it; the new version was</text>
+<text x="58" y="389" fill="#ece5d8" font-size="15">approved 4 minutes later.</text>
+<circle cx="44" cy="419" r="4" fill="#2da44e"/>
+<text x="58" y="423" fill="#8b949e" font-size="11" font-weight="500" letter-spacing="2.2">MERGED</text>
+<text x="58" y="445" fill="#ece5d8" font-size="15">Merged 16 minutes after the pull request</text>
+<text x="58" y="467" fill="#ece5d8" font-size="15">was opened.</text>
+<a href="https://github.com/hivecommons/pluk/pull/328"><text x="460" y="187" fill="#f0b429" font-size="17" font-weight="700">hivecommons/pluk #328</text></a>
+<circle cx="464" cy="219" r="4" fill="#f0b429"/>
+<text x="478" y="223" fill="#8b949e" font-size="11" font-weight="500" letter-spacing="2.2">CAUGHT</text>
+<text x="478" y="245" fill="#ece5d8" font-size="15">An apostrophe inside a quoted message</text>
+<text x="478" y="267" fill="#ece5d8" font-size="15">ended the string early, so the project</text>
+<text x="478" y="289" fill="#ece5d8" font-size="15">would not compile and no tests could</text>
+<text x="478" y="311" fill="#ece5d8" font-size="15">run.</text>
+<circle cx="464" cy="341" r="4" fill="#2da44e"/>
+<text x="478" y="345" fill="#8b949e" font-size="11" font-weight="500" letter-spacing="2.2">FIXED</text>
+<text x="478" y="367" fill="#ece5d8" font-size="15">The author fixed it; the new version was</text>
+<text x="478" y="389" fill="#ece5d8" font-size="15">approved 10 minutes later.</text>
+<circle cx="464" cy="419" r="4" fill="#2da44e"/>
+<text x="478" y="423" fill="#8b949e" font-size="11" font-weight="500" letter-spacing="2.2">MERGED</text>
+<text x="478" y="445" fill="#ece5d8" font-size="15">Merged 23 minutes after the pull request</text>
+<text x="478" y="467" fill="#ece5d8" font-size="15">was opened.</text>
+<line x1="40" y1="501" x2="840" y2="501" stroke="#1c1814"/>
+<text x="40" y="523" fill="#8b949e" font-size="12">Times from the review records Hive keeps. Click a title to open the pull request.</text>
 </svg>

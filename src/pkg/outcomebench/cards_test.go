@@ -16,7 +16,7 @@ func TestCardsRespectMinimumBase(t *testing.T) {
 	if rep.MinBase() != DefaultReadmeMinBase {
 		t.Fatalf("MinBase = %d", rep.MinBase())
 	}
-	for _, c := range []string{CardCameBack, CardTimeToApproval, CardChecksGreen, CardCost, CardAlso, CardStories, CardPromptInjection} {
+	for _, c := range []string{CardAccuracy, CardChecksGreen, CardCost, CardAlso, CardStories, CardPromptInjection} {
 		if rep.HasCard(c) {
 			t.Errorf("%s drawn with base below %d", c, DefaultReadmeMinBase)
 		}
@@ -28,7 +28,7 @@ func TestCardsRespectMinimumBase(t *testing.T) {
 	// because MergedPRs is its own base.
 	opts.ReadmeMinBase = 10
 	rep = Compute(fixture(), 0, opts)
-	for _, c := range []string{CardCameBack, CardTimeToApproval, CardCost, CardAlso} {
+	for _, c := range []string{CardAccuracy, CardCost, CardAlso} {
 		if !rep.HasCard(c) {
 			t.Errorf("%s not drawn at min base 10", c)
 		}
@@ -43,19 +43,16 @@ func TestCardsRespectMinimumBase(t *testing.T) {
 	if low.HasCard(CardChecksGreen) {
 		t.Error("checks-green drawn with CI coverage below the floor")
 	}
-	svg, _ := rep.Card(CardCameBack, cardThemes[0])
-	for _, want := range []string{"<title>", `<text`, "3 in 4", "sent back came back fixed and were approved", "from 15 pull requests sent back"} {
+	svg, _ := rep.Card(CardAccuracy, cardThemes[0])
+	for _, want := range []string{"<title>", `<text`, "ACCURACY · 15 PULL REQUESTS SENT BACK", "The reviewer sent 15 back.", "Three in four", ">3 in 4<", ">20 min<", "of 15", "Of 11 fixed", "4 merged unchanged", `filter="url(#glow)"`, `width="1760"`, `viewBox="0 0 880 `} {
 		if !strings.Contains(svg, want) {
-			t.Errorf("came-back card missing %q:\n%s", want, svg)
+			t.Errorf("accuracy card missing %q:\n%s", want, svg)
 		}
 	}
-	svg, _ = rep.Card(CardTimeToApproval, cardThemes[0])
-	for _, want := range []string{"20 min", "from 11 pull requests that were sent back"} {
-		if !strings.Contains(svg, want) {
-			t.Errorf("time-to-approval card missing %q:\n%s", want, svg)
-		}
+	if light, _ := rep.Card(CardAccuracy, cardThemes[1]); strings.Contains(light, `filter="url(#glow)"`) {
+		t.Error("light theme must not glow")
 	}
-	if len(rep.Cards()) != 2*6 { // came-back, time-to-approval, checks-green, cost, also, how-it-works × dark/light
+	if len(rep.Cards()) != 2*5 { // accuracy, checks-green, cost, also, how-it-works × dark/light
 		t.Errorf("Cards() = %d files: %v", len(rep.Cards()), rep.Cards())
 	}
 }
@@ -114,7 +111,7 @@ func TestLoadStoriesAndRedTeam(t *testing.T) {
 	}
 	rep := Report{RedTeam: rt, GeneratedAt: now}
 	svg, ok := rep.Card(CardPromptInjection, cardThemes[1])
-	if !ok || !strings.Contains(svg, ">97%<") || !strings.Contains(svg, "63 attacks, 12 harmless") || !strings.Contains(svg, "texts, Oct 2026") || !strings.Contains(svg, "Not production traffic") {
+	if !ok || !strings.Contains(svg, ">97%<") || !strings.Contains(svg, ">1 in 12<") || !strings.Contains(svg, "We planted 63 prompt-injection") || !strings.Contains(svg, "TEST SET · OCT 2026") || !strings.Contains(svg, "not production traffic") {
 		t.Fatalf("prompt-injection card:\n%s", svg)
 	}
 }

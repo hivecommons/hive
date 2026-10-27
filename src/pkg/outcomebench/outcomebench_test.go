@@ -177,7 +177,7 @@ func TestComputeRefusesUnsupportedSplit(t *testing.T) {
 		t.Fatalf("findings: %v", rep.Findings())
 	}
 	block := rep.ReadmeBlock("src/docs/benchmarks")
-	if !strings.Contains(block, "Not enough reviewed pull requests are on record yet") || strings.Contains(block, "card-came-back") || strings.Contains(block, "card-also") {
+	if !strings.Contains(block, "Not enough reviewed pull requests are on record yet") || strings.Contains(block, "card-accuracy") || strings.Contains(block, "card-also") {
 		t.Fatalf("readme block must not claim a comparison or draw a card below the minimum base:\n%s", block)
 	}
 	for _, r := range []Rate{rep.Mediated.RevertRate, rep.Unmediated.TimeToMergeRate()} {
@@ -228,7 +228,7 @@ func TestReadmeBlockRoundTrip(t *testing.T) {
 		RedTeam: &RedTeam{Attacks: 10, Caught: 9, Benign: 5, FalseAlarms: 1, RunAt: now}})
 	block := rep.ReadmeBlock("src/docs/benchmarks")
 	for _, want := range []string{ReadmeStart, ReadmeEnd, "## Accuracy", "## Security", "## Cost", "## Also", "46 pull requests across 2 repositories", "src/docs/benchmarks/outcomes-2026-10.md",
-		"card-came-back-fixed-dark.svg", "card-time-to-approval-light.svg", "card-stories-dark.svg", "card-prompt-injection-light.svg", "card-cost-dark.svg", "card-also-light.svg", "prefers-color-scheme: dark", "how we count"} {
+		"card-accuracy-dark.svg", "card-accuracy-light.svg", "card-stories-dark.svg", "card-prompt-injection-light.svg", "card-cost-dark.svg", "card-also-light.svg", "prefers-color-scheme: dark", "how we count"} {
 		if !strings.Contains(block, want) {
 			t.Errorf("block missing %q:\n%s", want, block)
 		}

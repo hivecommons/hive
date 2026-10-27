@@ -1,29 +1,47 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="190" viewBox="0 0 880 190" role="img" aria-label="Also: consistency, readability, efficiency, speed" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif">
-<title>Also: consistency, readability, efficiency, speed</title>
-<rect x="0.5" y="0.5" width="879" height="189" rx="12" fill="#121922" stroke="#263545"/>
-<text x="20" y="32" fill="#a8b3c2" font-size="10" font-weight="600" letter-spacing="1.2">ALSO · OCT 2026</text>
-<text x="20" y="62" fill="#f6f8fb" font-size="14" font-weight="700">Consistency</text>
-<text x="20" y="94" fill="#f4c75f" font-size="30" font-weight="700">15,054</text>
-<text x="20" y="114" fill="#a8b3c2" font-size="12">review verdicts, each</text>
-<text x="20" y="129" fill="#a8b3c2" font-size="12">against the same checklist;</text>
-<text x="20" y="144" fill="#a8b3c2" font-size="12">one house style file for</text>
-<text x="20" y="159" fill="#a8b3c2" font-size="12">every task.</text>
-<line x1="220" y1="48" x2="220" y2="162" stroke="#263545"/>
-<text x="230" y="62" fill="#f6f8fb" font-size="14" font-weight="700">Readability</text>
-<text x="230" y="84" fill="#a8b3c2" font-size="12">Every verdict is written as</text>
-<text x="230" y="99" fill="#a8b3c2" font-size="12">what this is, the problem,</text>
-<text x="230" y="114" fill="#a8b3c2" font-size="12">the fix, and what happens if</text>
-<text x="230" y="129" fill="#a8b3c2" font-size="12">it is skipped.</text>
-<line x1="430" y1="48" x2="430" y2="162" stroke="#263545"/>
-<text x="440" y="62" fill="#f6f8fb" font-size="14" font-weight="700">Efficiency</text>
-<text x="440" y="84" fill="#a8b3c2" font-size="12">Agents run only when there</text>
-<text x="440" y="99" fill="#a8b3c2" font-size="12">is work; capacity is shared</text>
-<text x="440" y="114" fill="#a8b3c2" font-size="12">fairly across repositories.</text>
-<line x1="640" y1="48" x2="640" y2="162" stroke="#263545"/>
-<text x="650" y="62" fill="#f6f8fb" font-size="14" font-weight="700">Speed</text>
-<text x="650" y="94" fill="#f4c75f" font-size="30" font-weight="700">27</text>
-<text x="650" y="114" fill="#a8b3c2" font-size="12">minutes from open to merge</text>
-<text x="650" y="129" fill="#a8b3c2" font-size="12">for a typical reviewed pull</text>
-<text x="650" y="144" fill="#a8b3c2" font-size="12">request; review adds about</text>
-<text x="650" y="159" fill="#a8b3c2" font-size="12">15.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="830" viewBox="0 0 880 415" role="img" aria-label="Also: consistent, readable, efficient, fast" font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+<title>Also: consistent, readable, efficient, fast</title>
+<defs>
+<linearGradient id="amber" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#f0b429"/><stop offset="1" stop-color="#ffd166"/></linearGradient>
+<filter id="glow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="5"/></filter>
+</defs>
+<rect x="0.5" y="0.5" width="879" height="414" rx="16" fill="#0f0d0a" stroke="#2a251f"/>
+<text x="40" y="51" fill="#8b949e" font-size="11" font-weight="500" letter-spacing="2.2">ALSO · OCT 2026</text>
+<text x="40" y="91" fill="#fffaf0" font-size="32">Every pull request gets the same</text>
+<text x="40" y="133" fill="#fffaf0" font-size="32">reviewer. It costs about 15 minutes.</text>
+<text x="40" y="183" fill="#8b949e" font-size="15" font-weight="500" letter-spacing="2.2">CONSISTENT</text>
+<text x="40" y="235" fill="#f0b429" font-size="30" font-weight="700" filter="url(#glow)" opacity="0.35">15,054</text>
+<text x="40" y="235" fill="url(#amber)" font-size="30" font-weight="700">15,054</text>
+<text x="40" y="263" fill="#ece5d8" font-size="14">review verdicts,</text>
+<text x="40" y="283" fill="#ece5d8" font-size="14">each against the</text>
+<text x="40" y="303" fill="#ece5d8" font-size="14">same checklist and</text>
+<text x="40" y="323" fill="#ece5d8" font-size="14">one house style</text>
+<text x="40" y="343" fill="#ece5d8" font-size="14">file.</text>
+<text x="240" y="183" fill="#8b949e" font-size="15" font-weight="500" letter-spacing="2.2">READABLE</text>
+<text x="240" y="235" fill="#f0b429" font-size="30" font-weight="700" filter="url(#glow)" opacity="0.35">4 parts</text>
+<text x="240" y="235" fill="url(#amber)" font-size="30" font-weight="700">4 parts</text>
+<text x="240" y="263" fill="#ece5d8" font-size="14">to every verdict:</text>
+<text x="240" y="283" fill="#ece5d8" font-size="14">what this is, the</text>
+<text x="240" y="303" fill="#ece5d8" font-size="14">problem, the fix,</text>
+<text x="240" y="323" fill="#ece5d8" font-size="14">what happens if</text>
+<text x="240" y="343" fill="#ece5d8" font-size="14">skipped.</text>
+<text x="440" y="183" fill="#8b949e" font-size="15" font-weight="500" letter-spacing="2.2">EFFICIENT</text>
+<text x="440" y="235" fill="#f0b429" font-size="30" font-weight="700" filter="url(#glow)" opacity="0.35">On demand</text>
+<text x="440" y="235" fill="url(#amber)" font-size="30" font-weight="700">On demand</text>
+<text x="440" y="263" fill="#ece5d8" font-size="14">agents start when</text>
+<text x="440" y="283" fill="#ece5d8" font-size="14">there is work and</text>
+<text x="440" y="303" fill="#ece5d8" font-size="14">stop when it is</text>
+<text x="440" y="323" fill="#ece5d8" font-size="14">done; capacity is</text>
+<text x="440" y="343" fill="#ece5d8" font-size="14">shared across</text>
+<text x="440" y="363" fill="#ece5d8" font-size="14">repositories.</text>
+<text x="640" y="183" fill="#8b949e" font-size="15" font-weight="500" letter-spacing="2.2">FAST</text>
+<text x="640" y="211" fill="#8b949e" font-size="12">merged without review</text>
+<rect x="640" y="220" width="55" height="8" rx="4" fill="#3a342c"/>
+<text x="703" y="228" fill="#fffaf0" font-size="13" font-weight="700">12 min</text>
+<text x="640" y="251" fill="#8b949e" font-size="12">reviewed by Hive</text>
+<rect x="640" y="260" width="124" height="8" rx="4" fill="url(#amber)"/>
+<text x="772" y="268" fill="#fffaf0" font-size="13" font-weight="700">27 min</text>
+<text x="640" y="295" fill="#ece5d8" font-size="14">typical minutes from</text>
+<text x="640" y="315" fill="#ece5d8" font-size="14">open to merge;</text>
+<text x="640" y="335" fill="#ece5d8" font-size="14">review adds about</text>
+<text x="640" y="355" fill="#ece5d8" font-size="14">15.</text>
 </svg>
