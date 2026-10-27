@@ -5695,6 +5695,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					)
 					return
 				}
+				refusedProjectConfig.Store("")
 				curACMM := 0
 				if b.cfg.ACMMLevel != nil {
 					curACMM = *b.cfg.ACMMLevel

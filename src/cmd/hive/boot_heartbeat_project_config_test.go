@@ -126,6 +126,14 @@ func TestBootHeartbeatProjectConfig_RepeatedRefusalLogsErrorOncePerDistinctPush(
 	if got := refusedErrors(); got != 2 {
 		t.Fatalf("changed misconfiguration logged %d ERROR lines total, want 2:\n%s", got, f.log.String())
 	}
+
+	// The same misconfiguration recurring after a valid push is accepted
+	// is new information again.
+	push("acme")
+	push("other/widgets")
+	if got := refusedErrors(); got != 3 {
+		t.Fatalf("misconfiguration recurring after a valid push logged %d ERROR lines total, want 3:\n%s", got, f.log.String())
+	}
 }
 
 func TestBootHeartbeatProjectConfig_AlreadyReconciledIsANoOp(t *testing.T) {
