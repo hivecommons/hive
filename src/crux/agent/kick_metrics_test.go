@@ -43,9 +43,11 @@ func TestKickMetricsRecordBoundedAttributes(t *testing.T) {
 	if err := reader.Collect(context.Background(), &rm); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
+	okSet := attribute.NewSet(attrKickRole.String("scanner"), attrKickOutcome.String(kickOutcomeOK))
+	errSet := attribute.NewSet(attrKickRole.String(kickRoleUnknown), attrKickOutcome.String(kickOutcomeError))
 	want := map[attribute.Distinct]bool{
-		attribute.NewSet(attrKickRole.String("scanner"), attrKickOutcome.String(kickOutcomeOK)).Equivalent():          true,
-		attribute.NewSet(attrKickRole.String(kickRoleUnknown), attrKickOutcome.String(kickOutcomeError)).Equivalent(): true,
+		okSet.Equivalent():  true,
+		errSet.Equivalent(): true,
 	}
 	seen := map[string]bool{}
 	for _, sm := range rm.ScopeMetrics {
