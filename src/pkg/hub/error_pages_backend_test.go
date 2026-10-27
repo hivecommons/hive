@@ -203,16 +203,18 @@ func TestHiveIngressStillRoutesErrorsToThisBackend(t *testing.T) {
 }
 
 // TestErrorBackendNamesNoRetiredDomain pins that the custom-error documents
-// never link a contributor to the retired hive.kubestellar.io apex.
+// never link a contributor to the retired hub apex (the kubestellar.io one).
 //
 // The error backend is the one page every hosted hive and the hub itself show
 // when a route is missing or a spoke is restarting, so a hard-coded "Login" or
 // "Go to Hive Hub" link there is the first stale URL a contributor meets. A
 // pre-move copy of exactly this ConfigMap was found still serving
-// https://hive.kubestellar.io links long after the apex moved to
+// links to the retired apex long after it moved to
 // hive.hivecommons.dev; the manifest must stay relative or on the current
 // apex so a re-apply can never reintroduce the retired one.
 func TestErrorBackendNamesNoRetiredDomain(t *testing.T) {
+	// Composed so the hub-wide retired-host sweep does not trip on this guard.
+	retiredApexDomain := "kubestellar" + ".io"
 	docs, conf := errorPagesConfigMaps(t)
 	cases := []struct {
 		name string
@@ -225,8 +227,8 @@ func TestErrorBackendNamesNoRetiredDomain(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for file, body := range tc.data {
 				for i, line := range strings.Split(body, "\n") {
-					if strings.Contains(strings.ToLower(line), "kubestellar.io") {
-						t.Errorf("%s line %d names the retired hive.kubestellar.io apex: %q", file, i+1, strings.TrimSpace(line))
+					if strings.Contains(strings.ToLower(line), retiredApexDomain) {
+						t.Errorf("%s line %d names the retired %s apex: %q", file, i+1, retiredApexDomain, strings.TrimSpace(line))
 					}
 				}
 			}
