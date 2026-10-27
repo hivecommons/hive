@@ -785,7 +785,7 @@ does not bump itself.
   keeps an adopted PR in the fixer's work list every cycle until a new head
   lands. Existing pending fix rows are replaced with the next bounded attempt
   (adopted PRs at once; any other hive-owned PR once the row is older than
-  `PendingFixTTL`, default 2h, with the head unchanged);
+  `review.pending_fix_ttl`, default 2h, with the head unchanged);
   once the attempt cap is exhausted the PR is visibly parked for a human at
   085 with reason `fix-attempts-exhausted`, not left silent.
 - **Cleared at once on any activity.** The next cycle that sees a new head,

@@ -228,7 +228,8 @@ type DispatchOptions struct {
 	// DefaultMaxRedispatch.
 	MaxRedispatch int
 	// PendingFixTTL is how long a pending fix row stays authoritative with
-	// no new head before the next bounded attempt replaces it. Zero means
+	// no new head before the next bounded attempt replaces it
+	// (review.pending_fix_ttl). Zero means
 	// DefaultPendingFixTTL; negative disables expiry. Attempts are capped by
 	// escalation.MaxReEngagements.
 	PendingFixTTL time.Duration

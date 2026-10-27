@@ -10750,6 +10750,7 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		ReviseRepos:           cfg.Review.ReviseRepos,
 		ReviseVerdictsBefore:  parseReviseCutoff(cfg.Review.ReviseVerdictsBefore, logger),
 		PendingTTL:            cfg.Review.PendingReviewTTL(),
+		PendingFixTTL:         cfg.Review.PendingReviewFixTTL(),
 		MaxRedispatch:         cfg.Review.EffectiveMaxRedispatch(),
 		HeadMaxRetries:        cfg.Review.HeadMaxRetries,
 		ProjectOrg:            cfg.Project.Org,

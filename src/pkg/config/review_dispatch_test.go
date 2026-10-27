@@ -101,6 +101,46 @@ func TestPendingReviewTTL(t *testing.T) {
 	}
 }
 
+// review.pending_fix_ttl reaches the planner's PendingFixTTL; before
+// hivecommons/hive#14643 the 2h default could only be changed in code.
+func TestPendingReviewFixTTL(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want time.Duration
+	}{
+		{"", DefaultPendingFixTTL},
+		{"0", DefaultPendingFixTTL},
+		{"garbage", DefaultPendingFixTTL},
+		{"30m", 30 * time.Minute},
+		{" 6h ", 6 * time.Hour},
+		{"-1s", -time.Second},
+	}
+	for _, tc := range cases {
+		if got := (ReviewConfig{PendingFixTTL: tc.raw}).PendingReviewFixTTL(); got != tc.want {
+			t.Fatalf("PendingReviewFixTTL(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+	if DefaultPendingFixTTL != 2*time.Hour {
+		t.Fatalf("DefaultPendingFixTTL = %v, want 2h (review.DefaultPendingFixTTL)", DefaultPendingFixTTL)
+	}
+	err := (ReviewConfig{PendingFixTTL: "soon"}).ValidatePendingFixTTL()
+	if err == nil || !strings.Contains(err.Error(), "pending_fix_ttl") {
+		t.Fatalf("ValidatePendingFixTTL(soon) = %v, want an error naming pending_fix_ttl", err)
+	}
+	for _, ok := range []string{"", "2h", "-1s"} {
+		if err := (ReviewConfig{PendingFixTTL: ok}).ValidatePendingFixTTL(); err != nil {
+			t.Fatalf("ValidatePendingFixTTL(%q) rejected: %v", ok, err)
+		}
+	}
+	// Config.Validate rejects it too, so a typo fails at load instead of
+	// silently running on the default.
+	cfg := validatableConfig(nil)
+	cfg.Review.PendingFixTTL = "soon"
+	if err := cfg.ValidateWithOptions(ValidateOptions{}); err == nil || !strings.Contains(err.Error(), "pending_fix_ttl") {
+		t.Fatalf("Config.Validate() = %v, want a pending_fix_ttl error", err)
+	}
+}
+
 func TestEffectiveSelfAuthoredDecisionPolicy(t *testing.T) {
 	if got := (ReviewConfig{}).EffectiveSelfAuthoredDecisionPolicy(); got != ReviewSelfAuthoredDecisionResolve {
 		t.Fatalf("unset policy = %q, want resolve", got)

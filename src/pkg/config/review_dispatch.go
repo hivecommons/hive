@@ -16,6 +16,9 @@ const (
 	// DefaultPendingReviewTTL matches review.DefaultPendingReviewTTL;
 	// duplicated here to avoid a config→review import cycle.
 	DefaultPendingReviewTTL = 45 * time.Minute
+	// DefaultPendingFixTTL matches review.DefaultPendingFixTTL; duplicated
+	// here for the same reason.
+	DefaultPendingFixTTL = 2 * time.Hour
 	// DefaultMaxRedispatch matches review.DefaultMaxRedispatch.
 	DefaultMaxRedispatch               = 3
 	ReviewSelfAuthoredDecisionResolve  = "resolve"
@@ -70,6 +73,21 @@ func (r ReviewConfig) PendingReviewTTL() time.Duration {
 	return d
 }
 
+// PendingReviewFixTTL is review.pending_fix_ttl as a duration. Unset, "0" or
+// an unparsable value means DefaultPendingFixTTL; a negative duration is
+// returned as-is and the planner reads it as "never expire".
+func (r ReviewConfig) PendingReviewFixTTL() time.Duration {
+	raw := strings.TrimSpace(r.PendingFixTTL)
+	if raw == "" {
+		return DefaultPendingFixTTL
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d == 0 {
+		return DefaultPendingFixTTL
+	}
+	return d
+}
+
 // EffectiveMaxRedispatch resolves review.max_redispatch.
 func (r ReviewConfig) EffectiveMaxRedispatch() int {
 	if r.MaxRedispatch <= 0 {
@@ -94,6 +112,19 @@ func (r ReviewConfig) ValidatePendingReviewTTL() error {
 	}
 	if _, err := time.ParseDuration(raw); err != nil {
 		return fmt.Errorf("review: pending_ttl %q is not a duration (e.g. 45m); unset means the default %s", r.PendingTTL, DefaultPendingReviewTTL)
+	}
+	return nil
+}
+
+// ValidatePendingFixTTL rejects a review.pending_fix_ttl that is not a Go
+// duration string.
+func (r ReviewConfig) ValidatePendingFixTTL() error {
+	raw := strings.TrimSpace(r.PendingFixTTL)
+	if raw == "" {
+		return nil
+	}
+	if _, err := time.ParseDuration(raw); err != nil {
+		return fmt.Errorf("review: pending_fix_ttl %q is not a duration (e.g. 2h); unset means the default %s", r.PendingFixTTL, DefaultPendingFixTTL)
 	}
 	return nil
 }

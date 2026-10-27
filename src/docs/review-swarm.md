@@ -182,6 +182,7 @@ review:
     base_sync: false                        # optional; let GitHub update-branch unstick hive-authored fork PRs (default off)
   priority_labels: false                    # optional; mirror the PR review queue rank onto review-priority/* labels (default off)
   pending_ttl: 45m                          # optional; re-dispatch a review that has posted no verdict after this long (default 45m)
+  pending_fix_ttl: 2h                       # optional; dispatch the next bounded fix attempt when a fixer has pushed no new head after this long (default 2h; negative disables expiry)
   max_redispatch: 3                         # optional; expiries per head before the PR is held for a human (default 3)
   bot_author_model: ""                      # optional; model (or backend/model) that reviews PRs opened by bot_authors, e.g. gpt-6-luna (default empty = off)
   bot_authors: [dependabot[bot], renovate[bot], github-actions[bot], "*[bot]"]  # optional; logins routed to bot_author_model; the hive's own App never matches

@@ -841,6 +841,9 @@ governor:
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 #   pending_ttl: 45m    # re-dispatch a review whose kick posted no verdict after this long
 #                       # (Go duration; default 45m; negative disables expiry)
+#   pending_fix_ttl: 2h # dispatch the next bounded fix attempt when a fixer turn has
+#                       # pushed no new head after this long (Go duration; default 2h;
+#                       # negative disables expiry)
 #   max_redispatch: 3   # expiries per PR head before the planner stops re-kicking and
 #                       # records a requires_human hold (review-dispatch-exhausted)
 #   out_of_scope_backlog_disabled: false # true opts out of review-filed backlog issues

@@ -7383,6 +7383,12 @@ type ReviewConfig struct {
 	// (hivecommons/hive#12045). "0" or unset means the default; a negative
 	// value disables expiry.
 	PendingTTL string `yaml:"pending_ttl,omitempty" json:"pending_ttl,omitempty"`
+	// PendingFixTTL is how long a dispatched review fix may go without a new
+	// head before its pending row expires and the next bounded attempt is
+	// dispatched (Go duration string, default DefaultPendingFixTTL;
+	// hivecommons/hive#14604). "0" or unset means the default; a negative
+	// value disables expiry.
+	PendingFixTTL string `yaml:"pending_fix_ttl,omitempty" json:"pending_fix_ttl,omitempty"`
 	// MaxRedispatch caps how many times one PR head's pending reviews may
 	// expire before the planner stops re-kicking and records a requires_human
 	// hold (reason prefix review-dispatch-exhausted). 0 means

@@ -1,0 +1,1 @@
+- `review.pending_fix_ttl` sets how long a dispatched review fix may go without a new head before the next bounded attempt is dispatched (default 2h; negative disables expiry). It was previously fixed at 2h even though the docs presented it as tunable (#14643).
