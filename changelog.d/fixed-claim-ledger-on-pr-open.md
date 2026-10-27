@@ -1,0 +1,1 @@
+- A PR hive opens now records its issue claims in the duplicate-PR claim ledger immediately, so a contributor can no longer be admitted to an issue that PR already covers in the window before the next claim scan (#14472).

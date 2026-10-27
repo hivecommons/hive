@@ -187,8 +187,15 @@ type PROpenedDetail struct {
 	Repo    string
 	Number  int
 	URL     string
+	Title   string
 	Body    string
 	Handoff *PRHandoff
+	// Author is the login GitHub recorded as the PR's opener and Head is the
+	// branch it was opened from, so the duplicate-PR claim ledger can record
+	// the PR's claims the moment it exists (hivecommons/hive#14472) instead
+	// of waiting for the next scan.
+	Author string
+	Head   string
 	// Issues are the issue numbers the request named (Fixes/Closes), so the
 	// lifecycle timeline can mark pr_opened on each issue's journey.
 	Issues []int
@@ -663,7 +670,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		go (*hook)(req.Agent, req.Repo, res.Number, res.URL)
 	}
 	if hook := c.prOpenedDetailHook.Load(); hook != nil && *hook != nil && !res.AlreadyExisted {
-		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Body: body, Handoff: req.Handoff, Issues: append([]int(nil), req.IssueN...)})
+		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Title: title, Body: body, Handoff: req.Handoff, Author: res.Author, Head: req.Head, Issues: append([]int(nil), req.IssueN...)})
 	}
 	// The PR supersedes the pr-in-progress start mark on the issues it
 	// names: they move to stage/040-covered-by-pr, where the stage
