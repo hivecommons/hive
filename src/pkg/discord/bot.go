@@ -190,13 +190,25 @@ func (b *Bot) Start(ctx context.Context) error {
 }
 
 func (b *Bot) SendMessage(content string) error {
+	return b.SendMessageTo(b.channelID, content)
+}
+
+// SendMessageTo posts content to an arbitrary channel the bot token can
+// write to, bypassing the status channel and the drain queue. It works on a
+// Bot that was never started, so a feature that only needs to post (RFC
+// lifecycle notices, pkg/rfcnotify) can share the token without running the
+// command loops.
+func (b *Bot) SendMessageTo(channelID, content string) error {
+	if strings.TrimSpace(channelID) == "" {
+		return fmt.Errorf("discord send: channel id not configured")
+	}
 	payload := map[string]string{"content": content}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	url := fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, b.channelID)
+	url := fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, channelID)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return err

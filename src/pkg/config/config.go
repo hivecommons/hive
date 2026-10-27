@@ -3932,6 +3932,9 @@ type SlackConfig struct {
 	Webhook string `yaml:"webhook"`
 }
 
+// DiscordRFCChannelIDEnvVar overrides notifications.discord.rfc_channel_id.
+const DiscordRFCChannelIDEnvVar = "HIVE_DISCORD_RFC_CHANNEL_ID"
+
 type DiscordConfig struct {
 	Webhook        string `yaml:"webhook"`
 	FactoryWebhook string `yaml:"factory_webhook,omitempty"`
@@ -3940,6 +3943,12 @@ type DiscordConfig struct {
 	RequestsWebhookURL string `yaml:"requests_webhook_url,omitempty" json:"-"`
 	BotToken           string `yaml:"bot_token"`
 	ChannelID          string `yaml:"channel_id"`
+	// RFCChannelID is the channel that receives RFC lifecycle notices (an
+	// RFC issue opened, closed, or taken off hold; pkg/rfcnotify). Posted
+	// with BotToken; needs no ChannelID and does not start the command bot.
+	// Empty (the default) disables the notices. The env var
+	// HIVE_DISCORD_RFC_CHANNEL_ID overrides it.
+	RFCChannelID string `yaml:"rfc_channel_id,omitempty" json:"rfc_channel_id,omitempty"`
 	// AllowedUsers is an allowlist of Discord user IDs permitted to issue bot
 	// COMMANDS (!kick, !pause, agent actions — anything that drives an agent).
 	// SECURITY: without it, any member of the guild who can post in the channel
@@ -5424,6 +5433,12 @@ func (c *Config) applyBootstrapEnv() {
 		if v := os.Getenv("HIVE_AUTHORIZED_USERS"); v != "" {
 			c.Dashboard.AuthorizedUsers = parseAuthorizedUsers(v)
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv(DiscordRFCChannelIDEnvVar)); v != "" {
+		if c.Notifications.Discord == nil {
+			c.Notifications.Discord = &DiscordConfig{}
+		}
+		c.Notifications.Discord.RFCChannelID = v
 	}
 	if v := os.Getenv("HIVE_SELF_AUTHORIZATION_HOLD"); strings.TrimSpace(v) != "" {
 		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {

@@ -184,3 +184,22 @@ Webhook notifications are the `notifications.discord.webhook` field above.
 The repository also contains a separate Discord bot under [`../../discord/`](../../discord/). That bot is a Node.js service using `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_PRIMARY` to connect to Discord, route commands, and bridge dashboard/pipeline status. It is not required for webhook notifications, and a bot token cannot replace `notifications.discord.webhook`.
 
 For the Hive Go process, bot startup uses `notifications.discord.bot_token` and `notifications.discord.channel_id` when both are set. Those fields start the bot integration; they do not send ordinary webhook notifications unless `notifications.discord.webhook` is also configured.
+
+## RFC lifecycle notices (Discord bot)
+
+Set `notifications.discord.rfc_channel_id` (or the env var `HIVE_DISCORD_RFC_CHANNEL_ID`, which overrides it) together with `notifications.discord.bot_token` and the hive posts one line to that channel when an RFC issue in a managed repo:
+
+- is opened: `RFC opened: #N <title> - <url> (by @author)`
+- is closed: `RFC closed (completed): ...` or `RFC closed (not planned): ...`, from GitHub's close reason
+- is taken off hold so it can be implemented: `RFC ready to implement (hold removed): #N <title> - <url>`, when the `hold` label (Prow `/unhold`) comes off an open RFC, or a held RFC moves to `stage/010-actionable`. One notice per hold episode.
+
+An issue is an RFC when it carries the `rfc` label or its title starts with `RFC` after any leading emoji or `[tag]` (`RFC: ...`, `[RFC] ...`, `📝 RFC: [v6] ...`). A hive that manages several repos prefixes the number with the repo (`owner/repo#N`).
+
+The default is empty, which turns the notices off. `channel_id` is not required: the notices only post with the bot token and never start the command bot. The hive polls GitHub every three minutes for issues updated since its last poll (one list call per repo) and keeps per-issue records in `/data/rfc-notify.json`, so a restart never re-announces a transition. The first poll after the key is set only records the current open RFCs; transitions announce from the next poll on. Each post is also written to the audit log as `rfc-notify`.
+
+```yaml
+notifications:
+  discord:
+    bot_token: ${DISCORD_BOT_TOKEN}
+    rfc_channel_id: "1540404487099777136"
+```
