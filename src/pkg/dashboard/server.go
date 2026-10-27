@@ -896,6 +896,14 @@ type FrontendAgent struct {
 	// the turn is still running. KickOutcomeReason is the deciding pane line.
 	KickOutcome       string `json:"kickOutcome,omitempty"`
 	KickOutcomeReason string `json:"kickOutcomeReason,omitempty"`
+	// RepeatFailureCheck is the repeat-failure check state (#14550): "on",
+	// "not_covered" or "no_data", with RepeatFailureCheckMessage as the row
+	// text. RepeatFailureNote is "Repeating failure: `<command>` failed N
+	// times in M min (exit S)" while a command repeats. All empty while the
+	// check is off, so the row shows nothing. Monitor only: never pauses.
+	RepeatFailureCheck        string `json:"repeatFailureCheck,omitempty"`
+	RepeatFailureCheckMessage string `json:"repeatFailureCheckMessage,omitempty"`
+	RepeatFailureNote         string `json:"repeatFailureNote,omitempty"`
 	// BackendAuth* surfaces this agent's backend-auth canary (#6558): derived
 	// from the same classifyProviderError verdict as StructuredStatus's
 	// "blocked: inference" evidence, so the dashboard can render an explicit

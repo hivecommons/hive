@@ -1220,6 +1220,11 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			CadenceModes:      cadenceModes,
 		}
 		applyAgentLastAction(&a, proc, busy)
+		// #14550: the repeat-failure note and check state; nothing while
+		// the check is off.
+		a.RepeatFailureCheck = string(proc.RepeatFailure.Check)
+		a.RepeatFailureCheckMessage = proc.RepeatFailure.Check.Message()
+		a.RepeatFailureNote = redactTokens(proc.RepeatFailure.Note)
 		// #7421: how the last kicked turn ended, so the card can say "asked
 		// the operator what to do" or "stood down" instead of implying work.
 		if proc.KickOutcome.Settled(proc.LastKick) {

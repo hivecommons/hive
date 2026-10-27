@@ -1660,6 +1660,10 @@
     .agent-blockers .ab-sep { opacity: 0.35; }
     .agent-blockers .ab-ok { color: var(--green); }
     .agent-blockers .ab-bad { color: var(--red); font-weight: 600; }
+    .agent-repeat-failure { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); margin-top: var(--sp-1); color: var(--muted); }
+    .agent-repeat-failure .rf-key { opacity: 0.65; margin-right: 3px; }
+    .agent-repeat-failure .rf-warn { color: var(--yellow); font-weight: 600; }
+    .agent-repeat-failure .rf-note { color: var(--yellow); overflow-wrap: anywhere; }
     .oc-detail-blockers { margin-top: var(--sp-3); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
     .never-scheduled-chip { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--yellow); background: none; border: 1px solid var(--yellow); border-radius: 3px; padding: 1px 5px; margin-left: var(--sp-3); cursor: pointer; vertical-align: middle; white-space: nowrap; }
     .never-scheduled-chip:hover { background: color-mix(in srgb, var(--yellow) 18%, transparent); }
@@ -11022,7 +11026,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const nowEl = detail.querySelector('[data-agent-now]');
         if (nowEl) nowEl.outerHTML = agentNowHtml(a);
         const blockersEl = detail.querySelector('.oc-detail-blockers');
-        if (blockersEl) blockersEl.innerHTML = agentBlockerLineHtml(a) + neverScheduledChipHtml(a, a.name);
+        if (blockersEl) blockersEl.innerHTML = agentBlockerLineHtml(a) + neverScheduledChipHtml(a, a.name) + repeatFailureLineHtml(a);
         const fieldsEl = detail.querySelector('.oc-detail-fields');
         if (fieldsEl) fieldsEl.outerHTML = ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand);
         const indEl = detail.querySelector('.oc-detail-indicators');
@@ -11160,7 +11164,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${effortSelectHtml(a)}
         </div>
         ${agentNowHtml(a)}
-        <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}</div>
+        <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}${repeatFailureLineHtml(a)}</div>
         ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
         ${subAgentModelsHtml(a)}
@@ -17306,6 +17310,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return '';
     }
+    /* repeatFailureLineHtml renders the repeat-failure check (#14550): the
+       check state ("on", "not available for this backend", "not receiving
+       data") and, while a command keeps failing the same way, the note.
+       Monitor only: the agent is never paused for it. Renders nothing while
+       the check is off — the hive sends no state then. */
+    function repeatFailureLineHtml(a) {
+      if (!a || (!a.repeatFailureCheck && !a.repeatFailureNote)) return '';
+      const warn = a.repeatFailureCheck === 'not_covered' || a.repeatFailureCheck === 'no_data';
+      const checkTip = a.repeatFailureCheck === 'no_data'
+        ? 'A turn in progress ran shell commands, but no command record has arrived for repeat_failure.no_data_after_s. The backend may have changed how it runs commands.'
+        : a.repeatFailureCheck === 'not_covered'
+        ? 'Hive cannot record this backend\'s shell commands yet, so repeated failures are not noticed. See the repeated-failure table in the backend support docs.'
+        : 'Hive records this agent\'s shell commands and notes a command that keeps failing the same way.';
+      const check = a.repeatFailureCheckMessage
+        ? `<span class="${warn ? 'rf-warn' : ''}" data-repeat-failure-check="${esc(a.repeatFailureCheck)}" title="${esc(checkTip)}"><span class="rf-key">repeat-failure</span>${esc(a.repeatFailureCheckMessage)}</span>`
+        : '';
+      const note = a.repeatFailureNote
+        ? `<span class="rf-note" data-repeat-failure-note title="Monitor only: the agent is not paused.">${esc(a.repeatFailureNote)}</span>`
+        : '';
+      return `<div class="agent-repeat-failure">${note}${check}</div>`;
+    }
     /* agentPowerSwitchHtml renders the master-power 0/1 rocker for an agent's
        `enabled` flag.
 
@@ -18031,6 +18056,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           })()}${kickOutcomeBadgeHtml(a)}${agentSpendChip(a.name)}</div>
           ${agentNowHtml(a)}
           ${agentBlockerLineHtml(a)}
+          ${repeatFailureLineHtml(a)}
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
           ${(() => {
             // Last upstream/launch error stays on its own line below the state

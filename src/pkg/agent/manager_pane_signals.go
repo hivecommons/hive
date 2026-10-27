@@ -565,6 +565,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		KickHistory:               history,
 		LastKickMessage:           a.LastKickMessage,
 		KickOutcome:               a.KickOutcome,
+		RepeatFailure:             a.RepeatFailure,
 		NeedsLogin:                needsLogin,
 		LoginURL:                  loginURL,
 		Starting:                  a.startupLaunchQueued || a.launching,
