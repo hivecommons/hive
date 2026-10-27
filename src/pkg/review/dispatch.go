@@ -275,6 +275,32 @@ type DispatchState struct {
 	HeadRetries  []HeadRetryCount   `json:"head_retries,omitempty"`
 	MissingHeads []MissingHead      `json:"missing_heads,omitempty"`
 	Acknowledged []AcknowledgedHead `json:"acknowledged,omitempty"`
+	// RevisitStarved counts, per head, the consecutive cycles in which a
+	// changes_requested verdict was sent down the revisit path instead of
+	// the fix path. At RevisitStarvationCycles the planner forces the fix
+	// (hivecommons/hive#14665). Cleared when the head is settled normally.
+	RevisitStarved []RevisitStarvation `json:"revisit_starved,omitempty"`
+}
+
+// RevisitStarvation is the per-head counter behind RevisitStarvationCycles.
+type RevisitStarvation struct {
+	Repo    string    `json:"repo"`
+	Number  int       `json:"number"`
+	HeadSHA string    `json:"head_sha,omitempty"`
+	Reason  string    `json:"reason"`
+	Cycles  int       `json:"cycles"`
+	LastAt  time.Time `json:"last_at"`
+}
+
+// ForcedFix is a fix kick the planner took despite a revisit being due,
+// because the head had been starved of its fix for RevisitStarvationCycles
+// consecutive cycles. The caller logs each one.
+type ForcedFix struct {
+	Repo    string
+	Number  int
+	HeadSHA string
+	Reason  string
+	Cycles  int
 }
 
 // RedispatchCount is the per-head expiry counter behind review.max_redispatch.
@@ -471,7 +497,10 @@ type DispatchPlan struct {
 	// trivial delta). The caller records them in the verdict artifact
 	// (RecordDeltaRestamps) and logs each one.
 	DeltaRestamps []DeltaRestamp
-	State         DispatchState
+	// ForcedFixes are the changes_requested heads whose fix kick was forced
+	// this cycle after RevisitStarvationCycles revisit-suppressed cycles.
+	ForcedFixes []ForcedFix
+	State       DispatchState
 }
 
 type FixDispatchExclusion struct {
@@ -490,6 +519,10 @@ const (
 	FixDispatchExcludedNotHiveAuthored      = "not-hive-authored"
 	FixDispatchExcludedNotHiveAuthoredDCO   = "not-hive-authored-squash-signoff"
 	FixAttemptsExhaustedHumanDecisionReason = "fix-attempts-exhausted"
+	// The revisit reasons name why a changes_requested verdict was sent back
+	// to the reviewers instead of the fixer this cycle (hivecommons/hive#14665).
+	FixDispatchExcludedRevisitBodyEdited = "verdict-revisit:body-edited"
+	FixDispatchExcludedRevisitStale      = "verdict-revisit:stale-reviewer"
 )
 
 func LoadDispatchState(path string) (DispatchState, error) {
@@ -596,7 +629,26 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			// reviewer-side defect is found: without this, verdicts produced
 			// by a known-broken reviewer stay frozen until someone happens to
 			// push a commit.
-			if !staleVerdictRevisitable(pr.Repo, agg, opts) && !bodyEditedVerdictRevisitable(pr, agg) {
+			revisitReason := ""
+			if staleVerdictRevisitable(pr.Repo, agg, opts) {
+				revisitReason = FixDispatchExcludedRevisitStale
+			} else if bodyEditedVerdictRevisitable(pr, agg) {
+				revisitReason = FixDispatchExcludedRevisitBodyEdited
+			}
+			// A revisit re-asks the reviewers; it must not keep the fixer
+			// away from a changes_requested head indefinitely. After
+			// RevisitStarvationCycles consecutive revisit cycles with no fix
+			// kick, the fix path is taken regardless (hivecommons/hive#14665).
+			forcedFix := false
+			if revisitReason != "" && agg.Verdict == VerdictChangesRequested {
+				if starved := revisitStarvedCycles(plan.State, pr); starved >= RevisitStarvationCycles {
+					plan.ForcedFixes = append(plan.ForcedFixes, ForcedFix{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: revisitReason, Cycles: starved})
+					revisitReason = ""
+					forcedFix = true
+				}
+			}
+			if revisitReason == "" {
+				plan.State.RevisitStarved = removeRevisitStarvedForHead(plan.State.RevisitStarved, pr)
 				if agg.Verdict == VerdictIncomplete {
 					// Every perspective that reported approved; some never
 					// reported. The head is not settled, it is under-asked:
@@ -619,7 +671,11 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 					}
 					plan.expirePending(pr, opts, now)
 				} else {
-					plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+					// A forced fix leaves the in-flight revisit's pending
+					// entries alone: the relay binds its verdicts to them.
+					if !forcedFix {
+						plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+					}
 					if headsMode {
 						plan.acknowledgeSkippedDecision(pr, agg, opts, now)
 					}
@@ -636,6 +692,9 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 					continue
 				}
 			} else {
+				if agg.Verdict == VerdictChangesRequested {
+					plan.noteRevisitStarvation(pr, revisitReason, now)
+				}
 				// Pending entries are the lifetime record of what this head has
 				// already been asked, and a PR with a verdict always has them —
 				// so left in place they make every perspective look covered and
@@ -1051,17 +1110,79 @@ func (p *DispatchPlan) holdForHuman(pr PullRequest, agg Aggregate, now time.Time
 	p.State.Human = upsertHuman(p.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: reason, UpdatedAt: now})
 }
 
+// bodyEditedVerdictRevisitable reports whether a non-approve verdict was
+// judged against an earlier PR title/body than the one the PR carries now.
+// Only a present-and-different digest proves an edit. A verdict with no
+// digest is unknown, not edited: perspective reports may omit body_digest
+// (the prompt allows it), and reading the gap as "edited" sent every such
+// changes_requested verdict down the revisit path instead of the fix path,
+// forever (hivecommons/hive#14665). The UpdatedAt fallback is for PR
+// snapshots that predate digests altogether.
 func bodyEditedVerdictRevisitable(pr PullRequest, agg Aggregate) bool {
 	if agg.Verdict == VerdictApprove || agg.Verdict == VerdictIncomplete {
 		return false
 	}
-	if strings.TrimSpace(pr.BodyDigest) != "" && strings.TrimSpace(agg.BodyDigest) != "" {
-		return strings.TrimSpace(pr.BodyDigest) != strings.TrimSpace(agg.BodyDigest)
-	}
-	if strings.TrimSpace(pr.BodyDigest) != "" && strings.TrimSpace(agg.BodyDigest) == "" {
-		return true
+	prDigest := strings.TrimSpace(pr.BodyDigest)
+	aggDigest := strings.TrimSpace(agg.BodyDigest)
+	if prDigest != "" {
+		if aggDigest == "" {
+			return false
+		}
+		return prDigest != aggDigest
 	}
 	return !pr.UpdatedAt.IsZero() && !agg.RecordedAt.IsZero() && pr.UpdatedAt.After(agg.RecordedAt)
+}
+
+// RevisitStarvationCycles is how many consecutive planner cycles a
+// changes_requested head may be sent down the revisit path with no fix kick
+// before the planner forces the fix path. The revisit exists to re-ask the
+// reviewers; it must never become a reason the fixer is not asked at all.
+const RevisitStarvationCycles = 3
+
+// revisitStarvedCycles returns how many consecutive cycles this head's
+// changes_requested verdict was suppressed by the revisit path so far.
+func revisitStarvedCycles(state DispatchState, pr PullRequest) int {
+	for _, s := range state.RevisitStarved {
+		if samePRHead(s.Repo, s.Number, s.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			return s.Cycles
+		}
+	}
+	return 0
+}
+
+// noteRevisitStarvation counts one more cycle in which the revisit path
+// suppressed this head's fix kick, and records the exclusion so the caller
+// logs why fix_kicks stayed at zero.
+func (p *DispatchPlan) noteRevisitStarvation(pr PullRequest, reason string, now time.Time) {
+	cycles := 0
+	found := false
+	for i := range p.State.RevisitStarved {
+		s := &p.State.RevisitStarved[i]
+		if samePRHead(s.Repo, s.Number, s.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			s.Cycles++
+			s.Reason = reason
+			s.LastAt = now
+			cycles = s.Cycles
+			found = true
+			break
+		}
+	}
+	if !found {
+		cycles = 1
+		p.State.RevisitStarved = append(p.State.RevisitStarved, RevisitStarvation{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: reason, Cycles: cycles, LastAt: now})
+	}
+	p.recordFixExclusion(pr, reason, cycles)
+}
+
+func removeRevisitStarvedForHead(items []RevisitStarvation, pr PullRequest) []RevisitStarvation {
+	kept := items[:0]
+	for _, s := range items {
+		if samePRHead(s.Repo, s.Number, s.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			continue
+		}
+		kept = append(kept, s)
+	}
+	return kept
 }
 
 // effectivePendingTTL resolves PendingTTL: zero is the default, negative
@@ -1730,6 +1851,13 @@ func pruneState(state DispatchState, prs []PullRequest, org string) DispatchStat
 		}
 	}
 	state.Redispatches = redispatches
+	var starved []RevisitStarvation
+	for _, s := range state.RevisitStarved {
+		if openHeads[reviewKey(s.Repo, s.Number, s.HeadSHA, "")] {
+			starved = append(starved, s)
+		}
+	}
+	state.RevisitStarved = starved
 	state = pruneReviewHeadState(state, openHeads)
 	return state
 }

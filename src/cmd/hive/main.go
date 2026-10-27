@@ -10783,10 +10783,36 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 	for _, h := range plan.Exhausted {
 		logger.Warn("review dispatch exhausted; holding PR for a human", "repo", h.Repo, "pr", h.Number, "head", h.HeadSHA, "reason", h.Reason)
 	}
-	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
-		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))
+	for _, f := range plan.ForcedFixes {
+		logger.Warn("review fix forced: changes_requested head starved by the revisit path", "repo", f.Repo, "pr", f.Number, "head", f.HeadSHA, "reason", f.Reason, "cycles", f.Cycles, "limit", review.RevisitStarvationCycles)
+	}
+	if len(plan.ReviewKicks)+len(plan.FixKicks)+len(plan.FixExclusions) > 0 {
+		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks), "fix_excluded", len(plan.FixExclusions), "fix_excluded_reasons", fixExclusionReasonSummary(plan.FixExclusions))
 	}
 	return plan
+}
+
+// fixExclusionReasonSummary renders the cycle's fix exclusions as
+// "reason=count,..." (sorted) for the dispatch summary line, so fix_kicks: 0
+// is never printed without saying why (hivecommons/hive#14665).
+func fixExclusionReasonSummary(exclusions []review.FixDispatchExclusion) string {
+	if len(exclusions) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	for _, x := range exclusions {
+		counts[x.Reason]++
+	}
+	reasons := make([]string, 0, len(counts))
+	for r := range counts {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	parts := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		parts = append(parts, fmt.Sprintf("%s=%d", r, counts[r]))
+	}
+	return strings.Join(parts, ",")
 }
 
 // recordReviewDeltaRestamps writes the verdicts the planner carried forward
@@ -11001,8 +11027,11 @@ type reviewFixAuditor interface {
 // hivecommons/hive#12897). The planner reports each head once, so
 // this does not repeat on every eval cycle.
 func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
+	// One WARN per changes_requested head that ends the cycle without a fix
+	// kick: a PR shown as "Fixing" that nobody is fixing must be loud
+	// (hivecommons/hive#14665).
 	for _, x := range plan.FixExclusions {
-		logger.Info("review fix dispatch excluded",
+		logger.Warn("review fix dispatch excluded",
 			"repo", x.Repo, "pr", x.Number, "head_sha", x.HeadSHA, "author", x.Author, "reason", x.Reason, "attempts", x.Attempts)
 	}
 	for _, w := range plan.WithheldFixes {
