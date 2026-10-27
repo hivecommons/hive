@@ -677,21 +677,29 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		Repo: fullRepo, Kind: effects.KindBranchPush, Target: branch, Actor: "stage_labels",
 		Inputs: map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "adopt": "true"},
 	}, func(ctx context.Context) (effects.Result, error) {
+		tip := obs.HeadSHA
+		if dcoRehome {
+			if signed, signErr := c.resignAdoptionCommits(ctx, obs); signErr != nil {
+				c.warn("stage labels: re-signing adopted commits failed; branching from the unsigned head", "repo", obs.Display, "pr", number, "error", signErr)
+			} else if signed != "" {
+				tip = signed
+			}
+		}
 		_, _, apiErr := c.gh.Git.CreateRef(ctx, owner, repo, &gh.Reference{
 			Ref:    gh.Ptr("refs/heads/" + branch),
-			Object: &gh.GitObject{SHA: gh.Ptr(obs.HeadSHA)},
+			Object: &gh.GitObject{SHA: gh.Ptr(tip)},
 		})
 		if apiErr != nil && isGitHubStatus(apiErr, http.StatusUnprocessableEntity) {
 			// The branch exists from an earlier attempt: point it at this head.
 			_, _, apiErr = c.gh.Git.UpdateRef(ctx, owner, repo, &gh.Reference{
 				Ref:    gh.Ptr("refs/heads/" + branch),
-				Object: &gh.GitObject{SHA: gh.Ptr(obs.HeadSHA)},
+				Object: &gh.GitObject{SHA: gh.Ptr(tip)},
 			}, true)
 		}
 		if apiErr != nil {
 			return effects.Result{}, effects.NotApplied(apiErr)
 		}
-		return effects.Result{Provenance: obs.HeadSHA}, nil
+		return effects.Result{Provenance: tip}, nil
 	})
 	if err != nil {
 		c.warn("stage labels: adoption failed to push branch", "repo", obs.Display, "pr", number, "branch", branch, "error", err)
@@ -739,6 +747,55 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		}
 	}
 	return 1, nil
+}
+
+// resignAdoptionCommits replays the contributor's commits as a linear chain
+// with the App's Signed-off-by added where missing (the API equivalent of
+// `git rebase --signoff`), keeping each commit's tree, author and message,
+// and returns the new tip. It returns "" when the commits cannot be replayed
+// without changing content (a merge commit, or no commits), so the caller
+// keeps the contributor head.
+func (c *Engine) resignAdoptionCommits(ctx context.Context, obs stageObservation) (string, error) {
+	opts := &gh.ListOptions{PerPage: 100}
+	var all []*gh.RepositoryCommit
+	for page := 0; page < stageDCOMaxPages; page++ {
+		commits, resp, err := c.gh.PullRequests.ListCommits(ctx, obs.Owner, obs.Repo, obs.Number, opts)
+		if err != nil {
+			return "", fmt.Errorf("listing commits for %s#%d: %w", obs.Display, obs.Number, err)
+		}
+		all = append(all, commits...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	if len(all) == 0 || all[len(all)-1].GetSHA() != obs.HeadSHA {
+		return "", nil
+	}
+	for _, rc := range all {
+		if len(rc.Parents) != 1 {
+			return "", nil
+		}
+	}
+	trailer := hgithub.BotSignedOffByTrailer(c.transport.AppBotLogin())
+	parent := all[0].Parents[0].GetSHA()
+	for _, rc := range all {
+		msg := rc.GetCommit().GetMessage()
+		if !signedOffByRE.MatchString(msg) {
+			msg = strings.TrimRight(msg, "\n") + "\n\n" + trailer + "\n"
+		}
+		created, _, err := c.gh.Git.CreateCommit(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), obs.Owner, obs.Repo, &gh.Commit{
+			Message: gh.Ptr(msg),
+			Tree:    &gh.Tree{SHA: gh.Ptr(rc.GetCommit().GetTree().GetSHA())},
+			Parents: []*gh.Commit{{SHA: gh.Ptr(parent)}},
+			Author:  rc.GetCommit().GetAuthor(),
+		}, nil)
+		if err != nil {
+			return "", fmt.Errorf("re-signing %s: %w", shortSHA(rc.GetSHA()), err)
+		}
+		parent = created.GetSHA()
+	}
+	return parent, nil
 }
 
 // settleAdoption polls the superseding App PR for a PR in stage 074 (at

@@ -3,6 +3,7 @@ package automerge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -25,6 +26,7 @@ type adoptAPI struct {
 	nextPR      int
 	superseders map[int]map[string]any // number → GET payload
 	prEdits     []string
+	newCommits  []map[string]any // POST git/commits bodies
 	commits     map[string]adoptCommit
 	// failRefs makes POST git/refs answer 500; refAttempts counts them.
 	failRefs    bool
@@ -116,6 +118,13 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 			files = []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}
 		}
 		_ = json.NewEncoder(w).Encode(files)
+		return true
+	case r.Method == http.MethodPost && path == "/repos/acme/widget/git/commits":
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.newCommits = append(a.newCommits, body)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": fmt.Sprintf("signed%d", len(a.newCommits))})
 		return true
 	case r.Method == http.MethodPost && path == "/repos/acme/widget/git/refs":
 		var body struct {
@@ -1023,6 +1032,36 @@ func TestAlreadyAdoptedInPlaceDCOFailureRehomesAndClosesOriginal(t *testing.T) {
 	}
 	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || rec.AdoptedBy != 90 || rec.AdoptMode != stagelabels.AdoptModeSupersede || rec.AdoptReason != AdoptReasonDCORehome {
 		t.Fatalf("record not moved to supersede adoption: %+v", rec)
+	}
+}
+
+// The dco-rehome branch must not inherit the contributor's unsigned commits
+// (#14666): each is replayed with a Signed-off-by and the branch points at the
+// new tip.
+func TestDCORehomeBranchCarriesResignedCommits(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commits = map[int][]string{7: {"fix: unsigned contributor commit"}}
+	h.observe(adoptPR(7, "c0"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "c0", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "c0", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 1 {
+		t.Fatalf("re-signed commits=%v", h.adopt.newCommits)
+	}
+	msg, _ := h.adopt.newCommits[0]["message"].(string)
+	if !strings.Contains(msg, "fix: unsigned contributor commit") || !signedOffByRE.MatchString(msg) {
+		t.Fatalf("re-signed message lacks sign-off or original text: %q", msg)
+	}
+	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "signed1" {
+		t.Fatalf("rehome branch sha=%q, want the re-signed tip; refs=%v", got, h.adopt.refs)
 	}
 }
 
