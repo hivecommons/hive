@@ -99,6 +99,7 @@ agents.<key>.sandbox.job.env_from_secrets[] # TODO #11854
 agents.<key>.sandbox.job.node_selector.<key> # TODO #11854
 agents.<key>.sandbox.job.resources.limits.<key> # TODO #11854
 agents.<key>.sandbox.job.resources.requests.<key> # TODO #11854
+agents.<key>.sandbox.job.scheduler_name # TODO #11854
 agents.<key>.sandbox.job.service_account # TODO #11854
 agents.<key>.sandbox.job.tolerations[].effect # TODO #11854
 agents.<key>.sandbox.job.tolerations[].key # TODO #11854
