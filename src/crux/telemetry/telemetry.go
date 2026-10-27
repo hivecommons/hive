@@ -87,15 +87,19 @@ func initFromEnv(ctx context.Context, version string, getenv func(string) string
 		return noopShutdown, err
 	}
 
-	var stops []func(context.Context) error
+	// Build both pipelines before registering either global, so a failure
+	// on the second leaves no provider (and no shut-down provider) behind.
+	var (
+		tp    *sdktrace.TracerProvider
+		mp    *sdkmetric.MeterProvider
+		stops []func(context.Context) error
+	)
 	if traces {
 		exp, err := otlptracehttp.New(ctx)
 		if err != nil {
 			return noopShutdown, fmt.Errorf("trace exporter: %w", err)
 		}
-		tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp), sdktrace.WithResource(res))
-		otel.SetTracerProvider(tp)
-		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+		tp = sdktrace.NewTracerProvider(sdktrace.WithBatcher(exp), sdktrace.WithResource(res))
 		stops = append(stops, tp.Shutdown)
 	}
 	if metrics {
@@ -106,9 +110,15 @@ func initFromEnv(ctx context.Context, version string, getenv func(string) string
 			}
 			return noopShutdown, fmt.Errorf("metric exporter: %w", err)
 		}
-		mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp)), sdkmetric.WithResource(res))
-		otel.SetMeterProvider(mp)
+		mp = sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp)), sdkmetric.WithResource(res))
 		stops = append(stops, mp.Shutdown)
+	}
+	if tp != nil {
+		otel.SetTracerProvider(tp)
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	}
+	if mp != nil {
+		otel.SetMeterProvider(mp)
 	}
 
 	var once sync.Once

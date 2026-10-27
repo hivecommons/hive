@@ -174,7 +174,10 @@ Only the `http/protobuf` protocol is built in: setting
 makes crux print `crux: telemetry disabled: …` and run without export rather
 than fail the command. There is no `/metrics` endpoint and no Prometheus
 dependency; scrape or forward from an OpenTelemetry Collector instead. Spans
-and metrics are flushed on exit (bounded to five seconds). Inside Hive the
+and metrics are flushed on exit, bounded to five seconds: with an endpoint set
+and the collector unreachable, each `crux` invocation can take up to that long
+to exit after its work is done — that is the flush timing out, not a hang.
+Unset the endpoint (or set `OTEL_SDK_DISABLED=true`) to avoid it. Inside Hive the
 same instruments flow through Hive's own `tracing:` configuration instead.
 
 ## What this is not

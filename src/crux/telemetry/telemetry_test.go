@@ -2,7 +2,10 @@ package telemetry
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"go.opentelemetry.io/otel"
@@ -91,5 +94,52 @@ func TestNewResourceDefaultsAndEnvOverride(t *testing.T) {
 	}
 	if _, ok := res.Set().Value(attribute.Key("service.version")); ok {
 		t.Fatal("an empty version must not stamp service.version")
+	}
+}
+
+// With an endpoint set, Init must actually export: one span and one counter
+// recorded through the OTel API reach the collector as /v1/traces and
+// /v1/metrics POSTs when Shutdown flushes.
+func TestInitExportsToCollectorOnShutdown(t *testing.T) {
+	prevTP, prevMP, prevProp := otel.GetTracerProvider(), otel.GetMeterProvider(), otel.GetTextMapPropagator()
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prevTP)
+		otel.SetMeterProvider(prevMP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+
+	var (
+		mu    sync.Mutex
+		posts = map[string]int{}
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			posts[r.URL.Path]++
+			mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv(envEndpoint, srv.URL)
+
+	flush, err := Init(context.Background(), "test")
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	_, span := otel.Tracer("crux/telemetry/test").Start(context.Background(), "test.span")
+	span.End()
+	counter, err := otel.Meter("crux/telemetry/test").Int64Counter("test.counter")
+	if err != nil {
+		t.Fatalf("Int64Counter: %v", err)
+	}
+	counter.Add(context.Background(), 1)
+	flush()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if posts["/v1/traces"] == 0 || posts["/v1/metrics"] == 0 {
+		t.Fatalf("collector POSTs = %v, want /v1/traces and /v1/metrics", posts)
 	}
 }
