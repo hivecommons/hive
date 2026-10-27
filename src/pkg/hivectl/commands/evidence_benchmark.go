@@ -22,7 +22,8 @@ var evidenceBenchmarkNow = func() time.Time { return time.Now().UTC() }
 const benchmarkReadmeDocDir = "src/docs/benchmarks"
 
 func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
-	var root, month, now, spendPath, hubPath, outDir, readme, source string
+	var root, month, now, spendPath, hubPath, storiesPath, redTeamPath, outDir, readme, source string
+	var readmeMinBase int
 	cmd := &cobra.Command{
 		Use:   "benchmark",
 		Short: "Compare mediated and unmediated merged PRs from stored evidence and write the outcomes report",
@@ -31,9 +32,11 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 			"median time-to-merge, CI failure at merged head, changes-requested-before-merge, and cost per merged PR when a\n" +
 			"saved /api/cost response is given with --spend. Every rate carries its n and a 95% Wilson interval; n < 10 is\n" +
 			"printed as \"not reported\". No telemetry is added and nothing contacts a hive.\n\n" +
-			"Writes <out-dir>/outcomes-YYYY-MM.md, outcomes-YYYY-MM.json and assets/outcomes-YYYY-MM-{bars,trend}.svg.\n" +
-			"--readme rewrites the <!-- outcomes:start --> … <!-- outcomes:end --> block of that README from the same\n" +
-			"report, so the README never drifts from the committed report (a test asserts they match).",
+			"Writes <out-dir>/outcomes-YYYY-MM.md, outcomes-YYYY-MM.json, assets/outcomes-YYYY-MM-{bars,trend}.svg and the\n" +
+			"plain-language README cards assets/outcomes-YYYY-MM-card-<name>-{dark,light}.svg (one number per card, no\n" +
+			"statistics; cards whose base is under --readme-min-base are not written). --stories supplies curated real PRs\n" +
+			"for the story card; --red-team the prompt-injection eval summary. --readme rewrites the <!-- outcomes:start --> … <!-- outcomes:end --> block of that README\n" +
+			"from the same report, so the README never drifts from the committed report (a test asserts they match).",
 		Example: "  hivectl evidence benchmark --root ./evidence --month 2026-10 --spend cost.json --out-dir src/docs/benchmarks --readme README.md\n" +
 			"  hivectl evidence benchmark --root /data/evidence --month 2026-10 --out-dir /tmp/bench",
 		Args: argsNone(),
@@ -61,6 +64,17 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 					return err
 				}
 			}
+			if storiesPath != "" {
+				if opts.Stories, err = outcomebench.LoadStories(storiesPath); err != nil {
+					return err
+				}
+			}
+			if redTeamPath != "" {
+				if opts.RedTeam, err = outcomebench.LoadRedTeam(redTeamPath); err != nil {
+					return err
+				}
+			}
+			opts.ReadmeMinBase = readmeMinBase
 			opts.Source = source
 			if opts.Source == "" {
 				opts.Source = "evidence bundles under " + root
@@ -103,6 +117,9 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 	cmd.Flags().StringVar(&now, "now", "", "observation time (RFC3339) for the maturation window; default now")
 	cmd.Flags().StringVar(&spendPath, "spend", "", "saved GET /api/cost JSON for cost per merged PR")
 	cmd.Flags().StringVar(&hubPath, "hub", "", "saved GET /api/hub/evidence JSON for fleet context")
+	cmd.Flags().StringVar(&storiesPath, "stories", "", "saved JSON list of real PRs for the README story card")
+	cmd.Flags().StringVar(&redTeamPath, "red-team", "", "saved JSON summary of the prompt-injection eval (docs/ioscan-red-team.md) for the security card")
+	cmd.Flags().IntVar(&readmeMinBase, "readme-min-base", outcomebench.DefaultReadmeMinBase, "smallest count a README card may be built on")
 	cmd.Flags().StringVar(&outDir, "out-dir", "docs/benchmarks", "directory for the report, JSON and assets/")
 	cmd.Flags().StringVar(&readme, "readme", "", "README whose outcomes block to rewrite from this report")
 	cmd.Flags().StringVar(&source, "source", "", "how the report names its source (default: the --root path)")
@@ -126,8 +143,20 @@ func writeBenchmark(rep outcomebench.Report, outDir string) ([]string, error) {
 		filepath.Join(outDir, "assets", rep.AssetBase()+"-bars.svg"):  []byte(rep.BarChartSVG()),
 		filepath.Join(outDir, "assets", rep.AssetBase()+"-trend.svg"): []byte(rep.TrendSVG()),
 	}
+	order := []string{base + ".md", base + ".json", filepath.Join(outDir, "assets", rep.AssetBase()+"-bars.svg"), filepath.Join(outDir, "assets", rep.AssetBase()+"-trend.svg")}
+	cards := rep.Cards()
+	for _, name := range outcomebench.CardNames() {
+		for _, theme := range []string{"dark", "light"} {
+			file := rep.CardFile(name, theme)
+			if svg, ok := cards[file]; ok {
+				p := filepath.Join(outDir, "assets", file)
+				files[p] = []byte(svg)
+				order = append(order, p)
+			}
+		}
+	}
 	paths := make([]string, 0, len(files))
-	for _, p := range []string{base + ".md", base + ".json", filepath.Join(outDir, "assets", rep.AssetBase()+"-bars.svg"), filepath.Join(outDir, "assets", rep.AssetBase()+"-trend.svg")} {
+	for _, p := range order {
 		if err := os.WriteFile(p, files[p], 0o644); err != nil {
 			return nil, fmt.Errorf("writing %s: %w", p, err)
 		}

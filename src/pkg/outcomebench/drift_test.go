@@ -43,6 +43,10 @@ func TestCommittedReportMatchesReadme(t *testing.T) {
 	if got != want {
 		t.Errorf("README outcomes block drifted from %s; regenerate with src/scripts/outcome-benchmark.sh --readme\n--- README\n%s\n--- regenerated\n%s", latest, got, want)
 	}
+	// The ladder card sits outside the generated block but is still generated.
+	if !strings.Contains(string(readme), rep.HowItWorksPicture("src/docs/benchmarks")) {
+		t.Errorf("README does not embed the how-it-works card: expected\n%s", rep.HowItWorksPicture("src/docs/benchmarks"))
+	}
 	base := strings.TrimSuffix(latest, ".json")
 	check := func(path, want string) {
 		t.Helper()
@@ -57,4 +61,14 @@ func TestCommittedReportMatchesReadme(t *testing.T) {
 	check(base+".md", rep.Markdown())
 	check(filepath.Join(docDir, "assets", rep.AssetBase()+"-bars.svg"), rep.BarChartSVG())
 	check(filepath.Join(docDir, "assets", rep.AssetBase()+"-trend.svg"), rep.TrendSVG())
+	for file, svg := range rep.Cards() {
+		check(filepath.Join(docDir, "assets", file), svg)
+	}
+	// A card the generator no longer emits must not linger as a stale asset.
+	stale, _ := filepath.Glob(filepath.Join(docDir, "assets", rep.AssetBase()+"-card-*.svg"))
+	for _, p := range stale {
+		if _, ok := rep.Cards()[filepath.Base(p)]; !ok {
+			t.Errorf("%s is not emitted by the generator any more; delete it", p)
+		}
+	}
 }

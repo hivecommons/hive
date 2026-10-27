@@ -46,6 +46,12 @@ type Options struct {
 	Hub *HubContext
 	// Source names where the bundles came from, for the methodology section.
 	Source string
+	// Stories are curated real PRs for the README story card; nil omits it.
+	Stories []Story
+	// RedTeam is the saved prompt-injection eval summary; nil omits the card.
+	RedTeam *RedTeam
+	// ReadmeMinBase overrides DefaultReadmeMinBase (0 keeps the default).
+	ReadmeMinBase int
 }
 
 // Spend is what /api/cost already publishes.
@@ -138,6 +144,10 @@ type Report struct {
 	Trend  map[string][]MonthPoint
 	Spend  *Spend
 	Hub    *HubContext
+	// Stories and ReadmeMinBase feed the README cards; see cards.go.
+	Stories       []Story  `json:",omitempty"`
+	RedTeam       *RedTeam `json:",omitempty"`
+	ReadmeMinBase int      `json:",omitempty"`
 }
 
 // RepoCount is merged PRs per repository in the window.
@@ -291,6 +301,7 @@ func Compute(bundles []*evidence.Bundle, unreadable int, opts Options) Report {
 		GeneratedAt: now, Since: opts.Since, Until: opts.Until, Now: now, Source: opts.Source,
 		Bundles: len(bundles), Unreadable: unreadable, PRs: len(prs),
 		Spend: opts.Spend, Hub: opts.Hub, Trend: map[string][]MonthPoint{},
+		Stories: opts.Stories, RedTeam: opts.RedTeam, ReadmeMinBase: opts.ReadmeMinBase,
 	}
 	var med, unmed cohortAcc
 	repos := map[string]int{}

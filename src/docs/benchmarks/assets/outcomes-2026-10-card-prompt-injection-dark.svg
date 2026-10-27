@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="235" viewBox="0 0 280 235" role="img" aria-label="97% of prompt-injection attempts were caught before reaching an agent, with 1 false alarm in 12 harmless requests" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif">
+<title>97% of prompt-injection attempts were caught before reaching an agent, with 1 false alarm in 12 harmless requests</title>
+<rect x="0.5" y="0.5" width="279" height="234" rx="12" fill="#121922" stroke="#263545"/>
+<text x="20" y="32" fill="#a8b3c2" font-size="10" font-weight="600" letter-spacing="1.2">SECURITY · PROMPT INJECTION</text>
+<text x="20" y="96" fill="#f4c75f" font-size="52" font-weight="700">97%</text>
+<text x="20" y="126" fill="#f6f8fb" font-size="14">of prompt-injection attempts</text>
+<text x="20" y="145" fill="#f6f8fb" font-size="14">were caught; 1 false alarm in 12</text>
+<text x="20" y="164" fill="#f6f8fb" font-size="14">harmless requests.</text>
+<text x="20" y="206" fill="#a8b3c2" font-size="10">Hive&#39;s own test set: 63 attacks, 12 harmless</text>
+<text x="20" y="219" fill="#a8b3c2" font-size="10">texts, Oct 2026. Not production traffic.</text>
+</svg>

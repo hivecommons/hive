@@ -166,8 +166,8 @@ func TestComputeRefusesUnsupportedSplit(t *testing.T) {
 		t.Fatalf("findings: %v", rep.Findings())
 	}
 	block := rep.ReadmeBlock("src/docs/benchmarks")
-	if !strings.Contains(block, "does not support a mediated-vs-unmediated comparison") || strings.Contains(block, "Revert rate") {
-		t.Fatalf("readme block must not claim a comparison:\n%s", block)
+	if !strings.Contains(block, "Not enough reviewed pull requests are on record yet") || strings.Contains(block, "card-sent-back") || strings.Contains(block, "card-also") {
+		t.Fatalf("readme block must not claim a comparison or draw a card below the minimum base:\n%s", block)
 	}
 	for _, r := range []Rate{rep.Mediated.RevertRate, rep.Unmediated.TimeToMergeRate()} {
 		if r.Reported {
@@ -212,14 +212,22 @@ func TestSVGsAreWellFormedAndHonest(t *testing.T) {
 
 func TestReadmeBlockRoundTrip(t *testing.T) {
 	since, until, _ := ParseWindow("2026-10")
-	rep := Compute(fixture(), 0, Options{Since: since, Until: until, Now: now, Spend: &Spend{USD: 26, MergedPRs: 13}})
+	rep := Compute(fixture(), 0, Options{Since: since, Until: until, Now: now, Spend: &Spend{USD: 26, MergedPRs: 13}, ReadmeMinBase: 1,
+		Stories: []Story{{Repo: "hivecommons/hive", Number: 1, Caught: "A test was skipped.", OpenedAt: now.Add(-20 * time.Minute), CaughtAt: now.Add(-15 * time.Minute), FixApprovedAt: now.Add(-10 * time.Minute), MergedAt: now}},
+		RedTeam: &RedTeam{Attacks: 10, Caught: 9, Benign: 5, FalseAlarms: 1, RunAt: now}})
 	block := rep.ReadmeBlock("src/docs/benchmarks")
-	for _, want := range []string{ReadmeStart, ReadmeEnd, "**Revert rate", "**Median time-to-merge", "flagged for changes", "≈$2.00", "36 pull requests across 2 repositories", "src/docs/benchmarks/outcomes-2026-10.md", "assets/outcomes-2026-10-bars.svg", "assets/outcomes-2026-10-trend.svg"} {
+	for _, want := range []string{ReadmeStart, ReadmeEnd, "## Accuracy", "## Security", "## Cost", "## Also", "36 pull requests across 2 repositories", "src/docs/benchmarks/outcomes-2026-10.md",
+		"card-sent-back-dark.svg", "card-sent-back-light.svg", "card-stories-dark.svg", "card-prompt-injection-light.svg", "card-cost-dark.svg", "card-also-light.svg", "prefers-color-scheme: dark", "how we count"} {
 		if !strings.Contains(block, want) {
 			t.Errorf("block missing %q:\n%s", want, block)
 		}
 	}
-	if n := strings.Count(block, "\n"); n > 14 {
+	for _, banned := range []string{"Wilson", "interval", "(n=", " n=", "median", "mediated", "95%", "≈"} {
+		if strings.Contains(block, banned) {
+			t.Errorf("block contains %q; statistical vocabulary belongs in the report", banned)
+		}
+	}
+	if n := strings.Count(block, "\n"); n > 60 {
 		t.Fatalf("block is %d lines; README additions must stay small", n+1)
 	}
 	readme := "# Hive\n\nintro\n\n" + ReadmeStart + "\nstale\n" + ReadmeEnd + "\n\n## Next\n"

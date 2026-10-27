@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="364" viewBox="0 0 880 364" role="img" aria-label="How Hive works: scan, claim, work, verify, merge, credit" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif">
+<title>How Hive works: scan, claim, work, verify, merge, credit</title>
+<rect x="0.5" y="0.5" width="879" height="363" rx="12" fill="#121922" stroke="#263545"/>
+<text x="20" y="32" fill="#a8b3c2" font-size="10" font-weight="600" letter-spacing="1.2">HOW IT WORKS · EVERY TASK</text>
+<circle cx="32" cy="60" r="12" fill="#f4c75f"/><text x="32" y="64" fill="#121922" font-size="12" font-weight="700" text-anchor="middle">1</text>
+<text x="56" y="64" fill="#f6f8fb" font-size="15" font-weight="700">Scan</text>
+<text x="56" y="81" fill="#a8b3c2" font-size="12">Hive reads your open issues, pull requests and failing checks.</text>
+<text x="860" y="64" fill="#74df9a" font-size="12" font-weight="600" text-anchor="end">Work comes from your backlog</text>
+<line x1="32" y1="74" x2="32" y2="90" stroke="#263545"/>
+<circle cx="32" cy="104" r="12" fill="#f4c75f"/><text x="32" y="108" fill="#121922" font-size="12" font-weight="700" text-anchor="middle">2</text>
+<text x="56" y="108" fill="#f6f8fb" font-size="15" font-weight="700">Claim</text>
+<text x="56" y="125" fill="#a8b3c2" font-size="12">One agent claims one task, so nothing is done twice.</text>
+<text x="860" y="108" fill="#74df9a" font-size="12" font-weight="600" text-anchor="end">No duplicate work</text>
+<line x1="32" y1="118" x2="32" y2="134" stroke="#263545"/>
+<circle cx="32" cy="148" r="12" fill="#f4c75f"/><text x="32" y="152" fill="#121922" font-size="12" font-weight="700" text-anchor="middle">3</text>
+<text x="56" y="152" fill="#f6f8fb" font-size="15" font-weight="700">Work</text>
+<text x="56" y="169" fill="#a8b3c2" font-size="12">A fresh, short-lived agent does the job and then stops.</text>
+<text x="860" y="152" fill="#74df9a" font-size="12" font-weight="600" text-anchor="end">Nothing runs for hours unattended</text>
+<line x1="32" y1="162" x2="32" y2="178" stroke="#263545"/>
+<circle cx="32" cy="192" r="12" fill="#f4c75f"/><text x="32" y="196" fill="#121922" font-size="12" font-weight="700" text-anchor="middle">4</text>
+<text x="56" y="196" fill="#f6f8fb" font-size="15" font-weight="700">Verify</text>
+<text x="56" y="213" fill="#a8b3c2" font-size="12">CI runs, a separate reviewer checks the change, and planted</text>
+<text x="56" y="227" fill="#a8b3c2" font-size="12">instructions are screened out.</text>
+<text x="860" y="196" fill="#74df9a" font-size="12" font-weight="600" text-anchor="end">Problems are found before merge</text>
+<line x1="32" y1="206" x2="32" y2="236" stroke="#263545"/>
+<circle cx="32" cy="250" r="12" fill="#f4c75f"/><text x="32" y="254" fill="#121922" font-size="12" font-weight="700" text-anchor="middle">5</text>
+<text x="56" y="254" fill="#f6f8fb" font-size="15" font-weight="700">Merge</text>
+<text x="56" y="271" fill="#a8b3c2" font-size="12">Trust level decides: hold for a human, or merge once every check</text>
+<text x="56" y="285" fill="#a8b3c2" font-size="12">passes.</text>
+<text x="860" y="254" fill="#74df9a" font-size="12" font-weight="600" text-anchor="end">Humans keep the decisions</text>
+<line x1="32" y1="264" x2="32" y2="294" stroke="#263545"/>
+<circle cx="32" cy="308" r="12" fill="#f4c75f"/><text x="32" y="312" fill="#121922" font-size="12" font-weight="700" text-anchor="middle">6</text>
+<text x="56" y="312" fill="#f6f8fb" font-size="15" font-weight="700">Credit</text>
+<text x="56" y="329" fill="#a8b3c2" font-size="12">The person who opened the issue is credited on the merge.</text>
+<text x="860" y="312" fill="#74df9a" font-size="12" font-weight="600" text-anchor="end">The asker is credited</text>
+</svg>

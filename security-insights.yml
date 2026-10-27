@@ -18,7 +18,7 @@ project:
       social: https://github.com/clubanderson
       primary: true
   documentation:
-    quickstart-guide: https://github.com/hivecommons/hive/blob/v5/README.md#quick-start
+    quickstart-guide: https://github.com/hivecommons/hive/blob/v5/src/docs/what-is-hive.md#run-it
     detailed-guide: https://docs.hivecommons.dev
     code-of-conduct: https://github.com/hivecommons/.github/blob/main/CODE_OF_CONDUCT.md
   repositories:

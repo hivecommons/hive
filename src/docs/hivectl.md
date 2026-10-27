@@ -302,10 +302,14 @@ at merged head, the share of mediated merges that carried a `changes_requested` 
 `--spend` names a saved `GET /api/cost` response — cost per merged PR. Every rate carries its n and a 95 % Wilson
 interval; n < 10 is `not reported`. `--month YYYY-MM` bounds the merge time (default all), `--now` fixes the
 observation time for maturation, `--hub` adds a saved `GET /api/hub/evidence` response as fleet context, `--source`
-names the data in the methodology section. It writes `outcomes-YYYY-MM.{md,json}` and
-`assets/outcomes-YYYY-MM-{bars,trend}.svg` under `--out-dir`, and `--readme FILE` rewrites that file's
-`<!-- outcomes:start -->…<!-- outcomes:end -->` block from the same report. Local filesystem only; no hive session, no
-telemetry. `src/scripts/outcome-benchmark.sh` wraps it; see [benchmarks/](benchmarks/README.md).
+names the data in the methodology section. It writes `outcomes-YYYY-MM.{md,json}`,
+`assets/outcomes-YYYY-MM-{bars,trend}.svg` and the plain-language README cards
+`assets/outcomes-YYYY-MM-card-<name>-{dark,light}.svg` under `--out-dir`, and `--readme FILE` rewrites that file's
+`<!-- outcomes:start -->…<!-- outcomes:end -->` block from the same report. The README block carries only the cards
+and flat sentences, no intervals: `--readme-min-base N` (default 200) is the smallest base a production-count card
+may rest on, separate from the n ≥ 10 report threshold; `--stories FILE` supplies curated caught → fixed → merged
+examples and `--red-team FILE` the prompt-injection evaluation counts (see [benchmarks/](benchmarks/README.md) for
+both formats). Local filesystem only; no hive session, no telemetry. `src/scripts/outcome-benchmark.sh` wraps it; see [benchmarks/](benchmarks/README.md).
 
 ### evidence — backfill bundles from GitHub history
 

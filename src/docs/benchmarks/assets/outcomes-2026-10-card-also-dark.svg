@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="190" viewBox="0 0 880 190" role="img" aria-label="Also: consistency, readability, efficiency, speed" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif">
+<title>Also: consistency, readability, efficiency, speed</title>
+<rect x="0.5" y="0.5" width="879" height="189" rx="12" fill="#121922" stroke="#263545"/>
+<text x="20" y="32" fill="#a8b3c2" font-size="10" font-weight="600" letter-spacing="1.2">ALSO · OCT 2026</text>
+<text x="20" y="62" fill="#f6f8fb" font-size="14" font-weight="700">Consistency</text>
+<text x="20" y="94" fill="#f4c75f" font-size="30" font-weight="700">15,054</text>
+<text x="20" y="114" fill="#a8b3c2" font-size="12">review verdicts, each</text>
+<text x="20" y="129" fill="#a8b3c2" font-size="12">against the same checklist;</text>
+<text x="20" y="144" fill="#a8b3c2" font-size="12">one house style file for</text>
+<text x="20" y="159" fill="#a8b3c2" font-size="12">every task.</text>
+<line x1="220" y1="48" x2="220" y2="162" stroke="#263545"/>
+<text x="230" y="62" fill="#f6f8fb" font-size="14" font-weight="700">Readability</text>
+<text x="230" y="84" fill="#a8b3c2" font-size="12">Every verdict is written as</text>
+<text x="230" y="99" fill="#a8b3c2" font-size="12">what this is, the problem,</text>
+<text x="230" y="114" fill="#a8b3c2" font-size="12">the fix, and what happens if</text>
+<text x="230" y="129" fill="#a8b3c2" font-size="12">it is skipped.</text>
+<line x1="430" y1="48" x2="430" y2="162" stroke="#263545"/>
+<text x="440" y="62" fill="#f6f8fb" font-size="14" font-weight="700">Efficiency</text>
+<text x="440" y="84" fill="#a8b3c2" font-size="12">Agents run only when there</text>
+<text x="440" y="99" fill="#a8b3c2" font-size="12">is work; capacity is shared</text>
+<text x="440" y="114" fill="#a8b3c2" font-size="12">fairly across repositories.</text>
+<line x1="640" y1="48" x2="640" y2="162" stroke="#263545"/>
+<text x="650" y="62" fill="#f6f8fb" font-size="14" font-weight="700">Speed</text>
+<text x="650" y="94" fill="#f4c75f" font-size="30" font-weight="700">27</text>
+<text x="650" y="114" fill="#a8b3c2" font-size="12">minutes from open to merge</text>
+<text x="650" y="129" fill="#a8b3c2" font-size="12">for a typical reviewed pull</text>
+<text x="650" y="144" fill="#a8b3c2" font-size="12">request; review adds about</text>
+<text x="650" y="159" fill="#a8b3c2" font-size="12">15.</text>
+</svg>
