@@ -156,9 +156,9 @@ const retroFeedbackGraphQL = `{"data":{"repository":{"pullRequest":{
 	]},
 	"commits":{"nodes":[
 		{"commit":{"oid":"c0","messageHeadline":"feat: add Foo","authoredDate":"2026-09-01T00:00:00Z","parents":{"totalCount":1,"nodes":[{"oid":"p0"}]}}},
-		{"commit":{"oid":"c1","messageHeadline":"fix: split Foo","authoredDate":"2026-09-02T01:00:00Z","parents":{"totalCount":1,"nodes":[{"oid":"c0"}]}}},
-		{"commit":{"oid":"m1","messageHeadline":"Merge branch 'v6'","authoredDate":"2026-09-02T02:00:00Z","parents":{"totalCount":2,"nodes":[{"oid":"c1"},{"oid":"b9"}]}}},
-		{"commit":{"oid":"c2","messageHeadline":"test: cover Foo","committedDate":"2026-09-02T03:00:00Z","parents":{"totalCount":1,"nodes":[{"oid":"m1"}]}}},
+		{"commit":{"oid":"m1","messageHeadline":"Merge branch 'v6'","authoredDate":"2026-09-02T00:30:00Z","parents":{"totalCount":2,"nodes":[{"oid":"c0"},{"oid":"b9"}]}}},
+		{"commit":{"oid":"c1","messageHeadline":"fix: split Foo","authoredDate":"2026-09-02T01:00:00Z","parents":{"totalCount":1,"nodes":[{"oid":"m1"}]}}},
+		{"commit":{"oid":"c2","messageHeadline":"test: cover Foo","committedDate":"2026-09-02T03:00:00Z","parents":{"totalCount":1,"nodes":[{"oid":"c1"}]}}},
 		{"commit":{"oid":"c3","messageHeadline":"chore: after merge","authoredDate":"2026-09-04T00:00:00Z","parents":{"totalCount":1,"nodes":[{"oid":"c2"}]}}}
 	]}
 }}}}`
@@ -213,8 +213,44 @@ func TestRetroReviewFeedback_Qualifying(t *testing.T) {
 	if graphQL != 1 || compares != 1 || rework != 0 {
 		t.Fatalf("GitHub calls: graphql=%d compare=%d rework=%d, want 1/1/0 on a cache hit", graphQL, compares, rework)
 	}
-	if s.compares[0] != "c0...c2" {
-		t.Fatalf("compare range = %s, want c0...c2 (parent of first rework commit to last)", s.compares[0])
+	if s.compares[0] != "m1...c2" {
+		t.Fatalf("compare range = %s, want m1...c2 (parent of first rework commit to last)", s.compares[0])
+	}
+}
+
+// A merge from base between rework commits would pull the base branch's files
+// into the compare, so the range is dropped while the subjects survive.
+func TestRetroReworkCommits_MergeInsideRangeDropsRange(t *testing.T) {
+	commit := func(oid, subject, at string, parents ...string) rawPRRetroCommit {
+		var rc rawPRRetroCommit
+		rc.Commit.OID = oid
+		rc.Commit.MessageHeadline = subject
+		rc.Commit.AuthoredDate, _ = time.Parse(time.RFC3339, at)
+		rc.Commit.Parents.TotalCount = len(parents)
+		for _, p := range parents {
+			rc.Commit.Parents.Nodes = append(rc.Commit.Parents.Nodes, struct {
+				OID string `json:"oid"`
+			}{OID: p})
+		}
+		return rc
+	}
+	commits := []rawPRRetroCommit{
+		commit("c1", "fix: split Foo", "2026-09-02T01:00:00Z", "c0"),
+		commit("m1", "Merge branch 'v6'", "2026-09-02T02:00:00Z", "c1", "b9"),
+		commit("c2", "test: cover Foo", "2026-09-02T03:00:00Z", "m1"),
+	}
+	subjects, base, head := retroReworkCommits(commits, retroFirstReview, retroMergedAt)
+	if got := strings.Join(subjects, "|"); got != "fix: split Foo|test: cover Foo" {
+		t.Fatalf("subjects = %q", got)
+	}
+	if base != "" || head != "" {
+		t.Fatalf("range = %q...%q, want none when a merge sits inside it", base, head)
+	}
+
+	// A merge after the last rework commit is outside the range.
+	subjects, base, head = retroReworkCommits(commits[:2], retroFirstReview, retroMergedAt)
+	if base != "c0" || head != "c1" || len(subjects) != 1 {
+		t.Fatalf("range = %q...%q subjects=%v, want c0...c1", base, head, subjects)
 	}
 }
 
