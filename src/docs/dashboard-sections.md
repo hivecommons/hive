@@ -97,6 +97,7 @@ How busy Hive thinks your projects are right now, and how often it wakes its wor
 - The Governor picks a mode by comparing the amount of actionable work with three thresholds. Actionable work is work Hive could do now, with nothing waiting on a person.
 - The **actionable issues** and **actionable PRs** tiles use the same count as the Overview's Actionable now tile. The two always agree.
 - The **hold** list names every held item. Held means someone parked it with a hold label.
+- The compact strip at the top of the Agents view also shows **running** — how many workers are mid-round right now, and the estimated spend the whole fleet has accrued in the current clock hour (`3 · $1.20 this hour`). The hour figure is the rise in the cumulative estimate since the top of the hour; `$–` means the hive has not yet taken a reading this hour.
 - The **cadence table** shows, for each worker, how often it runs in each mode. Continuous means it runs again as soon as it finishes.
 - The **budget** shows how much of the AI spending allowance for the current period has been used.
 - The **next kick** estimate follows the eval tick, which is longer while GitHub webhooks are trusted (`/api/status.webhooks.mode` reads `webhook`) and drops back to `governor.eval_interval_s` when they degrade (`polling`). How that decision is made is in [webhooks.md](webhooks.md#fallback-when-webhooks-degrade).
@@ -614,6 +615,14 @@ More about the line:
 - **Times use the hive's clock**, not your computer's. They are right even when your computer's clock is wrong, and they are never negative.
 - **Updates.** The line updates with each worker update, every 10 seconds by default, so a change shows within about 15 seconds.
 - **Privacy.** Titles come only from the issue and pull request lists the dashboard already shows you. If it shows you no repositories' issues, the line shows no item numbers either.
+
+**The run line.** While a worker is working, a second line under **Now:** reads like `$0.42 · 38.1K tok · 4m 12s · tests ✓ · 3 files`. The same line is pinned in the worker's detail panel header. It is built only from figures Hive already keeps:
+
+- **`$` and `tok`** are the estimated cost and tokens of *this* round of work: the worker's cumulative token count × public list price (the same basis as the Cost section), minus what it was when Hive started the round (the last kick). Hive remembers the starting point, so a page reload does not reset the figure. `$–` means the token collector has no figure for this worker yet.
+- **Elapsed** counts from the start of the round.
+- **`tests ✓` / `tests ✗` / `tests –`** is the last test-runner summary visible in the worker's terminal (`go test` `ok`/`FAIL`, pytest `N passed`/`N failed`, jest/vitest `Tests:` lines). `–` means no result line is visible.
+- **`N files`** is the last `N files changed` git summary visible in the terminal; `–` means none is.
+- It updates with each worker update and disappears when the round ends. The **spend (range)** row further down the card is unchanged: that is the worker's spend over the Cost section's timeframe, not this round's.
 
 **What it is good for.** Use it to pause a worker, restart a stuck one, or change its settings. Fix any card that says it needs a login. Read the **Now:** lines to see what each worker is on without opening its log.
 

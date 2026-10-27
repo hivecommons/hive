@@ -544,17 +544,19 @@ type StatusPayload struct {
 	// from the shallow /api/health liveness signal or the repo-workflow
 	// Health map above, so the pill can never show "Health OK" while the
 	// spoke's own agents are down (#2465).
-	DeepHealth          map[string]any    `json:"deepHealth,omitempty"`
-	Budget              FrontendBudget    `json:"budget"`
-	CadenceMatrix       []FrontendCadence `json:"cadenceMatrix"`
-	GHRateLimits        map[string]any    `json:"ghRateLimits"`
-	APIBudget           map[string]any    `json:"api_budget"`
-	AgentMetrics        map[string]any    `json:"agentMetrics"`
-	Hold                FrontendHold      `json:"hold"`
-	IssueToMerge        map[string]any    `json:"issueToMerge"`
-	ACMMLevel           int               `json:"acmmLevel"`
-	ACMMLevelConfigured bool              `json:"acmmLevelConfigured"`
-	ACMMPackAgents      []string          `json:"acmmPackAgents"`
+	DeepHealth    map[string]any    `json:"deepHealth,omitempty"`
+	Budget        FrontendBudget    `json:"budget"`
+	CadenceMatrix []FrontendCadence `json:"cadenceMatrix"`
+	GHRateLimits  map[string]any    `json:"ghRateLimits"`
+	APIBudget     map[string]any    `json:"api_budget"`
+	AgentMetrics  map[string]any    `json:"agentMetrics"`
+	Hold          FrontendHold      `json:"hold"`
+	// FleetRun is the governor-strip `running N · $X this hour` figure (#14576).
+	FleetRun            FrontendFleetRun `json:"fleetRun"`
+	IssueToMerge        map[string]any   `json:"issueToMerge"`
+	ACMMLevel           int              `json:"acmmLevel"`
+	ACMMLevelConfigured bool             `json:"acmmLevelConfigured"`
+	ACMMPackAgents      []string         `json:"acmmPackAgents"`
 	// ACMMAdvice is the advisory level-up recommendation (#5225), derived from
 	// the same live signals the /api/acmm-recommendation endpoint serves so the
 	// two surfaces can never drift. It is ADVISORY ONLY: nothing acts on it
@@ -824,6 +826,10 @@ type FrontendAgent struct {
 	// the turn is still running. KickOutcomeReason is the deciding pane line.
 	KickOutcome       string `json:"kickOutcome,omitempty"`
 	KickOutcomeReason string `json:"kickOutcomeReason,omitempty"`
+	// Run is the live per-run figure (#14576): this kick's estimated cost,
+	// tokens, elapsed time, last visible test result and files changed.
+	// Present only while Busy is "working".
+	Run *FrontendAgentRun `json:"run,omitempty"`
 	// BackendAuth* surfaces this agent's backend-auth canary (#6558): derived
 	// from the same classifyProviderError verdict as StructuredStatus's
 	// "blocked: inference" evidence, so the dashboard can render an explicit

@@ -346,6 +346,7 @@ func BuildAgentOnlyStatus(
 	cfg *config.Config,
 ) *AgentStatusPayload {
 	agents, hidden := buildAgentsWithHidden(agentStatuses, cfg, govState)
+	applyRunMeter(defaultRunMeter, agents, agentStatuses, nil, time.Now())
 	return &AgentStatusPayload{
 		Timestamp:        time.Now().UTC().Format(time.RFC3339),
 		Agents:           agents,
@@ -376,6 +377,7 @@ func BuildFrontendStatus(
 	ghRateLimits := buildGHRateLimits(ghClient, ctx, cfg)
 
 	agents, hiddenAgents := buildAgentsWithHidden(agentStatuses, cfg, govState)
+	fleetRun := applyRunMeter(defaultRunMeter, agents, agentStatuses, tokenCollector, time.Now())
 	health := buildHealth(ghClient, ctx)
 	mergeAgentAuthHealth(health, agents)
 
@@ -413,6 +415,7 @@ func BuildFrontendStatus(
 		AgentMetrics:          agentMetrics,
 		OverviewCoverage:      buildOverviewCoverage(agentMetrics, cfg),
 		Hold:                  buildHold(actionable),
+		FleetRun:              fleetRun,
 		IssueToMerge:          issueToMerge,
 		IssuesDisabledRepos:   metricsCollector.GetIssuesDisabledRepos(),
 		ACMMLevel:             detectACMMLevel(cfg),

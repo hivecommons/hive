@@ -1288,6 +1288,14 @@
     .agent-now .an-lead { font-weight: 600; color: var(--text); }
     .agent-now.outdated { color: var(--yellow); }
     .oc-agent-detail .agent-now { text-align: left; }
+    /* Live per-run line (#14576): $cost · tokens · elapsed · tests · files. */
+    .oc-run-line { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); font-variant-numeric: tabular-nums; }
+    .oc-run-line .rl-cost { font-weight: 600; color: var(--text); }
+    .oc-run-line .rl-tests.pass { color: var(--green); }
+    .oc-run-line .rl-tests.fail { color: var(--red); }
+    .oc-run-line .rl-sep { opacity: 0.5; }
+    .oc-agent-detail .oc-run-line { justify-content: flex-start; }
+    .oc-agent-detail-header .oc-run-line { margin-top: var(--sp-0); margin-left: auto; }
     /* Agent activity section (#10935): one row per agent. */
     .agent-activity-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
     .agent-activity-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
@@ -10757,6 +10765,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="gov-metric"><span class="gm-label">actionable</span><span class="gm-val">${govActionable}</span></div>
           <div class="gov-metric"><span class="gm-label">PRs</span><span class="gm-val">${govPrs}</span></div>
           <div class="gov-metric"><span class="gm-label">MTTR</span><span class="gm-val">${formatFixTime(itmMedian)}</span></div>
+          ${fleetRunStripHtml()}
           <div class="gov-metric" title="${esc((window._lastStatus?.hold?.items || []).map(h => (h.type === 'pr' ? 'PR' : 'Issue') + ' ' + h.repo + '#' + h.number + (h.review_class ? ' [' + h.review_class + ']' : '') + ': ' + h.title).join('\n') || 'No items on hold')}"><span class="gm-label">on hold</span><span class="gm-val">${window._lastStatus?.hold?.total || 0}</span></div>
           ${(() => {
             const plan = window._lastStatus?.planning || {};
@@ -10823,6 +10832,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="oc-agent-detail-header">
           <span class="status-dot ${dotState}" data-status="${statusAttr(dotState)}"${dotTitle ? ` title="${esc(dotTitle)}"` : ''}></span>
           <span class="agent-name-big">${esc(a.displayName || a.name)}</span>${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${needsLoginDown ? '<span title="CLI needs login" style="margin-left:var(--sp-3)">\uD83D\uDD11</span>' : ''}
+          ${agentRunLineHtml(a)}
           <span style="font-size:0.78rem;color:var(--muted);margin-left:auto">${stateLabel}${pauseInfoIcon(a)}</span>
         </div>
         <div class="oc-detail-actions">
@@ -13518,6 +13528,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function agentNowHtml(a) {
       return agentNowLineHtml(a, agentNowStateOf(a), agentNowContext(Date.now()));
+    }
+
+    // Live per-run line (#14576): "$0.42 · 38.1K tok · 4m 12s · tests ✓ · 3 files".
+    // Rendered only while /api/status carries agents[].run (busy agents), from
+    // the per-agent cumulative figures the token collector already keeps; the
+    // server reports the delta since the kick's BusySince, so a reload does not
+    // reset it. Missing signals render as "–" rather than a guess.
+    const RUN_LINE_HELP = 'Live figures for the kick in progress: estimated cost and tokens since the kick started (token × list price, same basis as the Cost section), elapsed time, the last test-runner result visible in the transcript, and the last "N files changed" git summary. "–" means not observed yet.';
+    function fmtRunElapsed(sec) {
+      sec = Math.max(0, Math.floor(Number(sec) || 0));
+      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+      if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+      if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
+      return `${s}s`;
+    }
+    function agentRunLineHtml(a) {
+      const r = a && a.run;
+      if (!r) return '';
+      const sep = '<span class="rl-sep">·</span>';
+      const cost = r.priced ? fmtUSD(r.costUSD || 0) : '$–';
+      const toks = r.priced ? `${fmtTokens(r.tokens || 0)} tok` : '– tok';
+      const tests = r.tests === 'pass' ? '<span class="rl-tests pass">tests ✓</span>'
+        : r.tests === 'fail' ? '<span class="rl-tests fail">tests ✗</span>'
+        : '<span class="rl-tests">tests –</span>';
+      const files = (typeof r.filesChanged === 'number' && r.filesChanged >= 0)
+        ? `${r.filesChanged} file${r.filesChanged === 1 ? '' : 's'}` : '– files';
+      return `<div class="oc-run-line" data-agent-run="${esc(a.name)}" title="${esc(RUN_LINE_HELP)}"><span class="rl-cost">${cost}</span>${sep}<span class="rl-tokens">${toks}</span>${sep}<span class="rl-elapsed">${fmtRunElapsed(r.elapsedS)}</span>${sep}${tests}${sep}<span class="rl-files">${files}</span></div>`;
+    }
+    function fleetRunStripHtml() {
+      const f = window._lastStatus?.fleetRun;
+      if (!f) return '';
+      const hour = f.hourPriced ? fmtUSD(f.hourUSD || 0) : '$–';
+      return `<div class="gov-metric" title="Agents mid-kick right now · estimated spend accrued by the whole fleet in the current clock hour (token × list price)"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run">${f.running || 0} · ${hour} this hour</span></div>`;
     }
 
     // Repaints every "Now:" line in place so "ago" keeps counting up (and
@@ -17733,6 +17776,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             return '';
           })()}${kickOutcomeBadgeHtml(a)}${agentSpendChip(a.name)}</div>
           ${agentNowHtml(a)}
+          ${agentRunLineHtml(a)}
           ${agentBlockerLineHtml(a)}
           ${(() => {
             // Last upstream/launch error stays on its own line below the state
