@@ -149,17 +149,22 @@ func TestTrustedAuthorSweepEvaluatesTrustedBotWhenSelfAuthoredLaneInactive(t *te
 	}
 }
 
-func TestTrustedAuthorSweepHandsAppAuthoredToContributorLaneReason(t *testing.T) {
-	// The contributor lane vouches for the App's own PRs (RoleTrusted), so the
-	// trusted-author tier must not log a contradictory untrusted-author-role,
+func TestTrustedAuthorSweepHandsAppAuthoredToSelfLaneWithOwnReason(t *testing.T) {
+	// The self-authored lane owns the App's own PRs, so the trusted-author
+	// tier must hand off under its own reason — not a contradictory
+	// untrusted-author-role, and not the contributor lane's reason, which
+	// read as if that lane had routed the PR (hivecommons/hive#14482) —
 	// whether or not the self-authored lane is active.
 	for _, active := range []bool{false, true} {
 		fx := trustedSweepFixture{author: testHiveAppBotLogin}
 		api := newTrustedSweepAPI(t, &fx)
 		var logs bytes.Buffer
 		policy := TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"}
+		tracker := NewStageTracker()
 		c := newTrustedSweepEngine(api.URL, policy, Options{
-			Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+			Logger:           slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+			StageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
+			StageTracker:     tracker,
 		})
 
 		result, err := c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{SelfAuthoredLaneActive: active})
@@ -170,8 +175,18 @@ func TestTrustedAuthorSweepHandsAppAuthoredToContributorLaneReason(t *testing.T)
 		if result.Seen != 1 || result.Candidates != 0 || result.Skipped != 1 {
 			t.Fatalf("active=%v result = %+v, want App PR counted as a skipped hand-off", active, result)
 		}
-		if strings.Contains(logs.String(), "untrusted-author-role") || !strings.Contains(logs.String(), "reason="+contributorLaneReasonAppAuthored) {
-			t.Fatalf("active=%v logs = %q, want reason %s and no untrusted-author-role", active, logs.String(), contributorLaneReasonAppAuthored)
+		drained := tracker.drain()
+		if len(drained) != 1 || len(drained[0]) != 1 {
+			t.Fatalf("active=%v drained = %+v, want one observation for the App PR", active, drained)
+		}
+		if obs := drained[0][0]; obs.Lane != stageLaneTrusted || obs.Reason != trustedAuthorReasonAppAuthored {
+			t.Fatalf("active=%v observation lane/reason = %s/%s, want %s/%s", active, obs.Lane, obs.Reason, stageLaneTrusted, trustedAuthorReasonAppAuthored)
+		}
+		if v := classifyStage(drained[0][0]); v.Rank != stageRankNone {
+			t.Fatalf("active=%v hand-off classified as %+v, want no opinion", active, v)
+		}
+		if strings.Contains(logs.String(), "untrusted-author-role") || strings.Contains(logs.String(), contributorLaneReasonAppAuthored) || !strings.Contains(logs.String(), "reason="+trustedAuthorReasonAppAuthored+" tier=trusted-author") {
+			t.Fatalf("active=%v logs = %q, want reason %s under tier=trusted-author and neither untrusted-author-role nor %s", active, logs.String(), trustedAuthorReasonAppAuthored, contributorLaneReasonAppAuthored)
 		}
 	}
 }

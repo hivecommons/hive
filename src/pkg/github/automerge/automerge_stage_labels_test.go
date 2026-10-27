@@ -434,6 +434,31 @@ func TestResolveStageLanePrecedence(t *testing.T) {
 	}
 }
 
+// TestResolveStageAppAuthoredHandoffsYieldToSelfLane reproduces
+// hivecommons/hive#14482: the trusted-author and contributor-lane tiers each
+// hand an App-authored PR off under their own reason, and neither hand-off
+// has a say in the stage — the self-authored lane's review-gate hold owns
+// it and is what the stage write is attributed to.
+func TestResolveStageAppAuthoredHandoffsYieldToSelfLane(t *testing.T) {
+	list := []stageObservation{
+		{Lane: stageLaneSelf, Reason: autoMergeReasonReviewGatePrefix + ReviewGateOutcomeNoBundle, HeadSHA: "cdf5961", Detail: stageDetail{Role: stagelabels.RoleTrusted}},
+		{Lane: stageLaneTrusted, Reason: trustedAuthorReasonAppAuthored, HeadSHA: "cdf5961"},
+		{Lane: stageLaneContributor, Reason: contributorLaneReasonAppAuthored, HeadSHA: "cdf5961"},
+	}
+	v, role, obs := resolveStage(list)
+	if v.Stage != stagelabels.ReviewPending || v.Rank != stageRankOwned || role != stagelabels.RoleTrusted {
+		t.Fatalf("got %v/%d/%v, want review-pending owned by a trusted author", v.Stage, v.Rank, role)
+	}
+	if obs.Lane != stageLaneSelf {
+		t.Fatalf("attributed to lane %q, want %q", obs.Lane, stageLaneSelf)
+	}
+	for _, o := range list[1:] {
+		if got := classifyStage(o); got.Rank != stageRankNone {
+			t.Fatalf("%s hand-off %q classified as %+v, want no opinion", o.Lane, o.Reason, got)
+		}
+	}
+}
+
 func TestResolveStageKeepsExistingRoleWhenNoLaneReportsOne(t *testing.T) {
 	cases := []struct {
 		name   string
