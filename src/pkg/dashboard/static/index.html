@@ -14147,7 +14147,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
-          else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = sg.label + ' — ' + String(item.human_merge_reason_text).trim() + (sg.description ? ' — ' + sg.description : '');
+          else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim() + (sg.description ? ' — ' + sg.description : '');
           if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.

@@ -397,9 +397,9 @@ assert.strictEqual(stageTrackerManualMergeWord({ human_approver: 'clubanderson',
 const whyTip = 'Changes .github/workflows/** — the hive never merges workflow changes; click Merge on GitHub';
 const why = stageTrackerRowHtml(P('o/r', 401, 90, { manual_merge: true, human_approver: 'clubanderson', human_merge_reason: 'workflow-files', human_merge_reason_text: whyTip }), stages, ctx);
 assert.ok(why.includes('<span class="ham-detour">Awaiting human merge · workflow files · approved by @clubanderson</span>'), 'manual-merge 090 word carries the reason: ' + why);
-assert.ok(why.includes('Ready for human merge — ' + whyTip), 'the 090 tooltip leads with the reason: ' + why);
+assert.ok(why.includes('title="Awaiting human merge · workflow files · approved by @clubanderson — ' + whyTip), 'the lit 090 chevron tooltip leads with the reason: ' + why);
 const whyPlain = stageTrackerRowHtml(P('o/r', 402, 90, { human_merge_reason: 'untrusted-author', human_merge_reason_text: 'No lane can vouch for the author' }), stages, ctx);
-assert.ok(whyPlain.includes('<span class="ham-detour">Ready for human merge · untrusted author</span>') && whyPlain.includes('Ready for human merge — No lane can vouch for the author'), 'plain 090 word carries the reason: ' + whyPlain);
+assert.ok(whyPlain.includes('<span class="ham-detour">Ready for human merge · untrusted author</span>') && whyPlain.includes('title="Ready for human merge · untrusted author — No lane can vouch for the author'), 'plain 090 word carries the reason: ' + whyPlain);
 const whyNested = stageTrackerRowHtml(I('o/r', 400, 90, { linked_prs: [{ number: 401, stage: 90, title: 'Shard', manual_merge: true, human_approver: 'clubanderson', human_merge_reason: 'workflow-files', human_merge_reason_text: whyTip }] }), stages, ctx);
 assert.ok(whyNested.includes('Awaiting human merge · workflow files · approved by @clubanderson'), 'nested 090 PR carries the reason: ' + whyNested);
 
