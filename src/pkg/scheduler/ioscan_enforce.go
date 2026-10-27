@@ -260,6 +260,7 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		return s.classifierErrored(sanitized, v, err)
 	}
 	s.classifierUnavailable(nil)
+	s.lastClassifierErr.Store("")
 	action := ioscan.ActionForScore(score, thresholds, s.classifierFailClosed())
 	s.recordClassifierResult(score, action)
 	switch action {

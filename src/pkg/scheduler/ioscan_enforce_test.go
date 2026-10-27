@@ -482,3 +482,23 @@ func TestBlockedKickWarnNamesClassifierError(t *testing.T) {
 		}
 	}
 }
+
+func TestBlockedKickWarnOmitsClassifierErrorAfterRecovery(t *testing.T) {
+	var buf strings.Builder
+	s := newSchedulerWithIoscanFailMode(true, "closed")
+	s.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fc := &fakeInjectionClassifier{err: errors.New("model not found: ioscan-judge")}
+	s.SetClassifier(fc, ioscan.Thresholds{Warn: 0.5, Block: 0.8})
+
+	s.enforceIssueTextVerdict("some issue title")
+	fc.err = nil
+	s.enforceIssueTextVerdict("some issue title")
+	buf.Reset()
+	s.warnBlockedKick("reviewer")
+	if !strings.Contains(buf.String(), "ioscan fail-closed blocked kick") {
+		t.Fatalf("blocked-kick warning missing: %s", buf.String())
+	}
+	if strings.Contains(buf.String(), "classifier_error") {
+		t.Fatalf("stale classifier error reported after recovery: %s", buf.String())
+	}
+}
