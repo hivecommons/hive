@@ -247,6 +247,13 @@ type Engine struct {
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool
+	// unauthorized remembers, per PR, the head and step this process marked
+	// `hive:unauthorized` for, so the same head logs once and the mark
+	// clears when the step is done; unauthorizedLabelReady remembers the
+	// repositories whose label is provisioned (automerge_unauthorized.go).
+	unauthorizedMu         sync.Mutex
+	unauthorized           map[string]unauthorizedState
+	unauthorizedLabelReady map[string]bool
 	// mergeQueueBases remembers base branches whose ruleset refused a direct
 	// merge as merge-queue-only, so the self-authored sweep stops re-issuing
 	// a REST merge that cannot succeed (hivecommons/hive#14068).
@@ -2297,6 +2304,11 @@ func classifyUpdateBranchError(err error, fork bool) updateBranchFailure {
 		if fork {
 			return updateBranchForkNotEditable
 		}
+		// TODO(hivecommons/hive#14589): a same-repo 403 "Resource not
+		// accessible by integration" means the App lacks contents: write
+		// and should mark the lane unauthorized (step: update-branch);
+		// a rate-limit 403 must not. Wire through markUnauthorized once
+		// the two are told apart here (isResourceNotAccessible).
 	case http.StatusUnprocessableEntity:
 		switch {
 		case strings.Contains(msg, "maintainer") || strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):

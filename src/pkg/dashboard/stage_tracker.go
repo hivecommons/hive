@@ -299,11 +299,19 @@ type StageTrackerItem struct {
 	// a human-merge path): at 090 the merge gate then reads "Awaiting
 	// human merge" and names the approver, since the only step left is
 	// the maintainer's merge click.
-	HumanApprover string     `json:"human_approver,omitempty"`
-	ManualMerge   bool       `json:"manual_merge,omitempty"`
-	NudgeCount    int        `json:"nudge_count,omitempty"`
-	LastNudgeAt   *time.Time `json:"last_nudge_at,omitempty"`
-	AdoptedBy     int        `json:"adopted_by,omitempty"`
+	HumanApprover string `json:"human_approver,omitempty"`
+	ManualMerge   bool   `json:"manual_merge,omitempty"`
+	// UnauthorizedStep is set when the item wears hive:unauthorized: the
+	// step the hive's GitHub App is not permitted to take, in words
+	// ("approve workflow runs"), from the `unauthorized:<step>` stage
+	// reason; the gate cell reads "Awaiting human: <step>". Unauthorized
+	// is the pill's tooltip naming the permission and the human action
+	// (hivecommons/hive#14589).
+	UnauthorizedStep string     `json:"unauthorized_step,omitempty"`
+	Unauthorized     string     `json:"unauthorized,omitempty"`
+	NudgeCount       int        `json:"nudge_count,omitempty"`
+	LastNudgeAt      *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy        int        `json:"adopted_by,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -409,6 +417,10 @@ const (
 	modNeedsRebase  = "needs-rebase"
 	modBlocked      = "blocked"
 	modDraft        = "draft"
+	// modUnauthorized: the item wears stagelabels.UnauthorizedLabel — the
+	// hive's GitHub App lacks the permission for its next step and a
+	// person must take it (hivecommons/hive#14589).
+	modUnauthorized = "unauthorized"
 )
 
 // Lane names.
@@ -653,6 +665,8 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			set[modNeedsRebase] = true
 		case "blocked":
 			set[modBlocked] = true
+		case stagelabels.UnauthorizedLabel:
+			set[modUnauthorized] = true
 		}
 	}
 	if len(holdLabels(labels, hiveID)) > 0 {
@@ -670,7 +684,7 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 		set[modDraft] = true
 	}
 	out := make([]string, 0, len(set))
-	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsTriage, modPossibleDupe, modNeedsRebase, modBlocked, modDraft} {
+	for _, m := range []string{modStalled, modRegressed, modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsTriage, modPossibleDupe, modNeedsRebase, modBlocked, modDraft} {
 		if set[m] {
 			out = append(out, m)
 		}
@@ -742,6 +756,9 @@ func humanizeStageReason(reason string) string {
 	if rest, ok := strings.CutPrefix(r, "base-branch-red:"); ok {
 		return "waiting for the base branch's CI to recover (" + strings.ReplaceAll(rest, ",", ", ") + ") — not this PR's fault"
 	}
+	if rest, ok := strings.CutPrefix(r, stageengineprstage.StageReasonUnauthorizedPrefix); ok {
+		return "the hive's GitHub App is not permitted to " + unauthorizedStepWords(rest) + "; a maintainer must"
+	}
 	if rest, ok := strings.CutPrefix(r, "fork-guard:"); ok {
 		return "check " + strings.ReplaceAll(rest, ",", ", ") + " refuses fork PRs — a maintainer must push this branch to the repository"
 	}
@@ -793,6 +810,33 @@ func humanizeStageReason(reason string) string {
 		return strings.ReplaceAll(strings.ReplaceAll(rest, "-", " "), "_", " ")
 	}
 	return strings.NewReplacer("-", " ", "_", " ", ":", ": ").Replace(r)
+}
+
+// unauthorizedStepWords renders an `unauthorized:<step>` step as words.
+func unauthorizedStepWords(step string) string {
+	return strings.ReplaceAll(strings.TrimSpace(step), "-", " ")
+}
+
+// Tooltip for the unauthorized pill, per step; the generic form serves a
+// label whose stage reason does not (or no longer) names the step.
+const (
+	stageTrackerUnauthorizedApproveRuns = "The hive's GitHub App lacks `actions: write`, so it cannot approve the workflow runs GitHub is holding for this head. A maintainer must click Approve and run on the PR's checks banner (or the Actions tab); see the hive:unauthorized comment for the run ids. Hive resumes, and clears the label, once the required checks report."
+	stageTrackerUnauthorizedGeneric     = "The hive's GitHub App lacks a permission for the next step, so only a person can take it; the hive:unauthorized comment on the PR names the permission and the step. Hive resumes, and clears the label, once the step is done."
+)
+
+// stageTrackerUnauthorized derives the gate word and the tooltip for an
+// item wearing hive:unauthorized from its stage reason.
+func stageTrackerUnauthorized(reason string) (step, tip string) {
+	base, _ := stagelabels.HumanApprovedReason(strings.TrimSpace(reason))
+	rest, ok := strings.CutPrefix(base, stageengineprstage.StageReasonUnauthorizedPrefix)
+	if !ok || strings.TrimSpace(rest) == "" {
+		return "", stageTrackerUnauthorizedGeneric
+	}
+	step = unauthorizedStepWords(rest)
+	if rest == stageengineprstage.UnauthorizedStepApproveWorkflowRuns {
+		return step, stageTrackerUnauthorizedApproveRuns
+	}
+	return step, "The hive's GitHub App lacks the permission to " + step + ", so only a person can take that step; the hive:unauthorized comment on the PR names the permission and the action. Hive resumes, and clears the label, once the step is done."
 }
 
 // stageTrackerManualMergeReason reports whether a bare stage reason is a
@@ -928,6 +972,11 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.AwaitingMergeAdmission:
 		return joinClause("Green and approved; waiting for the automerge lane to admit it", clause), "automerge lane"
 	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
+		if step, _ := stageTrackerUnauthorized(reason); step != "" {
+			// hivecommons/hive#14589: not a decision but a step only a
+			// person may take; the gate cell says the same.
+			return joinClause("Awaiting human: "+step, clause), "maintainer"
+		}
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
 		if base, approver := stagelabels.HumanApprovedReason(reason); stageTrackerManualMergeReason(base) {
@@ -1128,6 +1177,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
+		if slices.Contains(it.Modifiers, modUnauthorized) {
+			it.UnauthorizedStep, it.Unauthorized = stageTrackerUnauthorized(it.Reason)
+		}
 		it.History = stageTrackerHistory(rec)
 	}
 	seen := map[string]bool{}

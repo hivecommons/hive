@@ -1254,10 +1254,17 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	if !green {
 		if strings.HasPrefix(reason, requiredCheckMissingPrefix) {
-			c.approveHeldRunsForRegistryTrusted(ctx, displayRepo, owner, repo, pr, number, headSHA, claim, policy, files, reason)
+			_, reason = c.approveHeldRunsForRegistryTrusted(ctx, displayRepo, owner, repo, pr, number, headSHA, claim, policy, files, reason)
+		}
+		if !strings.HasPrefix(reason, unauthorizedReasonPrefix) {
+			// The required check exists now (pending or red), or the head
+			// moved on: whoever approved the runs did the step, so the
+			// unauthorized mark comes off in this same tick (#14589).
+			c.clearUnauthorized(ctx, displayRepo, owner, repo, pr, number, unauthorizedStepApproveWorkflowRuns)
 		}
 		return eval, reason, nil
 	}
+	c.clearUnauthorized(ctx, displayRepo, owner, repo, pr, number, unauthorizedStepApproveWorkflowRuns)
 	if !verdict.Configured {
 		return eval, contributorLaneReasonNoReviewer, nil
 	}

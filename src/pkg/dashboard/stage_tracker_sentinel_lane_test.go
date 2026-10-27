@@ -32,14 +32,17 @@ func stageTrackerSentinelJS(t *testing.T, html string) string {
 }
 
 // stageTrackerManualMergeJS is the 090 manual-merge surface (the stage
-// number, the word and its builder) every harness that runs
-// stageTrackerSegments needs beside the sentinel one.
+// number, the word and its builder) and the 085 unauthorized one every
+// harness that runs stageTrackerSegments needs beside the sentinel one.
 func stageTrackerManualMergeJS(t *testing.T, html string) string {
 	t.Helper()
 	return strings.Join([]string{
 		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE"),
 		jsConstLine(t, html, "STAGE_TRACKER_MANUAL_MERGE_WORD"),
 		jsFunc(t, html, "stageTrackerManualMergeWord"),
+		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_GATED"),
+		jsConstLine(t, html, "STAGE_TRACKER_UNAUTHORIZED_WORD"),
+		jsFunc(t, html, "stageTrackerUnauthorizedWord"),
 	}, "\n")
 }
 

@@ -259,6 +259,8 @@ func decisionCause(reason string) string {
 		return "GitHub Actions is holding the workflow runs for approval and Hive cannot start them: `" + workflowApprovalCommand + "` on this repository belongs to Prow, which does not trust the Hive App. A maintainer must comment `" + workflowApprovalCommand + "` (and `/lgtm` + `/approve` for tide), or install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) so the repository GITHUB_TOKEN approves trusted same-repo bot runs on Hive's command."
 	case strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix):
 		return "GitHub Actions is still waiting after Hive posted `" + workflowApprovalCommand + "`. Install the self-contained `" + oktotest.WorkflowPath + "` below (or render it with `hivectl ok-to-test-template`) so the repository GITHUB_TOKEN can approve trusted same-repo bot runs, or manually approve the runs from the PR checks banner."
+	case strings.HasPrefix(reason, unauthorizedReasonPrefix):
+		return "the hive's GitHub App is not permitted to " + strings.ReplaceAll(strings.TrimPrefix(reason, unauthorizedReasonPrefix), "-", " ") + " (GitHub answered 403 Resource not accessible by integration); the `" + unauthorizedLabel + "` note above names the permission and the step a maintainer must take"
 	case strings.HasPrefix(reason, workflowApprovalRequiredPrefix):
 		return "GitHub Actions is waiting for workflow approval. Hive posted `" + workflowApprovalCommand + "`; install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) if the runs do not start, or manually approve them from the PR checks banner."
 	case reason == "approval-desk-withheld":

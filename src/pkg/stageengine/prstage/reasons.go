@@ -44,7 +44,16 @@ const (
 	StageReasonForkGuard                   = "fork-guard:"
 	StageReasonOptionalCheckFailing        = "optional-check-failing:"
 	StageReasonSharedCIIncident            = "shared-ci-incident:"
-	TrustedAuthorReasonAppAuthored         = "trusted-author:app-authored"
-	TrustedBotLaneSkipReason               = "trusted-bot-lane"
-	WorkflowApprovalRequiredPrefix         = "workflow-approval-required:"
+	// StageReasonUnauthorizedPrefix: the lane's next step needs an API
+	// call the hive's GitHub App is not permitted to make (403 "Resource
+	// not accessible by integration"); the rest names the step
+	// (UnauthorizedStepApproveWorkflowRuns, …). A person must take the
+	// step; the lane parks at 085 (hivecommons/hive#14589).
+	StageReasonUnauthorizedPrefix = "unauthorized:"
+	// UnauthorizedStepApproveWorkflowRuns: approving held `action_required`
+	// workflow runs needs `actions: write`.
+	UnauthorizedStepApproveWorkflowRuns = "approve-workflow-runs"
+	TrustedAuthorReasonAppAuthored      = "trusted-author:app-authored"
+	TrustedBotLaneSkipReason            = "trusted-bot-lane"
+	WorkflowApprovalRequiredPrefix      = "workflow-approval-required:"
 )

@@ -65,6 +65,7 @@ const (
 	stageReasonSharedCIIncident            = prstage.StageReasonSharedCIIncident
 	trustedBotLaneSkipReason               = prstage.TrustedBotLaneSkipReason
 	workflowApprovalRequiredPrefix         = prstage.WorkflowApprovalRequiredPrefix
+	stageReasonUnauthorizedPrefix          = prstage.StageReasonUnauthorizedPrefix
 )
 
 func normalizeContributorLaneVerdict(v ContributorLaneVerdict) ContributorLaneVerdict {
@@ -316,6 +317,11 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}, humanApprovalReason)
 	}
 	if strings.HasPrefix(reason, workflowApprovalRequiredPrefix) {
+		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+	}
+	if strings.HasPrefix(reason, stageReasonUnauthorizedPrefix) {
+		// The App lacks the permission the next step needs; only a person
+		// can take it (hivecommons/hive#14589). The reason keeps the step.
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}
 	if strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {

@@ -879,6 +879,11 @@ func (c *Engine) closeSupersededOriginal(ctx context.Context, store *stagelabels
 	store.MarkSuperseded(key, rec.AdoptedBy, true, now)
 	if _, _, err := c.gh.PullRequests.Edit(ctx, obs.Owner, obs.Repo, obs.Number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil {
 		if isGitHubStatus(err, http.StatusForbidden) || isGitHubStatus(err, http.StatusNotFound) {
+			// TODO(hivecommons/hive#14589): a 403 here may be the App
+			// lacking pull_requests: write on this repository, or an
+			// archived/locked PR; only the former is a markUnauthorized
+			// case. Route it through markUnauthorized once the cause is
+			// told apart (the note already asks a person to close it).
 			c.warn("stage labels: cannot close superseded PR (permission); left open with the note, tracker row dropped", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy, "error", err)
 			return 1, nil
 		}

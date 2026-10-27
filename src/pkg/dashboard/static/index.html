@@ -1460,6 +1460,8 @@
     /* A regression the hive is already working through: muted, never red. */
     .ham-badge-mod.ham-mod-regressed.ham-mod-handled { color: var(--text-muted); border-color: var(--line-subtle); border-style: dashed; }
     .ham-badge-mod.ham-mod-needs-triage { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+    /* hive:unauthorized — the App lacks a permission for the next step; muted, never red: a person must take the step. */
+    .ham-badge-mod.ham-mod-unauthorized { color: var(--text-muted); border-color: var(--line-subtle); border-style: dashed; }
     .ham-badge-mod.ham-mod-possible-dupe { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 45%, transparent); }
     /* Sentinel-flagged PR, #13535 follow-up: the chip beside needs rebase /
        regressed, and the human-decision chevron itself when its word
@@ -13702,6 +13704,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const approver = String((item && item.human_approver) || '').trim();
       return STAGE_TRACKER_MANUAL_MERGE_WORD + (approver ? ' · approved by @' + approver : '');
     }
+    // 085 under hive:unauthorized (payload unauthorized_step, e.g. "approve
+    // workflow runs"): the hive's GitHub App lacks the permission for that
+    // step, so the lit chevron names the human step owed instead of the
+    // generic "Needs human decision" (hivecommons/hive#14589).
+    const STAGE_TRACKER_HUMAN_GATED = 85;
+    const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Awaiting human';
+    function stageTrackerUnauthorizedWord(item) {
+      const step = String((item && item.unauthorized_step) || '').trim();
+      return step ? STAGE_TRACKER_UNAUTHORIZED_WORD + ': ' + step : '';
+    }
     // Issue-slot placeholders for a closing reference whose title the server
     // could not resolve (the issue is closed and unreadable, or of unknown state).
     const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';
@@ -13757,7 +13769,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       50: STAGE_TRACKER_MOTION_ACTIVE, 60: STAGE_TRACKER_MOTION_ACTIVE, 70: STAGE_TRACKER_MOTION_ACTIVE, 74: STAGE_TRACKER_MOTION_ACTIVE, 80: STAGE_TRACKER_MOTION_ACTIVE, 95: STAGE_TRACKER_MOTION_ACTIVE, 100: STAGE_TRACKER_MOTION_ACTIVE,
     };
     const STAGE_TRACKER_MOTION_AUTHOR_STAGES = [30, 40];
-    const STAGE_TRACKER_MOTION_HUMAN_MODS = ['stalled', 'blocked', 'needs-human', 'needs-decision', 'needs-triage'];
+    const STAGE_TRACKER_MOTION_HUMAN_MODS = ['stalled', 'blocked', 'needs-human', 'needs-decision', 'needs-triage', 'unauthorized'];
     function stageTrackerMotion(item) {
       const mods = Array.isArray(item && item.modifiers) ? item.modifiers : [];
       if (mods.indexOf('hold') >= 0) return STAGE_TRACKER_MOTION_STATIC;
@@ -13943,7 +13955,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
@@ -13972,7 +13984,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs;
     }
 
-    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
+    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
     const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
     const STAGE_TRACKER_ICONS = {
@@ -14119,7 +14131,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Modifiers that park an item on a person. A regression on a row that
     // carries none of these and sits on a hive-driven stage is the hive's
     // to work through, so the dashboard must not dress it as a human call.
-    const STAGE_TRACKER_HUMAN_MODS = ['hold', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'stalled'];
+    const STAGE_TRACKER_HUMAN_MODS = ['hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'stalled'];
     const STAGE_TRACKER_HANDLED_TEXT = 'stage ↓';
     const STAGE_TRACKER_HANDLED_NOTE = 'the hive is handling it — no action needed; clears on the next forward step';
 
@@ -14173,6 +14185,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.sentinel_alert) lines.push(stageTrackerSentinelTip(item));
       const regressed = stageTrackerRegressionText(item, nowMs);
       if (regressed) lines.push(regressed.charAt(0).toUpperCase() + regressed.slice(1));
+      if (mods.indexOf('unauthorized') >= 0 && item.unauthorized) lines.push('Unauthorized: ' + item.unauthorized);
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
       return lines.filter(Boolean).join('\n');
@@ -14201,8 +14214,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!isNaN(recheckMs)) text += ' · re-check at ' + agentNowClockTime(recheckMs, Date.now());
       // The regressed pill (lead or folded into "+1") explains itself on hover.
       const regressed = stageTrackerRegressionText(item, Date.now());
+      // An unauthorized pill names the missing App permission and the human step.
+      const tip = (mods.indexOf('unauthorized') >= 0 && String(item.unauthorized || '').trim()) || regressed;
       const cls = 'ham-mod-' + mods[0] + (handled && mods[0] === 'regressed' ? ' ham-mod-handled' : '');
-      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${regressed ? ` title="${esc(regressed)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
+      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
     }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries

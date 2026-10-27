@@ -42,26 +42,36 @@ const (
 // registry path and the lane stopped at reason (`required-check-missing:<ctx>`).
 // It refuses for any other admission path, when the toggle is off, when the
 // PR carries the sentinel or an exclude label, or when the diff touches CI
-// definitions. It returns the run ids it approved (nil when it did nothing).
-func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA string, claim contributorClaimMatch, policy ContributorLanePolicy, files []intent.ChangedFile, reason string) []int64 {
+// definitions. It returns the run ids it approved (nil when it did nothing)
+// and the lane reason to report: the input reason, or
+// `unauthorized:approve-workflow-runs` while the App lacks `actions: write`
+// for this head (hivecommons/hive#14589) — GitHub answers 403 "Resource not
+// accessible by integration", the PR is marked via markUnauthorized, and the
+// mark holds until the head's required checks exist or the head changes.
+func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA string, claim contributorClaimMatch, policy ContributorLanePolicy, files []intent.ChangedFile, reason string) ([]int64, string) {
 	if c == nil || c.gh == nil || pr == nil || headSHA == "" {
-		return nil
+		return nil, reason
 	}
 	if !policy.ApproveHeldRunsForRegistryTrusted || !claim.admittedByRegistry() {
-		return nil
+		return nil, reason
 	}
 	if !strings.HasPrefix(reason, requiredCheckMissingPrefix) {
-		return nil
+		return nil, reason
 	}
 	labels := labelNames(pr.Labels)
 	if c.sentinelLabelPresent(labels) || policy.excludedLabel(labels) != "" || c.labelBlockReason(labels, false) != "" {
-		return nil
+		return nil, reason
 	}
 	if contributorLaneDiffReason(files) == contributorLaneReasonWorkflowPath {
-		return nil
+		return nil, reason
 	}
 	if c.contributorHeldRunsApprovalAttempted(owner, repo, number, headSHA) {
-		return nil
+		// Already tried this head; keep reporting the permission gap while
+		// it stands, without another API call or another log line.
+		if step := c.unauthorizedStep(owner, repo, number, headSHA); step == unauthorizedStepApproveWorkflowRuns {
+			return nil, unauthorizedReason(step)
+		}
+		return nil, reason
 	}
 	missing := strings.TrimPrefix(reason, requiredCheckMissingPrefix)
 	runs, _, err := c.gh.Actions.ListRepositoryWorkflowRuns(hgithub.WithRESTCaller(ctx, "hive:contributor_lane_automerge_sweep"), owner, repo, &gh.ListWorkflowRunsOptions{
@@ -71,35 +81,43 @@ func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayR
 	})
 	if err != nil || runs == nil {
 		c.warn("contributor-lane could not list workflow runs for held-run approval", "repo", displayRepo, "pr", number, "head", headSHA, "error", err)
-		return nil
+		return nil, reason
 	}
 	held := heldWorkflowRunsForHead(runs.WorkflowRuns, contributorLaneHeadRepo(pr, owner, repo))
 	if len(held) == 0 {
-		return nil
+		return nil, reason
 	}
 	// Mark before calling the API: a partial failure must not be retried
 	// every tick against the same head.
 	if !c.markContributorHeldRunsApprovalAttempted(owner, repo, number, headSHA) {
-		return nil
+		return nil, reason
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
-	var approved []int64
+	var approved, forbidden []int64
 	for _, run := range held {
 		if err := c.approveWorkflowRun(ctx, owner, repo, run.GetID()); err != nil {
+			if isResourceNotAccessible(err) {
+				forbidden = append(forbidden, run.GetID())
+				continue
+			}
 			c.warn("contributor-lane could not approve held workflow run", "repo", displayRepo, "pr", number, "head", headSHA, "author", author, "tier", claim.RegistryTier, "run_id", run.GetID(), "workflow", run.GetName(), "context", missing, "error", err)
 			continue
 		}
 		approved = append(approved, run.GetID())
 	}
+	if len(forbidden) > 0 && len(approved) == 0 {
+		sort.Slice(forbidden, func(i, j int) bool { return forbidden[i] < forbidden[j] })
+		return nil, c.markUnauthorized(ctx, displayRepo, owner, repo, pr, number, headSHA, unauthorizedStepApproveWorkflowRuns, unauthorizedPermissionActionsWrite, approveWorkflowRunsHumanAction(owner, repo, missing, forbidden))
+	}
 	if len(approved) == 0 {
-		return nil
+		return nil, reason
 	}
 	sort.Slice(approved, func(i, j int) bool { return approved[i] < approved[j] })
 	c.info("contributor-lane approved held runs", "repo", displayRepo, "pr", number, "head", headSHA, "author", author, "tier", claim.RegistryTier, "run_ids", approved, "context", missing)
 	if err := c.commentContributorHeldRunsApproved(ctx, owner, repo, number, headSHA, author, claim.RegistryTier, approved); err != nil {
 		c.warn("contributor-lane held-run approval audit comment failed", "repo", displayRepo, "pr", number, "head", headSHA, "error", err)
 	}
-	return approved
+	return approved, reason
 }
 
 // approveWorkflowRun is POST /repos/{owner}/{repo}/actions/runs/{run_id}/approve.

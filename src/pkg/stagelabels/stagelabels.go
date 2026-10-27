@@ -137,6 +137,14 @@ const PartiallyAddressedLabel = "hive/partially-addressed"
 // StalledLabel is the health label; it coexists with the stage label.
 const StalledLabel = Prefix + "stalled"
 
+// UnauthorizedLabel marks a PR (or issue) whose next step the hive cannot
+// take because its GitHub App lacks the permission the API call needs
+// (403 "Resource not accessible by integration"; hivecommons/hive#14589).
+// The automerge lane adds it with a comment naming the permission and the
+// human step, and removes it in the same tick the step stops being needed.
+// It is deliberately outside Prefix so the stage reconciler never strips it.
+const UnauthorizedLabel = "hive:unauthorized"
+
 // RegressedLabel is the RETIRED backward-move marker (hivecommons/hive#12534).
 // It is no longer provisioned or emitted; being under Prefix it is Owned, so
 // Plan removes it from every item the reconciler touches.
