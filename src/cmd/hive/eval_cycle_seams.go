@@ -644,7 +644,9 @@ func stoppedAgentStartErrorIsBenign(err error) bool {
 		return true
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "already running") || strings.Contains(msg, "launch already in progress")
+	return strings.Contains(msg, "already running") ||
+		strings.Contains(msg, "launch already in progress") ||
+		strings.Contains(msg, "shared session pool is busy")
 }
 
 // advisoryIngestDeps are the side effects of recording an ioscan canary leak

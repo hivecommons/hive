@@ -93,8 +93,14 @@ func (c *sharedSessionPoolClient) request(ctx context.Context, method, path stri
 }
 
 func (c *sharedSessionPoolClient) Acquire(ctx context.Context, agentName string) (string, error) {
+	deadlineCtx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		deadlineCtx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+	}
 	for {
-		result, err := c.request(ctx, http.MethodPost, "/leases", sharedPoolRequest{HiveID: c.hiveID, AgentName: agentName})
+		result, err := c.request(deadlineCtx, http.MethodPost, "/leases", sharedPoolRequest{HiveID: c.hiveID, AgentName: agentName})
 		if err == nil {
 			if result.LeaseID == "" {
 				return "", fmt.Errorf("shared session pool returned an empty lease ID")
@@ -104,14 +110,14 @@ func (c *sharedSessionPoolClient) Acquire(ctx context.Context, agentName string)
 		if err != errSharedSessionPoolBusy {
 			return "", err
 		}
-		timer := time.NewTimer(3 * time.Second)
+		timer := time.NewTimer(1 * time.Second)
 		select {
-		case <-ctx.Done():
+		case <-deadlineCtx.Done():
 			timer.Stop()
 			cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_, _ = c.request(cancelCtx, http.MethodDelete, "/leases", sharedPoolRequest{HiveID: c.hiveID, CancelWait: true})
 			cancel()
-			return "", ctx.Err()
+			return "", fmt.Errorf("shared session pool is busy: %w", deadlineCtx.Err())
 		case <-timer.C:
 		}
 	}
