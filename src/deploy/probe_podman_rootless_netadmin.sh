@@ -144,7 +144,9 @@ printf 'podman=%s rootless=%s cgroups=%s netbackend=%s rootlessnet=%s runtime=%s
   "$rootlessnet" "$(pinfo .Host.OCIRuntime.Name)"
 printf 'store=%s\nimage=%s\n\n' "${CONTAINERS_STORAGE_CONF:-<caller default>}" "$IMAGE"
 
-podman pull -q "$IMAGE" >/dev/null 2>&1 || fail_prereq "cannot pull ${IMAGE}"
+# Keep registry and storage errors visible: exit 78 alone cannot distinguish
+# an unavailable image from a transient registry failure or a full runner disk.
+podman pull -q "$IMAGE" || fail_prereq "cannot pull ${IMAGE}"
 
 failures=0
 note_fail() { printf '  RESULT: UNEXPECTED — %s\n' "$1"; failures=$((failures + 1)); }
