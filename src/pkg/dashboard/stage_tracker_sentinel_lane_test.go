@@ -267,7 +267,7 @@ func TestStageTrackerSentinelLaneWiring(t *testing.T) {
 		`message: preface + 'Post "/lgtm" and "/approve" on '`,
 		`confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel`,
 		`label: preface + 'What should the hive change on '`,
-		`if (item.sentinel_alert) lines.push(stageTrackerSentinelTip(item));`,
+		`if (item.sentinel_alert && deferred.indexOf(STAGE_TRACKER_SENTINEL_CHIP) < 0) lines.push(stageTrackerSentinelTip(item));`,
 		`sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || ''`,
 	} {
 		if !strings.Contains(html, want) {
