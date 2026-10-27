@@ -67,6 +67,7 @@ func TestNewGitHubProxy(t *testing.T) {
 func TestStartInferenceTranslatorIntegration(t *testing.T) {
 	p := newTestProxy()
 	p.inference = newInferenceRouter()
+	p.proxyAdvisoryOK = true // no UID map in tests; exercise routing, not identity
 
 	// Mock vLLM backend
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

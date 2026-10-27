@@ -205,11 +205,22 @@ func TestBootDashboardWithAdvisoryHookNoStoresIsNoop(t *testing.T) {
 }
 
 func TestBootDashboardWithClassifier(t *testing.T) {
+	// The fixture's agent runs on copilot, which boot would use as the
+	// classifier CLI when no endpoint is configured (#14499); these cases
+	// are about a hive with no usable backend at all, so they run on codex.
+	noToollessAgents := func(cfg *config.Config) {
+		t.Setenv(config.LiteLLMEndpointEnv, "")
+		for name, a := range cfg.Agents {
+			a.Backend = "codex"
+			cfg.Agents[name] = a
+		}
+	}
 	t.Run("no endpoint logs and skips", func(t *testing.T) {
 		cfg := bootDashboardConfig()
 		on := true
 		cfg.Ioscan.Enabled = &on
 		cfg.Ioscan.Classifier.Enabled = &on
+		noToollessAgents(cfg)
 		b := newBootDashboardBoot(t, cfg)
 		// bootDashboardWith starts backfillRecentMergedPRs in a goroutine that
 		// logs through b.logger, so the sink must be goroutine-safe (#13168).
@@ -232,6 +243,7 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 		cfg.Ioscan.Enabled = &on
 		level := 5
 		cfg.ACMMLevel = &level
+		noToollessAgents(cfg)
 		b := newBootDashboardBoot(t, cfg)
 		var log syncLogBuffer
 		b.logger = slog.New(slog.NewTextHandler(&log, nil))
@@ -243,6 +255,27 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 			t.Fatal("L5 requires the classifier; an unavailable classifier must be installed so scans fail closed")
 		}
 		if !strings.Contains(log.String(), "required at this ACMM level but not running") {
+			t.Fatalf("log:\n%s", log.String())
+		}
+	})
+	t.Run("L5, no endpoint, copilot agents installs the copilot CLI classifier", func(t *testing.T) {
+		cfg := bootDashboardConfig()
+		on := true
+		cfg.Ioscan.Enabled = &on
+		level := 5
+		cfg.ACMMLevel = &level
+		t.Setenv(config.LiteLLMEndpointEnv, "")
+		b := newBootDashboardBoot(t, cfg)
+		var log syncLogBuffer
+		b.logger = slog.New(slog.NewTextHandler(&log, nil))
+		b.sched = scheduler.New(cfg, b.logger)
+
+		b.bootDashboardWith(newBootDashboardFake().deps)
+
+		if _, _, installed := b.sched.IoscanHooksForTest(); !installed {
+			t.Fatal("copilot agents with no endpoint must install the copilot CLI classifier")
+		}
+		if !strings.Contains(log.String(), "backend=copilot") || !strings.Contains(log.String(), "backend_from_agents=true") || strings.Contains(log.String(), "not running") {
 			t.Fatalf("log:\n%s", log.String())
 		}
 	})

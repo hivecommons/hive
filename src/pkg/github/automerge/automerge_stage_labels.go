@@ -81,6 +81,12 @@ type StageLabelPolicy struct {
 	// App-linked git identity rollout, with a first-deploy safety valve in
 	// settleInPlaceAdoption.
 	AdoptionStrictAttribution bool
+	// AdoptionAutoMerge lets the contributor lane admit an in-place-adopted
+	// head under the hive's own authority, without the original author's
+	// trust tier (governor.labels.stage.adoption.auto_merge, default on).
+	// Every other contributor-lane gate still applies; the head must be
+	// exactly the one the stage store records as adopted/pushed by the hive.
+	AdoptionAutoMerge bool
 	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
 	// override for "owner/repo"; ok false means "detect" (a DCO context in
 	// the branch's required checks or on the head). nil = always detect.
@@ -1078,6 +1084,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		if want.Stage == stagelabels.AdoptedByHive {
 			n, err := c.settleAdoption(ctx, store, key, obs, policy, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		} else if rec, ok := store.Get(key); ok && rec.AdoptedBy > 0 && !obs.Merged {
+			// hivecommons/hive#14471: the superseder is still on record while
+			// the lane derives 085 (needs-human) or 072 (a later contributor
+			// head). Its merge must still close this PR.
+			n, err := c.settleSuperseder(ctx, store, key, obs, rec, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err

@@ -426,7 +426,7 @@ used to admit the PR:
 | `label:hold`, `held`, `label:needs-human`, `exempt-label`, `excluded-label:*`, `sentinel`, `human-merge-path*`, `intent-*`, `contributor-lane:workflow-path` / `tests-removed` / `no-reviewer` / `reporter-trust-hold` | human hand-off, **decision** cause → routed by the head's evidence (below); lands at `085-needs-decision` when the head is otherwise clean |
 | `merge-refused:review-required` (GitHub answered the merge with 405 "At least N approving review(s) is/are required by reviewers with write access"), `merge-refused:method-not-allowed` (405 "Merge commits / Squash merges / Rebase merges are not allowed on this repository") | human hand-off, **decision** cause, as above: lands at `085-needs-decision` when the head is otherwise clean, and the entry comment names the rule GitHub refused the merge on. Every sweep (self-authored, trusted-author, queued, contributor lane) logs these as skips, not `merge-failed` errors, and stops calling merge: a review refusal is remembered per PR head and re-armed when the head moves, when GitHub's `mergeable_state` for the PR changes (an approving review turns `blocked` into `clean`), or after 30 minutes; a method refusal is remembered per repository and method for 30 minutes. The hive never switches the merge method on its own (a forward merge or a `merge-method/merge` PR must not be squashed), so `method-not-allowed` is a manual-merge park. Any other 405, 409 or 422 is still `merge-failed` |
 | `contributor-lane:no-claim` / `claim-*` / `author-association` / `no-linked-issue`, `untrusted-author-role`, `author-permission-missing` | human hand-off, **trust** cause → routed by the head's evidence (below); lands at `090-ready-for-human-merge` when the head is otherwise clean |
-| hand-offs (`not-app-authored`, `trusted-bot-lane`, `contributor-lane:app-authored`), transient fetch errors | no opinion — the owning lane decides; nothing is written |
+| hand-offs (`not-app-authored`, `trusted-bot-lane`, `trusted-author:app-authored`, `contributor-lane:app-authored`), transient fetch errors | no opinion — the owning lane decides; nothing is written. An App-authored PR is handed off by the trusted-author and contributor-lane tiers under their own reason; the self-authored lane owns it, and its `review-gate:no-review-bundle` is the stage's reason while the swarm has not reviewed the head ([#14482](https://github.com/hivecommons/hive/issues/14482)) |
 
 When several lanes see the same PR the self-authored lane outranks the
 trusted-author lane, which outranks the contributor lane; the trusted-author
@@ -884,6 +884,11 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      not done. The sweep re-evaluates existing 074 records every pass, so a
      record adopted before this rule existed converts too
      (hivecommons/hive#12858).
+   - Stale-red recovery (no re-home): an in-place head red only from a
+     since-fixed base/shared-CI flake — its failing check is green on the
+     base tip — is updated from the base when behind, or has its failed
+     jobs re-run when current, once per (head, base tip), before the dwell
+     escalates it to 085 (hivecommons/hive#14500).
    A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
    adopted (a human parked it; one log line, the stage stays 072).
    A PR whose diff trips the contributor lane's diff fences — it touches
@@ -939,7 +944,12 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      pushes keep the adoption and the stage stays
      074 whatever CI or the review swarm say of them — pending, green,
      approved or red again — until the merge gate (080/085/090/100) takes
-     the head (hivecommons/hive#12736). A later head keeps that ownership
+     the head (hivecommons/hive#12736). The hive owns that head: when it is
+     green, reviewer-approved, DCO-clean and soaked, the contributor lane
+     admits it under the hive's own authority
+     (`contributor-lane:adopted-by-hive`, `governor.labels.stage.adoption.auto_merge`,
+     default `true`) without the original author's trust tier, so 074 moves
+     to 095/097 and merges instead of parking on a maintainer `/lgtm`. A later head keeps that ownership
      only when the commit's GitHub-linked author/committer is the App bot
      (the stage store remembers SHAs that already passed that check; it is
      not a separate evidence source)

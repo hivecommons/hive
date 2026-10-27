@@ -39,7 +39,7 @@ import (
 //   - OpenAI (GPT-5.x):    https://openai.com/api/pricing/
 //   - DeepSeek:            https://api-docs.deepseek.com/quick_start/pricing
 //   - Meta Llama / Gemini: representative OpenRouter/provider list prices
-const priceTableDate = "2026-10-22"
+const priceTableDate = "2026-10-26"
 
 // PriceTableDate returns the date the price table was last reconciled with
 // published list prices, so the UI can show "list prices as of <date>".
@@ -185,8 +185,8 @@ var modelPrices = map[string]ModelPrice{
 	// These reuse the closest sibling tier so every offered dropdown value has
 	// a deterministic price entry instead of relying on the coarse fallback.
 	"grok-4-5":                 {InputPerMTok: 2.00, OutputPerMTok: 6.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 2.00},
-	"kimi-k3":                  {InputPerMTok: 0.239, OutputPerMTok: 11.936, CacheReadPerMTok: 0.21, CacheWritePerMTok: 0.239},
-	"kimi-k2-7-code":           {InputPerMTok: 0.6712, OutputPerMTok: 3.35, CacheReadPerMTok: 0.18, CacheWritePerMTok: 0.6712},
+	"kimi-k3":                  {InputPerMTok: 0.17, OutputPerMTok: 20.00, CacheReadPerMTok: 0.16, CacheWritePerMTok: 0.17},
+	"kimi-k2-7-code":           {InputPerMTok: 0.6712, OutputPerMTok: 3.35, CacheReadPerMTok: 0.15, CacheWritePerMTok: 0.6712},
 	"mai-code-1-flash-picker":  {InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25},
 	"claude-opus-4-6-thinking": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
 	"gpt-oss-120b-medium":      {InputPerMTok: 0.15, OutputPerMTok: 0.60, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.15},

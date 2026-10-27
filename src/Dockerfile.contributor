@@ -485,8 +485,16 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
 # npm-shrinkwrap.json, so install a pinned npm package with lifecycle scripts
 # disabled and fail the image build if the binary is absent.
 ARG PI_CODING_AGENT_VERSION=1.4.0
-RUN npm install -g --ignore-scripts --no-fund --no-audit \
-    "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}" \
+# Registry tarballs can briefly return 404 while a release propagates. npm's
+# fetch retries do not cover 404s, so retry the install with a bounded delay.
+RUN for attempt in 1 2 3; do \
+      if npm install -g --ignore-scripts --no-fund --no-audit \
+        "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"; then \
+        break; \
+      fi; \
+      if [ "$attempt" -eq 3 ]; then exit 1; fi; \
+      sleep 30; \
+    done \
   && npm cache clean --force \
   && which pi
 

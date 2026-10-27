@@ -54,8 +54,10 @@ const (
 )
 
 // adoptClosesPattern lifts the original PR's closing keywords so the
-// superseding PR closes the same issues.
-var adoptClosesPattern = regexp.MustCompile(`(?im)^\s*(?:fixes|closes|resolves)\s+(?:[\w.-]+/[\w.-]+)?#\d+\s*$`)
+// superseding PR closes the same issues. A non-closing `Refs #N` line
+// travels too (hivecommons/hive#14471): it is the original's link to its
+// issue, and the claim ledger reads it as the superseder covering that issue.
+var adoptClosesPattern = regexp.MustCompile(`(?im)^\s*(?:fixes|closes|resolves|refs)\s+(?:[\w.-]+/[\w.-]+)?#\d+\s*$`)
 
 var adoptHiveRunPattern = regexp.MustCompile(`(?im)^\s*Hive-Run\s*:\s*(?:[\w.-]+/[\w.-]+)?#(\d+)\s*$`)
 
@@ -803,7 +805,18 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	if rec.AdoptedBy <= 0 {
 		return 0, nil
 	}
-	if !rec.AdoptCheckedAt.IsZero() && now.Sub(rec.AdoptCheckedAt) < adoptCheckInterval {
+	return c.settleSuperseder(ctx, store, key, obs, rec, now)
+}
+
+// settleSuperseder polls the superseding App PR recorded on an adoption (at
+// most every adoptCheckInterval) and settles the original: merged → close
+// note + close; closed unmerged → forget the adoption. It runs for a PR at
+// 074 and, since hivecommons/hive#14471, for any other stage the lane
+// derives while the superseder is on record: a `needs-human` label (085) or
+// a contributor push after the adoption (072) used to stop the poll, and the
+// original stayed open with "closed automatically once #N merges" on it.
+func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, now time.Time) (int, error) {
+	if obs.Merged || !rec.SupersederPollDue(now, adoptCheckInterval) {
 		return 0, nil
 	}
 	store.MarkAdoptChecked(key, now)
@@ -814,22 +827,67 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	}
 	switch {
 	case sup.GetMerged():
-		body := fmt.Sprintf("%s\nClosing: #%d (the hive's adoption of this PR, with @%s's commits) has merged. Thank you!", adoptionCloseMarker, rec.AdoptedBy, obs.Author)
-		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
-			c.warn("stage labels: adoption close note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
-			return 0, err
-		}
-		if _, _, err := c.gh.PullRequests.Edit(ctx, obs.Owner, obs.Repo, obs.Number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil {
-			c.warn("stage labels: closing adopted PR failed", "repo", obs.Display, "pr", obs.Number, "error", err)
-			return 1, err
-		}
-		c.info("stage labels: adopted PR closed after superseder merged", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy)
-		return 1, nil
+		return c.closeSupersededOriginal(ctx, store, key, obs, rec, sup, now)
 	case strings.EqualFold(sup.GetState(), "closed"):
 		c.warn("stage labels: adoption superseder closed unmerged; returning PR to the contributor", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy)
 		store.ClearAdoption(key)
 	}
 	return 0, nil
+}
+
+// supersederCarriesHead reports whether the merged superseder landed the
+// original's current head: the adoption took that head, or the superseder's
+// own head is it (the fix lane re-pushed the contributor's later commits,
+// as on hivecommons/hive#14403 → #14461).
+func supersederCarriesHead(rec stagelabels.Record, obs stageObservation, sup *gh.PullRequest) bool {
+	if obs.HeadSHA == "" {
+		return true
+	}
+	return rec.Adopted(obs.HeadSHA) || strings.EqualFold(sup.GetHead().GetSHA(), obs.HeadSHA)
+}
+
+// AdoptionSupersederMergedDivergedMarker opens the one note left on an
+// original whose superseder merged without its latest commits.
+const AdoptionSupersederMergedDivergedMarker = "<!-- hive:adopted-merged-diverged"
+
+// closeSupersededOriginal posts the close note on the original and closes
+// it, recording the supersession on the store first so a failed or refused
+// close never re-posts. A close GitHub refuses (403/404: the App cannot
+// close this fork PR) leaves the original open with the note and the
+// record marked SupersededOpen, which drops the activity monitor row.
+func (c *Engine) closeSupersededOriginal(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, sup *gh.PullRequest, now time.Time) (int, error) {
+	if !supersederCarriesHead(rec, obs, sup) {
+		if rec.SupersederMergedNotedHead == obs.HeadSHA {
+			return 0, nil
+		}
+		store.MarkSupersederMergedNoted(key, obs.HeadSHA)
+		body := fmt.Sprintf("%s superseded_by=%d head=%s -->\n#%d (the hive's adoption of this PR, with @%s's commits as of `%s`) has merged, but this PR has moved on to `%s` since. Not closing it automatically: if the later commits are already covered, close this PR; otherwise rebase them on `%s` for review.",
+			AdoptionSupersederMergedDivergedMarker, rec.AdoptedBy, obs.HeadSHA, rec.AdoptedBy, obs.Author, shortSHA(rec.AdoptedHead), shortSHA(obs.HeadSHA), nonEmpty(obs.BaseRef, "the base branch"))
+		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+			c.warn("stage labels: adoption diverged note failed", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy, "error", err)
+			return 0, err
+		}
+		c.warn("stage labels: adoption superseder merged but the original moved on; left open with a note", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy, "adopted_head", rec.AdoptedHead, "head", obs.HeadSHA)
+		return 1, nil
+	}
+	body := fmt.Sprintf("%s\nClosing: #%d (the hive's adoption of this PR, with @%s's commits) has merged. Thank you!", adoptionCloseMarker, rec.AdoptedBy, obs.Author)
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		c.warn("stage labels: adoption close note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return 0, err
+	}
+	// The note is out: whatever the close below does, never post it again.
+	store.MarkSuperseded(key, rec.AdoptedBy, true, now)
+	if _, _, err := c.gh.PullRequests.Edit(ctx, obs.Owner, obs.Repo, obs.Number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil {
+		if isGitHubStatus(err, http.StatusForbidden) || isGitHubStatus(err, http.StatusNotFound) {
+			c.warn("stage labels: cannot close superseded PR (permission); left open with the note, tracker row dropped", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy, "error", err)
+			return 1, nil
+		}
+		c.warn("stage labels: closing adopted PR failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return 1, err
+	}
+	store.MarkSuperseded(key, rec.AdoptedBy, false, now)
+	c.info("stage labels: adopted PR closed after superseder merged", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy)
+	return 1, nil
 }
 
 // maintainerPermTTL is how long authorMaintainsRepo trusts a permission
@@ -1266,6 +1324,19 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	if rehomeReason == "" && rec.AdoptedInPlace() && obs.HeadSHA == rec.AdoptedHead && !adoptedHeadDCORed(obs, rec) && adoptionBlocked(obs.Labels) == "" && !verdictNeedsHuman(obs.Detail) && c.pushAccessLost(ctx, obs) {
 		rehomeReason = AdoptReasonPushRehome
 	}
+	if rehomeReason == "" && adoptionStalledReason(obs, rec, policy, now) != "" {
+		// Before a red head is handed to a person, try the recovery a
+		// since-fixed base or shared-CI flake needs (hivecommons/hive#14500):
+		// an attempt holds the escalation while CI runs on the result, and
+		// releases one already in place for the same head.
+		if recovery := c.recoverStaleRedAdoption(ctx, store, key, obs, rec); recovery.Attempted {
+			if rec.AdoptionEscalated(obs.HeadSHA) {
+				store.ClearAdoptionEscalation(key)
+				c.info("stage labels: adoption escalation released for recovery; back to adopted-by-hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "was", rec.AdoptEscalatedReason, "recovery", recovery.Reason)
+			}
+			return adoptionEscape{}, 0, nil
+		}
+	}
 	if rec.AdoptionEscalated(obs.HeadSHA) {
 		// A workflow-path refusal is a verdict on the head itself: it holds
 		// until the head moves, whatever the re-home or stall reasons say.
@@ -1331,7 +1402,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	}
 	noted := rec.AdoptionEscalationNoted(obs.HeadSHA)
 	store.MarkAdoptionEscalated(key, obs.HeadSHA, reason)
-	c.warn("stage labels: adopted PR sits with nothing the hive can push; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "head_since", rec.AdoptedHeadSince(), "noted", noted)
+	c.info("stage labels: adopted PR sits with nothing the hive can push; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "head_since", rec.AdoptedHeadSince(), "noted", noted)
 	if noted {
 		// The blocker flapped on a head already noted: re-escalate silently.
 		return adoptionEscape{Escalated: true, Reason: reason}, comments, firstErr

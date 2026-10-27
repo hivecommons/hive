@@ -2737,10 +2737,20 @@ type StageAdoptionConfig struct {
 	// safety is handled by the stage store until any App-linked head has been
 	// recorded for the repo.
 	StrictAttribution *bool `yaml:"strict_attribution,omitempty"`
+	// AutoMerge lets the contributor lane merge an in-place-adopted PR under
+	// the hive's own authority once the hive-authored gates pass (CI green
+	// on the adopted head, reviewer verdict, DCO, diff fences, soak), without
+	// requiring the original author's trust tier. nil = true. Off, an
+	// adopted PR by an untrusted contributor waits for a human /lgtm.
+	AutoMerge *bool `yaml:"auto_merge,omitempty"`
 }
 
 // IsEnabled reports whether adoption runs (default on).
 func (c StageAdoptionConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
+
+// AutoMergeEnabled reports whether an in-place-adopted head may merge under
+// the hive's own authority (default on).
+func (c StageAdoptionConfig) AutoMergeEnabled() bool { return c.AutoMerge == nil || *c.AutoMerge }
 
 // InPlaceEnabled reports whether in-place adoption is allowed (default on).
 func (c StageAdoptionConfig) InPlaceEnabled() bool { return c.InPlace == nil || *c.InPlace }

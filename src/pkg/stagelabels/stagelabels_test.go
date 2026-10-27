@@ -1415,3 +1415,48 @@ func TestTriageNeededStage(t *testing.T) {
 		t.Fatal("un-parking 045 → 015 is not a step back")
 	}
 }
+
+// hivecommons/hive#14471: the supersession mark and the poll gate it closes.
+func TestStoreMarkSupersededAndPollDue(t *testing.T) {
+	now := time.Date(2026, 10, 26, 22, 0, 0, 0, time.UTC)
+	s := NewStore("", func() time.Time { return now })
+	key := Key("acme/widget", 7)
+	s.Observe(key, ReturnedToContributor, "check-failing:unit")
+	r, _ := s.Get(key)
+	if r.SupersederPollDue(now, 10*time.Minute) {
+		t.Fatal("poll due with no superseder on record")
+	}
+	s.MarkAdopted(key, "a", 90, now)
+	r, _ = s.Get(key)
+	if !r.SupersederPollDue(now.Add(10*time.Minute), 10*time.Minute) || r.SupersederPollDue(now.Add(time.Minute), 10*time.Minute) {
+		t.Fatalf("poll gate: %+v", r)
+	}
+	s.MarkSuperseded(key, 90, true, now)
+	r, _ = s.Get(key)
+	if !r.Superseded() || r.SupersededBy != 90 || !r.SupersededOpen || !r.SupersededAt.Equal(now) {
+		t.Fatalf("superseded open: %+v", r)
+	}
+	if r.SupersederPollDue(now.Add(time.Hour), 10*time.Minute) {
+		t.Fatal("poll due after supersession")
+	}
+	// The close succeeding later flips open off without moving the clock.
+	s.MarkSuperseded(key, 90, false, now.Add(time.Minute))
+	r, _ = s.Get(key)
+	if r.SupersededOpen || !r.SupersededAt.Equal(now) {
+		t.Fatalf("superseded closed: %+v", r)
+	}
+	s.MarkSupersederMergedNoted(key, "b")
+	r, _ = s.Get(key)
+	if r.SupersederMergedNotedHead != "b" {
+		t.Fatalf("noted head: %+v", r)
+	}
+	s.ClearAdoption(key)
+	r, _ = s.Get(key)
+	if r.Superseded() || r.SupersederMergedNotedHead != "" || r.SupersededOpen {
+		t.Fatalf("ClearAdoption kept supersession: %+v", r)
+	}
+	s.MarkSuperseded(key, 0, false, now)
+	if r, _ = s.Get(key); r.Superseded() {
+		t.Fatal("MarkSuperseded accepted PR 0")
+	}
+}

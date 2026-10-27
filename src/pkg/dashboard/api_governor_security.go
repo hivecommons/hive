@@ -125,7 +125,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 
 	if body.IoscanClassifierBackend != nil {
 		if b := strings.TrimSpace(*body.IoscanClassifierBackend); b != "" && !ioscan.SupportsToolless(b) {
-			jsonError(w, "ioscan classifier backend must be empty or claude; "+b+" cannot run without tools", http.StatusBadRequest)
+			jsonError(w, "ioscan classifier backend must be empty or one of "+strings.Join(ioscan.ToollessBackends(), ", ")+"; "+b+" cannot run without tools", http.StatusBadRequest)
 			return
 		}
 	}

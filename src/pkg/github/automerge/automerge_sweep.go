@@ -1221,13 +1221,15 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				stage(trustedBotLaneSkipReason, false, nil)
 				continue
 			}
-			if lane, _ := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser())); lane == "self-authored" {
-				// The contributor lane vouches for the App's own PRs
-				// (RoleTrusted), so hand off with its reason rather than a
-				// contradictory untrusted-author-role.
-				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", contributorLaneReasonAppAuthored, "tier", "trusted-author")
+			if lane, _ := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser())); lane == stageLaneSelf {
+				// The self-authored lane owns the App's own PRs, so hand
+				// off under this tier's own reason rather than a
+				// contradictory untrusted-author-role or the contributor
+				// lane's reason, which read as if that lane had routed the
+				// PR (hivecommons/hive#14482).
+				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", trustedAuthorReasonAppAuthored, "tier", "trusted-author")
 				result.Skipped++
-				stage(contributorLaneReasonAppAuthored, false, nil)
+				stage(trustedAuthorReasonAppAuthored, false, nil)
 				continue
 			}
 			if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
@@ -1871,6 +1873,12 @@ func (c *Engine) sweepLaneForAuthor(author string) (string, bool) {
 // it hands off to the self-authored sweep's "trusted-bot" lane.
 const trustedBotLaneSkipReason = prstage.TrustedBotLaneSkipReason
 
+// trustedAuthorReasonAppAuthored is the trusted-author tier's skip reason
+// for the App's own PRs, which the self-authored lane owns. It is
+// namespaced to this tier so the skip line and the stage observation never
+// read as the contributor lane's.
+const trustedAuthorReasonAppAuthored = prstage.TrustedAuthorReasonAppAuthored
+
 // isTrustedBotLaneAuthor reports whether author falls in the "trusted-bot"
 // lane of sweepLaneForAuthor.
 func (c *Engine) isTrustedBotLaneAuthor(author string) bool {
@@ -2048,8 +2056,8 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	}
 	c.noteStagePR(owner, repo, number, pr)
 	author := hgithub.SafeGetLogin(pr.GetUser())
-	if lane, _ := c.sweepLaneForAuthor(author); lane == "self-authored" {
-		return AutoMergeSweepEvent{}, contributorLaneReasonAppAuthored, nil
+	if lane, _ := c.sweepLaneForAuthor(author); lane == stageLaneSelf {
+		return AutoMergeSweepEvent{}, trustedAuthorReasonAppAuthored, nil
 	}
 	if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil

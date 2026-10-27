@@ -1146,6 +1146,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
 		pr.Repo = nonEmpty(pr.Repo, repoName)
 		rec, ok := lookup(repoName, pr.Number)
+		if ok && rec.Superseded() {
+			// hivecommons/hive#14471: the hive's adoption of this PR merged
+			// and the original was told. Closed or not (the App may lack
+			// permission on a fork PR), it is finished work, not a row.
+			return
+		}
 		it := StageTrackerItem{Repo: repoName, Number: pr.Number, Kind: "pr", Title: pr.Title, Author: pr.Author, Head: pr.HeadSHA,
 			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,

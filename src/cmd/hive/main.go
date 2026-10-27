@@ -2775,7 +2775,11 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			}
 		}
 	})
-	installIoscanClassifier(b.sched, b.cfg, b.logger, time.Now)
+	var ioscanAlerts ioscanClassifierAlerter
+	if b.dashSrv != nil {
+		ioscanAlerts = b.dashSrv
+	}
+	installIoscanClassifier(b.sched, ioscanAlerts, b.cfg, b.logger, time.Now)
 	b.agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
 		b.dashSrv.AuditLog(agentName, action, detail, agentName)
 		if action == "sandbox_broker_rejected" {

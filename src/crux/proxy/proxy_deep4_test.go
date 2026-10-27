@@ -53,12 +53,13 @@ func TestStartInferenceTranslatorActual(t *testing.T) {
 
 	caCert, caX509, _ := generateCA()
 	p := &GitHubProxy{
-		caCert:     caCert,
-		caX509:     caX509,
-		logger:     slog.Default(),
-		violations: make(map[string]int),
-		certCache:  make(map[string]cachedCert),
-		inference:  newInferenceRouter(),
+		caCert:          caCert,
+		caX509:          caX509,
+		logger:          slog.Default(),
+		violations:      make(map[string]int),
+		certCache:       make(map[string]cachedCert),
+		inference:       newInferenceRouter(),
+		proxyAdvisoryOK: true, // no UID map in tests; exercise routing, not identity
 	}
 
 	p.inference.Set("agent1", &InferenceRoute{Backend: "vllm", Endpoint: mock.URL, Model: "test-model"})

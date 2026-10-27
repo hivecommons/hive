@@ -379,7 +379,9 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 			// falls inside the 2020 range.
 			assertComplianceCSVManifest(t, body, "posture", 0, 0)
 		}},
-		{name: "audit json", query: "kind=audit&since=1h", contentType: "application/json", ext: "json", check: func(t *testing.T, body []byte) {
+		// The audit entry is stamped with the real clock at one-second
+		// resolution, which can land after the pinned now; widen until.
+		{name: "audit json", query: "kind=audit&since=1h&until=" + now.Add(time.Hour).Format(time.RFC3339), contentType: "application/json", ext: "json", check: func(t *testing.T, body []byte) {
 			var got struct {
 				Audit complianceAuditExport `json:"audit"`
 			}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -29,13 +30,39 @@ const (
 // this package, so it cannot be called from here without an import cycle.
 //
 // Only backends whose CLI can disable all built-in tools and all MCP servers
-// from the command line are listed. copilot, codex and gemini expose no flag
-// that removes every tool (their non-interactive modes still run read-only
+// from the command line are listed. codex and gemini expose no flag that
+// removes every tool (their non-interactive modes still run read-only
 // shell/file tools), so SupportsToolless reports false for them.
+//
+// promptViaArg says how the rendered prompt reaches the CLI: false pipes it
+// on stdin (claude -p with no text reads the prompt from stdin); true appends
+// it as the value of promptFlag (copilot ignores stdin in prompt mode). The
+// prompt is bounded by DefaultClassifierMaxInputChars plus the fixed system
+// text, far below any argv limit.
 var cliToollessArgs = map[string]struct {
-	binary string
-	args   []string
+	binary       string
+	args         []string
+	promptViaArg bool
+	promptFlag   string
 }{
+	"copilot": {
+		binary: "copilot",
+		// --available-tools with a name that matches no tool leaves the model
+		// with no tool at all (#14499): the CLI logs "Disabled tools: bash,
+		// create, edit, glob, grep, view, web_fetch, ..." and every MCP server
+		// reports disabled. An empty list is ignored by the CLI, so the
+		// sentinel name is required. --disable-builtin-mcps additionally
+		// turns off the GitHub MCP servers, --no-custom-instructions keeps
+		// AGENTS.md and friends out of the context, --no-ask-user removes the
+		// interactive ask tool, --no-auto-update keeps the run offline apart
+		// from the model call, and -s prints the reply with no stats.
+		// --allow-all-tools is never passed: with no tools available the
+		// model has nothing to be approved for.
+		args: []string{"-s", "--no-color", "--available-tools", cliCopilotNoToolSentinel,
+			"--disable-builtin-mcps", "--no-custom-instructions", "--no-ask-user", "--no-auto-update"},
+		promptViaArg: true,
+		promptFlag:   "-p",
+	},
 	"claude": {
 		binary: "claude",
 		// --tools "" disables every built-in tool; --strict-mcp-config with no
@@ -55,13 +82,22 @@ var cliToollessArgs = map[string]struct {
 // no user, project, local or plugin hook runs in the classifier session.
 const cliClaudeHooksOffSettings = `{"disableAllHooks":true}`
 
+// cliCopilotNoToolSentinel is the tool allowlist passed to copilot. It names
+// no real tool, so the allowlist is empty and the model is launched with no
+// tool, built-in or MCP.
+const cliCopilotNoToolSentinel = "hive-ioscan-no-tools"
+
 // cliEnvAllowlist is the complete environment a classifier CLI receives:
 // enough to locate the binary and its own subscription login, and nothing
 // else, so hive tokens (GH_TOKEN, GITHUB_TOKEN, HIVE_GITHUB_TOKEN, ...) never
-// reach a process that reads untrusted text.
+// reach a process that reads untrusted text. copilot's own login lives in
+// COPILOT_HOME (default ~/.copilot); COPILOT_GITHUB_TOKEN is its dedicated
+// override. GH_TOKEN and GITHUB_TOKEN, which copilot also honours, are
+// deliberately absent: they are the hive's tokens.
 var cliEnvAllowlist = map[string][]string{
-	"":       {"PATH", "HOME", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME"},
-	"claude": {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN"},
+	"":        {"PATH", "HOME", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME"},
+	"claude":  {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_OAUTH_TOKEN"},
+	"copilot": {"COPILOT_HOME", "COPILOT_GITHUB_TOKEN", "COPILOT_GH_HOST", "GH_HOST", "NO_COLOR"},
 }
 
 // SupportsToolless reports whether backend can be launched as a classifier
@@ -69,6 +105,17 @@ var cliEnvAllowlist = map[string][]string{
 func SupportsToolless(backend string) bool {
 	_, ok := cliToollessArgs[strings.TrimSpace(backend)]
 	return ok
+}
+
+// ToollessBackends lists the backends SupportsToolless accepts, sorted, for
+// log lines and error messages.
+func ToollessBackends() []string {
+	out := make([]string, 0, len(cliToollessArgs))
+	for b := range cliToollessArgs {
+		out = append(out, b)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // CLIChatClient is a ChatClient that runs the classifier prompt through a
@@ -111,13 +158,24 @@ func NewCLIClassifier(backend, model string, dailyQuota int, now func() time.Tim
 	return NewDailyQuotaClassifier(llm, dailyQuota, now), nil
 }
 
-func (c *CLIChatClient) argv() []string {
+// argv returns the launch command. The prompt is appended as a flag value
+// only for backends that do not read it from stdin; Complete pipes it on
+// stdin otherwise. Either way the untrusted text is delivered as data, never
+// interpreted by a shell: exec.Command passes argv verbatim.
+func (c *CLIChatClient) argv(prompt string) []string {
 	spec := cliToollessArgs[c.backend]
 	argv := append([]string{c.binary}, spec.args...)
 	if c.model != "" {
 		argv = append(argv, "--model", c.model)
 	}
+	if spec.promptViaArg {
+		argv = append(argv, spec.promptFlag, prompt)
+	}
 	return argv
+}
+
+func (c *CLIChatClient) promptViaArg() bool {
+	return cliToollessArgs[c.backend].promptViaArg
 }
 
 func (c *CLIChatClient) env() []string {
@@ -130,8 +188,9 @@ func (c *CLIChatClient) env() []string {
 	return env
 }
 
-// Complete runs the CLI once with the rendered prompt on stdin and returns
-// the single JSON verdict object it printed. Timeouts, nonzero exits, and
+// Complete runs the CLI once with the rendered prompt (on stdin, or as the
+// prompt flag's value for CLIs that do not read stdin) and returns the
+// single JSON verdict object it printed. Timeouts, nonzero exits, and
 // replies that are not exactly one valid verdict are errors.
 func (c *CLIChatClient) Complete(ctx context.Context, messages []chatMessage, _ int) (string, error) {
 	dir, err := os.MkdirTemp("", "hive-ioscan-cli-")
@@ -142,11 +201,16 @@ func (c *CLIChatClient) Complete(ctx context.Context, messages []chatMessage, _ 
 
 	runCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	argv := c.argv()
+	prompt := renderCLIPrompt(messages)
+	argv := c.argv(prompt)
 	cmd := exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Env = c.env()
-	cmd.Stdin = strings.NewReader(renderCLIPrompt(messages))
+	if c.promptViaArg() {
+		cmd.Stdin = strings.NewReader("")
+	} else {
+		cmd.Stdin = strings.NewReader(prompt)
+	}
 	stdout := &cappedBuffer{max: cliClassifierMaxOutput}
 	cmd.Stdout = stdout
 	cmd.Stderr = &cappedBuffer{max: cliClassifierMaxOutput}

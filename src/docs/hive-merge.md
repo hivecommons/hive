@@ -399,7 +399,22 @@ Every other gate below still applies to a registry-admitted PR. Set
 
 A PR merges through this tier only when all of the following hold:
 
-- The PR author is admitted by one of two paths:
+- The PR author is admitted by one of three paths:
+  - **Adopted by the hive**: the stage store records an in-place adoption of
+    the PR (`stage/074-adopted-by-hive`) and the head being evaluated is
+    exactly the head the hive adopted or pushed (`AdoptedHead`). The hive
+    owns that head, so the original author's tier, marker and GitHub
+    association are not consulted — hive owner decision (hivecommons/hive,
+    2026-10-27): "If items are adopted, then the hive agents own it and they
+    should be eligible for auto merge." The sweep logs `contributor-lane
+    admitted reason=contributor-lane:adopted-by-hive adopted_head=<sha>` and
+    the merge log carries `admitted_by=contributor-lane:adopted-by-hive`. A
+    contributor push over the adopted head yields the adoption (074 → 072,
+    `AdoptedHead` cleared), so the next pass falls through to the two paths
+    below; a superseding adoption (`hive/adopt-<n>`) is never admitted on the
+    original PR — its App PR merges through the self-authored lane and closes
+    the original. Off with `governor.labels.stage.adoption.auto_merge: false`
+    (default on). Every other gate below still applies.
   - **Registry**: the author's contributor-registry profile has a trust tier in
     `require_tiers`. The sweep logs `contributor-lane admitted
     reason=contributor-lane:registry-trusted registry_tier=<tier>` and the
@@ -538,7 +553,11 @@ is red with the contributor's failures, lands in `ci-failing.json` like any
 hive-authored red PR, and the scanner's FIX-BEFORE-NEW kick rebases and fixes
 it on that branch (never a replacement PR), after which it follows the normal
 `050 → 100` path. When adoption is in-place on the contributor PR's own
-branch, a changed head stays adopted only with hive-controlled evidence
+branch, the hive owns the head it pushed: once that head is green, approved
+by the reviewer, DCO-clean and soaked, the contributor lane admits it under
+the hive's own authority (`contributor-lane:adopted-by-hive`, see the
+admission paths above) rather than waiting for the original author's trust
+tier or a maintainer `/lgtm`; a changed head stays adopted only with hive-controlled evidence
 (GitHub-linked App commit metadata; the stage store only remembers SHAs that
 already passed that check);
 forgeable git author/committer names and emails are treated as contributor
@@ -561,8 +580,18 @@ re-homes immediately (`reason=push-rehome`). A pushable `needs-rebase` or
 conflicting branch first gets the normal fixer window; if its head remains
 unchanged past the 074 dwell, the same sweep supersedes it
 (`reason=rebase-rehome`) rather than parking at 085. Previously escalated
-adoptions are re-evaluated for these recoveries too (#13975). An adoption with nothing the hive can
-push past the dwell goes to `stage/085-needs-decision` as
+adoptions are re-evaluated for these recoveries too (#13975). A red adopted
+head whose failing check is green on the base branch tip — the shared-CI
+flake or red base it fell to was fixed since, but the head never ran CI
+again — is recovered before anyone is asked: the sweep merges the base into
+the head when it is behind (GitHub update-branch, which works on a fork the
+maintainers may edit) or re-runs the failed workflow jobs when it is current,
+at most once per (head, base tip) and three times per adoption, logged as
+`adopted PR recovery` with `reason=update-branch`, `rerun-failed-jobs` or
+`skipped:<why>`; an escalation already in place for that head is released
+(hivecommons/hive#14500). An adoption with nothing the hive can
+push past the dwell — after that recovery was tried and the head is still
+red — goes to `stage/085-needs-decision` as
 `adoption-stalled:<lane reason>` with one comment naming the blocker, so the
 dashboard shows a person's item, not a silent 074; "waiting on maintainer
 lgtm" is only ever the state at 080+ (hivecommons/hive#12858). The dwell runs

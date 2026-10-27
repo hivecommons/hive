@@ -58,6 +58,7 @@ const (
 	contributorLaneReasonWorkflowPath      = prstage.ContributorLaneReasonWorkflowPath
 	stageLaneContributor                   = prstage.StageLaneContributor
 	stageLaneSelf                          = prstage.StageLaneSelf
+	trustedAuthorReasonAppAuthored         = prstage.TrustedAuthorReasonAppAuthored
 	stageLaneTrusted                       = prstage.StageLaneTrusted
 	stageReasonBaseBranchRed               = prstage.StageReasonBaseBranchRed
 	stageReasonForkGuard                   = prstage.StageReasonForkGuard
@@ -190,7 +191,7 @@ func StageHumanApprovalReason(d stageDetail, head string) string {
 // stageHandoffReasons are reasons that mean "not this lane's PR".
 var stageHandoffReasons = map[string]bool{
 	"not-app-authored": true, trustedBotLaneSkipReason: true, "repo-auto-merge-disabled": true,
-	contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
+	trustedAuthorReasonAppAuthored: true, contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
 	"fetch-pr": true, "fetch-pr-recheck": true,
 }
 

@@ -77,6 +77,19 @@ type Record struct {
 	AdoptedAt   time.Time `json:"adopted_at,omitempty"`
 	// AdoptCheckedAt is the last time the superseding PR's state was polled.
 	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
+	// SupersededBy / SupersededAt record that the superseding App PR merged
+	// and the close note was posted on the original (hivecommons/hive#14471).
+	// Set once per adoption: the settle pass never re-posts, and the
+	// dashboard stage tracker drops the row even when the close itself was
+	// refused (a fork PR the App may not close). SupersededOpen is true when
+	// the original could not be closed and is left open with the note.
+	SupersededBy   int       `json:"superseded_by,omitempty"`
+	SupersededAt   time.Time `json:"superseded_at,omitempty"`
+	SupersededOpen bool      `json:"superseded_open,omitempty"`
+	// SupersederMergedNotedHead is the original's head for which the
+	// "superseder merged but this PR has moved on" note was posted, so a
+	// diverged original is told once per head rather than every poll.
+	SupersederMergedNotedHead string `json:"superseder_merged_noted_head,omitempty"`
 	// DCOHead, DCOTotal and DCOUnsigned cache the commit check for one head
 	// (hivecommons/hive#12542): how many non-merge commits the PR carried
 	// and how many lacked a Signed-off-by trailer. DCOUnsignedHive /
@@ -161,6 +174,14 @@ type Record struct {
 	// for; it survives ClearAdoptionEscalation so a blocker that flaps on
 	// one head is noted once.
 	AdoptEscalationNotedHead string `json:"adopt_escalation_noted_head,omitempty"`
+	// AdoptRecoveryAttempt is the "<head>@<base tip>" pair the hive last
+	// tried to recover a stale-red in-place adoption on (update-branch or a
+	// re-run of the failed jobs, hivecommons/hive#14500); one attempt per
+	// pair. AdoptRecoveryCount counts attempts across heads for the
+	// adoption so a base that keeps moving under a red head cannot churn
+	// update-branch commits forever; both reset with the adoption.
+	AdoptRecoveryAttempt string `json:"adopt_recovery_attempt,omitempty"`
+	AdoptRecoveryCount   int    `json:"adopt_recovery_count,omitempty"`
 	// MergeCommitNotedHead is the head the `merge-method/merge` note was
 	// posted for, so the lane explains the merge method once per head.
 	MergeCommitNotedHead string `json:"merge_commit_noted_head,omitempty"`
@@ -860,6 +881,15 @@ func (r Record) AdoptionEscalationNoted(head string) bool {
 	return head != "" && r.AdoptEscalationNotedHead == head
 }
 
+// AdoptionRecoveryKey is the "<head>@<base>" pair AdoptRecoveryAttempt stores.
+func AdoptionRecoveryKey(head, base string) string { return head + "@" + base }
+
+// AdoptionRecoveryAttempted reports whether the stale-red recovery already
+// ran for head against this base tip.
+func (r Record) AdoptionRecoveryAttempted(head, base string) bool {
+	return head != "" && base != "" && r.AdoptRecoveryAttempt == AdoptionRecoveryKey(head, base)
+}
+
 // MergeCommitNoted reports whether the merge-method note was posted for head.
 func (r Record) MergeCommitNoted(head string) bool {
 	return head != "" && r.MergeCommitNotedHead == head
@@ -963,6 +993,7 @@ func (s *Store) MarkYielded(key, head string) {
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
+	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
 	r.YieldedHead = head
 	s.items[key] = r
 	s.dirty = true
@@ -1025,6 +1056,26 @@ func (s *Store) MarkAdoptionEscalated(key, head, reason string) {
 	s.dirty = true
 }
 
+// MarkAdoptionRecovery records one stale-red recovery attempt for head
+// against base (hivecommons/hive#14500). Recorded before the API call, as
+// every adoption path does, so a refused call is not retried each sweep.
+func (s *Store) MarkAdoptionRecovery(key, head, base string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || base == "" {
+		return
+	}
+	pair := AdoptionRecoveryKey(head, base)
+	if r.AdoptRecoveryAttempt == pair {
+		return
+	}
+	r.AdoptRecoveryAttempt = pair
+	r.AdoptRecoveryCount++
+	s.items[key] = r
+	s.dirty = true
+}
+
 // MarkMergeCommitNoted records that the merge-method note was posted for head.
 func (s *Store) MarkMergeCommitNoted(key, head string) {
 	s.mu.Lock()
@@ -1064,8 +1115,62 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
+	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
+	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
 	s.items[key] = r
 	s.dirty = true
+}
+
+// MarkSuperseded records that superseding PR `by` merged and the original
+// was told (hivecommons/hive#14471). open is true when the original could
+// not be closed and stays open with the note; the tracker drops it either
+// way. Idempotent: a record already superseded by the same PR is unchanged.
+func (s *Store) MarkSuperseded(key string, by int, open bool, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || by <= 0 {
+		return
+	}
+	if r.SupersededBy == by && r.SupersededOpen == open {
+		return
+	}
+	if r.SupersededBy != by {
+		r.SupersededAt = now
+	}
+	r.SupersededBy, r.SupersededOpen = by, open
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkSupersederMergedNoted records that the diverged-head note was posted
+// for head, so the next poll of the same head stays silent.
+func (s *Store) MarkSupersederMergedNoted(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.SupersederMergedNotedHead == head {
+		return
+	}
+	r.SupersederMergedNotedHead = head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// Superseded reports whether the adoption's superseding PR merged and the
+// original was told: the row is finished whatever its labels say.
+func (r Record) Superseded() bool {
+	return r.SupersededBy > 0
+}
+
+// SupersederPollDue reports whether a supersede-mode adoption with a
+// superseding PR on record should be polled: not yet superseded, and the
+// last poll older than interval.
+func (r Record) SupersederPollDue(now time.Time, interval time.Duration) bool {
+	if r.AdoptedBy <= 0 || r.AdoptMode != AdoptModeSupersede || r.Superseded() {
+		return false
+	}
+	return r.AdoptCheckedAt.IsZero() || now.Sub(r.AdoptCheckedAt) >= interval
 }
 
 // NoteAdoptDiffFence records the diff-fence reason the adopted head tripped

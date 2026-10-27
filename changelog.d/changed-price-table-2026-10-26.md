@@ -1,0 +1,1 @@
+- Refreshed the model list-price table from OpenRouter (2 rows moved; list prices as of 2026-10-26); the Cost panel estimate now uses the new rates.

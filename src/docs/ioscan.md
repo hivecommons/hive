@@ -71,7 +71,7 @@ ioscan:
     enabled: true        # default: on at ACMM L4–L6, off at L1–L3
     fail_mode: closed    # default: follows ioscan.fail_mode (closed at L5–L6)
     model: ""            # empty uses the governor's default model
-    backend: ""          # empty = model endpoint (HTTP); "claude" = tool-less CLI
+    backend: ""          # empty = model endpoint, or the agents' CLI when none; "claude"/"copilot" = tool-less CLI
     cli_budget_per_eval: 8   # CLI backend only: calls per scheduler pass (max 64)
     cli_daily_quota: 500     # CLI backend only: calls per UTC day
     warn_threshold: 0.55
@@ -140,12 +140,17 @@ marker and records a fail-closed entry. `classifier.fail_mode` left unset
 follows `ioscan.fail_mode`, so it is `closed` at L5–L6 and `open` below. At
 L5–L6 a hive with no model endpoint configured therefore withholds all
 untrusted text until one is set, or until the owner sets
-`classifier.backend: claude` (see **CLI backend** below),
+`classifier.backend: claude` or `copilot` (see **CLI backend** below),
 `classifier.enabled: false` or `classifier.fail_mode: open`. The boot log
-says so in one line. A hive whose agents all run on a subscription CLI such
-as Copilot has no such endpoint, so this is the usual case there and the
-CLI backend is the remedy that keeps the classifier running. The classifier
-itself is built at boot, so changing its backend needs a restart.
+says so in one line, and the dashboard shows a persistent
+`ioscan-classifier-blocked` alert naming those fixes, since every kick that
+carries untrusted text is withheld while this lasts (#14499). A hive whose
+agents all run on a subscription CLI such as Copilot has no such endpoint;
+with `classifier.backend` left empty, boot then runs the classifier through
+the tool-less CLI most of the hive's agents run on (the most common of
+`claude`/`copilot` across `agents.*.backend`, ties by name), so such a hive
+needs no extra setting. The classifier itself is built at boot, so changing
+its backend needs a restart.
 
 **What still passes.** The classifier has a budget of 64 calls per scheduler
 pass (8 with a CLI backend, see below). Text beyond that budget is passed on with a `budget_exhausted` skip in
@@ -156,7 +161,9 @@ rules alone cover them.
 **CLI backend.** A hive with no model endpoint, for example one whose agents
 all run on subscription CLIs, can run the classifier through a CLI instead
 with `classifier.backend`. Empty (the default) keeps the HTTP endpoint path
-exactly as before. The only accepted backend today is `claude`.
+when an endpoint is resolved and otherwise falls back to the agents' own
+tool-less CLI as described above. The accepted backends are `claude` and
+`copilot`.
 
 * **Tool-less guarantee.** The CLI is launched with every built-in tool
   disabled and no MCP server, in an empty temporary working directory, with
@@ -169,7 +176,19 @@ exactly as before. The only accepted backend today is `claude`.
   settings are the operator's own and still run. Its reply must contain
   exactly one valid JSON verdict; anything else is a classifier error and
   follows `classifier.fail_mode`.
-* **Refused backends.** `copilot`, `codex` and `gemini` have no command-line
+* **copilot.** Copilot CLI is launched as `copilot -s --no-color
+  --available-tools hive-ioscan-no-tools --disable-builtin-mcps
+  --no-custom-instructions --no-ask-user --no-auto-update [--model m] -p
+  <prompt>`. `--available-tools` is an allowlist; naming a tool that does not
+  exist leaves the model with no tool at all (the CLI logs `Disabled tools:
+  bash, create, edit, glob, grep, view, web_fetch, …` and every MCP server,
+  built-in or user-configured, reports `disabled`); an empty list is ignored
+  by the CLI, hence the sentinel. `--allow-all-tools` is never passed.
+  Copilot does not read stdin in prompt mode, so the prompt is the value of
+  `-p`, passed as one argv element with no shell involved. The environment
+  carries `COPILOT_HOME` and `COPILOT_GITHUB_TOKEN` for copilot's own login
+  and never `GH_TOKEN`/`GITHUB_TOKEN`, which copilot would otherwise honour.
+* **Refused backends.** `codex` and `gemini` have no command-line
   flag that removes every tool, so boot refuses them with one log line and
   then behaves as for any classifier that cannot be built: at a closed
   classifier fail mode untrusted text is withheld, at open the classifier

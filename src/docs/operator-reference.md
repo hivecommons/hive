@@ -647,7 +647,12 @@ check); otherwise it hands the PR back as a contributor push
 without any repo evidence log and keep adoption). Push-capable App-authored
 agents use the App bot noreply email (keyed by the bot's GitHub user id, not
 the App id) for git commits so fixer pushes normally carry that GitHub linkage while their commit name/sign-off still names the
-lane. If the hive cannot push in place, it
+lane. Once the hive's in-place head is green, reviewer-approved, DCO-clean
+and soaked, the contributor lane merges it under the hive's own authority
+(`contributor-lane:adopted-by-hive`) — the original author's trust tier is
+not consulted, because the hive owns an adopted head
+(`governor.labels.stage.adoption.auto_merge`, default on; `false` leaves an
+untrusted contributor's adopted PR waiting for a maintainer `/lgtm`). If the hive cannot push in place, it
 pushes `hive/adopt-<n>` at the contributor head, opens a superseding App PR
 that preserves the author's commits, moves the original to 074 and closes it
 once the superseder merges. Whether that rework reaches each agent is visible per row

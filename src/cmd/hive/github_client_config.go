@@ -328,6 +328,7 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	client.SetAttributionAuditRecord(func(rec github.AuditRecord) {
 		b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
 		recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec)
+		b.dashSrv.ApplyPRTerminalAudit(rec)
 		// #10927/#10933: the agent card's "what is it on" and stale warning
 		// read each agent's last hive-mediated write.
 		dashboard.RecordAgentLastAction(rec, time.Now())
@@ -399,6 +400,10 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// The issues the PR fixes get their own pr_opened stage: the
 		// start→PR SLA boundary, and the link a later merge folds back on.
 		recordPROpenedForIssues(b.dashSrv, b.cfg.Project.Org, d.Agent, d.Repo, d.Number, d.URL, d.Issues)
+		// The duplicate-PR claim ledger learns about the PR now, not at the
+		// next scan, so a contributor cannot be admitted to an issue this
+		// PR already covers in the gap between (hivecommons/hive#14472).
+		client.RecordOpenedPRClaims(getClaimLedger(b.logger), d, hiveIdentity(b.cfg), time.Now())
 	})
 	client.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, b.handleCanaryLeak)
 }

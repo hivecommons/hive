@@ -53,6 +53,24 @@ type adoptAPI struct {
 	failPermission  bool
 	permissionReads int
 	onPermission    func()
+	// failEditStatus, when non-zero, is the status PATCH pulls/n answers.
+	failEditStatus int
+	// Stale-red recovery fixtures (hivecommons/hive#14500): compareBehind
+	// and compareBase are what GET compare/base...head reports; baseChecks
+	// is name → conclusion served by GET commits/<base>/check-runs;
+	// failedRuns are the workflow runs GET actions/runs?head_sha= lists;
+	// updateBranchStatus, when non-zero, is the status PUT update-branch
+	// answers with updateBranchMessage. The recorder slices count calls.
+	compareBehind       int
+	compareBase         string
+	baseChecks          map[string]string
+	failBaseChecks      bool
+	failedRuns          []int64
+	updateBranchStatus  int
+	updateBranchMessage string
+	branchUpdates       []string
+	reruns              []int64
+	baseCheckReads      int
 }
 
 type adoptCommit struct {
@@ -180,7 +198,58 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		for _, f := range a.compareFiles {
 			files = append(files, map[string]string{"filename": f})
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
+		payload := map[string]any{"files": files, "behind_by": a.compareBehind}
+		if a.compareBase != "" {
+			payload["base_commit"] = map[string]any{"sha": a.compareBase}
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/") && strings.HasSuffix(path, "/check-runs"):
+		a.baseCheckReads++
+		if a.failBaseChecks {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		runs := []map[string]any{}
+		id := int64(1)
+		for name, conclusion := range a.baseChecks {
+			run := map[string]any{"id": id, "name": name, "status": "completed", "conclusion": conclusion}
+			if conclusion == "pending" {
+				run["status"] = "in_progress"
+				delete(run, "conclusion")
+			}
+			runs = append(runs, run)
+			id++
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+		return true
+	case r.Method == http.MethodPut && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/update-branch"):
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		expected, _ := body["expected_head_sha"].(string)
+		a.branchUpdates = append(a.branchUpdates, strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), "/update-branch")+"@"+expected)
+		if a.updateBranchStatus != 0 {
+			w.WriteHeader(a.updateBranchStatus)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": nonEmpty(a.updateBranchMessage, "scripted refusal")})
+			return true
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
+		return true
+	case r.Method == http.MethodGet && path == "/repos/acme/widget/actions/runs":
+		sha := r.URL.Query().Get("head_sha")
+		runs := []map[string]any{}
+		for _, id := range a.failedRuns {
+			runs = append(runs, map[string]any{"id": id, "workflow_id": id, "run_number": 1, "run_attempt": 1, "head_sha": sha, "status": "completed", "conclusion": "failure"})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "workflow_runs": runs})
+		return true
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/repos/acme/widget/actions/runs/") && strings.HasSuffix(path, "/rerun-failed-jobs"):
+		var id int
+		_, _ = sscanInt(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/actions/runs/"), "/rerun-failed-jobs"), &id)
+		a.reruns = append(a.reruns, int64(id))
+		w.WriteHeader(http.StatusCreated)
 		return true
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/"):
 		sha := strings.TrimPrefix(path, "/repos/acme/widget/commits/")
@@ -201,6 +270,11 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		a.prEdits = append(a.prEdits, strings.TrimPrefix(path, "/repos/acme/widget/pulls/")+":"+body["state"].(string))
+		if a.failEditStatus != 0 {
+			w.WriteHeader(a.failEditStatus)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted refusal"})
+			return true
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
 		return true
 	}
@@ -242,6 +316,13 @@ func (a *adoptAPI) setSuperseder(n int, state string, merged bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.superseders[n] = map[string]any{"number": n, "state": state, "merged": merged}
+}
+
+// setSupersederHead is setSuperseder with the superseder's head SHA served.
+func (a *adoptAPI) setSupersederHead(n int, state string, merged bool, head string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.superseders[n] = map[string]any{"number": n, "state": state, "merged": merged, "head": map[string]any{"sha": head}}
 }
 
 func adoptPR(number int, head string, labels ...string) *gh.PullRequest {
@@ -1871,5 +1952,160 @@ func TestSupersedeRevalidatesBeforeRefMutation(t *testing.T) {
 				t.Fatalf("unsafe supersession mutated repository: n=%d refs=%v updates=%v pulls=%v edits=%v", n, h.adopt.refs, h.adopt.refUpdates, h.adopt.pulls, h.adopt.prEdits)
 			}
 		})
+	}
+}
+
+// adoptThenLeave074 adopts PR 7 at head "aaa" (offline grace) and returns
+// the labels the PR wears at 074. Shared by the hivecommons/hive#14471
+// cases, which then move the PR off 074 before the superseder merges.
+func adoptThenLeave074(t *testing.T) (*adoptHarness, func()) {
+	t.Helper()
+	fake := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "comment"}}
+	h, done := newAdoptHarnessWith(t, fake, nudgeOnlySink{fake}, adoptPolicy())
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.clock.advance(time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("not adopted: pulls=%d", len(h.adopt.pulls))
+	}
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if added := h.addedLabels(); len(added) == 0 || added[len(added)-1] != "stage/074-adopted-by-hive" {
+		t.Fatalf("074: %v", h.api.added)
+	}
+	return h, done
+}
+
+// hivecommons/hive#14471: a `needs-human` label parks the adopted PR at 085,
+// which does not yield to adoption. The superseder's merge must still close
+// the original, once.
+func TestAdoptionSupersederMergedClosesOriginalParkedAt085(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	parked := []string{"stage/074-adopted-by-hive", "needs-human", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", parked...), "label:needs-human")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/085-needs-decision" {
+		t.Fatalf("085 from needs-human: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	at085 := []string{"stage/085-needs-decision", "needs-human", "role/contributor", "author/clanker"}
+	h.adopt.setSuperseder(90, "closed", true)
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	res := h.observe(adoptPR(7, "aaa", at085...), "label:needs-human")
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed from 085: %v", h.adopt.prEdits)
+	}
+	closeNotes := 0
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, adoptionCloseMarker) && strings.Contains(c, "#90") {
+			closeNotes++
+		}
+	}
+	if closeNotes != 1 || res.Comments < 1 {
+		t.Fatalf("close note: %v res=%+v", h.api.comments, res)
+	}
+	rec, ok := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !ok || rec.SupersededBy != 90 || rec.SupersededOpen {
+		t.Fatalf("record not marked superseded: ok=%v rec=%+v", ok, rec)
+	}
+	// Idempotent: the PR still reads open to the lane (GitHub lag) but the
+	// note and close never repeat.
+	h.api.reset()
+	h.adopt.prEdits = nil
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "aaa", at085...), "label:needs-human")
+	if len(h.adopt.prEdits) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("repeated settle: edits=%v comments=%v", h.adopt.prEdits, h.api.comments)
+	}
+}
+
+// hivecommons/hive#14471 (#14403 → #14461): the contributor pushes a new
+// head after the adoption, so the PR falls back to 072; the fix lane carries
+// that head into the superseder and merges it. The original closes.
+func TestAdoptionSupersederMergedWithLaterHeadClosesOriginal(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	h.api.reset()
+	h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/072-returned-to-contributor" {
+		t.Fatalf("new head should leave 074: added=%v", h.api.added)
+	}
+	at072 := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.adopt.setSupersederHead(90, "closed", true, "bbb")
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "bbb", at072...), "check-failing:unit")
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed after superseder merged its head: %v", h.adopt.prEdits)
+	}
+}
+
+// hivecommons/hive#14471: the superseder merged the adopted head but the
+// original has commits past it. One note per head, no close.
+func TestAdoptionSupersederMergedDivergedHeadNotesOnce(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	at072 := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	h.adopt.setSupersederHead(90, "closed", true, "aaa")
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "bbb", at072...), "check-failing:unit")
+	if len(h.adopt.prEdits) != 0 {
+		t.Fatalf("closed a PR whose head the superseder did not carry: %v", h.adopt.prEdits)
+	}
+	notes := 0
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionSupersederMergedDivergedMarker) && strings.Contains(c, "#90") && strings.Contains(c, "bbb") {
+			notes++
+		}
+	}
+	if notes != 1 {
+		t.Fatalf("diverged note: %v", h.api.comments)
+	}
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "bbb", at072...), "check-failing:unit")
+	if len(h.api.comments) != 0 || len(h.adopt.prEdits) != 0 {
+		t.Fatalf("diverged note repeated: comments=%v edits=%v", h.api.comments, h.adopt.prEdits)
+	}
+}
+
+// hivecommons/hive#14471: GitHub refuses the close (the App cannot close
+// this fork PR). The note stands, the record is superseded-open so the
+// tracker drops the row, nothing repeats and no error is raised.
+func TestAdoptionSupersederMergedCloseRefusedMarksSupersededOpen(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	at074 := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker"}
+	h.adopt.mu.Lock()
+	h.adopt.failEditStatus = http.StatusForbidden
+	h.adopt.mu.Unlock()
+	h.adopt.setSuperseder(90, "closed", true)
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "aaa", at074...), "check-failing:unit")
+	if len(h.adopt.prEdits) != 1 {
+		t.Fatalf("close not attempted: %v", h.adopt.prEdits)
+	}
+	rec, ok := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !ok || rec.SupersededBy != 90 || !rec.SupersededOpen {
+		t.Fatalf("record not superseded-open: ok=%v rec=%+v", ok, rec)
+	}
+	h.api.reset()
+	h.adopt.prEdits = nil
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "aaa", at074...), "check-failing:unit")
+	if len(h.adopt.prEdits) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("refused close retried: edits=%v comments=%v", h.adopt.prEdits, h.api.comments)
+	}
+}
+
+// hivecommons/hive#14471: a `Refs #N` line travels into the superseder body.
+func TestAdoptionClosesCarriesRefs(t *testing.T) {
+	got := adoptionCloses("Refs #14389 — addresses root cause 2\nRefs #5\nCloses #12\n")
+	if len(got) != 2 || got[0] != "Refs #5" || got[1] != "Closes #12" {
+		t.Fatalf("adoptionCloses: %v", got)
 	}
 }

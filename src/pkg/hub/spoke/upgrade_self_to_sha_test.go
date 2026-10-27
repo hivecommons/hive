@@ -460,7 +460,7 @@ func TestUpgradeSelfMutableToSHA_DirectCall_Success(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive"}]}}}}`))
 	}))
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)

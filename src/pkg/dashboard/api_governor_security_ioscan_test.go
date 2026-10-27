@@ -44,7 +44,7 @@ func TestGovernorSecurityClassifierBackendRoundTrip(t *testing.T) {
 
 func TestGovernorSecurityRejectsInvalidClassifierBackendValues(t *testing.T) {
 	for name, body := range map[string]map[string]any{
-		"copilot backend":   {"ioscanClassifierBackend": "copilot"},
+		"gemini backend":    {"ioscanClassifierBackend": "gemini"},
 		"codex backend":     {"ioscanClassifierBackend": "codex"},
 		"negative budget":   {"ioscanClassifierCliBudgetPerEval": -1},
 		"budget above 64":   {"ioscanClassifierCliBudgetPerEval": 65},
