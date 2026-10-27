@@ -250,11 +250,14 @@ func TestMaintainHeldPRMergeabilityRetriesRefusedHeadOnlyAfterHeadOrBaseMoves(t 
 }
 
 // A record written by a build that only knew the workflows refusal keeps
-// stopping on its head.
+// stopping on its head only while no base is known; a known base retries.
 func TestMaintainHeldPRMergeabilityHonoursLegacyWorkflowRefusal(t *testing.T) {
 	rec := holdguard.Entry{WorkflowRefusedHeadSHA: "c1"}
-	if reason, ok := rec.UpdateStoppedFor("c1", "b9"); !ok || reason != holdguard.UpdateStopWorkflowPermission {
+	if reason, ok := rec.UpdateStoppedFor("c1", ""); !ok || reason != holdguard.UpdateStopWorkflowPermission {
 		t.Fatalf("UpdateStoppedFor(c1) = %q, %v; want the legacy workflows refusal", reason, ok)
+	}
+	if _, ok := rec.UpdateStoppedFor("c1", "b9"); ok {
+		t.Fatal("a known base must re-evaluate a legacy record")
 	}
 	if _, ok := rec.UpdateStoppedFor("c2", "b9"); ok {
 		t.Fatal("a moved head must not be stopped by the legacy record")

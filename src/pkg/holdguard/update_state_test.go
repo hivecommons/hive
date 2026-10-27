@@ -95,8 +95,11 @@ func TestUpdateStoppedForOneHeadAndBase(t *testing.T) {
 	}
 
 	legacy := Entry{WorkflowRefusedHeadSHA: "h3"}
-	if reason, ok := legacy.UpdateStoppedFor("h3", "any-base"); !ok || reason != UpdateStopWorkflowPermission {
-		t.Fatalf("legacy workflows refusal = (%q, %v), want (%q, true)", reason, ok, UpdateStopWorkflowPermission)
+	if reason, ok := legacy.UpdateStoppedFor("h3", ""); !ok || reason != UpdateStopWorkflowPermission {
+		t.Fatalf("legacy workflows refusal without a base = (%q, %v), want (%q, true)", reason, ok, UpdateStopWorkflowPermission)
+	}
+	if _, ok := legacy.UpdateStoppedFor("h3", "any-base"); ok {
+		t.Fatal("a legacy record has no base, so a known base must re-evaluate rather than stop")
 	}
 }
 

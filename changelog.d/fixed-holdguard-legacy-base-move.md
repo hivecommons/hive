@@ -1,0 +1,1 @@
+- Held PRs stopped by an older build's workflows-refusal record are retried once when the base branch moves, instead of being skipped until the next head push.

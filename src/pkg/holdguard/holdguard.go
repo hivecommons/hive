@@ -371,7 +371,9 @@ const UpdateConfirmWindow = 30 * time.Minute
 
 // UpdateStoppedFor reports whether the guard stopped updating this head on
 // this base, and why. A record from a build that only knew the workflows
-// refusal (WorkflowRefusedHeadSHA) stops on its head alone.
+// refusal (WorkflowRefusedHeadSHA) records no base, so it stops only when the
+// caller has no base to compare; with a known base it falls through so a base
+// move earns a fresh attempt, which records both SHAs.
 func (e Entry) UpdateStoppedFor(headSHA, baseSHA string) (string, bool) {
 	if headSHA == "" {
 		return "", false
@@ -379,7 +381,7 @@ func (e Entry) UpdateStoppedFor(headSHA, baseSHA string) (string, bool) {
 	if e.UpdateStoppedHeadSHA == headSHA && e.UpdateStoppedBaseSHA == baseSHA && e.UpdateStoppedReason != "" {
 		return e.UpdateStoppedReason, true
 	}
-	if e.WorkflowRefusedHeadSHA == headSHA {
+	if e.WorkflowRefusedHeadSHA == headSHA && baseSHA == "" {
 		return UpdateStopWorkflowPermission, true
 	}
 	return "", false
