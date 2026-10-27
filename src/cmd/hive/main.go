@@ -1168,6 +1168,11 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	b.ctx, cancel = context.WithCancel(context.Background())
 	b.cleanup.push(func() { cancel() })
 
+	// Runtime observability (#14681): GOMEMLIMIT from the cgroup limit, the
+	// loopback pprof listener and the 60 s `mem:` line. Before tracing so the
+	// first mem line lands even when an exporter stalls.
+	b.startRuntimeObservability()
+
 	// Initialize OpenTelemetry tracing. Off by default: with no otel block
 	// (or otel.enabled=false) this installs a no-op provider with zero export
 	// overhead. Never fatal — a tracing setup error must not stop hive.

@@ -1466,6 +1466,27 @@ means the App/key/installation are healthy, but the hive still names the old
 repository owner after an org transfer; update the configured project org rather
 than trying to add the moved repository back to the old installation.
 
+## Runtime diagnostics (`debug`, `GOMEMLIMIT`, `mem:` log line)
+
+Added for [#14681](https://github.com/hivecommons/hive/issues/14681) (hive
+process RSS growing hundreds of MiB/min with no pprof to name the culprit).
+
+| Name | Source | Default | Purpose |
+|---|---|---|---|
+| `debug.pprof_addr` | `hive.yaml` | `127.0.0.1:6060` | `net/http/pprof` listener. **Loopback only**: a non-loopback host (`0.0.0.0`, pod IP) is rejected at startup with a warning and the default is used instead. `off` disables the listener. Profiles are under `/debug/pprof/`; `/debug/runtime` prints the same counters as the `mem:` log line. |
+| `GOMEMLIMIT` | env | 85% of the cgroup memory limit | Go soft memory limit. When the env var is unset the hive reads `/sys/fs/cgroup/memory.max` (v2) or `memory/memory.limit_in_bytes` (v1) and sets `MemoryLimitPercent` (85%) of it via `debug.SetMemoryLimit`; an unlimited cgroup leaves the runtime default. Set the env var to override. Logged at startup as `runtime: memory limit` with `source=env|cgroup|none`. |
+| `mem: runtime snapshot` | log (INFO, every 60 s) | always on | `heap_inuse`, `heap_live`, `heap_objects`, `total_sys`, `next_gc`, `gc_cycles`, `goroutines`, `threads` (OS threads from `/proc/self/status`), `gomemlimit`. Read from `runtime/metrics`, so no stop-the-world. |
+
+The same snapshot is embedded in `GET /api/health` as `runtime` so the
+dashboard health probe and `kubectl exec … curl` see goroutine count and heap
+without the pprof port. Taking profiles on a pod:
+
+```bash
+kubectl -n <ns> port-forward deploy/hive 6060:6060 &
+go tool pprof -top  http://127.0.0.1:6060/debug/pprof/heap          # inuse_space
+curl -s 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=1' | head  # parked goroutines
+```
+
 ## `cmd/hive` flags and environment
 
 ### Startup
