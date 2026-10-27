@@ -36,6 +36,7 @@ type fakeAPI struct {
 	podStatus string // "terminated" or "running"
 	failCode  int    // when >0, every request fails with this status
 	createErr int    // when >0, POST fails with this status
+	onJobGet  func() // called (under mu) on every GET job, after it is counted
 }
 
 func newFakeAPI() *fakeAPI {
@@ -72,6 +73,9 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 				i = len(f.statuses) - 1
 			}
 			f.getCalls++
+			if f.onJobGet != nil {
+				f.onJobGet()
+			}
 			_, _ = w.Write([]byte(f.statuses[i]))
 		case r.Method == http.MethodDelete:
 			f.deleted = true
@@ -186,11 +190,14 @@ func TestRunContextTimeoutDeletesTheJob(t *testing.T) {
 	defer srv.Close()
 	l := newLauncher(srv, Options{})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	// End the context only once Run is polling the created Job, so a slow
+	// runner cannot expire it before the Job exists.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	api.onJobGet = cancel
 	res, err := l.Run(ctx, specFor("/data/agents/sandbox/deps-123"))
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Run error = %v, want deadline exceeded", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want the ended context", err)
 	}
 	if !api.deleted {
 		t.Error("a timed-out Job must be deleted so the workload stops")
