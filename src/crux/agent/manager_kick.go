@@ -1151,8 +1151,9 @@ const (
 // pkg/agent TestMain can shrink them for the whole suite: they accumulate to
 // well over the default 10m `go test` timeout when 440 tests pay production
 // pacing (1-3s sleeps, 60-120s poll deadlines) against stub CLIs that render
-// instantly. Production values are unchanged — nothing outside TestMain may
-// mutate them. Relationships the values encode (bobInputHandlerSettleDelay
+// instantly. Production values are unchanged. Outside TestMain, a test may
+// override one for its own body only if it restores the original via t.Cleanup;
+// this is safe because no test in the package uses t.Parallel. Relationships the values encode (bobInputHandlerSettleDelay
 // distinct from every tmux-pacing delay, and far below inputPromptTimeout) are
 // pinned by TestBobSettleDelay_* and must be preserved by any test override.
 var (
