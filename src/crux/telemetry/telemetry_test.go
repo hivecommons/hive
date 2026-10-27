@@ -2,11 +2,21 @@ package telemetry
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -141,5 +151,81 @@ func TestInitExportsToCollectorOnShutdown(t *testing.T) {
 	defer mu.Unlock()
 	if posts["/v1/traces"] == 0 || posts["/v1/metrics"] == 0 {
 		t.Fatalf("collector POSTs = %v, want /v1/traces and /v1/metrics", posts)
+	}
+}
+
+// caCertPEM writes a self-signed certificate the exporters' CERTIFICATE env
+// variables can load, so a TLS root can be configured against an http://
+// endpoint — the one exporter construction error reachable through env.
+func caCertPEM(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "crux-telemetry-test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
+}
+
+func TestInitResourceErrorInstallsNothing(t *testing.T) {
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment") // no '=': ErrPartialResource
+	shutdown, err := initFromEnv(context.Background(), "v1", envOf(map[string]string{envEndpoint: "http://collector:4318"}))
+	if err == nil {
+		t.Fatal("initFromEnv must surface an invalid OTEL_RESOURCE_ATTRIBUTES")
+	}
+	shutdown()
+	if otel.GetTracerProvider() != tp || otel.GetMeterProvider() != mp {
+		t.Fatal("a resource error must not install a provider")
+	}
+}
+
+func TestInitTraceExporterErrorInstallsNothing(t *testing.T) {
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "")
+	t.Setenv(envEndpoint, "http://collector:4318")
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE", caCertPEM(t))
+	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_INSECURE", "true")
+	shutdown, err := initFromEnv(context.Background(), "v1", envOf(map[string]string{envEndpoint: "http://collector:4318"}))
+	if err == nil || !strings.Contains(err.Error(), "trace exporter") {
+		t.Fatalf("err = %v, want a trace exporter error", err)
+	}
+	shutdown()
+	if otel.GetTracerProvider() != tp || otel.GetMeterProvider() != mp {
+		t.Fatal("a trace exporter error must not install a provider")
+	}
+}
+
+// When the metric pipeline fails after the trace pipeline was built, the
+// trace provider is shut down and neither global is replaced.
+func TestInitMetricExporterErrorTearsDownTraces(t *testing.T) {
+	tp, mp := otel.GetTracerProvider(), otel.GetMeterProvider()
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "")
+	t.Setenv(envEndpoint, "http://collector:4318")
+	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE", caCertPEM(t))
+	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_INSECURE", "true")
+	shutdown, err := initFromEnv(context.Background(), "v1", envOf(map[string]string{envEndpoint: "http://collector:4318"}))
+	if err == nil || !strings.Contains(err.Error(), "metric exporter") {
+		t.Fatalf("err = %v, want a metric exporter error", err)
+	}
+	shutdown()
+	if otel.GetTracerProvider() != tp || otel.GetMeterProvider() != mp {
+		t.Fatal("a metric exporter error must not leave the trace provider installed")
 	}
 }
