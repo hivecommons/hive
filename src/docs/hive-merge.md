@@ -432,6 +432,28 @@ A PR merges through this tier only when all of the following hold:
     with `contributor-lane:no-linked-issue`. The marker's `tier=` must be in
     `require_tiers` (`contributor-lane:claim-tier-untrusted`) and it must say
     `verified=true` (`contributor-lane:claim-unverified`).
+  - **Auto-promotion**: when the marker path fails on tier, the conservative
+    clean-history ratchet (`auto_merge.contributor_tier.auto_promote_after_merged`,
+    default 5; negative disables) admits the author if their last N merged
+    PRs have no revert or sentinel-alert evidence — none is itself a revert,
+    none carries the sentinel label, none was undone by a later merged
+    `Revert "<title>"` / "This reverts commit <sha>" PR — and the author is
+    not `revoked` in the registry. By default the merges are counted across
+    **every repository the hive manages**
+    (`auto_merge.contributor_lane.auto_promotion_scope: hive`): trust is a
+    property of the person, and the small satellite repos of a multi-repo
+    hive never reach the threshold on their own (hivecommons/docs#481 sat 17h
+    at `contributor-lane:claim-tier-untrusted` while the same author had nine
+    clean merges in hivecommons/hive; #14517). The PR's own repository is
+    walked first; only when it is short does one `search/issues` query
+    (`is:pr is:merged author:<login> repo:… repo:…`) find which other hive
+    repos hold the author's merges, and only those are walked for revert
+    evidence — a revert or sentinel hit in any repository blocks. The sweep
+    posts a `<!-- hive:contributor-auto-promoted author=… merged=N scope=hive
+    repos=hive:4,docs:1 -->` audit comment once per PR and logs
+    `contributor-lane admitted reason=contributor-lane:auto-promoted
+    merged_prs=5 scope=hive repos=hive:4,docs:1`. `auto_promotion_scope:
+    repo` restores the per-repository count.
 - When neither admission path above vouches for the author, GitHub's
   `author_association` for the PR author must be `OWNER`, `MEMBER`,
   `COLLABORATOR` or `CONTRIBUTOR`; `NONE`, `FIRST_TIMER`,
@@ -491,11 +513,15 @@ auto_merge:
       - trusted
       - merger
     registry_tiers_sufficient: true   # a require_tiers tier on the author's registry profile admits without a claim marker
+    auto_promotion_scope: hive        # count clean merged PRs across every hive repo (repo = this repository only)
+  contributor_tier:
+    auto_promote_after_merged: 5      # clean merged PRs before the lane trusts an author on its own; negative disables
 ```
 
 The block is editable from **Settings → Features → Auto Merge →
 Contributor-lane auto-merge** (enable switch, soak minutes, reviewer-verdict
-switch, required tiers, excluded labels, repository allow-list) through the
+switch, required tiers, auto-promotion scope, excluded labels, repository
+allow-list) through the
 same owner-only `GET/PUT /api/config/auto-merge` overlay.
 
 **Operator workflow.** To let a known contributor's relay PRs merge

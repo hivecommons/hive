@@ -49641,6 +49641,10 @@ function burnAreaChart() {
       const amContributorLaneLabels = Array.isArray(amContributorLane.exclude_labels) ? amContributorLane.exclude_labels : ['hold','do-not-merge','needs-human','blocked','needs-rebase'];
       const amContributorLaneTiers = Array.isArray(amContributorLane.require_tiers) && amContributorLane.require_tiers.length ? amContributorLane.require_tiers : ['merger','trusted'];
       const amContributorLaneGrantable = Array.isArray(amContributorLane.grantable_tiers) ? amContributorLane.grantable_tiers : ['trusted','merger','advisor'];
+      const amContributorLaneScope = typeof amContributorLane.auto_promotion_scope === 'string' && amContributorLane.auto_promotion_scope ? amContributorLane.auto_promotion_scope : 'hive';
+      const amContributorLaneScopes = Array.isArray(amContributorLane.auto_promotion_scopes) && amContributorLane.auto_promotion_scopes.length ? amContributorLane.auto_promotion_scopes : ['hive','repo'];
+      const amContributorLaneScopeLabel = { hive: "hive — every repository this hive manages", repo: "repo — the PR's repository only" };
+      const amContributorLaneScopeOptions = amContributorLaneScopes.map(v => `<option value="${esc(v)}"${v === amContributorLaneScope ? ' selected' : ''}>${esc(amContributorLaneScopeLabel[v] || v)}</option>`).join('');
       const amContributorLaneRepoSet = new Set((Array.isArray(amContributorLane.repos) ? amContributorLane.repos : []).map(r => String(r).toLowerCase()));
       const amContributorLaneRepoOptions = watchedRepos.map(r => `<option value="${esc(r)}"${amContributorLaneRepoSet.has(String(r).toLowerCase()) ? ' selected' : ''}>${esc(r)}</option>`).join('');
       const amBotSourceLabel = { known: 'known bot', discovered: 'seen in open PRs', custom: 'added manually' };
@@ -49828,6 +49832,11 @@ function burnAreaChart() {
               </div>
             </div>
             <div class="config-field mt-4">
+              <label for="am-contributor-lane-auto-promotion-scope">Auto-promotion scope ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Auto-promotion scope', `Where the clean-merged-PR ratchet (auto_merge.contributor_tier.auto_promote_after_merged) counts an author's merges. hive (the default) counts clean merged PRs across every repository this hive manages, so a contributor trusted in the main repo is trusted in the small satellite repos too; repo counts only the PR's own repository. Revert and sentinel-alert evidence blocks promotion in either scope.`)}</label>
+              <select id="am-contributor-lane-auto-promotion-scope" data-change-action="gh104">${amContributorLaneScopeOptions}</select>
+              <p class="am-trusted-authors-note">A contributor's trust is a property of the person, not the repository: with <code>hive</code>, nine clean merges in the main repo also admit their first PR to a docs repo.</p>
+            </div>
+            <div class="config-field mt-4">
               <label for="am-contributor-lane-exclude-labels">Excluded labels</label>
               <input id="am-contributor-lane-exclude-labels" type="text" value="${esc(amContributorLaneLabels.join(', '))}" placeholder="hold, do-not-merge, needs-human, blocked, needs-rebase" data-change-action="gh104">
               <p class="am-trusted-authors-note">Any listed label keeps the PR out of this tier; defaults are shown when unset.</p>
@@ -49836,7 +49845,7 @@ function burnAreaChart() {
               <label for="am-contributor-lane-repos">Repositories</label>
               <select id="am-contributor-lane-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh104" class="am-trusted-authors-repos">${amContributorLaneRepoOptions}</select>
               <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, no-linked-issue, claim-author-mismatch, claim-other-hive, claim-tier-untrusted, claim-unverified, author-association, workflow-path, tests-removed, no-reviewer, no-verdict, soaking, sentinel-blocked); a registry-admitted PR logs <code>contributor-lane:registry-trusted</code>.</p>
-              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
+              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.auto_promotion_scope</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
             </div>
           </div>
         </div>
@@ -52143,12 +52152,14 @@ function burnAreaChart() {
       const labels = document.getElementById('am-contributor-lane-exclude-labels');
       const repos = document.getElementById('am-contributor-lane-repos');
       const tiers = document.getElementById('am-contributor-lane-require-tiers');
+      const scope = document.getElementById('am-contributor-lane-auto-promotion-scope');
       const soakMinutes = soak ? parseInt(soak.value, 10) : 30;
       markDirty('auto-merge', 'contributor_lane', {
         enabled: !!(enabled && enabled.classList.contains('on')),
         soak_minutes: Number.isFinite(soakMinutes) && soakMinutes >= 0 ? soakMinutes : 30,
         require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
         registry_tiers_sufficient: !!(registry && registry.classList.contains('on')),
+        auto_promotion_scope: scope && scope.value ? scope.value : 'hive',
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : [],
         require_tiers: tiers ? tiers.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []

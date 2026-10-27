@@ -135,6 +135,26 @@ func TestContributorLaneAutoMergeConfigRequireTiers(t *testing.T) {
 	}
 }
 
+// auto_promotion_scope defaults to hive (fleet-wide clean-merge count,
+// #14517), accepts repo, and rejects anything else.
+func TestContributorLaneAutoMergeConfigAutoPromotionScope(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if got := cfg.EffectiveAutoPromotionScope(); got != ContributorLaneAutoPromotionScopeHive {
+		t.Fatalf("default auto_promotion_scope = %q, want hive", got)
+	}
+	cfg.AutoPromotionScope = " Repo "
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("repo scope should validate: %v", err)
+	}
+	if got := cfg.EffectiveAutoPromotionScope(); got != ContributorLaneAutoPromotionScopeRepo {
+		t.Fatalf("auto_promotion_scope = %q, want repo (trimmed, lower-cased)", got)
+	}
+	cfg.AutoPromotionScope = "fleet"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "auto_promotion_scope") {
+		t.Fatalf("invalid scope must fail validation, got %v", err)
+	}
+}
+
 func TestBotTakeoverAutoMergeConfigDefaultsOnAndHonorsExplicitOff(t *testing.T) {
 	var a AutoMergeConfig
 	if !a.BotTakeover.IsEnabled() {

@@ -56,6 +56,15 @@ type contributorLaneFixture struct {
 	issueComments   []map[string]any // comments on the linked issue
 	prComments      []map[string]any // comments on the PR
 	mergedHistory   []map[string]any
+	// otherHistory is the closed-PR list of the hive's other repositories
+	// (acme/<name>), served to the hive-wide auto-promotion walk; the fake
+	// search/issues endpoint reports a repo only when it holds a merged PR
+	// by the searched author.
+	otherHistory    map[string][]map[string]any
+	searchStatus    int
+	searches        int
+	searchQuery     string
+	otherLists      []string
 	issueCommentsSt int
 	reviews         []map[string]any
 	mergeStatus     int
@@ -66,6 +75,7 @@ type contributorLaneFixture struct {
 	comments        int
 	updates         int
 	lastComment     string
+	allComments     []string
 	// checkCompletedAt, when set, is the completed_at the check-runs
 	// endpoint reports for sha7 (RFC 3339); empty omits the field.
 	checkCompletedAt string
@@ -148,6 +158,43 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				return
 			}
 			json.NewEncoder(w).Encode([]map[string]any{pull("sha7")})
+		case r.Method == http.MethodGet && r.URL.Path == "/search/issues":
+			fx.searches++
+			fx.searchQuery = r.URL.Query().Get("q")
+			if fx.searchStatus != 0 {
+				http.Error(w, "search error", fx.searchStatus)
+				return
+			}
+			searchedAuthor := ""
+			var searchedRepos []string
+			for _, term := range strings.Fields(fx.searchQuery) {
+				switch {
+				case strings.HasPrefix(term, "author:"):
+					searchedAuthor = strings.TrimPrefix(term, "author:")
+				case strings.HasPrefix(term, "repo:"):
+					searchedRepos = append(searchedRepos, strings.TrimPrefix(term, "repo:"))
+				}
+			}
+			items := []map[string]any{}
+			for _, full := range searchedRepos {
+				name := strings.TrimPrefix(full, "acme/")
+				for _, pr := range fx.otherHistory[name] {
+					user, _ := pr["user"].(map[string]string)
+					if merged, _ := pr["merged_at"].(string); merged != "" && strings.EqualFold(user["login"], searchedAuthor) {
+						items = append(items, map[string]any{"number": pr["number"], "repository_url": "https://api.github.com/repos/" + full, "pull_request": map[string]any{}})
+						break
+					}
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"total_count": len(items), "incomplete_results": false, "items": items})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/") && strings.HasSuffix(r.URL.Path, "/pulls") && r.URL.Path != "/repos/acme/widget/pulls" && r.URL.Query().Get("state") == "closed":
+			name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos/acme/"), "/pulls")
+			fx.otherLists = append(fx.otherLists, name)
+			history := fx.otherHistory[name]
+			if history == nil {
+				history = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(history)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
 			fetches++
 			if fetches == 1 && fx.getStatus != 0 {
@@ -234,6 +281,7 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			}
 			_ = json.NewDecoder(r.Body).Decode(&payload)
 			fx.lastComment = payload.Body
+			fx.allComments = append(fx.allComments, payload.Body)
 			json.NewEncoder(w).Encode(map[string]any{"id": 1})
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
@@ -275,7 +323,13 @@ func approvedVerdict(string, int, string) ContributorLaneVerdict {
 }
 
 func newContributorLaneEngine(apiURL string, policy ContributorLanePolicy, clock *contributorLaneClock, opts Options) *Engine {
-	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, apiURL)
+	return newContributorLaneEngineRepos(apiURL, []string{"widget"}, policy, clock, opts)
+}
+
+// newContributorLaneEngineRepos is newContributorLaneEngine for a hive that
+// manages repos (acme/<name>…); the PR under test still lives in acme/widget.
+func newContributorLaneEngineRepos(apiURL string, repos []string, policy ContributorLanePolicy, clock *contributorLaneClock, opts Options) *Engine {
+	client := hgithub.NewClient("token", "acme", repos, nil, apiURL)
 	client.SetAppBotLogin(testHiveAppBotLogin)
 	opts.ContributorLanePolicy = func() ContributorLanePolicy { return policy }
 	if opts.ContributorLaneVerdict == nil {
@@ -885,6 +939,213 @@ func TestTrySweepContributorLanePRAutoPromotion(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Regression for #14517: the clean-merge ratchet counts across every
+// repository the hive manages by default, so a contributor trusted in the
+// main repo is admitted on their first PR to a satellite repo; scope=repo
+// keeps the old per-repo count; revert and sentinel evidence in any
+// repository still blocks; a failed repo search degrades to the own-repo
+// count instead of blocking the sweep.
+func TestTrySweepContributorLanePRAutoPromotionScope(t *testing.T) {
+	cleanHistory := func(n int) []map[string]any {
+		history := make([]map[string]any, 0, n)
+		for i := 0; i < n; i++ {
+			history = append(history, mergedHistoryPR(contributorLaneTestAuthor, "fix: clean change"))
+		}
+		return history
+	}
+	hiveRepos := []string{"widget", "hive", "docs", "homebrew-hive"}
+	for _, tc := range []struct {
+		name         string
+		scope        string
+		own          []map[string]any
+		other        map[string][]map[string]any
+		searchStatus int
+		wantReason   string
+		wantMerges   int
+		wantSearches int
+		wantLists    []string
+		wantComment  string
+	}{
+		{
+			name:         "hive scope admits on first PR to a satellite repo",
+			own:          nil,
+			other:        map[string][]map[string]any{"hive": cleanHistory(9), "docs": cleanHistory(1)},
+			wantMerges:   1,
+			wantSearches: 1,
+			wantLists:    []string{"hive"},
+			wantComment:  "merged=5 scope=hive repos=widget:0,hive:5 -->",
+		},
+		{
+			name:         "hive scope sums clean merges across repos",
+			own:          cleanHistory(2),
+			other:        map[string][]map[string]any{"hive": cleanHistory(2), "docs": cleanHistory(1)},
+			wantMerges:   1,
+			wantSearches: 1,
+			wantLists:    []string{"hive", "docs"},
+			wantComment:  "merged=5 scope=hive repos=widget:2,hive:2,docs:1 -->",
+		},
+		{
+			name:         "hive scope skips repos without the author's merges",
+			own:          cleanHistory(1),
+			other:        map[string][]map[string]any{"hive": cleanHistory(2), "docs": cleanHistory(0), "homebrew-hive": {mergedHistoryPR("someone-else", "fix: theirs")}},
+			wantReason:   contributorLaneReasonClaimTier,
+			wantSearches: 1,
+			wantLists:    []string{"hive"},
+		},
+		{
+			name:         "hive scope blocks on a revert in another repo",
+			own:          cleanHistory(2),
+			other:        map[string][]map[string]any{"hive": append(cleanHistory(1), mergedHistoryPR(contributorLaneTestAuthor, "Revert \"fix: clean change\"")), "docs": cleanHistory(3)},
+			wantReason:   contributorLaneReasonClaimTier,
+			wantSearches: 1,
+			wantLists:    []string{"hive"},
+		},
+		{
+			name:         "hive scope blocks on a sentinel label in another repo",
+			own:          cleanHistory(4),
+			other:        map[string][]map[string]any{"docs": {mergedHistoryPR(contributorLaneTestAuthor, "fix: risky", defaultSentinelLabel)}},
+			wantReason:   contributorLaneReasonClaimTier,
+			wantSearches: 1,
+			wantLists:    []string{"docs"},
+		},
+		{
+			name:         "repo scope counts the PR's repository only",
+			scope:        "repo",
+			own:          cleanHistory(1),
+			other:        map[string][]map[string]any{"hive": cleanHistory(9)},
+			wantReason:   contributorLaneReasonClaimTier,
+			wantSearches: 0,
+		},
+		{
+			name:        "repo scope still admits on own history",
+			scope:       "repo",
+			own:         cleanHistory(5),
+			other:       map[string][]map[string]any{"hive": cleanHistory(9)},
+			wantMerges:  1,
+			wantComment: "merged=5 scope=repo repos=widget:5 -->",
+		},
+		{
+			name:        "own repository meeting the threshold needs no search",
+			own:         cleanHistory(5),
+			other:       map[string][]map[string]any{"hive": cleanHistory(9)},
+			wantMerges:  1,
+			wantComment: "merged=5 scope=hive repos=widget:5 -->",
+		},
+		{
+			name:         "search failure degrades to the PR's repository",
+			own:          cleanHistory(1),
+			other:        map[string][]map[string]any{"hive": cleanHistory(9)},
+			searchStatus: http.StatusUnprocessableEntity,
+			wantReason:   contributorLaneReasonClaimTier,
+			wantSearches: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.issueComments[0]["body"] = contributorClaimMarkerTier(contributorLaneTestAuthor, "contributor", contributorLaneTestHive, " tier=contributor verified=true")
+			fx.mergedHistory = tc.own
+			fx.otherHistory = tc.other
+			fx.searchStatus = tc.searchStatus
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			policy.AutoPromoteAfterMergedPR = 5
+			policy.AutoPromotionScope = tc.scope
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+			engine := newContributorLaneEngineRepos(api.URL, hiveRepos, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+			event, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+			}
+			if fx.merges != tc.wantMerges {
+				t.Fatalf("merges = %d, want %d", fx.merges, tc.wantMerges)
+			}
+			if fx.searches != tc.wantSearches {
+				t.Fatalf("searches = %d, want %d (q=%q)", fx.searches, tc.wantSearches, fx.searchQuery)
+			}
+			if fx.searches > 0 {
+				for _, want := range []string{"is:pr", "is:merged", "author:" + contributorLaneTestAuthor, "repo:acme/hive", "repo:acme/docs", "repo:acme/homebrew-hive"} {
+					if !strings.Contains(fx.searchQuery, want) {
+						t.Fatalf("search query %q missing %q", fx.searchQuery, want)
+					}
+				}
+				if strings.Contains(fx.searchQuery, "repo:acme/widget") {
+					t.Fatalf("search query %q must not include the PR's own repository", fx.searchQuery)
+				}
+			}
+			if strings.Join(fx.otherLists, ",") != strings.Join(tc.wantLists, ",") {
+				t.Fatalf("other repos listed = %v, want %v", fx.otherLists, tc.wantLists)
+			}
+			if tc.wantMerges > 0 {
+				if event.Tier != contributorLaneTier || !strings.Contains(fx.lastComment, "auto-promoted after 5 clean merged PRs") {
+					t.Fatalf("event=%+v comment=%q", event, fx.lastComment)
+				}
+				where := "in this hive's repositories"
+				if tc.scope == "repo" {
+					where = "in this repository"
+				}
+				if !strings.Contains(fx.lastComment, where) {
+					t.Fatalf("merge comment %q should say %q", fx.lastComment, where)
+				}
+			}
+			if tc.wantComment != "" {
+				var auditComment string
+				for _, body := range fx.allComments {
+					if strings.HasPrefix(body, contributorAutoPromotionMarkerPrefix) {
+						auditComment = body
+					}
+				}
+				if !strings.Contains(auditComment, tc.wantComment) {
+					t.Fatalf("audit comment %q should contain %q", auditComment, tc.wantComment)
+				}
+			}
+		})
+	}
+}
+
+func TestContributorMergedHistoryHelpers(t *testing.T) {
+	h := contributorMergedHistory{HiveWide: true, Repos: []contributorRepoMerges{{Repo: "hive", Clean: 8}, {Repo: "docs", Clean: 1}}}
+	if got := h.repoBreakdown(); got != "hive:8,docs:1" {
+		t.Fatalf("repoBreakdown = %q", got)
+	}
+	if h.scopeName() != "hive" || (contributorMergedHistory{}).scopeName() != "repo" {
+		t.Fatalf("scopeName wrong: %q / %q", h.scopeName(), (contributorMergedHistory{}).scopeName())
+	}
+	for _, tc := range []struct{ in, want string }{
+		{"https://api.github.com/repos/HiveCommons/Docs", "hivecommons/docs"},
+		{"https://api.github.com/repos/acme/widget/", "acme/widget"},
+		{"", ""},
+		{"https://api.github.com/repos/", ""},
+		{"nonsense", ""},
+	} {
+		if got := repoFromRepositoryURL(tc.in); got != tc.want {
+			t.Fatalf("repoFromRepositoryURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		scope string
+		want  bool
+	}{{"", true}, {"hive", true}, {" HIVE ", true}, {"repo", false}, {" Repo ", false}} {
+		if got := (ContributorLanePolicy{AutoPromotionScope: tc.scope}).hiveWideAutoPromotion(); got != tc.want {
+			t.Fatalf("hiveWideAutoPromotion(%q) = %v, want %v", tc.scope, got, tc.want)
+		}
+	}
+	if contributorAutoPromotionWhere(true) != "in this hive's repositories" || contributorAutoPromotionWhere(false) != "in this repository" {
+		t.Fatal("contributorAutoPromotionWhere wording changed")
+	}
+	var nilEngine *Engine
+	if got := nilEngine.contributorMergedRepos(context.Background(), "acme", "widget", "bob"); got != nil {
+		t.Fatalf("nil engine repos = %v", got)
+	}
+	history, err := nilEngine.contributorCleanMergedHistory(context.Background(), "acme", "widget", "bob", 5, true)
+	if err != nil || history.Clean || history.Reason != "disabled" {
+		t.Fatalf("nil engine history = %+v err=%v", history, err)
 	}
 }
 

@@ -7726,6 +7726,36 @@ type ContributorLaneAutoMergeConfig struct {
 	// than closes its issue, or was claimed outside the relay, waits for a
 	// human (`contributor-lane:no-linked-issue` / `no-claim`).
 	RegistryTiersSufficient *bool `yaml:"registry_tiers_sufficient,omitempty" json:"registry_tiers_sufficient,omitempty"`
+	// AutoPromotionScope is where the clean-merged-PR ratchet
+	// (auto_merge.contributor_tier.auto_promote_after_merged) counts an
+	// author's merges. `hive` (default) counts clean merged PRs across every
+	// repository this hive manages: trust in a contributor is a property of
+	// the person, and the small satellite repos of a multi-repo hive never
+	// reach a per-repo threshold on their own. `repo` counts only the PR's
+	// own repository (the pre-#14517 behaviour). Revert and sentinel-alert
+	// evidence is applied per PR in either scope.
+	AutoPromotionScope string `yaml:"auto_promotion_scope,omitempty" json:"auto_promotion_scope,omitempty"`
+}
+
+// Contributor-lane auto-promotion scopes
+// (auto_merge.contributor_lane.auto_promotion_scope).
+const (
+	ContributorLaneAutoPromotionScopeHive = "hive"
+	ContributorLaneAutoPromotionScopeRepo = "repo"
+)
+
+// ContributorLaneAutoPromotionScopes lists the accepted
+// auto_promotion_scope values.
+var ContributorLaneAutoPromotionScopes = []string{ContributorLaneAutoPromotionScopeHive, ContributorLaneAutoPromotionScopeRepo}
+
+// EffectiveAutoPromotionScope returns the normalized auto_promotion_scope,
+// defaulting to ContributorLaneAutoPromotionScopeHive.
+func (c ContributorLaneAutoMergeConfig) EffectiveAutoPromotionScope() string {
+	scope := strings.ToLower(strings.TrimSpace(c.AutoPromotionScope))
+	if scope == "" {
+		return ContributorLaneAutoPromotionScopeHive
+	}
+	return scope
 }
 
 // ContributorTierAutoMergeConfig is auto_merge.contributor_tier.*.
@@ -7863,6 +7893,9 @@ func (c ContributorLaneAutoMergeConfig) Validate() error {
 		if !IsContributorLaneGrantableTier(tier) {
 			return fmt.Errorf("auto_merge.contributor_lane.require_tiers: %q is not an operator-granted tier (allowed: %s)", tier, strings.Join(ContributorLaneGrantableTiers, ", "))
 		}
+	}
+	if scope := c.EffectiveAutoPromotionScope(); scope != ContributorLaneAutoPromotionScopeHive && scope != ContributorLaneAutoPromotionScopeRepo {
+		return fmt.Errorf("auto_merge.contributor_lane.auto_promotion_scope: %q is not valid (allowed: %s)", c.AutoPromotionScope, strings.Join(ContributorLaneAutoPromotionScopes, ", "))
 	}
 	return nil
 }

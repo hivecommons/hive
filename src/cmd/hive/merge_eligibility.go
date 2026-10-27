@@ -89,6 +89,7 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 			RequireTiers:             p.RequireTierSet(),
 			RegistryTiersSufficient:  p.EffectiveRegistryTiersSufficient(),
 			AutoPromoteAfterMergedPR: tier.EffectiveAutoPromoteAfterMerged(),
+			AutoPromotionScope:       p.EffectiveAutoPromotionScope(),
 		}
 	}
 }
