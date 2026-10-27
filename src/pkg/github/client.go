@@ -186,6 +186,14 @@ type Client struct {
 	// reviewEvidence resolves the evidence-bundle settings for a repo. Nil
 	// means no bundles are written (see review_evidence.go).
 	reviewEvidence func(repo string) ReviewEvidenceSettings
+	// mergeCredit resolves issue-author credit for the hive's merges
+	// (merge_credit.go, hivecommons/hive#14581); creditIssueAuthors is the
+	// live auto_merge.credit_issue_authors switch and mergeCredits holds the
+	// credit decided for a PR until its pr_merged audit consumes it.
+	mergeCreditMu      sync.Mutex
+	mergeCredit        *MergeCreditor
+	creditIssueAuthors func(repo string) bool
+	mergeCredits       map[string]MergeCredit
 	// issueClaims reports whether issue claims are recognised at enumeration
 	// time and the TTL an assignee-inferred claim runs for (#8380). Nil or
 	// false → no comment is fetched, no Issue carries claim fields. Read live
@@ -4375,14 +4383,16 @@ func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path 
 	if c == nil {
 		return
 	}
+	credit := c.takeMergeCredit(repo, number)
+	extra := []string{"method", method, "sha", sha, "path", path}
+	if logins := mergeCreditLogins(credit); logins != "" {
+		extra = append(extra, "issue_authors", logins)
+	}
 	c.recordWriteAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
-		WriteTarget{Repo: repo, Number: number},
-		"method", method,
-		"sha", sha,
-		"path", path)
+		WriteTarget{Repo: repo, Number: number}, extra...)
 	// Every merge path ends here, so this is where the merged head's evidence
 	// bundle gains its merge event and the PR gets its evidence pointer.
-	c.recordReviewEvidenceMerge(repo, number, method, sha, path)
+	c.recordReviewEvidenceMerge(repo, number, method, sha, path, credit.Logins())
 	// A successful App merge on any path proves the repo is mergeable, so
 	// retire its "merge blocked" alerts (#11924).
 	c.clearMergeFailureAlertsForRepo(repo)

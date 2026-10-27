@@ -478,11 +478,11 @@ func TestRecordReviewEvidenceMergeGuards(t *testing.T) {
 	var nilClient *Client
 	nilClient.RecordPRMergedAudit("o/r", 7, "squash", "m", PRAuditPathSweep)
 	c := evidenceMergeClient(t, &evidenceMergeFixture{head: "h1"}, &ReviewEvidenceSettings{Enabled: true})
-	c.recordReviewEvidenceMerge("o/r", 0, "squash", "m", PRAuditPathSweep)
+	c.recordReviewEvidenceMerge("o/r", 0, "squash", "m", PRAuditPathSweep, nil)
 	// A client with no REST transport still records nothing and posts nothing.
 	bare := &Client{logger: c.logger}
 	bare.SetReviewEvidence(func(string) ReviewEvidenceSettings { return ReviewEvidenceSettings{Enabled: true} })
-	bare.recordReviewEvidenceMerge("o/r", 7, "squash", "m", PRAuditPathSweep)
+	bare.recordReviewEvidenceMerge("o/r", 7, "squash", "m", PRAuditPathSweep, nil)
 }
 
 func TestReviewEvidencePublicKey(t *testing.T) {

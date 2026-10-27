@@ -557,6 +557,38 @@ unattended (for example `mrbobbytables`):
 A claim keeps the tier the contributor held when it was taken, so grant the
 tier before the issue is leased.
 
+### Issue-author credit at merge time
+
+Every merge the hive performs — the self-authored, trusted-author,
+contributor-lane and queue sweeps as well as `hive-merge` relay requests —
+credits the humans who opened the issues the PR closes. The merge reads the
+closing references the PR already carries (`Fixes|Closes|Resolves #N` in the
+body) and resolves each referenced issue's author with at most one
+`GET /issues/{n}` per newly seen issue, cached for the life of the process
+(attributed as `hive:merge_credit` in the API-quota ledger). Bots and Apps
+(`type=Bot`, `[bot]`/`-bot` suffixes, `github-actions*`), the PR author
+themself, and issues that are really PRs are skipped; the remaining logins are
+de-duplicated and appended as `Co-authored-by: <login>
+<id+login@users.noreply.github.com>` trailers to the squash commit message. A
+`merge-method/merge` PR gets the trailer on the merge commit instead; a rebase
+merge has no commit to carry it and is left alone.
+
+`Co-authored-by` is the trailer GitHub counts toward the contributor graph, so
+a reporter whose issue was fixed by someone else's clanker shows up on the
+repository's contributors page rather than only in the issue timeline. It is
+purely additive: the branch's own commit subjects, bodies and `Signed-off-by`
+lines are reproduced unchanged ahead of the new trailers, so the squash
+sign-off gate and `check-squash-signoff-attribution.sh` see exactly what they
+saw before plus the credit. This is the single mechanism: a hive-opened PR
+already carries the trailer on its commits (`issue-coauthor.sh`,
+`hive-open-pr`), and the merge recognises an existing trailer for the same
+login (by noreply address or login) and does not add a duplicate. The credited
+logins are recorded on the merge audit entry (`issue_authors=`) and in the PR's
+review-evidence `merge.issue_authors`, so dashboards and DIBS statistics can
+report them. If the branch's commits cannot be read at merge time, the hive
+falls back to GitHub's default message rather than risk dropping a sign-off.
+Switch it off with `auto_merge.credit_issue_authors: false` (#14581).
+
 ### Stage labels
 
 Every sweep cycle also writes the hive-owned `stage/NNN-*` label for each PR

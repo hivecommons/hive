@@ -10274,6 +10274,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
 		return reviewEvidenceSettings(cfg, repo)
 	})
+	// hivecommons/hive#14581: issue-author credit on every merge path, read
+	// live so a reload of auto_merge.credit_issue_authors applies.
+	client.SetCreditIssueAuthors(func(string) bool { return cfg.AutoMerge.CreditIssueAuthorsEnabled() })
 	// hivecommons/hive#13241: an issue a person reopens after its closing PR
 	// merged is a change failure on that PR's evidence record, from both the
 	// issues.reopened webhook and the enumeration reopen check.

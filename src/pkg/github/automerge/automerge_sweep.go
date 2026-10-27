@@ -1787,13 +1787,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
+	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, evaluatedHeadSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
-		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
-			SHA:         evaluatedHeadSHA,
-			MergeMethod: method,
-		})
+		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
 			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
 		}
@@ -2184,13 +2182,11 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
+	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, headSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
-		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
-			SHA:         headSHA,
-			MergeMethod: method,
-		})
+		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
 			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
 		}
@@ -2532,13 +2528,11 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
+	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, pr, headSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
-		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
-			SHA:         headSHA,
-			MergeMethod: method,
-		})
+		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
 			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
 		}

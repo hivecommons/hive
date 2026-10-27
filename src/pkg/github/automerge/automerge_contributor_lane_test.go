@@ -106,6 +106,20 @@ type contributorLaneFixture struct {
 	// approveStatus, when set, is the status every approve returns.
 	approvedRuns  []int64
 	approveStatus int
+	// issueAuthor is who GET issues/42 reports as the linked issue's
+	// author (hivecommons/hive#14581); empty serves the PR author, so the
+	// merge credits nobody and sends GitHub's default message.
+	issueAuthor     string
+	issueAuthorID   int64
+	issueAuthorType string
+	issueStatus     int
+	issueGets       int
+	// commitMessages are the branch commits GET pulls/7/commits serves;
+	// nil serves one signed commit.
+	commitMessages []string
+	commitLists    int
+	// mergeBody is the JSON body of the last PUT pulls/7/merge.
+	mergeBody map[string]any
 }
 
 func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.Server {
@@ -219,6 +233,35 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				sha = fx.recheckHeadSHA
 			}
 			json.NewEncoder(w).Encode(pull(sha))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/42":
+			fx.issueGets++
+			if fx.issueStatus != 0 {
+				http.Error(w, "issue error", fx.issueStatus)
+				return
+			}
+			issueAuthor := fx.issueAuthor
+			if issueAuthor == "" {
+				issueAuthor = author
+			}
+			userType := fx.issueAuthorType
+			if userType == "" {
+				userType = "User"
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"number": 42, "state": "open",
+				"user": map[string]any{"login": issueAuthor, "id": fx.issueAuthorID, "type": userType},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/commits":
+			fx.commitLists++
+			msgs := fx.commitMessages
+			if msgs == nil {
+				msgs = []string{"Fix the widget\n\nSigned-off-by: " + author + " <" + author + "@example.com>"}
+			}
+			commits := make([]map[string]any, 0, len(msgs))
+			for i, msg := range msgs {
+				commits = append(commits, map[string]any{"sha": fmt.Sprintf("c%d", i), "commit": map[string]any{"message": msg}, "parents": []map[string]any{{"sha": "p"}}})
+			}
+			json.NewEncoder(w).Encode(commits)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/42/comments":
 			if fx.issueCommentsSt != 0 {
 				http.Error(w, "comments error", fx.issueCommentsSt)
@@ -258,6 +301,8 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			json.NewEncoder(w).Encode(map[string]any{"sha": "sha7", "committer": map[string]string{"name": "c", "date": fx.headCommittedAt}})
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
 			fx.merges++
+			fx.mergeBody = map[string]any{}
+			_ = json.NewDecoder(r.Body).Decode(&fx.mergeBody)
 			if fx.mergeStatus != 0 {
 				w.WriteHeader(fx.mergeStatus)
 				msg := fx.mergeMessage

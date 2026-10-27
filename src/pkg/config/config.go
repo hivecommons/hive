@@ -7661,6 +7661,22 @@ type AutoMergeConfig struct {
 	// squash-only repo the lane keeps the squash convention and the PR goes
 	// back to its author (or, adopted, to stage/085 naming this policy).
 	SquashOnly []string `yaml:"squash_only,omitempty" json:"squash_only,omitempty"`
+	// CreditIssueAuthors puts `Co-authored-by: <issue author>` on the commit
+	// the hive's merge lands for every human who opened an issue the PR
+	// closes (`Fixes|Closes|Resolves #N`), minus the PR author, skipping
+	// bots, and never duplicating a trailer the branch already carries
+	// (hivecommons/hive#14581). The credit is additive — the PR author
+	// still authors the squash, every Signed-off-by is kept — and reaches
+	// the PRs external clankers open, which bypass the hive's own
+	// open-time attribution. nil/unset means ON; `credit_issue_authors:
+	// false` sends the merge with GitHub's default message as before.
+	CreditIssueAuthors *bool `yaml:"credit_issue_authors,omitempty" json:"credit_issue_authors,omitempty"`
+}
+
+// CreditIssueAuthorsEnabled reports the auto_merge.credit_issue_authors
+// switch; unset is on.
+func (a AutoMergeConfig) CreditIssueAuthorsEnabled() bool {
+	return a.CreditIssueAuthors == nil || *a.CreditIssueAuthors
 }
 
 // AutoMergeRepoConfig carries per-repository auto-merge overrides.

@@ -10,9 +10,11 @@ package automerge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
@@ -45,6 +47,14 @@ type selfSweepFixture struct {
 	mergeCalls    *int     // incremented on every PUT .../merge
 	// reviews is the PR review list; nil serves an empty list.
 	reviews []map[string]any
+	// Issue-author credit (hivecommons/hive#14581): issueAuthor is who the
+	// linked issue's GET reports as its author (default: a bot, so the
+	// merge credits nobody); commitMessages are the branch commits served
+	// for the squash body; mergeBody receives the last merge request body.
+	issueAuthor    string
+	issueAuthorID  int64
+	commitMessages []string
+	mergeBody      *map[string]any
 }
 
 func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
@@ -137,9 +147,25 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				runs = append(runs, map[string]string{"name": "build", "status": "completed", "conclusion": "success"})
 			}
 			json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/issues/"), "/"):
+			user := map[string]any{"login": "linker[bot]", "id": 1, "type": "Bot"}
+			if fx.issueAuthor != "" {
+				user = map[string]any{"login": fx.issueAuthor, "id": fx.issueAuthorID, "type": "User"}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"number": 12, "state": "open", "user": user})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/commits":
+			commits := make([]map[string]any, 0, len(fx.commitMessages))
+			for i, msg := range fx.commitMessages {
+				commits = append(commits, map[string]any{"sha": fmt.Sprintf("c%d", i), "commit": map[string]any{"message": msg}, "parents": []map[string]any{{"sha": "p"}}})
+			}
+			json.NewEncoder(w).Encode(commits)
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
 			if fx.mergeCalls != nil {
 				*fx.mergeCalls++
+			}
+			if fx.mergeBody != nil {
+				*fx.mergeBody = map[string]any{}
+				_ = json.NewDecoder(r.Body).Decode(fx.mergeBody)
 			}
 			if fx.mergeHTTPCode != 0 {
 				w.WriteHeader(fx.mergeHTTPCode)

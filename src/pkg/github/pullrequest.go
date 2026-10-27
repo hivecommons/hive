@@ -418,9 +418,15 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 	// Forward-merges keep ancestry no matter which caller (sweep, the
 	// hive-merge relay or the forge adapter) asked for the merge. A failed lookup falls through to
 	// the requested method.
+	var (
+		fetched      *gh.PullRequest
+		fetchedTried bool
+	)
 	if mergeMethod != "merge" {
 		restCtx := WithRESTCaller(ctx, "hive:merge_pr")
+		fetchedTried = true
 		if pr, _, err := c.client.PullRequests.Get(restCtx, owner, repo, number); err == nil {
+			fetched = pr
 			mergeMethod = ResolveForwardMergeMethod(restCtx, c.client, c.logger, owner, repo, pr, mergeMethod)
 		}
 	}
@@ -428,6 +434,20 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 	opts := &gh.PullRequestOptions{MergeMethod: mergeMethod}
 	if expectSHA = strings.TrimSpace(expectSHA); expectSHA != "" {
 		opts.SHA = expectSHA
+	}
+	commitMessage := ""
+	// Issue-author credit (hivecommons/hive#14581) rides the PR already
+	// fetched above; a merge-commit request fetches it only when the credit
+	// is on for the repo.
+	if creditor := c.MergeCreditor(); creditor.Enabled(owner+"/"+repo) {
+		if fetched == nil && !fetchedTried {
+			if pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, mergeCreditCaller), owner, repo, number); err == nil {
+				fetched = pr
+			}
+		}
+		credit := creditor.Prepare(ctx, owner, repo, fetched, mergeMethod)
+		commitMessage = credit.CommitMessage
+		c.NoteMergeCredit(owner+"/"+repo, number, credit)
 	}
 	var res *gh.PullRequestMergeResult
 	boundary := c.mutationBoundary()
@@ -439,7 +459,7 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 	}
 	merge := func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
-		res, _, apiErr = c.client.PullRequests.Merge(ctx, owner, repo, number, "", opts)
+		res, _, apiErr = c.client.PullRequests.Merge(ctx, owner, repo, number, commitMessage, opts)
 		if apiErr != nil {
 			if isDefiniteMergeRefusal(apiErr) {
 				return effects.Result{}, effects.NotApplied(apiErr)

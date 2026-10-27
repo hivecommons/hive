@@ -187,6 +187,10 @@ type MergeEvent struct {
 	At       time.Time `json:"at"`
 	SHA      string    `json:"sha"`
 	OpenedAt time.Time `json:"opened_at,omitzero"`
+	// IssueAuthors are the human authors of the issues the PR closed whom
+	// the merge credited (hivecommons/hive#14581): the Co-authored-by the
+	// hive put on the landing commit, or that the branch already carried.
+	IssueAuthors []string `json:"issue_authors,omitempty"`
 }
 
 // Shadow records what shadow-mode gates would have done for the head SHA.
