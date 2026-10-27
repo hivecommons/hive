@@ -690,6 +690,10 @@ type Manager struct {
 	// and env paths, which hold m.mu — same atomic.Pointer discipline as
 	// explainModeDefaultResolver.
 	advisorEnabledResolver atomic.Pointer[func(agentName string) bool]
+	// repeatFailureEnabledResolver reports the live repeat_failure.enabled
+	// switch (#14550), read at launch so a toggle applies on the next launch.
+	// Same atomic.Pointer discipline as advisorEnabledResolver.
+	repeatFailureEnabledResolver atomic.Pointer[func() bool]
 	// advisorRolesResolver returns the live model_roles map the OMP adapter
 	// projects as a --config overlay at launch (#9723). Same discipline as
 	// advisorEnabledResolver.

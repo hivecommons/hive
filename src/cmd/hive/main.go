@@ -2386,6 +2386,11 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	b.agentMgr.SetAdvisorEnabledResolver(func(agentName string) bool {
 		return b.cfg.AdvisorEnabledFor(agentName)
 	})
+	// Repeat-failure check (#14550): read per launch off the live cfg so
+	// turning it on or off reaches each agent at its next launch.
+	b.agentMgr.SetRepeatFailureEnabledResolver(func() bool {
+		return b.cfg.RepeatFailure.IsEnabled()
+	})
 	b.agentMgr.SetAdvisorRolesResolver(func() map[string]config.ModelRole {
 		return b.cfg.ModelRoles
 	})

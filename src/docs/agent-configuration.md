@@ -570,6 +570,20 @@ What turning it on does:
 Config validation accepts only `off`, `assist`, or empty; the dashboard and
 `hivectl` writes apply the same gate.
 
+## Repeat-failure check: the shell route (`repeat_failure`)
+
+The repeat-failure check ([#14550](https://github.com/hivecommons/hive/issues/14550)) is off by default; the switch and its thresholds are described under [Agent-runtime blocks](operator-reference.md#agent-runtime-blocks-configagentruntimeconfig). While `repeat_failure.enabled` is false Hive adds nothing to an agent's environment or home.
+
+When it is on, backends that run every shell command in a fresh, non-interactive bash (claude, codex, goose, pi, gemini, bob, opencode, kilo, and the inference backends, which drive Claude Code) share one Hive-owned route:
+
+- At each launch Hive writes `~/.hive/repeat-failure/bash_env.sh` (in the agent's 0700 record directory) and launches the CLI with `BASH_ENV` pointing at it and `SHELL=/bin/bash`.
+- For a `bash -c` / `bash -lc` command the script installs one `EXIT` trap that appends a single record (the command from `$BASH_EXECUTION_STRING` and its exit status `$?`) to `~/.hive/repeat-failure/records.jsonl`. Scripts the command runs and nested `bash -c` shells are not recorded: the first recording shell exports `__HIVE_RF_PID` with its own PID and only that shell records. A wrapper that ends in `exec /bin/bash -c '<cmd>'` (Codex) keeps the PID and records `<cmd>` exactly once.
+- The trap and the `__HIVE_RF_PID` marker are the only things a command can see. The command's output and exit status are unchanged, including under `set -euo pipefail` and an exported `SHELLOPTS`. A missing script or an unwritable record file means no record and nothing else. A command that sets its own `EXIT` trap replaces Hive's and is not recorded. Under `bash -x` the script's few startup lines appear in the trace.
+- A `BASH_ENV` already in Hive's environment is chained, not overwritten: the script sources it after installing the trap, so it still runs.
+- **bob shell change:** bob runs commands with `$SHELL -c`, falling back to `/bin/sh` (dash in the agent image). With the check on Hive exports `SHELL=/bin/bash`, so bob's commands run in bash instead of dash. opencode and kilo also follow `$SHELL`. This change of shell is accepted and only applies while the check is on.
+
+Turning the check off removes the script at each agent's next launch and drops a Hive-set `BASH_ENV` from the agent's tmux session; a pane shell that still holds the old variable points at a missing file, which bash skips silently.
+
 ## Methods: subscription CLIs vs self-hosted inference
 
 `backend:` picks one of two families. They differ in how you authenticate and where model lists come from:

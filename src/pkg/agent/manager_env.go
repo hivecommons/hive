@@ -482,6 +482,11 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if m.advisorEnabledFor(agent.Name) {
 		vars = append(vars, agentEnvPair{advisorpkg.EndpointEnvVar, advisorpkg.DefaultEndpoint, false})
 	}
+	// Repeat-failure check (#14550): BASH_ENV names the Hive-owned record
+	// script and SHELL is forced to bash, only while the check is on and only
+	// for backends that run commands in a fresh bash. See
+	// repeat_failure_bash_env.go.
+	vars = append(vars, m.repeatFailureEnvPairs(agent, backend)...)
 	// Export the RESOLVED explain mode, not the raw config value, so an agent's
 	// skills and helper scripts see the same answer the kick suffix acted on
 	// (including inheritance from the hive-wide default and the off fallback for

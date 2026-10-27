@@ -455,7 +455,9 @@ agents:
 # Repeat-failure check (#14550): notice an agent running the same failing shell
 # command again and again. Monitor only — it never pauses the agent. Off by
 # default; while off Hive collects no command records and adds nothing to an
-# agent's environment or home. Values shown are the defaults.
+# agent's environment or home. While on, fresh-bash backends launch with
+# BASH_ENV (a Hive-owned recording script) and SHELL=/bin/bash, so bob runs its
+# commands in bash instead of dash. Values shown are the defaults.
 # repeat_failure:
 #   enabled: false
 #   threshold: 5          # same command, same result, this many times...

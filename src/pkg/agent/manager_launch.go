@@ -298,6 +298,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	m.fixSharedConfigPerms(agent)
 
+	// Repeat-failure check (#14550): write the BASH_ENV route the env prefix
+	// below points at, or remove it when the check is now off.
+	m.provisionRepeatFailureBashEnv(agent, backend)
+
 	// NOTE on Copilot's "Confirm folder trust" modal (≥1.0.78): #4563 tried to
 	// pre-seed config.json trusted_folders here so it never appears. That does
 	// NOT work — the shared config is rewritten wholesale by every running CLI
