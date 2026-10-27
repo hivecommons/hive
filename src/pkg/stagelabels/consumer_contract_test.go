@@ -77,7 +77,10 @@ func TestPossiblyExistingStage(t *testing.T) {
 			t.Errorf("017 → %v flagged as regression", to)
 		}
 	}
-	if !stagelabels.IsRegression(stagelabels.Claimed, s) {
-		t.Fatal("020 → 017 must be a regression, like → 010")
+	if stagelabels.IsRegression(stagelabels.Claimed, s) {
+		t.Fatal("020 → 017 is a lapsed reservation, not a regression (like → 010)")
+	}
+	if !stagelabels.IsRegression(stagelabels.PRInProgress, s) {
+		t.Fatal("030 → 017 must be a regression, like → 010")
 	}
 }

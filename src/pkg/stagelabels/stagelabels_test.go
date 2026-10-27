@@ -1418,10 +1418,13 @@ func TestTriageNeededStage(t *testing.T) {
 	if IsRegression(Actionable, TriageNeeded) {
 		t.Fatal("010 → 015 is forward")
 	}
-	for _, from := range []Stage{Claimed, PRInProgress, CoveredByPR} {
+	for _, from := range []Stage{PRInProgress, CoveredByPR} {
 		if !IsRegression(from, TriageNeeded) {
 			t.Errorf("%v → 015 must be a regression, like → 010", from)
 		}
+	}
+	if IsRegression(Claimed, TriageNeeded) {
+		t.Fatal("020 → 015 is a lapsed reservation, not a regression (like → 010)")
 	}
 	if IsRegression(IssueNeedsDecision, TriageNeeded) {
 		t.Fatal("un-parking 045 → 015 is not a step back")
