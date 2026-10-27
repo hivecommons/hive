@@ -53,7 +53,7 @@ func bundle(repo string, n int, merged time.Time, ttm time.Duration, verdict str
 	b.Author.Kind = kind
 	b.Merge = &evidence.MergeEvent{At: merged, OpenedAt: merged.Add(-ttm), SHA: "m"}
 	if verdict != "" {
-		b.Verdicts = []evidence.Verdict{{Perspective: "p", Verdict: verdict}}
+		b.Verdicts = []evidence.Verdict{{Perspective: "p", Verdict: verdict, RecordedAt: merged}}
 		b.CI.Status = "success"
 	}
 	return b
@@ -83,8 +83,19 @@ func fixture() []*evidence.Bundle {
 	// too young to have matured; both must be folded correctly.
 	early := bundle("o/a", 1, oct.Add(time.Hour), 30*time.Minute, "changes_requested", "agent")
 	early.Merge, early.CreatedAt, early.HeadSHA = nil, oct, "h0"
+	early.Verdicts[0].RecordedAt = oct
 	bs = append(bs, early)
 	bs = append(bs, bundle("o/a", 50, now.Add(-time.Hour), time.Hour, "approve", "agent"))
+	// Ten open PRs sent back on a first head and approved on a second head
+	// 20 minutes later, for the follow-up metrics.
+	for i := 400; i < 410; i++ {
+		at := oct.Add(time.Duration(i) * time.Minute)
+		first := bundle("o/a", i, at, time.Hour, "changes_requested", "agent")
+		first.Merge, first.HeadSHA, first.CI.Status = nil, "h0", "failure"
+		second := bundle("o/a", i, at.Add(20*time.Minute), time.Hour, "approve", "agent")
+		second.Merge = nil
+		bs = append(bs, first, second)
+	}
 	// September history for the trend and a PR outside the window.
 	for i := 300; i < 311; i++ {
 		bs = append(bs, bundle("o/a", i, time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC).Add(time.Duration(i)*time.Minute), time.Hour, "", "bot"))
@@ -100,7 +111,7 @@ func TestComputeCohorts(t *testing.T) {
 	rep := Compute(fixture(), 2, Options{Since: since, Until: until, Now: now, Source: "fixture",
 		Spend: &Spend{USD: 26, MergedPRs: 13}})
 	m, u := rep.Mediated, rep.Unmediated
-	if m.Merged != 13 || u.Merged != 12 || rep.PRs != 36 || len(rep.Repos) != 2 || rep.Repos[0].Repo != "o/a" {
+	if m.Merged != 13 || u.Merged != 12 || rep.PRs != 46 || len(rep.Repos) != 2 || rep.Repos[0].Repo != "o/a" {
 		t.Fatalf("cohorts: med %d unmed %d prs %d repos %+v", m.Merged, u.Merged, rep.PRs, rep.Repos)
 	}
 	if m.Matured != 12 || m.RevertRate.K != 0 || !m.RevertRate.Reported {
@@ -119,7 +130,7 @@ func TestComputeCohorts(t *testing.T) {
 	if !m.CIFailureAtHead.Reported || m.CIFailureAtHead.K != 0 || u.CIFailureAtHead.Reported || u.CICoverage.K != 0 {
 		t.Fatalf("ci: %+v / %+v", m.CIFailureAtHead, u.CIFailureAtHead)
 	}
-	if m.ByAuthorKind["agent"] != 13 || u.ByAuthorKind["human"] != 12 || rep.Verdicts != 14 {
+	if m.ByAuthorKind["agent"] != 13 || u.ByAuthorKind["human"] != 12 || rep.Verdicts != 34 {
 		t.Fatalf("kinds %v %v verdicts %d", m.ByAuthorKind, u.ByAuthorKind, rep.Verdicts)
 	}
 	if rep.FirstMediatedMerge != oct(1) {
@@ -166,7 +177,7 @@ func TestComputeRefusesUnsupportedSplit(t *testing.T) {
 		t.Fatalf("findings: %v", rep.Findings())
 	}
 	block := rep.ReadmeBlock("src/docs/benchmarks")
-	if !strings.Contains(block, "Not enough reviewed pull requests are on record yet") || strings.Contains(block, "card-sent-back") || strings.Contains(block, "card-also") {
+	if !strings.Contains(block, "Not enough reviewed pull requests are on record yet") || strings.Contains(block, "card-came-back") || strings.Contains(block, "card-also") {
 		t.Fatalf("readme block must not claim a comparison or draw a card below the minimum base:\n%s", block)
 	}
 	for _, r := range []Rate{rep.Mediated.RevertRate, rep.Unmediated.TimeToMergeRate()} {
@@ -216,8 +227,8 @@ func TestReadmeBlockRoundTrip(t *testing.T) {
 		Stories: []Story{{Repo: "hivecommons/hive", Number: 1, Caught: "A test was skipped.", OpenedAt: now.Add(-20 * time.Minute), CaughtAt: now.Add(-15 * time.Minute), FixApprovedAt: now.Add(-10 * time.Minute), MergedAt: now}},
 		RedTeam: &RedTeam{Attacks: 10, Caught: 9, Benign: 5, FalseAlarms: 1, RunAt: now}})
 	block := rep.ReadmeBlock("src/docs/benchmarks")
-	for _, want := range []string{ReadmeStart, ReadmeEnd, "## Accuracy", "## Security", "## Cost", "## Also", "36 pull requests across 2 repositories", "src/docs/benchmarks/outcomes-2026-10.md",
-		"card-sent-back-dark.svg", "card-sent-back-light.svg", "card-stories-dark.svg", "card-prompt-injection-light.svg", "card-cost-dark.svg", "card-also-light.svg", "prefers-color-scheme: dark", "how we count"} {
+	for _, want := range []string{ReadmeStart, ReadmeEnd, "## Accuracy", "## Security", "## Cost", "## Also", "46 pull requests across 2 repositories", "src/docs/benchmarks/outcomes-2026-10.md",
+		"card-came-back-fixed-dark.svg", "card-time-to-approval-light.svg", "card-stories-dark.svg", "card-prompt-injection-light.svg", "card-cost-dark.svg", "card-also-light.svg", "prefers-color-scheme: dark", "how we count"} {
 		if !strings.Contains(block, want) {
 			t.Errorf("block missing %q:\n%s", want, block)
 		}

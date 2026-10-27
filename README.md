@@ -15,17 +15,18 @@ Measured on 11,571 pull requests across 10 repositories and 15,054 review verdic
 
 ## Accuracy
 
-A separate reviewer reads every pull request an agent opens and can send it back before it merges.
+A separate reviewer reads every pull request an agent opens and can send it back before it merges. The question is whether its objections hold up.
 
 <p align="center">
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-sent-back-dark.svg"><img alt="1 in 3 reviewed pull requests was sent back for fixes before it merged" width="280" src="src/docs/benchmarks/assets/outcomes-2026-10-card-sent-back-light.svg"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-came-back-fixed-dark.svg"><img alt="2 in 3 pull requests the reviewer sent back came back fixed and were approved" width="280" src="src/docs/benchmarks/assets/outcomes-2026-10-card-came-back-fixed-light.svg"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-time-to-approval-dark.svg"><img alt="24 minutes, typically, from the reviewer&#39;s change request to approval of the fixed version" width="280" src="src/docs/benchmarks/assets/outcomes-2026-10-card-time-to-approval-light.svg"></picture>
 </p>
 
 <p align="center">
 <picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-stories-dark.svg"><img alt="Two real pull requests where the reviewer caught a problem before merge" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-stories-light.svg"></picture>
 </p>
 
-Pull requests merged without review come from other repositories and periods, not a controlled comparison, so differences may not be caused by review. Revert rates are not distinguishable so far.
+140 of the sent-back pull requests merged unchanged, 133 of them after another review pass approved the same version; 19 did not merge. Whether reviewed code later had to be reverted needs merges at least 14 days old; reviewed merges only began Oct 2026, so those figures are in the report, not here.
 
 ## Security
 

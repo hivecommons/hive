@@ -151,7 +151,8 @@ const (
 
 // Card names; the asset file is <AssetBase>-card-<name>-<theme>.svg.
 const (
-	CardSentBack        = "sent-back"
+	CardCameBack        = "came-back-fixed"
+	CardTimeToApproval  = "time-to-approval"
 	CardChecksGreen     = "checks-green"
 	CardStories         = "stories"
 	CardPromptInjection = "prompt-injection"
@@ -162,7 +163,7 @@ const (
 
 // CardNames lists every card the generator knows, in README order.
 func CardNames() []string {
-	return []string{CardSentBack, CardChecksGreen, CardStories, CardPromptInjection, CardCost, CardAlso, CardHowItWorks}
+	return []string{CardCameBack, CardTimeToApproval, CardChecksGreen, CardStories, CardPromptInjection, CardCost, CardAlso, CardHowItWorks}
 }
 
 // CardFile is the asset filename for a card in a theme.
@@ -187,8 +188,10 @@ func (r Report) Cards() map[string]string {
 // Card renders one named card; ok is false when its data is not shown.
 func (r Report) Card(name string, th cardTheme) (string, bool) {
 	switch name {
-	case CardSentBack:
-		return r.sentBackCard(th)
+	case CardCameBack:
+		return r.cameBackCard(th)
+	case CardTimeToApproval:
+		return r.timeToApprovalCard(th)
 	case CardChecksGreen:
 		return r.checksGreenCard(th)
 	case CardStories:
@@ -241,6 +244,22 @@ func oneIn(rate float64) string {
 		return "0"
 	}
 	return fmt.Sprintf("1 in %d", int(math.Round(1/rate)))
+}
+
+// share renders a rate above one half as "k in d" with the smallest
+// denominator within a few points of the true value, and otherwise as
+// oneIn.
+func share(rate float64) string {
+	if rate < 0.5 {
+		return oneIn(rate)
+	}
+	for d := 2; d <= 5; d++ {
+		k := int(math.Round(rate * float64(d)))
+		if math.Abs(float64(k)/float64(d)-rate) < 0.04 && k < d {
+			return fmt.Sprintf("%d in %d", k, d)
+		}
+	}
+	return fmt.Sprintf("%d in 10", int(math.Round(rate*10)))
 }
 
 // minutes rounds hours to whole minutes.
@@ -313,17 +332,33 @@ func numberCard(th cardTheme, title, eye, big, claim, base string) string {
 	return b.String()
 }
 
-func (r Report) sentBackCard(th cardTheme) (string, bool) {
-	m := r.Mediated.ChangesRequested
-	if !r.SplitSupported() || !m.Reported || m.Rate <= 0 || m.N < r.MinBase() {
+func (r Report) cameBackCard(th cardTheme) (string, bool) {
+	f := r.Followup
+	fa := f.FixedAndApproved
+	if !fa.Reported || fa.K <= 0 || fa.N < r.MinBase() {
 		return "", false
 	}
 	return numberCard(th,
-		fmt.Sprintf("%s reviewed pull requests was sent back for fixes before it merged", oneIn(m.Rate)),
-		"Accuracy · sent back before merge",
-		oneIn(m.Rate),
-		"reviewed pull requests was sent back for fixes before it merged.",
-		fmt.Sprintf("from %s merged pull requests Hive reviewed, %s", commas(m.N), r.windowLabel()),
+		fmt.Sprintf("%s pull requests the reviewer sent back came back fixed and were approved", share(fa.Rate)),
+		"Accuracy · sent back, then fixed",
+		share(fa.Rate),
+		"pull requests the reviewer sent back came back fixed and were approved.",
+		fmt.Sprintf("from %s pull requests sent back for fixes, %s", commas(fa.N), r.windowLabel()),
+	), true
+}
+
+func (r Report) timeToApprovalCard(th cardTheme) (string, bool) {
+	m := r.Followup.TimeToApproval
+	if !m.Reported || m.N < r.MinBase() {
+		return "", false
+	}
+	mins := minutes(m.Value)
+	return numberCard(th,
+		fmt.Sprintf("%d minutes, typically, from the reviewer's change request to approval of the fixed version", mins),
+		"Accuracy · time to fix",
+		fmt.Sprintf("%d min", mins),
+		"typically, from the reviewer's change request to approval of the fixed version.",
+		fmt.Sprintf("from %s pull requests that were sent back and then approved, %s", commas(m.N), r.windowLabel()),
 	), true
 }
 

@@ -422,6 +422,36 @@
     "basis": "hive-attributed"
   },
   "Hub": null,
+  "Followup": {
+    "SentBack": 563,
+    "NewHead": 404,
+    "FixedAndApproved": {
+      "K": 369,
+      "N": 563,
+      "Rate": 0.655417406749556,
+      "Lo": 0.615227050920689,
+      "Hi": 0.6935011722725277,
+      "Reported": true
+    },
+    "MergedSameHead": 140,
+    "MergedSameHeadApproved": 133,
+    "Unresolved": 19,
+    "TimeToApproval": {
+      "Value": 0.4026072397602778,
+      "N": 369,
+      "Reported": true
+    },
+    "CIPairs": 140,
+    "CIFixed": 48,
+    "CICoverage": {
+      "K": 140,
+      "N": 404,
+      "Rate": 0.3465346534653465,
+      "Lo": 0.30177321979967897,
+      "Hi": 0.3941871726664157,
+      "Reported": true
+    }
+  },
   "Stories": [
     {
       "repo": "hivecommons/hive",

@@ -59,7 +59,11 @@ Whole evidence history, not just the window; months with n < 10 are gaps.
 
 The README carries only plain-language cards; this section says which numbers made it and why the rest did not.
 
-- **Sent back before merge** is shown: 490 of 1455 reviewed merged PRs (full base, no exclusions beyond the window).
+- **Sent back, then fixed** is shown: 369 of 563 PRs that received a changes_requested verdict in the window pushed a new head that was then approved (404 pushed a new head at all; 140 merged on the same head, 133 of those because another perspective approved it; 19 were unresolved at observation time).
+- **Time to fix** is shown: 24 minutes is the median from the first changes_requested verdict to the first approve verdict on a later head, over 369 PRs.
+- **Sent back before merge** (490 of 1455 reviewed merges) is in the tables but not the README: it counts reviewer objections, not whether the shipped code was right.
+- **Checks fixed after a change request** is not shown: a check result is captured on both the sent-back head and the next head for 140 of 404 PRs (35%), under the 80% floor; of those, 48 went from failing to passing.
+- **Issues that stayed closed** is not shown: issue reopen records exist only for the newest part of the history and no closure via a reviewed merge has been observed for 14 days yet.
 - **Checks passing at merge** is not shown: a check result is recorded on 798 of 1455 reviewed merges (55%), under the 80% floor, so the pass rate would describe a biased subset.
 - **Revert rate** is not shown: the reviewed base is 43 merges observed 14+ days after merge, below the README minimum of 200, and the two groups are not distinguishable on this data.
 - **Cost per merged PR** is shown as an estimate: $2.13 = $6124.75 estimated spend / 2869 hive-attributed merges, 2026-08-08 → 2026-10-27.
@@ -79,6 +83,9 @@ How measured: per-PR evidence bundles the spoke already writes, folded per PR; 9
 - **Time-to-merge.** Lower median of merge time minus open time, over merged PRs whose bundle recorded an open time.
 - **CI failure at head.** Share of merged heads with a captured `failure` status among heads with a captured success/failure. The unmediated cohort rarely has a captured status (Hive only records CI for heads it reviews), so its cell reports coverage and is not comparable when coverage is low.
 - **Changes requested.** Share of mediated merged PRs with at least one `changes_requested` verdict on any head before the merge — findings the author had a chance to address pre-merge. Whether the later head fixed the finding, or a human overrode it, is not verified here.
+- **Sent back, then fixed.** Over PRs whose first `changes_requested` verdict falls in the window: the share that pushed a later head which then received an `approve` verdict. Heads are ordered by bundle creation time; a PR counted as *merged on the same head* merged with no later head, and the report says how many of those heads also carried an `approve` from another perspective, which is how the gate let them through. This measures whether the author acted on the reviewer and the fix passed re-review, not whether the shipped code was correct.
+- **Time to fix.** Lower median of first `approve` on a later head minus the first `changes_requested`, over the PRs counted as fixed above.
+- **Outcome measures after review** (reverts, follow-up fixes, reopened issues) need merges observed at least 14 days; the reviewed cohort is too young for a base of 200, so they stay in the tables and are not drawn in the README.
 - **Cost.** `/api/cost` estimated spend divided by its hive-attributed merged-PR count over the same window; model prices are estimates and some models are unpriced, so treat it as an upper-bound order of magnitude.
 - **Intervals.** 95% Wilson score; n < 10 is never reported.
 - **Regenerate.** `src/scripts/outcome-benchmark.sh --month 2026-10` (see `docs/benchmarks/README.md`).

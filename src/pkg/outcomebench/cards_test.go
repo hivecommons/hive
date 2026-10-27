@@ -16,7 +16,7 @@ func TestCardsRespectMinimumBase(t *testing.T) {
 	if rep.MinBase() != DefaultReadmeMinBase {
 		t.Fatalf("MinBase = %d", rep.MinBase())
 	}
-	for _, c := range []string{CardSentBack, CardChecksGreen, CardCost, CardAlso, CardStories, CardPromptInjection} {
+	for _, c := range []string{CardCameBack, CardTimeToApproval, CardChecksGreen, CardCost, CardAlso, CardStories, CardPromptInjection} {
 		if rep.HasCard(c) {
 			t.Errorf("%s drawn with base below %d", c, DefaultReadmeMinBase)
 		}
@@ -28,7 +28,7 @@ func TestCardsRespectMinimumBase(t *testing.T) {
 	// because MergedPRs is its own base.
 	opts.ReadmeMinBase = 10
 	rep = Compute(fixture(), 0, opts)
-	for _, c := range []string{CardSentBack, CardCost, CardAlso} {
+	for _, c := range []string{CardCameBack, CardTimeToApproval, CardCost, CardAlso} {
 		if !rep.HasCard(c) {
 			t.Errorf("%s not drawn at min base 10", c)
 		}
@@ -43,13 +43,19 @@ func TestCardsRespectMinimumBase(t *testing.T) {
 	if low.HasCard(CardChecksGreen) {
 		t.Error("checks-green drawn with CI coverage below the floor")
 	}
-	svg, _ := rep.Card(CardSentBack, cardThemes[0])
-	for _, want := range []string{"<title>", `<text`, "reviewed pull requests was sent back", "from 13 merged pull requests Hive reviewed"} {
+	svg, _ := rep.Card(CardCameBack, cardThemes[0])
+	for _, want := range []string{"<title>", `<text`, "3 in 4", "sent back came back fixed and were approved", "from 15 pull requests sent back"} {
 		if !strings.Contains(svg, want) {
-			t.Errorf("sent-back card missing %q:\n%s", want, svg)
+			t.Errorf("came-back card missing %q:\n%s", want, svg)
 		}
 	}
-	if len(rep.Cards()) != 2*5 { // sent-back, checks-green, cost, also, how-it-works × dark/light
+	svg, _ = rep.Card(CardTimeToApproval, cardThemes[0])
+	for _, want := range []string{"20 min", "from 11 pull requests that were sent back"} {
+		if !strings.Contains(svg, want) {
+			t.Errorf("time-to-approval card missing %q:\n%s", want, svg)
+		}
+	}
+	if len(rep.Cards()) != 2*6 { // came-back, time-to-approval, checks-green, cost, also, how-it-works × dark/light
 		t.Errorf("Cards() = %d files: %v", len(rep.Cards()), rep.Cards())
 	}
 }

@@ -43,13 +43,11 @@ func (r Report) ReadmeBlock(docDir string) string {
 	add(r.HeroLine(), "")
 
 	add("## Accuracy", "")
-	if r.HasCard(CardSentBack) || r.HasCard(CardStories) {
-		add("A separate reviewer reads every pull request an agent opens and can send it back before it merges.", "")
-		cards(cardW, CardSentBack, CardChecksGreen)
+	if r.HasCard(CardCameBack) || r.HasCard(CardStories) {
+		add("A separate reviewer reads every pull request an agent opens and can send it back before it merges. The question is whether its objections hold up.", "")
+		cards(cardW, CardCameBack, CardTimeToApproval)
 		cards(cardWideW, CardStories)
-		if r.Mediated.RevertRate.Reported && r.Unmediated.RevertRate.Reported {
-			add("Pull requests merged without review come from other repositories and periods, not a controlled comparison, so differences may not be caused by review. Revert rates are not distinguishable so far.", "")
-		}
+		add(r.followupCaveat(), "")
 	} else {
 		add("Not enough reviewed pull requests are on record yet to report accuracy figures.", "")
 	}
@@ -72,6 +70,24 @@ func (r Report) ReadmeBlock(docDir string) string {
 	add(fmt.Sprintf("Production data, not a lab run. Every count above is regenerated from live records by `src/scripts/outcome-benchmark.sh`; bases, dates, exclusions and the full tables are in [how we count →](%s).", report))
 	add(ReadmeEnd)
 	return strings.Join(lines, "\n")
+}
+
+// followupCaveat is the one honest sentence under the Accuracy cards: what
+// happened to the rest, and why shipped-code outcomes are not shown yet.
+func (r Report) followupCaveat() string {
+	f := r.Followup
+	var parts []string
+	if f.MergedSameHead > 0 {
+		parts = append(parts, fmt.Sprintf("%s of the sent-back pull requests merged unchanged, %s of them after another review pass approved the same version", commas(f.MergedSameHead), commas(f.MergedSameHeadApproved)))
+	}
+	if f.Unresolved > 0 {
+		parts = append(parts, fmt.Sprintf("%s did not merge", commas(f.Unresolved)))
+	}
+	s := ""
+	if len(parts) > 0 {
+		s = strings.Join(parts, "; ") + ". "
+	}
+	return s + fmt.Sprintf("Whether reviewed code later had to be reverted needs merges at least %d days old; reviewed merges only began %s, so those figures are in the report, not here.", int(Maturation.Hours()/24), monthLabel(r.FirstMediatedMerge))
 }
 
 // HeroLine is the one sentence of scale at the top of the README.
