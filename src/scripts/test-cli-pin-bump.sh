@@ -187,6 +187,10 @@ case "$url" in
   "https://api.github.com/repos/aaif-goose/goose/releases/latest") printf '{"tag_name":"v1.53.0"}' > "$out" ;;
   "https://github.com/aaif-goose/goose/releases/download/v1.53.0/goose-x86_64-unknown-linux-gnu.tar.gz") printf 'goose-amd64' > "$out" ;;
   "https://github.com/aaif-goose/goose/releases/download/v1.53.0/goose-aarch64-unknown-linux-gnu.tar.gz") printf 'goose-arm64' > "$out" ;;
+  "https://api.github.com/repos/cli/cli/releases/latest") printf '{"tag_name":"v%s"}' "${STUB_GH_VERSION:-2.101.1}" > "$out" ;;
+  *"/github.com/cli/cli/releases/download/"*"/gh_"*"_checksums.txt") printf 'gh-amd64' > "$out"; printf ' gh_*_linux_amd64.tar.gz\n' >> "$out"; printf 'gh-arm64' > "$out"; printf ' gh_*_linux_arm64.tar.gz\n' >> "$out" ;;
+  *"/github.com/cli/cli/releases/download/"*"/gh_"*"_linux_amd64.tar.gz") printf 'gh-amd64' > "$out" ;;
+  *"/github.com/cli/cli/releases/download/"*"/gh_"*"_linux_arm64.tar.gz") printf 'gh-arm64' > "$out" ;;
   *"/api/cask/antigravity-cli.json")
     amd64="$(printf 'agy-amd64' | shasum -a 256 | cut -d' ' -f1)"
     arm64="$(printf 'agy-arm64' | shasum -a 256 | cut -d' ' -f1)"
@@ -245,6 +249,23 @@ HIVE_PIN_INCLUDE_PATCH=1 STUB_AGY_VERSION=1.1.19,5905287731871744 run bump agy
 [ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=1.1.19,4894004681244672\nNEW=1.1.19,5905287731871744\nMAJOR=false\nCHANGED=true')" ] \
   && [ "$(arg Dockerfile AGY_BUILD)" = "5905287731871744" ] \
   && pass "HIVE_PIN_INCLUDE_PATCH=1 applies an agy build-only bump" || fail "agy patch override" "$OUT $ERR"
+
+echo "-- gh patch eligibility --"
+make_fixtures
+STUB_GH_VERSION=2.101.1 run bump gh
+GH_AMD64="$(printf 'gh-amd64' | shasum -a 256 | cut -d' ' -f1)"
+GH_ARM64="$(printf 'gh-arm64' | shasum -a 256 | cut -d' ' -f1)"
+[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.101.0\nNEW=2.101.1\nMAJOR=false\nCHANGED=true')" ] \
+  && [ "$(arg Dockerfile GH_VERSION)" = "2.101.1" ] \
+  && [ "$(arg runner.Dockerfile GITHUB_CLI_VERSION)" = "2.101.1" ] \
+  && pass "gh patch-only bump (2.101.0 -> 2.101.1) applies by default because gh is now patch-eligible" || fail "gh patch-eligible" "$OUT $ERR"
+
+make_fixtures
+HIVE_PIN_PATCH_ELIGIBLE= STUB_GH_VERSION=2.101.1 run bump gh
+[ $RC -eq 0 ] && [ "$OUT" = "$(printf 'OLD=2.101.0\nNEW=2.101.1\nMAJOR=false\nCHANGED=false\nSKIPPED=patch')" ] \
+  && [ "$(arg Dockerfile GH_VERSION)" = "2.101.0" ] \
+  && pass "gh patch bump is skipped when patch eligibility is disabled (HIVE_PIN_PATCH_ELIGIBLE=empty)" || fail "gh patch skip" "$OUT $ERR"
+
 unset HIVE_PIN_HTTP
 
 echo

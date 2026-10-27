@@ -46,7 +46,7 @@
 #   HIVE_PIN_INCLUDE_PATCH=1     include patch-only bumps (default: skip, except
 #                                for the patch-eligible CLIs below)
 #   HIVE_PIN_PATCH_ELIGIBLE      CLIs whose patch releases are bumped anyway
-#                                (default: "claude"; set empty to disable)
+#                                (default: "claude gh"; set empty to disable)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,7 +62,7 @@ CLIS="claude codex copilot pi goose agy omp muse bob gh"
 # CLIs that ship features (new models) in patch releases: Claude Code's 2.1.x
 # line adds models as patches, so skipping patches leaves the image unable to
 # launch models Hive lists (#9805). See src/docs/cli-pins.md.
-PATCH_ELIGIBLE="${HIVE_PIN_PATCH_ELIGIBLE-claude}"
+PATCH_ELIGIBLE="${HIVE_PIN_PATCH_ELIGIBLE-claude gh}"
 
 # Digest lengths in hex characters — a value of any other length is never
 # written into a Dockerfile (the "never guess a hash" guard).

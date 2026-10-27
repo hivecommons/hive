@@ -88,7 +88,7 @@ Most CLIs ship features on major/minor releases, so patch-only bumps are
 skipped. **Claude Code is patch-eligible**: it ships new models as 2.1.x
 patches (for example Sonnet 5.5 needs 2.1.284), so skipping patches left the
 image unable to launch models Hive lists. `cli-pin-bump.sh` bumps patch
-releases of the CLIs in `HIVE_PIN_PATCH_ELIGIBLE` (default `claude`; set it to
+releases of the CLIs in `HIVE_PIN_PATCH_ELIGIBLE` (default `claude gh`; set it to
 empty to restore the strict rule). Add a CLI there when it starts shipping
 models in patches.
 
