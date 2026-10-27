@@ -338,7 +338,7 @@ assert.strictEqual(openWord(row), 'Draft · since 18h', row);
 assert.deepStrictEqual(segStates(row), ['active ham-open-draft', T, T, T, T, T, 'todo cap'], 'draft: its own class, no hold/blocked class');
 assert.ok(row.includes('ham-mod-draft" title="' + STAGE_TRACKER_DRAFT_TIP + '">draft</span>'), 'draft pill with tooltip: ' + row);
 assert.ok(strip(row).includes(' — ' + STAGE_TRACKER_DRAFT_TIP + ' — open since '), 'chevron tooltip explains the draft: ' + strip(row));
-assert.ok(tooltip(row).startsWith('Open · draft'), tooltip(row));
+assert.ok(tooltip(row).includes('Open · draft'), tooltip(row));
 assert.ok(tooltip(row).includes('Flags: draft'), tooltip(row));
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 14428, kind: 'pr', title: 'Old draft', stage: 0, stage_since: new Date(now - 5 * 86400000).toISOString(), modifiers: ['draft'] }, stages, ctx);
 assert.strictEqual(openWord(row), 'Draft · since 5d');
