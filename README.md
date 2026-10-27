@@ -65,7 +65,7 @@ The trust level ([ACMM](src/docs/acmm-policy-matrix.md)) sets how far the loop r
 ```bash
 git clone https://github.com/hivecommons/hive.git && cd hive
 cp src/hive.yaml.example src/hive.yaml   # set project.org, project.repos and dashboard.port 3002
-(umask 077; printf 'HIVE_GITHUB_TOKEN=ghp_...\nHIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" > src/.env)
+printf 'HIVE_GITHUB_TOKEN=ghp_...\nHIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" > src/.env && chmod 600 src/.env
 docker compose -f src/docker-compose.yaml up -d
 ```
 
