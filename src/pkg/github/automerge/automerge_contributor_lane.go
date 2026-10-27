@@ -17,7 +17,13 @@ package automerge
 // tier and proved the GitHub login, and adds author/diff fences of its own.
 //
 // This tier merges such a PR when ALL of these hold:
-//   - the PR author is admitted by one of two paths: EITHER the author's
+//   - the PR author is admitted by one of three paths: the hive ADOPTED the
+//     PR in place (stage/074-adopted-by-hive) and the head is exactly the
+//     one the stage store records as adopted/pushed by the hive (admit
+//     reason contributor-lane:adopted-by-hive; the hive owns that head, so
+//     the original author's trust tier is not consulted — if the
+//     contributor pushes over it the adoption yields and the tier gates
+//     below apply again); OR the author's
 //     profile in this hive's contributor registry carries an operator-set
 //     trust tier in require_tiers (registry_tiers_sufficient, default on;
 //     admit reason contributor-lane:registry-trusted), OR the PR closes an
@@ -106,6 +112,13 @@ const (
 // without a claim marker. It is not a skip reason: it names the path that
 // admitted the PR so operators can tell it from a marker-admitted merge.
 const contributorLaneReasonRegistryTrusted = contributorLaneReasonPrefix + "registry-trusted"
+
+// contributorLaneReasonAdoptedByHive is the admit reason logged when the
+// hive's own in-place adoption of the head admitted the PR: the hive owns
+// the head (stage/074-adopted-by-hive), so the original author's registry
+// tier, claim marker and GitHub association are not consulted. Like the
+// registry reason it names the admission path, not a skip.
+const contributorLaneReasonAdoptedByHive = prstage.ContributorLaneReasonAdoptedByHive
 
 // contributorLaneTrustedAssociations are the GitHub author_association
 // values the tier accepts for an author that neither a verified claim
@@ -476,6 +489,10 @@ type contributorClaimMatch struct {
 	RegistryTier string
 	AutoPromoted int
 	Reason       string
+	// AdoptedHead is set when the hive's own in-place adoption admitted the
+	// PR: the head SHA the stage store records as adopted/pushed by the
+	// hive, which the lane verified equals the PR head it is evaluating.
+	AdoptedHead string
 	// ObservedTier is the raw tier the lane saw for the author (registry
 	// profile or this hive's claim marker), admitted or not. It feeds the
 	// author/* stage label; admission itself still goes through Reason.
@@ -489,6 +506,42 @@ func (m contributorClaimMatch) admittedByRegistry() bool {
 
 func (m contributorClaimMatch) admittedByAutoPromotion() bool {
 	return m.AutoPromoted > 0
+}
+
+// admittedByAdoption reports whether the hive's in-place adoption of the
+// head admitted the PR under the hive's own authority.
+func (m contributorClaimMatch) admittedByAdoption() bool {
+	return m.AdoptedHead != ""
+}
+
+// adoptionAutoMergeEnabled reports whether an in-place-adopted head may be
+// admitted under the hive's own authority
+// (governor.labels.stage.adoption.auto_merge). An engine without a stage
+// policy keeps the default: on.
+func (c *Engine) adoptionAutoMergeEnabled() bool {
+	if c == nil || c.stageLabelPolicy == nil {
+		return true
+	}
+	return c.stageLabelPolicy().AdoptionAutoMerge
+}
+
+// adoptedHeadOwnedByHive reports whether the stage store says the hive
+// adopted this PR IN PLACE and headSHA is exactly the adopted head. A
+// superseding adoption (hive/adopt-<n>) is not admitted here: the App PR it
+// opened merges through the self-authored lane and closes the original. A
+// contributor push over the adopted head clears AdoptedHead (MarkYielded,
+// 074 → 072), so a stale record can never vouch for a head the hive did not
+// own; the record alone decides, not the 074 label, which can lag.
+func (c *Engine) adoptedHeadOwnedByHive(owner, repo string, number int, headSHA string) bool {
+	headSHA = strings.TrimSpace(headSHA)
+	if c == nil || headSHA == "" || !c.adoptionAutoMergeEnabled() {
+		return false
+	}
+	rec, ok := c.stageStoreOrShared().Get(stageKey(owner, repo, number))
+	if !ok {
+		return false
+	}
+	return rec.AdoptedInPlace() && rec.Adopted(headSHA)
 }
 
 // admittedRegistryTier returns the PR author's registry tier when the
@@ -514,13 +567,19 @@ func (c *Engine) admittedRegistryTier(author string, policy ContributorLanePolic
 	return tier
 }
 
-// admitContributor resolves the author through the registry path first and
-// the claim-marker path second. The registry path is the operator's own
+// admitContributor resolves the author through the adoption path first,
+// the registry path second and the claim-marker path third. An in-place
+// adoption of exactly this head is the hive's own ownership statement (the
+// hive repaired and pushed it), so it needs neither tier nor linked issue.
+// The registry path is the operator's own
 // statement of trust for the login, so a hit needs no linked issue; a miss
 // (no profile, or a tier outside RequireTiers) leaves the marker path and
 // its skip reasons exactly as before.
 func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *gh.PullRequest, policy ContributorLanePolicy) (contributorClaimMatch, error) {
 	author := hgithub.SafeGetLogin(pr.GetUser())
+	if headSHA := pr.GetHead().GetSHA(); c.adoptedHeadOwnedByHive(owner, repo, pr.GetNumber(), headSHA) {
+		return contributorClaimMatch{AdoptedHead: headSHA, ObservedTier: c.observedRegistryTier(author)}, nil
+	}
 	if tier := c.admittedRegistryTier(author, policy); tier != "" {
 		return contributorClaimMatch{RegistryTier: tier, ObservedTier: tier}, nil
 	}
@@ -913,6 +972,9 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		}
 		return eval, claim.Reason, nil
 	}
+	if claim.admittedByAdoption() {
+		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonAdoptedByHive, "adopted_head", claim.AdoptedHead)
+	}
 	if claim.admittedByRegistry() {
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonRegistryTrusted, "registry_tier", claim.RegistryTier)
 	}
@@ -1093,8 +1155,12 @@ func contributorLaneConflictReason(pr *gh.PullRequest) string {
 }
 
 // contributorLaneAdmitPath names the path that admitted the author for the
-// merge log: the registry admit reason, or "claim" for the marker path.
+// merge log: the adoption or registry admit reason, or "claim" for the
+// marker path.
 func contributorLaneAdmitPath(claim contributorClaimMatch) string {
+	if claim.admittedByAdoption() {
+		return contributorLaneReasonAdoptedByHive
+	}
 	if claim.admittedByRegistry() {
 		return contributorLaneReasonRegistryTrusted
 	}
@@ -1116,6 +1182,10 @@ func contributorLaneMergeComment(author string, claim contributorClaimMatch, soa
 		verdictText = "reviewer verdict not required"
 	}
 	login := strings.TrimPrefix(author, "@")
+	if claim.admittedByAdoption() {
+		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, head `%s` adopted by the hive (`%s`) with @%s's commits — merged under the hive's own authority.",
+			int(soak.Minutes()), verdictText, shortSHA(claim.AdoptedHead), stagelabels.AdoptedByHive.Label(), login)
+	}
 	if claim.admittedByRegistry() {
 		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, @%s holds the %s tier in this hive's contributor registry.",
 			int(soak.Minutes()), verdictText, login, claim.RegistryTier)

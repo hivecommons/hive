@@ -939,7 +939,12 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      pushes keep the adoption and the stage stays
      074 whatever CI or the review swarm say of them — pending, green,
      approved or red again — until the merge gate (080/085/090/100) takes
-     the head (hivecommons/hive#12736). A later head keeps that ownership
+     the head (hivecommons/hive#12736). The hive owns that head: when it is
+     green, reviewer-approved, DCO-clean and soaked, the contributor lane
+     admits it under the hive's own authority
+     (`contributor-lane:adopted-by-hive`, `governor.labels.stage.adoption.auto_merge`,
+     default `true`) without the original author's trust tier, so 074 moves
+     to 095/097 and merges instead of parking on a maintainer `/lgtm`. A later head keeps that ownership
      only when the commit's GitHub-linked author/committer is the App bot
      (the stage store remembers SHAs that already passed that check; it is
      not a separate evidence source)

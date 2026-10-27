@@ -81,6 +81,12 @@ type StageLabelPolicy struct {
 	// App-linked git identity rollout, with a first-deploy safety valve in
 	// settleInPlaceAdoption.
 	AdoptionStrictAttribution bool
+	// AdoptionAutoMerge lets the contributor lane admit an in-place-adopted
+	// head under the hive's own authority, without the original author's
+	// trust tier (governor.labels.stage.adoption.auto_merge, default on).
+	// Every other contributor-lane gate still applies; the head must be
+	// exactly the one the stage store records as adopted/pushed by the hive.
+	AdoptionAutoMerge bool
 	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
 	// override for "owner/repo"; ok false means "detect" (a DCO context in
 	// the branch's required checks or on the head). nil = always detect.

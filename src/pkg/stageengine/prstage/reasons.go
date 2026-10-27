@@ -17,6 +17,7 @@ const (
 	AutoMergeReasonMergeRefusedReview      = "merge-refused:review-required"
 	AutoMergeReasonNoAppBotLogin           = "no-app-bot-login"
 	AutoMergeReasonReviewGatePrefix        = "review-gate:"
+	ContributorLaneReasonAdoptedByHive     = "contributor-lane:adopted-by-hive"
 	ContributorLaneReasonAppAuthored       = "contributor-lane:app-authored"
 	ContributorLaneReasonAuthorAssociation = "contributor-lane:author-association"
 	ContributorLaneReasonChangesRequested  = "contributor-lane:changes-requested"

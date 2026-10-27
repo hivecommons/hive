@@ -399,7 +399,22 @@ Every other gate below still applies to a registry-admitted PR. Set
 
 A PR merges through this tier only when all of the following hold:
 
-- The PR author is admitted by one of two paths:
+- The PR author is admitted by one of three paths:
+  - **Adopted by the hive**: the stage store records an in-place adoption of
+    the PR (`stage/074-adopted-by-hive`) and the head being evaluated is
+    exactly the head the hive adopted or pushed (`AdoptedHead`). The hive
+    owns that head, so the original author's tier, marker and GitHub
+    association are not consulted — hive owner decision (hivecommons/hive,
+    2026-10-27): "If items are adopted, then the hive agents own it and they
+    should be eligible for auto merge." The sweep logs `contributor-lane
+    admitted reason=contributor-lane:adopted-by-hive adopted_head=<sha>` and
+    the merge log carries `admitted_by=contributor-lane:adopted-by-hive`. A
+    contributor push over the adopted head yields the adoption (074 → 072,
+    `AdoptedHead` cleared), so the next pass falls through to the two paths
+    below; a superseding adoption (`hive/adopt-<n>`) is never admitted on the
+    original PR — its App PR merges through the self-authored lane and closes
+    the original. Off with `governor.labels.stage.adoption.auto_merge: false`
+    (default on). Every other gate below still applies.
   - **Registry**: the author's contributor-registry profile has a trust tier in
     `require_tiers`. The sweep logs `contributor-lane admitted
     reason=contributor-lane:registry-trusted registry_tier=<tier>` and the
@@ -538,7 +553,11 @@ is red with the contributor's failures, lands in `ci-failing.json` like any
 hive-authored red PR, and the scanner's FIX-BEFORE-NEW kick rebases and fixes
 it on that branch (never a replacement PR), after which it follows the normal
 `050 → 100` path. When adoption is in-place on the contributor PR's own
-branch, a changed head stays adopted only with hive-controlled evidence
+branch, the hive owns the head it pushed: once that head is green, approved
+by the reviewer, DCO-clean and soaked, the contributor lane admits it under
+the hive's own authority (`contributor-lane:adopted-by-hive`, see the
+admission paths above) rather than waiting for the original author's trust
+tier or a maintainer `/lgtm`; a changed head stays adopted only with hive-controlled evidence
 (GitHub-linked App commit metadata; the stage store only remembers SHAs that
 already passed that check);
 forgeable git author/committer names and emails are treated as contributor
