@@ -397,6 +397,24 @@ the issue had been claimed outside the relay; the registry path admits both.
 Every other gate below still applies to a registry-admitted PR. Set
 `registry_tiers_sufficient: false` to require the marker for everyone.
 
+A registry-admitted author also gets their CI started. GitHub's fork-approval
+policy holds a first-time contributor's `pull_request` runs in
+`action_required`, and the hive otherwise never approves a human-authored
+lane's held runs (the `hive-ok-to-test` workflow approves same-repo heads
+only). hivecommons/docs#481 by a `trusted` registry contributor sat 17 hours
+at `required-check-missing:Audit production dependencies` until an operator
+clicked "Approve and run". When the registry path admitted the author and the
+lane stops at `required-check-missing:<ctx>`, it now approves the head's held
+runs once (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`, fork head
+included), posts one `<!-- hive:contributor-held-runs-approved … -->` audit
+comment naming the author and tier, and logs `contributor-lane approved held
+runs` with the run ids (`approve_held_runs_for_registry_trusted`, default
+`true`). Claim-marker, auto-promotion and association admissions are never
+approved for, nor is a PR carrying the sentinel or an `exclude_labels` label,
+nor one touching `.github/workflows/**`. The App needs **Actions: Read and
+write** for the call; without it the approve fails, is logged once per head,
+and the PR waits for a person as before.
+
 A PR merges through this tier only when all of the following hold:
 
 - The PR author is admitted by one of three paths:
@@ -514,6 +532,7 @@ auto_merge:
       - merger
     registry_tiers_sufficient: true   # a require_tiers tier on the author's registry profile admits without a claim marker
     auto_promotion_scope: hive        # count clean merged PRs across every hive repo (repo = this repository only)
+    approve_held_runs_for_registry_trusted: true   # approve action_required runs once per head for registry-admitted authors
   contributor_tier:
     auto_promote_after_merged: 5      # clean merged PRs before the lane trusts an author on its own; negative disables
 ```

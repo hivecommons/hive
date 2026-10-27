@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,18 @@ type contributorLaneFixture struct {
 	baseRef  string
 	behindBy int // behind_by reported by compare/<baseRef>...sha7
 	compares int
+	// requiredContexts, when set with baseRef, is what branch protection
+	// declares as required_status_checks.contexts; empty keeps the branch
+	// unprotected. The status/check-runs routes only ever report ci/build,
+	// so any other name yields required-check-missing:<name>.
+	requiredContexts []string
+	// workflowRuns is the payload of GET actions/runs?head_sha=sha7; nil
+	// serves an empty list.
+	workflowRuns []map[string]any
+	// approvedRuns records POST actions/runs/{id}/approve calls;
+	// approveStatus, when set, is the status every approve returns.
+	approvedRuns  []int64
+	approveStatus int
 }
 
 func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.Server {
@@ -258,8 +271,30 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/"+fx.baseRef:
 			json.NewEncoder(w).Encode(map[string]any{"name": fx.baseRef, "commit": map[string]string{"sha": "base1"}})
 		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/"+fx.baseRef+"/protection/required_status_checks":
+			if len(fx.requiredContexts) > 0 {
+				json.NewEncoder(w).Encode(map[string]any{"strict": false, "contexts": fx.requiredContexts})
+				return
+			}
 			w.WriteHeader(http.StatusNotFound)
 			json.NewEncoder(w).Encode(map[string]any{"message": "Branch not protected"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/actions/runs":
+			runs := fx.workflowRuns
+			if runs == nil {
+				runs = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "workflow_runs": runs})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/actions/runs/") && strings.HasSuffix(r.URL.Path, "/approve"):
+			id, err := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/actions/runs/"), "/approve"), 10, 64)
+			if err != nil {
+				t.Fatalf("bad approve path %s: %v", r.URL.Path, err)
+			}
+			fx.approvedRuns = append(fx.approvedRuns, id)
+			if fx.approveStatus != 0 {
+				w.WriteHeader(fx.approveStatus)
+				json.NewEncoder(w).Encode(map[string]string{"message": "Resource not accessible by integration"})
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
 		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/rules/branches/"+fx.baseRef:
 			json.NewEncoder(w).Encode([]any{})
 		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/base1/status":
@@ -282,7 +317,14 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			_ = json.NewDecoder(r.Body).Decode(&payload)
 			fx.lastComment = payload.Body
 			fx.allComments = append(fx.allComments, payload.Body)
-			json.NewEncoder(w).Encode(map[string]any{"id": 1})
+			// Posted comments become visible to later GETs so once-per-PR
+			// markers can be exercised across ticks.
+			fx.prComments = append(fx.prComments, map[string]any{
+				"id":   1000 + fx.comments,
+				"user": map[string]string{"login": testHiveAppBotLogin},
+				"body": payload.Body,
+			})
+			json.NewEncoder(w).Encode(map[string]any{"id": 1000 + fx.comments})
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}

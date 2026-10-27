@@ -183,6 +183,21 @@ func TestContributorLaneAutoMergeConfigRegistryTiersSufficient(t *testing.T) {
 	}
 }
 
+// approve_held_runs_for_registry_trusted defaults on so a registry-admitted
+// contributor's held workflow runs are approved; an explicit false keeps them
+// a person's decision.
+func TestContributorLaneAutoMergeConfigApproveHeldRunsForRegistryTrusted(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if !cfg.EffectiveApproveHeldRunsForRegistryTrusted() {
+		t.Fatal("approve_held_runs_for_registry_trusted must default to true")
+	}
+	off := false
+	cfg.ApproveHeldRunsForRegistryTrusted = &off
+	if cfg.EffectiveApproveHeldRunsForRegistryTrusted() {
+		t.Fatal("explicit approve_held_runs_for_registry_trusted: false must turn held-run approval off")
+	}
+}
+
 func TestContributorTierAutoMergeConfigAutoPromoteDefault(t *testing.T) {
 	var cfg ContributorTierAutoMergeConfig
 	if got := cfg.EffectiveAutoPromoteAfterMerged(); got != DefaultContributorTierAutoPromoteAfterMerged {

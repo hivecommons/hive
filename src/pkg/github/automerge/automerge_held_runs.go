@@ -28,7 +28,15 @@ package automerge
 // acts for (trySweepSelfAuthoredPR); human-authored lanes are untouched so a
 // first-time contributor's held run is never nudged by automation. Hive posts
 // `/ok-to-test`; the repository-local self-contained workflow approves only same-repo
-// heads, never fork heads.
+// heads, never fork heads. The one human exception lives in
+// automerge_contributor_held_runs.go (#14519): a contributor the operator
+// placed in this hive's registry at a tier the contributor lane accepts for
+// merging (require_tiers) gets their `action_required` runs approved once per
+// head with the App token — fork head included — when the lane itself stops
+// at `required-check-missing:<ctx>`. Claim-marker, auto-promotion and
+// association admissions, sentinel/exclude labels and `.github/workflows/**`
+// diffs stay a person's decision, and the toggle is
+// auto_merge.contributor_lane.approve_held_runs_for_registry_trusted.
 
 import (
 	"context"

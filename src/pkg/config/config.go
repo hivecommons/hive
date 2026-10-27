@@ -7735,6 +7735,16 @@ type ContributorLaneAutoMergeConfig struct {
 	// own repository (the pre-#14517 behaviour). Revert and sentinel-alert
 	// evidence is applied per PR in either scope.
 	AutoPromotionScope string `yaml:"auto_promotion_scope,omitempty" json:"auto_promotion_scope,omitempty"`
+	// ApproveHeldRunsForRegistryTrusted lets the contributor lane approve
+	// `pull_request` workflow runs GitHub holds for approval
+	// (`action_required`) on a PR whose author the registry path admitted at
+	// a RequireTiers tier, once per head, when the only thing between the PR
+	// and merge is a required check those held runs would produce. Authors
+	// admitted by claim marker, auto-promotion or association are never
+	// approved for. nil/unset means ON. Needs the App's Actions: Read and
+	// write permission; without it the approve call fails and the lane keeps
+	// waiting for a person.
+	ApproveHeldRunsForRegistryTrusted *bool `yaml:"approve_held_runs_for_registry_trusted,omitempty" json:"approve_held_runs_for_registry_trusted,omitempty"`
 }
 
 // Contributor-lane auto-promotion scopes
@@ -7821,6 +7831,12 @@ func (c ContributorLaneAutoMergeConfig) EffectiveRequireReviewerVerdict() bool {
 // the contributor registry admits a PR without a claim marker (default on).
 func (c ContributorLaneAutoMergeConfig) EffectiveRegistryTiersSufficient() bool {
 	return c.RegistryTiersSufficient == nil || *c.RegistryTiersSufficient
+}
+
+// EffectiveApproveHeldRunsForRegistryTrusted reports whether the contributor
+// lane may approve held workflow runs for registry-admitted authors (default on).
+func (c ContributorLaneAutoMergeConfig) EffectiveApproveHeldRunsForRegistryTrusted() bool {
+	return c.ApproveHeldRunsForRegistryTrusted == nil || *c.ApproveHeldRunsForRegistryTrusted
 }
 
 func (c ContributorLaneAutoMergeConfig) RepoSet() map[string]bool {

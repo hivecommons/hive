@@ -400,7 +400,12 @@ runs when a required check is missing or pending:
   `automerge hold`; later ticks only count the PR in the skip stats instead of
   emitting `automerge skip` every tick.
 - fork heads, sentinel-alert PRs, and human-authored lanes are never touched; a
-  first-time contributor's held run is still a person's decision.
+  first-time contributor's held run is still a person's decision — with one
+  exception: a contributor-lane PR whose author the **contributor registry**
+  admitted at a `require_tiers` tier has its held runs approved once per head
+  by the App (`auto_merge.contributor_lane.approve_held_runs_for_registry_trusted`,
+  default `true`; needs Actions: Read and write). The operator already trusts
+  that author to merge, so holding their CI is pure drag (hivecommons/docs#481).
 
 Per-repo `project.repo_policies[].auto_merge: false` is stronger than the
 hive-wide L6 setting: the merge relay refuses the repo, the self-authored sweep
@@ -435,6 +440,7 @@ advanced into the merge path.
 | `auto_merge.contributor_lane.registry_tiers_sufficient` | `true` | Admit a PR whose author's contributor-registry profile carries a `require_tiers` tier without a linked issue or `hive:claim` marker (logged as `contributor-lane:registry-trusted`). All other gates still apply. `false` requires the claim marker for every contributor. |
 | `auto_merge.contributor_lane.auto_promotion_scope` | `hive` | Where the clean-merged-PR ratchet (`auto_merge.contributor_tier.auto_promote_after_merged`) counts an author's merges: `hive` counts across every repository the hive manages (one `search/issues` query finds the repos holding the author's merges; the PR's own repo is always walked first), `repo` counts only the PR's repository. Revert and sentinel-alert evidence blocks promotion in either scope. |
 | `auto_merge.contributor_tier.auto_promote_after_merged` | `5` | Clean merged PRs (no revert, no sentinel label, not undone by a later merged revert) after which the contributor lane treats an author as `trusted` without an operator grant, unless the registry marks them `revoked`. Negative disables the ratchet. |
+| `auto_merge.contributor_lane.approve_held_runs_for_registry_trusted` | `true` | When the registry path admitted the PR author and the lane stops at `required-check-missing:<ctx>`, approve the head's `action_required` workflow runs once (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`, fork heads included), post one `hive:contributor-held-runs-approved` audit comment and log `contributor-lane approved held runs`. Never acts for claim-marker, auto-promoted or association admissions, sentinel/exclude-labelled PRs, or diffs touching `.github/workflows/**`. Needs the App's **Actions: Read and write** permission. See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
 | `auto_merge.contributor_lane.repos` | empty = all watched repos | Optional repo allow-list for the contributor-lane tier (bare name or `owner/repo`). |
 | `auto_merge.contributor_lane.exclude_labels` | `hold`, `do-not-merge`, `needs-human`, `blocked`, `needs-rebase` | Labels that keep a PR out of contributor-lane auto-merge (`do-not-merge/*` always excluded). |
 

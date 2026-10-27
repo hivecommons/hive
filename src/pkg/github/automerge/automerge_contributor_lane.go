@@ -200,6 +200,11 @@ type ContributorLanePolicy struct {
 	// PR's own repository only; anything else (the default, "hive") counts
 	// every repository this hive manages (#14517).
 	AutoPromotionScope string
+	// ApproveHeldRunsForRegistryTrusted lets the lane approve `action_required`
+	// workflow runs once per head for an author the registry path admitted
+	// (auto_merge.contributor_lane.approve_held_runs_for_registry_trusted).
+	// See automerge_contributor_held_runs.go.
+	ApproveHeldRunsForRegistryTrusted bool
 }
 
 // Contributor-lane auto-promotion scopes; mirrors
@@ -1248,6 +1253,9 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return eval, reason, err
 	}
 	if !green {
+		if strings.HasPrefix(reason, requiredCheckMissingPrefix) {
+			c.approveHeldRunsForRegistryTrusted(ctx, displayRepo, owner, repo, pr, number, headSHA, claim, policy, files, reason)
+		}
 		return eval, reason, nil
 	}
 	if !verdict.Configured {
