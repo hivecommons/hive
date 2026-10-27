@@ -1685,12 +1685,12 @@ func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl ti
 	hashResp := resp
 	hashResp.GeneratedAt = time.Time{}
 	if err := json.NewEncoder(&hashBuf).Encode(hashResp); err != nil {
-		slogWarnOverviewEncode(err)
+		logOverviewEncodeFailure(err)
 		return stageTrackerCache{}, false
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
-		slogWarnOverviewEncode(err)
+		logOverviewEncodeFailure(err)
 		return stageTrackerCache{}, false
 	}
 	return stageTrackerCache{body: buf.Bytes(), etag: webstatic.ETagFor(hashBuf.Bytes()), generatedAt: now}, true
@@ -1767,7 +1767,7 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 		body = bytes.Replace(body, stageTrackerSourceCache, stageTrackerSourceStale, 1)
 	}
 	if _, err := w.Write(body); err != nil {
-		slogWarnOverviewEncode(err)
+		logOverviewEncodeFailure(err)
 	}
 }
 

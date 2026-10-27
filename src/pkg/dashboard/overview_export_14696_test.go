@@ -17,13 +17,13 @@ func TestOverviewEncodeLogLevels14696(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer slog.SetDefault(prev)
 
-	slogWarnOverviewEncode(&net.OpError{Op: "write", Err: os.NewSyscallError("write", syscall.EPIPE)})
+	logOverviewEncodeFailure(&net.OpError{Op: "write", Err: os.NewSyscallError("write", syscall.EPIPE)})
 	if strings.Contains(buf.String(), "level=WARN") {
 		t.Errorf("client disconnect must not log WARN, got:\n%s", buf.String())
 	}
 
 	buf.Reset()
-	slogWarnOverviewEncode(errors.New("boom"))
+	logOverviewEncodeFailure(errors.New("boom"))
 	if !strings.Contains(buf.String(), "level=WARN") {
 		t.Errorf("genuine encode failure should log WARN, got:\n%s", buf.String())
 	}
