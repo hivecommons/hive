@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -14,21 +15,28 @@ import (
 
 func TestReviewBacklogBlocksOnlyRelatedFiles(t *testing.T) {
 	for _, tc := range []struct {
-		name, files              string
+		name, files, file        string
 		missing, failed, blocked bool
 	}{
 		{name: "untouched", files: `[{"filename":"other.go"}]`},
 		{name: "changed", files: `[{"filename":"pkg/a.go"}]`, blocked: true},
+		{name: "dot-relative finding path", files: `[{"filename":"pkg/a.go"}]`, file: "./pkg/a.go", blocked: true},
+		{name: "root-relative finding path", files: `[{"filename":"pkg/a.go"}]`, file: "/pkg/a.go", blocked: true},
 		{name: "renamed", files: `[{"filename":"new.go","previous_filename":"pkg/a.go"}]`, blocked: true},
 		{name: "missing on base", missing: true, blocked: true},
 		{name: "lookup failed", failed: true, blocked: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withReviewBacklogState(t)
+			file := tc.file
+			if file == "" {
+				file = "pkg/a.go"
+			}
 			lookups := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
+				// Clean so a "./pkg/a.go" finding still resolves the base probe's contents lookup.
+				switch path.Clean(r.URL.Path) {
 				case "/repos/o/r/issues/5/comments":
 					fmt.Fprint(w, `{"id":1}`)
 				case "/repos/o/r/pulls/5":
@@ -53,7 +61,7 @@ func TestReviewBacklogBlocksOnlyRelatedFiles(t *testing.T) {
 			defer srv.Close()
 			sink := &fakeBacklogSink{dest: config.ReviewBacklogLinear}
 			c := headsBacklogClient(t, srv.URL, sink)
-			report := routingReport(t, 5, "abc", nit("first", "low", "pkg/a.go", 7, "evidence"), nit("second", "low", "pkg/a.go", 8, "other evidence"))
+			report := routingReport(t, 5, "abc", nit("first", "low", file, 7, "evidence"), nit("second", "low", file, 8, "other evidence"))
 			if err := c.fileOutOfScopeReviewBacklog(context.Background(), ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: report}, time.Now()); err != nil {
 				t.Fatal(err)
 			}

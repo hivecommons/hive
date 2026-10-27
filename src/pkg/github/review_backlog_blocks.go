@@ -378,6 +378,8 @@ func reviewFollowUpsSection(listed []reviewBacklogFiled, capped int) string {
 // newReviewBacklogChangedFilesProbe caches a bounded, paginated lookup per
 // filing pass. A partial list cannot prove a file untouched, so errors and
 // exhausted budgets report unknown rather than releasing potentially blocked work.
+// Paths are normalised on both sides so a finding citing "./pkg/a.go" or
+// "/pkg/a.go" still matches GitHub's repo-root-relative "pkg/a.go".
 func (c *Client) newReviewBacklogChangedFilesProbe(repo string, pr int) func(context.Context, string) (bool, bool) {
 	loaded, complete := false, false
 	files := map[string]bool{}
@@ -394,8 +396,10 @@ func (c *Client) newReviewBacklogChangedFilesProbe(repo string, pr int) func(con
 				}
 				count += len(changed)
 				for _, f := range changed {
-					files[f.GetFilename()] = true
-					if old := f.GetPreviousFilename(); old != "" {
+					if p := normaliseFingerprintPath(f.GetFilename()); p != "" {
+						files[p] = true
+					}
+					if old := normaliseFingerprintPath(f.GetPreviousFilename()); old != "" {
 						files[old] = true
 					}
 				}
@@ -407,9 +411,10 @@ func (c *Client) newReviewBacklogChangedFilesProbe(repo string, pr int) func(con
 				opts.Page = resp.NextPage
 			}
 		}
-		if files[strings.TrimSpace(file)] {
+		file = normaliseFingerprintPath(file)
+		if files[file] {
 			return true, true
 		}
-		return false, complete && strings.TrimSpace(file) != ""
+		return false, complete && file != ""
 	}
 }
