@@ -212,6 +212,7 @@ func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo str
 	if head == "" {
 		return PullRequestDecisionEvent{}, ErrPullRequestHeadUnknown
 	}
+	mode := prDecisionModeFor(unparkCommand{Kind: unparkCommandDecision, Decision: decision, Text: decision})
 	req := review.HumanChangeRequest{
 		Repo:     owner + "/" + name,
 		Number:   number,
@@ -220,19 +221,19 @@ func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo str
 		SourceID: operatorDecisionMarkerID,
 		Actor:    actor,
 		Body:     decision,
+		Kind:     mode.kind(),
 	}
 	// Record before replying: a reply without a record would promise a fix
 	// nothing is queued to make.
 	if err := store.Record(req); err != nil {
 		return PullRequestDecisionEvent{}, fmt.Errorf("recording dashboard decision on %s/%s#%d: %w", owner, name, number, err)
 	}
-	body := renderPRDecisionRecordedReply(actor, head) + "\n\n_Recorded from the hive dashboard._"
+	stage := c.applyPRDecisionStage(ctx, owner, name, number, head, actor, mode, selfAuthored)
+	body := renderPRDecisionReply(actor, head, mode) + "\n\n_Recorded from the hive dashboard._"
 	if err := c.postUnparkReply(ctx, owner, name, number, operatorDecisionMarkerID, body); err != nil {
 		return PullRequestDecisionEvent{}, err
 	}
-	event := PullRequestDecisionEvent{Repo: owner + "/" + name, Number: number, HeadSHA: head, Actor: actor, Decision: decision}
-	if c.logger != nil {
-		c.logger.Info("pull request direction recorded by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
-	}
+	event := PullRequestDecisionEvent{Repo: owner + "/" + name, Number: number, HeadSHA: head, Actor: actor, Decision: decision, Mode: string(mode)}
+	c.logPRDecision(event.Repo, number, head, actor, mode, stage, false)
 	return event, nil
 }

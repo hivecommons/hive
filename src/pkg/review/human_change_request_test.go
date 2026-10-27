@@ -259,6 +259,7 @@ func TestHumanChangeRequestApprovalKindIsNotAFixRequest(t *testing.T) {
 	store := NewHumanChangeRequests(filepath.Join(t.TempDir(), HumanChangeRequestsFile))
 	approve := liveCaseRequest()
 	approve.Body, approve.Kind = "approve", HumanChangeRequestKindApprove
+	approve.RecordedAt = time.Date(2026, 10, 27, 18, 35, 0, 0, time.UTC)
 	if err := store.Record(approve); err != nil {
 		t.Fatal(err)
 	}

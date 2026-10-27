@@ -77,6 +77,28 @@ func TestRecordOperatorPullRequestDecisionRecordsChangeRequestAndReplies(t *test
 	if !strings.Contains(posted, unparkReplyMarkerPrefix+"0 -->") {
 		t.Fatalf("reply must carry the shared unpark marker with a non-command id, got %q", posted)
 	}
+	if event.Mode != string(prDecisionChangesRequested) || got.IsApproval() {
+		t.Fatalf("event mode = %q, kind = %q; want changes_requested", event.Mode, got.Kind)
+	}
+	if facts := prDecisionFacts(t, c); len(facts) != 1 || !facts[0].Instruction || facts[0].Head != liveDecisionHead {
+		t.Fatalf("stage facts = %+v, want one PRDecided with the instruction", facts)
+	}
+
+	// A bare "approve" from the dashboard is an approval, not a fix request.
+	c2, rec2 := newUnparkPRClient(t, []unparkWireIssue{hiveParkedPR()}, nil)
+	event2, err := c2.RecordOperatorPullRequestDecision(context.Background(), "org/repo", liveDecisionPR, "maintainer", "approve", store)
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if event2.Mode != string(prDecisionApprove) || review.HumanChangeRequestFor(store, "org/repo", liveDecisionPR, liveDecisionHead) != nil || review.HumanApprovalFor(store, "org/repo", liveDecisionPR, liveDecisionHead) == nil {
+		t.Fatalf("approve event = %+v, store = %+v", event2, store)
+	}
+	if posted := strings.Join(rec2.posted[liveDecisionPR], "\n"); !strings.Contains(posted, "Approval recorded by @maintainer") {
+		t.Fatalf("expected the approval reply, got %q", posted)
+	}
+	if facts := prDecisionFacts(t, c2); len(facts) != 1 || facts[0].Instruction {
+		t.Fatalf("stage facts = %+v, want one PRDecided without an instruction", facts)
+	}
 }
 
 func TestRecordOperatorPullRequestDecisionRefusesForeignEmptyAndUnstored(t *testing.T) {

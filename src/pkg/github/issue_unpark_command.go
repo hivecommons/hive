@@ -120,13 +120,10 @@ func (c unparkCommand) DecisionText() string {
 
 // IssueUnparkEvent records one issue this sweep un-parked, for the audit log.
 type IssueUnparkEvent struct {
-	Repo     string
-	Number   int
-	Actor    string
-	Decision string
-	// Mode is "changes_requested" (the decision carries an instruction)
-	// or "approve" (a bare `/hive decision approve`).
-	Mode       string
+	Repo       string
+	Number     int
+	Actor      string
+	Decision   string
 	CommentURL string
 }
 
@@ -176,11 +173,14 @@ type IssueUnparkSweepOptions struct {
 // PullRequestDecisionEvent records one `/hive decision` on a hive-authored
 // PR the sweep routed to the fix lane (hivecommons/hive#13041).
 type PullRequestDecisionEvent struct {
-	Repo       string
-	Number     int
-	HeadSHA    string
-	Actor      string
-	Decision   string
+	Repo     string
+	Number   int
+	HeadSHA  string
+	Actor    string
+	Decision string
+	// Mode is "changes_requested" (the decision carries an instruction)
+	// or "approve" (a bare `/hive decision approve`).
+	Mode       string
 	CommentURL string
 }
 
