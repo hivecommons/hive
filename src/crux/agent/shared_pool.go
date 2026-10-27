@@ -186,8 +186,8 @@ func (m *Manager) evictSharedPoolSessionIf(name, leaseID string, expected *KickO
 		return
 	}
 	if expected != nil &&
-		(a.KickOutcome.At != expected.At ||
-			a.KickOutcome.KickAt != expected.KickAt ||
+		(!a.KickOutcome.At.Equal(expected.At) ||
+			!a.KickOutcome.KickAt.Equal(expected.KickAt) ||
 			a.KickOutcome.Kind != expected.Kind ||
 			a.KickOutcome.Reason != expected.Reason ||
 			!a.KickOutcome.Settled(a.LastKick) ||

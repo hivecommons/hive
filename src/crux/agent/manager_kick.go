@@ -128,10 +128,21 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 	}
 
 	if agent.State != StateRunning {
-		if m.deferStartupKickLocked(agent, message) {
+		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+			m.mu.Unlock()
+			if err := m.Start(context.Background(), name); err != nil {
+				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
+			}
+			m.mu.Lock()
+			agent, ok = m.agents[name]
+			if !ok || agent.State != StateRunning {
+				return fmt.Errorf("agent %s failed to enter running state", name)
+			}
+		} else if m.deferStartupKickLocked(agent, message) {
 			return nil
+		} else {
+			return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
 		}
-		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
 	}
 	if m.deferStartupKickLocked(agent, message) {
 		return nil
