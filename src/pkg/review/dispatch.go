@@ -1365,6 +1365,7 @@ func BuildFixPrompt(pr PullRequest, agg Aggregate, attempt, maxAttempts int) str
 	}
 	fmt.Fprintf(&b, "Auto-fix attempt %d of %d. Stay narrowly scoped to the review findings below; push a new commit to the PR branch.\n\n", attempt, maxAttempts)
 	fmt.Fprintf(&b, "When committing the fix, include this exact git trailer so rework metrics can count the attempt: Hive-Fix-Attempt: %d/%d\n\n", attempt, maxAttempts)
+	b.WriteString("REQUIRED: every follow-up commit MUST carry a Signed-off-by trailer — create it with `git commit -s`, and run `git rebase --signoff` before pushing if any new commit lacks one. An unsigned fix commit bounces the PR to no-dco.\n\n")
 	if req := pr.HumanChangeRequest; req != nil && strings.TrimSpace(req.Body) != "" {
 		b.WriteString(humanChangeRequestPromptSection(*req))
 	}

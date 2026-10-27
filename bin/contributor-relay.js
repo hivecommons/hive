@@ -1270,6 +1270,9 @@ const RELAY_CAPABILITIES = ['quota_preflight_v1', 'run-stage', 'fix_pr_interrupt
 //             fix is DEFERRED and runs before the next `ready`.
 // A fix never replaces currentTask: the primary lease stays owned and renewed.
 const FIX_PR_KIND = 'fix-pr';
+// Every follow-up commit must be signed off or the PR bounces to no-dco
+// (hivecommons/hive#14605).
+const FIX_PR_SIGNOFF_REQUIREMENT = 'REQUIRED: every follow-up commit MUST carry a Signed-off-by trailer — commit with `git commit -s`, and run `git rebase --signoff` before pushing if any new commit lacks one.';
 const FIX_PR_MAX_PARALLEL = Math.max(0, Math.min(16, Number(process.env.HIVE_MAX_PARALLEL_FIXES || 1) || 0));
 const FIX_PR_DONE_MARKER = 'HIVE_FIX_PR_DONE';
 const FIX_PR_FAILED_MARKER = 'HIVE_FIX_PR_FAILED';
@@ -4017,7 +4020,9 @@ function headlessProgressTick(task) {
 const WORKSPACE_DIR_VARIABLE = /\$\{?HIVE_WORKSPACE_DIR\}?/g;
 function resolveTaskPrompt(task) {
   const prompt = task.prompt || `Work on ${task.kind} ${task.repo}#${task.number}: ${task.title}`;
-  return prompt.replace(WORKSPACE_DIR_VARIABLE, TASK_WORKSPACE_DIR);
+  const resolved = prompt.replace(WORKSPACE_DIR_VARIABLE, TASK_WORKSPACE_DIR);
+  if (task.kind !== FIX_PR_KIND) return resolved;
+  return `${resolved}\n\n${FIX_PR_SIGNOFF_REQUIREMENT}`;
 }
 
 // installRepoToolchain runs bin/repo-toolchain.sh against the task's checkout

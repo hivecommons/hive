@@ -14243,6 +14243,16 @@ test('#7908 resolveTaskPrompt leaves a prompt without the variable untouched and
   } finally { teardown(relay); }
 });
 
+test('#14605 resolveTaskPrompt requires sign-off on fix-pr tasks only', () => {
+  const relay = loadRelay({});
+  try {
+    const fix = relay.resolveTaskPrompt({ kind: 'fix-pr', prompt: 'fix it' });
+    assert.ok(fix.startsWith('fix it'), 'original prompt is kept');
+    assert.ok(fix.includes('git commit -s') && fix.includes('git rebase --signoff') && fix.includes('Signed-off-by'));
+    assert.ok(!relay.resolveTaskPrompt({ kind: 'issue', prompt: 'do it' }).includes('Signed-off-by'));
+  } finally { teardown(relay); }
+});
+
 // ---------------------------------------------------------------------------
 // hivecommons/hive#7907 — the verdict is judged on a settled pane, not the
 // capture that discovered it.
