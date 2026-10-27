@@ -22,16 +22,39 @@ func TestUpstreamDialTimeoutConstant(t *testing.T) {
 	}
 }
 
-func TestAllTLSUpstreamDialsAreBound(t *testing.T) {
+// readGitHubProxySource returns the concatenated source of the non-test
+// github_proxy*.go files, so source-level invariants hold across the files
+// GitHubProxy is split into.
+func readGitHubProxySource(t *testing.T) string {
+	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "github_proxy.go"))
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(file), "github_proxy*.go"))
 	if err != nil {
-		t.Fatalf("read github_proxy.go: %v", err)
+		t.Fatalf("glob github_proxy*.go: %v", err)
 	}
-	text := string(body)
+	var sb strings.Builder
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", filepath.Base(path), err)
+		}
+		sb.Write(body)
+		sb.WriteString("\n")
+	}
+	if sb.Len() == 0 {
+		t.Fatal("no github_proxy*.go source files found")
+	}
+	return sb.String()
+}
+
+func TestAllTLSUpstreamDialsAreBound(t *testing.T) {
+	text := readGitHubProxySource(t)
 	if got := strings.Count(text, "copilot sniff: client hung up before TLS handshake"); got != 1 {
 		t.Fatalf("copilot sniff handshake hangup demotion sites = %d, want 1", got)
 	}
@@ -54,15 +77,7 @@ func TestAllTLSUpstreamDialsAreBound(t *testing.T) {
 }
 
 func TestAllClientTLSHandshakesAreBound(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "github_proxy.go"))
-	if err != nil {
-		t.Fatalf("read github_proxy.go: %v", err)
-	}
-	text := string(body)
+	text := readGitHubProxySource(t)
 	if clientTLSHandshakeTimeout != upstreamDialTimeout {
 		t.Fatalf("clientTLSHandshakeTimeout = %v, want upstreamDialTimeout %v", clientTLSHandshakeTimeout, upstreamDialTimeout)
 	}
@@ -89,15 +104,7 @@ func TestAllClientTLSHandshakesAreBound(t *testing.T) {
 }
 
 func TestHTTPRelayDeadlinesAreBoundAndObservable(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "github_proxy.go"))
-	if err != nil {
-		t.Fatalf("read github_proxy.go: %v", err)
-	}
-	text := string(body)
+	text := readGitHubProxySource(t)
 	if !strings.Contains(text, "upstream.SetWriteDeadline(time.Now().Add(httpWriteTimeout))") {
 		t.Fatal("request relays must bound upstream writes with httpWriteTimeout")
 	}

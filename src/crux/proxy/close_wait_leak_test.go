@@ -4,8 +4,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -195,21 +193,13 @@ func TestProxyHTTPBodyRelayToleratesSlowButFlowingBody(t *testing.T) {
 }
 
 // TestProxyHTTPHasNoInlineCopyPairs asserts the source-level invariant behind
-// leak (1): every opaque byte-shuttling path in github_proxy.go must go
+// leak (1): every opaque byte-shuttling path in github_proxy*.go must go
 // through relayTunnel (whose half-close drains are the #3872 guarantee), never
 // a hand-rolled io.Copy pair. The pre-fix git branch was exactly such a pair
 // that #3872 missed. relayTunnel's own two copies are the only sanctioned
 // ones.
 func TestProxyHTTPHasNoInlineCopyPairs(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "github_proxy.go"))
-	if err != nil {
-		t.Fatalf("read github_proxy.go: %v", err)
-	}
-	text := string(body)
+	text := readGitHubProxySource(t)
 	const wantRelayTunnelCalls = 3 // transparent passthrough, CONNECT tunnelDirect, git branch
 	if got := strings.Count(text, "relayTunnel(") - strings.Count(text, "func relayTunnel("); got != wantRelayTunnelCalls {
 		t.Fatalf("relayTunnel call sites = %d, want %d — opaque relays must use relayTunnel, not inline io.Copy pairs", got, wantRelayTunnelCalls)
