@@ -147,15 +147,23 @@ func retroReworkQualifies(rework PRReworkStats) bool {
 // retroReworkCommits returns the subjects of the non-merge commits authored
 // after the first review (and not after the merge), oldest first, plus the
 // compare range covering them: the first such commit's parent and the last
-// such commit. Merge-from-base commits are maintenance, not rework.
+// such commit. Merge-from-base commits are maintenance, not rework. When a
+// merge commit sits inside that range the range is dropped (empty base and
+// head): a compare across it would also list every file the base branch
+// gained through the merge, so no file list beats a misleading one.
 func retroReworkCommits(commits []rawPRRetroCommit, firstReview, mergedAt time.Time) (subjects []string, base, head string) {
+	var mergeAfterBase, mergeInRange bool
 	for _, rc := range commits {
 		cm := rc.Commit
 		at := cm.AuthoredDate
 		if at.IsZero() {
 			at = cm.CommittedDate
 		}
-		if cm.Parents.TotalCount > 1 || !commitAfterFirstReview(firstReview, mergedAt, at) {
+		if cm.Parents.TotalCount > 1 {
+			mergeAfterBase = mergeAfterBase || base != ""
+			continue
+		}
+		if !commitAfterFirstReview(firstReview, mergedAt, at) {
 			continue
 		}
 		if base == "" {
@@ -165,9 +173,13 @@ func retroReworkCommits(commits []rawPRRetroCommit, firstReview, mergedAt time.T
 			base = cm.Parents.Nodes[0].OID
 		}
 		head = cm.OID
+		mergeInRange = mergeInRange || mergeAfterBase
 		if subject := strings.TrimSpace(cm.MessageHeadline); subject != "" {
 			subjects = append(subjects, subject)
 		}
+	}
+	if mergeInRange {
+		return subjects, "", ""
 	}
 	return subjects, base, head
 }
