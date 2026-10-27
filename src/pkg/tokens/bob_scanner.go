@@ -141,6 +141,10 @@ func scanBobSessions(bobHomeDir string, logger *slog.Logger) (*AggregateSummary,
 
 		var inputTokens, outputTokens, cachedTokens int64
 		hasExplicitUsage := false
+		// usageReported: some reply carried a usage block (even all-zero), so
+		// the format records usage and zero means the call got no response.
+		usageReported := false
+		hasReply := false
 		messageCount := 0
 		// Per-message model; use last seen as session model.
 		var sessionModel string
@@ -151,6 +155,13 @@ func scanBobSessions(bobHomeDir string, logger *slog.Logger) (*AggregateSummary,
 
 			if msg.Model != "" {
 				sessionModel = msg.Model
+			}
+
+			if msgType == "bob-shell" || msgType == "assistant" {
+				hasReply = true
+				if msg.Tokens != nil || msg.Usage != nil {
+					usageReported = true
+				}
 			}
 
 			in, out, cached := msg.effectiveTokensReal()
@@ -166,8 +177,10 @@ func scanBobSessions(bobHomeDir string, logger *slog.Logger) (*AggregateSummary,
 			}
 		}
 
-		// Fall back to estimation when no explicit usage is recorded.
-		if !hasExplicitUsage {
+		// Fall back to estimation only for recordings that never carry usage
+		// and show a model reply; unanswered or zero-usage turns are failed
+		// calls and must not be charged.
+		if !hasExplicitUsage && !usageReported && hasReply {
 			for i := range sess.Messages {
 				msg := &sess.Messages[i]
 				chars := int64(len(msg.Content))
