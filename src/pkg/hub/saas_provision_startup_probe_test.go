@@ -1,9 +1,12 @@
 package hub
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // #9692: the hosted spoke's startup probe allowed about 160s, and the first
@@ -104,5 +107,39 @@ func TestHostedStartupProbeTemplateHasNoLiteralThreshold(t *testing.T) {
 	want := "failureThreshold: {{.StartupProbeFailureThreshold}}"
 	if !strings.Contains(block, want) {
 		t.Errorf("startupProbe block does not render failureThreshold from StartupProbeFailureThreshold:\n%s", block)
+	}
+}
+
+// Static operator templates must give first boots the same migration budget as
+// hosted provisioning, before a self-upgrade can backfill their probe settings.
+func TestSelfManagedStartupProbesMatchHostedConstants(t *testing.T) {
+	for _, path := range []string{"../../deploy/k8s/deployment.yaml", "../../docs/manual-provisioning.md"} {
+		t.Run(path, func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, block, ok := strings.Cut(string(data), "startupProbe:")
+			if !ok {
+				t.Fatal("missing startupProbe")
+			}
+			block, _, ok = strings.Cut(block, "livenessProbe:")
+			if !ok {
+				t.Fatal("missing livenessProbe after startupProbe")
+			}
+			var probe map[string]any
+			if err := yaml.Unmarshal([]byte(block), &probe); err != nil {
+				t.Fatal(err)
+			}
+			for field, want := range map[string]int{
+				"initialDelaySeconds": hostedStartupProbeInitialDelaySeconds,
+				"periodSeconds":       hostedStartupProbePeriodSeconds,
+				"failureThreshold":    hostedStartupProbeFailureThreshold,
+			} {
+				if got := probeInt(t, probe, field); got != want {
+					t.Errorf("startupProbe.%s = %d, want %d", field, got, want)
+				}
+			}
+		})
 	}
 }
