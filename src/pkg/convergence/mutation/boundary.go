@@ -102,9 +102,11 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 	})
 	// The claim guards the window of the external call only. Every exit path
 	// must release it: a claim left ActiveMutation after a refused or failed
-	// effect holds the repo's writer slot until TTL, and at enforce that
-	// denies every other mutation on the repo for ten minutes (observed on a
-	// live hive as "writers exhausted (max 1)" behind one stuck review).
+	// effect holds its writer slot until TTL, and at enforce that denies
+	// every other mutation in the same writer scope for ten minutes (observed
+	// on a live hive as "repo ... writers exhausted (max 1)" behind one stuck
+	// review while the slot was per repo; with TargetWriterScope it is
+	// "target owner/repo#N writers exhausted" and only that item waits).
 	b.release(executor, claim, mclaim, entry)
 	logicalID := mutEffect.LogicalID()
 	if execErr != nil {

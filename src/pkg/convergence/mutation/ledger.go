@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -33,7 +34,8 @@ var (
 	// ErrClaimHeld: an overlapping claim is actively held; the waiter
 	// consumes no capacity and simply does not acquire.
 	ErrClaimHeld = errors.New("an overlapping mutation claim is actively held")
-	// ErrNoCapacity: the repository's mutation-writer slots are all consumed.
+	// ErrNoCapacity: the writer scope's mutation-writer slots are all
+	// consumed (the repository by default; see WriterScope).
 	ErrNoCapacity = errors.New("no mutation-writer capacity is available")
 	// ErrStaleEpoch: the presented epoch is not the entry's current epoch, or
 	// the entry is not in a state that epoch may act in. Every stale-owner
@@ -53,6 +55,52 @@ const ledgerFormatVersion = 1
 // DefaultMaxWritersPerRepo is the accepted default capacity: one
 // mutation-writer slot per canonical repository.
 const DefaultMaxWritersPerRepo = 1
+
+// DefaultMaxWritersPerTarget is the default capacity of a TargetWriterScope
+// ledger: one mutation-writer slot per target (repo#number).
+const DefaultMaxWritersPerTarget = 1
+
+// WriterScope maps a claim to the capacity bucket its mutation-writer slot is
+// counted in. Claims whose scopes differ never compete for capacity (they
+// still conflict through Overlaps).
+type WriterScope func(Claim) string
+
+// RepoWriterScope counts every claim against its canonical repository: one
+// shared pool of slots per repo. It is the OpenLedger default.
+func RepoWriterScope(c Claim) string { return c.Repo }
+
+// TargetWriterScope counts a claim against the issue or pull request it
+// mutates ("owner/repo#N"), so a label write on one item never waits behind a
+// review, merge or comment on another (hivecommons/hive#14645). It
+// understands both the plain work key ("owner/repo#N") and the boundary's
+// "owner/repo#<kind>/<target>" subject; a claim with no numeric target
+// (branch pushes, issue/PR creation, repo claims, "!" keys) falls back to the
+// repository scope.
+func TargetWriterScope(c Claim) string {
+	if c.Type != ClaimTypeTask || len(c.Subject) <= len(c.Repo)+1 || c.Subject[len(c.Repo)] != '#' {
+		return c.Repo
+	}
+	rest := c.Subject[len(c.Repo)+1:]
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[i+1:]
+	}
+	if !isDecimal(rest) {
+		return c.Repo
+	}
+	return c.Repo + "#" + rest
+}
+
+func isDecimal(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
 
 // Entry is one durable claim record: the canonical claim, its holder, its
 // monotonic epoch (per key, never reused — it survives Released and Waiting
@@ -84,6 +132,7 @@ type persistedLedger struct {
 type Ledger struct {
 	path       string
 	maxWriters int
+	scope      WriterScope
 	mu         sync.Mutex
 	entries    map[string]*Entry
 }
@@ -103,7 +152,22 @@ func OpenLedger(path string, maxWritersPerRepo int) (*Ledger, error) {
 	if maxWritersPerRepo <= 0 {
 		maxWritersPerRepo = DefaultMaxWritersPerRepo
 	}
-	l := &Ledger{path: path, maxWriters: maxWritersPerRepo, entries: make(map[string]*Entry)}
+	return OpenLedgerScoped(path, maxWritersPerRepo, RepoWriterScope)
+}
+
+// OpenLedgerScoped is OpenLedger with an explicit writer scope: maxWriters
+// slots are available per scope bucket rather than per repository. A nil
+// scope selects RepoWriterScope; maxWriters <= 0 selects
+// DefaultMaxWritersPerTarget for TargetWriterScope-style scoping and
+// DefaultMaxWritersPerRepo otherwise (both are 1).
+func OpenLedgerScoped(path string, maxWriters int, scope WriterScope) (*Ledger, error) {
+	if scope == nil {
+		scope = RepoWriterScope
+	}
+	if maxWriters <= 0 {
+		maxWriters = DefaultMaxWritersPerTarget
+	}
+	l := &Ledger{path: path, maxWriters: maxWriters, scope: scope, entries: make(map[string]*Entry)}
 	if err := l.reloadLocked(); err != nil {
 		return nil, err
 	}
@@ -179,12 +243,21 @@ func (l *Ledger) reconcileExpiredLocked(now time.Time) bool {
 	return changed
 }
 
-// activeWritersLocked counts consumed mutation-writer slots in a repo:
-// ONLY ActiveMutation consumes; Waiting and Released are structural zeros.
-func (l *Ledger) activeWritersLocked(repo string) int {
+func (l *Ledger) writerScope(c Claim) string {
+	if l.scope == nil {
+		return c.Repo
+	}
+	return l.scope(c)
+}
+
+// activeWritersLocked counts consumed mutation-writer slots in one writer
+// scope (the repo under RepoWriterScope, repo#number under
+// TargetWriterScope): ONLY ActiveMutation consumes; Waiting and Released are
+// structural zeros.
+func (l *Ledger) activeWritersLocked(scope string) int {
 	n := 0
 	for _, e := range l.entries {
-		if e.State == StateActiveMutation && e.Claim.Repo == repo {
+		if e.State == StateActiveMutation && l.writerScope(e.Claim) == scope {
 			n++
 		}
 	}
@@ -198,9 +271,10 @@ func (l *Ledger) activeWritersLocked(repo string) int {
 //  2. Any actively held overlapping claim refuses acquisition (ErrClaimHeld):
 //     exactly one owner per overlap set. The refused acquirer consumes no
 //     capacity — it simply does not acquire.
-//  3. A repo with all writer slots consumed refuses (ErrNoCapacity), unless
-//     the acquisition is the reacquisition of this exact key (its own prior
-//     hold is the one being replaced).
+//  3. A writer scope (the repo by default, repo#number under
+//     TargetWriterScope) with all writer slots consumed refuses
+//     (ErrNoCapacity), unless the acquisition is the reacquisition of this
+//     exact key (its own prior hold is the one being replaced).
 //  4. Otherwise the entry moves to ActiveMutation at epoch prev+1, persisted
 //     before the grant is returned (durable-before-authoritative).
 func (l *Ledger) Acquire(c Claim, holder string, ttl time.Duration, now time.Time) (Entry, error) {
@@ -236,8 +310,11 @@ func (l *Ledger) Acquire(c Claim, holder string, ttl time.Duration, now time.Tim
 				key, otherKey, e.Holder, e.Epoch, ErrClaimHeld)
 		}
 	}
-	if l.activeWritersLocked(c.Repo) >= l.maxWriters {
-		return Entry{}, fmt.Errorf("repo %s writers exhausted (max %d): %w", c.Repo, l.maxWriters, ErrNoCapacity)
+	if scope := l.writerScope(c); l.activeWritersLocked(scope) >= l.maxWriters {
+		if scope == c.Repo {
+			return Entry{}, fmt.Errorf("repo %s writers exhausted (max %d): %w", c.Repo, l.maxWriters, ErrNoCapacity)
+		}
+		return Entry{}, fmt.Errorf("target %s writers exhausted (max %d): %w", scope, l.maxWriters, ErrNoCapacity)
 	}
 
 	var prevEpoch uint64

@@ -158,6 +158,7 @@ classification.review_bots.resolve_after_fix # TODO #11854
 compliance.frameworks[] # TODO #11854
 contribute.token_idle_max # TODO #11854
 contribute.token_max_age # TODO #11854
+convergence.mutation.max_writers_per_target # boundary capacity tuning; yaml-only (#14645)
 deployment.runtime # set via HIVE_DEPLOYMENT_RUNTIME env var or auto-detected, not a Settings control (#14072)
 duplicate_sweep.bot_authors[] # TODO #11854
 evidence.complexity.enabled # TODO #11854

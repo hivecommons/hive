@@ -2024,7 +2024,8 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 	stats := &effects.Recorder{}
 	stats.SetMode(mode)
 	b.mutationStats = stats
-	ledger, err := mutation.OpenLedger(filepath.Join(mutationStateDir, "claims.json"), mutation.DefaultMaxWritersPerRepo)
+	ledger, err := mutation.OpenLedgerScoped(filepath.Join(mutationStateDir, "claims.json"),
+		b.cfg.MutationMaxWritersPerTarget(), mutation.TargetWriterScope)
 	if err != nil {
 		b.logger.Error("mutation convergence ledger unavailable; external mutation fencing disabled", "mode", mode, "error", err)
 		return false
