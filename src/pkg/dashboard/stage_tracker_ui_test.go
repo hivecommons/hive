@@ -154,6 +154,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_HANDLED_NOTE"),
 		jsFunc(t, html, "stageTrackerRegressionHandled"),
 		jsFunc(t, html, "stageTrackerRegressionText"),
+		jsFunc(t, html, "stageTrackerStaleLabelsText"),
 		jsFunc(t, html, "stageTrackerTooltip"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
