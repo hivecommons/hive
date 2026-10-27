@@ -1241,6 +1241,11 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return eval, reason, err
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
+		// A conflicted head is the contributor's to fix, and the rebase push
+		// brings new held runs: approving this head's runs is wasted, so the
+		// unauthorized mark must not stay the row's blocker. The next head
+		// re-marks if its runs are held too (hivecommons/hive#14668).
+		c.clearUnauthorized(ctx, displayRepo, owner, repo, pr, number, unauthorizedStepApproveWorkflowRuns)
 		return eval, "conflicting", nil
 	}
 	var methodReason string

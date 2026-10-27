@@ -1132,9 +1132,11 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    focus-window rule; this ordering applies at task-boundary time.
 7. Capacity ≥ 2: fixes are dispatched immediately as parallel sub-sessions,
    up to the advertised count so the primary session keeps going and is
-   never preempted; further failures queue, and each finished fix session
-   (`task_complete`/`task_failed` for the fix's `task_id`) frees a slot that
-   is refilled automatically with the next queued `fix-pr`.
+   never preempted; further failures queue, and each completed fix session
+   (`task_complete` for the fix's `task_id`) frees a slot that is refilled
+   automatically with the next queued `fix-pr`. A `task_failed` requeues the
+   fix with backoff instead (three attempts, then the re-nudge / adoption
+   path; see [contributor-relay.md § fix-pr tasks](contributor-relay.md#fix-pr-tasks)).
 
 All seven steps ship with the stage engine and the contribute hub
 (hivecommons/hive#12436).

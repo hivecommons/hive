@@ -43,6 +43,18 @@ const (
 	// taskUnavailableFixInFlight is the task_unavailable reason when a
 	// contributor's queued fixes exist but every slot is busy: new work waits.
 	taskUnavailableFixInFlight = "fix_pr_in_flight"
+
+	// fixTaskAckGrace is how long Nudge waits after an interrupt dispatch for
+	// the relay to refuse it before reporting the nudge as delivered; relays
+	// that cannot take the task fail it within ~100ms (hivecommons/hive#14668).
+	fixTaskAckGrace = time.Second
+	// fixTaskRetryBackoff keeps a failed fix from being interrupted straight
+	// back into a relay that may be mid-turn; a task boundary still serves it.
+	fixTaskRetryBackoff = 5 * time.Minute
+	// fixTaskMaxAttempts is how many failed dispatches a PR gets before it
+	// leaves the fix queue and the stage engine's re-nudge / adoption path
+	// takes over.
+	fixTaskMaxAttempts = 3
 )
 
 // WSFixPR is one red PR inside a fix-pr task_assign.
@@ -257,8 +269,15 @@ func (h *ContributeWSHub) Nudge(_ context.Context, n automerge.ContributorNudge)
 	h.rememberFixOwner(author, item.Key())
 	out.Mode = "queued"
 	if online {
+		failed := h.beginFixWait()
+		defer h.endFixWait()
 		if msg := h.dispatchFixes(author, conns, false); msg != nil {
 			out.Mode = msg.Mode
+			if reason, refused := h.awaitFixTaskRefusal(msg.TaskID, failed); refused {
+				out.Mode = "queued"
+				out.RelayFailed = true
+				out.RelayError = reason
+			}
 		}
 	}
 	st := sched.Status(author, fixqueue.Capacity{Max: 1})
@@ -462,6 +481,137 @@ func (h *ContributeWSHub) completeFixTask(c *ContributorConnection, taskID strin
 		}
 	}
 	return true
+}
+
+// failFixTask settles a fix-pr task the relay reported failed: its PRs go
+// back in the queue with backoff, and a PR that has failed
+// fixTaskMaxAttempts times leaves the queue for the stage engine's re-nudge
+// and adoption path. The freed slot is not refilled here — that would hand
+// the same fix straight back. It returns false when msg.TaskID is not a fix
+// task on this connection.
+func (h *ContributeWSHub) failFixTask(c *ContributorConnection, msg WSMessage) bool {
+	c.mu.Lock()
+	_, ok := c.fixTasks[msg.TaskID]
+	if ok {
+		delete(c.fixTasks, msg.TaskID)
+		delete(c.fixTasksAt, msg.TaskID)
+	}
+	c.mu.Unlock()
+	if !ok {
+		return false
+	}
+	reason := relayFailureReason(msg)
+	if c.profile == nil {
+		h.logger.Info("[contribute-ws] fix-pr task failed", "username", identityOf(c), "task", msg.TaskID, "reason", reason)
+		return true
+	}
+	user := c.profile.GitHubUsername
+	sched := h.fixQueue()
+	requeued := sched.Requeue(user, msg.TaskID, fixTaskRetryBackoff)
+	if len(requeued) == 0 {
+		h.logger.Info("[contribute-ws] fix-pr task failed", "username", user, "task", msg.TaskID, "reason", reason)
+	}
+	for _, it := range requeued {
+		if it.Attempts >= fixTaskMaxAttempts {
+			sched.Remove(user, it.Repo, it.Number)
+			h.forgetFixOwner(user, it.Key())
+			h.logger.Warn("[contribute-ws] fix-pr task failed; giving up on relay delivery", "username", user, "task", msg.TaskID, "pr", it.Key(), "attempts", it.Attempts, "reason", reason)
+			continue
+		}
+		h.logger.Info("[contribute-ws] fix-pr task failed; requeued", "username", user, "task", msg.TaskID, "pr", it.Key(), "attempts", it.Attempts, "retry_after", it.NotBefore, "reason", reason)
+	}
+	h.pulseFixFailed(msg.TaskID, reason)
+	return true
+}
+
+// relayFailureReason is the relay's own words for a task_failed.
+func relayFailureReason(msg WSMessage) string {
+	for _, r := range []string{msg.Message, msg.Reason, msg.FailureKind} {
+		if r = strings.TrimSpace(r); r != "" {
+			return r
+		}
+	}
+	return ""
+}
+
+// beginFixWait registers a Nudge waiting to learn whether its dispatch is
+// refused and returns the channel closed at the next fix-pr failure. Call it
+// BEFORE dispatching so a failure racing the dispatch is not missed; pair it
+// with endFixWait. Failures are only remembered while someone waits.
+func (h *ContributeWSHub) beginFixWait() <-chan struct{} {
+	h.fixQueueMu.Lock()
+	defer h.fixQueueMu.Unlock()
+	h.fixWaiters++
+	return h.fixFailedSignalLocked()
+}
+
+func (h *ContributeWSHub) endFixWait() {
+	h.fixQueueMu.Lock()
+	defer h.fixQueueMu.Unlock()
+	if h.fixWaiters > 0 {
+		h.fixWaiters--
+	}
+	if h.fixWaiters == 0 {
+		h.fixFailures = nil
+	}
+}
+
+func (h *ContributeWSHub) fixFailedSignalLocked() chan struct{} {
+	if h.fixFailedSig == nil {
+		h.fixFailedSig = make(chan struct{})
+	}
+	return h.fixFailedSig
+}
+
+// pulseFixFailed records why taskID failed (while a Nudge waits) and wakes
+// every waiter.
+func (h *ContributeWSHub) pulseFixFailed(taskID, reason string) {
+	h.fixQueueMu.Lock()
+	defer h.fixQueueMu.Unlock()
+	if h.fixWaiters > 0 {
+		if h.fixFailures == nil {
+			h.fixFailures = map[string]string{}
+		}
+		h.fixFailures[taskID] = reason
+	}
+	if h.fixFailedSig != nil {
+		close(h.fixFailedSig)
+		h.fixFailedSig = nil
+	}
+}
+
+// takeFixFailure reports (and forgets) whether taskID failed, and why.
+func (h *ContributeWSHub) takeFixFailure(taskID string) (string, bool) {
+	h.fixQueueMu.Lock()
+	defer h.fixQueueMu.Unlock()
+	reason, ok := h.fixFailures[taskID]
+	delete(h.fixFailures, taskID)
+	return reason, ok
+}
+
+// awaitFixTaskRefusal waits up to the ack grace for the relay to fail the
+// fix-pr task it was just handed. refused=true means it did, so the nudge
+// was not delivered as a task.
+func (h *ContributeWSHub) awaitFixTaskRefusal(taskID string, failed <-chan struct{}) (reason string, refused bool) {
+	grace := h.fixAckGrace
+	if grace <= 0 {
+		grace = fixTaskAckGrace
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	for {
+		if r, ok := h.takeFixFailure(taskID); ok {
+			return r, true
+		}
+		select {
+		case <-failed:
+			h.fixQueueMu.Lock()
+			failed = h.fixFailedSignalLocked()
+			h.fixQueueMu.Unlock()
+		case <-timer.C:
+			return h.takeFixFailure(taskID)
+		}
+	}
 }
 
 // FixQueueStatus is the contributor's fix-queue view for the profile API.

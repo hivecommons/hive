@@ -367,6 +367,45 @@ func TestContributorLaneUnauthorizedWhenApproveForbidden(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#14668: once the head conflicts, the held runs are no
+// longer the blocker (the rebase push brings new ones), so the lane reports
+// `conflicting` and takes the stale hive:unauthorized mark off in that tick.
+func TestContributorLaneConflictClearsUnauthorized(t *testing.T) {
+	fx := validContributorFixture()
+	fx.baseRef = "main"
+	fx.body = "Part of #42\n\nSome change."
+	fx.issueComments = nil
+	fx.requiredContexts = []string{"ci/build", contributorHeldRunsTestContext}
+	fx.workflowRuns = []map[string]any{heldRun(11, "acme/widget")}
+	fx.approveStatus = http.StatusForbidden
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	policy.RegistryTiersSufficient = true
+	policy.ApproveHeldRunsForRegistryTrusted = true
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 27, 13, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorRegistryTier: registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}), ContributorSoak: soakedTracker(clock)})
+
+	if _, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy); err != nil || !strings.HasPrefix(reason, unauthorizedReasonPrefix) {
+		t.Fatalf("mark tick reason = %q err = %v, want %s…", reason, err, unauthorizedReasonPrefix)
+	}
+	if !slices.Contains(fx.labels, unauthorizedLabel) {
+		t.Fatalf("labels = %v, want %q after the forbidden approval", fx.labels, unauthorizedLabel)
+	}
+
+	fx.mergeableState = "dirty"
+	_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+	if err != nil || reason != "conflicting" {
+		t.Fatalf("conflict tick reason = %q err = %v, want conflicting", reason, err)
+	}
+	if len(fx.labelsRemoved) != 1 || fx.labelsRemoved[0] != unauthorizedLabel || slices.Contains(fx.labels, unauthorizedLabel) {
+		t.Fatalf("labels removed = %v labels = %v, want %q removed once the head conflicts", fx.labelsRemoved, fx.labels, unauthorizedLabel)
+	}
+	if step := engine.unauthorizedStep("acme", "widget", 7, "sha7"); step != "" {
+		t.Fatalf("unauthorizedStep after conflict = %q, want empty", step)
+	}
+}
+
 func TestIsResourceNotAccessible(t *testing.T) {
 	mk := func(status int, msg string) error {
 		return &gh.ErrorResponse{Response: &http.Response{StatusCode: status, Request: &http.Request{Method: "POST", URL: &url.URL{Path: "/x"}}}, Message: msg}

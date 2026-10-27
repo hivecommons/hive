@@ -403,3 +403,20 @@ func TestTrustedHuman071CommentReasons(t *testing.T) {
 		})
 	}
 }
+
+// hivecommons/hive#14668: a fix-pr task the relay failed right after
+// dispatch is not reported as received; the comment says the relay could not
+// take it, names the relay's reason and promises the retry.
+func TestContributorNudgeCommentRelayFailed(t *testing.T) {
+	n := ContributorNudge{Author: "alice", HeadSHA: "abc", Nudge: 1}
+	body := ContributorNudgeComment(n, ContributorNudgeOutcome{Mode: "queued", Online: true, RelayFailed: true, RelayError: "codex: session busy"})
+	if !strings.Contains(body, "could not take this as a `fix-pr` task (codex: session busy)") || !strings.Contains(body, "retry") {
+		t.Fatalf("relay-failed comment = %q", body)
+	}
+	if strings.Contains(body, "received this as a `fix-pr` task") || strings.Contains(body, "Queued in your relay fix queue") {
+		t.Fatalf("relay-failed comment must not claim delivery or plain queueing: %q", body)
+	}
+	if body := ContributorNudgeComment(n, ContributorNudgeOutcome{Mode: "queued", QueueDepth: 2}); !strings.Contains(body, "Queued in your relay fix queue (2 waiting)") {
+		t.Fatalf("plain queued comment = %q", body)
+	}
+}

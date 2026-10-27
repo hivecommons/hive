@@ -903,6 +903,16 @@ type ContributeWSHub struct {
 	fixSched      *fixqueue.Scheduler
 	fixOwners     map[string]map[string]bool
 	fixDispatched func(*ContributorConnection, WSMessage)
+	// fixFailedSig is closed (and replaced) whenever a relay reports a
+	// fix-pr task failed, waking a Nudge that is waiting to learn whether its
+	// dispatch was refused (hivecommons/hive#14668). fixAckGrace overrides
+	// that wait (zero = fixTaskAckGrace); a test hook.
+	// fixWaiters counts those Nudges; fixFailures (task id → relay reason)
+	// is kept only while one waits.
+	fixFailedSig chan struct{}
+	fixWaiters   int
+	fixFailures  map[string]string
+	fixAckGrace  time.Duration
 	// stageStore is the stage-label memory the fleet view reads "PRs returned
 	// to this contributor" from (hivecommons/hive#12502). Nil means the
 	// process-wide stagelabels.Shared(); tests inject an in-memory store.
@@ -4156,8 +4166,9 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 	h := s.h
 	// hivecommons/hive#12436: a fix-pr task settles in the contributor's fix
 	// queue (freeing its slot and refilling it) and never touches currentTask.
-	if s.contributor != nil && msg.TaskID != "" && h.completeFixTask(s.contributor, msg.TaskID) {
-		h.logger.Info("[contribute-ws] fix-pr task failed", "username", identityOf(s.contributor), "task", msg.TaskID)
+	// hivecommons/hive#14668: a failed fix is requeued with backoff (retried,
+	// then dropped back to the stage engine), not settled as done.
+	if s.contributor != nil && msg.TaskID != "" && h.failFixTask(s.contributor, msg) {
 		return
 	}
 	if s.contributor != nil {

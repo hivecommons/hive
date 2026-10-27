@@ -71,6 +71,10 @@ type Item struct {
 	// EnqueuedAt is when the item entered the queue (set by Enqueue; read by
 	// Overflow).
 	EnqueuedAt time.Time
+	// Attempts counts the dispatches of this item the relay reported failed
+	// (set by Requeue); NotBefore is when an interrupt may retry it.
+	Attempts  int
+	NotBefore time.Time
 }
 
 // Key identifies an item.
@@ -225,14 +229,14 @@ func (s *Scheduler) Enqueue(user string, it Item) bool {
 	key := it.Key()
 	for _, d := range c.inflight {
 		if old, ok := d.items[key]; ok {
-			it.EnqueuedAt = old.EnqueuedAt
+			it.EnqueuedAt, it.Attempts, it.NotBefore = old.EnqueuedAt, old.Attempts, old.NotBefore
 			d.items[key] = it
 			return false
 		}
 	}
 	for i, q := range c.queue {
 		if q.Key() == key {
-			it.EnqueuedAt = q.EnqueuedAt
+			it.EnqueuedAt, it.Attempts, it.NotBefore = q.EnqueuedAt, q.Attempts, q.NotBefore
 			c.queue[i] = it
 			sortQueue(c.queue)
 			return false
@@ -338,15 +342,54 @@ func (s *Scheduler) CompleteDispatch(user, id string) bool {
 	return false
 }
 
+// Requeue settles a dispatch the relay reported failed and puts its items
+// back in the queue (keeping their place by age) with Attempts incremented
+// and NotBefore = now+backoff, so an interrupt does not hand the same fix
+// straight back to a relay that just refused it. It returns the requeued
+// items; nil when id is not in flight.
+func (s *Scheduler) Requeue(user, id string, backoff time.Duration) []Item {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.by[norm(user)]
+	if !ok {
+		return nil
+	}
+	for i, d := range c.inflight {
+		if d.id != id {
+			continue
+		}
+		c.inflight = append(c.inflight[:i], c.inflight[i+1:]...)
+		if d.mode == ModePreempt {
+			// The primary was never parked for long: no focus window.
+			c.preempted = false
+		}
+		out := d.public().Items
+		notBefore := s.opts.Now().Add(backoff)
+		for j := range out {
+			out[j].Attempts++
+			out[j].NotBefore = notBefore
+			c.queue = append(c.queue, out[j])
+		}
+		sortQueue(c.queue)
+		s.log("requeue", user, Dispatch{ID: d.id, Mode: d.mode, Items: out}, len(c.queue))
+		return out
+	}
+	return nil
+}
+
 // Dispatch tries to hand user the next fix while a primary task is running.
 // It returns nil when nothing may be dispatched now: empty queue, all slots
-// busy, a preemption still in flight, or the resumed primary's focus window
-// has not elapsed. The returned Dispatch's Mode is spawn or preempt.
+// busy, a preemption still in flight, the resumed primary's focus window
+// has not elapsed, or the queue head is backing off after a failed dispatch.
+// The returned Dispatch's Mode is spawn or preempt.
 func (s *Scheduler) Dispatch(user string, cap Capacity) *Dispatch {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.by[norm(user)]
 	if !ok || len(c.queue) == 0 || len(c.inflight) >= cap.Slots() {
+		return nil
+	}
+	if s.opts.Now().Before(c.queue[0].NotBefore) {
 		return nil
 	}
 	mode := cap.Mode()

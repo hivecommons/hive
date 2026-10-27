@@ -67,6 +67,11 @@ type ContributorNudgeOutcome struct {
 	Online bool
 	// QueueDepth is the author's fix-queue depth after this nudge.
 	QueueDepth int
+	// RelayFailed is true when the relay reported the fix-pr task failed
+	// right after dispatch: the nudge was not delivered as a task and the
+	// fix waits in the queue for a retry; RelayError is the relay's reason.
+	RelayFailed bool
+	RelayError  string
 }
 
 // ContributorNudgeSink receives stage-072 nudges. The dashboard hub implements
@@ -204,6 +209,14 @@ func ContributorNudgeComment(n ContributorNudge, out ContributorNudgeOutcome) st
 	case "preempt":
 		b.WriteString("\n_Your relay session received this as a `fix-pr` task; your current task is parked (claim kept alive) until this PR is green._\n")
 	case "queued":
+		if out.RelayFailed {
+			b.WriteString("\n_Your relay could not take this as a `fix-pr` task")
+			if e := strings.TrimSpace(out.RelayError); e != "" {
+				fmt.Fprintf(&b, " (%s)", e)
+			}
+			b.WriteString("; the hive will retry it from your relay fix queue._\n")
+			break
+		}
 		fmt.Fprintf(&b, "\n_Queued in your relay fix queue (%d waiting): fixes are handed out before new work as soon as you have capacity._\n", out.QueueDepth)
 	}
 	if n.Stalled {
@@ -270,7 +283,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		return 0, err
 	}
 	store.MarkNudged(key, obs.HeadSHA, ordinal, out.Online || out.Mode == "spawn" || out.Mode == "preempt" || out.Mode == "queued", now)
-	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "reason", obs.Reason)
+	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "relay_failed", out.RelayFailed, "reason", obs.Reason)
 	return 1, nil
 }
 

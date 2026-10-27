@@ -1221,6 +1221,8 @@ The one place a declaration DOES shape dispatch is the stage-072 contributor nud
 
 The hub records the mode it used in the nudge comment's marker (`mode=spawn|preempt|queued|comment`) and exposes queue depth / in-flight as `fix_queue` on the contributor profile API.
 
+**When the relay fails the task.** `task_failed` for a fix's `task_id` does not settle it as done: its PRs go back in the hub's queue (same place by age) and are not interrupted back in for 5 minutes, though the relay's next `ready` serves them at once. After three failed dispatches a PR leaves the fix queue and the stage engine's re-nudge / adoption path takes over. A dispatch the relay fails within one second of the nudge is not reported as delivered: the nudge comment reads `mode=queued`, says the relay could not take the task (quoting the relay's `message`/`reason`), and the stage log carries `relay_failed=true` (hivecommons/hive#14668).
+
 #### What the operator sees (Operations → Connected contributor agents)
 
 Each row of the "Connected contributor agents (ClankeR)" list on `/contribute/operations` reads the same declaration back (hivecommons/hive#12502), so an operator can check whether the rework the stage labels promise is actually reaching the agent. The row is fed by `/api/contribute/fleet`; each `clankers[]` entry carries:
