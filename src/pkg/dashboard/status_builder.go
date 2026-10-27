@@ -24,6 +24,7 @@ import (
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/housestyle"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
@@ -1165,6 +1166,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			Pinned:          pinnedCli || pinnedModel,
 			LastKick:        lastKick,
 			LastKickAt:      lastKickAt,
+			StyleSource:     string(housestyle.SourceFromKick(proc.LastKickMessage)),
 			NextKick:        nextKick,
 			NextKickAt:      nextKickAt,
 			NextKickIn:      nextKickIn,

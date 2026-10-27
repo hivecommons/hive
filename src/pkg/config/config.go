@@ -958,6 +958,19 @@ type ProjectConfig struct {
 	// 2048 are raised to 2048.
 	AgentsMdMaxBytes int `yaml:"agents_md_max_bytes,omitempty"`
 
+	// Style is the hive-wide house style: a short list of how-to-change rules
+	// prepended to every kick on every backend. A managed repo's HIVE_STYLE.md
+	// overrides it; when both this and StyleFile are empty the built-in text
+	// applies. Inline text wins over StyleFile. See docs/house-style.md.
+	Style string `yaml:"style,omitempty"`
+	// StyleFile is a path on the hive host holding the hive-wide house style;
+	// used when Style is empty.
+	StyleFile string `yaml:"style_file,omitempty"`
+	// StyleMaxBytes caps each house-style candidate; a larger file is skipped
+	// (not clipped) and the next source applies. Zero means 4096; values below
+	// 512 are raised to 512.
+	StyleMaxBytes int `yaml:"style_max_bytes,omitempty"`
+
 	// PausedRepos is the per-repo agent pause: the repos in Repos that are
 	// currently quiet. It is a RUN-STATE, and deliberately a SEPARATE list
 	// rather than a field on a per-repo object, because #6111 (per-repo ACMM
