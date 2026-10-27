@@ -37,6 +37,7 @@ func TestNotificationsSettingsDiscordBotAndGitHubActivityRoundTrip(t *testing.T)
 	rec := doPut(s, notificationsSettings, map[string]any{
 		"discordBotToken":           testDiscordBotToken,
 		"discordChannelId":          " 1234567890 ",
+		"discordRfcChannelId":       " 1540404487099777136 ",
 		"discordAllowedUsers":       []string{" 42 ", "", "42", "77"},
 		"discordFactoryWebhook":     testFactoryWebhook,
 		"discordRequestsWebhookUrl": testRequestsWebhook,
@@ -61,7 +62,7 @@ func TestNotificationsSettingsDiscordBotAndGitHubActivityRoundTrip(t *testing.T)
 	if d == nil {
 		t.Fatal("discord config not created")
 	}
-	if d.BotToken != testDiscordBotToken || d.ChannelID != "1234567890" ||
+	if d.BotToken != testDiscordBotToken || d.ChannelID != "1234567890" || d.RFCChannelID != "1540404487099777136" ||
 		d.FactoryWebhook != testFactoryWebhook || d.RequestsWebhookURL != testRequestsWebhook {
 		t.Fatalf("discord config = %+v", d)
 	}
@@ -93,6 +94,9 @@ func TestNotificationsSettingsDiscordBotAndGitHubActivityRoundTrip(t *testing.T)
 	}
 	if payload["discordChannelId"] != "1234567890" {
 		t.Errorf("discordChannelId = %v", payload["discordChannelId"])
+	}
+	if payload["discordRfcChannelId"] != "1540404487099777136" {
+		t.Errorf("discordRfcChannelId = %v", payload["discordRfcChannelId"])
 	}
 	gaPayload, ok := payload["githubActivity"].(map[string]any)
 	if !ok || gaPayload["enabled"] != true || gaPayload["org"] != "hivecommons" || gaPayload["filterBots"] != false {

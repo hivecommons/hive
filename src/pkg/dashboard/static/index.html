@@ -48016,6 +48016,11 @@ function burnAreaChart() {
           <div class="config-help">Requires restart.</div>
         </div>
         <div class="config-field">
+          <label>RFC channel id ${yamlHint('notifications.discord.rfc_channel_id')} ${settingHelpMark('notifications', 'configuration', 'Discord RFC channel id', `Discord channel that receives RFC lifecycle notices: an RFC issue (rfc label or RFC-prefixed title) opened, closed, or taken off hold so it can be implemented. Posts with the bot token only; the command bot and the channel id above are not required. Empty turns the notices off.`)}</label>
+          <input type="text" value="${esc(n.discordRfcChannelId || '')}" placeholder="1234567890" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordRfcChannelId" data-arg-types="s,s,w">
+          <div class="config-help">Empty disables RFC notices. Env HIVE_DISCORD_RFC_CHANNEL_ID overrides.</div>
+        </div>
+        <div class="config-field">
           <label>Allowed users ${yamlHint('notifications.discord.allowed_users[]')} ${settingHelpMark('notifications', 'configuration', 'Discord allowed users', `Discord user IDs permitted to issue bot commands (!kick, !pause, agent actions). When empty, command handling is disabled (fail closed): the bot still posts status but accepts no commands.`)}</label>
           <textarea rows="3" placeholder="One Discord user id per line" data-change-action="markNotificationsList" data-arg0="discordAllowedUsers" data-arg-types="s,v">${esc((n.discordAllowedUsers || []).join('\n'))}</textarea>
           <div class="config-help">Empty disables bot commands. Requires restart.</div>
