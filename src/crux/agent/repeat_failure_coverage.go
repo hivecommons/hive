@@ -73,6 +73,7 @@ var repeatFailureCoverageTable = []RepeatFailureCoverage{
 	{Backend: "muse", Route: "none yet; planned: `PostToolUse` / `PostToolUseFailure` hooks", FollowUp: repeatFailureBackendRoutesIssue, Reason: "sandboxed shell tools in a closed binary; " + rfOwnRouteNotBuilt},
 	{Backend: "omp", Route: "none yet; planned: `tool_result` extension event", FollowUp: repeatFailureBackendRoutesIssue, Reason: "embedded shell that strips BASH_ENV; " + rfOwnRouteNotBuilt},
 	{Backend: "openhands", Route: "none yet; planned: `PostToolUse` hook or saved events", FollowUp: repeatFailureBackendRoutesIssue, Reason: "one interactive bash kept open in tmux; " + rfOwnRouteNotBuilt},
+	{Backend: "omnigent", Route: "none yet; planned: tool-call policy checkpoint (`ALLOW`/`DENY` verdicts) or saved session events", FollowUp: repeatFailureBackendRoutesIssue, Reason: "meta-harness driving Claude Code, Codex or Pi through its own policy engine; " + rfOwnRouteNotBuilt},
 	{Backend: "vllm", Route: "follows `claude` (drives Claude Code)", FollowUp: repeatFailureBackendRoutesIssue, Reason: "follows `claude`, which is not covered"},
 	{Backend: "llm-d", Route: "follows `claude` (drives Claude Code)", FollowUp: repeatFailureBackendRoutesIssue, Reason: "follows `claude`, which is not covered"},
 	{Backend: "litellm", Route: "follows `claude` (drives Claude Code)", FollowUp: repeatFailureBackendRoutesIssue, Reason: "follows `claude`, which is not covered"},

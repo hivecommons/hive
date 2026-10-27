@@ -774,7 +774,7 @@ func TestHostObserversReachTheEventStream(t *testing.T) {
 		return resp
 	}
 
-	waitUntil(t, "background loops started", func() bool { return len(rt.Background()) == 4 })
+	waitUntil(t, "background loops started", func() bool { return len(rt.Background()) == len(backgroundLoops) })
 	var h api.Health
 	resp := get(api.PathHealth)
 	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
