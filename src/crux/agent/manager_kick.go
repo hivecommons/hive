@@ -100,7 +100,7 @@ func notRunningReason(agent *AgentProcess) string {
 	}
 }
 
-func (m *Manager) SendKick(name string, message string) error {
+func (m *Manager) SendKick(name string, message string) (err error) {
 	// Agent-kick span. No-op with zero export cost when tracing is disabled
 	// (the default). SendKick has no context parameter, so this span roots at
 	// Background; it still captures the kick leg of the governor→agent
@@ -109,6 +109,11 @@ func (m *Manager) SendKick(name string, message string) error {
 		attribute.String("agent.name", name))
 	defer span.End()
 
+	// Kick duration/outcome metrics; role stays kickRoleUnknown until the
+	// name resolves to a configured agent (kick_metrics.go).
+	start, role := time.Now(), kickRoleUnknown
+	defer func() { recordKick(role, start, err) }()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -116,6 +121,7 @@ func (m *Manager) SendKick(name string, message string) error {
 	if !ok {
 		return fmt.Errorf("agent %s not found", name)
 	}
+	role = name
 
 	if m.agentSandboxEnabledLocked(agent) {
 		return m.startSandboxKickLocked(agent, message)

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
@@ -1546,8 +1547,9 @@ func repoWorkPR(raw any) (github.RepoWorkPR, bool) {
 }
 
 // stageTrackerRESTCaller tags the endpoint's requests in the REST
-// accounting (/api/gh-rate-limits) so an operator can see them listed with
-// Charged 0: the handler never reaches GitHub.
+// accounting (/api/gh-rate-limits). Serving the tracker is Charged 0; the
+// only GitHub reads are the memoised issues GETs that title untitled links
+// (stageTrackerEnrichSoftLinks).
 const stageTrackerRESTCaller = "dashboard:stage-tracker"
 
 // stageTrackerCache is the memoised payload: the encoded body, its ETag and
@@ -1670,6 +1672,7 @@ func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl ti
 		build = s.stageTrackerBuildFn
 	}
 	resp := build(status, s.stageStoreOrShared(), now)
+	s.stageTrackerEnrichSoftLinks(resp.Items, stageTrackerRepoQualifier(status), now)
 	resp.CacheTTLSeconds = int64(ttl / time.Second)
 	// The encoded body carries source=cache: that is what every later hit
 	// serves verbatim, and what the ETag validates. The building request
@@ -1848,11 +1851,128 @@ func stageTrackerLinkSoft(li StageTrackerLinkedIssue) bool {
 	return li.Via != "" && li.Via != github.PRLinkViaFixes
 }
 
+// Bounds on the issues GETs stageTrackerEnrichSoftLinks makes. A lookup is
+// memoised per Server for stageTrackerLinkTTL (a failed one for
+// stageTrackerLinkRetry), because the tracker payload itself is rebuilt on
+// every status publish. A rebuild makes at most stageTrackerLinkLookups GETs,
+// all within stageTrackerLinkTimeout, as it holds stageTrackerCacheMu.
+const (
+	stageTrackerLinkTTL     = 15 * time.Minute
+	stageTrackerLinkRetry   = 2 * time.Minute
+	stageTrackerLinkLookups = 10
+	stageTrackerLinkTimeout = 3 * time.Second
+	stageTrackerLinkMemoMax = 1024
+)
+
+// stageTrackerLinkInfo is one memoised lookup: the issue's title and state,
+// or pr when the number names a pull request; ok is false for a failed GET.
+type stageTrackerLinkInfo struct {
+	title, state string
+	pr, ok       bool
+	at           time.Time
+}
+
+// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#number.
+type stageTrackerLinkMemo struct {
+	mu sync.Mutex
+	m  map[string]stageTrackerLinkInfo
+}
+
+func (m *stageTrackerLinkMemo) get(key string, now time.Time) (stageTrackerLinkInfo, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	in, ok := m.m[key]
+	if ok && now.Sub(in.at) < in.ttl() {
+		return in, true
+	}
+	return stageTrackerLinkInfo{}, false
+}
+
+func (m *stageTrackerLinkMemo) put(key string, in stageTrackerLinkInfo, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.m == nil {
+		m.m = map[string]stageTrackerLinkInfo{}
+	}
+	if len(m.m) >= stageTrackerLinkMemoMax {
+		for k, v := range m.m {
+			if now.Sub(v.at) >= v.ttl() {
+				delete(m.m, k)
+			}
+		}
+	}
+	in.at = now
+	m.m[key] = in
+}
+
+func (in stageTrackerLinkInfo) ttl() time.Duration {
+	if in.ok {
+		return stageTrackerLinkTTL
+	}
+	return stageTrackerLinkRetry
+}
+
+// stageTrackerEnrichSoftLinks gives the links no listed issue or closing
+// reference titled (soft refs / title / mention links, and closing keywords
+// hive read from the PR text) a title and state, from one issues GET per
+// distinct same-repo number, memoised across rebuilds (stageTrackerLinkMemo).
+// A number that turns out to be a pull request, open or closed (`Supersedes
+// #N`, an adoption's "close #N"), is dropped: it is not an issue the PR
+// covers (hivecommons/hive#14667). A failed or skipped lookup leaves the link
+// as it was.
+func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify func(string) string, now time.Time) {
+	if s == nil || s.deps == nil || s.deps.GHClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(github.WithRESTCaller(context.Background(), stageTrackerRESTCaller), stageTrackerLinkTimeout)
+	defer cancel()
+	lookups := 0
+	for i := range items {
+		pr := &items[i]
+		if pr.Kind != "pr" || len(pr.LinkedIssues) == 0 {
+			continue
+		}
+		owner, name, ok := strings.Cut(qualify(pr.Repo), "/")
+		if !ok {
+			continue
+		}
+		kept := pr.LinkedIssues[:0]
+		for _, li := range pr.LinkedIssues {
+			if !li.Listed && li.Title == "" && li.State == "" {
+				key := owner + "/" + name + "#" + strconv.Itoa(li.Number)
+				in, hit := s.stageTrackerLinks.get(key, now)
+				if !hit && lookups < stageTrackerLinkLookups && ctx.Err() == nil {
+					lookups++
+					title, state, isPR, err := s.deps.GHClient.IssueTitleState(ctx, owner, name, li.Number)
+					in = stageTrackerLinkInfo{title: title, state: state, pr: isPR, ok: err == nil}
+					// Running out of this rebuild's budget says nothing
+					// about the issue: leave it for the next rebuild.
+					if err == nil || ctx.Err() == nil {
+						s.stageTrackerLinks.put(key, in, now)
+					}
+				}
+				if in.pr {
+					continue
+				}
+				if in.ok {
+					li.Title, li.State = in.title, in.state
+				}
+			}
+			kept = append(kept, li)
+		}
+		if len(kept) == 0 {
+			kept = nil
+		}
+		pr.LinkedIssues = kept
+	}
+}
+
 // stageTrackerPruneSoftLinks drops, from a PR's links, every soft link whose
 // number is an open PR in the same repo (a squash title's `(#N)` or a
 // `Refs #N` naming the PR this one follows) and every bare mention that is
 // not an issue listed in the response — a keyword-less `#N` has no other
-// way to prove it names an issue.
+// way to prove it names an issue. A closed PR is not in the response;
+// stageTrackerEnrichSoftLinks drops links to those.
 func stageTrackerPruneSoftLinks(pr *StageTrackerItem, prs, issues map[string]*StageTrackerItem) {
 	if len(pr.LinkedIssues) == 0 {
 		return

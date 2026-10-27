@@ -3,6 +3,7 @@ package automerge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -25,6 +26,7 @@ type adoptAPI struct {
 	nextPR      int
 	superseders map[int]map[string]any // number → GET payload
 	prEdits     []string
+	newCommits  []map[string]any // POST git/commits bodies
 	commits     map[string]adoptCommit
 	// failRefs makes POST git/refs answer 500; refAttempts counts them.
 	failRefs    bool
@@ -116,6 +118,13 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 			files = []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}
 		}
 		_ = json.NewEncoder(w).Encode(files)
+		return true
+	case r.Method == http.MethodPost && path == "/repos/acme/widget/git/commits":
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.newCommits = append(a.newCommits, body)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": fmt.Sprintf("signed%d", len(a.newCommits))})
 		return true
 	case r.Method == http.MethodPost && path == "/repos/acme/widget/git/refs":
 		var body struct {
@@ -524,7 +533,7 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 		t.Fatal("signed head does not need DCO re-home")
 	}
 	obs.Detail.DCOUnsigned = 2
-	body := AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true)
+	body := AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true, "")
 	for _, want := range []string{
 		"**DCO repair required:**",
 		"cherry-pick each original commit with `git cherry-pick -s`",
@@ -538,6 +547,17 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+	// A successful re-sign replay names the new tip and drops the manual
+	// re-home steps the hive already performed.
+	body = AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true, "5e5e5e5e5e5e5e5e")
+	if !strings.Contains(body, "re-signed as `"+shortSHA("5e5e5e5e5e5e5e5e")+"`") || strings.Contains(body, ", unchanged.") {
+		t.Fatalf("re-signed body must name the re-signed tip:\n%s", body)
+	}
+	for _, unwanted := range []string{"**DCO repair required:**", "git cherry-pick -s"} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("re-signed body still carries %q:\n%s", unwanted, body)
 		}
 	}
 }
@@ -1026,6 +1046,43 @@ func TestAlreadyAdoptedInPlaceDCOFailureRehomesAndClosesOriginal(t *testing.T) {
 	}
 }
 
+// The dco-rehome branch must not inherit the contributor's unsigned commits
+// (#14666): each is replayed with a Signed-off-by and the branch points at the
+// new tip.
+func TestDCORehomeBranchCarriesResignedCommits(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commits = map[int][]string{7: {"fix: unsigned contributor commit"}}
+	h.observe(adoptPR(7, "c0"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "c0", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "c0", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 1 {
+		t.Fatalf("re-signed commits=%v", h.adopt.newCommits)
+	}
+	msg, _ := h.adopt.newCommits[0]["message"].(string)
+	if !strings.Contains(msg, "fix: unsigned contributor commit") || !signedOffByRE.MatchString(msg) {
+		t.Fatalf("re-signed message lacks sign-off or original text: %q", msg)
+	}
+	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "signed1" {
+		t.Fatalf("rehome branch sha=%q, want the re-signed tip; refs=%v", got, h.adopt.refs)
+	}
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("pulls=%v", h.adopt.pulls)
+	}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	if !strings.Contains(body, "re-signed as `signed1`") || strings.Contains(body, "**DCO repair required:**") || strings.Contains(body, "git cherry-pick -s") {
+		t.Fatalf("re-signed rehome body must name the new tip and omit the manual DCO repair block:\n%s", body)
+	}
+}
+
 // The ownership split is cached on the store record, so the decision does
 // not depend on the stage label being present on the PR.
 func TestAlreadyAdoptedInPlaceDCOFailureRehomesFromCachedSplitWithoutStageLabel(t *testing.T) {
@@ -1048,8 +1105,10 @@ func TestAlreadyAdoptedInPlaceDCOFailureRehomesFromCachedSplitWithoutStageLabel(
 	h.clock.advance(time.Minute)
 	reads := h.api.commitReads
 	h.observe(adoptPR(7, "aaa", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
-	if h.api.commitReads != reads {
-		t.Fatalf("commit reads=%d, want cached decision (%d)", h.api.commitReads, reads)
+	// The cached split spares the DCO decision a commit read; the re-sign
+	// replay needs the commit trees and messages, so it lists them exactly once.
+	if h.api.commitReads != reads+1 {
+		t.Fatalf("commit reads=%d, want cached decision plus one re-sign listing (%d)", h.api.commitReads, reads+1)
 	}
 	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 {
 		t.Fatalf("expected re-home from cached split: pulls=%v edits=%v", h.adopt.pulls, h.adopt.prEdits)

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,6 +80,7 @@ import (
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -6369,6 +6371,13 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			tick(evalSourceCached)
 			armContinuousWake()
 			armWebhookHealthRecheck()
+		case batch := <-b.verdictWakeChan():
+			b.logger.Info("review verdict wake: running an early eval cycle from the cached snapshot",
+				"pr", batch.Reason, "last_pr", batch.LastRe, "verdicts", batch.Count,
+				"coalesced", batch.Coalesced.Round(time.Millisecond).String())
+			tick(evalSourceCached)
+			armContinuousWake()
+			armWebhookHealthRecheck()
 		case batch := <-b.webhookWakeChan():
 			now := healthNow()
 			// Apply the delivery's targeted re-reads first so this cycle
@@ -8757,6 +8766,10 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 		fmt.Fprintf(&b, "Its owning agent (%s) is not reachable right now, so this repair is routed to you.\n\n", redPRFixOwner(o.Agent))
 	}
 	b.WriteString("Repair it BEFORE claiming new issues or opening any new PR:\n")
+	if slices.Contains(o.Labels, stagelabels.NoDCOLabel) {
+		fmt.Fprintf(&b, "  FIRST (required): the PR is %s — it inherited unsigned commits. Re-sign them: gh pr checkout %d --repo %s → git rebase --signoff <base> (original authors preserved) → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo)
+		b.WriteString("  THEN fix any failing CI the same way.\n")
+	}
 	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
 	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")

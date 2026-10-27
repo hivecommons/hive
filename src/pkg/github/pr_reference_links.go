@@ -56,7 +56,8 @@ var prTitleReferencePattern = regexp.MustCompile(`\((?:([\w.-]+/[\w.-]+))?#(\d+)
 // without GitHub having derived a closing link, in priority order: closing
 // keywords in the text (PRLinkViaFixes), reference keywords in the body
 // (PRLinkViaRefs), parenthesised references in the title (PRLinkViaTitle),
-// then bare `#N` mentions in the body's first paragraph (PRLinkViaMention).
+// then bare `#N` mentions in the body's first paragraph (PRLinkViaMention)
+// unless the text says the PR does not cover them (prMentionUncovered).
 // Only same-repo references are kept — a bare `#N`, or `owner/repo#N`
 // naming repo itself — never the PR's own number, each number once at its
 // strongest tier. Title and State are left empty: the dashboard fills them
@@ -92,14 +93,51 @@ func PRReferencedIssues(title, body, repo string, prNumber int) []PRLinkedIssue 
 		}
 		add(m[1], n, PRLinkViaTitle)
 	}
-	for _, m := range issueRefPattern.FindAllStringSubmatch(firstParagraph(cleanBody), -1) {
-		n, err := strconv.Atoi(m[2])
+	lead := firstParagraph(cleanBody)
+	for _, m := range issueRefPattern.FindAllStringSubmatchIndex(lead, -1) {
+		if prMentionUncovered(lead, m[0], m[1]) {
+			continue
+		}
+		n, err := strconv.Atoi(lead[m[4]:m[5]])
 		if err != nil {
 			continue
 		}
-		add(m[1], n, PRLinkViaMention)
+		refRepo := ""
+		if m[2] >= 0 {
+			refRepo = lead[m[2]:m[3]]
+		}
+		add(refRepo, n, PRLinkViaMention)
 	}
 	return out
+}
+
+// prMentionUncoveredPattern is prose after a bare `#N` saying the PR leaves
+// that issue alone: "#14559 backend-specific routes remain", "#7 is out of
+// scope".
+var prMentionUncoveredPattern = regexp.MustCompile(`(?i)\b(?:remains?|remaining|left (?:open|for|to)|not covered|out of scope|not in this pr)\b`)
+
+// prMentionQualifiedPattern is text ending in a reference, so a parenthetical
+// opening right after it qualifies that reference.
+var prMentionQualifiedPattern = regexp.MustCompile(`#\d+[ \t]*$`)
+
+// prMentionUncovered reports whether the bare `#N` at text[start:end] names
+// work the PR does not cover (hivecommons/hive#14667): its clause, up to the
+// next , ; . ) or line end, says the issue remains, or it sits inside a
+// parenthetical qualifying the reference just before it, as in
+// `Part of #14550 (tracker; #14559 backend-specific routes remain)`.
+func prMentionUncovered(text string, start, end int) bool {
+	clause := text[end:]
+	if i := strings.IndexAny(clause, ",;.)\n"); i >= 0 {
+		clause = clause[:i]
+	}
+	if prMentionUncoveredPattern.MatchString(clause) {
+		return true
+	}
+	open := strings.LastIndexByte(text[:start], '(')
+	if open < 0 || strings.ContainsRune(text[open:start], ')') {
+		return false
+	}
+	return prMentionQualifiedPattern.MatchString(text[:open])
 }
 
 // firstParagraph is text up to its first blank line.

@@ -142,7 +142,7 @@ var linearMutations = map[string]linearRequirement{
 }
 
 // IsLinearHost reports whether host is Linear's API host.
-func IsLinearHost(host string) bool { return host == linearHost }
+func IsLinearHost(host string) bool { return canonicalHost(host) == linearHost }
 
 // IsLinearGraphQLPath reports whether path is Linear's GraphQL endpoint.
 func IsLinearGraphQLPath(path string) bool { return path == linearGraphQLPath }

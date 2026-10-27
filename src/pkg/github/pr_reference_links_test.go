@@ -58,6 +58,18 @@ func TestPRReferencedIssues(t *testing.T) {
 			want: []PRLinkedIssue{{Number: 40, Repo: repo, Via: PRLinkViaMention}},
 		},
 		{
+			// hivecommons/hive#14667: #14559 is the sibling the PR leaves
+			// for later, named inside the tracker reference's parenthetical.
+			name: "mention qualifying another ref or said to remain does not bind",
+			body: "Closes #14558\nPart of #14550 (tracker; #14559 backend-specific routes remain)",
+			want: []PRLinkedIssue{{Number: 14558, Repo: repo, Via: PRLinkViaFixes}, {Number: 14550, Repo: repo, Via: PRLinkViaRefs}},
+		},
+		{
+			name: "mention said to remain or qualifying another mention does not bind",
+			body: "Builds on #30; #31 remains open. Touches #32 (and #33).",
+			want: []PRLinkedIssue{{Number: 30, Repo: repo, Via: PRLinkViaMention}, {Number: 32, Repo: repo, Via: PRLinkViaMention}},
+		},
+		{
 			name: "cross-repo refs ignored, same-repo explicit kept",
 			body: "Refs acme/other#9 and hivecommons/hive#10",
 			want: []PRLinkedIssue{{Number: 10, Repo: repo, Via: PRLinkViaRefs}},

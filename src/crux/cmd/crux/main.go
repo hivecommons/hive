@@ -16,11 +16,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 
 	"github.com/hivecommons/hive/crux/cli"
 	"github.com/hivecommons/hive/crux/defs"
+	"github.com/hivecommons/hive/crux/telemetry"
 )
 
 // version is what --version reports. Release builds set it with
@@ -34,6 +36,14 @@ func main() {
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, ctxFn func() (context.Context, context.CancelFunc)) int {
 	ctx, stop := ctxFn()
 	defer stop()
+	// OTLP export when OTEL_EXPORTER_OTLP_* names an endpoint; a no-op
+	// otherwise (hivecommons/crux#19). A bad configuration costs telemetry,
+	// never the command.
+	flush, err := telemetry.Init(ctx, version)
+	if err != nil {
+		fmt.Fprintln(stderr, "crux: telemetry disabled:", err)
+	}
+	defer flush()
 	env := &cli.Env{Stdin: stdin, Stdout: stdout, Stderr: stderr, Loader: defs.Loader{}, Version: version}
 	return env.Run(ctx, args)
 }

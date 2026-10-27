@@ -329,8 +329,10 @@ func AdoptionDCORehomeComment(obs stageObservation, hiveID string, superseding i
 		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), AdoptReasonDCORehome, stagelabels.AdoptModeSupersede, superseding, obs.HeadSHA, obs.Author, superseding)
 }
 
-// AdoptionPRBody is the superseding App PR's body.
-func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool) string {
+// AdoptionPRBody is the superseding App PR's body. resignedTip is the head of
+// the re-signed replay the branch points at, or "" when the branch carries the
+// contributor's head unchanged.
+func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool, resignedTip string) string {
 	var b strings.Builder
 	if rec.AdoptDiffFence != "" {
 		// Read back by carriedFenceGate: the App lanes never merge this
@@ -350,7 +352,11 @@ func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool
 	if obs.HeadRepo != "" && !strings.EqualFold(obs.HeadRepo, obs.Display) {
 		fmt.Fprintf(&b, " (fork `%s`)", obs.HeadRepo)
 	}
-	b.WriteString(", unchanged. Last lane reason on the original: `")
+	if resignedTip != "" {
+		fmt.Fprintf(&b, ", re-signed as `%s` (content unchanged, `Signed-off-by` added). Last lane reason on the original: `", shortSHA(resignedTip))
+	} else {
+		b.WriteString(", unchanged. Last lane reason on the original: `")
+	}
 	b.WriteString(nonEmpty(rec.Reason, obs.Reason))
 	b.WriteString("`.\n\n")
 	b.WriteString("**Hive fix agent:** rebase this branch on `")
@@ -369,7 +375,7 @@ func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool
 	if rec.AdoptReason == AdoptReasonSignoffRehome {
 		b.WriteString("\n**Sign-off attribution:** the original PR would squash the App's signed fixes as the contributor. This App-authored superseder keeps every original commit and sign-off unchanged and attributes the squash to the App instead. DCO and all merge gates still apply here.\n")
 	}
-	if dcoRehome {
+	if dcoRehome && resignedTip == "" {
 		b.WriteString("\n**DCO repair required:** this adoption has unsigned non-merge commits and the hive cannot repair them by amending the contributor branch. Re-home the work onto a hive-owned branch from `")
 		b.WriteString(nonEmpty(obs.BaseRef, "the base branch"))
 		b.WriteString("`: cherry-pick each original commit with `git cherry-pick -s` (or squash with `git commit --author` preserving the original author), ensure every replacement commit has `Signed-off-by`, push the DCO-clean branch, open/keep one superseding PR with the same title, then comment on and close #")
@@ -673,25 +679,37 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	}
 	branch := adoptBranchPrefix + strconv.Itoa(number)
 	fullRepo := owner + "/" + repo
+	// resignedTip stays "" when the branch falls back to the unsigned
+	// contributor head; the body then keeps the manual DCO repair steps.
+	var resignedTip string
 	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo: fullRepo, Kind: effects.KindBranchPush, Target: branch, Actor: "stage_labels",
 		Inputs: map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "adopt": "true"},
 	}, func(ctx context.Context) (effects.Result, error) {
+		tip := obs.HeadSHA
+		if dcoRehome {
+			if signed, signErr := c.resignAdoptionCommits(ctx, obs); signErr != nil {
+				c.warn("stage labels: re-signing adopted commits failed; branching from the unsigned head", "repo", obs.Display, "pr", number, "error", signErr)
+			} else if signed != "" {
+				tip = signed
+				resignedTip = signed
+			}
+		}
 		_, _, apiErr := c.gh.Git.CreateRef(ctx, owner, repo, &gh.Reference{
 			Ref:    gh.Ptr("refs/heads/" + branch),
-			Object: &gh.GitObject{SHA: gh.Ptr(obs.HeadSHA)},
+			Object: &gh.GitObject{SHA: gh.Ptr(tip)},
 		})
 		if apiErr != nil && isGitHubStatus(apiErr, http.StatusUnprocessableEntity) {
 			// The branch exists from an earlier attempt: point it at this head.
 			_, _, apiErr = c.gh.Git.UpdateRef(ctx, owner, repo, &gh.Reference{
 				Ref:    gh.Ptr("refs/heads/" + branch),
-				Object: &gh.GitObject{SHA: gh.Ptr(obs.HeadSHA)},
+				Object: &gh.GitObject{SHA: gh.Ptr(tip)},
 			}, true)
 		}
 		if apiErr != nil {
 			return effects.Result{}, effects.NotApplied(apiErr)
 		}
-		return effects.Result{Provenance: obs.HeadSHA}, nil
+		return effects.Result{Provenance: tip}, nil
 	})
 	if err != nil {
 		c.warn("stage labels: adoption failed to push branch", "repo", obs.Display, "pr", number, "branch", branch, "error", err)
@@ -708,7 +726,7 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 			Title: gh.Ptr(nonEmpty(strings.TrimSpace(obs.Title), fmt.Sprintf("Adopt #%d", number))),
 			Head:  gh.Ptr(branch),
 			Base:  gh.Ptr(obs.BaseRef),
-			Body:  gh.Ptr(AdoptionPRBody(obs, rec, dcoRehome)),
+			Body:  gh.Ptr(AdoptionPRBody(obs, rec, dcoRehome, resignedTip)),
 		})
 		if apiErr != nil {
 			return effects.Result{}, effects.NotApplied(apiErr)
@@ -739,6 +757,55 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		}
 	}
 	return 1, nil
+}
+
+// resignAdoptionCommits replays the contributor's commits as a linear chain
+// with the App's Signed-off-by added where missing (the API equivalent of
+// `git rebase --signoff`), keeping each commit's tree, author and message,
+// and returns the new tip. It returns "" when the commits cannot be replayed
+// without changing content (a merge commit, or no commits), so the caller
+// keeps the contributor head.
+func (c *Engine) resignAdoptionCommits(ctx context.Context, obs stageObservation) (string, error) {
+	opts := &gh.ListOptions{PerPage: 100}
+	var all []*gh.RepositoryCommit
+	for page := 0; page < stageDCOMaxPages; page++ {
+		commits, resp, err := c.gh.PullRequests.ListCommits(ctx, obs.Owner, obs.Repo, obs.Number, opts)
+		if err != nil {
+			return "", fmt.Errorf("listing commits for %s#%d: %w", obs.Display, obs.Number, err)
+		}
+		all = append(all, commits...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	if len(all) == 0 || all[len(all)-1].GetSHA() != obs.HeadSHA {
+		return "", nil
+	}
+	for _, rc := range all {
+		if len(rc.Parents) != 1 {
+			return "", nil
+		}
+	}
+	trailer := hgithub.BotSignedOffByTrailer(c.transport.AppBotLogin())
+	parent := all[0].Parents[0].GetSHA()
+	for _, rc := range all {
+		msg := rc.GetCommit().GetMessage()
+		if !signedOffByRE.MatchString(msg) {
+			msg = strings.TrimRight(msg, "\n") + "\n\n" + trailer + "\n"
+		}
+		created, _, err := c.gh.Git.CreateCommit(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), obs.Owner, obs.Repo, &gh.Commit{
+			Message: gh.Ptr(msg),
+			Tree:    &gh.Tree{SHA: gh.Ptr(rc.GetCommit().GetTree().GetSHA())},
+			Parents: []*gh.Commit{{SHA: gh.Ptr(parent)}},
+			Author:  rc.GetCommit().GetAuthor(),
+		}, nil)
+		if err != nil {
+			return "", fmt.Errorf("re-signing %s: %w", shortSHA(rc.GetSHA()), err)
+		}
+		parent = created.GetSHA()
+	}
+	return parent, nil
 }
 
 // settleAdoption polls the superseding App PR for a PR in stage 074 (at

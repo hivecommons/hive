@@ -405,12 +405,16 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 		ttl = DefaultTTLSeconds
 	}
 
-	env := make([]map[string]string, 0, len(spec.Env))
-	for _, k := range sortedKeys(spec.Env) {
-		if sandbox.IsCredentialName(k) {
-			continue
+	// Same filter as the Podman path; explicit spec.Env entries come last and win.
+	merged := map[string]string{}
+	for _, entry := range sandbox.SanitizedEnv(os.Environ(), spec.EnvAllowlist, spec.Env) {
+		if k, v, ok := strings.Cut(entry, "="); ok {
+			merged[k] = v
 		}
-		env = append(env, map[string]string{"name": k, "value": spec.Env[k]})
+	}
+	env := make([]map[string]string, 0, len(merged))
+	for _, k := range sortedKeys(merged) {
+		env = append(env, map[string]string{"name": k, "value": merged[k]})
 	}
 	envFrom := make([]map[string]any, 0, len(l.Options.EnvFromSecrets))
 	for _, s := range l.Options.EnvFromSecrets {

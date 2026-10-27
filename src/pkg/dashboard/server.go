@@ -131,6 +131,9 @@ type Server struct {
 	// stageTrackerBuildFn replaces buildStageTracker in tests that need a
 	// build they can hold open; nil in production.
 	stageTrackerBuildFn func(status *StatusPayload, store *stagelabels.Store, now time.Time) StageTrackerResponse
+	// stageTrackerLinks memoises the issue lookups that title the tracker's
+	// untitled links across rebuilds (stage_tracker.go).
+	stageTrackerLinks stageTrackerLinkMemo
 	// evidenceHB is the background-refreshed evidence aggregate the hub
 	// heartbeat reads (evidence_heartbeat.go); zero value is ready to use.
 	evidenceHB evidenceHeartbeatCache

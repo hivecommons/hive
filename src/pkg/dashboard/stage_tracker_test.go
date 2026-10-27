@@ -2,12 +2,14 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1001,5 +1003,95 @@ func TestStageTrackerClosedIssueAnchor(t *testing.T) {
 				t.Fatalf("got %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#14606: a soft link (refs / title / mention) carries only a
+// number, so the tracker fetches its title and state once per distinct issue
+// and memoises it across rebuilds, since every status publish rebuilds the
+// payload. hivecommons/hive#14667: a number that is a PR, open or closed
+// (`Supersedes #14592`, an adoption's "close #14592"), is dropped rather than
+// drawn as an issue "(title unavailable)".
+func TestStageTrackerEnrichSoftLinks(t *testing.T) {
+	var gets atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gets.Add(1)
+		switch r.URL.Path {
+		case "/repos/hivecommons/hive/issues/14576":
+			fmt.Fprint(w, `{"number":14576,"title":"Runner stalls","state":"closed"}`)
+		case "/repos/hivecommons/hive/issues/14577":
+			fmt.Fprint(w, `{"number":14577,"title":"A PR","state":"open","pull_request":{}}`)
+		case "/repos/hivecommons/hive/issues/14592":
+			fmt.Fprint(w, `{"number":14592,"title":"Superseded PR","state":"closed","pull_request":{}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	s := newTestServer()
+	s.deps = &Dependencies{GHClient: github.NewClientForTest(ts.URL, "hivecommons", []string{"hive"}, s.logger)}
+	url := func(n int) string { return "https://github.com/hivecommons/hive/issues/" + strconv.Itoa(n) }
+	build := func() []StageTrackerItem {
+		return []StageTrackerItem{
+			{Repo: "hive", Number: 14597, Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{
+				{Number: 14576, URL: url(14576), Via: github.PRLinkViaRefs},
+				{Number: 14577, URL: url(14577), Via: github.PRLinkViaTitle},
+				{Number: 14578, URL: url(14578), Via: github.PRLinkViaRefs},
+				{Number: 14567, Title: "Titled", State: "closed", URL: url(14567)},
+				{Number: 14592, URL: url(14592)},
+			}},
+			{Repo: "hive", Number: 14590, Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{{Number: 14576, URL: url(14576), Via: github.PRLinkViaRefs}}},
+		}
+	}
+	qualify := func(string) string { return "hivecommons/hive" }
+	now := time.Date(2026, 10, 27, 18, 0, 0, 0, time.UTC)
+	items := build()
+	s.stageTrackerEnrichSoftLinks(items, qualify, now)
+
+	links := items[0].LinkedIssues
+	if len(links) != 3 {
+		t.Fatalf("links = %+v, want the PR numbers 14577 and 14592 dropped", links)
+	}
+	if got := links[0]; got.Number != 14576 || got.Title != "Runner stalls" || got.State != "closed" {
+		t.Fatalf("refs link = %+v, want titled and closed", got)
+	}
+	if got := items[1].LinkedIssues[0]; got.Title != "Runner stalls" || got.State != "closed" {
+		t.Fatalf("second PR's refs link = %+v", got)
+	}
+	if got := links[1]; got.Number != 14578 || got.Title != "" || got.State != "" {
+		t.Fatalf("failed lookup = %+v, want untouched", got)
+	}
+	if got := links[2]; got.Number != 14567 || got.Title != "Titled" || got.State != "closed" {
+		t.Fatalf("closing link = %+v, want unchanged", got)
+	}
+	if n := gets.Load(); n != 4 {
+		t.Fatalf("issues GETs = %d, want 4 (one per distinct number)", n)
+	}
+
+	// A rebuild after a status publish reuses the memo, the failed lookup
+	// included, until its retry window lapses.
+	items = build()
+	s.stageTrackerEnrichSoftLinks(items, qualify, now.Add(time.Minute))
+	if n := gets.Load(); n != 4 || len(items[0].LinkedIssues) != 3 || items[0].LinkedIssues[0].Title != "Runner stalls" {
+		t.Fatalf("rebuild: GETs = %d, links = %+v, want memoised", n, items[0].LinkedIssues)
+	}
+	s.stageTrackerEnrichSoftLinks(build(), qualify, now.Add(stageTrackerLinkRetry))
+	if n := gets.Load(); n != 5 {
+		t.Fatalf("issues GETs = %d, want only the failed lookup retried", n)
+	}
+	s.stageTrackerEnrichSoftLinks(build(), qualify, now.Add(stageTrackerLinkTTL))
+	if n := gets.Load(); n != 9 {
+		t.Fatalf("issues GETs = %d, want every lookup refreshed after the TTL", n)
+	}
+
+	// One rebuild makes at most stageTrackerLinkLookups GETs.
+	var many []StageTrackerLinkedIssue
+	for n := 20000; n < 20000+stageTrackerLinkLookups+5; n++ {
+		many = append(many, StageTrackerLinkedIssue{Number: n, URL: url(n), Via: github.PRLinkViaRefs})
+	}
+	before := gets.Load()
+	s.stageTrackerEnrichSoftLinks([]StageTrackerItem{{Repo: "hive", Number: 14598, Kind: "pr", LinkedIssues: many}}, qualify, now)
+	if n := gets.Load() - before; n != stageTrackerLinkLookups {
+		t.Fatalf("issues GETs in one rebuild = %d, want the cap %d", n, stageTrackerLinkLookups)
 	}
 }
