@@ -1489,7 +1489,9 @@ func stageTrackerPRLinkedIssues(pr github.PullRequest, repoName, baseURL string)
 		if li.Number <= 0 || li.Number == pr.Number || seen[li.Number] {
 			return
 		}
-		if li.Repo != "" && !stageTrackerSameRepo(li.Repo, pr.Repo) && !stageTrackerSameRepo(li.Repo, full) {
+		// Compare against the fully-qualified name when one is known so a
+		// same-named repository under another owner is still foreign.
+		if li.Repo != "" && !stageTrackerSameRepo(li.Repo, full) {
 			return
 		}
 		seen[li.Number] = true
