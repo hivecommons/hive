@@ -55,7 +55,19 @@ func liveServe(t *testing.T) (*cruxtest.Recorder, *httptest.Server) {
 	srv := serve.New(rec)
 	srv.Token = "tok"
 	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
+	t.Cleanup(func() {
+		// httptest.Server.Close waits for in-flight requests; a runtime
+		// holding a long-lived request open would hang it until the go test
+		// deadline. Drop the connections first and bound the wait.
+		ts.CloseClientConnections()
+		done := make(chan struct{})
+		go func() { ts.Close(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("live crux serve did not shut down within 10s")
+		}
+	})
 	return rec, ts
 }
 

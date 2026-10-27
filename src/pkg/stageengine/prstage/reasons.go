@@ -43,6 +43,7 @@ const (
 	StageReasonForkGuard                   = "fork-guard:"
 	StageReasonOptionalCheckFailing        = "optional-check-failing:"
 	StageReasonSharedCIIncident            = "shared-ci-incident:"
+	TrustedAuthorReasonAppAuthored         = "trusted-author:app-authored"
 	TrustedBotLaneSkipReason               = "trusted-bot-lane"
 	WorkflowApprovalRequiredPrefix         = "workflow-approval-required:"
 )

@@ -400,6 +400,10 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// The issues the PR fixes get their own pr_opened stage: the
 		// start→PR SLA boundary, and the link a later merge folds back on.
 		recordPROpenedForIssues(b.dashSrv, b.cfg.Project.Org, d.Agent, d.Repo, d.Number, d.URL, d.Issues)
+		// The duplicate-PR claim ledger learns about the PR now, not at the
+		// next scan, so a contributor cannot be admitted to an issue this
+		// PR already covers in the gap between (hivecommons/hive#14472).
+		client.RecordOpenedPRClaims(getClaimLedger(b.logger), d, hiveIdentity(b.cfg), time.Now())
 	})
 	client.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, b.handleCanaryLeak)
 }

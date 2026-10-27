@@ -853,6 +853,75 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	return claims
 }
 
+// ClaimsFromPROpened returns the claims a PR the watcher just opened makes,
+// exactly as the next FetchClaimScan would parse them (hivecommons/hive#14472).
+// The claim ledger the contribute admission gate reads was only refreshed by
+// the eval cycle's scan, so an issue whose PR opened seconds after a scan
+// stayed admissible for a contributor until the next one; recording the
+// claims from the open path closes that window. configRepos lets the claim
+// carry the repo in the form the ledger keys by (bare or owner/repo, as
+// configured) when the request named it the other way.
+func ClaimsFromPROpened(d PROpenedDetail, configRepos []string, identity HiveIdentity, now time.Time) []IssueClaim {
+	if d.Number <= 0 || d.Repo == "" {
+		return nil
+	}
+	repo := canonicalConfigRepo(d.Repo, configRepos)
+	pr := &gh.PullRequest{
+		Number:  gh.Ptr(d.Number),
+		Title:   gh.Ptr(d.Title),
+		Body:    gh.Ptr(d.Body),
+		HTMLURL: gh.Ptr(d.URL),
+		State:   gh.Ptr(PRStateOpen),
+		User:    &gh.User{Login: gh.Ptr(d.Author)},
+		Head:    &gh.PullRequestBranch{Ref: gh.Ptr(d.Head)},
+	}
+	claims := claimsFromPR(pr, repo, identity, now)
+	for i := range claims {
+		claims[i].PRState = PRStateOpen
+	}
+	return claims
+}
+
+// canonicalConfigRepo maps repo onto the configured spelling it names, so a
+// request that says "owner/repo" for a repo configured as "repo" (or the
+// reverse) keys the same ledger entry the scan writes. Unknown repos are
+// returned unchanged.
+func canonicalConfigRepo(repo string, configRepos []string) string {
+	_, bare := splitRepoName(repo)
+	for _, cfg := range configRepos {
+		if strings.EqualFold(cfg, repo) {
+			return cfg
+		}
+		if _, cfgBare := splitRepoName(cfg); strings.EqualFold(cfgBare, bare) {
+			return cfg
+		}
+	}
+	return repo
+}
+
+func splitRepoName(repo string) (owner, name string) {
+	if parts := strings.SplitN(repo, "/", 2); len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", repo
+}
+
+// RecordOpenedPRClaims is ClaimsFromPROpened wired to this client's repo list
+// and written into ledger. It returns the claims recorded.
+func (c *Client) RecordOpenedPRClaims(ledger *ClaimLedger, d PROpenedDetail, identity HiveIdentity, now time.Time) []IssueClaim {
+	if c == nil || ledger == nil {
+		return nil
+	}
+	claims := ClaimsFromPROpened(d, c.getRepos(), identity, now)
+	for _, claim := range claims {
+		if err := ledger.Record(claim); err != nil && c.logger != nil {
+			c.logger.Warn("duplicate-PR guard: could not persist claim from just-opened PR",
+				slog.String("repo", claim.Repo), slog.Int("issue", claim.Issue), slog.Int("pr", claim.PRNumber), slog.String("error", err.Error()))
+		}
+	}
+	return claims
+}
+
 // FetchClaims lists open PRs across the client's configured repos and returns
 // the issue claims parsed from their titles and bodies. Claims from PRs the
 // hive did not author are included and marked ExternalAuthor
