@@ -25,6 +25,8 @@ func stageTrackerSentinelJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_TIP"),
 		jsConstLine(t, html, "STAGE_TRACKER_SENTINEL_TIP_FALLBACK"),
 		jsConstLine(t, html, "STAGE_TRACKER_SHORT_SHA"),
+		jsConstLine(t, html, "STAGE_TRACKER_DEFERRED_NOTE"),
+		jsFunc(t, html, "stageTrackerDeferredMods"),
 		jsFunc(t, html, "stageTrackerSentinelTip"),
 		jsFunc(t, html, "stageTrackerSentinelInLane"),
 		jsFunc(t, html, "stageTrackerSentinelChipHtml"),

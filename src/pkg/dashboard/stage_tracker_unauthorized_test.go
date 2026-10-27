@@ -17,11 +17,11 @@ import (
 // hold: it rides the label, outranks the needs-* chips and counts under
 // Needs attention, since only a person can clear it.
 func TestStageTrackerModifiers_Unauthorized(t *testing.T) {
-	got := stageTrackerModifiers([]string{stagelabels.UnauthorizedLabel, "needs-human", "bug"}, "hv", stagelabels.Record{}, false, nil, time.Now(), false)
+	got, _ := stageTrackerModifiers([]string{stagelabels.UnauthorizedLabel, "needs-human", "bug"}, "hv", stagelabels.Record{}, false, nil, time.Now(), false, "", "pr", stagelabels.NeedsDecision, false)
 	if len(got) != 2 || got[0] != modUnauthorized || got[1] != modNeedsHuman {
 		t.Fatalf("modifiers = %v, want [%s %s]", got, modUnauthorized, modNeedsHuman)
 	}
-	if got := stageTrackerModifiers([]string{"hold", stagelabels.UnauthorizedLabel}, "hv", stagelabels.Record{}, false, nil, time.Now(), false); len(got) != 2 || got[0] != modHold || got[1] != modUnauthorized {
+	if got, _ := stageTrackerModifiers([]string{"hold", stagelabels.UnauthorizedLabel}, "hv", stagelabels.Record{}, false, nil, time.Now(), false, "", "pr", stagelabels.NeedsDecision, false); len(got) != 2 || got[0] != modHold || got[1] != modUnauthorized {
 		t.Fatalf("hold (a human instruction) must lead: %v", got)
 	}
 }
