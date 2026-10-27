@@ -1,0 +1,1 @@
+- Refuse proxy-owned inference translator requests unless advisory identity is explicitly enabled, preventing forged agent identities through private plain-HTTP forwarding when `HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` (#14448).

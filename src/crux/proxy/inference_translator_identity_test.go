@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,11 +18,16 @@ import (
 // 43210 (0xA8CA) belongs to uid 2003 and nothing else is listed.
 func fakeProcNetTCP(t *testing.T) {
 	t.Helper()
+	fakeProcNetTCPUID(t, 2003)
+}
+
+func fakeProcNetTCPUID(t *testing.T, uid int) {
+	t.Helper()
 	dir := t.TempDir()
 	tcp := filepath.Join(dir, "tcp")
 	tcp6 := filepath.Join(dir, "tcp6")
-	if err := os.WriteFile(tcp, []byte("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"+
-		"   0: 0100007F:A8CA 0100007F:480E 01 00000000:00000000 00:00000000 00000000  2003        0 1 0000000000000000 100 0 0 10 0\n"), 0o644); err != nil {
+	if err := os.WriteFile(tcp, []byte(fmt.Sprintf("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"+
+		"   0: 0100007F:A8CA 0100007F:480E 01 00000000:00000000 00:00000000 00000000  %d        0 1 0000000000000000 100 0 0 10 0\n", uid)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(tcp6, []byte("header\n"), 0o644); err != nil {
@@ -88,9 +94,9 @@ func TestTranslatorAgentName_UnmappedRefusedUnlessAdvisoryOK(t *testing.T) {
 // control plane (an internal UID) may still name the agent it is acting for:
 // it is the party that issues the sk-hive- keys in the first place.
 func TestTranslatorAgentName_InternalUIDKeepsHeader(t *testing.T) {
-	fakeProcNetTCP(t)
+	fakeProcNetTCPUID(t, 0)
 	p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	// 2003 is the proxy's own UID here and no agent occupies it.
+	// Root is the control plane; the separate proxy UID is not trusted.
 	p.uidMap = &agent.UIDMap{BaseUID: 2001, ProxyUID: 2003, Agents: map[string]int{"quality": 2002}}
 
 	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
@@ -126,5 +132,38 @@ func TestInferenceTranslatorHandler_RefusesUnidentified(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"authentication_error"`) {
 		t.Fatalf("body %q lacks Anthropic-shaped authentication_error", rec.Body.String())
+	}
+}
+
+// Private forwarding may reach the translator, but its proxy-owned socket must
+// not turn a forged agent name into an authenticated inference request.
+func TestPlainForwardPrivateTranslatorRejectsProxyUID(t *testing.T) {
+	fakeProcNetTCP(t)
+	p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), inference: newInferenceRouter()}
+	p.uidMap = &agent.UIDMap{BaseUID: 2001, ProxyUID: 2003, Agents: map[string]int{"quality": 2002}}
+	t.Setenv(plainForwardAllowPrivateEnv, "true")
+	p.allowPrivateForward = plainForwardAllowPrivate()
+	handler := p.inferenceTranslatorHandler()
+	translator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Model the proxy-owned upstream socket using the synthetic proc table.
+		r.RemoteAddr = "127.0.0.1:43210"
+		handler.ServeHTTP(w, r)
+	}))
+	defer translator.Close()
+	req, err := http.NewRequest(http.MethodPost, translator.URL+"/v1/messages", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("x-api-key", inferenceAPIKeyPrefix+"quality")
+	resp := plainForwardRoundTrip(t, p, req)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("forwarded proxy UID: status = %d, want 401", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"authentication_error"`) {
+		t.Fatalf("body %q lacks authentication_error", body)
 	}
 }

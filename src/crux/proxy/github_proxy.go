@@ -1223,8 +1223,9 @@ const inferenceAPIKeyPrefix = "sk-hive-"
 //
 //   - a UID mapped to an agent is authoritative; a header naming someone else
 //     is logged and overridden;
-//   - an internal UID (the hive's own control plane, UIDMap.IsInternalUID)
-//     keeps the header name — the hive is the party that issues these keys;
+//   - the root control plane keeps the header name — the hive is the party
+//     that issues these keys; the proxy UID cannot assert a name because its
+//     upstream sockets can relay agent-controlled requests;
 //   - an unmapped UID, or no UID map at all, accepts the header only under
 //     HIVE_PROXY_ADVISORY_OK, the same operator escape hatch the GitHub path
 //     honours for deployments without per-agent UID separation.
@@ -1248,7 +1249,7 @@ func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 			}
 			return name, true
 		}
-		if p.uidMap.IsInternalUID(uid) {
+		if uid == 0 && p.uidMap.IsInternalUID(uid) {
 			return claimed, true
 		}
 	}
