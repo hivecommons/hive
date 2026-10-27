@@ -200,6 +200,10 @@ function makeFetch(state) {
     } else if (body.operation === 'current') {
       sub.repositories.forEach(r => { r.selected = !!body.value; });
       state.diff.membership = [{ subscription: sub.id }];
+    } else if (body.operation === 'repository') {
+      const repo = sub.repositories.find(r => r.id === body.repository);
+      repo.selected = !!body.value && !repo.excluded_by.length; repo.unreviewed = false;
+      state.diff.membership = [{ subscription: sub.id }];
     } else if (body.operation === 'exclude') {
       sub.repositories.find(r => r.id === body.repository).excluded_by = body.value ? [sub.id] : [];
       state.diff.membership = [{ subscription: sub.id }];
@@ -215,7 +219,7 @@ function makeFetch(state) {
 
 const settle = async () => { for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r)); };
 
-async function boot() {
+async function boot(options = {}) {
   const doc = new Doc();
   const ul = doc.add('ul', 'contribution-tree');
   ul.setAttribute('role', 'tree');
@@ -223,11 +227,12 @@ async function boot() {
     'tree-collapse-all', 'tree-expand-all', 'tree-select-matching', 'skip-apply', 'skip-profiles', 'manage', 'profiles-title']) doc.add('div', id);
   doc.add('input', 'tree-search').value = '';
   const state = newState();
+  if(options.setup) options.setup(state);
   const said = [];
   const ctx = vm.createContext({
     document: doc, window: { addEventListener() {} }, history: { pushState() {}, go() {} }, location: { pathname: '/', assign() {} },
-    headers: {}, fetch: makeFetch(state), say: (text, cls) => said.push([text, cls]), load: async () => {},
-    styledConfirm: async () => true, console, setTimeout, clearTimeout,
+    headers: {}, fetch: options.fetch ? options.fetch(makeFetch(state)) : makeFetch(state), say: (text, cls) => said.push([text, cls]), load: async () => {},
+    styledConfirm: options.confirm || (async () => true), console, setTimeout, clearTimeout,
   });
   vm.runInContext(fs.readFileSync(SCRIPT, 'utf8'), ctx, { filename: SCRIPT });
   await vm.runInContext('loadTree()', ctx);
@@ -247,7 +252,7 @@ async function boot() {
     for (let i = 0; i < 40 && label() !== target; i++) press('ArrowDown');
     assert.equal(label(), target, 'arrow keys should reach ' + target);
   };
-  return { doc, ul, state, said, rows, row, control, label, activeRows, press, walkTo };
+  return { doc, ul, state, said, rows, row, control, label, activeRows, press, walkTo, ctx };
 }
 
 // ---- tests ----------------------------------------------------------------
@@ -309,4 +314,237 @@ test('Exclude on a repository row far from the first row keeps focus there, and 
 
   t.press('ArrowDown');
   assert.equal(t.label(), 'beta-org/api', 'navigation continues from the repository, not from the top of the list');
+});
+
+
+// Source-level behavior only: these fixtures do not prove browser rendering or
+// screen-reader announcements. CI owns execution of this suite.
+for (const mode of ['accept', 'search']) {
+  test(mode + ': partial failure preserves staged edits, error, focus and retry', async () => {
+    let calls = 0, fail = true;
+    const t = await boot({ fetch: next => async (url, opts) => {
+      if (opts && opts.method && ++calls === 2 && fail) throw new Error('second request failed');
+      return next(url, opts);
+    } });
+    let trigger;
+    if (mode === 'accept') {
+      t.walkTo('beta');
+      trigger = t.control(t.row('beta'), 'Accept 2 new: beta');
+    } else {
+      t.doc.getElementById('tree-search').value = 'beta-org';
+      vm.runInContext('renderTree()', t.ctx);
+      trigger = t.doc.getElementById('tree-select-matching');
+    }
+    const focusKey = trigger.dataset.focusKey;
+    trigger.focus();
+    await trigger.onclick();
+    assert.equal(calls, 2);
+    assert.equal(t.state.tree.subscriptions[1].repositories[0].selected, true);
+    assert.equal(t.state.tree.subscriptions[1].repositories[2].selected, false);
+    assert.match(t.said.at(-1)[0], /1 of 2 changes confirmed staged.*1 failed; 0 not attempted.*second request failed/);
+    assert.equal(t.said.at(-1)[1], 'error');
+    if (mode === 'accept') assert.equal(t.doc.activeElement.dataset.focusKey, focusKey);
+    else assert.equal(t.doc.activeElement, trigger);
+    fail = false;
+    const retry = mode === 'accept' ? t.control(t.row('beta'), 'Accept 1 new: beta') : trigger;
+    await retry.onclick();
+    assert.equal(calls, 3, 'retry sends only the remaining candidate');
+    assert.match(t.said.at(-1)[0], /1 of 1 changes confirmed staged/);
+  });
+}
+
+test('failed first batch request reports unattempted items and no later success', async () => {
+  let calls = 0;
+  const t = await boot({ fetch: next => async (url, opts) => {
+    if (opts && opts.method) { calls++; throw new Error('offline'); }
+    return next(url, opts);
+  } });
+  await t.control(t.row('beta'), 'Accept 2 new: beta').onclick();
+  assert.equal(calls, 1);
+  assert.match(t.said.at(-1)[0], /0 of 2 changes confirmed staged.*1 failed; 1 not attempted.*offline/);
+  assert.equal(t.said.at(-1)[1], 'error');
+});
+
+test('confirmation and in-flight batch lock repeated actions; cancellation releases lock', async () => {
+  let confirm, send, confirmations = 0, calls = 0;
+  const t = await boot({
+    confirm: () => { confirmations++; return new Promise(r => { confirm = r; }); },
+    fetch: next => async (url, opts) => {
+      if (opts && opts.method) { calls++; await new Promise(r => { send = r; }); }
+      return next(url, opts);
+    },
+  });
+  const trigger = t.control(t.row('beta'), 'Accept 2 new: beta');
+  const first = trigger.onclick();
+  await trigger.onclick();
+  assert.equal(confirmations, 1);
+  assert.equal(calls, 0);
+  confirm(false); await first;
+  const second = trigger.onclick();
+  assert.equal(confirmations, 2);
+  confirm(true); await settle();
+  await trigger.onclick();
+  await t.control(t.row('beta'), 'Pause: beta').onclick();
+  assert.equal(calls, 1);
+  assert.equal(t.doc.getElementById('tree-apply').getAttribute('aria-disabled'), 'true');
+  send(); await settle();
+  assert.equal(calls, 2);
+  await trigger.onclick();
+  assert.equal(confirmations, 2);
+  send(); await second;
+  assert.match(t.said.at(-1)[0], /2 of 2 changes confirmed staged/);
+  assert.equal(t.ul.getAttribute('aria-busy'), 'false');
+});
+
+test('Pause is staged and relay receipt distinguishes persistence from runtime uncertainty', async () => {
+  const t = await boot();
+  t.walkTo('beta');
+  await t.control(t.row('beta'), 'Pause: beta').onclick();
+  assert.match(t.doc.getElementById('tree-info').textContent, /Pause staged in this review.*Apply saves it.*Runtime pause is not confirmed/);
+  assert.match(t.row('beta').textContent, /Pause staged/);
+  assert.doesNotMatch(t.doc.getElementById('tree-info').textContent, /no new work is requested/);
+  const receipt = vm.runInContext("describeReceipt('profiles-and-projection-saved', 'no-managed-relay-found', 'unknown')", t.ctx);
+  assert.match(receipt, /profiles.yml and contributor.env/);
+  assert.match(receipt, /another relay may still be running/);
+  assert.match(receipt, /Confirmed by relay: unknown/);
+  assert.doesNotMatch(receipt, /no relay running/);
+});
+
+test('a Hive that is already saved as paused says so and offers nothing to apply', async () => {
+  const t = await boot({ setup: state => { state.tree.subscriptions[1].disabled = true; } });
+  t.row('beta').focus();
+  const info = t.doc.getElementById('tree-info').textContent;
+  assert.match(info, /Paused in the saved profiles/);
+  assert.doesNotMatch(info, /Apply saves|staged/);
+  assert.match(t.row('beta').textContent, /Paused/);
+  assert.doesNotMatch(t.row('beta').textContent, /staged/);
+});
+
+test('a server error without punctuation stays a separate sentence in the batch message', async () => {
+  let calls = 0;
+  const t = await boot({ fetch: next => async (url, opts) => {
+    if (opts && opts.method && ++calls === 2) throw new Error('storage busy');
+    return next(url, opts);
+  } });
+  await t.control(t.row('beta'), 'Accept 2 new: beta').onclick();
+  assert.match(t.said.at(-1)[0], /not attempted\. storage busy\. Successful changes remain staged/);
+});
+
+test('detail descriptions expose API provenance, offered state and global exclusion recovery', async () => {
+  const t = await boot({ setup: state => {
+    state.tree.subscriptions[0].selection_sources = ['unknown'];
+    state.tree.subscriptions[1].selection_sources = ['hub:https://hub.example'];
+    const repos = state.tree.subscriptions[1].repositories;
+    repos[0].offered = 'no'; repos[0].excluded_by = ['alpha', 'beta'];
+    repos[1].offered = 'unknown';
+    delete repos[2].offered;
+  } });
+  t.row('beta').focus();
+  assert.match(t.doc.getElementById('tree-info').textContent, /Selection sources: hub:https:\/\/hub.example/);
+  t.row('alpha').focus();
+  assert.match(t.doc.getElementById('tree-info').textContent, /Selection sources: unknown/);
+  t.row('beta-org/agent').focus();
+  const detail = t.doc.getElementById('tree-info').textContent;
+  assert.match(detail, /Not currently offered.*saved consent is kept/);
+  assert.match(detail, /Excluded by: alpha, beta.*across scoped Hives.*each source Hive/);
+  const row = t.row('beta-org/agent');
+  const descriptionID = row.getAttribute('aria-describedby');
+  assert.ok(descriptionID);
+  assert.equal(row.querySelector('input').getAttribute('aria-describedby'), descriptionID);
+  assert.ok(row.children.some(c => c.getAttribute('id') === descriptionID && c.textContent.includes('Excluded by: alpha, beta')));
+  t.row('beta-org/api').focus();
+  assert.match(t.doc.getElementById('tree-info').textContent, /Current offering is unknown/);
+  t.row('beta-org/web').focus();
+  assert.match(t.doc.getElementById('tree-info').textContent, /Current offering status was not provided/);
+  t.row('alpha-org/agent').focus();
+  assert.match(t.doc.getElementById('tree-info').textContent, /Currently offered by this Hive/);
+  const absent = await boot();
+  absent.row('alpha').focus();
+  assert.match(absent.doc.getElementById('tree-info').textContent, /No selection provenance recorded/);
+});
+
+
+test('server error response retains returned staged state and blocks stale retries', async () => {
+  let calls = 0;
+  const t = await boot({ fetch: next => async (url, opts) => {
+    const response = await next(url, opts);
+    if (!opts || !opts.method || ++calls !== 2) return response;
+    const data = await response.json();
+    data.diff.stale = true;
+    data.error = 'review changed elsewhere';
+    return { ok:false, status:409, headers:response.headers, json:async () => data };
+  } });
+  await t.control(t.row('Added directly'), 'Accept 4 new: Added directly').onclick();
+  assert.equal(calls, 2);
+  assert.match(t.said.at(-1)[0], /1 of 4 changes confirmed staged.*1 failed; 2 not attempted.*review changed elsewhere/);
+  assert.equal(t.said.at(-1)[1], 'error');
+  assert.equal(t.row('alpha-org/agent').querySelector('input').checked, true, 'returned staged changes stay visible');
+  const outcome = await vm.runInContext("editTree({operation:'enabled',target:'beta',value:false})", t.ctx);
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.error, /stale review/);
+  assert.equal(calls, 2, 'stale retry must not send another request');
+});
+
+
+test('a repository checkbox sends only selection and preserves other Hive exclusions', async () => {
+  const requests = [];
+  const t = await boot({
+    setup: state => { state.tree.subscriptions[1].repositories[0].excluded_by = ['alpha']; },
+    fetch: next => async (url, opts) => {
+      if (opts && opts.method) requests.push(JSON.parse(opts.body));
+      return next(url, opts);
+    },
+  });
+  t.row('beta-org/agent').querySelector('input').click();
+  await settle();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].operation, 'repository');
+  assert.equal(requests[0].target, 'beta');
+  assert.deepEqual(t.state.tree.subscriptions[1].repositories[0].excluded_by, ['alpha']);
+  assert.equal(t.row('beta-org/agent').querySelector('input').checked, false, 'global veto keeps the effective selection off');
+  t.row('beta-org/agent').focus();
+  assert.match(t.doc.getElementById('tree-info').textContent, /Excluded by: alpha/);
+});
+
+
+test('empty request errors still report a failed batch', async () => {
+  const t = await boot({ fetch: next => async (url, opts) => {
+    if (opts && opts.method) throw new Error('');
+    return next(url, opts);
+  } });
+  const result = await t.control(t.row('beta'), 'Accept 2 new: beta').onclick();
+  assert.equal(result.failed, 1);
+  assert.match(t.said.at(-1)[0], /0 of 2 changes confirmed staged.*1 failed; 1 not attempted/);
+  assert.equal(t.said.at(-1)[1], 'error');
+});
+
+test('refresh owns its lock before awaiting and cannot overlap or unlock a batch', async () => {
+  let releaseRefresh, releaseEdit, gets = 0, edits = 0;
+  const t = await boot({
+    setup: state => { state.diff.membership = [{ subscription:'alpha' }]; },
+    fetch: next => async (url, opts) => {
+      if (!opts || !opts.method) {
+        if (++gets > 1) await new Promise(r => { releaseRefresh = r; });
+      } else {
+        edits++;
+        await new Promise(r => { releaseEdit = r; });
+      }
+      return next(url, opts);
+    },
+  });
+  const refresh = t.doc.getElementById('tree-refresh').onclick();
+  await t.control(t.row('beta'), 'Accept 2 new: beta').onclick();
+  assert.equal(edits, 0, 'refresh blocks staging until its response is received');
+  releaseRefresh(); await refresh;
+  assert.equal(t.ul.getAttribute('aria-busy'), 'false');
+  const batch = t.control(t.row('beta'), 'Accept 2 new: beta').onclick();
+  await settle();
+  await t.doc.getElementById('tree-refresh').onclick();
+  assert.equal(gets, 2, 'refresh must not start during the batch');
+  assert.equal(t.ul.getAttribute('aria-busy'), 'true');
+  await t.control(t.row('beta'), 'Pause: beta').onclick();
+  assert.equal(edits, 1, 'blocked refresh must not release the batch lock');
+  releaseEdit(); await settle();
+  releaseEdit(); await batch;
+  assert.equal(edits, 2);
 });

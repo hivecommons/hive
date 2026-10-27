@@ -32,9 +32,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agentmode"
+	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/proxy"
 )
 
 // outcome is what the scanner actually did with a payload, which is a
@@ -313,12 +313,12 @@ func TestRedTeamCorpusOutcomesAreStable(t *testing.T) {
 func TestRedTeamContainmentHoldsForEveryMode(t *testing.T) {
 	modes := []struct {
 		name string
-		mode agent.AgentMode
+		mode agentmode.AgentMode
 	}{
-		{"Advisory", agent.ModeAdvisory},
-		{"IssuesOnly", agent.ModeIssuesOnly},
-		{"IssuesAndPRs", agent.ModeIssuesAndPRs},
-		{"IssuesPRsMerge", agent.ModeIssuesPRsMerge},
+		{"Advisory", agentmode.ModeAdvisory},
+		{"IssuesOnly", agentmode.ModeIssuesOnly},
+		{"IssuesAndPRs", agentmode.ModeIssuesAndPRs},
+		{"IssuesPRsMerge", agentmode.ModeIssuesPRsMerge},
 	}
 	denied := []struct{ method, path string }{
 		{"POST", "/repos/o/r/pulls"},

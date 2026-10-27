@@ -17,12 +17,12 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/issueclaim"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/redmain"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -180,6 +180,11 @@ type Client struct {
 	// so the self-approval guard treats a base and its replicas as one
 	// author. nil compares exact lane names.
 	agentBase func(agent string) string
+	// priorArtFiling* enforce the prior-art filing verdict on relayed issue
+	// creates (issue_request_prior_art.go, hivecommons/hive#13879).
+	priorArtFilingGate   func() config.PriorArtGateConfig
+	priorArtFilingFind   PriorArtFinder
+	priorArtFilingRecord PriorArtRefusalRecorder
 	// confidenceScore gates the Confidence line on review comments.
 	confidenceScore      func() bool
 	reviewBacklog        func() (enabled bool, cap int) // out-of-scope finding filing on/off and per-PR cap
@@ -187,6 +192,14 @@ type Client struct {
 	// reviewEvidence resolves the evidence-bundle settings for a repo. Nil
 	// means no bundles are written (see review_evidence.go).
 	reviewEvidence func(repo string) ReviewEvidenceSettings
+	// mergeCredit resolves issue-author credit for the hive's merges
+	// (merge_credit.go, hivecommons/hive#14581); creditIssueAuthors is the
+	// live auto_merge.credit_issue_authors switch and mergeCredits holds the
+	// credit decided for a PR until its pr_merged audit consumes it.
+	mergeCreditMu      sync.Mutex
+	mergeCredit        *MergeCreditor
+	creditIssueAuthors func(repo string) bool
+	mergeCredits       map[string]MergeCredit
 	// issueClaims reports whether issue claims are recognised at enumeration
 	// time and the TTL an assignee-inferred claim runs for (#8380). Nil or
 	// false → no comment is fetched, no Issue carries claim fields. Read live
@@ -384,7 +397,8 @@ type Client struct {
 	// they are archived (hivecommons/hive#14026); the sweep skips them.
 	stageArchived coveredByPRLabelState
 	// legacyDecisionLabels memoises repos whose retired needs-decision /
-	// needs-direction definitions were deleted (hivecommons/hive#12683).
+	// needs-direction definitions were deleted (hivecommons/hive#12683), or
+	// whose definition cleanup was denied integration permission (#14372).
 	legacyDecisionLabels coveredByPRLabelState
 	// issueStage resolves the live `governor.labels.stage` policy for the
 	// issue stage reconciler; nil disables it.
@@ -409,6 +423,10 @@ type Client struct {
 	// MergeRequestPolicyGate). nil installs no gate: the relay then applies
 	// only its own authz, label and CI checks, as before the gate existed.
 	mergePolicyGate MergeRequestPolicyGate
+	// forgeMergeSelector routes a relayed merge for a repo on a non-GitHub
+	// forge to that forge's merger (see ForgeMergeSelector). nil keeps every
+	// repo on the GitHub path.
+	forgeMergeSelector ForgeMergeSelector
 	// mergeStateMu guards the merge-request watcher's per-PR+SHA wait state
 	// (merge_request_state.go). mergeStatePath is where it is persisted;
 	// empty keeps it in memory only (tests). Set by SetMergeRequestStatePath.
@@ -2109,12 +2127,12 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 					ScopeContract:       scopeContract,
 					ReporterTrustReason: reporterTrustReason,
 					HeadSHA:             prHeadSHA(pr),
+					BaseSHA:             pr.GetBase().GetSHA(),
 					HeadRef:             headRef,
 					HeadRepo:            headRepo,
 					FromFork:            fromFork,
 					MaintainerCanModify: pr.GetMaintainerCanModify(),
 					BaseRef:             prBaseRef(pr),
-					BaseSHA:             pr.GetBase().GetSHA(),
 					RequestedReviewers:  reqLogins,
 					RequestedTeams:      reqTeams,
 					HoldSources:         prHoldSources,
@@ -2809,17 +2827,56 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 	}
 	body = logscrub.ScrubString(body)
 	owner, repoName := c.splitRepo(repo)
-	return c.executeIssueWrite(ctx, effects.Claim{
+	// ExecuteReconciling, not Execute: an ambiguous POST failure journals the
+	// op Unknown, and without an observation every later post of the same
+	// comment was refused forever (hivecommons/hive#14011).
+	_, err := effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindIssueComment,
 		Target: strconv.Itoa(number),
 		Inputs: map[string]string{"body": effects.StableDigest(body)},
-	}, func(ctx context.Context) (effects.Result, error) {
-		comment, _, apiErr := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
-		return effects.Result{Provenance: comment.GetHTMLURL()}, issueWriteAPIErrorNotApplied(apiErr)
 	}, func(ctx context.Context) (effects.ExternalState, error) {
 		return c.observeIssueComment(ctx, owner, repoName, number, body)
+	}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
+		comment, _, apiErr := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
+		if apiErr != nil && isDefiniteIssueRefusal(apiErr) {
+			// A 403/404/410/422 means the comment was not posted; recording
+			// Unknown would fence the operation behind reconciliation.
+			return effects.Result{}, effects.NotApplied(apiErr)
+		}
+		return effects.Result{Provenance: comment.GetHTMLURL()}, apiErr
 	})
+	return err
+}
+
+// observeIssueComment is the authoritative observation of an issue comment
+// the mutation journal holds as unresolved: the earlier attempt applied when
+// the issue already carries a comment with the same body. Bodies are compared
+// like review bodies (line endings and surrounding whitespace normalised).
+func (c *Client) observeIssueComment(ctx context.Context, owner, repoName string, number int, body string) (effects.ExternalState, error) {
+	if c == nil || c.client == nil {
+		return effects.ExternalState{}, ErrNoGitHubClient
+	}
+	want := normalizeReviewBody(body)
+	if want == "" {
+		return effects.ExternalState{}, errors.New("comment has no body to match against")
+	}
+	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for {
+		comments, resp, err := c.client.Issues.ListComments(WithRESTCaller(ctx, "hive:reconcile_issue_comment"), owner, repoName, number, opts)
+		if err != nil {
+			return effects.ExternalState{}, err
+		}
+		for _, comment := range comments {
+			if normalizeReviewBody(comment.GetBody()) == want {
+				return effects.ExternalState{Applied: true, Provenance: comment.GetHTMLURL()}, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return effects.ExternalState{}, nil
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 // GetPRAuthor returns the current author login for an open PR.
@@ -2909,6 +2966,15 @@ func (c *Client) GetPRBody(ctx context.Context, repo string, number int) (string
 // auto-merge-on-green sweep. The approval body records who queued the PR so
 // the sweep can re-check the self-merge ban before it squashes anything.
 func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, queuedBy string) error {
+	return c.QueuePRAutoMergeWithNote(ctx, repo, number, queuedBy, "")
+}
+
+// QueuePRAutoMergeWithNote is QueuePRAutoMerge with an extra note appended
+// to the approval body after the queue line the sweep parses (the line is
+// anchored at the start, so the note never changes who the sweep sees as the
+// queuer). The dashboard's delegated decision uses it to carry the
+// owner-delegate audit marker on the review itself.
+func (c *Client) QueuePRAutoMergeWithNote(ctx context.Context, repo string, number int, queuedBy, note string) error {
 	if c == nil {
 		return ErrNoGitHubClient
 	}
@@ -2939,6 +3005,9 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		return fmt.Errorf("ensuring %s label: %w", label, err)
 	}
 	body := fmt.Sprintf("Approved by @%s for Hive auto-merge on green CI.", queuedBy)
+	if note = strings.TrimSpace(note); note != "" {
+		body += "\n\n" + note
+	}
 	provenance := owner + "/" + repoName + "#" + strconv.Itoa(number)
 	_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repoName,
@@ -4402,19 +4471,21 @@ func (c *Client) IsHeldLabels(labels []string) bool {
 
 // RecordPRMergedAudit records the standard PR-merged audit event. path names
 // the code path that performed the merge (PRAuditPathSweep, PRAuditPathQueue,
-// PRAuditPathRelay).
+// PRAuditPathRelay, PRAuditPathForge).
 func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path string) {
 	if c == nil {
 		return
 	}
+	credit := c.takeMergeCredit(repo, number)
+	extra := []string{"method", method, "sha", sha, "path", path}
+	if logins := mergeCreditLogins(credit); logins != "" {
+		extra = append(extra, "issue_authors", logins)
+	}
 	c.recordWriteAudit(AuditActionPRMerged, InvocationMeta{Agent: AttributionAgentGovernor},
-		WriteTarget{Repo: repo, Number: number},
-		"method", method,
-		"sha", sha,
-		"path", path)
+		WriteTarget{Repo: repo, Number: number}, extra...)
 	// Every merge path ends here, so this is where the merged head's evidence
 	// bundle gains its merge event and the PR gets its evidence pointer.
-	c.recordReviewEvidenceMerge(repo, number, method, sha, path)
+	c.recordReviewEvidenceMerge(repo, number, method, sha, path, credit.Logins())
 	// A successful App merge on any path proves the repo is mergeable, so
 	// retire its "merge blocked" alerts (#11924).
 	c.clearMergeFailureAlertsForRepo(repo)

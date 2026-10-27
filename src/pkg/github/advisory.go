@@ -13,9 +13,9 @@ import (
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
-	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (

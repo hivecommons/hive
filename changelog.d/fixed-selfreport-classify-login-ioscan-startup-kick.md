@@ -1,0 +1,2 @@
+- Classify the login-required, ioscan classifier fail-closed and startup-kick-dropped WARNs as named fleet-report classes instead of `unclassified_error_repeated` (#14262, #14263, #14266)
+- Classify transient GitHub-fetch, label-provisioning and agent-CLI restart-loop WARNs as named fleet-report classes (`github_fetch_transient`, `label_provisioning_failed`, `agent_cli_restart_loop`), report `ioscan_classifier_unavailable` on first observation, and tighten the `agent_pane_timeout` keywords (#14258, #14259, #14260, #14277, #14278, #14286)

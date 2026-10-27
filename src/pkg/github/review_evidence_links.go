@@ -115,7 +115,7 @@ func (c *Client) addReviewEvidenceBacklink(id, from string, revert bool, key ed2
 		return
 	}
 	path := ReviewEvidencePath("", repo, number, head)
-	b, err := LoadReviewEvidence(path)
+	b, err := LoadVerifiedReviewEvidence(path, reviewEvidenceVerifierForKey(key))
 	if err != nil {
 		c.logger.Warn("review evidence: linked bundle unreadable, back-link not written",
 			slog.String("path", path), slog.String("error", err.Error()))

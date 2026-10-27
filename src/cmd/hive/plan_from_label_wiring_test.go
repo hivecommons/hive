@@ -3,7 +3,9 @@ package main
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -36,7 +38,7 @@ func planLabeledIssue(number int, labels ...string) github.Issue {
 func TestPlanFromLabeledIssuesGatedBelowPlanningLevel(t *testing.T) {
 	store := newPlanTestStore(t)
 	stores := map[string]*beads.Store{planning.ArchitectAgentName: store}
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, restoreTestLogger(), crux.ProjectContext{})
 	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
 		planLabeledIssue(1, "hive-plan"),
 	}}}
@@ -60,7 +62,7 @@ func TestPlanFromLabeledIssuesRoutesToArchitectStore(t *testing.T) {
 		planning.ArchitectAgentName: architectStore,
 		"scanner":                   otherStore,
 	}
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, restoreTestLogger(), crux.ProjectContext{})
 	actionable := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
 		planLabeledIssue(1, "hive-plan"),
 		planLabeledIssue(2, "kind/bug"),
@@ -82,7 +84,7 @@ func TestPlanFromLabeledIssuesRoutesToArchitectStore(t *testing.T) {
 // runs this every tick, including before the first GitHub pass and on hives
 // with no bead stores at all.
 func TestPlanFromLabeledIssuesNilInputs(t *testing.T) {
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, restoreTestLogger(), crux.ProjectContext{})
 	planFromLabeledIssues(nil, map[string]*beads.Store{}, mgr, nil, nil, restoreTestLogger(), planLabelTestConfig(),
 		planning.PlanningMinACMMLevel)
 	planFromLabeledIssues(&github.ActionableResult{}, nil, mgr, nil, nil, restoreTestLogger(), planLabelTestConfig(),
@@ -98,7 +100,7 @@ func TestPlanFromLabeledIssuesNilInputs(t *testing.T) {
 func TestPlanFromLabeledIssuesDoesNotCorruptActionableItemsWithSpektacular(t *testing.T) {
 	store := newPlanTestStore(t)
 	stores := map[string]*beads.Store{planning.ArchitectAgentName: store}
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, restoreTestLogger(), crux.ProjectContext{})
 	dashSrv := dashboard.NewServer(0, restoreTestLogger())
 
 	original := []github.Issue{

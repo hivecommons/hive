@@ -21,13 +21,13 @@ re-read-then-write `Enforce` that heals duplicate stage pills
 records transitions, regressions and history hops
 (`src/pkg/stagelabels/store.go:397`, `IsRegression` at
 `src/pkg/stagelabels/store.go:540`). The dashboard activity tracker and the
-hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:584-588`).
+hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:957-962`).
 
 **What is not central — three gaps.**
 
 1. *Two derivation engines.* Issues are staged by `IssueStageFor` /
-   `SyncIssueStageLabels` (`src/pkg/github/issue_stage_labels.go:145`,
-   `src/pkg/github/issue_stage_labels.go:233`) from the enumeration bucket. PRs
+   `SyncIssueStageLabels` (`src/pkg/github/issue_stage_labels.go:205`,
+   `src/pkg/github/issue_stage_labels.go:337`) from the enumeration bucket. PRs
    are staged by the automerge engine: each lane calls `recordStage`
    (`src/pkg/github/automerge/automerge_stage_labels.go:365`), observations are
    sorted by `stageLanePrecedence` (self 3 > trusted 2 > contributor 1,
@@ -36,7 +36,7 @@ hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:584-58
    into a ranked opinion (`prstage.RankNone..prstage.RankOwned`,
    `src/pkg/stageengine/prstage/types.go:145-148`), and
    `ResolveStage` picks the winner
-   (`src/pkg/stageengine/derive_pr_classify.go:459`). These PR helpers now
+   (`src/pkg/stageengine/derive_pr_classify.go:454`). These PR helpers now
    live in the engine (#13779); automerge keeps only gathering-side previews. Shared concepts —
    parking (045/085, `needs-human`, hold labels), author kind (070/071/072),
    adoption (074), terminal states, `origin/*` — are modelled twice with
@@ -52,7 +52,7 @@ hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:584-58
    the issue path uses `Client.StageLabeler` + `Enforce`
    (`src/pkg/github/stage_labeler.go:63`); the claim relay and ledger hooks
    write `stage/020` / `stage/030` directly as a side effect of a claim
-   (`src/cmd/hive/claimswire.go:196-201`, `src/cmd/hive/claimswire.go:158-171`,
+   (`src/cmd/hive/claimswire.go:236-238`, `src/cmd/hive/claimswire.go:176-178`,
    `src/pkg/github/issue_inprogress.go:126-141`, `src/pkg/github/issue_inprogress.go:186`,
    `src/pkg/github/stage_labeler.go:114`); the PR-claim sync writes 040
    (`src/pkg/github/prclaims.go:1777`, `src/pkg/github/prclaims.go:2037`) and so

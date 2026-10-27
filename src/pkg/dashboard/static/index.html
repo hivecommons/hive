@@ -1291,6 +1291,14 @@
     .agent-now .an-lead { font-weight: 600; color: var(--text); }
     .agent-now.outdated { color: var(--yellow); }
     .oc-agent-detail .agent-now { text-align: left; }
+    /* Live per-run line (#14576): $cost · tokens · elapsed · tests · files. */
+    .oc-run-line { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); font-variant-numeric: tabular-nums; }
+    .oc-run-line .rl-cost { font-weight: 600; color: var(--text); }
+    .oc-run-line .rl-tests.pass { color: var(--green); }
+    .oc-run-line .rl-tests.fail { color: var(--red); }
+    .oc-run-line .rl-sep { opacity: 0.5; }
+    .oc-agent-detail .oc-run-line { justify-content: flex-start; }
+    .oc-agent-detail-header .oc-run-line { margin-top: var(--sp-0); margin-left: auto; }
     /* Agent activity section (#10935): one row per agent. */
     .agent-activity-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
     .agent-activity-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
@@ -1352,6 +1360,7 @@
     .ham-meta:empty { display: none; }
     .ham-meta .ham-count { color: var(--muted); }
     .ham-meta .ham-updated.ham-stale { color: var(--amber); }
+    .ham-meta .ham-updated .ham-poll-failing { font-weight: 600; }
     .ham-engine { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--font-mono); }
     .ham-engine > span { padding: 0 var(--sp-1); border: var(--line-width) solid var(--line-subtle); border-radius: var(--radius-sm); }
     .ham-engine .ham-engine-mode { color: var(--muted); }
@@ -1388,6 +1397,7 @@
     .ham-head-main { display: flex; flex: 1; align-items: flex-start; gap: var(--sp-3); min-width: 0; }
     .ham-pr-ref { display: inline-flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; max-width: 100%; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
     .ham-pr-ref:hover { color: var(--text); }
+    .ham-linked-ico { color: var(--text-faint); font-size: var(--fs-xs); margin-right: var(--sp-1); }
     .ham-pr-ref:hover .ham-pr-num { text-decoration: underline; }
     .ham-pr-num { flex: 0 0 auto; white-space: nowrap; }
     .ham-pr-title { min-width: 0; white-space: normal; overflow-wrap: anywhere; color: var(--text-faint); }
@@ -1451,6 +1461,8 @@
     .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+    /* A regression the hive is already working through: muted, never red. */
+    .ham-badge-mod.ham-mod-regressed.ham-mod-handled { color: var(--text-muted); border-color: var(--line-subtle); border-style: dashed; }
     .ham-badge-mod.ham-mod-needs-triage { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
     .ham-badge.ham-finisher-person { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
     .ham-badge-mod.ham-mod-possible-dupe { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 45%, transparent); }
@@ -1487,6 +1499,9 @@
     .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
     .ham-seg.active.ham-open-hold { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
+    .ham-seg.active.ham-open-blocked { background: var(--yellow); color: var(--surface-0); }
+    .ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔'; margin-right: var(--sp-1); }
+    .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
     .ham-active-ico { display: none; }
@@ -2088,6 +2103,29 @@
     .ev-flow h5 { margin:var(--sp-2) 0 0; font-size:var(--fs-2xs); color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
+    /* Compact tables inside a panel (issue reopen rate, control arm): the
+       panel's own font scale, nowrap headers, overflow contained in the wrap
+       so a wide table scrolls instead of bleeding into the next panel. */
+    .ev-table-wrap { margin-top:var(--sp-2); max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; }
+    .ev-table { width:100%; border-collapse:collapse; font-size:var(--fs-2xs); font-variant-numeric:tabular-nums; }
+    .ev-table th, .ev-table td { padding:var(--sp-1) var(--sp-2); text-align:right; border-top:1px solid var(--border); white-space:nowrap; }
+    .ev-table th { color:var(--muted); font-size:var(--fs-2xs); font-weight:600; border-top:none; }
+    .ev-table th:first-child, .ev-table td:first-child { text-align:left; padding-left:0; }
+    .ev-table th:last-child, .ev-table td:last-child { padding-right:0; }
+    /* Issue opens : PR merges rows reuse .ev-table; the fleet total row and
+       the per-repo bar cell are the only additions. */
+    .ev-table tr.ev-om-total td { font-weight:600; color:var(--text); }
+    .ev-om-barcell { width:28%; }
+    .ev-om-bar { display:block; width:100%; height:6px; }
+    .ev-om-bar rect { fill:var(--green); }
+    .ev-om-bar rect.ev-om-above { fill:var(--red); }
+    .ev-om-bar rect.ev-om-below { fill:var(--amber); }
+    .ev-om-bar rect.ev-om-no_data { fill:var(--muted); opacity:.4; }
+    .ev-om-headline.ev-om-above b { color:var(--red); }
+    .ev-om-headline.ev-om-below b { color:var(--amber); }
+    .ev-svg .ev-om-band { fill:var(--green); opacity:.12; }
+    .ev-svg .ev-om-parity { stroke:var(--muted); stroke-dasharray:2 2; }
+    .ev-legend i.ev-om-band-key { background:var(--green); opacity:.3; }
     /* Evidence window pills (24h · 7d · 30d · custom) and the inline custom
        from/to row that opens under the head when "custom" is active. */
     .ev-window-controls { margin-left:auto; }
@@ -4979,6 +5017,7 @@
     .audit-filter-chip[aria-pressed="false"] { border-color: var(--line-subtle); background: color-mix(in srgb, var(--surface-2) 70%, transparent); color: var(--muted); }
     .audit-entry-sensitive { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--yellow) 72%, transparent); background: color-mix(in srgb, var(--yellow) 7%, transparent); }
     .audit-entry-sensitive-tag { display: inline-flex; align-items: center; margin-left: var(--sp-2); padding: 0 var(--sp-2); min-height: 16px; border: 1px solid color-mix(in srgb, var(--yellow) 48%, transparent); border-radius: var(--r-pill); background: color-mix(in srgb, var(--yellow) 13%, transparent); color: var(--yellow); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: middle; }
+    .audit-entry-delegated-tag { border-color: color-mix(in srgb, var(--accent) 48%, transparent); background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); }
     .dash-card .section-label, .dash-card .token-title, .dash-card .cost-title, .dash-card .gov-title { margin: 0; }
     .section-group-header {
       font-size: var(--fs-sm); border-bottom: 1px solid var(--border);
@@ -7135,7 +7174,7 @@
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="approvals-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Approvals section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> ✋ Approvals <span id="approvals-badge" title="Pending operator approvals" style="display:none;font-size:var(--fs-2xs);font-weight:600;vertical-align:middle;padding:var(--sp-1) var(--sp-3);border-radius:var(--r-pill);margin-left:var(--sp-3);background:color-mix(in srgb, var(--yellow) 25%, transparent);color:var(--text)">0</span></h2>
     <div class="section-body">
       <div id="approvals-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">
-        <!-- Policy-bug banner: an inbox accumulating on a full-autonomy hive is
+        <!-- Policy-bug banner: an inbox accumulating on an L6 (Autonomous) hive is
              a misconfiguration signal, not a normal wait (#4000 requirement 4). -->
         <div id="approvals-policy-bug" style="display:none;margin-bottom:10px;padding:8px 10px;border-radius:var(--r);background:color-mix(in srgb, var(--red) 12%, transparent);border:1px solid color-mix(in srgb, var(--red) 40%, transparent);font-size:var(--fs-sm)"></div>
         <div id="approvals-chips" style="display:flex;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:10px;font-size:0.72rem"></div>
@@ -7306,7 +7345,7 @@
         <input id="activity-monitor-q" class="ham-input" type="search" placeholder="Search # or title…" autocomplete="off" spellcheck="false" aria-label="Search by number or title" data-input-action="hamFilter" data-arg0="q" data-arg-types="s,w">
         <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
-        <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, regressed, held, needs-human, needs-decision, needs-rebase, blocked, or on 045 / 071 / 072 / 085 / 090">Needs attention</button>
+        <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person">Needs attention</button>
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option><option value="finisher" title="Rows Hive can finish on its own first, then rows waiting on someone else, then rows that need a person. Reverse the direction for rows that need a person first.">Hive end to end first</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
         <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
@@ -7413,7 +7452,7 @@
             <li><strong>L3 — Quality-Gated (Measured):</strong> quality may open hold-gated test/CI PRs; ci-maintainer watches build health. The reviewer agent works the hold-gated PR queue every 30 minutes and comments for the human who lifts the hold; it never approves or merges.</li>
             <li><strong>L4 — Security-Aware (Adaptive):</strong> sec-check joins; delivery agents may file issues; only quality, sec-check, and ci-maintainer may open hold-gated PRs. The reviewer agent works the hold-gated PR queue every 30 minutes and comments for the human who lifts the hold; it never approves or merges.</li>
             <li><strong>L5 — Semi-Autonomous:</strong> most lanes may open issues and hold-gated PRs; humans batch-review and remove holds. The reviewer keeps working the queue every 30 minutes; adjudicator and dedupe join and recommend, never merge or close.</li>
-            <li><strong>L6 — Fully Autonomous:</strong> eligible App-authored PRs auto-merge when checks pass. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos afterward. The reviewer still never merges — and its <code>requires_human</code> / <code>reject</code> verdicts do <em>not</em> stop the App auto-merge sweep; use a <code>hold</code> label or a GitHub branch rule when merging must stop.</li>
+            <li><strong>L6 — Autonomous:</strong> eligible App-authored PRs auto-merge when checks pass. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos afterward. The reviewer still never merges — and its <code>requires_human</code> / <code>reject</code> verdicts do <em>not</em> stop the App auto-merge sweep; use a <code>hold</code> label or a GitHub branch rule when merging must stop.</li>
           </ul>
           <p>Promotion adds agents and capability; demotion narrows them again. Hive removes only level-owned holds when the level no longer calls for them — a hold you applied is never removed automatically. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/running-at-level-6.md#does-the-hive-reviewer-stop-a-merge" target="_blank" rel="noopener noreferrer">Running at Level 6</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>.</p>
         </details>
@@ -9036,7 +9075,7 @@
     function acmmCollapsedLevelLabel(level) {
       if (!Number.isFinite(level) || level <= 0) return 'not yet evaluated';
       if (typeof acmmLevelLabel === 'function') return acmmLevelLabel(level).replace(' ', ' · ');
-      const levelNames = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
+      const levelNames = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Autonomous'};
       return `L${level}${levelNames[level] ? ' · ' + levelNames[level] : ''}`;
     }
     function acmmCollapsedGapDetail(data, level, dims, total, met) {
@@ -11067,6 +11106,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="gov-metric"><span class="gm-label">actionable</span><span class="gm-val">${govActionable}</span></div>
           <div class="gov-metric"><span class="gm-label">PRs</span><span class="gm-val">${govPrs}</span></div>
           <div class="gov-metric"><span class="gm-label">MTTR</span><span class="gm-val">${formatFixTime(itmMedian)}</span></div>
+          ${fleetRunStripHtml()}
           <div class="gov-metric" title="${esc((window._lastStatus?.hold?.items || []).map(h => (h.type === 'pr' ? 'PR' : 'Issue') + ' ' + h.repo + '#' + h.number + (h.review_class ? ' [' + h.review_class + ']' : '') + ': ' + h.title).join('\n') || 'No items on hold')}"><span class="gm-label">on hold</span><span class="gm-val">${window._lastStatus?.hold?.total || 0}</span></div>
           ${standbyPauseFactsHtml(gov)}
           ${(() => {
@@ -11134,6 +11174,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="oc-agent-detail-header">
           <span class="status-dot ${dotState}" data-status="${statusAttr(dotState)}"${dotTitle ? ` title="${esc(dotTitle)}"` : ''}></span>
           <span class="agent-name-big">${esc(a.displayName || a.name)}</span>${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${needsLoginDown ? '<span title="CLI needs login" style="margin-left:var(--sp-3)">\uD83D\uDD11</span>' : ''}
+          ${agentRunLineHtml(a)}
           <span style="font-size:0.78rem;color:var(--muted);margin-left:auto">${stateLabel}${pauseInfoIcon(a)}</span>
         </div>
         <div class="oc-detail-actions">
@@ -13873,6 +13914,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return agentNowLineHtml(a, agentNowStateOf(a), agentNowContext(Date.now()));
     }
 
+    // Live per-run line (#14576): "$0.42 · 38.1K tok · 4m 12s · tests ✓ · 3 files".
+    // Rendered only while /api/status carries agents[].run (busy agents), from
+    // the per-agent cumulative figures the token collector already keeps; the
+    // server reports the delta since the kick's BusySince, so a reload does not
+    // reset it. Missing signals render as "–" rather than a guess.
+    const RUN_LINE_HELP = 'Live figures for the kick in progress: estimated cost and tokens since the kick started (token × list price, same basis as the Cost section), elapsed time, the last test-runner result visible in the transcript, and the last "N files changed" git summary. "–" means not observed yet.';
+    function fmtRunElapsed(sec) {
+      sec = Math.max(0, Math.floor(Number(sec) || 0));
+      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+      if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+      if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
+      return `${s}s`;
+    }
+    function agentRunLineHtml(a) {
+      const r = a && a.run;
+      if (!r) return '';
+      const sep = '<span class="rl-sep">·</span>';
+      const cost = r.priced ? fmtUSD(r.costUSD || 0) : '$–';
+      const toks = r.priced ? `${fmtTokens(r.tokens || 0)} tok` : '– tok';
+      const tests = r.tests === 'pass' ? '<span class="rl-tests pass">tests ✓</span>'
+        : r.tests === 'fail' ? '<span class="rl-tests fail">tests ✗</span>'
+        : '<span class="rl-tests">tests –</span>';
+      const files = (typeof r.filesChanged === 'number' && r.filesChanged >= 0)
+        ? `${r.filesChanged} file${r.filesChanged === 1 ? '' : 's'}` : '– files';
+      return `<div class="oc-run-line" data-agent-run="${esc(a.name)}" title="${esc(RUN_LINE_HELP)}"><span class="rl-cost">${cost}</span>${sep}<span class="rl-tokens">${toks}</span>${sep}<span class="rl-elapsed">${fmtRunElapsed(r.elapsedS)}</span>${sep}${tests}${sep}<span class="rl-files">${files}</span></div>`;
+    }
+    function fleetRunStripHtml() {
+      const f = window._lastStatus?.fleetRun;
+      if (!f) return '';
+      const hour = f.hourPriced ? fmtUSD(f.hourUSD || 0) : '$–';
+      return `<div class="gov-metric" title="Agents mid-kick right now · estimated spend accrued by the whole fleet in the current clock hour (token × list price)"><span class="gm-label">running</span><span class="gm-val" id="oc-fleet-run">${f.running || 0} · ${hour} this hour</span></div>`;
+    }
+
     // Repaints every "Now:" line in place so "ago" keeps counting up (and
     // turns into "information may be out of date") without new data.
     function refreshAgentNowLines() {
@@ -13999,6 +14073,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MERGE_COLUMN = 80;
     const STAGE_TRACKER_NEEDS_DECISION = 85;
     const STAGE_TRACKER_ISSUE_NEEDS_DECISION = 45;
+    // 090 under a manual-merge lane rule (payload manual_merge: CI workflow /
+    // action edits, removed tests, a human-merge path): the hive never merges
+    // it itself, so the lit chevron says what is actually owed — the
+    // maintainer's merge click — and names who already approved the head
+    // (payload human_approver) instead of the generic stage word.
+    const STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90;
+    const STAGE_TRACKER_MANUAL_MERGE_WORD = 'Awaiting human merge';
+    function stageTrackerManualMergeWord(item) {
+      const approver = String((item && item.human_approver) || '').trim();
+      return STAGE_TRACKER_MANUAL_MERGE_WORD + (approver ? ' · approved by @' + approver : '');
+    }
     // Issue-slot placeholders for a closing reference whose title the server
     // could not resolve (the issue is closed and unreadable, or of unknown state).
     const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';
@@ -14082,6 +14167,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTracker = null;
     var _stageTrackerSig = '';
     var _stageTrackerEtag = '';
+    // Last poll outcome: '' while polls succeed, else a short reason ('HTTP
+    // 504', 'unreachable'). Without it a payload that was "fresh" when it
+    // arrived keeps saying so while every later poll fails — the operator
+    // reads "updated 8m ago · fresh" and cannot tell a quiet hive from a
+    // dashboard that has lost the server (#14416).
+    var _stageTrackerPollError = '';
+    var _stageTrackerPollErrorSince = 0;
     // Filter / sort / paging state. Everything but the page survives a reload
     // (localStorage, like the Review window) so a maintainer's view sticks.
     const STAGE_TRACKER_FILTER_KEY = 'hive-activity-monitor-filter';
@@ -14130,8 +14222,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const holdLabels = stageTrackerHoldLabels(item);
       if (mods.indexOf('stalled') >= 0) return 'Stalled';
-      if (mods.indexOf('regressed') >= 0) return 'Sent back';
+      if (mods.indexOf('regressed') >= 0 && !stageTrackerRegressionHandled(item)) return 'Sent back';
       if (n === 0 && mods.indexOf('hold') >= 0) return 'Open · on hold' + (holdLabels.length ? ' (' + holdLabels.join(', ') + ')' : '');
+      if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
       const viaPR = item.kind === 'issue' && n >= 50 && (n !== 85 || item.via_pr) ? ' (its PR)' : '';
@@ -14177,6 +14270,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
     }
 
+    // The Open · blocked chevron's reason: the blocker when the payload names
+    // one (`blocked_on`: "owner/repo#N" or a list of them), else the label.
+    function stageTrackerBlockedTip(item) {
+      const on = item && item.blocked_on;
+      const refs = (Array.isArray(on) ? on : (on ? [on] : [])).map(r => String(r || '').trim()).filter(Boolean);
+      return refs.length ? 'blocked on ' + refs.join(', ') : 'carries the blocked label';
+    }
+
     // "Sentinel flagged security-relevant changes at <head short sha>:
     // <reason>" — the sentinel wording for an item's tooltips and aria
     // labels; '' when the item carries no alert. Without a reason or a
@@ -14215,7 +14316,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Segment list for one item: path segments with done/active state plus a
     // detour badge when the item sits on a side stage, and the merged end-cap.
-    function stageTrackerSegments(item, stages) {
+    function stageTrackerSegments(item, stages, nowMs) {
       const byNum = {};
       (stages || []).forEach(st => { byNum[st.number] = st; });
       const cur = Number(item.stage) || 0;
@@ -14224,7 +14325,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur)), sentinel: sentinelLane } : null;
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
@@ -14233,9 +14334,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // The lit column's tooltip names the real stage (030 vs 040, 060 vs 080).
         const tipStage = (state === 'active' && !detour && curStage.label) ? curStage : st;
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
-        const openHold = n === 0 && state === 'active' && (Array.isArray(item.modifiers) ? item.modifiers : []).indexOf('hold') >= 0;
+        const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+        const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
+        // hold is a human instruction, so it wins over blocked when both are present.
+        const openBlocked = n === 0 && state === 'active' && !openHold && mods.indexOf('blocked') >= 0;
         if (openHold) word = 'Open · hold';
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold };
+        else if (openBlocked) word = 'Open · blocked';
+        // A plain or blocked Open step (no stage label, not held) says how
+        // long it has sat there, from the same instant the since column
+        // shows — a stale blocked item is exactly what should stand out.
+        let openSince = null;
+        if (n === 0 && state === 'active' && !openHold && !detour && nowMs) {
+          const os = stageTrackerOpenSince(item);
+          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
+        }
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;
@@ -14293,6 +14406,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return role;
     }
 
+    // An Open item is tinted stale once it has sat unlabelled this long.
+    const STAGE_TRACKER_OPEN_STALE_DAYS = 2;
+    // When an item entered its current (Open) state: the payload's
+    // stage_since — the value the since column draws — else the time it was
+    // opened. fromCreated marks the fallback so the tooltip can say so.
+    function stageTrackerOpenSince(item) {
+      const since = Date.parse((item && item.stage_since) || '');
+      if (since) return { ms: since, fromCreated: false };
+      const created = Date.parse((item && item.created_at) || '');
+      return { ms: created || 0, fromCreated: !!created };
+    }
+
     function stageTrackerShortAgo(ms) {
       const sec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
       if (sec < 60) return 'now';
@@ -14319,8 +14444,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // columns outside it are invisible spacers that keep the grid aligned.
     // Only the active chevron carries hover text (stage name, description,
     // whose move it is); passed and upcoming chevrons have none.
-    function stageTrackerStripItems(item, stages, range) {
-      const segs = stageTrackerSegments(item, stages);
+    function stageTrackerStripItems(item, stages, range, nowMs) {
+      const segs = stageTrackerSegments(item, stages, nowMs);
       const curStage = Number(item.stage) || 0;
       const from = range && range.from != null ? range.from : -Infinity;
       const to = range && range.to != null ? range.to : Infinity;
@@ -14332,11 +14457,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         if (active) {
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
+          if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
+          if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
           if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
@@ -14356,8 +14483,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Compact strips retain their column alignment; the current step gets a
     // full-width caption so detours and the next actor never need a hover.
-    function stageTrackerCurrentStageHtml(item, stages, range) {
-      const active = stageTrackerSegments(item, stages).find(sg => sg.state === 'active'
+    function stageTrackerCurrentStageHtml(item, stages, range, nowMs) {
+      const active = stageTrackerSegments(item, stages, nowMs).find(sg => sg.state === 'active'
         && (!range || range.from == null || sg.number >= range.from)
         && (!range || range.to == null || sg.number <= range.to));
       if (!active) return '';
@@ -14376,9 +14503,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return st && (st.short || st.label) ? code + ' ' + (st.short || st.label) : code;
     }
 
+    // Modifiers that park an item on a person. A regression on a row that
+    // carries none of these and sits on a hive-driven stage is the hive's
+    // to work through, so the dashboard must not dress it as a human call.
+    const STAGE_TRACKER_HUMAN_MODS = ['hold', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'stalled'];
+    const STAGE_TRACKER_HANDLED_TEXT = 'stage ↓';
+    const STAGE_TRACKER_HANDLED_NOTE = 'the hive is handling it — no action needed; clears on the next forward step';
+
+    // True when the item is regressed but nothing about it waits on a
+    // person: no human-gate modifier and not on a human-gated stage. Such a
+    // row gets a muted "stage ↓" pill and stays out of "Needs attention".
+    function stageTrackerRegressionHandled(item) {
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (mods.indexOf('regressed') < 0) return false;
+      if (mods.some(m => STAGE_TRACKER_HUMAN_MODS.indexOf(m) >= 0)) return false;
+      return STAGE_TRACKER_ATTENTION_STAGES.indexOf(Number(item.stage) || 0) < 0;
+    }
+
     // The regressed pill's explanation: which stage the item fell from and
     // to, when, and the reason recorded with the fall — so "regressed" never
     // needs a trip to the store to read. '' when the item is not regressed.
+    // A hive-handled regression adds the note that nobody needs to act.
     function stageTrackerRegressionText(item, nowMs) {
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const from = Number(item.regressed_from) || 0;
@@ -14390,6 +14535,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!isNaN(atMs)) text += ' at ' + agentNowClockTime(atMs, nowMs || Date.now());
       if (item.regressed_reason) text += ' because ' + String(item.regressed_reason);
       if (cur && cur !== to) text += ' · now ' + stageTrackerStageWord(cur);
+      if (stageTrackerRegressionHandled(item)) text += ' · ' + STAGE_TRACKER_HANDLED_NOTE;
       return text;
     }
 
@@ -14438,14 +14584,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
-      let text = STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' ');
+      // A regression the hive is working through yields the lead pill to any
+      // other modifier and, alone, draws muted as "stage ↓" rather than red.
+      const handled = stageTrackerRegressionHandled(item);
+      if (handled && mods.length > 1) mods.push(mods.shift());
+      let text = handled && mods[0] === 'regressed' ? STAGE_TRACKER_HANDLED_TEXT : (STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '));
       // A blocked row with a hive:recheck-after deadline ("blocked until <RFC3339>") names when the sweep re-checks it.
       const recheck = mods[0] === 'blocked' ? /^blocked until (\S+)/i.exec(String(item.bucket_reason || '')) : null;
       const recheckMs = recheck ? Date.parse(recheck[1]) : NaN;
       if (!isNaN(recheckMs)) text += ' · re-check at ' + agentNowClockTime(recheckMs, Date.now());
       // The regressed pill (lead or folded into "+1") explains itself on hover.
       const regressed = stageTrackerRegressionText(item, Date.now());
-      return sentinel + `<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}"${regressed ? ` title="${esc(regressed)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
+      const cls = 'ham-mod-' + mods[0] + (handled && mods[0] === 'regressed' ? ' ham-mod-handled' : '');
+      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${regressed ? ` title="${esc(regressed)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
     }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
@@ -14458,10 +14609,42 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
-      const sinceMs = Date.parse(item.stage_since || '');
-      const stalled = (Array.isArray(item.modifiers) ? item.modifiers : []).indexOf('stalled') >= 0;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      let sinceMs = Date.parse(item.stage_since || '');
+      // A blocked row without stage_since still shows its age, from created_at.
+      if (!sinceMs && mods.indexOf('blocked') >= 0) sinceMs = stageTrackerOpenSince(item).ms;
+      const stalled = mods.indexOf('stalled') >= 0;
       return `<span class="ham-since${stalled ? ' ham-stalled' : ''}">${esc(sinceMs ? stageTrackerShortAgo(nowMs - sinceMs) : '')}</span>`;
     }
+
+    const STAGE_TRACKER_LINKED_TIP = "linked PR, shown on its issue's row";
+    // Issue numbers that list each covering PR, by "repo#pr", for the PRs
+    // listed by more than one open issue (so a row can say "also under #N").
+    function stageTrackerSharedPRs(items) {
+      const by = {};
+      (items || []).forEach(it => {
+        if (!it || it.kind !== 'issue') return;
+        (Array.isArray(it.linked_prs) ? it.linked_prs : []).forEach(lp => {
+          const k = (it.repo || '') + '#' + (Number(lp.number) || 0);
+          (by[k] = by[k] || []).push(Number(it.number) || 0);
+        });
+      });
+      const out = {};
+      Object.keys(by).forEach(k => { if (by[k].length > 1) out[k] = by[k].slice().sort((a, b) => a - b); });
+      return out;
+    }
+    // Hover text for a PR drawn on its issue's row (it rides the PR link:
+    // the row's hover budget allows no other titled element). Every row but
+    // the lowest-numbered issue listing the PR also names where else it shows.
+    function stageTrackerLinkedTip(issue, prNumber, ctx) {
+      const all = (ctx && ctx.sharedPRs && ctx.sharedPRs[(issue.repo || '') + '#' + (Number(prNumber) || 0)]) || [];
+      const others = all.filter(n => n !== Number(issue.number));
+      const also = others.length && all[0] !== Number(issue.number) ? ' · also under #' + others.join(', #') : '';
+      return STAGE_TRACKER_LINKED_TIP + also;
+    }
+    // "↳" ahead of such a PR, so the shared row is recognisable as the PR's
+    // place in the list (aria-label only; no title of its own).
+    const STAGE_TRACKER_LINKED_GLYPH = '<span class="ham-linked-ico" aria-label="linked PR">↳</span>';
 
     // A covering PR nested under its issue: "[author icon] #N title" at the
     // PR column, then the PR's own strip from PR in progress onwards. The
@@ -14471,10 +14654,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '',
         finisher: lp.finisher || '', finisher_verb: lp.finisher_verb || '', finisher_reason: lp.finisher_reason || '' };
-      let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
+      let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       ref += stageTrackerBaseRefBadge(lp);
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
+      ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
@@ -14645,7 +14829,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
-          prRefs = [stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title) + stageTrackerBaseRefBadge(lp)];
+          const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + stageTrackerBaseRefBadge(lp)];
           // Who finishes the row is the PR's answer once the PR has one.
           const fin = lp.finisher ? lp : item;
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason,
@@ -14696,9 +14881,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}
         </div>
         <div class="ham-strip-row">
-          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range)}</ol>
+          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs)}</ol>
           <span class="ham-since"></span>
-        </div>${stageTrackerCurrentStageHtml(shown, stages, range)}${subs}
+        </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${subs}
       </div>`;
     }
 
@@ -15123,6 +15308,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerNeedsAttention(item) {
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const n = Number(item.stage) || 0;
+      if (stageTrackerRegressionHandled(item)) return false;
       return mods.length > 0 || STAGE_TRACKER_ATTENTION_STAGES.indexOf(n) >= 0;
     }
 
@@ -15256,6 +15442,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return rank(item && item.finisher);
     }
 
+    // The canonical tracker count (owner): rows of the default view — every
+    // item on its own row except a PR drawn on a listed issue's row.
+    function stageTrackerRowCount(items, ctx) {
+      return stageTrackerVisible(items, stageTrackerDefaultFilter(), ctx).length;
+    }
+
     // Order rows. 'furthest' is the strip order (furthest along first, then
     // longest on step); 'waiting' is longest wait first; 'newest' is most
     // recently opened first; 'number' is repo then number; 'finisher' is
@@ -15329,36 +15521,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // label facet model end
 
-    // "showing X–Y of N (M filtered out)" and the header's "N items · M need attention".
-    // With `open` ({issues, prs} — the payload's open_issues/open_prs, i.e. the
-    // canonical open-items set the Overview tile and its sidebar pill count) the
-    // header leads with "N items (I issues / P PRs)" so the three agree on the
-    // same number; the filtered row count follows when a filter is active.
+    // "showing X–Y of N (M filtered out)", the header's "N rows · M need
+    // attention" and the sidebar pill — all from one call, so they cannot
+    // disagree. The canonical count is ROWS (owner): allCount is the row
+    // count of the default view (a filter narrows page.total, never
+    // allCount), and the pill shows it. A covering PR is drawn on its
+    // issue's row rather than its own, so rows can sit below the payload's
+    // open items; `open` ({issues, prs}) lets the line footnote that gap
+    // ("2 PRs shown on their issue's row") instead of printing two totals.
     function stageTrackerCountsText(page, allCount, attention, open, attentionAll) {
       const filteredOut = Math.max(0, allCount - page.total);
       const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
       const attnText = n => n ? n + ' need' + (n === 1 ? 's' : '') + ' attention' : 'nothing needs attention';
       const attn = attnText(attention);
       const attnAll = attnText(Number.isFinite(Number(attentionAll)) ? Number(attentionAll) : attention);
+      const rowsWord = n => n === 1 ? 'row' : 'rows';
+      let note = '';
       if (open && Number.isFinite(Number(open.issues)) && Number.isFinite(Number(open.prs))) {
-        const issues = Number(open.issues), prs = Number(open.prs), total = issues + prs;
-        const lead = `${total} ${total === 1 ? 'item' : 'items'} (${issues} ${issues === 1 ? 'issue' : 'issues'} / ${prs} ${prs === 1 ? 'PR' : 'PRs'})`;
-        // Rows nest covering PRs under their issue, so the row count can be
-        // below the item count without any filter; say so rather than let
-        // "of N" look like a different total.
-        const nested = !filteredOut && allCount < total ? ` (${total - allCount} nested under ${total - allCount === 1 ? 'its issue' : 'their issues'})` : '';
-        return {
-          showing: showing + nested + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
-          header: lead + (filteredOut ? ` · ${page.total} match filters` : '') + ` · ${attn}`,
-          badge: total,
-          badgeTitle: `${lead} open · ${attnAll}`,
-        };
+        const shared = Math.max(0, Number(open.issues) + Number(open.prs) - allCount);
+        if (shared) note = `${shared} ${shared === 1 ? 'PR' : 'PRs'} shown on ${shared === 1 ? 'its' : 'their'} issue's row`;
       }
       return {
         showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
-        header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attn}`,
+        header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${rowsWord(page.total)} · ${attn}`,
         badge: allCount,
-        badgeTitle: `${allCount} ${allCount === 1 ? 'item' : 'items'} open · ${attnAll}`,
+        badgeTitle: `${allCount} ${rowsWord(allCount)} open · ${attnAll}` + (note ? ` · ${note}` : ''),
+        note,
       };
     }
 
@@ -15577,15 +15765,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // "updated 12s ago · cache" — re-stamped every STAGE_TRACKER_CLOCK_MS
-    // without a fetch; amber once the payload is older than two TTLs.
-    function stageTrackerUpdatedHtml(d, nowMs) {
+    // without a fetch; amber once the payload is older than two TTLs or
+    // once the poll itself is failing (pollError = short reason, '' = ok).
+    // A failing poll also demotes "fresh" to "cache": the payload was built
+    // for a request long gone, and the server has not answered since.
+    function stageTrackerUpdatedHtml(d, nowMs, pollError, pollErrorSinceMs) {
       const at = Date.parse((d && d.generated_at) || '') || 0;
       if (!at) return '';
       const ageMs = Math.max(0, nowMs - at);
       const ttlMs = (Number(d.cache_ttl_s) || 0) * 1000;
-      const stale = ttlMs > 0 && ageMs > 2 * ttlMs;
-      const src = d.source === 'fresh' ? 'built for this request' : 'from the server cache';
-      return `<span class="ham-updated${stale ? ' ham-stale' : ''}" title="${esc('Payload built ' + agentNowClockTime(at, nowMs) + ' ' + src + (ttlMs ? '; the server rebuilds it at most every ' + Math.round(ttlMs / 1000) + 's and makes no GitHub call per request' : ''))}">updated ${esc(stageTrackerShortAgo(ageMs) === 'now' ? Math.floor(ageMs / 1000) + 's' : stageTrackerShortAgo(ageMs))} ago · ${esc(d.source || 'cache')}</span>`;
+      const failing = !!pollError;
+      const stale = failing || (ttlMs > 0 && ageMs > 2 * ttlMs);
+      const source = failing ? 'cache' : (d.source || 'cache');
+      const src = source === 'fresh' ? 'built for this request' : 'from the server cache';
+      const failTip = failing ? '. Polling is failing (' + pollError + (pollErrorSinceMs ? ', since ' + agentNowClockTime(pollErrorSinceMs, nowMs) : '') + '): the dashboard keeps showing this payload until the server answers again' : '';
+      const failTag = failing ? ` · <span class="ham-poll-failing">poll failing (${esc(pollError)})</span>` : '';
+      return `<span class="ham-updated${stale ? ' ham-stale' : ''}" title="${esc('Payload built ' + agentNowClockTime(at, nowMs) + ' ' + src + (ttlMs ? '; the server rebuilds it at most every ' + Math.round(ttlMs / 1000) + 's and makes no GitHub call per request' : '') + failTip)}">updated ${esc(stageTrackerShortAgo(ageMs) === 'now' ? Math.floor(ageMs / 1000) + 's' : stageTrackerShortAgo(ageMs))} ago · ${esc(source)}${failTag}</span>`;
     }
     // The ADR-0025 central stage engine's status strip: mode and admission
     // anomalies (governor.labels.stage.engine.mode). Hover text on the
@@ -15604,8 +15799,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const el = document.querySelector('#activity-monitor-meta .ham-updated');
       if (!el || !_stageTracker) return;
       const wrap = document.createElement('span');
-      wrap.innerHTML = stageTrackerUpdatedHtml(_stageTracker, Date.now());
+      wrap.innerHTML = stageTrackerUpdatedHtml(_stageTracker, Date.now(), _stageTrackerPollError, _stageTrackerPollErrorSince);
       if (wrap.firstChild) el.replaceWith(wrap.firstChild);
+    }
+    function stageTrackerPollFailed(reason) {
+      if (!_stageTrackerPollError) _stageTrackerPollErrorSince = Date.now();
+      _stageTrackerPollError = reason;
+      stageTrackerTickClock();
+    }
+    function stageTrackerPollOk() {
+      _stageTrackerPollError = '';
+      _stageTrackerPollErrorSince = 0;
     }
 
     function renderStageTracker(data) {
@@ -15629,6 +15833,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerSyncToolbar(f);
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
       ctx.needsHumanLabels = stageTrackerNeedsHumanLabels(d);
+      ctx.sharedPRs = stageTrackerSharedPRs(d.items);
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
@@ -15641,14 +15846,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Attention is counted over the filtered set, nested PRs included.
       const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
       const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
-      // "N filtered out" counts against the unfiltered row list, so nesting
-      // a PR under its issue is not reported as a filter.
-      const allRows = stageTrackerFilterActive(f) ? stageTrackerVisible(d.items, Object.assign(stageTrackerDefaultFilter(), { kind: f.kind === 'pr' ? 'pr' : 'all' }), ctx).length : visible.length;
+      // "N filtered out" and the sidebar pill count against the default
+      // view's rows (stageTrackerRowCount), so drawing a PR on its issue's
+      // row is never reported as a filter and the pill holds still while
+      // the kind tabs or chips narrow the list.
+      const allRows = stageTrackerFilterActive(f) ? stageTrackerRowCount(d.items, ctx) : visible.length;
       // The sidebar pill, the header lead and the "of N" line come out of
       // one stageTrackerCountsText call per render, so they cannot
-      // disagree: the pill is the total open items (= the Overview tile's
-      // issues + PRs); needs-attention is the warn-coloured header suffix
-      // and the pill's tooltip, counted over every item regardless of filter.
+      // disagree: the pill is the default view's row count (owner: rows,
+      // not items — a covering PR shares its issue's row); needs-attention
+      // is the warn-coloured header suffix and the pill's tooltip, counted
+      // over every item regardless of filter.
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
       const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll);
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
@@ -15658,7 +15866,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f, { needsHumanLabels: ctx.needsHumanLabels })));
       stageTrackerRenderLabelDialog();
       const meta = document.getElementById('activity-monitor-meta');
-      if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
+      if (meta) setIfChanged(meta, `<span class="ham-count"${counts.note ? ` title="${esc(counts.note)}"` : ''}>${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs, _stageTrackerPollError, _stageTrackerPollErrorSince)}${stageTrackerPagerHtml(page)}`);
       const foot = document.getElementById('activity-monitor-meta-foot');
       if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
       const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
@@ -15747,17 +15955,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (at) _stageTracker.generated_at = at;
             if (src) _stageTracker.source = src;
           }
+          stageTrackerPollOk();
           stageTrackerTickClock();
           return;
         }
-        if (!r.ok) return;
+        if (!r.ok) { stageTrackerPollFailed('HTTP ' + r.status); return; }
         _stageTrackerEtag = r.headers.get('ETag') || '';
         const text = await r.text();
+        stageTrackerPollOk();
         if (text === _stageTrackerSig) { stageTrackerTickClock(); return; }
         _stageTrackerSig = text;
         renderStageTracker(JSON.parse(text));
         dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS);
-      } catch (e) { /* keep the previous render */ }
+      } catch (e) {
+        // Network failure or an aborted body: keep the previous render but
+        // say so in the "updated" chip instead of letting it read "fresh".
+        stageTrackerPollFailed('unreachable');
+      }
     }
 
     /* ---- Row actions: context menu + multi-select -------------------------
@@ -15776,7 +15990,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MENU_MARGIN = 4;
     const STAGE_TRACKER_MENU_FAIL_LINES = 3;
     const STAGE_TRACKER_ACTION_LABELS = {
-      'decide:approve': 'Approve', 'decide:direction': 'Give direction',
+      'decide:delegate': 'Let hive decide', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
@@ -15788,6 +16002,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTIONABLE_STAGE = 10;
     const STAGE_TRACKER_WHY_WRITE = 'Sign in with write access to this repo';
     const STAGE_TRACKER_WHY_ROLE = 'Needs the merger or owner role';
+    const STAGE_TRACKER_DELEGATE_POLL_MS = 1500;
+    const STAGE_TRACKER_DELEGATE_POLL_MAX = 40;
     var _stageTrackerSel = new Set();
     var _stageTrackerSelAnchor = '';
     var _stageTrackerMenu = null;
@@ -15906,6 +16122,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const enabled = ctx.canHold !== false && !!ctx.user;
       const why = enabled ? '' : STAGE_TRACKER_WHY_WRITE;
       const out = [];
+      // First: the hive decides as the owner's delegate (policy + rails on
+      // the server; recorded as a human decision with an audit marker).
+      out.push({ id: 'decide:delegate', label: 'Let hive decide', hint: 'delegate', enabled, why });
       if (item.kind === 'pr') {
         out.push({ id: 'decide:approve', label: 'Approve (/lgtm + /approve)', enabled, why });
         out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
@@ -15982,8 +16201,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         return { enabled: items.length > 0, why: items.length ? '' : 'Nothing selected' };
       };
-      const decideIds = ['decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'];
-      const submenu = decideIds.map(id => Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'decide:approve' ? '' : '…'), danger: id.indexOf('close') > 0 }, judge(id)));
+      const decideIds = ['decide:delegate', 'decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'];
+      const submenu = decideIds.map(id => Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'decide:approve' || id === 'decide:delegate' ? '' : '…'), danger: id.indexOf('close') > 0 }, judge(id)));
       const targets = items.map(stageTrackerDecisionTarget).filter(Boolean);
       if (targets.length === items.length && items.length) {
         const kinds = {};
@@ -16218,6 +16437,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
         case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
       }
+      if (id === 'decide:delegate') {
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decide-delegated', body: { type, reason: item.reason || '', caption: item.caption || '', sentinel_reason: item.sentinel_reason || '' }, poll: true };
+      }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
         if (payload.supersededBy) body.superseded_by = payload.supersededBy;
@@ -16237,7 +16459,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         msg += '. Failed: ' + fails.slice(0, STAGE_TRACKER_MENU_FAIL_LINES).map(r => stageTrackerRefOf(r.item) + ' — ' + r.error).join('; ');
         if (fails.length > STAGE_TRACKER_MENU_FAIL_LINES) msg += '; +' + (fails.length - STAGE_TRACKER_MENU_FAIL_LINES) + ' more';
       }
+      const decided = stageTrackerDelegatedSummary(results);
+      if (decided) msg += '. ' + decided;
       return { msg, type: fails.length ? 'error' : 'success' };
+    }
+    // Pure: one clause per delegated decision — "#12 approve (small-low-risk)",
+    // with "kept for owner" when the hive only recommended.
+    function stageTrackerDelegatedSummary(results) {
+      const parts = [];
+      for (const r of results) {
+        const d = r && r.ok && r.data && r.data.decision;
+        if (!d) continue;
+        parts.push(stageTrackerRefOf(r.item) + ' ' + (d.verdict || '?') + (d.rule ? ' (' + d.rule + ')' : '') + (d.keeps_park ? ' — kept for the owner' : ''));
+      }
+      return parts.length ? 'Hive decided: ' + parts.slice(0, STAGE_TRACKER_MENU_FAIL_LINES).join('; ') + (parts.length > STAGE_TRACKER_MENU_FAIL_LINES ? '; +' + (parts.length - STAGE_TRACKER_MENU_FAIL_LINES) + ' more' : '') : '';
+    }
+    // Pure: whether a delegated-decision job has finished.
+    function stageTrackerDelegatedDone(job) { return !!job && job.status !== 'running'; }
+    // Poll a delegated-decision job until it ends (or the budget runs out);
+    // resolves with the last job payload read.
+    async function stageTrackerAwaitDelegated(url, job) {
+      for (let i = 0; i < STAGE_TRACKER_DELEGATE_POLL_MAX && !stageTrackerDelegatedDone(job); i++) {
+        await new Promise(res => setTimeout(res, STAGE_TRACKER_DELEGATE_POLL_MS));
+        try {
+          const r = await fetch(url);
+          if (r.ok) job = await r.json();
+        } catch (e) { /* keep polling */ }
+      }
+      return job;
     }
     function stageTrackerProgressToast(label, n) {
       const el = showToast('', 'info', true);
@@ -16280,9 +16529,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (req.once && once[req.url]) { results.push({ item: it, ok: true, data: once[req.url] }); continue; }
         try {
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
-          const data = await r.json().catch(() => ({}));
+          let data = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
           if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
+          if (req.poll && !stageTrackerDelegatedDone(data)) {
+            showToast('Hive is deciding ' + stageTrackerRefOf(it) + '…', 'info');
+            data = await stageTrackerAwaitDelegated(req.url, data);
+          }
+          if (req.poll) {
+            if (!stageTrackerDelegatedDone(data)) throw new Error('still deciding — check the row shortly');
+            if (data.status === 'failed') throw new Error(data.error || 'the hive could not decide');
+          }
           if (req.once) once[req.url] = data;
           if (id === 'accept-triage') stageTrackerPatchItem(it, stageTrackerTriageAccepted);
           results.push({ item: it, ok: true, data });
@@ -16341,6 +16598,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sentinel = id.indexOf('decide:') === 0 ? stageTrackerSentinelPreface(items) : '';
       const preface = sentinel ? sentinel + '\n\n' : '';
       switch (id) {
+        case 'decide:delegate':
+          return (await hiveConfirm({ title: 'Let hive decide', message: preface + 'Let the hive decide ' + refs + ' as the owner\'s delegate, under the owner-delegate policy? It records a "/hive decision" (or a recommendation when the question is the hive\'s own policy), lifts the park and stamps an audit marker. Rails: it never merges, never acts on a held item, never grants secrets or permissions, and leaves the sentinel label to a person.', confirmLabel: 'Let hive decide', danger: !!sentinel })) ? {} : null;
         case 'decide:approve':
           if (prs) {
             return (await hiveConfirm({ title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge gate takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
@@ -18058,6 +18317,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             return '';
           })()}${kickOutcomeBadgeHtml(a)}${agentSpendChip(a.name)}</div>
           ${agentNowHtml(a)}
+          ${agentRunLineHtml(a)}
           ${agentBlockerLineHtml(a)}
           ${repeatFailureLineHtml(a)}
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
@@ -20249,10 +20509,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         })
         .catch(e => { repoMergeLaneCache[key] = { at: Date.now(), error: (e && e.message) || 'network error' }; });
     }
-    function repoLanePRLink(repoUrl, pr, title) {
-      return `<a href="${esc(repoUrl + '/pull/' + Number(pr))}" target="_blank" rel="noopener"${title ? ` title="${esc(title)}"` : ''}>#${Number(pr)}</a>`;
+    function repoLanePRLink(repoUrl, pr, title, changePath) {
+      // Follow the card's forge (GitLab/Gitea change paths) instead of GitHub's /pull/ (#14115).
+      return `<a href="${esc(repoUrl + (changePath || '/pull') + '/' + Number(pr))}" target="_blank" rel="noopener"${title ? ` title="${esc(title)}"` : ''}>#${Number(pr)}</a>`;
     }
-    function repoLanePanelHTML(full, repoUrl) {
+    function repoLanePanelHTML(full, repoUrl, changePath) {
       const cached = repoMergeLaneCache[String(full || '').toLowerCase()] || {};
       const head = '<div class="repo-lane-title">SERIALIZED LANE</div>';
       if (cached.error) return `<div class="repo-lane-panel">${head}<div class="repo-lane-muted">Lane state unavailable: ${esc(cached.error)}</div></div>`;
@@ -20272,16 +20533,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
                   : 'Hive cannot read whether GitHub requires up-to-date branches here (classic branch protection needs Administration permission)' + (l.enforcement_reason ? ' — ' + l.enforcement_reason : '')));
         const enf = `<span class="repo-lane-enforcement repo-lane-enforcement-${esc(l.enforcement || 'unknown')}" title="${esc(enfTip)}">${esc(l.enforcement_label || 'unknown')}</span>`;
         const front = l.front
-          ? `<div class="repo-lane-row"><span class="repo-lane-key">front</span>${repoLanePRLink(repoUrl, l.front.pr)} <span class="repo-lane-stage">${esc(l.front.stage_label || l.front.stage)}</span>${l.front.reason ? `<div class="repo-lane-muted">${esc(l.front.reason)}</div>` : ''}</div>`
+          ? `<div class="repo-lane-row"><span class="repo-lane-key">front</span>${repoLanePRLink(repoUrl, l.front.pr, '', changePath)} <span class="repo-lane-stage">${esc(l.front.stage_label || l.front.stage)}</span>${l.front.reason ? `<div class="repo-lane-muted">${esc(l.front.reason)}</div>` : ''}</div>`
           : '<div class="repo-lane-row"><span class="repo-lane-key">front</span><span class="repo-lane-muted">empty</span></div>';
         const waiting = (l.waiting || []).length
-          ? `<div class="repo-lane-row"><span class="repo-lane-key">waiting</span>${l.waiting.map(w => repoLanePRLink(repoUrl, w.pr, w.position + '. ' + w.reason)).join(' → ')}</div>`
+          ? `<div class="repo-lane-row"><span class="repo-lane-key">waiting</span>${l.waiting.map(w => repoLanePRLink(repoUrl, w.pr, w.position + '. ' + w.reason, changePath)).join(' → ')}</div>`
           : '';
         const last = l.last_exit
-          ? `<div class="repo-lane-row"><span class="repo-lane-key">last left</span>${repoLanePRLink(repoUrl, l.last_exit.pr)}<div class="repo-lane-muted">${esc(l.last_exit.reason)}</div></div>`
+          ? `<div class="repo-lane-row"><span class="repo-lane-key">last left</span>${repoLanePRLink(repoUrl, l.last_exit.pr, '', changePath)}<div class="repo-lane-muted">${esc(l.last_exit.reason)}</div></div>`
           : '';
         const reasons = (l.reasons || []).length
-          ? `<details class="repo-lane-reasons"><summary>no-merge reasons (${l.reasons.length})</summary><ul>${l.reasons.map(x => `<li>${x.pr ? repoLanePRLink(repoUrl, x.pr) + ' ' : ''}${esc(x.reason)}</li>`).join('')}</ul></details>`
+          ? `<details class="repo-lane-reasons"><summary>no-merge reasons (${l.reasons.length})</summary><ul>${l.reasons.map(x => `<li>${x.pr ? repoLanePRLink(repoUrl, x.pr, '', changePath) + ' ' : ''}${esc(x.reason)}</li>`).join('')}</ul></details>`
           : '';
         const reco = l.recommend_up_to_date_rule && l.recommendation ? `<div class="repo-lane-reco">⚠ ${esc(l.recommendation)}</div>` : '';
         return `<div class="repo-lane"><div class="repo-lane-row"><span class="repo-lane-key">branch</span><code>${esc(l.branch)}</code> ${enf}</div>${front}${waiting}${last}${reasons}${reco}</div>`;
@@ -24355,8 +24616,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // that read "GITHUB.COM" on a github.ibm.com hive.
       const hostLabel = (window._githubBaseUrl || 'https://github.com').replace(/^https?:\/\//, '').replace(/\/$/, '') || 'github.com';
       const isPublic = hostLabel === 'github.com';
+      // Each card carries its own forge (#14115), and repo_policies[].forge can
+      // put one repo on a different forge from the rest. The badge names the
+      // hive's forge only when every card agrees; a GitLab or Gitea/Forgejo
+      // hive gets its own host here instead of the GitHub host the badge would
+      // otherwise claim, and a mixed hive says so instead of claiming one host.
+      const repoForges = (repos || []).map(r => repoForgeWeb(r, hostLabel));
+      const forgeHosts = [...new Set(repoForges.map(f => f.name + ' · ' + f.host))];
+      const hiveForge = repoForges[0] || repoForgeWeb(undefined, hostLabel);
       const badge = document.getElementById('repos-host-badge');
-      if (badge) {
+      if (badge && forgeHosts.length > 1) {
+        badge.textContent = forgeHosts.length + ' forges';
+        badge.style.background = 'color-mix(in srgb, var(--indigo) 15%, transparent)';
+        badge.style.color = 'var(--indigo)';
+        badge.title = 'Projects in this hive are on ' + forgeHosts.join(', ') + ' — each card names its own forge';
+      } else if (badge && hiveForge.kind !== 'github') {
+        badge.textContent = hiveForge.name + ' · ' + hiveForge.host;
+        badge.style.background = 'color-mix(in srgb, var(--indigo) 15%, transparent)';
+        badge.style.color = 'var(--indigo)';
+        badge.title = 'Every project in this hive is on ' + hiveForge.name + ' at ' + hiveForge.host + ' — this hive is single-host';
+      } else if (badge) {
         // Definitive single-host badge in the section header: every repo in this
         // hive is on ONE GitHub host. Green = github.com, indigo = GHE — GHE also
         // gets an "Enterprise" tag so an operator instantly sees it is not public.
@@ -24394,7 +24673,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setIfChanged(el, visibleRepos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)', getHistoryTimes(), `repo:${r.name}:issues`);
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)', getHistoryTimes(), `repo:${r.name}:prs`);
-        const repoUrl = (window._githubBaseUrl || 'https://github.com') + '/' + (r.full || r.name);
+        const cardForge = repoForgeWeb(r, hostLabel);
+        const repoUrl = cardForge.base + '/' + (r.full || r.name);
         // The card's width comes from the stored map on EVERY repaint, not
         // from a one-time assignment on the element: this HTML replaces the
         // grid's contents on every governor cycle, so a width set once on the
@@ -24449,7 +24729,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const heldClass = isHeldIssue ? ' held' : '';
           const staleClass = issueIsStale(i) ? ' stale' : '';
           const statusTip = (isHeldIssue ? heldTip + ' — band: ' : '') + issueStatusTip(info, isHeldIssue);
-          const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
+          const issueUrl = i.url || (repoUrl + cardForge.issuesPath + '/' + i.number);
           const rowKinds = repoIssueFilterKinds(i, info, isHeldIssue);
           const statusKind = isHeldIssue ? 'issue:held' : (info.chip ? repoIssueChipKind(info.chip) : ('issue:' + info.band));
           return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(repoFull, 'issue', i), `<button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : (info.chip || issueBandShortLabel(info.band)))}</button>`)}<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}${cpChipsHTML(i)}</a>${repoPillActionCluster([prBadge + cpActionHTML(i), planBtn, designBtn, holdBtn])}</span>`;
@@ -24476,7 +24756,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const renderNonActionableIssuePill = (i) => {
           const spec = repoNonActionableIssueBucketSpec(i);
           const title = i.title || '';
-          const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
+          const issueUrl = i.url || (repoUrl + cardForge.issuesPath + '/' + i.number);
           const labels = (i.labels || []).map(l => String(l)).filter(Boolean).join(', ');
           const reason = i.reason || spec.tip;
           const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (labels ? ' — labels: ' + labels : '') + ' — ' + reason;
@@ -24561,9 +24841,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const primaryIssue = linkedIssues.find(i => i.state === 'open') || linkedIssues[0];
           const issueBadgeTip = 'Closes issue' + (linkedIssues.length > 1 ? 's' : '') + ': ' + linkedIssueText;
           const issueBadge = primaryIssue
-            ? `<a class="repo-pr-pill pill-icon" href="${esc(primaryIssue.url || (repoUrl + '/issues/' + primaryIssue.number))}" target="_blank" rel="noopener" data-stop="1" title="${esc(issueBadgeTip)}" aria-label="${esc('Linked issue #' + primaryIssue.number)}">🔗</a>`
+            ? `<a class="repo-pr-pill pill-icon" href="${esc(primaryIssue.url || (repoUrl + cardForge.issuesPath + '/' + primaryIssue.number))}" target="_blank" rel="noopener" data-stop="1" title="${esc(issueBadgeTip)}" aria-label="${esc('Linked issue #' + primaryIssue.number)}">🔗</a>`
             : '';
-          const url = p.url || (repoUrl + '/pull/' + p.number);
+          const url = p.url || (repoUrl + cardForge.changePath + '/' + p.number);
           const heldClass = held ? ' held' : '';
           const staleClass = prIsStale(p) ? ' stale' : '';
           // needs-human wins the pill tint over mergeable green: a PR can be
@@ -24661,7 +24941,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? `<button type="button" class="repo-strategy-btn${serialized ? ' serialized' : ''}" data-action="setRepoMergeStrategy" data-arg0="${esc(cardRepo)}" data-arg1="${esc(strategyTarget)}" data-arg-types="s,s,t" data-stop="1" data-prevent="1" title="${esc(strategyTip)}">${esc(mergeStrategy)}</button>`
           : `<span class="repo-strategy-btn${serialized ? ' serialized' : ''}" title="${esc(strategyTip)}">${esc(mergeStrategy)}</span>`;
         if (serialized) ensureRepoMergeLane(cardRepo);
-        const laneHtml = serialized ? repoLanePanelHTML(cardRepo, repoUrl) : '';
+        const laneHtml = serialized ? repoLanePanelHTML(cardRepo, repoUrl, cardForge.changePath) : '';
         const pauseBtn = canPauseRepo
           ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(cardRepo)}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
           : '';
@@ -24686,17 +24966,37 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return `
         <div class="repo-card${cardW ? ' repo-card-sized' : ''}" data-repo-order-key="${esc(cardRepoKey)}"${cardW ? ` style="flex-basis:${cardW}px"` : ''}>
           ${resizeHandle}
-          <div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
+          ${cardForge.kind === 'github'
+            ? `<div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>`
+            : `<div class="repo-provider-label" data-forge="${esc(cardForge.kind)}" style="color:var(--indigo)" title="This repo lives on ${esc(cardForge.name)} at ${esc(cardForge.host)}">${cardForge.icon} ${esc(cardForge.name)} · ${esc(cardForge.host)}</div>`}
           <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${forkPill}${pausedPill}</span>${autoMergeBtn}${strategyBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${swarmBtn}${pauseBtn}</span></div>${redMainHtml}
           <div class="repo-stats">
-            <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
-            <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
+            <div class="repo-stat"><a href="${esc(repoUrl + cardForge.issuesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
+            <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
           </div>${laneHtml}${collapseHtml}${pillsHtml}${hfRepoSectionHtml(r)}
         </div>`;
       }).join(''));
       hfRenderEditor();
       hfRenderPinned();
       hfRenderCrossRepo();
+    }
+
+    /**
+     * Where a repo card points and what it calls its host (#14115). r.forge is
+     * the repo's forge kind from /api/status; GitHub (and an older hive that
+     * reports no kind) keeps the GitHub host from /api/config, while GitLab and
+     * Gitea/Forgejo use r.forgeUrl and their own issue and change-request paths.
+     */
+    function repoForgeWeb(r, githubHost) {
+      const kind = String((r && r.forge) || 'github').toLowerCase();
+      const base = String((r && r.forgeUrl) || '').replace(/\/+$/, '');
+      if (kind === 'gitlab' && base) {
+        return { kind, icon: '🦊', name: 'GitLab', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/-/issues', changesPath: '/-/merge_requests', changePath: '/-/merge_requests' };
+      }
+      if (kind === 'gitea' && base) {
+        return { kind, icon: '🍵', name: 'Gitea/Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+      }
+      return { kind: 'github', icon: '🐙', name: 'GitHub', host: githubHost, base: window._githubBaseUrl || 'https://github.com', issuesPath: '/issues', changesPath: '/pulls', changePath: '/pull' };
     }
 
     /**
@@ -28388,7 +28688,7 @@ function burnAreaChart() {
       return previous ? `previous ${label}` : `last ${label}`;
     }
     function prtActorDefinition() {
-      return "Hive means this hive's sweep/queue/relay or hive/App bot actor; human means a non-bot login; other automation means a non-hive bot. Unknown actors are excluded.";
+      return "Hive means this hive's sweep/queue/relay/forge or hive/App bot actor; human means a non-bot login; other automation means a non-hive bot. Unknown actors are excluded.";
     }
     function prtTrendStats(dto) {
       const series = Array.isArray(dto.series) ? dto.series : [];
@@ -28453,7 +28753,7 @@ function burnAreaChart() {
       const slaReport = prtSLAReport();
       const summary = `${merged} merged · ${opened} opened (${windowName ? windowName[1] : 'window'})${prtSLASummary(slaReport)}`;
       setSectionSummary('pr-throughput-section', summary, `Merged and opened PRs in the selected window; ${hiveMergedPct}% hive-attributed merged share`);
-      const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', hive: 'hive identity', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
+      const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', forge: 'forge adapter', hive: 'hive identity', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
       const pathParts = Object.keys(byPath).filter((k) => Number(byPath[k]) > 0).sort()
         .map((k) => `${Number(byPath[k])} ${escapeHtml(pathLabels[k] || k)}`);
       const pathsHtml = pathParts.length ? `<div class="prt-paths">Merged by: ${pathParts.join(' · ')}</div>` : '';
@@ -29020,6 +29320,21 @@ function burnAreaChart() {
           grade: 'ungraded', reason: 'report-only; no threshold to grade against',
         };
       },
+      'issue-reopen': (dto) => {
+        const rows = Array.isArray(dto.issue_reopen_rates_30d) ? dto.issue_reopen_rates_30d : [];
+        const sum = (gate, key) => rows.filter((r) => r && Boolean(r.clarity_gate) === gate).reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
+        const gatedClosed = sum(true, 'closed'), gatedReopened = sum(true, 'reopened');
+        const ungatedClosed = sum(false, 'closed'), ungatedReopened = sum(false, 'reopened');
+        const repos = new Set(rows.filter((r) => r && Number(r.closed) > 0).map((r) => r.repo)).size;
+        return {
+          matters: 'An issue that is re-opened after a hive PR closed it is work that was not actually done. Splitting by the clarity-gate marker shows whether issues that were specified clearly enough to pass the gate stay closed more often than ones with no marker.',
+          measured: 'Distinct issues closed by hive PRs in the last 30 days, per repository, split by whether the issue carried the clarity-gate marker at closure, with how many of them were later re-opened.',
+          how: 'Closures come from evidence bundles and are placed by closure time, not by the selected PR window or author filter. Each issue is counted once (its latest closure). A re-open counts when it happened after that closure, as seen by the issues webhook or the issue listing. Rate = re-opened ÷ closed per row; issues whose historical clarity status is missing are excluded rather than counted as ungated.',
+          good: 'Low reopen rates in both rows, and no large gap that favours the ungated row. Recent closures have had less time to re-open, so a short window understates the rate.',
+          ours: `${repos} repo(s) with closures. Passed through the gate: ${gatedReopened} re-opened of ${gatedClosed} closed (${evPct(evRate(gatedReopened, gatedClosed))}). No marker: ${ungatedReopened} re-opened of ${ungatedClosed} closed (${evPct(evRate(ungatedReopened, ungatedClosed))}). This is a descriptive comparison, not proof of causality.`,
+          grade: 'ungraded', reason: 'report-only; no threshold to grade against',
+        };
+      },
       'shadow-gates': (dto) => {
         const sg = dto.shadow_gate || {};
         let heldN = 0, heldReverted = 0, heldMerged = 0, passedN = 0, passedReverted = 0, shadowUnknown = 0;
@@ -29126,6 +29441,21 @@ function burnAreaChart() {
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent writes` : `${blocked} of ${formatNumber(total)} agent writes blocked (${blockedRate == null ? '—' : (blockedRate * 100).toFixed(2) + '%'})`,
         };
       },
+      'opens-merges': (dto) => {
+        const om = dto.issue_opens_pr_merges && typeof dto.issue_opens_pr_merges === 'object' ? dto.issue_opens_pr_merges : {};
+        const total = om.total || {}, band = om.expected || {}, roll = om.rolling_30d || {}, rollBand = om.rolling_30d_expected || {};
+        const repos = Array.isArray(om.repos) ? om.repos : [];
+        const n = Number(om.n) || 0;
+        const grade = n >= EV_GRADE_MIN_N ? (om.status === 'in_band' ? 'strong' : 'weak') : 'none';
+        return {
+          matters: 'A hive that files issues faster than it lands PRs is manufacturing backlog; one that only merges and never scouts runs dry. Neither is a flat 1:1 target: when the queue is busy the hive should drain it (merges ahead of opens), and when it is quiet it may scout ahead (opens ahead of merges) within a bound. This card reads the ratio against what the current cadence mode expects, not against 1.0.',
+          measured: 'Issues the hive itself opened (through its GitHub App identity, for an agent or as hive automation) ÷ PRs the hive merged or wrote, per repository and fleet-wide, in the selected window; the governor’s current cadence mode and the band it expects; and the same ratio over a fixed rolling 30 days, which should regress to parity.',
+          how: `Opens are the hive audit log’s issue-create actions (agent-requested and hive-automation issues) — issues humans or third-party bots open directly on GitHub are not in the log and never count. Merges are evidence-bundle PRs that merged where this hive performed the merge or the author kind is agent (the Outcome by author kind card’s agent-authored set); a human or bot PR merged by someone else does not count. Bands: surge / busy expect ≤ ${EV_OM_DRAIN_MAX} opens per merge (drain), quiet / idle expect ${EV_OM_SCOUT_MIN}–${EV_OM_SCOUT_MAX} (scout, bounded), unknown mode and the rolling 30 d expect parity ±${Math.round(EV_OM_PARITY_TOLERANCE * 100)}%. The sparkline plots a trailing ${EV_OM_SPARK_TRAIL_DAYS}-day ratio per day with the parity band shaded.`,
+          good: `Inside the band for the current mode. Over ${EV_OM_ROLLING_DAYS} days the ratio should sit near 1:1 whatever the mode did day to day: a sustained reading above the band means the backlog is growing faster than it is worked; below it in quiet mode means the hive is not scouting even though it has room.`,
+          ours: `${om.headline || 'No reading yet.'} ${total.opens != null ? `${total.opens} hive issue opens against ${total.merges} hive PR merges across ${repos.length} repo(s) in this window.` : ''} Rolling ${EV_OM_ROLLING_DAYS} d: ${roll.opens || 0} opens / ${roll.merges || 0} merges = ${evOmRatioText(roll)} (${evOmStatusLabel(om.rolling_30d_status)}; expects ${rollBand.label || '—'}).`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} hive issue opens + PR merges in the window` : `${evOmRatioText(total)} opens per merge, ${om.status === 'in_band' ? 'inside' : om.status === 'above' ? 'above' : 'below'} the ${band.mode || 'unknown'} band ${band.label || ''}`,
+        };
+      },
     };
 
     // Detail text that used to sit inline under a chart (denominators, policy,
@@ -29226,7 +29556,7 @@ function burnAreaChart() {
           const delta = d == null || Number(a.n) < minN || Number(b.n) < minN ? 'withheld' : (Number(d) > 0 ? '+' : '') + (hours ? Number(d).toFixed(1) + ' h' : (Number(d) * 100).toFixed(1) + ' pp');
           return `<tr><td>${label}</td><td>${format(a.value)} (n=${Number(a.n) || 0})</td><td>${format(b.value)} (n=${Number(b.n) || 0})</td><td>${delta}</td></tr>`;
         }).join('');
-        return `<div class="ev-note"><b>${escapeHtml(r.repo || '')}</b> · on: ${Number((on.outcomes || {}).n) || 0} opened · off: ${Number((off.outcomes || {}).n) || 0} opened (unequal exposure; not a throughput comparison)</div><table><thead><tr><th>Control-arm metric</th><th>On</th><th>Off</th><th>Δ on − off</th></tr></thead><tbody>${rows}</tbody></table>`;
+        return `<div class="ev-note"><b>${escapeHtml(r.repo || '')}</b> · on: ${Number((on.outcomes || {}).n) || 0} opened · off: ${Number((off.outcomes || {}).n) || 0} opened (unequal exposure; not a throughput comparison)</div><div class="ev-table-wrap"><table class="ev-table"><thead><tr><th>Control-arm metric</th><th>On</th><th>Off</th><th>Δ on − off</th></tr></thead><tbody>${rows}</tbody></table></div>`;
       }).join('');
     }
 
@@ -29512,6 +29842,78 @@ function burnAreaChart() {
       return `<svg class="ev-svg ev-spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="Sentinel hits per ISO week"><g class="ev-c3">${weeks.length > 1 ? `<polyline class="ev-line" points="${pts}"/>` : ''}${dots}</g><text x="${l}" y="${h - 3}">${escapeHtml(first)}</text><text x="${w - r}" y="${h - 3}" text-anchor="end">${escapeHtml(last)}</text></svg><div class="ev-legend"><span class="ev-c3"><i class="dot"></i>sentinel hits per ISO week (UTC Monday) · ${total} in ${weeks.length} week(s) · peak ${maxHits}</span></div>`;
     }
 
+    // Issue opens : PR merges — hive-authored issue opens ÷ hive-merged PRs,
+    // read against the governor's cadence band rather than a flat 1.0. The
+    // server (pkg/evidence/opens_merges.go) owns the counts, the band and the
+    // verdict; the constants below mirror its thresholds for the explainer.
+    const EV_OM_DRAIN_MAX = 1;            // surge / busy: opens per merge ≤ this (drain)
+    const EV_OM_SCOUT_MIN = 1, EV_OM_SCOUT_MAX = 2; // quiet / idle: scouting, bounded
+    const EV_OM_PARITY_TOLERANCE = 0.25;  // unknown mode and rolling 30 d: parity ± this
+    const EV_OM_ROLLING_DAYS = 30;
+    const EV_OM_SPARK_TRAIL_DAYS = 7;     // the sparkline plots a trailing 7-day ratio per day
+    const EV_OM_BAR_MAX_RATIO = 3;        // the per-repo bar is full at this many opens per merge
+    const EV_OM_SPARK_MAX_RATIO = 3;      // the sparkline's y axis tops out here; higher is clipped
+    const EV_OM_STATUS = { in_band: 'in band', above: 'backlog growing', below: 'scouting below cadence', no_data: 'no data' };
+    function evOmStatusLabel(status) { return EV_OM_STATUS[status] || 'no data'; }
+    // evOmRatioText: "—" with nothing to count, "∞" with opens but no merges.
+    function evOmRatioText(row) {
+      row = row || {};
+      if (row.ratio != null) return String(Math.round(Number(row.ratio) * 100) / 100);
+      return Number(row.opens) > 0 ? '∞' : '—';
+    }
+    function evOmVerdict(row, band) {
+      const opens = Number(row && row.opens) || 0, merges = Number(row && row.merges) || 0;
+      if (!opens && !merges) return 'no_data';
+      if (!merges) return 'above';
+      const r = opens / merges;
+      if (r > Number(band.max)) return 'above';
+      if (Number(band.min) > 0 && r < Number(band.min)) return 'below';
+      return 'in_band';
+    }
+    function evOmSparkline(days, band) {
+      const rows = (Array.isArray(days) ? days : []).map((d) => ({ day: String((d && d.day) || ''), opens: Number(d && d.opens) || 0, merges: Number(d && d.merges) || 0 }));
+      if (!rows.length) return '';
+      const w = EV_SVG_W, h = 56, l = 22, r = 4, t = 6, b = 14;
+      const pw = w - l - r, ph = h - t - b;
+      const x = (i) => l + (rows.length > 1 ? (i * pw) / (rows.length - 1) : pw / 2);
+      const y = (v) => t + ph - (Math.min(v, EV_OM_SPARK_MAX_RATIO) / EV_OM_SPARK_MAX_RATIO) * ph;
+      const pts = [];
+      rows.forEach((row, i) => {
+        let opens = 0, merges = 0;
+        for (let k = Math.max(0, i - EV_OM_SPARK_TRAIL_DAYS + 1); k <= i; k++) { opens += rows[k].opens; merges += rows[k].merges; }
+        if (merges > 0) pts.push({ i, ratio: opens / merges, opens, merges, day: row.day });
+      });
+      const bandMin = Number(band && band.min) || 0, bandMax = Number(band && band.max) || 0;
+      const shade = bandMax > bandMin ? `<rect class="ev-om-band" x="${l}" y="${y(bandMax).toFixed(1)}" width="${pw}" height="${(y(bandMin) - y(bandMax)).toFixed(1)}"><title>${escapeHtml(`rolling ${EV_OM_ROLLING_DAYS} d expects ${band.label || ''}`)}</title></rect>` : '';
+      const parity = `<line class="ev-axis ev-om-parity" x1="${l}" x2="${w - r}" y1="${y(1).toFixed(1)}" y2="${y(1).toFixed(1)}"/><text x="${l - 4}" y="${(y(1) + 3).toFixed(1)}" text-anchor="end">1:1</text><text x="${l - 4}" y="${(y(EV_OM_SPARK_MAX_RATIO) + 3).toFixed(1)}" text-anchor="end">${EV_OM_SPARK_MAX_RATIO}+</text>`;
+      const line = pts.length > 1 ? `<polyline class="ev-line" points="${pts.map((p) => `${x(p.i).toFixed(1)},${y(p.ratio).toFixed(1)}`).join(' ')}"/>` : '';
+      const dots = pts.map((p) => `<circle class="ev-pt" cx="${x(p.i).toFixed(1)}" cy="${y(p.ratio).toFixed(1)}" r="2"><title>${escapeHtml(`${p.day}: trailing ${EV_OM_SPARK_TRAIL_DAYS} d ${p.opens} opens / ${p.merges} merges = ${Math.round(p.ratio * 100) / 100}`)}</title></circle>`).join('');
+      const empty = pts.length ? '' : `<text x="${(l + pw / 2).toFixed(1)}" y="${(t + ph / 2 + 3).toFixed(1)}" text-anchor="middle">no hive merges in the last ${EV_OM_ROLLING_DAYS} days</text>`;
+      return `<svg class="ev-svg ev-spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="Issue opens per PR merge, trailing ${EV_OM_SPARK_TRAIL_DAYS}-day ratio per day over the last ${EV_OM_ROLLING_DAYS} days"><g class="ev-c0">${shade}${parity}${line}${dots}${empty}</g><text x="${l}" y="${h - 3}">${escapeHtml(rows[0].day)}</text><text x="${w - r}" y="${h - 3}" text-anchor="end">${escapeHtml(rows[rows.length - 1].day)}</text></svg>`;
+    }
+    function evOpensMergesHtml(om) {
+      om = om && typeof om === 'object' ? om : {};
+      const total = om.total || {}, band = om.expected || {}, roll = om.rolling_30d || {}, rollBand = om.rolling_30d_expected || {};
+      const repos = Array.isArray(om.repos) ? om.repos : [];
+      const status = om.status || 'no_data';
+      const mark = status === 'in_band' ? '✓' : status === 'no_data' ? '' : `⚠ (${evOmStatusLabel(status)})`;
+      const headline = `<div class="ev-headline ev-om-headline ev-om-${escapeHtml(status)}"><b>${escapeHtml(evOmRatioText(total))} opens per merge</b> · ${escapeHtml(band.mode || 'unknown')} mode expects ${escapeHtml(band.label || '—')} ${escapeHtml(mark)}<span class="ev-sub"> · rolling ${EV_OM_ROLLING_DAYS} d ${escapeHtml(evOmRatioText(roll))} (${escapeHtml(evOmStatusLabel(om.rolling_30d_status))}, expects ${escapeHtml(rollBand.label || '—')})</span></div>`;
+      evDetails['opens-merges'] = `Current governor mode ${band.mode || 'unknown'} (${band.why || 'parity'}): ${band.label || '—'} opens per merge expected. Fleet ${Number(total.opens) || 0} opens / ${Number(total.merges) || 0} merges in this window; rolling ${EV_OM_ROLLING_DAYS} d ${Number(roll.opens) || 0} / ${Number(roll.merges) || 0}.`;
+      const row = (r, cls) => {
+        const ratio = r.ratio != null ? Number(r.ratio) : (Number(r.opens) > 0 ? Infinity : null);
+        const verdict = evOmVerdict(r, band);
+        const width = ratio == null ? 0 : Math.min(1, Math.min(ratio, EV_OM_BAR_MAX_RATIO) / EV_OM_BAR_MAX_RATIO) * 100;
+        const tip = `${r.repo || 'fleet'}: ${Number(r.opens) || 0} hive issue opens / ${Number(r.merges) || 0} hive PR merges = ${evOmRatioText(r)} · ${evOmStatusLabel(verdict)} vs ${band.mode || 'unknown'} band ${band.label || ''}`;
+        return `<tr class="${cls}" title="${escapeHtml(tip)}"><td>${escapeHtml(r.repo || 'Fleet')}</td><td class="num">${Number(r.opens) || 0}</td><td class="num">${Number(r.merges) || 0}</td><td class="num">${escapeHtml(evOmRatioText(r))}</td><td class="ev-om-barcell"><svg class="ev-om-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="ev-om-${verdict}" x="0" y="0" width="${width.toFixed(0)}" height="6" rx="3"/></svg></td></tr>`;
+      };
+      const table = repos.length || Number(total.opens) || Number(total.merges)
+        ? `<div class="ev-table-wrap"><table class="ev-table ev-om-table"><thead><tr><th>Repository</th><th class="num">Opens</th><th class="num">Merges</th><th class="num">Ratio</th><th aria-label="Opens per merge, bar"></th></tr></thead><tbody>${repos.map((r) => row(r, '')).join('')}${row(total, 'ev-om-total')}</tbody></table></div>`
+        : '<div class="ev-empty">— no hive issue opens or hive PR merges in this window</div>';
+      const spark = evOmSparkline(om.rolling_30d_days, rollBand);
+      const legend = spark ? `<div class="ev-legend"><span class="ev-c0"><i class="dot"></i>trailing ${EV_OM_SPARK_TRAIL_DAYS} d opens per merge</span><span><i class="ev-om-band-key"></i>parity band ${escapeHtml(rollBand.label || '')}</span></div>` : '';
+      return `${headline}${table}${spark}${legend}<p class="ev-note">Descriptive, not causal; the ratio says how the hive’s filing pace compares with its landing pace, not whether either was right. Opens count hive-filed issues only (humans and third-party bots excluded); merges count PRs this hive merged or an agent wrote. A merge is not a closed issue and an open is not a commitment to work.</p>`;
+    }
+
     // Panel 5 (#12365): claim vs verdict, read as CI recovery. Headline strip:
     // red-at-claim agent PRs by what happened next (recovered and merged ·
     // green but open · abandoned · still red/pending · outcome unknown).
@@ -29710,10 +30112,19 @@ function burnAreaChart() {
       return `${headline}<div class="ev-flow"><div><h5>Issues</h5>${issues}</div><div><h5>Pull requests</h5>${prs}</div></div>`;
     }
 
+    // Issue reopen rate (rolling 30 d by closure time): one row per repo ×
+    // clarity-gate marker. Rendered through evPanel so it carries the same
+    // collapse toggle, ⓘ explainer, n= chip and grade pill as its siblings;
+    // n = distinct issues closed (each issue lands in exactly one row).
     function evIssueReopenRatesHtml(dto) {
       const rows = Array.isArray(dto.issue_reopen_rates_30d) ? dto.issue_reopen_rates_30d : [];
-      const body = rows.length ? `<table><thead><tr><th>Repository</th><th>Clarity gate</th><th>Reopened / closed</th><th>Rate</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escapeHtml(String(r.repo || ''))}</td><td>${r.clarity_gate ? 'Passed through' : 'No marker'}</td><td>${Number(r.reopened) || 0} / ${Number(r.closed) || 0}</td><td>${evPct(r.rate)}</td></tr>`).join('')}</tbody></table>` : '<div class="ev-note">No captured issue closures in the last 30 days.</div>';
-      return `<section class="ev-panel"><h4>Issue reopen rate · rolling 30 days</h4>${body}<p class="ev-note">Distinct issues closed by hive PRs in the last 30 days, split by the clarity-gate marker at closure. Uses closure time, not the selected PR window or author filter. Missing historical clarity status is excluded, not counted as ungated. Recent closures have less time to reopen; this comparison does not prove causality.</p></section>`;
+      const closedN = rows.reduce((sum, r) => sum + (Number(r && r.closed) || 0), 0);
+      const table = rows.length
+        ? `<div class="ev-table-wrap"><table class="ev-table"><thead><tr><th>Repository</th><th>Clarity gate</th><th>Reopened / closed</th><th>Rate</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escapeHtml(String(r.repo || ''))}</td><td>${r.clarity_gate ? 'Passed through' : 'No marker'}</td><td>${Number(r.reopened) || 0} / ${Number(r.closed) || 0}</td><td>${evPct(r.rate)}</td></tr>`).join('')}</tbody></table></div>`
+        : '<div class="ev-empty">— no captured issue closures in the last 30 days</div>';
+      const body = `${table}<p class="ev-note">Distinct issues closed by hive PRs in the last 30 days, split by the clarity-gate marker at closure. Uses closure time, not the selected PR window or author filter. Missing historical clarity status is excluded, not counted as ungated. Recent closures have less time to reopen; this comparison does not prove causality.</p>`;
+      return evPanel('issue-reopen', 'Issue reopen rate · rolling 30 days', closedN, body,
+        'A fixed 30-day window by closure time, so the window pills and repo/author filters above do not apply. Only issues closed by hive PRs are counted; an issue closed by hand is not tracked, and a reopen is only seen through the issues webhook or the issue listing. Rows are descriptive and the clarity-gate split is not a controlled comparison.');
     }
 
     function renderEvidenceSummary(dto) {
@@ -29752,6 +30163,7 @@ function burnAreaChart() {
       const issueSourceNote = balanceSrc.issue_series_weeks ? `${balanceSrc.issue_series_weeks} historical repository-week(s) use backfilled GitHub issue history; ${balanceSrc.audit_only_weeks || 0} week(s) include audit fallback, where human and third-party bot opens may be missing. Collector-covered weeks keep the collector data.` : balanceSrc.issues_github_since ? `Issue opens and closes are GitHub-truth (all authors) from ${balanceSrc.issues_github_since}${balanceSrc.audit_only_weeks ? `; the ${balanceSrc.audit_only_weeks} earlier week(s) are audit-log only, where issues humans or third-party bots open directly on GitHub are not observed` : ''}.` : 'GitHub issue history has not been fetched yet, so issue opens and closes are audit-log only: issues humans or third-party bots open directly on GitHub are not observed and the human column is a floor.';
       const rec = dto.ci_recovery && typeof dto.ci_recovery === 'object' ? dto.ci_recovery : {};
       const recGate = rec.gate || {}, recConv = rec.convergence || {};
+      const opensMerges = dto.issue_opens_pr_merges && typeof dto.issue_opens_pr_merges === 'object' ? dto.issue_opens_pr_merges : {};
       const scope = evWindowLabel() + (dto.repo ? ` · ${dto.repo}` : '');
       const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
@@ -29771,6 +30183,8 @@ function burnAreaChart() {
           `Gate integrity covers every merged PR in the window (any author) whose check state on the merged head is on record; a review-time snapshot that was red is only suspected until GitHub confirms it${recGate.suspected ? ` (${recGate.suspected})` : ''}, and merged PRs with no snapshot on the merged head and no GitHub trail${recGate.unknown ? ` (${recGate.unknown})` : ''} are unknown — neither is green and neither is a breach. Convergence covers agent-authored PRs only: a pass is one CI evaluation of a new head SHA, read from GitHub’s commit trail where it has arrived and from this hive’s own snapshots otherwise (which can miss heads nobody reviewed); in-flight${recConv.in_flight ? ` (${recConv.in_flight})` : ''} and unknown${recConv.unknown ? ` (${recConv.unknown})` : ''} PRs are in no rate. This hive hands off to CI by policy (agents do not wait for CI; a red check holds the PR), so CI red at claim is by design and is disclosed, not graded. A PR with no captured checks${emptyCI ? ` (${emptyCI} in this window)` : ''} or still-running checks at claim${pendingCI ? ` (${pendingCI})` : ''} is left out of the CI column. A non-approve verdict is not proof the agent was wrong.`)
         + evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance, balanceSrc),
           `${issueSourceNote} PR opens, merges and closes come from evidence bundles for PRs opened in the window (live and backfilled), so PRs never seen by this hive are missing. Week-end queue depth is the governor’s actionable open issues / PRs (held items excluded) from its last snapshot of the week, kept ${balanceSrc.queue_retention_days || 30} days${balanceSrc.queue_samples === 0 ? ' — no snapshot in this window' : ''}. Nothing is weighted by size, and an opened issue counts whether or not anyone acted on it. ${throttleNote}`)
+        + evPanel('opens-merges', 'Issue opens : PR merges', opensMerges.n, evOpensMergesHtml(opensMerges),
+          `Opens are hive-filed issues from the audit log only: an issue a human or a third-party bot opened directly on GitHub is not counted, so this is the hive’s own filing pace, not the repo’s. Merges follow the Outcome by author kind card: a PR this hive merged (any author) or an agent-authored PR merged by anyone; a human or bot PR merged outside the hive is not counted, and PRs never seen by this hive are missing. The band is the governor’s mode right now, not the mode when each open or merge happened; the rolling ${EV_OM_ROLLING_DAYS} d is judged against parity for that reason. Issue opens and PR merges are not the same unit of work — nothing here is weighted by size or links an open to the merge that closed it.`)
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
           'Shadow mode only records; no merge was held or blocked. Closed-without-merge is known only from backfilled records and the review-outcome ledger; a PR with no recorded outcome is shown as unknown rather than as open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
@@ -29828,12 +30242,12 @@ function burnAreaChart() {
         badge.style.display = (dto.count > 0) ? '' : 'none';
       }
 
-      // Requirement 4: items queued at full autonomy are probable policy bugs.
+      // Requirement 4: items queued at L6 (Autonomous) are probable policy bugs.
       const bug = document.getElementById('approvals-policy-bug');
       if (bug) {
         if (dto.policy_bug_count > 0) {
           bug.style.display = '';
-          bug.innerHTML = '⚠️ <strong>' + dto.policy_bug_count + '</strong> item(s) are waiting on a hive at ACMM L6 (full autonomy). ' +
+          bug.innerHTML = '⚠️ <strong>' + dto.policy_bug_count + '</strong> item(s) are waiting on a hive at ACMM L6 (Autonomous). ' +
             'An inbox that accumulates at L6 usually means a policy rule is over-restrictive, not that a human is needed.';
         } else {
           bug.style.display = 'none';
@@ -34220,6 +34634,9 @@ function burnAreaChart() {
        the densest table on the dashboard, so its faces are the smallest. */
     const AUDIT_AVATAR_PX = 16;
 
+    // Pure: a decision the hive made as the owner's delegate ("Let hive
+    // decide"), as opposed to a person's repo_item_decision_* entry.
+    function auditDelegatedDecision(e) { return !!e && String(e.action || '').indexOf('repo_item_decision_delegated') === 0; }
     function renderAuditRow(e) {
       var t = e.ts ? new Date(e.ts) : null;
       var timeStr = t ? formatDashboardDateTime(t) : '—';
@@ -34242,10 +34659,11 @@ function burnAreaChart() {
         face = linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px');
       }
       var sensitiveTag = sensitive ? '<span class="audit-entry-sensitive-tag" title="Server-classified sensitive audit action">sensitive</span>' : '';
+      var delegatedTag = auditDelegatedDecision(e) ? '<span class="audit-entry-sensitive-tag audit-entry-delegated-tag" title="Decided by the hive as the owner\'s delegate (owner-delegate policy), not by a person">delegated</span>' : '';
       return '<tr class="audit-entry' + (sensitive ? ' audit-entry-sensitive' : '') + '" data-audit-sensitive="' + (sensitive ? '1' : '0') + '" style="border-bottom:1px solid var(--terminal-line)">' +
         '<td style="padding:var(--sp-2) var(--sp-4);white-space:nowrap;color:var(--terminal-muted)">' + timeStr + '</td>' +
         '<td class="py-2-px-4" title="' + esc(actor) + '">' + face + esc(actorLabel || '—') + '</td>' +
-        '<td style="padding:var(--sp-2) var(--sp-4);font-weight:600">' + esc(e.action||'—') + sensitiveTag + '</td>' +
+        '<td style="padding:var(--sp-2) var(--sp-4);font-weight:600">' + esc(e.action||'—') + sensitiveTag + delegatedTag + '</td>' +
         '<td class="py-2-px-4">' + esc(e.agent||'—') + '</td>' +
         '<td style="padding:var(--sp-2) var(--sp-4);color:var(--terminal-muted)">' + esc(e.detail||'') + '</td>' +
         '</tr>';
@@ -39844,7 +40262,7 @@ function burnAreaChart() {
 
     // ACMM Evaluation
     const ACMM_EVAL_INTERVAL_MS = 3600000; // 1 hour
-    const ACMM_LEVEL_NAMES = {0:'Prerequisites not met',1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
+    const ACMM_LEVEL_NAMES = {0:'Prerequisites not met',1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Autonomous'};
     const ACMM_LEVEL_DESCRIPTIONS = {
       0: 'Foundational tooling: test suites, CI/CD, templates, and code style enforcement.',
       2: 'AI agents receive explicit instructions via CLAUDE.md, copilot-instructions, cursor rules, and prompt catalogs.',
@@ -40466,7 +40884,7 @@ function burnAreaChart() {
         3: 'Observability in place — metrics, dashboards, and review rubrics track agent quality.',
         4: 'Self-tuning — agents adapt their behavior based on feedback loops and compliance checks.',
         5: 'Semi-autonomous — CI/CD triggers agents, auto-QA self-tunes, policies enforced as code.',
-        6: 'Fully autonomous — multi-agent orchestration, auto issue generation, strategic oversight.'
+        6: 'Autonomous — multi-agent orchestration, auto issue generation, strategic oversight.'
       };
       const desc = opsDescriptions[d.operational_level] || 'Level not recognized.';
       acmmShowDialog('Operational Autonomy — L' + d.operational_level + ' ' + escapeHtml(name),
@@ -42571,7 +42989,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Central stage engine', key: 'governor.labels.stage.engine.mode', text: 'stage engine mode shadow enforce dry run pause anomaly reconciler ADR-0025 governor.labels.stage.engine.mode' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
-      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution' },
+      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
@@ -43412,7 +43830,7 @@ function burnAreaChart() {
     // Short "L3 Quality-Gated"-style label for an ACMM pack level. Shared by the
     // badges, the level dialog subtitle, and the Governor config General tab.
     function acmmLevelLabel(level) {
-      const levelNames = ['', 'L1 Inception', 'L2 Advisory', 'L3 Quality-Gated', 'L4 Security-Aware', 'L5 Semi-Autonomous', 'L6 Fully Autonomous'];
+      const levelNames = ['', 'L1 Inception', 'L2 Advisory', 'L3 Quality-Gated', 'L4 Security-Aware', 'L5 Semi-Autonomous', 'L6 Autonomous'];
       return levelNames[level] || 'L' + level;
     }
 
@@ -48928,7 +49346,7 @@ function burnAreaChart() {
           <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">${hiveIdEditable ? 'Format: hive-adjective-noun (e.g. hive-bold-hawk). Lowercase letters, digits and hyphens only. Changes take effect immediately.' : esc(hiveIdLockReason)}</span>
         </div>
         <div class="config-field" data-setting-key="acmm_level">
-          <label>Maturity Level ${settingHelpMark('agent-configuration', 'acmm-levels-agent-rosters-as-packs', 'Maturity Level', `ACMM (AI Codebase Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).`)}</label>
+          <label>Maturity Level ${settingHelpMark('agent-configuration', 'acmm-levels-agent-rosters-as-packs', 'Maturity Level', `ACMM (AI Codebase Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to autonomous (L6).`)}</label>
           <div style="display:flex;gap:10px;align-items:center">
             <span style="display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:var(--fs-sm);font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber)">${currentACMMLevel > 0 ? acmmLevelLabel(currentACMMLevel) : 'Not set'}</span>
             <button class="hv-btn btn-secondary btn" data-action="gh41" title="Open the ACMM maturity level selector">Change&hellip;</button>
@@ -49372,7 +49790,7 @@ function burnAreaChart() {
           ${activeScope === 'per_repo' ? '<p style="font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Scaling is ignored when cadence mode scope is per repo.</p>' : ''}
         </div>
         <div class="config-field mb-7">
-          <label>Coverage goal (%) ${settingHelpMark('governor-thresholds', '', 'Coverage goal', `Test-coverage percentage the quality card, ci-maintainer bar, agent coverage preamble, and ACMM full-autonomy gate measure against (1-100, default 91).`)}</label>
+          <label>Coverage goal (%) ${settingHelpMark('governor-thresholds', '', 'Coverage goal', `Test-coverage percentage the quality card, ci-maintainer bar, agent coverage preamble, and ACMM L6 gate measure against (1-100, default 91).`)}</label>
           <input type="number" min="1" max="100" id="cfg-coverage-target" value="${activeCoverageTarget}" data-input-action="markDirty" data-arg0="coverage-target" data-arg1="coverageTarget" data-arg-types="s,s,N">
         </div>
         <p class="fs-sm text-muted mb-7">Drag the handles to set issue-count thresholds for governor mode transitions.</p>
@@ -49689,7 +50107,7 @@ function burnAreaChart() {
         <div class="config-field">
           <label for="cfg-stage-grace-offline">Offline contributor grace ${yamlHint('governor.labels.stage.contributor_grace_offline')}</label>
           <input type="text" id="cfg-stage-grace-offline" value="${esc(stageGraceOffline)}" placeholder="1h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_grace_offline" data-arg-types="s,s,w">
-          <div class="config-help">Go duration after the comment-only nudge before an offline or external author's red PR is adopted. With live hub presence the hive instead waits ${yamlHint('governor.labels.stage.adoption.after_offline')} (default 30m) after a registered relay's last heartbeat, or ${yamlHint('governor.labels.stage.adoption.after_unregistered')} (default 2h) for an author with no profile here, and adopts in place on the PR's own branch when GitHub permits ${yamlHint('governor.labels.stage.adoption.in_place')} (default on) rather than opening a superseding PR. An in-place adoption keeps a changed head only when GitHub links the commit to the App bot ${yamlHint('governor.labels.stage.adoption.strict_attribution')} (default on); otherwise the hive hands the PR back to the contributor.</div>
+          <div class="config-help">Go duration after the comment-only nudge before an offline or external author's red PR is adopted. With live hub presence the hive instead waits ${yamlHint('governor.labels.stage.adoption.after_offline')} (default 30m) after a registered relay's last heartbeat, or ${yamlHint('governor.labels.stage.adoption.after_unregistered')} (default 2h) for an author with no profile here, and adopts in place on the PR's own branch when GitHub permits ${yamlHint('governor.labels.stage.adoption.in_place')} (default on) rather than opening a superseding PR. An in-place adoption keeps a changed head only when GitHub links the commit to the App bot ${yamlHint('governor.labels.stage.adoption.strict_attribution')} (default on); otherwise the hive hands the PR back to the contributor. Once the hive owns the head, the contributor lane merges it under the hive's own authority when the hive-authored gates pass (CI green on the adopted head, reviewer verdict, DCO, diff fences, soak), without requiring the original author's trust tier ${yamlHint('governor.labels.stage.adoption.auto_merge')} (default on).</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>
@@ -51397,7 +51815,7 @@ function burnAreaChart() {
     function securityWarningsHtml(sec) {
       const level = (window._lastStatus || {}).acmmLevel || 0;
       const warnings = [];
-      if (level >= 6 && !sec.intentEnforce) warnings.push('L6 is fully autonomous; intent enforcement is recommended before merge automation.');
+      if (level >= 6 && !sec.intentEnforce) warnings.push('L6 is autonomous; intent enforcement is recommended before merge automation.');
       if (level >= 5 && (sec.ioscanFailMode || 'open') === 'open') warnings.push('L5+ with ioscan fail-open keeps work flowing, but fail-closed gives stronger prompt-injection protection.');
       if (sec.reviewRequireApproval && (sec.reviewCapableAgents || 0) === 0) warnings.push('Review approval is required, but no enabled review-capable agents were detected.');
       // #4918: the sandbox opt-in is two-gated (global agent_sandbox.enabled AND
@@ -51786,11 +52204,12 @@ function burnAreaChart() {
           </select>
         </div>
         <div class="config-field" data-setting-key="ioscan.classifier.backend">
-          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude runs the classifier through the Claude CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. copilot, codex and gemini cannot run without tools and are refused at boot. Takes effect after a restart.`)}</label>
+          <label>Classifier backend ${settingHelpMark('ioscan', '', 'Classifier backend', `Model endpoint uses the governor's OpenAI-compatible gateway. claude and copilot run the classifier through that CLI with every tool disabled, no MCP servers, no GitHub token and an empty working directory. When this is empty and no model endpoint is configured, boot uses the tool-less CLI the hive's agents run on. codex and gemini cannot run without tools and are refused at boot. Takes effect after a restart.`)}</label>
           <select data-change-action="markDirty" data-arg0="security" data-arg1="ioscanClassifierBackend" data-arg-types="s,s,v">
             <option value="" ${classifierBackend === '' ? 'selected' : ''}>model endpoint (HTTP)</option>
             <option value="claude" ${classifierBackend === 'claude' ? 'selected' : ''}>claude — tool-less CLI</option>
-            ${classifierBackend !== '' && classifierBackend !== 'claude' ? `<option value="${esc(classifierBackend)}" selected>${esc(classifierBackend)} — refused at boot</option>` : ''}
+            <option value="copilot" ${classifierBackend === 'copilot' ? 'selected' : ''}>copilot — tool-less CLI</option>
+            ${classifierBackend !== '' && classifierBackend !== 'claude' && classifierBackend !== 'copilot' ? `<option value="${esc(classifierBackend)}" selected>${esc(classifierBackend)} — refused at boot</option>` : ''}
           </select>
         </div>
         <div class="config-field-row">
@@ -52642,10 +53061,15 @@ function burnAreaChart() {
       const amContributorLaneOn = amContributorLane.enabled !== false; // nil/undefined = enabled
       const amContributorLaneVerdict = amContributorLane.require_reviewer_verdict !== false;
       const amContributorLaneRegistry = amContributorLane.registry_tiers_sufficient !== false;
+      const amContributorLaneHeldRuns = amContributorLane.approve_held_runs_for_registry_trusted !== false;
       const amContributorLaneSoak = Number.isFinite(Number(amContributorLane.soak_minutes)) ? Number(amContributorLane.soak_minutes) : 30;
       const amContributorLaneLabels = Array.isArray(amContributorLane.exclude_labels) ? amContributorLane.exclude_labels : ['hold','do-not-merge','needs-human','blocked','needs-rebase'];
       const amContributorLaneTiers = Array.isArray(amContributorLane.require_tiers) && amContributorLane.require_tiers.length ? amContributorLane.require_tiers : ['merger','trusted'];
       const amContributorLaneGrantable = Array.isArray(amContributorLane.grantable_tiers) ? amContributorLane.grantable_tiers : ['trusted','merger','advisor'];
+      const amContributorLaneScope = typeof amContributorLane.auto_promotion_scope === 'string' && amContributorLane.auto_promotion_scope ? amContributorLane.auto_promotion_scope : 'hive';
+      const amContributorLaneScopes = Array.isArray(amContributorLane.auto_promotion_scopes) && amContributorLane.auto_promotion_scopes.length ? amContributorLane.auto_promotion_scopes : ['hive','repo'];
+      const amContributorLaneScopeLabel = { hive: "hive — every repository this hive manages", repo: "repo — the PR's repository only" };
+      const amContributorLaneScopeOptions = amContributorLaneScopes.map(v => `<option value="${esc(v)}"${v === amContributorLaneScope ? ' selected' : ''}>${esc(amContributorLaneScopeLabel[v] || v)}</option>`).join('');
       const amContributorLaneRepoSet = new Set((Array.isArray(amContributorLane.repos) ? amContributorLane.repos : []).map(r => String(r).toLowerCase()));
       const amContributorLaneRepoOptions = watchedRepos.map(r => `<option value="${esc(r)}"${amContributorLaneRepoSet.has(String(r).toLowerCase()) ? ' selected' : ''}>${esc(r)}</option>`).join('');
       // Per-repo merge policy lists offer project.repos as owner/repo (the form
@@ -52868,6 +53292,18 @@ function burnAreaChart() {
                   <span class="config-toggle-label">Admit by registry tier ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Admit by registry tier', `When on (the default), the operator-set trust tier on the author's contributor profile satisfies the tier requirement on its own; every other gate (CI, reviewer verdict, soak, diff fences) still applies.`)}</span>
                 </div>
               </div>
+              <div class="config-field">
+                <label>Approve held runs for registry-trusted ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Approve held runs for registry-trusted', `When on (the default), a PR admitted by registry tier that is stuck at required-check-missing has its action_required workflow runs approved once per head by the App (fork heads included), with one audit comment. Claim-marker, auto-promoted and association admissions, sentinel/excluded-label PRs and diffs touching .github/workflows are never approved. Needs the App's Actions: Read and write permission.`)}</label>
+                <div class="config-toggle">
+                  <div id="am-contributor-lane-approve-held-runs" class="config-toggle-switch ${amContributorLaneHeldRuns ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneHeldRuns ? 'true' : 'false'}"></div>
+                  <span class="config-toggle-label">Start CI held by GitHub's fork-approval policy ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Start CI held by fork-approval policy', `GitHub holds a first-time contributor's pull_request runs until someone clicks Approve and run. If the operator already trusts the author to merge via the registry, holding their CI is pure drag; the hive approves the head's held runs once and logs contributor-lane approved held runs.`)}</span>
+                </div>
+              </div>
+            </div>
+            <div class="config-field mt-4">
+              <label for="am-contributor-lane-auto-promotion-scope">Auto-promotion scope ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Auto-promotion scope', `Where the clean-merged-PR ratchet (auto_merge.contributor_tier.auto_promote_after_merged) counts an author's merges. hive (the default) counts clean merged PRs across every repository this hive manages, so a contributor trusted in the main repo is trusted in the small satellite repos too; repo counts only the PR's own repository. Revert and sentinel-alert evidence blocks promotion in either scope.`)}</label>
+              <select id="am-contributor-lane-auto-promotion-scope" data-change-action="gh104">${amContributorLaneScopeOptions}</select>
+              <p class="am-trusted-authors-note">A contributor's trust is a property of the person, not the repository: with <code>hive</code>, nine clean merges in the main repo also admit their first PR to a docs repo.</p>
             </div>
             <div class="config-field mt-4">
               <label for="am-contributor-lane-exclude-labels">Excluded labels</label>
@@ -52878,7 +53314,7 @@ function burnAreaChart() {
               <label for="am-contributor-lane-repos">Repositories</label>
               <select id="am-contributor-lane-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh104" class="am-trusted-authors-repos">${amContributorLaneRepoOptions}</select>
               <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, no-linked-issue, claim-author-mismatch, claim-other-hive, claim-tier-untrusted, claim-unverified, author-association, workflow-path, tests-removed, no-reviewer, no-verdict, soaking, sentinel-blocked); a registry-admitted PR logs <code>contributor-lane:registry-trusted</code>.</p>
-              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
+              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.approve_held_runs_for_registry_trusted</code>, <code>auto_merge.contributor_lane.auto_promotion_scope</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
             </div>
           </div>
         </div>
@@ -54574,6 +55010,7 @@ function burnAreaChart() {
       'auto_merge.contributor_lane.enabled': { tab: 'Features', stage: v => complianceStageContributorLane('enabled', v) },
       'auto_merge.contributor_lane.require_reviewer_verdict': { tab: 'Features', stage: v => complianceStageContributorLane('require_reviewer_verdict', v) },
       'auto_merge.contributor_lane.registry_tiers_sufficient': { tab: 'Features', stage: v => complianceStageContributorLane('registry_tiers_sufficient', v) },
+      'auto_merge.contributor_lane.approve_held_runs_for_registry_trusted': { tab: 'Features', stage: v => complianceStageContributorLane('approve_held_runs_for_registry_trusted', v) },
       'auto_merge.required_checks': { tab: 'Features' },
       'sentinel.enabled': { tab: 'Security', stage: v => markSentinelDirty('enabled', v) },
       'sentinel.disabled_behaviors': { tab: 'Security' },
@@ -55391,16 +55828,20 @@ function burnAreaChart() {
       const enabled = document.getElementById('am-contributor-lane-enabled');
       const verdict = document.getElementById('am-contributor-lane-require-reviewer-verdict');
       const registry = document.getElementById('am-contributor-lane-registry-tiers-sufficient');
+      const heldRuns = document.getElementById('am-contributor-lane-approve-held-runs');
       const soak = document.getElementById('am-contributor-lane-soak-minutes');
       const labels = document.getElementById('am-contributor-lane-exclude-labels');
       const repos = document.getElementById('am-contributor-lane-repos');
       const tiers = document.getElementById('am-contributor-lane-require-tiers');
+      const scope = document.getElementById('am-contributor-lane-auto-promotion-scope');
       const soakMinutes = soak ? parseInt(soak.value, 10) : 30;
       markDirty('auto-merge', 'contributor_lane', {
         enabled: !!(enabled && enabled.classList.contains('on')),
         soak_minutes: Number.isFinite(soakMinutes) && soakMinutes >= 0 ? soakMinutes : 30,
         require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
         registry_tiers_sufficient: !!(registry && registry.classList.contains('on')),
+        approve_held_runs_for_registry_trusted: !!(heldRuns && heldRuns.classList.contains('on')),
+        auto_promotion_scope: scope && scope.value ? scope.value : 'hive',
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : [],
         require_tiers: tiers ? tiers.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []
@@ -56982,9 +57423,9 @@ function burnAreaChart() {
       { name:'retry', aliases:['again'], usage:'/retry', description:'Retry the last sent dialog.', example:'/retry', details:'Resends the last user prompt without you retyping it.', run: chatCommandRetry },
       { name:'edit', aliases:['revise'], usage:'/edit', description:'Put the last prompt back in the input for editing.', example:'/edit', details:'Restores the last sent prompt as a persistent draft.', run: chatCommandEdit },
       { name:'who', aliases:['presence'], usage:'/who', description:'Show who is online/idle in this hive.', example:'/who', details:'Uses `/api/presence`; unauthenticated local dashboards only show `local`.', run: chatCommandWho },
-      { name:'agents', aliases:['agent'], usage:'/agents <question>', description:'Ask about agent status, runs and blockers.', example:'/agents stuck', details:'Forwards a focused agent question to Hive Chat search.', run: chatForwardCommand('agents') },
-      { name:'beads', aliases:['issues','issue'], usage:'/beads <query>', description:'Ask about beads/issues and queue state.', example:'/beads high priority', details:'Forwards a focused bead/issue question to Hive Chat search.', run: chatForwardCommand('beads') },
-      { name:'prs', aliases:['pr'], usage:'/prs <query>', description:'Ask about pull requests, merges and reviews.', example:'/prs waiting on review', details:'Forwards a focused PR question to Hive Chat search.', run: chatForwardCommand('prs') },
+      { name:'agents', aliases:['agent'], usage:'/agents [stuck|paused|running|idle|failed] | /agents <name> [status|why|last|history]', description:'Agent roster, filters and per-agent detail cards.', example:'/agents scanner why', details:'Bare `/agents` lists every agent (BLOCKED ones with the reason inline). `/agents stuck|blocked|paused|running|idle|failed` filters the roster with the reason and since-when. `/agents <name> [status|why|last|history]` (or `/agents status <name>`) shows only that agent: state, block reason, current task, last completed turn, last kick, last PR/issue, restarts. Natural language works too: "which agent completed last?", "why is scanner blocked?", "which agents are idle?". Anything else is forwarded to Hive Chat search with the agent state attached.', run: chatForwardCommand('agents') },
+      { name:'beads', aliases:['issues','issue'], usage:'/beads <query>', description:'Ask about beads/issues and queue state.', example:'/beads high priority', details:'Bare `/beads` gives bead counts per store. With arguments the question is answered from the actionable-issue snapshot (stage labels, priority, assignees, age).', run: chatForwardCommand('beads') },
+      { name:'prs', aliases:['pr'], usage:'/prs [filters|question]', description:'List open pull requests, filtered or as a question.', example:'/prs waiting on review', details:'Bare `/prs` lists the open PRs per repo (author, stage, age, CI, review state, needs-decision/hold, mergeable), capped at 25 rows. Filters answered from the snapshot without a model: waiting on review, needs decision, hold, failing ci, mine, by <login>, repo <owner/repo>, stale, older than 7d. Any other question (`/prs which should merge first`) is answered from the open-PR snapshot by the grounded chat.', run: chatForwardCommand('prs') },
       { name:'governor', aliases:['gov'], usage:'/governor <query>', description:'Ask about governor cadence, kicks and policy.', example:'/governor next kick', details:'Forwards a focused governor question to Hive Chat search.', run: chatForwardCommand('governor') },
       { name:'knowledge', aliases:['kb'], usage:'/knowledge <query>', description:'Ask the knowledge base and imported docs.', example:'/knowledge relay setup', details:'Forwards a focused knowledge-base question to Hive Chat search.', run: chatForwardCommand('knowledge') },
       { name:'jam', aliases:['swarm'], usage:'/jam <query>', description:'Ask about jam sessions, contributors and live collaboration.', example:'/jam who is free?', details:'Presence questions (who is online / free / here / active) are answered locally from `/api/presence`; anything else is forwarded to Hive Chat search.', run: chatCommandJam },
@@ -56994,7 +57435,7 @@ function burnAreaChart() {
     CHAT_COMMANDS.forEach(c => [c.name].concat(c.aliases || []).forEach(n => CHAT_COMMAND_BY_NAME.set(n, c)));
 
     const CHAT_CHEATS = [
-      { group:'Agents', items:['/agents stuck', '/agents scanner status', 'Which agent completed last?'] },
+      { group:'Agents', items:['/agents stuck', '/agents scanner status', '/agents scanner why', 'Which agent completed last?', 'Which agents are idle?'] },
       { group:'Beads / Issues / PRs', items:['/beads high priority', '/prs waiting on review', 'Summarize open release blockers'] },
       { group:'Governor', items:['/governor next kick', 'Why is the governor paused?', 'Show recent kick failures'] },
       { group:'Knowledge', items:['/knowledge work sources', 'Search docs for relay setup', 'What changed in v5?'] },
@@ -57152,7 +57593,7 @@ function burnAreaChart() {
         if (!cmd) return 'No command named `' + name + '`. Try `/help`.';
         return '#### /' + cmd.name + '\n' + cmd.description + '\n\nUsage: `' + (cmd.usage || ('/' + cmd.name)) + '`\n\nExample: `' + cmd.example + '`\n\n' + (cmd.details || '');
       }
-      return '#### Hive Chat commands\n' + CHAT_COMMANDS.map(c => '- `' + (c.usage || ('/' + c.name)) + '` — ' + c.description + ' Example: `' + c.example + '`').join('\n');
+      return '#### Hive Chat commands\n' + CHAT_COMMANDS.map(c => '- `' + (c.usage || ('/' + c.name)) + '` — ' + c.description + ' Example: `' + c.example + '`').join('\n') + '\n\nA bare `/agents`, `/prs`, `/beads` or `/status` prints the summary. Add arguments (`/agents stuck`, `/prs waiting on review`) or ask in plain words (`which agent completed last?`) and Hive Chat answers from a read-only snapshot of the live hive state, citing the agents and items it used — or says it does not have that data. Grounded answers never take actions; they are gated by `chat.grounded_answers.enabled` (default on) and use the governor reviewer endpoint.';
     }
     function chatCommandClear() {
       chatTranscript = [];
@@ -59280,7 +59721,7 @@ function burnAreaChart() {
         id: 'acmm',
         title: 'Set your ACMM level',
         auto: (data) => !!(data && data.acmmLevelConfigured === true),
-        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>. ACMM (AI Codebase Maturity Model) is the dial for how much the agents may do on their own: L1 (advise only — agents report, never change anything) → L6 (fully autonomous — agents may merge on green CI), each level adding to the last. A default is preset — confirm it matches how much autonomy you want.',
+        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>. ACMM (AI Codebase Maturity Model) is the dial for how much the agents may do on their own: L1 (advise only — agents report, never change anything) → L6 (autonomous — agents may merge on green CI), each level adding to the last. A default is preset — confirm it matches how much autonomy you want.',
         autoNote: 'Checks itself once an ACMM level is explicitly saved on the hive.',
         actions: [{ label: 'Show me', action: 'welcomeShowACMM' }]
       }

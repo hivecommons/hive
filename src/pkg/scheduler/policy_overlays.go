@@ -26,9 +26,9 @@ func (s *Scheduler) addHeldPRCoordination(agentName string, actionable *github.A
 	}
 	claims, failClosed := s.formatHeldPRClaimsWithPolicy(actionable)
 	if failClosed {
-		if s.logger != nil {
-			s.logger.Warn("ioscan fail-closed blocked held-PR coordination kick", "agent", agentName)
-		}
+		// Persists every tick while the held PR stays open; warn once per agent
+		// like the main fail-closed kick path, then demote repeats to Debug.
+		s.warnOnce("blocked-held-pr-kick:"+agentName, "ioscan fail-closed blocked held-PR coordination kick", "agent", agentName)
 		return ""
 	}
 
@@ -703,4 +703,4 @@ const adoptedSentinelNote = "sentinel-alert: repair CI / rebase as usual, but do
 // stage label, not the check list, says what the hive still owes, and a
 // pending `tide` or a missing lgtm is never the hive's blocker below stage
 // 080 (hivecommons/hive#12858).
-const adoptedPRStatusRule = "    STATUS RULE: green CI is not done on a 074 PR. Read the stage comment/lane reason: an open review-swarm finding (reviewer-verdict:changes_requested) is YOUR blocker — fix it and let the swarm re-review. Never report \"only tide remains\" or \"needs maintainer lgtm/approve\" unless the stage label is already >= stage/080; below that, a pending tide check means the lane has not admitted the head yet, not that a person owes an approval.\n"
+const adoptedPRStatusRule = "    ADOPTED BRANCH: when needs-rebase/conflicting, fetch the contributor's actual fork branch and the PR base, rebase onto the base, preserve original authors and Signed-off-by trailers (never --reset-author), and push back to that fork with --force-with-lease against the observed head. Stop if the contributor moved it; never overwrite their new work. Sign only your own new commits.\n    STATUS RULE: green CI is not done on a 074 PR. Read the stage comment/lane reason: an open review-swarm finding (reviewer-verdict:changes_requested) is YOUR blocker — fix it and let the swarm re-review. Never report \"only tide remains\" or \"needs maintainer lgtm/approve\" unless the stage label is already >= stage/080; below that, a pending tide check means the lane has not admitted the head yet, not that a person owes an approval.\n"

@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -300,12 +301,22 @@ type StageTrackerItem struct {
 	// SentinelReason is the first finding's summary, so the lane text can
 	// name why a person must look (hivecommons/hive: "Sentinel alert ·
 	// needs human").
-	SentinelAlert    bool       `json:"sentinel_alert,omitempty"`
-	SentinelFindings int        `json:"sentinel_findings,omitempty"`
-	SentinelReason   string     `json:"sentinel_reason,omitempty"`
-	NudgeCount       int        `json:"nudge_count,omitempty"`
-	LastNudgeAt      *time.Time `json:"last_nudge_at,omitempty"`
-	AdoptedBy        int        `json:"adopted_by,omitempty"`
+	SentinelAlert    bool   `json:"sentinel_alert,omitempty"`
+	SentinelFindings int    `json:"sentinel_findings,omitempty"`
+	SentinelReason   string `json:"sentinel_reason,omitempty"`
+	// HumanApprover is the trusted merger whose GitHub Approve review on
+	// the current head settled a requires_human verdict or a manual-merge
+	// lane rule (the `:human-approved@login` suffix on the stage reason).
+	// ManualMerge is true when the stage reason is a lane rule the hive
+	// never merges unattended (CI workflow / action edits, removed tests,
+	// a human-merge path): at 090 the merge gate then reads "Awaiting
+	// human merge" and names the approver, since the only step left is
+	// the maintainer's merge click.
+	HumanApprover string     `json:"human_approver,omitempty"`
+	ManualMerge   bool       `json:"manual_merge,omitempty"`
+	NudgeCount    int        `json:"nudge_count,omitempty"`
+	LastNudgeAt   *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy     int        `json:"adopted_by,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -630,20 +641,20 @@ func stageTrackerTier(labels []string) string {
 // named in SentinelReason.
 const stageTrackerSentinelMoreFormat = " (+%d more)"
 
-// stageTrackerSentinel reports whether the sentinel flagged repo#number at
-// head: the PR wears the configured alert label (the sweep's blocking
-// signal, read from the live labels so a webhook label patch flips it at
-// once) or the review evidence bundle for head records sentinel findings
-// (how a trusted author's notice-only finding is seen, since those carry a
-// comment rather than the label). The findings count and the first
-// finding's summary come from the bundle; both are empty when only the
-// label says so. Blocking-alert findings without the label mean a
-// maintainer removed it after reviewing this head (the sweep re-applies it
-// only on a new head), so they do not flag the row; only notice findings
-// flag a row that has no label. One file read per PR with a known head,
+// stageTrackerSentinel reports whether the sentinel alert on repo#number
+// at head still stands. The live labels decide: the sweep announces a
+// blocking finding through the configured alert label, and a maintainer
+// removing that label is the sweep's own clearance signal
+// (sentinelClearedByMaintainer), so a webhook label patch flips the gate at
+// once. The verified review evidence bundle for head supplies the findings
+// count and the first finding's summary, and promotes the alert on its own
+// only for a notice-only finding (a trusted author's PR: comment, never the
+// label), since no label ever carried that one. A blocking finding whose
+// label is gone is reported as cleared — findings and reason still fill
+// the tooltip, alert does not. One file read per PR with a known head,
 // ENOENT when the sentinel never wrote one; the tracker payload is memoised
 // so this runs once per snapshot, not per request.
-func (s *Server) stageTrackerSentinel(repo string, number int, head string, labels []string) (alert bool, findings int, reason string) {
+func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, repo string, number int, head string, labels []string) (alert bool, findings int, reason string) {
 	label := s.sentinelLabel()
 	for _, l := range labels {
 		if strings.EqualFold(strings.TrimSpace(l), label) {
@@ -651,35 +662,30 @@ func (s *Server) stageTrackerSentinel(repo string, number int, head string, labe
 			break
 		}
 	}
-	if head == "" {
+	if head == "" || verifier == nil {
 		return alert, 0, ""
 	}
-	b, err := github.LoadReviewEvidence(github.ReviewEvidencePath("", repo, number, head))
+	b, err := github.LoadVerifiedReviewEvidence(github.ReviewEvidencePath("", repo, number, head), *verifier)
 	if err != nil || b == nil || len(b.Sentinel) == 0 {
 		return alert, 0, ""
 	}
-	shown := b.Sentinel
-	if !alert {
-		shown = nil
-		for _, f := range b.Sentinel {
-			if f.Notice {
-				shown = append(shown, f)
-			}
-		}
-		if len(shown) == 0 {
-			return false, 0, ""
-		}
-	}
-	findings = len(shown)
-	reason = strings.TrimSpace(shown[0].Summary)
+	findings = len(b.Sentinel)
+	reason = strings.TrimSpace(b.Sentinel[0].Summary)
 	if reason == "" {
-		reason = strings.TrimSpace(shown[0].Rule)
+		reason = strings.TrimSpace(b.Sentinel[0].Rule)
 	}
 	if findings > 1 {
 		reason += fmt.Sprintf(stageTrackerSentinelMoreFormat, findings-1)
 	}
-	return true, findings, reason
+	for _, f := range b.Sentinel {
+		if f.Notice {
+			alert = true
+			break
+		}
+	}
+	return alert, findings, reason
 }
+
 func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Record, hasRec bool, overrides map[string]time.Duration, now time.Time, draft bool) []string {
 	set := map[string]bool{}
 	for _, l := range labels {
@@ -752,6 +758,13 @@ func humanizeStageReason(reason string) string {
 	r := strings.TrimSpace(reason)
 	if r == "" {
 		return ""
+	}
+	if base, approver := stagelabels.HumanApprovedReason(r); approver != "" {
+		clause := humanizeStageReason(base)
+		if clause == "" {
+			return "approved by @" + approver
+		}
+		return clause + " — approved by @" + approver
 	}
 	lower := strings.ToLower(r)
 	switch lower {
@@ -826,10 +839,29 @@ func humanizeStageReason(reason string) string {
 	if strings.HasPrefix(lower, "status-") || strings.HasPrefix(lower, "check-") {
 		return "CI is red (" + r + ")"
 	}
+	switch lower {
+	case stageengineprstage.ContributorLaneReasonWorkflowPath:
+		return "workflow path"
+	case stageengineprstage.ContributorLaneReasonTestsRemoved:
+		return "tests removed"
+	case stageengineprstage.AutoMergeReasonHumanMergePath:
+		return "human-merge path"
+	}
 	if rest, ok := strings.CutPrefix(lower, "contributor-lane:"); ok {
 		return strings.ReplaceAll(strings.ReplaceAll(rest, "-", " "), "_", " ")
 	}
 	return strings.NewReplacer("-", " ", "_", " ", ":", ": ").Replace(r)
+}
+
+// stageTrackerManualMergeReason reports whether a bare stage reason is a
+// lane rule the hive never merges unattended, so a 090 under it is waiting
+// on a maintainer's merge click rather than on /lgtm /approve.
+func stageTrackerManualMergeReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case stageengineprstage.ContributorLaneReasonWorkflowPath, stageengineprstage.ContributorLaneReasonTestsRemoved, stageengineprstage.AutoMergeReasonHumanMergePath:
+		return true
+	}
+	return false
 }
 
 // trackerSoakRemainingRE pulls the time left out of the lane's
@@ -956,6 +988,13 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
+		if base, approver := stagelabels.HumanApprovedReason(reason); stageTrackerManualMergeReason(base) {
+			c := "Awaiting human merge (" + humanizeStageReason(base) + ")"
+			if approver != "" {
+				c += " — approved by @" + approver
+			}
+			return c + "; the hive never merges this itself: click Merge (or /lgtm + /approve for tide)", "maintainer"
+		}
 		return joinClause("Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself", clause), "maintainer"
 	case stagelabels.PreMergeSoak:
 		return joinClause("Admitted by the automerge lane; the pre-merge soak window is running", clause), "automerge lane"
@@ -1079,6 +1118,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		cfg = s.deps.Config
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
+	verifier, verifierErr := s.reviewEvidenceVerifier()
+	var evidenceVerifier *github.ReviewEvidenceVerifier
+	if verifierErr == nil {
+		evidenceVerifier = &verifier
+	}
 	lookup := func(repo string, number int) (stagelabels.Record, bool) {
 		if store == nil {
 			return stagelabels.Record{}, false
@@ -1139,6 +1183,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		base, approver := stagelabels.HumanApprovedReason(it.Reason)
+		it.HumanApprover = approver
+		it.ManualMerge = stageTrackerManualMergeReason(base)
 		it.History = stageTrackerHistory(rec)
 	}
 	seen := map[string]bool{}
@@ -1214,6 +1261,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	addPR := func(repoName string, decisions map[string]Ownership, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
 		pr.Repo = nonEmpty(pr.Repo, repoName)
 		rec, ok := lookup(repoName, pr.Number)
+		if ok && rec.Superseded() {
+			// hivecommons/hive#14471: the hive's adoption of this PR merged
+			// and the original was told. Closed or not (the App may lack
+			// permission on a fork PR), it is finished work, not a row.
+			return
+		}
 		it := StageTrackerItem{Repo: repoName, Number: pr.Number, Kind: "pr", Title: pr.Title, Author: pr.Author, Head: pr.HeadSHA,
 			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
@@ -1233,8 +1286,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
 		stageTrackerSetFinisher(&it, decisions, pr.Draft)
-		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(repoName, pr.Number, pr.HeadSHA, pr.Labels)
-		it.LinkedIssues = stageTrackerPRLinkedIssues(pr, status.GitHubBaseURL)
+		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
+		it.LinkedIssues = stageTrackerPRLinkedIssues(pr, repoName, status.GitHubBaseURL)
 		add(it)
 	}
 	for _, repo := range status.Repos {
@@ -1481,20 +1534,30 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 // and carries no Via; the softer tiers keep theirs so the UI can mark them.
 // Mention-tier entries are provisional: stageTrackerResolveLinkedPRs drops
 // them unless the number is an issue listed in the response.
-func stageTrackerPRLinkedIssues(pr github.PullRequest, baseURL string) []StageTrackerLinkedIssue {
+//
+// repoName is the PR's repository as owner/name. pr.Repo may be the config's
+// short name ("hive") while GitHub's closing references carry the full one
+// ("hivecommons/hive"): the two name the same repository, so a titled
+// closing link is kept — not dropped for the untitled text reference that
+// rendered "(title unavailable)" — and the fallback URL is built from the
+// full name, never from the short one.
+func stageTrackerPRLinkedIssues(pr github.PullRequest, repoName, baseURL string) []StageTrackerLinkedIssue {
 	var out []StageTrackerLinkedIssue
 	seen := map[int]bool{}
+	full := nonEmpty(strings.TrimSpace(repoName), pr.Repo)
 	add := func(li github.PRLinkedIssue, via string) {
 		if li.Number <= 0 || li.Number == pr.Number || seen[li.Number] {
 			return
 		}
-		if li.Repo != "" && !strings.EqualFold(li.Repo, pr.Repo) {
+		// Compare against the fully-qualified name when one is known so a
+		// same-named repository under another owner is still foreign.
+		if li.Repo != "" && !stageTrackerSameRepo(li.Repo, full) {
 			return
 		}
 		seen[li.Number] = true
 		out = append(out, StageTrackerLinkedIssue{
 			Number: li.Number, Title: li.Title, State: strings.ToLower(strings.TrimSpace(li.State)),
-			URL: overviewItemURL(li.URL, pr.Repo, li.Number, "issue", baseURL), Via: via,
+			URL: overviewItemURL(li.URL, full, li.Number, "issue", baseURL), Via: via,
 		})
 	}
 	for _, li := range pr.LinkedIssues {
@@ -1508,6 +1571,31 @@ func stageTrackerPRLinkedIssues(pr github.PullRequest, baseURL string) []StageTr
 		add(li, via)
 	}
 	return out
+}
+
+// stageTrackerSameRepo reports whether two repository names denote the
+// same repository: equal ignoring case, or one is the bare name of the
+// other's owner/name form.
+func stageTrackerSameRepo(a, b string) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	shortA, shortB := a, b
+	if i := strings.LastIndex(a, "/"); i >= 0 {
+		shortA = a[i+1:]
+	}
+	if i := strings.LastIndex(b, "/"); i >= 0 {
+		shortB = b[i+1:]
+	}
+	// Both fully qualified but different owners: different repositories.
+	if strings.Contains(a, "/") && strings.Contains(b, "/") {
+		return false
+	}
+	return strings.EqualFold(shortA, shortB)
 }
 
 // stageTrackerLinkSoft reports whether a linked issue is a reference link

@@ -1,0 +1,1 @@
+- `crux/hivecap`'s direct-vs-socket parity test used a fixed token expiry of 2026-10-25T14:00Z and began failing once that moment passed; it now uses a relative expiry (#14138).

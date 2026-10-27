@@ -1,0 +1,425 @@
+{
+  "GeneratedAt": "2026-10-27T00:00:00Z",
+  "Since": "2026-10-01T00:00:00Z",
+  "Until": "2026-11-01T00:00:00Z",
+  "Now": "2026-10-27T00:00:00Z",
+  "Source": "hive's own spoke (hive-oke) evidence snapshot taken 2026-10-27",
+  "Bundles": 13060,
+  "Unreadable": 10,
+  "PRs": 11571,
+  "Repos": [
+    {
+      "Repo": "hivecommons/hive",
+      "Merged": 2451
+    },
+    {
+      "Repo": "hivecommons/docs",
+      "Merged": 223
+    },
+    {
+      "Repo": "hivecommons/dibs",
+      "Merged": 179
+    },
+    {
+      "Repo": "hivecommons/rationguard",
+      "Merged": 172
+    },
+    {
+      "Repo": "hivecommons/pluk",
+      "Merged": 155
+    },
+    {
+      "Repo": "hivecommons/promptargs",
+      "Merged": 147
+    },
+    {
+      "Repo": "hivecommons/hivecommons.github.io",
+      "Merged": 145
+    },
+    {
+      "Repo": "hivecommons/hotshot",
+      "Merged": 122
+    },
+    {
+      "Repo": "hivecommons/homebrew-hive",
+      "Merged": 78
+    },
+    {
+      "Repo": "hivecommons/crux",
+      "Merged": 7
+    }
+  ],
+  "Verdicts": 15054,
+  "Mediated": {
+    "Name": "mediated",
+    "Merged": 1455,
+    "Matured": 43,
+    "RevertRate": {
+      "K": 0,
+      "N": 43,
+      "Rate": 0,
+      "Lo": 0,
+      "Hi": 0.08201257002322722,
+      "Reported": true
+    },
+    "ChangeFailure": {
+      "K": 1,
+      "N": 43,
+      "Rate": 0.023255813953488372,
+      "Lo": 0.004116981177419918,
+      "Hi": 0.12059267861216882,
+      "Reported": true
+    },
+    "TimeToMerge": {
+      "Value": 0.4418315681741667,
+      "N": 1455,
+      "Reported": true
+    },
+    "CIFailureAtHead": {
+      "K": 55,
+      "N": 798,
+      "Rate": 0.06892230576441102,
+      "Lo": 0.05333222787551566,
+      "Hi": 0.08864294527588978,
+      "Reported": true
+    },
+    "CICoverage": {
+      "K": 798,
+      "N": 1455,
+      "Rate": 0.5484536082474227,
+      "Lo": 0.5227885036932317,
+      "Hi": 0.5738635248751888,
+      "Reported": true
+    },
+    "ChangesRequested": {
+      "K": 490,
+      "N": 1455,
+      "Rate": 0.33676975945017185,
+      "Lo": 0.312943612754814,
+      "Hi": 0.36145558178419573,
+      "Reported": true
+    },
+    "ByAuthorKind": {
+      "agent": 857,
+      "bot": 70,
+      "human": 528
+    }
+  },
+  "Unmediated": {
+    "Name": "unmediated",
+    "Merged": 2224,
+    "Matured": 1513,
+    "RevertRate": {
+      "K": 1,
+      "N": 1513,
+      "Rate": 0.0006609385327164573,
+      "Lo": 0.00011667840798450777,
+      "Hi": 0.0037344817922631644,
+      "Reported": true
+    },
+    "ChangeFailure": {
+      "K": 16,
+      "N": 1513,
+      "Rate": 0.010575016523463317,
+      "Lo": 0.006519662289637756,
+      "Hi": 0.01710943649035351,
+      "Reported": true
+    },
+    "TimeToMerge": {
+      "Value": 0.19166666666666668,
+      "N": 2224,
+      "Reported": true
+    },
+    "CIFailureAtHead": {
+      "K": 17,
+      "N": 62,
+      "Rate": 0.27419354838709675,
+      "Lo": 0.17880918599092133,
+      "Hi": 0.39592775843327255,
+      "Reported": true
+    },
+    "CICoverage": {
+      "K": 62,
+      "N": 2224,
+      "Rate": 0.02787769784172662,
+      "Lo": 0.021807488449304663,
+      "Hi": 0.035576124461056645,
+      "Reported": true
+    },
+    "ChangesRequested": {
+      "K": 0,
+      "N": 2224,
+      "Rate": 0,
+      "Lo": 0,
+      "Hi": 0.0017243595774493123,
+      "Reported": true
+    },
+    "ByAuthorKind": {
+      "agent": 1186,
+      "bot": 103,
+      "human": 935
+    }
+  },
+  "FirstMediatedMerge": "2026-10-09T18:04:32Z",
+  "Months": [
+    "2026-04",
+    "2026-05",
+    "2026-06",
+    "2026-07",
+    "2026-08",
+    "2026-09",
+    "2026-10"
+  ],
+  "Trend": {
+    "mediated": [
+      {
+        "Month": "2026-04",
+        "Merged": 0,
+        "RevertRate": {
+          "K": 0,
+          "N": 0,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0,
+          "Reported": false
+        },
+        "TimeToMerge": {
+          "Value": 0,
+          "N": 0,
+          "Reported": false
+        }
+      },
+      {
+        "Month": "2026-05",
+        "Merged": 0,
+        "RevertRate": {
+          "K": 0,
+          "N": 0,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0,
+          "Reported": false
+        },
+        "TimeToMerge": {
+          "Value": 0,
+          "N": 0,
+          "Reported": false
+        }
+      },
+      {
+        "Month": "2026-06",
+        "Merged": 0,
+        "RevertRate": {
+          "K": 0,
+          "N": 0,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0,
+          "Reported": false
+        },
+        "TimeToMerge": {
+          "Value": 0,
+          "N": 0,
+          "Reported": false
+        }
+      },
+      {
+        "Month": "2026-07",
+        "Merged": 0,
+        "RevertRate": {
+          "K": 0,
+          "N": 0,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0,
+          "Reported": false
+        },
+        "TimeToMerge": {
+          "Value": 0,
+          "N": 0,
+          "Reported": false
+        }
+      },
+      {
+        "Month": "2026-08",
+        "Merged": 0,
+        "RevertRate": {
+          "K": 0,
+          "N": 0,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0,
+          "Reported": false
+        },
+        "TimeToMerge": {
+          "Value": 0,
+          "N": 0,
+          "Reported": false
+        }
+      },
+      {
+        "Month": "2026-09",
+        "Merged": 0,
+        "RevertRate": {
+          "K": 0,
+          "N": 0,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0,
+          "Reported": false
+        },
+        "TimeToMerge": {
+          "Value": 0,
+          "N": 0,
+          "Reported": false
+        }
+      },
+      {
+        "Month": "2026-10",
+        "Merged": 1455,
+        "RevertRate": {
+          "K": 0,
+          "N": 43,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0.08201257002322722,
+          "Reported": true
+        },
+        "TimeToMerge": {
+          "Value": 0.4418315681741667,
+          "N": 1455,
+          "Reported": true
+        }
+      }
+    ],
+    "unmediated": [
+      {
+        "Month": "2026-04",
+        "Merged": 184,
+        "RevertRate": {
+          "K": 0,
+          "N": 184,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0.02045127383923476,
+          "Reported": true
+        },
+        "TimeToMerge": {
+          "Value": 0.005555555555555556,
+          "N": 184,
+          "Reported": true
+        }
+      },
+      {
+        "Month": "2026-05",
+        "Merged": 432,
+        "RevertRate": {
+          "K": 0,
+          "N": 432,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0.008814211401573416,
+          "Reported": true
+        },
+        "TimeToMerge": {
+          "Value": 0.013888888888888888,
+          "N": 432,
+          "Reported": true
+        }
+      },
+      {
+        "Month": "2026-06",
+        "Merged": 943,
+        "RevertRate": {
+          "K": 1,
+          "N": 943,
+          "Rate": 0.0010604453870625664,
+          "Lo": 0.00018721436692565457,
+          "Hi": 0.005982349792486016,
+          "Reported": true
+        },
+        "TimeToMerge": {
+          "Value": 0.013333333333333334,
+          "N": 943,
+          "Reported": true
+        }
+      },
+      {
+        "Month": "2026-07",
+        "Merged": 611,
+        "RevertRate": {
+          "K": 0,
+          "N": 611,
+          "Rate": 0,
+          "Lo": 0,
+          "Hi": 0.006248113335206986,
+          "Reported": true
+        },
+        "TimeToMerge": {
+          "Value": 0.08694444444444445,
+          "N": 611,
+          "Reported": true
+        }
+      },
+      {
+        "Month": "2026-08",
+        "Merged": 1881,
+        "RevertRate": {
+          "K": 2,
+          "N": 1881,
+          "Rate": 0.001063264221158958,
+          "Lo": 0.00029162773813870926,
+          "Hi": 0.0038687218636527625,
+          "Reported": true
+        },
+        "TimeToMerge": {
+          "Value": 0.30833333333333335,
+          "N": 1881,
+          "Reported": true
+        }
+      },
+      {
+        "Month": "2026-09",
+        "Merged": 3088,
+        "RevertRate": {
+          "K": 4,
+          "N": 3088,
+          "Rate": 0.0012953367875647669,
+          "Lo": 0.0005038347363301571,
+          "Hi": 0.0033261156725135554,
+          "Reported": true
+        },
+        "TimeToMerge": {
+          "Value": 0.33694444444444444,
+          "N": 3088,
+          "Reported": true
+        }
+      },
+      {
+        "Month": "2026-10",
+        "Merged": 2224,
+        "RevertRate": {
+          "K": 1,
+          "N": 1513,
+          "Rate": 0.0006609385327164573,
+          "Lo": 0.00011667840798450777,
+          "Hi": 0.0037344817922631644,
+          "Reported": true
+        },
+        "TimeToMerge": {
+          "Value": 0.19166666666666668,
+          "N": 2224,
+          "Reported": true
+        }
+      }
+    ]
+  },
+  "Spend": {
+    "usd": 6124.75144225,
+    "merged_prs": 2869,
+    "window_start": "2026-08-08T00:00:00Z",
+    "window_end": "2026-10-27T14:50:41.723Z",
+    "basis": "hive-attributed"
+  },
+  "Hub": null
+}

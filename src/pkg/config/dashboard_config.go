@@ -432,6 +432,30 @@ type DashboardStageTrackerConfig struct {
 	// the item closed cannot bring the row back when it publishes minutes
 	// later. Must cover the longest eval cycle. 0 means the default (1800).
 	WebhookRefreshReplayWindowS int `yaml:"webhook_refresh_replay_window_s,omitempty" json:"webhook_refresh_replay_window_s,omitempty"`
+	// ClosedSweepIntervalS is how often, in seconds, the tracker asks GitHub
+	// for the repository's items closed since its last look (one list call
+	// per repo) and drops any it still shows as open: the backstop for a
+	// webhook delivery that never arrived or whose confirming read was
+	// refused. Each status publish starts a sweep when one is due. 0
+	// means the default (300); a negative value disables it.
+	ClosedSweepIntervalS int `yaml:"closed_sweep_interval_s,omitempty" json:"closed_sweep_interval_s,omitempty"`
+}
+
+// defaultStageTrackerClosedSweepInterval is the default
+// dashboard.stage_tracker.closed_sweep_interval_s.
+const defaultStageTrackerClosedSweepInterval = 5 * time.Minute
+
+// StageTrackerClosedSweepInterval is the effective
+// dashboard.stage_tracker.closed_sweep_interval_s as a duration; 0 means
+// the sweep is disabled.
+func (c *Config) StageTrackerClosedSweepInterval() time.Duration {
+	if c == nil || c.Dashboard.StageTracker.ClosedSweepIntervalS == 0 {
+		return defaultStageTrackerClosedSweepInterval
+	}
+	if c.Dashboard.StageTracker.ClosedSweepIntervalS < 0 {
+		return 0
+	}
+	return time.Duration(c.Dashboard.StageTracker.ClosedSweepIntervalS) * time.Second
 }
 
 // defaultStageTrackerWebhookRefreshDebounce is the default

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 )
 
 // Nous gate protocol tunables (RFC #11585 part 3, #11696).
@@ -41,7 +43,7 @@ const (
 	// NousDispatcherSDK has Nous call the model API directly. That spend is
 	// invisible to Hive's cost tracking; it remains selectable for operators
 	// who ran Nous that way before this part.
-	NousDispatcherSDK = "sdk"
+	NousDispatcherSDK = cruxconfig.NousDispatcherSDK
 
 	// DefaultNousDispatcher is the dispatcher used when nous.dispatcher is
 	// absent and NousDispatcherEnv is unset.
@@ -50,11 +52,11 @@ const (
 	// NousDispatcherEnv overrides nous.dispatcher at runtime (env > yaml >
 	// default). It is also the name the hive exports the RESOLVED dispatcher
 	// under to experimenter agents, so bin/nous-runner.sh reads one answer.
-	NousDispatcherEnv = "HIVE_NOUS_DISPATCHER"
+	NousDispatcherEnv = cruxconfig.NousDispatcherEnv
 
 	// NousEngineEnv is the name the hive exports an experimenter agent's
 	// resolved engine under.
-	NousEngineEnv = "HIVE_NOUS_ENGINE"
+	NousEngineEnv = cruxconfig.NousEngineEnv
 )
 
 // Pinned campaign dependencies (RFC #11585 part 7, #11700).
@@ -273,8 +275,6 @@ func effectiveRole(name string, agent AgentConfig) string {
 	}
 	return name
 }
-
-
 
 func sortedKeys(set map[string]bool) string {
 	keys := make([]string, 0, len(set))

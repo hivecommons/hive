@@ -1,0 +1,1 @@
+- Prevent repeated scanner sweeps from being reported as CI polling by counting repeated reads within each kick, excluding earlier kicks' reads ([#14061](https://github.com/hivecommons/hive/issues/14061)).

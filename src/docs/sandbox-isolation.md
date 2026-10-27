@@ -7,7 +7,7 @@ Hive agents are untrusted code executors: prompts, tool output, and cloned repos
 Two halves of that target hold differently, and the difference matters:
 
 - **Credentials and pushes are constrained on every path.** No agent receives a GitHub token or pushes directly; authorship goes through the App-gated `gh` wrapper and the push broker.
-- **Workspace write confinement depends on the launch path and backend.** The Podman sandbox below is the hub-side boundary. Contributor container mode has its own container boundary. In contributor local mode: claude/litellm and codex have OS-enforced sandboxes; copilot has its own OS-enforced sandbox, wired the same way, gated on the installed CLI actually supporting it; opencode has no sandbox but does get a command-name deny-list (a floor, not a boundary); goose, agy, bob, pi, aider, kilo, omp, and openhands have **no confinement mechanism this repo can wire at all** and refuse to launch in local mode unless the operator explicitly opts in per backend. See the [per-backend matrix](#per-backend-confinement-on-the-contributor-local-path) below.
+- **Workspace write confinement depends on the launch path and backend.** The Podman sandbox below is the hub-side boundary. Contributor container mode has its own container boundary. In contributor local mode: claude/litellm and codex have OS-enforced sandboxes; copilot has its own OS-enforced sandbox, wired the same way, gated on the installed CLI actually supporting it; opencode has no sandbox but does get a command-name deny-list (a floor, not a boundary); goose, agy, bob, pi, aider, kilo, omp, openhands, and omnigent have **no confinement mechanism this repo can wire at all** and refuse to launch in local mode unless the operator explicitly opts in per backend. See the [per-backend matrix](#per-backend-confinement-on-the-contributor-local-path) below.
 
 **#4918 is what that costs in practice, and it did not require a compromise.** An agent doing correct work on an assigned third-party repo ran that repo's own test suite; a latent defect in two of its tests let a hook escape its stubs and issue `rpm-ostree kargs --append-if-missing=...` against the operator's real deployment. Nothing was written, and the only reason is that the process happened to lack privilege. Benign behaviour was a sufficient precondition, so this is a routine exposure rather than an exceptional one.
 
@@ -53,7 +53,9 @@ This table is the ground truth for `just contribute-hive <backend> local` — th
 | `pi` | **None.** `@earendil-works/pi-coding-agent` ships with no sandbox by default; directory confinement exists only via a third-party extension (`pi-permission-modes`) hive does not install or depend on. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_PI_DANGEROUSLY_RUN_UNCONFINED=1` |
 | `aider` | **None.** No Docker/OS isolation option of any kind. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_AIDER_DANGEROUSLY_RUN_UNCONFINED=1` |
 | `omp` | **None.** OMP exposes `--auto-approve`, but that controls confirmation prompts rather than filesystem or host-state confinement; Hive does not pass it on the interactive contributor path. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1` |
+| `claude-managed-agents` | Claude Managed Agents `self_hosted` worker in the Hive pod, with `forced-egress`/`proxy-only` and the extwork `shadow`/`report-only` gate | Tool traffic stays on Hive's egress path; the worker gets an environment key and per-session work secret, never `ANTHROPIC_API_KEY` or a GitHub write token | No direct GitHub path is accepted; `github_repository`, vaulted-secret, and GitHub-MCP rows remain report-only and are refused for write-capable stages |
 | `openhands` | **None.** The bare `openhands` CLI runs the agent directly on the host (OpenHands' own README: "the agent will have full access to your filesystem!"); `--always-approve` governs approval only, and the Docker sandbox exists only behind `openhands serve`/Agent Canvas, which have no one-shot task shape hive can drive. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_OPENHANDS_DANGEROUSLY_RUN_UNCONFINED=1` |
+| `omnigent` | **None.** Omnigent provides an orchestration and policy layer over Claude Code, Codex, Cursor, Pi, and custom agents, with optional agent-level sandboxing (`enforce_sandbox`), but the local CLI invocation (`omnigent run --server local`) runs directly on the host with no OS-level boundary wired by Hive. `--server local` keeps the Omnigent server inside the Hive boundary (remote-server mode is unsupported); its internal policies evaluate additively, while Hive's proxy remains strictly authoritative for all repository writes and pushes. | Nothing — local mode refuses to launch without explicit opt-in | `HIVE_OMNIGENT_DANGEROUSLY_RUN_UNCONFINED=1` |
 
 **The build-cache root, and why it is a grant rather than a hole (#6100).** Every
 compiled toolchain writes to a cache under `$HOME` by default — `GOCACHE` at
@@ -70,9 +72,18 @@ hive owns, rather than `$HOME`. It is a **write root only** — deliberately not
 under, an agent has no reason to `Edit` a build cache, and adding it as a working
 directory would put megabytes of object files in the agent's view of the tree.
 
-The backends with no mechanism (goose, agy, bob, pi, aider, kilo, omp, openhands) are a hard stop, by design: `just contribute-hive <backend> local` prints an honest refusal and a non-zero exit rather than a silent unconfined launch, unless the operator sets that backend's own escape-hatch env var. This is deliberately not a blanket `HIVE_DANGEROUSLY_RUN_UNCONFINED` — a single shared flag would let opting into one unconfined backend silently opt into all eight.
+The backends with no mechanism (goose, agy, bob, pi, aider, kilo, omp, openhands, omnigent) are a hard stop, by design: `just contribute-hive <backend> local` prints an honest refusal and a non-zero exit rather than a silent unconfined launch, unless the operator sets that backend's own escape-hatch env var. This is deliberately not a blanket `HIVE_DANGEROUSLY_RUN_UNCONFINED` — a single shared flag would let opting into one unconfined backend silently opt into all nine.
 
 For `agy` specifically, this local-mode refusal used to be a dead end (#5048): `src/Dockerfile.contributor` never installed the `agy` binary, so container mode — the only real boundary any of these five backends can get on this path — was unavailable too, leaving no working path at all. That is now fixed: the image installs `agy` from Google's published, checksummed release tarball, so `just contribute-hive agy` (container mode, the default) actually works. Nothing above about agy's *local*-mode posture changed — it still has no sandbox and still refuses without the escape hatch, exactly like goose/bob/pi/aider.
+
+
+### Omnigent policy composition with Hive
+
+Omnigent ships with its own policy engine and configurable guardrails (such as `github_policy`, `ask_on_os_tools`, and `enforce_sandbox`). When Omnigent is run under Hive:
+
+1. **Hive policy strictly wins on GitHub writes.** All repository writes, PR submissions (`POST /repos/{owner}/{repo}/pulls`), PR merges (`PUT /repos/{owner}/{repo}/pulls/{n}/merge`), and git pushes are mediated by Hive's egress proxy and GitHub App authentication broker. Proxy denials remain authoritative: Omnigent's internal policy engine or harness configuration cannot grant or bypass write permissions that Hive denies.
+2. **Omnigent's sandbox is additive, never a substitute for Hive proxy or container isolation.** If an Omnigent agent spec configures `enforce_sandbox` (e.g. Linux bwrap or macOS seatbelt) or targets remote cloud sandboxes, this adds an extra layer of host isolation. However, Hive treats Omnigent as unconfined on the bare contributor local path because Hive does not wire or guarantee an OS-level boundary through CLI launch flags.
+3. **Underlying harness credential flow.** Omnigent orchestrates underlying harnesses (Claude Code, Codex, Cursor, Pi). In Hive, provider credentials pass through ambient environment variables or staged configs, but repository write tokens are never exposed directly to the harnesses.
 
 ### Codex in container mode is bounded by the container, not by `workspace-write` (#6653)
 
@@ -173,6 +184,7 @@ Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-
 - The Job runtime is a first slice: one Job per kick, workspace shared through a PVC, no per-kick Secret minting. A clone-inside-the-Job transport for clusters without ReadWriteMany storage is future work.
 - Live Podman execution is covered by skip-when-absent tests; CI still needs a rootless-Podman runner lane for always-on integration coverage.
 - Sandboxed inference depends on an operator-provided restricted network/proxy policy. `none` is stronger but not yet usable for all model backends.
+- A stronger runtime than plain containers is under evaluation: [ADR-0026](adr/0026-sandbox-runtime-selection.md) (Proposed) compares NVIDIA OpenShell and OpenSandbox against this contract.
 
 ## Agent guardrails (defense in depth)
 

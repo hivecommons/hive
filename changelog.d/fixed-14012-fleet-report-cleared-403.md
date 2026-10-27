@@ -1,0 +1,1 @@
+- A fleet-report cleared comment refused with 403 (a hosted hive's App cannot write to the fleet repo) is now journaled as a definite refusal instead of an uncertain outcome needing reconciliation, so it is given up once rather than re-warned every tick ([#14012](https://github.com/hivecommons/hive/issues/14012)).

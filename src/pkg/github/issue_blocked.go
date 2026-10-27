@@ -37,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/gfi"
 )
 
@@ -59,7 +60,33 @@ const blockedOnMarkerPrefix = "<!-- hive:blocked-on pr="
 // the block; re-runs look for it before posting again.
 const blockedUnblockedMarker = "<!-- hive:unblocked -->"
 
-var blockedOnMarkerRE = regexp.MustCompile(`<!--\s*hive:blocked-on\s+pr=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)\s*-->`)
+var (
+	blockedOnMarkerRE      = regexp.MustCompile(`<!--\s*hive:blocked-on\s+pr=([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)\s*-->`)
+	adoptedSupersedeRE     = regexp.MustCompile(`(?i)<!--\s*hive:adopted\b[^>]*\bmode=supersede\b[^>]*\bsuperseded_by=(\d+)`)
+	adoptedSupersedeAttrRE = regexp.MustCompile(`(?i)<!--\s*hive:adopted\b[^>]*\bsuperseded_by=(\d+)[^>]*\bmode=supersede`)
+	supersededByRE         = regexp.MustCompile(`(?i)\bSuperseded by #?(\d+)\b`)
+)
+
+// ParseSupersededBy finds a superseding PR number in text from an adoption
+// marker or a "Superseded by #N" comment.
+func ParseSupersededBy(text string) (int, bool) {
+	if m := adoptedSupersedeRE.FindStringSubmatch(text); len(m) > 1 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			return n, true
+		}
+	}
+	if m := adoptedSupersedeAttrRE.FindStringSubmatch(text); len(m) > 1 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			return n, true
+		}
+	}
+	if m := supersededByRE.FindStringSubmatch(text); len(m) > 1 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			return n, true
+		}
+	}
+	return 0, false
+}
 
 // BlockedOnMarker renders the marker that names the PR an issue waits on.
 func BlockedOnMarker(repo string, pr int) string {
@@ -143,7 +170,7 @@ const helpWantedLabel = "help wanted"
 
 // blockedSweepCommentLookups bounds how many blocked issues without a body
 // marker have their comments read per cycle for the scanner's marker.
-const blockedSweepCommentLookups = 10
+const blockedSweepCommentLookups = 40
 
 // blockedSweepNow is the sweep's clock for recheck-after deadlines; tests
 // override it.
@@ -236,6 +263,7 @@ type BlockedIssueResult struct {
 	Stripped  int
 	// SoakTriaged counts ops-tracking issues that got soak evidence.
 	SoakTriaged int
+	Retargeted  int
 	Errors      int
 }
 
@@ -270,9 +298,6 @@ func ReconcileBlockedIssues(ctx context.Context, client *Client, result *Actiona
 	if client == nil || client.client == nil || result == nil {
 		return res
 	}
-	if logger == nil {
-		logger = slog.Default()
-	}
 	var targets []blockedIssueTarget
 	repos := make([]string, 0, len(result.WorkDetailsByRepo))
 	for repo := range result.WorkDetailsByRepo {
@@ -287,6 +312,65 @@ func ReconcileBlockedIssues(ctx context.Context, client *Client, result *Actiona
 			targets = append(targets, blockedIssueTarget{repo: row.Repo, number: row.Number, labels: row.Labels, reason: row.Reason, recheckAfter: row.RecheckAfter, opsTracking: row.OpsTracking, recheckDone: row.RecheckDone})
 		}
 	}
+	return client.reconcileBlockedTargets(ctx, targets, logger)
+}
+
+// BlockedSweepOptions configures SweepBlockedIssues.
+type BlockedSweepOptions struct {
+	Repos []string
+}
+
+// SweepBlockedIssues lists open issues with the `blocked` label across repos
+// and reconciles their blocker status (unblocking settled blockers, re-targeting
+// on supersede, stripping help wanted on open blockers).
+func (c *Client) SweepBlockedIssues(ctx context.Context, opts BlockedSweepOptions) (BlockedIssueResult, error) {
+	if c == nil || c.client == nil {
+		return BlockedIssueResult{}, ErrNoGitHubClient
+	}
+	repos := opts.Repos
+	if len(repos) == 0 {
+		repos = c.getRepos()
+	}
+	sort.Strings(repos)
+	var targets []blockedIssueTarget
+	for _, repo := range repos {
+		owner, repoName := c.splitRepo(repo)
+		issues, err := c.listOpenBlockedIssues(ctx, owner, repoName)
+		if err != nil {
+			return BlockedIssueResult{}, err
+		}
+		for _, issue := range issues {
+			if issue == nil || issue.GetNumber() <= 0 {
+				continue
+			}
+			labels := issueLabelNames(issue.Labels)
+			if !hasBlockedLabel(labels) {
+				continue
+			}
+			body := issue.GetBody()
+			at, ops := blockedRecheck(body)
+			targets = append(targets, blockedIssueTarget{
+				repo:         repo,
+				number:       issue.GetNumber(),
+				labels:       labels,
+				reason:       blockedFilterReason(body),
+				recheckAfter: at,
+				opsTracking:  ops,
+				recheckDone:  blockedRecheckDone(body),
+			})
+		}
+	}
+	return c.reconcileBlockedTargets(ctx, targets, c.logger), nil
+}
+
+func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedIssueTarget, logger *slog.Logger) BlockedIssueResult {
+	var res BlockedIssueResult
+	if c == nil || c.client == nil {
+		return res
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	lookups := 0
 	now := blockedSweepNow()
 	for _, t := range targets {
@@ -298,18 +382,20 @@ func ReconcileBlockedIssues(ctx context.Context, client *Client, result *Actiona
 		// scanned: the comments were read without error and hold no marker,
 		// so a marker-less lift may trust that nothing names a PR.
 		scanned := false
-		if !ok && lookups < blockedSweepCommentLookups {
+		if lookups < blockedSweepCommentLookups {
 			lookups++
-			scan, err := client.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
-			prRepo, prNumber, ok = scan.prRepo, scan.pr, scan.ok
+			scan, err := c.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
 			scanned = err == nil
+			if scan.ok {
+				prRepo, prNumber, ok = scan.prRepo, scan.pr, scan.ok
+			}
 			if !ok && !t.recheckAfter.IsZero() && !now.Before(t.recheckAfter) {
 				if t.opsTracking && isRecheckSoakRepo(t.repo) {
 					// hivecommons/hive#13311: a maintainer's soak checklist
 					// on the hive's own project gets evidence, not a lift.
-					runRecheckSoak(ctx, client, t, scan.evidenceNoted, err, now, &res, logger)
+					runRecheckSoak(ctx, c, t, scan.evidenceNoted, err, now, &res, logger)
 				} else {
-					liftBlockedDeadline(ctx, client, t, scan.deadlineNoted, err, &res, logger)
+					liftBlockedDeadline(ctx, c, t, scan.deadlineNoted, err, &res, logger)
 					continue
 				}
 			}
@@ -322,34 +408,89 @@ func ReconcileBlockedIssues(ctx context.Context, client *Client, result *Actiona
 			// (hivecommons/hive#13267) is left alone: nothing to lift, but
 			// the issue still must not advertise itself.
 			if scanned && t.recheckAfter.IsZero() && !t.opsTracking {
-				if liftBlockedMarkerless(ctx, client, t, &res, logger) {
+				if liftBlockedMarkerless(ctx, c, t, &res, logger) {
 					continue
 				}
 			}
-			stripBlockedHelpWanted(ctx, client, t, &res, logger)
+			stripBlockedHelpWanted(ctx, c, t, &res, logger)
 			continue
 		}
-		closed, err := client.pullRequestSettled(ctx, prRepo, prNumber)
+		settled, merged, err := c.pullRequestSettledDetails(ctx, prRepo, prNumber)
 		if err != nil {
 			res.Errors++
 			logger.Warn("blocked sweep: tracked PR lookup failed", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(prNumber), "error", err)
 			continue
 		}
-		if closed {
-			if err := client.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+		if settled {
+			// Only a closed-unmerged blocker can be superseded: a merged
+			// blocker landed, so its issue is unblocked, never re-targeted.
+			supersededBy, isSuperseded := 0, false
+			if !merged {
+				supersededBy, isSuperseded = c.pullRequestSupersededBy(ctx, prRepo, prNumber)
+			}
+			if isSuperseded && supersededBy > 0 && supersededBy != prNumber {
+				ySettled, _, yErr := c.pullRequestSettledDetails(ctx, prRepo, supersededBy)
+				if yErr != nil {
+					res.Errors++
+					logger.Warn("blocked sweep: superseding PR lookup failed", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(supersededBy), "error", yErr)
+					continue
+				}
+				if ySettled {
+					if err := c.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+						res.Errors++
+						logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
+						continue
+					}
+					note := blockedUnblockedMarker + fmt.Sprintf("\nUnblocked: %s#%d (superseding #%d) is no longer open. This issue is actionable again.", prRepo, supersededBy, prNumber)
+					if err := c.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil {
+						logger.Warn("blocked sweep: unblock note not posted", "repo", t.repo, "issue", t.number, "error", err)
+					}
+					res.Unblocked++
+					logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(supersededBy), "superseded", prNumber)
+					continue
+				}
+				// Superseding PR is still open: re-target relation to Y. The
+				// re-target lives in a comment while the body still names X,
+				// so a pass whose comment budget ran out before this issue
+				// re-detects the supersede from the body every cycle; read
+				// the comments now and skip when the newest marker already
+				// moved off X.
+				if !scanned {
+					scan, scanErr := c.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
+					if scanErr != nil {
+						res.Errors++
+						logger.Warn("blocked sweep: comment lookup before re-target failed", "repo", t.repo, "issue", t.number, "error", scanErr)
+						continue
+					}
+					if scan.ok && (scan.prRepo != prRepo || scan.pr != prNumber) {
+						stripBlockedHelpWanted(ctx, c, t, &res, logger)
+						continue
+					}
+				}
+				note := fmt.Sprintf("%s\nRe-targeted: blocker #%d was superseded by #%d.", BlockedOnMarker(prRepo, supersededBy), prNumber, supersededBy)
+				if err := c.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil {
+					logger.Warn("blocked sweep: re-target note not posted", "repo", t.repo, "issue", t.number, "error", err)
+				}
+				stripBlockedHelpWanted(ctx, c, t, &res, logger)
+				res.Retargeted++
+				logger.Info("blocked sweep: issue re-targeted on supersede", "repo", t.repo, "issue", t.number, "old_pr", prNumber, "new_pr", supersededBy)
+				continue
+			}
+
+			if err := c.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
 				res.Errors++
 				logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 				continue
 			}
 			note := blockedPRSettledNote(prRepo + "#" + strconv.Itoa(prNumber))
-			if err := client.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil {
+			if err := c.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil {
 				logger.Warn("blocked sweep: unblock note not posted", "repo", t.repo, "issue", t.number, "error", err)
 			}
 			res.Unblocked++
 			logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(prNumber))
 			continue
 		}
-		stripBlockedHelpWanted(ctx, client, t, &res, logger)
+		stripBlockedHelpWanted(ctx, c, t, &res, logger)
 	}
 	return res
 }
@@ -528,15 +669,93 @@ func (c *Client) blockedSweepComments(ctx context.Context, repo string, number i
 	return scan, nil
 }
 
-// pullRequestSettled reports whether the PR is merged or closed. A 404 is
-// reported as an error: not found is not settled.
-func (c *Client) pullRequestSettled(ctx context.Context, repo string, number int) (bool, error) {
+// pullRequestSettledDetails reports whether the PR is merged or closed, and
+// whether it was merged. A 404 is reported as an error: not found is not settled.
+func (c *Client) pullRequestSettledDetails(ctx context.Context, repo string, number int) (bool, bool, error) {
 	owner, name := c.splitRepo(repo)
 	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, number)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return pr.GetMerged() || strings.EqualFold(pr.GetState(), "closed"), nil
+	merged := pr.GetMerged()
+	closed := strings.EqualFold(pr.GetState(), "closed")
+	return merged || closed, merged, nil
+}
+
+// pullRequestSupersededBy checks whether a PR was closed as superseded
+// and returns the superseding PR number.
+func (c *Client) pullRequestSupersededBy(ctx context.Context, repo string, number int) (int, bool) {
+	if c == nil || c.client == nil {
+		return 0, false
+	}
+	owner, name := c.splitRepo(repo)
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, number)
+	if err != nil || pr == nil {
+		return 0, false
+	}
+	if n, ok := ParseSupersededBy(pr.GetBody()); ok && n != number {
+		return c.followSupersededChain(ctx, repo, n, 1)
+	}
+	comments, err := c.listIssueComments(ctx, owner, name, number)
+	if err != nil {
+		return 0, false
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		if n, ok := ParseSupersededBy(comments[i].GetBody()); ok && n != number {
+			return c.followSupersededChain(ctx, repo, n, 1)
+		}
+	}
+	return 0, false
+}
+
+func (c *Client) followSupersededChain(ctx context.Context, repo string, number, depth int) (int, bool) {
+	if depth >= 3 {
+		return number, true
+	}
+	owner, name := c.splitRepo(repo)
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, number)
+	if err != nil || pr == nil || !strings.EqualFold(pr.GetState(), "closed") {
+		return number, true
+	}
+	if n, ok := ParseSupersededBy(pr.GetBody()); ok && n != number {
+		return c.followSupersededChain(ctx, repo, n, depth+1)
+	}
+	comments, err := c.listIssueComments(ctx, owner, name, number)
+	if err != nil {
+		return number, true
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		if n, ok := ParseSupersededBy(comments[i].GetBody()); ok && n != number {
+			return c.followSupersededChain(ctx, repo, n, depth+1)
+		}
+	}
+	return number, true
+}
+
+// listOpenBlockedIssues lists open issues with the `blocked` label in owner/repo.
+func (c *Client) listOpenBlockedIssues(ctx context.Context, owner, repo string) ([]*gh.Issue, error) {
+	opts := &gh.IssueListByRepoOptions{
+		State:       "open",
+		Labels:      []string{BlockedLabel},
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	var all []*gh.Issue
+	for {
+		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
+		if err != nil {
+			return all, err
+		}
+		for _, is := range issues {
+			if is != nil && !is.IsPullRequest() {
+				all = append(all, is)
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.ListOptions.Page = resp.NextPage
+	}
+	return all, nil
 }
 
 // mentionPattern matches a GitHub @login that is not part of a path, an
@@ -556,4 +775,34 @@ func blockedNoteBody(repo string, pr int, body string) string {
 		return defangMentions(body)
 	}
 	return BlockedOnMarker(repo, pr) + "\n" + defangMentions(body)
+}
+
+// stripBlockedOnMarkers removes any <!-- hive:blocked-on ... --> marker from text.
+func stripBlockedOnMarkers(text string) string {
+	return strings.TrimSpace(blockedOnMarkerRE.ReplaceAllString(text, ""))
+}
+
+// blockedTargetSettledNote renders the note posted when an issue is requested to
+// be blocked on a PR that is already merged or closed. The relation is not written.
+func blockedTargetSettledNote(repo string, pr int, merged bool, body string) string {
+	state := "closed"
+	if merged {
+		state = "merged"
+	}
+	notice := fmt.Sprintf("Target PR %s#%d is already %s — not parking as blocked. Verify this finding on current base branch; close this issue without a PR if it is already fixed, otherwise work it.", repo, pr, state)
+	b := strings.TrimSpace(defangMentions(stripBlockedOnMarkers(body)))
+	if b != "" {
+		return notice + "\n\n" + b
+	}
+	return notice
+}
+
+// blockedTargetNotFoundNote renders the note posted when the target PR was not found.
+func blockedTargetNotFoundNote(repo string, pr int, body string) string {
+	notice := fmt.Sprintf("Target PR %s#%d was not found — not parking as blocked.", repo, pr)
+	b := strings.TrimSpace(defangMentions(stripBlockedOnMarkers(body)))
+	if b != "" {
+		return notice + "\n\n" + b
+	}
+	return notice
 }

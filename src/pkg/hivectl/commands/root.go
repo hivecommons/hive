@@ -73,6 +73,7 @@ func NewRootCommand(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	root.AddCommand(newObserveCommand(env))
 	root.AddCommand(newEnrollCommand(env))
 	root.AddCommand(newHivesCommand(env))
+	root.AddCommand(newContributeCommand(env))
 	root.AddCommand(newOkToTestTemplateCommand(env))
 	root.AddCommand(newClaimCommand(env))
 	root.AddCommand(newUnclaimCommand(env))

@@ -353,7 +353,22 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 			slog.String("reason", auth.Reason))
 		return report, false
 	}
-	report.HeadSHA = c.canonicalVerdictHead(req, report.HeadSHA, auth.HeadSHA, prHead)
+	// A dispatched verdict is stored under the head its dispatch record names,
+	// whatever the reviewer wrote: the match above already proved the two
+	// agree (or that the reviewer's value names no revision at all), and a
+	// garbled head would orphan the report under a key nothing looks up
+	// (hivecommons/hive#14361). An advisory verdict keeps its own head.
+	if dispatchHead := strings.TrimSpace(auth.HeadSHA); auth.Dispatched && dispatchHead != "" {
+		if strings.TrimSpace(report.HeadSHA) != dispatchHead {
+			c.logger.Debug("review-request watcher: verdict head_sha replaced by the dispatch head",
+				slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
+				slog.String("perspective", string(report.Perspective)),
+				slog.String("agent", req.Agent))
+		}
+		report.HeadSHA = dispatchHead
+	} else {
+		report.HeadSHA = c.canonicalVerdictHead(req, report.HeadSHA, auth.HeadSHA, prHead)
+	}
 	report.HiveAuthored = auth.HiveAuthored
 	// The review head, and whether this is the decision step's reconciled
 	// report, come from the dispatch record this verdict bound to, never the
@@ -365,25 +380,25 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 	if !report.Decided {
 		report.Dispositions = nil
 	}
-	dispatchBodyDigest := auth.BodyDigest
 	if review.ConcreteRemediationText(req.Body) {
 		report.ConcreteRemediation = true
 	}
-	if strings.TrimSpace(dispatchBodyDigest) != "" {
-		if strings.TrimSpace(report.BodyDigest) == "" {
-			c.logger.Warn("review-request watcher: verdict missing review body digest, discarded",
+	// The body digest a verdict is grouped under comes from the dispatch
+	// record, never the reviewer's JSON. The dispatch recorded the digest of
+	// the exact title and body the reviewer was given; asking a model to copy
+	// a 64-character hash back proved unreliable (prose summaries, a
+	// "sha256:" prefix, a hash of something else), and every miscopy left the
+	// report orphaned in its own aggregate, so its pending entry never cleared
+	// and the swarm deadlocked (hivecommons/hive#14361). An advisory verdict
+	// has no dispatch record and keeps the digest it reported.
+	if dispatchBodyDigest := strings.TrimSpace(auth.BodyDigest); auth.Dispatched && dispatchBodyDigest != "" {
+		if strings.TrimSpace(report.BodyDigest) != dispatchBodyDigest {
+			c.logger.Debug("review-request watcher: verdict body digest replaced by the dispatch digest",
 				slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
 				slog.String("perspective", string(report.Perspective)),
 				slog.String("agent", req.Agent))
-			return report, false
 		}
-		if strings.TrimSpace(report.BodyDigest) != strings.TrimSpace(dispatchBodyDigest) {
-			c.logger.Warn("review-request watcher: verdict body digest does not match review dispatch, discarded",
-				slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
-				slog.String("perspective", string(report.Perspective)),
-				slog.String("agent", req.Agent))
-			return report, false
-		}
+		report.BodyDigest = dispatchBodyDigest
 	}
 
 	// Re-marshalled from the validated struct rather than written through from
@@ -449,6 +464,10 @@ type verdictAuthorization struct {
 	BodyDigest   string
 	HiveAuthored bool
 	ReviewHead   string
+	// Dispatched marks a verdict bound to a dispatch record (pending or
+	// recent) rather than admitted as advisory. Only a dispatched verdict
+	// takes its head SHA and body digest from the record.
+	Dispatched bool
 	// Decided marks a verdict bound to the review-heads decision step's
 	// dispatch: the reconciled report for its perspective (#13542).
 	Decided bool
@@ -474,7 +493,7 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 		if c.sameVerdictAuthor(verdictAuthorAgent(p.AuthorAgent, report), req.Agent) {
 			return verdictRefused("author_self_approval")
 		}
-		return verdictAuthorization{OK: true, HeadSHA: p.HeadSHA, BodyDigest: p.BodyDigest, HiveAuthored: strings.TrimSpace(p.AuthorAgent) != "", ReviewHead: strings.TrimSpace(p.Head), Decided: p.Decision}
+		return verdictAuthorization{OK: true, Dispatched: true, HeadSHA: p.HeadSHA, BodyDigest: p.BodyDigest, HiveAuthored: strings.TrimSpace(p.AuthorAgent) != "", ReviewHead: strings.TrimSpace(p.Head), Decided: p.Decision}
 	}
 	cutoff := now.Add(-review.RecentDispatchTTL)
 	for _, r := range state.Recent {
@@ -487,7 +506,7 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 		if c.sameVerdictAuthor(verdictAuthorAgent(r.AuthorAgent, report), req.Agent) {
 			return verdictRefused("author_self_approval")
 		}
-		return verdictAuthorization{OK: true, HeadSHA: r.HeadSHA, BodyDigest: r.BodyDigest, HiveAuthored: strings.TrimSpace(r.AuthorAgent) != "", ReviewHead: strings.TrimSpace(r.Head), Decided: r.Decision}
+		return verdictAuthorization{OK: true, Dispatched: true, HeadSHA: r.HeadSHA, BodyDigest: r.BodyDigest, HiveAuthored: strings.TrimSpace(r.AuthorAgent) != "", ReviewHead: strings.TrimSpace(r.Head), Decided: r.Decision}
 	}
 	// Queue-mode reviewer prompts can reach the relay through the ordinary
 	// PR-list comment path rather than a review-swarm dispatch. That still is
@@ -535,8 +554,24 @@ func reviewDispatchFieldsMatch(repo string, number int, headSHA string, perspect
 		return false
 	}
 	// An abbreviated head from the reviewer still binds to the dispatch that
-	// named the full one (review.SameHeadSHA).
-	return review.HeadSHAMatchesOrBlank(headSHA, report.HeadSHA)
+	// named the full one (review.SameHeadSHA). A head that is not a SHA at all
+	// (prose, a placeholder) names no revision, so it binds like a blank one
+	// and the dispatch head is stored instead (hivecommons/hive#14361).
+	reported := report.HeadSHA
+	if !verdictHeadLooksLikeSHA(reported) {
+		reported = ""
+	}
+	return review.HeadSHAMatchesOrBlank(headSHA, reported)
+}
+
+// verdictHeadLooksLikeSHA reports whether a reviewer-written head_sha is a
+// commit SHA, full or abbreviated hex. Anything else is treated as absent.
+func verdictHeadLooksLikeSHA(head string) bool {
+	h := strings.TrimSpace(head)
+	if h == "" {
+		return false
+	}
+	return review.IsAbbreviatedSHA(h) || review.IsFullHexSHA(h)
 }
 
 // sameVerdictAuthor reports whether agent belongs to the authoring lane's

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/logread"
+	"github.com/hivecommons/hive/crux/logread"
 )
 
 // The dashboard request log (hivecommons/hive#11944) is the log source

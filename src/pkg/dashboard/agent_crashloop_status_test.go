@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
@@ -25,7 +25,7 @@ func crashLoopProc(name string, events []crux.RestartEvent) *crux.Process {
 		Name:          name,
 		Config:        config.AgentConfig{Backend: "claude", Enabled: true},
 		State:         crux.StateRunning,
-		OutputBuffer:  agent.NewRingBuffer(10),
+		OutputBuffer:  cruxtest.NewRingBuffer(10),
 		RestartCount:  len(events),
 		RestartEvents: events,
 	}

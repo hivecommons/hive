@@ -124,6 +124,13 @@ type Config struct {
 	Review     ReviewConfig     `yaml:"review,omitempty" json:"review,omitempty"`
 	Compliance ComplianceConfig `yaml:"compliance,omitempty" json:"compliance,omitempty"`
 	AutoMerge  AutoMergeConfig  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	// Decisions tunes how decisions on needs-human items are recorded; its
+	// `delegate` block gates the activity monitor's "Let hive decide"
+	// action (default on).
+	Decisions DecisionsConfig `yaml:"decisions,omitempty" json:"decisions,omitempty"`
+	// Chat tunes the dashboard Hive Chat panel; its `grounded_answers`
+	// block gates the model-backed answer path (default on).
+	Chat ChatConfig `yaml:"chat,omitempty" json:"chat,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.

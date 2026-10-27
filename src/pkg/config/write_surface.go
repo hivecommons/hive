@@ -46,7 +46,7 @@ type WriteSurfaceConfig struct {
 	// write methods, GraphQL mutations and git push. For those lanes the
 	// relays above become the only write path. Default empty: no lane is
 	// enforced, so every agent keeps its direct access (and an ACMM L6 hive
-	// stays fully autonomous) until an operator lists a lane here. A replica
+	// stays autonomous) until an operator lists a lane here. A replica
 	// with no entry of its own follows its base agent; "*" enforces every
 	// lane.
 	Enforce []string `yaml:"enforce,omitempty" json:"enforce,omitempty"`

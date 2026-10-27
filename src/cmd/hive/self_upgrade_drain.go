@@ -5,7 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // selfUpgradeDrainStaleAfter bounds how long a drain stays latched without a
@@ -32,6 +34,10 @@ type upgradeDrain struct {
 	checkedAt time.Time
 	// deadline is startedAt plus the drain timeout of the open drain window.
 	deadline time.Time
+	// inFlight and timeout are the last decide inputs, kept so Report can
+	// tell the hub WHAT the drain is waiting on and for how much longer.
+	inFlight []string
+	timeout  time.Duration
 	// released is set once decide lets the upgrade proceed. Every path after
 	// that point exits the process or blocks until SIGTERM, so kicks stay
 	// withheld for good: a kick started now would be cut by the restart.
@@ -63,6 +69,8 @@ func (d *upgradeDrain) decide(target string, inFlight []string, timeout time.Dur
 
 	if timeout <= 0 {
 		d.target, d.startedAt, d.checkedAt, d.deadline = "", time.Time{}, time.Time{}, time.Time{}
+		d.target, d.startedAt, d.checkedAt = "", time.Time{}, time.Time{}
+		d.inFlight, d.timeout = nil, 0
 		return upgradeDrainDecision{Proceed: true}
 	}
 	if len(inFlight) == 0 {
@@ -80,6 +88,8 @@ func (d *upgradeDrain) decide(target string, inFlight []string, timeout time.Dur
 	d.target = target
 	d.checkedAt = now
 	d.deadline = d.startedAt.Add(timeout)
+	d.inFlight = append([]string(nil), inFlight...)
+	d.timeout = timeout
 
 	waited := now.Sub(d.startedAt)
 	if waited >= timeout {
@@ -102,9 +112,40 @@ func (d *upgradeDrain) Active(now time.Time) (target string, active bool) {
 	}
 	if now.Sub(d.checkedAt) >= selfUpgradeDrainStaleAfter {
 		d.target, d.startedAt, d.checkedAt, d.deadline = "", time.Time{}, time.Time{}, time.Time{}
+		d.target, d.startedAt, d.checkedAt = "", time.Time{}, time.Time{}
+		d.inFlight, d.timeout = nil, 0
 		return "", false
 	}
 	return d.target, true
+}
+
+// Report describes the open drain for the hub heartbeat, or nil when no
+// upgrade is being held. The hub's orphan sweep otherwise cannot tell a
+// deliberately draining spoke from one whose attempt died: both are alive,
+// heartbeating and still on the old SHA. A released drain reports nil too —
+// the process is about to exit and the hub sees the restart directly. The
+// same staleness rule as Active applies, so a drain the hub stopped asking
+// about is not reported either.
+func (d *upgradeDrain) Report(now time.Time) *spoke.UpgradeDrainReport {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.released || d.target == "" || d.startedAt.IsZero() {
+		return nil
+	}
+	if now.Sub(d.checkedAt) >= selfUpgradeDrainStaleAfter {
+		return nil
+	}
+	waited := now.Sub(d.startedAt)
+	remaining := d.timeout - waited
+	if remaining < 0 {
+		remaining = 0
+	}
+	return &spoke.UpgradeDrainReport{
+		Target:     d.target,
+		InFlight:   append([]string(nil), d.inFlight...),
+		WaitedS:    int(waited / time.Second),
+		RemainingS: int(remaining / time.Second),
+	}
 }
 
 // releaseLocked closes the drain window and latches the kick hold until the
@@ -114,6 +155,7 @@ func (d *upgradeDrain) releaseLocked(target string, now time.Time) {
 	d.startedAt = time.Time{}
 	d.checkedAt = now
 	d.deadline = time.Time{}
+	d.inFlight, d.timeout = nil, 0
 	d.released = true
 }
 
@@ -132,13 +174,39 @@ func (d *upgradeDrain) Deadline(now time.Time) (deadline time.Time, ok bool) {
 	return d.deadline, true
 }
 
+// wedgedKick is a kick agentKicksInFlight stopped counting as in flight
+// because it has gone unsettled for longer than the agent's turn bound.
+type wedgedKick struct {
+	Agent   string
+	KickAt  time.Time
+	Age     time.Duration
+	Ceiling time.Duration
+}
+
+// inFlightKickCeiling is the age past which an unsettled kick no longer holds
+// the drain: the agent's continuous_turn_ceiling (the same bound continuous
+// mode uses to presume a silent turn over), or DefaultContinuousTurnCeiling
+// when the agent is unknown or the ceiling is disabled. The drain needs a
+// bound either way — a turn-end signal that is never observed would otherwise
+// hold every upgrade for the full drain window (#14323).
+func inFlightKickCeiling(ceiling func(agent string) time.Duration, agent string) time.Duration {
+	if ceiling != nil {
+		if c := ceiling(agent); c > 0 {
+			return c
+		}
+	}
+	return config.DefaultContinuousTurnCeiling
+}
+
 // agentKicksInFlight names the running, unpaused agents whose most recent kick was
 // delivered by THIS process and whose turn has not been classified as ended
 // (crux.KickOutcome is settled by the pane poller / stall watchdog when the
 // CLI returns to its prompt). Kicks seeded from persisted state predate
-// processStart and cannot still be running here, so they are ignored.
-func agentKicksInFlight(statuses map[string]*crux.Process, processStart time.Time) []string {
-	var names []string
+// processStart and cannot still be running here, so they are ignored. A kick
+// left unsettled for longer than its agent's turn ceiling (see
+// inFlightKickCeiling) is presumed wedged: it is returned in wedged instead of
+// inFlight so a lost turn-end signal cannot hold the upgrade drain (#14323).
+func agentKicksInFlight(statuses map[string]*crux.Process, processStart, now time.Time, ceiling func(agent string) time.Duration) (inFlight []string, wedged []wedgedKick) {
 	for name, proc := range statuses {
 		if proc == nil || proc.State != crux.StateRunning || proc.Paused || proc.LastKick == nil {
 			continue
@@ -149,9 +217,56 @@ func agentKicksInFlight(statuses map[string]*crux.Process, processStart time.Tim
 		if proc.KickOutcome.Settled(proc.LastKick) {
 			continue
 		}
-		names = append(names, name)
+		bound := inFlightKickCeiling(ceiling, name)
+		if age := now.Sub(*proc.LastKick); age >= bound {
+			wedged = append(wedged, wedgedKick{Agent: name, KickAt: *proc.LastKick, Age: age, Ceiling: bound})
+			continue
+		}
+		inFlight = append(inFlight, name)
 	}
-	sort.Strings(names)
+	sort.Strings(inFlight)
+	sort.Slice(wedged, func(i, j int) bool { return wedged[i].Agent < wedged[j].Agent })
+	return inFlight, wedged
+}
+
+// wedgedKickNotices remembers which wedged kicks were already logged, so the
+// per-heartbeat upgrade check warns once per kick instead of every beat.
+type wedgedKickNotices struct {
+	mu     sync.Mutex
+	logged map[string]time.Time
+}
+
+// selfUpgradeWedgedKicks is the process-wide wedged-kick log de-duplicator.
+var selfUpgradeWedgedKicks = &wedgedKickNotices{}
+
+// fresh returns the wedged kicks not reported before (keyed on agent and
+// kick time, so a later kick that also wedges is reported again).
+func (n *wedgedKickNotices) fresh(wedged []wedgedKick) []wedgedKick {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.logged == nil {
+		n.logged = make(map[string]time.Time)
+	}
+	var out []wedgedKick
+	for _, w := range wedged {
+		if at, ok := n.logged[w.Agent]; ok && at.Equal(w.KickAt) {
+			continue
+		}
+		n.logged[w.Agent] = w.KickAt
+		out = append(out, w)
+	}
+	return out
+}
+
+// wedgedKickAgents names the agents in wedged, for log attributes.
+func wedgedKickAgents(wedged []wedgedKick) []string {
+	if len(wedged) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(wedged))
+	for _, w := range wedged {
+		names = append(names, w.Agent)
+	}
 	return names
 }
 

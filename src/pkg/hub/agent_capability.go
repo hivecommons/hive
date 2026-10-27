@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
@@ -672,7 +672,7 @@ func computeAgentRosterMismatch(level int, agents []AgentSummary) *agentRosterMi
 		if name == "" {
 			continue
 		}
-		if !agent.AgentAvailableAtACMMLevel(name, level) {
+		if !crux.AgentAvailableAtACMMLevel(name, level) {
 			continue
 		}
 		actual[name] = struct{}{}

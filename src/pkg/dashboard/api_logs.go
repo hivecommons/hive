@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/pkg/config"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
-	"github.com/hivecommons/hive/pkg/logread"
 )
 
 // registerLogReadRoutes serves this hive's logs to operators with no shell on

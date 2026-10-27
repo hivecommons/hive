@@ -543,6 +543,9 @@ func TestHandleEvidenceSummaryAvailableWindows(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := evidence.Seal(b, nil); err != nil {
+		t.Fatal(err)
+	}
 	data, _ := json.Marshal(b)
 	if err := os.WriteFile(filepath.Join(dir, "abc1234.json"), data, 0o644); err != nil {
 		t.Fatal(err)

@@ -69,12 +69,14 @@ func TestCachedDailyQuotaClassifier_CacheHitsDoNotSpendQuota(t *testing.T) {
 }
 
 func TestNewCLIClassifier_RefusesBackendsWithoutToollessMode(t *testing.T) {
-	for _, backend := range []string{"copilot", "codex", "gemini", "unknown"} {
+	for _, backend := range []string{"codex", "gemini", "unknown"} {
 		if _, err := NewCLIClassifier(backend, "", 0, nil); err == nil {
 			t.Fatalf("NewCLIClassifier(%q) succeeded, want refusal", backend)
 		}
 	}
-	if _, err := NewCLIClassifier("claude", "", 0, nil); err != nil {
-		t.Fatalf("NewCLIClassifier(claude): %v", err)
+	for _, backend := range []string{"claude", "copilot"} {
+		if _, err := NewCLIClassifier(backend, "", 0, nil); err != nil {
+			t.Fatalf("NewCLIClassifier(%s): %v", backend, err)
+		}
 	}
 }

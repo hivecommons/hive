@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/logread"
+	"github.com/hivecommons/hive/crux/logread"
 )
 
 // Settings → Logging → Read scan bound round-trips through the logging PUT,

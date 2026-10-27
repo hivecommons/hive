@@ -11,7 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/hivecommons/hive/pkg/agent/tmux"
+	"github.com/hivecommons/hive/crux/agent/tmux"
 	"github.com/hivecommons/hive/pkg/tui/client"
 )
 

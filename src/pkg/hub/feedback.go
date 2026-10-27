@@ -122,6 +122,10 @@ type feedbackIssueResult struct {
 	// recover path can tell a hub-filed observation issue from the other
 	// fleet issues that carry the same fingerprint marker.
 	Labels []string
+	// Closed/ClosedAt are set by the any-state self-report fingerprint
+	// search when only a closed issue carries the marker.
+	Closed   bool
+	ClosedAt time.Time
 }
 type feedbackIssueStatus struct {
 	Owner     string `json:"owner"`

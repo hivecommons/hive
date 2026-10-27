@@ -25,14 +25,14 @@ import (
 
 // ── Level bounds ────────────────────────────────────────────────────────────
 //
-// ACMM levels run L1 (Assisted) through L6 (Fully Autonomous), matching the
+// ACMM levels run L1 (Assisted) through L6 (Autonomous), matching the
 // level-*.yaml packs and the dashboard's 1..6 bound (pkg/dashboard/api_packs.go
 // handlePackSetLevel). The advisor never proposes a target below MinLevel,
 // above MaxLevel, or more than one level above the current level.
 const (
 	// MinLevel is the lowest ACMM level a hive can run at.
 	MinLevel = 1
-	// MaxLevel is the highest ACMM level (Fully Autonomous). No recommendation
+	// MaxLevel is the highest ACMM level (Autonomous). No recommendation
 	// ever proposes a target above this.
 	MaxLevel = 6
 	// levelStep is the number of levels a single recommendation may raise.
@@ -62,7 +62,7 @@ const (
 	coverageFloorL3 = 40.0         // L2→L3: measurement infra appearing; baseline coverage.
 	coverageFloorL4 = 60.0         // L3→L4: closed-loop feedback needs a real safety net.
 	coverageFloorL5 = 75.0         // L4→L5: semi-automated PRs demand strong coverage.
-	coverageFloorL6 = coverageGate // L5→L6: full autonomy requires the full gate.
+	coverageFloorL6 = coverageGate // L5→L6: L6 requires the full gate.
 )
 
 // ── Green-CI streak thresholds ──────────────────────────────────────────────
@@ -74,7 +74,7 @@ const (
 	greenStreakL3 = 3  // L2→L3: a short proven streak.
 	greenStreakL4 = 5  // L3→L4.
 	greenStreakL5 = 8  // L4→L5.
-	greenStreakL6 = 12 // L5→L6: full autonomy requires a long, stable streak.
+	greenStreakL6 = 12 // L5→L6: L6 requires a long, stable streak.
 )
 
 // ── Merge-success-rate thresholds ───────────────────────────────────────────
@@ -86,7 +86,7 @@ const (
 const (
 	mergeRateL4 = 0.70 // L3→L4.
 	mergeRateL5 = 0.85 // L4→L5.
-	mergeRateL6 = 0.95 // L5→L6: near-flawless track record for full autonomy.
+	mergeRateL6 = 0.95 // L5→L6: near-flawless track record for L6.
 )
 
 // ── Backlog / hold thresholds ───────────────────────────────────────────────
@@ -99,10 +99,10 @@ const (
 // is premature. Both are ceilings (Actual must be at or below the ceiling).
 const (
 	maxActionableL5 = 25 // L4→L5: backlog must be under control.
-	maxActionableL6 = 10 // L5→L6: near-empty backlog for full autonomy.
+	maxActionableL6 = 10 // L5→L6: near-empty backlog for L6.
 
 	maxHoldsL5 = 15 // L4→L5: holds must be drained regularly.
-	maxHoldsL6 = 5  // L5→L6: almost no unreviewed holds for full autonomy.
+	maxHoldsL6 = 5  // L5→L6: almost no unreviewed holds for L6.
 )
 
 // AdviseAction is the top-level recommendation verb.
@@ -216,7 +216,7 @@ func Recommend(s Signals) Recommendation {
 			TargetLevel:  level,
 			Ready:        true,
 			Rationale: fmt.Sprintf(
-				"At the maximum ACMM level (L%d, Fully Autonomous). No higher level to propose.",
+				"At the maximum ACMM level (L%d, Autonomous). No higher level to propose.",
 				MaxLevel,
 			),
 		}
@@ -263,7 +263,7 @@ func Recommend(s Signals) Recommendation {
 
 // criteriaForTarget returns the ordered checklist required to propose raising
 // *to* the given target level, evaluated against the supplied signals. The bar
-// is gentler for the low levels (L1→L2) and strictest for full autonomy
+// is gentler for the low levels (L1→L2) and strictest for L6 (Autonomous)
 // (L5→L6). target is assumed to be in [MinLevel+1, MaxLevel].
 func criteriaForTarget(target int, s Signals) []Criterion {
 	switch target {
@@ -321,21 +321,21 @@ func criteriaForTarget(target int, s Signals) []Criterion {
 				"Humans must be draining the hold queue, not drowning in it."),
 		}
 	default: // target == 6
-		// L5→L6 (Semi-Automated → Fully Autonomous): the strictest gate. Full
-		// autonomy (auto-merge on green) requires meeting the real 90% coverage
+		// L5→L6 (Semi-Automated → Autonomous): the strictest gate. L6
+		// (auto-merge on green) requires meeting the real 90% coverage
 		// gate, a long streak, a near-flawless merge rate, a near-empty backlog,
 		// and almost no outstanding holds.
 		return []Criterion{
 			boolCriterion("Quality agent present", s.HasQualityAgent,
-				"Full autonomy requires an active quality agent."),
+				"L6 requires an active quality agent."),
 			floorPctCriterion("Test coverage", s.CoveragePct, s.l6CoverageFloor(),
-				"Full autonomy requires meeting the enforced coverage gate."),
+				"L6 requires meeting the enforced coverage gate."),
 			floorIntCriterion("Green-CI streak", s.GreenStreak, greenStreakL6,
 				"A long, stable streak before auto-merge is granted."),
 			floorRateCriterion("Merge success rate", s.MergeSuccessRate, mergeRateL6,
 				"A near-flawless merge track record for auto-merge."),
 			ceilIntCriterion("Actionable-issue backlog", s.ActionableIssues, maxActionableL6,
-				"A near-empty backlog before granting full autonomy."),
+				"A near-empty backlog before granting L6."),
 			ceilIntCriterion("Open holds", s.HoldCount, maxHoldsL6,
 				"Almost no unreviewed holds before removing the hold gate."),
 		}

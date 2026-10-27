@@ -3,7 +3,7 @@ package turn
 import (
 	"context"
 
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 // LLMResponse is the output returned from an LLM model invocation.

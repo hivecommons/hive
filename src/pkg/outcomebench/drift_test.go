@@ -1,0 +1,60 @@
+package outcomebench
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// TestCommittedReportMatchesReadme regenerates the newest committed report
+// from its JSON and asserts the README outcomes block, the markdown and the
+// SVG assets are exactly what the generator emits, so none of them can
+// drift from the data. Fix with: src/scripts/outcome-benchmark.sh --readme
+// (or hivectl evidence benchmark … --readme README.md).
+func TestCommittedReportMatchesReadme(t *testing.T) {
+	docDir := filepath.Join("..", "..", "docs", "benchmarks")
+	reports, err := filepath.Glob(filepath.Join(docDir, "outcomes-*.json"))
+	if err != nil || len(reports) == 0 {
+		t.Skipf("no committed report under %s (%v)", docDir, err)
+	}
+	sort.Strings(reports)
+	latest := reports[len(reports)-1]
+	data, err := os.ReadFile(latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep Report
+	if err := json.Unmarshal(data, &rep); err != nil {
+		t.Fatalf("%s: %v", latest, err)
+	}
+	want := rep.ReadmeBlock("src/docs/benchmarks")
+
+	readme, err := os.ReadFile(filepath.Join("..", "..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ExtractReadmeBlock(string(readme))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("README outcomes block drifted from %s; regenerate with src/scripts/outcome-benchmark.sh --readme\n--- README\n%s\n--- regenerated\n%s", latest, got, want)
+	}
+	base := strings.TrimSuffix(latest, ".json")
+	check := func(path, want string) {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != want {
+			t.Errorf("%s drifted from %s; regenerate with src/scripts/outcome-benchmark.sh", path, latest)
+		}
+	}
+	check(base+".md", rep.Markdown())
+	check(filepath.Join(docDir, "assets", rep.AssetBase()+"-bars.svg"), rep.BarChartSVG())
+	check(filepath.Join(docDir, "assets", rep.AssetBase()+"-trend.svg"), rep.TrendSVG())
+}

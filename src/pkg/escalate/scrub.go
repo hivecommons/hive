@@ -1,6 +1,6 @@
 package escalate
 
-import "github.com/hivecommons/hive/pkg/logscrub"
+import "github.com/hivecommons/hive/crux/logscrub"
 
 // scrubEvent passes every operator-visible field of an escalation through the
 // shared secret/canary scrubber (`logscrub.ScrubString`) before it can leave

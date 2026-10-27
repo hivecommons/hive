@@ -65,6 +65,12 @@ func IsAbbreviatedSHA(sha string) bool {
 	return len(s) >= MinAbbreviatedSHALen && len(s) < fullSHALen && isHex(s)
 }
 
+// IsFullHexSHA reports whether sha is a full 40-digit hex object id.
+func IsFullHexSHA(sha string) bool {
+	s := strings.TrimSpace(sha)
+	return len(s) == fullSHALen && isHex(s)
+}
+
 func isHex(s string) bool {
 	for _, r := range s {
 		switch {

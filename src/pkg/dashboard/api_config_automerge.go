@@ -170,13 +170,15 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			ExcludeLabels           []string `json:"exclude_labels"`
 		} `json:"trusted_authors"`
 		ContributorLane *struct {
-			Enabled                 *bool    `json:"enabled"`
-			SoakMinutes             *int     `json:"soak_minutes"`
-			RequireReviewerVerdict  *bool    `json:"require_reviewer_verdict"`
-			Repos                   []string `json:"repos"`
-			ExcludeLabels           []string `json:"exclude_labels"`
-			RequireTiers            []string `json:"require_tiers"`
-			RegistryTiersSufficient *bool    `json:"registry_tiers_sufficient"`
+			Enabled                           *bool    `json:"enabled"`
+			SoakMinutes                       *int     `json:"soak_minutes"`
+			RequireReviewerVerdict            *bool    `json:"require_reviewer_verdict"`
+			Repos                             []string `json:"repos"`
+			ExcludeLabels                     []string `json:"exclude_labels"`
+			RequireTiers                      []string `json:"require_tiers"`
+			RegistryTiersSufficient           *bool    `json:"registry_tiers_sufficient"`
+			AutoPromotionScope                *string  `json:"auto_promotion_scope"`
+			ApproveHeldRunsForRegistryTrusted *bool    `json:"approve_held_runs_for_registry_trusted"`
 		} `json:"contributor_lane"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -250,6 +252,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	var contributorLaneRepos []string
 	var contributorLaneLabels []string
 	var contributorLaneTiers []string
+	var contributorLaneScope string
 	if body.ContributorLane != nil {
 		if body.ContributorLane.SoakMinutes != nil && *body.ContributorLane.SoakMinutes < 0 {
 			jsonError(w, "contributor_lane.soak_minutes must be 0 (default 30) or greater", http.StatusBadRequest)
@@ -275,6 +278,14 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			contributorLaneTiers = normalizeAutoMergeRepoList(body.ContributorLane.RequireTiers)
+		}
+		if body.ContributorLane.AutoPromotionScope != nil {
+			scope := config.ContributorLaneAutoMergeConfig{AutoPromotionScope: *body.ContributorLane.AutoPromotionScope}
+			if err := scope.Validate(); err != nil {
+				jsonError(w, "contributor_lane.auto_promotion_scope must be one of "+strings.Join(config.ContributorLaneAutoPromotionScopes, ", "), http.StatusBadRequest)
+				return
+			}
+			contributorLaneScope = scope.EffectiveAutoPromotionScope()
 		}
 	}
 
@@ -356,6 +367,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			v := *body.ContributorLane.RegistryTiersSufficient
 			cfg.AutoMerge.ContributorLane.RegistryTiersSufficient = &v
 		}
+		if body.ContributorLane.ApproveHeldRunsForRegistryTrusted != nil {
+			v := *body.ContributorLane.ApproveHeldRunsForRegistryTrusted
+			cfg.AutoMerge.ContributorLane.ApproveHeldRunsForRegistryTrusted = &v
+		}
 		if body.ContributorLane.Repos != nil {
 			cfg.AutoMerge.ContributorLane.Repos = contributorLaneRepos
 		}
@@ -364,6 +379,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.ContributorLane.RequireTiers != nil {
 			cfg.AutoMerge.ContributorLane.RequireTiers = contributorLaneTiers
+		}
+		if body.ContributorLane.AutoPromotionScope != nil {
+			cfg.AutoMerge.ContributorLane.AutoPromotionScope = contributorLaneScope
 		}
 	}
 	syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
@@ -463,14 +481,17 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"roles":                     []string{config.RoleMerger, config.RoleOwner},
 		},
 		"contributor_lane": map[string]interface{}{
-			"enabled":                   cl.IsEnabled(),
-			"soak_minutes":              cl.EffectiveSoakMinutes(),
-			"require_reviewer_verdict":  cl.EffectiveRequireReviewerVerdict(),
-			"repos":                     contributorLaneRepos,
-			"exclude_labels":            contributorLaneLabels,
-			"require_tiers":             cl.EffectiveRequireTiers(),
-			"registry_tiers_sufficient": cl.EffectiveRegistryTiersSufficient(),
-			"grantable_tiers":           config.ContributorLaneGrantableTiers,
+			"enabled":                                cl.IsEnabled(),
+			"soak_minutes":                           cl.EffectiveSoakMinutes(),
+			"require_reviewer_verdict":               cl.EffectiveRequireReviewerVerdict(),
+			"repos":                                  contributorLaneRepos,
+			"exclude_labels":                         contributorLaneLabels,
+			"require_tiers":                          cl.EffectiveRequireTiers(),
+			"registry_tiers_sufficient":              cl.EffectiveRegistryTiersSufficient(),
+			"auto_promotion_scope":                   cl.EffectiveAutoPromotionScope(),
+			"auto_promotion_scopes":                  config.ContributorLaneAutoPromotionScopes,
+			"grantable_tiers":                        config.ContributorLaneGrantableTiers,
+			"approve_held_runs_for_registry_trusted": cl.EffectiveApproveHeldRunsForRegistryTrusted(),
 		},
 	}
 }

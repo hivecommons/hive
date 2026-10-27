@@ -1,0 +1,1 @@
+- Add the opt-in Claude Managed Agents self-hosted external backend prototype with relay capability gating, durable session reconciliation, and USD 25/day ledger metering.

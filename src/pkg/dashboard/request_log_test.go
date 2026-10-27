@@ -16,9 +16,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/logread"
 )
 
 const requestLogTestToken = "request-log-good-dashboard-token"

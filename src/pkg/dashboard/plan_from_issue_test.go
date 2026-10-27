@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/planning"
@@ -192,7 +192,7 @@ func TestHandlePlanFromIssue_WithAgentMgr_KickPath(t *testing.T) {
 	}
 	logger := slog.Default()
 	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"architect": {}}}, ACMMLevel: acmmL5()}
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
 
 	srv := NewServer(0, logger)

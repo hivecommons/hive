@@ -231,7 +231,7 @@ func (c *Client) recordReviewEvidence(ctx context.Context, req ReviewRequest, re
 	for _, head := range heads {
 		u := updates[head]
 		if len(u.verdicts) > 0 {
-			existing, _ := LoadReviewEvidence(ReviewEvidencePath("", repo, req.Number, head))
+			existing, _ := LoadVerifiedReviewEvidence(ReviewEvidencePath("", repo, req.Number, head), reviewEvidenceVerifierForKey(key))
 			needsSignals := existing == nil
 			for _, v := range u.verdicts {
 				if existing != nil && !containsEvidenceVerdict(existing.Verdicts, v) {
@@ -269,10 +269,16 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
+	defer lockReviewEvidenceDir(path)()
 
 	b, err := LoadReviewEvidence(path)
 	switch {
 	case err == nil:
+		if err := reviewEvidenceVerifierForKey(key).Verify(b); err != nil {
+			c.logger.Warn("review evidence: existing bundle failed integrity verification, left untouched",
+				slog.String("path", path), slog.String("error", err.Error()))
+			return
+		}
 	case errors.Is(err, os.ErrNotExist):
 		pr := fetchPR()
 		if pr == nil {
@@ -460,9 +466,11 @@ func reviewEvidenceMergeFromPR(pr *gh.PullRequest, head string, now time.Time) *
 // already holds, so a head the relay has not written yet gets its bundle
 // started from it (author, base, policy) without another fetch. Like the
 // relay's writes, every failure is logged and swallowed: the alert label and
-// comment are already on GitHub. notice marks findings the sweep only
-// reported (a trusted author) rather than blocked on with the label.
-func (c *Client) recordReviewEvidenceSentinel(repo string, pr *gh.PullRequest, findings []sentinel.Finding, notice bool, now time.Time) {
+// comment are already on GitHub. blocked reports that the sweep applied the
+// alert label for these findings; a notice-only pass (trusted author,
+// comment but no label) records them with Notice set so readers know the
+// label never carried this alert.
+func (c *Client) recordReviewEvidenceSentinel(repo string, pr *gh.PullRequest, findings []sentinel.Finding, blocked bool, now time.Time) {
 	settings, ok := c.reviewEvidenceSettings(repo)
 	if !ok || pr == nil || len(findings) == 0 {
 		return
@@ -475,7 +483,7 @@ func (c *Client) recordReviewEvidenceSentinel(repo string, pr *gh.PullRequest, f
 	var u reviewEvidenceUpdate
 	for _, f := range findings {
 		if ef, ok := evidenceSentinelFinding(f); ok {
-			ef.Notice = notice
+			ef.Notice = !blocked
 			u.sentinel = append(u.sentinel, ef)
 		}
 	}

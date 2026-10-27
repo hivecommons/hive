@@ -350,7 +350,7 @@ Important environment variables:
 | `HIVE_COMMONS_STRATEGY` | `ranked` | Multi-hive routing strategy for The Commons. `ranked` solicits the first subscribed hive and falls through only when it has no work; `spread` rotates with rank weights and periodic mixing; `neediest` scores each hub's `/api/contribute/status` by `actionable_items` with a small boost for idle contributor capacity (`total_registered - active_contributors`) when those fields are present. The relay evaluates this only when it is ready for another task, never while a lease is in flight. |
 | `HIVE_COMMONS_SPREAD_MIX_EVERY` | `7` | In `spread`, every N completed/failed tasks the next hive is chosen randomly from the weighted rank cycle instead of by cursor. Set `0` to disable mixing. |
 | `HIVE_COMMONS_NEEDIEST_REFRESH_MS` | `60000` | In `neediest`, how often to refresh each subscribed hub's `/api/contribute/status` cache. Set `0` to rely on auth-time/manual refreshes only. |
-| `AGENT_BACKEND` | `claude` | CLI/backend to run (`claude`, `copilot`, `goose`, `bob`, `codex`, `pi`, `aider`, `litellm`, `agy`, `opencode`, `kilo`, `muse`, `omp`, `openhands`, depending on image support and credentials). `omp` is interactive-only: Hive starts normal `omp --model <id>` in the prepared tmux cwd and passes no fabricated permission flags. It has no verified local confinement mechanism, so local mode refuses it without `HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1`; container mode is the supported boundary. `agy` has the same confinement limit. `opencode`, `kilo`, `muse`, and `openhands` only run headless (`CONTRIBUTOR_MODE=headless`) — hive has no interactive-tmux wiring for them. |
+| `AGENT_BACKEND` | `claude` | CLI/backend to run (`claude`, `copilot`, `goose`, `bob`, `codex`, `pi`, `aider`, `litellm`, `agy`, `opencode`, `kilo`, `muse`, `omp`, `openhands`, `omnigent`, depending on image support and credentials). `omp` is interactive-only: Hive starts normal `omp --model <id>` in the prepared tmux cwd and passes no fabricated permission flags. It has no verified local confinement mechanism, so local mode refuses it without `HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1`; container mode is the supported boundary. `agy` and `omnigent` have the same confinement limit; `omnigent` is launched as `omnigent run --server local [--model <id>]` (`run` opens the agent REPL — bare `omnigent` only starts a background server — and `--server local` keeps the session off any remote server configured by `omnigent login`). `opencode`, `kilo`, `muse`, and `openhands` only run headless (`CONTRIBUTOR_MODE=headless`) — hive has no interactive-tmux wiring for them. |
 | `AGENT_MODEL` | unset (backend default) | Optional model override passed to the contributor agent (e.g. `claude-sonnet-4-6`, `gpt-4o`, `gemini-2.5-pro`). Declared to the hive when the relay connects. |
 | `AGENT_REASONING_EFFORT` | unset | Reasoning effort override. Consumed by `codex` (`-c model_reasoning_effort`), by `agy` (`--effort low\|medium\|high`, required whenever a model is set, else agy ignores the model), by `muse` (`--reasoning-effort none\|minimal\|low\|medium\|high\|xhigh\|max\|ultra`, applied with or without a model; a value outside that set is dropped rather than passed, because muse exits 2 on it), and by `claude` (`--effort low\|medium\|high\|xhigh\|max`, applied with or without a model; a value outside that set is dropped the same way, and unset leaves Claude Code at its own default - [#8377](https://github.com/hivecommons/hive/issues/8377)). Ignored by other backends, including inference routes such as `litellm` that drive the claude binary. |
 | `HIVE_CONTRIBUTOR_KNOWLEDGE_EXPORT_MAX_FACTS` | `80` | Maximum entries in the `/api/knowledge/export` response when it is fetched with a contributor registration token. Owner/API-token exports remain full; contributor startup context receives a bounded summary with a truncation marker and should fetch more specific entries on demand with `hive knowledge` or the Hive MCP knowledge tool. |
@@ -387,6 +387,7 @@ Important environment variables:
 | `HIVE_KILO_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive kilo local` to launch at all. kilo's `--auto` is an unattended auto-approve flag, not a boundary; kilo has no verified sandbox, filesystem allowlist, or command deny-list hive can wire. |
 | `HIVE_OPENHANDS_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive openhands local` to launch at all. The bare `openhands` CLI runs the agent on the host with no sandbox; `--always-approve` is approval, not a boundary, and its Docker sandbox is reachable only through `openhands serve`, not the headless one-shot path. |
 | `HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive omp local` to launch at all. OMP has no sandbox, filesystem allowlist, or command deny-list Hive can wire; local mode refuses to launch without this. |
+| `HIVE_OMNIGENT_DANGEROUSLY_RUN_UNCONFINED` | unset | **Required** for `just contribute-hive omnigent local` to launch at all. Omnigent has no OS sandbox wired by Hive on the local CLI path; local mode refuses to launch without this. |
 
 ### Where each backend reads its instructions
 
@@ -395,6 +396,15 @@ symlinks it under whatever filename the chosen CLI actually looks for
 (`bin/contributor-agent.sh`). Getting this wrong is silent: the export is
 fetched and refreshed on schedule, but the model never sees it — the failure
 mode fixed for Goose in [#2393](https://github.com/hivecommons/hive/issues/2393).
+
+`just contribute-hive local` fetches the same export into
+`${HIVE_AGENT_MD:-$HOME/agent.md}` before starting the CLI and refreshes it
+every 10 minutes (shared code in `bin/lib/knowledge-export.sh`). It is then
+symlinked under the backend's context filenames (`CLAUDE.md`, `AGENTS.md`,
+`.goosehints`, ...) in `HIVE_AGENT_CWD`, the directory the CLI is launched
+from, rather than in your home directory as the container does. If the hub
+cannot serve it, the file stays absent and the relay reports a `~`-relative
+`knowledge_error`.
 
 | Backend | Filenames linked in `$HOME` |
 | --- | --- |
@@ -410,6 +420,7 @@ mode fixed for Goose in [#2393](https://github.com/hivecommons/hive/issues/2393)
 | `openhands` | `AGENTS.md`, `CLAUDE.md` |
 | `muse` | `AGENTS.md`, `CLAUDE.md` |
 | `omp` | `AGENTS.md`, `CLAUDE.md` |
+| `omnigent` | `AGENTS.md`, `CLAUDE.md` |
 | anything else | `CLAUDE.md` only — the `*` fallback |
 
 A backend that reads neither `CLAUDE.md` nor one of the names above falls into
@@ -458,7 +469,7 @@ OS-enforced — Seatbelt/bubblewrap/ProcessContainer depending on platform),
 gated on the installed CLI actually supporting the flag; opencode gets a
 command-name deny-list via its own `permission.bash` config (a floor, not a
 filesystem boundary — opencode has no OS sandbox); goose, agy, bob, pi, aider,
-kilo, omp, and openhands have no confinement mechanism this repo can wire at all, and local
+kilo, omp, openhands, and omnigent have no confinement mechanism this repo can wire at all, and local
 mode for them **refuses to launch** unless the operator sets that backend's own
 `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED=1`. See
 [sandbox-isolation.md](sandbox-isolation.md)'s per-backend confinement matrix
@@ -515,6 +526,7 @@ The relay speaks to whatever backend you set up — pass it to `contribute-setup
 | `muse` | Muse Code (`curl -fsSL https://dev.meta.ai/install.sh | bash`). Headless-only: `muse exec "<prompt>"` is its documented non-interactive sub-command. Auth is `META_API_KEY` (which muse says always takes priority) or `~/.config/muse/auth.json` written by `muse login` / `muse auth set --api-key-stdin`. Set `AGENT_MODEL` to a catalog id from `GET https://api.meta.ai/v1/models`, queried **from the machine that will run muse** — the catalog is caller-dependent (a workstation and an AWS container saw different model sets for the same key on 2026-09-08), and an id the caller cannot see fails at task time. **muse brings its own OS sandbox** (bubblewrap/seccomp on Linux, seatbelt on macOS), on by default — hive narrows it rather than refusing local launch. Installed in both images, pinned by version and per-arch SHA-256 from muse's release manifest. |
 | `omp` | Oh My Pi — **interactive-only**: Hive starts ordinary `omp --model <id>` in the prepared tmux cwd, with no fabricated permission flags; there is no headless wiring for it. Sign in once on the host (run `omp`, complete its provider setup, quit): container mode stages an allowlist of `~/.omp/agent` — only the selected provider's credential rows — into the container ([#7678](https://github.com/hivecommons/hive/issues/7678)), and the contributor image ships a pinned, checksummed `omp` ([#7661](https://github.com/hivecommons/hive/issues/7661)) so `just contribute-hive omp` runs without an `omp` on the host. No verified local confinement mechanism, so local mode refuses without `HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1`; container mode is the supported boundary. Full setup notes: [docs/backend-setup.md](../../docs/backend-setup.md) |
 | `openhands` | OpenHands CLI (`uv tool install openhands --python 3.12`; PyPI `openhands`, MIT). Headless-only: `openhands --headless -t "<prompt>" --always-approve --override-with-envs`. Auth is `LLM_API_KEY` (plus `LLM_BASE_URL` for an OpenAI-compatible gateway) or the `~/.openhands/settings.json` an interactive first run writes; `AGENT_MODEL=provider/model` (any litellm id) is forwarded as `LLM_MODEL` — the CLI has no `--model` flag and ignores `LLM_*` without `--override-with-envs`. No sandbox on this path, so local mode refuses without `HIVE_OPENHANDS_DANGEROUSLY_RUN_UNCONFINED=1`; not shipped in the contributor image (needs Python 3.12). Upstream has marked the CLI repo as no longer actively maintained in favour of Agent Canvas — T3 experimental. Full setup notes: [docs/backend-setup.md](../../docs/backend-setup.md) |
+| `omnigent` | Omnigent CLI ([github.com/omnigent-ai/omnigent](https://github.com/omnigent-ai/omnigent), Apache-2.0). Meta-harness over Claude Code, Codex, Cursor, Pi, and custom agents. Auth uses ambient provider API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`), Databricks profiles (`~/.databrickscfg`), or session tokens in `~/.omnigent/auth_tokens.json` / `~/.omnigent/config.yaml`. Launched as `omnigent run --server local`; remote-server mode is unsupported. No OS sandbox wired by Hive on the local CLI path, so local mode refuses without `HIVE_OMNIGENT_DANGEROUSLY_RUN_UNCONFINED=1`; container mode is the recommended boundary and stages only `auth_tokens.json` and `config.yaml` from `~/.omnigent`. Omnigent's internal policy engine and sandboxing compose additively, while Hive egress/API proxy remains strictly authoritative on all GitHub writes — T3 experimental. See [backend-omnigent-cli-contract.md](backend-omnigent-cli-contract.md). |
 
 ## Running multiple backends under one account
 
@@ -1233,6 +1245,7 @@ Two admission behaviors are worth knowing when your relay seems idle:
 - **An issue somebody has *claimed* is not offered — and a clanker already on it is pulled off when a higher rank claims it.** The PR-claim ledger above only knows about work that has reached a pull request. Since [#8380](https://github.com/hivecommons/hive/issues/8380) the hub also keeps a **worker-claim ledger**: who is on an issue *right now*, ranked **human > agent > contributor > external**. A person claims from the terminal (`hivectl claim owner/repo#N`) or the API (`POST /api/claims/{owner}/{repo}/{number}`); a governor kick *lists* each issue it hands one of the hive's own agents — no GitHub comment, no claim, just a 30-minute hold that keeps your session and other agents off it while the kick is live — and the hub records the **agent** claim on the agent's first start signal on that issue (its own comment, label or claim request through `hive-open-issue`, or a `hive-open-pr` request naming it; [#10527](https://github.com/hivecommons/hive/issues/10527) — a comment that is an explicit *deferral* (see the [recognized forms](hive-open-issue.md#comment)) is posted but records no claim, so a parked issue is not shown in progress for two hours after its blocker lands; [#12387](https://github.com/hivecommons/hive/issues/12387)); and the relay records a **contributor** claim for your session the moment it leases you a task, releasing it when the task completes, is abandoned, is yanked or its lease expires. `selectTask` excludes every issue another holder claims exactly as it excludes leased items, and the scheduler withholds them from kicks under *In Flight*. Precedence is enforced on write: a higher rank **takes over** and the displaced holder is told to stop — for a relay session that means the hub yanks that one task (`task_revoke`, generation bumped so a late completion is fenced) and hands the session its next admissible item in the same call, leaving your other sessions alone; for an agent or an external bot it means a `🔁` comment addressed to it plus a `preempted:<login>` label on the issue. Same rank warns unless forced; a lower rank is refused. Claims lapse on a per-kind TTL (`claims.human_ttl_s` 4h, `agent_ttl_s` 2h, `contributor_ttl_s` 30m — the relay lease length — capped by `max_ttl_s` 24h) and `claims.enabled: false` turns the whole mechanism off. Every transition is mirrored onto the issue as a comment carrying a `<!-- hive:claim who=… kind=… until=… -->` marker (or `<!-- hive:preempt target=… by=… -->` on takeover) and a `claimed` label, so a relay that only reads GitHub can still see it was preempted.
 - **Claims expire.** Ledger entries live 72 hours — refreshed while the PR stays open, or anchored at the merge for a merged claim, so a settled issue is suppressed for 72h after its fix lands and nothing is stranded forever. An **open** claiming PR that goes red on a required check and stale releases the issue back to the queue; merged claims never take that valve — a fix already on `main` cannot go red.
 - **A repository the App cannot mint a token for is excluded, not fatal.** Since C4 the `task_assign` token is scoped to the chosen item's repository, so GitHub's `422 There is at least one repository that does not exist or is not accessible to the parent installation` means *that repo* — renamed, deleted, or removed from the installation — and nothing about the tier or the App key. It used to fail the whole selection with `token_mint_failed`, and because selection is deterministic the same doomed item was chosen on every 30 s retry: one stale entry in the project repo list (a renamed repo) wedged a hive for every contributor while `actionable_items` sat at 19 ([#7869](https://github.com/hivecommons/hive/issues/7869)). Now the claim is rolled back, the repo is excluded from selection for `mintFailureRepoCooldown` (10 min, so the fleet is not re-discovering it every retry, but the operator's fix takes effect without a restart), and the *same* call selects again from the remaining candidates (bounded at three such skips). If nothing else is admissible the reason is `repo_unmintable` rather than `no_matching_work` or `token_mint_failed`, and the hub log names the repo with a pointer at the repo list. Non-repo mint failures (5xx, bad key, an unaccepted permission) keep the `token_mint_failed` contract and exclude nothing — they would recur for any candidate.
+- **An App with no installation says so.** When `github.installation_id` is `0` — the App is not installed on the hive's org, or discovery never found it — no token can be minted for any repository. The hub answers `task_unavailable` with reason `app_not_installed` and a `message` naming the org and the App install link, without calling GitHub and without excluding any repo ([#14002](https://github.com/hivecommons/hive/issues/14002)). Before this, GitHub's 404 for installation `0` was read as a repo-scope failure and contributors saw `repo_unmintable`, which points at the repo list rather than the missing installation. The relay prints the message under the reason line; the fix is the operator's (install the App on the org), never the contributor's.
 
 ## Contributor repository scope
 
@@ -1933,17 +1946,26 @@ Per extension:
   `ext-exec/...` token. The Extensions tab lists currently connected peers and
   their declared capabilities.
 
-External-execution items add engine-scoped tokens: `ext-exec/flue` and
-`ext-exec/omp` ([#8361](https://github.com/hivecommons/hive/issues/8361)). A
-run-stage item that names an external engine (`ext_exec: flue` or
-`ext_exec: omp`) is offered only while the operator has enabled that engine's
-binding (`runs.external.flue`, `runs.external.omp`) AND the relay declares
-that engine's token in `capabilities.relay_capabilities`. A relay without the
-token, or a hub with the binding off, refuses that item; it is never handed
-out as ordinary local work, and declaring one token grants nothing for the
-other engine. The token grants nothing by itself: the engine still receives
-only a bounded context bundle, and the hub still decides acceptance of its
-receipt.
+External-execution items add engine-scoped tokens: `ext-exec/flue`,
+`ext-exec/omp`, and `ext-exec/claude-managed-agents`
+([#8361](https://github.com/hivecommons/hive/issues/8361),
+[#14124](https://github.com/hivecommons/hive/issues/14124)). A run-stage item
+that names an external engine (`ext_exec: flue`, `ext_exec: omp`, or
+`ext_exec: claude-managed-agents`) is offered only while the operator has
+enabled that engine's binding AND the relay declares that engine's token in
+`capabilities.relay_capabilities`. A relay without the token, or a hub with
+the binding off, refuses that item; it is never handed out as ordinary local
+work, and declaring one token grants nothing for another engine. The token
+grants nothing by itself: each engine receives only a bounded context bundle,
+and the hub still decides acceptance of its receipt.
+
+**Claude Managed Agents self-hosted host.** The
+`ext-exec/claude-managed-agents` token is an opt-in for the private-spoke
+hosted adapter. The relay sends no vendor key, GitHub token, or dashboard
+credential; Hive sends the bounded prompt/repository context only after the
+normal lease authority is durable. The adapter keeps the session in advisory
+`shadow` or `report-only` mode, refuses direct GitHub write paths, and records
+token and list-cost metering in the spoke ledger with a hard USD 25 daily cap.
 
 **OMP workbench as a contributor host** ([#6899](https://github.com/hivecommons/hive/issues/6899)).
 An already-running OMP workbench does not embed the relay; it registers as a

@@ -42,6 +42,12 @@ func TestMaintainHeldPRMergeabilityUpdatesBehindBranchAndAdvancesBaseline(t *tes
 	if calls != 1 {
 		t.Fatalf("update-branch calls for PR 7 = %d, want 1", calls)
 	}
+	fake.mu.Lock()
+	expected := fake.updateBranchExpected[7]
+	fake.mu.Unlock()
+	if len(expected) != 1 || expected[0] != "c1" {
+		t.Fatalf("update-branch expected_head_sha = %v, want [c1] (the enumerated head)", expected)
+	}
 	rec, ok := store.Recorded("acme/widgets", 7)
 	if !ok || rec.HeadSHA != "c2" {
 		t.Fatalf("baseline = %+v ok=%v, want it advanced to the merged head c2", rec, ok)
@@ -208,6 +214,45 @@ func TestMaintainHeldPRMergeabilityNotesUnresolvableConflictOnce(t *testing.T) {
 	}
 	if rec.HeadSHA != "c2" {
 		t.Fatalf("baseline = %q, want it advanced to c2 once the conflict clears", rec.HeadSHA)
+	}
+}
+
+// #14537: the update is pinned to the enumerated head, so a contributor push
+// landing between enumeration and the update makes GitHub refuse it instead of
+// stacking the hive's merge on unevaluated commits. That refusal is a moved
+// head, not a merge conflict: no conflict notice, baseline untouched.
+func TestMaintainHeldPRMergeabilityRefusedWhenHeadMovedSinceEnumeration(t *testing.T) {
+	for _, state := range []string{"behind", "dirty"} {
+		t.Run(state, func(t *testing.T) {
+			store := newTestHoldGuardStore(t)
+			fake := &holdGuardServer{
+				commits:  map[int][]map[string]any{7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("c9", "contributor", "feat: late push")}},
+				liveHead: map[int]string{7: "c9"},
+			}
+			client := newHoldGuardClient(t, fake)
+			cfg := escalationTestConfig()
+			store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+
+			held := heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "c1", BaseSHA: "b1", MergeableState: state})
+			_ = enforceHoldGuard(context.Background(), cfg, client, client, held, discardLogger())
+
+			fake.mu.Lock()
+			calls := fake.updateBranchCalls[7]
+			comments := append([]string(nil), fake.comments...)
+			fake.mu.Unlock()
+			if calls != 1 {
+				t.Fatalf("update-branch calls for PR 7 = %d, want 1", calls)
+			}
+			for _, c := range comments {
+				if strings.Contains(c, "conflict") {
+					t.Fatalf("a moved head must not be reported as a merge conflict, saw %q", c)
+				}
+			}
+			rec, ok := store.Recorded("acme/widgets", 7)
+			if !ok || rec.HeadSHA != "c1" || rec.ConflictNoted {
+				t.Fatalf("snapshot = %+v ok=%v, want baseline pinned at c1 and no conflict noted", rec, ok)
+			}
+		})
 	}
 }
 

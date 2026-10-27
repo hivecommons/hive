@@ -150,6 +150,15 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		SelfAuthored:     obs.Lane == stageLaneSelf,
 		AuthorKind:       obs.AuthorKind,
 		ManualMerge:      manualMergeReason(obs.Reason),
+		LaneReason:       obs.Reason,
+		ManualMergeRule:  manualMergeRuleReason(obs.Reason),
+	}
+	// A trusted merger's APPROVED review on exactly this head is the human
+	// decision the lane noted (latestTrustedHumanApproval): it settles a
+	// requires_human verdict and a manual-merge lane rule, so the route
+	// must not keep asking for a decision already made (hivecommons/hive#14568).
+	if approver := strings.TrimSpace(obs.Detail.HumanApprover); approver != "" && obs.HeadSHA != "" && strings.TrimSpace(obs.Detail.HumanApprovalHead) == obs.HeadSHA {
+		e.HumanApprover = approver
 	}
 	if rec, ok := c.stageStoreOrShared().Get(key); ok && rec.AdoptedHead != "" && rec.AdoptDiffFence != "" && rec.AdoptDiffFence == obs.Reason && e.CauseReason != "" {
 		// An adopted head whose diff fence is the blocker: the 085 note
@@ -197,6 +206,17 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		}
 	}
 	return e
+}
+
+// manualMergeRuleReason reports whether a lane reason is a rule no review
+// or reply overrides: the hive never merges the head unattended, a person
+// clicks merge.
+func manualMergeRuleReason(reason string) bool {
+	switch reason {
+	case contributorLaneReasonWorkflowPath, contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath:
+		return true
+	}
+	return false
 }
 
 // routeHuman refines a lane's human hand-off into the stage the evidence

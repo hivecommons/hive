@@ -21,10 +21,22 @@ import (
 	"sync/atomic"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+	cruxruntime "github.com/hivecommons/hive/crux/runtime"
+
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/inference"
+	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/proxy"
+	"github.com/hivecommons/hive/crux/pushbroker"
+	"github.com/hivecommons/hive/crux/taskmcp"
+	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/crux/trajectory"
+	"github.com/hivecommons/hive/crux/watchdog"
+	"github.com/hivecommons/hive/crux/watsonx"
 	"github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/advisory"
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/apphealth"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/celtrigger"
@@ -34,7 +46,6 @@ import (
 	convergenceaudit "github.com/hivecommons/hive/pkg/convergence/audit"
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/outcome"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashchat"
@@ -54,13 +65,11 @@ import (
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/hub"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
-	"github.com/hivecommons/hive/pkg/inference"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/loginscan"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/matrix"
 	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/msteams"
@@ -72,8 +81,6 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
-	"github.com/hivecommons/hive/pkg/proxy"
-	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/rfccoverage"
@@ -85,15 +92,10 @@ import (
 	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/startrec"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 	"github.com/hivecommons/hive/pkg/telegram"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/toolapprove"
 	"github.com/hivecommons/hive/pkg/tracing"
-	"github.com/hivecommons/hive/pkg/trajectory"
-	"github.com/hivecommons/hive/pkg/watchdog"
-	"github.com/hivecommons/hive/pkg/watsonx"
 	"github.com/hivecommons/hive/pkg/worksource"
 	"github.com/hivecommons/hive/pkg/worksource/wavefront" // registers the additive Wavefront source (#8362)
 	"go.opentelemetry.io/otel/attribute"
@@ -219,7 +221,7 @@ func heartbeatProviders(cfg *config.Config, agents []spoke.AgentSummary) []crux.
 	return spoke.ProviderStatusForHeartbeat(agents)
 }
 
-func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *crux.Process, onDemandFromPack map[string]bool) hub.AgentActivity {
+func agentActivityFor(mgr crux.Runtime, cfg *config.Config, govState governor.State, currentMode, name string, proc *crux.Process, onDemandFromPack map[string]bool) hub.AgentActivity {
 	act := hub.AgentActivity{
 		Paused:         proc.Paused,
 		PausedTrigger:  proc.PausedTrigger,
@@ -925,7 +927,6 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// hub is always the same length it stores (no short-vs-full mismatch).
 	gitShort = canonicalGitShort(gitShort)
 	dashboard.SetGitVersion(gitHash, gitShort)
-	agent.SetBuildCommit(gitShort)
 	dashboard.SetFleetReportBuildInfo(reportedVersion(), gitShort)
 	dashboard.SetGitBranch(gitBranch)
 	// Resolve channel and tracking together from the cached Deployment image.
@@ -1451,8 +1452,9 @@ func (b *boot) wireBootClosures() {
 			auditJournal = boundary.Executor.Journal
 		}
 		return &dashboard.Dependencies{
-			Config:   b.cfg,
-			AgentMgr: b.agentMgr,
+			Config:            b.cfg,
+			AgentMgr:          b.agentMgr,
+			CruxRuntimeHealth: cruxRuntimeHealthFunc(b.cruxSupervision),
 			// Provider gateways (#5565 slice 3): concrete openrouter/watsonx/
 			// linearagent adapters behind the dashboard's consumer-defined
 			// interfaces — this composition root is the only non-test place that
@@ -1463,6 +1465,8 @@ func (b *boot) wireBootClosures() {
 			LinearStoredViewerID: linearStoredViewerID,
 			MentionWebhook:       b.mentionWebhook,
 			MentionStore:         b.mentionStore,
+			DelegateDecider:      newDelegateDeciderRunner(func() *config.Config { return b.cfg }),
+			ChatGrounder:         newChatGroundingRunner(func() *config.Config { return b.cfg }),
 			DashboardChatSubmit: func(user, role, text string) (uint64, error) {
 				if b.dashChat == nil {
 					return 0, fmt.Errorf("dashboard chat is not configured")
@@ -2139,7 +2143,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		b.logger.Warn("failed to seed default policies", "path", b.policyDirPath, "error", err)
 	}
 
-	b.projectCtx = agent.ProjectContext{
+	b.projectCtx = crux.ProjectContext{
 		Org: b.cfg.Project.Org,
 		// Repos stays the full watched set; the functions below narrow it at
 		// read time — RepoPaused to the repos open for work (#6203), AgentRepos
@@ -2311,11 +2315,46 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	for _, name := range b.cfg.Governor.ClearInvalidInferenceLaunchCmds(b.cfg.Agents) {
 		b.logger.Warn("cleared invalid inference launch_cmd; inference and gateway backends launch through claude", "agent", name)
 	}
-	b.agentMgr = agent.NewManager(b.cfg.EnabledAgents(), b.logger, b.projectCtx)
+	rtCfg := cruxconfig.RuntimeConfigFromEnv()
+	b.agentMgr, err = deps.newRuntime(rtCfg,
+		cruxruntime.WithDefinitions(b.cfg.EnabledAgents()),
+		cruxruntime.WithLogger(b.logger),
+		cruxruntime.WithProject(b.projectCtx))
+	if err != nil {
+		b.logger.Error("crux runtime unavailable", "mode", rtCfg.Mode, "error", err)
+		deps.exit(1)
+		return
+	}
+	if sh, ok := b.agentMgr.(*sidecarHost); ok {
+		sh.setLogger(b.logger)
+	}
+	// A sidecar runtime reaches hive's capabilities (token minting, PR
+	// creation, Linear credentials, scanners, conditions) over the callback
+	// endpoint instead of the Set* calls below; serve it before the runtime
+	// starts dialing. Failing to bind is as fatal as no runtime: the runtime
+	// would otherwise run with every capability reporting unavailable.
+	if rtCfg.Mode == cruxconfig.ModeSidecar {
+		if err := deps.startHiveCallback(b.ctx, b.hiveCallbackCapabilities(), b.logger); err != nil {
+			b.logger.Error("hive callback endpoint unavailable", "error", err)
+			deps.exit(1)
+			return
+		}
+		// Stage 4: spawn/supervise `crux serve` (CRUX_SUPERVISE=child) and
+		// keep the crux_runtime_unavailable condition in step with the
+		// socket. The callback endpoint is up first so a child's first
+		// capability call lands.
+		if b.cruxSupervision = newCruxRuntimeSupervision(rtCfg, b.agentMgr, b.logger); b.cruxSupervision != nil {
+			deps.superviseRuntime(b.ctx, b.cruxSupervision)
+		}
+	}
 	// The runtime's spans go through pkg/tracing so they carry the hive
 	// component attribute and count toward reach (#3973); the runtime itself
 	// only knows the OpenTelemetry API (#13536).
 	b.agentMgr.SetSpanStarter(tracing.StartSpan)
+	// The runtime's self-reported error conditions (stalls, restart storms,
+	// token-mint failures…) feed the fleet-report tracker through the
+	// types.ConditionReporter seam; the runtime does not import pkg/fleetreport.
+	b.agentMgr.SetConditionReporter(fleetreport.DefaultReporter{})
 	// SIGTERM (pod roll, hive upgrade) destroys every tmux server and with it
 	// the in-flight kick's scrollback; archive it to /data first (#4296).
 	archiveOnShutdown := func() { b.agentMgr.ArchiveAllKickLogs("shutdown") }
@@ -2423,7 +2462,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	}
 	if b.appAuth != nil {
 		b.agentMgr.SetAppAuth(b.appAuth)
-		b.agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: b.appAuth})
+		b.agentMgr.SetSandboxPushMinter(appMinter(b.appAuth, ""))
 	}
 	// Start the per-agent token refresh loop UNCONDITIONALLY. It no-ops until
 	// App auth is wired, and on hosted spokes that wiring happens AFTER boot
@@ -2631,6 +2670,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	autoMergeOpts.SelfAuthorizationHoldEnabled = selfAuthorizationHoldEnabled
 	autoMergeOpts.MinHeadAge = b.cfg.AutoMerge.EffectiveMinHeadAge()
 	autoMergeOpts.RepoAutoMergeEnabled = func(repo string) bool { return b.cfg.RepoAutoMergeEnabled(repo) }
+	autoMergeOpts.RepoOnGitHub = func(repo string) bool { return b.cfg.RepoOnGitHub(repo) }
 	// Read through b.cfg on every sweep tick so a config reload of
 	// auto_merge.trusted_bot_authors takes effect without a restart.
 	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
@@ -2673,6 +2713,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			// (tier, soak, min_head_age, review verdict) the sweep applies;
 			// hive-authored PRs keep the relay's existing behaviour.
 			mergePolicy: relayLanePolicyGate(autoMergeOpts),
+			// Per-repo forge (#14113): a repo on GitLab/Gitea merges through
+			// its forge.Merger after the same merge-eligible binding; GitHub
+			// repos keep the path above unchanged.
+			forgeMerge: forgeMergeSelector(func() *config.Config { return b.cfg }, b.logger),
 			// Push relay (#9771): the same forge-resistance + CanPush ACMM
 			// gate a direct `git push` is governed by, so the relay grants
 			// no privilege — it only changes which process performs the push.
@@ -2899,28 +2943,21 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.sched.SetRunTriageDeps(b.dashSrv, liveTriageCommenter{client: b.currentGitHubClient})
 	// Prior-art gate search (hivecommons/hive#13575): knowledge, the
 	// Settings index and the forge, through the client provider.
-	b.sched.SetPriorArtSearcher(newPriorArtSearcher(b.cfg, func() *knowledge.KnowledgeAPI { return b.knowledgeAPI }, func() []rfccoverage.Setting { return b.rfcCoverageState().index(b.logger) }, b.currentGitHubClient, b.logger))
+	priorArtSearcher := newPriorArtSearcher(b.cfg, func() *knowledge.KnowledgeAPI { return b.knowledgeAPI }, func() []rfccoverage.Setting { return b.rfcCoverageState().index(b.logger) }, b.currentGitHubClient, b.logger)
+	b.priorArtSearcher.Store(priorArtSearcher)
+	b.sched.SetPriorArtSearcher(priorArtSearcher)
 	b.sched.SetAdvisoryFunc(func(title, detail, agentName string) {
-		store := b.beadStores[agentName]
-		if store == nil {
-			store = b.beadStores["scanner"]
-		}
-		if store == nil {
-			store = b.beadStores["supervisor"]
-		}
-		if store == nil {
-			for _, candidate := range b.beadStores {
-				store = candidate
-				break
-			}
-		}
-		if store != nil {
+		if store := b.beadStoreFor(agentName); store != nil {
 			if b, err := store.Create(title, beads.TypeAdvisory, beads.PriorityHigh, agentName, ""); err == nil {
 				_ = store.SetMetadata(b.ID, "ioscan_classifier", detail)
 			}
 		}
 	})
-	installIoscanClassifier(b.sched, b.cfg, b.logger, time.Now)
+	var ioscanAlerts ioscanClassifierAlerter
+	if b.dashSrv != nil {
+		ioscanAlerts = b.dashSrv
+	}
+	installIoscanClassifier(b.sched, ioscanAlerts, b.cfg, b.logger, time.Now)
 	b.agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
 		b.dashSrv.AuditLog(agentName, action, detail, agentName)
 		if action == "sandbox_broker_rejected" {
@@ -3170,6 +3207,9 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.metricsCollector.SetProjectScope(b.cfg.Project.Org, primaryRepo, b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 	b.metricsCollector.SetGitHubClientProvider(b.currentGitHubClient)
 	b.metricsCollector.SetCoverageTargetProvider(func() int { return b.cfg.Governor.EffectiveCoverageTarget() })
+	b.metricsCollector.SetReviewEvidenceVerifierProvider(func() (github.ReviewEvidenceVerifier, error) {
+		return github.NewReviewEvidenceVerifier(b.cfg.Evidence.SigningKeyPath())
+	})
 	b.metricsCollector.SetPRIssueWindowStartProvider(b.dashSrv.CostWindowStart)
 	// Merged / closed counts move on webhook events and the Search API is
 	// asked only hourly; with forgestate.enabled the Overview's open totals
@@ -3701,41 +3741,49 @@ func (b *boot) bootSupervision() {
 	for _, e := range wdCfgErrs {
 		b.logger.Warn("watchdog config problem", "error", e)
 	}
-	if wdSettings.Enabled() {
-		wdFleet := agent.WatchdogFleet{
-			M: b.agentMgr,
-			// Queue depth for the readiness gate: an agent producing nothing
-			// while nothing is queued is correct, not unhealthy. Read live
-			// from the governor so it reflects the current sweep.
-			Queued: func() (int, bool) {
-				st := b.gov.GetState()
-				return st.QueueIssues + st.QueuePRs, true
-			},
-			// The items behind that count, from the same enumeration the
-			// governor counted, so the not-producing alert can link them.
-			QueuedRefs: func() []watchdog.QueuedRef {
-				return watchdogQueuedRefs(b.lastActionable.Load(), b.cfg.Project.Org, watchdog.MaxQueuedRefs)
-			},
-			// Agents the governor deliberately does not kick are idle by
-			// design, not "alive but not producing" (#11910).
-			KickSuppressed: func(name string) string {
-				mode := strings.ToLower(string(b.gov.GetState().Mode))
-				ac, ok := b.cfg.Agents[name]
-				onDemand := (ok && ac.OnDemand) || b.onDemandFromPack[name]
-				if b.cfg.OffByCadence(name, mode, onDemand) {
-					return fmt.Sprintf("cadence paused in %s mode", mode)
-				}
-				return b.sched.ReviewerLaneIdleReason(name)
-			},
-			// The no-production window is never shorter than the agent's own
-			// cadence: a daily lane is on schedule for a day (#13817).
-			CadencePeriod: func(name string) (time.Duration, bool) {
-				mode := strings.ToLower(string(b.gov.GetState().Mode))
-				return b.cfg.CadenceValueForMode(name, mode).Period(time.Now())
-			},
-		}
+	// The fleet view reads the manager's agent table, so it exists only for
+	// the in-process runtime; hostedRuntime guarantees that today, and a
+	// sidecar replaces it with an API family (#14138 stage 3).
+	wdFleet, wdErr := cruxruntime.NewWatchdogFleet(b.agentMgr, cruxruntime.WatchdogHooks{
+		// Queue depth for the readiness gate: an agent producing nothing
+		// while nothing is queued is correct, not unhealthy. Read live
+		// from the governor so it reflects the current sweep.
+		Queued: func() (int, bool) {
+			st := b.gov.GetState()
+			return st.QueueIssues + st.QueuePRs, true
+		},
+		// The items behind that count, from the same enumeration the
+		// governor counted, so the not-producing alert can link them.
+		QueuedRefs: func() []watchdog.QueuedRef {
+			return watchdogQueuedRefs(b.lastActionable.Load(), b.cfg.Project.Org, watchdog.MaxQueuedRefs)
+		},
+		// Agents the governor deliberately does not kick are idle by
+		// design, not "alive but not producing" (#11910).
+		KickSuppressed: func(name string) string {
+			mode := strings.ToLower(string(b.gov.GetState().Mode))
+			ac, ok := b.cfg.Agents[name]
+			onDemand := (ok && ac.OnDemand) || b.onDemandFromPack[name]
+			if b.cfg.OffByCadence(name, mode, onDemand) {
+				return fmt.Sprintf("cadence paused in %s mode", mode)
+			}
+			return b.sched.ReviewerLaneIdleReason(name)
+		},
+		// The no-production window is never shorter than the agent's own
+		// cadence: a daily lane is on schedule for a day (#13817).
+		CadencePeriod: func(name string) (time.Duration, bool) {
+			mode := strings.ToLower(string(b.gov.GetState().Mode))
+			return b.cfg.CadenceValueForMode(name, mode).Period(time.Now())
+		},
+	})
+	switch {
+	case !wdSettings.Enabled():
+		b.logger.Info("agent watchdog disabled by config", "mode", string(wdSettings.Mode))
+	case wdErr != nil:
+		b.logger.Error("agent watchdog disabled: fleet view unavailable", "error", wdErr)
+	default:
 		b.wd = watchdog.New(wdSettings, wdFleet, b.dashSrv, b.logger,
-			watchdog.WithAuthProbes(watchdogAuthProbes(b.cfg)))
+			watchdog.WithAuthProbes(watchdogAuthProbes(b.cfg)),
+			watchdog.WithConditionReporter(fleetreport.DefaultReporter{}))
 		if b.saved != nil && len(b.saved.Watchdog) > 0 {
 			b.wd.Restore(b.saved.Watchdog)
 		}
@@ -3753,8 +3801,6 @@ func (b *boot) bootSupervision() {
 		if wdSettings.Mode == watchdog.ModeObserve {
 			b.logger.Info("agent watchdog is in OBSERVE mode: it will classify agents, publish conditions and record what it WOULD have done, but will not restart or pause anything. Set governor.watchdog.mode: heal to enable healing.")
 		}
-	} else {
-		b.logger.Info("agent watchdog disabled by config", "mode", string(wdSettings.Mode))
 	}
 
 	// Linear write credential for ISSUES_ONLY+ agents (GitHub-issue parity):
@@ -3774,14 +3820,14 @@ func (b *boot) bootSupervision() {
 	// through the session environment (a process keeps the environment it was
 	// forked with), so the proxy, not the environment, is what keeps agent
 	// Linear writes authenticated across rotations.
-	b.linearCredentialResolver = func() agent.LinearCredential {
+	b.linearCredentialResolver = func() crux.LinearCredential {
 		if tok := b.dashSrv.LinearAgentAccessToken(); tok != "" {
-			return agent.LinearCredential{AccessToken: tok}
+			return crux.LinearCredential{AccessToken: tok}
 		}
 		if b.cfg.Governor.WorkSource.Type == "linear" {
-			return agent.LinearCredential{APIKey: strings.TrimSpace(b.cfg.Governor.WorkSource.Linear.APIKey)}
+			return crux.LinearCredential{APIKey: strings.TrimSpace(b.cfg.Governor.WorkSource.Linear.APIKey)}
 		}
-		return agent.LinearCredential{}
+		return crux.LinearCredential{}
 	}
 	b.agentMgr.SetLinearCredentialResolver(b.linearCredentialResolver)
 
@@ -4420,6 +4466,10 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		b.logger.Error("failed to create github proxy", "error", err)
 	} else {
 		b.githubProxy.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, canaryLeakHandler)
+		// REST accounting and the shared core-bucket snapshot the agent
+		// GitHub budget reads live in pkg/github; the proxy takes them through
+		// a seam (#13536).
+		b.githubProxy.SetGitHubRESTAccounting(githubRESTAccounting{})
 		// Per-repo pause (#6203). This is the deterministic refusal the feature
 		// rests on: whatever an agent believes, a write to a paused repo is
 		// answered with a 403 here. The predicate reads live config, so pausing
@@ -4486,6 +4536,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// instance on the same dir would clobber the first's numbers.
 		inferenceSink := tokens.NewInferenceSink(b.cfg.Data.MetricsDir, b.logger)
 		b.githubProxy.SetTokenSink(inferenceSink)
+		b.setInferenceSink(inferenceSink)
 		// Live Linear credential for agent requests — see
 		// spokeWire.linearCredentialResolver and proxy.injectLinearCredential.
 		b.githubProxy.SetLinearCredentialResolver(b.linearCredentialResolver)
@@ -5343,6 +5394,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				PendingGitHubAppInstall:  b.dashSrv.IsPendingGitHubAppInstall(),
 				AutoUpgrade:              b.cfg.Hub.AutoUpgrade,
 				UpgradeDrainUntil:        upgradeDrainUntilForHeartbeat(selfUpgradeDrainNow()),
+				UpgradeDrain:             selfUpgradeDrain.Report(selfUpgradeDrainNow()),
 				ClusterHealth: spoke.TimedSection("cluster_health", func() *spoke.HeartbeatClusterHealthReport {
 					if !shouldCollectHeartbeatClusterHealth(b.cfg.Hub.ClusterID) {
 						return nil
@@ -5523,7 +5575,21 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// heartbeat) and withhold new kicks; proceed once the turns end or
 				// hub.upgrade_drain_timeout_s elapses.
 				if b.agentMgr != nil {
-					inFlight := agentKicksInFlight(b.agentMgr.AllStatuses(), b.startTime)
+					inFlight, wedged := agentKicksInFlight(b.agentMgr.AllStatuses(), b.startTime, selfUpgradeDrainNow(), func(name string) time.Duration {
+						if ac, ok := b.cfg.Agents[name]; ok {
+							return ac.EffectiveContinuousTurnCeiling()
+						}
+						return 0
+					})
+					for _, w := range selfUpgradeWedgedKicks.fresh(wedged) {
+						b.logger.Warn("self-upgrade drain: ignoring wedged agent kick that never reported a turn end",
+							"agent", w.Agent,
+							"kick_at", w.KickAt.UTC().Format(time.RFC3339),
+							"age", w.Age.Round(time.Second),
+							"ceiling", w.Ceiling,
+						)
+					}
+					ignoredWedged := wedgedKickAgents(wedged)
 					drainTimeout := b.cfg.Hub.EffectiveUpgradeDrainTimeout()
 					dec := selfUpgradeDrain.decide(targetSHA, inFlight, drainTimeout, selfUpgradeDrainNow())
 					switch {
@@ -5535,6 +5601,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 							"waited", dec.Waited.Round(time.Second),
 							"max_wait_remaining", dec.Remaining.Round(time.Second),
 							"drain_timeout", drainTimeout,
+							"ignored_wedged", ignoredWedged,
 						)
 						return
 					case dec.TimedOut:
@@ -5544,12 +5611,14 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 							"cut_kicks", dec.InFlight,
 							"waited", dec.Waited.Round(time.Second),
 							"drain_timeout", drainTimeout,
+							"ignored_wedged", ignoredWedged,
 						)
-					case dec.Waited > 0:
+					case dec.Waited > 0 || len(ignoredWedged) > 0:
 						b.logger.Info("self-upgrade drain complete: no agent kicks in flight",
 							"target", targetSHA,
 							"current", gitShort,
 							"waited", dec.Waited.Round(time.Second),
+							"ignored_wedged", ignoredWedged,
 						)
 					}
 				}
@@ -5645,9 +5714,30 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// UpgradeSelfToSHA patches the image instead when we are pinned.
 				needsRestart, err := spoke.UpgradeSelfToSHA(b.logger, targetSHA)
 				if err != nil {
+					// The patch did not go through. When the Deployment tracks a
+					// floating tag that the kubelet re-pulls on container start,
+					// a plain process exit still lands the upgrade — so skip the
+					// RolloutRestartSelf PATCH (same API, same admission webhook,
+					// same failure, another timeout wait) and exit NOW, reporting
+					// pending-restart rather than failed. On vllm-d a Kyverno
+					// webhook timed out every Deployment patch; the upgrade
+					// landed on each restart yet the hub showed "failed 3
+					// attempts" with a floating-tag hint (#14385).
+					fb := spoke.RestartFallbackForPatchFailure(b.logger, err)
+					recordUpgradeError(upgradeMarkerPath, fmt.Errorf("%s: %w", fb.Hint, err), b.logger)
+					if fb.RestartLands {
+						b.logger.Warn("self-upgrade: Deployment patch failed, exiting so the kubelet re-pulls the floating tag",
+							"target", targetSHA,
+							"current", gitShort,
+							"kind", string(fb.Kind),
+							"hint", fb.Hint,
+							"error", err,
+						)
+						spoke.ReportUpgradePendingRestart(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, fb.Hint, b.logger)
+						os.Exit(selfUpgradePendingRestartExitCode)
+					}
 					b.logger.Warn("pinned-image upgrade failed, falling back to rolling restart",
-						"target", targetSHA, "error", err)
-					recordUpgradeError(upgradeMarkerPath, err, b.logger)
+						"target", targetSHA, "kind", string(fb.Kind), "hint", fb.Hint, "error", err)
 					needsRestart = true
 				}
 				if needsRestart {
@@ -5658,14 +5748,15 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						// the spoke lacks patch on its own Deployment) must be both
 						// persisted for the next attempt and reported to the hub so
 						// the UI stops showing a permanent "Upgrading".
+						hint := spoke.PatchFailureHint(spoke.ClassifyPatchFailure(err))
 						b.logger.Error("self-upgrade FAILED: could not patch own Deployment, restarting onto the same image",
 							"target", targetSHA,
 							"current", gitShort,
 							"error", err,
-							"hint", "grant get/patch on deployments/hive in this namespace (hive-self-upgrade Role/RoleBinding)",
+							"hint", hint,
 						)
 						recordUpgradeError(upgradeMarkerPath, err, b.logger)
-						spoke.ReportUpgradeFailure(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, err.Error(), b.logger)
+						spoke.ReportUpgradeFailure(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, hint+": "+err.Error(), b.logger)
 						// os.Exit skips the cleanup stack: record this end
 						// now so the next start reads self-upgrade-failed
 						// (#11945).
@@ -6900,12 +6991,12 @@ func activeIssueRefsFromLastActionable(actionable *github.ActionableResult) (map
 	return refs, coveredRepos
 }
 
-// agentKicker adapts *agent.Manager to planning.Kicker for the Phase 3
+// agentKicker adapts crux.Runtime to planning.Kicker for the Phase 3
 // stall-replan lane. Kick delegates to SendKick, which takes the manager lock
 // ITSELF and is only ever called here from the governor tick (never from the
 // agent-launch path), so it cannot re-enter a held manager lock. This is the
 // same out-of-band kick path the eval loop already uses for governor kicks.
-type agentKicker struct{ mgr *agent.Manager }
+type agentKicker struct{ mgr crux.Runtime }
 
 func (k agentKicker) Kick(agent, message string) error {
 	if k.mgr == nil {
@@ -6929,7 +7020,7 @@ func (k agentKicker) Kick(agent, message string) error {
 func planFromLabeledIssues(
 	actionable *github.ActionableResult,
 	beadStores map[string]*beads.Store,
-	agentMgr *agent.Manager,
+	agentMgr crux.Runtime,
 	gov *governor.Governor,
 	dashSrv *dashboard.Server,
 	logger *slog.Logger,
@@ -7413,7 +7504,7 @@ func runEvalCycle(
 	ghClient *github.Client,
 	gov *governor.Governor,
 	sched *scheduler.Scheduler,
-	agentMgr *agent.Manager,
+	agentMgr crux.Runtime,
 	dashSrv *dashboard.Server,
 	notifier *notify.Notifier,
 	beadStores map[string]*beads.Store,
@@ -7898,6 +7989,8 @@ func runEvalCycle(
 	applyHumanDecisionLabels(ctx, cfg, ghClient, actionable, reviewPlan, logger)
 	if ghClient != nil {
 		applyReviewPriorityLabels(ctx, cfg, ghClient, reviewQueue, logger)
+		applyReviewVerdictLabels(ctx, cfg, ghClient, actionable, reviewPlan, logger)
+		sweepClosedPRVerdictLabels(ctx, cfg, ghClient, time.Now(), logger)
 	}
 	messages, messageSkips := sched.BuildKickMessagesWithSkips(kickActionable, agentsDue)
 	agentsSkipped = append(agentsSkipped, messageSkips...)
@@ -8376,7 +8469,7 @@ func runEvalCycle(
 		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
 			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
 			sendKick: func(agentName, message string) error {
-				return agentMgr.SendKickWithSource(agentName, message, agent.GovernorCadenceKickSource)
+				return agentMgr.SendKickWithSource(agentName, message, crux.GovernorCadenceKickSource)
 			},
 			startStoppedAgent: func(agentName string) error {
 				if !agentMgr.GovernorMayStart(agentName) {
@@ -8595,9 +8688,18 @@ func watchdogAuthProbes(cfg *config.Config) map[string]watchdog.AuthProbe {
 	}
 	out := make(map[string]watchdog.AuthProbe, len(probers))
 	for _, p := range probers {
-		out[p.Provider()] = watchdog.RotationAuthProbe{Prober: p}
+		out[p.Provider()] = watchdog.RotationAuthProbe{Prober: usageProber{p}}
 	}
 	return out
+}
+
+// usageProber adapts a rotation prober to the watchdog's UsageProber slice
+// (provider key + sanitised probe error); the watchdog does not import
+// pkg/rotation.
+type usageProber struct{ rotation.Prober }
+
+func (u usageProber) ProbeError(ctx context.Context) string {
+	return u.Prober.Probe(ctx).ProbeError()
 }
 
 // turnLossToSnapshot converts the manager's in-memory turn-loss accumulation
@@ -8673,11 +8775,11 @@ func restartEventsFromSnapshot(events []snapshot.AgentRestartEvent) []crux.Resta
 // this var cannot race a goroutine still reading it.
 var persistPathsForRuntime = defaultPersistPaths
 
-func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler) {
+func persistState(agentMgr crux.Runtime, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler) {
 	persistStateWithPaths(agentMgr, gov, cfg, path, logger, dashSrv, wd, persistPathsForRuntime())
 }
 
-func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler, paths persistPaths) {
+func persistStateWithPaths(agentMgr crux.Runtime, gov *governor.Governor, cfg *config.Config, path string, logger *slog.Logger, dashSrv *dashboard.Server, wd *watchdog.Reconciler, paths persistPaths) {
 	statuses := agentMgr.AllStatuses()
 	agents := make(map[string]snapshot.AgentState, len(statuses))
 	for name, proc := range statuses {
@@ -9069,7 +9171,7 @@ func recordRedStaleness(cfg *config.Config, actionable *github.ActionableResult)
 }
 
 // fixKicker is the out-of-band kick path the re-engagement lanes deliver
-// through. *agent.Manager satisfies it via agentKicker, which is the same
+// through. crux.Runtime satisfies it via agentKicker, which is the same
 // adapter the governor tick's replan lane uses.
 type fixKicker interface {
 	Kick(agent, message string) error
@@ -9081,7 +9183,7 @@ type fixKicker interface {
 // every mode (the v5 L6 pack pauses `strategist` everywhere) can never answer a
 // FIX-BEFORE-NEW kick, so charging its red PRs' re-engagement budget only
 // escalates them to a human having asked nobody (hivecommons/hive#9472).
-func agentAvailability(cfg *config.Config, mgr *agent.Manager) func(string) bool {
+func agentAvailability(cfg *config.Config, mgr crux.Runtime) func(string) bool {
 	return func(name string) bool {
 		if name == "" {
 			return false
@@ -9613,7 +9715,7 @@ const rotationTrigger = "provider-rotation"
 // nothing has headroom, pause it loudly (strand). Stranded agents are
 // auto-resumed when their provider recovers headroom. Never runs mid-task:
 // only idle agents are candidates.
-func runRotationCheck(ctx context.Context, cfg *config.Config, rotMgr *rotation.Manager, gov *governor.Governor, agentMgr *agent.Manager, logger *slog.Logger) {
+func runRotationCheck(ctx context.Context, cfg *config.Config, rotMgr *rotation.Manager, gov *governor.Governor, agentMgr crux.Runtime, logger *slog.Logger) {
 	if rotMgr == nil || !cfg.Governor.Rotation.Enabled {
 		return
 	}
@@ -9727,6 +9829,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.QueueOnApproveAndUnhold = func(repo string) bool {
 			return cfg.AutoMerge.QueueOnApproveAndUnholdAllowed(repo, cfg.ACMMLevel)
 		}
+		opts.RepoOnGitHub = func(repo string) bool { return cfg.RepoOnGitHub(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
@@ -10014,6 +10117,35 @@ func runSharedCIRerunSweepIfDue(ctx context.Context, ghClient *github.Client, cf
 	}
 	if len(result.Rerun) > 0 {
 		logger.Info("shared-ci rerun sweep complete", "incidents", result.Incidents, "seen", result.Seen, "rerun", len(result.Rerun), "skipped", result.Skipped)
+	}
+}
+
+// blockedIssuesSweepInterval is how often the periodic sweep reconciles open
+// issues carrying the `blocked` label.
+const blockedIssuesSweepInterval = 5 * time.Minute
+
+func runBlockedIssuesSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < blockedIssuesSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	var repos []string
+	if cfg != nil {
+		repos = cfg.Project.Repos
+	}
+	res, err := ghClient.SweepBlockedIssues(ctx, github.BlockedSweepOptions{Repos: repos})
+	if err != nil {
+		logger.Warn("blocked issues reconciliation sweep failed", "error", err)
+		return
+	}
+	if res.Unblocked+res.Retargeted+res.Stripped+res.Errors > 0 {
+		logger.Info("blocked issues reconciliation sweep complete", "items", res.Items, "unblocked", res.Unblocked, "retargeted", res.Retargeted, "help_wanted_stripped", res.Stripped, "errors", res.Errors)
 	}
 }
 
@@ -10340,10 +10472,49 @@ func runClosedIssueStageSweepIfDue(ctx context.Context, ghClient *github.Client,
 	})
 	if err != nil {
 		logger.Warn("closed-issue stage sweep failed", "error", err)
+	} else if result != nil && (len(result.Cleaned) > 0 || result.Skipped > 0) {
+		logger.Info("closed-issue stage sweep complete", "seen", result.Seen, "cleaned", len(result.Cleaned), "skipped", result.Skipped)
+	}
+	runReviewBacklogSplitSweep(ctx, ghClient, dashSrv, since, logger)
+}
+
+// runReviewBacklogSplitSweep re-files still-unchecked review findings folded
+// into an issue that has since closed (hivecommons/hive#13914). It shares the
+// closed-issue sweep's cadence and window; every rule lives in
+// SweepReviewBacklogSplits. It then runs the one-off
+// BackfillReviewBacklogSplits for hosts closed before that window
+// (hivecommons/hive#13947), a no-op once the ledger records it complete.
+func runReviewBacklogSplitSweep(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, since time.Time, logger *slog.Logger) {
+	audit := func(event github.ReviewBacklogSplitEvent) {
+		if dashSrv == nil {
+			return
+		}
+		detail := fmt.Sprintf("repo=%s, host=%d, issue=%d, reused=%t, key=%s",
+			event.Repo, event.Host, event.Number, event.Reused, event.Key)
+		dashSrv.AuditLogRecord("system", "review-backlog-split", detail, "", event.Repo, event.Host)
+	}
+	result, err := ghClient.SweepReviewBacklogSplits(ctx, github.ReviewBacklogSplitSweepOptions{
+		Since:      since,
+		MaxActions: github.DefaultReviewBacklogSplitMaxActions,
+		Audit:      audit,
+	})
+	if err != nil {
+		logger.Warn("review backlog split sweep failed", "error", err)
 		return
 	}
-	if result != nil && (len(result.Cleaned) > 0 || result.Skipped > 0) {
-		logger.Info("closed-issue stage sweep complete", "seen", result.Seen, "cleaned", len(result.Cleaned), "skipped", result.Skipped)
+	if result != nil && (len(result.Split) > 0 || result.Skipped > 0 || result.Deferred > 0) {
+		logger.Info("review backlog split sweep complete", "hosts", result.Hosts, "split", len(result.Split), "skipped", result.Skipped, "deferred", result.Deferred)
+	}
+	backfill, err := ghClient.BackfillReviewBacklogSplits(ctx, github.ReviewBacklogSplitSweepOptions{
+		MaxActions: github.DefaultReviewBacklogSplitMaxActions,
+		Audit:      audit,
+	})
+	if err != nil {
+		logger.Warn("review backlog split backfill failed", "error", err)
+		return
+	}
+	if backfill != nil && (len(backfill.Split) > 0 || backfill.Skipped > 0 || backfill.Deferred > 0) {
+		logger.Info("review backlog split backfill pass complete", "hosts", backfill.Hosts, "split", len(backfill.Split), "skipped", backfill.Skipped, "deferred", backfill.Deferred)
 	}
 }
 
@@ -10467,8 +10638,16 @@ func applyDuplicatePRGuard(
 	// hivecommons/hive#13093: issues parked on an unmerged PR come back once
 	// that PR settles, and never advertise `help wanted` while parked.
 	blockedCtx, blockedCancel := context.WithTimeout(ctx, issueStageSyncTimeout)
-	if br := github.ReconcileBlockedIssues(blockedCtx, ghClient, actionable, logger); br.Unblocked+br.Stripped+br.Errors > 0 {
-		logger.Info("blocked issues reconciled", "items", br.Items, "unblocked", br.Unblocked, "help_wanted_stripped", br.Stripped, "errors", br.Errors)
+	// hivecommons/hive#13833: review-backlog items wait on the PR they were
+	// filed from in every destination; lift them when it merges, and when it
+	// closes unmerged unblock them with a re-triage note (never auto-close).
+	// Runs first so the items get the sweep's own note rather than the
+	// generic one from the sweep below.
+	if rb := github.ReconcileReviewBacklogBlocks(blockedCtx, ghClient, logger); rb.Lifted+rb.Retriaged+rb.Errors > 0 {
+		logger.Info("review backlog blocks reconciled", "checked", rb.Checked, "lifted", rb.Lifted, "retriaged", rb.Retriaged, "errors", rb.Errors)
+	}
+	if br := github.ReconcileBlockedIssues(blockedCtx, ghClient, actionable, logger); br.Unblocked+br.Retargeted+br.Stripped+br.SoakTriaged+br.Errors > 0 {
+		logger.Info("blocked issues reconciled", "items", br.Items, "unblocked", br.Unblocked, "retargeted", br.Retargeted, "help_wanted_stripped", br.Stripped, "soak_triaged", br.SoakTriaged, "errors", br.Errors)
 	}
 	blockedCancel()
 	// Closing an issue is irreversible: refuse while the snapshot is stale and
@@ -10673,6 +10852,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
 		return reviewEvidenceSettings(cfg, repo)
 	})
+	// hivecommons/hive#14581: issue-author credit on every merge path, read
+	// live so a reload of auto_merge.credit_issue_authors applies.
+	client.SetCreditIssueAuthors(func(string) bool { return cfg.AutoMerge.CreditIssueAuthorsEnabled() })
 	// hivecommons/hive#13241: an issue a person reopens after its closing PR
 	// merged is a change failure on that PR's evidence record, from both the
 	// issues.reopened webhook and the enumeration reopen check.
@@ -10957,7 +11139,7 @@ func parseReviseCutoff(raw string, logger *slog.Logger) time.Time {
 	return cutoff
 }
 
-func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult, agentMgr *agent.Manager, beadStores map[string]*beads.Store, logger *slog.Logger) review.DispatchPlan {
+func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult, agentMgr crux.Runtime, beadStores map[string]*beads.Store, logger *slog.Logger) review.DispatchPlan {
 	if cfg == nil || actionable == nil || !cfg.Review.RequireApproval || !cfg.Review.FanOut {
 		return review.DispatchPlan{}
 	}
@@ -11646,24 +11828,24 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 	discordIdentities := make(map[string]discord.AgentIdentity)
 	discordAliases := make(map[string]string)
 
-	for name, agent := range cfg.Agents {
-		if len(agent.LaneKeywords) > 0 {
+	for name, ac := range cfg.Agents {
+		if len(ac.LaneKeywords) > 0 {
 			lanes = append(lanes, classify.LaneConfig{
 				Name:     name,
-				Keywords: agent.LaneKeywords,
+				Keywords: ac.LaneKeywords,
 			})
 		}
-		if len(agent.DetectKeywords) > 0 {
-			detectKeywords[name] = agent.DetectKeywords
+		if len(ac.DetectKeywords) > 0 {
+			detectKeywords[name] = ac.DetectKeywords
 		}
-		if agent.Emoji != "" || agent.Color != "" {
+		if ac.Emoji != "" || ac.Color != "" {
 			discordIdentities[name] = discord.AgentIdentity{
-				Emoji: agent.Emoji,
-				Color: parseColorInt(agent.Color),
+				Emoji: ac.Emoji,
+				Color: parseColorInt(ac.Color),
 			}
 		}
 		sort.Slice(lanes, func(i, j int) bool { return lanes[i].Name < lanes[j].Name })
-		for _, alias := range agent.Aliases {
+		for _, alias := range ac.Aliases {
 			discordAliases[alias] = name
 		}
 	}
@@ -11808,7 +11990,7 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	case "agy-turn":
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
-		return true, agent.RunAgyTurn(args[1:], stdout, stderr)
+		return true, cruxruntime.RunAgyTurn(args[1:], stdout, stderr)
 	case jev.Subcommand:
 		// Run from inside an agent's pane by the jev-decide skill; see
 		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.

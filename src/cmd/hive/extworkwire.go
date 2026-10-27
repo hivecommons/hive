@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,17 +20,20 @@ import (
 // External-execution wiring (#8361). pkg/dashboard owns the extwork-free
 // seams (lease authority, hub accessor, ExternalExecution status); this file
 // binds the concrete pkg/extwork pieces to them. Each adapter is registered
-// only under its build tag (extwork_flue.go, extwork_omp.go), so without the
+// only under its build tag (extwork_flue.go, extwork_omp.go,
+// extwork_vibekanban.go, extwork_claude_managed_agents.go), so without the
 // tag the registry lacks that engine and its constructor here fails closed
 // with extwork.ErrEngineNotLinked.
 
-// extExecEngineFlue and extExecEngineOMP mirror dashboard's private engine
-// names; the adapter packages cannot be imported here without linking them
-// into every build.
+// extExecEngineFlue, extExecEngineOMP, extExecEngineVibeKanban, and
+// extExecEngineClaudeManagedAgents mirror dashboard's private engine names;
+// the adapter packages cannot be imported here without linking them into every
+// build.
 const (
-	extExecEngineFlue       = "flue"
-	extExecEngineOMP        = "omp"
-	extExecEngineVibeKanban = "vibe-kanban"
+	extExecEngineFlue                = "flue"
+	extExecEngineOMP                 = "omp"
+	extExecEngineVibeKanban          = "vibe-kanban"
+	extExecEngineClaudeManagedAgents = "claude-managed-agents"
 )
 
 var (
@@ -129,6 +133,8 @@ func (s *extworkStatus) bindingFor(engine string) (*externalExecutionBinding, er
 		b, err = newExternalOMPExecutionBinding(s.srv, s.cfg, s.registry, s.now)
 	case extExecEngineVibeKanban:
 		b, err = newExternalVibeKanbanExecutionBinding(s.srv, s.cfg, s.registry, s.now)
+	case extExecEngineClaudeManagedAgents:
+		b, err = newExternalClaudeManagedAgentsExecutionBinding(s.srv, s.cfg, s.registry, s.now)
 	default:
 		err = fmt.Errorf("%w: %s", extwork.ErrEngineNotLinked, engine)
 	}
@@ -156,6 +162,26 @@ func configForEngine(cfg *config.Config, engine string) string {
 		return strings.Join([]string{cfg.VibeKanbanBindingMode(), vk.MCPCommand, vk.ProjectID, vk.StateDir, vk.WorkflowVersion}, "\x00")
 	case extExecEngineOMP:
 		return strings.Join([]string{cfg.OMPBindingMode(), cfg.Runs.External.OMP.WorkflowVersion}, "\x00")
+	case extExecEngineClaudeManagedAgents:
+		m := cfg.Runs.External.ClaudeManagedAgents
+		return strings.Join([]string{
+			cfg.ClaudeManagedAgentsBindingMode(),
+			m.Endpoint,
+			m.WorkflowVersion,
+			m.AgentID,
+			strconv.Itoa(m.AgentVersion),
+			m.ToolsetVersion,
+			m.EnvironmentID,
+			m.EnvironmentType,
+			m.NetworkPolicy,
+			m.APIKeyEnv,
+			m.APIKeyFile,
+			m.Model,
+			m.StateDir,
+			strconv.FormatInt(m.DailyBudgetCents, 10),
+			m.GitHubWritePath,
+			strconv.FormatBool(m.DirectGitHubWrite),
+		}, "\x00")
 	default:
 		return ""
 	}
@@ -333,4 +359,49 @@ func newExternalOMPExecutionBinding(srv *dashboard.Server, cfg *config.Config, r
 	}
 	store := extwork.NewLeaseStore(hubLeaseAuthority{hub: hub, now: now}, extworkRecordDir())
 	return &externalExecutionBinding{engine: extExecEngineOMP, adapter: adapter, binding: extwork.New(adapter, store, store, extwork.NewAuditProgressSink(srv.AgentAuditSink()), mode)}, nil
+}
+
+// newExternalClaudeManagedAgentsExecutionBinding builds the private-spoke
+// hosted binding. It is intentionally yaml-only: the API key is resolved by
+// the tagged adapter from a secret reference at request time.
+func newExternalClaudeManagedAgentsExecutionBinding(srv *dashboard.Server, cfg *config.Config, registry *extwork.Registry, now func() time.Time) (*externalExecutionBinding, error) {
+	mode := cfg.ClaudeManagedAgentsBindingMode()
+	if mode == config.FlueBindingModeOff {
+		return nil, errExternalBindingOff
+	}
+	if now == nil {
+		now = time.Now
+	}
+	m := cfg.Runs.External.ClaudeManagedAgents
+	stateDir := strings.TrimSpace(m.StateDir)
+	if stateDir == "" {
+		stateDir = filepath.Join(extworkRecordDir(), extExecEngineClaudeManagedAgents)
+	}
+	adapter, err := registry.Open(extExecEngineClaudeManagedAgents, map[string]string{
+		extwork.SettingEndpoint:        m.Endpoint,
+		extwork.SettingWorkflowVersion: m.WorkflowVersion,
+		"agent_id":                     m.AgentID,
+		"agent_version":                strconv.Itoa(m.AgentVersion),
+		"toolset_version":              m.ToolsetVersion,
+		"environment_id":               m.EnvironmentID,
+		"environment_type":             m.EnvironmentType,
+		"network_policy":               m.NetworkPolicy,
+		"api_key_env":                  m.APIKeyEnv,
+		"api_key_file":                 m.APIKeyFile,
+		"model":                        m.Model,
+		"state_dir":                    stateDir,
+		"metrics_dir":                  cfg.Data.MetricsDir,
+		"daily_budget_cents":           strconv.FormatInt(m.DailyBudgetCents, 10),
+		"direct_github_write":          strconv.FormatBool(m.DirectGitHubWrite),
+		"github_write_path":            m.GitHubWritePath,
+	})
+	if err != nil {
+		return nil, err
+	}
+	hub := srv.ContributeHub()
+	if hub == nil {
+		return nil, errExternalHubNotRunning
+	}
+	store := extwork.NewLeaseStore(hubLeaseAuthority{hub: hub, now: now}, extworkRecordDir())
+	return &externalExecutionBinding{engine: extExecEngineClaudeManagedAgents, adapter: adapter, binding: extwork.New(adapter, store, store, extwork.NewAuditProgressSink(srv.AgentAuditSink()), mode)}, nil
 }

@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -311,9 +313,9 @@ func TestAgentPausedEmitterCarriesHookCausationAndStopsPauseLoop(t *testing.T) {
 	resetHookDispatcher(t)
 	t.Cleanup(func() { resetHookDispatcher(t) })
 
-	mgr := agent.NewManager(map[string]config.AgentConfig{
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{
 		"scanner": {Backend: "claude"},
-	}, hookTestLogger(), agent.ProjectContext{})
+	}, hookTestLogger(), crux.ProjectContext{})
 	audit := &hookWireAudit{ch: make(chan string, 8)}
 	cfg := &config.Config{Hooks: []config.HookRule{{
 		Name: "pause-again", On: "agent_paused", Action: "pause",

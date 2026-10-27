@@ -402,9 +402,20 @@ func detectTransitions(old, new *RegistryEntry, now time.Time) []TimelineEvent {
 				if target == "" {
 					target = "latest"
 				}
-				add(TimelineUpgradeStale, fmt.Sprintf(
-					"upgrade to %s has been in flight for %s with no version change — the hive may be unreachable or pinned to an immutable tag",
-					target, shortDur(elapsed)))
+				if d := new.UpgradeDrain; d != nil && d.RemainingS > 0 {
+					// Not stuck: the spoke is holding the restart on purpose
+					// until its kicked agent turns end. Say so, or the entry
+					// reads as a wedge and sends an operator chasing the
+					// image tag.
+					add(TimelineUpgradeStale, fmt.Sprintf(
+						"upgrade to %s has been held for %s — the spoke is draining in-flight agent kicks (%s) and will restart within %s",
+						target, shortDur(elapsed), orDash(joinNames(d.InFlight)),
+						shortDur(time.Duration(d.RemainingS)*time.Second)))
+				} else {
+					add(TimelineUpgradeStale, fmt.Sprintf(
+						"upgrade to %s has been in flight for %s with no version change — the hive may be unreachable or pinned to an immutable tag",
+						target, shortDur(elapsed)))
+				}
 			}
 		}
 	}

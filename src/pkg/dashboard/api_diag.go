@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/pkg/adminmcp"
-	"github.com/hivecommons/hive/pkg/logread"
 )
 
 // Diagnostic reads (hivecommons/hive#11943): bounded, scrubbed views of what
@@ -18,7 +18,7 @@ import (
 // route calls the existing dashboard endpoint through the mux as the caller
 // (same user, role and verified-owner marker), so that endpoint's own role
 // rule decides access, and the existing endpoint's response is never changed.
-// The answer is then scrubbed as log lines are (pkg/logread) and cut to its
+// The answer is then scrubbed as log lines are (crux/logread) and cut to its
 // newest part under adminmcp.DiagResultByteCap, with truncation disclosed in
 // the result itself. Nothing here writes, rotates or deletes anything.
 

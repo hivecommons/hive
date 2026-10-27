@@ -343,7 +343,7 @@
 
       <!-- Step 3: ACMM level + submit.
            Options are rendered by renderAcmmOptions() from ACMM_LEVELS so the
-           capability names (Inception → Fully Autonomous) match the hub
+           capability names (Inception → Autonomous) match the hub
            dashboard and the spoke. An older revision read "L1 Advisory /
            L2 Measured / L4 Auto PR", which named the levels wrongly AND
            described L4 as auto-merging — it does not. -->
@@ -524,7 +524,7 @@ just contribute-hive              # start taking tasks</code></pre>
       {level: 3, label: 'L3 — Quality-Gated (Measured)',        desc: 'Improve quality through better test coverage. Agents open hold-gated PRs that raise coverage behind CI gates; every PR waits for a human.'},
       {level: 4, label: 'L4 — Security-Aware (Adaptive)',       desc: 'Agents open issues and hold-gated PRs, plus security checks. Still a human on every merge.'},
       {level: 5, label: 'L5 — Semi-Autonomous (Semi-Automated)', desc: 'PRs carry a hold label for batch review, so you approve in groups rather than one at a time.'},
-      {level: 6, label: 'L6 — Fully Autonomous',                desc: 'Auto-merge when checks pass. Only for projects with checks you already trust.'}
+      {level: 6, label: 'L6 — Autonomous',                desc: 'Auto-merge when checks pass. Only for projects with checks you already trust.'}
     ];
     /* L3 Quality-Gated is the recommended entry point: it is the first level that
        produces useful work (test-coverage PRs) while still gating every merge

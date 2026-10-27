@@ -78,3 +78,6 @@ sponsor must propose this page and obtain Ready status before submitting it
 upstream. Track that Goose documentation handoff in
 [Hive #10627](https://github.com/hivecommons/hive/issues/10627) and the
 [ecosystem landscape](../src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
+
+The drafted upstream issue text is in
+[goose-at-scale-upstream-proposal.md](goose-at-scale-upstream-proposal.md).

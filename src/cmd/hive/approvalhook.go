@@ -5,15 +5,15 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/hooks"
-	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 // hookApprovalAdapter satisfies hooks.ApprovalQueue over toolapprove.Inbox.
 type hookApprovalAdapter struct {
 	inbox *toolapprove.Inbox
 	// acmmLevel is the hive's level, recorded on the queued item so the panel
-	// can flag an approval parked on a full-autonomy hive as a probable policy
+	// can flag an approval parked on an L6 (Autonomous) hive as a probable policy
 	// bug (throughput-contract requirement 4) exactly as it does for the
 	// sweep-produced ones.
 	acmmLevel int

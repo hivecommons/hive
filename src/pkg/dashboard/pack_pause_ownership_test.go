@@ -180,3 +180,44 @@ func TestHandleResume_ClaimsPauseOwnership(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncAgentVisibility_StartupDoesNotResumeSameLevelPackPause pins #14368:
+// an agent the pack paused at level N ("agent not in pack level N") must stay
+// paused when the startup sweep at the SAME level finds it in the roster —
+// that only happens when a new image ships a wider pack definition (reviewer
+// joining the L2 pack), and resuming it there undid the operator's standing
+// pause on an unattended upgrade. A real level change, or an explicit apply,
+// still resumes it.
+func TestSyncAgentVisibility_StartupDoesNotResumeSameLevelPackPause(t *testing.T) {
+	const level = 2 // the L2 pack lists reviewer (not on-demand)
+	s, deps := apiServer(t)
+
+	reviewer := config.AgentConfig{Backend: "claude", Role: "reviewer", Enabled: true, Managed: true}
+	deps.Config.Agents["reviewer"] = reviewer
+	deps.AgentMgr.AddAgent("reviewer", reviewer)
+	if err := deps.AgentMgr.Pause("reviewer", "acmm-pack", packVisibilityPauseReason(level)); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	_, resumed := s.syncAgentVisibilityWith(level, false)
+	for _, name := range resumed {
+		if name == "reviewer" {
+			t.Fatalf("startup sweep resumed reviewer (resumed=%v); a same-level pack pause must survive an upgrade restart", resumed)
+		}
+	}
+	if !deps.AgentMgr.IsPaused("reviewer") {
+		t.Fatal("reviewer was unpaused by the startup sweep at the level it was pack-paused at (#14368)")
+	}
+
+	// Control: the pause was made at a DIFFERENT level, so the level really
+	// changed and the agent now belongs to the roster — resume as designed.
+	if err := deps.AgentMgr.Pause("reviewer", "acmm-pack", packVisibilityPauseReason(1)); err != nil {
+		t.Fatalf("re-pause: %v", err)
+	}
+	_, _ = s.syncAgentVisibilityWith(level, false)
+	// Resume clears the pause marker even when the test manager cannot relaunch
+	// the agent (no tmux), leaving State paused, so assert on the marker.
+	if proc, err := deps.AgentMgr.GetStatus("reviewer"); err != nil || proc.PausedTrigger != "" {
+		t.Fatalf("reviewer paused at level 1 stayed paused at level 2; a real level change must still resume pack-paused agents")
+	}
+}

@@ -75,7 +75,7 @@ func TestSupersessionResolve_BehindBaseRequestsUpdateAndReleasesOwnPark(t *testi
 		LabelEvents: []supersessionLabelEventFixture{
 			{Event: "labeled", Label: issueNeedsHumanLabel, Actor: resolveBot},
 		},
-	}, acmmLevelFullyAutonomous)
+	}, acmmLevelAutonomous)
 	assertNoEscalation(t, obs, parked)
 	if len(res.Resolved) != 1 || res.Resolved[0].Action != SupersessionActionRebased {
 		t.Fatalf("result = %+v, want one %q", res, SupersessionActionRebased)
@@ -101,7 +101,7 @@ func TestSupersessionResolve_PersonParkedPRIsLeftAlone(t *testing.T) {
 		LabelEvents: []supersessionLabelEventFixture{
 			{Event: "labeled", Label: issueNeedsHumanLabel, Actor: "maintainer"},
 		},
-	}, acmmLevelFullyAutonomous)
+	}, acmmLevelAutonomous)
 	assertNoEscalation(t, obs, parked)
 	if res.Actions() != 0 || len(obs.comments[13782]) != 0 || obs.updated[13782] != "" || len(obs.removedLabels[13782]) != 0 {
 		t.Fatalf("a person's park must not be resolved over: res=%+v obs=%+v", res, obs)
@@ -109,7 +109,7 @@ func TestSupersessionResolve_PersonParkedPRIsLeftAlone(t *testing.T) {
 }
 
 func TestSupersessionResolve_SameHeadIsIdempotent(t *testing.T) {
-	first, obs1, _ := runResolveSweep(t, supersessionPRFixture{BehindBy: 2}, acmmLevelFullyAutonomous)
+	first, obs1, _ := runResolveSweep(t, supersessionPRFixture{BehindBy: 2}, acmmLevelAutonomous)
 	if len(first.Resolved) != 1 {
 		t.Fatalf("first pass = %+v", first)
 	}
@@ -117,7 +117,7 @@ func TestSupersessionResolve_SameHeadIsIdempotent(t *testing.T) {
 	res, obs, parked := runResolveSweep(t, supersessionPRFixture{
 		BehindBy: 2,
 		Comments: []supersessionCommentFixture{{ID: 700, Body: notice, Author: resolveBot, Bot: true, CreatedAt: time.Now().Add(-time.Minute)}},
-	}, acmmLevelFullyAutonomous)
+	}, acmmLevelAutonomous)
 	assertNoEscalation(t, obs, parked)
 	if res.Actions() != 0 || obs.updated[13782] != "" || len(obs.comments[13782]) != 0 {
 		t.Fatalf("second pass on the same head must not re-request the update: res=%+v updated=%q comments=%v", res, obs.updated[13782], obs.comments[13782])
@@ -128,7 +128,7 @@ func TestSupersessionResolve_SameHeadIsIdempotent(t *testing.T) {
 }
 
 func TestSupersessionResolve_UpdateRefusedIsReportedOnce(t *testing.T) {
-	res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 2, UpdateBranchStatus: http.StatusUnprocessableEntity}, acmmLevelFullyAutonomous)
+	res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 2, UpdateBranchStatus: http.StatusUnprocessableEntity}, acmmLevelAutonomous)
 	assertNoEscalation(t, obs, parked)
 	if len(res.Resolved) != 1 || res.Resolved[0].Action != SupersessionActionRebaseFailed {
 		t.Fatalf("result = %+v, want %q", res, SupersessionActionRebaseFailed)
@@ -146,7 +146,7 @@ func TestSupersessionResolve_UpdateRefusedIsReportedOnce(t *testing.T) {
 	res2, obs2, _ := runResolveSweep(t, supersessionPRFixture{
 		BehindBy: 2, UpdateBranchStatus: http.StatusUnprocessableEntity,
 		Comments: []supersessionCommentFixture{{ID: 701, Body: refused, Author: resolveBot, Bot: true, CreatedAt: time.Now().Add(-time.Minute)}},
-	}, acmmLevelFullyAutonomous)
+	}, acmmLevelAutonomous)
 	if res2.Actions() != 0 || obs2.updated[13782] != "" {
 		t.Fatalf("refused update must not be retried on the same head: res=%+v", res2)
 	}
@@ -159,7 +159,7 @@ func TestSupersessionResolve_CurrentHeadWithExtraFilesRewritesClaim(t *testing.T
 		LabelEvents: []supersessionLabelEventFixture{
 			{Event: "labeled", Label: issueNeedsHumanLabel, Actor: resolveBot},
 		},
-	}, acmmLevelFullyAutonomous)
+	}, acmmLevelAutonomous)
 	assertNoEscalation(t, obs, parked)
 	if len(res.Resolved) != 1 || res.Resolved[0].Action != SupersessionActionResolved {
 		t.Fatalf("result = %+v, want %q", res, SupersessionActionResolved)
@@ -187,7 +187,7 @@ func TestSupersessionResolve_ResolvedBodyIsSkipped(t *testing.T) {
 	if !ok {
 		t.Fatal("first rewrite must apply")
 	}
-	res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 0, Body: body}, acmmLevelFullyAutonomous)
+	res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 0, Body: body}, acmmLevelAutonomous)
 	assertNoEscalation(t, obs, parked)
 	if res.Actions() != 0 || res.Seen != 1 || len(obs.comments[13782]) != 0 || obs.bodies[13782] != "" {
 		t.Fatalf("already-resolved PR must be skipped: res=%+v comments=%v", res, obs.comments[13782])
@@ -209,7 +209,7 @@ func TestSupersessionResolve_CurrentHeadWithNoRemainingDiffSelfCloses(t *testing
 			// serves the same list both times, so model "extra at detection,
 			// none after" by a closer that covers everything but keeping the
 			// own path: a hive PR whose remaining files are all covered.
-			res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 0, Files: tc.files}, acmmLevelFullyAutonomous)
+			res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 0, Files: tc.files}, acmmLevelAutonomous)
 			assertNoEscalation(t, obs, parked)
 			if len(res.Closed) != 1 || len(obs.closed) != 1 || obs.closed[0] != 13782 {
 				t.Fatalf("result = %+v closed=%v, want self-close", res, obs.closed)
@@ -225,7 +225,7 @@ func TestSupersessionResolve_CurrentHeadWithNoRemainingDiffSelfCloses(t *testing
 }
 
 func TestSupersessionResolve_BelowL6EscalatesOwnPRThroughStageEngine(t *testing.T) {
-	res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 2}, acmmLevelFullyAutonomous-1)
+	res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 2}, acmmLevelAutonomous-1)
 	if len(res.Commented) != 1 || res.Commented[0].Action != SupersessionActionEscalated {
 		t.Fatalf("result = %+v, want escalation", res)
 	}
@@ -241,7 +241,7 @@ func TestSupersessionResolve_BelowL6EscalatesOwnPRThroughStageEngine(t *testing.
 }
 
 func TestSupersessionResolve_ContributorExtraFilesEscalatesWithFiles(t *testing.T) {
-	res, obs, parked := runResolveSweep(t, supersessionPRFixture{Author: "contributor", BehindBy: 2}, acmmLevelFullyAutonomous)
+	res, obs, parked := runResolveSweep(t, supersessionPRFixture{Author: "contributor", BehindBy: 2}, acmmLevelAutonomous)
 	if len(res.Commented) != 1 || res.Commented[0].Action != SupersessionActionEscalated {
 		t.Fatalf("result = %+v, want escalation", res)
 	}

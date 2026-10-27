@@ -34,7 +34,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
@@ -61,6 +63,10 @@ var clientSetterAllowlist = map[string]string{
 		"it on whichever client the relays run on, and every rebuilt client re-arms the relays " +
 		"(armRequestRelays in github_client_provider.go), so the gate is reinstalled alongside the " +
 		"merge authorizer it extends",
+	"SetForgeMergeSelector": "owned by the request-relay supervisor, like SetMergeRequestPolicyGate: " +
+		"startRequestRelays installs the per-repo forge router on whichever client the merge relay " +
+		"runs on, and every rebuilt client re-arms the relays (armRequestRelays), so the selector is " +
+		"reinstalled alongside the merge authorizer it routes (#14113)",
 	"SetStageFactSink": "test seam: production uses the client's own default stage FactSink " +
 		"(enforce-mode reconciler over stagelabels.Shared()), which every rebuilt client " +
 		"constructs lazily on first use (ADR-0025, #13009)",
@@ -85,7 +91,7 @@ const (
 	rebuildTestOpenRepo  = "acme/open"
 	rebuildTestLockedRep = "acme/locked"
 	// rebuildTestHiveLevel lets "quality" open PRs; rebuildTestLockedLevel
-	// (advisory) does not. See agent.DefaultAgentMode.
+	// (advisory) does not. See crux.DefaultAgentMode.
 	rebuildTestHiveLevel   = 5
 	rebuildTestLockedLevel = 2
 	rebuildTestAgent       = "quality"
@@ -225,7 +231,7 @@ func TestConfigureGitHubClientTiersWaitForDependencies(t *testing.T) {
 		t.Fatal("App policy tier (no dependencies) was not applied")
 	}
 
-	b.agentMgr = agent.NewManager(map[string]config.AgentConfig{}, b.logger, agent.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(map[string]config.AgentConfig{}, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	b.configureGitHubClient(client)
 	b.configureGitHubClient(client)

@@ -632,9 +632,17 @@ const hivesActiveLegend = "* = active: the hub the relay solicits from first."
 // profile set is committed and the relay signal has been attempted.
 const hivesSwitchNote = "the running relay is signaled when present"
 
-// View renders the overlay's box, sized to its own content. Placing it over the
-// frame is the app's job, matching every other overlay.
-func (o HivesOverlay) View(width int) string {
+// View renders the overlay. The optional terminal height bounds the staged
+// review (24 rows by default); other modes size their box to its content.
+// Placing it over the frame is the app's job.
+func (o HivesOverlay) View(width int, height ...int) string {
+	if o.TreeReviewing() && !o.pending {
+		h := 24
+		if len(height) > 0 {
+			h = height[0]
+		}
+		return o.treeReviewView(width, h)
+	}
 	boxWidth := max(1, width-4)
 	contentWidth := max(1, boxWidth-2)
 

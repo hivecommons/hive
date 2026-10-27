@@ -1,0 +1,1 @@
+- Agent: 'failed to tighten …' interactive-home WARNs are now classified as agent_dir_setup_failed instead of unclassified (#13910).

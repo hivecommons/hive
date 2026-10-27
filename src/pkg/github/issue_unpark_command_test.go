@@ -634,6 +634,76 @@ func TestSweepIssueUnparkCommandsNeedsDirectionIdempotency(t *testing.T) {
 	}
 }
 
+// TestSweepIssueUnparkCommandsNeverReplaysSupersededDecision covers
+// hivecommons/hive#14344: two decisions, the newer one already answered, the
+// issue parked again. The older (retracted) decision must not be applied.
+func TestSweepIssueUnparkCommandsNeverReplaysSupersededDecision(t *testing.T) {
+	notice := unparkWireComment{
+		ID:        60,
+		Body:      unparkNoticeBody(parkedIssue(17).Body),
+		User:      wireUser{Login: "hive[bot]"},
+		CreatedAt: unparkNow(),
+		UpdatedAt: unparkNow(),
+	}
+	answeredNewer := unparkWireComment{
+		ID:        63,
+		Body:      fmt.Sprintf("%s62 -->\nUn-parked by @maintainer.\n\nDecision: Hold", unparkReplyMarkerPrefix),
+		User:      wireUser{Login: "hive[bot]"},
+		CreatedAt: unparkNow(),
+		UpdatedAt: unparkNow(),
+	}
+	issues := []unparkWireIssue{parkedIssue(17,
+		notice,
+		humanComment(61, "maintainer", "/hive decision Proceed with the membership grant"),
+		humanComment(62, "maintainer", "/hive decision Hold. Retracting the earlier instruction"),
+		answeredNewer,
+	)}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Unparked) != 0 {
+		t.Fatalf("a superseded decision must not be replayed: %+v", result.Unparked)
+	}
+	if len(rec.posted[17]) != 0 || len(rec.removed[17]) != 0 || len(rec.added[17]) != 0 {
+		t.Fatalf("no writes expected, posted=%v removed=%v added=%v", rec.posted[17], rec.removed[17], rec.added[17])
+	}
+}
+
+// TestSweepIssueUnparkCommandsAppliesNewestOfSeveralDecisions: with two
+// unanswered decisions only the newest is applied, with a single reply.
+func TestSweepIssueUnparkCommandsAppliesNewestOfSeveralDecisions(t *testing.T) {
+	issues := []unparkWireIssue{parkedIssue(18,
+		humanComment(71, "maintainer", "/hive decision Proceed"),
+		humanComment(72, "maintainer", "/hive decision Hold"),
+	)}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Unparked) != 1 || result.Unparked[0].Decision != "Hold" {
+		t.Fatalf("expected only the newest decision applied, got %+v", result.Unparked)
+	}
+	var replies int
+	for _, body := range rec.posted[18] {
+		if strings.Contains(body, unparkReplyMarkerPrefix) {
+			replies++
+			if !strings.Contains(body, unparkReplyMarkerPrefix+"72 ") {
+				t.Fatalf("reply must answer the newest decision, got %q", body)
+			}
+		}
+	}
+	if replies != 1 {
+		t.Fatalf("expected exactly one unpark reply, got %v", rec.posted[18])
+	}
+}
+
 func TestSweepIssueUnparkCommandsHelpAndProseDoNotUnpark(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // TriggerRuntimeError is the fleet-report trigger for the "unusual runtime
@@ -21,16 +22,22 @@ const TriggerRuntimeError = "runtime-error"
 // Runtime error classes. Each is an explicit allow-list entry: an error site
 // opts in by calling Observe with one of these, so an arbitrary logged error
 // never becomes an upstream issue by accident.
+//
+// The classes the agent runtime and its watchdog emit are declared in
+// the crux root (the runtime reports through crux.ConditionReporter and
+// must not import this package); they are aliased here so the allow-list
+// below and every host-side caller keep one name.
 const (
-	ClassRestartStorm             = "restart_storm"
-	ClassKickFailedRepeatedly     = "kick_failed_repeatedly"
+	ClassRestartStorm             = crux.ClassRestartStorm
+	ClassKickFailedRepeatedly     = crux.ClassKickFailedRepeatedly
 	ClassPanicRecovered           = "panic_recovered"
 	ClassModelDiscoveryDegraded   = "model_discovery_degraded"
 	ClassInferenceAuthFailed      = "inference_auth_failed"
 	ClassAdvisoryPostFailed       = "advisory_post_failed"
 	ClassUpgradeStalled           = "upgrade_stalled"
-	ClassDataDiskPressure         = "data_disk_pressure"
-	ClassGitHubAppTokenMintFailed = "github_app_token_mint_failed"
+	ClassDataDiskPressure         = crux.ClassDataDiskPressure
+	ClassGitHubAppTokenMintFailed = crux.ClassGitHubAppTokenMintFailed
+	ClassGitHubAppNotInstalled    = crux.ClassGitHubAppNotInstalled
 	ClassUnexpectedHub5xx         = "unexpected_http_5xx_from_hub"
 	ClassUnclassifiedRepeated     = "unclassified_error_repeated"
 	// ClassAgentStall, ClassAgentCrashLoop and ClassCIPollNudge replace the
@@ -38,9 +45,9 @@ const (
 	// counters that used to be synthesised into a bare "Fleet report: …
 	// hive-code defect" issue are now observed at the hook site that owns
 	// them, so the report carries kick/pane context like every other class.
-	ClassAgentStall     = "agent_stall"
-	ClassAgentCrashLoop = "agent_crash_loop"
-	ClassCIPollNudge    = "ci_poll_nudge"
+	ClassAgentStall     = crux.ClassAgentStall
+	ClassAgentCrashLoop = crux.ClassAgentCrashLoop
+	ClassCIPollNudge    = crux.ClassCIPollNudge
 	// ClassIssueRequestStuck and ClassEffectLedgerOpStuck are queue-health
 	// classes: a relay request that keeps failing or a journaled external
 	// effect that stays Unknown is work the hive is silently not doing. Both
@@ -49,6 +56,12 @@ const (
 	// so the class itself fires on the first observation.
 	ClassIssueRequestStuck   = "issue_request_stuck"
 	ClassEffectLedgerOpStuck = "effect_ledger_op_stuck"
+	// ClassCruxRuntimeUnavailable: the sidecar `crux serve` the hive was
+	// built against is unreachable (hivecommons/hive#14138 stage 4). Raised
+	// by cmd/hive's runtime watcher on the first failed probe and cleared
+	// on the first success; while it holds, kicks are refused with
+	// crux.ErrRuntimeUnavailable rather than queued.
+	ClassCruxRuntimeUnavailable = crux.ClassRuntimeUnavailable
 )
 
 // Log-fed classes: faults that have no dedicated hook site and are recognised
@@ -60,10 +73,22 @@ const (
 	ClassAgentDirSetupFailed        = "agent_dir_setup_failed"
 	ClassReviewEvidenceWriteFail    = "review_evidence_write_failed"
 	ClassFeedbackIssueRefreshFailed = "feedback_issue_refresh_failed"
+	ClassBeadFactIngestFailed       = "bead_fact_ingest_failed"
+	ClassSelfReportClearedFailed    = "selfreport_cleared_comment_failed"
+	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
 	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
 	ClassInferenceUpstreamError     = "inference_upstream_error"
+	ClassSHAPollCommitMsgUnavail    = "sha_poll_commit_message_unavailable"
+	ClassAgentLoginRequired         = "agent_login_required"
+	ClassPRRequestHeadUnpushed      = "pr_request_head_unpushed"
 	ClassIOScanClassifierUnavail    = "ioscan_classifier_unavailable"
+	ClassGitHubFetchTransient       = "github_fetch_transient"
+	ClassLabelProvisioningFailed    = "label_provisioning_failed"
+	ClassAgentCLIRestartLoop        = "agent_cli_restart_loop"
 	ClassAgentGitHubCapReached      = "agent_github_api_cap_reached"
+	// A restart or normal stop can invalidate a pending bootstrap without
+	// indicating a restart storm; only repeated interruptions are reportable.
+	ClassStartupKickInterrupted = "startup_kick_interrupted"
 )
 
 const (
@@ -144,23 +169,35 @@ var Classes = map[string]ClassSpec{
 	ClassUpgradeStalled:             {Component: "agent-lifecycle", Severity: "high", MinCount: 1, Keywords: []string{"upgrade stalled", "upgrade stall"}},
 	ClassDataDiskPressure:           {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"disk full", "disk pressure", "no space left"}},
 	ClassGitHubAppTokenMintFailed:   {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token"}},
+	ClassGitHubAppNotInstalled:      {Component: "github-client", Severity: "medium", MinCount: 1, Keywords: []string{"github app installation id is unset", "github app has no installation"}},
 	ClassUnexpectedHub5xx:           {Component: "dashboard", Severity: "medium", MinCount: hub5xxStreak, Keywords: []string{"hub 5", "hub returned 5"}},
 	ClassUnclassifiedRepeated:       {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear},
 	ClassAgentStall:                 {Component: "agent-runtime", Severity: "medium", MinCount: AgentStallNudgeStreak, Keywords: []string{"agent stall", "stalled after kick", "continue nudge"}},
 	ClassAgentCrashLoop:             {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"crash loop", "crash-loop", "crash looping"}},
 	ClassCIPollNudge:                {Component: "agent-runtime", Severity: "low", MinCount: 1, Window: ciPollNudgeWindow, Keywords: []string{"ci-poll nudge", "polling ci", "stop-polling nudge"}},
 	ClassIssueRequestStuck:          {Component: "github-relay", Severity: "medium", MinCount: 1, Keywords: []string{"issue-request stuck", "issue request stuck", "issue-request watcher", "relay request stuck"}},
+	ClassCruxRuntimeUnavailable:     {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"crux runtime unavailable", "crux server unreachable"}},
 	ClassEffectLedgerOpStuck:        {Component: "mutation-ledger", Severity: "medium", MinCount: 1, Keywords: []string{"effect ledger stuck", "ledger op stuck", "needs reconciliation", "mutation journal unknown"}},
 	ClassTmuxSessionCheckFailed:     {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"tmux has-session failed"}},
-	ClassAgentPaneTimeout:           {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"prompt timeout — dumping pane", "pane content at timeout", "startup kick dropped", "cli never reached input prompt", "kick undeliverable"}},
-	ClassProxyTLSHandshakeFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy client tls handshake failed", "transparent proxy tls handshake failed"}},
-	ClassAgentDirSetupFailed:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to create per-agent xdg dir", "failed to restore per-agent dir mode", "failed to restore interactive home mode"}},
+	ClassStartupKickInterrupted:     {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"startup kick dropped: agent restarted or stopped while waiting"}},
+	ClassAgentPaneTimeout:           {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"prompt timeout — dumping pane", "pane content at timeout", "startup kick dropped: cli never became ready", "startup kick dropped: cli never reached input prompt", "kick undeliverable"}},
+	ClassProxyTLSHandshakeFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy client tls handshake failed", "transparent proxy tls handshake failed", "copilot sniff: client tls handshake failed"}},
+	ClassAgentDirSetupFailed:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to create per-agent xdg dir", "failed to restore per-agent dir mode", "failed to restore interactive home mode", "failed to tighten per-agent dir mode", "failed to tighten interactive home mode", "failed to restore inference home mode", "failed to tighten inference home mode"}},
 	ClassReviewEvidenceWriteFail:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"review evidence: could not write bundle"}},
 	ClassFeedbackIssueRefreshFailed: {Component: "dashboard", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"feedback: issue refresh failed"}},
+	ClassBeadFactIngestFailed:       {Component: "knowledge", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to ingest bead fact"}},
+	ClassSelfReportClearedFailed:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"fleet report: cleared comment failed"}},
+	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed"}},
 	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
+	ClassSHAPollCommitMsgUnavail:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
+	ClassAgentLoginRequired:         {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"login required detected"}},
+	ClassPRRequestHeadUnpushed:      {Component: "github-relay", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"head branch is not on the remote"}},
 	ClassIOScanClassifierUnavail:    {Component: "inference-gateway", Severity: "medium", MinCount: 1, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"ioscan classifier failed closed", "ioscan fail-closed blocked kick"}},
 	ClassAgentGitHubCapReached:      {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"agent github api hourly cap reached"}},
+	ClassGitHubFetchTransient:       {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"channel commit date: fetch failed"}},
+	ClassLabelProvisioningFailed:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"issue stage labels: provisioning failed"}},
+	ClassAgentCLIRestartLoop:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"agent cli crashed or stuck on consent screen"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".
@@ -290,6 +327,21 @@ func ObserveItem(class, key, message, diagnostics, repo, ref string) {
 
 // Clear marks a condition as no longer present on the default tracker.
 func Clear(class, key string) { DefaultTracker().Clear(class, key) }
+
+// DefaultReporter is the crux.ConditionReporter the host hands the agent
+// runtime (Manager.SetConditionReporter) and the watchdog. It forwards to
+// the package-level Observe and Clear rather than capturing DefaultTracker
+// at wiring time, so a test that swaps the default tracker with
+// SetDefaultTrackerForTest sees the runtime's observations too.
+type DefaultReporter struct{}
+
+var _ crux.ConditionReporter = DefaultReporter{}
+
+func (DefaultReporter) Observe(class, key, message, diagnostics string) {
+	Observe(class, key, message, diagnostics)
+}
+
+func (DefaultReporter) Clear(class, key string) { Clear(class, key) }
 
 func condKey(class, key string) string {
 	return strings.TrimSpace(class) + "\x00" + strings.TrimSpace(key)
@@ -533,10 +585,39 @@ func runOfHex(runes []rune, i int) int {
 	return n
 }
 
-// RuntimeFingerprint is class + normalised message + hive version.
-func RuntimeFingerprint(class, message, version string) string {
-	h := sha256.Sum256([]byte(strings.Join([]string{TriggerRuntimeError, strings.ToLower(strings.TrimSpace(class)), NormalizeMessage(message), strings.ToLower(strings.TrimSpace(version))}, "|")))
+// RuntimeFingerprint is class + normalised message. The hive version is
+// deliberately NOT part of it: a fingerprint names a defect, not a build.
+// When it did include the version (before #14256), every spoke on a
+// different build, and the same spoke after every upgrade, got a fresh
+// fingerprint for the same message — so a closed issue's cooldown never
+// applied, the join-first search never matched, and a hive on a daily
+// channel re-filed the same warning as a brand-new issue each day.
+func RuntimeFingerprint(class, message string) string {
+	h := sha256.Sum256([]byte(strings.Join([]string{TriggerRuntimeError, strings.ToLower(strings.TrimSpace(class)), NormalizeMessage(message)}, "|")))
 	return hex.EncodeToString(h[:])[:24]
+}
+
+// SimilarityPhrase is the title phrase the join-first search uses when the
+// class alone does not identify the defect (the catch-all
+// unclassified_error_repeated and any other class without keywords): the
+// leading words of the short message, cut at the first clause separator
+// and bounded so GitHub's search accepts it as one quoted phrase. Empty
+// when the message has no usable words.
+func SimilarityPhrase(message string) string {
+	msg := ShortMessage(message)
+	if msg == "unusual error" {
+		return ""
+	}
+	if i := strings.IndexAny(msg, ";—…\n"); i >= 0 {
+		msg = msg[:i]
+	}
+	msg = strings.NewReplacer("\"", " ", "`", " ", "'", " ", ":", " ", "(", " ", ")", " ", "[", " ", "]", " ").Replace(msg)
+	words := strings.Fields(msg)
+	const maxWords = 8
+	if len(words) > maxWords {
+		words = words[:maxWords]
+	}
+	return strings.Join(words, " ")
 }
 
 // ShortMessage trims a message for an issue title.
@@ -877,8 +958,10 @@ type FilingLimits struct {
 }
 
 // DefaultFilingLimits: 5 new issues per hive per day, 1h between filings of
-// different classes, closed fingerprints are not re-filed for 7 days, and a
-// hive adds itself to an existing issue at most once per 24h.
+// different classes, a fingerprint whose issue was closed upstream is not
+// re-filed until the condition has been absent for 7 days (see
+// ClosedSuppressed), and a hive adds itself to an existing issue — or posts
+// a "cleared" comment on it — at most once per 24h.
 var DefaultFilingLimits = FilingLimits{MaxPerDay: 5, MinGap: time.Hour, ClosedCooldown: 7 * 24 * time.Hour, SeenGap: 24 * time.Hour}
 
 // WithMaxPerDay returns limits with MaxPerDay overridden when n > 0.
@@ -933,6 +1016,38 @@ func AllowSeenComment(open OpenIssue, now time.Time, limits FilingLimits) bool {
 // cooldown: treat as known/fixed-pending-rollout and do not re-file.
 func ClosedRecently(closedAt time.Time, now time.Time, limits FilingLimits) bool {
 	return !closedAt.IsZero() && now.Sub(closedAt) < limits.ClosedCooldown
+}
+
+// ClosedSuppressed reports whether a fingerprint whose issue was found
+// closed upstream must not be re-filed now. The cooldown runs from the later
+// of the close and the last time THIS hive observed the condition while the
+// issue was closed (OpenIssue.ClosedObservedAt): a condition that persists on
+// this build keeps the suppression alive for as long as it persists, however
+// many builds the hive moves through, and only a condition that was absent
+// for the whole cooldown and then came back — a regression, not the same
+// unfixed instance — is filed again. Whoever closed the issue (maintainer,
+// scanner, close-on-merge) therefore silences this reporter for it.
+func ClosedSuppressed(open OpenIssue, now time.Time, limits FilingLimits) bool {
+	if open.ClosedAt.IsZero() {
+		return false
+	}
+	since := open.ClosedAt
+	if open.ClosedObservedAt.After(since) {
+		since = open.ClosedObservedAt
+	}
+	return now.Sub(since) < limits.ClosedCooldown
+}
+
+// AllowClearedComment reports whether a runtime "cleared" comment may be
+// posted for open now: never on an issue known to be closed, and at most
+// once per SeenGap so a condition that flaps between observed and cleared
+// does not post "Cleared on …" every cycle (hivecommons/hive#13825 collected
+// 79 of them in a day).
+func AllowClearedComment(open OpenIssue, now time.Time, limits FilingLimits) bool {
+	if !open.ClosedAt.IsZero() {
+		return false
+	}
+	return open.ClearedPostedAt.IsZero() || now.Sub(open.ClearedPostedAt) >= limits.SeenGap
 }
 
 // displayVersion renders a version with exactly one leading "v".

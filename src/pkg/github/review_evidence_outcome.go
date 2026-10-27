@@ -29,6 +29,12 @@ func (c *Client) RecordReviewEvidenceOutcome(repo string, number int, st PRState
 	if !ok {
 		return
 	}
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
+			slog.String("error", err.Error()))
+		key = nil
+	}
 	if !st.MergedAt.IsZero() {
 		// A merged revert the hive did not perform still names the PR it
 		// undid; the state fetch already carried its text (#13241).
@@ -39,7 +45,7 @@ func (c *Client) RecordReviewEvidenceOutcome(repo string, number int, st PRState
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
 
-	found, err := FindReviewEvidence("", repo, number, "")
+	found, err := FindVerifiedReviewEvidence("", repo, number, "", reviewEvidenceVerifierForKey(key))
 	if err != nil || found.Entry == nil {
 		return
 	}
@@ -56,12 +62,6 @@ func (c *Client) RecordReviewEvidenceOutcome(repo string, number int, st PRState
 		c.logger.Warn("review evidence: outcome-stamped bundle invalid, not written",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
-	}
-	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
-	if err != nil {
-		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
-			slog.String("error", err.Error()))
-		key = nil
 	}
 	if err := evidence.Seal(b, key); err != nil {
 		c.logger.Warn("review evidence: could not seal outcome-stamped bundle",

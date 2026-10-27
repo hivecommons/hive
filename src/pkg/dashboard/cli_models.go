@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
@@ -303,7 +303,7 @@ var copilotStaticModels = []string{
 	"gpt-4o",
 	// The -5 family is DASHED in copilot CLI nomenclature; the 4.x family is
 	// DOTTED, including 5.5 (the dashed -5-5 spelling is rejected by the CLI,
-	// #9927). Keep in sync with agent.copilotCLIAcceptedModels (#4262).
+	// #9927). Keep in sync with the crux root's copilotCLIAcceptedModels (#4262).
 	"claude-opus-5",
 	"claude-sonnet-5",
 	"claude-fable-5",
@@ -329,7 +329,7 @@ var copilotStaticModels = []string{
 // Sonnet 5. The DOTTED claude-opus-5.5 / claude-sonnet-5.5 below are the
 // CLI's actual accepted ids for that model (every other X.Y id in this list
 // — the 4.x family, GPT's 5.x, Gemini's — is dotted too); keep this list and
-// agent.copilotCLIAcceptedModels in sync.
+// the crux root's copilotCLIAcceptedModels in sync.
 var copilotPinnedCLIModels = []string{
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
@@ -1225,7 +1225,7 @@ func filterPinnedCLIModels(backend string, models []string) []string {
 	for _, id := range models {
 		candidate := id
 		if backend == "copilot" {
-			candidate = agent.CanonicalizeCopilotModel(id)
+			candidate = crux.CanonicalizeCopilotModel(id)
 		}
 		if _, ok := allowed[candidate]; ok {
 			out = append(out, candidate)
@@ -1526,11 +1526,11 @@ func copilotProbeUnauthorized(lower string) bool {
 // produces, AND the stabilize/auto-heal retention keys in one canonical
 // spelling, so a sample that flips separators can never look like a new model
 // appearing plus the old one vanishing (false "model revoked" churn). Unknown
-// ids pass through verbatim (see agent.CanonicalizeCopilotModel).
+// ids pass through verbatim (see crux.CanonicalizeCopilotModel).
 func canonicalizeCopilotModelIDs(in []string) []string {
 	out := make([]string, len(in))
 	for i, id := range in {
-		out[i] = agent.CanonicalizeCopilotModel(id)
+		out[i] = crux.CanonicalizeCopilotModel(id)
 	}
 	return out
 }
@@ -1664,7 +1664,7 @@ func parseCopilotSDKModels(data []byte) ([]string, error) {
 // copilotToken resolves the Copilot GitHub OAuth token from the agent manager
 // (device-flow login, promoted CLI login, or the token it was started with)
 // or the COPILOT_GITHUB_TOKEN env var, together with a display-safe name for
-// where it came from (one of the agent.CopilotTokenSource* phrases; "" when
+// where it came from (one of the crux.CopilotTokenSource* phrases; "" when
 // there is no token). The token is a secret — never log it; the source is
 // exactly the thing to log.
 func (s *Server) copilotToken() (token, source string) {
@@ -1674,7 +1674,7 @@ func (s *Server) copilotToken() (token, source string) {
 		}
 	}
 	if t := os.Getenv("COPILOT_GITHUB_TOKEN"); t != "" {
-		return t, agent.CopilotTokenSourceEnv
+		return t, crux.CopilotTokenSourceEnv
 	}
 	return "", ""
 }
@@ -1691,7 +1691,7 @@ type copilotLoginCache struct {
 
 // lookupCopilotTokenLogin resolves a token to its GitHub login via GET /user.
 // A package-level seam so tests never reach api.github.com.
-var lookupCopilotTokenLogin = agent.GitHubTokenLogin
+var lookupCopilotTokenLogin = crux.GitHubTokenLogin
 
 // copilotTokenLogin returns the GitHub login that owns token, or "" when it
 // cannot be resolved (GitHub unreachable, token revoked). Only the rejection

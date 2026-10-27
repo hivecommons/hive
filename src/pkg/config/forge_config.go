@@ -25,7 +25,7 @@ func (g GitHubConfig) SelfAuthorizationHoldEnabled() bool {
 
 // SelfAuthorizationHoldEnabledAtLevel reports whether the #5117
 // self-authorization hold is active at the provided live ACMM level. Explicit
-// env/config values win; otherwise L6 fully autonomous defaults the policy off.
+// env/config values win; otherwise L6 autonomous defaults the policy off.
 func (g GitHubConfig) SelfAuthorizationHoldEnabledAtLevel(acmmLevel int) bool {
 	if g.selfAuthorizationHoldEnvOverride != nil {
 		return *g.selfAuthorizationHoldEnvOverride

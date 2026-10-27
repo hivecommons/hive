@@ -136,8 +136,8 @@ contribute-check-backend backend="claude":
       bob)
         if command -v bob &>/dev/null; then
           # Bob's browser SSO flow cannot complete in a container, so the
-          # containerized path needs BOBSHELL_API_KEY exported in your shell.
-          echo "Bob CLI detected — export BOBSHELL_API_KEY for containerized runs."
+          # containerized path needs BOB_API_KEY (or BOBSHELL_API_KEY) exported in your shell.
+          echo "Bob CLI detected — export BOB_API_KEY for containerized runs."
         else
           echo "ERROR: Bob CLI not found."
           exit 1
@@ -315,6 +315,24 @@ contribute-check-backend backend="claude":
           node bin/omp-backend.js --describe "${HOME}/.omp" "${AGENT_MODEL:-}" | sed 's/^/  /'
         else
           echo "ERROR: OMP CLI not found. Install: https://github.com/can1357/oh-my-pi"
+          exit 1
+        fi
+        ;;
+      omnigent)
+        if command -v omnigent &>/dev/null; then
+          echo "Omnigent CLI detected ($(omnigent --version 2>&1 | head -1))"
+          echo "  Meta-harness for Claude Code, Codex, Cursor, Pi, and custom agents."
+          echo "  Auth: export ANTHROPIC_API_KEY=..., OPENAI_API_KEY=..., or GEMINI_API_KEY=..."
+          echo "        (persisted ~/.omnigent/auth_tokens.json / config.yaml credentials are staged too)"
+          echo "  Hive launches 'omnigent run --server local': a remote server default from"
+          echo "  'omnigent login <url>' is NOT honoured — remote-server mode is unsupported."
+          echo "  omnigent has NO OS sandbox on the local CLI path; local mode refuses to launch without"
+          echo "  HIVE_OMNIGENT_DANGEROUSLY_RUN_UNCONFINED=1."
+          if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" && -z "${GEMINI_API_KEY:-}" && -z "${DATABRICKS_TOKEN:-}" && -z "${OMNIGENT_API_KEY:-}" && ! -s "$HOME/.omnigent/auth_tokens.json" && ! -s "$HOME/.omnigent/config.yaml" && ! -s "$HOME/.databrickscfg" ]]; then
+            echo "  WARNING: no provider API key and no ~/.omnigent credentials found — omnigent may fail at task time."
+          fi
+        else
+          echo "ERROR: omnigent CLI not found. Install: https://github.com/omnigent-ai/omnigent"
           exit 1
         fi
         ;;
@@ -1034,9 +1052,9 @@ contribute-hive backend="" mode="docker": check-version
     fi
     # Bob has no headless credential other than its API key — without it the
     # agent would launch and sit at Bob's key prompt forever. Fail fast.
-    if [[ "$BACKEND" == "bob" && -z "${BOBSHELL_API_KEY:-}" ]]; then
-      echo "ERROR: BOBSHELL_API_KEY not set — Bob cannot authenticate."
-      echo "  export BOBSHELL_API_KEY=your-bob-api-key"
+    if [[ "$BACKEND" == "bob" && -z "${BOB_API_KEY:-}" && -z "${BOBSHELL_API_KEY:-}" ]]; then
+      echo "ERROR: BOB_API_KEY (or legacy BOBSHELL_API_KEY) not set — Bob cannot authenticate."
+      echo "  export BOB_API_KEY=your-bob-api-key"
       echo "  then re-run: just contribute-hive bob"
       exit 1
     fi
@@ -1280,9 +1298,9 @@ contribute-hive backend="" mode="docker": check-version
         codex)
           PERM_FLAG=$(backend_perm_flag_shell "$BACKEND" 2>/dev/null || echo "")
           ;;
-        goose|agy|bob|pi|aider|kilo|omp|openhands)
+        goose|agy|bob|pi|aider|kilo|omp|openhands|omnigent)
           # No sandbox, filesystem allowlist, or command deny-list exists for
-          # any of these eight (see the "no confinement mechanism at all"
+          # any of these nine (see the "no confinement mechanism at all"
           # block in backends.conf) — refuse to launch unconfined by
           # default rather than silently grant full host access (#4918).
           if ! PERM_FLAG=$(unconfined_local_perm_flag_shell "$BACKEND"); then
@@ -1420,6 +1438,39 @@ contribute-hive backend="" mode="docker": check-version
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV TMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV CCACHE_DIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/ccache")"
       export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}"
+
+      # Registered before anything long-lived is forked below (knowledge
+      # refresh, tmux session, quota publisher, relay); the PID variables it
+      # reads are filled in as each one starts.
+      cleanup() {
+        echo "Shutting down..."
+        [[ -n "${RELAY_PID:-}" ]] && kill "$RELAY_PID" 2>/dev/null || true
+        # Starts and stops with the contributor (#10299): a surviving publisher
+        # keeps refreshing this pool's presence marker and tells the next relay
+        # a reading is coming that nothing will write.
+        [[ -n "${QUOTA_PUBLISHER_PID:-}" ]] && kill "$QUOTA_PUBLISHER_PID" 2>/dev/null || true
+        [[ -n "${KNOWLEDGE_REFRESH_PID:-}" ]] && kill "$KNOWLEDGE_REFRESH_PID" 2>/dev/null || true
+        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+        exit 0
+      }
+      trap cleanup SIGTERM SIGINT EXIT
+
+      # The relay reads ${HIVE_AGENT_MD:-$HOME/agent.md} and reports a
+      # knowledge error when it is missing (#14521). Only the container
+      # entrypoint used to fetch the export, so local mode never wrote it. Use
+      # the same fetch + 10-minute refresh as bin/contributor-agent.sh; if the
+      # hub cannot serve it the file stays absent and the relay says so.
+      #
+      # This runs BEFORE the CLI is started in tmux, and the export is linked
+      # under the backend's context filenames (CLAUDE.md, AGENTS.md, ...) in
+      # HIVE_AGENT_CWD -- the directory the CLI is launched from -- so the
+      # knowledge is actually read at startup. The container links into $HOME;
+      # here $HOME is the user's real home, which these links must not touch.
+      export HIVE_AGENT_MD="${HIVE_AGENT_MD:-${HOME}/agent.md}"
+      source "${SCRIPT_DIR}/lib/knowledge-export.sh"
+      knowledge_export_sync_start "$HIVE_AGENT_MD"
+      link_backend_knowledge "$BACKEND" "$HIVE_AGENT_MD" "$HIVE_AGENT_CWD"
+
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
       tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && $AGENT_LAUNCH_CMD" Enter
@@ -1441,18 +1492,6 @@ contribute-hive backend="" mode="docker": check-version
       export HIVE_CONTRIBUTOR_CLI="$BACKEND"
       export NODE_PATH="${NODE_PATH:-$(pwd)/node_modules}"
       echo "Starting relay + ${BACKEND} in tmux session '${TMUX_SESSION}'..."
-
-      cleanup() {
-        echo "Shutting down..."
-        kill "$RELAY_PID" 2>/dev/null || true
-        # Starts and stops with the contributor (#10299): a surviving publisher
-        # keeps refreshing this pool's presence marker and tells the next relay
-        # a reading is coming that nothing will write.
-        [[ -n "${QUOTA_PUBLISHER_PID:-}" ]] && kill "$QUOTA_PUBLISHER_PID" 2>/dev/null || true
-        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-        exit 0
-      }
-      trap cleanup SIGTERM SIGINT EXIT
 
       # Publish this contributor's quota readings (hivecommons/hive#10299).
       # Local mode runs no `hive` process either, so without this the relay's
@@ -2011,6 +2050,36 @@ contribute-hive backend="" mode="docker": check-version
             CLI_MOUNTS="-v ${CLI_STAGE}/.openhands:/home/dev/.openhands${VOLSUF}"
           fi
           ;;
+        omnigent)
+          # Stage ONLY Omnigent's credential files, never the directory.
+          # ~/.omnigent also holds omnigent.db (every prior session and turn),
+          # logs/ (full JSON conversation dumps) and debug/ (SSE event tapes)
+          # — the same transcript-exposure problem #7836 closed for ~/.claude.
+          #   auth_tokens.json — persisted server session tokens
+          #   config.yaml      — provider/LLM configuration. Its `server:`
+          #                      default is NOT honoured: the launch line pins
+          #                      `--server local` (backends.conf) so a remote
+          #                      server from `omnigent login <url>` can never
+          #                      take the session out of this container.
+          mkdir -p "${CLI_STAGE}/.omnigent"
+          if [ -d "${HOME}/.omnigent" ]; then
+            staged=""
+            for f in auth_tokens.json config.yaml; do
+              if [ -f "${HOME}/.omnigent/${f}" ] && cp -p "${HOME}/.omnigent/${f}" "${CLI_STAGE}/.omnigent/${f}" 2>/dev/null; then
+                staged="${staged:+${staged} }${f}"
+              fi
+            done
+            echo "Staged:    ${staged:-nothing} from ${HOME}/.omnigent (allowlist: auth_tokens.json config.yaml; omnigent.db, logs/ and debug/ stay on the host)"
+          fi
+          CLI_MOUNTS="-v ${CLI_STAGE}/.omnigent:/home/dev/.omnigent${VOLSUF}"
+          # ~/.databrickscfg is the one credential file outside ~/.omnigent that
+          # detect_cli (bin/contributor-agent.sh) accepts; stage that single
+          # file so the container's verdict matches the host preflight.
+          if [ -s "${HOME}/.databrickscfg" ] && cp -p "${HOME}/.databrickscfg" "${CLI_STAGE}/.databrickscfg" 2>/dev/null; then
+            echo "Staged:    .databrickscfg from ${HOME}"
+            CLI_MOUNTS="${CLI_MOUNTS} -v ${CLI_STAGE}/.databrickscfg:/home/dev/.databrickscfg${VOLSUF}"
+          fi
+          ;;
       esac
       CONTAINER_NAME="hive-contributor-${BACKEND}-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
       # Pi receives ONLY the selected provider's official credential variables.
@@ -2029,7 +2098,7 @@ contribute-hive backend="" mode="docker": check-version
           if [[ -n "$name" ]]; then add_provider_env "$name"; fi
         done < <(node bin/pi-backend.js --env-names "${AGENT_MODEL}")
       else
-        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY LLM_API_KEY LLM_BASE_URL LLM_MODEL; do
+        for name in ANTHROPIC_API_KEY OPENROUTER_API_KEY OPENAI_API_KEY OPENAI_HOST OPENAI_BASE_PATH GOOGLE_API_KEY GEMINI_API_KEY DATABRICKS_TOKEN OMNIGENT_API_KEY GOOSE_API_KEY GOOSE_PROVIDER GOOSE_MODEL KIRO_API_KEY BOB_API_KEY BOBSHELL_API_KEY HIVE_LITELLM_ENDPOINT HIVE_LITELLM_API_KEY KILO_AUTH_CONTENT KILO_CONFIG_CONTENT KILO_API_KEY KILO_ORG_ID META_API_KEY LLM_API_KEY LLM_BASE_URL LLM_MODEL; do
           add_provider_env "$name"
         done
       fi

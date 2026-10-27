@@ -25,6 +25,9 @@ const escalationLogMsg = "stage labels: adopted PR sits with nothing the hive ca
 // squashUnsafeAdoption adopts PR 7 in place and gives head 021bb6f the shape
 // of all three PRs: the contributor's own signed commit, then the hive's fix
 // signed off as the App. The caller observes it once to trigger the stall.
+// Since v5's signoff re-home (hivecommons/hive#13980) such a head is
+// superseded at once unless something blocks it, so the observation carries
+// a `hold` label: the stall note is then the one the hive still writes.
 func squashUnsafeAdoption(t *testing.T) (*adoptHarness, func()) {
 	t.Helper()
 	p := adoptPolicy()
@@ -54,7 +57,7 @@ func TestSignoffStallNoteNamesSquashGateOnlyWhereItRuns(t *testing.T) {
 			if tc.gate {
 				h.e.noteStageDCOGate("acme", "widget", 7, "021bb6f", map[string]bool{squashSignoffCheck: true}, nil)
 			}
-			h.observe(adoptPR(7, "021bb6f", adoptedLabels...), contributorLaneReasonNoVerdict)
+			h.observe(adoptPR(7, "021bb6f", append([]string{"hold"}, adoptedLabels...)...), contributorLaneReasonNoVerdict)
 			notes := stalledComments(h.api)
 			if len(notes) != 1 {
 				t.Fatalf("stalled note: %v", h.api.comments)
@@ -120,7 +123,7 @@ func TestAdoptionStallEscalationLogsAtInfo(t *testing.T) {
 		fed = append(fed, message)
 	}))
 
-	h.observe(adoptPR(7, "021bb6f", adoptedLabels...), contributorLaneReasonNoVerdict)
+	h.observe(adoptPR(7, "021bb6f", append([]string{"hold"}, adoptedLabels...)...), contributorLaneReasonNoVerdict)
 	if len(stalledComments(h.api)) != 1 {
 		t.Fatalf("expected the escalation to happen: %v", h.api.comments)
 	}

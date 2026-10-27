@@ -12,7 +12,6 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/notify"
-	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/releasesentinel"
 )
 
@@ -43,7 +42,7 @@ var newReleaseSentinelRetagger = func(cfg *config.Config, ghClient *github.Clien
 	return &releasesentinel.GitRetagger{
 		RemoteURL: strings.TrimRight(cfg.GitHub.ResolvedBaseURL(), "/") + "/" + owner + "/" + repo + ".git",
 		Dir:       releaseSentinelRetagDir,
-		Minter:    pushbroker.GitHubAppMinter{Auth: auth, Tier: releaseSentinelRetagTokenTier},
+		Minter:    appMinter(auth, releaseSentinelRetagTokenTier),
 	}, nil
 }
 

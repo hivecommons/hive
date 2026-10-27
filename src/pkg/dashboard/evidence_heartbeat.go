@@ -123,12 +123,19 @@ func (s *Server) EvidenceHeartbeat() *spoke.HeartbeatEvidence {
 // load every bundle, fold, aggregate, store. Runs on its own goroutine.
 func (s *Server) refreshEvidenceHeartbeat() {
 	started := time.Now()
-	var block *spoke.HeartbeatEvidence
-	bundles, _, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot)
+	var (
+		block   *spoke.HeartbeatEvidence
+		bundles []*evidence.Bundle
+	)
+	verifier, err := s.reviewEvidenceVerifier()
 	if err == nil {
-		block = buildHeartbeatEvidence(bundles, time.Now().UTC(), nil)
-	} else if s.logger != nil {
-		s.logger.Warn("heartbeat evidence refresh: bundles unreadable; keeping previous summary", "error", err)
+		bundles, _, err = loadEvidenceBundles(ghpkg.ReviewEvidenceRoot, verifier)
+		if err == nil {
+			block = buildHeartbeatEvidence(bundles, time.Now().UTC(), nil)
+		}
+	}
+	if err != nil && s.logger != nil {
+		s.logger.Warn("heartbeat evidence refresh: bundles unverifiable; keeping previous summary", "error", err)
 	}
 	took := time.Since(started)
 	if took > evidenceHeartbeatRefreshInterval && s.logger != nil {

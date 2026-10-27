@@ -134,7 +134,7 @@ func resolveChannelDistance(base, head string, logger *slog.Logger) channelDista
 	d, err := fetchCommitCompareCounts(base, head, logger)
 	if err != nil {
 		if logger != nil {
-			logger.Warn("channel distance: compare failed — the row will render without a distance",
+			warnGitHubFetchOnce(logger, "distance:"+key.base+"..."+key.head, "channel distance: compare failed — the row will render without a distance",
 				"base", base, "head", head, "error", err)
 		}
 		return channelDistance{}

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/taskmcp"
 	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 )
 
 type dashboardTaskMCPProvider struct{ server *Server }

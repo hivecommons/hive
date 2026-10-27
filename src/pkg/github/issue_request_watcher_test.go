@@ -1185,3 +1185,61 @@ func TestCreateIssue_AgentLabelEnsureAllowsFilingWhenPresent(t *testing.T) {
 		t.Fatalf("labels = %v, want the agent author-kind label only", createLabels)
 	}
 }
+
+// #14360: no_consolidate_reason round-trips through the request file and the
+// watcher echoes it as consolidation_skipped_reason on the result.
+func TestIssueRequestWatcher_NoConsolidateReason(t *testing.T) {
+	tests := []struct {
+		name       string
+		reason     string
+		wantReason string
+	}{
+		{name: "no reason leaves the result unmarked", reason: "", wantReason: ""},
+		{name: "reason is recorded in the result", reason: "unrelated code change", wantReason: "unrelated code change"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			created := 0
+			srv := newIssueMockServer(t, "", &created, nil, nil)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			dir := withIssueDir(t)
+
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Repo: "o/r", Title: "Fix capture path", Body: "detail", Agent: "scanner",
+				NoConsolidateReason: tt.reason,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(reqPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got IssueRequest
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.NoConsolidateReason != tt.reason {
+				t.Errorf("request round-trip reason = %q, want %q", got.NoConsolidateReason, tt.reason)
+			}
+
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			if created != 1 {
+				t.Fatalf("expected 1 issue created, got %d", created)
+			}
+			b, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
+			if err != nil {
+				t.Fatalf("result file missing: %v", err)
+			}
+			var res IssueResponse
+			if err := json.Unmarshal(b, &res); err != nil {
+				t.Fatal(err)
+			}
+			if !res.OK || res.Consolidated || res.ConsolidationSkippedReason != tt.wantReason {
+				t.Errorf("unexpected result: %+v", res)
+			}
+		})
+	}
+}

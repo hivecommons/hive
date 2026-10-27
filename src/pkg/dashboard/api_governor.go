@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
-	"github.com/hivecommons/hive/pkg/logread"
 )
 
 func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request) {

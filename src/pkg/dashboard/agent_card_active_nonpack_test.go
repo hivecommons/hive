@@ -3,9 +3,9 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -53,7 +53,7 @@ func TestBuildAgentsIncludesActiveAgentOutsideCurrentPack(t *testing.T) {
 			Name:         "supervisor",
 			Config:       supervisorCfg,
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"scanner": {
 			Name:          "scanner",
@@ -61,7 +61,7 @@ func TestBuildAgentsIncludesActiveAgentOutsideCurrentPack(t *testing.T) {
 			State:         crux.StatePaused,
 			Paused:        true,
 			PausedTrigger: "acmm-pack",
-			OutputBuffer:  agent.NewRingBuffer(10),
+			OutputBuffer:  cruxtest.NewRingBuffer(10),
 		},
 	}
 
@@ -122,7 +122,7 @@ func TestBuildAgentsWithHidden_RuntimePausedGhostNotResurrectedByConfigPass(t *t
 			State:         crux.StatePaused,
 			Paused:        true,
 			PausedTrigger: "acmm-pack",
-			OutputBuffer:  agent.NewRingBuffer(10),
+			OutputBuffer:  cruxtest.NewRingBuffer(10),
 		},
 	}
 
@@ -179,7 +179,7 @@ func TestBuildAgentsWithHidden_ReportsPackInactiveGhost(t *testing.T) {
 			Name:         "supervisor",
 			Config:       supervisorCfg,
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"scanner": {
 			Name:          "scanner",
@@ -187,7 +187,7 @@ func TestBuildAgentsWithHidden_ReportsPackInactiveGhost(t *testing.T) {
 			State:         crux.StatePaused,
 			Paused:        true,
 			PausedTrigger: "acmm-pack",
-			OutputBuffer:  agent.NewRingBuffer(10),
+			OutputBuffer:  cruxtest.NewRingBuffer(10),
 		},
 	}
 

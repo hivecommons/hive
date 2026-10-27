@@ -106,7 +106,9 @@ const (
 	// capExtExecOMP (declared beside it as "ext-exec/omp") is the same opt-in
 	// for the OMP workbench host (#8361 step 9, #6899), gated by
 	// runs.external.omp. capExtExecVibeKanban is the local board/workspace host
-	// opt-in, gated by runs.external.vibe_kanban. The tokens are independent:
+	// opt-in, gated by runs.external.vibe_kanban. The Claude Managed Agents
+	// token is the private-spoke hosted prototype, gated by
+	// runs.external.claude_managed_agents. The tokens are independent:
 	// declaring one grants nothing for another engine.
 	//
 	// capRepoScope: the hub accepts a versioned contributor repository scope
@@ -139,6 +141,7 @@ func serverCapabilities() []string {
 		capExtExecFlue,
 		capExtExecOMP,
 		capExtExecVibeKanban,
+		capExtExecClaudeManagedAgents,
 		capFixPRInterrupt,
 		capRepoScope,
 	}

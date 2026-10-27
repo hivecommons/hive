@@ -26,6 +26,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_WHY_ROLE"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_STAGE"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTIONABLE_STAGE"),
+		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_POLL_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_POLL_MAX"),
 		"var _stageTrackerSel = new Set(); var _stageTrackerSelAnchor = ''; var _stageTrackerMenu = null; var _stageTracker = null; var _statusSeqFloor = 0; var _stageTrackerEtag = 'e'; var _stageTrackerSig = 's';",
 		jsFunc(t, html, "esc"),
 		jsFunc(t, html, "repoParts"),
@@ -55,6 +57,9 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerActionLabel"),
 		jsFunc(t, html, "stageTrackerActionRequest"),
 		jsFunc(t, html, "stageTrackerActionSummary"),
+		jsFunc(t, html, "stageTrackerDelegatedSummary"),
+		jsFunc(t, html, "stageTrackerDelegatedDone"),
+		jsFunc(t, html, "stageTrackerAwaitDelegated"),
 		jsFunc(t, html, "stageTrackerPatchItem"),
 		jsFunc(t, html, "stageTrackerRunActions"),
 	}, "\n")
@@ -134,7 +139,7 @@ const ctx = { user: true, canHold: true, canHuman: true };
 const parked = { repo: 'o/r', kind: 'issue', number: 1, title: 'Parked', url: 'https://github.com/o/r/issues/1', stage: 45, modifiers: ['needs-decision'] };
 let as = stageTrackerRowActions(parked, ctx);
 assert.deepStrictEqual(ids(as), ['decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
-assert.deepStrictEqual(ids(as[0].submenu), ['decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'], 'an issue gets approve / direction / close');
+assert.deepStrictEqual(ids(as[0].submenu), ['decide:delegate', 'decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'], 'an issue gets let-hive-decide first, then approve / direction / close');
 assert.ok(as.every(a => a.enabled), 'everything is enabled for a writer');
 
 const plain = { repo: 'o/r', kind: 'issue', number: 2, url: 'u', stage: 20, modifiers: [] };
@@ -150,9 +155,10 @@ assert.deepStrictEqual(ids(as), ['release', 'retry', 'open', 'copy'], 'held row 
 const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'] };
 as = stageTrackerRowActions(pr85, ctx);
 assert.strictEqual(as[0].id, 'decide'); assert.strictEqual(as[0].label, 'Decide…');
-assert.deepStrictEqual(ids(as[0].submenu), ['decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction'], 'a PR at 085 gets the full decision set');
-assert.strictEqual(as[0].submenu[0].label, 'Approve (/lgtm + /approve)');
-assert.strictEqual(as[0].submenu[1].label, 'Close as superseded by…');
+assert.deepStrictEqual(ids(as[0].submenu), ['decide:delegate', 'decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction'], 'a PR at 085 gets the full decision set, Let hive decide first');
+assert.strictEqual(as[0].submenu[0].label, 'Let hive decide');
+assert.strictEqual(as[0].submenu[1].label, 'Approve (/lgtm + /approve)');
+assert.strictEqual(as[0].submenu[2].label, 'Close as superseded by…');
 assert.ok(as[0].submenu.every(o => o.enabled));
 // The pill alone (no stage) is enough; a PR at 085 without the pill too.
 const pilled = { ...pr85, stage: 70 };
@@ -170,7 +176,7 @@ assert.strictEqual(tgt.kind, 'pr'); assert.strictEqual(tgt.number, 458);
 as = stageTrackerRowActions(issueWithPR, ctx);
 assert.strictEqual(as[0].id, 'decide'); assert.strictEqual(as[0].label, 'Decide PR #458…');
 assert.strictEqual(as[0].target.number, 458);
-assert.deepStrictEqual(ids(as[0].submenu), ['decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction']);
+assert.deepStrictEqual(ids(as[0].submenu), ['decide:delegate', 'decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction']);
 assert.strictEqual(stageTrackerDecisionTarget({ ...issueWithPR, linked_prs: [issueWithPR.linked_prs[0]] }), null, 'mirrored 85 with no parked PR is not decidable');
 assert.strictEqual(stageTrackerDecisionTarget(parked), parked, 'a 045 issue decides itself');
 
@@ -205,7 +211,7 @@ assert.strictEqual(by.open.enabled, true);
 const menu = stageTrackerMenuHtml(as, 'o/r#1 · Parked');
 assert.ok(menu.startsWith('<div class="ham-menu" role="menu"'));
 assert.ok(menu.includes('<div class="ham-menu-head">o/r#1 · Parked</div>'));
-assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 10, 'six top-level items + four decide options');
+assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 11, 'six top-level items + five decide options');
 assert.ok(menu.includes('data-ham-act="hold" tabindex="-1" aria-disabled="true" title="' + STAGE_TRACKER_WHY_WRITE + '"'), 'disabled items carry the reason');
 assert.ok(menu.includes('aria-haspopup="menu" aria-expanded="false"'), 'Decide is a collapsed submenu');
 assert.ok(menu.includes('<div class="ham-submenu" role="menu" aria-label="Decide…">'));
@@ -398,6 +404,69 @@ let refreshed = 0; function stageTrackerAfterActions() { refreshed++; }
   assert.strictEqual(sum.msg, 'Hold: 1/5 done. Failed: o/r#2 — a; o/x#3 — b; o/r#4 — c; +1 more');
   assert.strictEqual(stageTrackerActionSummary('Release hold', [{ item: i1, ok: true }]).type, 'success');
   assert.ok(stageTrackerActionSummary('Re-evaluate now', [{ item: i1, ok: true, data: { status: 'debounced' } }]).msg.includes('already running'));
+})().catch(e => { console.error(e); process.exit(1); });
+`)
+}
+
+// TestStageTrackerLetHiveDecide: "Let hive decide" is the first Decide…
+// entry on rows and in the selection bar, posts to the delegated-decision
+// endpoint with the row's park words, polls the job until it ends, reports
+// the verdict and flags a failed job as a failed row; the audit view marks a
+// delegated decision apart from a person's.
+func TestStageTrackerLetHiveDecide(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`'decide:delegate': 'Let hive decide'`,
+		`/decide-delegated'`,
+		`'Hive is deciding ' + stageTrackerRefOf(it)`,
+		`function auditDelegatedDecision(e)`,
+		`>delegated</span>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("index.html missing %q", want)
+		}
+	}
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+jsFunc(t, html, "auditDelegatedDecision")+`
+const ids = as => as.map(a => a.id);
+const ctx = { user: true, canHold: true, canHuman: true };
+const pr = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'], reason: 'requires_human', caption: 'Needs human decision', sentinel_reason: '' };
+const issue = { repo: 'o/r', kind: 'issue', number: 5, url: 'u', stage: 45, modifiers: ['needs-decision'] };
+assert.strictEqual(stageTrackerDecideOptions(pr, ctx)[0].id, 'decide:delegate');
+assert.strictEqual(stageTrackerDecideOptions(issue, ctx)[0].id, 'decide:delegate');
+assert.strictEqual(stageTrackerDecideOptions(issue, { user: '', canHold: false })[0].enabled, false, 'needs write access like its siblings');
+const sel = stageTrackerSelectionActions([pr], () => ctx);
+assert.strictEqual(sel[0].submenu[0].id, 'decide:delegate'); assert.strictEqual(sel[0].submenu[0].label, 'Let hive decide'); assert.ok(sel[0].submenu[0].enabled);
+assert.deepStrictEqual(stageTrackerActionRequest(pr, 'decide:delegate'), { url: '/api/repos/o/r/items/4/decide-delegated', body: { type: 'pr', reason: 'requires_human', caption: 'Needs human decision', sentinel_reason: '' }, poll: true });
+assert.strictEqual(stageTrackerActionLabel('decide:delegate'), 'Let hive decide');
+assert.strictEqual(stageTrackerDelegatedDone({ status: 'running' }), false);
+assert.strictEqual(stageTrackerDelegatedDone({ status: 'done' }), true);
+assert.strictEqual(stageTrackerDelegatedDone(null), false);
+assert.strictEqual(stageTrackerDelegatedSummary([{ item: pr, ok: true, data: { decision: { verdict: 'approve', rule: 'small-low-risk' } } }, { item: issue, ok: true, data: { decision: { verdict: 'recommend-only', rule: 'hive-policy', keeps_park: true } } }, { item: issue, ok: false }]),
+  'Hive decided: o/r#4 approve (small-low-risk); o/r#5 recommend-only (hive-policy) — kept for the owner');
+assert.strictEqual(stageTrackerDelegatedSummary([{ item: pr, ok: true, data: {} }]), '');
+assert.ok(auditDelegatedDecision({ action: 'repo_item_decision_delegated' }));
+assert.ok(auditDelegatedDecision({ action: 'repo_item_decision_delegated_failed' }));
+assert.ok(!auditDelegatedDecision({ action: 'repo_item_decision_approve' }));
+assert.ok(!auditDelegatedDecision(null));
+
+// The run: POST answers 202 running; GET polls land done / failed.
+const calls = []; const toasts = []; const progress = [];
+const jobs = { '/api/repos/o/r/items/4/decide-delegated': [{ status: 'running' }, { status: 'running' }, { status: 'done', decision: { verdict: 'approve', rule: 'default-release' } }],
+               '/api/repos/o/r/items/5/decide-delegated': [{ status: 'running' }, { status: 'failed', error: 'GitHub 502' }] };
+global.fetch = async (url, init) => { calls.push({ url, method: (init && init.method) || 'GET' }); const q = jobs[url]; const j = q.length > 1 ? q.shift() : q[0]; return { ok: true, status: init ? 202 : 200, json: async () => j }; };
+global.showToast = (msg, type) => { toasts.push(type + ':' + msg); return null; }; global.dismissToast = () => {};
+global.setTimeout = fn => fn();
+function stageTrackerProgressToast(label, n) { return { update() {}, done(msg, type) { progress.push(type + ':' + msg); } }; }
+function stageTrackerAfterActions() {}
+(async () => {
+  const res = await stageTrackerRunActions([pr, issue], 'decide:delegate', {});
+  assert.deepStrictEqual(res.map(r => r.ok), [true, false]);
+  assert.strictEqual(res[1].error, 'GitHub 502');
+  assert.strictEqual(res[0].data.decision.verdict, 'approve');
+  assert.deepStrictEqual(calls.filter(c => c.method === 'POST').map(c => c.url), ['/api/repos/o/r/items/4/decide-delegated', '/api/repos/o/r/items/5/decide-delegated']);
+  assert.strictEqual(calls.filter(c => c.method === 'GET' && c.url.endsWith('/4/decide-delegated')).length, 2, 'polls until the job ends');
+  assert.ok(toasts.includes('info:Hive is deciding o/r#4…'));
+  assert.strictEqual(progress[0], 'error:Let hive decide: 1/2 done. Failed: o/r#5 — GitHub 502. Hive decided: o/r#4 approve (default-release)');
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }

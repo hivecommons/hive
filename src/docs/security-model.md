@@ -41,17 +41,17 @@ Companion pages: [security-threat-model.md](security-threat-model.md)
 
 | Control | Mitigates | Where it lives | How to check it is on |
 |---|---|---|---|
-| Fresh context per task (`clear_on_kick`) | injection persistence | `src/pkg/agent/manager_kick.go` | `hive.yaml` agent block |
-| Watchdog and crash-loop pause | stuck agents | `src/pkg/agent/watchdog_fleet.go` | `conditions[]` in `GET /api/agents` |
+| Fresh context per task (`clear_on_kick`) | injection persistence | `src/crux/agent/manager_kick.go` | `hive.yaml` agent block |
+| Watchdog and crash-loop pause | stuck agents | `src/crux/agent/watchdog_fleet.go` | `conditions[]` in `GET /api/agents` |
 | Per-agent Unix users, `su-exec` 4750 | cross-agent access, privilege escalation | `src/deploy/entrypoint.sh`, `src/Dockerfile` | `/var/run/hive/uid-map.json`; `suid-contract` CI job |
-| Per-agent tool denials; GitHub MCP writes denied | GitHub writes through tools | `src/pkg/agent/manager_launch.go` | agent launch command |
+| Per-agent tool denials; GitHub MCP writes denied | GitHub writes through tools | `src/crux/agent/manager_launch.go` | agent launch command |
 | Credential-free sandbox and push broker (opt-in) | credential theft | `src/pkg/sandbox`, `src/pkg/pushbroker` | `agentSandboxEnabled` in `GET /api/config/governor` |
 | Work ledger and knowledge store instead of memory | injection persistence | `src/pkg/beads`, `src/pkg/knowledge` | `bd` CLI |
 | `ioscan` scanning and canaries (default on) | prompt injection, secret leakage | `src/pkg/ioscan` | `ioscanEnabled`, `ioscanFailMode` in `GET /api/config/governor` |
 | Trajectory review (default on) | goal drift | `src/pkg/trajectory` | `governor.trajectory.enabled` |
 | Policy proxy and repo allowlist | credential theft, out-of-scope writes | `src/pkg/proxy/rules.go` | `403` with `X-Hive-Proxy-Blocked` |
 | Forced egress through the proxy (iptables) | proxy bypass | `src/deploy/entrypoint.sh` | boot log; no `HIVE_PROXY_ADVISORY_OK` |
-| Tiered GitHub tokens per agent mode | blast radius of a leaked token | `src/pkg/agentmode`, `src/pkg/agent/manager_tokens.go` | token tier on the agent card |
+| Tiered GitHub tokens per agent mode | blast radius of a leaked token | `src/pkg/agentmode`, `src/crux/agent/manager_tokens.go` | token tier on the agent card |
 | Proxy-side credential injection (opt-in) | token theft | `HIVE_PROXY_INJECT_GH_AUTH` | `security.credentialInjection` in governor config |
 | Inference-key placeholder swap | provider key theft | `src/pkg/apiproxy` | agent env shows `sk-hive-<agent>` |
 | `gh` wrapper with per-agent restrictions | denied commands | `bin/gh-wrapper.sh` | `gh` resolves to `/usr/local/bin/gh` |
@@ -175,6 +175,18 @@ agent by the user ID that owns the socket, read from `/proc/net/tcp`, which a
 process cannot forge. Only `api.github.com` is inspected; other hosts are
 tunnelled without inspection. See
 [net-admin-requirement.md](net-admin-requirement.md).
+
+**Plain-HTTP forwards.** The redirect covers port 443 only, so plain HTTP
+reaches the proxy through its explicit proxy port. Those forwards are
+identified like any other request and dialled only when the resolved address
+is globally routable: loopback services beside the proxy, the link-local
+metadata endpoint, RFC 1918/CGNAT cluster addresses and multicast are refused
+with `403` and counted as violations (loopback excepted — agents are handed
+`NO_PROXY` for it, so it is logged as the client misconfiguration it is). The
+check runs at dial time on the resolved address, so a hostname pointed inward
+is refused on the same evidence as a literal IP. Set
+`HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` only where a private-network plain-HTTP
+destination is intended.
 
 **Hub-to-spoke channel.** Heartbeats carry a per-hive bearer key derived from
 the hub master secret and are compared in constant time. The payload is
@@ -358,9 +370,10 @@ until code-owner review is required in branch protection.
 * **Hub registration has no review step.** Any spoke with the derived keys
   can register.
 * **Trust tiers do not decay.**
-* **Trajectory review and the `ioscan` classifier fail open.** The
-  deterministic rules, canaries, proxy and token tiers hold when a model is
-  down.
+* **Trajectory review fails open; the `ioscan` classifier fails open only
+  at L1–L4.** At L5–L6 text is withheld when the classifier cannot answer.
+  The deterministic rules, canaries, proxy and token tiers hold when a model
+  is down.
 
 ## 12. How to audit a running hive
 

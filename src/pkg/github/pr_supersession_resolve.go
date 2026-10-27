@@ -179,6 +179,49 @@ func (c *Client) releaseSupersessionPark(ctx context.Context, prRepo string, pr 
 	return nil
 }
 
+// SupersessionActionReleased: the sweep took its own `needs-human` off a
+// PR it had escalated because the cause is gone — the claimed issue was
+// reopened, the claim rewritten, or the link turned out to be a reference
+// rather than a closing claim (hivecommons/hive#14155).
+const SupersessionActionReleased = "released-needs-human"
+
+// supersessionEscalationMark is the phrase every escalation notice carries;
+// a sweep comment without it (a resolved / kept-open notice) parked nothing.
+const supersessionEscalationMark = "**Decision needed"
+
+// releaseStaleSupersessionPark lifts the sweep's own escalation when the
+// supersession it announced no longer holds. The park's cause is the sweep
+// notice: a PR carrying `needs-human` that the hive applied while the
+// sweep's "Decision needed" notice stands is the sweep's park, and it clears
+// with the cause instead of waiting for a maintainer to strip the label
+// (#13959 and #14090 sat at stage/085-needs-decision, verdict approved and
+// CI green, for a label whose cause had gone). A person's `needs-human`,
+// one the hive cannot attribute, or one next to no sweep notice is left
+// alone. The lane re-derives the stage from the labels on its next pass.
+func (c *Client) releaseStaleSupersessionPark(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest) (SupersessionSweepEvent, string, error) {
+	if !supersessionHasLabel(pr, issueNeedsHumanLabel) {
+		return SupersessionSweepEvent{}, "", nil
+	}
+	notice, err := c.findSupersessionComment(ctx, owner, repo, pr.GetNumber())
+	if err != nil {
+		return SupersessionSweepEvent{}, "", err
+	}
+	if notice == nil || !strings.Contains(notice.GetBody(), supersessionEscalationMark) {
+		return SupersessionSweepEvent{}, "", nil
+	}
+	if c.supersessionNeedsHumanByPerson(ctx, owner, repo, pr) {
+		return SupersessionSweepEvent{}, "", nil
+	}
+	if err := c.releaseSupersessionPark(ctx, prRepo, pr); err != nil {
+		return SupersessionSweepEvent{}, "", err
+	}
+	if c.logger != nil {
+		c.logger.Info("supersession sweep: released its needs-human, the cause is gone", "repo", prRepo, "pr", pr.GetNumber())
+	}
+	event := SupersessionSweepEvent{Repo: prRepo, Number: pr.GetNumber(), Author: safeGetLogin(pr.GetUser()), Action: SupersessionActionReleased}
+	return event, "resolved", nil
+}
+
 // prHeadBehindBase is how many base commits the PR head lacks; 0 means the
 // head already contains the base tip, so GitHub's file list for the PR is
 // the diff against the base as it stands.
@@ -204,7 +247,7 @@ func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo
 		// A person parked it; the hive does not resolve over them.
 		return event, "", nil
 	}
-	if level < acmmLevelFullyAutonomous {
+	if level < acmmLevelAutonomous {
 		return c.escalateSupersededPR(ctx, prRepo, owner, repo, pr, event, closer,
 			"this hive is below ACMM L6, so the sweep will not close or update PRs automatically. A human should decide whether to close this PR.")
 	}

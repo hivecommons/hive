@@ -8,7 +8,7 @@ import (
 func TestStageLabelsConfigGetterDefaults(t *testing.T) {
 	var s StageLabelsConfig
 	if !s.IsEnabled() || !s.Stalled.IsRequireQuiet() || !s.Adoption.IsEnabled() ||
-		!s.Adoption.InPlaceEnabled() || !s.Adoption.StrictAttributionEnabled() || !s.ContributorNudge.IsEnabled() {
+		!s.Adoption.InPlaceEnabled() || !s.Adoption.StrictAttributionEnabled() || !s.Adoption.AutoMergeEnabled() || !s.ContributorNudge.IsEnabled() {
 		t.Fatal("nil tri-state toggles default on")
 	}
 	if s.Adoption.EffectiveAfterOffline() != DefaultAdoptAfterOffline ||
@@ -32,13 +32,13 @@ func TestStageLabelsConfigGetterDefaults(t *testing.T) {
 		Dwell:                   map[string]string{" Review ": " 3h ", "bad": "x", "neg": "-1h"},
 		ContributorNudge:        ContributorNudgeConfig{Enabled: &off, RenudgeInterval: "30m"},
 		Adoption: StageAdoptionConfig{
-			Enabled: &off, InPlace: &off, StrictAttribution: &off,
+			Enabled: &off, InPlace: &off, StrictAttribution: &off, AutoMerge: &off,
 			AfterOffline: "2m", AfterUnregistered: "0s",
 		},
 		Stalled: StageStalledConfig{RequireQuiet: &off},
 	}
 	if s.IsEnabled() || s.Stalled.IsRequireQuiet() || s.Adoption.IsEnabled() ||
-		s.Adoption.InPlaceEnabled() || s.Adoption.StrictAttributionEnabled() || s.ContributorNudge.IsEnabled() {
+		s.Adoption.InPlaceEnabled() || s.Adoption.StrictAttributionEnabled() || s.Adoption.AutoMergeEnabled() || s.ContributorNudge.IsEnabled() {
 		t.Fatal("explicit false turns each toggle off")
 	}
 	if s.EffectivePresenceWindow() != time.Minute || s.Adoption.EffectiveAfterOffline() != 2*time.Minute ||

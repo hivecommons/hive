@@ -34,12 +34,12 @@ Scope: freeze today's behaviour. No production code changes.
 - `src/pkg/stageengine/testdata/stage_goldens/*.json`: one fixture per
   lane × reason × verdict × author-kind × adoption combination reachable in
   `ClassifyStage`/`ResolveStage` (`src/pkg/stageengine/derive_pr_classify.go:261`,
-  `src/pkg/stageengine/derive_pr_classify.go:459`), serialised as
+  `src/pkg/stageengine/derive_pr_classify.go:454`), serialised as
   `[]stageObservation` → `{stage, rank, reason, role, terminal}`. Generated
   by a `go test -run TestStageGoldens -update` flag; checked in.
 - `src/pkg/github/testdata/issue_stage_goldens/*.json`: one per bucket ×
   claim kind × park label × likely-done × covering-PR stage for
-  `IssueStageFor` (`src/pkg/github/issue_stage_labels.go:145`).
+  `IssueStageFor` (`src/pkg/github/issue_stage_labels.go:205`).
 - `src/pkg/github/automerge/stage_goldens_test.go`,
   `src/pkg/github/issue_stage_goldens_test.go`: replay fixtures; fail on any
   diff.
@@ -128,7 +128,7 @@ Scope: no out-of-cycle code names a stage label.
 
 - `src/cmd/hive/claimswire.go`: ledger hooks call `FactSink.Claimed` /
   `ClaimReleased` instead of `claimStageFor` + label writes
-  (`src/cmd/hive/claimswire.go:158-171`, `src/cmd/hive/claimswire.go:196-201`).
+  (`src/cmd/hive/claimswire.go:176-178`, `src/cmd/hive/claimswire.go:236-238`).
 - `src/pkg/github/issue_inprogress.go`: the `claim` request submits
   `InProgress`; the sweep's 040 swap becomes `CoveredBy`
   (`src/pkg/github/issue_inprogress.go:126-141`, `src/pkg/github/issue_inprogress.go:186`).

@@ -1,0 +1,1 @@
+- Crux: `cmd/crux` is a host composition root in the root module, like `cmd/hive`, and is no longer counted as a ring package by the outbound ratchet; with its `config`/`defsrc` rows gone the ring imports nothing from Hive in non-test code (Stage 2 prerequisite 3 complete).

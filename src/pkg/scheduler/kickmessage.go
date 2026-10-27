@@ -273,8 +273,12 @@ func (s *Scheduler) buildAgentListAndRoles() (list, roles string) {
 }
 
 type KickMessage struct {
-	Agent     string
-	Repo      string
+	Agent string
+	Repo  string
+	// Forge is the forge kind ("github", "gitlab", "gitea") the kick's repo
+	// lives on: Repo's repo_policies[].forge override, else project.forge
+	// (hivecommons/hive#14112). A kick with no Repo carries project.forge.
+	Forge     string
 	Message   string
 	IssueRefs []string
 }
@@ -335,6 +339,7 @@ func (s *Scheduler) BuildKickMessagesWithSkips(actionable *github.ActionableResu
 			messages = append(messages, KickMessage{
 				Agent:     agentName,
 				Repo:      repo,
+				Forge:     s.cfg.ForgeKindForRepo(repo),
 				Message:   msg,
 				IssueRefs: issueRefsForAgent(agentName, s.kickIssueRefs(targetIssues), s.issueCap()),
 			})

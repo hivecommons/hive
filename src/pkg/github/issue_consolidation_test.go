@@ -21,6 +21,7 @@ type openTwin struct {
 	number      int
 	title, body string
 	author      string
+	labels      []string
 }
 
 // closedTwin is one closed issue served by consolidationMockServer, closed
@@ -142,10 +143,15 @@ func consolidationMockServer(t *testing.T, open []openTwin, m *consolidationMock
 			}
 			out := make([]map[string]any, 0, len(open))
 			for _, o := range open {
+				labels := make([]map[string]any, 0, len(o.labels))
+				for _, l := range o.labels {
+					labels = append(labels, map[string]any{"name": l})
+				}
 				out = append(out, map[string]any{
 					"number": o.number, "title": o.title, "body": o.body, "state": "open",
 					"html_url": "https://github.example/o/r/issues/" + strconv.Itoa(o.number),
 					"user":     map[string]any{"login": o.author},
+					"labels":   labels,
 				})
 			}
 			b, _ := json.Marshal(out)
@@ -527,6 +533,81 @@ func TestIssueRequestWatcher_FoldsSameComponentStream(t *testing.T) {
 	}
 	if !res.OK || !res.Consolidated || !res.AlreadyExisted || res.Number != 58 {
 		t.Errorf("result = %+v, want ok/consolidated naming #58", res)
+	}
+	if res.ConsolidatedReason != "component:scripts/lib/svg-active-content.mjs" {
+		t.Errorf("consolidated_reason = %q, want the shared component path", res.ConsolidatedReason)
+	}
+}
+
+// The #14360 failure: a scanner code-change finding on a Windows module was
+// folded into an outreach issue parked on a maintainer decision (an admin
+// topics edit that merely cites the module), where no PR would ever pick it
+// up. A parked issue or another agent lane's issue neither takes the fold nor
+// counts toward the component stream, so the finding files on its own.
+func TestIssueRequestWatcher_DoesNotFoldIntoParkedOrOtherLaneIssue(t *testing.T) {
+	closedSiblings := []closedTwin{
+		{number: 290, author: testBot, title: "[scanner] a", body: "windows/HotshotCapture.psm1 a", stateReason: "completed", closedAgo: 24 * time.Hour},
+		{number: 291, author: testBot, title: "[scanner] b", body: "windows/HotshotCapture.psm1 b", stateReason: "completed", closedAgo: 24 * time.Hour},
+		{number: 292, author: testBot, title: "[scanner] c", body: "windows/HotshotCapture.psm1 c", stateReason: "completed", closedAgo: 24 * time.Hour},
+	}
+	cases := []struct {
+		name   string
+		labels []string
+	}{
+		{name: "parked on decision, same lane", labels: []string{"agent/scanner", NeedsDecisionStageLabel}},
+		{name: "other agent lane", labels: []string{"agent/outreach"}},
+		{name: "parked outreach issue", labels: []string{"help wanted", "agent/outreach", NeedsDecisionStageLabel}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &consolidationMock{closed: closedSiblings}
+			srv := consolidationMockServer(t, []openTwin{{
+				number: 306, author: testBot, labels: tc.labels,
+				title: "[outreach] hotshot topics list only macos",
+				body:  "Windows (PowerShell, `windows/HotshotCapture.psm1`); run gh repo edit --add-topic windows",
+			}}, m)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+
+			_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+				Repo: "o/r", Agent: "scanner",
+				Title: "[scanner] windows: Gemini CLI still gets the bracketed fallback",
+				Body:  "Get-HotshotTypedText in windows/HotshotCapture.psm1 has no gemini arm",
+			})
+			if m.created != 1 || len(m.commentedOn) != 0 || res.Consolidated {
+				t.Fatalf("created=%d comments=%v result=%+v, want a fresh issue, not a fold into #306", m.created, m.commentedOn, res)
+			}
+		})
+	}
+}
+
+// The same stream folds as before when the open sibling is in the requester's
+// own lane and not parked: the #14360 vetoes only remove ineligible targets.
+func TestIssueRequestWatcher_FoldsIntoSameLaneUnparkedSibling(t *testing.T) {
+	m := &consolidationMock{closed: []closedTwin{
+		{number: 290, author: testBot, title: "[scanner] a", body: "windows/HotshotCapture.psm1 a", stateReason: "completed", closedAgo: 24 * time.Hour},
+		{number: 291, author: testBot, title: "[scanner] b", body: "windows/HotshotCapture.psm1 b", stateReason: "completed", closedAgo: 24 * time.Hour},
+	}}
+	srv := consolidationMockServer(t, []openTwin{{
+		number: 300, author: testBot, labels: []string{"agent/scanner", "help wanted"},
+		title: "[scanner] windows: clipboard fallback drops the path",
+		body:  "windows/HotshotCapture.psm1 Set-Clipboard via windows/clipboard.ps1",
+	}}, m)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	c.appBotLogin = testBot
+
+	_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+		Repo: "o/r", Agent: "scanner",
+		Title: "[scanner] windows: Gemini CLI still gets the bracketed fallback",
+		Body:  "Get-HotshotTypedText in windows/HotshotCapture.psm1 has no gemini arm",
+	})
+	if m.created != 0 || len(m.commentedOn) != 1 || m.commentedOn[0] != 300 {
+		t.Fatalf("created=%d comments=%v, want the finding folded into #300", m.created, m.commentedOn)
+	}
+	if !res.Consolidated || res.ConsolidatedReason != "component:windows/HotshotCapture.psm1" {
+		t.Errorf("result = %+v, want consolidated with a component reason", res)
 	}
 }
 

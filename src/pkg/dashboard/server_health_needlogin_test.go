@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
@@ -79,7 +79,7 @@ func TestHealthSummary_QuietByDesignAgentsAreIdleNotDown(t *testing.T) {
 		}},
 	}}
 	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
-	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
+	deps.AgentMgr = cruxtest.NewRuntime(deps.Config.Agents, deps.Logger, crux.ProjectContext{})
 	healthAgentStatuses = func() map[string]*crux.Process {
 		return map[string]*crux.Process{
 			"reviewer": {State: crux.StateStopped, Config: deps.Config.Agents["reviewer"]},
@@ -117,7 +117,7 @@ func TestHealthSummary_AgentAuthCheckAggregatesProviderAuthBlocks(t *testing.T) 
 		"idle": {Cadences: map[string]config.Cadence{"scanner": "15m", "quality": "15m"}},
 	}}
 	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
-	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
+	deps.AgentMgr = cruxtest.NewRuntime(deps.Config.Agents, deps.Logger, crux.ProjectContext{})
 	healthAgentStatuses = func() map[string]*crux.Process {
 		return map[string]*crux.Process{
 			"scanner": {
@@ -151,7 +151,7 @@ func TestHealthSummary_AgentAuthCheckIgnoresExpiredProviderBlocks(t *testing.T) 
 	cfg := config.AgentConfig{Backend: "copilot", Enabled: true}
 	deps.Config.Agents = map[string]config.AgentConfig{"scanner": cfg}
 	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
-	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
+	deps.AgentMgr = cruxtest.NewRuntime(deps.Config.Agents, deps.Logger, crux.ProjectContext{})
 	healthAgentStatuses = func() map[string]*crux.Process {
 		return map[string]*crux.Process{
 			"scanner": {
@@ -202,7 +202,7 @@ func tokenHealthServer(t *testing.T, agentCfgs map[string]config.AgentConfig, st
 	}
 	deps.Config.Governor = config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": idleMode}}
 	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
-	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
+	deps.AgentMgr = cruxtest.NewRuntime(deps.Config.Agents, deps.Logger, crux.ProjectContext{})
 	deps.Tokens = collector
 	healthAgentStatuses = func() map[string]*crux.Process { return statuses }
 	t.Cleanup(func() { healthAgentStatuses = nil })
@@ -271,7 +271,7 @@ func TestHealthSummary_NeedLoginBucket(t *testing.T) {
 		"needy-b": {Backend: "bob", Enabled: true},    // unauthenticated → need login
 		"needy-a": {Backend: "bob", Enabled: true},    // unauthenticated → need login
 	}
-	deps.AgentMgr = agent.NewManager(agentCfgs, deps.Logger, agent.ProjectContext{})
+	deps.AgentMgr = cruxtest.NewRuntime(agentCfgs, deps.Logger, crux.ProjectContext{})
 
 	SetBackendAuthProvider(func(backend string) (available, known bool) {
 		switch backend {
@@ -310,9 +310,9 @@ func TestHealthSummary_NeedLoginBucket(t *testing.T) {
 // non-running agent is merely unauthenticated: no "down" segment at all.
 func TestHealthSummary_NeedLoginOnly(t *testing.T) {
 	deps := testDeps(t)
-	deps.AgentMgr = agent.NewManager(map[string]config.AgentConfig{
+	deps.AgentMgr = cruxtest.NewRuntime(map[string]config.AgentConfig{
 		"supervisor": {Backend: "bob", Enabled: true},
-	}, deps.Logger, agent.ProjectContext{})
+	}, deps.Logger, crux.ProjectContext{})
 
 	SetBackendAuthProvider(func(backend string) (available, known bool) {
 		return false, backend == "bob"
@@ -383,7 +383,7 @@ func TestHealthSummary_RunningAtLoginPromptNeedsLogin(t *testing.T) {
 		"wedged": {Backend: "copilot", Enabled: true},
 		"worker": {Backend: "copilot", Enabled: true},
 	}
-	deps.AgentMgr = agent.NewManager(agentCfgs, deps.Logger, agent.ProjectContext{})
+	deps.AgentMgr = cruxtest.NewRuntime(agentCfgs, deps.Logger, crux.ProjectContext{})
 	// The probe says copilot credentials exist — proving that the pane-poller
 	// NeedsLogin signal alone moves a RUNNING agent into the bucket.
 	SetBackendAuthProvider(func(backend string) (available, known bool) { return true, true })
@@ -437,9 +437,9 @@ func summaryOf(t *testing.T, s *Server) (status string, fails int) {
 func needLoginServer(t *testing.T) *Server {
 	t.Helper()
 	deps := testDeps(t)
-	deps.AgentMgr = agent.NewManager(map[string]config.AgentConfig{
+	deps.AgentMgr = cruxtest.NewRuntime(map[string]config.AgentConfig{
 		"supervisor": {Backend: "bob", Enabled: true},
-	}, deps.Logger, agent.ProjectContext{})
+	}, deps.Logger, crux.ProjectContext{})
 	SetBackendAuthProvider(func(backend string) (available, known bool) {
 		return false, backend == "bob" // known-unauthenticated → need login
 	})
@@ -512,9 +512,9 @@ func TestHealthBootGrace_NeedLoginPastGraceDegraded(t *testing.T) {
 // dependency failure.
 func TestHealthBootGrace_PersistentFailureDegradesEvenWithinGrace(t *testing.T) {
 	deps := testDeps(t)
-	deps.AgentMgr = agent.NewManager(map[string]config.AgentConfig{
+	deps.AgentMgr = cruxtest.NewRuntime(map[string]config.AgentConfig{
 		"supervisor": {Backend: "bob", Enabled: true},
-	}, deps.Logger, agent.ProjectContext{})
+	}, deps.Logger, crux.ProjectContext{})
 	SetBackendAuthProvider(func(backend string) (available, known bool) {
 		return false, backend == "bob"
 	})

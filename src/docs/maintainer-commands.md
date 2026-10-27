@@ -247,10 +247,15 @@ Issues labelled `hive/selfreport` were filed by a hive about itself
 affected hive is listed in the `Affected hives (N)` block of the body; hives
 that hit the same condition add themselves rather than filing duplicates, so
 the body block is the fleet-wide tally. Hives post a "cleared on <hive>" comment when the
-condition stops but never close these issues — close them when the fix has
-rolled out. A fingerprint closed within the last 7 days is not re-filed; a
-recurrence after that reopens the search and a new issue may appear, so
-`/reopen` the original instead if the fix did not hold.
+condition stops — at most once per hive per 24h for a flapping condition, and
+never under a closed issue (the hive reads the state first and records the
+close) — but never close these issues; close them when the fix has rolled
+out. Closing a self-report silences its reporter for that fingerprint for as
+long as the reporter keeps observing the condition (the 7-day cooldown runs
+from the last observation, not the close), so an old build that still carries
+the bug does not re-file daily after an "already fixed on v5" close. A hive
+that was quiet about it for 7 days and then sees it again files a new issue,
+so `/reopen` the original instead if the fix did not hold.
 
 ## Label-driven repositories
 

@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
@@ -306,13 +308,13 @@ func TestPRLifecycleState(t *testing.T) {
 }
 
 func TestPRFollowUpResumer_AdaptsManager(t *testing.T) {
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, discardLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(map[string]config.AgentConfig{}, discardLogger(), crux.ProjectContext{})
 	r := prFollowUpResumer{mgr: mgr}
 	if _, ok := r.SessionID("ghost"); ok {
 		t.Fatal("unknown agent must have no session")
 	}
 	err := r.SendResumeKick("ghost", "msg", "s1")
-	if !errors.Is(err, agent.ErrResumeSessionGone) || errors.Is(err, prfollowup.ErrBusy) {
+	if !errors.Is(err, crux.ErrResumeSessionGone) || errors.Is(err, prfollowup.ErrBusy) {
 		t.Fatalf("err = %v, want session-gone (a fallback), not busy", err)
 	}
 }
@@ -337,14 +339,14 @@ func TestPRFollowUpMetricsCounters_ReadsStatsFile(t *testing.T) {
 }
 
 // fakePRFollowUpResumeSessions is a session source that also exposes a
-// backend-native resume handle, like *agent.Manager does (#9606).
+// backend-native resume handle, like crux.Runtime does (#9606).
 type fakePRFollowUpResumeSessions struct {
 	fakePRFollowUpSessions
-	handle agent.ResumeHandle
+	handle crux.ResumeHandle
 	ok     bool
 }
 
-func (f fakePRFollowUpResumeSessions) ResumeHandle(string) (agent.ResumeHandle, bool) {
+func (f fakePRFollowUpResumeSessions) ResumeHandle(string) (crux.ResumeHandle, bool) {
 	return f.handle, f.ok
 }
 
@@ -359,7 +361,7 @@ func TestPRFollowUpWiring_CapturesBackendResumeHandle(t *testing.T) {
 	}
 	sessions := fakePRFollowUpResumeSessions{
 		fakePRFollowUpSessions: fakePRFollowUpSessions{"scanner": "s1"},
-		handle: agent.ResumeHandle{
+		handle: crux.ResumeHandle{
 			Backend: "copilot", SessionID: "sess-9606", Transcript: transcript,
 			Command: "copilot --resume sess-9606", CapturedAt: time.Now(),
 		},

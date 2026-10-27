@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hivecommons/hive/crux/openrouter"
+	"github.com/hivecommons/hive/crux/watsonx"
 	"github.com/hivecommons/hive/pkg/linearagent"
-	"github.com/hivecommons/hive/pkg/openrouter"
-	"github.com/hivecommons/hive/pkg/watsonx"
 )
 
 // --- watsonx ---

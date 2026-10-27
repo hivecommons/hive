@@ -96,7 +96,7 @@ from `.github/hooks/`, which would mean committing hive's hook into the target r
 that path is ruled out and the hive-owned hooks directory is the one used.
 
 Hub-launched agents already get a per-agent home directory
-(`/data/home/agents/<name>`, `src/pkg/agent/interactive_home.go`), so the Copilot and Codex
+(`/data/home/agents/<name>`, `src/crux/agent/interactive_home.go`), so the Copilot and Codex
 hook files have a place to live that hive controls without touching anything the operator owns.
 
 ### Roles

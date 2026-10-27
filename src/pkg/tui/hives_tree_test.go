@@ -3,12 +3,14 @@ package tui
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/hivecommons/hive/internal/hivectltest"
 	"github.com/hivecommons/hive/pkg/hivectl"
@@ -455,5 +457,64 @@ func TestHivesTreeNarrowKeepsIdentityScopeAndApplyHint(t *testing.T) {
 	}
 	if strings.Contains(view, "READINESS") {
 		t.Errorf("narrow tree kept the wide columns:\n%s", view)
+	}
+}
+
+// Uses the same shared fixture as the staging layer and the Web surface, with
+// additional discovered repositories. No command is executed before Enter.
+func TestHivesTreeLargeReviewNavigationDoesNotWrite(t *testing.T) {
+	h := treeHarness(t, nil)
+	var repositories []string
+	for i := 0; i < 60; i++ {
+		repositories = append(repositories, fmt.Sprintf("github/github.com/org/repository-%02d", i))
+	}
+	h.model.hivesEnv.discoverTree = func(context.Context, *hivectl.ProfileSet) ([]hivectl.TreeHubSnapshot, map[string]hivectl.TreeRepositorySnapshot) {
+		_, hubs, repos := hivectltest.ContributionStageFixture()
+		repos["alpha"] = hivectl.TreeRepositorySnapshot{Discovery: hivectl.TreeComplete, Repositories: repositories}
+		return hubs, repos
+	}
+	h.openTree(t)
+	profiles, env := readFile(t, h.store.Path()), readFile(t, h.store.EnvPath())
+	h.send(t, key("A"))
+	if h.model.hives.TreeReviewing() {
+		t.Fatal("empty staging opened Apply")
+	}
+	for _, repo := range repositories {
+		if err := h.model.hivesTree.edits.SelectRepository("alpha", repo, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := h.model.hives.SetTree(hivesTreeView(h.model.hivesTree))
+	h.model.hives = &o
+	before := h.model.hivesTree.edits.Diff()
+	h.send(t, tea.WindowSizeMsg{Width: 80, Height: 24})
+	h.send(t, key("A"))
+	if view := h.view(); lipgloss.Width(view) > 80 || lipgloss.Height(view) > 24 || !strings.Contains(view, "Enter apply") {
+		t.Fatalf("model review does not fit 80x24: %s", view)
+	}
+	for _, k := range []tea.KeyType{tea.KeyPgDown, tea.KeyPgUp, tea.KeyEnd, tea.KeyHome, tea.KeyDown, tea.KeyUp} {
+		if cmd := h.send(t, tea.KeyMsg{Type: k}); cmd != nil {
+			t.Fatal("review navigation issued a command")
+		}
+	}
+	h.send(t, tea.WindowSizeMsg{Width: 40, Height: 12})
+	if view := h.view(); lipgloss.Width(view) > 40 || lipgloss.Height(view) > 12 || !strings.Contains(view, "Enter apply") || !strings.Contains(view, "Effective scope:") {
+		t.Fatalf("model review did not resize: %s", view)
+	}
+	h.send(t, tea.WindowSizeMsg{Width: 40, Height: 11})
+	if cmd := h.send(t, treeEnter); cmd != nil {
+		t.Fatal("Enter applied while review context was hidden")
+	}
+	h.send(t, treeEsc)
+	if h.model.hives.TreeReviewing() || !reflect.DeepEqual(before, h.model.hivesTree.edits.Diff()) {
+		t.Fatal("Escape changed staged edits")
+	}
+	if !bytes.Equal(profiles, readFile(t, h.store.Path())) || !bytes.Equal(env, readFile(t, h.store.EnvPath())) {
+		t.Fatal("review navigation wrote before Apply")
+	}
+	h.send(t, tea.WindowSizeMsg{Width: 80, Height: 24})
+	h.send(t, key("A"))
+	if cmd := h.send(t, treeEnter); cmd == nil {
+		t.Fatal("explicit Enter did not issue Apply")
 	}
 }

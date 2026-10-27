@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/skillreg"
+	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/spf13/cobra"
 )
 

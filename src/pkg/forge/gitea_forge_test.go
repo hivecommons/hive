@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -805,4 +806,388 @@ func makeGiteaIssuePage(start, n int) string {
 	}
 	b.WriteByte(']')
 	return b.String()
+}
+
+// --- Merge path tests ---
+
+// giteaMergeServer serves the two endpoints the merge path uses: the PR read
+// that decides the gates, and the merge POST. get shapes the PR body; post
+// writes the merge answer. A nil post fails the test if the merge is called,
+// which is how the gate cases prove they refuse before the wire.
+func giteaMergeServer(t *testing.T, get func() map[string]any, post func(w http.ResponseWriter, p giteaMergePayload)) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(get())
+		case http.MethodPost:
+			if post == nil {
+				t.Errorf("POST %s called — the gate must refuse before the merge", r.URL.Path)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			var p giteaMergePayload
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			post(w, p)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+// openPR is the forge-neutral "mergeable, ungated" PR the cases start from.
+func openPR(sha string) map[string]any {
+	return map[string]any{
+		"number": 1,
+		"state":  "open",
+		"merged": false,
+		"head":   map[string]any{"ref": "feature", "sha": sha},
+		"base":   map[string]any{"ref": "main"},
+	}
+}
+
+func TestGiteaMergeSuccess(t *testing.T) {
+	var gotAuth, gotPath, gotCT string
+	var gotPayload giteaMergePayload
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/hivecommons/hive/pulls/101":
+			_ = json.NewEncoder(w).Encode(openPR("1111111111111111111111111111111111111111"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/repos/hivecommons/hive/pulls/101/merge":
+			gotAuth = r.Header.Get(giteaAuthHeader)
+			gotPath = r.URL.Path
+			gotCT = r.Header.Get("Content-Type")
+			_ = json.NewDecoder(r.Body).Decode(&gotPayload)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "pull request merged"})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "hivecommons")
+	if err := f.Merge(context.Background(), "hivecommons/hive", 101, MergeOptions{}); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if gotAuth != giteaTokenScheme+"test-token" {
+		t.Errorf("Authorization = %q", gotAuth)
+	}
+	if gotPath != "/api/v1/repos/hivecommons/hive/pulls/101/merge" {
+		t.Errorf("path = %s", gotPath)
+	}
+	if gotCT != "application/json" {
+		t.Errorf("Content-Type = %q", gotCT)
+	}
+	if gotPayload.Do != "merge" {
+		t.Errorf("Do = %q, want merge", gotPayload.Do)
+	}
+	if gotPayload.HeadCommitID != "" || gotPayload.DeleteBranchAfterMerge {
+		t.Errorf("payload = %+v, want no pin and no branch delete", gotPayload)
+	}
+}
+
+func TestGiteaMergeStrategies(t *testing.T) {
+	cases := []struct {
+		strategy string
+		wantDo   string
+	}{
+		{"", "merge"},
+		{string(MergeStrategyMerge), "merge"},
+		{string(MergeStrategySquash), "squash"},
+		{string(MergeStrategyRebase), "rebase"},
+		{"rebase-merge", "rebase-merge"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.strategy, func(t *testing.T) {
+			var gotDo string
+			srv := giteaMergeServer(t,
+				func() map[string]any { return openPR("abc") },
+				func(w http.ResponseWriter, p giteaMergePayload) {
+					gotDo = p.Do
+					_ = json.NewEncoder(w).Encode(map[string]any{})
+				})
+			defer srv.Close()
+
+			f := newTestGitea(t, srv.URL, "o")
+			if err := f.Merge(context.Background(), "o/r", 1, MergeOptions{Strategy: tc.strategy}); err != nil {
+				t.Fatalf("Merge: %v", err)
+			}
+			if gotDo != tc.wantDo {
+				t.Errorf("Do = %q, want %q", gotDo, tc.wantDo)
+			}
+		})
+	}
+}
+
+func TestGiteaMergeStrategyUnsupported(t *testing.T) {
+	f := newTestGitea(t, "https://gitea.example.com", "o")
+	err := f.Merge(context.Background(), "o/r", 1, MergeOptions{Strategy: "fast-forward-only"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported merge strategy") {
+		t.Fatalf("err = %v, want an unsupported-strategy refusal", err)
+	}
+}
+
+func TestGiteaMergeDeleteBranch(t *testing.T) {
+	var gotDelete bool
+	srv := giteaMergeServer(t,
+		func() map[string]any { return openPR("abc") },
+		func(w http.ResponseWriter, p giteaMergePayload) {
+			gotDelete = p.DeleteBranchAfterMerge
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		})
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "o")
+	if err := f.Merge(context.Background(), "o/r", 1, MergeOptions{DeleteBranch: true}); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if !gotDelete {
+		t.Errorf("delete_branch_after_merge = false, want true")
+	}
+}
+
+// TestGiteaMergeHeadCommitIDGuard pins the server-side half of the head guard:
+// the SHA the caller decided on is sent as head_commit_id, so a push landing
+// between the read and the merge is refused by Gitea, not only locally.
+func TestGiteaMergeHeadCommitIDGuard(t *testing.T) {
+	var gotHeadCommitID string
+	const expected = "commit-12345"
+	srv := giteaMergeServer(t,
+		func() map[string]any { return openPR(expected) },
+		func(w http.ResponseWriter, p giteaMergePayload) {
+			gotHeadCommitID = p.HeadCommitID
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+		})
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "o")
+	if err := f.Merge(context.Background(), "o/r", 1, MergeOptions{HeadSHA: expected}); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if gotHeadCommitID != expected {
+		t.Errorf("head_commit_id = %q, want %q", gotHeadCommitID, expected)
+	}
+}
+
+func TestGiteaMergeHeadMismatchLocal(t *testing.T) {
+	srv := giteaMergeServer(t, func() map[string]any { return openPR("head-actual") }, nil)
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "o")
+	err := f.Merge(context.Background(), "o/r", 1, MergeOptions{HeadSHA: "head-stale"})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict", err)
+	}
+}
+
+func TestGiteaMergeHoldGate(t *testing.T) {
+	srv := giteaMergeServer(t, func() map[string]any {
+		pr := openPR("h1")
+		pr["labels"] = []map[string]any{{"name": "hold"}}
+		return pr
+	}, nil)
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "o")
+	err := f.Merge(context.Background(), "o/r", 1, MergeOptions{})
+	if !errors.Is(err, ErrHoldActive) {
+		t.Fatalf("err = %v, want ErrHoldActive", err)
+	}
+}
+
+func TestGiteaMergeAlreadyMerged(t *testing.T) {
+	srv := giteaMergeServer(t, func() map[string]any {
+		return map[string]any{
+			"number":           1,
+			"state":            "closed",
+			"merged":           true,
+			"merge_commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"head":             map[string]any{"sha": "h1"},
+		}
+	}, nil)
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "o")
+	err := f.Merge(context.Background(), "o/r", 1, MergeOptions{})
+	if !errors.Is(err, ErrAlreadyMerged) {
+		t.Fatalf("err = %v, want ErrAlreadyMerged", err)
+	}
+}
+
+// TestGiteaMergeForgejoParity covers the Forgejo spelling of a merged PR
+// (merged_commit_id rather than merge_commit_sha): the state field is what
+// decides, so the already-merged answer is identical on both servers.
+func TestGiteaMergeForgejoParity(t *testing.T) {
+	srv := giteaMergeServer(t, func() map[string]any {
+		return map[string]any{
+			"number":           1,
+			"state":            "closed",
+			"merged":           true,
+			"merged_commit_id": "dddddddddddddddddddddddddddddddddddddddd",
+			"head":             map[string]any{"sha": "h1"},
+		}
+	}, nil)
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "o")
+	if err := f.Merge(context.Background(), "o/r", 1, MergeOptions{}); !errors.Is(err, ErrAlreadyMerged) {
+		t.Fatalf("err = %v, want ErrAlreadyMerged", err)
+	}
+}
+
+// TestGiteaMerge409Conflict covers both things Gitea answers 409 for. Both are
+// ErrConflict under this contract, but the message must name the right one:
+// classifying on "was a pin supplied" reported every genuine merge conflict as
+// a moved head, which is the opposite diagnosis.
+func TestGiteaMerge409Conflict(t *testing.T) {
+	t.Run("head out of date", func(t *testing.T) {
+		srv := giteaMergeServer(t,
+			func() map[string]any { return openPR("h1") },
+			func(w http.ResponseWriter, _ giteaMergePayload) {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{"message": "head out of date"})
+			})
+		defer srv.Close()
+
+		f := newTestGitea(t, srv.URL, "o")
+		err := f.Merge(context.Background(), "o/r", 1, MergeOptions{HeadSHA: "h1"})
+		if !errors.Is(err, ErrConflict) {
+			t.Fatalf("err = %v, want ErrConflict", err)
+		}
+		if !strings.Contains(err.Error(), "head moved") {
+			t.Errorf("err = %v, want the head-moved diagnosis", err)
+		}
+	})
+
+	// The quadrant the pin used to hide: a real git conflict, reported as a
+	// bare ErrMergeConflicts object with no "message" key, while the caller
+	// did pin a head that has NOT moved.
+	t.Run("git conflict with an unchanged pinned head", func(t *testing.T) {
+		srv := giteaMergeServer(t,
+			func() map[string]any { return openPR("h1") },
+			func(w http.ResponseWriter, _ giteaMergePayload) {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"Style": "merge", "StdOut": "CONFLICT (content): Merge conflict in a.go", "StdErr": "", "Err": "exit status 1",
+				})
+			})
+		defer srv.Close()
+
+		f := newTestGitea(t, srv.URL, "o")
+		err := f.Merge(context.Background(), "o/r", 1, MergeOptions{HeadSHA: "h1"})
+		if !errors.Is(err, ErrConflict) {
+			t.Fatalf("err = %v, want ErrConflict", err)
+		}
+		if strings.Contains(err.Error(), "head moved") {
+			t.Errorf("err = %v, want a merge-conflict diagnosis, not head-moved", err)
+		}
+	})
+
+	t.Run("git conflict without a pin", func(t *testing.T) {
+		srv := giteaMergeServer(t,
+			func() map[string]any { return openPR("h1") },
+			func(w http.ResponseWriter, _ giteaMergePayload) {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{"message": "merge conflict"})
+			})
+		defer srv.Close()
+
+		f := newTestGitea(t, srv.URL, "o")
+		err := f.Merge(context.Background(), "o/r", 1, MergeOptions{})
+		if !errors.Is(err, ErrConflict) {
+			t.Fatalf("err = %v, want ErrConflict", err)
+		}
+		if strings.Contains(err.Error(), "head moved") {
+			t.Errorf("err = %v, want a merge-conflict diagnosis, not head-moved", err)
+		}
+	})
+}
+
+func TestGiteaMerge405MethodNotAllowed(t *testing.T) {
+	t.Run("not mergeable", func(t *testing.T) {
+		srv := giteaMergeServer(t,
+			func() map[string]any { return openPR("h1") },
+			func(w http.ResponseWriter, _ giteaMergePayload) {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				_ = json.NewEncoder(w).Encode(map[string]any{"message": "PR is not mergeable"})
+			})
+		defer srv.Close()
+
+		f := newTestGitea(t, srv.URL, "o")
+		err := f.Merge(context.Background(), "o/r", 1, MergeOptions{})
+		if !errors.Is(err, ErrNotMergeable) {
+			t.Fatalf("err = %v, want ErrNotMergeable", err)
+		}
+	})
+
+	// Gitea answers 405 for an already-merged PR too, and not always with a
+	// message that says so — the re-read of the change's state is what decides.
+	t.Run("already merged on 405, state is the evidence", func(t *testing.T) {
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.Method {
+			case http.MethodGet:
+				calls++
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"number": 1, "state": "closed", "merged": calls > 1,
+					"merge_commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+					"head":             map[string]any{"sha": "h1"},
+				})
+			case http.MethodPost:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				_ = json.NewEncoder(w).Encode(map[string]any{"message": "cannot merge"})
+			}
+		}))
+		defer srv.Close()
+
+		f := newTestGitea(t, srv.URL, "o")
+		err := f.Merge(context.Background(), "o/r", 1, MergeOptions{})
+		if !errors.Is(err, ErrAlreadyMerged) {
+			t.Fatalf("err = %v, want ErrAlreadyMerged", err)
+		}
+	})
+}
+
+func TestGiteaMergeInvalidNumber(t *testing.T) {
+	f := newTestGitea(t, "https://gitea.example.com", "o")
+	for _, n := range []int{0, -1} {
+		err := f.Merge(context.Background(), "o/r", n, MergeOptions{})
+		if err == nil || !strings.Contains(err.Error(), "change number must be > 0") {
+			t.Errorf("Merge(n=%d) err = %v, want a number refusal", n, err)
+		}
+	}
+}
+
+// TestGiteaMergeEmptyPostResponseIsSuccess pins Gitea's standard answer: the
+// merge endpoint returns APIEmpty ({}), which is success and needs no further
+// call to confirm it.
+func TestGiteaMergeEmptyPostResponseIsSuccess(t *testing.T) {
+	getCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			getCalls++
+			_ = json.NewEncoder(w).Encode(openPR("h1"))
+		case http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+
+	f := newTestGitea(t, srv.URL, "o")
+	if err := f.Merge(context.Background(), "o/r", 1, MergeOptions{}); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if getCalls != 1 {
+		t.Errorf("got %d GET calls, want 1 (the gate read only)", getCalls)
+	}
 }

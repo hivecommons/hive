@@ -148,7 +148,7 @@ CURRENT_UID=$(id -u)
 # NOTE: tmux reads history-limit at PANE creation, so the raise below CANNOT
 # deepen the pane that already exists when the browser attaches. The
 # authoritative deep-scrollback setting is applied at session creation by the
-# agent manager (newSessionCommands in src/pkg/agent/manager.go, default 50000,
+# agent manager (newSessionCommands in src/crux/agent/manager.go, default 50000,
 # override HIVE_TMUX_HISTORY_LIMIT). The attach-time raise is only defense in
 # depth for sessions created outside the manager.
 #
@@ -173,7 +173,7 @@ TTYD_HISTORY_LIMIT="${HIVE_TTYD_HISTORY_LIMIT:-50000}"
 # output" report in #4399.
 #
 # The authoritative setting is applied at SESSION creation by the agent manager
-# (newSessionCommands in src/pkg/agent/manager.go). This attach-time set is the
+# (newSessionCommands in src/crux/agent/manager.go). This attach-time set is the
 # same defense in depth as the history-limit raise above: it reaches sessions
 # created before that change, or outside the manager. Saved and restored around
 # the attach so an agent CLI that manages its own status line is not permanently

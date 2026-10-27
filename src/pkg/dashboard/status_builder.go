@@ -15,10 +15,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/paneclass"
+	"github.com/hivecommons/hive/crux/skillreg"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -26,10 +28,8 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/review"
-	"github.com/hivecommons/hive/pkg/skillreg"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // skillsConventionalDir is the conventional on-disk location the dashboard
@@ -346,6 +346,7 @@ func BuildAgentOnlyStatus(
 	cfg *config.Config,
 ) *AgentStatusPayload {
 	agents, hidden := buildAgentsWithHidden(agentStatuses, cfg, govState)
+	applyRunMeter(defaultRunMeter, agents, agentStatuses, nil, time.Now())
 	return &AgentStatusPayload{
 		Timestamp:        time.Now().UTC().Format(time.RFC3339),
 		Agents:           agents,
@@ -416,6 +417,7 @@ func BuildFrontendStatus(
 	ghRateLimits := buildGHRateLimits(ghClient, ctx, cfg)
 
 	agents, hiddenAgents := buildAgentsWithHidden(agentStatuses, cfg, govState)
+	fleetRun := applyRunMeter(defaultRunMeter, agents, agentStatuses, tokenCollector, time.Now())
 	health := buildHealth(ghClient, ctx)
 	mergeAgentAuthHealth(health, agents)
 
@@ -458,6 +460,7 @@ func BuildFrontendStatus(
 		AgentMetrics:          agentMetrics,
 		OverviewCoverage:      buildOverviewCoverage(agentMetrics, cfg),
 		Hold:                  buildHold(actionable),
+		FleetRun:              fleetRun,
 		IssueToMerge:          issueToMerge,
 		IssuesDisabledRepos:   metricsCollector.GetIssuesDisabledRepos(),
 		ACMMLevel:             detectACMMLevel(cfg),
@@ -702,15 +705,15 @@ func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
 
 	agents := make([]FrontendConfiguredAgent, 0, len(names))
 	for _, name := range names {
-		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+		if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 			continue
 		}
 		agentCfg := cfg.Agents[name]
 		// Same resolution buildAgents uses: explicit per-agent Mode wins,
 		// otherwise the ACMM level default for this agent.
-		mode := agent.DefaultAgentMode(name, acmmLevel)
+		mode := crux.DefaultAgentMode(name, acmmLevel)
 		if modeStr := agentCfg.Mode; modeStr != "" {
-			if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+			if parsed, ok := crux.ParseAgentMode(modeStr); ok {
 				mode = parsed
 			}
 		}
@@ -859,6 +862,39 @@ func restartsLast24h(proc *crux.Process, now time.Time) (int, string) {
 	return count, reason
 }
 
+// firstRestartSince is the earliest restart event at or after cutoff — the
+// "since" of a crash-loop BLOCKED verdict (#14409). Zero when none.
+func firstRestartSince(proc *crux.Process, cutoff time.Time) time.Time {
+	var first time.Time
+	for _, ev := range proc.RestartEvents {
+		if ev.At.IsZero() || ev.At.Before(cutoff) {
+			continue
+		}
+		if first.IsZero() || ev.At.Before(first) {
+			first = ev.At
+		}
+	}
+	return first
+}
+
+// blockedReasonFromEvidence derives FrontendAgent.BlockedReason: the
+// StatusEvidence prose minus its "blocked:" prefix, only while the structured
+// status is BLOCKED. Empty evidence yields "reason not recorded" so a consumer
+// never has to special-case a BLOCKED agent with no WHY.
+func blockedReasonFromEvidence(structuredStatus, evidence string) string {
+	if structuredStatus != "BLOCKED" {
+		return ""
+	}
+	reason := strings.TrimSpace(evidence)
+	if lower := strings.ToLower(reason); strings.HasPrefix(lower, "blocked:") {
+		reason = strings.TrimSpace(reason[len("blocked:"):])
+	}
+	if reason == "" {
+		return "reason not recorded"
+	}
+	return reason
+}
+
 // HiddenAgentInfo names an entry that IS present in the agent manager's
 // runtime status map but was left out of the Agents cards, and the stable
 // reason category why. It exists so an operator staring at an empty (or
@@ -929,7 +965,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// The operability-agent gate is a hard availability boundary, unlike
 		// membership in a pack's default roster. Keep it authoritative even if
 		// a stale manager snapshot still contains one of those processes.
-		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+		if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 			hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
 			slog.Debug("agent card omitted: below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
 			continue
@@ -955,7 +991,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			// (#6652). "No cards and nothing hidden" is indistinguishable from
 			// "the builder never saw your config", which is what made the
 			// original report impossible to act on.
-			if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+			if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
 				slog.Debug("agent card omitted: config-only agent below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
 				seen[name] = true
@@ -1113,14 +1149,14 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		const summaryLines = 20
 		var liveSummary string
 		if pane := proc.PaneLines(summaryLines); len(pane) > 0 {
-			liveSummary = redactTokens(agent.SanitizePaneText(strings.Join(pane, "\n"), summaryLines))
+			liveSummary = redactTokens(paneclass.SanitizePaneText(strings.Join(pane, "\n"), summaryLines))
 		}
 		var detailSummary string
 		const maxDetailLines = 50
 		if buf := proc.OutputBuffer; buf != nil && buf.Count() > 0 {
-			detailSummary = redactTokens(agent.SanitizePaneText(strings.Join(buf.Last(buf.Count()), "\n"), maxDetailLines))
+			detailSummary = redactTokens(paneclass.SanitizePaneText(strings.Join(buf.Last(buf.Count()), "\n"), maxDetailLines))
 		} else if pane := proc.FilteredPaneLines(0); len(pane) > 0 {
-			detailSummary = redactTokens(agent.SanitizePaneText(strings.Join(pane, "\n"), maxDetailLines))
+			detailSummary = redactTokens(paneclass.SanitizePaneText(strings.Join(pane, "\n"), maxDetailLines))
 		}
 
 		agentID := proc.ID
@@ -1230,8 +1266,10 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		if proc.KickOutcome.Settled(proc.LastKick) {
 			a.KickOutcome = proc.KickOutcome.Kind
 			a.KickOutcomeReason = proc.KickOutcome.Reason
+			a.KickOutcomeAt = formatOptionalTime(proc.KickOutcome.At)
 			if proc.KickOutcome.Kind == crux.KickOutcomeStandDown {
 				a.StructuredStatus = "BLOCKED"
+				a.BlockedSince = a.KickOutcomeAt
 				a.StatusEvidence = "blocked: policy stand-down"
 				if r := strings.TrimSpace(proc.KickOutcome.Reason); r != "" {
 					a.StatusEvidence += ": " + r
@@ -1260,6 +1298,10 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		}
 		if proc.ProviderErrorClass != "" && time.Now().Before(proc.ProviderErrorBackoffUntil) {
 			a.StructuredStatus = "BLOCKED"
+			a.BlockedSince = formatOptionalTime(proc.BackendAuth.Since)
+			if a.BlockedSince == "" && hasInferenceLastErr {
+				a.BlockedSince = formatOptionalTime(inferenceLastErrAt)
+			}
 			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"
 			line := strings.TrimSpace(proc.ProviderErrorLine)
 			if hasInferenceLastErr {
@@ -1302,6 +1344,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// relaunching carries the more specific reason, so it wins.
 		if n, reason := restartsLast24h(proc, time.Now()); n >= spoke.AgentRestartProblemThreshold() {
 			a.StructuredStatus = "BLOCKED"
+			a.BlockedSince = formatOptionalTime(firstRestartSince(proc, time.Now().Add(-24*time.Hour)))
 			a.StatusEvidence = fmt.Sprintf("blocked: crash-looping (%d restarts in 24h)", n)
 			if reason != "" {
 				a.StatusEvidence += ": " + reason
@@ -1315,23 +1358,25 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// and it is the one the operator has to act on first.
 		if proc.StartBlocked {
 			a.StructuredStatus = "BLOCKED"
+			a.BlockedSince = formatOptionalTime(proc.StartFailureLastAt)
 			a.StatusEvidence = "blocked: " + strings.TrimSpace(proc.StartFailureReason)
 			if proc.StartFailureCount > 0 {
 				a.StatusEvidence += fmt.Sprintf(" (%d consecutive failed starts)", proc.StartFailureCount)
 			}
 		}
+		a.BlockedReason = blockedReasonFromEvidence(a.StructuredStatus, a.StatusEvidence)
 
 		acmmLevel := 0
 		if cfg.ACMMLevel != nil {
 			acmmLevel = *cfg.ACMMLevel
 		}
-		mode := agent.DefaultAgentMode(name, acmmLevel)
+		mode := crux.DefaultAgentMode(name, acmmLevel)
 		if modeStr := agentCfg.Mode; modeStr != "" {
-			if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+			if parsed, ok := crux.ParseAgentMode(modeStr); ok {
 				mode = parsed
 			}
 		}
-		defaultMode := agent.DefaultAgentMode(name, acmmLevel)
+		defaultMode := crux.DefaultAgentMode(name, acmmLevel)
 		a.Mode = mode.String()
 		a.ModeEmoji = mode.Emoji()
 		a.DefaultMode = defaultMode.String()
@@ -1348,7 +1393,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// method check the auth probe already applies
 		// (BackendRequiresInteractiveAuth) so the badge and control only
 		// ever appear for a backend where a login URL is a real possibility.
-		a.NeedsLogin = proc.NeedsLogin && agent.BackendRequiresInteractiveAuth(cli)
+		a.NeedsLogin = proc.NeedsLogin && crux.BackendRequiresInteractiveAuth(cli)
 		// Per-agent probe FIRST: it resolves this agent's own per-UID HOME and
 		// answers "does this backend even have an interactive login?" before
 		// looking at any file. The backend-level probe (shared legacy path
@@ -1393,13 +1438,13 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 	if cfg.ACMMLevel != nil {
 		acmmLevel = *cfg.ACMMLevel
 	}
-	mode := agent.DefaultAgentMode(name, acmmLevel)
+	mode := crux.DefaultAgentMode(name, acmmLevel)
 	if modeStr := agentCfg.Mode; modeStr != "" {
-		if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+		if parsed, ok := crux.ParseAgentMode(modeStr); ok {
 			mode = parsed
 		}
 	}
-	defaultMode := agent.DefaultAgentMode(name, acmmLevel)
+	defaultMode := crux.DefaultAgentMode(name, acmmLevel)
 
 	backendKind := "backend"
 	if config.IsInferenceBackend(cli) {
@@ -1468,6 +1513,7 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 			return "BLOCKED"
 		}(),
 		StatusEvidence: evidence,
+		BlockedReason:  blockedReasonFromEvidence("BLOCKED", evidence),
 		LastError:      evidence,
 		Enabled:        agentCfg.Enabled,
 
@@ -2368,6 +2414,20 @@ func earliestRFC3339(a, b string) string {
 	}
 }
 
+// repoForge returns the forge kind repo's card carries and, for GitLab and
+// Gitea/Forgejo, the instance web root its links point at. A
+// per-repo forge / forge_url policy wins over the project-wide forge, so one
+// card can name a different forge from the rest. GitHub reports no URL:
+// the SPA takes the GitHub host from /api/config, as it always has.
+func repoForge(cfg *config.Config, repo string) (kind, url string) {
+	kind = cfg.ForgeKindForRepo(repo)
+	switch kind {
+	case config.ForgeGitLab, config.ForgeGitea:
+		url = cfg.ForgeURLForRepo(repo)
+	}
+	return kind, strings.TrimRight(url, "/")
+}
+
 func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govState governor.State) []FrontendRepo {
 	return buildReposWithForge(cfg, actionable, govState, nil)
 }
@@ -2463,6 +2523,7 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 				workBreakdown = &breakdown
 			}
 		}
+		forgeKind, forgeURL := repoForge(cfg, repoName)
 
 		r := FrontendRepo{
 			Name:                repoName,
@@ -2479,6 +2540,8 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 			NonActionablePrs:    nonActionablePrsByRepo[repoName],
 			AutoMerge:           cfg.RepoAutoMergeEnabled(repoName),
 			MergeStrategy:       cfg.RepoMergeStrategy(repoName),
+			Forge:               forgeKind,
+			ForgeURL:            forgeURL,
 		}
 		// Deliberately iterating cfg.Project.Repos above, not ActiveRepos: a
 		// paused repo keeps its card and its counts. Dropping it here would
@@ -2882,7 +2945,7 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*crux.Proce
 	}
 	sortedNames := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
-		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+		if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 			continue
 		}
 		sortedNames = append(sortedNames, name)
@@ -3409,11 +3472,11 @@ func roundTo(f float64, decimals int) float64 {
 	return math.Round(f*shift) / shift
 }
 
-// redactTokens delegates to agent.RedactPaneTokens (itself a thin seam over
-// pkg/logscrub) so the agent package, which dashboard already imports, applies
-// the identical pane redaction.
+// redactTokens delegates to crux.RedactPaneTokens (itself a thin seam over
+// pkg/logscrub) so dashboard applies the runtime's identical pane redaction
+// without importing pkg/logscrub directly.
 func redactTokens(s string) string {
-	return agent.RedactPaneTokens(s)
+	return crux.RedactPaneTokens(s)
 }
 
 // SetReleaseLineLagProvider registers a function reporting how far the edge

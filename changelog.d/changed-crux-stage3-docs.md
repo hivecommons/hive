@@ -1,0 +1,1 @@
+- Crux docs: the design page records stage 3 of the sidecar plan (endpoint families, the sidecar client and parity test, callback wiring, `crux agy-turn`) and what stage 4 must do; `crux-serve.md` gains the per-family route table, the Host observer event types and `--hive-callback`; the module README lists `crux/api/client`, `crux/api/callback` and `crux/hivecap`.

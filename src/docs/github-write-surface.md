@@ -38,7 +38,7 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | Operation (`op`) | Entry point | Agent script | Audit action on success | Audited? | Typed `repo` / `target`? |
 | --- | --- | --- | --- | :---: | :---: |
 | `open_pr` | `pr_request_watcher.go` (`/var/run/hive-metrics/pr-requests`) | `hive-open-pr` | `agent_pr_created` | yes | yes / PR number |
-| `create_issue` | `issue_request_watcher.go` kind `issue` (`.../issue-requests`) | `hive-open-issue` | `agent_issue_created` (or `agent_issue_rejected_duplicate`) | yes | yes / issue number |
+| `create_issue` | `issue_request_watcher.go` kind `issue` (`.../issue-requests`) | `hive-open-issue` | `agent_issue_created` (or `agent_issue_rejected_duplicate` / `agent_issue_prior_art_refused`) | yes | yes / issue number |
 | `comment` | `issue_request_watcher.go` kind `comment` | `hive-open-issue comment` | `agent_comment_created` | yes | yes / issue or PR number |
 | `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` (adds `hive/claimed-by-<agent>` + `hive/in-progress` and one timestamped `hive:claim` marker comment; the pr-request watcher and enumeration sweep remove `hive/in-progress`) | yes | yes / issue number |
 | `close_issue` | `issue_request_watcher.go` kind `close` | `hive-open-issue close` | `agent_issue_closed` (`pr_closed` when the number is a PR) | yes | yes / issue or PR number |
@@ -266,7 +266,7 @@ write_surface:
 ```
 
 - **Default off.** With no `enforce` list nothing changes: every lane keeps
-  its direct access, and an ACMM L6 hive stays fully autonomous. Enforcement
+  its direct access, and an ACMM L6 hive stays autonomous. Enforcement
   starts only when an operator lists a lane, at any ACMM level.
 - **Per lane.** Listing one lane does not affect the others. A replica
   (`scanner-2`) follows its base agent; `"*"` enforces every lane. Names are
@@ -405,7 +405,7 @@ them survives.
 ## Not yet done
 
 These are deliberately out of scope so far. They change what an agent can do,
-so they need operator sign-off first. ACMM L6 is full autonomy by design: none
+so they need operator sign-off first. ACMM L6 is autonomous by design: none
 of them may reduce what an L6 hive can do by default.
 
 - **Removing direct write access by default.** The per-lane opt-in has landed

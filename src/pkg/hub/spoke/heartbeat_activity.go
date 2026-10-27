@@ -6,15 +6,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
 // AgentActivityFor gathers the per-agent liveness evidence the hub needs to
 // tell a deliberately-paused agent from one that is running but unable to work.
-func AgentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *crux.Process, onDemandFromPack map[string]bool) AgentActivity {
+func AgentActivityFor(mgr crux.ActivityObserver, cfg *config.Config, govState governor.State, currentMode, name string, proc *crux.Process, onDemandFromPack map[string]bool) AgentActivity {
 	act := AgentActivity{
 		Paused: proc.Paused,
 		// Pause provenance (#4041): ride WHO/WHY/WHEN to the hub so the fleet
@@ -79,7 +78,7 @@ func AgentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 // ApplyBackendAuth copies the agent's backend-auth canary (#6558) onto act,
 // plus whether its credential is refreshable without a human login
 // (ADR-0024). Shared by both heartbeat build paths so neither drops it.
-func ApplyBackendAuth(act *AgentActivity, mgr *agent.Manager, name string, proc *crux.Process) {
+func ApplyBackendAuth(act *AgentActivity, mgr crux.ActivityObserver, name string, proc *crux.Process) {
 	if act == nil || proc == nil {
 		return
 	}

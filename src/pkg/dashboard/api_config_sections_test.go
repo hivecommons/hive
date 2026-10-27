@@ -639,6 +639,9 @@ func TestAutoMergeGet_ContributorLaneDefaults(t *testing.T) {
 			ExcludeLabels          []string `json:"exclude_labels"`
 			RequireTiers           []string `json:"require_tiers"`
 			RegistryTiers          bool     `json:"registry_tiers_sufficient"`
+			AutoPromotionScope     string   `json:"auto_promotion_scope"`
+			AutoPromotionScopes    []string `json:"auto_promotion_scopes"`
+			ApproveHeldRuns        bool     `json:"approve_held_runs_for_registry_trusted"`
 			GrantableTiers         []string `json:"grantable_tiers"`
 		} `json:"contributor_lane"`
 	}
@@ -652,8 +655,11 @@ func TestAutoMergeGet_ContributorLaneDefaults(t *testing.T) {
 	if strings.Join(cl.GrantableTiers, ",") != strings.Join(config.ContributorLaneGrantableTiers, ",") {
 		t.Fatalf("contributor_lane grantable_tiers = %v", cl.GrantableTiers)
 	}
-	if !cl.Enabled || cl.SoakMinutes != config.DefaultContributorLaneSoakMinutes || !cl.RequireReviewerVerdict || !cl.RegistryTiers || len(cl.Repos) != 0 {
+	if !cl.Enabled || cl.SoakMinutes != config.DefaultContributorLaneSoakMinutes || !cl.RequireReviewerVerdict || !cl.RegistryTiers || !cl.ApproveHeldRuns || len(cl.Repos) != 0 {
 		t.Fatalf("contributor_lane defaults wrong: %+v", cl)
+	}
+	if cl.AutoPromotionScope != config.ContributorLaneAutoPromotionScopeHive || strings.Join(cl.AutoPromotionScopes, ",") != "hive,repo" {
+		t.Fatalf("contributor_lane auto_promotion_scope defaults wrong: %+v", cl)
 	}
 	if strings.Join(cl.ExcludeLabels, ",") != strings.Join(config.DefaultContributorLaneExcludeLabels, ",") {
 		t.Fatalf("contributor_lane default labels wrong: %v", cl.ExcludeLabels)
@@ -664,21 +670,29 @@ func TestAutoMergePut_ContributorLaneValidation(t *testing.T) {
 	s := covApiServer(t)
 	valid := map[string]any{
 		"contributor_lane": map[string]any{
-			"enabled":                   false,
-			"soak_minutes":              30,
-			"require_reviewer_verdict":  false,
-			"registry_tiers_sufficient": false,
-			"repos":                     []string{" widget ", ""},
-			"exclude_labels":            []string{"hold"},
-			"require_tiers":             []string{" merger "},
+			"enabled":                                false,
+			"soak_minutes":                           30,
+			"require_reviewer_verdict":               false,
+			"registry_tiers_sufficient":              false,
+			"repos":                                  []string{" widget ", ""},
+			"exclude_labels":                         []string{"hold"},
+			"require_tiers":                          []string{" merger "},
+			"auto_promotion_scope":                   " Repo ",
+			"approve_held_runs_for_registry_trusted": false,
 		},
 	}
 	if rec := doPut(s, "/api/config/auto-merge", valid); rec.Code != http.StatusOK {
 		t.Fatalf("valid contributor_lane: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	cl := s.deps.Config.AutoMerge.ContributorLane
-	if cl.IsEnabled() || cl.EffectiveSoakMinutes() != 30 || cl.EffectiveRequireReviewerVerdict() || cl.EffectiveRegistryTiersSufficient() {
+	if cl.IsEnabled() || cl.EffectiveSoakMinutes() != 30 || cl.EffectiveRequireReviewerVerdict() || cl.EffectiveRegistryTiersSufficient() || cl.EffectiveApproveHeldRunsForRegistryTrusted() {
 		t.Fatalf("contributor_lane write did not apply: %+v", cl)
+	}
+	if cl.AutoPromotionScope != config.ContributorLaneAutoPromotionScopeRepo {
+		t.Fatalf("contributor_lane auto_promotion_scope not normalized: %q", cl.AutoPromotionScope)
+	}
+	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"contributor_lane": map[string]any{"auto_promotion_scope": "fleet"}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid auto_promotion_scope: expected 400, got %d", rec.Code)
 	}
 	if strings.Join(cl.Repos, ",") != "widget" || strings.Join(cl.ExcludeLabels, ",") != "hold" {
 		t.Fatalf("contributor_lane lists not normalized: repos=%v labels=%v", cl.Repos, cl.ExcludeLabels)

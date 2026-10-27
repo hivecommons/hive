@@ -139,6 +139,16 @@ The hub registers heartbeat, registry, SaaS, contributor, OAuth, webhook, backup
 
 See `api-reference.md` and the dashboard OpenAPI file for route details, and `manual-provisioning.md` for known failure modes.
 
+### Search engine indexing
+
+Only the hub's public landing pages (`/`, `/learn`, `/get-started`, `/reading`, `/contribute`) are meant to be indexed; everything else is an API, an auth gate, or an operator console, and a crawler walking it just collects 401/403s (the "Blocked due to unauthorized request" errors in Google Search Console). The hub enforces that in three layers, all in `src/pkg/hub/robots.go`:
+
+- `GET /robots.txt` is generated per request host. On the configured public host (`HIVE_HUB_PUBLIC_URL`, default `hive.hivecommons.dev`, plus `localhost`) it allows `/` and emits one `Disallow:` line per gated route group (`/api/`, `/metrics`, `/openapi.json`, `/login`, `/logout`, `/auth/`, `/oauth`, `/openrouter/`, `/dashboard`, `/access-denied`, `/error/`, `/fleet`, `/my-hives`, `/gh-setup`, `/ws`, `/static/`) followed by the `Sitemap:` pointer; `sitemap.xml` lists public pages only. On any other host — a hosted tenant, an internal Service name, a preview hostname — it answers `User-agent: *` / `Disallow: /`. A CI test derives the auth-gated routes from the mux registrations and fails if one is not covered by a `Disallow` line.
+- Every response under a disallowed group, every 401 or 403, and every redirect into `/login` carries `X-Robots-Tag: noindex, nofollow`; the login pages also carry `<meta name="robots" content="noindex, nofollow">`.
+- Hosted spoke dashboards (`<id>.hive.hivecommons.dev`) are never indexable: the hub's ingress auth-check lets `/robots.txt` through unauthenticated and the spoke serves `Disallow: /` for it, and every spoke response — including the 401 login page — carries `X-Robots-Tag: noindex, nofollow` (`src/pkg/dashboard/robots.go`).
+
+Verify from outside with `curl -A Googlebot https://hive.hivecommons.dev/robots.txt` and `curl -sI https://hive.hivecommons.dev/api/hub/stats | grep -i x-robots`.
+
 ## Running several spokes under one hub
 
 Splitting one large hive into several subject-scoped spokes stops agents competing over unrelated work. It also surfaces things that are fleet-wide in reality but per-hive in the implementation — provider quota, the shared GitHub App rate limit, agent credentials, and repo ownership ([#5691](https://github.com/hivecommons/hive/issues/5691) is the RFC tracking those).

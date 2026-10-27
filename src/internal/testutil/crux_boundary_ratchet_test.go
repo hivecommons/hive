@@ -14,20 +14,21 @@ import (
 )
 
 // This file is the architecture ratchet for the Crux boundary
-// (hivecommons/hive#13536, src/docs/design/crux.md). Crux is pkg/agent and
-// its ring; everything else in Hive is a consumer and should reach it only
-// through the exported runtime surface. Two numbers measure how far the code
+// (hivecommons/hive#13536, src/docs/design/crux.md). Crux is crux/agent and
+// its ring, the nested Go module at src/crux (before the module cut,
+// pkg/agent and pkg/crux); everything else in Hive is a consumer and should
+// reach it only through the exported runtime surface. Two numbers measure how far the code
 // is from that today, and neither may grow:
 //
 //  1. cruxSymbolBaseline — per importing package, the number of DISTINCT
 //     `agent.<Symbol>` selectors referenced from Go files (tests included:
 //     a test that builds an agent.Manager to drive a dashboard handler is
-//     coupling the runtime surface has to serve too) outside pkg/agent/...
-//     and pkg/crux. A new symbol is new coupling; the way to add behaviour
-//     is to widen crux.Runtime (or an equivalent exported seam in pkg/crux),
-//     not to reach for another internal.
+//     coupling the runtime surface has to serve too) outside the Crux
+//     module. A new symbol is new coupling; the way to add behaviour is to
+//     widen crux.Runtime (or an equivalent exported seam in the crux
+//     package), not to reach for another internal.
 //  2. cruxTmuxBaseline — per package, the number of NON-TEST Go files outside
-//     pkg/agent/... that invoke tmux: a string literal exactly "tmux"
+//     the Crux module that invoke tmux: a string literal exactly "tmux"
 //     (exec.Command("tmux", ...), exec.LookPath("tmux"), or a constant that
 //     feeds one). Every production tmux call belongs behind one package
 //     inside Crux; hermetic tests that drive a real tmux are not the target.
@@ -58,22 +59,49 @@ import (
 // NewManager, ProjectContext), agent-mode and capability parsing, UID maps,
 // and pane classification — implementation, not observation.
 //
-// The v6 line carries more couplings than v5 (the advisor lane, admin MCP
-// and chat surfaces predate the ratchet there); its baselines were
-// re-measured on the v5→v6 top-up of 2026-10-23 and ratchet down from here.
+// Since the module cut (Stage 2 step 4) the ring lives in the nested module
+// at src/crux and this walk covers the root module only (src/pkg, src/cmd,
+// src/internal): the consumers. pkg/proxy's 14 references moved with it to
+// crux/proxy, an intra-module import the module boundary now owns, so its
+// row left the table without any consumer's count changing.
+// Test construction moved behind crux/cruxtest (#13962 slice 1): dashboard
+// 19 → 12, loginscan 4 → 2. Spoke now takes crux.ActivityObserver and its
+// tests use cruxtest too, removing all three remaining agent symbols.
+// Agent-mode and capability parsing moved to crux (#13962 slice 2):
+// dashboard 12 → 9, hub 1 → 0, ioscan 5 → 0 (its test names the
+// crux/agentmode leaf directly).
+// Copilot-token and pane-classification helpers moved to crux (#13962
+// slice 3): dashboard 9 → 3, loginscan 2 → 0, discord 1 → 0 (#13973).
+// CanonicalizeCopilotModel and BackendRequiresInteractiveAuth moved to crux
+// and the dashboard's backend check uses config.IsInferenceBackend:
+// dashboard 3 → 0. cmd/hive is the only consumer left; what it names is the
+// manager, its constructors and the host wiring it injects.
+// The pause vocabulary (BreakerTrigger, PauseCausation, PauseTransitionEvent)
+// moved to crux, ProjectContext and DefaultAgentMode are named as crux.<Name>,
+// and the agent-named loop variable in initAgentConfigDrivenSystems that this
+// walk counted as five false positives was renamed: cmd/hive 22 → 12. The
+// twelve left (Manager, NewManager, LinearCredential, AgentMintIssuer,
+// StartPermissionsWatcher, WatchdogFleet, RunAgyTurn, ResumeHandle,
+// ResolveReasoningEffort, ErrResumeBusy, ErrResumeSessionGone, PRCreator)
+// were the in-process manager and the host wiring it is handed. The Runtime
+// seam (#14138 stage 1) took them: cmd/hive holds crux.Runtime (plus
+// crux.Host for the Set* wiring), constructs through crux/runtime.New,
+// builds the watchdog fleet through crux/runtime.NewWatchdogFleet, names the
+// capability types as crux.<Name>, and its tests use cruxtest.NewRuntime:
+// cmd/hive 12 → 0 and the table is empty. crux/runtime is the only place
+// outside crux/agent (and crux/cli, crux/cruxtest) that names the manager.
+// The ratchet stays so a new consumer-side agent.<Symbol> reference fails.
 var cruxSymbolBaseline = map[string]int{
-	"cmd/hive":      25,
-	"pkg/chat":      1,
-	"pkg/dashboard": 34,
-	"pkg/hub":       1,
-	"pkg/hub/spoke": 3,
-	"pkg/ioscan":    5,
-	"pkg/loginscan": 4,
-	"pkg/proxy":     14,
+	// The v6 Spek hub executor (spek_hub_executor.go and its UID-map test)
+	// predates the Crux cut and launches headless agents itself: Headless*
+	// command/credential helpers, the UIDMap loader and the proxy env
+	// accessors. Follow-up: lift those leaves onto the crux package (or a
+	// Runtime method that runs a headless turn) and lower this to 0.
+	"pkg/dashboard": 11,
 }
 
 // cruxTmuxBaseline is the per-package count of non-test files that invoke
-// tmux outside pkg/agent/... (see above). The RFC's larger "dashboard 17,
+// tmux outside the Crux module (see above). The RFC's larger "dashboard 17,
 // hub 5" figures counted files that MENTION tmux anywhere (comments, JSON
 // field names, user-facing messages); this ratchet counts invocations, which
 // is what a funnel has to absorb. Likewise the RFC's "dashboard 109 symbols"
@@ -90,13 +118,16 @@ var cruxTmuxBaseline = map[string]int{
 }
 
 const (
-	cruxAgentImportPath = "github.com/hivecommons/hive/pkg/agent"
+	cruxAgentImportPath = "github.com/hivecommons/hive/crux/agent"
 	cruxTmuxLiteral     = "tmux"
 )
 
 // cruxBoundaryRoots are the trees the ratchet walks, relative to this
-// package's directory (src/internal/testutil). src/test is the integration
-// suite and is excluded for the same reason sleep_ratchet_test.go excludes it.
+// package's directory (src/internal/testutil): the root module's packages,
+// which are Crux's consumers. src/crux is the nested Crux module and is not
+// walked (an import of crux/agent from inside the runtime is not coupling to
+// measure). src/test is the integration suite and is excluded for the same
+// reason sleep_ratchet_test.go excludes it.
 var cruxBoundaryRoots = []string{
 	filepath.Join("..", "..", "pkg"),
 	filepath.Join("..", "..", "cmd"),
@@ -104,10 +135,11 @@ var cruxBoundaryRoots = []string{
 }
 
 // cruxInsidePrefixes are the Crux tree itself, relative to src/. Files under
-// them (including pkg/agent/<sub> packages such as the tmux funnel, and
-// pkg/crux, the exported runtime surface that aliases the manager's types)
-// are the thing being protected, not consumers, and are skipped.
-var cruxInsidePrefixes = []string{"pkg/agent", "pkg/crux"}
+// them are the thing being protected, not consumers, and are skipped. Since
+// the module cut this is the nested module's directory; it is outside
+// cruxBoundaryRoots anyway, and the prefix stays so a root that gains the
+// tree (or a stray copy) is still skipped rather than counted.
+var cruxInsidePrefixes = []string{"crux"}
 
 // cruxInside reports whether rel (a src/-relative directory) is one of
 // cruxInsidePrefixes or nested under one.
@@ -178,8 +210,8 @@ func TestCruxBoundaryRatchet(t *testing.T) {
 
 	if len(failures) > 0 {
 		t.Fatalf("Crux boundary ratchet (hivecommons/hive#13536, src/docs/design/crux.md):\n\n%s\n"+
-			"New agent.<Symbol> references belong on the exported runtime surface (pkg/crux); new tmux calls belong "+
-			"inside pkg/agent/... Remove the coupling, or move an existing reference out so the count does not grow. "+
+			"New agent.<Symbol> references belong on the exported runtime surface (the crux package); new tmux calls belong "+
+			"inside crux/agent/... Remove the coupling, or move an existing reference out so the count does not grow. "+
 			"A baseline above the measured count must be lowered to it in the same change.",
 			strings.Join(failures, "\n\n"))
 	}
@@ -195,7 +227,7 @@ func cruxStaleBaseline(table, pkg string, want, got int) string {
 }
 
 // measureCruxBoundary parses every non-test Go file under cruxBoundaryRoots
-// (skipping pkg/agent/... and testdata) and records, per package, the distinct
+// (skipping the Crux tree and testdata) and records, per package, the distinct
 // agent.<Symbol> selectors and the files that invoke tmux.
 func measureCruxBoundary(t *testing.T) cruxMeasurement {
 	t.Helper()
@@ -257,7 +289,7 @@ func cruxRelPath(root, path string) string {
 	return filepath.ToSlash(filepath.Join(filepath.Base(root), rel))
 }
 
-// cruxAgentAlias returns the local name under which file imports pkg/agent,
+// cruxAgentAlias returns the local name under which file imports crux/agent,
 // or "" when it does not. A dot or blank import contributes no selectors and
 // is reported as "" too; neither occurs today.
 func cruxAgentAlias(file *ast.File) string {
@@ -377,7 +409,7 @@ func TestCruxBoundaryDetectors(t *testing.T) {
 	}
 
 	aliased := parse(`package x
-import ag "github.com/hivecommons/hive/pkg/agent"
+import ag "github.com/hivecommons/hive/crux/agent"
 var _ = ag.Manager{}
 func f(a *ag.AgentProcess) { _ = a; _ = ag.StateRunning; _ = ag.Manager{} }
 `)
@@ -389,7 +421,7 @@ func f(a *ag.AgentProcess) { _ = a; _ = ag.StateRunning; _ = ag.Manager{} }
 	}
 
 	plain := parse(`package x
-import "github.com/hivecommons/hive/pkg/agent"
+import "github.com/hivecommons/hive/crux/agent"
 var _ = agent.Manager{}
 `)
 	if got := cruxAgentAlias(plain); got != "agent" {

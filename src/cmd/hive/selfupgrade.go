@@ -25,10 +25,17 @@ const (
 	// selfUpgradeFailureExitCode marks a process exit caused by a FAILED
 	// self-upgrade. Distinct from 0 so the failure is visible in the container's
 	// termination state instead of looking like a clean shutdown.
-	selfUpgradeFailureExitCode   = 17
-	selfUpgradeImageCheckTimeout = 5 * time.Second
-	selfUpgradeGHCRBase          = "https://ghcr.io"
-	selfUpgradeSpokeRepo         = "hivecommons/hive"
+	selfUpgradeFailureExitCode = 17
+	// selfUpgradePendingRestartExitCode marks a process exit taken because the
+	// Deployment PATCH failed but the Deployment tracks a floating tag the
+	// kubelet re-pulls on start, so the restart itself is expected to land the
+	// upgrade. Distinct from 17 so the termination state says "fell back to a
+	// restart", not "failed", and from 18/19 (duplicate-process, proxy-inject
+	// guards in main.go).
+	selfUpgradePendingRestartExitCode = 20
+	selfUpgradeImageCheckTimeout      = 5 * time.Second
+	selfUpgradeGHCRBase               = "https://ghcr.io"
+	selfUpgradeSpokeRepo              = "hivecommons/hive"
 )
 
 // upgradeMarker is the on-PVC record at /data/upgrade-requested. It survives

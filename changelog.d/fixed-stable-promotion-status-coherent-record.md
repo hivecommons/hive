@@ -1,0 +1,1 @@
+- `GET /api/hub/release/stable-promotion` no longer mixes a fresh stable SHA with the digest and commit date of the previous stable build, and reports the stable commit time as `built_at` (it was published as `promoted_at`, which misread a commit time as the tag's promotion time).

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 )
 
 // TestScanPrunesVanishedAgentsFromTheSightingMap pins the Retain sweep at the

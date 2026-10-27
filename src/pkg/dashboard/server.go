@@ -21,12 +21,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/advisor"
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/compliance"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/fleetreport"
@@ -39,7 +39,6 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 //go:embed static
@@ -94,8 +93,19 @@ func isOwnerRole(role string) bool {
 // A WRONG proof header is ALWAYS rejected regardless of this setting.
 var proxyProofRequired = true
 
+// staleDropStarvationThreshold is the number of consecutive stale-snapshot
+// drops (no publish between) at which the drop is logged at Warn.
+const staleDropStarvationThreshold = 5
+
 type Server struct {
 	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
+
+	feedbackRefreshBackoff feedbackBackoff
+
+	// chatGroundedInflight caps concurrent grounded chat turns
+	// (api_chat_grounded.go); created lazily by chatGroundedSlots.
+	chatGroundedOnce     sync.Once
+	chatGroundedInflight chan struct{}
 
 	port       int
 	authToken  string
@@ -129,7 +139,10 @@ type Server struct {
 	// snapshot so UpdateStatusIfFresh can re-apply them to a snapshot the
 	// governor built from an older enumeration (webhook_tracker_refresh.go).
 	// Guarded by statusMu.
-	webhookPatches         map[string]webhookPatchEntry
+	webhookPatches map[string]webhookPatchEntry
+	// closedSweep is the tracker's closed-item backstop
+	// (stage_tracker_closed_sweep.go).
+	closedSweep            closedSweepState
 	sidebar                interface{}
 	sidebarMu              sync.RWMutex
 	actionsJWKSMu          sync.Mutex
@@ -167,6 +180,9 @@ type Server struct {
 	repoRescanLast     ReposRescanResult
 	repoHoldPermMu     sync.Mutex
 	repoHoldPermCache  map[string]repoHoldPermissionCacheEntry
+	// delegatedJobs tracks "Let hive decide" jobs by repo#number
+	// (api_repo_item_decide_delegated.go).
+	delegatedJobs delegatedDecisionJobs
 	// acmmLinearBaseURL overrides the Linear GraphQL endpoint the ACMM
 	// "Open Issue" path posts issueCreate to. Empty = production; tests
 	// point it at an httptest server.
@@ -251,6 +267,9 @@ type Server struct {
 	// a mutation landed mid-build. Published on the payload so a dashboard
 	// whose snapshot stops advancing shows whether the guard is the reason.
 	statusStaleDrops uint64
+	// statusConsecutiveStaleDrops resets on every publish; reaching
+	// staleDropStarvationThreshold means publishing is starved.
+	statusConsecutiveStaleDrops uint64
 
 	// fact/cost histories were migrated to the generic timeSeries store (#2041);
 	// the trend history (#2039) remains a dedicated buffer for now.
@@ -595,17 +614,19 @@ type StatusPayload struct {
 	// from the shallow /api/health liveness signal or the repo-workflow
 	// Health map above, so the pill can never show "Health OK" while the
 	// spoke's own agents are down (#2465).
-	DeepHealth          map[string]any    `json:"deepHealth,omitempty"`
-	Budget              FrontendBudget    `json:"budget"`
-	CadenceMatrix       []FrontendCadence `json:"cadenceMatrix"`
-	GHRateLimits        map[string]any    `json:"ghRateLimits"`
-	APIBudget           map[string]any    `json:"api_budget"`
-	AgentMetrics        map[string]any    `json:"agentMetrics"`
-	Hold                FrontendHold      `json:"hold"`
-	IssueToMerge        map[string]any    `json:"issueToMerge"`
-	ACMMLevel           int               `json:"acmmLevel"`
-	ACMMLevelConfigured bool              `json:"acmmLevelConfigured"`
-	ACMMPackAgents      []string          `json:"acmmPackAgents"`
+	DeepHealth    map[string]any    `json:"deepHealth,omitempty"`
+	Budget        FrontendBudget    `json:"budget"`
+	CadenceMatrix []FrontendCadence `json:"cadenceMatrix"`
+	GHRateLimits  map[string]any    `json:"ghRateLimits"`
+	APIBudget     map[string]any    `json:"api_budget"`
+	AgentMetrics  map[string]any    `json:"agentMetrics"`
+	Hold          FrontendHold      `json:"hold"`
+	// FleetRun is the governor-strip `running N · $X this hour` figure (#14576).
+	FleetRun            FrontendFleetRun `json:"fleetRun"`
+	IssueToMerge        map[string]any   `json:"issueToMerge"`
+	ACMMLevel           int              `json:"acmmLevel"`
+	ACMMLevelConfigured bool             `json:"acmmLevelConfigured"`
+	ACMMPackAgents      []string         `json:"acmmPackAgents"`
 	// AdmissionLabels are the labels a maintainer adds to admit an untrusted
 	// reporter's issue (project.issue_filter.reporter_trust); the "your turn"
 	// menu for an ADMIT item names them. It is read from configuration, with
@@ -904,6 +925,10 @@ type FrontendAgent struct {
 	RepeatFailureCheck        string `json:"repeatFailureCheck,omitempty"`
 	RepeatFailureCheckMessage string `json:"repeatFailureCheckMessage,omitempty"`
 	RepeatFailureNote         string `json:"repeatFailureNote,omitempty"`
+	// Run is the live per-run figure (#14576): this kick's estimated cost,
+	// tokens, elapsed time, last visible test result and files changed.
+	// Present only while Busy is "working".
+	Run *FrontendAgentRun `json:"run,omitempty"`
 	// BackendAuth* surfaces this agent's backend-auth canary (#6558): derived
 	// from the same classifyProviderError verdict as StructuredStatus's
 	// "blocked: inference" evidence, so the dashboard can render an explicit
@@ -958,6 +983,18 @@ type FrontendAgent struct {
 	// in surge".
 	UnscheduledInMode bool     `json:"unscheduledInMode"`
 	CadenceModes      []string `json:"cadenceModes,omitempty"`
+
+	// BlockedReason is the operator-facing WHY behind StructuredStatus ==
+	// "BLOCKED" (#14409): StatusEvidence with its "blocked:" prefix stripped,
+	// so Hive Chat and the Agents page read the same reason from the same
+	// payload. BlockedSince is when that block was first observed, where the
+	// underlying record carries a timestamp (auth canary, inference error,
+	// policy stand-down, first restart of a crash loop); empty otherwise.
+	BlockedReason string `json:"blockedReason,omitempty"`
+	BlockedSince  string `json:"blockedSince,omitempty"`
+	// KickOutcomeAt is when the last kicked turn was observed to END — the
+	// "last completed run" the chat answers "which agent completed last" from.
+	KickOutcomeAt string `json:"kickOutcomeAt,omitempty"`
 }
 
 // FrontendConfiguredAgent is the secret-free config inventory used by the
@@ -1207,6 +1244,14 @@ type FrontendRepo struct {
 	Upstream          string `json:"upstream,omitempty"`
 	UpstreamWatchOn   bool   `json:"upstreamWatchOn,omitempty"`
 	UpstreamLastCheck string `json:"upstreamLastCheck,omitempty"`
+	// Forge is the source forge the repo lives on — "github", "gitlab" or
+	// "gitea" (Gitea and Forgejo) — from the project forge setting (hivecommons/hive#14115),
+	// so the card names the right host instead of always reading github.com.
+	// ForgeURL is the instance web root for a GitLab or Gitea forge, used for
+	// the card's links; it is empty for GitHub, whose host the SPA already reads
+	// from /api/config.
+	Forge    string `json:"forge"`
+	ForgeURL string `json:"forgeUrl,omitempty"`
 }
 
 type FrontendBeads struct {
@@ -1671,7 +1716,7 @@ func (s *Server) Start() error {
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
 	s.openRequestLog()
-	handler := s.withRequestLog(s.withServerTiming(s.authenticatedMux()))
+	handler := s.withRequestLog(s.withServerTiming(s.noIndex(s.authenticatedMux())))
 
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
@@ -2186,7 +2231,12 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 
 		if !trusted && r.URL.Path == "/api/knowledge/export" {
-			if profile := s.contributorProfileFromAuthorization(r); profile != nil && profile.TrustTier != "revoked" {
+			profile, reason := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
+			if profile == nil && reason == contributorTokenExpired {
+				jsonError(w, reason, http.StatusUnauthorized)
+				return
+			}
+			if profile != nil && profile.TrustTier != "revoked" {
 				trusted = true
 				r.Header.Set("X-Hive-User", profile.GitHubUsername)
 				r.Header.Set("X-Hive-Role", config.RoleRead)
@@ -2443,6 +2493,7 @@ func isPublicPath(path string) bool {
 const loginPage = `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + dashboardRobotsMetaTag + `
 <title>Hive — Sign In</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -2563,7 +2614,7 @@ async function poll(interval,flowId){
 </script></body></html>`
 
 func (s *Server) Handler() http.Handler {
-	return s.withRequestLog(s.authenticatedMux())
+	return s.withRequestLog(s.noIndex(s.authenticatedMux()))
 }
 
 func (s *Server) roleEnforcement(next http.Handler) http.Handler {
@@ -2732,9 +2783,17 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		curEpoch := s.statusMutationEpoch
 		s.statusStaleDrops++
 		drops := s.statusStaleDrops
+		s.statusConsecutiveStaleDrops++
+		consecutive := s.statusConsecutiveStaleDrops
 		s.statusMu.Unlock()
-		s.logger.Warn("dropping stale status snapshot built before a mutation",
-			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops)
+		// A single drop is normal optimistic-concurrency self-healing; only a
+		// run of drops with no publish in between is an anomaly.
+		level := slog.LevelInfo
+		if consecutive >= staleDropStarvationThreshold {
+			level = slog.LevelWarn
+		}
+		s.logger.Log(context.Background(), level, "dropping stale status snapshot built before a mutation",
+			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops, "consecutiveDrops", consecutive)
 		return false
 	}
 
@@ -2753,6 +2812,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	// with; webhook re-reads that landed since (a PR closed mid-cycle) are
 	// re-applied so the publish cannot bring a gone row back.
 	s.replayWebhookPatchesLocked(status, time.Now())
+	s.statusConsecutiveStaleDrops = 0
 	s.statusSeq++
 	status.StatusSeq = s.statusSeq
 	status.StatusStaleDrops = s.statusStaleDrops
@@ -2772,6 +2832,9 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	// body so the next GET rebuilds from this payload instead of serving the
 	// previous one for the rest of its TTL.
 	nudgeTracker := s.invalidateStageTrackerCache()
+	// Backstop for closed items whose delivery never arrived or whose
+	// confirming read was refused (hivecommons/hive#14159, #14064).
+	s.maybeSweepClosedRows(time.Now().UTC())
 
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)
@@ -3270,7 +3333,15 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]string{"status": "starting"})
 		return
 	}
-	jsonResponse(w, map[string]string{"status": "ok"})
+	body := map[string]any{"status": "ok"}
+	if s.deps != nil && s.deps.CruxRuntimeHealth != nil {
+		rt := s.deps.CruxRuntimeHealth()
+		body["crux_runtime"] = rt
+		if !rt.Reachable {
+			body["status"] = "degraded"
+		}
+	}
+	jsonResponse(w, body)
 }
 
 const (
@@ -4484,7 +4555,7 @@ func agentCLIUnauthenticated(proc *crux.Process, authFn func(backend string) (av
 	// probe stops a shared-credential miss from flagging an inference-backed
 	// agent that is running fine. See pkg/agent/authprobe.go for the full
 	// precedence rule.
-	if agent.IsInferenceBackend(backend) {
+	if config.IsInferenceBackend(backend) {
 		return false
 	}
 	// POSITIVE EVIDENCE beats absence-of-file: a running agent that the pane

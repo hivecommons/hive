@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -56,9 +57,9 @@ func newFullServerWithUIDMapPath(t *testing.T, uidMapPath string) *Server {
 	scannerStore, _ := beads.NewStore(dir + "/scanner")
 	logger := slog.Default()
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManagerWithOptions(cfg.Agents, logger, agent.ProjectContext{
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{
 		Org: "testorg", Repos: []string{"testrepo"}, ACMMLevel: *cfg.ACMMLevel, PRsAllowed: true,
-	}, agent.WithUIDMapPath(uidMapPath))
+	}, cruxtest.WithUIDMapPath(uidMapPath))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 

@@ -33,7 +33,7 @@ backend CLI that hive cannot externalize without headless turns.
 A hosted agent is not a process hive controls turn-by-turn. It is a backend
 CLI (`claude`, `codex`, `copilot`, `agy`, `goose`, `bob`, …) launched into a
 detached tmux session that the spoke's agent manager owns
-(`src/pkg/agent/manager.go`, `Manager` / `AgentProcess`; sessions are named
+(`src/crux/agent/manager.go`, `Manager` / `AgentProcess`; sessions are named
 `hive-<agent>` — `manager.go:846`). The manager's contract with the agent is
 deliberately thin:
 
@@ -180,7 +180,7 @@ key generations (`/data/saas/hub-generations.json`).
 
 | # | State | Where (v5) | On a spoke (dashboard) pod roll | Verdict |
 |---|-------|------------|--------------------------------|---------|
-| 27 | Completed-task ledger + per-task cooldowns + PR URLs | `completedTasks` / `completedTaskCooldown` / `completedTaskPRURL` (`contribute_ws.go:353`), persisted to `/data/contributors/completed-tasks.json` | Survives; was moved to the PVC ledger through the #3792 → #3989 lineage after re-offer loops | **fixed** |
+| 27 | Completed-task ledger + per-task cooldowns + PR URLs | `completedTasks` / `completedTaskCooldown` / `completedTaskPRURL` (`contribute_ws.go:965`), persisted to `/data/contributors/completed-tasks.json` | Survives; was moved to the PVC ledger through the #3792 → #3989 lineage after re-offer loops | **fixed** |
 | 28 | Failure cooldowns + quarantine counters | `failedTasks` / `consecutiveFailures` (`:373`, `:381`), persisted to `/data/contributors/failed-tasks.json` | Survives (#2435 livelock fix, made durable with the ledger) | **fixed** |
 | 29 | No-PR completion streaks | `noPRStreaks` (`:394`), `/data/contributors/no-pr-streaks.json` | Survives (#3980; geometric backoff must outlive the completion entry it escalates) | **fixed** |
 | 30 | `no_work_needed` verdicts | `noWorkVerdicts` (`:416`), `/data/contributors/no-work-verdicts.json` | Survives (#3987/#3997) — "persisted in the same PVC-backed ledger dir as the cooldowns so a pod restart does not forget the verdict" | **fixed** |

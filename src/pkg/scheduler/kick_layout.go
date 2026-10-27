@@ -3,6 +3,7 @@ package scheduler
 import (
 	"strings"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -99,7 +100,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 
 	// Semi-static: changes when the operator pauses/scopes repos, not per kick.
 	if a.repo != "" {
-		message = appendKickSection(message, "REPO-SCOPED CADENCE TARGET: "+a.repo)
+		message = appendKickSection(message, "REPO-SCOPED CADENCE TARGET: "+a.repo+s.repoForgeNote(a.repo))
 	}
 	if a.includeRepos {
 		// Built per agent, not once for the fleet: a repo-scoped agent must be
@@ -123,6 +124,22 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 		message = addConcreteKickClosingInstruction(message)
 	}
 	return message
+}
+
+// repoForgeNote names the forge a repo-scoped kick's repo lives on when it is
+// not GitHub (hivecommons/hive#14112), so the agent does not reach for gh
+// against a GitLab or Gitea repo. GitHub repos get "" and their kick text is
+// unchanged.
+func (s *Scheduler) repoForgeNote(repo string) string {
+	kind := s.cfg.ForgeKindForRepo(repo)
+	if kind == config.ForgeGitHub {
+		return ""
+	}
+	note := "\nFORGE: " + kind
+	if u := s.cfg.ForgeURLForRepo(repo); u != "" {
+		note += " at " + u
+	}
+	return note + " — this repo is NOT on GitHub; gh cannot reach it. Use the " + kind + " instance's own API or CLI."
 }
 
 // insertAfterKickHeader splices a static section directly under the kick's

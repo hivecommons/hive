@@ -1,0 +1,1 @@
+- The GitLab forge adapter no longer reports a closed (unmerged) merge request as already merged: a closed MR is refused as not mergeable before any write, and a 406 from the accept endpoint is resolved against the re-read MR state. Follow-up to [#14151](https://github.com/hivecommons/hive/pull/14151) ([#14113](https://github.com/hivecommons/hive/issues/14113)).

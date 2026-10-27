@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	standbypkg "github.com/hivecommons/hive/pkg/standby"
@@ -184,8 +184,8 @@ func standbyModeCeilingReason(cfg *config.Config, lane string) string {
 	}
 	acmm := cfg.ACMMLevelOrZero()
 	agentCfg := cfg.Agents[lane]
-	mode := agent.DefaultAgentMode(lane, acmm)
-	if parsed, ok := agent.ParseAgentMode(strings.TrimSpace(agentCfg.Mode)); ok && strings.TrimSpace(agentCfg.Mode) != "" {
+	mode := crux.DefaultAgentMode(lane, acmm)
+	if parsed, ok := crux.ParseAgentMode(strings.TrimSpace(agentCfg.Mode)); ok && strings.TrimSpace(agentCfg.Mode) != "" {
 		mode = parsed
 	}
 	if !mode.CanCreatePRs() {

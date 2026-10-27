@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
@@ -109,7 +109,7 @@ func TestKickBeforeFirstScanReturnsDeferred(t *testing.T) {
 		Backend: "claude", Model: "sonnet", Enabled: true,
 		Sandbox: &config.AgentSandboxOverride{Enabled: &sandboxOn},
 	}
-	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{Org: "myorg", Repos: []string{"repo1"}})
+	deps.AgentMgr = cruxtest.NewRuntime(deps.Config.Agents, deps.Logger, crux.ProjectContext{Org: "myorg", Repos: []string{"repo1"}})
 	agentManager(deps.AgentMgr).SetSandboxConfig(deps.Config.AgentSandbox)
 	if err := deps.AgentMgr.Start(context.Background(), "scanner"); err != nil {
 		t.Fatalf("start sandbox scanner: %v", err)

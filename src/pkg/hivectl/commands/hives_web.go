@@ -562,9 +562,10 @@ dl dt{font-weight:bold;margin-top:.5rem}dl dd{margin:0 0 0 1rem}summary{cursor:p
 <h2 id="tree-title">What you contribute to</h2>
 <p>Turn on what this machine may work on. Nothing is saved until you press <strong>Apply</strong>.</p>
 <details class="help"><summary>Help &amp; keyboard</summary><dl>
+<dt>Apply and runtime</dt><dd>Edits, including Pause, are staged until Apply. Saving profiles and projecting contributor.env do not confirm that a relay has picked up the changes. Read the receipt for notification and acknowledgement separately.</dd>
 <dt>Hive</dt><dd>A project you can contribute to. A hub is a group of Hives.</dd>
-<dt>New</dt><dd>Offered to you but not chosen yet. It gets no work until you turn it on.</dd>
-<dt>Excluded</dt><dd>Never, even if you turn on the whole group.</dd>
+<dt>New</dt><dd>Not chosen in this review. Details show whether it is currently offered.</dd>
+<dt>Excluded</dt><dd>Vetoed across scoped Hives, even if you turn on a whole group. Details name the source Hives; clear each exclusion there. Unrestricted Hives are an exception.</dd>
 <dt>Unrestricted</dt><dd>An older setup that gets work from everything the Hive offers. “Choose what to allow” limits it.</dd>
 <dt>Accept all new</dt><dd>Also turn on repositories added later. “Accept N new” turns on the ones already waiting.</dd>
 <dt>Turning on a group</dt><dd>Turns on everything inside it; a dash means only some are on.</dd>

@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // #14550 (C11, C12, C14): the agent row carries the repeat-failure check
@@ -17,7 +17,7 @@ func repeatFailureProc(status crux.RepeatFailureStatus) *crux.Process {
 		Name:          "scanner",
 		Config:        config.AgentConfig{Backend: "claude", Enabled: true},
 		State:         crux.StateRunning,
-		OutputBuffer:  agent.NewRingBuffer(10),
+		OutputBuffer:  cruxtest.NewRingBuffer(10),
 		RepeatFailure: status,
 	}
 }

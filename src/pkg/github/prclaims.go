@@ -124,8 +124,9 @@ const (
 	// PartiallyAddressedLabel marks an open issue whose merged PR covered only
 	// part of it (no closing keyword, a remainder paragraph, or none of the
 	// cited paths changed). It suppresses likely-done and keeps the issue
-	// actionable (#11931).
-	PartiallyAddressedLabel = "hive/partially-addressed"
+	// actionable (#11931). Spelled in stagelabels so the stage engine can
+	// read it without importing this package.
+	PartiallyAddressedLabel = stagelabels.PartiallyAddressedLabel
 	// PartiallyAddressedLabelColor is the amber label colour used for partially-addressed.
 	PartiallyAddressedLabelColor = "fbca04"
 	// PartiallyAddressedLabelDescription is the description hive creates PartiallyAddressedLabel with.
@@ -863,6 +864,75 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	}
 	for _, ref := range referenced {
 		add(ref, true, false)
+	}
+	return claims
+}
+
+// ClaimsFromPROpened returns the claims a PR the watcher just opened makes,
+// exactly as the next FetchClaimScan would parse them (hivecommons/hive#14472).
+// The claim ledger the contribute admission gate reads was only refreshed by
+// the eval cycle's scan, so an issue whose PR opened seconds after a scan
+// stayed admissible for a contributor until the next one; recording the
+// claims from the open path closes that window. configRepos lets the claim
+// carry the repo in the form the ledger keys by (bare or owner/repo, as
+// configured) when the request named it the other way.
+func ClaimsFromPROpened(d PROpenedDetail, configRepos []string, identity HiveIdentity, now time.Time) []IssueClaim {
+	if d.Number <= 0 || d.Repo == "" {
+		return nil
+	}
+	repo := canonicalConfigRepo(d.Repo, configRepos)
+	pr := &gh.PullRequest{
+		Number:  gh.Ptr(d.Number),
+		Title:   gh.Ptr(d.Title),
+		Body:    gh.Ptr(d.Body),
+		HTMLURL: gh.Ptr(d.URL),
+		State:   gh.Ptr(PRStateOpen),
+		User:    &gh.User{Login: gh.Ptr(d.Author)},
+		Head:    &gh.PullRequestBranch{Ref: gh.Ptr(d.Head)},
+	}
+	claims := claimsFromPR(pr, repo, identity, now)
+	for i := range claims {
+		claims[i].PRState = PRStateOpen
+	}
+	return claims
+}
+
+// canonicalConfigRepo maps repo onto the configured spelling it names, so a
+// request that says "owner/repo" for a repo configured as "repo" (or the
+// reverse) keys the same ledger entry the scan writes. Unknown repos are
+// returned unchanged.
+func canonicalConfigRepo(repo string, configRepos []string) string {
+	_, bare := splitRepoName(repo)
+	for _, cfg := range configRepos {
+		if strings.EqualFold(cfg, repo) {
+			return cfg
+		}
+		if _, cfgBare := splitRepoName(cfg); strings.EqualFold(cfgBare, bare) {
+			return cfg
+		}
+	}
+	return repo
+}
+
+func splitRepoName(repo string) (owner, name string) {
+	if parts := strings.SplitN(repo, "/", 2); len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	return "", repo
+}
+
+// RecordOpenedPRClaims is ClaimsFromPROpened wired to this client's repo list
+// and written into ledger. It returns the claims recorded.
+func (c *Client) RecordOpenedPRClaims(ledger *ClaimLedger, d PROpenedDetail, identity HiveIdentity, now time.Time) []IssueClaim {
+	if c == nil || ledger == nil {
+		return nil
+	}
+	claims := ClaimsFromPROpened(d, c.getRepos(), identity, now)
+	for _, claim := range claims {
+		if err := ledger.Record(claim); err != nil && c.logger != nil {
+			c.logger.Warn("duplicate-PR guard: could not persist claim from just-opened PR",
+				slog.String("repo", claim.Repo), slog.Int("issue", claim.Issue), slog.Int("pr", claim.PRNumber), slog.String("error", err.Error()))
+		}
 	}
 	return claims
 }
@@ -1813,8 +1883,15 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 	// The in-memory copy says "covered" for the dashboard and the kick;
 	// the forge label itself is the issue stage sweep's to write, so it is
 	// told when this is a synthesised label rather than one GitHub returned
-	// (hivecommons/hive#13316).
-	synthesized := !issueHasLabel(issue.Labels, CoveredByPRLabel)
+	// (hivecommons/hive#13316). The annotation runs twice per cycle
+	// (SyncIssuePRClaimLabels, then FilterClaimedIssues on the same
+	// payload): the second pass finds the label the first one synthesised
+	// and must not re-grade it as GitHub's, or the sweep plans against a
+	// payload that already "has" 040 and never writes it — which left
+	// hivecommons/hive#14372 and #14371 at 010 under an open `Fixes` PR
+	// (hivecommons/hive#14397).
+	synthesized := !issueHasLabel(issue.Labels, CoveredByPRLabel) ||
+		(issue.ClaimContext != nil && issue.ClaimContext.CoveredLabelSynthesized)
 	issue.Labels = addIssueLabel(issue.Labels, CoveredByPRLabel)
 	issue.ClaimContext = claimContext(claim, ClaimDecisionCoveredByOpenPR)
 	issue.ClaimContext.CoveredLabelSynthesized = synthesized

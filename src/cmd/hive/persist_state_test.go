@@ -12,15 +12,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/tracing"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 type persistStateFakeFleet struct {
@@ -94,7 +95,7 @@ func TestPersistStateRoundTripUsesInjectedPaths(t *testing.T) {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{ACMMLevel: level})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{ACMMLevel: level})
 	// Anchor relative to now: SeedRestartTelemetry prunes restart events older
 	// than 24h, so a fixed calendar date turns this test into a time bomb.
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
@@ -105,10 +106,10 @@ func TestPersistStateRoundTripUsesInjectedPaths(t *testing.T) {
 		t.Fatalf("PauseBy: %v", err)
 	}
 	mgr.SeedPauseState("scanner", pausedAt, "dashboard-api", "owner maintenance", "owner@example")
-	if err := mgr.Pause("worker", agent.BreakerTrigger, "fleet breaker engaged"); err != nil {
+	if err := mgr.Pause("worker", crux.BreakerTrigger, "fleet breaker engaged"); err != nil {
 		t.Fatalf("Pause worker: %v", err)
 	}
-	mgr.SeedPauseState("worker", pausedAt, agent.BreakerTrigger, "fleet breaker engaged", "")
+	mgr.SeedPauseState("worker", pausedAt, crux.BreakerTrigger, "fleet breaker engaged", "")
 	if err := mgr.PinCLI("scanner", "copilot-cli-v1"); err != nil {
 		t.Fatalf("PinCLI: %v", err)
 	}
@@ -375,7 +376,7 @@ func TestPersistStateResolvesPathsThroughRuntimeSeam(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte("project:\n  org: testorg\nagents:\n  scanner:\n    role: scanner\n"), 0o644); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
 	// One evaluation gives the governor a non-empty eval and mode history, so
 	// the history files are the observable proof that the seam's path set —

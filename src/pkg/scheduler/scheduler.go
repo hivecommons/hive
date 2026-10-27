@@ -16,18 +16,20 @@ import (
 )
 
 type Scheduler struct {
-	surgeDuration        func() (time.Duration, bool)
-	cfg                  *config.Config
-	primer               *knowledge.Primer
-	inception            *knowledge.InceptionEngine
-	lastActionable       *github.ActionableResult
-	logger               *slog.Logger
-	promptResolver       *promptsrc.Resolver
-	auditFunc            AuditFunc
-	advisoryFunc         AdvisoryFunc
-	classifier           ioscan.Classifier
-	classifierThresholds ioscan.Thresholds
-	classifierBudget     int
+	surgeDuration             func() (time.Duration, bool)
+	cfg                       *config.Config
+	primer                    *knowledge.Primer
+	inception                 *knowledge.InceptionEngine
+	lastActionable            *github.ActionableResult
+	logger                    *slog.Logger
+	primerCapLogged           sync.Map // agent|cap_bytes -> omitted fact count last logged at INFO
+	promptResolver            *promptsrc.Resolver
+	auditFunc                 AuditFunc
+	advisoryFunc              AdvisoryFunc
+	classifierUnavailableFunc func(error)
+	classifier                ioscan.Classifier
+	classifierThresholds      ioscan.Thresholds
+	classifierBudget          int
 	// classifierBudgetPerEval is what resetClassifierBudget refills to each
 	// pass: DefaultClassifierBudgetPerEval, or the lower CLI budget.
 	classifierBudgetPerEval int

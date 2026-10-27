@@ -23,6 +23,7 @@ const (
 	AutoMergeReasonNoAppBotLogin           = "no-app-bot-login"
 	AutoMergeReasonReviewGatePrefix        = "review-gate:"
 	AutoMergeReasonWorkflowPermission      = "workflow-permission"
+	ContributorLaneReasonAdoptedByHive     = "contributor-lane:adopted-by-hive"
 	ContributorLaneReasonAppAuthored       = "contributor-lane:app-authored"
 	ContributorLaneReasonAuthorAssociation = "contributor-lane:author-association"
 	ContributorLaneReasonChangesRequested  = "contributor-lane:changes-requested"
@@ -52,6 +53,7 @@ const (
 	StageReasonForkGuard                   = "fork-guard:"
 	StageReasonOptionalCheckFailing        = "optional-check-failing:"
 	StageReasonSharedCIIncident            = "shared-ci-incident:"
+	TrustedAuthorReasonAppAuthored         = "trusted-author:app-authored"
 	TrustedBotLaneSkipReason               = "trusted-bot-lane"
 	WorkflowApprovalRequiredPrefix         = "workflow-approval-required:"
 )

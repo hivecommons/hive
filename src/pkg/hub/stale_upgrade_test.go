@@ -2,6 +2,7 @@ package hub
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -231,6 +232,61 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 			},
 			orphaned:  true,
 			converged: true,
+		},
+		{
+			// The daily-mode incident behind the drain report: the spoke
+			// received the instruction, deferred because an agent kick was in
+			// flight, and said so on every beat. 68 minutes in, still inside
+			// its 45-minute-plus-grace window from its own account, it is
+			// held, not orphaned — abandoning it here is what produced three
+			// days of "never landed" and a false floating-tag diagnosis.
+			name: "not orphaned: spoke reports it is draining in-flight kicks",
+			entry: RegistryEntry{
+				Upgrading:        true,
+				UpgradeStartedAt: started,
+				GitHash:          "14f41ee",
+				UpgradeTarget:    "4f8be0b",
+				ImageRef:         "ghcr.io/hivecommons/hive:edge",
+				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
+				UpgradeDrain: &UpgradeDrainReport{
+					Target: "4f8be0b", InFlight: []string{"brainstorm"},
+					WaitedS: 60 * 60, RemainingS: 15 * 60,
+				},
+			},
+			orphaned: false,
+		},
+		{
+			// A drain whose own window (waited+remaining) plus the sweep's
+			// grace is already behind us is a spoke that cannot act on its own
+			// verdict. The hold must not become a new way to wedge forever.
+			name: "orphaned: drain report long past its own deadline",
+			entry: RegistryEntry{
+				Upgrading:        true,
+				UpgradeStartedAt: fixedSweepNow.Add(-3 * time.Hour),
+				GitHash:          "14f41ee",
+				UpgradeTarget:    "4f8be0b",
+				ImageRef:         "ghcr.io/hivecommons/hive:edge",
+				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
+				UpgradeDrain: &UpgradeDrainReport{
+					Target: "4f8be0b", InFlight: []string{"brainstorm"},
+					WaitedS: 44 * 60, RemainingS: 60,
+				},
+			},
+			orphaned: true,
+		},
+		{
+			// A drain with no time left is not a hold: the spoke is about to
+			// restart (or already should have). Normal orphan judgment applies.
+			name: "orphaned: drain report with nothing remaining",
+			entry: RegistryEntry{
+				Upgrading:        true,
+				UpgradeStartedAt: started,
+				GitHash:          "14f41ee",
+				UpgradeTarget:    "4f8be0b",
+				LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
+				UpgradeDrain:     &UpgradeDrainReport{Target: "4f8be0b", WaitedS: 45 * 60},
+			},
+			orphaned: true,
 		},
 		{
 			name:     "not upgrading at all",
@@ -577,5 +633,54 @@ func TestSweepConvergedNeverEscalatesToFault(t *testing.T) {
 	}
 	if s.registry.Hives[0].UpgradeFailed {
 		t.Error("a hive that converges on every cycle must never be reported as a permanent upgrade failure")
+	}
+}
+
+func TestDrainingUpgradeHold(t *testing.T) {
+	d := &UpgradeDrainReport{Target: "4f8be0b", InFlight: []string{"brainstorm", "triage"}, WaitedS: 600, RemainingS: 2100}
+	hold, reason := drainingUpgradeHold(d, 11*time.Minute)
+	if !hold {
+		t.Fatal("an active drain inside its window must hold")
+	}
+	for _, want := range []string{"brainstorm, triage", "draining"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("reason %q should mention %q", reason, want)
+		}
+	}
+	if hold, _ := drainingUpgradeHold(nil, time.Minute); hold {
+		t.Error("nil report must not hold")
+	}
+	window := time.Duration(d.WaitedS+d.RemainingS) * time.Second
+	if hold, _ := drainingUpgradeHold(d, window+upgradeDrainOverrun+time.Second); hold {
+		t.Error("a report past window+overrun must not hold")
+	}
+	if hold, _ := drainingUpgradeHold(d, window+upgradeDrainOverrun); !hold {
+		t.Error("a report exactly at window+overrun still holds")
+	}
+}
+
+// TestSweepExhaustedMessageNamesDrain asserts the terminal UpgradeError blames
+// the drain the spoke reported rather than the floating-tag guess — the
+// misdiagnosis that sent an operator to the image tag in the incident.
+func TestSweepExhaustedMessageNamesDrain(t *testing.T) {
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID: "h1", Name: "kellyaa/agent-newsletter",
+		Upgrading: true, UpgradeStartedAt: time.Now().Add(-3 * time.Hour),
+		GitHash: "14f41ee", UpgradeTarget: "4f8be0b",
+		LastHeartbeat:         rfc3339(time.Now().Add(-30 * time.Second)),
+		OrphanedUpgradeSweeps: maxOrphanedUpgradeSweeps - 1,
+		UpgradeDrain:          &UpgradeDrainReport{Target: "4f8be0b", InFlight: []string{"brainstorm"}, WaitedS: 2700, RemainingS: 1},
+	}}
+	s.sweepOrphanedUpgrades()
+	h := s.registry.Hives[0]
+	if !h.UpgradeFailed {
+		t.Fatalf("expected UpgradeFailed after exhausting sweeps; entry=%+v", h)
+	}
+	if !strings.Contains(h.UpgradeError, "brainstorm") || strings.Contains(h.UpgradeError, "floating tag") {
+		t.Fatalf("UpgradeError should name the drained kick, not the floating-tag hint: %q", h.UpgradeError)
 	}
 }

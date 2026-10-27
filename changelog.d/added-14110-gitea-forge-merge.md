@@ -1,0 +1,1 @@
+- Gitea and Forgejo merge implementation on the forge adapter (`POST /repos/{owner}/{repo}/pulls/{number}/merge`), with merge style mapping, head commit guard, and shared merge contract test coverage ([#14110](https://github.com/hivecommons/hive/issues/14110)).

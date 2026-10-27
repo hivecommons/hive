@@ -48,7 +48,7 @@ func TestHandleAgentLoginCode_InvalidBody(t *testing.T) {
 
 // The security property of the endpoint: a code carrying a newline would be
 // SUBMITTED mid-paste and everything after it typed as a fresh command line.
-// agent.SubmitLoginCode must refuse it, the handler must surface that as 400,
+// crux.Runtime.SubmitLoginCode must refuse it, the handler must surface that as 400,
 // and neither the response nor the error may echo the submitted value.
 func TestHandleAgentLoginCode_RejectsInjectableCode(t *testing.T) {
 	srv := newFullServer(t)

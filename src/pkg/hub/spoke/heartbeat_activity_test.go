@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -33,7 +33,7 @@ func activityTestConfig() *config.Config {
 
 func TestAgentActivityForRidesPauseProvenance(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, activityTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, activityTestLogger(), crux.ProjectContext{})
 	pausedAt := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
 	lastPane := time.Date(2026, 8, 20, 8, 55, 0, 0, time.UTC)
 	proc := &crux.Process{
@@ -69,7 +69,7 @@ func TestAgentActivityForRidesPauseProvenance(t *testing.T) {
 
 func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, activityTestLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, activityTestLogger(), crux.ProjectContext{})
 	proc := &crux.Process{}
 
 	scheduled := AgentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)

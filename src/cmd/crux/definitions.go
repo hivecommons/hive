@@ -4,35 +4,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/defs"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/defsrc"
 )
 
 // hiveLoader is the cli.DefinitionLoader backed by Hive's own config loader
 // and pkg/defsrc. It lives in the process boundary rather than pkg/crux/cli
 // because both of those packages sit outside the Crux boundary
-// (src/docs/design/crux.md, "Configuration leaf").
+// (src/docs/design/crux.md, "Configuration leaf"), which is also why
+// cmd/crux itself is a host package outside the Crux module set: it is to
+// the crux binary what cmd/hive is to the hive binary, and the outbound
+// ratchet (internal/testutil/crux_outbound_ratchet_test.go) measures the
+// ring without it.
 type hiveLoader struct{}
 
-// definitionNamePattern is the dashboard import handler's agent-name rule
-// (kickTemplatePattern on `<name>.md`): lower-case words joined by hyphens
-// or underscores, so a definition cannot name a path.
-var definitionNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
-
-// maxDefinitionNameLen matches the dashboard import limit.
-const maxDefinitionNameLen = 64
-
-// Defaults a portable AgentDefinition is merged over; the same values the
-// dashboard's agentConfigFromDefinition fills in for an import.
+// The name rule and the defaults a portable AgentDefinition is merged over
+// are the module loader's (crux/defs), so both crux binaries agree.
 const (
-	defaultDefinitionBackend         = "copilot"
-	defaultDefinitionRestartStrategy = "immediate"
+	maxDefinitionNameLen             = defs.MaxNameLen
+	defaultDefinitionBackend         = defs.DefaultBackend
+	defaultDefinitionRestartStrategy = defs.DefaultRestartStrategy
 )
 
 // defaultPoliciesLocalDir is cmd/hive's default policies checkout.
@@ -116,16 +113,7 @@ func isPortableDefinition(data []byte) bool {
 }
 
 func validateDefinitionName(name string) error {
-	if name == "" {
-		return fmt.Errorf("agent name is empty")
-	}
-	if len(name) > maxDefinitionNameLen {
-		return fmt.Errorf("agent name %q is longer than %d characters", name, maxDefinitionNameLen)
-	}
-	if !definitionNamePattern.MatchString(name) {
-		return fmt.Errorf("agent name %q contains invalid characters", name)
-	}
-	return nil
+	return defs.ValidateName(name)
 }
 
 // projectContextFromConfig builds the ProjectContext cmd/hive builds in

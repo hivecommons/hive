@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agentsmd"
+	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/pkg/config"
 )
 

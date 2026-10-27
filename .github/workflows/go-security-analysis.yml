@@ -171,7 +171,7 @@ jobs:
 
       - name: Scan
         working-directory: src
-        run: govulncheck ./...
+        run: govulncheck ./... ./crux/...
 
   gosec:
     needs: required-context-scope
@@ -228,7 +228,7 @@ jobs:
       - name: Scan
         working-directory: src
         continue-on-error: true
-        run: gosec -exclude-generated ./...
+        run: gosec -exclude-generated ./... ./crux/...
 
   golangci-lint:
     needs: required-context-scope
@@ -261,6 +261,9 @@ jobs:
         with:
           version: v2.13.1
           working-directory: src
+          # src/go.work: ./... covers the root module only; the nested Crux
+          # module (#13536) is addressed as ./crux/... from src/.
+          args: ./... ./crux/...
           skip-cache: true
 
   action-pins:

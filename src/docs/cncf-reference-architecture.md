@@ -132,7 +132,7 @@ Two ideas define the architecture:
    judgment calls (read code, reason about a fix, write a PR).
 
 2. **Autonomy is a dial, enforced in depth.** An **AI-native Capability Maturity
-   Model (ACMM)** with six levels (advisory → fully autonomous) is the single
+   Model (ACMM)** with six levels (advisory → autonomous) is the single
    control a human turns. Each level maps deterministically to a per-agent
    permission mode, and that mode is enforced at three independent layers: CLI
    tool denial, least-privilege scoped GitHub App tokens, and a network-level

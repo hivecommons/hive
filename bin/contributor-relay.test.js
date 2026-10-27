@@ -8575,7 +8575,7 @@ test('#6437 bob is told about its API key, not to type /login', () => {
   const relay = loadRelay({ backend: 'bob' });
   try {
     const text = relay.loginBannerLines('bob', 'podman exec -it c tmux attach -t contributor').join('\n');
-    assert.ok(/BOBSHELL_API_KEY/.test(text), 'bob needs its API key named');
+    assert.ok(/BOB_API_KEY/.test(text), 'bob needs its API key named');
     assert.ok(!/\/login/.test(text), 'typing /login cannot authenticate bob');
     assert.ok(!/tmux attach/.test(text),
       'attaching to the pane cannot fix a missing API key, so the banner must not send the operator there');
@@ -8641,7 +8641,7 @@ test('#6437 waitForCLI prints the blocked backend\'s own banner, not Claude Code
   try {
     assert.ok(/needs authentication/.test(output),
       'the needs-login banner should have been printed during startup');
-    assert.ok(/BOBSHELL_API_KEY/.test(output),
+    assert.ok(/BOB_API_KEY/.test(output),
       'bob was told to authenticate some other way than with its API key');
     assert.ok(!/Claude Code/.test(output),
       'a blocked bob is announced as Claude Code');
@@ -8717,6 +8717,37 @@ test('#5145 a docker container is unchanged, with or without the new variable', 
       'an older launch that passes no runtime must keep printing docker');
   } finally { teardown(withoutVar); }
 });
+
+for (const runtime of ['apptainer', 'singularity']) {
+  test(`#13976 a ${runtime} authentication banner attaches to the named instance`, () => {
+    const { relay, output } = captureStartupWithImmediateTimers({
+      backend: 'claude',
+      cliStates: ['Please run /login\n', 'Please run /login\n', 'Please run /login\n'],
+      env: {
+        HIVE_CONTAINER_NAME: 'hive-contributor-claude-9a1c',
+        HIVE_CONTAINER_RUNTIME: runtime,
+        HIVE_AGENT_SESSION: 'claude-session',
+      },
+    });
+    try {
+      const expected = `${runtime} exec instance://hive-contributor-claude-9a1c tmux attach -t claude-session`;
+      assert.strictEqual(relay.ATTACH_COMMAND, expected);
+      assert.ok(output.includes('needs authentication'), 'the login banner must fire');
+      assert.ok(output.includes(expected), `the banner must print the instance attach command; captured:\n${output}`);
+    } finally { teardown(relay); }
+  });
+
+  test(`#13976 local mode ignores ${runtime} without a container name`, () => {
+    const relay = loadRelay({ env: {
+      HIVE_CONTAINER_NAME: '',
+      HIVE_CONTAINER_RUNTIME: runtime,
+      HIVE_AGENT_SESSION: 'local-session',
+    } });
+    try {
+      assert.strictEqual(relay.ATTACH_COMMAND, 'tmux attach -t local-session');
+    } finally { teardown(relay); }
+  });
+}
 
 test('#5145 local mode names no container at all', () => {
   // HIVE_CONTAINER_NAME is set ONLY by the container arm of the recipe
@@ -13787,6 +13818,21 @@ test('#6951 an exhausted window of an UNRECOGNIZED kind refuses work', () => {
   assert.strictEqual(d.admit, false, 'a window kind this build was never taught must not admit work at 0% remaining');
   assert.strictEqual(d.reason, 'guarded_unknown_window');
   assert.strictEqual(d.window_id, 'd1');
+});
+
+test('#13946 agy Gemini ignores an exhausted 3p window but Claude/GPT and Gemini pools still hold', () => {
+  const limits = [{ id: '3p-5h', kind: 'short', pct_remaining: 0 }, { id: 'gemini-5h', kind: 'short', pct_remaining: 99 }];
+  const run = (model, lim) => loadRelay({ env: { AGENT_BACKEND: 'agy', AGENT_MODEL: model,
+    HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: lim }) } })
+    .evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(run('gemini-3.8-flash-high', limits).admit, true);
+  const claude = run('claude-opus-5', limits);
+  assert.strictEqual(claude.admit, false);
+  assert.strictEqual(claude.window_id, '3p-5h');
+  const gem = run('gemini-3.8-flash-high', [{ id: 'gemini-5h', kind: 'short', pct_remaining: 0 }]);
+  assert.strictEqual(gem.admit, false);
+  assert.strictEqual(gem.window_id, 'gemini-5h');
+  assert.strictEqual(run('mystery-model', limits).admit, false, 'unknown model stays conservative');
 });
 
 test('#6951 a recognized kind is held as `guarded`, an unrecognized one as `guarded_unknown_window`', () => {

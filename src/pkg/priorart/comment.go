@@ -97,7 +97,7 @@ func RenderGapSection(r Report) string {
 func renderFindingList(r Report) string {
 	var b strings.Builder
 	for i, f := range r.Findings {
-		fmt.Fprintf(&b, "%d. %s %s (%d%% match", i+1, kindLabel(f.Kind), linkOrRef(f), f.Confidence)
+		fmt.Fprintf(&b, "%d. %s %s (%d%% match", i+1, KindLabel(f.Kind), linkOrRef(f), f.Confidence)
 		if len(f.Matched) > 0 {
 			fmt.Fprintf(&b, " on `%s`", strings.Join(f.Matched, "`, `"))
 		}
@@ -129,7 +129,9 @@ func linkOrRef(f Finding) string {
 	}
 }
 
-func kindLabel(k Kind) string {
+// KindLabel is the human label for a finding kind ("merged PR", "closed
+// issue"), shared by the gate's comments and the relay's refusal messages.
+func KindLabel(k Kind) string {
 	switch k {
 	case KindMergedPR:
 		return "merged PR"

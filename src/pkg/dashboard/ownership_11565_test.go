@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -27,7 +27,7 @@ func ownershipEnv11565(level int) ownershipEnv {
 	// Every lane runs in its launched mode; push rights come from the lane's
 	// default mode at the repository's level, as in newOwnershipEnv.
 	env.laneCanOpenPR = func(lane, repo string) bool {
-		return agent.DefaultAgentMode(lane, env.levelFor(repo)).CanPush()
+		return crux.DefaultAgentMode(lane, env.levelFor(repo)).CanPush()
 	}
 	return env
 }
@@ -420,12 +420,12 @@ func TestReviewerLaneAvailable11565(t *testing.T) {
 	tests := []struct {
 		name     string
 		cfg      *config.Config
-		statuses map[string]*agent.AgentProcess
+		statuses map[string]*crux.Process
 		want     bool
 	}{
 		{"scheduled adjudicator", cfgWith(map[string]config.AgentConfig{"adjudicator": adjudicator}), nil, true},
 		{"adjudicator absent, advisory reviewer running", cfgWith(map[string]config.AgentConfig{"reviewer": advisory}), nil, false},
-		{"adjudicator paused at runtime", cfgWith(map[string]config.AgentConfig{"adjudicator": adjudicator, "reviewer": advisory}), map[string]*agent.AgentProcess{"adjudicator": {Paused: true}}, false},
+		{"adjudicator paused at runtime", cfgWith(map[string]config.AgentConfig{"adjudicator": adjudicator, "reviewer": advisory}), map[string]*crux.Process{"adjudicator": {Paused: true}}, false},
 		{"adjudicator disabled", cfgWith(map[string]config.AgentConfig{"adjudicator": {Role: "reviewer"}}), nil, false},
 	}
 	for _, tt := range tests {

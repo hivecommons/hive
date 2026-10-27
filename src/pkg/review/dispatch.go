@@ -508,6 +508,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 	}
 	state.GeneratedAt = now
 	state = pruneState(state, prs, opts.ProjectOrg)
+	state.Pending = pruneUnconfiguredAgents(state.Pending, opts.Agents)
 	plan := DispatchPlan{State: state}
 	if !opts.RequireApproval || !opts.FanOut {
 		return plan
@@ -665,7 +666,10 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		// however many perspectives it covers. Applying it anyway would drop
 		// perspectives to buy quiet that has already been bought.
 		if opts.CombinedPerspectives {
-			reviewer := leastLoadedReviewer(prReviewers, plan.State.Pending)
+			reviewer, free := freeReviewer(prReviewers, plan.inFlight(opts, now))
+			if !free {
+				continue
+			}
 			agent := reviewer.Name
 			// One kick covers several perspectives, so a per-perspective
 			// override can only apply when it is the only perspective.
@@ -734,7 +738,10 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			limit = availableSlots
 		}
 		for i := 0; i < limit; i++ {
-			reviewer := prReviewers[i%len(prReviewers)]
+			reviewer, free := freeReviewer(prReviewers, plan.inFlight(opts, now))
+			if !free {
+				break
+			}
 			agent := reviewer.Name
 			perspective := missing[i]
 			choice := chooseReviewModel(reviewer, perspective, pr.AuthorModel, opts.PerspectiveModels)
@@ -784,27 +791,132 @@ func noIndependentModelReason(authorModel string) string {
 	return reason
 }
 
-// leastLoadedReviewer picks the reviewer for a combined kick: the one with the
-// fewest PR heads still pending on it (dispatched and not yet answered),
-// counting this cycle's kicks too, ties going to the first in name order.
-// Always taking reviewers[0] queued every combined review on one agent, so
-// extra reviewers and replicas sat idle and max_parallel_reviews could not
-// parallelise anything: each kick waited for the previous one to finish.
-func leastLoadedReviewer(reviewers []AgentCapability, pending []PendingReview) AgentCapability {
-	heads := map[string]map[string]bool{}
+// pendingKickKey identifies the review kick a pending entry belongs to. A
+// head kick covers one perspective; a combined kick and a decision kick cover
+// several perspectives of one PR head in one session, so their entries share a
+// key. Plain per-perspective entries cannot be told apart from a combined
+// kick's (both carry no head), so they key on the PR head: for load counting
+// that undercounts one agent holding several plain perspectives of the same PR,
+// which the one-kick-in-flight rule in freeReviewer prevents for new dispatch.
+func pendingKickKey(p PendingReview) string {
+	base := fmt.Sprintf("%s#%d@%s", strings.ToLower(p.Repo), p.Number, p.HeadSHA)
+	switch {
+	case p.Decision:
+		return base + "/decision"
+	case p.Head != "":
+		return base + "/" + string(p.Perspective) + "/" + p.Head
+	default:
+		return base
+	}
+}
+
+// pendingKicksByAgent counts the review kicks still pending on each agent
+// (dispatched and not yet answered), including kicks planned earlier in this
+// cycle: the planner appends to state.Pending as it goes.
+func pendingKicksByAgent(pending []PendingReview) map[string]int {
+	kicks := map[string]map[string]bool{}
 	for _, p := range pending {
-		if heads[p.Agent] == nil {
-			heads[p.Agent] = map[string]bool{}
+		if kicks[p.Agent] == nil {
+			kicks[p.Agent] = map[string]bool{}
 		}
-		heads[p.Agent][fmt.Sprintf("%s#%d@%s", p.Repo, p.Number, p.HeadSHA)] = true
+		kicks[p.Agent][pendingKickKey(p)] = true
 	}
-	best := reviewers[0]
-	for _, r := range reviewers[1:] {
-		if len(heads[r.Name]) < len(heads[best.Name]) {
-			best = r
+	out := make(map[string]int, len(kicks))
+	for agent, keys := range kicks {
+		out[agent] = len(keys)
+	}
+	return out
+}
+
+// freeReviewer picks the reviewer for a review kick: the first, in name order,
+// with no review kick in flight (pending on it, counting this cycle's kicks),
+// and false when every reviewer is busy.
+//
+// It replaces leastLoadedReviewer, which counted distinct PR heads per agent
+// (#13401, itself replacing "always reviewers[0]"). Replicas holding the same
+// PR tied on that count, so one PR's remaining perspectives all went to the
+// first replica in name order: on a two-replica Sonnet head, four perspective
+// kicks reached one Claude session within three minutes, it ran one turn, and
+// three verdicts never came back. An agent's CLI works one prompt at a time; a
+// second review kick typed into a busy session is merged into, or lost behind,
+// the turn in progress, and its pending entry can only expire.
+//
+// When nobody is free the work waits for a later cycle. Nothing is recorded,
+// so waiting costs no redispatch and no head retry, and pending_ttl starts
+// when the kick is actually sent to an idle agent.
+func freeReviewer(reviewers []AgentCapability, pending []PendingReview) (AgentCapability, bool) {
+	load := pendingKicksByAgent(pending)
+	for _, r := range reviewers {
+		if load[r.Name] == 0 {
+			return r, true
 		}
 	}
-	return best
+	return AgentCapability{}, false
+}
+
+// inFlight is the subset of pending entries that still mean "this agent is
+// working on a kick", the only ones freeReviewer may count. A pending entry is
+// also the lifetime record of what a head was asked, and two kinds outlive the
+// work they stood for (hivecommons/hive#14361):
+//
+//   - entries of a head whose redispatch budget is exhausted: expirePending
+//     deliberately leaves them in place so the head is never re-kicked, and
+//     holds the PR for a human;
+//   - entries older than pending_ttl that expirePending has not dropped,
+//     because the planner did not reach their PR this cycle.
+//
+// Counted as load, they pinned every replica of every head (and the decision
+// agent) indefinitely: three PRs that ran out of redispatches left 13 entries
+// behind and the swarm dispatched nothing for any PR for ~36 hours while every
+// reviewer sat idle. They stay in state for their bookkeeping; they just do not
+// make anyone busy. An entry with no dispatched_at has no measurable age and
+// still counts, as before.
+func (p *DispatchPlan) inFlight(opts DispatchOptions, now time.Time) []PendingReview {
+	ttl := opts.effectivePendingTTL()
+	out := make([]PendingReview, 0, len(p.State.Pending))
+	for _, e := range p.State.Pending {
+		if ttl > 0 && !e.Dispatched.IsZero() && now.Sub(e.Dispatched) >= ttl {
+			continue
+		}
+		if p.headExhausted(e.Repo, e.Number, e.HeadSHA) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// headExhausted is redispatchExhausted keyed on a pending entry's PR head.
+func (p *DispatchPlan) headExhausted(repo string, number int, headSHA string) bool {
+	for _, h := range p.State.Human {
+		if samePRHead(h.Repo, h.Number, h.HeadSHA, repo, number, headSHA) && strings.HasPrefix(h.Reason, HoldReasonDispatchExhausted) {
+			return true
+		}
+	}
+	return false
+}
+
+// pruneUnconfiguredAgents drops pending entries for agents the hive no longer
+// runs, such as a replica or review head removed by lowering `replicas`. Their
+// verdict can never arrive, so the entry would only hold its perspective as
+// "asked" forever. A pruned perspective is simply asked again. With no agent
+// list (callers that plan without one) nothing is pruned.
+func pruneUnconfiguredAgents(pending []PendingReview, agents []AgentCapability) []PendingReview {
+	if len(agents) == 0 {
+		return pending
+	}
+	known := make(map[string]bool, len(agents))
+	for _, a := range agents {
+		known[a.Name] = true
+	}
+	kept := pending[:0]
+	for _, e := range pending {
+		if e.Agent != "" && !known[e.Agent] {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return kept
 }
 
 // agentBase resolves an agent's base lane from the full configured set, so an

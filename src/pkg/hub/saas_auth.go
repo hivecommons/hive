@@ -790,10 +790,14 @@ var publicExactPaths = map[string]struct{}{
 	"/api/themes":              {},
 	"/auth/return":             {},
 	"/components.css":          {},
-	ssoHandoffPath:             {},
-	"/tokens.css":              {},
-	spokeWidgetSummaryPath:     {},
-	spokeWebhookRelayPath:      {},
+	// A hosted spoke's robots.txt (Disallow: /, see dashboard.noIndex) must
+	// reach the spoke unauthenticated; behind the auth-signin redirect a
+	// crawler would only ever see the hub's /login instead.
+	"/robots.txt":          {},
+	ssoHandoffPath:         {},
+	"/tokens.css":          {},
+	spokeWidgetSummaryPath: {},
+	spokeWebhookRelayPath:  {},
 }
 
 var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot"}

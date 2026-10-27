@@ -1,0 +1,1 @@
+- A burst of shadow-mode "shadow fence would have denied external mutation" warnings no longer files repeated runtime-error self-reports; the warning stays in logs and enforce-mode denials remain reportable.

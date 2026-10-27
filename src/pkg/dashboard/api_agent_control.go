@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
@@ -328,7 +327,7 @@ func (s *Server) validateModelForAgent(name, model string) error {
 	// the served list is canonical, so compare the canonicalized candidate
 	// rather than rejecting a dotted/dashed variant of an available model.
 	if backend == "copilot" {
-		model = agent.CanonicalizeCopilotModel(model)
+		model = crux.CanonicalizeCopilotModel(model)
 	}
 	for _, id := range known {
 		if id == model {

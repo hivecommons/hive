@@ -1,98 +1,16 @@
-// Package issueshape holds the shared shape validators for agent-authored
-// GitHub issue and comment content. The rules originated in the issue-request
-// watcher (pkg/github), which validates the request files agents drop for the
-// hive's own creation path. The proxy (pkg/proxy) enforces the same rules on
-// the OTHER creation path — an agent's `gh issue create` becomes a raw
-// POST /repos/{owner}/{repo}/issues that never touches the watcher — so the
-// logic lives here as a single source of truth for both callers.
+// Package issueshape is the Hive-side name for the shape validators that
+// agent-authored GitHub issue and comment content must pass. The validators
+// live in the Crux ring as pkg/crux/issueshape (stdlib only) because the
+// proxy enforces them on an agent's raw POST /repos/{owner}/{repo}/issues;
+// this package re-exports them so the issue-request watcher (pkg/github) and
+// pkg/classify keep their import path: Crux owns, Hive aliases
+// (hivecommons/hive#13536).
 package issueshape
 
-import (
-	"regexp"
-	"strings"
-)
+import cruxissueshape "github.com/hivecommons/hive/crux/issueshape"
 
 var (
-	angleBracketTokenRE = regexp.MustCompile(`<([^>\n]+)>`)
-	// unchosenOptionListRE matches a policy template's pick-one list left
-	// verbatim ("Impact: high/medium/low", "**Severity**: critical/high/medium/low").
-	unchosenOptionListRE           = regexp.MustCompile(`(?i)\b(?:critical/)?high/medium/low\b`)
-	templatePlaceholderContentRE   = regexp.MustCompile(`^(?:[a-z][a-z0-9]*(?:[ -][a-z0-9]+)+|analysis|fix)$`)
-	markdownHTMLTagsWithAttributes = map[string]bool{
-		"a": true, "br": true, "code": true, "dd": true, "del": true, "details": true,
-		"div": true, "dl": true, "dt": true, "em": true, "h1": true, "h2": true,
-		"h3": true, "h4": true, "h5": true, "h6": true, "hr": true, "img": true,
-		"ins": true, "kbd": true, "li": true, "ol": true, "p": true, "pre": true,
-		"rp": true, "rt": true, "ruby": true, "s": true, "samp": true, "source": true,
-		"span": true, "strong": true, "sub": true, "summary": true, "sup": true,
-		"table": true, "tbody": true, "td": true, "tfoot": true, "th": true,
-		"thead": true, "tr": true, "ul": true, "var": true,
-	}
+	UnsubstitutedTemplatePlaceholder = cruxissueshape.UnsubstitutedTemplatePlaceholder
+	BodyHasMisEscapedNewlines        = cruxissueshape.BodyHasMisEscapedNewlines
+	UnchosenOptionList               = cruxissueshape.UnchosenOptionList
 )
-
-// UnsubstitutedTemplatePlaceholder reports whether text still contains an
-// unfilled policy-template placeholder like <analysis>, <fix>, or
-// <specific description of the documentation gap>: lowercase words, with
-// multi-word placeholders separated by spaces or hyphens. It deliberately
-// skips URLs, generic type parameters, and recognized GitHub Markdown HTML
-// tags (including attribute forms such as <details open>) so those legitimate
-// constructs are not mistaken for an unfilled template. The returned string is
-// the full matched token (with angle brackets) for use in an error message.
-func UnsubstitutedTemplatePlaceholder(text string) (string, bool) {
-	for _, match := range angleBracketTokenRE.FindAllStringSubmatch(text, -1) {
-		if len(match) != 2 {
-			continue
-		}
-		// A real placeholder is written tight: <like this>. Requiring no
-		// surrounding whitespace is what separates it from a sentence that
-		// merely contains two comparison operators -- "holds when a < b and
-		// c > d in practice" yields the span "< b and c >", which trimming
-		// would turn into the multi-word phrase "b and c" and refuse. That
-		// sentence is ordinary prose and must be allowed through.
-		if strings.TrimSpace(match[1]) != match[1] {
-			continue
-		}
-		content := match[1]
-		if content == "" || strings.Contains(content, "://") || strings.ContainsAny(content, "/=,") {
-			continue
-		}
-		firstField := content
-		if fields := strings.Fields(content); len(fields) > 0 {
-			firstField = fields[0]
-		}
-		if markdownHTMLTagsWithAttributes[strings.ToLower(firstField)] {
-			continue
-		}
-		if templatePlaceholderContentRE.MatchString(content) {
-			return match[0], true
-		}
-	}
-	return "", false
-}
-
-// BodyHasMisEscapedNewlines reports whether body is a single physical line
-// whose markdown structure was encoded as literal backslash-n escape
-// sequences instead of real newlines (the classic `## X\n\n<...>\n\n## Y`
-// specimen). A body with real line breaks may legitimately discuss "\n" in
-// prose or a fenced code block, so it requires the combination — no real
-// newline, multiple literal \n tokens, and \n\n / \n## structure — before
-// flagging, to avoid blocking ordinary one-line text that mentions the escape.
-func BodyHasMisEscapedNewlines(body string) bool {
-	return !strings.Contains(body, "\n") &&
-		strings.Count(body, `\n`) >= 2 &&
-		(strings.Contains(body, `\n\n`) || strings.Contains(body, `\n## `))
-}
-
-// UnchosenOptionList reports whether text still carries a policy template's
-// pick-one option list verbatim — "Impact: high/medium/low", "**Severity**:
-// critical/high/medium/low" — which means the author never chose one. The
-// hivecommons/hive#7898 issue was the quality template filed untouched:
-// prose placeholders ("Detailed explanation of what needs testing and why.")
-// carry no angle brackets, so UnsubstitutedTemplatePlaceholder let it
-// through; the unpicked priority list is the one template fragment that
-// survives any rewording of the prose. The returned string is the matched
-// list for use in an error message.
-func UnchosenOptionList(text string) (string, bool) {
-	m := unchosenOptionListRE.FindString(text)
-	return m, m != ""
-}

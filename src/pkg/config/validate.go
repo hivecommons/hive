@@ -200,6 +200,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateReviewPerspectiveModels(); err != nil {
 		return err
 	}
+	if err := c.Review.VerdictLabels.Validate(); err != nil {
+		return err
+	}
 	if err := c.validateReviewHeads(); err != nil {
 		return err
 	}
@@ -213,6 +216,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.ValidateRecheckDiscovery(); err != nil {
+		return err
+	}
+	if err := c.validateRepoForges(); err != nil {
 		return err
 	}
 	if err := ValidateKnowledgeConnectors(c.Knowledge.Connectors); err != nil {

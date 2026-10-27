@@ -115,6 +115,7 @@ func waitChannelTargetRefreshes(t *testing.T) {
 func resetChannelCommitDateCache() {
 	commitDateMu.Lock()
 	commitDateBySHA = map[string]time.Time{}
+	commitDateBackoffUntil = map[string]time.Time{}
 	commitDateMu.Unlock()
 }
 

@@ -20,13 +20,26 @@ import (
 // A nested module can only be a module once this list is empty, so the list
 // may shrink and never grow.
 //
-// cruxModulePrefixes is the package set the module will hold — pkg/agent and
-// its ring, exactly the set .github/scripts/crux-scope.sh uses to skip the
-// hub and dashboard shards on a crux-only PR, plus pkg/crux (the exported
-// surface) and cmd/crux (the CLI). KEEP THE THREE IN SYNC. An import between
-// two packages in the set is not an edge; an import of anything else under
-// github.com/hivecommons/hive/ is. Third-party and stdlib imports are not
-// measured.
+// cruxModuleDir is the nested Crux module, src/crux, relative to this
+// package's directory. Since the module cut (Stage 2 step 4) the module
+// boundary is the ring: every package under src/crux is in the set and
+// nothing else is. Before the cut this file carried cruxModulePrefixes, the
+// src/-relative list that .github/scripts/crux-scope.sh and the v2-tests
+// boundary comment mirrored; all three now name the one directory. An import
+// between two packages in the module is not an edge; an import of anything
+// else under github.com/hivecommons/hive/ is. Third-party and stdlib imports
+// are not measured.
+//
+// cmd/crux is NOT in the module. It is the crux binary's process boundary
+// and, like cmd/hive, a host: its only job besides signals and the exit code
+// is the Hive-backed cli.DefinitionLoader (hive.yaml via pkg/config, the
+// portable AgentDefinition via pkg/defsrc, Hive's per-agent defaults), which
+// is host knowledge by definition and has no layer above main to be injected
+// from. A nested module that held it would import pkg/config and so need the
+// root module, the cycle Stage 2 exists to avoid; the binary therefore stays
+// in the root module and builds against the nested one the way cmd/hive
+// does. The inbound ratchet still measures it (baseline zero `agent.<Symbol>`
+// references), so it can reach the runtime only through the crux package.
 //
 // cruxOutboundBaseline is exact and fails closed in both directions, like the
 // inbound tables: an edge not in the baseline fails the PR gate and names the
@@ -35,8 +48,8 @@ import (
 // into stale headroom. Entries are "<dep>" when a non-test file imports it
 // and "<dep> (test)" when only _test.go files do. Edges are removed in the
 // same change that cuts them; they are never added. The way to give the
-// runtime something from Hive is to move the value type into pkg/crux/types
-// (stdlib-only; see PRResult, the audit vocabulary), invert it behind a
+// runtime something from Hive is to move the value type into the crux root
+// package (stdlib-only; see PRResult, the audit vocabulary), invert it behind a
 // Manager setter the host wires (SetSpanStarter, SetSandboxPRClient), or
 // move the test to the consumer side (pkg/review's prompt trigger test).
 //
@@ -65,85 +78,70 @@ import (
 // and reaches the ACMM-pack plan gates through Desk.SetPlanPolicy (cmd/hive
 // wires config.PlanAutoApproveForLevel and PlanningConfig.PlanFromLabelEnabled
 // and carries the parity tests), and the two tests that loaded a full
-// hive.yaml moved to cmd/hive. No ring package imports pkg/config any more;
-// what remains is the effects/fleetreport/gitidentity/jev/outputschema/
-// pushbroker cluster, the proxy's GitHub-side helpers and watchdog's
-// fleetreport/rotation edges.
-var cruxOutboundBaseline = map[string][]string{
-	"cmd/crux": {
-		"pkg/config",
-		"pkg/defsrc",
-	},
-	"pkg/agent": {
-		"internal/testutil (test)",
-		"pkg/advisor",
-		"pkg/config",
-		"pkg/effects",
-		"pkg/fleetreport",
-		"pkg/gitidentity",
-		"pkg/jev",
-		"pkg/outputschema",
-		"pkg/pushbroker",
-		"pkg/taskmcp",
-	},
-	"pkg/inference": {
-		"internal/testutil (test)",
-		"pkg/logread",
-		"pkg/watsonx",
-	},
-	"pkg/proxy": {
-		"pkg/github",
-		"pkg/inferencehealth",
-		"pkg/ioscan",
-		"pkg/issueshape",
-		"pkg/tokens",
-	},
-	"pkg/toolapprove": {
-		"pkg/ioscan",
-	},
-	"pkg/trajectory": {
-		"pkg/jsonextract",
-	},
-	"pkg/watchdog": {
-		"pkg/fleetreport",
-		"pkg/rotation",
-	},
-}
+// hive.yaml moved to cmd/hive. No ring package imports pkg/config any more.
+// The value-type edges went next (Stage 2 prerequisite 2): pkg/effects
+// moved whole into pkg/crux/effects (stdlib-only; pkg/effects aliases every
+// symbol), pkg/gitidentity moved to pkg/crux/gitidentity (its two callers
+// repointed, nothing left to alias), the Jev environment contract and
+// jev-decide skill moved to pkg/crux/jev (pkg/jev aliases them; the
+// endpoint and CLI stay), the agent-report schema and validator moved to
+// pkg/crux/outputschema with the receipt's provenance handle as
+// pkg/crux/types.ProofProvenance (pkg/convergence/proof and
+// pkg/outputschema alias; the report directory and path helpers stay host
+// side), and pkg/jsonextract moved to pkg/crux/jsonextract (pkg/jsonextract
+// aliases it), which also closed pkg/trajectory's only edge. The service
+// edges followed: the runtime's self-reported error conditions go through
+// pkg/crux/types.ConditionReporter (the seven ring-emitted Class* names live
+// in types; fleetreport aliases them), wired by Manager.SetConditionReporter
+// and watchdog.WithConditionReporter to fleetreport.DefaultReporter in
+// cmd/hive; pkg/pushbroker's only Hive dependency, *github.AppAuth, became
+// the pushbroker.TokenScoper interface (cmd/hive's appMinter adapts), and
+// pushbroker joined the ring together with the stdlib-only pkg/watsonx,
+// since both are runtime-side packages the ring already imported. The
+// sibling edges followed: the watchdog's RotationAuthProbe reads a
+// two-method watchdog.UsageProber (cmd/hive adapts each rotation prober)
+// and toolapprove's payload scanning goes through toolapprove.TextScanner,
+// which pkg/ioscan implements (ToolApproveScanner) and cmd/hive and
+// pkg/turn install at init; a desk with no text scanner fails closed.
+// Prerequisite 3 started with the proxy's value-type edges: the
+// inference-gateway health store moved whole into pkg/crux/inferencehealth
+// and the issue/comment shape validators into pkg/crux/issueshape (both
+// stdlib-only; pkg/inferencehealth and pkg/issueshape alias every symbol so
+// hub, spoke, dashboard, github and classify keep their import path). Its
+// three service edges were inverted behind seams in pkg/proxy/host_seams.go:
+// proxy.CanaryScanner (pkg/ioscan's *CanaryRegistry implements it; the leak
+// value is pkg/crux/types.CanaryLeak, which ioscan aliases),
+// proxy.UsageSink (*tokens.InferenceSink implements it) and
+// proxy.GitHubRESTAccounting (cmd/hive's githubRESTAccounting adapts
+// pkg/github's package-level recorders and core-bucket snapshot; a proxy
+// without one records nothing and the agent GitHub budget applies the
+// per-agent cap alone). The proxy's tests drive the seams with in-package
+// fakes. The two cmd/crux rows (pkg/config, pkg/defsrc: the DefinitionLoader
+// implementation) left when cmd/crux left the set — see the file comment —
+// which completed prerequisite 3: no ring package imports anything from
+// Hive in non-test code. The last two rows were test-only: pkg/agent and
+// pkg/inference tests used this package's Eventually* and
+// Skip[f]UnlessRequired helpers. Those copied into the ring as
+// pkg/crux/testutil (crux/internal/testutil after the module cut), so the
+// baseline is empty: no ring package imports anything from Hive, in test
+// code or otherwise. After step 4 the module boundary enforces the same
+// thing (the nested module has no replace back to the root), and this test
+// keeps measuring it from the root module's side.
+var cruxOutboundBaseline = map[string][]string{}
 
-// cruxModulePrefixes are the src/-relative package directories (and their
-// subpackages) that Stage 2 moves into the nested module. See the file
-// comment for the sync rule with .github/scripts/crux-scope.sh.
-var cruxModulePrefixes = []string{
-	"pkg/agent",
-	"pkg/crux",
-	"cmd/crux",
-	"pkg/agentmode",
-	"pkg/agentparse",
-	"pkg/agentsmd",
-	"pkg/claude",
-	"pkg/sandbox",
-	"pkg/kubejob",
-	"pkg/toolapprove",
-	"pkg/skillreg",
-	"pkg/inference",
-	"pkg/openrouter",
-	"pkg/watchdog",
-	"pkg/trajectory",
-	"pkg/logscrub",
-	"pkg/proxy",
-}
+// cruxModuleDir is the src/-relative directory of the nested Crux module;
+// cruxModuleRoots is the same as a path from this package's directory. See
+// the file comment for the sync rule with .github/scripts/crux-scope.sh.
+const cruxModuleDir = "crux"
+
+var cruxModuleRoots = []string{filepath.Join("..", "..", cruxModuleDir)}
 
 const cruxHiveModulePath = "github.com/hivecommons/hive/"
 
-// cruxInModule reports whether rel (a src/-relative directory) is one of
-// cruxModulePrefixes or nested under one.
+// cruxInModule reports whether rel (a src/-relative directory, or an import
+// path with cruxHiveModulePath trimmed) is inside the nested module.
 func cruxInModule(rel string) bool {
-	for _, p := range cruxModulePrefixes {
-		if rel == p || strings.HasPrefix(rel, p+"/") {
-			return true
-		}
-	}
-	return false
+	return rel == cruxModuleDir || strings.HasPrefix(rel, cruxModuleDir+"/")
 }
 
 // cruxOutboundEdge is one measured import of an outside Hive package.
@@ -160,7 +158,7 @@ type cruxOutboundEdge struct {
 func TestCruxOutboundRatchet(t *testing.T) {
 	edges, files := measureCruxOutbound(t)
 	if files == 0 {
-		t.Fatalf("no .go files found under %v — is the test running from src/internal/testutil?", cruxModulePrefixes)
+		t.Fatalf("no .go files found under %v — is the test running from src/internal/testutil?", cruxModuleRoots)
 	}
 
 	measured := map[string][]string{}
@@ -204,25 +202,27 @@ func TestCruxOutboundRatchet(t *testing.T) {
 
 	if len(failures) > 0 {
 		t.Fatalf("Crux outbound ratchet (hivecommons/hive#13536, src/docs/design/crux.md):\n\n%s\n"+
-			"A package that Stage 2 moves into the crux module may not grow a dependency on the rest of Hive. "+
-			"Move the value type into pkg/crux/types, invert it behind a Manager setter the host wires, or move the "+
+			"A package in the crux module may not grow a dependency on the rest of Hive. "+
+			"Move the value type into the crux root package, invert it behind a Manager setter the host wires, or move the "+
 			"test to the consumer side; a baseline entry whose edge is gone must be deleted in the same change.",
 			strings.Join(failures, "\n\n"))
 	}
 }
 
 // measureCruxOutbound parses the import declarations of every Go file under
-// cruxModulePrefixes (skipping testdata) and records, per package, every
-// import of a Hive package outside the set, with the importing files and
-// whether any of them is a non-test file.
+// the nested module (skipping testdata) and records, per package, every
+// import of a Hive package outside the module, with the importing files and
+// whether any of them is a non-test file. The Go toolchain enforces the same
+// thing at build time (the nested module has no replace back to the root,
+// so such an import does not resolve); the parse here reports it by file
+// and keeps the record in one place with the inbound ratchet.
 func measureCruxOutbound(t *testing.T) (map[string]map[string]*cruxOutboundEdge, int) {
 	t.Helper()
 	edges := map[string]map[string]*cruxOutboundEdge{}
 	files := 0
 	fset := token.NewFileSet()
 	srcRoot := filepath.Join("..", "..")
-	for _, prefix := range cruxModulePrefixes {
-		root := filepath.Join(srcRoot, filepath.FromSlash(prefix))
+	for _, root := range cruxModuleRoots {
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err

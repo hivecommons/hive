@@ -1078,6 +1078,10 @@ func (m model) View() string {
 		return splash
 	}
 
+	if m.hives != nil && m.hives.TreeReviewing() {
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.hives.View(m.width, m.height))
+	}
+
 	if m.width < minWidth || m.height < minHeight {
 		return m.tooSmallView()
 	}
@@ -1087,7 +1091,7 @@ func (m model) View() string {
 			return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
 				footerStyle.Render(hivesOnlyClosedText))
 		}
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.hives.View(m.width))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.hives.View(m.width, m.height))
 	}
 
 	// One line each for header and footer; the grid gets the rest. At the
@@ -1173,7 +1177,7 @@ func (m model) View() string {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.acmm.View(m.width))
 	}
 	if m.hives != nil {
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.hives.View(m.width))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.hives.View(m.width, m.height))
 	}
 	if m.helpVisible {
 		// Place, not Join: the overlay sits ON the frame rather than taking

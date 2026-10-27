@@ -66,8 +66,13 @@ a release note for the exact target version says to do so.
 For Kubernetes, preserve the startup budget and capabilities from
 `src/deploy/k8s/deployment.yaml` when carrying local overlays forward:
 
-- `startupProbe` currently allows 150 seconds (`failureThreshold: 30`,
-  `periodSeconds: 5`) before liveness restarts are armed.
+- `startupProbe` ships with `failureThreshold: 30`, `periodSeconds: 5` in the
+  manifest (150 seconds of probes, plus the 10-second initial delay). On an
+  image switch or rollout restart, spoke self-upgrades raise an existing `hive`
+  container's threshold to at least 118, giving the hosted 10-minute startup
+  budget with those timings. Set 118 (or higher) in local overlays so reapplying
+  an overlay preserves that threshold. Larger thresholds, probe handlers and
+  timings are preserved; containers without a startup probe are unchanged.
 - The pod must retain the capabilities the entrypoint and per-agent UID switch
   use (`CHOWN`, `SETUID`, `SETGID`, `SETPCAP`, `DAC_OVERRIDE`, `FOWNER`,
   `FSETID`, plus `NET_ADMIN` unless proxy egress is explicitly advisory).

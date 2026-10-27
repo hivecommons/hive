@@ -26,25 +26,13 @@ set -uo pipefail
 base=${1:?base revision}
 head=${2:?head revision}
 
-# The Crux package set: pkg/agent and its subpackages plus the runtime
-# packages the RFC lists. KEEP IN SYNC with the "Crux boundary" header
-# comment in .github/workflows/v2-tests.yml.
+# The Crux package set: the nested Go module at src/crux (module
+# github.com/hivecommons/hive/crux, #13536 step 4) — crux/agent and the
+# runtime ring the RFC lists. KEEP IN SYNC with the "Crux boundary" header
+# comment in .github/workflows/v2-tests.yml and with cruxModuleDir in
+# src/internal/testutil/crux_outbound_ratchet_test.go.
 CRUX_DIRS=(
-  src/pkg/agent
-  src/pkg/agentmode
-  src/pkg/agentparse
-  src/pkg/agentsmd
-  src/pkg/claude
-  src/pkg/sandbox
-  src/pkg/kubejob
-  src/pkg/toolapprove
-  src/pkg/skillreg
-  src/pkg/inference
-  src/pkg/openrouter
-  src/pkg/watchdog
-  src/pkg/trajectory
-  src/pkg/logscrub
-  src/pkg/proxy
+  src/crux
 )
 
 changed=$(git diff --no-renames --name-only "$base" "$head" 2>/dev/null) || { echo full; exit 0; }
@@ -55,7 +43,7 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
     # Fail-safe: anything that can change how every package builds or tests.
-    src/go.mod|src/go.sum|src/internal/*|src/pkg/config/*|.github/workflows/*|.github/scripts/*|src/scripts/*)
+    src/go.mod|src/go.sum|src/go.work|src/go.work.sum|src/crux/go.mod|src/crux/go.sum|src/internal/*|src/pkg/config/*|.github/workflows/*|.github/scripts/*|src/scripts/*)
       echo full
       exit 0
       ;;

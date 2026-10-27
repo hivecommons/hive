@@ -595,6 +595,42 @@ if [[ "$(readlink "${HOME_DIR}/CLAUDE.md")" != "$BOB_AGENT_MD" ]]; then
 fi
 echo "contributor-agent bob knowledge link tests passed"
 
+# `just contribute-hive local` links into HIVE_AGENT_CWD rather than $HOME
+# (#14521): on the host $HOME is the user's real home, and the CLI reads its
+# context files from the directory it is started in. The third argument must
+# place every link there, leave $HOME untouched, and skip the container-only
+# goose config seed.
+rm -f "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md" "${HOME_DIR}/.goosehints" "${HOME_DIR}/.goose-instructions.md"
+rm -rf "${HOME_DIR}/.config/goose"
+LOCAL_AGENT_MD="${HOME_DIR}/agent.md"
+LOCAL_AGENT_CWD="${WORK_DIR}/agent-cwd"
+rm -rf "$LOCAL_AGENT_CWD"
+env -i \
+  PATH="${PATH}" \
+  HOME="$HOME_DIR" \
+  HIVE_REGISTRATION_TOKEN="test-token" \
+  HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE=1 \
+  HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="$LOCAL_AGENT_MD" \
+  HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_LINK_DIR="$LOCAL_AGENT_CWD" \
+  AGENT_BACKEND=goose \
+  bash "${ROOT_DIR}/bin/contributor-agent.sh"
+
+for name in AGENTS.md .goosehints .goose-instructions.md CLAUDE.md; do
+  if [[ "$(readlink "${LOCAL_AGENT_CWD}/${name}")" != "$LOCAL_AGENT_MD" ]]; then
+    echo "expected local-mode knowledge link ${LOCAL_AGENT_CWD}/${name} to target the Hive export" >&2
+    exit 1
+  fi
+  if [[ -e "${HOME_DIR}/${name}" ]]; then
+    echo "expected local-mode knowledge linking to leave ${HOME_DIR}/${name} alone" >&2
+    exit 1
+  fi
+done
+if [[ -e "${HOME_DIR}/.config/goose/config.yaml" || -e "${LOCAL_AGENT_CWD}/.config/goose/config.yaml" ]]; then
+  echo "expected local-mode knowledge linking not to seed a goose config" >&2
+  exit 1
+fi
+echo "contributor-agent local-mode knowledge link dir tests passed"
+
 # OMP reads both of Hive's conventional knowledge-link names. The test hook
 # exits before launching tmux or the relay, so it proves the agent-owned seam
 # without reproducing any of its lifecycle.
@@ -612,6 +648,25 @@ env -i \
 for link in "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"; do
   if [[ "$(readlink "$link")" != "$OMP_AGENT_MD" ]]; then
     echo "expected OMP knowledge link $link to target the Hive export" >&2
+    exit 1
+  fi
+done
+
+# Omnigent orchestrates several harnesses, so it gets both link names too.
+rm -f "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"
+OMNIGENT_AGENT_MD="${HOME_DIR}/agent.md"
+env -i \
+  PATH="${PATH}" \
+  HOME="$HOME_DIR" \
+  HIVE_REGISTRATION_TOKEN="test-token" \
+  HIVE_CONTRIBUTOR_AGENT_TEST_LINK_KNOWLEDGE=1 \
+  HIVE_CONTRIBUTOR_AGENT_TEST_KNOWLEDGE_DEST="$OMNIGENT_AGENT_MD" \
+  AGENT_BACKEND=omnigent \
+  bash "${ROOT_DIR}/bin/contributor-agent.sh"
+
+for link in "${HOME_DIR}/AGENTS.md" "${HOME_DIR}/CLAUDE.md"; do
+  if [[ "$(readlink "$link")" != "$OMNIGENT_AGENT_MD" ]]; then
+    echo "expected Omnigent knowledge link $link to target the Hive export" >&2
     exit 1
   fi
 done

@@ -98,6 +98,12 @@ type Options struct {
 	// auto_merge.queue_on_approve_and_unhold opt-in at the hive's ACMM level
 	// (hivecommons/hive#13629). repo is owner/repo. nil means off.
 	QueueOnApproveAndUnhold func(repo string) bool
+	// RepoOnGitHub reports whether a repo lives on GitHub (its forge.Kind, via
+	// config.RepoOnGitHub). Every lane merges through the GitHub API, so a repo
+	// on GitLab or Gitea is left out of the sweep rather than looked up on
+	// GitHub under its slug (hivecommons/hive#14150). nil means every repo is
+	// on GitHub.
+	RepoOnGitHub func(repo string) bool
 	// TrustedBotAuthors returns the live lower-cased set of bot logins whose
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
@@ -191,6 +197,9 @@ type Engine struct {
 	gh        *gh.Client
 	logger    *slog.Logger
 
+	selfSkipWarnedMu sync.Mutex
+	selfSkipWarned   map[string]struct{}
+
 	mergerAuthzMu sync.RWMutex
 	mergerAuthz   MergerAuthorizer
 
@@ -226,6 +235,7 @@ type Engine struct {
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
 	queueOnApproveAndUnhold           func(repo string) bool
+	repoOnGitHub                      func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
 	botTakeoverEnabledFn              func() bool
 	onTerminalHold                    func(repo string, number int, headSHA, reason string)
@@ -321,6 +331,7 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 		queueOnApproveAndUnhold:           opts.QueueOnApproveAndUnhold,
+		repoOnGitHub:                      opts.RepoOnGitHub,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
 		rateLimitCautious:                 opts.RateLimitCautious,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
@@ -380,18 +391,32 @@ func (c *Engine) repoAutoMergeAllowed(repo string) bool {
 }
 
 // activeRepos is Repositories() minus the repos under an operator pause
-// (#6203). The narrowing lives behind an optional transport capability, the
-// same shape New uses for MutationBoundary: a transport that does not know
-// about pauses (the sweep's own fakes) keeps its full repository list, so
-// pause support is additive rather than a Transport-interface break.
+// (#6203) and minus the repos that live on another forge (#14150). The pause
+// narrowing lives behind an optional transport capability, the same shape New
+// uses for MutationBoundary: a transport that does not know about pauses (the
+// sweep's own fakes) keeps its full repository list, so pause support is
+// additive rather than a Transport-interface break.
 func (c *Engine) activeRepos() []string {
 	if c == nil || c.transport == nil {
 		return nil
 	}
+	var repos []string
 	if provider, ok := c.transport.(interface{ ActiveRepositories() []string }); ok {
-		return provider.ActiveRepositories()
+		repos = provider.ActiveRepositories()
+	} else {
+		repos = c.transport.Repositories()
 	}
-	return c.transport.Repositories()
+	if c.repoOnGitHub == nil {
+		return repos
+	}
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if !c.repoOnGitHub(repo) {
+			continue
+		}
+		out = append(out, repo)
+	}
+	return out
 }
 
 // SweepQueuedAutoMerges consumes queued automerge requests using a one-shot engine.
@@ -1119,7 +1144,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				branchUpdateAttempts++
 			}
 			if err != nil {
-				c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
+				c.warnSelfAuthoredSkipOnce(repo, number, reason, err)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
@@ -1241,13 +1266,15 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				stage(trustedBotLaneSkipReason, false, nil)
 				continue
 			}
-			if lane, _ := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser())); lane == "self-authored" {
-				// The contributor lane vouches for the App's own PRs
-				// (RoleTrusted), so hand off with its reason rather than a
-				// contradictory untrusted-author-role.
-				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", contributorLaneReasonAppAuthored, "tier", "trusted-author")
+			if lane, _ := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser())); lane == stageLaneSelf {
+				// The self-authored lane owns the App's own PRs, so hand
+				// off under this tier's own reason rather than a
+				// contradictory untrusted-author-role or the contributor
+				// lane's reason, which read as if that lane had routed the
+				// PR (hivecommons/hive#14482).
+				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", trustedAuthorReasonAppAuthored, "tier", "trusted-author")
 				result.Skipped++
-				stage(contributorLaneReasonAppAuthored, false, nil)
+				stage(trustedAuthorReasonAppAuthored, false, nil)
 				continue
 			}
 			if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
@@ -1846,13 +1873,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
+	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, evaluatedHeadSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
-		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
-			SHA:         evaluatedHeadSHA,
-			MergeMethod: method,
-		})
+		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
 			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
 		}
@@ -2052,6 +2077,12 @@ func (c *Engine) sweepLaneForAuthor(author string) (string, bool) {
 // it hands off to the self-authored sweep's "trusted-bot" lane.
 const trustedBotLaneSkipReason = prstage.TrustedBotLaneSkipReason
 
+// trustedAuthorReasonAppAuthored is the trusted-author tier's skip reason
+// for the App's own PRs, which the self-authored lane owns. It is
+// namespaced to this tier so the skip line and the stage observation never
+// read as the contributor lane's.
+const trustedAuthorReasonAppAuthored = prstage.TrustedAuthorReasonAppAuthored
+
 // isTrustedBotLaneAuthor reports whether author falls in the "trusted-bot"
 // lane of sweepLaneForAuthor.
 func (c *Engine) isTrustedBotLaneAuthor(author string) bool {
@@ -2229,8 +2260,8 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	}
 	c.noteStagePR(owner, repo, number, pr)
 	author := hgithub.SafeGetLogin(pr.GetUser())
-	if lane, _ := c.sweepLaneForAuthor(author); lane == "self-authored" {
-		return AutoMergeSweepEvent{}, contributorLaneReasonAppAuthored, nil
+	if lane, _ := c.sweepLaneForAuthor(author); lane == stageLaneSelf {
+		return AutoMergeSweepEvent{}, trustedAuthorReasonAppAuthored, nil
 	}
 	if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
@@ -2360,13 +2391,11 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
+	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, headSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
-		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
-			SHA:         headSHA,
-			MergeMethod: method,
-		})
+		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
 			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
 		}
@@ -2717,13 +2746,11 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
+	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, pr, headSHA, method)
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
-		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, "", &gh.PullRequestOptions{
-			SHA:         headSHA,
-			MergeMethod: method,
-		})
+		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
 			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
 		}
@@ -3177,6 +3204,28 @@ func (c *Engine) warn(msg string, args ...any) {
 	if c != nil && c.logger != nil {
 		c.logger.Warn(msg, args...)
 	}
+}
+
+// warnSelfAuthoredSkipOnce logs the skip at WARN once per repo#pr+reason+error
+// and at Debug on later ticks, so a PR stuck on the same condition does not
+// repeat the line every sweep.
+func (c *Engine) warnSelfAuthoredSkipOnce(repo string, number int, reason string, err error) {
+	if c == nil {
+		return
+	}
+	key := fmt.Sprintf("%s#%d|%s|%v", repo, number, reason, err)
+	c.selfSkipWarnedMu.Lock()
+	if c.selfSkipWarned == nil || len(c.selfSkipWarned) > 4096 {
+		c.selfSkipWarned = map[string]struct{}{}
+	}
+	_, seen := c.selfSkipWarned[key]
+	c.selfSkipWarned[key] = struct{}{}
+	c.selfSkipWarnedMu.Unlock()
+	if seen {
+		c.debug("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
+		return
+	}
+	c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
 }
 
 func (c *Engine) info(msg string, args ...any) {

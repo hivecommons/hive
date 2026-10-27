@@ -1,0 +1,1 @@
+- Self-managed Kubernetes deployments and the manual provisioning template now allow the same ten-minute startup budget as hosted spokes, avoiding premature restarts during slow first boots.

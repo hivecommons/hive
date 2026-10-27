@@ -63,7 +63,7 @@ ask is done; see [Doc status](#doc-status-already-corrected-by-4938) below.
 
 The claude-family permission flags are `--dangerously-skip-permissions
 --permission-mode bypassPermissions` unconditionally
-(`config/backends.conf:69`, mirrored at `src/pkg/agent/manager_launch.go:861`, base
+(`config/backends.conf:69`, mirrored at `src/crux/agent/manager_launch.go:861`, base
 string `--model %s --dangerously-skip-permissions%s`). Full tool-permission
 bypass is not gated by anything added in #4938 — it is the unconditional base.
 
@@ -75,10 +75,10 @@ Workspace "confinement" is a `cd`, not a boundary:
   directory only; nothing stops the CLI process — running as the contributor's
   own uid — from reading or writing any path that uid can reach.
 - Hub-pod agents: `launchInTmux` starts the session with `new-session -d -s
-  session -c dir` (`src/pkg/agent/manager_tmux.go:165`), then, when the agent has a
+  session -c dir` (`src/crux/agent/manager_tmux.go:165`), then, when the agent has a
   UID assigned, runs the tmux command through `su-exec`/an exec-user spec
-  (`agentExecUserSpec`, `src/pkg/agent/manager_tmux.go:178-186`,
-  `src/pkg/agent/manager_tmux.go:207-212`) so the CLI runs as `hive-<agent>` or a
+  (`agentExecUserSpec`, `src/crux/agent/manager_tmux.go:178-186`,
+  `src/crux/agent/manager_tmux.go:207-212`) so the CLI runs as `hive-<agent>` or a
   synthetic `uid:gid`, not as the same uid as every other agent. This is
   **process-identity separation between agents on the same pod**, not
   filesystem confinement to the workspace — there is no mount namespace, no
@@ -106,16 +106,16 @@ Bash(rpm-ostree:*), Bash(bootc:*), Bash(ostree:*),
 Bash(grubby:*), Bash(bootctl:*), Bash(efibootmgr:*)
 ```
 
-(`src/pkg/agent/manager_pause.go:176-182`, shell mirror at
+(`src/crux/agent/manager_pause.go:176-182`, shell mirror at
 `config/backends.conf:86`, parity enforced by
-`src/pkg/agent/host_state_deny_test.go:88-95` `TestShellAndGoDenyListsAgree`,
+`src/crux/agent/host_state_deny_test.go:88-95` `TestShellAndGoDenyListsAgree`,
 which sources `config/backends.conf` and diffs the two lists byte-for-byte).
 
 Applied on both launch paths: relay (`config/backends.conf:88-100`
-`claude_family_perm_flag`) and hub-pod (`src/pkg/agent/manager_launch.go:865`, `base +
+`claude_family_perm_flag`) and hub-pod (`src/crux/agent/manager_launch.go:865`, `base +
 claudeGitHubWriteDenyFlags + claudeHostStateDenyFlags()`). An escape hatch,
 `HIVE_CLAUDE_DANGEROUSLY_ALLOW_HOST_STATE`, drops the deny fragment entirely on
-either path when set truthy (`src/pkg/agent/manager_launch.go:668-673`,
+either path when set truthy (`src/crux/agent/manager_launch.go:668-673`,
 `config/backends.conf:92-99`).
 
 The PR body documents that this was verified against a real CLI (Claude Code
@@ -133,9 +133,9 @@ command's leading token, not a boundary enforced by the OS.** It has the shape
 of every denylist: it stops the literal named binaries when invoked as a bare
 command word through the `Bash` tool, and nothing establishes that it stops
 equivalent effects reached another way. None of the following are covered by
-anything in `src/pkg/agent/manager_launch.go:628-684` or
+anything in `src/crux/agent/manager_launch.go:628-684` or
 `config/backends.conf:41-77`, and no test in
-`src/pkg/agent/host_state_deny_test.go` exercises them:
+`src/crux/agent/host_state_deny_test.go` exercises them:
 
 - **Absolute or relative path invocation.** `Bash(rpm-ostree:*)` matches the
   leading token `rpm-ostree`; whether Claude Code's matcher also catches
@@ -183,11 +183,11 @@ title names.
 
 The exposure is not uniform. Three shapes exist in this repo today:
 
-1. **Hub-hosted pod agents (containerized hive deployment).** `src/pkg/agent/manager.go`
+1. **Hub-hosted pod agents (containerized hive deployment).** `src/crux/agent/manager.go`
    is the manager for this mode; the K8s manifest at `src/deploy/k8s/deployment.yaml`
    defines the pod's own security context. Agents on this path get per-agent
    uid separation via `agentExecUserSpec`/`su-exec`
-   (`src/pkg/agent/manager_tmux.go:178-186`) but no filesystem namespace scoping —
+   (`src/crux/agent/manager_tmux.go:178-186`) but no filesystem namespace scoping —
    "the host" an agent can reach here is the container's filesystem view,
    bounded by whatever the pod's volumes and security context expose. This is
    the mode where "the operator's host" is a fungible pod, not a workstation;
@@ -221,17 +221,17 @@ boundary with confidence.
 
 ## The opt-in Podman sandbox, and why it's off by default
 
-`src/pkg/sandbox/sandbox.go` and `src/pkg/agent/sandbox_executor.go` implement
+`src/crux/sandbox/sandbox.go` and `src/crux/agent/sandbox_executor.go` implement
 a working rootless-Podman path: `PodmanArgs` builds `run --rm --userns=keep-id
 -v <workspace>:<mount>:Z --network=<mode>` with an explicit env allowlist that
-filters credential-shaped names (`src/pkg/sandbox/sandbox.go:123-146`,
+filters credential-shaped names (`src/crux/sandbox/sandbox.go:123-146`,
 `isCredentialName` at `:150-152`). This is real workspace confinement: the
 container only has the one bind-mounted workspace directory, not the host
 filesystem.
 
 It is double-gated off: `AgentConfig.SandboxEnabled` requires both the global
 `agent_sandbox.enabled` bool and a per-agent `sandbox.enabled` pointer to be
-true (`src/pkg/crux/config/agent_runtime.go:524-529`); both default to their zero value
+true (`src/crux/config/agent_runtime.go:524-529`); both default to their zero value
 (`false`/`nil`), so an agent is on the sandbox path only if an operator finds
 and sets both knobs. `sandbox-isolation.md` confirms this is deliberate:
 "Sandbox execution is opt-in and the tmux path remains unchanged for all
@@ -316,17 +316,17 @@ estimated from reading the code, not measured.
   without necessarily restricting file writes elsewhere — and is normally
   layered with, not instead of, a namespace/container boundary; the existing
   Podman path does not currently set an explicit seccomp profile beyond
-  Podman's own default (`src/pkg/sandbox/sandbox.go:123-146` sets no
+  Podman's own default (`src/crux/sandbox/sandbox.go:123-146` sets no
   `--security-opt seccomp=`). Cost: profile authorship and maintenance as agent
   tool use evolves; a too-strict profile silently breaks legitimate git/build
   tooling in ways that are hard to diagnose from an agent transcript.
 - **Dedicated low-privilege UID with no polkit/sudo rights, for the
   `contribute-hive local` / native case specifically.** Hive already has a
   precedent for per-agent UID separation on the hub-pod path
-  (`src/pkg/agent/uidmap.go`, `agentExecUserSpec` at
-  `src/pkg/agent/manager_tmux.go:178-186`), but that map is scoped to hub-pod
+  (`src/crux/agent/uidmap.go`, `agentExecUserSpec` at
+  `src/crux/agent/manager_tmux.go:178-186`), but that map is scoped to hub-pod
   agents inside an already-containerized deployment (`UIDMapPath =
-  "/var/run/hive/uid-map.json"`, `src/pkg/agent/uidmap.go:17`) — nothing
+  "/var/run/hive/uid-map.json"`, `src/crux/agent/uidmap.go:17`) — nothing
   currently wires an equivalent mechanism into `contribute-hive local`, which
   is the mode that actually reached the operator's bootloader. Applying the
   same idea there (a `hive-agent` system user with no polkit rule granting it
@@ -364,9 +364,9 @@ containerized and, especially, `local` mode), with the current denylist
 (#4938) kept as the floor for hosts where the sandbox genuinely cannot run.**
 The sandbox is already built, already does real workspace confinement via a
 bind mount and `--userns=keep-id`
-(`src/pkg/sandbox/sandbox.go:123-146`), and is exactly the shape the Codex
+(`src/crux/sandbox/sandbox.go:123-146`), and is exactly the shape the Codex
 comparison in the original issue argues for. The double gate
-(`src/pkg/crux/config/agent_runtime.go:524-529`) is a configuration default, not a
+(`src/crux/config/agent_runtime.go:524-529`) is a configuration default, not a
 missing capability — closing it is materially cheaper than any option in
 category B that requires new code (bwrap/seccomp/VM), and it directly answers
 the mode where the incident actually happened (`local`, no container, no
@@ -410,7 +410,7 @@ overstated claim in the shipped text.
 
 - Whether Claude Code's `Bash(cmd:*)` deny pattern matches absolute-path
   invocation (`/usr/bin/rpm-ostree`) or only the bare command word. Not tested
-  in `src/pkg/agent/host_state_deny_test.go`; the PR's own verification table
+  in `src/crux/agent/host_state_deny_test.go`; the PR's own verification table
   tested the bare-command case only.
 - Whether a shell function/alias/wrapper that ultimately execs a denied binary
   is caught by the same `Bash` tool-call parsing, or bypasses it.

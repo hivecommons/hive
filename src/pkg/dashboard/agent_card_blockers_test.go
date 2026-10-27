@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -70,7 +70,7 @@ func newBlockerProc(name string, cfg config.AgentConfig, lastKick *time.Time) *c
 		Config:       cfg,
 		State:        crux.StateRunning,
 		LastKick:     lastKick,
-		OutputBuffer: agent.NewRingBuffer(10),
+		OutputBuffer: cruxtest.NewRingBuffer(10),
 	}
 }
 

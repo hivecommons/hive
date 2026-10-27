@@ -18,7 +18,7 @@ Pluk is installed in the container image as an npm global package
 Hive-authored component; Hive only shells out to it.
 
 When the agent manager creates a tmux session for an agent
-(`pkg/agent/manager.go`), it looks up `pluk` on `PATH` and, if found, attaches
+(`crux/agent/manager.go`), it looks up `pluk` on `PATH` and, if found, attaches
 it to that session's pane with:
 
 ```
@@ -58,7 +58,7 @@ fails, because it writes through a named FIFO and confirms delivery via a
 - The run directory (`/var/run/pluk` — `logs/` and `commands/` subdirectories)
   is created ahead of time in the image (`Dockerfile`) and re-created
   defensively before each attach by `ensurePlukRunDirs`
-  (`pkg/agent/pluk_dirs.go`). Both subdirectories are `0770` plus setgid,
+  (`crux/agent/pluk_dirs.go`). Both subdirectories are `0770` plus setgid,
   owned by the `dev` user and the shared `node` group, so any agent UID in
   that group can read another agent's log without world-readable
   permissions.
@@ -82,7 +82,7 @@ object, newline-delimited (JSONL), appended as the agent produces output.
 The file is written by a shell redirect, not by pluk. `pluk watch` classifies
 its stdin and prints events to stdout; it opens no file of its own. `tmux
 pipe-pane` feeds the pane into that command's stdin but does nothing with its
-stdout, so the publisher invocation in `pkg/agent/manager.go` has to end in
+stdout, so the publisher invocation in `crux/agent/manager.go` has to end in
 `>> /var/run/pluk/logs/<session>.jsonl` for anything to be written at all. It
 did not between [#1759](https://github.com/hivecommons/hive/pull/1759) — which
 replaced the Go `pluk-publish` binary, a publisher that wrote the log itself,

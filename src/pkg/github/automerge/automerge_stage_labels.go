@@ -29,6 +29,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -80,6 +81,12 @@ type StageLabelPolicy struct {
 	// App-linked git identity rollout, with a first-deploy safety valve in
 	// settleInPlaceAdoption.
 	AdoptionStrictAttribution bool
+	// AdoptionAutoMerge lets the contributor lane admit an in-place-adopted
+	// head under the hive's own authority, without the original author's
+	// trust tier (governor.labels.stage.adoption.auto_merge, default on).
+	// Every other contributor-lane gate still applies; the head must be
+	// exactly the one the stage store records as adopted/pushed by the hive.
+	AdoptionAutoMerge bool
 	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
 	// override for "owner/repo"; ok false means "detect" (a DCO context in
 	// the branch's required checks or on the head). nil = always detect.
@@ -887,7 +894,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// adoption; a head the contributor pushed yields it.
 				// Settled on every head change whatever the lane sees —
 				// the hive's fix going green must not hide the yield.
-				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec, policy)
+				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec, policy, now)
 				result.Comments += n
 				if err != nil && firstErr == nil {
 					firstErr = err
@@ -986,13 +993,20 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		transitions, _ = reconciler.ReconcileBatch(ctx, facts)
 	}
 	for i, p := range pending {
+		if i >= len(transitions) {
+			// A context or writer deadline stopped the batch. The tail
+			// was never attempted and must not trigger public side effects.
+			if firstErr == nil {
+				firstErr = ctx.Err()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("stage labels: batch stopped before %s#%d", p.obs.Display, p.obs.Number)
+				}
+			}
+			break
+		}
 		obs, key, role, want, tr := p.obs, p.key, p.role, p.want, p.tr
 		commentsBefore := result.Comments
-		var out stagelabels.Outcome
-		err := ctx.Err()
-		if i < len(transitions) {
-			out, err = transitions[i].Outcome, transitions[i].Err
-		}
+		out, err := transitions[i].Outcome, transitions[i].Err
 		if err != nil {
 			c.warn("stage labels: write failed", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "error", err)
 			if firstErr == nil {
@@ -1039,7 +1053,27 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
-		if (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) && (policy.ContributorNudge || policy.Adoption) {
+		// Explicit delegated adoption also applies to a PR parked at 085,
+		// regardless of author kind or whether a nudge was ever sent.
+		if policy.Adoption && !obs.Merged && hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) {
+			before, _ := store.Get(key)
+			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, ContributorPresence{}, false, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			// The request is one attempt, not a standing order: clear the
+			// label once an attempt was recorded for this head (success or
+			// failure) so a persistent write failure re-parks the PR at 085
+			// instead of retrying every sweep. A deferral (hold label, fence
+			// unreadable) records nothing and keeps the label for a retry.
+			if after, ok := store.Get(key); ok && (after.AdoptedBy > 0 || delegatedAdoptionAttempted(before, after)) {
+				if err := c.removeNonStageLabel(ctx, obs.Owner, obs.Repo, obs.Number, delegatedecision.LabelAdoptSupersede); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		if !hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) && (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) && (policy.ContributorNudge || policy.Adoption) {
 			// The 072 interrupt machinery (nudge + adoption) is for
 			// author/clanker only: there is a hive on the other end to
 			// interrupt or stand in for. A human-authored PR simply waits
@@ -1089,6 +1123,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		if want.Stage == stagelabels.AdoptedByHive {
 			n, err := c.settleAdoption(ctx, store, key, obs, policy, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		} else if rec, ok := store.Get(key); ok && rec.AdoptedBy > 0 && !obs.Merged {
+			// hivecommons/hive#14471: the superseder is still on record while
+			// the lane derives 085 (needs-human) or 072 (a later contributor
+			// head). Its merge must still close this PR.
+			n, err := c.settleSuperseder(ctx, store, key, obs, rec, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err

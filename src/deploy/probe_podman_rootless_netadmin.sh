@@ -91,7 +91,9 @@ trap cleanup EXIT
 
 if [[ "$SHARED_STORE" != "true" ]]; then
   if [[ -z "$STORE" ]]; then
-    STORE="$(mktemp -d -t hive-rootless-probe-store-XXXXXX)"
+    # Keep multi-GB image layers off quota-limited /tmp (or tmpfs), as the
+    # rootful probe does. The private store is still removed by cleanup.
+    STORE="$(mktemp -d -p /var/tmp hive-rootless-probe-store-XXXXXX)"
     OWN_STORE="true"
   fi
   mkdir -p "${STORE}/graph" "${STORE}/run" "${STORE}/tmp"
@@ -144,7 +146,9 @@ printf 'podman=%s rootless=%s cgroups=%s netbackend=%s rootlessnet=%s runtime=%s
   "$rootlessnet" "$(pinfo .Host.OCIRuntime.Name)"
 printf 'store=%s\nimage=%s\n\n' "${CONTAINERS_STORAGE_CONF:-<caller default>}" "$IMAGE"
 
-podman pull -q "$IMAGE" >/dev/null 2>&1 || fail_prereq "cannot pull ${IMAGE}"
+# Keep registry and storage errors visible: exit 78 alone cannot distinguish
+# an unavailable image from a transient registry failure or a full runner disk.
+podman pull -q "$IMAGE" || fail_prereq "cannot pull ${IMAGE}"
 
 failures=0
 note_fail() { printf '  RESULT: UNEXPECTED — %s\n' "$1"; failures=$((failures + 1)); }

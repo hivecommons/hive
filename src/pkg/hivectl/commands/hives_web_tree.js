@@ -28,7 +28,7 @@ const SAVED_TEXT = {
 const RELOAD_TEXT = {
   'notified': 'the running relay was asked to reload.',
   'pending-failed': 'couldn’t reach the running relay; changes apply when it next starts.',
-  'no-managed-relay-found': 'no relay running; changes apply when it next starts.',
+  'no-managed-relay-found': 'no managed relay was found to notify; another relay may still be running. Runtime state is unknown.',
   'not-requested': 'not requested.'
 };
 const ACK_TEXT = {
@@ -87,13 +87,20 @@ async function loadTree(discover=false, accept=false) {
   if(!response.ok) throw new Error(await response.text());
   review = await response.json(); renderTree();
 }
+// Called only while the caller owns treeBusy; batches keep the lock throughout.
+async function stageChange(change) {
+  if(!review || review.diff.stale) return {ok:false, error:'Discard the stale review and review again before editing.'};
+  try { await treeRequest('/api/tree/diff', change); return {ok:true}; }
+  catch(e) { return {ok:false, error:e.message || 'Contribution request failed without an explanation.'}; }
+}
 async function editTree(change) {
-  if(treeBusy || !review) return;
-  if(review.diff.stale) { say('Discard the stale review and review again before editing.','error'); return; }
-  treeBusy = true; treeControls();
-  try { await treeRequest('/api/tree/diff', change); say('Changed. Press Apply to save.'); }
-  catch(e) { say(e.message, 'error'); }
-  finally { treeBusy = false; treeControls(); }
+  if(treeBusy || !review) return {ok:false, blocked:true};
+  treeBusy = true; clearTimeout(searchTimer); treeControls();
+  try {
+    const result = await stageChange(change);
+    say(result.ok ? 'Staged. Press Apply to save; runtime changes are not confirmed.' : result.error, result.ok ? undefined : 'error');
+    return result;
+  } finally { treeBusy = false; treeControls(); }
 }
 function node(tag, text, cls) {
   const e = document.createElement(tag); if(text !== undefined) e.textContent = text; if(cls) e.className = cls; return e;
@@ -103,6 +110,14 @@ function button(text, action, key, context) {
   // Same words first (WCAG label-in-name), then what the button acts on, so repeated buttons are distinguishable.
   if(context) b.setAttribute('aria-label', text + ': ' + context);
   return b;
+}
+// The review's diff.enabled lists only staged pauses/resumes; a Hive that is paused with nothing staged is saved state.
+function pauseNotice(sub) {
+  const staged = ((review && review.diff.enabled) || []).find(e => e.target === sub.id);
+  if(staged) return staged.after
+    ? {label: 'Resume staged', detail: 'Resume staged in this review. Apply saves it; a relay must pick it up before new work resumes. Runtime resume is not confirmed here.'}
+    : {label: 'Pause staged', detail: 'Pause staged in this review: choices are kept. Apply saves it; stopping new work still requires a relay to pick it up. Runtime pause is not confirmed here.'};
+  return sub.disabled ? {label: 'Paused', detail: 'Paused in the saved profiles: choices are kept. A relay that has loaded this profile requests no new work; this page cannot confirm that one has.'} : null;
 }
 function selectionText(s) {
   if(s.legacy_unrestricted) return 'Unrestricted — legacy: can receive work from ' + (s.repositories ? 'all ' + s.repositories + ' repositories' : 'every repository it offers') + ' until you restrict it' + (s.membership_incomplete ? '; Membership incomplete' : '');
@@ -183,30 +198,43 @@ function newRepos(subs) {
   const out = [];
   for(const s of subs) {
     if(s.selection.legacy_unrestricted) continue;
-    for(const r of s.repositories) if(r.unreviewed && !(r.excluded_by || []).length && r.offered !== 'no') out.push({sub: s.id, repo: r.id});
+    for(const r of s.repositories) if(r.unreviewed && !r.selected && !(r.excluded_by || []).length && r.offered !== 'no') out.push({sub: s.id, repo: r.id});
   }
   return out;
 }
-// Individual repository edits through the existing operation; stops if the review went stale.
-async function stageList(list) {
-  for(const c of list) {
-    await editTree({operation:'repository', target:c.sub, repository:c.repo, value:true});
-    if(!review || review.diff.stale) return false;
+// Stop on failure: successful changes stay staged, and later successes cannot hide it.
+async function stageList(changes) {
+  const result = {staged:0, failed:0, unattempted:changes.length, error:null};
+  for(const change of changes) {
+    const outcome = await stageChange(change);
+    result.unattempted--;
+    if(!outcome.ok) { result.failed = 1; result.error = outcome.error; break; }
+    result.staged++;
   }
-  return true;
+  return result;
 }
-// Tick-down: a hub's box sets the follow flag on every restricted Hive under it.
+async function stageBatch(changes, confirmation) {
+  if(treeBusy || !review || !changes.length) return {blocked:true};
+  treeBusy = true; clearTimeout(searchTimer); treeControls();
+  try {
+    if(confirmation && !await styledConfirm(confirmation, 'Turn on')) return {cancelled:true};
+    const result = await stageList(changes);
+    const counts = result.staged + ' of ' + changes.length + ' changes confirmed staged. ';
+    // The server's error text may end without punctuation; keep it a sentence of its own.
+    const reason = result.error ? result.error.replace(/[\s.]*$/, '') + '.' : '';
+    say(result.failed ? counts + result.failed + ' failed; ' + result.unattempted + ' not attempted. ' + reason + ' Successful changes remain staged. Review before retrying; nothing has been applied.' : counts + 'Apply to save; runtime changes are not confirmed.', result.failed ? 'error' : undefined);
+    return result;
+  } catch(e) { say(e.message, 'error'); return {error:e.message}; }
+  finally { treeBusy = false; treeControls(); }
+}
+// Tick-down changes only follow flags, never exclusions.
 async function setFollowAll(subs, value) {
-  for(const s of subs.filter(s => !s.selection.legacy_unrestricted && s.follow_new_repositories !== value)) {
-    await editTree({operation:'follow', target:s.id, value});
-    if(!review || review.diff.stale) return;
-  }
+  return stageBatch(subs.filter(s => !s.selection.legacy_unrestricted && s.follow_new_repositories !== value).map(s => ({operation:'follow', target:s.id, value})));
 }
+const repositoryChanges = list => list.map(c => ({operation:'repository', target:c.sub, repository:c.repo, value:true}));
 async function acceptNew(list, where) {
-  if(treeBusy || !list.length) return;
   const noun = list.length === 1 ? 'repository' : 'repositories';
-  if(!await styledConfirm('Turn on ' + list.length + ' new ' + noun + ' in ' + where + '? Excluded ones are skipped. Nothing is saved until Apply.', 'Turn on')) return;
-  if(await stageList(list)) say('Turned on ' + list.length + ' new ' + noun + '. Apply to save.');
+  return stageBatch(repositoryChanges(list), 'Turn on ' + list.length + ' new ' + noun + ' in ' + where + '? Excluded ones are skipped. Nothing is saved until Apply.');
 }
 function acceptBox(context, fs, key, toggle) {
   const wrap = node('label', undefined, 'accept');
@@ -244,6 +272,13 @@ function treeItem(parent, key, label, selection, change, branch, text, info) {
   check.setAttribute('aria-label', 'Turn on: ' + label);
   check.onchange = () => { check.checked = selection.state === 'all-current'; check.indeterminate = selection.state === 'partial'; editTree({...change, value:selection.state !== 'all-current'}); };
   row.append(check, node('span', label, 'identity'));
+  if(info) {
+    // A stable per-row description avoids pointing every row at the hovered panel.
+    const description = node('span', info.lines.join(' '), 'sr-only');
+    const id = 'tree-description-' + encodeURIComponent(key);
+    description.setAttribute('id', id); item.append(description);
+    item.setAttribute('aria-describedby', id); check.setAttribute('aria-describedby', id);
+  }
   const meta = text === undefined ? shortText(selection) : text;
   if(meta) row.append(node('span', meta, 'tree-meta'));
   // Secondary actions live here and show only on the active row (CSS), so every row is not a toolbar.
@@ -301,14 +336,15 @@ function renderTree() {
     for(const sub of members.filter(matches)) {
       const skey = JSON.stringify([hub.id,sub.id]);
       const subFollow = followState([sub]), subNew = newRepos([sub]), legacy = sub.selection.legacy_unrestricted;
-      const subText = [shortText(sub.selection), sub.disabled && 'Paused', sub.shared_across_hubs > 1 && 'in ' + sub.shared_across_hubs + ' hubs'].filter(Boolean).join(' · ');
+      const pause = pauseNotice(sub);
+      const subText = [shortText(sub.selection), pause && pause.label, sub.shared_across_hubs > 1 && 'in ' + sub.shared_across_hubs + ' hubs'].filter(Boolean).join(' · ');
       const s = treeItem(h.group, skey, sub.id, sub.selection, {operation:'current',target:sub.id}, true, subText, {kind: 'Hive', title: sub.id, lines: [
         legacy ? 'Unrestricted: gets work from every repository it offers, whatever is ticked. “Choose what to allow” limits it.' : sub.selection.selected + ' of ' + sub.selection.repositories + ' repositories on.',
         legacy ? '' : (sub.follow_new_repositories ? 'New repositories are turned on automatically when you check for new.' : 'New repositories wait until you turn them on.'),
         subNew.length ? subNew.length + ' new ' + (subNew.length === 1 ? 'repository' : 'repositories') + ' waiting.' : 'Nothing new waiting.',
-        sub.disabled ? 'Paused: your choices are kept, but no new work is requested.' : '',
+        pause ? pause.detail : '',
         sub.shared_across_hubs > 1 ? 'Listed under ' + sub.shared_across_hubs + ' hubs; a change here shows in each.' : '',
-        sub.sources && sub.sources.length ? 'Chosen from: ' + sub.sources.join(', ') + '.' : '',
+        sub.selection_sources && sub.selection_sources.length ? 'Selection sources: ' + sub.selection_sources.join(', ') + '. These describe the selection, not repository ownership.' : 'No selection provenance recorded.',
         'Address: ' + sub.hive_id].filter(Boolean)});
       if(subFollow.state !== 'na') s.row.append(acceptBox(sub.id, subFollow, skey+':accept', value => editTree({operation:'follow', target:sub.id, value})));
       if(subNew.length) s.row.append(button('Accept ' + subNew.length + ' new', () => acceptNew(subNew, sub.id), skey+':acceptnew', sub.id));
@@ -331,8 +367,9 @@ function renderTree() {
         const sel = {state:repo.selected ? 'all-current':'off',selected:repo.selected ? 1:0,repositories:1,excluded:(repo.excluded_by || []).length ? 1:0,unreviewed:repo.unreviewed ? 1:0};
         const excl = repo.excluded_by || [];
         const r = treeItem(s.group, rkey, shortId(repo.id), sel, {operation:'repository',target:sub.id,repository:repo.id}, false, '', {kind: 'Repository', title: repo.id, lines: [
-          repo.selected ? (repo.auto ? 'Automatic: on because you follow this Hive. Turn it off and it stays off, so following will not add it back.' : 'On: this machine may work on it.') : repo.unreviewed ? 'New: not chosen yet, so it gets no work until you turn it on.' : 'Off.',
-          excl.length ? 'Excluded: stays off even if you turn the group on.' : '',
+          repo.selected ? (repo.auto ? 'Automatic: on because you follow this Hive. Turn it off and it stays off, so following will not add it back.' : 'Selected in this review. Apply saves changes; this is not runtime confirmation.') : repo.unreviewed ? 'New: not chosen in this review.' : 'Off.',
+          excl.length ? 'Excluded by: ' + excl.join(', ') + '. These exclusions veto this repository across scoped Hives, even when a group is turned on. Use Allow again in each source Hive to clear its exclusion; then select the repository and Apply.' : '',
+          ({yes:'Currently offered by this Hive.', no:'Not currently offered by this Hive; saved consent is kept.', unknown:'Current offering is unknown; discovery is incomplete.'}[repo.offered] || 'Current offering status was not provided.'),
           legacy ? 'This Hive is unrestricted, so it gets this repository anyway.' : '',
           'From ' + sub.id + '.'].filter(Boolean)});
         if(excl.length) r.row.append(node('span','Excluded','pill'));
@@ -405,8 +442,10 @@ document.getElementById('tree-search').addEventListener('input', () => {
   renderTree();
   // Announce the result count (debounced) so screen-reader and sighted users both learn what the filter did.
   clearTimeout(searchTimer);
+  if(treeBusy) return;
   searchTimer = setTimeout(() => {
     const q = document.getElementById('tree-search').value, n = visibleRepoCount();
+    if(treeBusy) return;
     say(q ? n + (n === 1 ? ' repository matches “' : ' repositories match “') + q + '”.' : 'Search cleared.');
   }, 400);
 });
@@ -417,7 +456,7 @@ treeRoot.addEventListener('focusin', e => {
 });
 applyButton.onclick = async () => {
   if(treeBusy || !hasTreeEdits() || review.diff.stale) return;
-  treeBusy = true; treeControls();
+  treeBusy = true; clearTimeout(searchTimer); treeControls();
   try { await treeRequest('/api/tree/apply'); say('Saved. Details below.', 'ok'); }
   catch(e) { say(e.message, 'error'); }
   finally { treeBusy = false; treeControls(); }
@@ -428,13 +467,13 @@ async function discardTree() {
 }
 discardButton.onclick = async () => {
   if(treeBusy || !review || review.projection_pending || (!hasTreeEdits() && !review.diff.stale)) return;
-  treeBusy = true; treeControls();
+  treeBusy = true; clearTimeout(searchTimer); treeControls();
   try { await discardTree(); await loadTree(); say('Changes discarded.'); }
   catch(e) { say(e.message,'error'); }
   finally { treeBusy = false; treeControls(); }
 };
-async function leaveTreeEdits() {
-  if(treeBusy) { say('Wait for the current contribution request.'); return false; }
+async function leaveTreeEdits(ownsBusy=false) {
+  if(treeBusy && !ownsBusy) { say('Wait for the current contribution request.'); return false; }
   if(review && review.projection_pending) { say('Profiles were saved, but projection failed. Retry Apply before leaving this review.','error'); return false; }
   if(hasTreeEdits() && !await styledConfirm('Discard unapplied contribution edits?', 'Discard edits')) return false;
   await discardTree(); return true;
@@ -443,12 +482,13 @@ async function leaveTreeEdits() {
 // The page-load call passes false, so opening the page never stages anything.
 async function refreshTree(accept) {
   if(treeBusy) return;
+  treeBusy = true; clearTimeout(searchTimer); treeControls();
   // Ordinary refresh keeps pending edits and focus; renewed discovery requires
   // explicitly discarding the old reviewed snapshot, never replaying its edits.
   try {
     if(hasTreeEdits() && !review.diff.stale) { await loadTree(); say('Your changes are kept. Apply or Discard them before checking for new.'); return; }
-    if(!await leaveTreeEdits()) return;
-    treeBusy = true; treeControls(); say('Checking for new repositories…'); await loadTree(true, accept);
+    if(!await leaveTreeEdits(true)) return;
+    say('Checking for new repositories…'); await loadTree(true, accept);
     const n = (review.diff.auto || []).length;
     say(n ? n + ' new ' + (n === 1 ? 'repository was' : 'repositories were') + ' turned on automatically because you follow their Hive. Apply to save, or Discard.' : 'Up to date. Nothing saved.');
   } catch(e) { say(e.message,'error'); }
@@ -482,8 +522,7 @@ document.getElementById('tree-select-matching').onclick = async () => {
   const list = matchingCandidates();
   if(!list.length || treeBusy) return;
   const q = document.getElementById('tree-search').value;
-  if(!await styledConfirm('Turn on ' + list.length + ' repositories matching “' + q + '”? Excluded ones and unrestricted Hives are skipped. Nothing is saved until Apply.', 'Turn on')) return;
-  if(await stageList(list)) say('Turned on ' + list.length + ' ' + (list.length === 1 ? 'repository' : 'repositories') + '. Apply to save.');
+  return stageBatch(repositoryChanges(list), 'Turn on ' + list.length + ' repositories matching “' + q + '”? Excluded ones and unrestricted Hives are skipped. Nothing is saved until Apply.');
 };
 document.getElementById('skip-apply').onclick = () => applyButton.focus();
 document.getElementById('skip-profiles').onclick = () => { document.getElementById('manage').open = true; document.getElementById('profiles-title').focus(); };

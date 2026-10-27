@@ -136,11 +136,9 @@ func TestAdoptedInPlaceFindingWithPendingCIStays074(t *testing.T) {
 }
 
 // The hive pushed a fix to the contributor branch signed as the App: the
-// squash would land it as the contributor with the App's sign-off, which
-// the sign-off gate rejects. A supersede would carry the very same head and
-// fail the same gate (hivecommons/hive#13623), so the hive opens none and
-// hands the original PR to a person at once with the merge-commit option.
-func TestAdoptedInPlaceSquashUnsafeHiveCommitStallsWithoutSupersede(t *testing.T) {
+// squash would land it as the contributor with the App's sign-off. An
+// App-authored superseder changes the squash attribution, not the commits.
+func TestAdoptedInPlaceSquashUnsafeHiveCommitSupersedes(t *testing.T) {
 	p := adoptPolicy()
 	p.AdoptInPlace = true
 	p.DCORequired = func(string) (bool, bool) { return true, true }
@@ -157,32 +155,23 @@ func TestAdoptedInPlaceSquashUnsafeHiveCommitStallsWithoutSupersede(t *testing.T
 	// This repo runs the gate (dco-squash-attribution.yml), so the note names it.
 	h.e.noteStageDCOGate("acme", "widget", 7, "f72fa44", map[string]bool{squashSignoffCheck: true}, nil)
 	h.observe(adoptPR(7, "f72fa44", adoptedLabels...), contributorLaneReasonNoVerdict)
-	if h.adopt.refAttempts != 0 || len(h.adopt.refs) != 0 || len(h.adopt.pulls) != 0 {
-		t.Fatalf("signoff supersede opened: attempts=%d refs=%v pulls=%v", h.adopt.refAttempts, h.adopt.refs, h.adopt.pulls)
+	if h.adopt.refs["refs/heads/hive/adopt-7"] != "f72fa44" || len(h.adopt.pulls) != 1 {
+		t.Fatalf("expected unchanged head on superseder: refs=%v pulls=%v", h.adopt.refs, h.adopt.pulls)
 	}
-	if c := adoptionComments(h.api); len(c) != 0 {
-		t.Fatalf("unexpected adoption comment: %v", c)
-	}
-	wantReason := stagelabels.LaneReasonAdoptionStalledPrefix + stagelabels.LaneReasonHiveSignoffAttribution
-	notes := stalledComments(h.api)
-	if len(notes) != 1 {
-		t.Fatalf("stalled note: %v", h.api.comments)
-	}
-	for _, want := range []string{"reason=" + wantReason, "opened none", "`gh pr merge 7 --merge`, not squash", "Sign-off survives the squash"} {
-		if !strings.Contains(notes[0], want) {
-			t.Fatalf("stalled note missing %q:\n%s", want, notes[0])
-		}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	if !strings.Contains(body, "**Sign-off attribution:**") || strings.Contains(body, "**Open review finding") {
+		t.Fatalf("signoff explanation invents a review finding: %s", body)
 	}
 	rec, _ := h.e.stageStoreOrShared().Get(key)
-	if !rec.AdoptedInPlace() || rec.AdoptedBy != 0 || rec.Stage != stagelabels.NeedsDecision || rec.Reason != wantReason {
-		t.Fatalf("record: %+v", rec)
+	if rec.AdoptedInPlace() || rec.AdoptedBy != 90 || rec.Stage != stagelabels.AdoptedByHive || rec.AdoptReason != AdoptReasonSignoffRehome || len(stalledComments(h.api)) != 0 {
+		t.Fatalf("record: %+v comments=%v", rec, h.api.comments)
 	}
 
-	// Next sweep on the same head: no supersede, no second note.
+	// Next sweep on the same head: no second superseder or stall note.
 	h.api.reset()
 	h.clock.advance(time.Hour)
 	h.observe(adoptPR(7, "f72fa44", stagelabels.NeedsDecision.Label(), "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
-	if len(h.adopt.pulls) != 0 || len(stalledComments(h.api)) != 0 {
+	if len(h.adopt.pulls) != 1 || len(stalledComments(h.api)) != 0 {
 		t.Fatalf("repeated: pulls=%v comments=%v", h.adopt.pulls, h.api.comments)
 	}
 }
@@ -301,8 +290,8 @@ func TestAdoptionEscapeHelpers(t *testing.T) {
 		{"fresh in-place with finding stays", stageObservation{HeadSHA: "aaa", Reason: "reviewer-verdict:changes_requested", LaneReason: contributorLaneReasonChangesRequested, Detail: blocking}, inPlace, now.Add(time.Hour), "", ""},
 		{"stale in-place with finding re-homes", stageObservation{HeadSHA: "aaa", Reason: "reviewer-verdict:changes_requested", LaneReason: contributorLaneReasonChangesRequested, Detail: blocking}, inPlace, now.Add(adoptedDwell), AdoptReasonInPlaceStalled, "adoption-stalled:reviewer-verdict:changes_requested"},
 		{"stale in-place finding but CI pending waits", stageObservation{HeadSHA: "aaa", Reason: "reviewer-verdict:changes_requested", LaneReason: "required-check-pending:unit", Detail: blocking}, inPlace, now.Add(adoptedDwell), "", ""},
-		{"squash-unsafe hive commit stalls at once without a re-home", stageObservation{HeadSHA: "aaa", Reason: stagelabels.LaneReasonHiveSignoffAttribution, Detail: stageDetail{DCOSquashUnsafeHive: 1}}, inPlace, now.Add(time.Minute), "", "adoption-stalled:hive-signoff-attribution"},
-		{"squash-unsafe hive commit with stale finding still stalls", stageObservation{HeadSHA: "aaa", Reason: stagelabels.LaneReasonHiveSignoffAttribution, LaneReason: contributorLaneReasonChangesRequested, Detail: stageDetail{DCOSquashUnsafeHive: 1, VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}}}, inPlace, now.Add(adoptedDwell), "", "adoption-stalled:hive-signoff-attribution"},
+		{"squash-unsafe hive commit re-homes at once", stageObservation{HeadSHA: "aaa", Reason: stagelabels.LaneReasonHiveSignoffAttribution, Detail: stageDetail{DCOSquashUnsafeHive: 1}}, inPlace, now.Add(time.Minute), AdoptReasonSignoffRehome, "adoption-stalled:hive-signoff-attribution"},
+		{"squash-unsafe hive commit with finding re-homes at once", stageObservation{HeadSHA: "aaa", Reason: stagelabels.LaneReasonHiveSignoffAttribution, LaneReason: contributorLaneReasonChangesRequested, Detail: stageDetail{DCOSquashUnsafeHive: 1, VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}}}, inPlace, now.Add(adoptedDwell), AdoptReasonSignoffRehome, "adoption-stalled:hive-signoff-attribution"},
 		{"dco-red head is the DCO re-home's", stageObservation{HeadSHA: "aaa", Reason: stagelabels.LaneReasonDCOMissing, Detail: stageDetail{DCOSquashUnsafeHive: 1, DCO: stagelabels.DCONo, DCOUnsigned: 1}}, inPlace, now.Add(time.Minute), "", ""},
 		{"other head is not stale", stageObservation{HeadSHA: "bbb", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}, inPlace, now.Add(adoptedDwell), "", ""},
 		{"stale red head escalates", stageObservation{HeadSHA: "aaa", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}, inPlace, now.Add(adoptedDwell), "", "adoption-stalled:check-failing:unit"},
@@ -352,6 +341,25 @@ func TestAdoptionBodyCauseAndBlockerText(t *testing.T) {
 	inPlace := stagelabels.Record{AdoptedHead: "64dd4be", AdoptMode: stagelabels.AdoptModeInPlace}
 	if got := adoptionBlockerText(signoff, inPlace); !strings.Contains(got, "`gh pr merge 13595 --merge`, not squash") || !strings.Contains(got, "2 commit(s)") || !strings.Contains(got, "@hanthor") {
 		t.Fatalf("signoff: %q", got)
+	}
+	for _, mode := range []string{"hold", "human-verdict", "moved-head"} {
+		blocked := signoff
+		want := ""
+		switch mode {
+		case "hold":
+			blocked.Labels = []string{"hold"}
+			want = "`hold` label prevents superseding"
+		case "human-verdict":
+			blocked.Detail.VerdictKnown = true
+			blocked.Detail.Verdict = ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+			want = "requires a human decision before superseding"
+		case "moved-head":
+			blocked.HeadSHA = "new-head"
+			want = "settle ownership of the new head"
+		}
+		if got := adoptionBlockerText(blocked, inPlace); !strings.Contains(got, want) || strings.Contains(got, "restore branch/PR-create access") {
+			t.Fatalf("%s stall must name actual blocker, not a failed write: %q", mode, got)
+		}
 	}
 	obs.Detail = stageDetail{}
 	obs.LaneReason = ""

@@ -9,8 +9,8 @@ import (
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
-func writeIssueReopenMetrics(b *strings.Builder, hiveID string) {
-	bundles, _, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot)
+func writeIssueReopenMetrics(b *strings.Builder, hiveID string, verifier ghpkg.ReviewEvidenceVerifier) {
+	bundles, _, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot, verifier)
 	if err != nil {
 		return
 	}

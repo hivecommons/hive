@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/skillreg"
 )
 
 // useSkillsDir points the kick-time registry loader at a temp dir for the

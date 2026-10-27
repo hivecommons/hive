@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/advisorhook"
 )
 
 // HookSubcommand is the `hive advisor-hook` subcommand every supported
@@ -18,7 +20,7 @@ import (
 // backend provides on stdin, asks the hub's loopback advise endpoint for the
 // verdict, and prints the answer in the calling backend's dialect. Keeping
 // the backend-specific part to formatting is what makes each adapter thin.
-const HookSubcommand = "advisor-hook"
+const HookSubcommand = advisorhook.HookSubcommand
 
 // hookFormatClaude renders the Claude Code `Stop` hook dialect: `{}` to let
 // the turn end, `{"decision":"block","reason":...}` to hold it with a reason
@@ -30,8 +32,8 @@ const hookFormatClaude = "claude"
 // prompt). HookFormatCodex is the Codex CLI `Stop` dialect, which matches
 // Claude Code's payload and answer.
 const (
-	HookFormatCopilot = "copilot"
-	HookFormatCodex   = "codex"
+	HookFormatCopilot = advisorhook.HookFormatCopilot
+	HookFormatCodex   = advisorhook.HookFormatCodex
 )
 
 const hookUsage = `usage: hive advisor-hook [--format claude|copilot|codex] [--endpoint <url>] [--timeout <dur>]

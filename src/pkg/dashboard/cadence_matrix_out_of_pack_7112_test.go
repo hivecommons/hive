@@ -3,9 +3,9 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -57,13 +57,13 @@ func TestCadenceMatrixFollowsStatusAgents_7112(t *testing.T) {
 			Name:         "supervisor",
 			Config:       supervisorCfg,
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"review": {
 			Name:         "review",
 			Config:       reviewCfg,
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 

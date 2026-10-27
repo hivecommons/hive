@@ -458,9 +458,42 @@ the issue had been claimed outside the relay; the registry path admits both.
 Every other gate below still applies to a registry-admitted PR. Set
 `registry_tiers_sufficient: false` to require the marker for everyone.
 
+A registry-admitted author also gets their CI started. GitHub's fork-approval
+policy holds a first-time contributor's `pull_request` runs in
+`action_required`, and the hive otherwise never approves a human-authored
+lane's held runs (the `hive-ok-to-test` workflow approves same-repo heads
+only). hivecommons/docs#481 by a `trusted` registry contributor sat 17 hours
+at `required-check-missing:Audit production dependencies` until an operator
+clicked "Approve and run". When the registry path admitted the author and the
+lane stops at `required-check-missing:<ctx>`, it now approves the head's held
+runs once (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`, fork head
+included), posts one `<!-- hive:contributor-held-runs-approved … -->` audit
+comment naming the author and tier, and logs `contributor-lane approved held
+runs` with the run ids (`approve_held_runs_for_registry_trusted`, default
+`true`). Claim-marker, auto-promotion and association admissions are never
+approved for, nor is a PR carrying the sentinel or an `exclude_labels` label,
+nor one touching `.github/workflows/**`. The App needs **Actions: Read and
+write** for the call; without it the approve fails, is logged once per head,
+and the PR waits for a person as before.
+
 A PR merges through this tier only when all of the following hold:
 
-- The PR author is admitted by one of two paths:
+- The PR author is admitted by one of three paths:
+  - **Adopted by the hive**: the stage store records an in-place adoption of
+    the PR (`stage/074-adopted-by-hive`) and the head being evaluated is
+    exactly the head the hive adopted or pushed (`AdoptedHead`). The hive
+    owns that head, so the original author's tier, marker and GitHub
+    association are not consulted — hive owner decision (hivecommons/hive,
+    2026-10-27): "If items are adopted, then the hive agents own it and they
+    should be eligible for auto merge." The sweep logs `contributor-lane
+    admitted reason=contributor-lane:adopted-by-hive adopted_head=<sha>` and
+    the merge log carries `admitted_by=contributor-lane:adopted-by-hive`. A
+    contributor push over the adopted head yields the adoption (074 → 072,
+    `AdoptedHead` cleared), so the next pass falls through to the two paths
+    below; a superseding adoption (`hive/adopt-<n>`) is never admitted on the
+    original PR — its App PR merges through the self-authored lane and closes
+    the original. Off with `governor.labels.stage.adoption.auto_merge: false`
+    (default on). Every other gate below still applies.
   - **Registry**: the author's contributor-registry profile has a trust tier in
     `require_tiers`. The sweep logs `contributor-lane admitted
     reason=contributor-lane:registry-trusted registry_tier=<tier>` and the
@@ -478,6 +511,28 @@ A PR merges through this tier only when all of the following hold:
     with `contributor-lane:no-linked-issue`. The marker's `tier=` must be in
     `require_tiers` (`contributor-lane:claim-tier-untrusted`) and it must say
     `verified=true` (`contributor-lane:claim-unverified`).
+  - **Auto-promotion**: when the marker path fails on tier, the conservative
+    clean-history ratchet (`auto_merge.contributor_tier.auto_promote_after_merged`,
+    default 5; negative disables) admits the author if their last N merged
+    PRs have no revert or sentinel-alert evidence — none is itself a revert,
+    none carries the sentinel label, none was undone by a later merged
+    `Revert "<title>"` / "This reverts commit <sha>" PR — and the author is
+    not `revoked` in the registry. By default the merges are counted across
+    **every repository the hive manages**
+    (`auto_merge.contributor_lane.auto_promotion_scope: hive`): trust is a
+    property of the person, and the small satellite repos of a multi-repo
+    hive never reach the threshold on their own (hivecommons/docs#481 sat 17h
+    at `contributor-lane:claim-tier-untrusted` while the same author had nine
+    clean merges in hivecommons/hive; #14517). The PR's own repository is
+    walked first; only when it is short does one `search/issues` query
+    (`is:pr is:merged author:<login> repo:… repo:…`) find which other hive
+    repos hold the author's merges, and only those are walked for revert
+    evidence — a revert or sentinel hit in any repository blocks. The sweep
+    posts a `<!-- hive:contributor-auto-promoted author=… merged=N scope=hive
+    repos=hive:4,docs:1 -->` audit comment once per PR and logs
+    `contributor-lane admitted reason=contributor-lane:auto-promoted
+    merged_prs=5 scope=hive repos=hive:4,docs:1`. `auto_promotion_scope:
+    repo` restores the per-repository count.
 - When neither admission path above vouches for the author, GitHub's
   `author_association` for the PR author must be `OWNER`, `MEMBER`,
   `COLLABORATOR` or `CONTRIBUTOR`; `NONE`, `FIRST_TIMER`,
@@ -537,11 +592,16 @@ auto_merge:
       - trusted
       - merger
     registry_tiers_sufficient: true   # a require_tiers tier on the author's registry profile admits without a claim marker
+    auto_promotion_scope: hive        # count clean merged PRs across every hive repo (repo = this repository only)
+    approve_held_runs_for_registry_trusted: true   # approve action_required runs once per head for registry-admitted authors
+  contributor_tier:
+    auto_promote_after_merged: 5      # clean merged PRs before the lane trusts an author on its own; negative disables
 ```
 
 The block is editable from **Settings → Features → Auto Merge →
 Contributor-lane auto-merge** (enable switch, soak minutes, reviewer-verdict
-switch, required tiers, excluded labels, repository allow-list) through the
+switch, required tiers, auto-promotion scope, excluded labels, repository
+allow-list) through the
 same owner-only `GET/PUT /api/config/auto-merge` overlay.
 
 **Operator workflow.** To let a known contributor's relay PRs merge
@@ -557,6 +617,38 @@ unattended (for example `mrbobbytables`):
 
 A claim keeps the tier the contributor held when it was taken, so grant the
 tier before the issue is leased.
+
+### Issue-author credit at merge time
+
+Every merge the hive performs — the self-authored, trusted-author,
+contributor-lane and queue sweeps as well as `hive-merge` relay requests —
+credits the humans who opened the issues the PR closes. The merge reads the
+closing references the PR already carries (`Fixes|Closes|Resolves #N` in the
+body) and resolves each referenced issue's author with at most one
+`GET /issues/{n}` per newly seen issue, cached for the life of the process
+(attributed as `hive:merge_credit` in the API-quota ledger). Bots and Apps
+(`type=Bot`, `[bot]`/`-bot` suffixes, `github-actions*`), the PR author
+themself, and issues that are really PRs are skipped; the remaining logins are
+de-duplicated and appended as `Co-authored-by: <login>
+<id+login@users.noreply.github.com>` trailers to the squash commit message. A
+`merge-method/merge` PR gets the trailer on the merge commit instead; a rebase
+merge has no commit to carry it and is left alone.
+
+`Co-authored-by` is the trailer GitHub counts toward the contributor graph, so
+a reporter whose issue was fixed by someone else's clanker shows up on the
+repository's contributors page rather than only in the issue timeline. It is
+purely additive: the branch's own commit subjects, bodies and `Signed-off-by`
+lines are reproduced unchanged ahead of the new trailers, so the squash
+sign-off gate and `check-squash-signoff-attribution.sh` see exactly what they
+saw before plus the credit. This is the single mechanism: a hive-opened PR
+already carries the trailer on its commits (`issue-coauthor.sh`,
+`hive-open-pr`), and the merge recognises an existing trailer for the same
+login (by noreply address or login) and does not add a duplicate. The credited
+logins are recorded on the merge audit entry (`issue_authors=`) and in the PR's
+review-evidence `merge.issue_authors`, so dashboards and DIBS statistics can
+report them. If the branch's commits cannot be read at merge time, the hive
+falls back to GitHub's default message rather than risk dropping a sign-off.
+Switch it off with `auto_merge.credit_issue_authors: false` (#14581).
 
 ### Stage labels
 
@@ -606,7 +698,11 @@ code would run as trusted. The hive records the refusal and the next pass
 parks the PR at `085` as `adoption-stalled:fork-rehome-refused` with a
 maintainer ask; in-place adoption on the fork's own branch (when the
 contributor allows maintainer edits) is unchanged. When adoption is in-place on the contributor PR's own
-branch, a changed head stays adopted only with hive-controlled evidence
+branch, the hive owns the head it pushed: once that head is green, approved
+by the reviewer, DCO-clean and soaked, the contributor lane admits it under
+the hive's own authority (`contributor-lane:adopted-by-hive`, see the
+admission paths above) rather than waiting for the original author's trust
+tier or a maintainer `/lgtm`; a changed head stays adopted only with hive-controlled evidence
 (GitHub-linked App commit metadata; the stage store only remembers SHAs that
 already passed that check);
 forgeable git author/committer names and emails are treated as contributor
@@ -621,13 +717,26 @@ on the contributor branch because a blocking review-swarm finding was left
 on a head that sat idle for the 074 dwell, it converts to a supersession
 (`reason=in-place-stalled`) and the superseding PR takes the same red-PR /
 review-fix route. A hive commit the squash sign-off gate strips
-(`hive-signoff-attribution`) is never re-homed: a supersede would carry the
-same head and fail the same gate, so the PR goes straight to
-`stage/085-needs-decision` as `adoption-stalled:hive-signoff-attribution`
-with one ask — merge it with a merge commit (`--merge`, not squash; every
-commit's sign-off matches its own author) or have the contributor re-author
-the hive's commits (hivecommons/hive#13623). An adoption with nothing the hive can
-push past the dwell goes to `stage/085-needs-decision` as
+(`hive-signoff-attribution`) now re-homes immediately if the lane cannot
+elect a merge commit: an App-authored superseder changes the squash
+attribution while preserving the contributor's commits and sign-offs.
+All DCO and merge gates still run on that PR. Loss of push access also
+re-homes immediately (`reason=push-rehome`). A pushable `needs-rebase` or
+conflicting branch first gets the normal fixer window; if its head remains
+unchanged past the 074 dwell, the same sweep supersedes it
+(`reason=rebase-rehome`) rather than parking at 085. Previously escalated
+adoptions are re-evaluated for these recoveries too (#13975). A red adopted
+head whose failing check is green on the base branch tip — the shared-CI
+flake or red base it fell to was fixed since, but the head never ran CI
+again — is recovered before anyone is asked: the sweep merges the base into
+the head when it is behind (GitHub update-branch, which works on a fork the
+maintainers may edit) or re-runs the failed workflow jobs when it is current,
+at most once per (head, base tip) and three times per adoption, logged as
+`adopted PR recovery` with `reason=update-branch`, `rerun-failed-jobs` or
+`skipped:<why>`; an escalation already in place for that head is released
+(hivecommons/hive#14500). An adoption with nothing the hive can
+push past the dwell — after that recovery was tried and the head is still
+red — goes to `stage/085-needs-decision` as
 `adoption-stalled:<lane reason>` with one comment naming the blocker, so the
 dashboard shows a person's item, not a silent 074; "waiting on maintainer
 lgtm" is only ever the state at 080+ (hivecommons/hive#12858). The dwell runs

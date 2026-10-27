@@ -322,7 +322,7 @@ dashboard said so until a human happened to open a terminal.
 
 Each agent tracks its own `backend_auth` state, derived from the same
 provider-error classifier the dashboard already uses
-(`classifyProviderError` in `src/pkg/agent/pane_classify.go`):
+(`classifyProviderError` in `src/crux/agent/pane_classify.go`):
 
 | Status | Meaning |
 |---|---|
@@ -661,7 +661,7 @@ ACMM banding) and `src/pkg/hub/remediation.go` (detector layering and the
 signature → action map), from fields the spoke reports in its heartbeat
 (`src/pkg/hub/heartbeat.go`). The spoke-side detectors live in
 `src/pkg/tokens/error_streak.go` (error streaks, from chat recordings),
-`src/pkg/agent/consent_wedge.go` (consent-screen restart tracking), and
+`src/crux/agent/consent_wedge.go` (consent-screen restart tracking), and
 `src/pkg/governor/no_cadence.go` (cadence-less agents). The `/fleet`
 rendering — dot, WHY chip, and hint line — is in
 `src/pkg/hub/static/my-hives.html`.

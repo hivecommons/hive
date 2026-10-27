@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-
 func LaunchCmdDeclaredBackend(cmd string) string {
 	bin := LaunchCmdExecutable(cmd)
 	if bin == "" {

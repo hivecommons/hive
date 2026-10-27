@@ -422,6 +422,26 @@ func TestCommonsTreePageAccessibilityAndLocalAssets(t *testing.T) {
 	}
 }
 
+// This checks emitted page/source contracts, not browser or assistive technology behavior.
+func TestCommonsPageExplainsStagingAndExclusionScope(t *testing.T) {
+	var page bytes.Buffer
+	if err := commonsWebTemplate.Execute(&page, map[string]string{"Token": "local-token"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Edits, including Pause, are staged until Apply.",
+		"do not confirm that a relay has picked up the changes",
+		"Vetoed across scoped Hives",
+		"Unrestricted Hives are an exception.",
+		"sub.selection_sources",
+		"aria-describedby",
+	} {
+		if !strings.Contains(page.String(), want) {
+			t.Errorf("page missing %q", want)
+		}
+	}
+}
+
 // The page script sends this literal as the X-Hive-Commons-Token header. The
 // template is html/template, whose JS context already quotes a string; piping
 // the token through printf "%q" first double-quotes it, the header then

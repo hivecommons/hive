@@ -7,9 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/agentaudit"
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
+
+// The runner's default security scanner needs pkg/ioscan's payload scanner,
+// which pkg/toolapprove (inside the Crux ring) cannot import itself.
+func init() { toolapprove.SetDefaultTextScanner(ioscan.ToolApproveScanner{}) }
 
 // Runner manages the execution of re-entrant turns over a SessionEnvelope.
 type Runner struct {

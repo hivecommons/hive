@@ -121,7 +121,7 @@ func TestStageTrackerPRLinkedIssuesOrdersClosingFirst(t *testing.T) {
 	pr := github.PullRequest{Repo: "acme/console", Number: 50,
 		LinkedIssues:     []github.PRLinkedIssue{{Number: 9, Title: "Nine", State: "OPEN"}},
 		ReferencedIssues: []github.PRLinkedIssue{{Number: 11, Repo: "acme/console", Via: github.PRLinkViaTitle}, {Number: 9, Repo: "acme/console", Via: github.PRLinkViaRefs}, {Number: 50, Repo: "acme/console", Via: github.PRLinkViaRefs}, {Number: 12, Repo: "acme/console", Via: github.PRLinkViaFixes}}}
-	got := stageTrackerPRLinkedIssues(pr, "https://github.com")
+	got := stageTrackerPRLinkedIssues(pr, "", "https://github.com")
 	if len(got) != 3 || got[0].Number != 9 || got[0].Via != "" || got[0].State != "open" || got[1].Number != 11 || got[1].Via != github.PRLinkViaTitle || got[2].Number != 12 || got[2].Via != "" {
 		t.Fatalf("got %+v", got)
 	}

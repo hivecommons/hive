@@ -139,8 +139,8 @@ agents.<key>.variables.<key>.type # TODO #11854
 agents.<key>.variables.<key>.url # TODO #11854
 agents.<key>.variables.<key>.value # TODO #11854
 agents.github_api_hourly_cap # TODO #11854
+auto_merge.credit_issue_authors # merge-time Co-authored-by credit (#14581); yaml-only
 auto_merge.allow_unprotected_base[] # TODO #11854
-auto_merge.contributor_tier.auto_promote_after_merged # contributor trust ratchet; yaml-only (#12839)
 auto_merge.merge_forward_trusted_human[] # TODO #11854
 auto_merge.no_ci_ok[] # TODO #11854
 auto_merge.queue_on_approve_and_unhold[] # per-repo L5 opt-in; yaml-only (#13629)
@@ -149,11 +149,15 @@ auto_merge.required_checks[] # TODO #11854
 auto_merge.trusted_authors.exclude_labels[] # TODO #11854
 auto_merge.trusted_authors.repos[] # TODO #11854
 auto_merge.trusted_bot_authors[] # TODO #11854
+chat.grounded_answers.model # TODO #14412
 classification.review_bots.logins[] # TODO #11854
 classification.review_bots.max_attempts_per_thread # TODO #11854
 classification.review_bots.resolve_after_fix # TODO #11854
 compliance.frameworks[] # TODO #11854
 data.nous_dir # TODO #11854
+contribute.token_idle_max # TODO #11854
+contribute.token_max_age # TODO #11854
+deployment.runtime # set via HIVE_DEPLOYMENT_RUNTIME env var or auto-detected, not a Settings control (#14072)
 duplicate_sweep.bot_authors[] # TODO #11854
 evidence.complexity.enabled # TODO #11854
 evidence.complexity.static_analysis # TODO #11854
@@ -374,6 +378,8 @@ project.repo_policies[].acmm_level # TODO #11854
 project.repo_policies[].acmm_pinned # TODO #11854
 project.repo_policies[].auto_merge # TODO #11854
 project.repo_policies[].companion_repos[] # TODO #11854
+project.repo_policies[].forge # TODO #11854
+project.repo_policies[].forge_url # TODO #11854
 project.repo_policies[].label_driven # TODO #11854
 project.repo_policies[].label_driven_approval_labels[] # TODO #11854
 project.repo_policies[].release_on_approve # TODO #12635
@@ -400,6 +406,27 @@ review.recommendations.labels[] # TODO #11854
 review.recommendations.repos[] # TODO #11854
 review.reviewer_agents[] # TODO #11854
 review.revise_repos[] # TODO #11854
+review.verdict_labels.approve # TODO #13833
+review.verdict_labels.changes_requested # TODO #13833
+review.verdict_labels.requires_human # TODO #13833
+review.verdict_labels.reviewing # TODO #13833
+runs.external.claude_managed_agents.agent_id # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.agent_version # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.api_key_env # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.api_key_file # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.daily_budget_cents # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.direct_github_write # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.enabled # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.endpoint # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.environment_id # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.environment_type # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.github_write_path # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.mode # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.model # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.network_policy # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.state_dir # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.toolset_version # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.workflow_version # prototype hosted backend; yaml-only (#14214)
 runs.spektacular.recheck.discovery.sources[].allow_prerelease # TODO #11854
 runs.spektacular.recheck.discovery.sources[].kind # TODO #11854
 runs.spektacular.recheck.discovery.sources[].max_items # TODO #11854

@@ -117,8 +117,12 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		SelfDecisionPolicy *string `json:"self_authored_decision_policy"`
 		ConfidenceScore    *bool   `json:"confidence_score"`
 		PriorityLabels     *bool   `json:"priority_labels"`
-		MaxReviewsPerHead  *int    `json:"max_reviews_per_head"`
-		PostComments       *bool   `json:"post_comments"`
+		// VerdictLabels replaces review.verdict_labels whole: its four keys
+		// only mean something together (one label per state), and an empty
+		// object turns the feature off (hivecommons/hive#13833).
+		VerdictLabels     *config.ReviewVerdictLabelsConfig `json:"verdict_labels"`
+		MaxReviewsPerHead *int                              `json:"max_reviews_per_head"`
+		PostComments      *bool                             `json:"post_comments"`
 		// EventDrivenMode is review.event_driven as auto|on|off: the key is a
 		// *bool whose unset value means "on when signed webhooks arrive", which
 		// a JSON bool cannot express. auto clears it back to unset.
@@ -199,6 +203,13 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	} {
 		if f.v != nil && *f.v < 0 {
 			jsonError(w, f.name+" must be >= 0", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if body.VerdictLabels != nil {
+		if err := body.VerdictLabels.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -444,6 +455,14 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ConfidenceScore != nil {
 		cfg.Review.ConfidenceScore = *body.ConfidenceScore
+	}
+	if body.VerdictLabels != nil {
+		v := *body.VerdictLabels
+		v.Reviewing = strings.TrimSpace(v.Reviewing)
+		v.Approve = strings.TrimSpace(v.Approve)
+		v.ChangesRequested = strings.TrimSpace(v.ChangesRequested)
+		v.RequiresHuman = strings.TrimSpace(v.RequiresHuman)
+		cfg.Review.VerdictLabels = v
 	}
 	if body.PriorityLabels != nil {
 		cfg.Review.PriorityLabels = *body.PriorityLabels

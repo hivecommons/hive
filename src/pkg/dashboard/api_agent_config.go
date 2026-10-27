@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hivecommons/hive/crux/taskmcp"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/resolve"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 )
 
 func (s *Server) defaultLaunchCmdForBackend(backend, model string) string {

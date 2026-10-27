@@ -147,6 +147,13 @@ type Input struct {
 	// registered contributor can still push by hand) and only fires when
 	// the body carries no marker.
 	RelayKnown bool
+	// Forge is the forge the PR lives on ("github", "gitlab", "gitea";
+	// pkg/forge.Kind by value). Empty means GitHub. It selects how a bot
+	// login is recognised: GitHub Apps carry a `[bot]` suffix, GitLab
+	// project/group access-token users are `project_<id>_bot…` /
+	// `group_<id>_bot…`, and Gitea/Forgejo Actions run as `gitea-actions` /
+	// `forgejo-actions`. The marker and trailer rules are forge-neutral.
+	Forge string
 }
 
 // Rule names Explain returns, in detection order.
@@ -177,6 +184,13 @@ const (
 	botSuffix        = "[bot]"
 )
 
+// gitlabBotLoginPattern matches the users GitLab creates for project and group
+// access tokens (project_<id>_bot, project_<id>_bot_<hash>, group_<id>_bot…).
+var gitlabBotLoginPattern = regexp.MustCompile(`^(project|group)_\d+_bot(_[0-9a-z]+)?$`)
+
+// giteaBotLogins are the pseudo-users Gitea and Forgejo Actions act as.
+var giteaBotLogins = map[string]bool{"gitea-actions": true, "forgejo-actions": true}
+
 var originMarkerPattern = regexp.MustCompile(`<!--\s*` + regexp.QuoteMeta(originMarkerName) + `\s+([^>]*?)\s*-->`)
 
 // Detect returns the authorship kind for in. See Explain for the rule.
@@ -194,7 +208,7 @@ func Detect(in Input) Kind {
 //  4. the `— hive:` attribution trailer → Clanker
 //  5. the 🐝 identity footer → Clanker
 //  6. RelayKnown → Clanker
-//  7. a non-App `[bot]` login → Unknown
+//  7. a non-App bot login (see Input.Forge) → Unknown
 //  8. otherwise → Human
 func Explain(in Input) (Kind, string) {
 	author, app := normLogin(in.Author), normLogin(in.AppLogin)
@@ -221,10 +235,27 @@ func Explain(in Input) (Kind, string) {
 	if in.RelayKnown {
 		return Clanker, RuleRegistry
 	}
-	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(in.Author)), botSuffix) {
+	if isBotLogin(in.Author, in.Forge) {
 		return Unknown, RuleBot
 	}
 	return Human, RuleDefaultHuman
+}
+
+// isBotLogin reports whether login is an automation account on forge. The
+// GitHub `[bot]` suffix is honoured on every forge (a mirrored PR may carry
+// one); the GitLab and Gitea conventions only on their own forge.
+func isBotLogin(login, forge string) bool {
+	l := strings.ToLower(strings.TrimSpace(login))
+	if strings.HasSuffix(l, botSuffix) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(forge)) {
+	case "gitlab":
+		return gitlabBotLoginPattern.MatchString(l)
+	case "gitea":
+		return giteaBotLogins[l]
+	}
+	return false
 }
 
 func normLogin(s string) string {

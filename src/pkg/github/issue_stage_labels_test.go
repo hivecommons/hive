@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -965,6 +967,128 @@ func TestSyncIssueStageLabels_WritesCoveredStageHiddenBySyntheticLabel(t *testin
 	}
 }
 
+// The enumeration cycle annotates each covered issue twice — once in
+// SyncIssuePRClaimLabels (links / retired-label cleanup) and again in
+// FilterClaimedIssues (suppress or keep) — on the same payload. The second
+// pass used to find the label the first pass synthesised and grade it as
+// GitHub's, so the sweep planned against a payload that already "had" 040
+// and never wrote it: hivecommons/hive#14372 and #14371 sat at 010 for an
+// hour under open `Fixes #N` PRs. The sweep must still see the forge labels
+// and write 040 whichever claim tier produced the cover; a label GitHub
+// really returned stays a no-op.
+func TestSyncIssueStageLabels_CoveredStageSurvivesDoubleAnnotation(t *testing.T) {
+	const issue, pr = 14372, 14375
+	cases := []struct {
+		name        string
+		claim       IssueClaim
+		forgeLabels []string
+		wantAdded   string
+		wantBucket  string
+	}{
+		{
+			name:        "external closing claim is suppressed into claimed_by_pr and staged 040",
+			claim:       IssueClaim{Closing: true, ExternalAuthor: true, PRAuthor: "thatguywob"},
+			forgeLabels: []string{"help wanted", stagelabels.Actionable.Label()},
+			wantAdded:   CoveredByPRLabel,
+			wantBucket:  workBucketClaimedByPR,
+		},
+		{
+			name:        "hive closing claim is suppressed into claimed_by_pr and staged 040",
+			claim:       IssueClaim{Closing: true, PRAuthor: "hive[bot]"},
+			forgeLabels: []string{"help wanted", stagelabels.Actionable.Label()},
+			wantAdded:   CoveredByPRLabel,
+			wantBucket:  workBucketClaimedByPR,
+		},
+		{
+			name:        "reference claim stays actionable in the payload but is staged 040",
+			claim:       IssueClaim{Reference: true, PRAuthor: "hive[bot]"},
+			forgeLabels: []string{"help wanted", stagelabels.Actionable.Label()},
+			wantAdded:   CoveredByPRLabel,
+		},
+		{
+			name:        "label GitHub really returned is left alone",
+			claim:       IssueClaim{Closing: true, ExternalAuthor: true, PRAuthor: "thatguywob"},
+			forgeLabels: []string{"help wanted", CoveredByPRLabel},
+			wantBucket:  workBucketClaimedByPR,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newIssueStageServer(t)
+			c := issueStageTestClient(t, fake.srv, true)
+			store := stagelabels.NewStore("", stageNow)
+			now := stageNow()
+			claim := tc.claim
+			claim.Repo, claim.Issue = "acme/widgets", issue
+			claim.PRRepo, claim.PRNumber, claim.PRState = "acme/widgets", pr, PRStateOpen
+			claim.PRURL = "https://github.com/acme/widgets/pull/14375"
+			claim.ObservedAt, claim.FirstObservedAt = now, now
+			ledger := NewClaimLedger("", testLogger())
+			ledger.SetClock(func() time.Time { return now })
+			ledger.Reconcile([]IssueClaim{claim}, true)
+
+			result := &ActionableResult{}
+			result.Issues.Items = []Issue{{Repo: "acme/widgets", Number: issue, Labels: append([]string(nil), tc.forgeLabels...)}}
+			// The production order: nil client so the link/label side effects
+			// are skipped and only the in-memory annotation runs, then the
+			// guard that annotates the same payload again.
+			SyncIssuePRClaimLabels(context.Background(), nil, result, ledger, testLogger())
+			FilterClaimedIssues(result, ledger, nil, testLogger())
+
+			inputs := IssueStageInputs(result)
+			if len(inputs) != 1 {
+				t.Fatalf("inputs = %+v, want exactly one row", inputs)
+			}
+			in := inputs[0]
+			if in.Bucket != tc.wantBucket {
+				t.Fatalf("bucket = %q, want %q", in.Bucket, tc.wantBucket)
+			}
+			if got, want := issueHasLabel(in.Labels, CoveredByPRLabel), issueHasLabel(tc.forgeLabels, CoveredByPRLabel); got != want {
+				t.Fatalf("sweep input labels = %v, want 040 present=%v (forge labels %v)", in.Labels, want, tc.forgeLabels)
+			}
+			if stage, _, _ := IssueStageFor(in, nil); stage != stagelabels.CoveredByPR {
+				t.Fatalf("stage = %s, want 040", stage)
+			}
+
+			res := syncSeeded(t, fake, c, result, store, now)
+			forgeWrites := fake.writes()
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if got := strings.Join(fake.added[issue], ","); got != tc.wantAdded {
+				t.Fatalf("added %q, want %q (writes=%d)", got, tc.wantAdded, res.Writes)
+			}
+			if tc.wantAdded == "" && (res.Writes != 0 || forgeWrites != 0) {
+				t.Fatalf("unchanged covered issue produced writes: %+v (%v / %v)", res, fake.added, fake.removed)
+			}
+		})
+	}
+}
+
+// annotateIssueWithClaim is idempotent on the synthesised flag: a second
+// annotation of the same payload keeps reporting the label as the hive's.
+func TestAnnotateIssueWithClaim_SynthesizedFlagSurvivesReannotation(t *testing.T) {
+	claim := IssueClaim{Repo: "acme/widgets", Issue: 1, PRRepo: "acme/widgets", PRNumber: 2, Closing: true}
+	cases := []struct {
+		name   string
+		labels []string
+		want   bool
+	}{
+		{name: "forge lacks the label", labels: []string{"bug"}, want: true},
+		{name: "forge carries the label", labels: []string{"bug", CoveredByPRLabel}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issue := Issue{Repo: "acme/widgets", Number: 1, Labels: tc.labels}
+			for pass := 1; pass <= 2; pass++ {
+				annotateIssueWithClaim(&issue, claim)
+				if issue.ClaimContext == nil || issue.ClaimContext.CoveredLabelSynthesized != tc.want {
+					t.Fatalf("pass %d: CoveredLabelSynthesized = %+v, want %v", pass, issue.ClaimContext, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // The label GitHub really returned is not synthesised, so a covered issue
 // already at 040 stays a no-op (no re-read, no write).
 func TestSyncIssueStageLabels_RealCoveredLabelIsNotStripped(t *testing.T) {
@@ -1149,4 +1273,26 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(p)
+}
+
+func TestNoteArchivedWrite(t *testing.T) {
+	c := NewClientForTest("http://127.0.0.1:0", "acme", []string{"widgets"}, testLogger())
+	forbidden := func(msg string) error {
+		return &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusForbidden}, Message: msg}
+	}
+	if c.noteArchivedWrite("acme/widgets", forbidden("Resource not accessible by integration")) {
+		t.Fatal("unrelated 403 treated as archived")
+	}
+	if c.noteArchivedWrite("acme/widgets", &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}, Message: "Repository was archived so is read-only."}) {
+		t.Fatal("non-403 treated as archived")
+	}
+	if c.stageArchived.has("acme/widgets") {
+		t.Fatal("repo memoised without an archived refusal")
+	}
+	if !c.noteArchivedWrite("acme/widgets", forbidden("Repository was archived so is read-only.")) {
+		t.Fatal("archived refusal not recognised")
+	}
+	if !c.stageArchived.has("acme/widgets") {
+		t.Fatal("archived repo not memoised")
+	}
 }

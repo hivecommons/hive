@@ -85,9 +85,9 @@ and what remains open. The control-by-control reference is
   it with a placeholder, is opt-in.
 * **Network is limited, not absent.** Agents can still reach GitHub reads,
   model backends and opaque `github.com` tunnels.
-* **The optional classifier fails open.** The deterministic rules, canaries
-  and proxy denials are the floor; the language-model classifier adds
-  coverage only when it is up.
+* **The classifier fails open at L1–L4.** It is on by default from L4 and
+  fails closed at L5–L6. The deterministic rules, canaries and proxy denials
+  are the floor; the language-model classifier adds coverage above it.
 * **Trajectory review reads transcripts, not reasoning**, and fails open.
 * **Hub compromise is high impact.** The hub still coordinates callbacks,
   registry data, terminal authorization and fleet visibility.

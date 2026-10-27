@@ -207,7 +207,10 @@ func (p *DispatchPlan) dispatchDecision(pr PullRequest, agg Aggregate, bases []A
 	if len(perspectives) == 0 {
 		return availableSlots
 	}
-	base := leastLoadedReviewer(bases, p.State.Pending)
+	base, free := freeReviewer(bases, p.inFlight(opts, now))
+	if !free {
+		return availableSlots
+	}
 	msg := BuildDecisionPrompt(pr, perspectives, agg, PromptOptions{
 		PostComments:          opts.PostComments,
 		AcknowledgeNoFindings: opts.AcknowledgeNoFindings,

@@ -1,0 +1,1 @@
+- Contributor registration tokens expire after 90 days by default, support an optional inactivity cutoff, and can be inspected or revoked individually or in bulk from Management and `hivectl contribute tokens`; GitHub-authenticated `hivectl contribute login` rotates expired tokens, while legacy credentials receive persisted migration-time issuance dates (#13804).

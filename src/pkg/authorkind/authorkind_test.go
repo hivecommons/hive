@@ -74,3 +74,35 @@ func TestNamesAndLabels(t *testing.T) {
 		t.Fatal("String")
 	}
 }
+
+// GitLab and Gitea PRs carry the same markers and trailer (relayed bodies are
+// forge-neutral text), but their bot accounts do not use GitHub's `[bot]`
+// suffix: each forge's own convention must read as a bot there, and only there.
+func TestExplainForgeAware(t *testing.T) {
+	cases := []struct {
+		name string
+		in   Input
+		kind Kind
+		rule string
+	}{
+		{"gitlab trailer", Input{Forge: "gitlab", Author: "mendezr", AppLogin: "project_42_bot_a1b2c3", Body: relayBody}, Clanker, RuleAttributionTrailer},
+		{"gitea trailer", Input{Forge: "gitea", Author: "mendezr", AppLogin: "acme-hive", Body: relayBody}, Clanker, RuleAttributionTrailer},
+		{"gitlab hive token user is the app", Input{Forge: "gitlab", Author: "project_42_bot_a1b2c3", AppLogin: "project_42_bot_a1b2c3", Body: appBody}, Hive, RuleAppLogin},
+		{"gitlab origin local", Input{Forge: "gitlab", Author: "mendezr", HiveID: "acme-hive", Body: "<!-- hive:origin hive=acme-hive -->"}, Hive, RuleOriginLocal},
+		{"gitlab project bot", Input{Forge: "gitlab", Author: "project_7_bot_9f8e", AppLogin: "project_42_bot_a1b2c3", Body: "Bumps x"}, Unknown, RuleBot},
+		{"gitlab group bot", Input{Forge: "gitlab", Author: "group_3_bot", Body: "Bumps x"}, Unknown, RuleBot},
+		{"gitea actions bot", Input{Forge: "gitea", Author: "gitea-actions", Body: "Bumps x"}, Unknown, RuleBot},
+		{"forgejo actions bot", Input{Forge: "gitea", Author: "Forgejo-Actions", Body: "Bumps x"}, Unknown, RuleBot},
+		{"github suffix on gitea", Input{Forge: "gitea", Author: "renovate[bot]", Body: "Bumps x"}, Unknown, RuleBot},
+		{"gitlab-style name on github is human", Input{Author: "project_7_bot", Body: "by hand"}, Human, RuleDefaultHuman},
+		{"gitea human", Input{Forge: "gitea", Author: "clubanderson", Body: "by hand"}, Human, RuleDefaultHuman},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kind, rule := Explain(tc.in)
+			if kind != tc.kind || rule != tc.rule {
+				t.Fatalf("Explain = (%q, %s) want (%q, %s)", kind, rule, tc.kind, tc.rule)
+			}
+		})
+	}
+}

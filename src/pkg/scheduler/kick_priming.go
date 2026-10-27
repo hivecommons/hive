@@ -2,12 +2,14 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/agentsmd"
+	"github.com/hivecommons/hive/crux/agentsmd"
+	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/knowledge"
-	"github.com/hivecommons/hive/pkg/skillreg"
 )
 
 const maxIssuesToPrime = 5
@@ -287,7 +289,15 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 		// The render carries its own marker; this is the operator-side half so
 		// a cap that is too tight for the vault shows up in logs, not only in
 		// a kick transcript (#12124).
-		s.logger.Debug("knowledge primer: dropped facts over the byte cap",
+		// Steady state for a vault larger than the cap: INFO the first time
+		// per (agent, cap) and whenever the omitted count changes, DEBUG after.
+		lvl := slog.LevelDebug
+		key := fmt.Sprintf("%s|%d", agentName, primed.MaxBytes)
+		if prev, ok := s.primerCapLogged.Load(key); !ok || prev != omitted.Facts {
+			s.primerCapLogged.Store(key, omitted.Facts)
+			lvl = slog.LevelInfo
+		}
+		s.logger.Log(context.Background(), lvl, "knowledge primer: dropped facts over the byte cap",
 			"omitted_facts", omitted.Facts, "omitted_hints", omitted.Hints,
 			"omitted_bytes", omitted.Bytes, "cap_bytes", primed.MaxBytes)
 	}

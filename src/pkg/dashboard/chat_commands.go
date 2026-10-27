@@ -27,16 +27,8 @@ func (s *Server) chatCommandHintAnswer(query string) (string, bool) {
 	switch {
 	case q == "/help":
 		return "Try `/agents`, `/beads`, `/prs`, `/governor`, `/knowledge work sources`, `/spek active campaigns`, `/spek spec runs`, `/who`, or `!help`.", true
-	case strings.HasPrefix(q, "/agents stuck") || strings.HasPrefix(q, "agents: stuck"):
-		return s.chatAgentsStuckAnswer(), true
-	case strings.HasPrefix(q, "/agents scanner status") || strings.HasPrefix(q, "agents: scanner status"):
-		return s.chatAgentNamedStatusAnswer("scanner"), true
-	case strings.Contains(q, "which agent completed last"):
-		return s.chatAgentCompletedLastAnswer(), true
 	case strings.HasPrefix(q, "/beads high priority") || strings.HasPrefix(q, "beads: high priority"):
 		return s.chatHighPriorityBeadsAnswer(), true
-	case strings.HasPrefix(q, "/prs waiting on review") || strings.HasPrefix(q, "prs: waiting on review"):
-		return s.chatPRsWaitingOnReviewAnswer(), true
 	case strings.Contains(q, "release blocker"):
 		return s.chatReleaseBlockersAnswer(), true
 	case strings.HasPrefix(q, "/governor next kick") || strings.HasPrefix(q, "governor: next kick"):
@@ -68,11 +60,11 @@ func (s *Server) chatCommandHintAnswer(query string) (string, bool) {
 	case strings.Contains(q, "inception relay state"):
 		return s.chatInceptionRelayStateAnswer(), true
 	case q == "/agents":
-		return s.chatAgentsAnswer(), true
+		return s.chatBareAnswer("agents")
 	case q == "/beads":
 		return s.chatBeadsAnswer(), true
 	case q == "/prs":
-		return s.chatPRsAnswer(), true
+		return s.chatBareAnswer("prs")
 	case q == "/governor":
 		return s.chatGovernorAnswer(), true
 	case q == "/spek":
@@ -185,38 +177,6 @@ func chatCampaignLine(c Campaign) string {
 	return line
 }
 
-func (s *Server) chatAgentsStuckAnswer() string {
-	status := s.chatStatusSnapshot()
-	if status == nil {
-		return "Agent status is still initializing; stuck-agent data is not available yet."
-	}
-	var lines []string
-	for _, a := range status.Agents {
-		state := strings.ToLower(strings.TrimSpace(a.State + " " + a.Busy + " " + a.StructuredStatus + " " + a.LastError + " " + a.KickOutcome))
-		if a.Paused || strings.Contains(state, "stuck") || strings.Contains(state, "blocked") || strings.Contains(state, "error") || strings.Contains(state, "fail") {
-			lines = append(lines, "- "+chatAgentLine(a))
-		}
-	}
-	if len(lines) == 0 {
-		return "No stuck, paused, blocked, or failing agents are currently reported."
-	}
-	sort.Strings(lines)
-	return "Agents needing attention:\n" + strings.Join(lines, "\n")
-}
-
-func (s *Server) chatAgentNamedStatusAnswer(name string) string {
-	status := s.chatStatusSnapshot()
-	if status == nil {
-		return "Agent status is still initializing; `" + name + "` status is not available yet."
-	}
-	for _, a := range status.Agents {
-		if strings.EqualFold(a.Name, name) || strings.EqualFold(a.ID, name) {
-			return "Agent `" + name + "`: " + chatAgentLine(a)
-		}
-	}
-	return "Agent `" + name + "` is not currently reported in hive status."
-}
-
 func chatAgentLine(a FrontendAgent) string {
 	state := firstRunNonEmpty(a.State, "unknown")
 	if a.Paused {
@@ -234,26 +194,6 @@ func chatAgentLine(a FrontendAgent) string {
 		return a.Name + ": " + state
 	}
 	return a.Name + ": " + state + " — " + detail
-}
-
-func (s *Server) chatAgentCompletedLastAnswer() string {
-	status := s.chatStatusSnapshot()
-	if status == nil || len(status.Agents) == 0 {
-		return "Agent completion data is unavailable: hive status has not reported agents yet."
-	}
-	var best *FrontendAgent
-	for i := range status.Agents {
-		if strings.TrimSpace(status.Agents[i].LastKickAt) == "" {
-			continue
-		}
-		if best == nil || status.Agents[i].LastKickAt > best.LastKickAt {
-			best = &status.Agents[i]
-		}
-	}
-	if best == nil {
-		return "Agent completion data is unavailable: the status snapshot has no `lastKickAt`/completion timestamps. Check the activity/audit panel for historical completions."
-	}
-	return "Most recent agent activity: " + best.Name + " at " + best.LastKickAt + " — " + firstRunNonEmpty(best.KickOutcome, best.State, "unknown outcome") + "."
 }
 
 func (s *Server) chatHighPriorityBeadsAnswer() string {
@@ -279,29 +219,6 @@ func (s *Server) chatHighPriorityBeadsAnswer() string {
 		lines = append(lines[:chatHintListLimit], fmt.Sprintf("- … %d more", len(lines)-chatHintListLimit))
 	}
 	return "High-priority beads:\n" + strings.Join(lines, "\n")
-}
-
-func (s *Server) chatPRsWaitingOnReviewAnswer() string {
-	status := s.chatStatusSnapshot()
-	if status == nil {
-		return "Pull request review data is still initializing."
-	}
-	var lines []string
-	total := 0
-	for _, repo := range status.Repos {
-		count := len(repo.OpenPrs)
-		total += count
-		if count == 0 {
-			continue
-		}
-		name := firstRunNonEmpty(repo.Full, repo.Name, "unknown repo")
-		lines = append(lines, fmt.Sprintf("- %s: %d open PR(s) that may need review", name, count))
-	}
-	if total == 0 {
-		return "No open pull requests are currently reported as waiting on review."
-	}
-	sort.Strings(lines)
-	return fmt.Sprintf("PRs waiting on review (%d):\n%s", total, strings.Join(lines, "\n"))
 }
 
 func (s *Server) chatReleaseBlockersAnswer() string {
@@ -547,4 +464,25 @@ func (s *Server) chatInceptionRelayStateAnswer() string {
 	}
 	parts = append(parts, "If a relay follow-up is missing, it is because Hive Chat has no asynchronous dashboard bot responder for this text; this command now reports the local relay state directly")
 	return "Inception relay state: " + strings.Join(parts, "; ") + "."
+}
+
+func (s *Server) chatGovernorAnswer() string {
+	status := s.chatStatusSnapshot()
+	if status == nil {
+		return "Governor status is still initializing; no recent kick failure details are available yet."
+	}
+	health := "unknown"
+	if state, ok := status.DeepHealth["status"].(string); ok && strings.TrimSpace(state) != "" {
+		health = strings.TrimSpace(state)
+	} else if ready, ok := status.DeepHealth["ready"].(bool); ok && ready {
+		health = "ready"
+	}
+	return fmt.Sprintf("Governor/kick status: hive health is %s. For detailed kick history, check the Governor and activity panels.", health)
+}
+
+func (s *Server) chatSpekAnswer() string {
+	if status := s.SpektacularStatus(); status != nil && status.Present {
+		return s.chatSpecRunsAnswer()
+	}
+	return "Spektacular/spec-run data is not available yet on this dashboard. Try the Inception/Spektacular panels or `!runs` if the chat bot is connected."
 }

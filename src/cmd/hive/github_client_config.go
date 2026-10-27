@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -124,6 +126,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// gates which issues become actionable at all, so it must be installed
 	// even when no exempt labels are configured.
 	client.SetIssueFilter(b.cfg.Project.IssueFilter)
+	b.applyPriorArtFilingGate(client)
 	client.SetAgentIssueDecisionPolicy(b.cfg.Project.EffectiveAgentIssueDecisionPolicy())
 	client.SetReporterConfirmationEnabledFunc(func() bool {
 		return b.cfg.Issues.ReporterConfirmationEnabled()
@@ -200,7 +203,7 @@ func (b *boot) prRepoPolicyGate(agentName, repo string) error {
 	if level <= 0 {
 		level = b.cfg.ACMMLevelOrZero()
 	}
-	if !agent.DefaultAgentMode(agentName, level).CanPush() {
+	if !crux.DefaultAgentMode(agentName, level).CanPush() {
 		return fmt.Errorf("repo %s effective ACMM L%d does not allow %s to open PRs", repo, level, agentName)
 	}
 	return nil
@@ -315,7 +318,7 @@ func (b *boot) applyGitHubClientAgentHooks(client *github.Client) {
 				// Same resolver the Manager uses, not a second copy of the
 				// rule: a hardcoded default here would drift silently the
 				// moment agy's default effort changed.
-				effort = agent.ResolveReasoningEffort(backend, model, ac.ReasoningEffort)
+				effort = cruxconfig.ResolveReasoningEffort(backend, model, ac.ReasoningEffort)
 			}
 		}
 		tool, toolVersion := github.ResolveToolVersion(backend)
@@ -398,9 +401,14 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	client.SetAttributionAuditRecord(func(rec github.AuditRecord) {
 		b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
 		recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec)
+		b.dashSrv.ApplyPRTerminalAudit(rec)
 		// #10927/#10933: the agent card's "what is it on" and stale warning
 		// read each agent's last hive-mediated write.
 		dashboard.RecordAgentLastAction(rec, time.Now())
+		// A PR the hive merged or closed itself leaves the tracker and the
+		// governor's cached snapshot now, instead of waiting for GitHub's
+		// `closed` delivery to come back round through the hub.
+		evictHiveClosedPR(b.dashSrv, rec, time.Now())
 	})
 	client.SetPRTerminalObservedHook(func(obs github.PRTerminalObservation) {
 		ts := obs.ObservedAt.UTC().Format(time.RFC3339)
@@ -471,6 +479,10 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// The issues the PR fixes get their own pr_opened stage: the
 		// start→PR SLA boundary, and the link a later merge folds back on.
 		recordPROpenedForIssues(b.dashSrv, b.cfg.Project.Org, d.Agent, d.Repo, d.Number, d.URL, d.Issues)
+		// The duplicate-PR claim ledger learns about the PR now, not at the
+		// next scan, so a contributor cannot be admitted to an issue this
+		// PR already covers in the gap between (hivecommons/hive#14472).
+		client.RecordOpenedPRClaims(getClaimLedger(b.logger), d, hiveIdentity(b.cfg), time.Now())
 	})
 	client.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, b.handleCanaryLeak)
 }
@@ -504,4 +516,21 @@ func holdMigrationFailedAlertMessage(hiveID, reportPath string) string {
 		msg += " Migration report: " + reportPath
 	}
 	return msg
+}
+
+// evictHiveClosedPR removes a pull request from the tracker and the cached
+// actionable snapshot the moment the hive records having merged or closed it
+// (AuditActionPRMerged / AuditActionPRClosed). The audit record is the one
+// point every merge path (sweep, queue, relay, forge) passes through, so it
+// is where the hive's own write stops depending on the webhook round-trip.
+func evictHiveClosedPR(srv *dashboard.Server, rec github.AuditRecord, now time.Time) {
+	if srv == nil || rec.Target <= 0 || rec.Repo == "" {
+		return
+	}
+	switch rec.Action {
+	case github.AuditActionPRMerged:
+		srv.EvictHiveClosedItem(rec.Repo, rec.Target, true, true, rec.Action, now)
+	case github.AuditActionPRClosed:
+		srv.EvictHiveClosedItem(rec.Repo, rec.Target, true, false, rec.Action, now)
+	}
 }

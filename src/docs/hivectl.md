@@ -288,6 +288,25 @@ Columns: `repo`, `pr`, `head_sha`, `bundle_id`, `author_login`, `author_kind`, `
 Reporting only: nothing here reads into or alters merge eligibility. See
 [Review evidence bundle](review-evidence.md#exporting).
 
+### evidence — benchmark
+
+```bash
+hivectl evidence benchmark --month 2026-10 --out-dir src/docs/benchmarks --readme README.md
+hivectl evidence benchmark --root ./evidence --month 2026-10 --spend cost.json --hub hub.json --source "hive-oke snapshot"
+```
+
+`evidence benchmark` folds the schema v1 bundles under `--root` per PR and compares the pull requests Hive's review
+swarm touched (**mediated**: at least one verdict or posted review on any head) with those merged without it
+(**unmediated**): revert rate and change-failure rate over merges observed ≥ 14 days, median time-to-merge, CI failure
+at merged head, the share of mediated merges that carried a `changes_requested` verdict before merging, and — when
+`--spend` names a saved `GET /api/cost` response — cost per merged PR. Every rate carries its n and a 95 % Wilson
+interval; n < 10 is `not reported`. `--month YYYY-MM` bounds the merge time (default all), `--now` fixes the
+observation time for maturation, `--hub` adds a saved `GET /api/hub/evidence` response as fleet context, `--source`
+names the data in the methodology section. It writes `outcomes-YYYY-MM.{md,json}` and
+`assets/outcomes-YYYY-MM-{bars,trend}.svg` under `--out-dir`, and `--readme FILE` rewrites that file's
+`<!-- outcomes:start -->…<!-- outcomes:end -->` block from the same report. Local filesystem only; no hive session, no
+telemetry. `src/scripts/outcome-benchmark.sh` wraps it; see [benchmarks/](benchmarks/README.md).
+
 ### evidence — backfill bundles from GitHub history
 
 ```bash
@@ -826,6 +845,15 @@ the heartbeat project-config callback; otherwise the hub provisions a hosted
 lite spoke. Lite mode is advisory-only and capped at ACMM L2. It writes no
 repository PAT or long-lived secret.
 
+### contribute — registration token recovery and operator controls
+
+`hivectl contribute login [profile]` rotates and saves a registration token using
+GitHub identity proof; omitting the profile uses the active saved hive. Operator
+commands `hivectl contribute tokens list`, `tokens revoke <contributor>`, and
+`tokens revoke --all --yes` inspect ages and invalidate credentials without changing
+trust tiers. See [token expiry and incident response](contributor-token-policy.md)
+for policy settings, API equivalents, migration and relay restart instructions.
+
 ### hives — named profiles for the hives you contribute to
 
 ```bash
@@ -1103,11 +1131,16 @@ Notes:
   same Hub → Hive → Repository tree as `hivectl hives web`, with the same staged
   edits, diff and Saved / Relay reload / Acknowledged receipt. `space` selects,
   `x` excludes or clears an exclusion, `f` follows, `e` enables, `R` reviews and
-  restricts a legacy profile, `/` searches (keeping ancestry), `A` reviews and
-  applies, `D` discards and `ctrl+r` refreshes without losing staged edits. Hub
-  and Hive actions show affected counts before staging. Nothing is written until
-  Apply; a review whose profiles changed elsewhere must be discarded and reviewed
-  again, and leaving or quitting with unapplied edits asks first.
+  restricts a legacy profile, `/` searches (keeping ancestry), `A` opens the bounded
+  change review, `D` discards and `ctrl+r` refreshes without losing staged edits. Hub
+  and Hive actions show affected counts before staging. In review, `↑`/`↓` or
+  `j`/`k` scroll wrapped rows; `PageUp`/`PageDown` page and `Home`/`End` jump.
+  Full target identities wrap without truncation. `Enter` explicitly applies;
+  `Esc` returns with edits kept. The review pins the title, scope and key hints,
+  scrolls only the diff, adapts to resize and pauses Apply
+  below 40 columns or 12 rows until its confirmation context fits again.
+  Nothing is written until Apply; a review whose profiles changed elsewhere must
+  be discarded and reviewed again, and leaving or quitting with unapplied edits asks first.
 - **Disable instead of removing a hive to pause it.** `hivectl hives disable <name>`
   (or `just contribute-hives disable <name>`) preserves its URL, registration token,
   contributor ID and rank. `enable <name>` restores eligibility without registration

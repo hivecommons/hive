@@ -190,8 +190,15 @@ type PROpenedDetail struct {
 	Repo    string
 	Number  int
 	URL     string
+	Title   string
 	Body    string
 	Handoff *PRHandoff
+	// Author is the login GitHub recorded as the PR's opener and Head is the
+	// branch it was opened from, so the duplicate-PR claim ledger can record
+	// the PR's claims the moment it exists (hivecommons/hive#14472) instead
+	// of waiting for the next scan.
+	Author string
+	Head   string
 	// Issues are the issue numbers the request named (Fixes/Closes), so the
 	// lifecycle timeline can mark pr_opened on each issue's journey.
 	Issues []int
@@ -685,7 +692,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		go (*hook)(req.Agent, req.Repo, res.Number, res.URL)
 	}
 	if hook := c.prOpenedDetailHook.Load(); hook != nil && *hook != nil && !res.AlreadyExisted {
-		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Body: body, Handoff: req.Handoff, Issues: append([]int(nil), req.IssueN...)})
+		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Title: title, Body: body, Handoff: req.Handoff, Author: res.Author, Head: req.Head, Issues: append([]int(nil), req.IssueN...)})
 	}
 	// The PR supersedes the pr-in-progress start mark on the issues it
 	// names: they move to stage/040-covered-by-pr, where the stage
@@ -739,7 +746,8 @@ func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func
 	// points away from its cause. Log it at ERROR on its own line — this is
 	// work an agent already completed and cannot publish, and it is invisible
 	// in the fleet view because the agent's session ended healthy.
-	if reason, ok := missingHeadReason(err); ok {
+	reason, missingHead := missingHeadReason(err)
+	if missingHead {
 		c.logger.Error("pr-request watcher: head branch is not on the remote — the agent's push did not authenticate",
 			slog.String("repo", req.Repo), slog.String("head", req.Head),
 			slog.String("agent", req.Agent), slog.String("diagnosis", reason))
@@ -750,6 +758,11 @@ func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func
 		c.logger.Error("pr-request watcher: request exceeded retry horizon, quarantined",
 			slog.String("path", path), slog.String("repo", req.Repo),
 			slog.String("head", req.Head), slog.String("error", err.Error()))
+		return
+	}
+	// The specific error above already reports this failure to the fleet.
+	// Avoid a second, unclassified report for the same retry.
+	if missingHead {
 		return
 	}
 	c.logger.Warn("pr-request watcher: request failed, will retry with backoff",

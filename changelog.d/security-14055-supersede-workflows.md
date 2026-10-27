@@ -1,0 +1,1 @@
+- Refuse to publish contributor workflow/action edits into upstream adoption branches, and revalidate head evidence before every supersession. The refusal is recorded once per head: the PR gets one note and moves to needs-decision instead of being re-checked every sweep.

@@ -1,6 +1,7 @@
 package github
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -59,7 +60,7 @@ func TestRecordReviewEvidenceOutcomeStampsNewestBundle(t *testing.T) {
 		t.Fatalf("outcome = %+v", newest.Outcome)
 	}
 	want := evidence.MergeEvent{Actor: "bob", Method: evidence.MergeUnrecorded, At: mergedAt, SHA: "h2"}
-	if newest.Merge == nil || *newest.Merge != want {
+	if newest.Merge == nil || !reflect.DeepEqual(*newest.Merge, want) {
 		t.Errorf("merge = %+v, want %+v", newest.Merge, want)
 	}
 	if !newest.UpdatedAt.Equal(now) || newest.Hash == "" {

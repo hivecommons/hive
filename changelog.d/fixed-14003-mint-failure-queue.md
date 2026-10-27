@@ -1,0 +1,1 @@
+- Exclude repositories with recorded token mint failures from contributor ready/actionable totals during their cooldown, expose the reason and expiry in opted-in withheld diagnostics, and preserve `repo_unmintable` refusals on subsequent work requests ([#14003](https://github.com/hivecommons/hive/issues/14003)).

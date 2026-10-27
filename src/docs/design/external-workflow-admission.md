@@ -432,6 +432,30 @@ token, and the fixture's stats assert both are absent.
 | Hub restarts with a run in flight | The replacement adapter holds no keys; `Recover` issues the keyed start and the workbench answers `deduplicated` for its existing run. | None. |
 | Cancel ignored by the workbench | `stopped: false` stays on record; the run stays visibly running; late output is rejected once authority is no longer current. | Wait or retire the lease; never assume stopped. |
 
+## Claude Managed Agents self-hosted host (#14124)
+
+The first hosted-execution prototype uses Claude Managed Agents with a
+contributor-private `self_hosted` environment. The adapter lives in
+`src/pkg/extwork/managedagents` and is linked only by
+`extwork_claude_managed_agents`; the relay token is
+`ext-exec/claude-managed-agents`. It is not a CLI backend and is never added
+to `KNOWN_BACKENDS` or `CLIBackends`.
+
+| Contract point | Prototype behavior |
+| --- | --- |
+| Admission and idempotency | `POST /v1/sessions` carries the Hive execution key, request digest, bounded prompt/repository context, pinned agent version, toolset version, and the remaining daily budget. A durable local session map plus a bounded vendor session scan reconciles a crash before Hive records the session ID; a different digest is `ErrConflict`. |
+| Incarnation | `GET /v1/environments/{id}` is authenticated before dispatch and on observation. The response must be `self_hosted`; environment ID/version form the pinned incarnation. |
+| Observation | `GET /v1/sessions/{id}` maps `created`/`queued`, `running`, `rescheduling`, `idle`, and `terminated` to the extwork states. `budget_reached` and `requires_action` remain visible as waiting. |
+| Cancellation | `POST /v1/sessions/{id}/events?beta=true` sends only `user.interrupt`; HTTP acknowledgement and observed stop remain separate facts. |
+| Artifacts | Session output files are listed through `GET /v1/files?scope_id={session}` and streamed through `/v1/files/{id}/content`; extwork receipt digest/size/schema checks remain authoritative. |
+| Egress | The configured network policy is `forced-egress` or `proxy-only`, and `github_write_path` must be `none` or `proxy`; every other value, including `github_repository`, `vaulted_secret`, `github_mcp`, and `direct_github_write`, is refused when the adapter is built for every stage. The prototype has no GitHub path, and nothing routes the hosted worker through the proxy, so the `POST /pulls` and `PUT /pulls/{n}/merge` denial tests remain open. |
+| Metering | `span.model_request_end` events from `GET /v1/sessions/{id}/events?beta=true` are deduplicated by vendor event ID into `pkg/tokens` JSONL. `session.usage.list_cost`, active seconds, and web-search counts are persisted in `managed-agents-ledger.json`; a hard USD 25 UTC-day cap sets the session budget to remaining cents and interrupts a running session at the cap. |
+
+The worker receives only its self-hosted environment key and per-session work
+secret. The Hive control-plane API key is resolved from `api_key_env` or a
+`/data/secrets` `api_key_file` reference and is never included in the bounded
+bundle or initial event.
+
 ## Deferred items
 
 - Any publication authority, target-repository mutation, broker integration,

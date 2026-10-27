@@ -1,0 +1,2 @@
+- The `crux-sync` workflow no longer aborts after committing the publish tree: the commit summary was piped through `head`, which under `pipefail` turned into exit 141 on a large first sync (#14138).
+- `crux-sync` no longer commits when the only difference is the `.hive-sync` timestamp, so tag-only runs and re-dispatches do not add empty syncs (#14138).

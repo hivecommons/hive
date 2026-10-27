@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -74,7 +76,7 @@ func newBootKnowledgeFake(t *testing.T) *bootKnowledgeFake {
 		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
 			return knowledge.NewInceptionEngine(f.inceptionDir, api, logger)
 		},
-		restartBrainstorm: func(_ context.Context, _ *agent.Manager, msg string) error {
+		restartBrainstorm: func(_ context.Context, _ crux.Runtime, msg string) error {
 			f.restarts = append(f.restarts, msg)
 			return f.restartErr
 		},
@@ -100,7 +102,7 @@ func newBootKnowledgeBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
 	b, _ := newDepsTestBoot(t, cfg)
 	b.sched = scheduler.New(cfg, b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	b.beadStores = map[string]*beads.Store{}
 	return b

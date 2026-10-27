@@ -1305,3 +1305,33 @@ func TestKiroProberErrorCases(t *testing.T) {
 		t.Fatalf("string used/limit not decoded: %+v", h)
 	}
 }
+
+// A timed-out app-server can leave stdout open in a helper until WaitDelay
+// closes it. Both that read error and ordinary EOF must retain the timeout.
+func TestCodexProber_AppServerDeadline(t *testing.T) {
+	for _, inherited := range []bool{false, true} {
+		t.Run(fmt.Sprintf("inherited_stdout=%t", inherited), func(t *testing.T) {
+			dir := t.TempDir()
+			script := "#!/bin/sh\nIFS= read -r line\n"
+			if inherited {
+				// Finite helper outlives WaitDelay without leaving a long-lived
+				// process behind. The shell itself blocks on stdin until killed.
+				script += fmt.Sprintf("sleep %d &\n", int(probeWaitDelay/time.Second)+1)
+			}
+			script += "IFS= read -r line\n"
+			if err := os.WriteFile(filepath.Join(dir, "codex"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			defer cancel()
+			h := (CodexProber{}).Probe(ctx)
+			if !errors.Is(h.ProbeErr, context.DeadlineExceeded) || h.ProbeErrCause != ProbeCauseTimeout {
+				t.Fatalf("ProbeErr = %v, cause = %q; want deadline exceeded / timeout", h.ProbeErr, h.ProbeErrCause)
+			}
+			if !h.Available {
+				t.Fatal("timeout must retain fail-open behavior")
+			}
+		})
+	}
+}

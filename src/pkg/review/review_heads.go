@@ -123,7 +123,8 @@ func pendingMissingHeadPerspectives(state DispatchState, pr PullRequest, perspec
 }
 
 // dispatchHeads plans one record-only kick per missing (perspective, head)
-// for this PR, each to the least-loaded replica of that head, and returns the
+// for this PR, each to a replica of that head with no review kick in flight
+// (freeReviewer; a busy head's perspectives wait for a later cycle), and returns the
 // parallel slots left. Each kick costs one slot. max_perspectives_per_pr still
 // bounds how many perspectives a PR head receives; an admitted perspective is
 // asked of every head so it is judged by all of them.
@@ -162,7 +163,12 @@ func (p *DispatchPlan) dispatchHeads(pr PullRequest, reviewers []AgentCapability
 		if availableSlots <= 0 {
 			break
 		}
-		reviewer := leastLoadedReviewer(groups[m.Head], p.State.Pending)
+		reviewer, free := freeReviewer(groups[m.Head], p.inFlight(opts, now))
+		if !free {
+			// Every replica of this head is mid-review; a later cycle asks
+			// the first one to free up. Other heads may still have room.
+			continue
+		}
 		msg := BuildPerspectivePromptWith(m.Perspective, pr, PromptOptions{
 			HeadRecordOnly:       m.Head,
 			Revise:               revisiting,

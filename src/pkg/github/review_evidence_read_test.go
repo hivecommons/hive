@@ -140,6 +140,67 @@ func TestListReviewEvidenceUnreadableDir(t *testing.T) {
 	}
 }
 
+func TestReviewEvidenceVerifierRejectsTamperingAndDowngrade(t *testing.T) {
+	root := t.TempDir()
+	created := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	b := writeTestEvidence(t, root, "aaaaaaa111", "", created)
+	path := ReviewEvidencePath(root, "o/r", 7, b.HeadSHA)
+
+	seed := make([]byte, ed25519.SeedSize)
+	priv := ed25519.NewKeyFromSeed(seed)
+	if err := evidence.Sign(b, priv); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeReviewEvidence(path, b); err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "evidence.key")
+	if err := os.WriteFile(keyFile, []byte(hex.EncodeToString(seed)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	verifier, err := NewReviewEvidenceVerifier(keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadVerifiedReviewEvidence(path, verifier); err != nil {
+		t.Fatalf("valid signed bundle rejected: %v", err)
+	}
+
+	b.Author.Login = "mallory"
+	if err := writeReviewEvidence(path, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadVerifiedReviewEvidence(path, verifier); err == nil || !strings.Contains(err.Error(), "hash mismatch") {
+		t.Fatalf("tampered bundle error = %v, want hash mismatch", err)
+	}
+
+	if err := evidence.Seal(b, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeReviewEvidence(path, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FindVerifiedReviewEvidence(root, "o/r", 7, b.HeadSHA, verifier); err == nil || !strings.Contains(err.Error(), "not signed") {
+		t.Fatalf("signature downgrade error = %v, want not signed", err)
+	}
+	if _, err := LoadVerifiedReviewEvidence(path, ReviewEvidenceVerifier{}); err != nil {
+		t.Fatalf("valid unsigned bundle rejected in unsigned mode: %v", err)
+	}
+
+	if err := evidence.Sign(b, priv); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeReviewEvidence(path, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadVerifiedReviewEvidence(path, ReviewEvidenceVerifier{}); err == nil || !strings.Contains(err.Error(), "without the signing key") {
+		t.Fatalf("signed bundle without key error = %v", err)
+	}
+	if _, err := NewReviewEvidenceVerifier(filepath.Join(t.TempDir(), "missing.key")); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("missing configured key error = %v", err)
+	}
+}
+
 func TestReviewEvidenceComment(t *testing.T) {
 	got := ReviewEvidenceComment(" o/r ", 7, "o/r#7@abc", "deadbeef")
 	want := "<!-- hive-review-evidence --> Evidence bundle `o/r#7@abc` sha256:deadbeef — download from the dashboard or `hivectl review evidence o/r#7`."
@@ -230,10 +291,20 @@ func evidenceMergeClient(t *testing.T, f *evidenceMergeFixture, settings *Review
 func TestRecordPRMergedAuditPostsEvidencePointerOnce(t *testing.T) {
 	root := withEvidenceRoot(t)
 	t0 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	writeTestEvidence(t, root, "head111", "", t0)
-	writeTestEvidence(t, root, "head222", evidence.BundleID("o/r", 7, "head111"), t0.Add(time.Hour))
-
 	seed := make([]byte, ed25519.SeedSize)
+	priv := ed25519.NewKeyFromSeed(seed)
+	for _, b := range []*evidence.Bundle{
+		writeTestEvidence(t, root, "head111", "", t0),
+		writeTestEvidence(t, root, "head222", evidence.BundleID("o/r", 7, "head111"), t0.Add(time.Hour)),
+	} {
+		if err := evidence.Sign(b, priv); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeReviewEvidence(ReviewEvidencePath(root, "o/r", 7, b.HeadSHA), b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	keyFile := filepath.Join(t.TempDir(), "key")
 	if err := os.WriteFile(keyFile, []byte(strings.Repeat("00", ed25519.SeedSize)), 0o600); err != nil {
 		t.Fatal(err)
@@ -407,11 +478,11 @@ func TestRecordReviewEvidenceMergeGuards(t *testing.T) {
 	var nilClient *Client
 	nilClient.RecordPRMergedAudit("o/r", 7, "squash", "m", PRAuditPathSweep)
 	c := evidenceMergeClient(t, &evidenceMergeFixture{head: "h1"}, &ReviewEvidenceSettings{Enabled: true})
-	c.recordReviewEvidenceMerge("o/r", 0, "squash", "m", PRAuditPathSweep)
+	c.recordReviewEvidenceMerge("o/r", 0, "squash", "m", PRAuditPathSweep, nil)
 	// A client with no REST transport still records nothing and posts nothing.
 	bare := &Client{logger: c.logger}
 	bare.SetReviewEvidence(func(string) ReviewEvidenceSettings { return ReviewEvidenceSettings{Enabled: true} })
-	bare.recordReviewEvidenceMerge("o/r", 7, "squash", "m", PRAuditPathSweep)
+	bare.recordReviewEvidenceMerge("o/r", 7, "squash", "m", PRAuditPathSweep, nil)
 }
 
 func TestReviewEvidencePublicKey(t *testing.T) {

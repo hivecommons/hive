@@ -17,9 +17,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (

@@ -25,12 +25,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/openrouter"
 	"github.com/hivecommons/hive/pkg/auth"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/delegation"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
-	"github.com/hivecommons/hive/pkg/openrouter"
 	"github.com/hivecommons/hive/pkg/reach"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
@@ -359,6 +359,20 @@ type RegistryEntry struct {
 	UpgradeFailed   bool      `json:"upgradeFailed,omitempty"`
 	UpgradeError    string    `json:"upgradeError,omitempty"`
 	UpgradeFailedAt time.Time `json:"upgradeFailedAt,omitempty"`
+	// UpgradeRestartFallback is the spoke's explanation for why it could not
+	// PATCH its own Deployment during the in-flight upgrade and exited so the
+	// kubelet re-pulls its floating tag instead (typically an admission
+	// webhook rejecting or timing out the patch). Not a failure: the latch
+	// stays, no attempt is spent. Carried across beats while Upgrading and
+	// dropped with the latch, so the orphan sweep and the stuck-upgrade alert
+	// can name the real cause instead of guessing at the image tag.
+	UpgradeRestartFallback string `json:"upgradeRestartFallback,omitempty"`
+	// UpgradeDrain is the spoke's latest heartbeat account of an upgrade it is
+	// deliberately holding until in-flight agent kicks finish. Rebuilt from
+	// every beat (nil when the spoke reports no drain), so a non-nil value
+	// means the MOST RECENT beat was still draining. The orphan sweep reads it
+	// to keep a draining attempt latched instead of abandoning it.
+	UpgradeDrain *UpgradeDrainReport `json:"upgradeDrain,omitempty"`
 	// OrphanedUpgradeSweeps counts how many times the orphan sweep has cleared
 	// and re-armed an upgrade for this hive without it ever landing. A spoke
 	// that cannot advance (it restarts, comes back on a SHA that is neither the
@@ -1726,7 +1740,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /components.css", s.serveStatic("static/components.css"))
 	s.mux.HandleFunc("GET /api/reading-list", s.handleReadingList)
 	s.mux.HandleFunc("GET /reading", s.serveStatic("static/reading.html"))
-	s.mux.HandleFunc("GET /robots.txt", s.serveStatic("static/robots.txt"))
+	s.mux.HandleFunc("GET /robots.txt", s.handleRobotsTxt)
 	s.mux.HandleFunc("GET /sitemap.xml", s.serveStatic("static/sitemap.xml"))
 	s.mux.HandleFunc("GET /llms.txt", s.serveStatic("static/llms.txt"))
 	s.mux.HandleFunc("GET "+hubErrorPagePath+"{code}", s.handleHubErrorPage)
@@ -1780,7 +1794,7 @@ func (s *HubServer) Start(port int) error {
 	s.logger.Info("hub server starting", "addr", addr)
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      s.mux,
+		Handler:      s.Handler(),
 		ReadTimeout:  hubReadTimeout,
 		WriteTimeout: hubWriteTimeout,
 		IdleTimeout:  hubIdleTimeout,
@@ -2275,12 +2289,26 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	// UpgradeDrainUntil is parsed below, once the entry's UpgradeStartedAt is
 	// settled, because its cap is anchored to the start clock.
+	entry.UpgradeDrain = payload.UpgradeDrain
 
 	// A spoke that explicitly reports a FAILED upgrade must not be left showing
 	// the "Upgrading" spinner, and must not be re-instructed on a loop. Record
 	// the cause so operators can see WHY, and drop the pending instruction: the
 	// spoke has already exhausted its own retry budget, so re-sending the same
 	// target every heartbeat only reproduces the failure.
+	if payload.UpgradePendingRestart && !payload.UpgradeFailed {
+		// The spoke could not patch its Deployment but is restarting onto a
+		// floating tag that will re-pull. Still in flight: keep the latch,
+		// keep the cause visible, and spend no failed attempt on it.
+		entry.Upgrading = true
+		entry.UpgradeRestartFallback = sanitizeProseField(payload.UpgradeError)
+		s.logger.Warn("heartbeat: spoke could not patch its Deployment, falling back to a process restart",
+			"hive_id", payload.HiveID,
+			"from", payload.GitHash,
+			"to", payload.UpgradeTargetSHA,
+			"hint", payload.UpgradeError,
+		)
+	}
 	if payload.UpgradeFailed {
 		entry.Upgrading = false
 		entry.UpgradeFailed = true
@@ -2335,7 +2363,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// the SAME org: a reassignment/reset changes the org (a reset slot
 			// reports its synthetic "available-<id>" org), and the old
 			// tenant's repos must never survive it.
-			if payload.Upgrading || payload.StatsStale || payload.UpgradeFailed {
+			if payload.Upgrading || payload.StatsStale || payload.UpgradeFailed || payload.UpgradePendingRestart {
 				if entry.DashboardURL == "" && h.DashboardURL != "" {
 					entry.DashboardURL = h.DashboardURL
 				}
@@ -2631,6 +2659,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// stamp now only when no clock has ever existed.
 			stampObservedUpgrade(&entry, h.UpgradeStartedAt)
 			entry.UpgradeDrainUntil = parseUpgradeDrainUntil(payload.UpgradeDrainUntil, entry.UpgradeStartedAt, time.Now())
+			// The restart-fallback note lives exactly as long as the latch: an
+			// ordinary beat never repeats it, so carry it while the upgrade is
+			// still in flight and let it drop with the latch on completion.
+			if entry.Upgrading && entry.UpgradeRestartFallback == "" {
+				entry.UpgradeRestartFallback = h.UpgradeRestartFallback
+			}
+			if !entry.Upgrading {
+				entry.UpgradeRestartFallback = ""
+			}
 			// Sparkline history: sample every 15 min, keep 7 days (672 points)
 			const sparkSampleInterval = 15 * 60 // seconds
 			const sparkMaxPoints = 672

@@ -43,7 +43,7 @@ fi
 
 # The format under test is read from the shipped sources, never restated here:
 # a copy would keep passing after the real one regressed.
-MANAGER="${ROOT}/src/pkg/agent/manager.go"
+MANAGER="${ROOT}/src/crux/agent/manager.go"
 ATTACH="${ROOT}/src/deploy/ttyd-tmux.sh"
 STATUS_FMT="$(sed -n 's/^\ttmuxStatusRight = "\(.*\)"$/\1/p' "$MANAGER" | head -1)"
 if [ -z "$STATUS_FMT" ]; then
@@ -52,7 +52,7 @@ if [ -z "$STATUS_FMT" ]; then
   echo "=== Results: $PASS passed, $FAIL failed ==="
   exit 1
 fi
-pass "status format extracted from src/pkg/agent/manager.go (not restated here)"
+pass "status format extracted from src/crux/agent/manager.go (not restated here)"
 
 # The attach path must carry the SAME format, or a session created before the
 # manager change gets a different terminal than one created after.
@@ -300,7 +300,7 @@ if tmux -S "$SOCK" list-commands copy-mode 2>/dev/null | grep -qE '\[-[a-zA-Z]*H
   # The rebind itself must be carried by BOTH the session-creation path and
   # the attach path, or a session created one way scrolls differently.
   grep -q 'copy-mode -eH' "$MANAGER" \
-    && pass "src/pkg/agent/manager.go rebinds the wheel to copy-mode -eH" \
+    && pass "src/crux/agent/manager.go rebinds the wheel to copy-mode -eH" \
     || fail "manager.go carries the wheel rebind"
   grep -q "copy-mode -eH" "$ATTACH" \
     && pass "src/deploy/ttyd-tmux.sh applies the identical rebind on attach" \

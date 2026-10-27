@@ -350,20 +350,20 @@ func TestNousGateDecisionWithoutStore(t *testing.T) {
 	}
 }
 
-// lockedBuffer is a bytes.Buffer safe to write from the watcher goroutine
+// nousLockedBuffer is a bytes.Buffer safe to write from the watcher goroutine
 // while the test goroutine reads it (#12052).
-type lockedBuffer struct {
+type nousLockedBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer
 }
 
-func (l *lockedBuffer) Write(p []byte) (int, error) {
+func (l *nousLockedBuffer) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.b.Write(p)
 }
 
-func (l *lockedBuffer) String() string {
+func (l *nousLockedBuffer) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.b.String()
@@ -374,7 +374,7 @@ func (l *lockedBuffer) String() string {
 func TestRunNousGateWatch(t *testing.T) {
 	store := &fakeGateStore{}
 	_, deps, pings := gateTestServer(t, store)
-	var logBuf lockedBuffer
+	var logBuf nousLockedBuffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
 
 	ticks := make(chan time.Time)

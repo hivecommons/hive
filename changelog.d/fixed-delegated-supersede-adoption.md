@@ -1,0 +1,1 @@
+- Delegated decisions to supersede an offline contributor PR now queue the existing adoption engine immediately, preserving contributor commits, sign-off, credit, and issue closing references.

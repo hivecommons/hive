@@ -39,7 +39,9 @@ func TestPlanDispatchStateMachine(t *testing.T) {
 		{name: "parallel reviewers dispatch up to cap", opts: DispatchOptions{RequireApproval: true, FanOut: true, MaxParallelReviews: 3, Agents: []AgentCapability{reviewer("r1"), reviewer("r2"), reviewer("r3")}}, wantReviews: 3, wantPending: 3},
 		{name: "single reviewer dispatches one sequential round", opts: DispatchOptions{RequireApproval: true, FanOut: true, Agents: []AgentCapability{reviewer("r1")}}, wantReviews: 1, wantPending: 1},
 		{name: "fresh aggregate suppresses duplicate review", opts: DispatchOptions{RequireApproval: true, FanOut: true, Agents: []AgentCapability{reviewer("r1"), reviewer("r2")}}, artifact: Artifact{Items: []Aggregate{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Verdict: VerdictApprove}}}, wantReviews: 0, wantPending: 0},
-		{name: "pending same head suppresses duplicate perspective", opts: DispatchOptions{RequireApproval: true, FanOut: true, MaxParallelReviews: 5, Agents: []AgentCapability{reviewer("r1"), reviewer("r2")}}, state: DispatchState{Pending: []PendingReview{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness, Agent: "r1"}}}, wantReviews: 4, wantPending: 5},
+		// r1 is mid-review, so only r2 takes a kick this cycle: one review kick
+		// in flight per agent, the rest wait instead of stacking on r1.
+		{name: "pending same head suppresses duplicate perspective and a busy reviewer waits", opts: DispatchOptions{RequireApproval: true, FanOut: true, MaxParallelReviews: 5, Agents: []AgentCapability{reviewer("r1"), reviewer("r2")}}, state: DispatchState{Pending: []PendingReview{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness, Agent: "r1"}}}, wantReviews: 1, wantPending: 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -56,7 +58,9 @@ func TestPlanDispatchStateMachine(t *testing.T) {
 func TestPlanDispatchSHAInvalidation(t *testing.T) {
 	state := DispatchState{Pending: []PendingReview{{Repo: "acme/hive", Number: 7, HeadSHA: "old", Perspective: PerspectiveSecurity, Agent: "r1"}}}
 	plan := PlanDispatch([]PullRequest{dispatchPR("new")}, Artifact{}, state, DispatchOptions{RequireApproval: true, FanOut: true, ProjectOrg: "acme", Agents: []AgentCapability{reviewer("r1"), reviewer("r2")}})
-	if len(plan.State.Pending) != DefaultMaxParallelReviews {
+	// The stale entry is pruned, freeing r1, so each reviewer takes one kick
+	// for the new head.
+	if len(plan.State.Pending) != 2 {
 		t.Fatalf("old head pending reviews were not invalidated: %+v", plan.State.Pending)
 	}
 	for _, p := range plan.State.Pending {

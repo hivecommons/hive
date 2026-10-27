@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/hooks"
-	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 // emitApprovalDenied fires review_rejected for ONE denied approval. item is

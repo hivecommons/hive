@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/taskmcp"
+	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/celtrigger"
 	"github.com/hivecommons/hive/pkg/claims"
@@ -17,8 +20,8 @@ import (
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/outcome"
 	"github.com/hivecommons/hive/pkg/convergence/proof"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hivestate"
@@ -30,9 +33,7 @@ import (
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/toolapprove"
 )
 
 type ChatOutbound struct {
@@ -64,6 +65,10 @@ type Dependencies struct {
 	Governor              *governor.Governor
 	GHClient              *ghpkg.Client
 	GHAppAuth             *ghpkg.AppAuth
+	// CruxRuntimeHealth reports the agent runtime's reachability for
+	// /api/health (hivecommons/hive#14138 stage 4). nil (in-process, or a
+	// test without a runtime) leaves the field out of the body.
+	CruxRuntimeHealth func() CruxRuntimeHealth
 	// GHTokenScopes is the boot-time PAT scope probe result (see
 	// ghpkg.CheckTokenScopes). It is set only on the token-auth path; the App
 	// path leaves it at ScopeStatusSkipped because Apps carry permissions, not
@@ -122,6 +127,17 @@ type Dependencies struct {
 	// configured, so /api/chat must return a visible unavailable message rather
 	// than leaving the browser waiting.
 	ChatResponder func(ctx context.Context, query string, history []any) (string, error)
+	// DelegateDecider runs the owner-delegate decider turn behind "Let hive
+	// decide" for items the rules leave at the reversible default
+	// (decisions.delegate.llm.enabled). Nil keeps the rules-first decider
+	// alone.
+	DelegateDecider delegatedecision.TurnRunner
+	// ChatGrounder runs the read-only grounding turn behind Hive Chat's
+	// grounded answers (chat.grounded_answers.enabled, api_chat_grounded.go):
+	// the question plus a compact hive-state snapshot in, the answer out.
+	// Nil means no inference backend is wired, so chat falls back to the
+	// deterministic handlers / command usage.
+	ChatGrounder delegatedecision.TurnRunner
 	// BeadStoreLoadFailures counts configured bead stores that failed to open at
 	// startup and were therefore LEFT OUT of BeadStores entirely. The dependency
 	// admission gate (contribute_admission_deps.go) needs this because it cannot

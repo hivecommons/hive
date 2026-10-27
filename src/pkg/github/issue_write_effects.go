@@ -84,32 +84,6 @@ func (c *Client) executeIssueWrite(ctx context.Context, claim effects.Claim, eff
 	return err
 }
 
-// observeIssueComment reports whether a comment with exactly body already
-// exists on the issue, carrying its URL as provenance.
-func (c *Client) observeIssueComment(ctx context.Context, owner, repo string, number int, body string) (effects.ExternalState, error) {
-	want := normalizeCommentBody(body)
-	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
-	for {
-		comments, resp, err := c.client.Issues.ListComments(WithRESTCaller(ctx, "hive:reconcile_issue_comment"), owner, repo, number, opts)
-		if err != nil {
-			return effects.ExternalState{}, err
-		}
-		for _, comment := range comments {
-			if normalizeCommentBody(comment.GetBody()) == want {
-				return effects.ExternalState{Applied: true, Provenance: comment.GetHTMLURL()}, nil
-			}
-		}
-		if resp == nil || resp.NextPage == 0 {
-			return effects.ExternalState{}, nil
-		}
-		opts.Page = resp.NextPage
-	}
-}
-
-func normalizeCommentBody(body string) string {
-	return strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n"))
-}
-
 // observeIssueLabels reports whether the issue's labels already satisfy a
 // label write: every label in add is present and remove (when set) is absent.
 func (c *Client) observeIssueLabels(ctx context.Context, owner, repo string, number int, add []string, remove string) (effects.ExternalState, error) {

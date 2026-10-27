@@ -1,0 +1,1 @@
+- Preserve durable write counter totals and retry pending counts after transient file read errors ([#14531](https://github.com/hivecommons/hive/issues/14531)).

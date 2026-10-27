@@ -2,7 +2,7 @@
 
 ## Context
 
-Hive today targets teams at ACMM Level 3-4 — repos with CI, agents running 24/7. The goal is to make Hive useful starting from Level 1 (someone with an idea and no code), guiding them through the full developer journey to full automation. Along the way, a layered knowledge base (powered by llm-wiki) accumulates learnings, test patterns, and project-specific facts that compound over time — making agents smarter and automation safer at every level.
+Hive today targets teams at ACMM Level 3-4 — repos with CI, agents running 24/7. The goal is to make Hive useful starting from Level 1 (someone with an idea and no code), guiding them through the full developer journey to autonomous operation. Along the way, a layered knowledge base (powered by llm-wiki) accumulates learnings, test patterns, and project-specific facts that compound over time — making agents smarter and automation safer at every level.
 
 This design is informed by contrasting MetaSwarm (dsifry/metaswarm) with Hive. MetaSwarm's best idea — a self-improving knowledge base with automated extraction and selective priming — is adopted here. Its weakest idea — using more LLMs to verify LLM output — is replaced by Hive's existing deterministic pipeline approach, with **testing** as the primary trust mechanism instead of adversarial LLM review.
 
@@ -292,7 +292,7 @@ src/pkg/knowledge/
 | `pkg/governor/` | Add test maturity level to governor decisions; adapt agent directives by ACMM level |
 | `pkg/scheduler/` | Add curator schedule (daily or on-merge trigger) |
 | `pkg/dashboard/` | Add `/api/knowledge/*` endpoints proxying to llm-wiki MCP; Knowledge tab in frontend |
-| `pkg/agent/` | Include primed facts in agent work orders |
+| `crux/agent/` | Include primed facts in agent work orders |
 
 ### Pipeline flow
 

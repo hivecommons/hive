@@ -8,10 +8,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalate"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -44,7 +44,7 @@ func newEscalationRuntimeKey(cfg *config.Config, notifier *notify.Notifier) *esc
 	}
 }
 
-func configureEscalationDispatcher(ctx context.Context, cfg *config.Config, notifier *notify.Notifier, audit agent.AuditSink, logger *slog.Logger) {
+func configureEscalationDispatcher(ctx context.Context, cfg *config.Config, notifier *notify.Notifier, audit crux.AuditSink, logger *slog.Logger) {
 	escalationRuntime.Lock()
 	defer escalationRuntime.Unlock()
 	var key *escalationRuntimeKey
@@ -70,7 +70,7 @@ func configureEscalationDispatcher(ctx context.Context, cfg *config.Config, noti
 
 // buildEscalationDispatcher returns nil when no sink is configured. A new
 // email sink inherits prev's pending digest.
-func buildEscalationDispatcher(ctx context.Context, cfg *config.Config, notifier *notify.Notifier, audit agent.AuditSink, logger *slog.Logger, prev *escalate.EmailSink) (*escalate.Dispatcher, *escalate.EmailSink) {
+func buildEscalationDispatcher(ctx context.Context, cfg *config.Config, notifier *notify.Notifier, audit crux.AuditSink, logger *slog.Logger, prev *escalate.EmailSink) (*escalate.Dispatcher, *escalate.EmailSink) {
 	auditFn := func(action, detail, sink string) {
 		if audit != nil {
 			audit.Record("system", action, sink, map[string]any{"detail": detail})
@@ -158,7 +158,7 @@ func emitReviewHumanEscalations(plan review.DispatchPlan) {
 	}
 }
 
-func emitAgentPauseEscalation(event agent.PauseTransitionEvent) {
+func emitAgentPauseEscalation(event crux.PauseTransitionEvent) {
 	if !event.Paused {
 		return
 	}

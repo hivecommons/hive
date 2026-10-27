@@ -36,7 +36,7 @@ func ReviewEvidenceComment(repo string, number int, id, hash string) string {
 // RecordPRMergedAudit, which every merge path (relay, sweep, queue) calls once
 // GitHub has merged. Like the relay's writes, every failure is logged and
 // swallowed: the merge already happened and must not be reported as failed.
-func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha, path string) {
+func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha, path string, issueAuthors []string) {
 	settings, ok := c.reviewEvidenceSettings(repo)
 	if !ok || number <= 0 {
 		return
@@ -73,7 +73,7 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 	if sha = strings.TrimSpace(sha); sha == "" {
 		sha = head
 	}
-	merge := evidence.MergeEvent{Actor: actor, Method: method, At: time.Now().UTC(), SHA: sha}
+	merge := evidence.MergeEvent{Actor: actor, Method: method, At: time.Now().UTC(), SHA: sha, IssueAuthors: issueAuthors}
 	// A clock-skewed opened_at later than the merge is dropped rather than
 	// recorded as a negative time to merge.
 	if !opened.IsZero() && !opened.After(merge.At) {
@@ -117,6 +117,12 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 // fetched) is known, the head's bundle is started here from pr so the merge
 // and its CI are never lost.
 func (c *Client) completeReviewEvidenceMerge(repo string, number int, head string, merge evidence.MergeEvent, settings ReviewEvidenceSettings, collect func(*evidence.Bundle), pr *gh.PullRequest) *evidence.Bundle {
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
+			slog.String("error", err.Error()))
+		key = nil
+	}
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
 
@@ -126,7 +132,7 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 	)
 	if head != "" {
 		path = ReviewEvidencePath("", repo, number, head)
-		got, err := LoadReviewEvidence(path)
+		got, err := LoadVerifiedReviewEvidence(path, reviewEvidenceVerifierForKey(key))
 		switch {
 		case err == nil:
 			b = got
@@ -137,7 +143,7 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 		}
 	}
 	if b == nil {
-		found, err := FindReviewEvidence("", repo, number, "")
+		found, err := FindVerifiedReviewEvidence("", repo, number, "", reviewEvidenceVerifierForKey(key))
 		switch {
 		case err == nil && found.Entry != nil:
 			b, path = found.Entry.Bundle, found.Entry.Path
@@ -164,12 +170,6 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 		c.logger.Warn("review evidence: merged bundle invalid, not written",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return nil
-	}
-	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
-	if err != nil {
-		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
-			slog.String("error", err.Error()))
-		key = nil
 	}
 	if err := evidence.Seal(b, key); err != nil {
 		c.logger.Warn("review evidence: could not seal merged bundle",

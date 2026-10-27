@@ -20,7 +20,6 @@ type TaskMCPConfig struct {
 	LaunchTokenTTL time.Duration `yaml:"launch_token_ttl,omitempty" json:"launch_token_ttl,omitempty"`
 }
 
-
 func (c TaskMCPConfig) LeaseRateLimitPerMinuteOrDefault() int {
 	if c.LeaseRateLimitPerMinute > 0 {
 		return c.LeaseRateLimitPerMinute

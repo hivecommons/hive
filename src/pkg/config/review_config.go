@@ -317,6 +317,14 @@ type ReviewConfig struct {
 	// a repo that does not already have them is skipped. Off by default: a
 	// label on every PR is churn a repo must ask for.
 	PriorityLabels bool `yaml:"priority_labels,omitempty" json:"priority_labels,omitempty"`
+	// VerdictLabels mirrors the review swarm's state for each PR's current
+	// head onto exactly one label (hivecommons/hive#13833): reviewing while
+	// the head's review is pending, then the settled verdict. Independent of
+	// the automerge engine's stage labels, so a hive with repo auto-merge
+	// off still shows the outcome on the PR. Like HumanDecisionLabel the
+	// labels are never created; a repo without them is skipped. Labels are
+	// informational and never block.
+	VerdictLabels ReviewVerdictLabelsConfig `yaml:"verdict_labels,omitempty" json:"verdict_labels,omitzero"`
 	// OutOfScopeBacklogDisabled opts out of filing cited out-of-scope review
 	// findings as follow-up issues. Default is enabled: the review can stay
 	// narrow without losing real adjacent defects.
@@ -522,6 +530,22 @@ type AutoMergeConfig struct {
 	// squash-only repo the lane keeps the squash convention and the PR goes
 	// back to its author (or, adopted, to stage/085 naming this policy).
 	SquashOnly []string `yaml:"squash_only,omitempty" json:"squash_only,omitempty"`
+	// CreditIssueAuthors puts `Co-authored-by: <issue author>` on the commit
+	// the hive's merge lands for every human who opened an issue the PR
+	// closes (`Fixes|Closes|Resolves #N`), minus the PR author, skipping
+	// bots, and never duplicating a trailer the branch already carries
+	// (hivecommons/hive#14581). The credit is additive — the PR author
+	// still authors the squash, every Signed-off-by is kept — and reaches
+	// the PRs external clankers open, which bypass the hive's own
+	// open-time attribution. nil/unset means ON; `credit_issue_authors:
+	// false` sends the merge with GitHub's default message as before.
+	CreditIssueAuthors *bool `yaml:"credit_issue_authors,omitempty" json:"credit_issue_authors,omitempty"`
+}
+
+// CreditIssueAuthorsEnabled reports the auto_merge.credit_issue_authors
+// switch; unset is on.
+func (a AutoMergeConfig) CreditIssueAuthorsEnabled() bool {
+	return a.CreditIssueAuthors == nil || *a.CreditIssueAuthors
 }
 
 // RequireCurrentBaseFor reports whether repo (owner/repo, matched
@@ -632,6 +656,46 @@ type ContributorLaneAutoMergeConfig struct {
 	// than closes its issue, or was claimed outside the relay, waits for a
 	// human (`contributor-lane:no-linked-issue` / `no-claim`).
 	RegistryTiersSufficient *bool `yaml:"registry_tiers_sufficient,omitempty" json:"registry_tiers_sufficient,omitempty"`
+	// AutoPromotionScope is where the clean-merged-PR ratchet
+	// (auto_merge.contributor_tier.auto_promote_after_merged) counts an
+	// author's merges. `hive` (default) counts clean merged PRs across every
+	// repository this hive manages: trust in a contributor is a property of
+	// the person, and the small satellite repos of a multi-repo hive never
+	// reach a per-repo threshold on their own. `repo` counts only the PR's
+	// own repository (the pre-#14517 behaviour). Revert and sentinel-alert
+	// evidence is applied per PR in either scope.
+	AutoPromotionScope string `yaml:"auto_promotion_scope,omitempty" json:"auto_promotion_scope,omitempty"`
+	// ApproveHeldRunsForRegistryTrusted lets the contributor lane approve
+	// `pull_request` workflow runs GitHub holds for approval
+	// (`action_required`) on a PR whose author the registry path admitted at
+	// a RequireTiers tier, once per head, when the only thing between the PR
+	// and merge is a required check those held runs would produce. Authors
+	// admitted by claim marker, auto-promotion or association are never
+	// approved for. nil/unset means ON. Needs the App's Actions: Read and
+	// write permission; without it the approve call fails and the lane keeps
+	// waiting for a person.
+	ApproveHeldRunsForRegistryTrusted *bool `yaml:"approve_held_runs_for_registry_trusted,omitempty" json:"approve_held_runs_for_registry_trusted,omitempty"`
+}
+
+// Contributor-lane auto-promotion scopes
+// (auto_merge.contributor_lane.auto_promotion_scope).
+const (
+	ContributorLaneAutoPromotionScopeHive = "hive"
+	ContributorLaneAutoPromotionScopeRepo = "repo"
+)
+
+// ContributorLaneAutoPromotionScopes lists the accepted
+// auto_promotion_scope values.
+var ContributorLaneAutoPromotionScopes = []string{ContributorLaneAutoPromotionScopeHive, ContributorLaneAutoPromotionScopeRepo}
+
+// EffectiveAutoPromotionScope returns the normalized auto_promotion_scope,
+// defaulting to ContributorLaneAutoPromotionScopeHive.
+func (c ContributorLaneAutoMergeConfig) EffectiveAutoPromotionScope() string {
+	scope := strings.ToLower(strings.TrimSpace(c.AutoPromotionScope))
+	if scope == "" {
+		return ContributorLaneAutoPromotionScopeHive
+	}
+	return scope
 }
 
 // ContributorTierAutoMergeConfig is auto_merge.contributor_tier.*.
@@ -697,6 +761,12 @@ func (c ContributorLaneAutoMergeConfig) EffectiveRequireReviewerVerdict() bool {
 // the contributor registry admits a PR without a claim marker (default on).
 func (c ContributorLaneAutoMergeConfig) EffectiveRegistryTiersSufficient() bool {
 	return c.RegistryTiersSufficient == nil || *c.RegistryTiersSufficient
+}
+
+// EffectiveApproveHeldRunsForRegistryTrusted reports whether the contributor
+// lane may approve held workflow runs for registry-admitted authors (default on).
+func (c ContributorLaneAutoMergeConfig) EffectiveApproveHeldRunsForRegistryTrusted() bool {
+	return c.ApproveHeldRunsForRegistryTrusted == nil || *c.ApproveHeldRunsForRegistryTrusted
 }
 
 func (c ContributorLaneAutoMergeConfig) RepoSet() map[string]bool {
@@ -769,6 +839,9 @@ func (c ContributorLaneAutoMergeConfig) Validate() error {
 		if !IsContributorLaneGrantableTier(tier) {
 			return fmt.Errorf("auto_merge.contributor_lane.require_tiers: %q is not an operator-granted tier (allowed: %s)", tier, strings.Join(ContributorLaneGrantableTiers, ", "))
 		}
+	}
+	if scope := c.EffectiveAutoPromotionScope(); scope != ContributorLaneAutoPromotionScopeHive && scope != ContributorLaneAutoPromotionScopeRepo {
+		return fmt.Errorf("auto_merge.contributor_lane.auto_promotion_scope: %q is not valid (allowed: %s)", c.AutoPromotionScope, strings.Join(ContributorLaneAutoPromotionScopes, ", "))
 	}
 	return nil
 }

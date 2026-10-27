@@ -235,6 +235,37 @@ func TestCopilotModelFallbackLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestRequiredChecksOverrideMismatchLogsWithoutFleetReport(t *testing.T) {
+	now := time.Date(2026, 10, 26, 6, 22, 45, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "automerge required_checks override does not match repo protection"
+	// Reproduce the reported five warnings in ten minutes. The notice must
+	// stay visible to operators without qualifying as a runtime defect.
+	for i := 0; i < 5; i++ {
+		logger.Warn(msg, "repo", "kubestellar/console-kb", "declared", "[build-gate]",
+			"actual", "[]", "using", "actual", "mismatch", "[build-gate]")
+		now = now.Add(time.Minute)
+	}
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("configuration drift produced fleet evidence: %+v", ev)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 5 {
+		t.Fatalf("wrapped handler saw %d records, want 5: %s", n, out.String())
+	}
+	if !strings.Contains(out.String(), `"msg":"`+msg+`"`) || !strings.Contains(out.String(), `"using":"actual"`) || !strings.Contains(out.String(), `"mismatch":"[build-gate]"`) {
+		t.Fatalf("configuration warning lost its diagnostics: %s", out.String())
+	}
+	const failure = "automerge failed to read repo protection"
+	for i := 0; i < 5; i++ {
+		logger.Warn(failure)
+	}
+	if ev := tr.Evidence(); len(ev) != 1 || ev[0].Class != fleetreport.ClassUnclassifiedRepeated || ev[0].Message != failure || ev[0].Count != 5 {
+		t.Fatalf("protection lookup failure should still produce fleet evidence: %+v", ev)
+	}
+}
+
 func TestFeedLogFedPath(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -316,6 +347,83 @@ func TestFeedLogFedPath(t *testing.T) {
 	}
 }
 
+func TestStartupKickInterruptedFeedThresholdAndClear(t *testing.T) {
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "startup kick dropped: agent restarted or stopped while waiting"
+	// One normal stop must not report a fault; repeated interruptions should
+	// carry their own attribution rather than a timeout or restart storm.
+	for i := 0; i < 4; i++ {
+		logger.Warn(msg, "name", "scanner", "trigger", "startup")
+		now = now.Add(time.Minute)
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("below threshold produced evidence: %+v", ev)
+		}
+	}
+	logger.Warn(msg, "name", "scanner", "trigger", "startup")
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassStartupKickInterrupted || ev[0].Count != 5 || ev[0].Severity != "low" {
+		t.Fatalf("repeated interruptions = %+v", ev)
+	}
+	if !strings.Contains(ev[0].Diagnostics, "scanner") || !strings.Contains(ev[0].Diagnostics, "startup") {
+		t.Fatalf("interruption diagnostics = %q", ev[0].Diagnostics)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("idle interruptions still reported: %+v", ev)
+	}
+	cleared := tr.TakeCleared()
+	if len(cleared) != 1 || cleared[0].Class != fleetreport.ClassStartupKickInterrupted {
+		t.Fatalf("cleared interruptions = %+v", cleared)
+	}
+}
+
+func TestAgentGitHubBudgetLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for _, msg := range []string{
+		"agent GitHub API hourly cap reached",
+		"agent GitHub API hourly budget above soft threshold",
+	} {
+		for i := 0; i < 8; i++ {
+			logger.Warn(msg, "agent", "reviewer", "count", 300, "cap", 300, "retry_after", 83, "reason", "cap")
+		}
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected quota backpressure produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 16 {
+		t.Fatalf("wrapped handler saw %d budget records, want 16: %s", n, out.String())
+	}
+	if !strings.Contains(out.String(), `"retry_after":83`) || !strings.Contains(out.String(), `"reason":"cap"`) {
+		t.Fatalf("budget log lost its diagnostics: %s", out.String())
+	}
+	// Suppress only the known enforcement notifications, not budget failures.
+	logger.Error("agent GitHub API hourly budget accounting failed")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("budget accounting failure must remain reportable: %+v", *seen)
+	}
+}
+
+func TestPostRestartKickHoldLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for i := 0; i < 8; i++ {
+		logger.Warn("failed to send kick", "agent", "reviewer-2", "error", "kick held after restart: agent reviewer-2 was restarted while producing a turn; kicks are held for 40s more (#7363)")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("expected post-restart kick hold produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 8 {
+		t.Fatalf("wrapped handler saw %d hold records, want 8", n)
+	}
+	// Other kick send failures must remain reportable.
+	logger.Warn("failed to send kick", "agent", "reviewer-2", "error", "tmux send-keys exit 1")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("other kick failures must remain reportable: %+v", *seen)
+	}
+}
+
 func TestMergeCIRefusalLogsWithoutFleetReport(t *testing.T) {
 	now := time.Date(2026, 10, 26, 14, 30, 19, 0, time.UTC)
 	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
@@ -347,5 +455,38 @@ func TestMergeCIRefusalLogsWithoutFleetReport(t *testing.T) {
 	}
 	if ev := tr.Evidence(); len(ev) != 1 || ev[0].Class != fleetreport.ClassUnclassifiedRepeated || ev[0].Message != failure || ev[0].Count != 5 {
 		t.Fatalf("watcher failure should still produce fleet evidence: %+v", ev)
+	}
+}
+
+func TestHandlerSkipsContributorTierLimits(t *testing.T) {
+	for _, msg := range []string{
+		"[contribute-ws] refusing task: concurrency limit reached",
+		"[contribute-ws] refusing task: hourly rate limit reached",
+		"[contribute-ws] refusing task: daily rate limit reached",
+		"  [CONTRIBUTE-WS] REFUSING TASK: HOURLY RATE LIMIT REACHED  ",
+	} {
+		t.Run(msg, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 5; i++ {
+				logger.Warn(msg, "tier", "newcomer", "assigned_last_hour", 3, "max_per_hour", 3)
+			}
+			if len(*seen) != 0 {
+				t.Fatalf("policy refusals observed as runtime errors: %+v", *seen)
+			}
+			if n := strings.Count(out.String(), "\n"); n != 5 {
+				t.Fatalf("wrapped handler saw %d records, want 5", n)
+			}
+		})
+	}
+	for _, msg := range []string{
+		"[contribute-ws] refusing task: lease could not be persisted — try again",
+		"[contribute-ws] hourly rate limit store write failed",
+		"[contribute-ws] refusing task: hourly rate limit reached: enforcement failed",
+	} {
+		logger, seen, _ := newFeed(t)
+		logger.Warn(msg)
+		if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+			t.Errorf("failure %q should remain reportable: %+v", msg, *seen)
+		}
 	}
 }

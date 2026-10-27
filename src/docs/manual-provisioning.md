@@ -382,7 +382,7 @@ data:
       ai_author: your-bot-login        # GitHub login agents use when authoring PRs
       primary_repo: your-repo          # must appear in repos: above
 
-    acmm_level: 2                      # 2 = plan+approve gating; 3 = fully autonomous
+    acmm_level: 2                      # 2 = plan+approve gating; 3 = autonomous
 
     hub:
       enabled: false                   # standalone; no hub connection
@@ -1406,11 +1406,13 @@ spec:
         - { name: HIVE_HUB_URL,    value: "https://hive.hivecommons.dev" }
         # startupProbe keeps the liveness clock from starting until boot
         # finishes, so a slow start can't race liveness into a restart loop.
+        # Match spoke.HostedStartupBudget: 10s + 118 x 5s = 600s; keep
+        # these timings in sync with its hosted startup probe constants.
         startupProbe:
           httpGet: { path: /api/health, port: 3002 }
           initialDelaySeconds: 10
           periodSeconds: 5
-          failureThreshold: 30
+          failureThreshold: 118
         livenessProbe:
           # /api/livez (NOT /api/health) — it also fails when the heartbeat
           # loop stops *attempting* sends, so a wedged/dead heartbeat

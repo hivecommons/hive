@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/planengine"
-	"github.com/hivecommons/hive/pkg/pushbroker"
 )
 
 func TestWireSpektacularRunner_DefaultOffAndOptIn(t *testing.T) {

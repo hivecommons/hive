@@ -66,7 +66,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
+          cache-dependency-path: |
+            src/go.sum
+            src/crux/go.sum
 
       - name: Table age before refresh
         working-directory: src
@@ -128,7 +130,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$HEAD_BRANCH"
           # One fragment per refresh; drop any earlier unmerged one on this branch.
-          git rm -q --ignore-unmatch 'changelog.d/changed-price-table-*.md' || true
+          while IFS= read -r -d '' fragment; do
+            if ! git cat-file -e "origin/${BASE_BRANCH}:${fragment}" 2>/dev/null; then
+              git rm -q -- "$fragment"
+            fi
+          done < <(git ls-files -z -- 'changelog.d/changed-price-table-*.md')
           changes="$(sed -n 's/^### Changes (\([0-9]*\)).*/\1/p' "$RUNNER_TEMP/report.md")"
           if [ "${changes:-0}" -gt 0 ]; then
             printf -- '- Refreshed the model list-price table from OpenRouter (%s rows moved; list prices as of %s); the Cost panel estimate now uses the new rates.\n' "$changes" "$DATE" \

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	agentpkg "github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/paneclass"
 )
 
 const (
@@ -307,7 +307,7 @@ func (s *Service) diffAgents(prev, cur *statusSnapshot) {
 }
 
 func (s *Service) agentCompletionText(agent, old agentSnapshot) string {
-	summary := agentpkg.SanitizePaneText(agent.LiveSummary, 3)
+	summary := paneclass.SanitizePaneText(agent.LiveSummary, 3)
 	work := strings.TrimSpace(agent.Doing)
 	if work == "" {
 		work = strings.TrimSpace(old.Doing)

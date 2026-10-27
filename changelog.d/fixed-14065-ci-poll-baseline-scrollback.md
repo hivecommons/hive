@@ -1,0 +1,1 @@
+- CI-poll nudges no longer miss repeated polls of one PR when earlier reads have scrolled out of the 2000-line terminal capture (#14065)

@@ -6,10 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
+	"github.com/hivecommons/hive/crux/sandbox"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/sandbox"
 )
 
 type kickIoscanLauncher struct{}
@@ -29,7 +30,7 @@ func kickIoscanSandboxServer(t *testing.T) *Server {
 	deps.Config.Agents["scanner"] = cfg
 	deps.Config.AgentSandbox = config.AgentSandboxConfig{Enabled: true, Image: "local-test-image"}
 
-	mgr := agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{
+	mgr := cruxtest.NewRuntime(deps.Config.Agents, deps.Logger, crux.ProjectContext{
 		Org:   deps.Config.Project.Org,
 		Repos: deps.Config.Project.Repos,
 	})

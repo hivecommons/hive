@@ -1,0 +1,1 @@
+- `crux-sync` tag runs (`crux/vX.Y.Z`) no longer commit to `hivecommons/crux` `main`; they tag the already-synced commit whose tree matches the tagged hive commit, fail clearly when none does, and refuse to overwrite an existing tag (#14138).

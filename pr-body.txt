@@ -1,3 +1,0 @@
-Closes #11572
-
-The kick's ISSUE FILTER notice rendered a deny-all "Agents may ONLY work issues carrying..." block whenever the filter was non-zero, even with an empty label allowlist (e.g. reporter-trust only). It now renders only when require_labels is non-empty. Adds table-driven test.

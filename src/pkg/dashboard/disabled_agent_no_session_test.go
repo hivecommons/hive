@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -28,13 +28,13 @@ func TestBuildAgentsCarriesEnabledFlag(t *testing.T) {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude", Enabled: true},
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"guide": {
 			Name:         "guide",
 			Config:       config.AgentConfig{Backend: "copilot", Enabled: false},
 			State:        crux.StateStopped,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
@@ -72,7 +72,7 @@ func TestBuildAgentsPrefersLiveConfigForEnabled(t *testing.T) {
 			Name:         "guide",
 			Config:       config.AgentConfig{Backend: "copilot", Enabled: true},
 			State:        crux.StateStopped,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{

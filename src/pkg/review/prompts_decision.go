@@ -33,7 +33,7 @@ func BuildDecisionPrompt(pr PullRequest, perspectives []Perspective, agg Aggrega
 		fmt.Fprintf(&b, "Head SHA: %s\n", pr.HeadSHA)
 	}
 	if pr.BodyDigest != "" {
-		fmt.Fprintf(&b, "Review body digest: %s\n", pr.BodyDigest)
+		fmt.Fprintf(&b, "Review body digest: %s (an opaque id: copy it verbatim into body_digest or leave the field out)\n", pr.BodyDigest)
 	}
 	if pr.Author != "" {
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
@@ -71,7 +71,7 @@ func BuildDecisionPrompt(pr PullRequest, perspectives []Perspective, agg Aggrega
 
 	b.WriteString("\nRETURN exactly one JSON ARRAY with one object per perspective — all ")
 	fmt.Fprintf(&b, "%d of them: %s.\n", len(perspectives), joinPerspectives(perspectives))
-	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, confidence, repo, number, head_sha, body_digest and dispositions.\n")
+	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, confidence, repo, number, head_sha, body_digest and dispositions (copy head_sha and body_digest verbatim from above, or leave them out; never compute or summarize them).\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	fmt.Fprintf(&b, "Every object must carry the same repo (%s) and number (%d).\n", pr.Repo, pr.Number)
 	b.WriteString("findings: ONLY the confirmed and out-of-scope findings, each once, with its FINAL severity (out-of-scope ones with review_scope \"out-of-scope\"). Not-reproducible findings do not appear here.\n")

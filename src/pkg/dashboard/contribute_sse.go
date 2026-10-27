@@ -347,11 +347,9 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 			continue
 		}
 		if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
-			// #6902: a disabled repository is the one gate that refuses a whole
-			// repo at once, so its candidates never reach the per-issue ladder
-			// below and would otherwise be the only absent rows with no
-			// explanation at all. Decoding them costs nothing when nothing is
-			// being collected, because the loop is skipped entirely.
+			// #6902: a disabled repository refuses all its candidates before
+			// the per-issue ladder, so explain them here. Skip decoding when
+			// diagnostics are not being collected.
 			if scope.collects() {
 				for _, raw := range repo.ActionableIssues {
 					issue, ref, ok := decodeActionableIssue(repo.Full, raw)
@@ -359,6 +357,19 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 						continue
 					}
 					withheld.addReason(withheldCandidateFrom(repo.Full, ref, issue), withheldReasonDisabledRepo)
+				}
+			}
+			continue
+		}
+		if until := h.repoUnmintableUntil(repo.Full, time.Now()); !until.IsZero() {
+			// Assignment already discovered this failure. Project its recorded
+			// cooldown without speculative GitHub token minting (#14003).
+			if scope.collects() {
+				for _, raw := range repo.ActionableIssues {
+					issue, ref, ok := decodeActionableIssue(repo.Full, raw)
+					if ok {
+						withheld.add(withheldCooldownItem(withheldCandidateFrom(repo.Full, ref, issue), withheldReasonRepoUnmintable, until))
+					}
 				}
 			}
 			continue

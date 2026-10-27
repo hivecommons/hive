@@ -2079,6 +2079,12 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <p class="ops-note m-0">Mirrored from the Governor Hub configuration. Changes here write the same <code>Config.Hub.*</code> fields the Governor config dialog edits. Owner &amp; read-write only.</p>
 
 <div class="admin-section-grid">
+<section class="admin-section" aria-labelledby="admin-section-tokens">
+<div class="admin-section-head"><h3 id="admin-section-tokens">Registration tokens</h3><p>Rotate tokens before expiry. Revocation disconnects relays but preserves trust; contributors recover with <code>hivectl contribute login</code>.</p></div>
+<div id="admin-token-status" role="status"></div>
+<div id="admin-token-list"></div>
+<div class="admin-action-row"><button type="button" class="hv-btn btn-secondary" id="admin-token-refresh">Refresh token ages</button><button type="button" class="hv-btn btn-danger" id="admin-token-revoke-all">Revoke all registration tokens</button></div>
+</section>
 <section class="admin-section" aria-labelledby="admin-section-announcement">
 <div class="admin-section-head"><h3 id="admin-section-announcement">Announcement</h3><p>Broadcast a short contributor announcement on Operations, Onboarding, profile, and relays. Empty text clears it.</p></div>
 <div class="admin-form-stack announcement-admin">
@@ -5085,11 +5091,37 @@ onEl('clanker-list','click',function(e){
 
 // Gate: only owner / read-write get the controls. Mirrors the main dashboard,
 // which reads the viewer role from /api/role.
+function adminRevokeToken(id){
+  if(!adminEnabled)return;
+  adminConfirm('Revoke registration '+(id?'token':'tokens'),id?'Disconnect this contributor until they log in again?':'Disconnect ALL contributors and require every contributor to log in again?','Revoke',function(){
+    var path=id?'/api/contributors/'+encodeURIComponent(id)+'/token/revoke':'/api/contributors/tokens/revoke-all';
+    fetch(path,{method:'POST'}).then(function(r){if(!r.ok)throw new Error('Revocation failed; refresh and retry');return r.json();})
+      .then(function(){toast('Registration tokens revoked',true);adminLoadTokens();})
+      .catch(function(e){toast(e.message,false);});
+  });
+}
+function adminLoadTokens(){
+  if(!adminEnabled)return;
+  fetch('/api/contributors').then(function(r){if(!r.ok)throw new Error('Unable to load token ages');return r.json();}).then(function(d){
+    var rows=d.contributors||[],due=rows.filter(function(p){return p.token_rotation_due&&p.active;}).length;
+    document.getElementById('admin-token-status').textContent=due?('Warning: '+due+' active contributor token(s) past 80 percent of maximum age. Ask contributors to run hivectl contribute login.'):'No active tokens need rotation.';
+    var list=document.getElementById('admin-token-list');list.replaceChildren();
+    rows.forEach(function(p){
+      var row=document.createElement('p');
+      row.textContent=p.github_username+' — issued '+p.token_issued_at+'; expires '+p.token_expires_at+(p.token_rotation_due?' — rotation due':'')+' ';
+      var button=document.createElement('button');button.type='button';button.className='hv-btn btn-secondary btn-sm';button.textContent='Revoke token';
+      button.addEventListener('click',function(){adminRevokeToken(p.contributor_id);});row.appendChild(button);list.appendChild(row);
+    });
+  }).catch(function(e){document.getElementById('admin-token-status').textContent=e.message;});
+}
+onEl('admin-token-refresh','click',adminLoadTokens);
+onEl('admin-token-revoke-all','click',function(){adminRevokeToken('');});
 async function initAdmin(){
   var role='owner';
   try{var r=await fetch('/api/role');var d=await r.json();if(d&&d.role)role=d.role;}catch(e){}
   if(role!=='owner'&&role!=='read-write')return; // read viewer: controls stay hidden
   adminEnabled=true;
+  adminLoadTokens();
   var badge=document.getElementById('admin-role-badge');if(badge)badge.textContent=role;
   document.getElementById('ops-admin').classList.add('enabled');
   bindImmediateToggle('admin-suspend-switch');
@@ -5860,7 +5892,9 @@ function ccLookupDecisions(user){
     });
 }
 
+var adminTokenLastPoll=0;
 async function opsPoll(){
+  if(adminEnabled&&Date.now()-adminTokenLastPoll>60000){adminTokenLastPoll=Date.now();adminLoadTokens();}
   try{
     var res=await fetch('/api/contribute/fleet');
     var data=await res.json();

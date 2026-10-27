@@ -32,10 +32,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+
+	"github.com/hivecommons/hive/crux/cruxtest"
+	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
-	"github.com/hivecommons/hive/pkg/pushbroker"
 )
 
 const (
@@ -262,8 +264,8 @@ func TestAdoptGitHubClientRepointsEveryConsumer(t *testing.T) {
 	if b.currentGitHubClient() != rebuilt {
 		t.Fatal("provider still serves the old client; collectors and the scheduler would stay stale")
 	}
-	pr, minter := b.agentMgr.SandboxGitHubWiring()
-	if pr != agent.PRCreator(rebuilt) {
+	pr, minter := b.agentMgr.(cruxtest.Runtime).SandboxGitHubWiring()
+	if pr != crux.PRCreator(rebuilt) {
 		t.Fatalf("sandbox PR client = %v, want the rebuilt client", pr)
 	}
 	if m, ok := minter.(pushbroker.GitHubAppMinter); !ok || m.Auth != rebuiltAuth {

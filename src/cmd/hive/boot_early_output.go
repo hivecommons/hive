@@ -4,7 +4,7 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/hivecommons/hive/pkg/logread"
+	"github.com/hivecommons/hive/crux/logread"
 )
 
 // teeEarlyOutput keeps what hive prints before its configured log is set up

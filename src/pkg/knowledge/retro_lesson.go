@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 const (

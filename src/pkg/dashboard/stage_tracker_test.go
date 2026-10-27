@@ -101,11 +101,99 @@ func TestHumanizeStageReason(t *testing.T) {
 		"base-branch-red:docker (hive),docker (hub)":    "waiting for the base branch's CI to recover (docker (hive), docker (hub)) — not this PR's fault",
 		"shared-ci-incident:13208":                      "deferred to shared-CI incident #13208 — not this PR's fault",
 		"fork-guard:Canary":                             "check Canary refuses fork PRs — a maintainer must push this branch to the repository",
+		"contributor-lane:workflow-path":                "workflow path",
+		"contributor-lane:tests-removed":                "tests removed",
+		"human-merge-path":                              "human-merge path",
+		"contributor-lane:workflow-path:human-approved@clubanderson": "workflow path — approved by @clubanderson",
+		"reviewer-verdict:requires_human:human-approved@octocat":     "review verdict requires human — approved by @octocat",
 	}
 	for in, want := range cases {
 		if got := humanizeStageReason(in); got != want {
 			t.Errorf("humanizeStageReason(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestStageTrackerManualMergeApproved: a 090 record under a manual-merge
+// lane rule the trusted merger approved (reason suffixed
+// `:human-approved@login`) renders "Awaiting human merge (workflow path) —
+// approved by @login" with the one step left, and the payload carries the
+// approver and manual_merge so the lit chevron can say the same; a
+// trust-blocked 090 and an unapproved rule are unchanged.
+func TestStageTrackerManualMergeApproved(t *testing.T) {
+	tests := []struct {
+		name          string
+		stage         stagelabels.Stage
+		reason        string
+		wantCaption   string
+		wantApprover  string
+		wantManual    bool
+		wantActor     string
+		wantNoCaption string
+	}{
+		{
+			name: "workflow path approved", stage: stagelabels.ReadyForHumanMerge, reason: "contributor-lane:workflow-path:human-approved@clubanderson",
+			wantCaption:  "Awaiting human merge (workflow path) — approved by @clubanderson; the hive never merges this itself: click Merge (or /lgtm + /approve for tide)",
+			wantApprover: "clubanderson", wantManual: true, wantActor: "maintainer",
+		},
+		{
+			name: "tests removed, approver unknown", stage: stagelabels.ReadyForHumanMerge, reason: "contributor-lane:tests-removed",
+			wantCaption: "Awaiting human merge (tests removed); the hive never merges this itself: click Merge (or /lgtm + /approve for tide)",
+			wantManual:  true, wantActor: "maintainer",
+		},
+		{
+			name: "trust-blocked 090 unchanged", stage: stagelabels.ReadyForHumanMerge, reason: "untrusted-author-role",
+			wantCaption: "Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself — author's role is not trusted for unattended merge", wantActor: "maintainer",
+		},
+		{
+			name: "requires_human approved at 090", stage: stagelabels.ReadyForHumanMerge, reason: "reviewer-verdict:requires_human:human-approved@octocat",
+			wantCaption:  "Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself — review verdict requires human — approved by @octocat",
+			wantApprover: "octocat", wantActor: "maintainer",
+		},
+		{
+			name: "workflow path still at 085", stage: stagelabels.NeedsDecision, reason: "contributor-lane:workflow-path",
+			wantCaption: "A human decision is owed — workflow path", wantManual: true, wantActor: "maintainer", wantNoCaption: "approved",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caption, actor := stageTrackerCaption(tt.stage, tt.reason, "pat", "pr", false, stagelabels.Record{}, false, 0, "")
+			if caption != tt.wantCaption || actor != tt.wantActor {
+				t.Fatalf("caption = %q actor %q, want %q %q", caption, actor, tt.wantCaption, tt.wantActor)
+			}
+			if tt.wantNoCaption != "" && strings.Contains(caption, tt.wantNoCaption) {
+				t.Fatalf("caption %q must not say %q", caption, tt.wantNoCaption)
+			}
+			base, approver := stagelabels.HumanApprovedReason(tt.reason)
+			if approver != tt.wantApprover || stageTrackerManualMergeReason(base) != tt.wantManual {
+				t.Fatalf("approver %q manual %v, want %q %v", approver, stageTrackerManualMergeReason(base), tt.wantApprover, tt.wantManual)
+			}
+		})
+	}
+
+	// End to end through the payload: the store record's reason fills
+	// human_approver / manual_merge on the row.
+	now := time.Date(2026, 10, 27, 14, 0, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	store.Observe(stagelabels.Key("acme/console", 120), stagelabels.ReadyForHumanMerge, "contributor-lane:workflow-path:human-approved@clubanderson")
+	s.statusMu.Lock()
+	s.status.Repos[0].OpenPrs = append(s.status.Repos[0].OpenPrs,
+		FrontendPR{PullRequest: github.PullRequest{Number: 120, Title: "Shard nightly", Author: "pat", Labels: []string{"stage/090-ready-for-human-merge", "lgtm"}}})
+	s.statusMu.Unlock()
+	resp := s.buildStageTracker(s.status, store, now)
+	it := trackerItem(t, resp, "pr", 120)
+	if it.Stage != 90 || it.HumanApprover != "clubanderson" || !it.ManualMerge || !strings.HasPrefix(it.Caption, "Awaiting human merge (workflow path) — approved by @clubanderson") {
+		t.Fatalf("row = stage %d approver %q manual %v caption %q", it.Stage, it.HumanApprover, it.ManualMerge, it.Caption)
+	}
+	raw, err := json.Marshal(it)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true`) {
+		t.Fatalf("payload lacks the manual-merge fields: %s", raw)
+	}
+	if clean := trackerItem(t, resp, "pr", 101); clean.HumanApprover != "" || clean.ManualMerge {
+		t.Fatalf("PR 101 must not carry manual-merge fields: %+v", clean)
 	}
 }
 
@@ -408,6 +496,26 @@ func TestStageTrackerClaimantKind(t *testing.T) {
 	}
 }
 
+// TestStageTrackerSupersededPRDropped pins hivecommons/hive#14471: a PR whose
+// adoption merged and was told so is not a row, even while GitHub still
+// lists it open (the close lagged, or the App could not close a fork PR).
+func TestStageTrackerSupersededPRDropped(t *testing.T) {
+	now := time.Date(2026, 10, 17, 11, 0, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	trackerItem(t, s.buildStageTracker(status, store, now), "pr", 101)
+	key := stagelabels.Key("acme/console", 101)
+	store.MarkAdopted(key, "abc123", 150, now)
+	store.MarkSuperseded(key, 150, true, now)
+	for _, it := range s.buildStageTracker(status, store, now).Items {
+		if it.Kind == "pr" && it.Number == 101 {
+			t.Fatalf("superseded PR #101 still a row: %+v", it)
+		}
+	}
+}
+
 // TestStageTrackerIssueFeedPRsAreNotIssues pins the fix for "every PR renders
 // twice as its own parent issue": the issues feed also lists pull requests,
 // and a PR must never be an issue row, pair with itself or nest under itself.
@@ -619,23 +727,43 @@ func TestStageTrackerPRSidePairing(t *testing.T) {
 }
 
 func TestStageTrackerPRLinkedIssues(t *testing.T) {
-	pr := github.PullRequest{Repo: "acme/console", Number: 42}
 	tests := []struct {
-		name   string
-		linked []github.PRLinkedIssue
-		want   []StageTrackerLinkedIssue
+		name     string
+		pr       github.PullRequest
+		repoName string
+		linked   []github.PRLinkedIssue
+		refs     []github.PRLinkedIssue
+		want     []StageTrackerLinkedIssue
 	}{
-		{"none", nil, nil},
-		{"same repo bare", []github.PRLinkedIssue{{Number: 7}}, []StageTrackerLinkedIssue{{Number: 7, URL: "https://github.com/acme/console/issues/7"}}},
-		{"explicit same repo, any case, state lower-cased", []github.PRLinkedIssue{{Number: 7, Repo: "Acme/Console", State: "CLOSED", URL: "https://gh/7"}}, []StageTrackerLinkedIssue{{Number: 7, URL: "https://gh/7", State: "closed"}}},
-		{"foreign repo dropped", []github.PRLinkedIssue{{Number: 7, Repo: "acme/other"}}, nil},
-		{"self and non-positive dropped", []github.PRLinkedIssue{{Number: 42}, {Number: 0}, {Number: -1}}, nil},
-		{"multiple, deduplicated, order kept", []github.PRLinkedIssue{{Number: 9}, {Number: 7}, {Number: 9}}, []StageTrackerLinkedIssue{{Number: 9, URL: "https://github.com/acme/console/issues/9"}, {Number: 7, URL: "https://github.com/acme/console/issues/7"}}},
+		{name: "none", pr: github.PullRequest{Repo: "acme/console", Number: 42}},
+		{name: "same repo bare", pr: github.PullRequest{Repo: "acme/console", Number: 42}, linked: []github.PRLinkedIssue{{Number: 7}}, want: []StageTrackerLinkedIssue{{Number: 7, URL: "https://github.com/acme/console/issues/7"}}},
+		{name: "explicit same repo, any case, state lower-cased", pr: github.PullRequest{Repo: "acme/console", Number: 42}, linked: []github.PRLinkedIssue{{Number: 7, Repo: "Acme/Console", State: "CLOSED", URL: "https://gh/7"}}, want: []StageTrackerLinkedIssue{{Number: 7, URL: "https://gh/7", State: "closed"}}},
+		{name: "foreign repo dropped", pr: github.PullRequest{Repo: "acme/console", Number: 42}, linked: []github.PRLinkedIssue{{Number: 7, Repo: "acme/other"}}},
+		{name: "same name, other owner dropped", pr: github.PullRequest{Repo: "hive", Number: 42}, repoName: "hivecommons/hive", linked: []github.PRLinkedIssue{{Number: 7, Repo: "fork/hive", Title: "Theirs"}}},
+		{name: "self and non-positive dropped", pr: github.PullRequest{Repo: "acme/console", Number: 42}, linked: []github.PRLinkedIssue{{Number: 42}, {Number: 0}, {Number: -1}}},
+		{name: "multiple, deduplicated, order kept", pr: github.PullRequest{Repo: "acme/console", Number: 42}, linked: []github.PRLinkedIssue{{Number: 9}, {Number: 7}, {Number: 9}}, want: []StageTrackerLinkedIssue{{Number: 9, URL: "https://github.com/acme/console/issues/9"}, {Number: 7, URL: "https://github.com/acme/console/issues/7"}}},
+		{
+			// hivecommons/hive#14568: the config names the repo "hive", the
+			// GraphQL closing reference says "hivecommons/hive". The titled
+			// closing link must win over the untitled `Fixes #14567` text
+			// reference, and the fallback URL must carry the owner.
+			name: "short config name vs full closing-ref name keeps the title",
+			pr:   github.PullRequest{Repo: "hive", Number: 14568}, repoName: "hivecommons/hive",
+			linked: []github.PRLinkedIssue{{Number: 14567, Repo: "hivecommons/hive", Title: "Runner stalls", State: "CLOSED", URL: "https://github.com/hivecommons/hive/issues/14567"}},
+			refs:   []github.PRLinkedIssue{{Number: 14567, Repo: "hive", Via: github.PRLinkViaFixes}, {Number: 14560, Repo: "hive", Via: github.PRLinkViaRefs}},
+			want: []StageTrackerLinkedIssue{
+				{Number: 14567, Title: "Runner stalls", State: "closed", URL: "https://github.com/hivecommons/hive/issues/14567"},
+				{Number: 14560, URL: "https://github.com/hivecommons/hive/issues/14560", Via: github.PRLinkViaRefs},
+			},
+		},
+		{name: "short name only builds the URL from the full repo", pr: github.PullRequest{Repo: "hive", Number: 1}, repoName: "hivecommons/hive", linked: []github.PRLinkedIssue{{Number: 7}}, want: []StageTrackerLinkedIssue{{Number: 7, URL: "https://github.com/hivecommons/hive/issues/7"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			pr := tt.pr
 			pr.LinkedIssues = tt.linked
-			got := stageTrackerPRLinkedIssues(pr, "")
+			pr.ReferencedIssues = tt.refs
+			got := stageTrackerPRLinkedIssues(pr, tt.repoName, "")
 			if len(got) != len(tt.want) {
 				t.Fatalf("got %+v, want %+v", got, tt.want)
 			}
@@ -645,6 +773,28 @@ func TestStageTrackerPRLinkedIssues(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStageTrackerSameRepo(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"hivecommons/hive", "hivecommons/hive", true},
+		{"HiveCommons/Hive", "hivecommons/hive", true},
+		{"hive", "hivecommons/hive", true},
+		{"hivecommons/hive", "hive", true},
+		{"hive", "hive", true},
+		{"fork/hive", "hivecommons/hive", false},
+		{"hivecommons/docs", "hive", false},
+		{"", "hive", false},
+		{"hive", "", false},
+	}
+	for _, tt := range tests {
+		if got := stageTrackerSameRepo(tt.a, tt.b); got != tt.want {
+			t.Errorf("stageTrackerSameRepo(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
 	}
 }
 

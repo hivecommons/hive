@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/logread"
+	"github.com/hivecommons/hive/crux/logread"
 )
 
 // ToolLogRead and ToolLogSources read this hive's logs (hivecommons/hive#11942)
@@ -16,7 +16,7 @@ import (
 // tool does rotates, truncates, deletes or edits a log, or changes a log
 // setting.
 //
-// Their results are bounded by pkg/logread (lines, bytes, scanned work) and
+// Their results are bounded by crux/logread (lines, bytes, scanned work) and
 // are never passed through CapResult: lines[] is the page, and paging goes
 // through next_cursor rather than the shared limit.
 const (

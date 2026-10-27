@@ -140,14 +140,29 @@ title is `[selfreport] <class>: <short message>`.
 | `advisory_post_failed` | the advisory digest could not be posted (rate-limit skips excluded) | medium |
 | `agent_stall` | ≥3 consecutive "continue" nudges sent to one agent after a kick without the pane moving; a credited stall recovery (the pane moves before the next kick) clears the streak. Message carries the nudge count, last kick time and frozen pane hash; diagnostics carry agent, lane, backend, counters and a scrubbed 15-line pane tail (#13470, was the hive-code-defect "agent stall") | medium |
 | `agent_crash_loop` | the watchdog latches an agent as crash-looping and pauses it (acting mode only — observe mode would re-count every sweep); the healthy-window reset clears it. Diagnostics carry the classifier detail, failure count/cap, backoff ladder and healthy-reset window (#13470, was "agent crash loop") | high |
-| `ci_poll_nudge` | the harness sent an agent the stop-polling-CI nudge (at most one per kick); a self-report fires only after the agent polled CI ≥2 times since the kick — a single nudged poll does not trigger a report. One per 24h window; message carries polls since kick / time since kick / nudges since boot, diagnostics the scrubbed pane tail (#13470, was "CI-poll nudge") | low |
+| `ci_poll_nudge` | the harness sent a non-monitoring agent the stop-polling-CI nudge (at most one per kick); reviewer, CI-maintainer and quality lanes are exempt because reading CI status across PRs and repositories is their assigned work. Only a command line run more than once since the kick counts as polling (#14016): a sweep that reads each of several PRs' checks once does not cross the count threshold. A self-report fires only after an eligible agent ran ≥2 such repeated polls since the kick — a single nudged poll or a sweep does not trigger a report. One per 24h window; message carries polls since kick / time since kick / nudges since boot, diagnostics the scrubbed pane tail plus the repeated CI-status command lines with their counts (#14289; #13470, was "CI-poll nudge") | low |
 | `issue_request_stuck` | an issue/comment/label request file in the relay queue (`issue-requests/`) has failed ≥3 attempts **or** has been retrying for ≥30 min. Key is the request file name; message carries kind, attempts and age, diagnostics the last error (scrubbed). Clears when the request completes or is quarantined (`.failed`/`.bad`) | medium |
 | `effect_ledger_op_stuck` | the mutation boundary refused a retry because the journaled external effect (issue create, PR open, …) has been `Unknown`/`Planned` for ≥30 min — the caller keeps replaying the same logical op and it never resolves. Key is the op's logical ID; message carries kind, status and age, diagnostics the attempt count, repo and claim target. Clears when the op is applied, replayed as already-applied, or reconciled | medium |
-| `agent_pane_timeout` | the agent-readiness wait timed out and the harness dumped the tmux pane (`prompt timeout — dumping pane` / `pane content at timeout`, `pkg/agent/manager.go`; also `startup kick dropped` / `cli never reached input prompt`; `busy_visibility.go`: `kick undeliverable`, `pkg/agent/manager_kick.go`). Log-fed: same ≥5-in-10-min repeat threshold and 20-min idle clear as the catch-all below; pane excerpts are scrubbed and bounded before storage | low |
-| `proxy_connect_dial_failed` | the hive proxy could not dial the upstream host of a CONNECT request (`proxy: CONNECT dial failed`, `crux/proxy/github_proxy.go`) — typically DNS or network unreachability of an agent-requested host, repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
-| `inference_upstream_error` | a failed or non-2xx response from the configured inference backend (LiteLLM, vLLM/llm-d) on the Anthropic-to-OpenAI translator or MITM reroute path (`inference upstream error` / `inference upstream failed`, `crux/proxy/github_proxy.go`), repeated ≥5 times in 10 min — covers transport failures and statuses other than the dedicated 401/403 auth signal. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `agent_dir_setup_failed` | the harness failed to set up the per-agent sandbox directory structure — create XDG directories, restore or tighten directory permissions on interactive/inference home directories. Log-fed: keywords include `failed to create per-agent xdg dir`, `failed to restore per-agent dir mode`, `failed to restore interactive home mode`, `failed to tighten per-agent dir mode`, `failed to tighten interactive home mode`, `failed to restore inference home mode`, `failed to tighten inference home mode` (`crux/agent/manager.go`), repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `agent_pane_timeout` | the agent-readiness wait timed out and the harness dumped the tmux pane (`prompt timeout — dumping pane` / `pane content at timeout`, `crux/agent/manager.go`), and the startup kick dropped because the CLI never became ready or reached its input prompt (`startup kick dropped: …`, `crux/agent/manager_kick.go`, the same event as the pane dump). Log-fed: same ≥5-in-10-min repeat threshold and 20-min idle clear as the catch-all below; pane excerpts are scrubbed and bounded before storage | low |
+| `agent_login_required` | the login scanner saw the agent CLI asking for `/login` (`login required detected`, `pkg/loginscan`) — the agent's auth lapsed and it is paused until an operator re-authenticates. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `pr_request_head_unpushed` | the pr-request watcher found the PR head branch missing on the remote (`head branch is not on the remote`) — the agent's push did not authenticate or never ran. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `bead_fact_ingest_failed` | the knowledge system failed to ingest a bead fact from an agent (`failed to ingest bead fact`, `pkg/knowledge`), repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `feedback_issue_refresh_failed` | the dashboard's feedback-issue watcher failed to refresh or update a feedback issue (`feedback: issue refresh failed`, `pkg/dashboard`), repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `github_app_repo_not_covered` | the GitHub App recheck (`state=repo-not-covered`) found the installation does not include every configured repo — an operator configuration condition (tick the repos in the App's repository access), not a hive defect. Log-fed: same ≥5-in-10-min repeat gate and 20-minute idle clear as `agent_pane_timeout` | low |
+| `github_app_not_installed` | a per-agent scoped-token mint was attempted while the GitHub App has no installation ID (`installation_id` 0): the App is not installed on the hive's org, or discovery never found it. An operator configuration condition — install the App or set `github.installation_id` — not a hive defect. Key is the agent name; reported on the first observation and cleared by the next successful mint. The runtime logs the matching WARN once per agent instead of every supervisor tick (#14186) | medium |
 | `ioscan_classifier_unavailable` | the ioscan model classifier failed closed (`ioscan classifier failed closed; text withheld`, `pkg/scheduler/ioscan_enforce.go`) — typically no model endpoint resolved — so untrusted text is withheld. The scheduler logs `ioscan fail-closed blocked kick` (`pkg/scheduler/templates.go`) when it withholds a kick for the same reason, which maps to this class too. The WARN is already deduped per failure by `warnOnce` (once per process), so it is reported on the first observation (`MinCount` 1) with the normal idle clear; this is a real degradation, not noise. Log-fed | medium |
-| `agent_github_api_cap_reached` | an agent exhausted its per-agent GitHub API hourly budget (`agent GitHub API hourly cap reached`, `pkg/proxy/agent_github_budget.go`; fields `agent`, `count`, `cap`, `retry_after`). The proxy throttles further calls until the window resets, so this reports sustained polling by one agent rather than an unknown error. Log-fed | medium |
+| `github_fetch_transient` | a non-critical GitHub fetch failed and the feature degrades gracefully (`channel commit date: fetch failed — the row will render without a timestamp`, `pkg/hub/channel_commit_date.go`) — typically a rate limit or transient API error, not a hive defect. Reported only when persistent: log-fed, same ≥5-in-10-min repeat threshold and idle clear as `agent_pane_timeout`. The sibling `SHA poll: commit message fetch non-200` has its own class, `sha_poll_commit_message_unavailable` | low |
+| `label_provisioning_failed` | provisioning the issue stage labels on a repo failed (`issue stage labels: provisioning failed`, `pkg/github/issue_stage_labels.go`) — typically the App lacking label permission on that repo or a transient API error; diagnostics carry the repo and scrubbed error. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | low |
+| `agent_cli_restart_loop` | the agent CLI crashed (bare shell) or sat on a consent screen and the harness restarted it before the kick (`agent CLI crashed or stuck on consent screen, restarting before kick`, `crux/agent/manager_kick.go`, `kick_async.go`), repeated ≥5 times in 10 min — a restart loop, not transient noise. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `proxy_connect_dial_failed` | the hive proxy could not dial the upstream host of a CONNECT request (`proxy: CONNECT dial failed`, `crux/proxy/github_proxy.go`) — typically DNS or network unreachability of an agent-requested host, repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `proxy_tls_handshake_failed` | the hive proxy's TLS handshake with an upstream host failed (`proxy client tls handshake failed`, `transparent proxy tls handshake failed`, `copilot sniff: client tls handshake failed`, `crux/proxy/github_proxy.go`) — typically a certificate validation failure or encryption mismatch on an agent-requested host, repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `review_evidence_write_failed` | the github-client failed to write a review evidence bundle to persistent storage (`review evidence: could not write bundle`, `pkg/github`), repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `selfreport_cleared_comment_failed` | the fleet report publisher failed to post the "condition cleared" comment on a self-report issue (`fleet report: cleared comment failed`, `pkg/github`), repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `inference_upstream_error` | a failed or non-2xx response from the configured inference backend (LiteLLM, vLLM/llm-d) on the Anthropic-to-OpenAI translator or MITM reroute path (`inference upstream error` / `inference upstream failed`, `crux/proxy/github_proxy.go`), repeated ≥5 times in 10 min — covers transport failures and statuses other than the dedicated 401/403 auth signal. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `sha_poll_commit_message_unavailable` | the SHA poller's commit-message fetch got a non-200 from GitHub (typically a 403 rate limit or token scope; `SHA poll: commit message fetch non-200`, `pkg/hub/saas_sha_poller.go`). The poller backs off per SHA and keeps serving the SHA without a message. The WARN itself is deduped to once per hour per (SHA, status) (`warnGitHubFetchOnce`), so one stuck commit logs one line and never trips this class; it is reported only when ≥5 distinct SHA/status pairs fail within 10 min (a broad outage such as an exhausted rate limit or a revoked token). Its main job is keeping the residual WARN out of `unclassified_error_repeated`. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | low |
+| `tmux_session_check_failed` | the agent's tmux session `has-session` check failed (`tmux has-session failed`, `crux/agent/manager.go`) — typically the session was lost or the tmux server is unhealthy, repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `agent_github_api_cap_reached` | an agent exhausted its per-agent GitHub API hourly budget (`agent GitHub API hourly cap reached`, `crux/proxy/agent_github_budget.go`; fields `agent`, `count`, `cap`, `retry_after`). The proxy throttles further calls until the window resets, so this reports sustained polling by one agent rather than an unknown error. Log-fed | medium |
 | `unclassified_error_repeated` | **generic catch-all**: the same WARN/ERROR log line (numbers, hashes, paths and quoted strings collapsed) repeated ≥5 times in 10 min. Fed by a `slog.Handler` tee (`pkg/fleetreport/slogfeed`) on the hive's root logger, so a repeating defect is noticed even with no hook site. Skips benign lines (read/keepalive i/o timeouts, context cancellation, the permissions watcher's `fixed …` self-healing lines) and any message that already matches another class's keywords. Clears automatically after 20 quiet minutes (2× the window), so a "cleared" comment follows once the symptom stops | low |
 
 The generic feed also skips the exact `review pending expired` message: it
@@ -167,7 +182,7 @@ a burst across unrelated templates is not a repeated runtime defect
 log, already deduped per path per process.
 
 It also skips `copilot CLI substituted the configured model`
-(`logCopilotModelFallback`, `src/pkg/agent/manager_poll.go`): each copilot
+(`logCopilotModelFallback`, `src/crux/agent/manager_poll.go`): each copilot
 agent warns once per (requested, running) model tuple (hivecommons/hive#13659)
 and shows the substitution on its dashboard `LastError`, so a hive whose
 copilot agents share one model id the account's Copilot CLI rejects emits one
@@ -267,9 +282,14 @@ with none. Observation issues additionally carry `hive-observation` and
 
 ## Deduplication, comments, and recovery
 
-Every report gets a deterministic **fingerprint**: a SHA-256 over the error
-class, component, version, and (for shortfalls) the criterion key. The same
-fault on the same version always produces the same fingerprint.
+Every report gets a deterministic **fingerprint**. A `runtime-error`
+fingerprint is a SHA-256 over the error class and the normalised message
+(numbers, hashes, paths and quoted strings collapsed) — it names the defect,
+not the build, so the same fault on every version and every hive produces
+the same fingerprint and a close by a maintainer keeps suppressing it across
+the daily channel rollout (#14256 was the case where a per-version
+fingerprint produced one new issue per build). An ACMM shortfall
+fingerprint covers the class, component, version and criterion key.
 
 Before filing, the hive searches upstream for an existing issue carrying that
 fingerprint:
@@ -286,8 +306,12 @@ For `runtime-error` reports the hive goes further and **joins first**. If no
 fingerprint match exists it looks for an open issue labelled
 `hive/selfreport` for the same class, then for a human-filed issue whose
 title or body mentions the class keywords (for example "restart storm",
-"model discovery degraded", "LiteLLM 401"). When any of those matches, the
-hive adds itself to that issue instead of opening a new one:
+"model discovery degraded", "LiteLLM 401"). The catch-all
+`unclassified_error_repeated` class says nothing about the defect, so its
+class search is additionally scoped to the leading words of the message in
+the title; with no usable message it does not join by class at all. When
+any of those matches, the hive adds itself to that issue instead of opening
+a new one:
 
 - one comment `Also seen on **<hive>** (v<version>, <cluster>) at <time>`
   carrying a `<!-- hive:selfreport-seen hive=<slug> fp=… -->` marker and its
@@ -418,9 +442,19 @@ the body as built, so the switch governs relayed reports too.
 A new issue is opened only when nothing matches. Rate limits apply to **new**
 filings only: at most `max_per_day` per hive per 24h, at least 1h between
 new filings of different classes, and a fingerprint that was closed upstream
-within the last 7 days is never re-filed (treated as known / fixed pending
-rollout). Filing is also deferred while the GitHub API budget is not
-`normal`. Hub-managed hives whose credential is refused by the report repo
+is never re-filed by the same hive while the hive keeps observing the
+condition — a close by anyone (maintainer, scanner, close-on-merge) is an
+instruction to that reporter to be quiet about that fingerprint. The 7-day
+cooldown runs from the later of the close and the last tick that still saw
+the condition, so it only expires once the condition has been absent for a
+whole week; a recurrence after that is a regression and gets a fresh issue.
+The hub relay applies the same rule for relayed reports (a recently closed
+fingerprint answers `closed_upstream` and writes nothing). For the scanner
+and maintainers this means "already fixed on v5" is a safe reason to close a
+self-report even when the reporting hive's build (named in the body)
+predates the fix: cite the fixing PR once and close; the reporter will not
+re-file or comment again, and picks the fix up on its next build. Filing is also
+deferred while the GitHub API budget is not `normal`. Hub-managed hives whose credential is refused by the report repo
 (403/404) relay the report to the hub's `POST /api/selfreport/ingest` with
 their heartbeat bearer, and the hub files or joins under the App identity.
 
@@ -435,9 +469,10 @@ it; if a human opened the issue, the hive comments but **leaves it open** —
 it will not close someone else's issue.
 
 `runtime-error` issues are never auto-closed, even by the hive that opened
-them: when the condition clears for that hive it posts a single
-`cleared on <hive> at <time>` comment and leaves the issue for a human to
-confirm the fix.
+them: when the condition clears for that hive it posts a
+`cleared on <hive> at <time>` comment — at most one per 24h when the
+condition flaps, and none once the issue is closed — and leaves the issue
+for a human to confirm the fix.
 
 ## State
 

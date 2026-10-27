@@ -60,33 +60,89 @@ func TestHeadsDispatchEveryPerspectiveToEveryHead(t *testing.T) {
 			t.Fatalf("kick for head %s went to %s", k.Head, k.Agent)
 		}
 	}
-	for _, want := range []string{"correctness/cr-sol", "correctness/cr-sonnet", "security/cr-sol", "security/cr-sonnet"} {
+	// One review kick in flight per agent: sonnet has two replicas, so both
+	// perspectives go out for it at once (one each); sol has one replica, so
+	// it takes correctness now and security waits until it answers.
+	for _, want := range []string{"correctness/cr-sol", "correctness/cr-sonnet", "security/cr-sonnet"} {
 		if !got[want] {
 			t.Errorf("missing kick %s; got %v", want, got)
 		}
 	}
-	if len(plan.ReviewKicks) != 4 || len(plan.State.Pending) != 4 {
-		t.Fatalf("kicks=%d pending=%d, want 4 each", len(plan.ReviewKicks), len(plan.State.Pending))
+	if got["security/cr-sol"] {
+		t.Fatalf("second kick sent to the busy single sol replica: %v", got)
+	}
+	if len(plan.ReviewKicks) != 3 || len(plan.State.Pending) != 3 {
+		t.Fatalf("kicks=%d pending=%d, want 3 each", len(plan.ReviewKicks), len(plan.State.Pending))
+	}
+	perAgent := map[string]int{}
+	for _, k := range plan.ReviewKicks {
+		perAgent[k.Agent]++
+	}
+	for agent, n := range perAgent {
+		if n != 1 {
+			t.Fatalf("%s got %d review kicks in one cycle, want at most 1: %v", agent, n, perAgent)
+		}
 	}
 	for _, p := range plan.State.Pending {
 		if p.Head == "" {
 			t.Fatalf("pending entry without head: %+v", p)
 		}
 	}
-	// The two sonnet kicks spread across both sonnet replicas (least loaded).
-	sonnetAgents := map[string]bool{}
-	for _, k := range plan.ReviewKicks {
-		if k.Head == "cr-sonnet" {
-			sonnetAgents[k.Agent] = true
-		}
-	}
-	if len(sonnetAgents) != 2 {
-		t.Fatalf("sonnet kicks did not spread across replicas: %v", sonnetAgents)
-	}
 
-	// Next cycle: everything pending, nothing new.
+	// Next cycle with everyone still busy: nothing new, and nothing stacks.
 	if again := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, plan.State, headsOpts()); len(again.ReviewKicks) != 0 {
 		t.Fatalf("re-dispatched pending head reviews: %+v", again.ReviewKicks)
+	}
+
+	// sol answers correctness: its replica is free, so the following cycle
+	// asks it security. The sonnet entries are still pending and untouched.
+	answered := AggregateReports([]PerspectiveReport{
+		{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness, Verdict: VerdictApprove, Head: "cr-sol"},
+	}, AggregateOptions{Perspectives: headsOpts().Perspectives, ExpectedHeads: []string{"cr-sol", "cr-sonnet"}})
+	next := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{Items: []Aggregate{answered}}, plan.State, headsOpts())
+	if len(next.ReviewKicks) != 1 || next.ReviewKicks[0].Agent != "cr-sol-1" || next.ReviewKicks[0].Perspective != PerspectiveSecurity {
+		t.Fatalf("freed sol replica was not given security: %+v", next.ReviewKicks)
+	}
+}
+
+// Two replicas of one head and five perspectives of one PR: each cycle gives
+// each replica at most one kick, alternating as they answer, instead of
+// stacking four kicks on the first replica in name order.
+func TestHeadReplicasTakeOneKickEachUntilTheyAnswer(t *testing.T) {
+	opts := headsOpts()
+	opts.Perspectives = PerspectiveSet{} // the five built-in perspectives
+	base := reviewer("cr")
+	base.HasReviewHeads = true
+	opts.Agents = []AgentCapability{
+		base,
+		headReviewer("cr-sonnet-1", "cr-sonnet", "claude", "claude-sonnet-5-5"),
+		headReviewer("cr-sonnet-2", "cr-sonnet", "claude", "claude-sonnet-5-5"),
+	}
+	plan := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, opts)
+	if len(plan.ReviewKicks) != 2 || plan.ReviewKicks[0].Agent == plan.ReviewKicks[1].Agent {
+		t.Fatalf("first cycle kicks = %+v, want one each for cr-sonnet-1 and cr-sonnet-2", plan.ReviewKicks)
+	}
+	if again := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, plan.State, opts); len(again.ReviewKicks) != 0 {
+		t.Fatalf("kick stacked on a busy replica: %+v", again.ReviewKicks)
+	}
+	// cr-sonnet-2 answers its perspective; only it is free next cycle.
+	var done Perspective
+	var keep []PendingReview
+	for _, p := range plan.State.Pending {
+		if p.Agent == "cr-sonnet-2" {
+			done = p.Perspective
+			continue
+		}
+		keep = append(keep, p)
+	}
+	answered := AggregateReports([]PerspectiveReport{
+		{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: done, Verdict: VerdictApprove, Head: "cr-sonnet"},
+	}, AggregateOptions{Perspectives: opts.Perspectives, ExpectedHeads: []string{"cr-sonnet"}})
+	state := plan.State
+	state.Pending = keep
+	next := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{Items: []Aggregate{answered}}, state, opts)
+	if len(next.ReviewKicks) != 1 || next.ReviewKicks[0].Agent != "cr-sonnet-2" {
+		t.Fatalf("next cycle kicks = %+v, want one for the freed cr-sonnet-2", next.ReviewKicks)
 	}
 }
 
@@ -241,9 +297,17 @@ func TestHeadsKeepPlainReviewersOnTheOrdinaryPath(t *testing.T) {
 	}
 	// Once the heads have taken every perspective, nothing is left for sec;
 	// a slot shortage that leaves a perspective unasked goes to sec next.
+	// Three head kicks, not four: the single sol replica takes one perspective
+	// and security/cr-sol waits for it to answer (one kick in flight per agent).
+	// sec still gets nothing, because security is already pending on sonnet.
 	plan := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, opts)
-	if len(plan.ReviewKicks) != 4 {
-		t.Fatalf("kicks = %d, want four head kicks", len(plan.ReviewKicks))
+	if len(plan.ReviewKicks) != 3 {
+		t.Fatalf("kicks = %d, want three head kicks", len(plan.ReviewKicks))
+	}
+	for _, k := range plan.ReviewKicks {
+		if k.Agent == "sec" {
+			t.Fatalf("sec took a perspective the heads still own: %+v", plan.ReviewKicks)
+		}
 	}
 	opts.MaxParallelReviews = 3
 	plan = PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, opts)

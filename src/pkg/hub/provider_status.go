@@ -3,7 +3,7 @@ package hub
 import (
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 )
 
 // maxProviderStatuses bounds the spoke-reported providers block. A hive runs a

@@ -345,18 +345,3 @@ func TestDecide_TransportError(t *testing.T) {
 		t.Fatalf("want wrapped transport error, got %v", err)
 	}
 }
-
-func TestSkillRelDir(t *testing.T) {
-	for backend, want := range map[string]string{
-		"claude": ".claude/skills/jev-decide", "codex": "skills/jev-decide",
-		"copilot": ".copilot/skills/jev-decide", "gemini": ".gemini/skills/jev-decide",
-		"goose": ".config/goose/skills/jev-decide", "aider": "", "bob": "",
-	} {
-		if got := SkillRelDir(backend); got != want {
-			t.Errorf("%s: %q, want %q", backend, got, want)
-		}
-	}
-	if !strings.Contains(string(SkillMarkdown()), "hive jev decide") || !strings.HasPrefix(string(SkillMarkdown()), "---\nname: jev-decide") {
-		t.Error("embedded skill must be the jev-decide SKILL.md with front matter")
-	}
-}

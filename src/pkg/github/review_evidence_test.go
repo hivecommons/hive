@@ -193,6 +193,40 @@ func TestRecordReviewEvidence(t *testing.T) {
 		})
 	}
 }
+func TestRecordReviewEvidenceDoesNotResignTamperedBundle(t *testing.T) {
+	root := withEvidenceRoot(t)
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	seed := make([]byte, ed25519.SeedSize)
+	keyFile := filepath.Join(t.TempDir(), "evidence.key")
+	if err := os.WriteFile(keyFile, []byte(hex.EncodeToString(seed)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	settings := &ReviewEvidenceSettings{Enabled: true, SigningKeyFile: keyFile}
+	c := evidenceTestClient(t, &evidencePRFixture{head: "head111"}, settings)
+	req := ReviewRequest{Repo: "o/r", Number: 7}
+	c.recordReviewEvidence(context.Background(), req, []review.PerspectiveReport{
+		evidenceReport(review.PerspectiveSecurity, review.VerdictApprove, "head111"),
+	}, nil, now)
+
+	b := mustLoadBundle(t, root, "head111")
+	b.Author.Login = "mallory"
+	path := ReviewEvidencePath(root, "o/r", 7, "head111")
+	if err := writeReviewEvidence(path, b); err != nil {
+		t.Fatal(err)
+	}
+	c.recordReviewEvidence(context.Background(), req, []review.PerspectiveReport{
+		evidenceReport(review.PerspectiveCorrectness, review.VerdictApprove, "head111"),
+	}, nil, now.Add(time.Minute))
+
+	got := mustLoadBundle(t, root, "head111")
+	if got.Author.Login != "mallory" || len(got.Verdicts) != 1 {
+		t.Fatalf("tampered bundle was rewritten and laundered: author=%q verdicts=%d", got.Author.Login, len(got.Verdicts))
+	}
+	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	if err := evidence.Verify(got, pub); err == nil {
+		t.Fatal("tampered bundle unexpectedly has a valid signature")
+	}
+}
 
 func TestRecordReviewEvidenceVerdictMapping(t *testing.T) {
 	root := withEvidenceRoot(t)

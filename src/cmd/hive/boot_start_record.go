@@ -3,8 +3,8 @@ package main
 import (
 	"log/slog"
 
+	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/pkg/dashboard"
-	"github.com/hivecommons/hive/pkg/logread"
 	"github.com/hivecommons/hive/pkg/startrec"
 )
 

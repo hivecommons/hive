@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 )
 
 // installRestartFakeTmux puts a fake tmux first on PATH that exits 0 for every
@@ -61,7 +61,7 @@ func restartableServer(t *testing.T) (*Server, *Dependencies) {
 	ac := deps.Config.Agents["scanner"]
 	ac.Paused = true
 	deps.Config.Agents["scanner"] = ac
-	deps.AgentMgr = agent.NewManager(deps.Config.Agents, logger, agent.ProjectContext{})
+	deps.AgentMgr = cruxtest.NewRuntime(deps.Config.Agents, logger, crux.ProjectContext{})
 	s := NewServer(0, logger)
 	s.RegisterAPI(deps)
 	return s, deps

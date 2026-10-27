@@ -16,11 +16,11 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -144,6 +144,10 @@ type IssueRequest struct {
 	NeedsDecision bool `json:"needs_decision,omitempty"` // issue and comment
 	// OwnerStep records a typed proposal; it does not authorize execution.
 	OwnerStep *IssueOwnerStep `json:"owner_step,omitempty"` // requires NeedsDecision
+	// NoConsolidateReason is the caller's escape hatch from open-issue
+	// consolidation (#14360): when set, the watcher files a new issue instead
+	// of folding the request into an existing one, and records the reason.
+	NoConsolidateReason string `json:"no_consolidate_reason,omitempty"` // issue only
 	// BlockedOnPR parks the issue on an open PR in the same repo
 	// (hivecommons/hive#13093). On a "comment" request the watcher prefixes
 	// the note with the blocked-on marker, strips @-mentions so the note
@@ -164,6 +168,13 @@ type IssueResponse struct {
 	// the finding was posted there as a comment instead, so the two land in
 	// one PR rather than two PRs that conflict. Number/URL name that issue.
 	Consolidated bool `json:"consolidated,omitempty"`
+	// ConsolidatedReason says what matched when Consolidated is set:
+	// "subject", "file_set", or "component:<path>" (#14360), so the agent can
+	// tell a true twin from a weak shared-path fold.
+	ConsolidatedReason string `json:"consolidated_reason,omitempty"`
+	// ConsolidationSkippedReason echoes the request's no_consolidate_reason
+	// when the watcher skipped consolidation because the caller asked.
+	ConsolidationSkippedReason string `json:"consolidation_skipped_reason,omitempty"`
 	// RejectedDuplicate reports that no issue was created because a maintainer
 	// recently closed an agent-filed issue covering the same file set as
 	// not-planned or duplicate (#6463). Number/URL point at that closed issue
@@ -561,6 +572,21 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		// spoke-local, so the body carries the relation too.
 		body = withParentMarker(body, req.Parent)
 	}
+	if kind == "issue" {
+		// Prior-art filing verdict (hivecommons/hive#13879). A refusal is
+		// terminal: retrying the same request cannot change the match.
+		var refusal string
+		var match priorArtMatch
+		body, refusal, match = c.priorArtFilingVerdict(ctx, req, body)
+		if refusal != "" {
+			c.recordWriteAudit(AuditActionAgentIssuePriorArtRefused, meta,
+				WriteTarget{Repo: req.Repo}, match.auditPairs()...)
+			c.writeIssueResult(path, IssueResponse{OK: false, Error: refusal, At: nowFn().UTC().Format(time.RFC3339)})
+			_ = os.Remove(path)
+			c.issueClearRetry(path)
+			return
+		}
+	}
 	if c.attributionTrailerOn() {
 		body = AppendTrailer(body, meta)
 	}
@@ -620,8 +646,21 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				break
 			}
 		}
+		var parkBlocked bool
 		if req.BlockedOnPR > 0 {
-			body = blockedNoteBody(req.Repo, req.BlockedOnPR, body)
+			settled, merged, pErr := c.pullRequestSettledDetails(ctx, req.Repo, req.BlockedOnPR)
+			if pErr != nil {
+				if !githubStatusError(pErr, http.StatusNotFound) {
+					err = pErr
+					break
+				}
+				body = blockedTargetNotFoundNote(req.Repo, req.BlockedOnPR, body)
+			} else if settled {
+				body = blockedTargetSettledNote(req.Repo, req.BlockedOnPR, merged, body)
+			} else {
+				body = blockedNoteBody(req.Repo, req.BlockedOnPR, body)
+				parkBlocked = true
+			}
 		}
 		// Park first: a retry after a failed comment re-adds the label (a
 		// no-op), while the reverse order would post the comment twice.
@@ -674,7 +713,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				return
 			}
 		}
-		if err == nil && req.BlockedOnPR > 0 {
+		if err == nil && parkBlocked {
 			err = c.AddLabels(ctx, req.Repo, req.Number, []string{BlockedLabel})
 			if err == nil {
 				err = c.RemoveLabel(ctx, req.Repo, req.Number, helpWantedLabel)
@@ -767,7 +806,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if d.Active {
 			issueDecisionDowngrade = d
 		}
-		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: issueOwnerStepBody(createBody, req.NeedsDecision && !issueDecisionDowngrade.Active, req.OwnerStep), Labels: createLabels, Origin: req.Agent, ConsolidateOpen: true})
+		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: issueOwnerStepBody(createBody, req.NeedsDecision && !issueDecisionDowngrade.Active, req.OwnerStep), Labels: createLabels, Origin: req.Agent, ConsolidateOpen: req.NoConsolidateReason == ""})
+		if req.NoConsolidateReason != "" {
+			resp.ConsolidationSkippedReason = req.NoConsolidateReason
+			c.logger.Info("issue-request watcher: consolidation skipped at the caller's request",
+				slog.String("repo", req.Repo), slog.String("reason", req.NoConsolidateReason), slog.String("agent", req.Agent))
+		}
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
 			// finding, and no amount of retrying changes their verdict
@@ -795,6 +839,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.URL = res.URL
 			resp.AlreadyExisted = res.AlreadyExisted
 			resp.Consolidated = res.Consolidated
+			resp.ConsolidatedReason = res.FoldReason
 			// Best-effort GitHub sub-issue link (#9435): the child issue is
 			// already created at this point, so a link failure (parent
 			// missing, already at GitHub's sub-issue cap, transient API
@@ -1200,6 +1245,13 @@ type CreateIssueResult struct {
 	// App-bot-filed issue has the same file-reference set (#9376); the
 	// finding was appended to it as a comment. AlreadyExisted is also true.
 	Consolidated bool
+	// FoldReason says what matched when Consolidated is set: "subject",
+	// "file_set", or "component:<path>" (#14360).
+	FoldReason string
+	// SameFileAs is the open issue CreateIssueRequest.FoldMatch refused to
+	// fold into: it cites the same files but not the same finding, so a new
+	// issue was created instead (#13906). 0 otherwise.
+	SameFileAs int
 }
 
 // CreateIssueRequest is what every hive issue-create path hands the central
@@ -1219,6 +1271,21 @@ type CreateIssueRequest struct {
 	// ConsolidateOpen turns on open-twin consolidation: a finding over the
 	// same files as an open hive-filed issue is folded into it (#9376).
 	ConsolidateOpen bool
+	// FoldMatch, when set, narrows ConsolidateOpen: a file-set or
+	// same-component twin is folded into only when FoldMatch accepts its
+	// title and body. Sharing a file is not sharing a problem; a refused twin
+	// is reported in CreateIssueResult.SameFileAs and the issue is created
+	// (#13906). A canonical-subject match is gated the same way; an exact
+	// title match is unaffected.
+	FoldMatch func(title, body string) bool
+	// IgnoreClosedTwin is a closed issue number the rejected-twin gate
+	// (#6463) must not count as the twin. The review-backlog split sweep
+	// files a folded finding out of a host that has just closed; a legacy
+	// fold cited exactly the host's files, so a not_planned/duplicate host
+	// would otherwise always be its own rejected twin and the split could
+	// never be filed (#13914). The host's rejection is applied by the
+	// caller's own eligibility rule; any other rejected twin still gates.
+	IgnoreClosedTwin int
 }
 
 // OriginLabel returns the provenance label this request resolves to: an
@@ -1310,13 +1377,24 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	var componentCount, componentClosed int
 	var openComponent map[string]int
 	var openComponentOldest map[string]*gh.Issue
-	if found, err := c.scanOpenIssues(ctx, owner, repoName, title, body, wantFiles); err != nil {
+	scan, err := c.scanOpenIssues(ctx, owner, repoName, title, body, wantFiles, originLabel)
+	// A canonical-subject match is only as specific as the stem left after
+	// stripping: every "Review backlog (<perspective>): …" title canonicalises
+	// to the same stem, so FoldMatch gates it like a file-set or component
+	// twin (#13906). An exact-title match is the same finding and stays
+	// unguarded.
+	if err == nil && scan.subject != nil && req.FoldMatch != nil &&
+		strings.TrimSpace(scan.subject.GetTitle()) != title &&
+		!req.FoldMatch(scan.subject.GetTitle(), scan.subject.GetBody()) {
+		scan.subject = nil
+	}
+	if err != nil {
 		if isRetryableGitHubError(err) {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: dedupe lookup failed with retryable error in %s/%s: %w", owner, repoName, err)
 		}
 		c.logger.Warn("CreateIssue: dedupe lookup failed with terminal error, creating without dedupe",
 			slog.String("repo", repoName), slog.String("reason_class", "terminal"), slog.String("error", err.Error()))
-	} else if existing := found.subject; existing != nil {
+	} else if existing := scan.subject; existing != nil {
 		// A human-filed twin was not created by this hive, so the finding's
 		// detail would otherwise vanish: leave it as a comment (#11576).
 		if consolidateOpen && len(c.hiveBotLogins()) > 0 && !isHiveBotLogin(c.hiveBotLogins(), existing.GetUser().GetLogin()) {
@@ -1324,23 +1402,23 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 				subjectMatchFindingComment(title, body)); err != nil {
 				return CreateIssueResult{}, err
 			}
-			return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true, Consolidated: true}, nil
+			return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true, Consolidated: true, FoldReason: "subject"}, nil
 		}
 		c.logger.Info("CreateIssue: open issue with the same subject exists, reusing",
 			slog.String("repo", repoName), slog.Int("number", existing.GetNumber()),
 			slog.String("existing_title", existing.GetTitle()))
 		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true}, nil
 	} else {
-		fileSetTwin = found.fileSet
-		componentTwin, componentPath, componentCount = found.component, found.componentPath, found.componentCount
-		openComponent, openComponentOldest = found.componentCounts, found.componentOldest
+		fileSetTwin = scan.fileSet
+		componentTwin, componentPath, componentCount = scan.component, scan.componentPath, scan.componentCount
+		openComponent, openComponentOldest = scan.componentCounts, scan.componentOldest
 	}
 
 	// Rejected-finding gate (#6463): a maintainer who recently closed an
 	// agent-filed issue over the same file set as not-planned/duplicate has
 	// already answered this finding, however it is reworded this time. A
 	// failed lookup files anyway — suppression only on positive evidence.
-	if twin, err := c.findRejectedTwin(ctx, owner, repoName, title, body); err != nil {
+	if twin, err := c.findRejectedTwin(ctx, owner, repoName, title, body, req.IgnoreClosedTwin); err != nil {
 		c.logger.Warn("CreateIssue: rejected-twin lookup failed, proceeding to create",
 			slog.String("repo", repoName), slog.String("error", err.Error()))
 	} else if twin != nil {
@@ -1360,6 +1438,10 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// by a second agent and become a second PR editing the same files, and
 	// whichever merges first forces the other to rebase. Fold the finding into
 	// the existing issue so one PR handles both.
+	var sameFileAs int
+	if fileSetTwin != nil && req.FoldMatch != nil && !req.FoldMatch(fileSetTwin.GetTitle(), fileSetTwin.GetBody()) {
+		sameFileAs, fileSetTwin = fileSetTwin.GetNumber(), nil
+	}
 	if fileSetTwin != nil {
 		comment := consolidatedFindingComment(title, body, wantFiles)
 		if !isHiveBotLogin(c.hiveBotLogins(), fileSetTwin.GetUser().GetLogin()) {
@@ -1372,7 +1454,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		c.logger.Info("CreateIssue: consolidated finding into open issue over the same file set",
 			slog.String("repo", repoName), slog.Int("number", fileSetTwin.GetNumber()),
 			slog.String("existing_title", fileSetTwin.GetTitle()))
-		return CreateIssueResult{Number: fileSetTwin.GetNumber(), URL: fileSetTwin.GetHTMLURL(), AlreadyExisted: true, Consolidated: true}, nil
+		return CreateIssueResult{Number: fileSetTwin.GetNumber(), URL: fileSetTwin.GetHTMLURL(), AlreadyExisted: true, Consolidated: true, FoldReason: "file_set"}, nil
 	}
 
 	// Same-component fold (#11239): exact file-set equality misses a stream
@@ -1400,6 +1482,12 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 			componentTwin, componentPath, componentCount, componentClosed = pickFoldComponent(openComponent, closed, openComponentOldest)
 		}
 	}
+	if componentTwin != nil && req.FoldMatch != nil && !req.FoldMatch(componentTwin.GetTitle(), componentTwin.GetBody()) {
+		if sameFileAs == 0 {
+			sameFileAs = componentTwin.GetNumber()
+		}
+		componentTwin = nil
+	}
 	if componentTwin != nil {
 		if err := c.appendFoldedFinding(ctx, owner, repoName, componentTwin.GetNumber(),
 			foldedComponentFindingComment(title, body, componentPath, componentCount, componentClosed)); err != nil {
@@ -1410,7 +1498,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 			slog.String("repo", repoName), slog.Int("number", componentTwin.GetNumber()),
 			slog.String("path", componentPath), slog.Int("open_siblings", componentCount),
 			slog.Int("recently_closed_siblings", componentClosed))
-		return CreateIssueResult{Number: componentTwin.GetNumber(), URL: componentTwin.GetHTMLURL(), AlreadyExisted: true, Consolidated: true}, nil
+		return CreateIssueResult{Number: componentTwin.GetNumber(), URL: componentTwin.GetHTMLURL(), AlreadyExisted: true, Consolidated: true, FoldReason: "component:" + componentPath}, nil
 	}
 
 	// Ensure labels exist. Retryable failures keep the whole request queued
@@ -1487,11 +1575,11 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		}
 		c.logger.Info("CreateIssue: create replayed as already applied, reusing the journaled issue",
 			slog.String("repo", repoName), slog.Int("number", number))
-		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true}, nil
+		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true, SameFileAs: sameFileAs}, nil
 	}
 	c.logger.Info("CreateIssue: issue created as the App bot",
 		slog.String("repo", repoName), slog.Int("number", issue.GetNumber()))
-	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID()}, nil
+	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID(), SameFileAs: sameFileAs}, nil
 }
 
 // issueCreateUnknownTTL bounds how long an issue-create operation may sit
@@ -1518,7 +1606,7 @@ const issueCreateUnknownTTL = time.Hour
 // so the watcher counts the attempt and gives up after
 // issueReconcileMaxAttempts).
 func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boundary, claim effects.Claim, owner, repoName, title, body string, create func(context.Context) (effects.Result, error), journalErr error) (effects.Result, error) {
-	found, lookupErr := c.scanOpenIssues(WithRESTCaller(ctx, "hive:reconcile_issue_create"), owner, repoName, title, body, nil)
+	found, lookupErr := c.scanOpenIssues(WithRESTCaller(ctx, "hive:reconcile_issue_create"), owner, repoName, title, body, nil, "")
 	if lookupErr != nil {
 		expired, expErr := effects.ExpireUnresolved(ctx, boundary, claim, issueCreateUnknownTTL)
 		if expErr != nil {
@@ -1739,10 +1827,11 @@ func isUbiquitousFileRef(p string) bool {
 // canonical match is returned so repeats consolidate onto the original issue
 // rather than the newest copy. When wantFiles is non-empty the same pass also
 // records the oldest open issue (bot- or human-filed) whose
-// file-reference set equals wantFiles (#9376). Bounded: agent-filed issues
-// are recent by construction, and an unbounded scan of a busy repo would burn
-// API budget on every create.
-func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body string, wantFiles map[string]bool) (openIssueMatches, error) {
+// file-reference set equals wantFiles (#9376). Issues that cannot take a
+// fold (see foldTargetEligible) are skipped for the file-set, pair and
+// component matches. Bounded: agent-filed issues are recent by construction,
+// and an unbounded scan of a busy repo would burn API budget on every create.
+func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body string, wantFiles map[string]bool, originLabel string) (openIssueMatches, error) {
 	wantCanonical := canonicalIssueSubject(title)
 	botLogins := c.hiveBotLogins()
 	wantPrimary, wantTokens := "", map[string]bool(nil)
@@ -1779,7 +1868,7 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body st
 			if wantCanonical != "" && canonicalIssueSubject(candidate) == wantCanonical {
 				found.subject = is
 			}
-			if len(wantFiles) > 0 {
+			if len(wantFiles) > 0 && c.foldTargetEligible(is, originLabel) {
 				have := issueFileRefSet(candidate + "\n" + is.GetBody())
 				// Human-filed issues are fold targets for an exact file-set
 				// match (#11576), but never count toward the high-confidence
@@ -1814,6 +1903,37 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title, body st
 	}
 	found.componentCounts, found.componentOldest = componentCounts, componentOldest
 	return found, nil
+}
+
+// foldTargetEligible reports whether an open issue may receive a folded
+// finding (#14360). A finding folded into an issue parked on a maintainer
+// decision waits on that decision, and one folded into another agent lane's
+// issue lands where nobody works it: an outreach issue that asks an admin to
+// edit repo topics cites the files it describes, but no PR closes it. Either
+// would hide a code-change finding, so such issues neither take folds nor
+// count toward a component stream. originLabel is the request's provenance
+// label; only an agent/<lane> origin is compared against the target's lane.
+func (c *Client) foldTargetEligible(is *gh.Issue, originLabel string) bool {
+	park := c.needsDecisionLabel()
+	wantLane := ""
+	if strings.HasPrefix(strings.ToLower(originLabel), agentLaneLabelPrefix) {
+		wantLane = originLabel
+	}
+	for _, l := range is.Labels {
+		name := strings.TrimSpace(l.GetName())
+		if strings.EqualFold(name, park) {
+			return false
+		}
+		for _, parking := range issueParkingLabels {
+			if strings.EqualFold(name, parking) {
+				return false
+			}
+		}
+		if wantLane != "" && strings.HasPrefix(strings.ToLower(name), agentLaneLabelPrefix) && !strings.EqualFold(name, wantLane) {
+			return false
+		}
+	}
+	return true
 }
 
 // pickFoldComponent picks the shared path to fold into: among paths cited by

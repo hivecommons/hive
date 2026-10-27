@@ -17,7 +17,7 @@ func MergeReviewEvidenceShadow(path string, obs evidence.Shadow, key ed25519.Pri
 	}
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
-	b, err := LoadReviewEvidence(path)
+	b, err := LoadVerifiedReviewEvidence(path, reviewEvidenceVerifierForKey(key))
 	if err != nil {
 		return err
 	}

@@ -14,7 +14,7 @@ Hive a shareable catalog or version metadata.
 ## Decision
 
 Introduce `skillreg` as a concurrency-safe registry of named, versioned skill
-files ([skill registry](../../pkg/skillreg/skillreg.go)). A skill is a Markdown
+files ([skill registry](../../crux/skillreg/skillreg.go)). A skill is a Markdown
 body with optional YAML front matter for name, version, description, and tags.
 Missing skill directories, unreadable files, and malformed front matter are
 skipped with logs so one bad catalog entry does not prevent Hive from loading.

@@ -97,15 +97,17 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 		p := cfg.AutoMerge.ContributorLane
 		tier := cfg.AutoMerge.ContributorTier
 		return automerge.ContributorLanePolicy{
-			Enabled:                  p.IsEnabled(),
-			HiveID:                   cfg.HiveID,
-			Soak:                     time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
-			RequireReviewerVerdict:   p.EffectiveRequireReviewerVerdict(),
-			Repos:                    p.RepoSet(),
-			ExcludeLabels:            p.ExcludeLabelSet(),
-			RequireTiers:             p.RequireTierSet(),
-			RegistryTiersSufficient:  p.EffectiveRegistryTiersSufficient(),
-			AutoPromoteAfterMergedPR: tier.EffectiveAutoPromoteAfterMerged(),
+			Enabled:                           p.IsEnabled(),
+			HiveID:                            cfg.HiveID,
+			Soak:                              time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
+			RequireReviewerVerdict:            p.EffectiveRequireReviewerVerdict(),
+			Repos:                             p.RepoSet(),
+			ExcludeLabels:                     p.ExcludeLabelSet(),
+			RequireTiers:                      p.RequireTierSet(),
+			RegistryTiersSufficient:           p.EffectiveRegistryTiersSufficient(),
+			AutoPromoteAfterMergedPR:          tier.EffectiveAutoPromoteAfterMerged(),
+			AutoPromotionScope:                p.EffectiveAutoPromotionScope(),
+			ApproveHeldRunsForRegistryTrusted: p.EffectiveApproveHeldRunsForRegistryTrusted(),
 		}
 	}
 }
@@ -131,6 +133,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			AdoptAfterUnregistered:    stage.Adoption.EffectiveAfterUnregistered(),
 			AdoptInPlace:              stage.Adoption.InPlaceEnabled(),
 			AdoptionStrictAttribution: stage.Adoption.StrictAttributionEnabled(),
+			AdoptionAutoMerge:         stage.Adoption.AutoMergeEnabled(),
 			HiveID:                    cfg.HiveID,
 			AuthorKindLabels:          cfg.Governor.Labels.Author.Names(),
 			RelayKnown:                contributorRelayKnown,

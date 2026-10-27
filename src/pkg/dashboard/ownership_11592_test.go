@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -91,10 +91,10 @@ func TestOwnershipReporterConfirmationGate11592(t *testing.T) {
 }
 
 func TestNewOwnershipEnvLaneAndLeases11592(t *testing.T) {
-	statuses := map[string]*agent.AgentProcess{
-		"quality": {State: agent.StateRunning, LaunchedMode: agent.ModeIssuesAndPRs},
-		"scanner": {State: agent.StateRunning, LaunchedMode: agent.ModeIssuesOnly},
-		"stopped": {State: agent.StateStopped, LaunchedMode: agent.ModeIssuesAndPRs},
+	statuses := map[string]*crux.Process{
+		"quality": {State: crux.StateRunning, LaunchedMode: crux.ModeIssuesAndPRs},
+		"scanner": {State: crux.StateRunning, LaunchedMode: crux.ModeIssuesOnly},
+		"stopped": {State: crux.StateStopped, LaunchedMode: crux.ModeIssuesAndPRs},
 	}
 	hub := NewContributeWSHub(nil, nil)
 	hub.taskLeasesFile = filepath.Join(t.TempDir(), "leases.json")
@@ -143,7 +143,7 @@ func TestOwnershipLaneLevelGate11592(t *testing.T) {
 		return 5
 	}
 	env.laneCanOpenPR = func(lane, repo string) bool {
-		return agent.DefaultAgentMode(lane, env.levelFor(repo)).CanPush()
+		return crux.DefaultAgentMode(lane, env.levelFor(repo)).CanPush()
 	}
 	checkOwnership11565(t, decideIssueOwnership(staleIssue11592("quality"), env), notYours11565)
 	other := staleIssue11592("quality")

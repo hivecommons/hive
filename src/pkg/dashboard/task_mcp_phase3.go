@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/taskmcp"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/planning"
-	"github.com/hivecommons/hive/pkg/taskmcp"
 )
 
 func (p dashboardTaskMCPProvider) RepoConventions(ctx context.Context, scope taskmcp.Scope, page taskmcp.PageRequest) (taskmcp.RepoConventionsData, taskmcp.PageInfo, error) {

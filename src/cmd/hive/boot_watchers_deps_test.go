@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -40,10 +42,10 @@ func newBootWatchersFake() *bootWatchersFake {
 			return f.watcher
 		},
 		startConfigWatcher: func(_ context.Context, w *config.Watcher) { f.started = w },
-		startAgent: func(_ context.Context, _ *agent.Manager, name string, _ *slog.Logger) {
+		startAgent: func(_ context.Context, _ crux.Runtime, name string, _ *slog.Logger) {
 			f.startedAgents = append(f.startedAgents, name)
 		},
-		refreshAgentTokens: func(context.Context, *agent.Manager) { f.tokenRefreshes++ },
+		refreshAgentTokens: func(context.Context, crux.Runtime) { f.tokenRefreshes++ },
 		registerGitHubHost: func(host string) { f.hosts = append(f.hosts, host) },
 	}
 	return f
@@ -75,7 +77,7 @@ func newBootWatchersBoot(t *testing.T, f *bootWatchersFake, cfg *config.Config) 
 		logger:           logger,
 		configPath:       filepath.Join(t.TempDir(), "hive.yaml"),
 		gov:              governor.New(cfg.Governor, cfg.EnabledAgents(), logger),
-		agentMgr:         agent.NewManager(cfg.EnabledAgents(), logger, agent.ProjectContext{}),
+		agentMgr:         cruxtest.NewRuntime(cfg.EnabledAgents(), logger, crux.ProjectContext{}),
 		dashSrv:          dashboard.NewServer(0, logger),
 		refreshDashboard: func() { refreshes++ },
 	}

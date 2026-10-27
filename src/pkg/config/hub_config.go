@@ -60,7 +60,11 @@ type ContributeAnnouncement struct {
 // ContributeConfig groups operator-facing settings for contributor surfaces that
 // are not admission/queue controls.
 type ContributeConfig struct {
-	HelpLinks []ContributeHelpLink `yaml:"help_links,omitempty" json:"help_links,omitempty"`
+	// TokenMaxAge bounds registration tokens (Go duration; default 2160h / 90 days).
+	TokenMaxAge string `yaml:"token_max_age,omitempty" json:"token_max_age,omitempty"`
+	// TokenIdleMax optionally expires unused registration tokens (default off).
+	TokenIdleMax string               `yaml:"token_idle_max,omitempty" json:"token_idle_max,omitempty"`
+	HelpLinks    []ContributeHelpLink `yaml:"help_links,omitempty" json:"help_links,omitempty"`
 	// MaxParallelFixes caps how many red-PR fix sessions the hive dispatches
 	// to one contributor at a time, regardless of what their relay advertises
 	// (hivecommons/hive#12436). 0/unset = DefaultMaxParallelFixes. A relay

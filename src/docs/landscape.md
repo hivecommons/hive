@@ -80,7 +80,7 @@ Symphony's `WORKFLOW.md` or Codex app-server contracts.
 
 | Dimension | Symphony | Hive |
 | --- | --- | --- |
-| Work source | Linear in the demo; the spec defines a tracker-neutral adapter. | GitHub Issues, GitHub Projects, Linear and Jira (see Work sources below). |
+| Work source | Linear in the demo; the spec defines a tracker-neutral adapter. | Trackers: GitHub Issues, GitHub Projects, Linear and Jira. Forge: GitHub; GitLab and Gitea/Forgejo adapters are not yet end-to-end (see Work sources below). |
 | Pre-agent gating | Config preflight, state checks, labels, claims and concurrency limits. | Shell-level listing, classification and merge checks before any kick, plus ACMM and proxy write checks. |
 | Agents | Codex app-server is the runner protocol. | Many CLI backends; isolation depends on backend and deployment. |
 | Scale model | One workspace per issue, bounded runs, retry. | Queue-depth cadence, long-lived agents, hub/spoke, convergence audits. |
@@ -142,8 +142,9 @@ Actions, like gh-aw; Jules itself is a possible backend.
 
 **[Omnigent](https://github.com/omnigent-ai/omnigent)** (Apache-2.0) is an
 open-source "meta-harness" over Claude Code, Codex, Cursor, Pi and others
-with policy and sandboxing. Both: a competitor at single-team scale and a
-backend candidate.
+with policy and sandboxing. Registered as a T3 experimental CLI backend (#14094);
+Omnigent's own policies and sandboxing are additive, with Hive's egress proxy
+deciding all GitHub writes.
 
 **[Zeron](https://github.com/zeronsh/zeron)** (MIT) is a local-first control
 plane for coding agents. Orchestrator for one developer or VPS; no
@@ -155,7 +156,7 @@ work-source adapters.
 | Work source | GitHub issues and PRs | None built in | Chat and terminal sessions |
 | Policy | Enterprise controls, agentic review | Scoped permissions, vaults | Omnigent policies; Zeron local |
 | Isolation | Vendor-run | Managed or self-hosted sandbox | Omnigent sandboxing; Zeron none stated |
-| Role for Hive | Competitor; Copilot backend | Backend / hosting | Both / competitor |
+| Role for Hive | Competitor; Copilot backend | Backend / hosting | Backend (T3) / competitor |
 
 ## Agent isolation
 
@@ -170,7 +171,9 @@ The project is evaluating stronger isolation runtimes. One candidate is
 "safe, private runtime for fleets of autonomous AI agents" with kernel-level
 file, syscall and network policy per sandbox. AAIF's
 [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) is another.
-Nothing is decided and no integration exists today.
+[ADR-0026](adr/0026-sandbox-runtime-selection.md) (Proposed) compares both
+against the sandbox contract and recommends OpenShell, pending a prototype on
+a hive spoke. No integration exists today.
 
 | Project | Isolation unit | Checked |
 | --- | --- | --- |
@@ -190,6 +193,15 @@ Projects, Linear or Jira through one
 itself runs on it. Symphony is Linear-first; Fullsend, gh-aw and Agent HQ
 are forge-first. Hive states this as a differentiator: the same fleet,
 policy and dashboard apply whichever tracker holds the work.
+
+That claim covers **trackers**, not **forges**. The code still has to live on
+GitHub.com or GitHub Enterprise. Hive has GitLab and Gitea/Forgejo adapters
+(`project.forge`) that read, comment, label and hold, and GitLab's can merge,
+but the governor, merge gate and agent `gh` path are not yet forge-neutral
+([#14096](https://github.com/hivecommons/hive/issues/14096)). Fullsend
+already ships GitHub, GitLab and Forgejo. See [Forges](integrations/forges.md).
+The [integrations page](integrations.md) lists every tracker, forge and backend
+with its status.
 
 ## Related projects and vendors
 
@@ -215,7 +227,8 @@ three: open-source, self-hosted, fleet-scale, with explicit policy.
 - **Research harnesses**: evaluation and one-off repair, not operations.
 - **Hive**: operating a live agent fleet across any work source, with many
   runtimes, ACMM gates, fixed merge policy, hub/spoke provisioning,
-  contributor compute, cost visibility and proxy-level write checks.
+  contributor compute, cost visibility and proxy-level write checks. See
+  [integrations.md](integrations.md) for what Hive works with today.
 
 ## Hive claims checked against this repo
 

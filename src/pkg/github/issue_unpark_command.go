@@ -269,6 +269,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			break
 		}
 		owner, repoName := c.splitRepo(repo)
+		if c.stageArchived.has(strings.ToLower(owner + "/" + repoName)) {
+			continue
+		}
 		labelDriven := opts.LabelDriven != nil && opts.LabelDriven(repo)
 		releasePolicy := unparkReleasePolicy{
 			enabled: opts.ReleaseOnApprove != nil && opts.ReleaseOnApprove(repo),
@@ -341,6 +344,13 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			result.Seen++
 			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, unparkLabelApproval{policy: policy, enabled: labelApproval, audit: opts.LabelApprovalAudit}, releasePolicy, result, opts.Audit, opts.ClosedAudit)
 			if err != nil {
+				if c.noteArchivedWrite(strings.ToLower(owner+"/"+repoName), err) {
+					if c.logger != nil {
+						c.logger.Info("unpark sweep: repository is archived and read-only, skipping it until restart", "repo", repo)
+					}
+					result.Skipped++
+					break
+				}
 				if c.logger != nil {
 					c.logger.Warn("unpark sweep skipped issue", "repo", repo, "issue", issue.GetNumber(), "error", err)
 				}
@@ -1038,11 +1048,22 @@ const unparkCandidateLimit = 5
 // comes from someone allowed to give one. Comments from people without write
 // access do not shadow an older command from someone who has it; they are
 // skipped in silence so the gate cannot be probed.
+//
+// An answered `/hive approve` / `/hive decision` / `/fixed` is a watermark:
+// every command posted before it is superseded and never replayed, even
+// after the issue is parked again (hivecommons/hive#14344). Otherwise a
+// retracted older decision would be acted on once the newer one is answered.
 func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, comments []*gh.IssueComment, answered map[int64]bool, cutoff time.Time, allowTriage bool) (*gh.IssueComment, unparkCommand, error) {
 	checked := 0
 	for i := len(comments) - 1; i >= 0 && checked < unparkCandidateLimit; i-- {
 		cm := comments[i]
-		if cm == nil || answered[cm.GetID()] {
+		if cm == nil {
+			continue
+		}
+		if answered[cm.GetID()] {
+			if isUnparkWatermarkCommand(cm.GetBody()) {
+				break
+			}
 			continue
 		}
 		created := cm.GetCreatedAt().Time
@@ -1101,6 +1122,20 @@ func (c *Client) isAIAuthorUser(user *gh.User) bool {
 func renderUnparkAIAuthorRefusal(login string) string {
 	return "@" + login + " is configured as this hive's `project.ai_author`, so Hive treats comments from it as its own and will not act on `/hive` commands from it. " +
 		"To un-park this issue, remove the parking label by hand, or set `project.ai_author` to an account that is not a maintainer (clear it to author as the GitHub App bot)."
+}
+
+// isUnparkWatermarkCommand reports whether an answered comment carried a
+// command that acted on the park state, so nothing older may be replayed.
+func isUnparkWatermarkCommand(body string) bool {
+	cmd, ok := parseUnparkCommand(body)
+	if !ok {
+		return false
+	}
+	switch cmd.Kind {
+	case unparkCommandApprove, unparkCommandDecision, unparkCommandFixed:
+		return true
+	}
+	return false
 }
 
 // parseUnparkCommand reads a `/hive …` command — or `/fixed` / `/close`

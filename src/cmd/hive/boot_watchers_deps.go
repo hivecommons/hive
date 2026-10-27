@@ -4,9 +4,10 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+
+	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/proxy"
 )
 
 // bootWatchersDeps are the long-lived effects bootWatchers performs (#7571,
@@ -20,10 +21,10 @@ type bootWatchersDeps struct {
 	// startConfigWatcher is `go w.Start(ctx)`.
 	startConfigWatcher func(ctx context.Context, w *config.Watcher)
 	// startAgent is the goroutine that launches an agent a reload added.
-	startAgent func(ctx context.Context, mgr *agent.Manager, name string, logger *slog.Logger)
+	startAgent func(ctx context.Context, mgr crux.Runtime, name string, logger *slog.Logger)
 	// refreshAgentTokens is `go mgr.RefreshAgentTokens(ctx)` after an App
 	// auth rebuild (#4072).
-	refreshAgentTokens func(ctx context.Context, mgr *agent.Manager)
+	refreshAgentTokens func(ctx context.Context, mgr crux.Runtime)
 	// registerGitHubHost is proxy.RegisterGitHubHost (GHE allowlisting).
 	registerGitHubHost func(host string)
 }
@@ -32,7 +33,7 @@ func defaultBootWatchersDeps() bootWatchersDeps {
 	return bootWatchersDeps{
 		newConfigWatcher:   config.NewWatcher,
 		startConfigWatcher: func(ctx context.Context, w *config.Watcher) { go w.Start(ctx) },
-		startAgent: func(ctx context.Context, mgr *agent.Manager, name string, logger *slog.Logger) {
+		startAgent: func(ctx context.Context, mgr crux.Runtime, name string, logger *slog.Logger) {
 			go func() {
 				logger.Info("audit: starting reconciled agent", "name", name, "trigger", "config-reload")
 				if err := mgr.Start(ctx, name); err != nil {
@@ -40,7 +41,7 @@ func defaultBootWatchersDeps() bootWatchersDeps {
 				}
 			}()
 		},
-		refreshAgentTokens: func(ctx context.Context, mgr *agent.Manager) { go mgr.RefreshAgentTokens(ctx) },
+		refreshAgentTokens: func(ctx context.Context, mgr crux.Runtime) { go mgr.RefreshAgentTokens(ctx) },
 		registerGitHubHost: proxy.RegisterGitHubHost,
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
@@ -63,6 +64,62 @@ func newPriorArtSearcher(cfg *config.Config, knowledgeAPI func() *knowledge.Know
 		MaxFindings: gate.EffectiveMaxFindings(),
 		Logger:      logger,
 	})
+}
+
+// applyPriorArtFilingGate makes the issue relay enforce the hive-agent
+// filing verdict (hivecommons/hive#13879) with the scheduler's Searcher and
+// the live runs.triage.prior_art config. Until the Searcher is built the
+// relay files as before.
+func (b *boot) applyPriorArtFilingGate(client *github.Client) {
+	client.SetPriorArtFilingGate(
+		func() config.PriorArtGateConfig { return b.cfg.Runs.Triage.PriorArt },
+		func(ctx context.Context, issue priorart.Issue) priorart.Report {
+			s := b.priorArtSearcher.Load()
+			if s == nil {
+				return priorart.Report{}
+			}
+			return s.Find(ctx, issue)
+		},
+		b.recordPriorArtRefusal,
+	)
+}
+
+// beadStoreFor resolves the bead store an agent-attributed bead is written
+// to: the agent's own, then the scanner's, then the supervisor's, then any
+// store at all. Nil only when the hive has no bead store. Shared by the
+// ioscan advisory writer and the prior-art refusal writer so the two
+// resolve by one rule.
+func (b *boot) beadStoreFor(agentName string) *beads.Store {
+	if store := b.beadStores[agentName]; store != nil {
+		return store
+	}
+	for _, name := range []string{"scanner", "supervisor"} {
+		if store := b.beadStores[name]; store != nil {
+			return store
+		}
+	}
+	for _, store := range b.beadStores {
+		return store
+	}
+	return nil
+}
+
+// recordPriorArtRefusal writes the knowledge bead for a filing the relay
+// refused as already existing, in the requesting agent's bead store (see
+// beadStoreFor for the fallback order).
+func (b *boot) recordPriorArtRefusal(title, detail, agentName, ref string) {
+	store := b.beadStoreFor(agentName)
+	if store == nil {
+		return
+	}
+	bead, err := store.Create(title, beads.TypeDecision, beads.PriorityLow, agentName, ref)
+	if err != nil {
+		if b.logger != nil {
+			b.logger.Warn("prior-art filing refusal bead failed", "agent", agentName, "error", err)
+		}
+		return
+	}
+	_ = store.SetMetadata(bead.ID, "prior_art", detail)
 }
 
 // knowledgePriorArt asks the knowledge layers for the issue's top terms.

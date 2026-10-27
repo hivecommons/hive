@@ -50,10 +50,12 @@ WORKDIR /src/src
 
 # Every module the tree depends on, then compile every package and every test
 # binary once so nothing needs the network later. A failure here fails the
-# build and primary_contact gets the log.
+# build and primary_contact gets the log. src/go.work puts the go tool in
+# workspace mode, where ./... covers the root module only; the nested Crux
+# module (src/crux, #13536) is addressed as ./crux/... .
 RUN go mod download \
-    && go build ./... \
-    && go test -run '^$' ./... >/dev/null
+    && go build ./... ./crux/... \
+    && go test -run '^$' ./... ./crux/... >/dev/null
 
 # The binaries an operator deploys (same targets as src/Dockerfile).
 RUN go build -o /usr/local/bin/hive        ./cmd/hive \
@@ -64,22 +66,22 @@ RUN go build -o /usr/local/bin/hive        ./cmd/hive \
     && /usr/local/bin/hive --version
 
 # Cheap baseline checks so the log shows the image works, without letting a
-# failing test abort the build. The full suite (pkg/hub and pkg/agent in
-# particular) is sharded across many CI runners, and pkg/agent exercises real
+# failing test abort the build. The full suite (pkg/hub and crux/agent in
+# particular) is sharded across many CI runners, and crux/agent exercises real
 # tmux servers and signal delivery, so the baseline here is the set of
 # security-relevant trust boundaries named in threat_model.md. Everything
 # else is compiled above and can be run on demand inside the image.
 # Known baseline noise: a handful of pkg/appkey and pkg/config tests chmod a
 # directory read-only and expect the write to fail; the build runs as root,
 # which ignores permission bits, so those report FAIL here and pass in CI.
-RUN go vet ./... || echo "WARNING: go vet reported problems"
+RUN go vet ./... ./crux/... || echo "WARNING: go vet reported problems"
 RUN timeout 1500 go test -short -p 4 -timeout 20m \
-      ./pkg/proxy/... ./pkg/github/... ./pkg/sentinel/... ./pkg/ioscan/... \
-      ./pkg/logscrub/... ./pkg/pushbroker/... ./pkg/sandbox/... ./pkg/appkey/... \
+      ./crux/proxy/... ./pkg/github/... ./pkg/sentinel/... ./pkg/ioscan/... \
+      ./crux/logscrub/... ./crux/pushbroker/... ./crux/sandbox/... ./pkg/appkey/... \
       ./pkg/keyderive/... ./pkg/delegation/... ./pkg/terminalassert/... \
       ./pkg/spoke/... ./pkg/mint/... ./pkg/apiproxy/... ./pkg/auth/... \
       ./pkg/config/... ./pkg/evidence/... ./pkg/knowledge/... ./pkg/scheduler/... \
-      ./pkg/review/... ./pkg/promptsrc/... ./pkg/claims/... ./pkg/toolapprove/... \
+      ./pkg/review/... ./pkg/promptsrc/... ./pkg/claims/... ./crux/toolapprove/... \
     || echo "WARNING: baseline go test reported failures"
 
 # Everything is fetched. From here on the go command must not try to reach a

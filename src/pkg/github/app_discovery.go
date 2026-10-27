@@ -10,6 +10,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 const (
@@ -84,6 +86,12 @@ func (a *AppAuth) ForgetInstallationDiscovery(org string) {
 // installed on the org. Callers must leave the configured installation_id
 // untouched when they see it.
 var ErrNoInstallationForOrg = fmt.Errorf("no installation of this app covers the target org")
+
+// ErrAppNotInstalled means a token mint was asked for while this auth has no
+// installation ID at all (installation_id 0): the App is not installed on the
+// hive's org, or discovery never found it. No GitHub request is made. Like
+// ErrNoInstallationForOrg it is not transient; the App has to be installed.
+var ErrAppNotInstalled = crux.ErrGitHubAppNotInstalled
 
 // DiscoverInstallationID resolves the installation ID of this App on org.
 //
@@ -276,7 +284,13 @@ func (a *AppAuth) InstallationAccountLogin(ctx context.Context, installationID i
 func (a *AppAuth) AppID() int64 { return a.appID }
 
 // InstallationID returns the installation ID this auth currently uses.
-func (a *AppAuth) InstallationID() int64 { return a.installationID }
+// It takes a.mu because AdoptInstallationID can rewrite the ID concurrently;
+// callers already holding a.mu must read the field directly instead.
+func (a *AppAuth) InstallationID() int64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.installationID
+}
 
 // APIURL returns the GitHub API base URL this auth targets ("" = public).
 func (a *AppAuth) APIURL() string { return a.apiURL }

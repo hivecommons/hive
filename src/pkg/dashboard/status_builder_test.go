@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -414,7 +414,7 @@ func TestBuildGHRateLimits_AppAuth(t *testing.T) {
 
 func TestBuildAgents(t *testing.T) {
 	now := time.Now()
-	buf := agent.NewRingBuffer(10)
+	buf := cruxtest.NewRingBuffer(10)
 	buf.Write("test output line")
 
 	statuses := map[string]*crux.Process{
@@ -432,7 +432,7 @@ func TestBuildAgents(t *testing.T) {
 			Paused:       true,
 			PinnedCLI:    "claude",
 			PinnedModel:  "opus",
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 
@@ -520,19 +520,19 @@ func TestBuildAgents_OffByCadence(t *testing.T) {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude"},
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"quality": {
 			Name:         "quality",
 			Config:       config.AgentConfig{Backend: "claude"},
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 		"brainstorm": {
 			Name:         "brainstorm",
 			Config:       config.AgentConfig{Backend: "claude", OnDemand: true},
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 	cfg := &config.Config{
@@ -597,7 +597,7 @@ func TestBuildFrontendStatus(t *testing.T) {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude", Model: "sonnet"},
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 
@@ -680,7 +680,7 @@ func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
 			State:                     crux.StateRunning,
-			OutputBuffer:              agent.NewRingBuffer(10),
+			OutputBuffer:              cruxtest.NewRingBuffer(10),
 			ProviderErrorClass:        "auth",
 			ProviderErrorLine:         "✗ You are not licensed to use Copilot.",
 			ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
@@ -689,7 +689,7 @@ func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.
 			Name:         "quality",
 			Config:       cfg.Agents["quality"],
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 
@@ -713,7 +713,7 @@ func TestBuildFrontendStatus_BackendAuthErrorBlocksWithoutLogin(t *testing.T) {
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
 			State:                     crux.StateRunning,
-			OutputBuffer:              agent.NewRingBuffer(10),
+			OutputBuffer:              cruxtest.NewRingBuffer(10),
 			ProviderErrorClass:        "backend_auth_error",
 			ProviderErrorLine:         "Inference backend outage (401): Error querying the database: FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute",
 			ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
@@ -756,7 +756,7 @@ func TestBuildFrontendStatus_AgentAuthHealthRecoversWhenProviderBackoffExpires(t
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
 			State:                     crux.StateRunning,
-			OutputBuffer:              agent.NewRingBuffer(10),
+			OutputBuffer:              cruxtest.NewRingBuffer(10),
 			ProviderErrorClass:        "auth",
 			ProviderErrorLine:         "old auth error",
 			ProviderErrorBackoffUntil: time.Now().Add(-time.Minute),
@@ -859,7 +859,7 @@ func TestBuildAgents_WithOverrides(t *testing.T) {
 			State:           crux.StateRunning,
 			BackendOverride: "aider",
 			ModelOverride:   "opus",
-			OutputBuffer:    agent.NewRingBuffer(10),
+			OutputBuffer:    cruxtest.NewRingBuffer(10),
 		},
 	}
 	cfg := &config.Config{
@@ -989,7 +989,7 @@ func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude"},
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 		},
 	}
 	// Test with non-nil metrics collector (just to hit the non-nil branch)
@@ -1567,7 +1567,7 @@ func TestBuildAgents_RedactsLastErrorAndPausedReason(t *testing.T) {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude"},
 			State:        crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10),
+			OutputBuffer: cruxtest.NewRingBuffer(10),
 			LastError:    "copilot hung: your one-time code: ABCD-1234 | key sk-ant-abcdef123456",
 			PausedReason: "restart storm: ghp_abcdefghijklmnop1234 sk-ant-abcdef123456",
 		},

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -384,4 +385,200 @@ func TestClaimHooks_ClaimedByLabelIsGenericHumanNeverLogin(t *testing.T) {
 		defer mu.Unlock()
 		return has(removed, claims.ClaimedByHumanLabel) && has(removed, "hive/claimed-by-clubanderson")
 	}, "release never removed the holder's generic and legacy claimed-by labels")
+}
+
+// A claim's GitHub side effects and the release of that same claim used to
+// run in independent goroutines. On hivecommons/hive#14065 the lease was
+// revoked 26s after the claim while the claim's goroutine was still working
+// through its stage write: the release re-read the issue, saw no
+// `hive/claimed-by-human` yet, finished, and THEN the claim applied the
+// label — orphaned (hivecommons/hive#14201). The hooks now run one issue's
+// transitions in ledger order, so the release's fresh read happens after
+// the claim's label write and strips it. The mock delays the claimed-by add
+// to reproduce the ordering.
+func TestClaimHooks_ReleaseWaitsForSlowClaimLabel(t *testing.T) {
+	var mu sync.Mutex
+	var removed []string
+	truth := []string{"stage/010-actionable"}
+	has := func(list []string, want string) bool {
+		for _, l := range list {
+			if l == want {
+				return true
+			}
+		}
+		return false
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widgets/issues/11", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		labels := make([]map[string]string, 0, len(truth))
+		for _, l := range truth {
+			labels = append(labels, map[string]string{"name": l})
+		}
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 11, "labels": labels})
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/11/labels", func(w http.ResponseWriter, r *http.Request) {
+		var body []string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if has(body, claims.ClaimedByHumanLabel) {
+			// The slow write: without ordering the release's read lands
+			// well inside this window.
+			select {
+			case <-time.After(400 * time.Millisecond):
+			case <-r.Context().Done():
+				return
+			}
+		}
+		mu.Lock()
+		truth = append(truth, body...)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/11/labels/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/repos/acme/widgets/issues/11/labels/")
+		if u, err := url.PathUnescape(name); err == nil {
+			name = u
+		}
+		mu.Lock()
+		removed = append(removed, name)
+		kept := truth[:0]
+		for _, l := range truth {
+			if l != name {
+				kept = append(kept, l)
+			}
+		}
+		truth = kept
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	gh := github.NewClientForTest(srv.URL, "acme", []string{"widgets"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg := &config.Config{}
+	cfg.Governor.Claims.Label = boolPtr(true)
+	cfg.Governor.Claims.Comment = boolPtr(false)
+	hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return gh }, nil)
+	claim := claims.Claim{Repo: "acme/widgets", Issue: 11, Holder: "arteeh", HolderID: "c-1", Kind: claims.KindContributor}
+	hooks.OnClaimed(claim, claims.OutcomeClaimed)
+	hooks.OnReleased(claim, "lease revoked")
+
+	testutil.Eventually(t, 10*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return has(removed, claims.ClaimedByHumanLabel)
+	}, "release never removed the claimed-by label its own claim wrote")
+	mu.Lock()
+	defer mu.Unlock()
+	if has(truth, claims.ClaimedByHumanLabel) {
+		t.Fatalf("labels after release = %v, want %s gone", truth, claims.ClaimedByHumanLabel)
+	}
+}
+
+// claimEffectQueue runs one key's work in submission order and different
+// keys concurrently.
+func TestClaimEffectQueue_OrdersPerKey(t *testing.T) {
+	q := &claimEffectQueue{}
+	var mu sync.Mutex
+	var order []string
+	firstDone := make(chan struct{})
+	otherRan := make(chan struct{})
+	q.run("a", func() {
+		// Block until the other key's work has run: proves keys are
+		// independent and that "a"'s second step waits for this one.
+		<-otherRan
+		mu.Lock()
+		order = append(order, "a1")
+		mu.Unlock()
+		close(firstDone)
+	})
+	q.run("a", func() {
+		mu.Lock()
+		order = append(order, "a2")
+		mu.Unlock()
+	})
+	q.run("b", func() {
+		mu.Lock()
+		order = append(order, "b1")
+		mu.Unlock()
+		close(otherRan)
+	})
+	<-firstDone
+	// Wait for both the work and the worker's idle-key cleanup.
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(order) != 3 {
+			return false
+		}
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		return len(q.pending) == 0
+	}, "queued work never finished or idle keys were retained")
+	mu.Lock()
+	defer mu.Unlock()
+	if order[0] != "b1" || order[1] != "a1" || order[2] != "a2" {
+		t.Fatalf("order = %v, want [b1 a1 a2]", order)
+	}
+}
+
+func TestClaimEffectQueue_ChurnDoesNotSpawnWaitingGoroutines(t *testing.T) {
+	q := &claimEffectQueue{}
+	blocked := make(chan struct{})
+	started := make(chan struct{})
+	var unblock sync.Once
+	release := func() { unblock.Do(func() { close(blocked) }) }
+	defer release()
+	q.run("busy", func() {
+		close(started)
+		<-blocked
+	})
+	<-started
+
+	before := runtime.NumGoroutine()
+	const transitions = 2048
+	var mu sync.Mutex
+	var order []int
+	for i := 0; i < transitions; i++ {
+		q.run("busy", func() {
+			mu.Lock()
+			order = append(order, i)
+			mu.Unlock()
+		})
+	}
+	// Allow unrelated runtime/HTTP goroutines some headroom. The old
+	// goroutine chain adds one waiting goroutine for every transition.
+	if growth := runtime.NumGoroutine() - before; growth > 32 {
+		t.Errorf("one blocked issue added %d goroutines for %d transitions", growth, transitions)
+	}
+	release()
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		return len(q.pending) == 0
+	}, "churn worker did not drain and remove its idle key")
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != transitions {
+		t.Fatalf("executed %d transitions, want %d (including the final release)", len(order), transitions)
+	}
+	for i, got := range order {
+		if got != i {
+			t.Fatalf("transition %d = %d, want FIFO order", i, got)
+		}
+	}
+}
+
+func TestClaimEffectQueue_RestartsAfterIdle(t *testing.T) {
+	q := &claimEffectQueue{}
+	for i := 0; i < 20; i++ {
+		done := make(chan struct{})
+		q.run("same", func() { close(done) })
+		<-done
+		testutil.Eventually(t, 5*time.Second, func() bool {
+			q.mu.Lock()
+			defer q.mu.Unlock()
+			return len(q.pending) == 0
+		}, "idle key was retained")
+	}
 }

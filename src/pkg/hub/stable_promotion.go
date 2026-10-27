@@ -29,8 +29,27 @@ type StablePromotionBuild struct {
 	SHA        string `json:"sha,omitempty"`
 	Digest     string `json:"digest,omitempty"`
 	Generation int    `json:"generation,omitempty"`
-	BuiltAt    string `json:"built_at,omitempty"`
-	PromotedAt string `json:"promoted_at,omitempty"`
+	// BuiltAt is the committer date of SHA (RFC3339 UTC). For the stable row
+	// this used to be published as "promoted_at", which it never was: the
+	// promote-stable workflow moves the :stable tag hours after the commit
+	// lands, so operators read a commit time as a promotion time.
+	BuiltAt string `json:"built_at,omitempty"`
+}
+
+// channelBuild folds one ChannelTarget snapshot into a StablePromotionBuild.
+// The live revision label can run ahead of the cached ChannelTarget (the two
+// caches refresh independently). When it does, the target's digest and commit
+// date describe the OLDER build, so they are dropped rather than published next
+// to the newer SHA as if they were one record.
+func channelBuild(t ChannelTarget, liveSHA string) StablePromotionBuild {
+	b := StablePromotionBuild{SHA: t.SHA, Digest: t.Digest, BuiltAt: t.CommittedAt}
+	if liveSHA == "" || sameCommit(liveSHA, t.SHA) {
+		return b
+	}
+	b.SHA = liveSHA
+	b.Digest = ""
+	b.BuiltAt = ""
+	return b
 }
 
 type MaintainedHiveSummary struct {
@@ -117,20 +136,14 @@ func (s *HubServer) stablePromotionStatus(targets []ChannelTarget) StablePromoti
 	for _, t := range targets {
 		switch t.Channel {
 		case ReleaseChannelCandidate:
-			sha := t.SHA
-			if imageSHA := channelRevisionSHA(ReleaseChannelCandidate, s.logger); imageSHA != "" {
-				sha = imageSHA
-			}
-			status.Candidate = StablePromotionBuild{SHA: sha, Digest: t.Digest, Generation: ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelCandidate, s.logger), BuiltAt: t.CommittedAt}
+			status.Candidate = channelBuild(t, channelRevisionSHA(ReleaseChannelCandidate, s.logger))
+			status.Candidate.Generation = ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelCandidate, s.logger)
 		case ReleaseChannelStable:
-			sha := t.SHA
-			if imageSHA := channelRevisionSHA(ReleaseChannelStable, s.logger); imageSHA != "" {
-				sha = imageSHA
-			}
-			status.Stable = StablePromotionBuild{SHA: sha, Digest: t.Digest, Generation: ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelStable, s.logger), PromotedAt: t.CommittedAt}
+			status.Stable = channelBuild(t, channelRevisionSHA(ReleaseChannelStable, s.logger))
+			status.Stable.Generation = ghcrTagGeneration(ghcrRepoSpoke, ReleaseChannelStable, s.logger)
 		}
 	}
-	if build, eligibleAt := stablePromotionEligibleBuild(status.Stable.Generation, status.Stable.PromotedAt, time.Now().UTC(), s.logger); eligibleAt != "" {
+	if build, eligibleAt := stablePromotionEligibleBuild(status.Stable.Generation, status.Stable.BuiltAt, time.Now().UTC(), s.logger); eligibleAt != "" {
 		status.EligibleAt = &eligibleAt
 		if build.Generation != 0 || build.SHA != "" {
 			status.EligibleBuild = &build
@@ -166,16 +179,16 @@ var stablePromotionRunsFetchTimeout = 30 * time.Second
 
 // stablePromotionRunsCutoff marks where paging can stop: runs arrive
 // newest-first, so once a page reaches the current stable build (by generation
-// or by its PromotedAt time) older pages cannot hold an eligible build.
+// or by its commit time) older pages cannot hold an eligible build.
 type stablePromotionRunsCutoff struct {
 	generation int
-	promotedAt time.Time
+	builtAt    time.Time
 }
 
-func newStablePromotionRunsCutoff(generation int, promotedAt string) stablePromotionRunsCutoff {
+func newStablePromotionRunsCutoff(generation int, builtAt string) stablePromotionRunsCutoff {
 	c := stablePromotionRunsCutoff{generation: generation}
-	if t, err := time.Parse(time.RFC3339, promotedAt); err == nil {
-		c.promotedAt = t.UTC()
+	if t, err := time.Parse(time.RFC3339, builtAt); err == nil {
+		c.builtAt = t.UTC()
 	}
 	return c
 }
@@ -184,11 +197,11 @@ func (c stablePromotionRunsCutoff) reached(run stablePromotionWorkflowRun) bool 
 	if c.generation > 0 && run.RunNumber > 0 && run.RunNumber <= c.generation {
 		return true
 	}
-	if c.promotedAt.IsZero() {
+	if c.builtAt.IsZero() {
 		return false
 	}
 	created, err := time.Parse(time.RFC3339, run.CreatedAt)
-	return err == nil && created.Before(c.promotedAt)
+	return err == nil && created.Before(c.builtAt)
 }
 
 // stablePromotionFetchRuns lists recent docker.yml runs on v5, newest-first,
@@ -240,14 +253,14 @@ var stablePromotionFetchRuns = func(cutoff stablePromotionRunsCutoff, _ *slog.Lo
 // verified build that will finish soaking soonest and when. Runs and GHCR
 // verifications are cached, and at most stablePromotionMaxVerifiedRuns runs
 // are verified per call.
-func stablePromotionEligibleBuild(stableGeneration int, stablePromotedAt string, now time.Time, logger *slog.Logger) (StablePromotionBuild, string) {
+func stablePromotionEligibleBuild(stableGeneration int, stableBuiltAt string, now time.Time, logger *slog.Logger) (StablePromotionBuild, string) {
 	type pending struct {
 		run      stablePromotionWorkflowRun
 		built    time.Time
 		eligible time.Time
 	}
 	var soaked, soaking []pending
-	for _, run := range stablePromotionRuns(newStablePromotionRunsCutoff(stableGeneration, stablePromotedAt), logger) {
+	for _, run := range stablePromotionRuns(newStablePromotionRunsCutoff(stableGeneration, stableBuiltAt), logger) {
 		if run.Status != "" && run.Status != "completed" {
 			continue
 		}
@@ -404,7 +417,7 @@ func (s *HubServer) stablePromotionStatusFromCachedTargets(targets []ChannelTarg
 		case ReleaseChannelCandidate:
 			status.Candidate = StablePromotionBuild{SHA: t.SHA, Digest: t.Digest, BuiltAt: t.CommittedAt}
 		case ReleaseChannelStable:
-			status.Stable = StablePromotionBuild{SHA: t.SHA, Digest: t.Digest, PromotedAt: t.CommittedAt}
+			status.Stable = StablePromotionBuild{SHA: t.SHA, Digest: t.Digest, BuiltAt: t.CommittedAt}
 		}
 	}
 	status.MaintainedHives = s.maintainedCandidateHivesCached(status.Candidate)

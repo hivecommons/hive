@@ -179,6 +179,155 @@ func TestRouteHumanDecision(t *testing.T) {
 	}
 }
 
+// TestRouteHumanApproved: a trusted merger's approval on the head is the
+// human decision (hivecommons/hive#14568, rationguard#401). It settles a
+// requires_human verdict, and with a manual-merge lane rule — the hive never
+// merges CI workflow edits itself — it moves the PR to 090 with the one
+// step left named: the merge click. Anything else still outstanding (the
+// sentinel label still on, a hold, a reviewer-less verdict, a fork guard)
+// keeps the 085 decision, and a rule the person has not approved stays
+// an open 085 as before.
+func TestRouteHumanApproved(t *testing.T) {
+	const workflow = "the PR edits CI workflow / action files, which the lane never merges unattended"
+	manual := func(e *Evidence) {
+		e.Cause, e.CauseReason, e.ManualMergeRule, e.LaneReason = CauseDecision, workflow, true, "contributor-lane:workflow-path"
+	}
+	cases := []struct {
+		name           string
+		mutate         func(*Evidence)
+		wantStage      Stage
+		wantManual     bool
+		wantLaneReason string
+		wantReason     string
+		wantNoReason   string
+	}{
+		{
+			name:         "requires_human approved, trust cause",
+			mutate:       func(e *Evidence) { e.Verdict, e.HumanApprover = VerdictRequiresHuman, "octocat" },
+			wantStage:    ReadyForHumanMerge,
+			wantNoReason: "requires_human",
+		},
+		{
+			name: "requires_human approved, workflow-path rule",
+			mutate: func(e *Evidence) {
+				e.Verdict, e.HumanApprover = VerdictRequiresHuman, "clubanderson"
+				manual(e)
+			},
+			wantStage: ReadyForHumanMerge, wantManual: true,
+			wantLaneReason: "contributor-lane:workflow-path" + HumanApprovedReasonSuffix + "clubanderson",
+			wantReason:     workflow + "; @clubanderson approved this head, so the only step left is the merge",
+			wantNoReason:   "requires_human",
+		},
+		{
+			name:           "swarm approved, workflow-path rule, human approved",
+			mutate:         func(e *Evidence) { e.HumanApprover = "octocat"; manual(e) },
+			wantStage:      ReadyForHumanMerge,
+			wantManual:     true,
+			wantLaneReason: "contributor-lane:workflow-path" + HumanApprovedReasonSuffix + "octocat",
+			wantReason:     workflow + "; @octocat approved this head",
+		},
+		{
+			name:       "workflow-path rule, nobody approved yet",
+			mutate:     manual,
+			wantStage:  NeedsDecision,
+			wantReason: workflow,
+		},
+		{
+			name:       "requires_human, nobody approved yet",
+			mutate:     func(e *Evidence) { e.Verdict = VerdictRequiresHuman; manual(e) },
+			wantStage:  NeedsDecision,
+			wantReason: "the reviewer swarm returned `requires_human` @abc1234",
+		},
+		{
+			name: "approved but the sentinel label is still on",
+			mutate: func(e *Evidence) {
+				e.Verdict, e.HumanApprover, e.Sentinel = VerdictRequiresHuman, "octocat", true
+				manual(e)
+			},
+			wantStage:  NeedsDecision,
+			wantReason: "a sentinel alert is open on this PR",
+		},
+		{
+			name: "approved but a hold label is set",
+			mutate: func(e *Evidence) {
+				e.HumanApprover, e.Holds = "octocat", Holds([]string{"hold"})
+				manual(e)
+			},
+			wantStage:  NeedsDecision,
+			wantReason: "the `hold` label is set",
+		},
+		{
+			name:       "approved but no reviewer configured",
+			mutate:     func(e *Evidence) { e.Verdict, e.HumanApprover = VerdictUnavailable, "octocat"; manual(e) },
+			wantStage:  NeedsDecision,
+			wantReason: "no reviewer agent is configured, so this head will never get a swarm verdict",
+		},
+		{
+			name: "approved, lane rule that is not a manual-merge rule",
+			mutate: func(e *Evidence) {
+				e.HumanApprover, e.Cause, e.CauseReason = "octocat", CauseDecision, "the reporter-trust hold is in place"
+			},
+			wantStage:  NeedsDecision,
+			wantReason: "the reporter-trust hold is in place",
+		},
+		{
+			name: "approved manual rule still waits for pending checks",
+			mutate: func(e *Evidence) {
+				e.HumanApprover = "octocat"
+				e.Checks = CheckSummary{Total: 55, Green: 54, Pending: 1, Known: true}
+				manual(e)
+			},
+			wantStage:  Reviewed,
+			wantReason: "1 check(s) still running",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := readyEvidence()
+			tc.mutate(&e)
+			r := RouteHuman(e)
+			if r.Stage != tc.wantStage || r.ManualMerge != tc.wantManual || r.LaneReason != tc.wantLaneReason {
+				t.Fatalf("route = %+v, want stage %s manual %v lane %q", r, tc.wantStage, tc.wantManual, tc.wantLaneReason)
+			}
+			if r.HumanApprover != e.HumanApprover {
+				t.Fatalf("route approver = %q, want %q", r.HumanApprover, e.HumanApprover)
+			}
+			joined := strings.Join(r.Reasons, "\n")
+			if tc.wantReason != "" && !strings.Contains(joined, tc.wantReason) {
+				t.Fatalf("reasons = %q, want %q", joined, tc.wantReason)
+			}
+			if tc.wantNoReason != "" && strings.Contains(joined, tc.wantNoReason) {
+				t.Fatalf("reasons = %q must not mention %q once a human approved", joined, tc.wantNoReason)
+			}
+			if e.HumanApprover != "" && !strings.Contains(r.Summary, "approved by @"+e.HumanApprover) {
+				t.Fatalf("summary = %q must name the approver", r.Summary)
+			}
+			if tc.wantStage == ReadyForHumanMerge && tc.wantManual {
+				got := ReadyComment(r, "`role/newcomer` (below require_tiers)")
+				if !strings.Contains(got, "click **Merge**") || strings.Contains(got, "Blocked only by") || !strings.Contains(got, "@"+e.HumanApprover+" approved this head") {
+					t.Fatalf("ReadyComment = %q", got)
+				}
+			}
+			if tc.wantStage == NeedsDecision && !strings.Contains(DecisionComment(r), tc.wantReason) {
+				t.Fatalf("DecisionComment = %q", DecisionComment(r))
+			}
+		})
+	}
+}
+
+func TestHumanApprovedReason(t *testing.T) {
+	for _, tc := range []struct{ in, base, approver string }{
+		{"contributor-lane:workflow-path:human-approved@octocat", "contributor-lane:workflow-path", "octocat"},
+		{"reviewer-verdict:requires_human:human-approved@a-b", "reviewer-verdict:requires_human", "a-b"},
+		{"contributor-lane:workflow-path", "contributor-lane:workflow-path", ""},
+		{"", "", ""},
+	} {
+		if base, approver := HumanApprovedReason(tc.in); base != tc.base || approver != tc.approver {
+			t.Errorf("HumanApprovedReason(%q) = %q, %q; want %q, %q", tc.in, base, approver, tc.base, tc.approver)
+		}
+	}
+}
+
 // TestRouteHumanWaits: pending checks, unreadable checks, or a soak still
 // running keep the PR at 060 so it never claims 090 early.
 func TestRouteHumanWaits(t *testing.T) {

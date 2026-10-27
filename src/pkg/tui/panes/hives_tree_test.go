@@ -1,9 +1,11 @@
 package panes_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
@@ -408,7 +410,7 @@ func TestHivesTreeApplyFlow(t *testing.T) {
 		t.Fatal("review did not open")
 	}
 	v := o.View(120)
-	for _, want := range []string{"Review staged changes", "+ select acme/repo-one in alpha", "- follow legacy", "Nothing has been written yet", "enter apply  esc back"} {
+	for _, want := range []string{"Review staged changes", "+ select acme/repo-one in alpha", "- follow legacy", "Nothing has been written yet", "Enter apply · Esc back"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("review missing %q:\n%s", want, v)
 		}
@@ -522,5 +524,84 @@ func TestHivesTreeRowWindow(t *testing.T) {
 		if openTree(t, long).View(w) == "" {
 			t.Errorf("width %d rendered nothing", w)
 		}
+	}
+}
+
+func TestHivesTreeReviewViewport(t *testing.T) {
+	v := treeView()
+	v.Staged = 60
+	for i := 0; i < 60; i++ {
+		v.Diff = append(v.Diff, fmt.Sprintf("change-%02d github/github.com/org/repo-%02d", i, i))
+	}
+	o := openTree(t, v).TreeBeginApply()
+	check := func(width, height int) string {
+		t.Helper()
+		view := o.View(width, height)
+		if lipgloss.Width(view) > width || lipgloss.Height(view) > height {
+			t.Fatalf("review exceeds %dx%d: %dx%d", width, height, lipgloss.Width(view), lipgloss.Height(view))
+		}
+		for _, hint := range []string{"Nothing has been written", "Effective scope:", "Enter apply", "Esc back", "PgUp/PgDn", "Lines "} {
+			if !strings.Contains(view, hint) {
+				t.Fatalf("missing %q: %s", hint, view)
+			}
+		}
+		return view
+	}
+	first := check(80, 24)
+	if !strings.Contains(first, "change-00") || strings.Contains(first, "change-59") {
+		t.Fatal("review is not bounded at the first page")
+	}
+	o = o.TreeReviewScroll("pgdown", 80, 24)
+	if check(80, 24) == first {
+		t.Fatal("PageDown did not move")
+	}
+	o = o.TreeReviewScroll("pgup", 80, 24)
+	if check(80, 24) != first {
+		t.Fatal("PageUp did not return")
+	}
+	o = o.TreeReviewScroll("end", 80, 24)
+	if !strings.Contains(check(80, 24), "change-59") {
+		t.Fatal("End did not reveal final change")
+	}
+	check(40, 12)
+	check(120, 60) // clamps an offset beyond the new final page
+	o = o.TreeReviewScroll("home", 80, 24)
+	if check(80, 24) != first {
+		t.Fatal("Home did not return")
+	}
+	for _, keys := range [][2]string{{"down", "up"}, {"j", "k"}} {
+		o = o.TreeReviewScroll(keys[0], 80, 24)
+		if check(80, 24) == first {
+			t.Fatal("line scroll did not move")
+		}
+		o = o.TreeReviewScroll(keys[1], 80, 24)
+		if check(80, 24) != first {
+			t.Fatal("reverse line scroll did not return")
+		}
+	}
+	if o.TreeReviewFits(39, 24) || o.TreeReviewFits(80, 11) || !strings.Contains(o.View(39, 11), "Enter disabled") || !strings.Contains(o.View(80, 11), "resize to 40x12") {
+		t.Fatal("small terminal must pause Apply explicitly")
+	}
+	for _, line := range strings.Split(o.View(30, 8), "\n") {
+		if strings.TrimSpace(line) == "." {
+			t.Fatal("paused message wrapped a lone period onto its own line")
+		}
+	}
+	if o.TreeCancel().TreeStaged() != 60 {
+		t.Fatal("Escape lost staged edits")
+	}
+}
+
+func TestHivesTreeReviewWrapsFullUnicodeIdentity(t *testing.T) {
+	v := treeView()
+	v.Staged = 1
+	identity := "github/github.com/" + strings.Repeat("界é", 40) + "/target-final"
+	v.Diff = []string{identity}
+	o := openTree(t, v).TreeBeginApply()
+	// A tall, narrow view exposes every wrapped row; joining the rows must
+	// recover the entire identity, with no clipping or Unicode corruption.
+	view := o.View(40, 80)
+	if lipgloss.Width(view) > 40 || !strings.Contains(strings.ReplaceAll(view, "\n", ""), identity) {
+		t.Fatalf("identity lost or overflowed: %s", view)
 	}
 }

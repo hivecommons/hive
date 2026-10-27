@@ -162,11 +162,12 @@ type Check struct {
 	URL        string `json:"url,omitempty"`
 }
 
-// SentinelFinding records why the sentinel sweep flagged the PR. Notice is
-// true when the sweep only posted an informational notice (a trusted author)
-// rather than a blocking alert with the label; readers use it to tell "a
-// maintainer cleared this alert" (label gone, Notice false) from "this head
-// only ever got a notice". Bundles written before the field read as alerts.
+// SentinelFinding records why the sentinel sweep flagged the PR. Notice
+// marks a notice-only finding: the sweep commented but never applied the
+// alert label (a trusted author's PR), so the finding is the only record
+// of the alert. A finding without Notice was announced through the label,
+// and the live label — not this record — says whether it still stands:
+// a maintainer removing the label is the sweep's clearance signal.
 type SentinelFinding struct {
 	Rule    string   `json:"rule"`
 	Summary string   `json:"summary"`
@@ -192,6 +193,10 @@ type MergeEvent struct {
 	At       time.Time `json:"at"`
 	SHA      string    `json:"sha"`
 	OpenedAt time.Time `json:"opened_at,omitzero"`
+	// IssueAuthors are the human authors of the issues the PR closed whom
+	// the merge credited (hivecommons/hive#14581): the Co-authored-by the
+	// hive put on the landing commit, or that the branch already carried.
+	IssueAuthors []string `json:"issue_authors,omitempty"`
 }
 
 // Shadow records what shadow-mode gates would have done for the head SHA.

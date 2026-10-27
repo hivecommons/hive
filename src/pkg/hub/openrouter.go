@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/openrouter"
+	"github.com/hivecommons/hive/crux/openrouter"
 )
 
 const (

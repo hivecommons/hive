@@ -55,8 +55,10 @@ func TestRecordRegressionHop(t *testing.T) {
 	if !ok || hop.From != CoveredByPR || hop.Stage != Claimed || !hop.At.Equal(fallAt) || hop.Reason != "live issue claim" || !hop.Regressed {
 		t.Fatalf("RegressionHop = %+v ok=%v, want the 040→020 fall at %v", hop, ok, fallAt)
 	}
-	if rec.RegressedFrom != CoveredByPR || !rec.RegressedAt.Equal(now) {
-		t.Fatalf("record = from %v at %v, want 040 high-water mark and the latest fall time", rec.RegressedFrom, rec.RegressedAt)
+	// 020 → 010 is a lapsed reservation, not a second fall: the record keeps
+	// the 040 → 020 fall as its only regression.
+	if rec.RegressedFrom != CoveredByPR || !rec.RegressedAt.Equal(fallAt) {
+		t.Fatalf("record = from %v at %v, want 040 high-water mark and the 040→020 fall time %v", rec.RegressedFrom, rec.RegressedAt, fallAt)
 	}
 	now = now.Add(time.Minute)
 	s.Observe(key, CoveredByPR, "open PR #270 covers it")

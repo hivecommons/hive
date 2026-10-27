@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
@@ -891,7 +891,7 @@ func repoWorkIssueRow(raw any) (github.RepoWorkIssue, bool) {
 
 // newOwnershipEnv resolves the decision's inputs from configuration and the
 // agent runtime once per status refresh.
-func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*agent.AgentProcess, currentMode string, now time.Time, hub *ContributeWSHub) ownershipEnv {
+func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*crux.Process, currentMode string, now time.Time, hub *ContributeWSHub) ownershipEnv {
 	env := ownershipEnv{now: now, hiveLevel: 1}
 	org := ""
 	if cfg != nil {
@@ -922,12 +922,12 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*agent.AgentPr
 // laneCanOpenPRAt builds the lane push-rights check: the lane's agent is
 // running in a mode that pushes, and its default mode at the repository's
 // effective level (which a repository policy can only lower) pushes too.
-func laneCanOpenPRAt(env ownershipEnv, agentStatuses map[string]*agent.AgentProcess) func(lane, repo string) bool {
+func laneCanOpenPRAt(env ownershipEnv, agentStatuses map[string]*crux.Process) func(lane, repo string) bool {
 	return func(lane, repo string) bool {
 		name := strings.ToLower(strings.TrimSpace(lane))
 		proc, ok := agentStatuses[name]
-		return ok && proc != nil && proc.State == agent.StateRunning && proc.LaunchedMode.CanPush() &&
-			agent.DefaultAgentMode(name, env.levelFor(repo)).CanPush()
+		return ok && proc != nil && proc.State == crux.StateRunning && proc.LaunchedMode.CanPush() &&
+			crux.DefaultAgentMode(name, env.levelFor(repo)).CanPush()
 	}
 }
 
@@ -945,7 +945,7 @@ func selfAuthorizationHoldActive(cfg *config.Config, repo string) bool {
 // (role reviewer, no kick_template — the adjudicator in the L5/L6 packs)
 // serves repo and is neither paused nor unscheduled in the current mode. The
 // ADVISORY reviewer, which has a kick_template, does not count.
-func reviewerLaneAvailable(cfg *config.Config, agentStatuses map[string]*agent.AgentProcess, currentMode, repo string) bool {
+func reviewerLaneAvailable(cfg *config.Config, agentStatuses map[string]*crux.Process, currentMode, repo string) bool {
 	if cfg == nil {
 		return false
 	}
@@ -1074,7 +1074,7 @@ func recordEscalationFirstSeen(repos []FrontendRepo, now time.Time) func(repo st
 
 // applyOwnershipDecisions computes the your-turn decision for every row of a
 // freshly built snapshot, using the snapshot's generated time as now.
-func applyOwnershipDecisions(cfg *config.Config, repos []FrontendRepo, agentStatuses map[string]*agent.AgentProcess, currentMode string, now time.Time, hub *ContributeWSHub, adjust ...func(*ownershipEnv)) {
+func applyOwnershipDecisions(cfg *config.Config, repos []FrontendRepo, agentStatuses map[string]*crux.Process, currentMode string, now time.Time, hub *ContributeWSHub, adjust ...func(*ownershipEnv)) {
 	env := newOwnershipEnv(cfg, agentStatuses, currentMode, now, hub)
 	for _, fn := range adjust {
 		fn(&env)

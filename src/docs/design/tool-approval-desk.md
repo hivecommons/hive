@@ -61,7 +61,7 @@ verdict (`CeilingApplied`), and it shows up in the audit record. Pinned by
 | --- | --- | --- |
 | L0–L2 | `operator-approve` | Nothing side-effectful resolves without a human. |
 | L3–L5 | `security-scan` | May reach `auto-approve`, but only *via* a green scan. |
-| L6+ | `auto-approve` | Full autonomy; the desk is an audit record, not a gate. |
+| L6+ | `auto-approve` | Autonomous; the desk is an audit record, not a gate. |
 
 An unknown or negative level clamps to the most restrictive lane, so a
 mis-parsed or absent `acmm_level` can never widen authority
@@ -154,10 +154,10 @@ audited policy changes — never as conservative shipped defaults.
 > `TestNoConservativeDowngradeAtHighAutonomy` states requirement 3 directly.
 
 **4. Operator-lane items at L6 are probable policy bugs.** An inbox that quietly
-accumulates on a hive whose level says "full autonomy" is a misconfiguration
-signal. `Inbox.PendingAtFullAutonomy` surfaces them, the API returns
+accumulates on a hive whose level says "Autonomous" is a misconfiguration
+signal. `Inbox.PendingAtAutonomousLevel` surfaces them, the API returns
 `policy_bug_count`, and the dashboard renders a warning banner rather than
-letting them wait politely (`TestPendingAtFullAutonomyIsFlagged`).
+letting them wait politely (`TestPendingAtAutonomousLevelIsFlagged`).
 
 Unchanged and deliberate: operator kill-switches and the `hold` label sit
 **above** the desk at every level.

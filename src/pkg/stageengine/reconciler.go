@@ -153,7 +153,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 		tr.Anomaly = a
 		r.recordAnomaly(f.Ref, tr.From, tr.To, d.Reason, a)
 	}
-	r.opts.Store.Observe(key, d.Stage, d.Reason)
+	r.opts.Store.ObserveProgress(key, d.Stage, d.Reason, d.Progress)
 	noteCoveringPR(r.opts.Store, key, f, d.Stage)
 
 	out, err := r.opts.Writer.Apply(ctx, f.Ref, f.Labels, d.Desired())
@@ -210,11 +210,12 @@ func (r *reconciler) recordAnomaly(ref Ref, from, to stagelabels.Stage, reason, 
 }
 
 // ReconcileBatch implements Reconciler. The last Facts for a Ref wins; the
-// first occurrence fixes its position. Every item is attempted and every
-// attempted item has a Transition in the result, in order, so a sweep can
+// first occurrence fixes its position. Every attempted item has a
+// Transition in the result, in order, so a sweep can
 // pair them with its own per-item work; an item whose write failed carries
 // the error in Transition.Err and the first such error is also returned.
-// A cancelled context stops the batch with the transitions so far.
+// Context cancellation or a writer deadline stops the batch with transitions
+// so far; callers must skip per-item side effects for the unattempted tail.
 func (r *reconciler) ReconcileBatch(ctx context.Context, facts []Facts) ([]Transition, error) {
 	order := make([]string, 0, len(facts))
 	latest := make(map[string]Facts, len(facts))
@@ -239,6 +240,11 @@ func (r *reconciler) ReconcileBatch(ctx context.Context, facts []Facts) ([]Trans
 			}
 		}
 		out = append(out, tr)
+		// A pacer can exhaust the budget before ctx.Err() becomes non-nil.
+		// Retrying every remaining item would only repeat the same failure.
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return out, err
+		}
 	}
 	return out, firstErr
 }

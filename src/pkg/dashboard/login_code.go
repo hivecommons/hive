@@ -23,7 +23,7 @@ import (
 // not already give the same operator; the point of the gate is that a narrower
 // door should not be easier to open than the wide one beside it.
 //
-// The code is validated in agent.SubmitLoginCode (printable, whitespace-free,
+// The code is validated in crux.Runtime.SubmitLoginCode (printable, whitespace-free,
 // length-bounded) so it cannot carry a newline and become a second command. It
 // is never logged, and never echoed back in a response — the audit entry
 // records that a code was submitted for an agent, not what it was.

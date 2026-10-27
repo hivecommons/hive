@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // #7421: an agent sitting at its idle prompt after a fruitless kick reported
@@ -23,7 +23,7 @@ func outcomeProc(kickAt time.Time, outcome crux.KickOutcome) *crux.Process {
 		Name:         "quality",
 		Config:       config.AgentConfig{Backend: "claude", Enabled: true},
 		State:        crux.StateRunning,
-		OutputBuffer: agent.NewRingBuffer(10),
+		OutputBuffer: cruxtest.NewRingBuffer(10),
 		LastKick:     &k,
 		KickOutcome:  outcome,
 	}

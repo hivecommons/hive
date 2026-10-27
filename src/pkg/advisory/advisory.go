@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
-	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const advisoryDir = "/data/advisory"

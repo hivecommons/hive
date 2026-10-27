@@ -5,7 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
@@ -22,7 +23,7 @@ func newBufferInterceptorWatcher(
 	if withBrainstormAgent {
 		agents["brainstorm"] = config.AgentConfig{Backend: "claude"}
 	}
-	mgr := agent.NewManager(agents, covFWatcherLogger(), agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(agents, covFWatcherLogger(), crux.ProjectContext{})
 	if withBrainstormAgent {
 		status, err := mgr.GetStatus("brainstorm")
 		if err != nil {

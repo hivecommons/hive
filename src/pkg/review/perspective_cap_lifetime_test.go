@@ -67,9 +67,35 @@ func TestPerspectiveCapAllowsExactlyItsBudget(t *testing.T) {
 
 func TestUncappedStillReachesEveryPerspective(t *testing.T) {
 	// The default must not change shape: a hive that wants depth keeps it.
-	kicks := dispatchAllKicks(t, 0, len(DefaultPerspectives)+2)
+	// One review kick is in flight per agent, so depth needs as many free
+	// reviewers as perspectives (nothing answers in this simulation, so a
+	// reviewer stays busy once kicked).
+	pr := dispatchPRNum(1, "sha1")
+	opts := cappedOpts(0)
+	opts.Agents = []AgentCapability{reviewer("r1"), reviewer("r2"), reviewer("r3"), reviewer("r4"), reviewer("r5")}
+	state := DispatchState{}
+	var kicks []DispatchKick
+	for i := 0; i < len(DefaultPerspectives)+2; i++ {
+		plan := PlanDispatch([]PullRequest{pr}, Artifact{}, state, opts)
+		kicks = append(kicks, plan.ReviewKicks...)
+		state = ConfirmDelivered(plan.State, plan.ReviewKicks, plan.ReviewKicks)
+	}
 	if len(kicks) != len(DefaultPerspectives) {
 		t.Fatalf("uncapped dispatch produced %d kicks, want %d (one per perspective)", len(kicks), len(DefaultPerspectives))
+	}
+}
+
+func TestUncappedNeverStacksKicksOnABusyReviewer(t *testing.T) {
+	// Three reviewers, five perspectives, and no verdicts: each reviewer takes
+	// one perspective and the other two wait instead of being typed into a
+	// session that is still reviewing.
+	kicks := dispatchAllKicks(t, 0, len(DefaultPerspectives)+2)
+	perAgent := map[string]int{}
+	for _, k := range kicks {
+		perAgent[k.Agent]++
+	}
+	if len(kicks) != 3 || perAgent["r1"] != 1 || perAgent["r2"] != 1 || perAgent["r3"] != 1 {
+		t.Fatalf("kicks by agent = %v (%d kicks), want one each while nobody has answered", perAgent, len(kicks))
 	}
 }
 

@@ -1,10 +1,12 @@
 package hub
 
 import (
+	"bytes"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -136,6 +138,7 @@ func TestFetchImageBuildStatusConnError(t *testing.T) {
 }
 
 func TestFetchCommitMessage(t *testing.T) {
+	resetSHACaches(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"commit":{"message":"first line\nsecond line"}}`))
 	}))
@@ -147,6 +150,7 @@ func TestFetchCommitMessage(t *testing.T) {
 }
 
 func TestFetchCommitMessageErrors(t *testing.T) {
+	resetSHACaches(t)
 	// non-200
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -156,9 +160,10 @@ func TestFetchCommitMessageErrors(t *testing.T) {
 		t.Errorf("non-200 should return empty, got %q", got)
 	}
 
-	// conn error
+	// conn error — a distinct SHA so the 403 back-off above does not
+	// short-circuit before the dial.
 	c := &http.Client{Transport: &rewriteTransport{target: mustURL(t, "http://127.0.0.1:1")}}
-	if got := fetchCommitMessage(c, "abcdef1234567", slog.Default()); got != "" {
+	if got := fetchCommitMessage(c, "fedcba7654321", slog.Default()); got != "" {
 		t.Errorf("conn error should return empty, got %q", got)
 	}
 }
@@ -288,4 +293,92 @@ func resetSHACaches(t *testing.T) {
 		delete(commitMsgBySHA, k)
 	}
 	latestSHAMu.Unlock()
+	// The per-SHA fetch back-off is a package-global keyed by SHA; a test that
+	// provoked a non-200 for a SHA must not park it for a later test under
+	// -shuffle=on.
+	commitMsgBackoffMu.Lock()
+	commitMsgBackoffUntil = map[string]time.Time{}
+	commitMsgBackoffMu.Unlock()
+}
+
+func TestFetchCommitMessageBacksOffPerSHA(t *testing.T) {
+	resetSHACaches(t)
+	githubWarnMu.Lock()
+	githubWarnLast = map[string]time.Time{}
+	githubWarnMu.Unlock()
+	now := time.Now()
+	githubWarnNow = func() time.Time { return now }
+	t.Cleanup(func() { githubWarnNow = time.Now })
+
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	c := clientTo(t, srv)
+
+	for i := 0; i < 5; i++ {
+		if got := fetchCommitMessage(c, "abcdef1234567", logger); got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	}
+	// The backfill path passes the short SHA; it must share the full-SHA entry.
+	if got := fetchCommitMessage(c, shortSHA("abcdef1234567"), logger); got != "" {
+		t.Fatalf("short-SHA fetch got %q, want empty", got)
+	}
+	if hits != 1 {
+		t.Errorf("fetches within back-off = %d, want 1", hits)
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Errorf("warns = %d, want 1", n)
+	}
+
+	now = now.Add(commitMsgBackoff + time.Second)
+	fetchCommitMessage(c, "abcdef1234567", logger)
+	if hits != 2 {
+		t.Errorf("fetches after back-off = %d, want 2", hits)
+	}
+}
+
+// TestFetchCommitMessageWarnsOncePerDistinctSHA pins the contract the
+// sha_poll_commit_message_unavailable fleet-report class relies on
+// (src/docs/fleet-report.md): the WARN is deduped per (SHA, status), so the
+// class's 5-in-10-min threshold is only reachable when five distinct commits
+// fail, never by one commit failing repeatedly.
+func TestFetchCommitMessageWarnsOncePerDistinctSHA(t *testing.T) {
+	resetSHACaches(t)
+	githubWarnMu.Lock()
+	githubWarnLast = map[string]time.Time{}
+	githubWarnMu.Unlock()
+	now := time.Now()
+	githubWarnNow = func() time.Time { return now }
+	t.Cleanup(func() { githubWarnNow = time.Now })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	c := clientTo(t, srv)
+
+	// One commit retried past every back-off inside the hour: still one WARN.
+	for i := 0; i < 5; i++ {
+		fetchCommitMessage(c, "abcdef1234567", logger)
+		now = now.Add(commitMsgBackoff + time.Second)
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Fatalf("warns for one SHA retried 5 times = %d, want 1", n)
+	}
+
+	buf.Reset()
+	for _, sha := range []string{"1111111aaaa", "2222222bbbb", "3333333cccc", "4444444dddd", "5555555eeee"} {
+		fetchCommitMessage(c, sha, logger)
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 5 {
+		t.Fatalf("warns for 5 distinct SHAs = %d, want 5", n)
+	}
 }

@@ -1,0 +1,1 @@
+- Fleet report: 'prompt timeout — dumping pane' and 'pane content at timeout' agent-readiness diagnostic WARNs are now classified as agent_pane_timeout (low severity) instead of unclassified_error_repeated (#13920).

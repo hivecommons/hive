@@ -1,0 +1,1 @@
+- Unpark sweep and stage-label PR-link comments now skip repositories GitHub has archived (403 "Repository was archived so is read-only") instead of retrying and warning on every sweep tick (#14177, #14213).

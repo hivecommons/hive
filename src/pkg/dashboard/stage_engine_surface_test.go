@@ -159,7 +159,7 @@ func TestStageTrackerEngineStrip(t *testing.T) {
 		t.Error("the engine strip must not carry inline style or raw colours")
 	}
 	for _, want := range []string{
-		"${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs)}",
+		"${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs, _stageTrackerPollError, _stageTrackerPollErrorSince)}",
 		".ham-engine {",
 		`.ham-engine[data-mode="enforce"] .ham-engine-mode { color: var(--status-ok); }`,
 		".ham-engine .ham-engine-warn { color: var(--status-error);",

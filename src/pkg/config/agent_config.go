@@ -69,7 +69,6 @@ func ValidateKickTemplateName(v string) error {
 	return nil
 }
 
-
 const cadenceTargetSeparator = "|"
 
 // CadenceTargetKey returns the persisted governor cadence/last-kick key for an
@@ -177,7 +176,6 @@ func AgentSandboxGateWarnings(cfg *Config) []string {
 	}
 	return out
 }
-
 
 // CadenceIsOperatorOwned reports whether an operator explicitly set the
 // cadence for agent in the given governor mode, which makes it immune to pack

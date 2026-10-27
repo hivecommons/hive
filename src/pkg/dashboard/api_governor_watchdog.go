@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // watchdogSettingBounds keep an operator from typing a value that defeats the

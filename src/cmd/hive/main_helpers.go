@@ -333,7 +333,20 @@ func maintainHeldPRMergeability(
 			stopHeldPRUpdate(ctx, writer, store, repo, pr, holdguard.UpdateStopForkNotEditable, nil, logger)
 			continue
 		}
+		// The update is pinned to the enumerated head: GitHub then refuses it
+		// if a contributor push landed after enumeration, so the hive never
+		// stacks its merge on commits the guard has not evaluated. The
+		// post-hoc IsHygieneMerge check below still covers a push landing
+		// after the 202 (hivecommons/hive#14537).
 		if err := ghClient.UpdateBranchExpectedHead(ctx, pr.Repo, pr.Number, head, base); err != nil {
+			if github.IsUpdateBranchStaleHead(err) {
+				// The head moved since enumeration: not a conflict, and not
+				// ours to merge onto. The next tick re-reads the head and the
+				// lift check sees the move as drift.
+				logger.Info("hold guard: held PR head moved since enumeration; skipped keeping it mergeable",
+					"repo", repo, "pr", pr.Number, "expected_head", head, "error", err)
+				continue
+			}
 			switch github.ClassifyBranchUpdateError(err, pr.FromFork) {
 			case github.BranchUpdateWorkflowPermission:
 				stopHeldPRUpdate(ctx, writer, store, repo, pr, holdguard.UpdateStopWorkflowPermission, err, logger)

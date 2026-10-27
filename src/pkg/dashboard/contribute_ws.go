@@ -91,10 +91,12 @@ func wsSameOrigin(r *http.Request) bool {
 }
 
 type ContributorConnection struct {
-	ws         *websocket.Conn
-	connID     string
-	profile    *ContributorProfile
-	cliBackend string
+	ws      *websocket.Conn
+	connID  string
+	profile *ContributorProfile
+	// Immutable handshake credential: profile refreshes must not adopt a rotated token.
+	registrationTokenHash string
+	cliBackend            string
 	// session is the OPTIONAL client-declared session label from auth_response
 	// (multi-session-per-account). Empty for a single-session contributor, which
 	// keeps identityOf() at the bare ContributorID. When set, identityOf()
@@ -2437,6 +2439,23 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
 				code, reason, source := websocketCloseErrorDetails(err)
+				// 1006 is synthesised by gorilla when the peer's TCP connection
+				// ends without a close frame (relay killed, laptop slept, NAT
+				// timeout). That is the contributor's network, not a hub
+				// defect, and the relay reconnects on its own; logging it at
+				// WARN fed the fleet selfreport as a repeated runtime error
+				// (hivecommons/hive#14163). Keep WARN for close codes that name
+				// a protocol or policy problem.
+				if code == websocket.CloseAbnormalClosure {
+					h.logger.Info("[contribute-ws] contributor connection dropped without close frame",
+						"id", connID,
+						"username", contributorUsername(s.contributor),
+						"close_source", source,
+						"close_code", code,
+						"close_reason", reason,
+						"error", err)
+					return
+				}
 				h.logger.Warn("[contribute-ws] read error",
 					"id", connID,
 					"username", contributorUsername(s.contributor),
@@ -2803,10 +2822,10 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		return true
 	}
 
-	profile := contributorProfileFromRegistrationToken(msg.RegistrationToken)
+	profile, tokenFailure := authenticateContributorToken(msg.RegistrationToken, h.server.contributorTokenPolicy())
 
 	if profile == nil {
-		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: "Invalid registration token"})
+		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: tokenFailure})
 		closeWithReason(s.conn, websocket.ClosePolicyViolation, "invalid registration token")
 		return true
 	}
@@ -2958,23 +2977,24 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	}
 
 	s.contributor = &ContributorConnection{
-		ws:              s.conn,
-		connID:          s.connID,
-		profile:         profile,
-		cliBackend:      msg.CLIBackend,
-		session:         sanitizeSessionLabel(msg.Session),
-		model:           msg.Model,
-		reasoningEffort: msg.ReasoningEffort,
-		knowledgeLoaded: knowledgeLoaded,
-		knowledgeError:  knowledgeError,
-		advisorModel:    advisorModel,
-		advisorEffort:   advisorEffort,
-		role:            requestedRole,
-		clientRole:      clientRole,
-		assignedRole:    assignedRole,
-		connectedAt:     time.Now(),
-		lastPong:        time.Now(),
-		capabilities:    caps,
+		ws:                    s.conn,
+		connID:                s.connID,
+		profile:               profile,
+		registrationTokenHash: sha256Hex(msg.RegistrationToken),
+		cliBackend:            msg.CLIBackend,
+		session:               sanitizeSessionLabel(msg.Session),
+		model:                 msg.Model,
+		reasoningEffort:       msg.ReasoningEffort,
+		knowledgeLoaded:       knowledgeLoaded,
+		knowledgeError:        knowledgeError,
+		advisorModel:          advisorModel,
+		advisorEffort:         advisorEffort,
+		role:                  requestedRole,
+		clientRole:            clientRole,
+		assignedRole:          assignedRole,
+		connectedAt:           time.Now(),
+		lastPong:              time.Now(),
+		capabilities:          caps,
 	}
 
 	// Hand the slot over from the pending counter to h.connections
@@ -3934,7 +3954,9 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			lease := h.lookupLease(identity, msg.TaskID, canonRepo, msg.Number, msg.TaskGen, time.Now())
 			if lease == nil {
 				rejectStage := h.leaseStageForDecision(identity, msg.TaskID)
-				h.logger.Warn("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
+				// Expected outcome after a hub restart or lease expiry: the relay is told to
+				// re-ready via task_revoke below, so this is not an error.
+				h.logger.Info("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID,
 					"repo", canonRepo,
@@ -4860,6 +4882,11 @@ func (h *ContributeWSHub) heartbeatLoopWithTicks(c *ContributorConnection, ticks
 			return
 		}
 
+		if !h.registrationTokenSessionValid(c) {
+			_ = c.send(WSMessage{Type: "auth_failed", Reason: contributorTokenExpired})
+			closeWithReason(c.ws, websocket.ClosePolicyViolation, "registration token expired or revoked")
+			return
+		}
 		h.maybeRefreshToken(c)
 
 		if err := c.send(WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {

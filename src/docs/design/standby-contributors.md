@@ -80,7 +80,7 @@ phase map stays small.
   selection already used to build kicks. Per-lane queue depth is a count over
   work the scheduler already computes.
 - **The tier vocabulary.** `RotationConfig.AgentTiers`
-  (`src/pkg/crux/config/agent_config.go:681`) already spells T1/T2/T3 in `hive.yaml`. It
+  (`src/crux/config/agent_config.go:681`) already spells T1/T2/T3 in `hive.yaml`. It
   maps *agent names*, not models — so standby borrows the vocabulary and needs
   its own mapping (below).
 - **The relay's configuration report.** `auth_response` already carries
@@ -103,7 +103,7 @@ phase map stays small.
   rule needs, persisted in the contributors directory alongside the cooldown
   and verdict ledgers.
 - **Hold gating.** `agentmode.CanCreatePRs`
-  (`src/pkg/agentmode/agentmode.go:67`) is the mode ceiling, and the
+  (`src/crux/agentmode/agentmode.go:67`) is the mode ceiling, and the
   `holdByLevel` path (`src/pkg/github/pr_request_watcher.go:443-460`) applies
   the `hold` label server-side from authoritative config, failing the request
   rather than silently shipping an unlabelled PR.
@@ -276,7 +276,7 @@ hub:
 
 `standby` is a new block on `AgentConfig` (`src/pkg/config/agent_config.go:142`); the
 three `hub.standby_*` keys are new fields on `HubConfig`. Both landed in S2:
-`AgentConfig.Standby` (`src/pkg/crux/config/agent_config.go:426`) and
+`AgentConfig.Standby` (`src/crux/config/agent_config.go:426`) and
 `HubConfig.StandbyContributors` (`src/pkg/config/hub_config.go:243`) with its two
 neighbours. The types, defaults and validation are `pkg/config/standby.go`.
 
@@ -383,7 +383,7 @@ stating plainly:
 - **Full lane** — donated PR is held anyway. Standby subtracts merge; it never
   adds it.
 - **Advisory or measured lane** — the lane has no authority to open PRs at all
-  (`CanCreatePRs`, `src/pkg/agentmode/agentmode.go:67`). Standby dispatch on
+  (`CanCreatePRs`, `src/crux/agentmode/agentmode.go:67`). Standby dispatch on
   such a lane is **refused**, with reason `mode_ceiling`. Donating cannot raise
   a lane's ceiling, so there is no PR to hold and nothing to dispatch.
 
@@ -869,7 +869,7 @@ construction. The live-hive runbook above stays a human's job.
 - Contributor protocol: `src/pkg/dashboard/contribute_protocol.go`,
   `src/pkg/dashboard/contribute_ws.go`, `bin/contributor-relay.js`.
 - Mode ladder and hold gating: [`src/docs/acmm-policy-matrix.md`](../acmm-policy-matrix.md),
-  `src/pkg/agentmode/agentmode.go`, `src/pkg/github/pr_request_watcher.go`.
+  `src/crux/agentmode/agentmode.go`, `src/pkg/github/pr_request_watcher.go`.
 - CI surface: [`src/docs/backend-smoke.md`](../backend-smoke.md).
 
 ### Outcome reconciliation

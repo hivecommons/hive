@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,9 +30,10 @@ const (
 	gitLabTokenHeader = "PRIVATE-TOKEN"
 )
 
-// gitLabForge implements Forge against the GitLab REST API v4 using only the
-// standard library. It covers the READ path (get project, list open issues,
-// list open merge requests). The write path is a TODO on the Forge interface.
+// gitLabForge implements Forge and Merger against the GitLab REST API v4 using
+// only the standard library. It covers the read path (get project, list open
+// issues, list open merge requests), write path (comments, labels, hold gate),
+// and merge operations.
 type gitLabForge struct {
 	baseURL string // instance root, no trailing slash, no /api/v4
 	token   string
@@ -289,6 +291,177 @@ func (f *gitLabForge) SetHold(ctx context.Context, repo string, number int, hold
 	return f.RemoveLabel(ctx, repo, number, holdLabel)
 }
 
+// --- Merge path ---
+
+// glMergePayload is the body sent to PUT /projects/:id/merge_requests/:iid/merge.
+type glMergePayload struct {
+	SHA                      string `json:"sha,omitempty"`
+	Squash                   *bool  `json:"squash,omitempty"`
+	ShouldRemoveSourceBranch bool   `json:"should_remove_source_branch,omitempty"`
+}
+
+// Merge accepts a merge request via PUT /projects/:id/merge_requests/:iid/merge.
+//
+// Strategy mapping:
+//   - "squash": sets squash=true in the merge payload.
+//   - "merge": sets squash=false in the merge payload.
+//   - "rebase": executes rebase-then-merge: calls PUT .../rebase first, then PUT .../merge.
+//   - empty (""): leaves squash unset to preserve project/MR default behavior.
+//   - DeleteBranch: sets should_remove_source_branch=true.
+//   - HeadSHA: passes sha=<HeadSHA> for the head-SHA guard.
+//
+// Error mapping:
+//   - If the MR carries the "hold" label: returns ErrHoldActive.
+//   - HTTP 405 (Method Not Allowed): returns ErrNotMergeable (e.g. conflicts, draft, CI blocked).
+//   - A closed (not merged) MR: returns ErrNotMergeable before any write.
+//   - HTTP 406 (Not Acceptable): GitLab sends it for both "already merged" and
+//     "closed", so the MR state is re-read: merged returns ErrAlreadyMerged,
+//     anything else ErrNotMergeable. A closed MR must never be reported as
+//     merged (the relay records ErrAlreadyMerged as success).
+//   - HTTP 409 (Conflict): returns ErrConflict (head SHA mismatch or concurrent merge).
+func (f *gitLabForge) Merge(ctx context.Context, repo string, number int, opts MergeOptions) error {
+	if strings.TrimSpace(repo) == "" {
+		return fmt.Errorf("gitlab: merge: repo is required")
+	}
+	if number <= 0 {
+		return fmt.Errorf("gitlab: merge: merge request number must be > 0 (got %d)", number)
+	}
+
+	strategy := strings.ToLower(strings.TrimSpace(opts.Strategy))
+	switch strategy {
+	case "", string(MergeStrategyMerge), string(MergeStrategySquash), string(MergeStrategyRebase):
+		// valid neutral strategy
+	default:
+		return fmt.Errorf("gitlab: unsupported merge strategy %q", opts.Strategy)
+	}
+
+	slug := f.projectSlug(repo)
+	mrEndpoint := fmt.Sprintf("/projects/%s/merge_requests/%d", url.PathEscape(slug), number)
+
+	// Step 1: Honor the hold label and inspect MR state.
+	var mr glMergeRequest
+	if err := f.getJSON(ctx, mrEndpoint, nil, &mr); err != nil {
+		return fmt.Errorf("gitlab: check merge request %q#%d: %w", slug, number, err)
+	}
+	for _, l := range mr.Labels {
+		if strings.EqualFold(strings.TrimSpace(l), holdLabel) {
+			return ErrHoldActive
+		}
+	}
+	if strings.EqualFold(mr.State, "merged") {
+		return ErrAlreadyMerged
+	}
+	if strings.EqualFold(mr.State, "closed") {
+		return fmt.Errorf("%w: gitlab merge request %q#%d is closed", ErrNotMergeable, slug, number)
+	}
+
+	// Step 2: Handle rebase-then-merge if strategy is "rebase".
+	if strategy == string(MergeStrategyRebase) {
+		rebaseEndpoint := fmt.Sprintf("/projects/%s/merge_requests/%d/rebase", url.PathEscape(slug), number)
+		if err := f.doRebase(ctx, rebaseEndpoint); err != nil {
+			return fmt.Errorf("gitlab: rebase %q#%d: %w", slug, number, err)
+		}
+	}
+
+	// Step 3: Accept the merge request.
+	mergeEndpoint := fmt.Sprintf("/projects/%s/merge_requests/%d/merge", url.PathEscape(slug), number)
+	payload := glMergePayload{
+		SHA:                      strings.TrimSpace(opts.HeadSHA),
+		ShouldRemoveSourceBranch: opts.DeleteBranch,
+	}
+	if strategy == string(MergeStrategySquash) {
+		payload.Squash = new(true)
+	} else if strategy == string(MergeStrategyMerge) {
+		payload.Squash = new(false)
+	}
+
+	err := f.doAcceptMerge(ctx, mergeEndpoint, payload)
+	if !errors.Is(err, errGitLabNotAcceptable) {
+		return err
+	}
+	// 406 is ambiguous (merged or closed): only a re-read that says "merged"
+	// may surface as ErrAlreadyMerged.
+	var after glMergeRequest
+	if gerr := f.getJSON(ctx, mrEndpoint, nil, &after); gerr != nil {
+		return fmt.Errorf("%w: gitlab 406 and re-check failed: %v", ErrNotMergeable, gerr)
+	}
+	if strings.EqualFold(after.State, "merged") {
+		return fmt.Errorf("%w: %v", ErrAlreadyMerged, err)
+	}
+	return fmt.Errorf("%w: gitlab merge request %q#%d is %s: %v", ErrNotMergeable, slug, number, after.State, err)
+}
+
+// errGitLabNotAcceptable marks a 406 from the accept endpoint; Merge resolves
+// it against the MR state because GitLab uses 406 for merged and closed alike.
+var errGitLabNotAcceptable = errors.New("gitlab 406")
+
+func (f *gitLabForge) doRebase(ctx context.Context, endpoint string) error {
+	u := f.baseURL + gitLabAPIPath + endpoint
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, nil)
+	if err != nil {
+		return fmt.Errorf("building rebase request: %w", err)
+	}
+	if f.token != "" {
+		req.Header.Set(gitLabTokenHeader, f.token)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := f.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusAccepted, http.StatusCreated:
+		return nil
+	case http.StatusMethodNotAllowed:
+		return fmt.Errorf("%w: gitlab 405: %s", ErrNotMergeable, truncate(string(data), 200))
+	case http.StatusConflict:
+		return fmt.Errorf("%w: gitlab 409: %s", ErrConflict, truncate(string(data), 200))
+	default:
+		return fmt.Errorf("gitlab API %s returned status %d: %s", endpoint, resp.StatusCode, truncate(string(data), 200))
+	}
+}
+
+func (f *gitLabForge) doAcceptMerge(ctx context.Context, endpoint string, payload glMergePayload) error {
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encoding merge request body: %w", err)
+	}
+	u := f.baseURL + gitLabAPIPath + endpoint
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(buf))
+	if err != nil {
+		return fmt.Errorf("building merge request: %w", err)
+	}
+	if f.token != "" {
+		req.Header.Set(gitLabTokenHeader, f.token)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := f.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusAccepted, http.StatusCreated:
+		return nil
+	case http.StatusMethodNotAllowed:
+		return fmt.Errorf("%w: gitlab 405: %s", ErrNotMergeable, truncate(string(data), 200))
+	case http.StatusNotAcceptable:
+		return fmt.Errorf("%w: %s", errGitLabNotAcceptable, truncate(string(data), 200))
+	case http.StatusConflict:
+		return fmt.Errorf("%w: gitlab 409: %s", ErrConflict, truncate(string(data), 200))
+	default:
+		return fmt.Errorf("gitlab API %s returned status %d: %s", endpoint, resp.StatusCode, truncate(string(data), 200))
+	}
+}
+
 // doWrite issues a POST/PUT with a JSON body and discards a successful response.
 func (f *gitLabForge) doWrite(ctx context.Context, method, endpoint string, payload any) error {
 	buf, err := json.Marshal(payload)
@@ -439,5 +612,6 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// Compile-time assertion that the adapter satisfies the interface.
+// Compile-time assertions that the adapter satisfies the interfaces.
 var _ Forge = (*gitLabForge)(nil)
+var _ Merger = (*gitLabForge)(nil)

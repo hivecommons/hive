@@ -127,6 +127,13 @@ const RolePrefix = "role/"
 // spellings are LegacyRoleLabels now and the reconciler replaces them.
 const AuthorPrefix = authorkind.Prefix
 
+// PartiallyAddressedLabel marks an open issue whose merged PR covered only
+// part of it; close-on-merge adds it instead of likely-done and the issue
+// returns to 010 with the remainder still actionable (hivecommons/hive#11931).
+// The stage engine reads it to tell that fall from a regression: the PR
+// landed, so leaving 040 for 010 is progress.
+const PartiallyAddressedLabel = "hive/partially-addressed"
+
 // StalledLabel is the health label; it coexists with the stage label.
 const StalledLabel = Prefix + "stalled"
 
@@ -754,61 +761,68 @@ type Desired struct {
 // spellings — is removed. With Kind unset, `author/<kind>` labels are kept
 // as found. The `dco` / `no-dco` pair is reconciled only when want.DCO is
 // known, and `merge-method/merge` only when want.MergeCommit is. Non-hive
-// labels — including Prow's `dco-signoff: *` — are never touched.
+// labels — including Prow's `dco-signoff: *` — are never touched. Labels
+// are matched case-insensitively, so a mis-cased existing label is correctly
+// identified and removed.
 func Plan(current []string, want Desired) (add, remove []string) {
-	wanted := map[string]bool{}
-	if l := want.Stage.Label(); l != "" {
-		wanted[l] = true
+	// wanted maps each desired label's lowercased form to its configured
+	// spelling, so a mixed-case configured author/<kind> name is matched
+	// case-insensitively but added verbatim.
+	wanted := map[string]string{}
+	wantLabel := func(l string) {
+		if l != "" {
+			wanted[strings.ToLower(l)] = l
+		}
 	}
-	if l := want.Role.Label(); l != "" {
-		wanted[l] = true
-	}
-	if l := want.KindLabels.Label(want.Kind); l != "" {
-		wanted[l] = true
-	}
+	wantLabel(want.Stage.Label())
+	wantLabel(want.Role.Label())
+	wantLabel(want.KindLabels.Label(want.Kind))
 	if want.Stalled {
-		wanted[StalledLabel] = true
+		wantLabel(StalledLabel)
 	}
-	if l := want.DCO.Label(); l != "" {
-		wanted[l] = true
-	}
+	wantLabel(want.DCO.Label())
 	if want.MergeCommit == MergeCommitWanted {
-		wanted[MergeCommitLabel] = true
+		wantLabel(MergeCommitLabel)
 	}
+	// Matching is case-insensitive: wanted keys and each current label are
+	// compared through their lowercased forms, so a mis-cased existing label
+	// counts as present rather than being removed and re-added. Removals
+	// keep the label's original spelling.
 	have := map[string]bool{}
-	for _, l := range current {
-		l = strings.TrimSpace(l)
+	for _, origL := range current {
+		l := strings.TrimSpace(origL)
 		if l == "" {
 			continue
 		}
-		have[l] = true
-		if wanted[l] {
+		lower := strings.ToLower(l)
+		have[lower] = true
+		if _, ok := wanted[lower]; ok {
 			continue
 		}
 		// The hive's own DCO pair is reconciled only once the commit check
 		// has spoken; an unread head keeps its pill.
-		if dcoOwned(l) {
+		if dcoOwned(lower) {
 			if want.DCO != DCOUnknown {
 				remove = append(remove, l)
 			}
 			continue
 		}
-		if l == MergeCommitLabel {
+		if lower == MergeCommitLabel {
 			if want.MergeCommit == MergeCommitNotWanted {
 				remove = append(remove, l)
 			}
 			continue
 		}
-		if IsLegacyDCO(l) || !Owned(l) {
+		if IsLegacyDCO(lower) || !Owned(lower) {
 			continue
 		}
-		if want.Kind == authorkind.Unknown && strings.HasPrefix(l, AuthorPrefix) && !IsLegacyRole(l) {
+		if want.Kind == authorkind.Unknown && strings.HasPrefix(lower, AuthorPrefix) && !IsLegacyRole(lower) {
 			continue
 		}
 		remove = append(remove, l)
 	}
-	for l := range wanted {
-		if !have[l] {
+	for lower, l := range wanted {
+		if !have[lower] {
 			add = append(add, l)
 		}
 	}
@@ -880,15 +894,18 @@ func IssueCoveredByPR(labels []string) bool {
 }
 
 // Owned reports whether label belongs to a hive-owned family this package
-// reconciles (including the retired labels it replaces).
+// reconciles (including the retired labels it replaces). Labels are normalized
+// (lowercased and trimmed) before matching, so owned-ness is case-insensitive.
 func Owned(label string) bool {
-	return strings.HasPrefix(label, Prefix) || strings.HasPrefix(label, RolePrefix) || strings.HasPrefix(label, AuthorPrefix) || IsLegacy(label)
+	l := strings.ToLower(strings.TrimSpace(label))
+	return strings.HasPrefix(l, Prefix) || strings.HasPrefix(l, RolePrefix) || strings.HasPrefix(l, AuthorPrefix) || IsLegacy(l)
 }
 
 // Renames maps retired stage label spellings to their current name. The
 // reconciler renames the GitHub label in place (one PATCH per repo) so every
 // item carrying the old name keeps its stage through the upgrade, and
-// Current reads the old spelling as the new stage until then.
+// Current reads the old spelling as the new stage until then. Keys are
+// normalized (lowercased) for case-insensitive matching.
 var Renames = map[string]Stage{
 	"stage/090-needs-human": ReadyForHumanMerge,
 	// #12713 briefly renamed 072 to `stage/072-needs-author`; that spelling

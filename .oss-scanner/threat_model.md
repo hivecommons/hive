@@ -7,7 +7,7 @@ process (`src/cmd/hive`, package `github.com/hivecommons/hive` rooted at
 `src/`) attached to a set of GitHub repositories. It enumerates the open work
 in those repositories, decides which AI coding agents to wake (`pkg/governor`,
 `pkg/scheduler`), launches each agent CLI (Claude Code, Copilot, Codex,
-Goose, …) inside a per-agent tmux server (`pkg/agent/manager_tmux.go`), feeds
+Goose, …) inside a per-agent tmux server (`crux/agent/manager_tmux.go`), feeds
 it a prompt built from the issues and pull requests it should work on, and
 then performs the resulting GitHub writes — branches, pull requests, issues,
 comments, reviews, labels, merges — with a **GitHub App installation token**
@@ -25,7 +25,9 @@ The scanned branch is `v5`. The authoritative long-form documents are
 `src/docs/security-threat-model.md`, `src/docs/acmm-policy-matrix.md`,
 `src/docs/github-write-surface.md`, `src/docs/hosted-hub.md`,
 `src/docs/review-swarm.md` and `src/docs/agent-configuration.md`; the package
-layout under `src/pkg/` is the ground truth when they disagree.
+layout under `src/pkg/` (Hive) and `src/crux/` (the agent runtime) is the
+ground truth when they disagree. Package paths below are relative to `src/`
+unless they explicitly start with `src/`.
 
 Treat everything below as attacker-controlled:
 
@@ -45,9 +47,9 @@ Treat everything below as attacker-controlled:
   local principal. It runs under its own UID (base 2001, launched via
   `su-exec`), inside a tmux server on a per-agent socket, with
   `HTTPS_PROXY` pointed at the hive's GitHub policy proxy
-  (`pkg/proxy/github_proxy.go`, rules in `pkg/proxy/rules.go`,
+  (`crux/proxy/github_proxy.go`, rules in `crux/proxy/rules.go`,
   `linear_rules.go`, `autonomy_levels.go`, `write_surface_enforce.go`,
-  UID attribution from `/proc/net/tcp` in `pkg/proxy/procnet.go`). Its only
+  UID attribution from `/proc/net/tcp` in `crux/proxy/procnet.go`). Its only
   sanctioned write path above its tier is a JSON request file dropped into
   `/var/run/hive-metrics/{pr,issue,review,merge,push}-requests`, consumed by
   the relay watchers in `pkg/github` (`pr_request_watcher.go`,
@@ -56,9 +58,9 @@ Treat everything below as attacker-controlled:
   authorises in the order documented in `src/docs/github-write-surface.md`:
   file-UID forge check and ACMM mode gate, lane allowlist, repo pause and
   scope, the relay's own content gates, then the GitHub call. Optionally the
-  agent runs credential-free in a rootless Podman sandbox (`pkg/sandbox`)
-  with pushes performed by the trusted post-step in `pkg/pushbroker`.
-- **The GitHub API responses** the proxy and the hive parse (`pkg/proxy`,
+  agent runs credential-free in a rootless Podman sandbox (`crux/sandbox`)
+  with pushes performed by the trusted post-step in `crux/pushbroker`.
+- **The GitHub API responses** the proxy and the hive parse (`crux/proxy`,
   `pkg/github`), including GraphQL error bodies and webhook deliveries
   (`pkg/hub/webhook.go`, verified with `X-Hub-Signature-256`).
 - **Spoke → hub traffic.** `POST /api/heartbeat`, `/api/task-status`, the
@@ -90,10 +92,10 @@ Treat everything below as attacker-controlled:
   GitHub App setup, release-channel selection and self-upgrade
   (`api_version.go` `handleSelfUpgrade`, `deployment_upgrade.go`).
 - **Model-gateway traffic.** Agents talk to inference backends through the
-  in-pod translator (`pkg/proxy/inference_*.go`, `anthropic_translate.go`,
+  in-pod translator (`crux/proxy/inference_*.go`, `anthropic_translate.go`,
   `inference_auth.go`) using a per-agent placeholder key
   `sk-hive-<agent>`; the real gateway/OpenRouter/watsonx key is swapped in
-  server-side (`pkg/openrouter`, `pkg/watsonx`, `pkg/inference`).
+  server-side (`crux/openrouter`, `crux/watsonx`, `crux/inference`).
   `cmd/apiproxy` is the standalone variant gated by `PROXY_AUTH_TOKEN`.
 - **Configuration and secrets on disk.** `hive.yaml` (`pkg/config`), the
   dashboard-persisted overlay, the App private key files (`pkg/appkey`), the
@@ -111,11 +113,11 @@ Treat everything below as attacker-controlled:
 
 Most important, in this order:
 
-1. **The agent → GitHub boundary.** `pkg/proxy` (`rules.go`,
+1. **The agent → GitHub boundary.** `crux/proxy` (`rules.go`,
    `github_proxy.go`, `write_surface_enforce.go`, `autonomy_levels.go`,
    `procnet.go`, `agent_github_budget.go`), the relay watchers and
    `SweepSentinel` in `pkg/github`, `pkg/sentinel` (`Evaluate`),
-   `pkg/pushbroker`, `pkg/sandbox`, `pkg/agent` (`mode.go`, token
+   `crux/pushbroker`, `crux/sandbox`, `crux/agent` (`mode.go`, token
    delivery, tmux launch, per-UID isolation), `pkg/mint` and
    `pkg/github/app.go` (installation-token minting and tier scoping),
    `pkg/appkey`. Any way an agent — or GitHub content acting through an
@@ -149,25 +151,25 @@ Most important, in this order:
    Every `exec.Command` of `git`, `gh`, `tmux`, `podman`, `su-exec` or a
    shell whose arguments include a branch name, repo name, issue title,
    label, login or file path that came from GitHub or from an agent
-   (`pkg/agent`, `pkg/pushbroker`, `pkg/sandbox`, `pkg/gitidentity`,
+   (`crux/agent`, `crux/pushbroker`, `crux/sandbox`, `crux/gitidentity`,
    `pkg/github`, `pkg/knowledge`, `cmd/hive`). `tmux send-keys` to an agent
    pane with attacker text, `git` option injection (`-c`, `--upload-pack`,
    refspecs starting with `-`), or a path that escapes the intended
    directory.
 5. **The prompt-injection defences and secret scrubbing.** `pkg/ioscan`,
-   `pkg/scheduler/ioscan_enforce.go`, `pkg/logscrub`, `pkg/promptsrc`
-   size caps, `pkg/toolapprove`, `pkg/claims`. A bypass of a deterministic
+   `pkg/scheduler/ioscan_enforce.go`, `crux/logscrub`, `pkg/promptsrc`
+   size caps, `crux/toolapprove`, `pkg/claims`. A bypass of a deterministic
    rule the docs say holds (zero-width stripping, base64 rescans, canary
    detection, token redaction in logs/PR bodies) is a real finding; a model
    that follows a plain-English instruction the classifier did not flag is
    not (see "leave alone").
 6. **File stores keyed by untrusted names.** `pkg/knowledge`,
-   `pkg/evidence`, `pkg/beads`, `pkg/trajectory`, `pkg/timeline`,
+   `pkg/evidence`, `pkg/beads`, `crux/trajectory`, `pkg/timeline`,
    `pkg/snapshot`, `pkg/hubbackup`/`pkg/spokebackup`, the relay request
    directories. Path traversal from a repo/agent/issue-derived component,
    symlink following into `/data/secrets` or the App key, world-readable
    token files.
-7. **`cmd/apiproxy`, `pkg/apiproxy`, `pkg/proxy/inference_*`.** Leaking the
+7. **`cmd/apiproxy`, `pkg/apiproxy`, `crux/proxy/inference_*`.** Leaking the
    upstream key to an unauthenticated caller, or letting one agent's
    placeholder spend as another's.
 
@@ -194,26 +196,30 @@ The image has only loopback networking. `GOPROXY=off`, `GOSUMDB=off` and
 `GOTOOLCHAIN=local` are set, every module is in the module cache, every
 package and test binary has been compiled, and the deployable binaries are
 in `/usr/local/bin` (`hive`, `hivectl`, `bd`, `hive-backup`, `apiproxy`).
-The Go module is `/src/src`; run `go` commands from there.
+The Go workspace is `/src/src`; run `go` commands from there. It contains
+the Hive module and the nested Crux module in `crux/`; `./...` alone covers
+only Hive, so use `./... ./crux/...` when targeting both modules.
 
-- **Tests.** `go test -short ./pkg/<name>/...` for any package. The image
+- **Tests.** `go test -short ./pkg/<name>/...` for a Hive package or
+  `go test -short ./crux/<name>/...` for a Crux package. The image
   runs as root, so the few tests in `pkg/appkey` and `pkg/config` that chmod
   a directory read-only and expect a write to fail report FAIL here; they
   pass in CI and are not findings. `pkg/hub`
-  and `pkg/agent` are large and are sharded across many runners in CI; use
-  `-run` to scope them. `pkg/agent` and parts of `pkg/dashboard` spawn real
+  and `crux/agent` are large and are sharded across many runners in CI; use
+  `-run` to scope them. `crux/agent` and parts of `pkg/dashboard` spawn real
   tmux servers and send signals by UID — this is fine inside the container
   but do not run them on a host that is also running a hive. Table-driven
   tests next to the code under test are the normal place for a regression
-  test; `src/internal/testutil` has shared helpers and `pkg/proxy/*_test.go`
+  test; `src/internal/testutil` has Hive helpers,
+  `src/crux/internal/testutil` has Crux helpers, and `crux/proxy/*_test.go`
   shows how to stand up the GitHub policy proxy against an `httptest`
   upstream.
-- **The policy proxy.** `pkg/proxy/rules.go` is a readable table of
+- **The policy proxy.** `crux/proxy/rules.go` is a readable table of
   `(method, path regexp) → minimum agent mode`; `agent_repo_scope_test.go`,
   `autonomy_enforcement_test.go`, `auth_inject_test.go` and
   `write_surface_enforce.go` tests show how to drive a request through it as
   an agent of a given mode and assert `403` with `X-Hive-Proxy-Blocked`.
-  `pkg/proxy/denial_message.go` is the operator-facing denial text.
+  `crux/proxy/denial_message.go` is the operator-facing denial text.
 - **The relays.** `pkg/github/*_request_watcher.go` with their tests show
   the JSON request shape and the authorisation order; `pkg/sentinel`
   `Evaluate` is a pure function over a PR's author, title and unified diff.
@@ -264,7 +270,7 @@ weighs more than one that needs an opt-in switched on.
   following in the knowledge/evidence/beads/relay stores that reads or
   writes outside the intended directory. Disclosure of secrets through
   logs, config export, snapshots, PR/issue bodies or heartbeats that
-  `pkg/logscrub`/the secret-free overlay are meant to prevent. CSRF on an
+  `crux/logscrub`/the secret-free overlay are meant to prevent. CSRF on an
   owner-only dashboard route. A deterministic `pkg/ioscan` rule (unicode
   normalisation, base64 rescan, canary, token patterns) that a crafted
   payload bypasses while the docs state it holds. A heartbeat or webhook
@@ -302,8 +308,8 @@ weighs more than one that needs an opt-in switched on.
   code under test, or a `curl`/shell sequence against `hive` or `apiproxy`
   on loopback, with the config file used and the exact request. For a
   proxy/relay finding, name the agent mode (`ADVISORY`, `ISSUES_ONLY`,
-  `ISSUES_AND_PRS`, `ISSUES_PRS_MERGE` — `pkg/agentmode`, re-exported by
-  `pkg/agent/mode.go`), the ACMM level and
+  `ISSUES_AND_PRS`, `ISSUES_PRS_MERGE` — `crux/agentmode`, re-exported by
+  `crux/agent/mode.go`), the ACMM level and
   the repo scope in force, and show the request that should have been
   refused and the write that landed. For a hub finding, show the two
   tenants and the session/bearer each one holds.
@@ -332,7 +338,7 @@ weighs more than one that needs an opt-in switched on.
   residual risk (hivecommons/hive#2804). Report concrete escapes, not the
   architecture.
 - The `pkg/ioscan` semantic classifier and trajectory review
-  (`pkg/trajectory`) fail open on model outage by design.
+  (`crux/trajectory`) fail open on model outage by design.
 - Agents keep read access to the GitHub repos the App is installed on and
   outbound access to their model backend; "an agent can read the repo" or
   "can reach api.anthropic.com" is not a finding.

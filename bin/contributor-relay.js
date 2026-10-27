@@ -1035,6 +1035,19 @@ function warnQuotaGuardAwaitingPublisherOnce() {
     'published for this pool yet — holding until the reading lands or the marker goes stale (kubestellar/hive#6987).');
 }
 
+// agy publishes Claude/GPT (`3p-*`) and Gemini (`gemini-*`) windows in one
+// reading, and the two provider pools are independent. A window whose id names
+// the other family must not hold this contributor. Unknown models and windows
+// outside either family stay evaluated (conservative).
+function quotaWindowAppliesToModel(window, backend = BACKEND, model = MODEL) {
+  if (backend !== 'agy') return true;
+  const m = (model || '').toLowerCase();
+  const id = (window.id || '').toString().toLowerCase();
+  if (/^gemini/.test(m)) return !id.startsWith('3p-');
+  if (/claude|opus|sonnet|haiku|gpt/.test(m)) return !id.startsWith('gemini');
+  return true;
+}
+
 // opts.baseReserveOnly evaluates against the window reserve alone, ignoring the
 // per-complexity tier reserves. #6833 specifies the base window reserve for the
 // `ready` hold; the tier reserves exist to judge a SPECIFIC task, and `ready`
@@ -1065,6 +1078,7 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
     && Number.isInteger(reading.reset_credits_available) && reading.reset_credits_available > 0;
   let usedBankedReset = false;
   for (const window of (reading.limits || [])) {
+    if (!quotaWindowAppliesToModel(window)) continue;
     const kind = (window.kind || '').toString();
     // Every window is evaluated, including kinds this build has never heard of
     // (kubestellar/hive#6951). Skipping unrecognized kinds meant an EXHAUSTED
@@ -1306,19 +1320,29 @@ const KNOWLEDGE_AGENT_MD = process.env.HIVE_AGENT_MD || path.join(process.env.HO
 const KNOWLEDGE_STATE_POLL_MS = Number(process.env.HIVE_KNOWLEDGE_STATE_POLL_MS || (RELAY_TEST_TIMING ? 200 : 30000));
 const KNOWLEDGE_ERROR_MAX = 500;
 
+// Report the contributor's home as "~" so the local username does not travel
+// to every hive in the fleet view.
+function tildePath(file) {
+  const home = process.env.HOME || require('os').homedir() || '';
+  if (home && home !== '/' && (file === home || file.startsWith(`${home}${path.sep}`))) return `~${file.slice(home.length)}`;
+  return file;
+}
+
 function boundKnowledgeError(reason) {
   reason = String(reason || '').replace(/\s+/g, ' ').trim();
   return reason.length > KNOWLEDGE_ERROR_MAX ? `${reason.slice(0, KNOWLEDGE_ERROR_MAX)}…` : reason;
 }
 
-function knowledgeExportLooksValid(file) {
+function knowledgeExportLooksValid(realFile) {
+  const file = tildePath(realFile);
   let text;
   try {
-    const st = fs.statSync(file);
+    const st = fs.statSync(realFile);
     if (!st.isFile() || st.size <= 0) return { ok: false, reason: `${file} is absent or empty` };
-    text = fs.readFileSync(file, 'utf8');
+    text = fs.readFileSync(realFile, 'utf8');
   } catch (e) {
-    return { ok: false, reason: `${file} is not readable: ${e.message}` };
+    if (e.code === 'ENOENT') return { ok: false, reason: `${file} is absent (knowledge export not available from the hub)` };
+    return { ok: false, reason: `${file} is not readable: ${boundKnowledgeError(e.message).split(realFile).join(file)}` };
   }
   const lines = text.split(/\r?\n/);
   if (lines[0] !== '# Agent Knowledge') return { ok: false, reason: `${file} is not a knowledge export (expected first line "# Agent Knowledge")` };
@@ -3176,8 +3200,12 @@ const CONTAINER_RUNTIME = process.env.HIVE_CONTAINER_RUNTIME || 'docker';
 // "microvm-krun" for a krun launch (#12200). The relay never detects it from
 // inside the container; unset means nothing is declared.
 const ISOLATION_CLASS = (process.env.HIVE_ISOLATION_CLASS || '').trim();
+// Apptainer/Singularity use instance URIs instead of Docker's -it/name syntax.
+const CONTAINER_EXEC_TARGET = ['apptainer', 'singularity'].includes(CONTAINER_RUNTIME)
+  ? `instance://${CONTAINER_NAME}`
+  : `-it ${CONTAINER_NAME}`;
 const ATTACH_COMMAND = process.env.HIVE_CONTAINER_NAME
-  ? `${CONTAINER_RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t ${TMUX_SESSION}`
+  ? `${CONTAINER_RUNTIME} exec ${CONTAINER_EXEC_TARGET} tmux attach -t ${TMUX_SESSION}`
   : `tmux attach -t ${TMUX_SESSION}`;
 
 // detectCapabilities builds the OPTIONAL, client-declared capability object the
@@ -3508,7 +3536,7 @@ function headlessChildEnv() {
 // without it agy warns "--model <m> requires --effort (available: low, medium,
 // high)" and silently IGNORES the model, so the contributor's configured model
 // never takes effect. AGY_DEFAULT_EFFORT mirrors agyDefaultEffort in the
-// hub-side launcher (src/pkg/agent/manager.go) so a relay agent and a pod agent
+// hub-side launcher (src/crux/agent/manager.go) so a relay agent and a pod agent
 // resolve the same effort. AGENT_REASONING_EFFORT can override it, but only
 // with a value agy actually accepts — codex's vocabulary is wider (it takes
 // "minimal"), and forwarding an unknown token here would make agy reject the
@@ -5085,7 +5113,7 @@ const BACKEND_LOGIN_HELP = {
     steps: () => [
       'bob authenticates with an API key, not an interactive login.',
       'Stop the relay, set the key, and start it again:',
-      '  export BOBSHELL_API_KEY=<your-bob-api-key>',
+      '  export BOB_API_KEY=<your-bob-api-key>',
       '  just contribute-hive bob',
     ],
     // The generic closing line would be a lie here: no login is coming, and the
@@ -5792,7 +5820,7 @@ function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
-// Keep category names in exact parity with src/pkg/logscrub/handler.go. The Go
+// Keep category names in exact parity with src/crux/logscrub/handler.go. The Go
 // test reads this declaration and fails if one implementation gains or loses a
 // category without the other (kubestellar/hive#5478).
 const RELAY_SECRET_PATTERNS = [
@@ -9638,6 +9666,10 @@ function handleMessage(data, hub) {
       // on a guessed timeout — means we never sit idle on a hub with no work
       // while a different configured hub has some.
       console.log(`No task assigned on ${hub.url} — reason: ${sanitizeHubText(msg.reason) || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
+      // #14002: some refusals carry a plain-language explanation (for example
+      // app_not_installed names the org and the install link the operator must
+      // use). Print it so the contributor knows whether the fix is theirs.
+      if (msg.message) console.log(sanitizeHubText(msg.message));
       scheduleReadyRetry(hub, 'task_unavailable');
       break;
 

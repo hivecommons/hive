@@ -316,9 +316,9 @@ func parseSlackSurface(t *testing.T) (*token.FileSet, map[string]*ast.File) {
 }
 
 var slackBlockedImports = map[string]string{
-	"github.com/hivecommons/hive/pkg/agent":     "direct agent control would bypass Converse and the proxy mode ladder",
+	"github.com/hivecommons/hive/crux/agent":    "direct agent control would bypass Converse and the proxy mode ladder",
 	"github.com/hivecommons/hive/pkg/dashboard": "surface-local dashboard authz would bypass the shared role floor",
-	"github.com/hivecommons/hive/pkg/proxy":     "direct proxy calls must not bypass the shared mode ladder/capability check",
+	"github.com/hivecommons/hive/crux/proxy":    "direct proxy calls must not bypass the shared mode ladder/capability check",
 	"github.com/hivecommons/hive/pkg/effects":   "mutations require the shared effects claim path",
 	"os/exec": "executing commands from Slack bypasses every guard at once",
 }

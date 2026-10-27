@@ -14,14 +14,16 @@ import (
 // External-execution seams (#8361, #8201 Gate 1).
 //
 // pkg/dashboard deliberately imports neither pkg/extwork nor an adapter
-// package (pkg/extwork/flue, pkg/extwork/omp): the dashboard is at its
-// internal-import ceiling and each adapter must stay out of every build that
-// lacks its build tag (extwork_flue, extwork_omp). What lives here is the
-// extwork-free half of the contract: the relay capability token, the
-// refuse-never-downgrade rule for engine-bound items, the lease as the
-// admission and authority record (LeaseAuthority), the hub accessor, and the
-// ExternalExecution status seam the Features panel reads. cmd/hive wires the
-// concrete extwork pieces to these (extworkwire.go).
+// package (pkg/extwork/flue, pkg/extwork/omp, pkg/extwork/vibekanban,
+// pkg/extwork/managedagents): the dashboard is at its internal-import ceiling
+// and each adapter must stay out of every build that lacks its build tag
+// (extwork_flue, extwork_omp, extwork_vibekanban, or
+// extwork_claude_managed_agents). What lives here is the extwork-free half of
+// the contract: the relay capability token, the refuse-never-downgrade rule
+// for engine-bound items, the lease as the admission and authority record
+// (LeaseAuthority), the hub accessor, and the ExternalExecution status seam
+// the Features panel reads. cmd/hive wires the concrete extwork pieces to
+// these (extworkwire.go).
 
 const (
 	// extExecEngineVibeKanban is the local board/workspace host.
@@ -42,6 +44,10 @@ const (
 	// must equal omp.Capability; a test pins the two. A peer without it is
 	// refused OMP-bound items, never handed them as ordinary local work.
 	capExtExecOMP = "ext-exec/omp"
+	// extExecEngineClaudeManagedAgents is the private-spoke hosted prototype.
+	extExecEngineClaudeManagedAgents = "claude-managed-agents"
+	// capExtExecClaudeManagedAgents is the hosted relay capability token.
+	capExtExecClaudeManagedAgents = "ext-exec/claude-managed-agents"
 	// ExtworkRecordDirName is the subdirectory of the agent report directory
 	// that holds admission records and verified receipts.
 	ExtworkRecordDirName             = "extwork"
@@ -218,11 +224,13 @@ func extExecEngineFromIssueMap(issue map[string]any) string {
 func extExecGate(engine string, cfg *config.Config) (capability string, enabled bool, known bool) {
 	switch engine {
 	case extExecEngineFlue:
-		return capExtExecFlue, cfg.FlueBindingEnabled(), true
+		return capExtExecFlue, cfg != nil && cfg.FlueBindingEnabled(), true
 	case extExecEngineVibeKanban:
-		return capExtExecVibeKanban, cfg.VibeKanbanBindingEnabled(), true
+		return capExtExecVibeKanban, cfg != nil && cfg.VibeKanbanBindingEnabled(), true
 	case extExecEngineOMP:
-		return capExtExecOMP, cfg.OMPBindingEnabled(), true
+		return capExtExecOMP, cfg != nil && cfg.OMPBindingEnabled(), true
+	case extExecEngineClaudeManagedAgents:
+		return capExtExecClaudeManagedAgents, cfg != nil && cfg.ClaudeManagedAgentsBindingEnabled(), true
 	default:
 		return "", false, false
 	}
@@ -239,6 +247,8 @@ func extExecMode(engine string, cfg *config.Config) string {
 		return cfg.VibeKanbanBindingMode()
 	case extExecEngineOMP:
 		return cfg.OMPBindingMode()
+	case extExecEngineClaudeManagedAgents:
+		return cfg.ClaudeManagedAgentsBindingMode()
 	default:
 		return config.FlueBindingModeOff
 	}
@@ -255,6 +265,8 @@ func extExecWorkflowVersion(engine string, cfg *config.Config) string {
 		return strings.TrimSpace(cfg.Runs.External.VibeKanban.WorkflowVersion)
 	case extExecEngineOMP:
 		return strings.TrimSpace(cfg.Runs.External.OMP.WorkflowVersion)
+	case extExecEngineClaudeManagedAgents:
+		return strings.TrimSpace(cfg.Runs.External.ClaudeManagedAgents.WorkflowVersion)
 	default:
 		return ""
 	}

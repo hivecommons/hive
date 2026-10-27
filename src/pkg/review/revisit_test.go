@@ -393,9 +393,21 @@ func TestPlanDispatchPartialRevisitRekicksOnlyMissingPerspectives(t *testing.T) 
 		state.Pending = append(state.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: p, Agent: "reviewer", Dispatched: dispatched})
 	}
 
+	// The only reviewer still holds four fresh revisit kicks, so the expired
+	// perspective waits rather than being typed into a busy session.
+	if busy := PlanDispatch([]PullRequest{pr}, stale, state, opts); len(busy.ReviewKicks) != 0 {
+		t.Fatalf("re-kick stacked on the busy reviewer: %+v", busy.ReviewKicks)
+	}
+
+	// With a second, free reviewer the expired perspective is re-asked once.
+	opts.ReviewerAgents = []string{"reviewer", "reviewer-b"}
+	opts.Agents = append(opts.Agents, AgentCapability{Name: "reviewer-b", Enabled: true, UsesKick: true})
 	plan := PlanDispatch([]PullRequest{pr}, stale, state, opts)
 	if len(plan.ReviewKicks) != 1 {
 		t.Fatalf("partial revisit should re-kick once, got %d kicks", len(plan.ReviewKicks))
+	}
+	if plan.ReviewKicks[0].Agent != "reviewer-b" {
+		t.Fatalf("re-kick went to %q, want the free reviewer-b", plan.ReviewKicks[0].Agent)
 	}
 	msg := plan.ReviewKicks[0].Message
 	if !strings.Contains(msg, "--revise") {

@@ -1,0 +1,1 @@
+- Expected contributor concurrency, hourly, and daily tier-limit refusals no longer generate repeated runtime-error self-reports; the warnings and task limits remain intact (#14414).

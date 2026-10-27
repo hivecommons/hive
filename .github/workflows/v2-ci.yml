@@ -161,6 +161,25 @@ jobs:
       - name: Build
         run: go build ./cmd/hive/
 
+      # The crux binary builds twice (#14138): the root-module host
+      # (./cmd/crux, Hive's hive.yaml loader) and the nested module's own
+      # ./crux/cmd/crux, which must build with GOWORK=off so a checkout of
+      # src/crux alone (or a downstream repo consuming the module) can
+      # `go build ./cmd/crux` without the workspace or the root module.
+      - name: Build crux (root host and standalone module)
+        run: |
+          go build -o /dev/null ./cmd/crux
+          (cd crux && GOWORK=off go build -o /dev/null ./cmd/crux)
+
+      # crux/scripts/smoke.sh (`make -C crux smoke` locally; the self-hosted
+      # runners have no make) starts `crux serve` on a private unix socket
+      # with an empty runtime, drives it with `crux --server … ps` and GET
+      # /v1/health, then stops it. No agents or tmux involved; it fails the
+      # PR if the server stops starting, listening or shutting down cleanly.
+      - name: Crux module smoke (crux serve over a unix socket)
+        working-directory: src/crux
+        run: GOWORK=off bash scripts/smoke.sh
+
       - name: CI install tool apt cache tests
         working-directory: .
         run: bash .github/scripts/test-ci-install-tool-apt-cache.sh
@@ -177,6 +196,10 @@ jobs:
         working-directory: .
         run: python3 .github/scripts/test-runner-cache-prune.py
 
+      - name: Patch coverage script tests
+        working-directory: .
+        run: bash .github/scripts/test-patch-coverage.sh
+
       # Runner-infra classifier, rerun-once guard and rate alert (#9664):
       # hermetic, real 2026-09-29 log excerpts as fixtures, about a second.
       - name: CI infra classifier tests
@@ -184,7 +207,7 @@ jobs:
         run: python3 .github/scripts/test-ci-infra.py
 
       - name: Vet
-        run: go vet ./...
+        run: go vet ./... ./crux/...
 
       # The model list-price table behind /api/cost is refreshed weekly by
       # price-table-refresh.yml (which also re-dates it after 30 quiet days).
@@ -1496,7 +1519,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

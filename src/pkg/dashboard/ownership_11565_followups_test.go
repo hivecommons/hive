@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -221,7 +221,7 @@ func TestOwnershipConfigBackedAdjudicator11565(t *testing.T) {
 	prRepo := func() []FrontendRepo {
 		return []FrontendRepo{{Name: "r", Full: "o/r", OpenPrs: []any{FrontendPR{PullRequest: github.PullRequest{Repo: "o/r", Number: 8, HiveAgent: "scanner", Labels: []string{"needs-human"}, CreatedAt: old, UpdatedAt: old}}}}}
 	}
-	decide := func(cfg *config.Config, statuses map[string]*agent.AgentProcess) Ownership {
+	decide := func(cfg *config.Config, statuses map[string]*crux.Process) Ownership {
 		t.Helper()
 		repos := prRepo()
 		applyOwnershipDecisions(cfg, repos, statuses, "idle", ownershipNow11565, nil)
@@ -231,7 +231,7 @@ func TestOwnershipConfigBackedAdjudicator11565(t *testing.T) {
 	// Inside the adjudicator wait: not your turn.
 	checkOwnership11565(t, decide(ownershipCfg11565(5, agents), nil), notYours11565)
 	// The adjudicator paused: reviewer_unavailable at once.
-	checkOwnership11565(t, decide(ownershipCfg11565(5, agents), map[string]*agent.AgentProcess{"adjudicator": {Paused: true}}), want11565{OwnershipVerbReview, OwnershipReasonReviewerUnavailable})
+	checkOwnership11565(t, decide(ownershipCfg11565(5, agents), map[string]*crux.Process{"adjudicator": {Paused: true}}), want11565{OwnershipVerbReview, OwnershipReasonReviewerUnavailable})
 	paused := map[string]config.AgentConfig{"adjudicator": {Enabled: true, Role: "reviewer", Paused: true}}
 	checkOwnership11565(t, decide(ownershipCfg11565(5, paused), nil), want11565{OwnershipVerbReview, OwnershipReasonReviewerUnavailable})
 }

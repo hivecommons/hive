@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/persona"
 )
 
@@ -121,7 +121,7 @@ type CommandRefuser interface {
 }
 
 type Config struct {
-	DashboardURL      string
+	DashboardURL string
 	// PublicURL is the externally reachable dashboard origin used for
 	// user-facing "details" links. DashboardURL is loopback and never linked.
 	PublicURL         string

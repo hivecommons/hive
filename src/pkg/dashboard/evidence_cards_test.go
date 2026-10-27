@@ -14,7 +14,7 @@ import (
 
 var evidenceCardKeys = []string{
 	evidenceCardOutcome, evidenceCardCalibration, evidenceCardCalibrationDerived, evidenceCardAccuracy, evidenceCardMaintainability,
-	evidenceCardBoundary, evidenceCardCIGate, evidenceCardWorkBalance, evidenceCardShadow,
+	evidenceCardBoundary, evidenceCardCIGate, evidenceCardWorkBalance, evidenceCardShadow, evidenceCardOpensMerges,
 }
 
 // TestEvidenceCardsEmptySummary pins the "—" grade and zero-data sentence on

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 )
 
 // kickHistoryServer wires apiServer's manager at a temp archive dir and

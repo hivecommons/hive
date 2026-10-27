@@ -104,6 +104,17 @@ func reviewEvidenceTarget(r *http.Request) (string, int, error) {
 	return repo, number, nil
 }
 
+// reviewEvidenceVerifier builds the trust policy for one dashboard read. The
+// signing key is loaded once per request or aggregate refresh, not once per
+// bundle. A nil server/config means the documented unsigned mode.
+func (s *Server) reviewEvidenceVerifier() (ghpkg.ReviewEvidenceVerifier, error) {
+	signingKeyFile := ""
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		signingKeyFile = s.deps.Config.Evidence.SigningKeyPath()
+	}
+	return ghpkg.NewReviewEvidenceVerifier(signingKeyFile)
+}
+
 // handleReviewEvidence serves GET /api/review/evidence?repo=&number=
 // [&head=][&format=json|zip][&download=1]. Without head it returns the
 // newest bundle (the latest head Hive reviewed). format=json (default)
@@ -129,7 +140,12 @@ func (s *Server) handleReviewEvidence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	head := strings.TrimSpace(q.Get("head"))
-	found, err := ghpkg.FindReviewEvidence("", repo, number, head)
+	verifier, err := s.reviewEvidenceVerifier()
+	if err != nil {
+		jsonError(w, "review evidence verification unavailable: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	found, err := ghpkg.FindVerifiedReviewEvidence("", repo, number, head, verifier)
 	if err != nil {
 		jsonError(w, "review evidence unreadable: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -174,7 +190,12 @@ func (s *Server) handleReviewEvidenceList(w http.ResponseWriter, r *http.Request
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	entries, err := ghpkg.ListReviewEvidence("", repo, number)
+	verifier, err := s.reviewEvidenceVerifier()
+	if err != nil {
+		jsonError(w, "review evidence verification unavailable: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	entries, err := ghpkg.ListVerifiedReviewEvidence("", repo, number, verifier)
 	if err != nil {
 		jsonError(w, "review evidence unreadable: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -191,7 +212,7 @@ func (s *Server) handleReviewEvidenceList(w http.ResponseWriter, r *http.Request
 	if n := len(resp.Bundles); n > 0 {
 		resp.Latest = resp.Bundles[n-1].ID
 	} else {
-		missing, err := ghpkg.FindReviewEvidence("", repo, number, "")
+		missing, err := ghpkg.FindVerifiedReviewEvidence("", repo, number, "", verifier)
 		if err == nil {
 			resp.Expired, resp.Reason = missing.Expired, missing.Reason
 		}

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/internal/testutil"
-	"github.com/hivecommons/hive/pkg/logread"
 )
 
 // The helper process: the test binary re-executed with helperEnv set runs a

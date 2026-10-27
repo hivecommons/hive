@@ -23,7 +23,14 @@ _inline.js
 /dash.js
 /pr-body.md
 
-# Test-run scratch: pkg/agent tests create stub CLI binaries under a
+# Agent/session scratch: PR and issue bodies drafted for --body-file, and
+# section drafts. Never source; #11588 and #14197 committed them by accident.
+/pr-body.*
+/issue-body.*
+/issue[0-9]*.txt
+/section.md
+
+# Test-run scratch: crux/agent tests create stub CLI binaries under a
 # randomly-suffixed dir. Generated per run; never part of the tree.
 .hive-agent-stubs-*/
 
@@ -36,3 +43,8 @@ _inline.js
 # committed — see #5423.
 src/docs/design/_out/
 .gomod/
+
+# src/crux `make build` / `make smoke` outputs: the module binary and the
+# smoke test's socket + work dir. Build products, never source.
+src/crux/bin/
+src/crux/.smoke/

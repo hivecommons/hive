@@ -48,7 +48,7 @@ func TestHandleChatRoutesPlainReplyToSpineDuringClarify(t *testing.T) {
 		t.Fatalf("POST /api/chat = %d body=%s", rec.Code, rec.Body.String())
 	}
 	body := decodeJSON(t, rec)
-	if body["accepted"] != true || body["status"] == "fallback" {
+	if body["accepted"] != true || body["status"] == "responder_unavailable" {
 		t.Fatalf("plain reply not forwarded to spine: %v", body)
 	}
 	if len(*submitted) != 1 || (*submitted)[0] != "owner:Go, single static binary" {
@@ -59,14 +59,16 @@ func TestHandleChatRoutesPlainReplyToSpineDuringClarify(t *testing.T) {
 func TestHandleChatPlainReplyNotRoutedOutsideClarifyOrBelowOwner(t *testing.T) {
 	s, submitted := clarifyChatServer(t, false)
 	rec := doPostWithRole(s, "/api/chat", map[string]interface{}{"query": "Go, single static binary"}, config.RoleOwner)
-	if got := decodeJSON(t, rec)["status"]; got != "fallback" {
-		t.Fatalf("capture phase: status = %v, want fallback", got)
+	// v5's router answers an unrouted plain question with the responder-unavailable
+	// usage reply instead of v6's "fallback" status; either way it must not reach the spine.
+	if got := decodeJSON(t, rec)["status"]; got != "responder_unavailable" {
+		t.Fatalf("capture phase: status = %v, want responder_unavailable", got)
 	}
 
 	s2, submitted2 := clarifyChatServer(t, true)
 	rec = doPostWithRole(s2, "/api/chat", map[string]interface{}{"query": "Go, single static binary"}, config.RoleReadWrite)
-	if got := decodeJSON(t, rec)["status"]; got != "fallback" {
-		t.Fatalf("read-write caller: status = %v, want fallback", got)
+	if got := decodeJSON(t, rec)["status"]; got != "responder_unavailable" {
+		t.Fatalf("read-write caller: status = %v, want responder_unavailable", got)
 	}
 	if len(*submitted) != 0 || len(*submitted2) != 0 {
 		t.Fatalf("unexpected submissions: %v %v", *submitted, *submitted2)

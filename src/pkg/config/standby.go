@@ -19,8 +19,6 @@ import (
 // Design: src/docs/design/standby-contributors.md, "Configuration schema",
 // "Validation rules", and "The rule that nothing suggests lowering the floor".
 
-
-
 const (
 	// standbyDailyCapMax clamps `daily_cap_per_contributor` so a stray value
 	// cannot turn a per-contributor cap into no cap at all. Follows the
@@ -37,7 +35,6 @@ const (
 	// githubLoginMaxLen is GitHub's own limit on a login.
 	githubLoginMaxLen = 39
 )
-
 
 // StandbyModelTier maps ONE contributor model configuration to a capability
 // tier. It is the whole configuration that is mapped, never the model alone:
@@ -123,10 +120,6 @@ func (t StandbyItemTier) TupleKey() string {
 		strings.ToLower(strings.TrimSpace(t.Label)),
 	}, "|")
 }
-
-
-
-
 
 // IsStandbyTier reports whether tier is one of the three legal capability
 // tiers. "unknown" is NOT one of them: it is the absence of a tier.

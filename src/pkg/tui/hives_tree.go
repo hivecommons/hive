@@ -322,6 +322,9 @@ func (m model) updateHivesTree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if o.TreeReviewing() {
 		switch k {
 		case "enter":
+			if !o.TreeReviewFits(m.width, m.height) {
+				return m, nil
+			}
 			next, ok := o.TreeStartApply()
 			m.hives = &next
 			if ok && m.hivesTree != nil {
@@ -329,6 +332,9 @@ func (m model) updateHivesTree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "esc":
 			o = o.TreeCancel()
+			m.hives = &o
+		default:
+			o = o.TreeReviewScroll(k, m.width, m.height)
 			m.hives = &o
 		}
 		return m, nil

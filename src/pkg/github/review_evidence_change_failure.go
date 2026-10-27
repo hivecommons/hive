@@ -188,11 +188,17 @@ func (c *Client) RecordReviewEvidenceIssueReopen(claim IssueClaim, at time.Time)
 	if iOwner, iName := c.splitRepo(strings.TrimSpace(claim.Repo)); !strings.EqualFold(iOwner+"/"+iName, full) {
 		issueRepo = iOwner + "/" + iName
 	}
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
+			slog.String("error", err.Error()))
+		key = nil
+	}
 
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
 
-	entries, err := ListReviewEvidence("", full, claim.PRNumber)
+	entries, err := ListVerifiedReviewEvidence("", full, claim.PRNumber, reviewEvidenceVerifierForKey(key))
 	if err != nil || len(entries) == 0 {
 		return
 	}
@@ -231,12 +237,6 @@ func (c *Client) RecordReviewEvidenceIssueReopen(claim IssueClaim, at time.Time)
 		c.logger.Warn("review evidence: reopen-stamped bundle invalid, not written",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
-	}
-	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
-	if err != nil {
-		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
-			slog.String("error", err.Error()))
-		key = nil
 	}
 	if err := evidence.Seal(b, key); err != nil {
 		c.logger.Warn("review evidence: could not seal reopen-stamped bundle",

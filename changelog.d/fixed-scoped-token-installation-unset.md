@@ -1,0 +1,1 @@
+- Per-agent scoped-token mint with no GitHub App installation ID now logs one actionable warning per agent instead of every tick, and is reported as the `github_app_not_installed` fleet-report class rather than `unclassified_error_repeated` (#14186)

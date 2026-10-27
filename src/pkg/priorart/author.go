@@ -123,7 +123,7 @@ func DiscoverabilityDetail(issueURL string, r Report) string {
 	if len(r.Findings) > 0 {
 		f := r.Findings[0]
 		b.WriteString(" Already covered by ")
-		b.WriteString(kindLabel(f.Kind))
+		b.WriteString(KindLabel(f.Kind))
 		b.WriteString(" ")
 		b.WriteString(firstNonEmpty(f.URL, f.Ref, f.Title))
 		if f.Quote != "" {

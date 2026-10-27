@@ -115,6 +115,7 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
 ## Where to go next
 
 - [Architecture](architecture.md)
+- [Integrations](integrations.md) — backends, trackers, forges and sandboxes Hive works with, at a glance.
 - [Getting started](getting-started.md)
 - [Operator reference](operator-reference.md)
 - [GitHub webhooks: cadence, patch and reconcile](webhooks.md) — polling fallback, webhook patch and reconcile, and the state-accuracy guarantees.

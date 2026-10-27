@@ -13,8 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/advisorhook"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -29,10 +30,10 @@ const AdvisePath = "/v1/advise"
 
 // EndpointEnvVar carries the advise endpoint base URL to advised agents, the
 // way HIVE_JEV_ENDPOINT carries the Jev endpoint.
-const EndpointEnvVar = "HIVE_ADVISOR_ENDPOINT"
+const EndpointEnvVar = advisorhook.EndpointEnvVar
 
 // DefaultEndpoint is what EndpointEnvVar carries to agents.
-const DefaultEndpoint = "http://127.0.0.1:18447"
+const DefaultEndpoint = advisorhook.DefaultEndpoint
 
 // maxTranscriptBytes bounds one hook request body.
 const maxTranscriptBytes = maxTranscriptChars + 8192

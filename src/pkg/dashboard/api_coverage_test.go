@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -98,7 +99,7 @@ func apiServerWithKnowledge(t *testing.T) (*Server, *Dependencies, *httptest.Ser
 	}
 
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 
 	layers := []knowledge.LayerConfig{
 		{Type: knowledge.LayerProject, URL: wiki.URL},
@@ -3009,7 +3010,7 @@ func TestHandleAgentConfigGet_CopilotBackend(t *testing.T) {
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	deps := &Dependencies{
 		Config:      cfg,
 		AgentMgr:    mgr,
@@ -3052,7 +3053,7 @@ func TestHandleAgentConfigGet_CustomLaunchCmd(t *testing.T) {
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	deps := &Dependencies{
 		Config:      cfg,
 		AgentMgr:    mgr,
@@ -3095,7 +3096,7 @@ func TestHandleAgentConfigGet_DisplayNameAndPauseCadence(t *testing.T) {
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	deps := &Dependencies{
 		Config:      cfg,
 		AgentMgr:    mgr,
@@ -3253,7 +3254,7 @@ func TestHandleAgentConfigGet_OffCadence(t *testing.T) {
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
 	deps := &Dependencies{
 		Config:      cfg,
 		AgentMgr:    mgr,
@@ -4029,5 +4030,37 @@ func TestHandleNousStatus_RepoOnlyPhases(t *testing.T) {
 	}
 	if deps.Nous.Status["phases"].(map[string]interface{})["governor"] == nil {
 		t.Error("stored status must not be mutated by the handler")
+	}
+}
+
+func TestHealthReportsCruxRuntime(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	s := NewServer(0, logger)
+	s.MarkReady()
+	health := CruxRuntimeHealth{Mode: "sidecar", Reachable: true, Supervise: "child", Child: &CruxRuntimeChild{Running: true, Ready: true, PID: 42, Starts: 1}}
+	s.RegisterAPI(&Dependencies{Config: &config.Config{}, CruxRuntimeHealth: func() CruxRuntimeHealth { return health }})
+
+	get := func() map[string]any {
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d", rec.Code)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	body := get()
+	rt, _ := body["crux_runtime"].(map[string]any)
+	if body["status"] != "ok" || rt["mode"] != "sidecar" || rt["reachable"] != true || rt["child"].(map[string]any)["pid"] != float64(42) {
+		t.Fatalf("health = %v", body)
+	}
+	health.Reachable, health.LastError = false, "dial unix /run/crux.sock: connection refused"
+	body = get()
+	rt, _ = body["crux_runtime"].(map[string]any)
+	if body["status"] != "degraded" || rt["reachable"] != false || rt["last_error"] == "" {
+		t.Fatalf("degraded health = %v", body)
 	}
 }

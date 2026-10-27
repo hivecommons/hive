@@ -68,4 +68,18 @@ func TestPrimeKnowledge_ByteCapIsVisibleInKickAndLog(t *testing.T) {
 	if !strings.Contains(logBuf.String(), "cap_bytes=2048") {
 		t.Errorf("log should name the cap, got:\n%s", logBuf.String())
 	}
+	// Steady state: the same trim on the next kick is not re-announced at INFO or above.
+	s.primeKnowledge("quality", issues)
+	var announced int
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		if strings.Contains(line, "dropped facts over the byte cap") && !strings.Contains(line, "level=DEBUG") {
+			announced++
+		}
+	}
+	if announced != 1 {
+		t.Errorf("byte-cap trim announced %d times above DEBUG, want 1:\n%s", announced, logBuf.String())
+	}
+	if strings.Contains(logBuf.String(), "level=WARN") && strings.Contains(logBuf.String(), "dropped facts") {
+		t.Errorf("byte-cap trim must not log at WARN:\n%s", logBuf.String())
+	}
 }

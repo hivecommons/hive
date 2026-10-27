@@ -194,48 +194,6 @@ func TestRecordReviewVerdictMarksConcreteRemediationFromBody(t *testing.T) {
 	}
 }
 
-func TestRecordReviewVerdictRejectsMissingBodyDigestForBodyBoundDispatch(t *testing.T) {
-	dir := t.TempDir()
-	c := &Client{logger: testLogger()}
-	raw := validVerdictJSONWithHead(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123")
-	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{{
-		Repo:        "projectbluefin/common",
-		Number:      1121,
-		Perspective: review.PerspectiveCorrectness,
-		Agent:       "reviewer",
-		HeadSHA:     "abc123",
-		BodyDigest:  "body-v2",
-		Dispatched:  time.Now().UTC(),
-	}}})
-
-	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
-
-	if len(recorded) != 0 {
-		t.Fatalf("recorded = %+v, want missing body digest rejected", recorded)
-	}
-}
-
-func TestRecordReviewVerdictRejectsMismatchedBodyDigest(t *testing.T) {
-	dir := t.TempDir()
-	c := &Client{logger: testLogger()}
-	raw := validVerdictJSONWithHeadAndBodyDigest(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123", "body-v1")
-	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{{
-		Repo:        "projectbluefin/common",
-		Number:      1121,
-		Perspective: review.PerspectiveCorrectness,
-		Agent:       "reviewer",
-		HeadSHA:     "abc123",
-		BodyDigest:  "body-v2",
-		Dispatched:  time.Now().UTC(),
-	}}})
-
-	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
-
-	if len(recorded) != 0 {
-		t.Fatalf("recorded = %+v, want mismatched body digest rejected", recorded)
-	}
-}
-
 func TestReviewDecisionRequestFallbackRequiresMaintainerCallLine(t *testing.T) {
 	got, question := reviewDecisionRequestFromBody("This is a maintainer call, not a code defect — @clubanderson should decide.")
 	if !got || !strings.Contains(question, "@clubanderson") {

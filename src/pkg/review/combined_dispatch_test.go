@@ -61,13 +61,33 @@ func TestCombinedDispatchSpendsOneSlotPerPR(t *testing.T) {
 	}
 	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, DispatchOptions{
 		RequireApproval: true, FanOut: true, MaxParallelReviews: 2, CombinedPerspectives: true,
-		Agents: []AgentCapability{reviewer("r1")}, AIAuthor: "hive",
+		Agents: []AgentCapability{reviewer("r1"), reviewer("r2"), reviewer("r3")}, AIAuthor: "hive",
 	})
 	if len(plan.ReviewKicks) != 2 {
 		t.Fatalf("kicks = %d, want 2 (slot budget)", len(plan.ReviewKicks))
 	}
 	if plan.ReviewKicks[0].Number != 1 || plan.ReviewKicks[1].Number != 2 {
 		t.Fatalf("kicks did not go breadth-first: %+v", plan.ReviewKicks)
+	}
+}
+
+// A single reviewer takes one combined kick per cycle: a second PR's kick
+// would be typed into the session reviewing the first, so it waits.
+func TestCombinedDispatchNeverStacksOnABusyReviewer(t *testing.T) {
+	prs := []PullRequest{
+		{Repo: "acme/hive", Number: 1, HeadSHA: "a", Author: "hive-bot[bot]"},
+		{Repo: "acme/hive", Number: 2, HeadSHA: "b", Author: "hive-bot[bot]"},
+	}
+	opts := DispatchOptions{
+		RequireApproval: true, FanOut: true, MaxParallelReviews: 5, CombinedPerspectives: true,
+		Agents: []AgentCapability{reviewer("r1")}, AIAuthor: "hive",
+	}
+	plan := PlanDispatch(prs, Artifact{}, DispatchState{}, opts)
+	if len(plan.ReviewKicks) != 1 || plan.ReviewKicks[0].Number != 1 {
+		t.Fatalf("kicks = %+v, want one kick for PR 1", plan.ReviewKicks)
+	}
+	if again := PlanDispatch(prs, Artifact{}, plan.State, opts); len(again.ReviewKicks) != 0 {
+		t.Fatalf("PR 2 stacked on the busy reviewer: %+v", again.ReviewKicks)
 	}
 }
 

@@ -1,0 +1,1 @@
+- Report runtime semantic classifier failures that withhold kicks in the dashboard ([#14509](https://github.com/hivecommons/hive/issues/14509)).

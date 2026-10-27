@@ -1,0 +1,1 @@
+- Issue-request consolidation no longer folds a finding into an open issue parked on a maintainer decision or owned by another `agent/<lane>`, and a consolidated result now reports `consolidated_reason` (`subject`, `file_set` or `component:<path>`) (#14360).

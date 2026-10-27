@@ -13,7 +13,8 @@ import (
 
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -860,9 +861,9 @@ func newFullServerWithAgents(t *testing.T) *Server {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
-	mgr := agent.NewManagerWithOptions(cfg.Agents, logger, agent.ProjectContext{
+	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{
 		Org: "testorg", Repos: []string{"testrepo"}, ACMMLevel: *cfg.ACMMLevel, PRsAllowed: true,
-	}, agent.WithUIDMapPath(filepath.Join(t.TempDir(), "uid-map.json")))
+	}, cruxtest.WithUIDMapPath(filepath.Join(t.TempDir(), "uid-map.json")))
 
 	srv := NewServer(0, logger)
 	srv.deps = &Dependencies{

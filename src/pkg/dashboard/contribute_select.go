@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +45,12 @@ const (
 	// token_mint_failed so an operator reading the reason knows to fix the repo
 	// list rather than the App credential.
 	taskUnavailableRepoUnmintable = "repo_unmintable"
+	// taskUnavailableAppNotInstalled: the hive's GitHub App has no installation
+	// for its org (installation_id 0), so no token can be minted for any repo
+	// (#14002). Not a repo-list problem and not a credential problem: the App
+	// has to be installed on the org. The negative-ack carries a Message naming
+	// the org and the install link so the contributor can tell the operator.
+	taskUnavailableAppNotInstalled = "app_not_installed"
 	// taskUnavailableLeasePersistFailed: the assignment's server-issued lease
 	// could not be written to the lease registry on disk (#8287). The grant is
 	// refused rather than handed out, because a lease that exists only in memory
@@ -375,17 +382,23 @@ func (h *ContributeWSHub) markRepoUnmintable(repo string, now time.Time) {
 // repoUnmintable reports whether repo is inside its post-mint-failure cooldown,
 // dropping the record once it has lapsed so a fixed repo is re-offered.
 func (h *ContributeWSHub) repoUnmintable(repo string, now time.Time) bool {
+	return !h.repoUnmintableUntil(repo, now).IsZero()
+}
+
+// repoUnmintableUntil shares the recorded exclusion and its expiry with the
+// read-only queue projection. It never attempts a token mint.
+func (h *ContributeWSHub) repoUnmintableUntil(repo string, now time.Time) time.Time {
 	h.unmintableMu.Lock()
 	defer h.unmintableMu.Unlock()
 	until, ok := h.unmintableRepos[repo]
 	if !ok {
-		return false
+		return time.Time{}
 	}
 	if !now.Before(until) {
 		delete(h.unmintableRepos, repo)
-		return false
+		return time.Time{}
 	}
-	return true
+	return until
 }
 
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
@@ -734,6 +747,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	}
 	var candidates []candidate
 	capabilityMismatchSeen := false
+	unmintableRepoSeen := false
 	// #12805: the connection's acknowledged repository scope. Nil / mode "all"
 	// leaves selection exactly as before; "selected" skips every repo outside
 	// it here, before any lease or mint, so out-of-scope work stays available
@@ -761,6 +775,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			continue
 		}
 		if h.repoUnmintable(repo.Full, time.Now()) {
+			unmintableRepoSeen = true
 			// #7869: the App could not mint a token scoped to this repo moments ago
 			// (renamed / deleted / dropped from the installation). Offering its items
 			// would fail the same way; skip the whole repo until the cooldown lapses.
@@ -1043,6 +1058,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		if capabilityMismatchSeen {
 			return h.taskUnavailable(taskUnavailableCapabilityMismatch)
 		}
+		if unmintableRepoSeen {
+			// #14003: retain the recorded failure on later ready requests,
+			// not only in the selection call that discovered it.
+			return h.taskUnavailable(taskUnavailableRepoUnmintable)
+		}
 		if repoScope.restricts() {
 			return h.taskUnavailable(taskUnavailableNoSelectedWork)
 		}
@@ -1287,6 +1307,21 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// the item is offerable again at once and no slot, lease or cooldown
 		// records a task that never shipped.
 		h.rollbackAssignment(c, taskID)
+
+		// #14002: installation_id 0 means the App is not installed on this
+		// hive's org at all. Without this check GitHub's 404 for installation 0
+		// is read below as a repo-scope failure and the contributor is told to
+		// fix the repo list. Nothing in this pass can be minted, so do not
+		// exclude the repo or scan again; name the real cause instead.
+		if errors.Is(err, ghpkg.ErrAppNotInstalled) {
+			org, installURL := h.appOrgAndInstallURL()
+			h.logger.Warn("[contribute-ws] GitHub App is not installed on this hive's org — "+
+				"no scoped token can be minted; install the App on the org or set github.installation_id",
+				"org", org, "install_url", installURL, "error", err)
+			msg := h.taskUnavailable(taskUnavailableAppNotInstalled)
+			msg.Message = appNotInstalledMessage(org, installURL)
+			return msg
+		}
 
 		// #7869: since C4 the token is scoped to the CANDIDATE'S repository, so a
 		// 422/404 from GitHub means that repo — renamed, deleted, or removed from

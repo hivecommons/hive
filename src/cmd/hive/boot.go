@@ -8,8 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/proxy"
+	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/crux/trajectory"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/advisory"
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
@@ -31,8 +35,8 @@ import (
 	"github.com/hivecommons/hive/pkg/mergelane"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
-	"github.com/hivecommons/hive/pkg/proxy"
 	"github.com/hivecommons/hive/pkg/questionclose"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
@@ -41,9 +45,6 @@ import (
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/toolapprove"
-	"github.com/hivecommons/hive/pkg/trajectory"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // boot is the state main() used to keep in ~40 local variables, made explicit
@@ -85,6 +86,9 @@ type boot struct {
 	// sweep on the current client. adoptGitHubClient swaps both on every
 	// rebuild (#9621); see github_client_provider.go.
 	ghClientLive atomic.Pointer[githubClientRef]
+	// priorArtSearcher is the prior-art gate's Searcher, shared by the
+	// scheduler's park and the issue relay's filing verdict (#13879).
+	priorArtSearcher atomic.Pointer[priorart.Searcher]
 
 	// forgeState is the per-repo GitHub state cache the governor work
 	// source reads from when `forgestate.enabled` is on (#13375). Built
@@ -117,7 +121,7 @@ type boot struct {
 	repoTargetIssueMessage        func() string
 	advisoryIssues                map[string]int
 	advisoryStore                 *advisory.Store
-	agentMgr                      *agent.Manager
+	agentMgr                      hostedRuntime
 	approvalDesk                  *toolapprove.Desk
 	approvalInbox                 *toolapprove.Inbox
 	dashChat                      *dashchat.Bot
@@ -186,11 +190,11 @@ type boot struct {
 	githubAppState    github.AppAuthState
 	githubAppRequired bool
 	policyDirPath     string
-	projectCtx        agent.ProjectContext
+	projectCtx        crux.ProjectContext
 	mutationStats     *effects.Recorder
 
 	// bootAgents
-	agentMinter agent.AgentMintIssuer
+	agentMinter crux.AgentMintIssuer
 
 	// bootState
 	saved *snapshot.PersistedState
@@ -213,13 +217,18 @@ type boot struct {
 
 	// bootSupervision
 	quotaReadingPublisher    *rotation.Manager
-	linearCredentialResolver func() agent.LinearCredential
+	linearCredentialResolver func() crux.LinearCredential
 
 	// bootWatchers
 	configWatcher *config.Watcher
 
 	// bootProxy
 	githubProxy *proxy.GitHubProxy
+	// inferenceSink is the one per-agent inference usage ledger; the proxy
+	// records into it in-process and the hive callback's usage capability
+	// records into it for a sidecar runtime (#14138 stage 4).
+	inferenceSink   *tokens.InferenceSink
+	inferenceSinkMu sync.Mutex
 
 	// bootHeartbeat
 	reporterName     string
@@ -238,6 +247,7 @@ type boot struct {
 	lastSupersessionSweep  time.Time
 	lastSharedCIRerunSweep time.Time
 	lastRedMainSweep       time.Time
+	lastBlockedIssuesSweep time.Time
 	lastIssueUnparkSweep   time.Time
 	lastClosedIssueSweep   time.Time
 	// lastClarityResumeSweep gates runClarityGateResumeSweepIfDue
@@ -280,6 +290,9 @@ type boot struct {
 	// read and sweepTrigger their webhook trigger over it (#13377).
 	forgeView    *github.ForgeStateView
 	sweepTrigger *automerge.SweepTrigger
+	// cruxSupervision is the sidecar runtime's child supervisor and probe
+	// loop (hivecommons/hive#14138 stage 4); nil in-process.
+	cruxSupervision *cruxRuntimeSupervision
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

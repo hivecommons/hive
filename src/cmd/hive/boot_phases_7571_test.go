@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/scheduler"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // These tests drive individual boot phases in isolation (#7571, step 1). They
@@ -155,7 +157,7 @@ func TestBootSupervision_WatchdogFollowsConfiguredMode(t *testing.T) {
 			logger:   logger,
 			gov:      governor.New(cfg.Governor, cfg.Agents, logger),
 			sched:    scheduler.New(cfg, logger),
-			agentMgr: agent.NewManager(cfg.Agents, logger, agent.ProjectContext{}),
+			agentMgr: cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{}),
 			dashSrv:  dashboard.NewServer(0, logger),
 		}
 	}
@@ -211,7 +213,7 @@ func TestBootLanes_BuildsOnlyTheRunnableLanes(t *testing.T) {
 			cfg:      cfg,
 			logger:   logger,
 			gov:      governor.New(cfg.Governor, cfg.Agents, logger),
-			agentMgr: agent.NewManager(cfg.Agents, logger, agent.ProjectContext{}),
+			agentMgr: cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{}),
 			dashSrv:  dashboard.NewServer(0, logger),
 		}
 	}

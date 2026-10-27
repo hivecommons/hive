@@ -3,7 +3,7 @@
 // (hivecommons/hive#11945). An operator with no shell on the host reads both
 // through the admin MCP's log_read tool as the sources "starts" and "crash".
 //
-// The files live in the output log directory (pkg/logread.OutputDir), which
+// The files live in the output log directory (crux/logread.OutputDir), which
 // the container start-up script keeps owned by the hive's own user with mode
 // 0700, so agent users cannot read them; every file is created 0600.
 //
@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/logread"
+	"github.com/hivecommons/hive/crux/logread"
 )
 
 const (

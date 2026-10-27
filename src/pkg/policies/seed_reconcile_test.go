@@ -3,9 +3,9 @@ package policies
 import (
 	"bytes"
 	"log/slog"
-	"strings"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 

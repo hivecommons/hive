@@ -15,14 +15,14 @@ implementation.
 
 ## The three tiers
 
-The 12 shell-known CLIs (`KNOWN_BACKENDS` in `config/backends.conf`) already
+The 15 shell-known CLIs (`KNOWN_BACKENDS` in `config/backends.conf`) already
 fall into three classes that are enforced in code. This document names them.
 
 | Tier | Meaning | Backends today | Enforcement point |
 | --- | --- | --- | --- |
 | **T1 - core (headless-pod)** | Runs unattended in a TTY-less pod from staged or env-injected credentials | `claude`, `litellm`, `copilot`, `codex`, `goose` | `HEADLESS_BACKENDS` in the `Justfile` (`contribute-k8s`) and `K8S_HEADLESS_BACKENDS` in `src/pkg/dashboard/api_contribute.go` |
 | **T2 - supported (confined)** | Has a confinement floor hive can wire on the contributor local path: an OS sandbox, or at least a host-state deny-list | `claude`/`litellm`, `codex`, `copilot`, `muse` (sandboxed); `opencode` (deny-listed) | `backend_perm_flag` and the `*_local_perm_flag_shell` helpers in `config/backends.conf` |
-| **T3 - experimental (unconfined)** | No confinement hive can wire; local mode refuses to launch without a per-backend opt-in, container mode is the default | `goose`, `agy`, `bob`, `pi`, `aider`, `kilo`, `omp` | `unconfined_local_perm_flag_shell` and `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED=1` (#4918) |
+| **T3 - experimental (unconfined)** | No confinement hive can wire; local mode refuses to launch without a per-backend opt-in, container mode is the default | `goose`, `agy`, `bob`, `pi`, `aider`, `kilo`, `omp`, `openhands`, `omnigent` | `unconfined_local_perm_flag_shell` and `HIVE_<BACKEND>_DANGEROUSLY_RUN_UNCONFINED=1` (#4918) |
 
 Tier assignment is per launch path. `goose` is T1 on the pod path (it has a
 one-shot `goose run` and an env-key credential) and T3 on the local path (no
@@ -35,6 +35,8 @@ Upstream considers that CLI/headless path legacy and no longer actively
 maintained (OpenHands/OpenHands#18046), and Hive will not promote OpenHands
 beyond T3 on that surface.
 
+`omnigent` is T3 experimental (open-source meta-harness over Claude Code, Codex, Cursor, Pi, and custom agents). On the contributor local launch path, the bare CLI runs with no OS sandbox wired by Hive, so local launches refuse by default without `HIVE_OMNIGENT_DANGEROUSLY_RUN_UNCONFINED=1`. While Omnigent has its own internal policy engine and optional agent sandboxing (`enforce_sandbox`), Hive treats these as additive: Hive's API/egress proxy strictly decides and controls all GitHub writes (`POST /repos/{owner}/{repo}/pulls`, `PUT /repos/{owner}/{repo}/pulls/{n}/merge`, Git pushes), and Omnigent policies can never override or bypass Hive proxy denials. See [backend-omnigent-cli-contract.md](backend-omnigent-cli-contract.md).
+
 The T3 tier also bounds what an already-running OMP workbench may take as an
 external host (#8361 step 9, #6899): it is admissible only in report-only and
 shadow modes, where it holds no repository credential and no dashboard token
@@ -42,6 +44,10 @@ and returns a receipt Hive verifies rather than trusts, and the adapter
 (`pkg/extwork/omp`, `CheckReportOnly`) refuses any write-capable stage in
 code. The escape-hatch env var above concerns launching `omp` locally under
 Hive; it does not widen what an external OMP host may do.
+
+Hosted agent runtimes (Claude Managed Agents, the OpenAI Agents API) are not
+CLI backends either. They have their own
+[hosted execution tier](#hosted-execution-tier) below.
 
 `gemini` is Go-only (`cliBackendExceptions`): it is launched by the hub-side
 manager and has no contributor-relay wiring at all, so the local-path tiers do
@@ -155,7 +161,7 @@ sandbox, no deny-list, and no unattended-credential story still lands here.
      `CLAUDE_HOST_DENY_TOOLS` (privilege escalation plus the boot/deployment
      tools named in #4918), with a `HIVE_<NAME>_DANGEROUSLY_ALLOW_HOST_STATE`
      opt-out. `TestOpencodeLocalModeDeniesHostStateCommands` and
-     `TestShellAndGoDenyListsAgree` (`src/pkg/agent/host_state_deny_test.go`)
+     `TestShellAndGoDenyListsAgree` (`src/crux/agent/host_state_deny_test.go`)
      are the templates. The local-mode banner must not call a deny-listed
      backend "confined" (`TestLocalModeBannerNeverCallsOpencodeConfined`).
 
@@ -248,6 +254,201 @@ case, entirely hermetically (no network, no sleeps) as an ordinary PR-time Go
 test rather than a new CI workflow arm.
 
 
+## Hosted execution tier
+
+Vendors now sell hosted agent runtimes: a platform that runs the agent loop,
+keeps its state, and executes its tools in a sandbox the vendor operates.
+[#14093](https://github.com/hivecommons/hive/issues/14093) asked whether Hive
+can drive two of them, Claude Managed Agents and the OpenAI Agents API, as
+backends. This section records the decision
+([#14111](https://github.com/hivecommons/hive/issues/14111)), made from two
+gap analyses:
+
+- Claude Managed Agents:
+  [backend-gap-claude-managed-agents.md](backend-gap-claude-managed-agents.md)
+  ([#14106](https://github.com/hivecommons/hive/issues/14106)).
+- OpenAI Agents API: the note proposed in
+  [#14130](https://github.com/hivecommons/hive/pull/14130)
+  ([#14108](https://github.com/hivecommons/hive/issues/14108)).
+
+Neither existing on-ramp fits a hosted runtime:
+
+- **Not CLI-style.** Criteria 1, 2 and 8 assume a local binary whose flags
+  Hive controls. A hosted runtime has no binary. A name in `KNOWN_BACKENDS`
+  would make the shell launch path try to exec it.
+- **Not gateway-path.** That tier routes the Claude CLI's model calls through
+  `pkg/proxy/anthropic_translate.go`. A hosted runtime runs the whole loop,
+  tools included, so the gateway rows (model picker, login, terminal) do not
+  describe it.
+
+What does fit is the `pkg/extwork` external-host contract that Flue, OMP and
+vibe-kanban already use (see
+[design/external-workflow-admission.md](design/external-workflow-admission.md)):
+start keyed by execution key, observe by status, cancel, and a receipt fetched
+by artifact path and checked against a declared digest. So a hosted runtime
+gets its own tier, **hosted execution**. It has no T1/T2/T3 assignment and is
+never added to `KNOWN_BACKENDS` or `CLIBackends`. It is an engine adapter
+under `pkg/extwork`, switched on per engine under `runs.external.<engine>` in
+`hive.yaml`, like the existing engines.
+
+### Decision per runtime
+
+| Runtime and shape | Placement | Ceiling |
+| --- | --- | --- |
+| Claude Managed Agents, `self_hosted` environment whose worker runs in a Hive pod with forced egress | Hosted execution | `report-only` at entry; can be promoted |
+| Claude Managed Agents, `cloud` environment, credential-less: `networking: limited` with no GitHub host, no vaulted GitHub secret, no GitHub MCP server, web tools off; repo delivered as a file resource or under a read-only one-repo token | Hosted execution | `report-only` at entry; can be promoted |
+| Claude Managed Agents, any setup with a direct GitHub write path: a write token on the `github_repository` resource, a vaulted GitHub secret, or the GitHub MCP server | Hosted execution | **Advisory for good** (`shadow` or `report-only`) |
+| OpenAI hosted loop (Responses API with a hosted container), credential-less: no network or an allowlist without GitHub, no GitHub token, no GitHub MCP server, writes only as Hive-answered function tools | Hosted execution | `report-only` at entry; can be promoted |
+| OpenAI hosted loop where the container can reach GitHub with a write credential, or a remote MCP server holds one | Hosted execution | **Advisory for good** |
+| OpenAI Agents SDK loop in a Hive pod with local tools | CLI-style | Not a new backend. `codex` already covers it. Any other SDK-based CLI goes through the T1-T3 bar above. |
+
+### Advisory-mode ceiling
+
+The GitHub proxy hard-denies `POST /repos/{o}/{r}/pulls` and
+`PUT /repos/{o}/{r}/pulls/{n}/merge` for every agent mode (`denyRules` in
+`src/crux/proxy/rules.go`). Those denials only bind traffic that the iptables
+redirect forces through the proxy
+([net-admin-requirement.md](net-admin-requirement.md)). Traffic from a hosted
+sandbox does not pass through it.
+
+A hosted sandbox **egresses GitHub directly** when it can reach GitHub with a
+write-capable credential by a path Hive's proxy does not see: from the
+sandbox itself, through a vendor-side git or MCP proxy, or through a secret
+the vendor substitutes at its own egress. **Such a backend cannot exceed
+advisory mode**, meaning `shadow` or `report-only` (`ModeShadow` and
+`ModeReportOnly` in `src/pkg/extwork/admission.go`). No promotion lifts this
+ceiling. The only way past it is a setup with no direct path. The adapter
+enforces the ceiling in code. Before `Start`, it checks the session or
+request configuration and refuses a write-capable stage if any direct path is
+present. It refuses; it does not downgrade, matching how the existing
+engines treat an item bound to an engine they cannot honour.
+
+Two consequences:
+
+- Today `pkg/extwork` has no write-capable mode at all, so every hosted
+  backend enters at advisory regardless of shape. The ceiling above is the
+  part that still holds after such a mode exists.
+- A read-only, one-repo token is not a write path, but it is still a GitHub
+  credential held by a third party. It must be a short-lived installation
+  token scoped to one repository with `contents: read`, minted per run. It is
+  never the App's own key and never a broad PAT.
+
+### Acceptance criteria
+
+These replace criteria 1-12 for a hosted backend. They are numbered H1-H6 so
+a PR can cite them next to the CLI criteria without confusion.
+
+- **H1. Engine adapter.** The runtime is an `extwork.Adapter` registered in
+  `src/pkg/extwork/registry.go`. It is linked into `hive` only behind its own
+  `extwork_<engine>` build tag, and offered only to relays that declare its
+  `ext-exec/<engine>` capability. It passes the #8201 conformance rows that
+  the Flue and OMP adapters pin in their `conformance_test.go` (admitted task
+  and replay, held task starts nothing, capability and version refused,
+  conflict and recreated engine, crash windows, cancel ignored and late
+  success, outage and waiting, artifact and verifier refusals, store write
+  fails). `Start` is idempotent on the execution key: the adapter stores the
+  vendor's session or response ID against the key (vendor `metadata` can hold
+  it) and reconciles before any retry.
+- **H2. Egress statement and refusal.** The PR names the environment type or
+  container network policy it uses. For each row of that runtime's egress
+  table in its gap note, it says why the `POST /pulls` and
+  `PUT /pulls/{n}/merge` denials still hold. Tests pin that the adapter
+  refuses a write-capable stage for each direct-path row.
+- **H3. Default off.** `runs.external.<engine>` defaults to off and to
+  `shadow` when enabled with no mode, the same as `FlueBindingConfig`. It
+  dispatches only in an explicitly chosen mode. This is the hosted
+  counterpart of criterion 8's refusal gate.
+- **H4. Credential handling.** Before dispatch, an authenticated read proves
+  the vendor key works (for example `GET /v1/environments/{id}` or
+  `GET /v1/models`), the counterpart of criterion 4. The vendor key never
+  enters the sandbox. A Managed Agents `self_hosted` worker holds only its
+  environment key and the per-session work secret, never `ANTHROPIC_API_KEY`.
+- **H5. Metering and spend cap.** Each model call becomes a token record in
+  `pkg/tokens`, deduplicated on the vendor's ID (the `span.model_request_end`
+  event ID, or `response.id`), with the model recorded at dispatch when the
+  usage record omits it. Non-token charges (session run time, web searches,
+  hosted-tool calls) are recorded, or the dashboard shows the backend as
+  partly unmetered, under the policy in
+  [Metering coverage and budget-gated hives](#metering-coverage-and-budget-gated-hives).
+  On a budget-gated hive the dispatch caps spend from the governor's
+  remaining budget. For Managed Agents that is the session `budget`; for
+  OpenAI it is per-call `max_output_tokens` and `max_tool_calls`, and the
+  adapter stops chaining calls when the governor says so.
+- **H6. Pins, docs and changelog.** The request pins what the runtime runs: the
+  agent version and toolset version for Managed Agents, and the model
+  snapshot and tool version for OpenAI. The PR adds the documentation rows
+  listed below and a changelog fragment (criterion 7).
+
+### Promotion beyond advisory
+
+A hosted backend in a setup with no direct path may later run a stage beyond
+`report-only`. Promotion is a PR that supplies all of:
+
+1. A write-capable `pkg/extwork` mode, designed in its own issue, in which the
+   change still reaches GitHub only through Hive's relays (`hive-open-pr`).
+   The sandbox never writes to GitHub itself.
+2. Live evidence from a real run: the vendor refusing an invalid network
+   policy or tool configuration with an error instead of ignoring it (the
+   counterpart of criterion 3), a test showing both proxy denials still hold,
+   and metering for that run reconciled against the vendor's own total
+   (`session.usage.list_cost` or the organisation usage API).
+
+A setup with a direct path is never promoted.
+
+### Which backend is prototyped first
+
+**Claude Managed Agents, with a `self_hosted` environment**, has the smaller
+gap:
+
+- Tool traffic goes through Hive's own proxy, so the two denials hold through
+  the existing `denyRules`. No new argument about who holds GitHub tokens is
+  needed.
+- A session `budget` is a hard spend cap that the platform checks before every
+  model request.
+- Agent, environment and session objects map directly onto `Start`, `Observe`
+  and `Cancel`. The durable, paginated event list is the transcript.
+
+The OpenAI hosted loop has the smaller gap on telemetry: model and usage are
+on every response. But it has no environment type that keeps tool traffic on
+Hive's proxy, no server-side spend cap, and hosted-tool charges are missing
+from `usage`. Its SDK-in-pod shape is already the `codex` backend.
+
+The prototype is [#14124](https://github.com/hivecommons/hive/issues/14124).
+It is implemented as the `claude-managed-agents` `pkg/extwork` adapter:
+`runs.external.claude_managed_agents` is default off, `shadow` when enabled
+without a mode, and dispatches only in explicit `report-only` mode. The adapter
+is linked only with `-tags extwork_claude_managed_agents`, requires a
+`self_hosted` environment and `forced-egress` or `proxy-only` policy, and
+stores vendor session bindings under the extwork record directory. It does not
+touch `KNOWN_BACKENDS`, `CLIBackends`, or CLI parity/posture tests.
+
+### Follow-ups
+
+These are filed as #14124 completes, as its checklist requires:
+
+- **Second backend.** The OpenAI hosted loop as a hosted-execution adapter in
+  the credential-less shape, under H1-H6, after #14124 lands.
+- **Tier promotion.** The write-capable `pkg/extwork` mode and the live
+  evidence that the promotion criteria above call for.
+
+### Rows shipped for the hosted prototype
+
+The first hosted row is now present in
+[`agent-configuration.md`](agent-configuration.md#methods-subscription-clis-vs-self-hosted-inference):
+
+- **Methods table:** `hosted / claude-managed-agents`, authenticated by an API
+  key reference (`api_key_env` or `api_key_file`) and pinned agent/model
+  metadata. There is no CLI login or model discovery.
+- **Engine block:** a hosted engine is not a `backend:` value. It is selected
+  under `runs.external.claude_managed_agents`.
+- **Per-engine block:** the endpoint, workflow/agent/toolset versions, pinned
+  `self_hosted` environment, forced-egress policy, report-only mode, state
+  directory, and USD 25 daily ledger cap are documented. Token events are
+  metered in `pkg/tokens`; cumulative session list cost, runtime, and web
+  search usage are persisted in the managed-agents ledger. The adapter stops
+  at the ledger cap and the vendor session budget is set to the remaining
+  cents, so the hosted path is not treated as unmetered.
+
 ## Metering coverage and budget-gated hives
 
 Backend support is also a metering contract. Budget gates in `pkg/governor`
@@ -265,6 +466,7 @@ Metered sources today are the scanner and sink implementations in `pkg/tokens`:
 | `copilot_scanner.go` | Copilot CLI `events.jsonl` | Reads `session.shutdown.modelMetrics` and avoids double-counting live proxy captures. |
 | `bob_scanner.go` | Bob CLI chat recordings | Uses Bob's explicit token fields, falling back to content-size estimates only when a recording lacks token data. |
 | `inference_sink.go` | vLLM, llm-d, LiteLLM, live Copilot proxy usage | Hive-written JSONL under the metrics directory. |
+| `managed_agents_ledger.go` | Claude Managed Agents self_hosted sessions | Deduplicates `span.model_request_end` IDs into collector JSONL and persists cumulative USD list cost, active seconds, and web searches with a hard USD 25 daily cap. |
 
 ### Tagging Bob sessions for Bobalytics
 
@@ -336,6 +538,7 @@ agent spend, and the `advisor_records` admin MCP tool.
 | `kilo` | No | n/a | Nothing; reported not active |
 | `muse` | No | n/a | Nothing; reported not active |
 | `openhands` | No | n/a | Nothing; reported not active |
+| `omnigent` | No | n/a | Nothing; reported not active |
 | `vllm` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
 | `llm-d` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |
 | `litellm` | No: inference backend, no turn-end hook | n/a | Nothing; reported not active |

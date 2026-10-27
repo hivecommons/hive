@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/proxy"
 )
 
 func TestAgentRepoScopeRefusal_UsesReposFromAgentSpec(t *testing.T) {

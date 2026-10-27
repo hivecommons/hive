@@ -42,7 +42,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 `issue`):
 
 ```sh
-hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision]
+hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--step-kind release --release-tag <tag> --release-target <sha>]
 hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-on-pr <n>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -65,6 +65,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--release-tag` | — | issue, comment | release tag from the repository's version source |
 | `--release-target` | — | issue, comment | full lowercase 40-character commit SHA for the proposed release |
 | `--needs-decision` | — | issue, comment | park the new issue, or the existing issue being commented on, on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)). On both subcommands a Hive-authored non-risk question is downgraded instead of parked under `project.agent_issue_decision_policy: resolve` (the default); a typed `--step-kind` owner step always parks |
+| `--no-consolidate` | — | issue | requires a non-empty reason; the watcher skips open-issue consolidation (same-subject, file-set and component folds) and files a new issue, echoing the reason as `consolidation_skipped_reason` in the result and logging it. Use it for unrelated work that only shares a file or component with an open issue ([#14360](https://github.com/hivecommons/hive/issues/14360)). The request carries `"no_consolidate_reason"` |
 | `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed. **This is how you test the tool.** A live call creates a real GitHub issue/comment/label change under the hive's App identity |
@@ -589,6 +590,49 @@ overlap — a genuine new defect involving one more file files normally), a
 regression), a rejection older than 30 days, or a hive with no App-bot
 identity all fall through to a normal create.
 
+### Feature requests that already exist are not filed
+
+Rejection dedupe only catches a finding a maintainer has already turned down.
+The fourth failure mode ([#13879](https://github.com/hivecommons/hive/issues/13879))
+is an agent asking for something the hive *already has*: a setting, a merged
+PR, a doc page, a knowledge bead. A person who files such an issue is parked
+on `stage/017-possible-existing` and asked to confirm; a hive agent gets no
+such round trip, so the watcher applies the hive-agent filing rule
+(`priorart.FilingVerdictFor`) **before** creating, with the same searcher and
+`runs.triage.prior_art` settings the park uses:
+
+- **Feature kinds only.** The rule judges requests whose labels (or a leading
+  `[RFC]` / `RFC:` / `Epic:` title tag) name one of `runs.triage.prior_art.kinds`
+  (default `feature`, `rfc`, `epic`, `enhancement`). A request carrying a bug
+  label is never judged, whatever else it carries.
+- **At or above the threshold** (`runs.triage.prior_art.threshold`, default
+  `70`) the create is **refused**: the error names the top match and a
+  `decision` bead is written to the requesting agent's bead store (the
+  scanner's, then the supervisor's, then any store when the agent has none)
+  so the next scan finds the refusal instead of rediscovering the request.
+  The verdict depends only on the match confidence: re-submitting the same
+  request, with or without a gap section, is refused the same way. If the
+  existing item genuinely lacks something, that gap is a *different*,
+  narrower request.
+- **Within 20 points under the threshold** the request is filed **only if its
+  body carries a `## Gap vs existing` heading** (markdown heading or bold line,
+  any case) stating what the existing items do not cover; the watcher then
+  appends a findings note listing the matches to the body. Without the
+  heading the create is refused and the error carries a rendered template of
+  the section to add before re-submitting.
+- **Further under the threshold**, or with no findings at all, the request
+  files unchanged.
+
+Both refusals are **terminal** like the rejection gate: the request is
+consumed, never retried, and the result file is `ok: false` with the reason in
+`error`. There is no structured field for this class — the error text is the
+contract. The refusal is recorded in the audit log as
+`agent_issue_prior_art_refused` with the verdict (`do_not_file` or
+`missing_gap_section`), the match's URL and kind, and the confidence and
+threshold. Setting `runs.triage.prior_art.enabled: false` turns the rule off
+along with the park; until the hive has built its prior-art searcher at boot,
+requests file as before.
+
 ### Findings over the same files are consolidated
 
 Title dedupe also misses the third failure mode
@@ -661,6 +705,24 @@ fold target is still the oldest **open** sibling — a finding is never folded
 into a closed issue — so if every sibling is closed the finding files
 normally. Issues closed as `not_planned` or `duplicate` never count: they are
 the rejected-twin gate's evidence, not a sign of a stream.
+
+### Parked and other-lane issues never take a fold
+
+An open issue parked on a maintainer decision (`stage/045-needs-decision`,
+the hive's configured needs-decision label, or any other parking label) or
+carrying a different `agent/<lane>` label than the requester's is not a fold
+target ([#14360](https://github.com/hivecommons/hive/issues/14360)): an
+outreach issue asking an admin to edit repository topics cites the files it
+describes, but no PR closes it, so a code-change finding folded there is never
+worked. Such an issue is skipped for the exact file-set twin and the
+same-component fold, and does not count toward the component threshold; the
+finding files normally unless an eligible sibling matches. An exact or
+canonical title match is unaffected.
+
+Every consolidated result also carries `consolidated_reason`: `subject` (a
+canonical title match on a human-filed issue), `file_set` (an exact file-set
+twin) or `component:<path>` (a same-component fold on `<path>`), so the agent
+can tell a true twin from a shared-path fold.
 
 ### Unattended comments are rate-limited per issue
 

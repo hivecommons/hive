@@ -21,7 +21,7 @@ src/scripts/check-suid-contract.sh   @clubanderson @hanthor @Danathar
 src/deploy/**                        @clubanderson @hanthor @Danathar
 
 # Egress proxy policy and GitHub API mediation
-src/pkg/proxy/**                     @clubanderson @hanthor @Danathar
+src/crux/proxy/**                    @clubanderson @hanthor @Danathar
 
 # Hub key, cookie, impersonation, OAuth, SSO, and session machinery
 src/pkg/hub/*key*.go                 @clubanderson @hanthor @Danathar

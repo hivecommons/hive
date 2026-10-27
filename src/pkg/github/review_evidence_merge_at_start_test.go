@@ -1,6 +1,7 @@
 package github
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -39,8 +40,8 @@ func TestUpsertReviewEvidenceRecordsMergeAlreadyOnPR(t *testing.T) {
 		t.Fatal("merge not recorded on bundle started after the PR merged")
 	}
 	want := evidence.MergeEvent{Actor: "hive[bot]", Method: reviewEvidenceMergeObservedMethod, At: mergedAt, SHA: "mergesha", OpenedAt: opened}
-	if *b.Merge != want {
-		t.Errorf("merge = %+v, want %+v", *b.Merge, want)
+	if got := *b.Merge; got.Actor != want.Actor || got.Method != want.Method || !got.At.Equal(want.At) || got.SHA != want.SHA || !got.OpenedAt.Equal(want.OpenedAt) || len(got.IssueAuthors) != 0 {
+		t.Errorf("merge = %+v, want %+v", got, want)
 	}
 	if b.Validate() != nil {
 		t.Errorf("bundle does not validate: %v", b.Validate())
@@ -78,7 +79,7 @@ func TestReviewEvidenceMergeFromPRFallbacks(t *testing.T) {
 	}
 	m := reviewEvidenceMergeFromPR(&gh.PullRequest{Merged: gh.Ptr(true)}, "h1", now)
 	want := evidence.MergeEvent{Actor: reviewEvidenceMergeObservedMethod, Method: reviewEvidenceMergeObservedMethod, At: now, SHA: "h1"}
-	if m == nil || *m != want {
+	if m == nil || !reflect.DeepEqual(*m, want) {
 		t.Errorf("sparse merged PR: got %+v, want %+v", m, want)
 	}
 	// opened_at after the merge (clock skew) is dropped, not recorded negative.

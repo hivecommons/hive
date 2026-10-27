@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -135,9 +135,9 @@ func (s *Server) resolveLinearSessionAgent() (string, error) {
 	}
 	writer := ""
 	for name, ac := range cfg.EnabledAgents() {
-		mode, ok := agent.ParseAgentMode(ac.Mode)
+		mode, ok := crux.ParseAgentMode(ac.Mode)
 		if !ok {
-			mode = agent.DefaultAgentMode(name, level)
+			mode = crux.DefaultAgentMode(name, level)
 		}
 		if !mode.CanCreateIssues() {
 			continue

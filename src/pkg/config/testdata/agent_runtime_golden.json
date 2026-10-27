@@ -76,7 +76,7 @@
       "kick_template": "Supervise {{.Repo}}",
       "include_repos": true,
       "bead_role": "supervisor",
-      "mode": "full-autonomy",
+      "mode": "autonomous",
       "explain_mode": "brief",
       "sandbox": {
         "enabled": true,
@@ -197,7 +197,8 @@
           "AfterOffline": "",
           "AfterUnregistered": "",
           "InPlace": null,
-          "StrictAttribution": null
+          "StrictAttribution": null,
+          "AutoMerge": null
         },
         "Stalled": {
           "RequireQuiet": null
@@ -715,6 +716,9 @@
       },
       "vibe_kanban": {
         "enabled": false
+      },
+      "claude_managed_agents": {
+        "enabled": false
       }
     }
   },
@@ -736,6 +740,12 @@
     "trusted_authors": {},
     "contributor_lane": {},
     "contributor_tier": {}
+  },
+  "decisions": {
+    "delegate": {}
+  },
+  "chat": {
+    "grounded_answers": {}
   },
   "duplicate_sweep": {},
   "good_first_issue": {},

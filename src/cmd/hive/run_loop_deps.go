@@ -4,7 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -55,7 +56,7 @@ type runLoopDeps struct {
 	runRotation    func(b *boot)
 	runSweeps      func(b *boot)
 	persist        func(b *boot)
-	restartCrashed func(ctx context.Context, mgr *agent.Manager) []string
+	restartCrashed func(ctx context.Context, mgr crux.Runtime) []string
 }
 
 func defaultRunLoopDeps() runLoopDeps {
@@ -94,6 +95,7 @@ func defaultRunLoopDeps() runLoopDeps {
 				runSupersessionSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSupersessionSweep, b.logger)
 				runSharedCIRerunSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSharedCIRerunSweep, b.logger)
 				runRedMainSweepIfDue(b.ctx, b.ghClient, &b.lastRedMainSweep, b.logger)
+				runBlockedIssuesSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastBlockedIssuesSweep, b.logger)
 			}
 			if decision.SkipOptional {
 				return
@@ -113,6 +115,6 @@ func defaultRunLoopDeps() runLoopDeps {
 		persist: func(b *boot) {
 			persistState(b.agentMgr, b.gov, b.cfg, spokeStatePath, b.logger, b.dashSrv, b.wd)
 		},
-		restartCrashed: func(ctx context.Context, mgr *agent.Manager) []string { return mgr.CheckAndRestartCrashedAgents(ctx) },
+		restartCrashed: func(ctx context.Context, mgr crux.Runtime) []string { return mgr.CheckAndRestartCrashedAgents(ctx) },
 	}
 }

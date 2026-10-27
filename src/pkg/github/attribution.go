@@ -38,6 +38,13 @@ const (
 	// not-planned/duplicate (#6463). Audited so the suppression is visible to
 	// operators — a silent gate would be indistinguishable from a lost finding.
 	AuditActionAgentIssueRejectedDuplicate = "agent_issue_rejected_duplicate"
+	// AuditActionAgentIssuePriorArtRefused is the audit action recorded when
+	// the issue-request watcher REFUSES a create under the prior-art filing
+	// verdict (hivecommons/hive#13879): either the request matches existing
+	// work at or above the gate threshold, or a medium match lacks the
+	// required "Gap vs existing" section. The detail names the match so the
+	// refusal is visible to operators, not just in the agent's bead store.
+	AuditActionAgentIssuePriorArtRefused = "agent_issue_prior_art_refused"
 	// AuditActionHiveIssueCreated is the audit action recorded when the hive
 	// itself creates an issue (advisory issue, ACMM-gap issue).
 	AuditActionHiveIssueCreated = "hive_issue_created"
@@ -132,6 +139,10 @@ const (
 	// MergePR from the hive-merge relay, or a PR close from the issue-request
 	// watcher.
 	PRAuditPathRelay = "relay"
+	// PRAuditPathForge marks a merge the forge adapter (pkg/forge's GitHub
+	// Merge) carried out through MergePRVia, so forge-driven merges are not
+	// counted as relay merges.
+	PRAuditPathForge = "forge"
 )
 
 // System "agent" names recorded for creations no single coding agent

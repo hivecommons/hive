@@ -105,6 +105,10 @@ project:
 # Hive's contributor docs and issue tracker. URLs must be absolute http(s).
 # Prefer discord.gg invites over discord.com/channels URLs for new contributors.
 # contribute:
+#   # Registration tokens: mandatory lifetime; optional inactivity cutoff.
+#   # Env overrides: HIVE_CONTRIBUTE_TOKEN_MAX_AGE / HIVE_CONTRIBUTE_TOKEN_IDLE_MAX.
+#   token_max_age: 2160h # 90 days (Go durations do not accept days)
+#   token_idle_max: 0s # off
 #   help_links:
 #     - label: Contributor docs
 #       url: https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md
@@ -120,7 +124,7 @@ project:
 #   min_focus_window: 30m
 
 # GitHub App / PR policy. The #5117 self-authorization hold defaults on through
-# ACMM L5 and off at ACMM L6 Fully Autonomous. App-authored PRs whose only
+# ACMM L5 and off at ACMM L6 (Autonomous). App-authored PRs whose only
 # tracked rationale is an unacknowledged hive-filed issue receive `hold` until a
 # human signs off on the direction. Set true to keep that hold at L6; set false
 # below L6 only for hives that are allowed to act on their own findings.
@@ -886,6 +890,32 @@ governor:
 #       endpoint: http://127.0.0.1:8585
 #       workflow_version: flue-fixture/1.0.0
 
+# Private-spoke Claude Managed Agents hosted-execution prototype (#14124).
+# OFF by default. The adapter is linked only with the
+# `extwork_claude_managed_agents` build tag; enabled with no mode is shadow,
+# and only explicit report-only dispatches. The environment must be
+# self_hosted behind forced egress or proxy-only, direct GitHub writes are
+# refused, and the durable ledger caps the spoke at USD 25 per UTC day.
+# API key settings below are references, never key values.
+# runs:
+#   external:
+#     claude_managed_agents:
+#       enabled: false
+#       mode: shadow
+#       endpoint: https://api.anthropic.com
+#       workflow_version: claude-managed/2026-04-01
+#       agent_id: agt_private
+#       agent_version: 1
+#       toolset_version: hive-tools/1
+#       environment_id: env_private
+#       environment_type: self_hosted
+#       network_policy: forced-egress
+#       api_key_env: ANTHROPIC_API_KEY
+#       model: claude-sonnet-4-6
+#       state_dir: /data/extwork/claude-managed-agents
+#       daily_budget_cents: 2500
+#       github_write_path: none
+
 # CEL-based agent triggers — declarative rules that kick an agent directly off
 # a normalized source-control event (issue opened, PR opened, a label applied,
 # a comment posted), evaluated with CEL against the `event` variable. This is
@@ -1090,7 +1120,7 @@ dashboard:
 #   is_public: false
 #   auto_snapshot: true
 #   auto_upgrade: true
-#   upgrade_drain_timeout_s: 2700  # self-upgrade waits up to this long for in-flight agent kicks (new kicks withheld); 0/unset = 45 min, negative disables
+#   upgrade_drain_timeout_s: 2700  # self-upgrade waits up to this long for in-flight agent kicks (new kicks withheld); 0/unset = 45 min, negative disables; a kick unsettled past its agent's continuous_turn_ceiling (default 45m) is treated as wedged and does not hold the drain
 #   task_status_push: true  # HIVE_HUB_TASK_STATUS_PUSH overrides; false stops only the separate task-status loop (restart required)
 #   contribute_labels_mode: deny
 #   contribute_deny_labels: [hold, wontfix]

@@ -4,7 +4,7 @@
 # CWE-250/269).
 #
 # Background. The image needs a SUID `su-exec` so the non-root `dev` process can
-# switch to per-agent UIDs at runtime (pkg/agent/manager.go,
+# switch to per-agent UIDs at runtime (crux/agent/manager.go,
 # pkg/dashboard/workspace_cleanup.go, deploy/ttyd-tmux.sh — all run AFTER the
 # entrypoint's `exec gosu dev`). The original build did
 # `curl .../master/su-exec.c | gcc | chmod u+s`, producing a mode-4755

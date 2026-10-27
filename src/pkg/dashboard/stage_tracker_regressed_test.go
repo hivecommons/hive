@@ -74,16 +74,23 @@ func TestStageTrackerRegressedPillExplainsItself(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
 		jsFunc(t, html, "stageTrackerStageWord"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
+		stageTrackerManualMergeJS(t, html),
 		stageTrackerSentinelJS(t, html),
+		jsConstLine(t, html, "STAGE_TRACKER_ATTENTION_STAGES"),
+		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MODS"),
+		jsConstLine(t, html, "STAGE_TRACKER_HANDLED_TEXT"),
+		jsConstLine(t, html, "STAGE_TRACKER_HANDLED_NOTE"),
+		jsFunc(t, html, "stageTrackerRegressionHandled"),
 		jsFunc(t, html, "stageTrackerRegressionText"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
 	}, "\n") + `
 const item = { stage: 10, modifiers: ['regressed'], regressed_from: 40, regressed_to: 20, regressed_at: '2026-10-22T12:44:59Z', regressed_reason: 'live issue claim' };
 const text = stageTrackerRegressionText(item, 0);
-assert.strictEqual(text, 'regressed: 040 Covered by PR → 020 Claimed at T' + Date.parse(item.regressed_at) + ' because live issue claim · now 010 Actionable');
+// On a hive-driven stage with no human gate the explanation ends with the "no action needed" note.
+assert.strictEqual(text, 'regressed: 040 Covered by PR → 020 Claimed at T' + Date.parse(item.regressed_at) + ' because live issue claim · now 010 Actionable · ' + STAGE_TRACKER_HANDLED_NOTE);
 // No hop detail: falls back to the current stage, no time, no reason.
-assert.strictEqual(stageTrackerRegressionText({ stage: 20, modifiers: ['regressed'], regressed_from: 40 }, 0), 'regressed: 040 Covered by PR → 020 Claimed');
-// Unknown stage numbers still read as codes.
+assert.strictEqual(stageTrackerRegressionText({ stage: 20, modifiers: ['regressed'], regressed_from: 40 }, 0), 'regressed: 040 Covered by PR → 020 Claimed · ' + STAGE_TRACKER_HANDLED_NOTE);
+// Unknown stage numbers still read as codes; 072 is parked on a person, so no note.
 assert.strictEqual(stageTrackerRegressionText({ stage: 72, modifiers: ['regressed'], regressed_from: 100 }, 0), 'regressed: 100 → 072');
 // Not regressed → nothing.
 assert.strictEqual(stageTrackerRegressionText({ stage: 10, modifiers: ['stalled'], regressed_from: 40 }, 0), '');
@@ -93,6 +100,36 @@ const pill = stageTrackerChipsHtml(item);
 assert.ok(pill.includes('title="regressed: 040 Covered by PR → 020 Claimed at T'), pill);
 assert.ok(pill.includes('because live issue claim'), pill);
 assert.ok(!stageTrackerChipsHtml({ stage: 10, modifiers: ['stalled'] }).includes('title='));
+// Hive-handled: muted "stage ↓" pill, never the red regressed look, and it says so on hover.
+const handledCases = [
+  { name: 'actionable', item: item },
+  { name: 'claimed', item: { stage: 20, modifiers: ['regressed'], regressed_from: 30 } },
+  { name: 'pr in progress', item: { stage: 30, modifiers: ['regressed'], regressed_from: 40 } },
+  { name: 'draft folds in', item: { kind: 'pr', stage: 50, modifiers: ['regressed', 'draft'], regressed_from: 100 } },
+];
+for (const c of handledCases) {
+  assert.ok(stageTrackerRegressionHandled(c.item), c.name);
+  const h = stageTrackerChipsHtml(c.item);
+  assert.ok(h.includes(STAGE_TRACKER_HANDLED_NOTE), c.name + ': ' + h);
+  if (c.item.modifiers.length === 1) {
+    assert.ok(h.includes('ham-mod-regressed ham-mod-handled') && h.includes('>' + STAGE_TRACKER_HANDLED_TEXT + '<'), c.name + ': ' + h);
+  } else {
+    assert.ok(!h.includes('ham-mod-regressed') && h.includes('ham-mod-draft') && h.includes(' +1<'), c.name + ' yields the lead pill: ' + h);
+  }
+}
+// A human gate keeps the red "regressed" pill: a human-gated stage or a human-call modifier.
+const redCases = [
+  { name: 'needs decision stage', item: { stage: 85, modifiers: ['regressed'], regressed_from: 100 } },
+  { name: 'returned to contributor', item: { stage: 72, modifiers: ['regressed'], regressed_from: 100 } },
+  { name: 'needs-rebase alongside', item: { kind: 'pr', stage: 70, modifiers: ['regressed', 'needs-rebase'], regressed_from: 100 } },
+  { name: 'hold alongside', item: { stage: 10, modifiers: ['regressed', 'hold'], regressed_from: 40 } },
+];
+for (const c of redCases) {
+  assert.ok(!stageTrackerRegressionHandled(c.item), c.name);
+  const h = stageTrackerChipsHtml(c.item);
+  assert.ok(h.includes('ham-mod-regressed') && !h.includes('ham-mod-handled') && h.includes('>regressed'), c.name + ': ' + h);
+  assert.ok(!h.includes(STAGE_TRACKER_HANDLED_NOTE), c.name + ': ' + h);
+}
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
@@ -893,5 +894,70 @@ func TestHubSelfReportIngestLegacyStandaloneJoinsFingerprintMatch(t *testing.T) 
 	}
 	if strings.Contains(strings.Join(*paths, ","), "POST /repos/hivecommons/hive/issues,") || strings.HasSuffix(strings.Join(*paths, ","), "POST /repos/hivecommons/hive/issues") {
 		t.Fatalf("legacy report created an issue: %v", *paths)
+	}
+}
+
+// selfReportClosedGitHubScript answers the fingerprint search with a single
+// closed issue closed at the given time, then counts creates.
+func selfReportClosedGitHubScript(closedAt time.Time) (http.HandlerFunc, *[]string) {
+	var mu sync.Mutex
+	var paths []string
+	return func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.URL.Path == "/search/issues":
+			if strings.Contains(r.URL.RawQuery, "is%3Aopen") {
+				http.Error(w, "fingerprint search must not be limited to open issues", http.StatusTeapot)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"number": 14256, "state": "closed", "closed_at": closedAt.UTC().Format(time.RFC3339),
+				"html_url": "https://github.com/hivecommons/hive/issues/14256",
+				"body":     "<!-- hive-fleet-fingerprint:abc123 -->\nbody",
+			}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 43, "html_url": "https://github.com/hivecommons/hive/issues/43"})
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusTeapot)
+		}
+	}, &paths
+}
+
+// The relay used to search open issues only, so a maintainer closing a
+// selfreport was followed by a brand-new issue on the next relayed report
+// (#14256 → #14255 → #14270 …). A recently closed fingerprint now answers
+// closed_upstream with no GitHub write so the spoke records the close.
+func TestHubSelfReportIngestHonoursRecentClose(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths := selfReportClosedGitHubScript(time.Now().Add(-2 * time.Hour))
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	rec := selfReportIngest(s, selfReportValidBody, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !out.OK || out.Number != 14256 || out.Reason != "closed_upstream" || out.ClosedAt.IsZero() {
+		t.Fatalf("response = %s (%v)", rec.Body.String(), err)
+	}
+	if strings.Join(*paths, ",") != "GET /search/issues" {
+		t.Fatalf("github calls = %v (a closed match must not create or comment)", *paths)
+	}
+}
+
+func TestHubSelfReportIngestRefilesAfterClosedCooldown(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths := selfReportClosedGitHubScript(time.Now().Add(-selfReportClosedCooldown - 24*time.Hour))
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	rec := selfReportIngest(s, selfReportValidBody, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Join(*paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues" {
+		t.Fatalf("github calls = %v", *paths)
 	}
 }

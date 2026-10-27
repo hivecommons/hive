@@ -7,9 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/snapshot"
 )
 
@@ -84,7 +83,7 @@ func pausedRestoreDetail(enabled map[string]config.AgentConfig, onDemandFromPack
 	return detail
 }
 
-func restoreAgentRuntimeState(saved *snapshot.PersistedState, cfg *config.Config, agentMgr *agent.Manager, logger *slog.Logger) {
+func restoreAgentRuntimeState(saved *snapshot.PersistedState, cfg *config.Config, agentMgr crux.Runtime, logger *slog.Logger) {
 	for name, as := range saved.Agents {
 		if _, inConfig := cfg.Agents[name]; !inConfig {
 			logger.Info("skipping saved state for agent not in config", "agent", name)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -57,7 +57,7 @@ func hookDispatcher() *hooks.Dispatcher {
 // than a silent no-op.
 type hookSinks struct {
 	Notifier  *notify.Notifier
-	AgentMgr  *agent.Manager
+	AgentMgr  crux.Runtime
 	Timeline  *timeline.Store
 	Audit     hooks.AuditSink
 	Approvals hooks.ApprovalQueue // #4000; nil until that RFC lands
@@ -185,11 +185,11 @@ func installGovernorModeChangeEmitter(gov *governor.Governor) {
 	})
 }
 
-func installAgentPauseEmitter(mgr *agent.Manager) {
+func installAgentPauseEmitter(mgr crux.Host) {
 	if mgr == nil {
 		return
 	}
-	mgr.SetPauseTransitionObserver(func(event agent.PauseTransitionEvent) {
+	mgr.SetPauseTransitionObserver(func(event crux.PauseTransitionEvent) {
 		emitAgentPauseEscalation(event)
 		transition := hooks.TransitionAgentResumed
 		if event.Paused {
@@ -266,7 +266,7 @@ func hookPauseTriggerFor(cause hooks.Causation) string {
 // pauserAdapter routes the pause action through the AUDITED agent-manager
 // pause — the same entry point the dashboard's pause button uses. It never
 // writes the paused flag directly.
-type pauserAdapter struct{ mgr *agent.Manager }
+type pauserAdapter struct{ mgr crux.Runtime }
 
 func (a *pauserAdapter) PauseAgent(ctx context.Context, agentName, reason string, cause hooks.Causation) error {
 	if a == nil || a.mgr == nil {
@@ -291,14 +291,14 @@ func (a *pauserAdapter) PauseAgent(ctx context.Context, agentName, reason string
 	// identity is the HOOK, not a person — PauseBy's contract is "never
 	// fabricate" a human actor, so hookPauseActor is an explicitly
 	// non-human identity that cannot be mistaken for a dashboard user.
-	return a.mgr.PauseByCause(agentName, hookPauseTriggerFor(cause), reason, hookPauseActor(cause), agent.PauseCausation{
+	return a.mgr.PauseByCause(agentName, hookPauseTriggerFor(cause), reason, hookPauseActor(cause), crux.PauseCausation{
 		Depth:            cause.Depth,
 		HookName:         cause.HookName,
 		OriginTransition: string(cause.OriginTransition),
 	})
 }
 
-type kickerAdapter struct{ mgr *agent.Manager }
+type kickerAdapter struct{ mgr crux.Runtime }
 
 func (a *kickerAdapter) Kick(agentName, reason string) error {
 	if a == nil || a.mgr == nil {

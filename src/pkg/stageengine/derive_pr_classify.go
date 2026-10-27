@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/cistatus"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -58,6 +59,7 @@ const (
 	contributorLaneReasonWorkflowPath      = prstage.ContributorLaneReasonWorkflowPath
 	stageLaneContributor                   = prstage.StageLaneContributor
 	stageLaneSelf                          = prstage.StageLaneSelf
+	trustedAuthorReasonAppAuthored         = prstage.TrustedAuthorReasonAppAuthored
 	stageLaneTrusted                       = prstage.StageLaneTrusted
 	stageReasonBaseBranchRed               = prstage.StageReasonBaseBranchRed
 	stageReasonForkGuard                   = prstage.StageReasonForkGuard
@@ -97,7 +99,7 @@ func ClassifyCIReason(reason string) CIReasonKind {
 	switch {
 	case reason == "":
 		return CIReasonNone
-	case commitCIReasonIsPending(reason), reason == "ci-unverified", reason == "check-pending",
+	case cistatus.ReasonIsPending(reason), reason == "ci-unverified", reason == "check-pending",
 		strings.HasPrefix(reason, "required-check-pending:"), CiReasonInconclusive(reason):
 		return CIReasonPending
 	case strings.HasPrefix(reason, "required-check-failing:"), strings.HasPrefix(reason, "check-failing:"),
@@ -190,7 +192,7 @@ func StageHumanApprovalReason(d stageDetail, head string) string {
 // stageHandoffReasons are reasons that mean "not this lane's PR".
 var stageHandoffReasons = map[string]bool{
 	"not-app-authored": true, trustedBotLaneSkipReason: true, "repo-auto-merge-disabled": true,
-	contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
+	trustedAuthorReasonAppAuthored: true, contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
 	"fetch-pr": true, "fetch-pr-recheck": true,
 }
 
@@ -582,8 +584,4 @@ func SharedCIDeferredStage(o stageObservation) (stageVerdict, bool) {
 		stage = stagelabels.Reviewed
 	}
 	return stageVerdict{Stage: stage, Rank: stageRankOwned, Reason: stageReasonSharedCIIncident + strconv.Itoa(o.SharedCIIncident)}, true
-}
-
-func commitCIReasonIsPending(reason string) bool {
-	return strings.HasSuffix(reason, "-pending") || strings.HasPrefix(reason, "pending: ") || strings.HasPrefix(reason, "required-check-missing:")
 }

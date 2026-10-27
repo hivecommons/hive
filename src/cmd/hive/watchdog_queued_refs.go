@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // watchdogQueuedRefs names up to limit items of the actionable queue the

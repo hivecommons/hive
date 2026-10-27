@@ -378,21 +378,28 @@ func TestHandleReviewEvidenceZipCarriesPublicKey(t *testing.T) {
 	}
 
 	for _, tt := range []struct {
-		name     string
-		keyFile  string
-		wantKey  string
-		wantNote bool
+		name      string
+		keyFile   string
+		wantCode  int
+		wantKey   string
+		wantError string
 	}{
-		{name: "configured key", keyFile: keyFile, wantKey: hex.EncodeToString(priv.Public().(ed25519.PublicKey))},
-		{name: "no key configured", keyFile: ""},
-		{name: "unreadable key", keyFile: badKey, wantNote: true},
+		{name: "configured key", keyFile: keyFile, wantCode: http.StatusOK, wantKey: hex.EncodeToString(priv.Public().(ed25519.PublicKey))},
+		{name: "no key configured", wantCode: http.StatusInternalServerError, wantError: "without the signing key"},
+		{name: "unreadable key", keyFile: badKey, wantCode: http.StatusInternalServerError, wantError: "verification unavailable"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s := NewServer(0, slog.Default())
 			s.deps = &Dependencies{Config: &config.Config{Evidence: config.EvidenceConfig{SigningKeyFile: tt.keyFile}}, Logger: slog.Default()}
 			w := reviewEvidenceRequest(t, s.handleReviewEvidence, config.RoleOwner, "/api/review/evidence?repo=acme/widget&number=7&format=zip")
-			if w.Code != http.StatusOK {
-				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			if w.Code != tt.wantCode {
+				t.Fatalf("status %d, want %d: %s", w.Code, tt.wantCode, w.Body.String())
+			}
+			if tt.wantError != "" {
+				if !strings.Contains(w.Body.String(), tt.wantError) {
+					t.Fatalf("body %s, want %q", w.Body.String(), tt.wantError)
+				}
+				return
 			}
 			var manifest reviewEvidenceManifest
 			if err := json.Unmarshal(readEvidenceZip(t, w.Body.Bytes())["acme-widget-7-aaaaaaa1/manifest.json"], &manifest); err != nil {
@@ -401,13 +408,61 @@ func TestHandleReviewEvidenceZipCarriesPublicKey(t *testing.T) {
 			if manifest.PublicKey != tt.wantKey || !manifest.Signed {
 				t.Fatalf("manifest key %q signed %v, want %q", manifest.PublicKey, manifest.Signed, tt.wantKey)
 			}
-			hasNote := false
-			for _, n := range manifest.Notes {
-				hasNote = hasNote || strings.HasPrefix(n, "public_key omitted")
-			}
-			if hasNote != tt.wantNote {
-				t.Fatalf("notes = %v", manifest.Notes)
-			}
 		})
+	}
+}
+
+func TestReviewEvidenceAPIsRejectTamperedSignedBundle(t *testing.T) {
+	dir := reviewEvidenceTestEnv(t)
+	created := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	priv := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	b := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion, ID: evidence.BundleID("acme/widget", 7, "aaaaaaa1"),
+		Repo: "acme/widget", Number: 7, Author: evidence.Author{Login: "alice", Kind: evidence.AuthorHuman},
+		BaseSHA: "base000", HeadSHA: "aaaaaaa1", CreatedAt: created, UpdatedAt: created,
+	}
+	if err := evidence.Sign(b, priv); err != nil {
+		t.Fatal(err)
+	}
+	path := ghpkg.ReviewEvidencePath("", "acme/widget", 7, b.HeadSHA)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "signing.key")
+	if err := os.WriteFile(keyFile, []byte(hex.EncodeToString(make([]byte, ed25519.SeedSize))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(0, slog.Default())
+	s.deps = &Dependencies{Config: &config.Config{Evidence: config.EvidenceConfig{SigningKeyFile: keyFile}}, Logger: slog.Default()}
+	writeBundle := func() {
+		t.Helper()
+		data, err := json.Marshal(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBundle()
+	if w := reviewEvidenceRequest(t, s.handleReviewEvidence, config.RoleOwner, "/api/review/evidence?repo=acme/widget&number=7"); w.Code != http.StatusOK {
+		t.Fatalf("valid bundle status %d: %s", w.Code, w.Body.String())
+	}
+
+	b.Author.Login = "mallory"
+	writeBundle()
+	for _, handler := range []http.HandlerFunc{s.handleReviewEvidence, s.handleReviewEvidenceList} {
+		w := reviewEvidenceRequest(t, handler, config.RoleOwner, "/api/review/evidence?repo=acme/widget&number=7")
+		if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "hash mismatch") {
+			t.Fatalf("tampered bundle status %d body %s", w.Code, w.Body.String())
+		}
+	}
+	verifier, err := s.reviewEvidenceVerifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundles, unreadable, err := loadEvidenceBundles(filepath.Join(dir, "evidence"), verifier)
+	if err != nil || len(bundles) != 0 || unreadable != 1 {
+		t.Fatalf("dashboard aggregate loaded tampered bundle: bundles=%d unreadable=%d err=%v", len(bundles), unreadable, err)
 	}
 }

@@ -1042,7 +1042,7 @@
           </div>
           <div class="install-step">
             <span>3</span>
-            <div><h3>Choose your autonomy level</h3><p style="font-size:.88rem">Pick an ACMM level from L1 Inception to L6 Fully Autonomous. Start conservative, upgrade anytime.</p></div>
+            <div><h3>Choose your autonomy level</h3><p style="font-size:.88rem">Pick an ACMM level from L1 Inception to L6 Autonomous. Start conservative, upgrade anytime.</p></div>
           </div>
           <div class="install-step">
             <span>4</span>
@@ -1201,7 +1201,7 @@
 
         <section class="hv-integration-group" aria-labelledby="agent-cli-title">
           <h3 id="agent-cli-title">Agent CLIs by support tier</h3>
-          <p class="muted">T1 core: claude, litellm, copilot, codex, goose. T2 supported local path: claude/litellm, codex, copilot, muse, opencode. T3 experimental: goose local, agy, bob, pi, aider, kilo, omp, openhands. Gemini is Go-side only.</p>
+          <p class="muted">T1 core: claude, litellm, copilot, codex, goose. T2 supported local path: claude/litellm, codex, copilot, muse, opencode. T3 experimental: goose local, agy, bob, pi, aider, kilo, omp, openhands, omnigent. Gemini is Go-side only.</p>
           <ul class="hv-infra-logo-row" aria-label="Supported agent CLI backends">
             <li><a class="hv-infra-logo-chip" href="https://www.anthropic.com/claude-code" aria-label="Claude Code by Anthropic, backend claude">
               <img src="/static/integrations/claude.svg" alt="Claude Code by Anthropic" loading="lazy" decoding="async">
@@ -1261,6 +1261,9 @@
             <li><a class="hv-infra-logo-chip" href="https://github.com/OpenHands/OpenHands" aria-label="OpenHands CLI, backend openhands, new experimental">
               <img src="/static/integrations/openhands.svg" alt="OpenHands agent CLI" loading="lazy" decoding="async">
               <span><span class="hv-infra-logo-label">OpenHands</span><span class="hv-infra-logo-note">new experimental · backend: openhands · headless-only</span></span>
+            </a></li>
+            <li><a class="hv-infra-logo-chip" href="https://github.com/omnigent-ai/omnigent" aria-label="Omnigent CLI, backend omnigent, experimental meta-harness">
+              <span><span class="hv-infra-logo-label">Omnigent</span><span class="hv-infra-logo-note">experimental meta-harness · backend: omnigent</span></span>
             </a></li>
           </ul>
         </section>
@@ -1388,14 +1391,14 @@
     }
 
     function acmmBadge(level) {
-      var names = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
+      var names = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Autonomous'};
       var tips = {
         1:'L1 Inception — Advisory only. Agents suggest but take no action.',
         2:'L2 Advisory — Advisory beads only, no provider writes.',
         3:'L3 Quality-Gated — Quality agent opens hold-gated test PRs. CI gates.',
         4:'L4 Security-Aware — Agents open issues, sec-check joins. Still hold-gated.',
         5:'L5 Semi-Autonomous — PRs carry a hold label, batch-reviewed by humans.',
-        6:'L6 Fully Autonomous — auto-merge when checks pass.'
+        6:'L6 Autonomous — auto-merge when checks pass.'
       };
       return '<span class="acmm-badge acmm-' + level + '" title="' + esc(tips[level] || '') + '">L' + level + ' ' + esc(names[level] || '') + '</span>';
     }

@@ -1,0 +1,1 @@
+- review evidence: upserts to a PR's evidence bundle now take a cross-process file lock so hub and agent writers no longer lose verdicts (#13911).

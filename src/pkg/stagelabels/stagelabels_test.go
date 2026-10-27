@@ -294,6 +294,50 @@ func TestPlanIdempotentExclusiveAndStaleRemoval(t *testing.T) {
 	}
 }
 
+func TestPlanCaseInsensitiveMatching(t *testing.T) {
+	// Test that Plan recognizes mis-cased stage labels.
+	want := Desired{Stage: ReviewPending, Role: RoleContributor}
+	add, remove := Plan([]string{"bug", "STAGE/050-REVIEW-PENDING", "role/contributor"}, want)
+	if len(add)+len(remove) != 0 {
+		t.Fatalf("mis-cased stage label should be recognized: add=%v remove=%v", add, remove)
+	}
+
+	// Test that Plan removes a mis-cased label and adds the canonical form.
+	add, remove = Plan([]string{"bug", "STAGE/070-FIXING"}, Desired{Stage: ReviewPending})
+	if !reflect.DeepEqual(remove, []string{"STAGE/070-FIXING"}) {
+		t.Fatalf("mis-cased stage/070-fixing should be removed: remove=%v", remove)
+	}
+	if !reflect.DeepEqual(add, []string{"stage/050-review-pending"}) {
+		t.Fatalf("canonical stage should be added: add=%v", add)
+	}
+
+	// A mixed-case configured author/<kind> name already on the item must be
+	// matched (no churn), and when missing must be added with its configured
+	// spelling.
+	names := authorkind.Names{Human: "author/Human"}
+	add, remove = Plan([]string{"bug", "author/Human", "stage/050-review-pending"},
+		Desired{Stage: ReviewPending, Kind: authorkind.Human, KindLabels: names})
+	if len(add)+len(remove) != 0 {
+		t.Fatalf("configured mixed-case author label should be idempotent: add=%v remove=%v", add, remove)
+	}
+	add, remove = Plan([]string{"bug", "stage/050-review-pending"},
+		Desired{Stage: ReviewPending, Kind: authorkind.Human, KindLabels: names})
+	if !reflect.DeepEqual(add, []string{"author/Human"}) || len(remove) != 0 {
+		t.Fatalf("configured author label should be added verbatim: add=%v remove=%v", add, remove)
+	}
+
+	// Test that Owned recognizes mis-cased labels.
+	if !Owned("STAGE/010-ACTIONABLE") || !Owned("ROLE/TRUSTED") || !Owned("AUTHOR/HUMAN") {
+		t.Fatal("Owned should recognize mis-cased labels")
+	}
+
+	// Test that Current recognizes mis-cased labels.
+	cur := Current([]string{"STAGE/030-PR-IN-PROGRESS"})
+	if cur != PRInProgress {
+		t.Fatalf("Current should recognize mis-cased labels: got %v want %v", cur, PRInProgress)
+	}
+}
+
 func TestStoreObserveRegressRecoverAndStalled(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
@@ -342,9 +386,14 @@ func TestStoreObserveRegressRecoverAndStalled(t *testing.T) {
 		t.Fatalf("second fall: tr=%+v rec=%+v", tr, rec)
 	}
 	// Red CI then a fixed head back to review is the repair route: the
-	// move to fixing regresses, leaving fixing for review does not.
-	if tr = st.Observe(key, Fixing, "check-failing:unit"); tr.Regressed || tr.Recovered {
-		t.Fatalf("50→70 is forward: %+v", tr)
+	// move to fixing is forward (and, being a forward step, resolves the
+	// open regression — the badge comes off as soon as the item moves on),
+	// leaving fixing for review does not regress.
+	if tr = st.Observe(key, Fixing, "check-failing:unit"); tr.Regressed || !tr.Recovered {
+		t.Fatalf("50→70 is forward and resolves the regression: %+v", tr)
+	}
+	if rec, _ = st.Get(key); rec.Regressed() {
+		t.Fatalf("forward step must clear the regression: %+v", rec)
 	}
 	if tr = st.Observe(key, ReviewPending, "check-pending"); tr.Regressed || tr.Recovered {
 		t.Fatalf("fixing→review-pending must not regress: %+v", tr)
@@ -364,13 +413,20 @@ func TestStoreObserveRegressRecoverAndStalled(t *testing.T) {
 			}
 		}
 	}
-	if tr = st.Observe(key, Reviewed, "y"); tr.Recovered {
-		t.Fatal("not yet back to the regressed-from stage")
+	// Fall again from 100 so a plain forward step can be watched clearing
+	// it: 050 → 060 is not back at the high-water mark but it is moving
+	// ahead, and that is enough.
+	st.Observe(key, MergeQueue, "soaking")
+	if tr = st.Observe(key, ReviewPending, "head-changed"); !tr.Regressed {
+		t.Fatalf("fall again: %+v", tr)
 	}
-	tr = st.Observe(key, MergeQueue, "z")
+	tr = st.Observe(key, Reviewed, "y")
 	rec, _ = st.Get(key)
 	if !tr.Recovered || rec.Regressed() {
-		t.Fatalf("recovery: tr=%+v rec=%+v", tr, rec)
+		t.Fatalf("first forward step must resolve the regression: tr=%+v rec=%+v", tr, rec)
+	}
+	if tr = st.Observe(key, MergeQueue, "z"); tr.Recovered || tr.Regressed {
+		t.Fatalf("nothing left to recover: %+v", tr)
 	}
 	tr = st.Observe(key, None, "")
 	if _, ok := st.Get(key); ok || tr.Prev != MergeQueue {
@@ -1362,10 +1418,13 @@ func TestTriageNeededStage(t *testing.T) {
 	if IsRegression(Actionable, TriageNeeded) {
 		t.Fatal("010 → 015 is forward")
 	}
-	for _, from := range []Stage{Claimed, PRInProgress, CoveredByPR} {
+	for _, from := range []Stage{PRInProgress, CoveredByPR} {
 		if !IsRegression(from, TriageNeeded) {
 			t.Errorf("%v → 015 must be a regression, like → 010", from)
 		}
+	}
+	if IsRegression(Claimed, TriageNeeded) {
+		t.Fatal("020 → 015 is a lapsed reservation, not a regression (like → 010)")
 	}
 	if IsRegression(IssueNeedsDecision, TriageNeeded) {
 		t.Fatal("un-parking 045 → 015 is not a step back")
@@ -1436,5 +1495,50 @@ func TestLabelNormalisationConsistency(t *testing.T) {
 				t.Errorf("IssueCoveredByPR(%v) = %v, want %v", tt.labels, gotCovered, tt.wantCovered)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#14471: the supersession mark and the poll gate it closes.
+func TestStoreMarkSupersededAndPollDue(t *testing.T) {
+	now := time.Date(2026, 10, 26, 22, 0, 0, 0, time.UTC)
+	s := NewStore("", func() time.Time { return now })
+	key := Key("acme/widget", 7)
+	s.Observe(key, ReturnedToContributor, "check-failing:unit")
+	r, _ := s.Get(key)
+	if r.SupersederPollDue(now, 10*time.Minute) {
+		t.Fatal("poll due with no superseder on record")
+	}
+	s.MarkAdopted(key, "a", 90, now)
+	r, _ = s.Get(key)
+	if !r.SupersederPollDue(now.Add(10*time.Minute), 10*time.Minute) || r.SupersederPollDue(now.Add(time.Minute), 10*time.Minute) {
+		t.Fatalf("poll gate: %+v", r)
+	}
+	s.MarkSuperseded(key, 90, true, now)
+	r, _ = s.Get(key)
+	if !r.Superseded() || r.SupersededBy != 90 || !r.SupersededOpen || !r.SupersededAt.Equal(now) {
+		t.Fatalf("superseded open: %+v", r)
+	}
+	if r.SupersederPollDue(now.Add(time.Hour), 10*time.Minute) {
+		t.Fatal("poll due after supersession")
+	}
+	// The close succeeding later flips open off without moving the clock.
+	s.MarkSuperseded(key, 90, false, now.Add(time.Minute))
+	r, _ = s.Get(key)
+	if r.SupersededOpen || !r.SupersededAt.Equal(now) {
+		t.Fatalf("superseded closed: %+v", r)
+	}
+	s.MarkSupersederMergedNoted(key, "b")
+	r, _ = s.Get(key)
+	if r.SupersederMergedNotedHead != "b" {
+		t.Fatalf("noted head: %+v", r)
+	}
+	s.ClearAdoption(key)
+	r, _ = s.Get(key)
+	if r.Superseded() || r.SupersederMergedNotedHead != "" || r.SupersededOpen {
+		t.Fatalf("ClearAdoption kept supersession: %+v", r)
+	}
+	s.MarkSuperseded(key, 0, false, now)
+	if r, _ = s.Get(key); r.Superseded() {
+		t.Fatal("MarkSuperseded accepted PR 0")
 	}
 }

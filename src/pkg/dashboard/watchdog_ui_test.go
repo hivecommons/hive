@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
 // ── RFC #4665: watchdog settings on the Health tab + observed conditions ──────

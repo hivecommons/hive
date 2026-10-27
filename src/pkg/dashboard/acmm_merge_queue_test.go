@@ -314,7 +314,7 @@ func TestACMMMergeQueueCredit_NilGuards(t *testing.T) {
 // acmmOrgMergeQueueGolden is the merge-queue gap ticket body as filed before
 // #10891. Organization repositories must keep it byte for byte (AC32).
 const acmmOrgMergeQueueGolden = "## ACMM Gap: Merge queue\n\n" +
-	"**Level:** L6 Fully Autonomous\n" +
+	"**Level:** L6 Autonomous\n" +
 	"**Category:** autonomy\n" +
 	"**Criterion ID:** `acmm:merge-queue`\n\n" +
 	"### What's needed\n\n" +
@@ -323,7 +323,7 @@ const acmmOrgMergeQueueGolden = "## ACMM Gap: Merge queue\n\n" +
 	"- `.github/merge-queue.yml`\n" +
 	"- `.prow.yaml`\n" +
 	"- `tide.yaml`\n\n" +
-	"Adding any one of these will satisfy this criterion and help the repository advance to ACMM Level 6 (Fully Autonomous).\n\n" +
+	"Adding any one of these will satisfy this criterion and help the repository advance to ACMM Level 6 (Autonomous).\n\n" +
 	"### Why it matters\n\n" +
 	"Autonomy criteria enable agents to operate independently — generating issues, orchestrating multi-agent workflows, and managing merge queues.\n\n" +
 	"### How to fix\n\n" +

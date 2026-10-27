@@ -16,7 +16,7 @@
 # forge-resistance as the gh wrapper; this shim adds no privilege.
 #
 # Usage (drop-in for the common gh shapes):
-#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision]
+#   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision] [--no-consolidate <reason>]
 #   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-on-pr <n>]
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
@@ -55,6 +55,11 @@
 # the body. Either shape tags the text so the notice offers /hive done; the
 # owner's /hive done reply records the done decision, and the lane that next
 # picks the issue up re-checks the step and closes it once verified.
+#
+# --no-consolidate <reason> (issue only) asks the watcher not to fold this
+# request into an existing open issue (hivecommons/hive#14360); use it when the
+# request is unrelated work that merely shares a file or component with one.
+# The reason is required, and the watcher records it in the result.
 #
 # --blocked-on-pr <n> (comment only) parks the issue on open PR <n> in the
 # same repo (hivecommons/hive#13093): use it when the code a finding names
@@ -134,12 +139,14 @@ CLOSE_ON_MERGE=0
 NEEDS_DECISION=0
 STEP_KIND=""; RELEASE_TAG=""; RELEASE_TARGET=""; STEP_REQUESTED=0
 BLOCKED_ON_PR=""
+NO_CONSOLIDATE=""
+NO_CONSOLIDATE_SET=0
 DRY_RUN=0
 LABELS=()
 REMOVE_LABELS=()
 REVIEWERS=()
 TEAM_REVIEWERS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --blocked-on-pr, --step-kind, --release-tag, --release-target, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --no-consolidate, --blocked-on-pr, --step-kind, --release-tag, --release-target, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -183,6 +190,8 @@ while [ $# -gt 0 ]; do
     --step-kind=*) STEP_KIND="${1#*=}"; STEP_REQUESTED=1; shift;;
     --release-tag=*) RELEASE_TAG="${1#*=}"; STEP_REQUESTED=1; shift;;
     --release-target=*) RELEASE_TARGET="${1#*=}"; STEP_REQUESTED=1; shift;;
+    --no-consolidate) NO_CONSOLIDATE_SET=1; NO_CONSOLIDATE="${2:-}"; shift $(( $# > 1 ? 2 : 1 ));;
+    --no-consolidate=*) NO_CONSOLIDATE_SET=1; NO_CONSOLIDATE="${1#*=}"; shift;;
     --blocked-on-pr) BLOCKED_ON_PR="$2"; shift 2;;
     --blocked-on-pr=*) BLOCKED_ON_PR="${1#*=}"; shift;;
     --dry-run|-n) DRY_RUN=1; shift;;
@@ -232,6 +241,15 @@ fi
 
 if [ "$NEEDS_DECISION" -eq 1 ] && [ "$KIND" != "issue" ] && [ "$KIND" != "comment" ]; then
   echo "hive-open-issue: --needs-decision only applies when creating an issue or commenting on one; nothing was written." >&2
+  exit 2
+fi
+
+if [ "$NO_CONSOLIDATE_SET" -eq 1 ] && [ "$KIND" != "issue" ]; then
+  echo "hive-open-issue: --no-consolidate only applies when creating an issue; nothing was written." >&2
+  exit 2
+fi
+if [ "$NO_CONSOLIDATE_SET" -eq 1 ] && [ -z "${NO_CONSOLIDATE//[[:space:]]/}" ]; then
+  echo "hive-open-issue: --no-consolidate needs a non-empty reason; nothing was written." >&2
   exit 2
 fi
 
@@ -358,9 +376,10 @@ REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import
 REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 BLOCKED_BY_JSON="$(printf '%s\n' "${BLOCKED_BY[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$STEP_KIND" "$RELEASE_TAG" "$RELEASE_TARGET" "$STEP_REQUESTED" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$STEP_KIND" "$RELEASE_TAG" "$RELEASE_TARGET" "$STEP_REQUESTED" "$NO_CONSOLIDATE" <<'PY'
 import json, os, re, sys
 temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision, blocked_on_pr = sys.argv[1:18]
+no_consolidate = sys.argv[22]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 remove_labels = [part.strip() for value in json.loads(remove_labels)
@@ -450,6 +469,10 @@ else:
     # label itself (hivecommons/hive#11215).
     if needs_decision == "1":
         req["needs_decision"] = True
+    # --no-consolidate: the watcher skips open-issue consolidation and records
+    # the reason (hivecommons/hive#14360).
+    if no_consolidate.strip():
+        req["no_consolidate_reason"] = no_consolidate.strip()
 if kind == "comment" and int(blocked_on_pr) > 0:
     # --blocked-on-pr: the watcher adds the marker and the `blocked` label
     # itself (hivecommons/hive#13093).
@@ -491,6 +514,9 @@ else
   fi
   if [ "$NEEDS_DECISION" -eq 1 ]; then
     echo "hive-open-issue: will park the issue on a maintainer decision (needs-decision label)"
+  fi
+  if [ "$NO_CONSOLIDATE_SET" -eq 1 ]; then
+    echo "hive-open-issue: will not consolidate into an existing issue: $NO_CONSOLIDATE"
   fi
 fi
 echo "hive-open-issue: request $REQ_FILE (Hive validates and fulfills it within one watcher tick; result appears at ${REQ_FILE%.json}.result.json)"

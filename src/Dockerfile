@@ -33,7 +33,11 @@ WORKDIR /src
 # populated. Mount contents never become image layers, so nothing here can
 # ship a stale artifact — the mount is an input cache for `go`, which
 # verifies modules against go.sum regardless of where they come from.
-COPY src/go.mod src/go.sum ./
+# src/go.work makes this a two-module workspace (root + the nested Crux
+# module at src/crux, #13536): the root go.mod replaces the Crux module with
+# ./crux, so its go.mod/go.sum must be present before `go mod download`.
+COPY src/go.mod src/go.sum src/go.work src/go.work.sum ./
+COPY src/crux/go.mod src/crux/go.sum ./crux/
 RUN --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
     go mod download
 
@@ -163,7 +167,7 @@ COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
 
 # su-exec: lightweight setuid exec for UID switching from non-root.
 # gosu rejects SUID mode, so we use su-exec (which is designed for it)
-# for the manager's dev→agent UID switches (pkg/agent/manager.go,
+# for the manager's dev→agent UID switches (crux/agent/manager.go,
 # pkg/dashboard/workspace_cleanup.go, deploy/ttyd-tmux.sh — all invoked by the
 # non-root `dev` process AFTER the entrypoint's `exec gosu dev`, so a SUID
 # helper or CAP_SETUID is genuinely required to switch to agent UIDs at runtime).
@@ -316,7 +320,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.309
+ARG CLAUDE_CODE_VERSION=2.1.311
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -337,9 +341,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
 # Installs from the OFFICIAL aaif-goose/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
-ARG GOOSE_VERSION=1.55.0
-ARG GOOSE_SHA256_AMD64=fd3932908328fac850ca7ad2a8289c744e0c2ddaf4c5a2338709fb17a00b3a4c
-ARG GOOSE_SHA256_ARM64=ea83f59bb165a3d999dd00edf69a58028747f31e404b96f0153452c6b1651188
+ARG GOOSE_VERSION=1.56.0
+ARG GOOSE_SHA256_AMD64=225a929b35b5130fb691eafdb50be236f2c0a150019b53973775938f8f19c281
+ARG GOOSE_SHA256_ARM64=26bcb7d3f55aac485a91d81cbdecd8d90e5af1acadeca6e580b4d58b64a888e4
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
@@ -385,9 +389,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.12.1
-ARG OMP_SHA256_AMD64=16181401e616d7d895bae31fa97476f1513d4080807d60d3a1a04006191a1bb3
-ARG OMP_SHA256_ARM64=16545d7e747b31dbc66f2bcd63f24f12dc1dc7e944767b09b0df6591bf826a93
+ARG OMP_VERSION=18.13.1
+ARG OMP_SHA256_AMD64=ee2961c7da02e514a2475ee958c2fd85dbabf4d0907949ba5022edb2951f84b5
+ARG OMP_SHA256_ARM64=803db725f9e5bd177ce5274f7718081481f367829f773d984a0a9611f4713244
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
@@ -485,7 +489,7 @@ ARG BOBSHELL_SHA256_ARM64=eff232eb1b69f34f984ddd295e6960470058ca922b1c751879c5a8
 # backend "bob" passed config validation (validBackends in pkg/config) and
 # then failed at launch with no honest signal — a silent trap that cost real
 # debugging time. That trap is now closed at the launch site instead of at
-# image-build time: pkg/agent/manager.go's launchInTmux resolves the backend
+# image-build time: crux/agent/manager.go's launchInTmux resolves the backend
 # binary via exec.LookPath BEFORE any bob-specific logic runs, and on a miss
 # marks the agent StateFailed, records LastError, logs a warning, writes a
 # banner into the agent's own tmux pane, and emits an AuditAgentStartFailed
@@ -669,7 +673,7 @@ RUN printf '\n# hive #4045: scrub backend-exported GitHub credentials from agent
 # while silently leaving CapAmb=0x0. When the bounding set LACKS it (self-hosted/rootless), the entrypoint
 # does NOT attempt the raise (setpriv would error) and falls back to plain
 # `gosu dev`: the binary execs fine (no file cap to block it) and the proxy's
-# SO_MARK path degrades gracefully (src/pkg/proxy/github_proxy.go logs once and
+# SO_MARK path degrades gracefully (src/crux/proxy/github_proxy.go logs once and
 # dials unmarked). setpriv comes from util-linux, installed in Layer 1.
 
 # --- Nous framework (strategist experiment engine) ---

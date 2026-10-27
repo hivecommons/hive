@@ -281,7 +281,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 		fmt.Fprintf(&b, "Head SHA: %s\n", pr.HeadSHA)
 	}
 	if pr.BodyDigest != "" {
-		fmt.Fprintf(&b, "Review body digest: %s\n", pr.BodyDigest)
+		fmt.Fprintf(&b, "Review body digest: %s (an opaque id: copy it verbatim into body_digest or leave the field out)\n", pr.BodyDigest)
 	}
 	if pr.Author != "" {
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
@@ -297,7 +297,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 		b.WriteString(planMatchSection(pr))
 	}
 	writeReviewWritingGuide(&b, opts)
-	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, confidence, repo, number, head_sha, and body_digest.\n")
+	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, confidence, repo, number, head_sha, and body_digest (copy head_sha and body_digest verbatim from above, or leave them out; never compute or summarize them).\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	b.WriteString(modelStampInstruction(pr, opts))
 	b.WriteString(findingSchemaInstruction)
@@ -604,7 +604,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 		fmt.Fprintf(&b, "Head SHA: %s\n", pr.HeadSHA)
 	}
 	if pr.BodyDigest != "" {
-		fmt.Fprintf(&b, "Review body digest: %s\n", pr.BodyDigest)
+		fmt.Fprintf(&b, "Review body digest: %s (an opaque id: copy it verbatim into body_digest or leave the field out)\n", pr.BodyDigest)
 	}
 	if pr.Author != "" {
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
@@ -623,7 +623,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	writeReviewWritingGuide(&b, opts)
 	b.WriteString("\nReturn exactly one JSON ARRAY containing one object per perspective — all ")
 	fmt.Fprintf(&b, "%d of them, even the ones that found nothing.\n", len(perspectives))
-	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, confidence, repo, number, head_sha, and body_digest.\n")
+	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, confidence, repo, number, head_sha, and body_digest (copy head_sha and body_digest verbatim from above, or leave them out; never compute or summarize them).\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	fmt.Fprintf(&b, "Every object must carry the same repo (%s) and number (%d). Allowed perspective values: %s.\n", pr.Repo, pr.Number, joinPerspectives(perspectives))
 	b.WriteString(modelStampInstruction(pr, opts))
@@ -733,7 +733,7 @@ const permissionsTighteningGuidance = "Narrowing GitHub Actions permissions is n
 // the gap with {"repo","pr","verdict","summary"}: every verdict it produced
 // was rejected and every PR it judged was handed straight back to it.
 // TestVerdictSchemaExampleValidates keeps this literal honest.
-const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","confidence":0.75,"repo":"owner/repo","number":123,"head_sha":"<head commit sha>","body_digest":"<review body digest>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41,"review_scope":"in-scope"}],"prs_opened":[],"beads_filed":[]}`
+const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","confidence":0.75,"repo":"owner/repo","number":123,"head_sha":"<Head SHA, copied verbatim>","body_digest":"<Review body digest, copied verbatim>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41,"review_scope":"in-scope"}],"prs_opened":[],"beads_filed":[]}`
 
 const reportedConfidenceInstruction = "Each perspective MUST include confidence, chosen independently of its verdict from these fixed bins:\n" +
 	"0.95 = claim verified directly in the diff and tests.\n" +

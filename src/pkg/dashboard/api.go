@@ -1,17 +1,22 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
@@ -348,6 +353,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/hold", s.handleRepoItemHold)
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/issues/{number}/release", s.handleRepoIssueRelease)
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decision", s.handleRepoItemDecision)
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decide-delegated", s.handleRepoItemDecideDelegated)
+	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/items/{number}/decide-delegated", s.handleRepoItemDecideDelegatedStatus)
 
 	s.mux.HandleFunc("GET /api/acmm/evaluation", s.handleACMMEvaluation)
 	s.mux.HandleFunc("POST /api/acmm/issue", s.handleACMMCreateIssue)
@@ -640,15 +647,34 @@ func upstreamBranch() string {
 func jsonResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		slog.Warn("jsonResponse encode failed", "error", err)
+		logEncodeFailure("jsonResponse encode failed", err)
 	}
+}
+
+// isClientDisconnect reports a write error caused by the client going away
+// (broken pipe, reset, cancelled request, handler timeout): an expected
+// condition on a dashboard behind probes and restarts, not a hive defect.
+func isClientDisconnect(err error) bool {
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, http.ErrHandlerTimeout) || errors.Is(err, io.ErrClosedPipe)
+}
+
+// logEncodeFailure logs client disconnects at DEBUG and genuine encode
+// failures at WARN.
+func logEncodeFailure(msg string, err error) {
+	if isClientDisconnect(err) {
+		slog.Debug(msg+" (client disconnected)", "error", err)
+		return
+	}
+	slog.Warn(msg, "error", err)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": msg}); err != nil {
-		slog.Warn("jsonError encode failed", "error", err)
+		logEncodeFailure("jsonError encode failed", err)
 	}
 }
 
@@ -664,7 +690,7 @@ func jsonStatusResponse(w http.ResponseWriter, code int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		slog.Warn("jsonStatusResponse encode failed", "error", err)
+		logEncodeFailure("jsonStatusResponse encode failed", err)
 	}
 }
 
@@ -1092,7 +1118,7 @@ func (s *Server) lifecycleACMMLevel() int {
 func filterJourneysByACMMLevel(journeys []timeline.Journey, level int) []timeline.Journey {
 	filtered := make([]timeline.Journey, 0, len(journeys))
 	for _, j := range journeys {
-		if agent.AgentAvailableAtACMMLevel(j.Agent, level) {
+		if crux.AgentAvailableAtACMMLevel(j.Agent, level) {
 			filtered = append(filtered, j)
 		}
 	}

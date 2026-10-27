@@ -1,14 +1,14 @@
 package dashboard
 
 import (
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 )
 
-// agentManager unwraps the concrete manager behind a Dependencies.AgentMgr
-// for tests that drive manager-only seams (kick-dispatch recording, kick log
+// agentManager accesses the fixture controls behind a Dependencies.AgentMgr
+// for tests that drive runtime setup seams (kick-dispatch recording, kick log
 // directories, capability probes). Production code holds crux.Runtime and
 // must not need this.
-func agentManager(rt crux.Runtime) *agent.Manager {
-	return rt.(*agent.Manager)
+func agentManager(rt crux.Runtime) cruxtest.Runtime {
+	return rt.(cruxtest.Runtime)
 }

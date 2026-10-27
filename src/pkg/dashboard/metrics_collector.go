@@ -94,6 +94,9 @@ type MetricsCollector struct {
 	// coverageTargetFn supplies the configured coverage goal on every collect so
 	// an edit from the hub applies without a restart; nil means the default.
 	coverageTargetFn func() int
+	// reviewEvidenceVerifier supplies the dashboard's current evidence trust
+	// policy. It is loaded once per evidence collection, never per bundle.
+	reviewEvidenceVerifier func() (ghpkg.ReviewEvidenceVerifier, error)
 
 	// Optional override for isolated disk-cache tests; empty uses /data/metrics.
 	prIssueCachePath string
@@ -149,6 +152,15 @@ func (mc *MetricsCollector) SetCoverageTargetProvider(fn func() int) {
 		return
 	}
 	mc.coverageTargetFn = fn
+}
+
+// SetReviewEvidenceVerifierProvider makes evidence-derived metrics reject
+// bundles whose configured signature or unsigned-mode hash does not verify.
+func (mc *MetricsCollector) SetReviewEvidenceVerifierProvider(fn func() (ghpkg.ReviewEvidenceVerifier, error)) {
+	if mc == nil {
+		return
+	}
+	mc.reviewEvidenceVerifier = fn
 }
 
 // effectiveCoverageTarget is the configured goal, or the default when no

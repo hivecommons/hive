@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/hivestate"
-	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 const (
@@ -176,8 +176,15 @@ type OpenIssue struct {
 	// LastSeenCommentAt is when this hive last posted an "also seen" comment.
 	LastSeenCommentAt time.Time `json:"last_seen_comment_at,omitempty"`
 	// ClosedAt is set when the upstream issue was found closed; such a
-	// fingerprint is not re-filed inside the closed cooldown.
-	ClosedAt time.Time `json:"closed_at,omitempty"`
+	// fingerprint is not re-filed while ClosedSuppressed holds.
+	// ClosedObservedAt is the last time this hive observed the condition
+	// while the issue was closed; it keeps the suppression alive for as long
+	// as the condition persists (#14256).
+	ClosedAt         time.Time `json:"closed_at,omitempty"`
+	ClosedObservedAt time.Time `json:"closed_observed_at,omitempty"`
+	// ClearedPostedAt is when this hive last posted a runtime "cleared"
+	// comment; AllowClearedComment paces the next one.
+	ClearedPostedAt time.Time `json:"cleared_posted_at,omitempty"`
 	// Deferred is the last reason a filing was held back (rate limit etc).
 	Deferred string `json:"deferred,omitempty"`
 	// ClearedAttempts / ClearedNextAttemptAt pace retries of a runtime
@@ -377,7 +384,7 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		if ev.Class == "" || !IsKnownClass(ev.Class) {
 			continue
 		}
-		fp := RuntimeFingerprint(ev.Class, ev.Message, version)
+		fp := RuntimeFingerprint(ev.Class, ev.Message)
 		report := BuildRuntimeReport(obs, ev, fp, instance, obs.HiveSlug, version, commit, now)
 		active[fp] = true
 		open := state.Open[fp]
@@ -725,7 +732,7 @@ var benignSubstrings = []string{
 	// within the same boot — and a burst across unrelated templates is not
 	// a repeated runtime defect (hivecommons/hive#14005).
 	"seeded policy differs from the embedded default with no seed record",
-	// The agent poller (src/pkg/agent/manager_poll.go) warns once per agent
+	// The agent poller (src/crux/agent/manager_poll.go) warns once per agent
 	// per (requested, running) tuple when the Copilot CLI rejects --model and
 	// runs another model (#13659), and surfaces it on the agent's LastError.
 	// A hive whose copilot agents share one model the account cannot use has
@@ -765,7 +772,7 @@ var benignSubstrings = []string{
 // IsBenignMessage reports whether a raw log message is noise the generic
 // repeated-error feed must not report: the read/keepalive i/o timeout rule
 // above applied to the whole line, every benignSubstrings entry, and the
-// review planner's pending-expiry retry notification.
+// exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
 	// A CI gate refusal is the merge safety policy working as designed, even
@@ -779,6 +786,22 @@ func IsBenignMessage(msg string) bool {
 	// Match only the retry notification: "review dispatch exhausted; holding
 	// PR for a human" and failures during expiry must remain reportable.
 	if strings.TrimSpace(m) == "review pending expired" {
+		return true
+	}
+	// Per-agent quota enforcement is expected backpressure, not a runtime
+	// defect. Different agents/windows can cross the repeat threshold even
+	// though the proxy already warns only once per agent per window (#14346).
+	switch strings.TrimSpace(m) {
+	case "agent github api hourly cap reached", "agent github api hourly budget above soft threshold":
+		return true
+	}
+	// Contributor tier limits are normal policy enforcement on each poll,
+	// not runtime failures (#14414). Match the complete notices so failures
+	// to enforce or persist a limit remain reportable.
+	switch strings.TrimSpace(m) {
+	case "[contribute-ws] refusing task: concurrency limit reached",
+		"[contribute-ws] refusing task: hourly rate limit reached",
+		"[contribute-ws] refusing task: daily rate limit reached":
 		return true
 	}
 	if benignIOTimeout(m, m) {

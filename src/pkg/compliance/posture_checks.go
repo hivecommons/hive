@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"gopkg.in/yaml.v3"
 )
 

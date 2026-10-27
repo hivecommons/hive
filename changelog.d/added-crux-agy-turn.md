@@ -1,0 +1,1 @@
+- `crux agy-turn`: the headless agy turn subprocess is a `crux` subcommand, so a manager running under `crux serve` (which types its own executable into the pane) can drive agy agents the same way `hive agy-turn` does in-process.

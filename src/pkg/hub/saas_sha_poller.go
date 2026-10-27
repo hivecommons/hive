@@ -1053,9 +1053,15 @@ func fetchImageBuildState(client *http.Client, fullSHA string, logger *slog.Logg
 }
 
 // fetchCommitMessage fetches the first line of a commit message from the GitHub API.
-// Uses a separate endpoint that's less likely to be rate-limited since it's called
-// only once per new SHA (not every poll cycle).
+// Callers retry on every poll tick while the cached message is empty, so a
+// non-200 parks the SHA for commitMsgBackoff. The back-off is keyed on the
+// short SHA so the poll path (full SHA) and the backfill path (short SHA) share
+// one entry per commit.
 func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger) string {
+	backoffKey := shortSHA(fullSHA)
+	if commitMsgBackedOff(backoffKey) {
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(hubGitHubCallerContext(context.Background(), "saas_sha_commit_message"), shaFetchTimeout)
 	defer cancel()
 	commitURL := fmt.Sprintf("%s/repos/hivecommons/hive/commits/%s", githubAPIBase, fullSHA)
@@ -1068,7 +1074,8 @@ func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		logger.Warn("SHA poll: commit message fetch non-200", "sha", fullSHA[:7], "status", resp.StatusCode)
+		markCommitMsgBackoff(backoffKey)
+		warnGitHubFetchOnce(logger, fmt.Sprintf("sha-msg:%s:%d", fullSHA[:7], resp.StatusCode), "SHA poll: commit message fetch non-200", "sha", fullSHA[:7], "status", resp.StatusCode)
 		return ""
 	}
 	var result struct {

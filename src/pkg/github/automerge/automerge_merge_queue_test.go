@@ -62,9 +62,7 @@ func TestSweepSelfAuthoredMergeQueueRequiredBase(t *testing.T) {
 	}{
 		{name: "merge queue 405 short-circuits later passes", mergeMessage: mergeQueueRequiredTestMessage, wantReason: autoMergeReasonMergeQueueRequired, wantAttempts: 1, wantHolds: 1},
 		{name: "merge queue base rechecked after window", mergeMessage: mergeQueueRequiredTestMessage, advance: mergeQueueBaseRecheck, wantReason: autoMergeReasonMergeQueueRequired, wantAttempts: 2, wantHolds: 1},
-		// v6 has no once-per-head WARN dedupe for skips (v5 #14052), so an
-		// unclassified 405 still warns on every pass here.
-		{name: "other 405 stays merge-failed and warns each pass", mergeMessage: "Pull Request is not mergeable", wantReason: "merge-failed", wantAttempts: 2, wantWarns: 2},
+		{name: "other 405 stays merge-failed and warns once", mergeMessage: "Pull Request is not mergeable", wantReason: "merge-failed", wantAttempts: 2, wantWarns: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var merged []int

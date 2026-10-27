@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/logread"
+	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/pkg/startrec"
 )
 

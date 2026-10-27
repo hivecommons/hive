@@ -40,6 +40,9 @@ const (
 	// withheldReasonDisabledRepo: the repository is switched off for
 	// contribution in hub config, so none of its issues are offered.
 	withheldReasonDisabledRepo = "disabled_repo"
+	// withheldReasonRepoUnmintable: a recorded repository-scoped token mint
+	// failure excludes the repository until its cooldown expires.
+	withheldReasonRepoUnmintable = taskUnavailableRepoUnmintable
 	// withheldReasonTracker: a tracker/umbrella issue is coordination-only; its
 	// children carry the work and are queued independently.
 	withheldReasonTracker = "tracker"
@@ -77,6 +80,7 @@ var withheldReasonLabels = map[string]string{
 	contributorAdmissionReasonDependencyBlocked: "A dependency is still open",
 	contributorAdmissionReasonDependencyUnknown: "A dependency could not be resolved",
 	withheldReasonDisabledRepo:                  "Repository is disabled for contribution",
+	withheldReasonRepoUnmintable:                "Repository excluded after a GitHub App token mint failure",
 	withheldReasonTracker:                       "Tracker / umbrella issue",
 	withheldReasonCooldown:                      "Completion cooldown",
 	withheldReasonNoWorkNeeded:                  "Previous no_work_needed verdict",
@@ -110,6 +114,7 @@ func isConvergenceWithheldReason(reason string) bool {
 		contributorAdmissionReasonMergedClaimStale,
 		contributorAdmissionReasonIssueChurn,
 		withheldReasonDisabledRepo,
+		withheldReasonRepoUnmintable,
 		withheldReasonTracker,
 		withheldReasonCooldown,
 		withheldReasonNoWorkNeeded,

@@ -184,9 +184,10 @@ func TestContributorLandingFetchesAreExplicitlyClassifiedForSaaSPublicAuth(t *te
 	}
 	privatePrefixes := []string{"/api/config/governor", "/api/contributors/"}
 	privateExact := map[string]bool{
-		"/api/audit":   true,
-		"/api/role":    true,
-		"/api/version": true,
+		"/api/audit":        true,
+		"/api/contributors": true,
+		"/api/role":         true,
+		"/api/version":      true,
 	}
 	seen := map[string]bool{}
 	for _, match := range matches {

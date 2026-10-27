@@ -1,0 +1,1 @@
+- Policy denials logged by the request watchers (for example a repo not allowlisted for in-place review revision) are no longer self-reported as repeated unclassified runtime errors ([#13955](https://github.com/hivecommons/hive/issues/13955)).

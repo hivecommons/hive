@@ -2283,16 +2283,16 @@ func provisionAdditionalAppKeys(fleetKeys map[int64]fleetAppKey, primaryAppID st
 const (
 	// hostedStartupBudget is the total time a new container gets to answer
 	// /api/health before kubelet restarts it.
-	hostedStartupBudget = 10 * time.Minute
+	hostedStartupBudget = spoke.HostedStartupBudget
 
 	// hostedStartupProbeInitialDelaySeconds and hostedStartupProbePeriodSeconds
 	// keep their pre-#9692 values; only the failure threshold grows.
-	hostedStartupProbeInitialDelaySeconds = 10
-	hostedStartupProbePeriodSeconds       = 5
+	hostedStartupProbeInitialDelaySeconds = spoke.HostedStartupProbeInitialDelaySeconds
+	hostedStartupProbePeriodSeconds       = spoke.HostedStartupProbePeriodSeconds
 
 	// hostedStartupProbeFailureThreshold is derived from the budget so the two
 	// can never disagree: (600s - 10s) / 5s = 118 probes.
-	hostedStartupProbeFailureThreshold = (int(hostedStartupBudget/time.Second) - hostedStartupProbeInitialDelaySeconds) / hostedStartupProbePeriodSeconds
+	hostedStartupProbeFailureThreshold = spoke.HostedStartupProbeFailureThreshold
 )
 
 // spokeSecretsMountPrefix is where the hive-secrets Secret is projected in the

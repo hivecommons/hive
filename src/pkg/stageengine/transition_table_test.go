@@ -125,10 +125,10 @@ func TestExpectedRules(t *testing.T) {
 		{"non-regression backward hop", stagelabels.PRItem, stagelabels.ReadyForHumanMerge, stagelabels.ReturnedToContributor, true},
 		{"non-regression backward hop not drawn", stagelabels.PRItem, stagelabels.ReadyForHumanMerge, stagelabels.Reviewed, true},
 		{"drawn regression", stagelabels.PRItem, stagelabels.MergeQueue, stagelabels.Fixing, true},
-		{"drawn regression (issue): claim lapsed", stagelabels.IssueItem, stagelabels.Claimed, stagelabels.Actionable, true},
+		{"drawn hop (issue): claim lapsed, not a regression", stagelabels.IssueItem, stagelabels.Claimed, stagelabels.Actionable, true},
 		{"drawn regression (issue): start mark lapsed", stagelabels.IssueItem, stagelabels.PRInProgress, stagelabels.Actionable, true},
 		{"covering PR closed, nothing live", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.Actionable, true},
-		{"covering PR closed, start marker live", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.PRInProgress, true},
+		{"covering PR worked again, not a regression", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.PRInProgress, true},
 		{"covering PR closed, claim held", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.Claimed, true},
 		{"PR evidence lapsed, claim held", stagelabels.IssueItem, stagelabels.PRInProgress, stagelabels.Claimed, true},
 		// 045 never regresses (IsRegression) and every backward hop among

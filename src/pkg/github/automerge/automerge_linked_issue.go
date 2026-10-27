@@ -71,10 +71,12 @@ func (c *Engine) linkedIssueGate(ctx context.Context, owner, repo string, pr *gh
 		issue, _, err := c.gh.Issues.Get(caller, owner, repo, n)
 		if err != nil {
 			if isGitHubStatus(err, http.StatusNotFound) || isGitHubStatus(err, http.StatusGone) {
+				c.noteCreditIssue(owner, repo, n, nil)
 				continue
 			}
 			return linkedIssueReasonCheck, fmt.Errorf("reading linked issue %s#%d: %w", fullRepo, n, err)
 		}
+		c.noteCreditIssue(owner, repo, n, issue)
 		if issue.IsPullRequest() || !strings.EqualFold(issue.GetState(), "open") {
 			continue
 		}
@@ -85,4 +87,13 @@ func (c *Engine) linkedIssueGate(ctx context.Context, owner, repo string, pr *gh
 		}
 	}
 	return "", nil
+}
+
+// noteCreditIssue hands an issue this gate read (nil for one GitHub reported
+// missing) to the transport's merge creditor, so the Co-authored-by trailer
+// (hivecommons/hive#14581) costs no second GET for the same issue.
+func (c *Engine) noteCreditIssue(owner, repo string, n int, issue *gh.Issue) {
+	if mt, ok := c.transport.(mergeCreditTransport); ok {
+		mt.MergeCreditor().NoteIssue(owner, repo, n, issue)
+	}
 }

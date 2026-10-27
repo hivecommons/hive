@@ -572,7 +572,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// review that never actually landed. The evidence bundle for the head
 	// records the same two things (review_evidence.go).
 	c.recordReviewEvidence(ctx, req, c.recordReviewVerdict(ctx, req, ""), created, nowFn())
-	if err := c.fileOutOfScopeReviewBacklog(ctx, req, nowFn().UTC()); err != nil {
+	if err := c.fileReviewBacklog(ctx, req, nowFn().UTC(), created); err != nil {
 		c.logger.Warn("review-request watcher: could not file out-of-scope backlog",
 			slog.String("repo", req.Repo), slog.Int("number", req.Number),
 			slog.String("error", err.Error()))

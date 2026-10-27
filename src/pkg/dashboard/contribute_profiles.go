@@ -135,17 +135,21 @@ type ContributorOperatorMessage struct {
 }
 
 type ContributorProfile struct {
-	GitHubUsername    string `json:"github_username"`
-	ContributorID     string `json:"contributor_id"`
-	RegistrationToken string `json:"registration_token"`
-	TokenPlain        string `json:"registration_token_plain,omitempty"`
-	TrustTier         string `json:"trust_tier"`
-	PreferredRole     string `json:"preferred_role,omitempty"`
-	CLIBackend        string `json:"cli_backend,omitempty"`
-	Model             string `json:"model,omitempty"`
-	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
-	KnowledgeLoaded   *bool  `json:"knowledge_loaded,omitempty"`
-	KnowledgeError    string `json:"knowledge_error,omitempty"`
+	GitHubUsername    string    `json:"github_username"`
+	ContributorID     string    `json:"contributor_id"`
+	RegistrationToken string    `json:"registration_token"`
+	TokenIssuedAt     time.Time `json:"token_issued_at"`
+	TokenExpiresAt    time.Time `json:"token_expires_at"`
+	TokenLastUsedAt   time.Time `json:"token_last_used_at"`
+	TokenRotationDue  bool      `json:"token_rotation_due,omitempty"`
+	TokenPlain        string    `json:"registration_token_plain,omitempty"`
+	TrustTier         string    `json:"trust_tier"`
+	PreferredRole     string    `json:"preferred_role,omitempty"`
+	CLIBackend        string    `json:"cli_backend,omitempty"`
+	Model             string    `json:"model,omitempty"`
+	ReasoningEffort   string    `json:"reasoning_effort,omitempty"`
+	KnowledgeLoaded   *bool     `json:"knowledge_loaded,omitempty"`
+	KnowledgeError    string    `json:"knowledge_error,omitempty"`
 	// AdvisorModel / AdvisorEffort: the last-reported second model that
 	// reviewed this contributor's work (hivecommons/hive#7760). Display only.
 	AdvisorModel  string `json:"advisor_model,omitempty"`
@@ -313,6 +317,10 @@ func saveContributorProfile(p *ContributorProfile) error {
 // A first-ever write (no disk file) or a legacy unversioned profile (Version 0)
 // proceeds and is upgraded to version 1+.
 func saveContributorProfileCAS(p *ContributorProfile, adminOverride bool) error {
+	return saveContributorProfileTokenCAS(p, adminOverride, false)
+}
+
+func saveContributorProfileTokenCAS(p *ContributorProfile, adminOverride, tokenUpdate bool) error {
 	if strings.Contains(p.GitHubUsername, "..") || strings.Contains(p.GitHubUsername, "/") || strings.Contains(p.GitHubUsername, "\\") {
 		return fmt.Errorf("invalid username for save")
 	}
@@ -330,8 +338,14 @@ func saveContributorProfileCAS(p *ContributorProfile, adminOverride bool) error 
 		// the disk. A zero base version (legacy/unversioned caller) is exempt so
 		// existing call sites keep working; those saves still get the terminal-tier
 		// fence above.
-		if p.Version != 0 && p.Version < cur.Version {
+		if (p.Version != 0 && p.Version < cur.Version) || (tokenUpdate && p.Version != cur.Version) {
 			return errProfileConflict
+		}
+		if !tokenUpdate {
+			p.RegistrationToken = cur.RegistrationToken
+			p.TokenIssuedAt = cur.TokenIssuedAt
+			p.TokenExpiresAt = cur.TokenExpiresAt
+			p.TokenLastUsedAt = cur.TokenLastUsedAt
 		}
 		p.Version = cur.Version
 	}
@@ -384,7 +398,7 @@ func listContributorProfiles() []ContributorProfile {
 	return profiles
 }
 
-func createContributorProfile(username string) (*ContributorProfile, string) {
+func createContributorProfile(username string, policies ...contributorTokenPolicy) (*ContributorProfile, string) {
 	cid := "c-" + randomHex(6)
 	token := randomHex(32)
 	p := &ContributorProfile{
@@ -400,6 +414,7 @@ func createContributorProfile(username string) (*ContributorProfile, string) {
 			MaxPerDay:     10,
 		},
 	}
+	policyOrDefault(policies).issue(p, time.Now().UTC())
 	_ = saveContributorProfile(p)
 	return p, token
 }
@@ -464,34 +479,24 @@ func registrationTokenFromAuthorization(r *http.Request) string {
 	return ""
 }
 
-func contributorProfileFromRegistrationToken(token string) *ContributorProfile {
-	if token == "" {
-		return nil
-	}
-	tokenHash := sha256Hex(token)
-	profiles := listContributorProfiles()
-	for i := range profiles {
-		if secureCompare(profiles[i].RegistrationToken, tokenHash) {
-			return &profiles[i]
-		}
-	}
-	return nil
-}
-
 func (s *Server) contributorProfileFromAuthorization(r *http.Request) *ContributorProfile {
-	return contributorProfileFromRegistrationToken(registrationTokenFromAuthorization(r))
+	p, _ := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
+	return p
 }
 
 // reissueContributorToken generates a new registration token for an existing
 // contributor, invalidating the previous one. Returns the new plaintext token.
 // Its only caller (handleContributeReissueToken) has just validated a GitHub
 // token for p.GitHubUsername, so the login is recorded as verified (#12041).
-func reissueContributorToken(p *ContributorProfile) string {
+func reissueContributorToken(p *ContributorProfile, policies ...contributorTokenPolicy) string {
 	const tokenBytes = 32 // 256-bit token
 	newToken := randomHex(tokenBytes)
 	p.RegistrationToken = sha256Hex(newToken)
 	p.TokenPlain = ""
 	p.GitHubVerifiedAt = time.Now().UTC().Format(time.RFC3339)
-	_ = saveContributorProfile(p)
+	policyOrDefault(policies).issue(p, time.Now().UTC())
+	if err := saveContributorProfileTokenCAS(p, false, true); err != nil {
+		return ""
+	}
 	return newToken
 }

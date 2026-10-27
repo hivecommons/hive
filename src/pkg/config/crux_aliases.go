@@ -1,6 +1,6 @@
 package config
 
-import cruxconfig "github.com/hivecommons/hive/pkg/crux/config"
+import cruxconfig "github.com/hivecommons/hive/crux/config"
 
 type (
 	AgentBobConfig             = cruxconfig.AgentBobConfig

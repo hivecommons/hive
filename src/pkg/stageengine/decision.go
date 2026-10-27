@@ -23,8 +23,13 @@ type Decision struct {
 	// lanes have staged at 040 or later covers it: the dwell clock then
 	// belongs to the PR and the sweep does not judge the issue stalled.
 	Covered bool
-	Reason  string             // stored on the Record, rendered in comments/tracker
-	Human   *stagelabels.Route // set when the stage is a hand-off (085/090)
+	// Progress is set when the stage fell in number but the move is
+	// forward motion the Store must not book as a regression: an issue
+	// leaving 040 for 010 because the PR covering it merged and addressed
+	// part of it (stagelabels.PartiallyAddressedLabel).
+	Progress bool
+	Reason   string             // stored on the Record, rendered in comments/tracker
+	Human    *stagelabels.Route // set when the stage is a hand-off (085/090)
 	// Abstain means the deriver has no opinion: nothing it saw classifies
 	// the item (today's stageRankNone), so the reconciler leaves the labels
 	// and the Store untouched. It is distinct from Stage == None, which is a

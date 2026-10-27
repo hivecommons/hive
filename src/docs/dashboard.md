@@ -208,6 +208,20 @@ autocomplete and argument hints. Current commands are `/help`, `/clear`,
 `/search`, `/history`, `/retry`, `/edit`, `/who`, `/agents`, `/beads`,
 `/prs`, `/governor`, `/knowledge`, `/jam`, and `/spek`.
 
+`/prs` answers locally from the status snapshot (the same cached rows
+`/api/prs` serves, so it costs no GitHub call): the open pull requests grouped
+by repo, one row each — `owner/repo#N — title (@author · stage labels · age ·
+✅/❌/⏳ CI · approved / changes requested · needs decision · hold · mergeable)`
+— under the aggregate count, capped at 25 rows with an "… and N more" footer.
+The remainder of the command narrows the list and every filter is a
+conjunct: `waiting on review` / `needs review` (not a draft, no approving
+review, no outstanding change request), `needs decision` (`stage/085-needs-decision` or
+`stage/045-needs-decision`), `hold` (held set or a hold label), `failing ci`,
+`mine` (the signed-in viewer) / `by <login>` / `@login`, `repo <owner/repo>` or
+a bare `owner/repo` token (the short repo name also works), and `stale`
+(untouched for 7 days) / `older than 3d` (`h`, `d`, `w`). Words the parser does
+not recognise are reported and ignored, and the list is still printed.
+
 The prompt behaves like a small terminal: `Enter` sends, `Shift+Enter` inserts a
 newline, `Tab` completes slash commands, Up/Down cycle prior commands while
 preserving the draft, `?` opens the shortcut overlay, `Esc` closes the overlay
@@ -226,6 +240,66 @@ to the draft, suggestion chips seed common prompts, and long/code-heavy output
 is collapsible with copy buttons on fenced code blocks. There is no server-side
 per-user chat persistence yet because dashboard user settings are not a
 general-purpose cross-browser preferences API.
+
+Agent questions are answered from the hive's own agent state (`/api/status`
+→ `agents[]`), not by dumping the roster (#14409). Bare `/agents` (or "list
+agents") prints the roster, with the block reason inline for every `BLOCKED`
+agent. `/agents stuck|blocked|paused|running|idle|failed` filters it: blocked
+agents show WHY (`blockedReason`: rate-limit cap, inference auth, policy
+stand-down, crash loop, failed starts…) and since when (`blockedSince`);
+paused agents show who paused them and why. `/agents <name> [status|why|last|
+history]`, `/agents status <name>`, or plain "scanner status" / "status of
+scanner" return only that agent's card — state, block reason + since, current
+task, last completed turn and its outcome, last kick, last PR/issue acted on,
+restart count; an unknown name answers `No agent named X; agents: …`. Natural
+language such as "which agent completed last?", "what is scanner doing?",
+"why is reviewer-2 blocked?", "when did scanner last run?" and "which agents
+are idle?" goes through the same table-driven matcher. An agent question the
+matcher does not recognise is handed to the configured chat responder with
+the agent state attached as context; without a responder the chat says what
+it does understand instead of printing the roster.
+
+### How a message is answered
+
+The server routes every message (`pkg/dashboard/api_chat_router.go`) into
+one of three paths, and never discards a message's arguments:
+
+- **Bare command** — `/agents`, `/prs`, `/beads`, `/status` with no
+  arguments (or a one-word keyword such as `agents` or `prs?`) prints the
+  deterministic summary: the agent roster, per-repo open PR counts, bead
+  counts per store, the hive health line.
+- **Deterministic argument handlers** — the `/agents` matcher above (and
+  the `/prs` filters, #14408) answer the argument vocabularies they
+  recognise without a model turn.
+- **Grounded answer** — any other command with arguments or plain-words
+  question (`/agents what should the hive do next`, `what's waiting on my
+  decision`, `which PRs have failing CI`, `what version are we on`) is answered
+  by one read-only model turn over a compact snapshot of the hive state the
+  dashboard already holds in memory: agents (state, paused/blocked reason,
+  awaiting-CI, last kick and outcome, last completed action, last error),
+  open PRs (stage labels, review state, requested reviewers, CI and failing
+  checks, mergeability, merge verdict, age), actionable issues (stage,
+  priority, assignees, age), items parked for a decision, governor mode and
+  next kick, system alerts, release/commit and the last landed upgrade. The
+  snapshot is scoped to the command's dataset (`/prs …` carries no agents),
+  capped at 40 items per list and 24 KiB overall. The model is instructed to
+  answer from the snapshot only, to say *"I don't have that data"* rather
+  than guess, to cite the agents and `owner/repo#N` items it used, and that
+  chat cannot take actions. The turn runs on the governor reviewer endpoint
+  (`governor.trajectory`, falling back to `governor.litellm`) with a 25 s
+  timeout and at most two turns in flight per dashboard; each attempt writes
+  one `chat_grounded_answer` audit line (scope, question, snapshot size,
+  outcome). Nothing on this path can mutate hive state.
+- **Fallback** — when grounding cannot run (setting off, no reviewer
+  endpoint, timeout, backend error, too many in flight) a scoped question
+  gets the command's usage naming the reason; it is never answered with the
+  bare dump. Unscoped free text falls through to the configured
+  `ChatResponder` when one exists, else the "guide agent unavailable"
+  message.
+
+**Setting.** `chat.grounded_answers.enabled` (default **true**) gates the
+grounded path hive-wide; `chat.grounded_answers.model` overrides the reviewer
+model for the grounding turn. See [operator-reference.md](operator-reference.md).
 
 Markdown is rendered from escaped input only: bold, inline code, code fences,
 links, GitHub-style `@mentions`, and `#issue` / `owner/repo#N` references are

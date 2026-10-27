@@ -112,9 +112,9 @@ func TestV6ConformanceTelegram_PollPathUsesScrubbedHandler(t *testing.T) {
 }
 
 var stateReachingImports = map[string]string{
-	"github.com/hivecommons/hive/pkg/agent":     "kicking or pausing an agent requires the mode ladder and Converse capability",
+	"github.com/hivecommons/hive/crux/agent":    "kicking or pausing an agent requires the mode ladder and Converse capability",
 	"github.com/hivecommons/hive/pkg/dashboard": "dashboard actions require the role floor rather than surface-local authorization",
-	"github.com/hivecommons/hive/pkg/proxy":     "tool calls require the proxy mode ladder/capability check",
+	"github.com/hivecommons/hive/crux/proxy":    "tool calls require the proxy mode ladder/capability check",
 	"github.com/hivecommons/hive/pkg/effects":   "mutations require an effects claim",
 	"github.com/hivecommons/hive/pkg/github":    "writing to GitHub requires Converse and the mode ladder",
 	"github.com/hivecommons/hive/pkg/scheduler": "scheduling agent work requires the mode ladder",

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -31,7 +31,7 @@ func backendAuthErrorStatuses(cfg *config.Config, lastKick *time.Time) map[strin
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
 			State:                     crux.StateRunning,
-			OutputBuffer:              agent.NewRingBuffer(10),
+			OutputBuffer:              cruxtest.NewRingBuffer(10),
 			LastKick:                  lastKick,
 			ProviderErrorClass:        "backend_auth_error",
 			ProviderErrorLine:         clippedPaneLine,
@@ -93,7 +93,7 @@ func TestBuildFrontendStatus_InferenceLastErrorDuringCurrentTurn(t *testing.T) {
 	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name: "scanner", Config: cfg.Agents["scanner"], State: crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10), LastKick: &kick,
+			OutputBuffer: cruxtest.NewRingBuffer(10), LastKick: &kick,
 		},
 	}
 	a := BuildFrontendStatus(gov.GetState(), nil, statuses, cfg, nil, gov, nil, nil, nil, nil).Agents[0]
@@ -118,7 +118,7 @@ func TestBuildFrontendStatus_InferenceLastErrorStaleIsHidden(t *testing.T) {
 	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name: "scanner", Config: cfg.Agents["scanner"], State: crux.StateRunning,
-			OutputBuffer: agent.NewRingBuffer(10), LastKick: &kick,
+			OutputBuffer: cruxtest.NewRingBuffer(10), LastKick: &kick,
 		},
 	}
 	if a := BuildFrontendStatus(gov.GetState(), nil, statuses, cfg, nil, gov, nil, nil, nil, nil).Agents[0]; a.InferenceLastError != "" {

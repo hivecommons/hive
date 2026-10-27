@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/logread"
 	"github.com/hivecommons/hive/pkg/adminmcp"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/logread"
 	"github.com/hivecommons/hive/pkg/startrec"
 )
 

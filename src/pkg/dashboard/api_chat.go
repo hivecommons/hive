@@ -1,12 +1,15 @@
 package dashboard
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
@@ -39,18 +42,29 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "message refused by safety scanner", http.StatusBadRequest)
 		return
 	}
+	bang := strings.HasPrefix(safeQuery, "!")
 
 	// While an inception waits in clarify, an owner's unprefixed reply is the
 	// answer to the next unanswered question: hand it to the chat spine, which
 	// owns that routing, before local intents and the fallback claim it (#13215).
-	if !strings.HasPrefix(safeQuery, "!") && s.inceptionAwaitingAnswers() &&
+	if !bang && s.inceptionAwaitingAnswers() &&
 		config.RoleAtLeast(r.Header.Get("X-Hive-Role"), config.RoleOwner) &&
 		s.deps.DashboardChatSubmit != nil {
 		s.submitDashboardChat(w, r, safeQuery)
 		return
 	}
 
-	if answer, ok := s.chatLocalIntentAnswerFor(r, safeQuery); ok {
+	if bang {
+		// `!` commands belong to the shared chat spine, which enforces the
+		// allowlist and owner role.
+		s.handleChatBang(w, r, safeQuery)
+		return
+	}
+
+	// Explicit slash commands with a v6 local handler (`/governor`,
+	// `/knowledge ...`, `/spek ...`, `/who`) answer before the shared router
+	// so they keep their command answers.
+	if answer, ok := s.chatCommandHintAnswer(safeQuery); ok {
 		jsonResponse(w, map[string]interface{}{
 			"answer": scrubDashboardChatAnswer(answer),
 			"status": "ok",
@@ -58,7 +72,76 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !strings.HasPrefix(safeQuery, "!") && s.deps != nil && s.deps.ChatResponder != nil {
+	route := chatParseRoute(safeQuery)
+	if answer, ok := s.chatRouteLocalAnswer(r, route); ok {
+		jsonResponse(w, map[string]interface{}{
+			"answer": scrubDashboardChatAnswer(answer),
+			"status": "ok",
+		})
+		return
+	}
+	// An agent-scoped question the deterministic matcher (#14409) did not
+	// understand is grounded against the agent snapshot.
+	agentUnmatched := false
+	if _, inScope, ok := s.chatAgentsAnswer(safeQuery); inScope && !ok {
+		agentUnmatched = true
+		route.Kind, route.Scope = chatRouteGrounded, "agents"
+		if route.Question == "" {
+			route.Question = route.Raw
+		}
+	}
+
+	// Grounded path: the question (with its arguments intact) against a
+	// scoped snapshot of the hive state. Read-only; audited; falls through
+	// to the usage reply / configured responder when it cannot run.
+	var groundErr error
+	if route.Kind == chatRouteGrounded {
+		answer, items, err := s.chatGroundedAnswer(r.Context(), route)
+		s.chatAuditGrounded(r, route, items, err)
+		if err == nil {
+			jsonResponse(w, map[string]interface{}{
+				"answer":   scrubDashboardChatAnswer(answer),
+				"status":   "ok",
+				"grounded": true,
+				"scope":    firstNonEmpty(route.Scope, "all"),
+			})
+			return
+		}
+		groundErr = err
+		if s.logger != nil {
+			s.logger.Debug("chat grounded answer unavailable", "scope", route.Scope, "err", err)
+		}
+		if agentUnmatched && s.deps != nil && s.deps.ChatResponder != nil {
+			// Hand it to the responder WITH the live agent state (#14409).
+			query := safeQuery
+			if ctxText := s.chatAgentStateContext(); ctxText != "" {
+				query += "\n\n" + ctxText
+			}
+			if answer, err := s.deps.ChatResponder(r.Context(), query, body.History); err == nil && strings.TrimSpace(answer) != "" {
+				jsonResponse(w, map[string]interface{}{"answer": scrubDashboardChatAnswer(answer), "status": "ok"})
+				return
+			}
+		}
+		if agentUnmatched {
+			jsonResponse(w, map[string]interface{}{
+				"answer": "I couldn't match that agent question locally (" + chatGroundingReason(err) + "). Try `/agents stuck`, `/agents <name> status`, `/agents <name> why`, \"which agent completed last?\" or \"which agents are idle?\" — or bare `/agents` for the roster.",
+				"status": "grounding_unavailable",
+				"scope":  "agents",
+			})
+			return
+		}
+		if route.Scope != "" {
+			// A scoped question must never collapse into the bare dump.
+			jsonResponse(w, map[string]interface{}{
+				"answer": chatScopeUsage(route.Scope, route.Question, chatGroundingReason(err)),
+				"status": "grounding_unavailable",
+				"scope":  route.Scope,
+			})
+			return
+		}
+	}
+
+	if s.deps != nil && s.deps.ChatResponder != nil {
 		answer, err := s.deps.ChatResponder(r.Context(), safeQuery, body.History)
 		if err != nil {
 			msg := scrubDashboardChatAnswer("The configured chat responder is unavailable: " + strings.TrimSpace(err.Error()))
@@ -78,24 +161,27 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if !strings.HasPrefix(strings.TrimSpace(safeQuery), "!") {
-		jsonResponse(w, map[string]interface{}{
-			"answer": scrubDashboardChatAnswer(chatUnhandledIntentAnswer(safeQuery)),
-			"status": "fallback",
-		})
-		return
+	msg := "The guide agent is not available for free-text chat right now. Try `help`, `beads`, `agents`, `prs`, or `status` for local hive answers."
+	if groundErr != nil {
+		msg += " Grounded answers: " + chatGroundingReason(groundErr) + "."
 	}
+	jsonResponse(w, map[string]interface{}{
+		"answer": scrubDashboardChatAnswer(msg),
+		"status": "responder_unavailable",
+	})
+}
 
+// handleChatBang forwards a `!` command to the shared dashboard chat spine.
+func (s *Server) handleChatBang(w http.ResponseWriter, r *http.Request, text string) {
 	if !config.RoleAtLeast(r.Header.Get("X-Hive-Role"), config.RoleReadWrite) {
 		jsonError(w, "read-write access required", http.StatusForbidden)
 		return
 	}
-
 	if s.deps == nil || s.deps.DashboardChatSubmit == nil {
 		jsonError(w, "dashboard chat is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	s.submitDashboardChat(w, r, safeQuery)
+	s.submitDashboardChat(w, r, text)
 }
 
 func (s *Server) submitDashboardChat(w http.ResponseWriter, r *http.Request, text string) {
@@ -166,6 +252,88 @@ func (s *Server) handleChatMessages(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// chatGroundingReason is the operator-facing reason a grounded turn did not
+// produce an answer.
+func chatGroundingReason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, errChatGroundingDisabled):
+		return "grounded answers are disabled by `chat.grounded_answers.enabled: false`"
+	case errors.Is(err, errChatGroundingUnavailable):
+		return "no inference backend is wired for chat"
+	case errors.Is(err, errChatGroundingBusy):
+		return "too many chat questions are in flight; try again in a moment"
+	case errors.Is(err, errChatGroundingNoStatus):
+		return "hive status is still initializing"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "the inference backend did not answer in time"
+	}
+	return "inference backend error: " + strings.TrimSpace(err.Error())
+}
+
+// chatRouteLocalAnswer answers the routes that need no inference: help,
+// presence and the bare command dumps. Grounded routes return false.
+func (s *Server) chatRouteLocalAnswer(r *http.Request, route chatRoute) (string, bool) {
+	switch route.Kind {
+	case chatRouteHelp:
+		return chatHelpAnswer, true
+	case chatRoutePresence:
+		return s.chatPresenceAnswer(chatViewer(s, r)), true
+	case chatRouteBare, chatRouteGrounded:
+		// Deterministic argument handlers first: "scanner status" names an
+		// agent and must reach its card before the bare `status` summary.
+		if answer, ok := s.chatScopedLocalAnswer(route, chatViewer(s, r)); ok {
+			return answer, true
+		}
+		if route.Kind == chatRouteBare {
+			return s.chatBareAnswer(route.Scope)
+		}
+	}
+	return "", false
+}
+
+// chatScopedLocalAnswer is where deterministic handlers for a command WITH
+// arguments answer before the grounded path runs: the `/prs <filters>`
+// list (hivecommons/hive#14408) and the `/agents <filter|name>` cards
+// (hivecommons/hive#14409) recognise their own argument vocabularies here.
+// Anything they do not recognise returns false and is grounded instead of
+// collapsing to the bare dump.
+func (s *Server) chatScopedLocalAnswer(route chatRoute, viewer string) (string, bool) {
+	if answer, inScope, ok := s.chatAgentsAnswer(route.Raw); inScope && ok {
+		return answer, true
+	}
+	// A PR question made only of the filters parseChatPRFilter knows is
+	// answered from the snapshot without a model turn (hivecommons/hive#14408);
+	// anything with words it cannot place goes to the grounded path.
+	if route.Scope == "prs" {
+		if f := parseChatPRFilter(route.Raw, viewer); route.Kind == chatRouteBare || len(f.Unknown) == 0 {
+			return s.chatPRsAnswer(route.Raw, viewer), true
+		}
+	}
+	return "", false
+}
+
+const chatHelpAnswer = "Try `beads` for bead counts, `agents` for the agent roster, `prs` for the open pull requests (filters: " + chatPRFilterHint + "), or `status` for a hive summary. Agent questions: `/agents stuck|paused|running|idle|failed`, `/agents <name> [status|why|last|history]`, or ask \"which agent completed last?\", \"why is scanner blocked?\". Any other arguments or plain-words question (`/prs waiting on review`, `what's waiting on my decision`) are answered from the live hive state. Commands beginning with `!` or `/` still use their command handlers."
+
+// chatBareAnswer is the deterministic summary for a bare command scope.
+func (s *Server) chatBareAnswer(scope string) (string, bool) {
+	switch scope {
+	case "beads":
+		return s.chatBeadsAnswer(), true
+	case "agents":
+		if answer, _, ok := s.chatAgentsAnswer("agents: status"); ok {
+			return answer, true
+		}
+		return "Agent status is still initializing.", true
+	case "prs":
+		return s.chatPRsAnswer("", ""), true
+	case "status":
+		return s.chatStatusAnswer(), true
+	}
+	return "", false
+}
+
 var chatIntentSplitRE = regexp.MustCompile(`[^a-z0-9#/-]+`)
 
 func chatIntentTokens(query string) map[string]bool {
@@ -177,21 +345,6 @@ func chatIntentTokens(query string) map[string]bool {
 		tokens[field] = true
 	}
 	return tokens
-}
-
-// chatLocalIntentAnswerFor answers intents that need the caller's identity
-// (presence) before falling back to the identity-free local intents.
-func (s *Server) chatLocalIntentAnswerFor(r *http.Request, query string) (string, bool) {
-	// Explicit slash/bang commands (v6 chat spine) win over the softer presence
-	// intent so `/jam who is online?` keeps its command answer.
-	if answer, ok := s.chatCommandHintAnswer(strings.TrimSpace(query)); ok {
-		return answer, true
-	}
-	tokens := chatIntentTokens(query)
-	if chatPresenceIntent(tokens) {
-		return s.chatPresenceAnswer(chatViewer(s, r)), true
-	}
-	return s.chatLocalIntentAnswer(query)
 }
 
 // chatPresenceIntent is true for `/jam who is online?`-style questions: the
@@ -244,43 +397,6 @@ func (s *Server) chatPresenceAnswer(viewer string) string {
 	return fmt.Sprintf("%d online (%d active, %d idle):\n%s", len(users), active, len(users)-active, strings.Join(lines, "\n"))
 }
 
-func (s *Server) chatLocalIntentAnswer(query string) (string, bool) {
-	trimmed := strings.TrimSpace(query)
-	if answer, ok := s.chatCommandHintAnswer(trimmed); ok {
-		return answer, true
-	}
-	if strings.HasPrefix(trimmed, "!") || strings.HasPrefix(trimmed, "/") {
-		return "", false
-	}
-	tokens := chatIntentTokens(query)
-	switch {
-	case tokens["spek"] || tokens["spectacular"] || tokens["spec"]:
-		return s.chatSpekAnswer(), true
-	case tokens["governor"] || tokens["kick"] || tokens["kicks"] || tokens["failure"] || tokens["failures"]:
-		return s.chatGovernorAnswer(), true
-	case tokens["help"]:
-		return "Try `beads` for bead counts, `agents` for agent status, `prs` for open pull requests, or `status` for a hive summary. Commands beginning with `!` or `/` still use their command handlers.", true
-	case tokens["bead"] || tokens["beads"]:
-		return s.chatBeadsAnswer(), true
-	case tokens["agent"] || tokens["agents"]:
-		return s.chatAgentsAnswer(), true
-	case tokens["pr"] || tokens["prs"] || tokens["pull"] || tokens["pulls"]:
-		return s.chatPRsAnswer(), true
-	case tokens["status"] || tokens["health"]:
-		return s.chatStatusAnswer(), true
-	default:
-		return "", false
-	}
-}
-
-func chatUnhandledIntentAnswer(query string) string {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		query = "that request"
-	}
-	return fmt.Sprintf("I don't know how to handle `%s` yet. Try `/help`, `/agents`, `/beads`, `/prs`, `/governor`, `/spek`, or `!help`.", query)
-}
-
 func (s *Server) chatStatusSnapshot() *StatusPayload {
 	s.statusMu.RLock()
 	defer s.statusMu.RUnlock()
@@ -312,61 +428,15 @@ func (s *Server) chatBeadsAnswer() string {
 	return "Bead data is not available yet."
 }
 
-func (s *Server) chatAgentsAnswer() string {
-	status := s.chatStatusSnapshot()
-	if status == nil {
-		return "Agent status is still initializing."
-	}
-	if len(status.Agents) == 0 {
-		return "No agents are currently reported in the hive status."
-	}
-	agents := append([]FrontendAgent(nil), status.Agents...)
-	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
-	lines := make([]string, 0, len(agents)+1)
-	for _, a := range agents {
-		state := strings.TrimSpace(a.State)
-		if state == "" {
-			state = "unknown"
-		}
-		if a.Paused {
-			state += " (paused)"
-		}
-		detail := strings.TrimSpace(a.Doing)
-		if detail == "" {
-			detail = strings.TrimSpace(a.StructuredStatus)
-		}
-		if detail != "" {
-			lines = append(lines, fmt.Sprintf("- %s: %s — %s", a.Name, state, detail))
-		} else {
-			lines = append(lines, fmt.Sprintf("- %s: %s", a.Name, state))
-		}
-	}
-	return fmt.Sprintf("Agents (%d):\n%s", len(agents), strings.Join(lines, "\n"))
-}
-
-func (s *Server) chatPRsAnswer() string {
+// chatPRsAnswer lists the snapshot's open pull requests, narrowed by the
+// filters in the query remainder (parseChatPRFilter). It reads the same
+// cached FrontendPR rows /api/prs serves — no GitHub call (hivecommons/hive#14408).
+func (s *Server) chatPRsAnswer(query, viewer string) string {
 	status := s.chatStatusSnapshot()
 	if status == nil {
 		return "Pull request data is still initializing."
 	}
-	total := 0
-	lines := []string{}
-	for _, repo := range status.Repos {
-		count := len(repo.OpenPrs)
-		total += count
-		if count > 0 {
-			name := repo.Full
-			if name == "" {
-				name = repo.Name
-			}
-			lines = append(lines, fmt.Sprintf("- %s: %d open PR(s)", name, count))
-		}
-	}
-	if total == 0 {
-		return "No open pull requests are currently reported."
-	}
-	sort.Strings(lines)
-	return fmt.Sprintf("There are %d open pull request(s):\n%s", total, strings.Join(lines, "\n"))
+	return renderChatPRList(status.Repos, parseChatPRFilter(query, viewer), time.Now())
 }
 
 func (s *Server) chatStatusAnswer() string {
@@ -395,25 +465,4 @@ func (s *Server) chatStatusAnswer() string {
 		}
 	}
 	return fmt.Sprintf("Hive status: %s. Agents: %d total, %d paused. Beads: %d worker, %d supervisor. Open PRs: %d.", health, len(status.Agents), paused, status.Beads.Workers, status.Beads.Supervisor, openPRs)
-}
-
-func (s *Server) chatGovernorAnswer() string {
-	status := s.chatStatusSnapshot()
-	if status == nil {
-		return "Governor status is still initializing; no recent kick failure details are available yet."
-	}
-	health := "unknown"
-	if state, ok := status.DeepHealth["status"].(string); ok && strings.TrimSpace(state) != "" {
-		health = strings.TrimSpace(state)
-	} else if ready, ok := status.DeepHealth["ready"].(bool); ok && ready {
-		health = "ready"
-	}
-	return fmt.Sprintf("Governor/kick status: hive health is %s. For detailed kick history, check the Governor and activity panels.", health)
-}
-
-func (s *Server) chatSpekAnswer() string {
-	if status := s.SpektacularStatus(); status != nil && status.Present {
-		return s.chatSpecRunsAnswer()
-	}
-	return "Spektacular/spec-run data is not available yet on this dashboard. Try the Inception/Spektacular panels or `!runs` if the chat bot is connected."
 }
