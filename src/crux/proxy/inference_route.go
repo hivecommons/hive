@@ -207,7 +207,7 @@ func unregisterAnthropicHost(host string) {
 func IsAnthropicHost(host string) bool {
 	anthropicHostsMu.RLock()
 	defer anthropicHostsMu.RUnlock()
-	return anthropicHosts[host]
+	return anthropicHosts[canonicalHost(host)]
 }
 
 // InferenceBackends lists the valid self-hosted inference backend IDs.

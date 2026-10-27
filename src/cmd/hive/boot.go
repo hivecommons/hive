@@ -259,6 +259,10 @@ type boot struct {
 	// carries its wakes to the governor loop (hivecommons/hive#11091).
 	reviewEvents *eventdispatch.Dispatcher
 	reviewWake   chan struct{}
+	// verdictWaker turns dispatched review verdicts the relay records into
+	// early eval cycles, at most one per governor.webhook_wake_min_gap_s
+	// (hivecommons/hive#14705).
+	verdictWaker *webhookWaker
 
 	// webhookWaker coalesces cache-invalidating GitHub webhooks into early
 	// eval cycles and evalLoop is the pacing block /api/status reports.

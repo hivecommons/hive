@@ -307,6 +307,10 @@ func TestIsGitHubHost(t *testing.T) {
 		{"github.com", true},
 		{"example.com", false},
 		{"api.github.com.evil.com", false},
+		{"API.GITHUB.COM", true},
+		{"Api.GitHub.com.", true},
+		{"github.com.", true},
+		{"evil-api.github.com", false},
 		{"", false},
 	}
 	for _, tt := range tests {
@@ -330,5 +334,34 @@ func TestNeedsMITM(t *testing.T) {
 		if got := NeedsMITM(tt.host); got != tt.want {
 			t.Errorf("NeedsMITM(%q) = %v, want %v", tt.host, got, tt.want)
 		}
+	}
+}
+
+func TestHostCanonicalization(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func(string) bool
+		host string
+		want bool
+	}{
+		{"inspection upper", NeedsInspection, "API.GITHUB.COM", true},
+		{"inspection mixed trailing dot", NeedsInspection, "Api.GitHub.com.", true},
+		{"inspection lookalike", NeedsInspection, "evil-api.github.com", false},
+		{"inspection empty", NeedsInspection, "", false},
+		{"mitm trailing dot", NeedsMITM, "api.github.com.", true},
+		{"linear upper", IsLinearHost, "API.LINEAR.APP", true},
+		{"linear trailing dot", IsLinearHost, "api.linear.app.", true},
+		{"linear lookalike", IsLinearHost, "evil-api.linear.app", false},
+		{"copilot upper", IsCopilotAPIHost, "API.GITHUBCOPILOT.COM", true},
+		{"copilot mixed trailing dot", IsCopilotAPIHost, "Api.GitHubCopilot.com.", true},
+		{"copilot lookalike", IsCopilotAPIHost, "evilgithubcopilot.com", false},
+		{"copilot empty", IsCopilotAPIHost, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.fn(tt.host); got != tt.want {
+				t.Errorf("host %q = %v, want %v", tt.host, got, tt.want)
+			}
+		})
 	}
 }
