@@ -478,6 +478,12 @@ const (
 	modSentinel = "sentinel"
 )
 
+// prowWIPLabel is prow's work-in-progress marker: it rides every draft PR
+// (and a "WIP" title) and is dropped when the author marks the PR ready.
+// On the tracker it is the draft state, not a maintainer hold, so a row
+// wearing only it reads "draft" rather than "hold" (hivecommons/hive#14572).
+const prowWIPLabel = "do-not-merge/work-in-progress"
+
 // Lane names.
 const (
 	laneIssue       = "issue"
@@ -767,9 +773,15 @@ func stageTrackerClassifyModifiers(labels []string, hiveID string, rec stagelabe
 			set[modBlocked] = true
 		case stagelabels.UnauthorizedLabel:
 			set[modUnauthorized] = true
+		case prowWIPLabel:
+			// Prow's WIP label is the draft marker, present whether or not
+			// the snapshot's draft bit made it this far.
+			draft = true
 		}
 	}
-	if len(holdLabels(labels, hiveID)) > 0 {
+	if len(slices.DeleteFunc(holdLabels(labels, hiveID), func(l string) bool {
+		return strings.EqualFold(strings.TrimSpace(l), prowWIPLabel)
+	})) > 0 {
 		set[modHold] = true
 	}
 	if hasRec {

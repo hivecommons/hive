@@ -1519,6 +1519,8 @@
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-blocked { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔'; margin-right: var(--sp-1); }
+    .ham-seg.active.ham-open-draft { background: var(--band-draft); color: var(--surface-0); }
+    .ham-seg.active.ham-open-draft .ham-seg-t::before { content: '✎'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
@@ -13934,6 +13936,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (mods.indexOf('regressed') >= 0 && !stageTrackerRegressionHandled(item)) return 'Sent back';
       if (n === 0 && mods.indexOf('hold') >= 0) return 'Open · on hold' + (holdLabels.length ? ' (' + holdLabels.join(', ') + ')' : '');
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
+      if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
       const viaPR = item.kind === 'issue' && n >= 50 && (n !== 85 || item.via_pr) ? ' (its PR)' : '';
@@ -14047,17 +14050,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.
         const openBlocked = n === 0 && state === 'active' && !openHold && mods.indexOf('blocked') >= 0;
+        // A draft PR with no stage is the author's, not the hive's: the
+        // Open word says so, muted, and it never tints stale (#14572).
+        const openDraft = n === 0 && state === 'active' && !openHold && !openBlocked && mods.indexOf('draft') >= 0;
         if (openHold) word = 'Open · hold';
         else if (openBlocked) word = 'Open · blocked';
-        // A plain or blocked Open step (no stage label, not held) says how
-        // long it has sat there, from the same instant the since column
-        // shows — a stale blocked item is exactly what should stand out.
+        else if (openDraft) word = 'Draft';
+        // A plain, blocked or draft Open step (no stage label, not held)
+        // says how long it has sat there, from the same instant the since
+        // column shows — a stale blocked item is exactly what should stand out.
         let openSince = null;
         if (n === 0 && state === 'active' && !openHold && !detour && nowMs) {
           const os = stageTrackerOpenSince(item);
-          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
+          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
         }
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, openSince };
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, draft: openDraft, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;
@@ -14065,6 +14072,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
     const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
+    // The draft pill and the Draft chevron explain themselves on hover: no
+    // maintainer action is pending, the lanes resume when the author is ready.
+    const STAGE_TRACKER_DRAFT_TIP = 'Draft PR — hive review and merge lanes skip drafts until the author marks it ready for review.';
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
     const STAGE_TRACKER_ICONS = {
       0: '<circle cx="8" cy="8" r="5"/>',
@@ -14161,12 +14171,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         if (active) {
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
+          if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
           if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
@@ -14299,11 +14310,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const recheck = mods[0] === 'blocked' ? /^blocked until (\S+)/i.exec(String(item.bucket_reason || '')) : null;
       const recheckMs = recheck ? Date.parse(recheck[1]) : NaN;
       if (!isNaN(recheckMs)) text += ' · re-check at ' + agentNowClockTime(recheckMs, Date.now());
-      // The regressed pill (lead or folded into "+1") explains itself on hover.
+      // The regressed pill (lead or folded into "+1") explains itself on
+      // hover; failing that, a draft pill (lead or folded) does.
       const regressed = stageTrackerRegressionText(item, Date.now());
-      // An unauthorized pill names the missing App permission and the human step.
+      // An unauthorized pill names the missing App permission and the human step;
+      // the regressed pill explains itself; a blocked pill names what it waits on;
+      // failing all three, a draft pill does.
       const tip = (mods.indexOf('unauthorized') >= 0 && String(item.unauthorized || '').trim()) || regressed
-        || (mods.indexOf('blocked') >= 0 && Array.isArray(item.blocked_on) && item.blocked_on.length ? 'Withheld from the scanner until ' + item.blocked_on.join(', ') + (item.blocked_on.length > 1 ? ' close' : ' closes') : '');
+        || (mods.indexOf('blocked') >= 0 && Array.isArray(item.blocked_on) && item.blocked_on.length ? 'Withheld from the scanner until ' + item.blocked_on.join(', ') + (item.blocked_on.length > 1 ? ' close' : ' closes') : '')
+        || (mods.indexOf('draft') >= 0 ? STAGE_TRACKER_DRAFT_TIP : '');
       const cls = 'ham-mod-' + mods[0] + (handled && mods[0] === 'regressed' ? ' ham-mod-handled' : '');
       return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
     }
