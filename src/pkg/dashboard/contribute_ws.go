@@ -3552,7 +3552,9 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			lease := h.lookupLease(identity, msg.TaskID, canonRepo, msg.Number, msg.TaskGen, time.Now())
 			if lease == nil {
 				rejectStage := h.leaseStageForDecision(identity, msg.TaskID)
-				h.logger.Warn("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
+				// Expected outcome after a hub restart or lease expiry: the relay is told to
+				// re-ready via task_revoke below, so this is not an error.
+				h.logger.Info("[contribute-ws] task_progress resume rejected: no matching server-issued lease",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID,
 					"repo", canonRepo,
