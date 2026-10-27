@@ -1082,6 +1082,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
+		} else if rec, ok := store.Get(key); ok && rec.AdoptedBy > 0 && !obs.Merged {
+			// hivecommons/hive#14471: the superseder is still on record while
+			// the lane derives 085 (needs-human) or 072 (a later contributor
+			// head). Its merge must still close this PR.
+			n, err := c.settleSuperseder(ctx, store, key, obs, rec, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
 		if tr.Regressed {
 			// Keyed by head SHA: a gate flapping between two stages on one

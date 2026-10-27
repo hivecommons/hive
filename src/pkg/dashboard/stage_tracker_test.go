@@ -408,6 +408,26 @@ func TestStageTrackerClaimantKind(t *testing.T) {
 	}
 }
 
+// TestStageTrackerSupersededPRDropped pins hivecommons/hive#14471: a PR whose
+// adoption merged and was told so is not a row, even while GitHub still
+// lists it open (the close lagged, or the App could not close a fork PR).
+func TestStageTrackerSupersededPRDropped(t *testing.T) {
+	now := time.Date(2026, 10, 17, 11, 0, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	trackerItem(t, s.buildStageTracker(status, store, now), "pr", 101)
+	key := stagelabels.Key("acme/console", 101)
+	store.MarkAdopted(key, "abc123", 150, now)
+	store.MarkSuperseded(key, 150, true, now)
+	for _, it := range s.buildStageTracker(status, store, now).Items {
+		if it.Kind == "pr" && it.Number == 101 {
+			t.Fatalf("superseded PR #101 still a row: %+v", it)
+		}
+	}
+}
+
 // TestStageTrackerIssueFeedPRsAreNotIssues pins the fix for "every PR renders
 // twice as its own parent issue": the issues feed also lists pull requests,
 // and a PR must never be an issue row, pair with itself or nest under itself.
