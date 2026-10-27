@@ -219,11 +219,12 @@ func TestRouteHumanApproved(t *testing.T) {
 			wantNoReason:   "requires_human",
 		},
 		{
-			name:       "swarm approved, workflow-path rule, human approved",
-			mutate:     func(e *Evidence) { e.HumanApprover = "octocat"; manual(e) },
-			wantStage:  ReadyForHumanMerge,
-			wantManual: true,
-			wantReason: workflow + "; @octocat approved this head",
+			name:           "swarm approved, workflow-path rule, human approved",
+			mutate:         func(e *Evidence) { e.HumanApprover = "octocat"; manual(e) },
+			wantStage:      ReadyForHumanMerge,
+			wantManual:     true,
+			wantLaneReason: "contributor-lane:workflow-path" + HumanApprovedReasonSuffix + "octocat",
+			wantReason:     workflow + "; @octocat approved this head",
 		},
 		{
 			name:       "workflow-path rule, nobody approved yet",
