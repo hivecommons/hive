@@ -35,21 +35,23 @@ func TestTakeIsPopulated(t *testing.T) {
 
 func TestStartLoggerEmitsPerTick(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	written := make(chan struct{}, 8)
+	logger := slog.New(&signallingHandler{Handler: slog.NewTextHandler(&buf, nil), done: written})
 	tick := make(chan time.Time)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	StartLogger(ctx, logger, tick)
 	for i := 0; i < 3; i++ {
 		tick <- time.Time{}
+		// Each tick is handled synchronously; wait for its record before the
+		// next so the buffer is complete when the goroutine is stopped.
+		select {
+		case <-written:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("tick %d: no log record written", i)
+		}
 	}
 	cancel()
-	// The send above only returns once the goroutine received, so three
-	// records have been written (the handler writes synchronously).
-	deadline := time.Now().Add(2 * time.Second)
-	for strings.Count(buf.String(), "mem: runtime snapshot") < 3 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
 	out := buf.String()
 	if n := strings.Count(out, "mem: runtime snapshot"); n != 3 {
 		t.Fatalf("got %d mem lines, want 3:\n%s", n, out)
@@ -169,4 +171,17 @@ func TestApplyMemoryLimit(t *testing.T) {
 	if out.Source != "none" || debug.SetMemoryLimit(-1) != prev {
 		t.Fatalf("no-cgroup path must not touch the runtime limit: %+v", out)
 	}
+}
+
+// signallingHandler sends on done after every record so tests can wait on the
+// observable write instead of sleeping.
+type signallingHandler struct {
+	slog.Handler
+	done chan<- struct{}
+}
+
+func (h *signallingHandler) Handle(ctx context.Context, r slog.Record) error {
+	err := h.Handler.Handle(ctx, r)
+	h.done <- struct{}{}
+	return err
 }

@@ -117,12 +117,19 @@ func TestHandleHealth_Body(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
 
-	var payload map[string]string
+	var payload map[string]any
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode error: %v", err)
 	}
 	if payload["status"] != "ok" {
 		t.Errorf(`expected {"status":"ok"}, got %v`, payload)
+	}
+	rt, ok := payload["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected runtime object in health body, got %v", payload["runtime"])
+	}
+	if g, _ := rt["goroutines"].(float64); g < 1 {
+		t.Errorf("runtime.goroutines = %v, want >= 1", rt["goroutines"])
 	}
 }
 

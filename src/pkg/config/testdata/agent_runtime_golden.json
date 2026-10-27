@@ -615,6 +615,7 @@
   },
   "otel": {},
   "Tracing": {},
+  "debug": {},
   "tool_approval": {
     "enabled": true,
     "rules": [

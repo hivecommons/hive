@@ -54,6 +54,7 @@ github.com/hivecommons/hive/pkg/resolve
 github.com/hivecommons/hive/pkg/retro
 github.com/hivecommons/hive/pkg/review
 github.com/hivecommons/hive/pkg/rotation
+github.com/hivecommons/hive/pkg/runtimeobs
 github.com/hivecommons/hive/pkg/scheduler
 github.com/hivecommons/hive/pkg/spokebackup
 github.com/hivecommons/hive/pkg/stageengine
