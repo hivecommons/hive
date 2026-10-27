@@ -154,6 +154,7 @@ agents:
           limits: { "vendor.com/device": "2" }
         tolerations:
           - { key: accelerator, operator: Exists, effect: NoSchedule }
+        scheduler_name: spyre-scheduler   # only if the cluster's admission webhook requires a custom scheduler for device pods
         env_from_secrets: [ artifact-registry ]
         volumes:
           - { name: cache, claim: compile-cache, mount_path: /cache }

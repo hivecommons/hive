@@ -113,6 +113,10 @@ type Options struct {
 	Tolerations    []Toleration
 	Resources      Resources
 	ServiceAccount string
+	// SchedulerName is passed through as the pod's schedulerName, for clusters
+	// whose admission webhook requires device-requesting pods to use a custom
+	// scheduler. Empty leaves the cluster default.
+	SchedulerName string
 	// EnvFromSecrets are Secret names whose keys become environment variables
 	// in the Job. This is the ONLY credential path into the Job.
 	EnvFromSecrets []string
@@ -460,6 +464,9 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 	}
 	if l.Options.ServiceAccount != "" {
 		podSpec["serviceAccountName"] = l.Options.ServiceAccount
+	}
+	if l.Options.SchedulerName != "" {
+		podSpec["schedulerName"] = l.Options.SchedulerName
 	}
 	labels := map[string]string{managedByLabel: managedByValue}
 	if spec.Name != "" {

@@ -140,11 +140,12 @@ func TestJobOptionsFromConfig(t *testing.T) {
 		Tolerations:         []config.SandboxJobToleration{{Key: "spyre", Operator: "Exists", Effect: "NoSchedule"}},
 		Resources:           config.SandboxJobResources{Limits: map[string]string{"ibm.com/spyre_pf": "2"}, Requests: map[string]string{"cpu": "4"}},
 		ServiceAccount:      "hive",
+		SchedulerName:       "spyre-scheduler",
 		EnvFromSecrets:      []string{"artifact-registry"},
 		Volumes:             []config.SandboxJobVolume{{Name: "cache", Claim: "compile-cache", MountPath: "/cache", ReadOnly: true}},
 		TTLSeconds:          600,
 	})
-	if got.WorkspaceClaim != "hive-data" || got.WorkspaceClaimMount != "/data" || got.ServiceAccount != "hive" || got.TTLSeconds != 600 {
+	if got.WorkspaceClaim != "hive-data" || got.WorkspaceClaimMount != "/data" || got.ServiceAccount != "hive" || got.SchedulerName != "spyre-scheduler" || got.TTLSeconds != 600 {
 		t.Errorf("scalar fields not carried: %+v", got)
 	}
 	if got.NodeSelector["accelerator"] != "spyre" {
