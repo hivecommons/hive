@@ -21,6 +21,13 @@ func revisitFixPR(t *testing.T, sha string) PullRequest {
 	return pr
 }
 
+// qualifiedRevisitPR mirrors the planner's org-qualification of pr.Repo so
+// state lookups keyed by repo match what PlanDispatch recorded.
+func qualifiedRevisitPR(pr PullRequest, opts DispatchOptions) PullRequest {
+	pr.Repo = fullRepoName(pr.Repo, opts.ProjectOrg)
+	return pr
+}
+
 func revisitFixOpts(now time.Time) DispatchOptions {
 	opts := fixGateOpts(false)
 	opts.Now = now
@@ -93,14 +100,15 @@ func TestRevisitStarvationForcesFixAfterNCycles(t *testing.T) {
 
 	state := DispatchState{}
 	for cycle := 1; cycle <= RevisitStarvationCycles; cycle++ {
-		plan := PlanDispatch([]PullRequest{pr}, artifact, state, revisitFixOpts(now.Add(time.Duration(cycle)*time.Minute)))
+		opts := revisitFixOpts(now.Add(time.Duration(cycle) * time.Minute))
+		plan := PlanDispatch([]PullRequest{pr}, artifact, state, opts)
 		if len(plan.FixKicks) != 0 {
 			t.Fatalf("cycle %d: fix kicked before the starvation limit", cycle)
 		}
 		if len(plan.ForcedFixes) != 0 {
 			t.Fatalf("cycle %d: forced fix before the starvation limit: %+v", cycle, plan.ForcedFixes)
 		}
-		if got := revisitStarvedCycles(plan.State, pr); got != cycle {
+		if got := revisitStarvedCycles(plan.State, qualifiedRevisitPR(pr, opts)); got != cycle {
 			t.Fatalf("cycle %d: starved counter = %d", cycle, got)
 		}
 		if len(plan.FixExclusions) != 1 || plan.FixExclusions[0].Attempts != cycle {
@@ -133,8 +141,9 @@ func TestRevisitStarvationResetsOnSettledCycle(t *testing.T) {
 	now := pr.UpdatedAt.Add(time.Hour)
 	edited := revisitFixAggregate(pr, PullRequestBodyDigest(pr.Title, "Refs #1"), pr.UpdatedAt.Add(-time.Hour))
 
-	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{edited}}, DispatchState{}, revisitFixOpts(now))
-	if revisitStarvedCycles(plan.State, pr) != 1 {
+	opts := revisitFixOpts(now)
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{edited}}, DispatchState{}, opts)
+	if revisitStarvedCycles(plan.State, qualifiedRevisitPR(pr, opts)) != 1 {
 		t.Fatalf("starved = %+v, want 1 cycle", plan.State.RevisitStarved)
 	}
 	settled := revisitFixAggregate(pr, pr.BodyDigest, now)
