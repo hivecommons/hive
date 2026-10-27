@@ -20,7 +20,15 @@ type Detail struct {
 	// overriding changes_requested/reject.
 	HumanApprover     string
 	HumanApprovalHead string
-	Role              stagelabels.Role
+	// HumanChangeRequester is the trusted human whose recorded change
+	// request (a CHANGES_REQUESTED review or a `/hive decision <text>` at
+	// 085) stands against HumanChangeRequestHead. It supersedes a
+	// requires_human / decision-requested reviewer verdict on that head:
+	// the person has answered, and the PR belongs in fixing, not 085
+	// (hivecommons/hive#14679).
+	HumanChangeRequester   string
+	HumanChangeRequestHead string
+	Role                   stagelabels.Role
 	// RedChecks names the completed-red, non-required checks the CI gate
 	// walked past on RedChecksHead (sorted). The lane ignores them by
 	// design; the stage engine must not call the PR merge-queued or

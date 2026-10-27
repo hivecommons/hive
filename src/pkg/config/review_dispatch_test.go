@@ -136,3 +136,32 @@ func TestReviewBotAuthorRouteConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewDeltaRereviewConfig(t *testing.T) {
+	off := false
+	if !(ReviewConfig{}).DeltaRereviewEnabled() {
+		t.Fatal("delta_rereview unset should be on")
+	}
+	if (ReviewConfig{DeltaRereview: &off}).DeltaRereviewEnabled() {
+		t.Fatal("delta_rereview: false still on")
+	}
+	for in, want := range map[int]int{0: DefaultReviewDeltaTrivialLines, 5: 5, -1: 0} {
+		if got := (ReviewConfig{DeltaTrivialLines: in}).EffectiveDeltaTrivialLines(); got != want {
+			t.Fatalf("delta_trivial_lines %d -> %d, want %d", in, got, want)
+		}
+	}
+	for in, want := range map[string]time.Duration{"": DefaultReviewDeltaMaxAge, "24h": 24 * time.Hour, "garbage": DefaultReviewDeltaMaxAge, "-1h": DefaultReviewDeltaMaxAge} {
+		if got := (ReviewConfig{DeltaMaxAge: in}).EffectiveDeltaMaxAge(); got != want {
+			t.Fatalf("delta_max_age %q -> %s, want %s", in, got, want)
+		}
+	}
+	if err := (ReviewConfig{DeltaMaxAge: "garbage"}).ValidateDeltaMaxAge(); err == nil {
+		t.Fatal("ValidateDeltaMaxAge accepted a non-duration")
+	}
+	if err := (ReviewConfig{DeltaMaxAge: "36h"}).ValidateDeltaMaxAge(); err != nil {
+		t.Fatalf("ValidateDeltaMaxAge rejected 36h: %v", err)
+	}
+	if err := (ReviewConfig{}).ValidateDeltaMaxAge(); err != nil {
+		t.Fatalf("ValidateDeltaMaxAge rejected unset: %v", err)
+	}
+}

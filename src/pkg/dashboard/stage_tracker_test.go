@@ -189,11 +189,84 @@ func TestStageTrackerManualMergeApproved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true`) {
-		t.Fatalf("payload lacks the manual-merge fields: %s", raw)
+	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true,"human_merge_reason":"workflow-files","human_merge_reason_text":"Changes .github/workflows/**`) {
+		t.Fatalf("payload lacks the manual-merge / human-merge-reason fields: %s", raw)
 	}
-	if clean := trackerItem(t, resp, "pr", 101); clean.HumanApprover != "" || clean.ManualMerge {
+	if clean := trackerItem(t, resp, "pr", 101); clean.HumanApprover != "" || clean.ManualMerge || clean.HumanMergeReason != "" || clean.HumanMergeReasonText != "" {
 		t.Fatalf("PR 101 must not carry manual-merge fields: %+v", clean)
+	}
+}
+
+// TestStageTrackerHumanMergeReason: every 090 row names WHY a person and
+// not the hive merges it (hivecommons/hive#14658) — a compact code from the
+// lane reason already on the stage record plus a one-sentence tooltip; an
+// unrecognised lane reason falls back to "policy" quoting it; a PR nested
+// under its issue mirrors the fields onto the linked_prs entry; rows off
+// 090 carry nothing.
+func TestStageTrackerHumanMergeReason(t *testing.T) {
+	tests := []struct {
+		reason, wantCode, wantWord, wantTipPrefix string
+	}{
+		{"contributor-lane:workflow-path:human-approved@clubanderson", "workflow-files", "workflow files", "Changes .github/workflows/**"},
+		{"contributor-lane:tests-removed", "tests-removed", "tests removed", "Deletes tests"},
+		{"human-merge-path:human-approved@octocat", "manual-merge-policy", "manual-merge policy", "Touches a path listed in auto_merge.human_merge_paths"},
+		{"untrusted-author-role", "untrusted-author", "untrusted author", "No lane can vouch for the author"},
+		{"contributor-lane:claim-tier-untrusted", "untrusted-author", "untrusted author", "No lane can vouch"},
+		{"repo-auto-merge-disabled", "auto-merge-off", "auto-merge off", "Auto-merge is switched off"},
+		{"reviewer-verdict:requires_human:human-approved@octocat", "reviewer-deferred", "reviewer deferred", "The reviewer swarm returned requires_human"},
+		{"something-brand-new", "policy", "policy", "The merge lane will not merge this unattended (lane reason `something-brand-new`)"},
+		{"", "", "", ""},
+	}
+	for _, tt := range tests {
+		code, word, tip := stageTrackerHumanMergeReason(tt.reason)
+		if code != tt.wantCode || word != tt.wantWord || !strings.HasPrefix(tip, tt.wantTipPrefix) || (tt.wantTipPrefix == "" && tip != "") {
+			t.Fatalf("%q → code %q word %q tip %q; want %q %q prefix %q", tt.reason, code, word, tip, tt.wantCode, tt.wantWord, tt.wantTipPrefix)
+		}
+	}
+
+	// Through the payload: a 090 PR whose body says `Fixes #400` nests under
+	// the open issue and the sub-row carries the same reason, approver and
+	// manual_merge; the issue line mirrors the PR's stage.
+	now := time.Date(2026, 10, 27, 18, 0, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	store.Observe(stagelabels.Key("acme/console", 401), stagelabels.ReadyForHumanMerge, "contributor-lane:workflow-path:human-approved@clubanderson")
+	store.Observe(stagelabels.Key("acme/console", 402), stagelabels.ReadyForHumanMerge, "no-such-lane-reason")
+	s.statusMu.Lock()
+	s.status.Repos[0].ActionableIssues = append(s.status.Repos[0].ActionableIssues,
+		github.Issue{Number: 400, Title: "Shard the nightly mutation run", Author: "pat", AuthorIsHuman: true, Labels: []string{"stage/090-ready-for-human-merge"}})
+	s.status.Repos[0].OpenPrs = append(s.status.Repos[0].OpenPrs,
+		FrontendPR{PullRequest: github.PullRequest{Number: 401, Title: "ci(mutation): shard nightly Stryker", Author: "pat", Labels: []string{"stage/090-ready-for-human-merge", "lgtm"},
+			LinkedIssues: []github.PRLinkedIssue{{Number: 400}}}},
+		FrontendPR{PullRequest: github.PullRequest{Number: 402, Title: "Odd lane", Author: "pat", Labels: []string{"stage/090-ready-for-human-merge"}}})
+	s.statusMu.Unlock()
+	resp := s.buildStageTracker(s.status, store, now)
+
+	pr401 := trackerItem(t, resp, "pr", 401)
+	if pr401.HumanMergeReason != "workflow-files" || !strings.HasPrefix(pr401.HumanMergeReasonText, "Changes .github/workflows/**") || pr401.NestedUnder != 400 {
+		t.Fatalf("PR 401 = reason %q text %q nested %d", pr401.HumanMergeReason, pr401.HumanMergeReasonText, pr401.NestedUnder)
+	}
+	issue400 := trackerItem(t, resp, "issue", 400)
+	if len(issue400.LinkedPRs) != 1 {
+		t.Fatalf("issue 400 linked_prs = %+v", issue400.LinkedPRs)
+	}
+	lp := issue400.LinkedPRs[0]
+	if lp.Number != 401 || lp.Stage != 90 || !lp.ManualMerge || lp.HumanApprover != "clubanderson" || lp.HumanMergeReason != "workflow-files" || lp.HumanMergeReasonText != pr401.HumanMergeReasonText {
+		t.Fatalf("issue 400 nested PR lacks the human-merge fields: %+v", lp)
+	}
+	raw, err := json.Marshal(lp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true,"human_merge_reason":"workflow-files"`) {
+		t.Fatalf("linked_prs payload lacks the fields: %s", raw)
+	}
+
+	pr402 := trackerItem(t, resp, "pr", 402)
+	if pr402.HumanMergeReason != "policy" || !strings.Contains(pr402.HumanMergeReasonText, "`no-such-lane-reason`") {
+		t.Fatalf("PR 402 fallback = reason %q text %q", pr402.HumanMergeReason, pr402.HumanMergeReasonText)
+	}
+	if soak := trackerItem(t, resp, "pr", 102); soak.HumanMergeReason != "" || soak.HumanMergeReasonText != "" {
+		t.Fatalf("PR 102 (095) must not carry a human-merge reason: %+v", soak)
 	}
 }
 

@@ -20,6 +20,28 @@ const defaultTtydPort = 7681
 // forwarding because ttyd serves its UI and websocket at the root.
 const terminalPathPrefix = "/terminal"
 
+// ttydCredential resolves the basic-auth credential ttyd itself was started
+// with, mirroring deploy/entrypoint.sh exactly: an explicit
+// HIVE_TTYD_CREDENTIAL wins, else "hive:<HIVE_DASHBOARD_TOKEN>" when a token
+// is set, else none. Returned split on the first ':' (ttyd's -c user:pass
+// form); ok is false when ttyd runs uncredentialed.
+//
+// Resolved once at proxy construction and never logged: the pass half IS the
+// dashboard token on every default deployment.
+func ttydCredential() (user, pass string, ok bool) {
+	cred := os.Getenv("HIVE_TTYD_CREDENTIAL")
+	if cred == "" {
+		if tok := os.Getenv("HIVE_DASHBOARD_TOKEN"); tok != "" {
+			cred = "hive:" + tok
+		}
+	}
+	if cred == "" {
+		return "", "", false
+	}
+	user, pass, _ = strings.Cut(cred, ":")
+	return user, pass, true
+}
+
 // ttydPort resolves the local ttyd port, falling back to the default on an
 // unset or malformed HIVE_TTYD_PORT.
 func ttydPort() int {
@@ -51,11 +73,26 @@ func ttydPort() int {
 // auth token endpoint, websocket handshake) is a GET, and a method-less
 // "/terminal/" pattern would conflict with Start()'s "GET /" under the Go
 // 1.22 ServeMux precedence rules (overlapping, neither more specific).
+//
+// The proxy presents ttyd's own basic-auth credential on every forwarded
+// request (assets, /token, and the websocket upgrade, which all go through
+// this same Rewrite). The entrypoint starts ttyd with -c hive:<token> whenever
+// HIVE_DASHBOARD_TOKEN is set, and without this header ttyd answered the
+// already-authenticated browser with a 401 that surfaced as a native
+// user/password dialog after the dashboard had admitted it. Hosted spokes run
+// ttyd uncredentialed, which is why only token-protected spokes saw it. Any
+// Authorization the browser sent is dropped rather than forwarded: it
+// authenticated the browser to the dashboard, not to ttyd.
 func (s *Server) registerTerminalProxy() {
 	target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", ttydPort())}
+	ttydUser, ttydPass, ttydCredentialed := ttydCredential()
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
+			pr.Out.Header.Del("Authorization")
+			if ttydCredentialed {
+				pr.Out.SetBasicAuth(ttydUser, ttydPass)
+			}
 			// Strip the /terminal prefix: ttyd serves at the root. Mirrors the
 			// Node proxy's pathRewrite (p.replace(/^\/terminal/, '') || '/').
 			p := strings.TrimPrefix(pr.In.URL.Path, terminalPathPrefix)

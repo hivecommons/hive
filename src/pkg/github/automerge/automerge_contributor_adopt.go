@@ -1034,10 +1034,13 @@ func (c *Engine) pushAccessLost(ctx context.Context, obs stageObservation) bool 
 }
 
 // baseSyncTouchesWorkflows reports whether the base has moved past a change
-// under .github/workflows/ since the PR's merge-base. The App token cannot
-// push such a base-sync to the PR branch (no `workflows` permission, #6985),
-// so in-place adoption would be a dead end (#12865). A compare failure counts
-// as touching: a superseding PR is always deliverable.
+// under .github/workflows/ since the PR's merge-base. Pushing such a
+// base-sync to a contributor's fork branch is refused for an App token
+// without the `workflows` grant (#6985; an installation with Workflows:
+// Read and write can merge approved workflow-path PRs into the base, #14664,
+// but a fork push is a separate matter), so in-place adoption would be a
+// dead end (#12865). A compare failure counts as touching: a superseding PR
+// is always deliverable.
 func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservation) bool {
 	if obs.HeadSHA == "" || obs.BaseRef == "" {
 		return false

@@ -301,17 +301,32 @@ type StageTrackerItem struct {
 	// the maintainer's merge click.
 	HumanApprover string `json:"human_approver,omitempty"`
 	ManualMerge   bool   `json:"manual_merge,omitempty"`
+	// HumanMergeReason is, at 090, the compact code naming why a person
+	// and not the hive merges this PR (prstage.HumanMergeReason*:
+	// "workflow-files", "untrusted-author", "branch-protection", …;
+	// "policy" when the lane reason has no more specific code), and
+	// HumanMergeReasonText the one-sentence tooltip for it, so the gate
+	// cell reads "Ready for human merge · workflow files" rather than
+	// leaving the owner to ask why (hivecommons/hive#14658).
+	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
+	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
 	// UnauthorizedStep is set when the item wears hive:unauthorized: the
 	// step the hive's GitHub App is not permitted to take, in words
 	// ("approve workflow runs"), from the `unauthorized:<step>` stage
 	// reason; the gate cell reads "Awaiting human: <step>". Unauthorized
 	// is the pill's tooltip naming the permission and the human action
 	// (hivecommons/hive#14589).
-	UnauthorizedStep string     `json:"unauthorized_step,omitempty"`
-	Unauthorized     string     `json:"unauthorized,omitempty"`
-	NudgeCount       int        `json:"nudge_count,omitempty"`
-	LastNudgeAt      *time.Time `json:"last_nudge_at,omitempty"`
-	AdoptedBy        int        `json:"adopted_by,omitempty"`
+	UnauthorizedStep string `json:"unauthorized_step,omitempty"`
+	Unauthorized     string `json:"unauthorized,omitempty"`
+	// StaleLabels are control labels the row still wears that its stage
+	// has outrun, so they are not read as modifiers: `needs-triage` on an
+	// issue at 020 or later (015 is not a gate; the reconciler removes the
+	// label on its next pass, hivecommons/hive#14586). Rendered as a muted
+	// operator tooltip, never as the stage word.
+	StaleLabels []string   `json:"stale_labels,omitempty"`
+	NudgeCount  int        `json:"nudge_count,omitempty"`
+	LastNudgeAt *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy   int        `json:"adopted_by,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -370,7 +385,14 @@ type StageTrackerLinkedPR struct {
 	// so a sub-row under an issue names the alert too.
 	SentinelAlert  bool   `json:"sentinel_alert,omitempty"`
 	SentinelReason string `json:"sentinel_reason,omitempty"`
-	Head           string `json:"head,omitempty"`
+	// HumanApprover / ManualMerge / HumanMergeReason(Text) mirror the
+	// nested PR's 090 fields so a sub-row's gate cell says why a person
+	// merges it, as the top-level row would (hivecommons/hive#14658).
+	HumanApprover        string `json:"human_approver,omitempty"`
+	ManualMerge          bool   `json:"manual_merge,omitempty"`
+	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
+	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
+	Head                 string `json:"head,omitempty"`
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -822,6 +844,7 @@ func unauthorizedStepWords(step string) string {
 const (
 	stageTrackerUnauthorizedApproveRuns = "The hive's GitHub App lacks `actions: write`, so it cannot approve the workflow runs GitHub is holding for this head. A maintainer must click Approve and run on the PR's checks banner (or the Actions tab); see the hive:unauthorized comment for the run ids. Hive resumes, and clears the label, once the required checks report."
 	stageTrackerUnauthorizedGeneric     = "The hive's GitHub App lacks a permission for the next step, so only a person can take it; the hive:unauthorized comment on the PR names the permission and the step. Hive resumes, and clears the label, once the step is done."
+	stageTrackerUnauthorizedMergeWF     = "The hive's GitHub App lacks `workflows: write`, so it cannot merge this owner-approved PR that edits .github/workflows files. A maintainer must click Merge on GitHub (the approval already stands), or grant the App Workflows: Read and write so the hive can merge such PRs itself."
 )
 
 // stageTrackerUnauthorized derives the gate word and the tooltip for an
@@ -836,6 +859,9 @@ func stageTrackerUnauthorized(reason string) (step, tip string) {
 	if rest == stageengineprstage.UnauthorizedStepApproveWorkflowRuns {
 		return step, stageTrackerUnauthorizedApproveRuns
 	}
+	if rest == stageengineprstage.UnauthorizedStepMergeWorkflowPath {
+		return step, stageTrackerUnauthorizedMergeWF
+	}
 	return step, "The hive's GitHub App lacks the permission to " + step + ", so only a person can take that step; the hive:unauthorized comment on the PR names the permission and the action. Hive resumes, and clears the label, once the step is done."
 }
 
@@ -848,6 +874,36 @@ func stageTrackerManualMergeReason(reason string) bool {
 		return true
 	}
 	return false
+}
+
+// Gate-cell words and tooltips per prstage.HumanMergeReason* code: why a
+// person, not the hive, merges a PR parked at 090 (hivecommons/hive#14658).
+var stageTrackerHumanMergeReasonWords = map[string][2]string{
+	stageengineprstage.HumanMergeReasonWorkflowFiles:     {"workflow files", "Changes .github/workflows/** (or action files) — the hive never merges workflow changes and its GitHub App lacks the workflows permission; click Merge on GitHub"},
+	stageengineprstage.HumanMergeReasonTestsRemoved:      {"tests removed", "Deletes tests — the hive never merges a PR that removes tests unattended; a maintainer reviews the deletion and clicks Merge"},
+	stageengineprstage.HumanMergeReasonManualMergePolicy: {"manual-merge policy", "Touches a path listed in auto_merge.human_merge_paths — the hive never merges it unattended; click Merge on GitHub"},
+	stageengineprstage.HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection or a ruleset requires an approving review the hive's GitHub App cannot give; approve on GitHub (or let the App bypass) and the hive merges, or click Merge"},
+	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repository disallows the merge method this PR needs (a forward merge or merge-commit PR is never squashed); merge by hand with an allowed method or allow it in the repository settings"},
+	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is switched off for this repository or lane, so every merge is a person's; click Merge on GitHub"},
+	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "No lane can vouch for the author (trust tier below require_tiers, no verified claim, or no trusted role), so the hive does not merge; a maintainer's /lgtm + /approve (or Merge) lands it"},
+	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "The hive's GitHub App is not permitted to take the merge step (GitHub answered 403); a maintainer merges by hand — see the hive:unauthorized note on the PR"},
+	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "The reviewer swarm returned requires_human on this head and a trusted merger approved it; the hive leaves the merge itself to a person"},
+}
+
+// stageTrackerHumanMergeReason derives, from a 090 stage reason, the
+// compact code, the gate-cell word and the tooltip saying why a person
+// must merge. An unrecognised lane reason falls back to the "policy" code
+// with the raw reason in the tooltip; an empty reason yields "".
+func stageTrackerHumanMergeReason(reason string) (code, word, tip string) {
+	code = stageengineprstage.HumanMergeReason(reason)
+	if code == "" {
+		return "", "", ""
+	}
+	if w, ok := stageTrackerHumanMergeReasonWords[code]; ok {
+		return code, w[0], w[1]
+	}
+	base, _ := stagelabels.HumanApprovedReason(reason)
+	return stageengineprstage.HumanMergeReasonPolicy, "policy", "The merge lane will not merge this unattended (lane reason `" + strings.TrimSpace(base) + "`); a maintainer merges by hand"
 }
 
 // trackerSoakRemainingRE pulls the time left out of the lane's
@@ -1167,16 +1223,24 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if stage == stagelabels.NeedsDecision || stage == stagelabels.IssueNeedsDecision {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
 		}
-		// Likewise 015 says "Triage needed" itself; the needs-triage chip
-		// only adds information on another stage (a claimed or covered
-		// issue the gate is still holding).
-		if stage == stagelabels.TriageNeeded {
+		// Likewise 015 says "Triage needed" itself, and a needs-triage left
+		// on a claimed / covered issue is stale, not a signal: 015 is not a
+		// gate, the stage word is the truth, and the reconciler removes the
+		// label on its next pass (hivecommons/hive#14586). The chip stays
+		// only before the claim (010 / 017 / 045).
+		if stage == stagelabels.TriageNeeded || stage.SettlesTriage() {
+			if stage != stagelabels.TriageNeeded && slices.Contains(it.Modifiers, modNeedsTriage) {
+				it.StaleLabels = append(it.StaleLabels, modNeedsTriage)
+			}
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
+		if stage == stagelabels.ReadyForHumanMerge {
+			it.HumanMergeReason, _, it.HumanMergeReasonText = stageTrackerHumanMergeReason(it.Reason)
+		}
 		if slices.Contains(it.Modifiers, modUnauthorized) {
 			it.UnauthorizedStep, it.Unauthorized = stageTrackerUnauthorized(it.Reason)
 		}
@@ -1309,12 +1373,85 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
-	sort.SliceStable(resp.Items, func(i, j int) bool {
-		a, b := resp.Items[i], resp.Items[j]
+	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
+	return resp
+}
+
+// Ordering tiers within a stage (stageTrackerAttentionTier; the dashboard's
+// STAGE_TRACKER_TIER_* carry the same values).
+const (
+	stageTrackerTierAttention = 0
+	stageTrackerTierNormal    = 1
+	stageTrackerTierSunk      = 2
+)
+
+// stageTrackerAttentionStages are the stages that park an item on a person
+// (dashboard STAGE_TRACKER_ATTENTION_STAGES): issue needs-decision, PR
+// needs-author / returned-to-contributor, PR needs-decision and
+// ready-for-human-merge.
+var stageTrackerAttentionStages = []int{stagelabels.IssueNeedsDecision.Number(), stagelabels.NeedsAuthor.Number(), stagelabels.ReturnedToContributor.Number(), stagelabels.NeedsDecision.Number(), stagelabels.ReadyForHumanMerge.Number()}
+
+// stageTrackerHumanMods are the modifiers that park an item on a person
+// (dashboard STAGE_TRACKER_HUMAN_MODS).
+var stageTrackerHumanMods = []string{modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsRebase, modBlocked, modStalled}
+
+// stageTrackerSunkMods are the modifiers that sink a row to the bottom of
+// its stage (dashboard STAGE_TRACKER_SUNK_MODS): a person parked it, or it
+// is a draft nobody should act on yet.
+var stageTrackerSunkMods = []string{modHold, modDraft}
+
+// stageTrackerRegressionHandled mirrors the dashboard's
+// stageTrackerRegressionHandled: a regressed item with no human-gate
+// modifier on a hive-driven stage is the hive's to work through.
+func stageTrackerRegressionHandled(it StageTrackerItem) bool {
+	if !slices.Contains(it.Modifiers, modRegressed) {
+		return false
+	}
+	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerHumanMods, m) }) {
+		return false
+	}
+	return !slices.Contains(stageTrackerAttentionStages, it.Stage)
+}
+
+// stageTrackerNeedsAttention mirrors the dashboard's
+// stageTrackerNeedsAttention: the item shows a pill or sits on a stage
+// parked on a person. Only the shown Modifiers count, so a merge-gate pill
+// held back until the gate never promotes a row.
+func stageTrackerNeedsAttention(it StageTrackerItem) bool {
+	if stageTrackerRegressionHandled(it) {
+		return false
+	}
+	return len(it.Modifiers) > 0 || slices.Contains(stageTrackerAttentionStages, it.Stage)
+}
+
+// stageTrackerAttentionTier is the item's ordering tier within its stage
+// (the dashboard's stageTrackerAttentionTier agrees): rows parked on a
+// person first, then the rest, then rows nobody should act on — hold
+// (incl. do-not-merge/*) and draft. The direction toggle never flips it.
+func stageTrackerAttentionTier(it StageTrackerItem) int {
+	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerSunkMods, m) }) {
+		return stageTrackerTierSunk
+	}
+	if stageTrackerNeedsAttention(it) {
+		return stageTrackerTierAttention
+	}
+	return stageTrackerTierNormal
+}
+
+// stageTrackerLess orders the payload: stage descending, then
+// attention-first within the stage (stageTrackerAttentionTier), then the
+// item that has waited longest, then repo and number — the dashboard's
+// default view, so chat and hub consumers read the same order.
+func stageTrackerLess(items []StageTrackerItem) func(i, j int) bool {
+	return func(i, j int) bool {
+		a, b := items[i], items[j]
 		if a.Stage != b.Stage {
 			return a.Stage > b.Stage
 		}
-		// Within a stage the item that has waited longest comes first: it is
+		if ta, tb := stageTrackerAttentionTier(a), stageTrackerAttentionTier(b); ta != tb {
+			return ta < tb
+		}
+		// Within a tier the item that has waited longest comes first: it is
 		// the one most likely to need a human.
 		at, bt := trackerSince(a), trackerSince(b)
 		if at.IsZero() != bt.IsZero() {
@@ -1327,8 +1464,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			return a.Repo < b.Repo
 		}
 		return a.Number < b.Number
-	})
-	return resp
+	}
 }
 
 func trackerSince(it StageTrackerItem) time.Time {
@@ -1679,6 +1815,8 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
+				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
+				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)

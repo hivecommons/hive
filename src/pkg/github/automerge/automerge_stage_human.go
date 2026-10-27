@@ -86,19 +86,20 @@ var humanConflictReasons = map[string]bool{"conflicting": true, "not-mergeable":
 // humanEvidence gathers the Evidence for one human-routed observation.
 func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, cause stagelabels.HumanCause, now time.Time) stagelabels.Evidence {
 	contributorVerdict := normalizeContributorLaneVerdict(c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA))
+	workflowManual := c.workflowFenceManual(obs.Owner, obs.Repo, obs.Number, obs.HeadSHA)
 	e := stagelabels.Evidence{
 		Head:             obs.HeadSHA,
 		Verdict:          humanVerdict(contributorVerdict),
 		Conflict:         humanConflictReasons[obs.Reason] || hasLabelFold(obs.Labels, "needs-rebase"),
 		Holds:            stagelabels.Holds(obs.Labels),
 		Cause:            cause,
-		CauseReason:      decisionCause(obs.Reason),
+		CauseReason:      decisionCauseFor(obs.Reason, workflowManual),
 		DecisionQuestion: strings.TrimSpace(contributorVerdict.DecisionQuestion),
 		HumanSummaries:   append([]string(nil), contributorVerdict.HumanSummaries...),
 		SelfAuthored:     obs.Lane == stageLaneSelf,
 		AuthorKind:       obs.AuthorKind,
 		LaneReason:       obs.Reason,
-		ManualMergeRule:  manualMergeRuleReason(obs.Reason),
+		ManualMergeRule:  manualMergeRuleReasonFor(obs.Reason, workflowManual),
 	}
 	// A trusted merger's APPROVED review on exactly this head is the human
 	// decision the lane noted (latestTrustedHumanApproval): it settles a
@@ -141,15 +142,33 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	return e
 }
 
-// manualMergeRuleReason reports whether a lane reason is a rule no review
-// or reply overrides: the hive never merges the head unattended, a person
-// clicks merge.
-func manualMergeRuleReason(reason string) bool {
+// manualMergeRuleReasonFor reports whether a lane reason is a rule no
+// review or reply overrides: the hive never merges the head unattended, a
+// person clicks merge. workflowManual supplies the workflow-path fence's
+// standing: true when the hive will not merge the head itself even once
+// approved (toggle off, or the App lacks `workflows: write` for this head);
+// false when owner approval releases it (hivecommons/hive#14664).
+func manualMergeRuleReasonFor(reason string, workflowManual bool) bool {
 	switch reason {
-	case contributorLaneReasonWorkflowPath, contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath:
+	case contributorLaneReasonWorkflowPath:
+		return workflowManual
+	case contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath:
 		return true
 	}
 	return false
+}
+
+// workflowFenceManual reports whether a workflow-path PR at this head is
+// one a person must merge: the owner-approval release is off, or the lane
+// has learnt the App cannot merge the head (unauthorized merge-workflow-path).
+func (c *Engine) workflowFenceManual(owner, repo string, number int, headSHA string) bool {
+	if c == nil {
+		return true
+	}
+	if !c.currentContributorLanePolicy().OwnerApprovalReleasesWorkflowFence {
+		return true
+	}
+	return c.unauthorizedStep(owner, repo, number, headSHA) == unauthorizedStepMergeWorkflowPath
 }
 
 // routeHuman refines a lane's human hand-off into the stage the evidence
@@ -175,7 +194,7 @@ func (c *Engine) routeHuman(ctx context.Context, tracker *StageTracker, key stri
 // consume `/hive approve` on a PR: the release lever for `requires_human` is
 // a trusted merger's GitHub Approve review on the current head.
 func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bool) {
-	if manualMergeRuleReason(obs.Reason) {
+	if e.ManualMergeRule {
 		action := "The hive never merges this change itself: a maintainer must click **Merge** on GitHub (or comment `/lgtm` + `/approve` for tide). A GitHub Approve review records the decision but does not merge, and `/hive approve` cannot override this lane's manual-merge rule."
 		if approver := strings.TrimSpace(e.HumanApprover); approver != "" {
 			action = "@" + approver + " has approved this head; the only step left is the merge. " + action
@@ -183,6 +202,9 @@ func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bo
 		return []string{action}, true
 	}
 	var actions []string
+	if obs.Reason == contributorLaneReasonWorkflowPath {
+		actions = append(actions, "A hive owner / trusted merger submits a GitHub **Approve** review on the current head (or approves from the Hive dashboard, which posts `/hive decision approve` on their behalf); that explicit approval releases the workflow-path fence and the lane merges on its next pass once CI, soak and the other gates are clear. Approval on an earlier head does not carry over: re-approve after a push.")
+	}
 	if len(e.ForkGuard) > 0 {
 		actions = append(actions, "A maintainer must push this branch to the repository (or approve the guarded run as the repository requires); the contributor cannot clear a fork guard by pushing to the fork, and the hive does not adopt it.")
 	}
@@ -233,14 +255,31 @@ func trustCause(reason string, role stagelabels.Role) string {
 }
 
 // decisionCause renders a non-trust human-only lane reason as prose for the
-// 085 comment ("" for reasons the labels already explain).
+// 085 comment ("" for reasons the labels already explain). The workflow-path
+// fence reads as a manual-merge rule; decisionCauseFor refines it.
 func decisionCause(reason string) string {
+	return decisionCauseFor(reason, true)
+}
+
+// workflowPathCause is the 085 prose for the workflow-path fence: a rule a
+// person merges around when workflowManual, otherwise a fence awaiting the
+// owner's explicit approval (hivecommons/hive#14664).
+func workflowPathCause(workflowManual bool) string {
+	if workflowManual {
+		return "the PR edits CI workflow / action files, which the lane never merges unattended"
+	}
+	return "the PR edits CI workflow / action files: awaiting owner approval — a hive owner / trusted merger's GitHub **Approve** review on the current head (or a dashboard `/hive decision approve`) releases the fence and the hive merges it; approval on an earlier head does not count, so re-approve after a push"
+}
+
+// decisionCauseFor is decisionCause with the workflow-path fence's standing
+// supplied (see workflowFenceManual).
+func decisionCauseFor(reason string, workflowManual bool) string {
 	switch {
 	case reason == "held", reason == "label:hold", reason == "label:needs-human", reason == "exempt-label",
 		strings.HasPrefix(reason, "excluded-label:"), reason == "sentinel", reason == contributorLaneReasonSentinelBlocked:
 		return ""
 	case reason == contributorLaneReasonWorkflowPath:
-		return "the PR edits CI workflow / action files, which the lane never merges unattended"
+		return workflowPathCause(workflowManual)
 	case reason == contributorLaneReasonTestsRemoved:
 		return "the PR removes tests, which the lane never merges unattended"
 	case strings.HasPrefix(reason, stageReasonForkGuard):

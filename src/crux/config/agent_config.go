@@ -34,6 +34,11 @@ type SandboxJobConfig struct {
 	Tolerations         []SandboxJobToleration `yaml:"tolerations,omitempty" json:"tolerations,omitempty"`
 	Resources           SandboxJobResources    `yaml:"resources,omitempty" json:"resources,omitempty"`
 	ServiceAccount      string                 `yaml:"service_account,omitempty" json:"service_account,omitempty"`
+	// SchedulerName sets the pod's schedulerName. Accelerator clusters often
+	// gate device-requesting pods behind a custom scheduler via an admission
+	// webhook (e.g. `A pod must use "schedulerName: spyre-scheduler"`);
+	// without this the Job create is denied before any pod exists.
+	SchedulerName       string                 `yaml:"scheduler_name,omitempty" json:"scheduler_name,omitempty"`
 	EnvFromSecrets      []string               `yaml:"env_from_secrets,omitempty" json:"env_from_secrets,omitempty"`
 	Volumes             []SandboxJobVolume     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	TTLSeconds          int                    `yaml:"ttl_seconds,omitempty" json:"ttl_seconds,omitempty"`

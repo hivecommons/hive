@@ -7055,7 +7055,7 @@
         <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
         <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person">Needs attention</button>
-        <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
+        <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
         <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
@@ -13735,9 +13735,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // (payload human_approver) instead of the generic stage word.
     const STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90;
     const STAGE_TRACKER_MANUAL_MERGE_WORD = 'Awaiting human merge';
+    // Every 090 word also says WHY a person merges (payload
+    // human_merge_reason, a prstage.HumanMergeReason* code such as
+    // "workflow-files" / "untrusted-author" / "branch-protection", falling
+    // back to "policy"); the tooltip carries the payload's one-sentence
+    // human_merge_reason_text (hivecommons/hive#14658).
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'policy': 'policy' };
+    function stageTrackerHumanMergeReasonWord(item) {
+      const code = String((item && item.human_merge_reason) || '').trim();
+      if (!code) return '';
+      return STAGE_TRACKER_HUMAN_MERGE_REASON_WORD[code] || code.replace(/-/g, ' ');
+    }
     function stageTrackerManualMergeWord(item) {
       const approver = String((item && item.human_approver) || '').trim();
-      return STAGE_TRACKER_MANUAL_MERGE_WORD + (approver ? ' · approved by @' + approver : '');
+      const why = stageTrackerHumanMergeReasonWord(item);
+      return STAGE_TRACKER_MANUAL_MERGE_WORD + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
+    }
+    // The plain 090 word (no manual-merge rule): the stage's short word
+    // plus the reason, "Ready for human merge · untrusted author".
+    function stageTrackerReadyForHumanWord(item, fallback) {
+      const why = stageTrackerHumanMergeReasonWord(item);
+      return why ? fallback + ' · ' + why : '';
     }
     // 085 under hive:unauthorized (payload unauthorized_step, e.g. "approve
     // workflow runs"): the hive's GitHub App lacks the permission for that
@@ -13852,6 +13870,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // labels follow when at least two items carry them.
     const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/', 'hold', 'on-hold', 'do-not-merge', 'hive-pause/'];
     const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number'];
+    // Attention tiers within a column (stageTrackerAttentionTier; same
+    // values as Go): the pills that sink a row, and the direction button's
+    // note that the arrow never flips the tier.
+    const STAGE_TRACKER_TIER_ATTENTION = 0;
+    const STAGE_TRACKER_TIER_NORMAL = 1;
+    const STAGE_TRACKER_TIER_SUNK = 2;
+    const STAGE_TRACKER_SUNK_MODS = ['hold', 'draft'];
+    const STAGE_TRACKER_DIR_TIER_NOTE = ' · Attention-first within each column; arrow flips age order';
     // Repo chip + group-by-repo. The chip before an item's number names its
     // repo (short name; owner/repo in the tooltip; click = the Repo filter)
     // and is shown always / only when the payload spans several repos
@@ -13910,7 +13936,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 74: return 'Hive took it over' + viaPR;
         case 80: return 'Not yet admitted to auto merge' + viaPR;
         case 85: return 'Needs a human decision' + viaPR;
-        case 90: return 'Ready for a human merge' + viaPR;
+        case 90: return 'Ready for a human merge' + (stageTrackerHumanMergeReasonWord(item) ? ' · ' + stageTrackerHumanMergeReasonWord(item) : '') + viaPR;
         case 95: return 'Pre-merge soak' + stageTrackerSoakLeft(item) + viaPR;
         case 100: return 'Admitted — merging' + viaPR;
         case 110: return 'Merged';
@@ -13990,7 +14016,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
@@ -14128,6 +14154,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
+          // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
+          else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim() + (sg.description ? ' — ' + sg.description : '');
           if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.
@@ -14217,6 +14245,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actorKind = stageTrackerActorKind(item);
       if (actorKind) lines.push('Next move: ' + actorKind);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
+      const stale = stageTrackerStaleLabelsText(item);
+      if (stale) lines.push(stale);
       if (item.sentinel_alert) lines.push(stageTrackerSentinelTip(item));
       const regressed = stageTrackerRegressionText(item, nowMs);
       if (regressed) lines.push(regressed.charAt(0).toUpperCase() + regressed.slice(1));
@@ -14311,7 +14341,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
-        sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
@@ -14329,11 +14359,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </div>`;
     }
 
-    // Covering PRs of an issue, furthest along first.
+    // Covering PRs of an issue, furthest along first, attention-first
+    // within a stage (stageTrackerAttentionTier), then longest on step.
     function stageTrackerLinkedSorted(item, stages) {
       const linked = Array.isArray(item.linked_prs) ? item.linked_prs.slice() : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
-      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr') - stageTrackerAnchor(x.stage, stages, 'pr')) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
+      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr') - stageTrackerAnchor(x.stage, stages, 'pr')) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
 
     // List order: furthest along the strip first — a covered issue counts as
@@ -14490,7 +14521,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -14967,6 +14998,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return mods.length > 0 || STAGE_TRACKER_ATTENTION_STAGES.indexOf(n) >= 0;
     }
 
+    // Ordering tier of a row within its column (mirrors Go
+    // stageTrackerAttentionTier): rows parked on a person first, then the
+    // rest, then rows nobody should act on — hold (incl. do-not-merge/*),
+    // draft, and a PR standing in for a closed issue. Only the pills a row
+    // shows count (deferred_modifiers never promote it); the direction
+    // toggle leaves the tier order alone.
+    function stageTrackerAttentionTier(row) {
+      const mods = Array.isArray(row.modifiers) ? row.modifiers : [];
+      if (STAGE_TRACKER_SUNK_MODS.some(m => mods.indexOf(m) >= 0) || (row.closed_issue && Number(row.closed_issue.number) > 0)) return STAGE_TRACKER_TIER_SUNK;
+      return stageTrackerNeedsAttention(row) ? STAGE_TRACKER_TIER_ATTENTION : STAGE_TRACKER_TIER_NORMAL;
+    }
+
     // The instant an item's current wait began: when it entered its step,
     // else when it was opened (an item with no step yet is waiting since then).
     function stageTrackerWaitSince(item) {
@@ -15092,22 +15135,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Order rows. 'furthest' is the strip order (furthest along first, then
     // longest on step); 'waiting' is longest wait first; 'newest' is most
-    // recently opened first; 'number' is repo then number. dir 'asc' reverses.
+    // recently opened first; 'number' is repo then number. Under 'furthest'
+    // and 'waiting' rows tier attention-first within a column
+    // (stageTrackerAttentionTier); dir 'asc' reverses the strip / age /
+    // repo / number keys but never the tier.
     function stageTrackerSort(rows, stages, f) {
       f = stageTrackerNormalizeFilter(f);
       const byRepoNumber = (x, y) => ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0));
+      const sign = f.dir === 'asc' ? -1 : 1;
+      const byTier = (x, y) => stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y);
       let cmp;
       switch (f.sort) {
-        case 'waiting': cmp = (x, y) => ((stageTrackerWaitSince(x) || Infinity) - (stageTrackerWaitSince(y) || Infinity)) || byRepoNumber(x, y); break;
-        case 'newest': cmp = (x, y) => ((Date.parse(y.created_at || '') || 0) - (Date.parse(x.created_at || '') || 0)) || byRepoNumber(y, x); break;
-        case 'number': cmp = (x, y) => byRepoNumber(y, x); break;
+        case 'waiting': cmp = (x, y) => byTier(x, y) || sign * (((stageTrackerWaitSince(x) || Infinity) - (stageTrackerWaitSince(y) || Infinity)) || byRepoNumber(x, y)); break;
+        case 'newest': cmp = (x, y) => sign * (((Date.parse(y.created_at || '') || 0) - (Date.parse(x.created_at || '') || 0)) || byRepoNumber(y, x)); break;
+        case 'number': cmp = (x, y) => sign * byRepoNumber(y, x); break;
         default: {
           const keyOf = it => stageTrackerSortKey(it, stages);
-          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return (b.anchor - a.anchor) || (a.since - b.since) || byRepoNumber(x, y); };
+          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return sign * (b.anchor - a.anchor) || byTier(x, y) || sign * ((a.since - b.since) || byRepoNumber(x, y)); };
         }
       }
-      const out = (rows || []).slice().sort(cmp);
-      return f.dir === 'asc' ? out.reverse() : out;
+      return (rows || []).slice().sort(cmp);
     }
 
     // One page of rows plus the numbers the "showing X–Y of N" line needs.
@@ -15301,7 +15348,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const att = document.getElementById('activity-monitor-attention');
       if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
       const dir = document.getElementById('activity-monitor-dir');
-      if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'); }
+      if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
       const reset = document.getElementById('activity-monitor-reset');
       if (reset) reset.hidden = !stageTrackerFilterActive(f);
     }
@@ -15631,8 +15678,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       open: 'Open on GitHub', copy: 'Copy link',
     };
     // Accept triage shows on an issue the chevron calls "Triage needed":
-    // stage 015, or the needs-triage pill on another stage (a claimed or
-    // covered issue the reporter-trust gate still holds). Never on a PR.
+    // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
+    // 045). A needs-triage left on a claimed or covered issue is reported
+    // as stale_labels, not a modifier, so no action is offered for it
+    // (hivecommons/hive#14586). Never on a PR.
     const STAGE_TRACKER_TRIAGE_STAGE = 15;
     const STAGE_TRACKER_ACTIONABLE_STAGE = 10;
     const STAGE_TRACKER_WHY_WRITE = 'Sign in with write access to this repo';
@@ -15741,7 +15790,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.kind === 'pr') return parked(item) ? item : null;
       for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
         const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], author: lp.author || '',
-          sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
+          human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
         if (parked(pr)) return pr;
       }
       if (item.mirrored) return null;
@@ -15772,6 +15821,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
       out.push({ id: 'decide:close-wontfix', label: "Close as won't-fix…", enabled, why, danger: true });
       return out;
+    }
+    // Pure: the operator note for labels the row's stage has outrun
+    // (stale_labels: a needs-triage still on a claimed issue, which the
+    // reconciler removes on its next pass — hivecommons/hive#14586). '' when none.
+    function stageTrackerStaleLabelsText(item) {
+      const stale = item && Array.isArray(item.stale_labels) ? item.stale_labels.filter(Boolean) : [];
+      if (!stale.length) return '';
+      return 'Stale label' + (stale.length > 1 ? 's' : '') + ': ' + stale.join(', ') + ' (stage has moved on; the hive removes it on its next pass)';
     }
     // Pure: whether a row is an issue waiting on a maintainer's triage.
     function stageTrackerTriageNeeded(item) {
@@ -49227,6 +49284,7 @@ function burnAreaChart() {
         <div class="config-field"><label>Workspace dir ${yamlHint('agent_sandbox.workspace_dir')} ${settingHelpMark('settings', 'security-and-access', 'Workspace dir', `Directory mounted as the sandbox workspace.`)}</label><input type="text" value="${esc(sec.agentSandboxWorkspaceDir || '')}" placeholder="default workspace dir" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxWorkspaceDir" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Env allowlist ${yamlHint('agent_sandbox.env_allowlist[]')} ${settingHelpMark('settings', 'security-and-access', 'Sandbox env allowlist', `Environment variable names passed into the sandbox. One per line.`)}</label><textarea rows="3" class="mono" data-change-action="markSecurityLines" data-arg0="agentSandboxEnvAllowlist" data-arg-types="s,v">${esc((sec.agentSandboxEnvAllowlist || []).join('\n'))}</textarea></div>
         <div class="config-field"><label>Job service account ${yamlHint('agent_sandbox.job.service_account')} ${settingHelpMark('settings', 'security-and-access', 'Job service account', `Kubernetes service account for sandbox Jobs.`)}</label><input type="text" value="${esc(sec.agentSandboxJobServiceAccount || '')}" placeholder="service account name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobServiceAccount" data-arg-types="s,s,v"></div>
+        <div class="config-field"><label>Job scheduler name ${yamlHint('agent_sandbox.job.scheduler_name')} ${settingHelpMark('settings', 'security-and-access', 'Job scheduler name', `Kubernetes schedulerName for sandbox Job pods. Leave empty for the cluster default; set when an admission webhook requires a custom scheduler for device-requesting pods (e.g. spyre-scheduler).`)}</label><input type="text" value="${esc(sec.agentSandboxJobSchedulerName || '')}" placeholder="cluster default" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobSchedulerName" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job TTL (seconds) ${yamlHint('agent_sandbox.job.ttl_seconds')} ${settingHelpMark('settings', 'security-and-access', 'Job TTL (seconds)', `Seconds a finished sandbox Job is kept. 0 uses the default.`)}</label><input type="number" min="0" value="${Number(sec.agentSandboxJobTtlSeconds || 0)}" data-change-action="markSecurityNumber" data-arg0="agentSandboxJobTtlSeconds" data-arg-types="s,v"></div>
         <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
@@ -49780,6 +49838,7 @@ function burnAreaChart() {
       const amContributorLaneVerdict = amContributorLane.require_reviewer_verdict !== false;
       const amContributorLaneRegistry = amContributorLane.registry_tiers_sufficient !== false;
       const amContributorLaneHeldRuns = amContributorLane.approve_held_runs_for_registry_trusted !== false;
+      const amContributorLaneWorkflowApproval = amContributorLane.owner_approval_releases_workflow_fence !== false;
       const amContributorLaneSoak = Number.isFinite(Number(amContributorLane.soak_minutes)) ? Number(amContributorLane.soak_minutes) : 30;
       const amContributorLaneLabels = Array.isArray(amContributorLane.exclude_labels) ? amContributorLane.exclude_labels : ['hold','do-not-merge','needs-human','blocked','needs-rebase'];
       const amContributorLaneTiers = Array.isArray(amContributorLane.require_tiers) && amContributorLane.require_tiers.length ? amContributorLane.require_tiers : ['merger','trusted'];
@@ -49980,6 +50039,13 @@ function burnAreaChart() {
                   <span class="config-toggle-label">Start CI held by GitHub's fork-approval policy ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Start CI held by fork-approval policy', `GitHub holds a first-time contributor's pull_request runs until someone clicks Approve and run. If the operator already trusts the author to merge via the registry, holding their CI is pure drag; the hive approves the head's held runs once and logs contributor-lane approved held runs.`)}</span>
                 </div>
               </div>
+              <div class="config-field">
+                <label>Owner approval releases the workflow-path fence ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Owner approval releases the workflow-path fence', `When on (the default), a trusted merger's GitHub Approve review on the current head — or a dashboard /hive decision approve bound to it — lets the contributor lane merge a PR that edits .github/workflows/** or .github/actions/** itself once CI, soak and the other gates are clear. Approval on an earlier head does not count. Needs the App's Workflows: Read and write; without it the merge is refused, the PR is marked hive:unauthorized and parks at 090 for a person's Merge click. Off keeps every workflow-path PR a person's merge.`)}</label>
+                <div class="config-toggle">
+                  <div id="am-contributor-lane-owner-approval-workflow-fence" class="config-toggle-switch ${amContributorLaneWorkflowApproval ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneWorkflowApproval ? 'true' : 'false'}"></div>
+                  <span class="config-toggle-label">Merge owner-approved workflow-file PRs ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Merge owner-approved workflow-file PRs', `YAML: auto_merge.contributor_lane.owner_approval_releases_workflow_fence. If you approved it, the hive merges it; a stale approval re-arms the fence on the next push.`)}</span>
+                </div>
+              </div>
             </div>
             <div class="config-field mt-4">
               <label for="am-contributor-lane-auto-promotion-scope">Auto-promotion scope ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Auto-promotion scope', `Where the clean-merged-PR ratchet (auto_merge.contributor_tier.auto_promote_after_merged) counts an author's merges. hive (the default) counts clean merged PRs across every repository this hive manages, so a contributor trusted in the main repo is trusted in the small satellite repos too; repo counts only the PR's own repository. Revert and sentinel-alert evidence blocks promotion in either scope.`)}</label>
@@ -49995,7 +50061,7 @@ function burnAreaChart() {
               <label for="am-contributor-lane-repos">Repositories</label>
               <select id="am-contributor-lane-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh104" class="am-trusted-authors-repos">${amContributorLaneRepoOptions}</select>
               <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, no-linked-issue, claim-author-mismatch, claim-other-hive, claim-tier-untrusted, claim-unverified, author-association, workflow-path, tests-removed, no-reviewer, no-verdict, soaking, sentinel-blocked); a registry-admitted PR logs <code>contributor-lane:registry-trusted</code>.</p>
-              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.approve_held_runs_for_registry_trusted</code>, <code>auto_merge.contributor_lane.auto_promotion_scope</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
+              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.approve_held_runs_for_registry_trusted</code>, <code>auto_merge.contributor_lane.owner_approval_releases_workflow_fence</code>, <code>auto_merge.contributor_lane.auto_promotion_scope</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
             </div>
           </div>
         </div>
@@ -51514,6 +51580,7 @@ function burnAreaChart() {
       'auto_merge.contributor_lane.require_reviewer_verdict': { tab: 'Features', stage: v => complianceStageContributorLane('require_reviewer_verdict', v) },
       'auto_merge.contributor_lane.registry_tiers_sufficient': { tab: 'Features', stage: v => complianceStageContributorLane('registry_tiers_sufficient', v) },
       'auto_merge.contributor_lane.approve_held_runs_for_registry_trusted': { tab: 'Features', stage: v => complianceStageContributorLane('approve_held_runs_for_registry_trusted', v) },
+      'auto_merge.contributor_lane.owner_approval_releases_workflow_fence': { tab: 'Features', stage: v => complianceStageContributorLane('owner_approval_releases_workflow_fence', v) },
       'auto_merge.required_checks': { tab: 'Features' },
       'sentinel.enabled': { tab: 'Security', stage: v => markSentinelDirty('enabled', v) },
       'sentinel.disabled_behaviors': { tab: 'Security' },
@@ -52300,6 +52367,7 @@ function burnAreaChart() {
       const verdict = document.getElementById('am-contributor-lane-require-reviewer-verdict');
       const registry = document.getElementById('am-contributor-lane-registry-tiers-sufficient');
       const heldRuns = document.getElementById('am-contributor-lane-approve-held-runs');
+      const workflowApproval = document.getElementById('am-contributor-lane-owner-approval-workflow-fence');
       const soak = document.getElementById('am-contributor-lane-soak-minutes');
       const labels = document.getElementById('am-contributor-lane-exclude-labels');
       const repos = document.getElementById('am-contributor-lane-repos');
@@ -52312,6 +52380,7 @@ function burnAreaChart() {
         require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
         registry_tiers_sufficient: !!(registry && registry.classList.contains('on')),
         approve_held_runs_for_registry_trusted: !!(heldRuns && heldRuns.classList.contains('on')),
+        owner_approval_releases_workflow_fence: !!(workflowApproval && workflowApproval.classList.contains('on')),
         auto_promotion_scope: scope && scope.value ? scope.value : 'hive',
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : [],

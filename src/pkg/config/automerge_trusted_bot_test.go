@@ -198,6 +198,21 @@ func TestContributorLaneAutoMergeConfigApproveHeldRunsForRegistryTrusted(t *test
 	}
 }
 
+// owner_approval_releases_workflow_fence defaults on so an owner-approved
+// workflow-path PR is the hive's to merge; an explicit false keeps every
+// workflow-path PR a person's merge (hivecommons/hive#14664).
+func TestContributorLaneAutoMergeConfigOwnerApprovalReleasesWorkflowFence(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if !cfg.EffectiveOwnerApprovalReleasesWorkflowFence() {
+		t.Fatal("owner_approval_releases_workflow_fence must default to true")
+	}
+	off := false
+	cfg.OwnerApprovalReleasesWorkflowFence = &off
+	if cfg.EffectiveOwnerApprovalReleasesWorkflowFence() {
+		t.Fatal("explicit owner_approval_releases_workflow_fence: false must keep the fence absolute")
+	}
+}
+
 func TestContributorTierAutoMergeConfigAutoPromoteDefault(t *testing.T) {
 	var cfg ContributorTierAutoMergeConfig
 	if got := cfg.EffectiveAutoPromoteAfterMerged(); got != DefaultContributorTierAutoPromoteAfterMerged {

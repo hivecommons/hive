@@ -304,6 +304,7 @@ func TestManifestShape(t *testing.T) {
 		Tolerations:         []Toleration{{Key: "spyre", Operator: "Exists", Effect: "NoSchedule"}},
 		Resources:           Resources{Limits: map[string]string{"ibm.com/spyre_pf": "2"}},
 		ServiceAccount:      "hive",
+		SchedulerName:       "spyre-scheduler",
 		EnvFromSecrets:      []string{"artifact-registry"},
 		ExtraVolumes:        []VolumeMount{{Claim: "compile-cache", MountPath: "/cache", ReadOnly: true}},
 	})
@@ -318,6 +319,7 @@ func TestManifestShape(t *testing.T) {
 		`"ttlSecondsAfterFinished":3600`,
 		`"restartPolicy":"Never"`,
 		`"nodeSelector":{"accelerator":"spyre"}`,
+		`"schedulerName":"spyre-scheduler"`,
 		// The fake decodes the manifest into a map before we re-marshal it
 		// here, so keys come back alphabetical regardless of struct order.
 		`"tolerations":[{"effect":"NoSchedule","key":"spyre","operator":"Exists"}]`,

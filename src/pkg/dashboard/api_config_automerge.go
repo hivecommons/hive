@@ -161,15 +161,16 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			ExcludeLabels           []string `json:"exclude_labels"`
 		} `json:"trusted_authors"`
 		ContributorLane *struct {
-			Enabled                           *bool    `json:"enabled"`
-			SoakMinutes                       *int     `json:"soak_minutes"`
-			RequireReviewerVerdict            *bool    `json:"require_reviewer_verdict"`
-			Repos                             []string `json:"repos"`
-			ExcludeLabels                     []string `json:"exclude_labels"`
-			RequireTiers                      []string `json:"require_tiers"`
-			RegistryTiersSufficient           *bool    `json:"registry_tiers_sufficient"`
-			AutoPromotionScope                *string  `json:"auto_promotion_scope"`
-			ApproveHeldRunsForRegistryTrusted *bool    `json:"approve_held_runs_for_registry_trusted"`
+			Enabled                            *bool    `json:"enabled"`
+			SoakMinutes                        *int     `json:"soak_minutes"`
+			RequireReviewerVerdict             *bool    `json:"require_reviewer_verdict"`
+			Repos                              []string `json:"repos"`
+			ExcludeLabels                      []string `json:"exclude_labels"`
+			RequireTiers                       []string `json:"require_tiers"`
+			RegistryTiersSufficient            *bool    `json:"registry_tiers_sufficient"`
+			AutoPromotionScope                 *string  `json:"auto_promotion_scope"`
+			ApproveHeldRunsForRegistryTrusted  *bool    `json:"approve_held_runs_for_registry_trusted"`
+			OwnerApprovalReleasesWorkflowFence *bool    `json:"owner_approval_releases_workflow_fence"`
 		} `json:"contributor_lane"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -327,6 +328,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			v := *body.ContributorLane.ApproveHeldRunsForRegistryTrusted
 			cfg.AutoMerge.ContributorLane.ApproveHeldRunsForRegistryTrusted = &v
 		}
+		if body.ContributorLane.OwnerApprovalReleasesWorkflowFence != nil {
+			v := *body.ContributorLane.OwnerApprovalReleasesWorkflowFence
+			cfg.AutoMerge.ContributorLane.OwnerApprovalReleasesWorkflowFence = &v
+		}
 		if body.ContributorLane.Repos != nil {
 			cfg.AutoMerge.ContributorLane.Repos = contributorLaneRepos
 		}
@@ -426,6 +431,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"auto_promotion_scopes":                  config.ContributorLaneAutoPromotionScopes,
 			"grantable_tiers":                        config.ContributorLaneGrantableTiers,
 			"approve_held_runs_for_registry_trusted": cl.EffectiveApproveHeldRunsForRegistryTrusted(),
+			"owner_approval_releases_workflow_fence": cl.EffectiveOwnerApprovalReleasesWorkflowFence(),
 		},
 	}
 }

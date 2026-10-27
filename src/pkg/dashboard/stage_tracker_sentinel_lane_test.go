@@ -39,7 +39,10 @@ func stageTrackerManualMergeJS(t *testing.T, html string) string {
 	return strings.Join([]string{
 		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE"),
 		jsConstLine(t, html, "STAGE_TRACKER_MANUAL_MERGE_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MERGE_REASON_WORD"),
+		jsFunc(t, html, "stageTrackerHumanMergeReasonWord"),
 		jsFunc(t, html, "stageTrackerManualMergeWord"),
+		jsFunc(t, html, "stageTrackerReadyForHumanWord"),
 		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_GATED"),
 		jsConstLine(t, html, "STAGE_TRACKER_UNAUTHORIZED_WORD"),
 		jsFunc(t, html, "stageTrackerUnauthorizedWord"),
@@ -382,6 +385,23 @@ assert.ok(manual.includes('<span class="ham-detour">Awaiting human merge · appr
 assert.ok(!manual.includes('entinel') && !manual.includes('Needs human decision'), manual);
 const plain090 = stageTrackerRowHtml(P('o/r', 402, 90, { reason: 'untrusted-author-role' }), stages, ctx);
 assert.ok(!plain090.includes('Awaiting human merge') && plain090.includes('<span class="ham-detour">Ready for human merge</span>'), 'a trust-blocked 090 keeps the stage word: ' + plain090);
+
+// Every 090 word says WHY a person merges (hivecommons/hive#14658): the
+// payload's human_merge_reason code becomes the word's tail, its
+// human_merge_reason_text leads the lit chevron's tooltip, and a nested
+// linked PR carries the same.
+assert.strictEqual(stageTrackerHumanMergeReasonWord({ human_merge_reason: 'workflow-files' }), 'workflow files');
+assert.strictEqual(stageTrackerHumanMergeReasonWord({ human_merge_reason: 'some-new-code' }), 'some new code');
+assert.strictEqual(stageTrackerHumanMergeReasonWord({}), '');
+assert.strictEqual(stageTrackerManualMergeWord({ human_approver: 'clubanderson', human_merge_reason: 'workflow-files' }), 'Awaiting human merge · workflow files · approved by @clubanderson');
+const whyTip = 'Changes .github/workflows/** — the hive never merges workflow changes; click Merge on GitHub';
+const why = stageTrackerRowHtml(P('o/r', 401, 90, { manual_merge: true, human_approver: 'clubanderson', human_merge_reason: 'workflow-files', human_merge_reason_text: whyTip }), stages, ctx);
+assert.ok(why.includes('<span class="ham-detour">Awaiting human merge · workflow files · approved by @clubanderson</span>'), 'manual-merge 090 word carries the reason: ' + why);
+assert.ok(why.includes('title="Awaiting human merge · workflow files · approved by @clubanderson — ' + whyTip), 'the lit 090 chevron tooltip leads with the reason: ' + why);
+const whyPlain = stageTrackerRowHtml(P('o/r', 402, 90, { human_merge_reason: 'untrusted-author', human_merge_reason_text: 'No lane can vouch for the author' }), stages, ctx);
+assert.ok(whyPlain.includes('<span class="ham-detour">Ready for human merge · untrusted author</span>') && whyPlain.includes('title="Ready for human merge · untrusted author — No lane can vouch for the author'), 'plain 090 word carries the reason: ' + whyPlain);
+const whyNested = stageTrackerRowHtml(I('o/r', 400, 90, { linked_prs: [{ number: 401, stage: 90, title: 'Shard', manual_merge: true, human_approver: 'clubanderson', human_merge_reason: 'workflow-files', human_merge_reason_text: whyTip }] }), stages, ctx);
+assert.ok(whyNested.includes('Awaiting human merge · workflow files · approved by @clubanderson'), 'nested 090 PR carries the reason: ' + whyNested);
 
 // Decide… preface: one line per flagged PR, nothing for clean ones.
 assert.strictEqual(stageTrackerSentinelPreface([P('o/r', 109, 85, flagged), P('o/r', 104, 85)]), '⚠ o/r#109 — ' + TIP);

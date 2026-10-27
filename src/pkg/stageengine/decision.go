@@ -36,12 +36,17 @@ type Decision struct {
 	// positive "no stage" that clears the hive-owned labels. Additive to the
 	// ADR-0025 shape, which has no way to say "skip" otherwise.
 	Abstain bool
+	// Clear names hive-stamped labels outside the stage families that the
+	// derived stage has made stale, removed in the same label write
+	// (stagelabels.Desired.Clear): the reporter-trust awaiting label on an
+	// issue whose stage settles triage (hivecommons/hive#14586).
+	Clear []string
 }
 
 // Desired renders the Decision as the full hive-owned label set the writer
 // should make the item carry.
 func (d Decision) Desired() stagelabels.Desired {
-	return stagelabels.Desired{Stage: d.Stage, Role: d.Role, Kind: d.Kind, KindLabels: d.KindLabels, Stalled: d.Stalled, DCO: d.DCO, MergeCommit: d.MergeCommit}
+	return stagelabels.Desired{Stage: d.Stage, Role: d.Role, Kind: d.Kind, KindLabels: d.KindLabels, Stalled: d.Stalled, DCO: d.DCO, MergeCommit: d.MergeCommit, Clear: d.Clear}
 }
 
 // abstain is the Decision for "no opinion" with a reason for the log.

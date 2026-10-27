@@ -175,3 +175,56 @@ func TestTrySweepSelfAuthoredPRHonoursRecordedDecision(t *testing.T) {
 		})
 	}
 }
+
+// hivecommons/hive#14679: a recorded `/hive decision` on the current head
+// is noted on the stage detail as the standing human change requester, so
+// the stage derives fixing over the swarm's decision-requested verdict on
+// that head; a bare approval recorded there is not a change request and
+// does not hold the lane.
+func TestTrySweepSelfAuthoredPRRecordedDecisionNotesStageAndApprovalReleases(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		kind          string
+		wantReason    string
+		wantRequester string
+	}{
+		{name: "instruction holds the lane and notes the requester", kind: review.HumanChangeRequestKindChanges, wantReason: autoMergeReasonHumanChangesRequested, wantRequester: "bob"},
+		{name: "bare approval releases the lane", kind: review.HumanChangeRequestKindApprove},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			api := newSelfSweepGuardAPI(t, selfSweepFixture{mergeApplied: true})
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			c.stageTracker = NewStageTracker()
+			c.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} }
+			store := review.NewHumanChangeRequests("")
+			c.humanChangeRequests = store
+			if err := store.Record(review.HumanChangeRequest{Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Source: review.HumanChangeRequestSourceDecision, SourceID: 99, Actor: "bob", Body: "approve", Kind: tt.kind}); err != nil {
+				t.Fatal(err)
+			}
+			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
+			}
+			c.stageTracker.mu.Lock()
+			detail := c.stageTracker.details[stageKey("acme", "widget", 7)]
+			c.stageTracker.mu.Unlock()
+			if detail.HumanChangeRequester != tt.wantRequester || (tt.wantRequester != "" && detail.HumanChangeRequestHead != "sha7") {
+				t.Fatalf("stage detail = %+v, want requester %q on sha7", detail, tt.wantRequester)
+			}
+			if tt.wantReason == "" && event.MergeSHA != "merge7" {
+				t.Fatalf("event = %+v, want the merge to proceed over a bare approval", event)
+			}
+			if tt.wantReason != "" {
+				o := stageObservation{Lane: stageLaneSelf, Reason: reason, HeadSHA: "sha7", Detail: detail}
+				o.Detail.Verdict, o.Detail.VerdictKnown = ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true}, true
+				if v := classifyStage(o); v.Stage != stagelabels.Fixing || v.Reason != autoMergeReasonHumanChangesRequested {
+					t.Fatalf("stage with the decision-requested verdict = %+v, want 070 on the recorded decision", v)
+				}
+			}
+		})
+	}
+}

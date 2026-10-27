@@ -251,3 +251,46 @@ func TestPlanDispatchPendingFixExpires(t *testing.T) {
 		})
 	}
 }
+
+// hivecommons/hive#14679: a bare `/hive decision approve` is recorded against
+// the head so the lanes stop asking for a decision, but it is not a change
+// request — the planner must not kick a fix whose instruction is "approve".
+func TestHumanChangeRequestApprovalKindIsNotAFixRequest(t *testing.T) {
+	store := NewHumanChangeRequests(filepath.Join(t.TempDir(), HumanChangeRequestsFile))
+	approve := liveCaseRequest()
+	approve.Body, approve.Kind = "approve", HumanChangeRequestKindApprove
+	approve.RecordedAt = time.Date(2026, 10, 27, 18, 35, 0, 0, time.UTC)
+	if err := store.Record(approve); err != nil {
+		t.Fatal(err)
+	}
+	if got := HumanChangeRequestFor(store, liveCaseRepo, liveCaseNumber, liveCaseHead); got != nil {
+		t.Fatalf("HumanChangeRequestFor returned an approval: %+v", got)
+	}
+	if got := HumanApprovalFor(store, liveCaseRepo, liveCaseNumber, liveCaseHead); got == nil || !got.IsApproval() || got.Actor != "clubanderson" {
+		t.Fatalf("HumanApprovalFor = %+v", got)
+	}
+	if got := HumanApprovalFor(store, liveCaseRepo, liveCaseNumber, "0ther"); got != nil {
+		t.Fatalf("approval leaked to another head: %+v", got)
+	}
+	pr := liveCasePR()
+	pr.HumanChangeRequest = HumanChangeRequestFor(store, pr.Repo, pr.Number, pr.HeadSHA)
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{}, DispatchState{}, humanRequestOpts())
+	if len(plan.FixKicks) != 0 {
+		t.Fatalf("a bare approval kicked a fix: %+v", plan.FixKicks)
+	}
+
+	// A later instruction on the same head supersedes the approval, and the
+	// record survives a reload with its kind.
+	changes := liveCaseRequest()
+	changes.SourceID, changes.RecordedAt = 4343, approve.RecordedAt.Add(time.Minute)
+	if err := store.Record(changes); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewHumanChangeRequests(store.path)
+	if got := HumanChangeRequestFor(reloaded, liveCaseRepo, liveCaseNumber, liveCaseHead); got == nil || got.SourceID != 4343 || !strings.Contains(got.Body, "gate it behind the flag") {
+		t.Fatalf("reloaded request = %+v", got)
+	}
+	if got := HumanApprovalFor(reloaded, liveCaseRepo, liveCaseNumber, liveCaseHead); got != nil {
+		t.Fatalf("superseded approval still standing: %+v", got)
+	}
+}

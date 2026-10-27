@@ -411,6 +411,18 @@ func (s Stage) Before(other Stage) bool {
 	return s.Number() < other.Number()
 }
 
+// SettlesTriage reports whether an issue at s has moved past the triage
+// question: it is claimed (020), has a PR under way (030), is covered by an
+// open PR (040) or mirrors a PR stage. 015 is a tracking state, not a gate
+// (the scanner claims from it exactly as from 010), so a `needs-triage` the
+// issue still wears at one of these stages is stale: the reconciler removes
+// it (Desired.Clear) and the activity monitor does not read "Triage needed"
+// from it (hivecommons/hive#14586). 010, 015, 017 and the 045 park are
+// before the claim and keep the label.
+func (s Stage) SettlesTriage() bool {
+	return s != None && !s.Before(Claimed) && s != IssueNeedsDecision
+}
+
 // YieldsToAdoption reports whether a live adoption (Record.AdoptionLive)
 // replaces s with AdoptedByHive. Adoption is who owns the PR, not what CI
 // says, so it outranks every review-side stage — 050 review-pending, 060
@@ -759,6 +771,13 @@ type Desired struct {
 	// MergeCommit is the merge-method verdict for the head;
 	// MergeCommitUnknown leaves `merge-method/merge` as found.
 	MergeCommit MergeCommitState
+	// Clear names labels outside the stage/role/author/health families
+	// that the item must not carry at this stage: a hive-stamped signal
+	// the stage has made stale (the reporter-trust awaiting label
+	// `needs-triage` once an issue is claimed, hivecommons/hive#14586).
+	// Each is removed when present and never added; matching is
+	// case-insensitive. Empty leaves every third-party label alone.
+	Clear []string
 }
 
 // Plan returns the labels to add and remove so current carries exactly the
@@ -792,6 +811,12 @@ func Plan(current []string, want Desired) (add, remove []string) {
 	if want.MergeCommit == MergeCommitWanted {
 		wantLabel(MergeCommitLabel)
 	}
+	clearSet := map[string]bool{}
+	for _, l := range want.Clear {
+		if l = strings.ToLower(strings.TrimSpace(l)); l != "" {
+			clearSet[l] = true
+		}
+	}
 	// Matching is case-insensitive: wanted keys and each current label are
 	// compared through their lowercased forms, so a mis-cased existing label
 	// counts as present rather than being removed and re-added. Removals
@@ -805,6 +830,10 @@ func Plan(current []string, want Desired) (add, remove []string) {
 		lower := strings.ToLower(l)
 		have[lower] = true
 		if _, ok := wanted[lower]; ok {
+			continue
+		}
+		if clearSet[lower] {
+			remove = append(remove, l)
 			continue
 		}
 		// The hive's own DCO pair is reconciled only once the commit check

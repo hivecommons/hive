@@ -476,6 +476,15 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			if !covered && !awaitingChildren {
 				want.Stalled = stagelabels.Stalled(rec, policy.Dwell, now)
 			}
+			// A claimed / covered issue still wearing the reporter-trust
+			// awaiting label is stale (015 is not a gate): the engine's
+			// Decision.Clear takes it off in the stage write, and the
+			// pre-plan here must see the same write as due so an issue
+			// whose stage label is already right is still reconciled
+			// (hivecommons/hive#14586).
+			if stage.SettlesTriage() && issueHasLabel(in.Labels, triageAwaitingLabel) {
+				want.Clear = []string{triageAwaitingLabel}
+			}
 		}
 		if stage == stagelabels.PRInProgress || stage == stagelabels.CoveredByPR {
 			edited, commented := ensureIssueStagePRLink(ctx, client, in, store, key, logger)

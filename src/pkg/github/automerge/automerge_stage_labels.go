@@ -285,6 +285,9 @@ func (t *StageTracker) drain() [][]stageObservation {
 			if detail.HumanApprover != "" && detail.HumanApprovalHead != "" && detail.HumanApprovalHead == o.HeadSHA {
 				o.Detail.HumanApprover, o.Detail.HumanApprovalHead = detail.HumanApprover, detail.HumanApprovalHead
 			}
+			if detail.HumanChangeRequester != "" && detail.HumanChangeRequestHead != "" && detail.HumanChangeRequestHead == o.HeadSHA {
+				o.Detail.HumanChangeRequester, o.Detail.HumanChangeRequestHead = detail.HumanChangeRequester, detail.HumanChangeRequestHead
+			}
 			if detail.Role != stagelabels.RoleNone {
 				o.Detail.Role = detail.Role
 			}
@@ -442,6 +445,20 @@ func (c *Engine) noteStageTrustedHumanApproval(owner, repo string, number int, h
 	}
 	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
 		d.HumanApprover, d.HumanApprovalHead = strings.TrimSpace(login), strings.TrimSpace(head)
+	})
+}
+
+// noteStageHumanChangeRequest records that a trusted human's change request
+// (review or `/hive decision <text>`) stands against the exact head. Stage
+// derivation reads it as "the person answered": the requires_human /
+// decision-requested verdict on that head no longer parks the PR at 085
+// (hivecommons/hive#14679).
+func (c *Engine) noteStageHumanChangeRequest(owner, repo string, number int, head, login string) {
+	if !c.stagePolicy().Enabled || strings.TrimSpace(login) == "" || strings.TrimSpace(head) == "" {
+		return
+	}
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
+		d.HumanChangeRequester, d.HumanChangeRequestHead = strings.TrimSpace(login), strings.TrimSpace(head)
 	})
 }
 

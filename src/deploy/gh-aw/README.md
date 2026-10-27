@@ -48,18 +48,38 @@ compiles without model credentials, and tests admission and the actual classifie
   Hive (OpenHands, SWE-agent, Devin, Copilot coding agent, Codex, Claude Code,
   Sweep, Factory, Jules, Gastown, Dagger, Kilo, Cline/Roo, Mentat, Aider,
   GPT-Engineer, Potpie, Agentless, public fleet-orchestrator write-ups) with
-  read-only GitHub tools and proxy-aware `curl` inside a network allowlist. It
-  writes a 600-900 word plain-language report plus a SWOT for Hive, appends it
-  as a comment to tracking issue
+  read-only GitHub tools and `curl` inside a network allowlist (HN Algolia,
+  Google News RSS, Bing News RSS, the GitHub changelog feed, vendor blogs; the
+  bash allowlist uses `cmd:*` entries so pipelines like `curl | jq` are
+  permitted, see #14673). The prompt starts with a grounded "What Hive is and
+  has" block (Crux runtime and its engine launchers, ACMM governor, MITM proxy,
+  reviewer swarm, evidence cards, dashboard, hub, `hivectl`) so the model
+  compares against reality. It writes a plain-language report of up to 1,200
+  words: what changed this week, a "Who does what" table (project, who runs
+  it, category, relationship to Hive, SPDX licence from the GitHub API), a
+  SWOT with filler banned, one thing to watch, and a "Top 5 this week - stay
+  ahead and stay integrated" action list with a concrete first step per item.
+  URLs are wrapped in `<...>` in the Discord step so they do not expand into
+  link cards; each chunk is posted with `?wait=true` and the returned Discord
+  message ids are logged, written to the step summary, and appended to the
+  tracking-issue comment so a report can be deleted or replaced later. The
+  `open_issues` dispatch input (default off) lets the agent
+  also file the Top 5 as `help wanted` + `competitor-watch` issues. It appends
+  the report as a comment to tracking issue
   [#14613](https://github.com/hivecommons/hive/issues/14613), and posts it to the
   Hive Commons Discord channel `#related-research` through a custom safe-output
-  job. Inference uses `permissions: copilot-requests: write` (org-billed, no
-  PAT). The Discord post needs one repository secret,
+  job. Inference authenticates with the `COPILOT_GITHUB_TOKEN` repository
+  secret: a fine-grained PAT owned by a user with a Copilot seat, resource owner
+  set to that user (not the org), with the account permission "Copilot Requests:
+  Read" and nothing else. The org-billed `copilot-requests: write` path does not
+  work for hivecommons (Copilot Business with no seats assigned), and fails as
+  `awf-reflect: models fetch returned 403` before the agent starts (#14652). The
+  Discord post needs a second repository secret,
   `DISCORD_RELATED_RESEARCH_WEBHOOK`: in Discord, open the channel settings ->
   Integrations -> Webhooks -> New Webhook, copy the webhook URL, then
   `gh secret set DISCORD_RELATED_RESEARCH_WEBHOOK -R hivecommons/hive`. Without
-  the secret the Discord job fails with a clear message and the GitHub comment
-  still lands. Recompile after edits with the pinned compiler:
+  the webhook secret the Discord job fails with a clear message and the GitHub
+  comment still lands. Recompile after edits with the pinned compiler:
   `gh aw compile weekly-competitor-report`, and commit both files (#14612).
 
 ## Graduate to Hive without rewriting workflows
