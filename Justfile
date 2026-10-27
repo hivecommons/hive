@@ -1449,6 +1449,7 @@ contribute-hive backend="" mode="docker": check-version
         # keeps refreshing this pool's presence marker and tells the next relay
         # a reading is coming that nothing will write.
         [[ -n "${QUOTA_PUBLISHER_PID:-}" ]] && kill "$QUOTA_PUBLISHER_PID" 2>/dev/null || true
+        [[ -n "${KNOWLEDGE_REFRESH_PID:-}" ]] && kill "$KNOWLEDGE_REFRESH_PID" 2>/dev/null || true
         tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
         exit 0
       }
@@ -1481,6 +1482,15 @@ contribute-hive backend="" mode="docker": check-version
         echo "NOTE: no hive-quota-publisher binary and no Go toolchain — the quota guard has no reading source."
         echo "      See src/docs/contributor-relay.md → 'How the reading reaches the guard'."
       fi
+
+      # The relay reads ${HIVE_AGENT_MD:-$HOME/agent.md} and reports a
+      # knowledge error when it is missing (#14521). Only the container
+      # entrypoint used to fetch the export, so local mode never wrote it. Use
+      # the same fetch + 10-minute refresh as bin/contributor-agent.sh; if the
+      # hub cannot serve it the file stays absent and the relay says so.
+      export HIVE_AGENT_MD="${HIVE_AGENT_MD:-${HOME}/agent.md}"
+      source "${SCRIPT_DIR}/lib/knowledge-export.sh"
+      knowledge_export_sync_start "$HIVE_AGENT_MD"
 
       export HIVE_RELAY_LOG_FILE="{{config_dir}}/contributor-relay.log"
       node "$RELAY" &

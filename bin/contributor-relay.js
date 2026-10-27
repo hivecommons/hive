@@ -1306,19 +1306,29 @@ const KNOWLEDGE_AGENT_MD = process.env.HIVE_AGENT_MD || path.join(process.env.HO
 const KNOWLEDGE_STATE_POLL_MS = Number(process.env.HIVE_KNOWLEDGE_STATE_POLL_MS || (RELAY_TEST_TIMING ? 200 : 30000));
 const KNOWLEDGE_ERROR_MAX = 500;
 
+// Report the contributor's home as "~" so the local username does not travel
+// to every hive in the fleet view.
+function tildePath(file) {
+  const home = process.env.HOME || require('os').homedir() || '';
+  if (home && home !== '/' && (file === home || file.startsWith(`${home}${path.sep}`))) return `~${file.slice(home.length)}`;
+  return file;
+}
+
 function boundKnowledgeError(reason) {
   reason = String(reason || '').replace(/\s+/g, ' ').trim();
   return reason.length > KNOWLEDGE_ERROR_MAX ? `${reason.slice(0, KNOWLEDGE_ERROR_MAX)}…` : reason;
 }
 
-function knowledgeExportLooksValid(file) {
+function knowledgeExportLooksValid(realFile) {
+  const file = tildePath(realFile);
   let text;
   try {
-    const st = fs.statSync(file);
+    const st = fs.statSync(realFile);
     if (!st.isFile() || st.size <= 0) return { ok: false, reason: `${file} is absent or empty` };
-    text = fs.readFileSync(file, 'utf8');
+    text = fs.readFileSync(realFile, 'utf8');
   } catch (e) {
-    return { ok: false, reason: `${file} is not readable: ${e.message}` };
+    if (e.code === 'ENOENT') return { ok: false, reason: `${file} is absent (knowledge export not available from the hub)` };
+    return { ok: false, reason: `${file} is not readable: ${boundKnowledgeError(e.message).split(realFile).join(file)}` };
   }
   const lines = text.split(/\r?\n/);
   if (lines[0] !== '# Agent Knowledge') return { ok: false, reason: `${file} is not a knowledge export (expected first line "# Agent Knowledge")` };
