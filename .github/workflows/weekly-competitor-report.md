@@ -7,7 +7,6 @@ on:
 permissions:
   contents: read
   issues: read
-  copilot-requests: write
 engine: copilot
 timeout-minutes: 25
 network:

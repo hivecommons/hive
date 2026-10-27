@@ -53,13 +53,18 @@ compiles without model credentials, and tests admission and the actual classifie
   as a comment to tracking issue
   [#14613](https://github.com/hivecommons/hive/issues/14613), and posts it to the
   Hive Commons Discord channel `#related-research` through a custom safe-output
-  job. Inference uses `permissions: copilot-requests: write` (org-billed, no
-  PAT). The Discord post needs one repository secret,
+  job. Inference authenticates with the `COPILOT_GITHUB_TOKEN` repository
+  secret: a fine-grained PAT owned by a user with a Copilot seat, resource owner
+  set to that user (not the org), with the account permission "Copilot Requests:
+  Read" and nothing else. The org-billed `copilot-requests: write` path does not
+  work for hivecommons (Copilot Business with no seats assigned), and fails as
+  `awf-reflect: models fetch returned 403` before the agent starts (#14652). The
+  Discord post needs a second repository secret,
   `DISCORD_RELATED_RESEARCH_WEBHOOK`: in Discord, open the channel settings ->
   Integrations -> Webhooks -> New Webhook, copy the webhook URL, then
   `gh secret set DISCORD_RELATED_RESEARCH_WEBHOOK -R hivecommons/hive`. Without
-  the secret the Discord job fails with a clear message and the GitHub comment
-  still lands. Recompile after edits with the pinned compiler:
+  the webhook secret the Discord job fails with a clear message and the GitHub
+  comment still lands. Recompile after edits with the pinned compiler:
   `gh aw compile weekly-competitor-report`, and commit both files (#14612).
 
 ## Graduate to Hive without rewriting workflows
