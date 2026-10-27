@@ -212,8 +212,6 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 			agent.Backend = "codex"
 			cfg.Agents[name] = agent
 		}
-		// Leave only an agent that cannot supply a tool-less classifier.
-		cfg.Agents["scanner"] = config.AgentConfig{Enabled: true, Backend: "codex"}
 		on := true
 		cfg.Ioscan.Enabled = &on
 		cfg.Ioscan.Classifier.Enabled = &on
@@ -227,7 +225,7 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 		b.bootDashboardWith(newBootDashboardFake().deps)
 
 		if _, _, installed := b.sched.IoscanHooksForTest(); installed {
-			t.Fatal("classifier must not install without an endpoint or supported CLI or supported agent")
+			t.Fatal("classifier must not install without an endpoint or supported agent")
 		}
 		if !strings.Contains(log.String(), "ioscan classifier enabled but not running") {
 			t.Fatalf("log:\n%s", log.String())
@@ -240,8 +238,6 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 			agent.Backend = "codex"
 			cfg.Agents[name] = agent
 		}
-		// Leave only an agent that cannot supply a tool-less classifier.
-		cfg.Agents["scanner"] = config.AgentConfig{Enabled: true, Backend: "codex"}
 		on := true
 		cfg.Ioscan.Enabled = &on
 		level := 5
