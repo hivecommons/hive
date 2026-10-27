@@ -32,7 +32,7 @@ func TestPlanDispatchReportsPRsWaitingForAFreeReviewer(t *testing.T) {
 	if len(got) != 1 || got[3] != ReviewWaitNoFreeReviewer {
 		t.Fatalf("waiting = %+v, want PR 3 %s", plan.Waiting, ReviewWaitNoFreeReviewer)
 	}
-	if key := plan.Waiting[0].Key(); key != "hive#3@sha3" {
+	if key := plan.Waiting[0].Key(); key != "acme/hive#3@sha3" {
 		t.Fatalf("key = %q", key)
 	}
 }
