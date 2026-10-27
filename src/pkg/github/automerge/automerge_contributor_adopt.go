@@ -1324,6 +1324,19 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	if rehomeReason == "" && rec.AdoptedInPlace() && obs.HeadSHA == rec.AdoptedHead && !adoptedHeadDCORed(obs, rec) && adoptionBlocked(obs.Labels) == "" && !verdictNeedsHuman(obs.Detail) && c.pushAccessLost(ctx, obs) {
 		rehomeReason = AdoptReasonPushRehome
 	}
+	if rehomeReason == "" && adoptionStalledReason(obs, rec, policy, now) != "" {
+		// Before a red head is handed to a person, try the recovery a
+		// since-fixed base or shared-CI flake needs (hivecommons/hive#14500):
+		// an attempt holds the escalation while CI runs on the result, and
+		// releases one already in place for the same head.
+		if recovery := c.recoverStaleRedAdoption(ctx, store, key, obs, rec); recovery.Attempted {
+			if rec.AdoptionEscalated(obs.HeadSHA) {
+				store.ClearAdoptionEscalation(key)
+				c.info("stage labels: adoption escalation released for recovery; back to adopted-by-hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "was", rec.AdoptEscalatedReason, "recovery", recovery.Reason)
+			}
+			return adoptionEscape{}, 0, nil
+		}
+	}
 	if rec.AdoptionEscalated(obs.HeadSHA) {
 		// A workflow-path refusal is a verdict on the head itself: it holds
 		// until the head moves, whatever the re-home or stall reasons say.

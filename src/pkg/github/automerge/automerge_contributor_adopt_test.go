@@ -55,6 +55,22 @@ type adoptAPI struct {
 	onPermission    func()
 	// failEditStatus, when non-zero, is the status PATCH pulls/n answers.
 	failEditStatus int
+	// Stale-red recovery fixtures (hivecommons/hive#14500): compareBehind
+	// and compareBase are what GET compare/base...head reports; baseChecks
+	// is name → conclusion served by GET commits/<base>/check-runs;
+	// failedRuns are the workflow runs GET actions/runs?head_sha= lists;
+	// updateBranchStatus, when non-zero, is the status PUT update-branch
+	// answers with updateBranchMessage. The recorder slices count calls.
+	compareBehind       int
+	compareBase         string
+	baseChecks          map[string]string
+	failBaseChecks      bool
+	failedRuns          []int64
+	updateBranchStatus  int
+	updateBranchMessage string
+	branchUpdates       []string
+	reruns              []int64
+	baseCheckReads      int
 }
 
 type adoptCommit struct {
@@ -182,7 +198,58 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		for _, f := range a.compareFiles {
 			files = append(files, map[string]string{"filename": f})
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
+		payload := map[string]any{"files": files, "behind_by": a.compareBehind}
+		if a.compareBase != "" {
+			payload["base_commit"] = map[string]any{"sha": a.compareBase}
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/") && strings.HasSuffix(path, "/check-runs"):
+		a.baseCheckReads++
+		if a.failBaseChecks {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		runs := []map[string]any{}
+		id := int64(1)
+		for name, conclusion := range a.baseChecks {
+			run := map[string]any{"id": id, "name": name, "status": "completed", "conclusion": conclusion}
+			if conclusion == "pending" {
+				run["status"] = "in_progress"
+				delete(run, "conclusion")
+			}
+			runs = append(runs, run)
+			id++
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+		return true
+	case r.Method == http.MethodPut && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/update-branch"):
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		expected, _ := body["expected_head_sha"].(string)
+		a.branchUpdates = append(a.branchUpdates, strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), "/update-branch")+"@"+expected)
+		if a.updateBranchStatus != 0 {
+			w.WriteHeader(a.updateBranchStatus)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": nonEmpty(a.updateBranchMessage, "scripted refusal")})
+			return true
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
+		return true
+	case r.Method == http.MethodGet && path == "/repos/acme/widget/actions/runs":
+		sha := r.URL.Query().Get("head_sha")
+		runs := []map[string]any{}
+		for _, id := range a.failedRuns {
+			runs = append(runs, map[string]any{"id": id, "workflow_id": id, "run_number": 1, "run_attempt": 1, "head_sha": sha, "status": "completed", "conclusion": "failure"})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "workflow_runs": runs})
+		return true
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/repos/acme/widget/actions/runs/") && strings.HasSuffix(path, "/rerun-failed-jobs"):
+		var id int
+		_, _ = sscanInt(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/actions/runs/"), "/rerun-failed-jobs"), &id)
+		a.reruns = append(a.reruns, int64(id))
+		w.WriteHeader(http.StatusCreated)
 		return true
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/"):
 		sha := strings.TrimPrefix(path, "/repos/acme/widget/commits/")

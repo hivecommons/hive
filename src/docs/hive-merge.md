@@ -580,8 +580,18 @@ re-homes immediately (`reason=push-rehome`). A pushable `needs-rebase` or
 conflicting branch first gets the normal fixer window; if its head remains
 unchanged past the 074 dwell, the same sweep supersedes it
 (`reason=rebase-rehome`) rather than parking at 085. Previously escalated
-adoptions are re-evaluated for these recoveries too (#13975). An adoption with nothing the hive can
-push past the dwell goes to `stage/085-needs-decision` as
+adoptions are re-evaluated for these recoveries too (#13975). A red adopted
+head whose failing check is green on the base branch tip — the shared-CI
+flake or red base it fell to was fixed since, but the head never ran CI
+again — is recovered before anyone is asked: the sweep merges the base into
+the head when it is behind (GitHub update-branch, which works on a fork the
+maintainers may edit) or re-runs the failed workflow jobs when it is current,
+at most once per (head, base tip) and three times per adoption, logged as
+`adopted PR recovery` with `reason=update-branch`, `rerun-failed-jobs` or
+`skipped:<why>`; an escalation already in place for that head is released
+(hivecommons/hive#14500). An adoption with nothing the hive can
+push past the dwell — after that recovery was tried and the head is still
+red — goes to `stage/085-needs-decision` as
 `adoption-stalled:<lane reason>` with one comment naming the blocker, so the
 dashboard shows a person's item, not a silent 074; "waiting on maintainer
 lgtm" is only ever the state at 080+ (hivecommons/hive#12858). The dwell runs

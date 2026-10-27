@@ -174,6 +174,14 @@ type Record struct {
 	// for; it survives ClearAdoptionEscalation so a blocker that flaps on
 	// one head is noted once.
 	AdoptEscalationNotedHead string `json:"adopt_escalation_noted_head,omitempty"`
+	// AdoptRecoveryAttempt is the "<head>@<base tip>" pair the hive last
+	// tried to recover a stale-red in-place adoption on (update-branch or a
+	// re-run of the failed jobs, hivecommons/hive#14500); one attempt per
+	// pair. AdoptRecoveryCount counts attempts across heads for the
+	// adoption so a base that keeps moving under a red head cannot churn
+	// update-branch commits forever; both reset with the adoption.
+	AdoptRecoveryAttempt string `json:"adopt_recovery_attempt,omitempty"`
+	AdoptRecoveryCount   int    `json:"adopt_recovery_count,omitempty"`
 	// MergeCommitNotedHead is the head the `merge-method/merge` note was
 	// posted for, so the lane explains the merge method once per head.
 	MergeCommitNotedHead string `json:"merge_commit_noted_head,omitempty"`
@@ -873,6 +881,15 @@ func (r Record) AdoptionEscalationNoted(head string) bool {
 	return head != "" && r.AdoptEscalationNotedHead == head
 }
 
+// AdoptionRecoveryKey is the "<head>@<base>" pair AdoptRecoveryAttempt stores.
+func AdoptionRecoveryKey(head, base string) string { return head + "@" + base }
+
+// AdoptionRecoveryAttempted reports whether the stale-red recovery already
+// ran for head against this base tip.
+func (r Record) AdoptionRecoveryAttempted(head, base string) bool {
+	return head != "" && base != "" && r.AdoptRecoveryAttempt == AdoptionRecoveryKey(head, base)
+}
+
 // MergeCommitNoted reports whether the merge-method note was posted for head.
 func (r Record) MergeCommitNoted(head string) bool {
 	return head != "" && r.MergeCommitNotedHead == head
@@ -976,6 +993,7 @@ func (s *Store) MarkYielded(key, head string) {
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
+	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
 	r.YieldedHead = head
 	s.items[key] = r
 	s.dirty = true
@@ -1038,6 +1056,26 @@ func (s *Store) MarkAdoptionEscalated(key, head, reason string) {
 	s.dirty = true
 }
 
+// MarkAdoptionRecovery records one stale-red recovery attempt for head
+// against base (hivecommons/hive#14500). Recorded before the API call, as
+// every adoption path does, so a refused call is not retried each sweep.
+func (s *Store) MarkAdoptionRecovery(key, head, base string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || base == "" {
+		return
+	}
+	pair := AdoptionRecoveryKey(head, base)
+	if r.AdoptRecoveryAttempt == pair {
+		return
+	}
+	r.AdoptRecoveryAttempt = pair
+	r.AdoptRecoveryCount++
+	s.items[key] = r
+	s.dirty = true
+}
+
 // MarkMergeCommitNoted records that the merge-method note was posted for head.
 func (s *Store) MarkMergeCommitNoted(key, head string) {
 	s.mu.Lock()
@@ -1077,6 +1115,7 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
+	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
 	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
 	s.items[key] = r
 	s.dirty = true

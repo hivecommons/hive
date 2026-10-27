@@ -884,6 +884,11 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      not done. The sweep re-evaluates existing 074 records every pass, so a
      record adopted before this rule existed converts too
      (hivecommons/hive#12858).
+   - Stale-red recovery (no re-home): an in-place head red only from a
+     since-fixed base/shared-CI flake — its failing check is green on the
+     base tip — is updated from the base when behind, or has its failed
+     jobs re-run when current, once per (head, base tip), before the dwell
+     escalates it to 085 (hivecommons/hive#14500).
    A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
    adopted (a human parked it; one log line, the stage stays 072).
    A PR whose diff trips the contributor lane's diff fences — it touches
