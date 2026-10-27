@@ -249,3 +249,107 @@ func TestProberReadsCgroupV2(t *testing.T) {
 		t.Fatalf("missing cgroup should be unknown: %+v", r)
 	}
 }
+
+func TestNilControllerAndProberAreInert(t *testing.T) {
+	var c *Controller
+	if c.Draining("reviewer") || c.DrainingNames() != nil || c.Status().Enabled {
+		t.Fatal("nil controller must report nothing")
+	}
+	var p *Prober
+	if r := p.Probe(t0); r.Known {
+		t.Fatalf("nil prober must be unknown: %+v", r)
+	}
+	if NewProber().root != defaultCgroupRoot {
+		t.Fatal("NewProber must read the default cgroup root")
+	}
+}
+
+func TestReconfigureAndDrainingNamesAndPrune(t *testing.T) {
+	c := New(testCfg(), "reviewer")
+	rs := reviewers(3)
+	if d := drive(c, 0, 3, rs, 0, nil); d.Action != ActionDrain || d.Agent != "reviewer-3" {
+		t.Fatalf("drain: %+v", d)
+	}
+	if got := c.DrainingNames(); len(got) != 1 || got[0] != "reviewer-3" {
+		t.Fatalf("draining names = %v", got)
+	}
+	st := c.Status()
+	if st.Draining == nil || st.LastDecision == nil || st.LastDecision.Action != ActionDrain {
+		t.Fatalf("status = %+v", st)
+	}
+	if s := st.LastDecision.String(); s != "reviewer autoscale: 3→2 drain reviewer-3 reason=idle for 3 cycles" {
+		t.Fatalf("drain string = %q", s)
+	}
+
+	cfg := testCfg()
+	cfg.Max = 2
+	c.Reconfigure(cfg, "reviewer-x")
+	if st := c.Status(); st.Max != 2 || st.Agent != "reviewer-x" {
+		t.Fatalf("reconfigure not reflected: %+v", st)
+	}
+
+	// The draining replica disappears from the roster (an operator removed
+	// it); the controller forgets it rather than retiring a ghost.
+	if d := drive(c, 3, 1, reviewers(2), 0, nil); d.Action == ActionRetire {
+		t.Fatalf("retired a reviewer that is not present: %+v", d)
+	}
+	if c.Draining("reviewer-3") {
+		t.Fatal("absent reviewer should be pruned from draining")
+	}
+}
+
+func TestDecisionStringVariants(t *testing.T) {
+	cases := map[Decision]string{
+		{Action: ActionHold, From: 2, Reason: "idle"}:                               "reviewer autoscale: hold at 2 reason=idle",
+		{Action: ActionBlocked, From: 2, To: 3, Reason: GuardCPU}:                   "reviewer autoscale: 2→3 blocked by cpu",
+		{Action: ActionRetire, From: 3, To: 2, Agent: "reviewer-3", Reason: "idle"}: "reviewer autoscale: 3→2 retire reviewer-3 reason=idle",
+		{Action: ActionScaleUp, From: 2, To: 3, Reason: "backlog=7"}:                "reviewer autoscale: 2→3 reason=backlog=7",
+	}
+	for d, want := range cases {
+		if got := d.String(); got != want {
+			t.Errorf("%+v => %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestProberToleratesMalformedCgroupFiles(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// "max" quota, unparsable stat, bad memory values: nothing known, nothing crashes.
+	write(cpuMaxFile, "max 100000\n")
+	write(cpuStatFile, "usage_usec notanumber\n")
+	write(memMaxFile, "lots\n")
+	write(memCurrentFile, "many\n")
+	if r := NewProberAt(dir).Probe(t0); r.Known || r.CPUUsed != 0 || r.MemUsedMB != 0 {
+		t.Fatalf("malformed cgroup should be unknown: %+v", r)
+	}
+	write(cpuMaxFile, "abc 100000\n")
+	write(cpuStatFile, "nr_periods 5\n")
+	if r := NewProberAt(dir).Probe(t0); r.Known {
+		t.Fatalf("unparsable quota should be unknown: %+v", r)
+	}
+	write(cpuMaxFile, "100000 0\n")
+	if r := NewProberAt(dir).Probe(t0); r.Known {
+		t.Fatalf("zero period should be unknown: %+v", r)
+	}
+	write(cpuMaxFile, "400000\n")
+	if r := NewProberAt(dir).Probe(t0); r.Known {
+		t.Fatalf("single field should be unknown: %+v", r)
+	}
+	// A usage counter that goes backwards clamps to zero rather than going negative.
+	write(cpuMaxFile, "400000 100000\n")
+	write(cpuStatFile, "usage_usec 5000000\n")
+	p := NewProberAt(dir)
+	p.Probe(t0)
+	write(cpuStatFile, "usage_usec 1000000\n")
+	if r := p.Probe(t0.Add(time.Second)); r.CPUUsed != 0 || r.CPULimit != 4 {
+		t.Fatalf("backwards counter: %+v", r)
+	}
+	if r := p.Probe(t0.Add(time.Second)); r.CPUUsed != 0 {
+		t.Fatalf("zero wall time must not divide: %+v", r)
+	}
+}
