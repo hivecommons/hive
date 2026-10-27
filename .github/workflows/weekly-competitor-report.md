@@ -13,7 +13,43 @@ on:
 permissions:
   contents: read
   issues: read
-engine: copilot
+engine:
+  id: copilot
+  # Copilot CLI has its own URL approval, separate from the shell tool
+  # allowlist and the AWF firewall. Without --allow-url every curl to a URL
+  # is refused with "no one to approve" (#14673). Keep this list in step
+  # with network.allowed below; the firewall still enforces that list.
+  args:
+    - "--allow-url"
+    - api.github.com
+    - raw.githubusercontent.com
+    - github.com
+    - hn.algolia.com
+    - news.ycombinator.com
+    - news.google.com
+    - www.bing.com
+    - all-hands.dev
+    - swe-agent.com
+    - cognition.ai
+    - github.blog
+    - docs.github.com
+    - openai.com
+    - anthropic.com
+    - claude.com
+    - sweep.dev
+    - factory.ai
+    - jules.google
+    - dagger.io
+    - kilocode.ai
+    - cline.bot
+    - roocode.com
+    - aider.chat
+    - potpie.ai
+    - mentat.ai
+    - arxiv.org
+    - techcrunch.com
+    - theverge.com
+    - venturebeat.com
 timeout-minutes: 25
 network:
   allowed:

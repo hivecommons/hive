@@ -51,7 +51,9 @@ compiles without model credentials, and tests admission and the actual classifie
   read-only GitHub tools and `curl` inside a network allowlist (HN Algolia,
   Google News RSS, Bing News RSS, the GitHub changelog feed, vendor blogs; the
   bash allowlist uses `cmd:*` entries so pipelines like `curl | jq` are
-  permitted, see #14673). The prompt starts with a grounded "What Hive is and
+  permitted, and `engine.args` passes `--allow-url` for the same hosts because
+  Copilot CLI has its own URL approval step that otherwise refuses every curl
+  with "no one to approve", see #14673). The prompt starts with a grounded "What Hive is and
   has" block (Crux runtime and its engine launchers, ACMM governor, MITM proxy,
   reviewer swarm, evidence cards, dashboard, hub, `hivectl`) so the model
   compares against reality. It writes a plain-language report of up to 1,200
