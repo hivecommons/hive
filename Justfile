@@ -1420,6 +1420,39 @@ contribute-hive backend="" mode="docker": check-version
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV TMPDIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/tmp")"
       BUILD_CACHE_ENV="$BUILD_CACHE_ENV CCACHE_DIR=$(printf %q "$HIVE_AGENT_CACHE_DIR/ccache")"
       export AGENT_LAUNCH_CMD="${LITELLM_ENV:+$LITELLM_ENV }${BUILD_CACHE_ENV} $CMD${PERM_FLAG:+ $PERM_FLAG}"
+
+      # Registered before anything long-lived is forked below (knowledge
+      # refresh, tmux session, quota publisher, relay); the PID variables it
+      # reads are filled in as each one starts.
+      cleanup() {
+        echo "Shutting down..."
+        [[ -n "${RELAY_PID:-}" ]] && kill "$RELAY_PID" 2>/dev/null || true
+        # Starts and stops with the contributor (#10299): a surviving publisher
+        # keeps refreshing this pool's presence marker and tells the next relay
+        # a reading is coming that nothing will write.
+        [[ -n "${QUOTA_PUBLISHER_PID:-}" ]] && kill "$QUOTA_PUBLISHER_PID" 2>/dev/null || true
+        [[ -n "${KNOWLEDGE_REFRESH_PID:-}" ]] && kill "$KNOWLEDGE_REFRESH_PID" 2>/dev/null || true
+        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+        exit 0
+      }
+      trap cleanup SIGTERM SIGINT EXIT
+
+      # The relay reads ${HIVE_AGENT_MD:-$HOME/agent.md} and reports a
+      # knowledge error when it is missing (#14521). Only the container
+      # entrypoint used to fetch the export, so local mode never wrote it. Use
+      # the same fetch + 10-minute refresh as bin/contributor-agent.sh; if the
+      # hub cannot serve it the file stays absent and the relay says so.
+      #
+      # This runs BEFORE the CLI is started in tmux, and the export is linked
+      # under the backend's context filenames (CLAUDE.md, AGENTS.md, ...) in
+      # HIVE_AGENT_CWD -- the directory the CLI is launched from -- so the
+      # knowledge is actually read at startup. The container links into $HOME;
+      # here $HOME is the user's real home, which these links must not touch.
+      export HIVE_AGENT_MD="${HIVE_AGENT_MD:-${HOME}/agent.md}"
+      source "${SCRIPT_DIR}/lib/knowledge-export.sh"
+      knowledge_export_sync_start "$HIVE_AGENT_MD"
+      link_backend_knowledge "$BACKEND" "$HIVE_AGENT_MD" "$HIVE_AGENT_CWD"
+
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50 -c "$HIVE_WORKSPACE_DIR"
       tmux send-keys -t "$TMUX_SESSION" "cd $(printf %q "$HIVE_AGENT_CWD") && $AGENT_LAUNCH_CMD" Enter
@@ -1441,19 +1474,6 @@ contribute-hive backend="" mode="docker": check-version
       export HIVE_CONTRIBUTOR_CLI="$BACKEND"
       export NODE_PATH="${NODE_PATH:-$(pwd)/node_modules}"
       echo "Starting relay + ${BACKEND} in tmux session '${TMUX_SESSION}'..."
-
-      cleanup() {
-        echo "Shutting down..."
-        kill "$RELAY_PID" 2>/dev/null || true
-        # Starts and stops with the contributor (#10299): a surviving publisher
-        # keeps refreshing this pool's presence marker and tells the next relay
-        # a reading is coming that nothing will write.
-        [[ -n "${QUOTA_PUBLISHER_PID:-}" ]] && kill "$QUOTA_PUBLISHER_PID" 2>/dev/null || true
-        [[ -n "${KNOWLEDGE_REFRESH_PID:-}" ]] && kill "$KNOWLEDGE_REFRESH_PID" 2>/dev/null || true
-        tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-        exit 0
-      }
-      trap cleanup SIGTERM SIGINT EXIT
 
       # Publish this contributor's quota readings (hivecommons/hive#10299).
       # Local mode runs no `hive` process either, so without this the relay's
@@ -1482,15 +1502,6 @@ contribute-hive backend="" mode="docker": check-version
         echo "NOTE: no hive-quota-publisher binary and no Go toolchain — the quota guard has no reading source."
         echo "      See src/docs/contributor-relay.md → 'How the reading reaches the guard'."
       fi
-
-      # The relay reads ${HIVE_AGENT_MD:-$HOME/agent.md} and reports a
-      # knowledge error when it is missing (#14521). Only the container
-      # entrypoint used to fetch the export, so local mode never wrote it. Use
-      # the same fetch + 10-minute refresh as bin/contributor-agent.sh; if the
-      # hub cannot serve it the file stays absent and the relay says so.
-      export HIVE_AGENT_MD="${HIVE_AGENT_MD:-${HOME}/agent.md}"
-      source "${SCRIPT_DIR}/lib/knowledge-export.sh"
-      knowledge_export_sync_start "$HIVE_AGENT_MD"
 
       export HIVE_RELAY_LOG_FILE="{{config_dir}}/contributor-relay.log"
       node "$RELAY" &
