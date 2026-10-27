@@ -241,9 +241,21 @@ func (m *Manager) SetKickOutcomeObserver(fn func(agentName string, outcome KickO
 }
 
 func (m *Manager) notifyKickOutcome(agentName string, outcome KickOutcome) {
-	fn := m.kickOutcomeObserver.Load()
-	if fn == nil {
-		return
+	if fn := m.kickOutcomeObserver.Load(); fn != nil {
+		go (*fn)(agentName, outcome)
 	}
-	go (*fn)(agentName, outcome)
+	if m.sharedPool != nil {
+		go func() {
+			m.mu.RLock()
+			agent := m.agents[agentName]
+			leaseID := ""
+			if agent != nil {
+				leaseID = agent.poolLeaseID
+			}
+			m.mu.RUnlock()
+			if leaseID != "" {
+				m.evictSharedPoolSessionAfterTurn(agentName, leaseID, outcome)
+			}
+		}()
+	}
 }
