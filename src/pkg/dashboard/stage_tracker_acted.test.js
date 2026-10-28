@@ -137,7 +137,7 @@ test('toolbar carries the Decisions select and the filter plumbing knows `acted`
   assert.match(html, /acted: 'any', sort: 'furthest'/);
   assert.match(html, /setVal\('activity-monitor-acted', f\.acted\);/);
   assert.match(html, /case 'acted': f\.acted = value \|\| 'any'; break;/);
-  assert.match(html, /\.ham-acted\.ham-acted-stuck\.config-info \{[^}]*var\(--yellow\)/);
+  assert.match(html, /\.config-info\.ham-acted\.ham-acted-stuck \{[^}]*var\(--yellow\)/);
 });
 
 test('decision trail: the hive moves that followed are listed in order, in plain words', () => {

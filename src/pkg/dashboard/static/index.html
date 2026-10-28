@@ -1504,13 +1504,13 @@
        the action failed, dotted while the hive is still deciding. It rides
        the shared .config-info tooltip portal, so the circle recipe is undone
        here in favour of the pill. */
-    .ham-acted.config-info { width: auto; height: auto; min-width: 1.6em; border-radius: var(--r-pill); margin-left: 0; padding: 0 var(--sp-2); background: color-mix(in srgb, var(--green) 14%, transparent); border-color: color-mix(in srgb, var(--green) 55%, transparent); color: var(--green); font-size: var(--fs-xs); font-weight: 600; cursor: help; }
-    .ham-acted.config-info:hover, .ham-acted.config-info:focus-visible { background: var(--green); border-color: var(--green); color: var(--bg); }
-    .ham-acted.ham-acted-stuck.config-info { background: color-mix(in srgb, var(--yellow) 16%, transparent); border-color: color-mix(in srgb, var(--yellow) 60%, transparent); color: var(--yellow); }
-    .ham-acted.ham-acted-stuck.config-info:hover, .ham-acted.ham-acted-stuck.config-info:focus-visible { background: var(--yellow); border-color: var(--yellow); color: var(--bg); }
-    .ham-acted.ham-acted-failed.config-info { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: color-mix(in srgb, var(--red) 55%, transparent); color: var(--red); }
-    .ham-acted.ham-acted-failed.config-info:hover, .ham-acted.ham-acted-failed.config-info:focus-visible { background: var(--red); border-color: var(--red); color: var(--bg); }
-    .ham-acted.ham-acted-pending.config-info { border-style: dotted; color: var(--text-muted); background: transparent; }
+    .config-info.ham-acted { width: auto; height: auto; min-width: 1.6em; border-radius: var(--r-pill); margin-left: 0; padding: 0 var(--sp-2); background: color-mix(in srgb, var(--green) 14%, transparent); border-color: color-mix(in srgb, var(--green) 55%, transparent); color: var(--green); font-size: var(--fs-xs); font-weight: 600; cursor: help; }
+    .config-info.ham-acted:hover, .config-info.ham-acted:focus-visible { background: var(--green); border-color: var(--green); color: var(--bg); }
+    .config-info.ham-acted.ham-acted-stuck { background: color-mix(in srgb, var(--yellow) 16%, transparent); border-color: color-mix(in srgb, var(--yellow) 60%, transparent); color: var(--yellow); }
+    .config-info.ham-acted.ham-acted-stuck:hover, .config-info.ham-acted.ham-acted-stuck:focus-visible { background: var(--yellow); border-color: var(--yellow); color: var(--bg); }
+    .config-info.ham-acted.ham-acted-failed { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: color-mix(in srgb, var(--red) 55%, transparent); color: var(--red); }
+    .config-info.ham-acted.ham-acted-failed:hover, .config-info.ham-acted.ham-acted-failed:focus-visible { background: var(--red); border-color: var(--red); color: var(--bg); }
+    .config-info.ham-acted.ham-acted-pending { border-style: dotted; color: var(--text-muted); background: transparent; }
     .ham-acted-tip { white-space: normal; text-align: left; font-weight: 400; }
     /* Sentinel-flagged PR, #13535 follow-up: the chip beside needs rebase /
        regressed, and the human-decision chevron itself when its word
