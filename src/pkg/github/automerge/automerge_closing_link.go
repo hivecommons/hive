@@ -68,14 +68,18 @@ func (c *Engine) closingContradictionGate(owner, repo string, pr *gh.PullRequest
 
 // closingKeywordPRGate refuses a merge while a closing keyword in the PR body,
 // or (with Options.ScanCommitClosingKeywords) in a commit message on the
-// head, names another pull request in the same repository
+// head, names an open pull request in the same repository
 // (`closing-keyword-targets-pr:#N`). A pull request is never the intended
-// target of a closing keyword. Whether a number is a pull request never
-// changes, so each number is read at most once per process, and the commit
-// messages once per head. A read error other than 404/410 fails closed with
-// linkedIssueReasonCheck. A PR whose base is not the default branch closes
-// nothing on merge, so it passes without a read.
-func (c *Engine) closingKeywordPRGate(ctx context.Context, owner, repo string, pr *gh.PullRequest) (string, error) {
+// target of a closing keyword, but GitHub's close of an already-closed PR
+// is a no-op, so a body that mentions "closed #N" about a merged PR passes.
+// A number that is not a pull request never becomes one, so that answer is
+// kept for the process; a pull request's state changes, so it is read
+// again on every tick. The commit messages are read once per head.
+// readThisTick carries the issues the caller read for this tick (number →
+// open pull request), so none is read twice. A read error other than
+// 404/410 fails closed with linkedIssueReasonCheck. A PR whose base is not
+// the default branch closes nothing on merge, so it passes without a read.
+func (c *Engine) closingKeywordPRGate(ctx context.Context, owner, repo string, pr *gh.PullRequest, readThisTick map[int]bool) (string, error) {
 	if !closingKeywordsApply(pr) {
 		return "", nil
 	}
@@ -94,53 +98,66 @@ func (c *Engine) closingKeywordPRGate(ctx context.Context, owner, repo string, p
 			continue
 		}
 		seen[n] = true
-		isPR, err := c.numberIsPullRequest(ctx, owner, repo, n)
-		if err != nil {
-			return linkedIssueReasonCheck, err
+		isOpenPR, ok := readThisTick[n]
+		if !ok {
+			var err error
+			isOpenPR, err = c.numberIsOpenPullRequest(ctx, owner, repo, n)
+			if err != nil {
+				return linkedIssueReasonCheck, err
+			}
 		}
-		if isPR {
+		if isOpenPR {
 			reason := prstage.ClosingKeywordTargetsPRReason(n)
-			c.info("automerge: closing keyword targets a pull request", "repo", fullRepo, "pr", pr.GetNumber(), "target", n, "reason", reason)
+			c.info("automerge: closing keyword targets an open pull request", "repo", fullRepo, "pr", pr.GetNumber(), "target", n, "reason", reason)
 			return reason, nil
 		}
 	}
 	return "", nil
 }
 
-// noteClosingTargetKind records whether repo#n is a pull request, from an
-// issue read the caller already made (the linked-issue gate reads every
-// issue the body closes), so closingKeywordPRGate needs no second GET.
-func (c *Engine) noteClosingTargetKind(owner, repo string, n int, isPR bool) {
+// isOpenPullRequest reports whether an issue read is an open pull request;
+// nil stands for a number GitHub reported missing.
+func isOpenPullRequest(issue *gh.Issue) bool {
+	return issue != nil && issue.IsPullRequest() && strings.EqualFold(issue.GetState(), "open")
+}
+
+// noteClosingTarget records, from an issue read the caller already made,
+// that repo#n is not a pull request (nil for a number GitHub reported
+// missing). That never changes, so later ticks skip the read. A pull
+// request is not recorded: whether it is still open has to be read again.
+func (c *Engine) noteClosingTarget(owner, repo string, n int, issue *gh.Issue) {
+	if issue != nil && issue.IsPullRequest() {
+		return
+	}
 	key := strings.ToLower(owner+"/"+repo) + "#" + strconv.Itoa(n)
 	c.closingLinkMu.Lock()
 	defer c.closingLinkMu.Unlock()
-	if c.closingTargetKinds == nil || len(c.closingTargetKinds) >= closingLinkCacheMax {
-		c.closingTargetKinds = map[string]bool{}
+	if c.closingNonPRTargets == nil || len(c.closingNonPRTargets) >= closingLinkCacheMax {
+		c.closingNonPRTargets = map[string]bool{}
 	}
-	c.closingTargetKinds[key] = isPR
+	c.closingNonPRTargets[key] = true
 }
 
-// numberIsPullRequest reports whether repo#n is a pull request. A number
-// GitHub reports missing (404/410) is not one.
-func (c *Engine) numberIsPullRequest(ctx context.Context, owner, repo string, n int) (bool, error) {
+// numberIsOpenPullRequest reports whether repo#n is an open pull request. A
+// number GitHub reports missing (404/410) is not one.
+func (c *Engine) numberIsOpenPullRequest(ctx context.Context, owner, repo string, n int) (bool, error) {
 	key := strings.ToLower(owner+"/"+repo) + "#" + strconv.Itoa(n)
 	c.closingLinkMu.Lock()
-	isPR, ok := c.closingTargetKinds[key]
+	notPR := c.closingNonPRTargets[key]
 	c.closingLinkMu.Unlock()
-	if ok {
-		return isPR, nil
+	if notPR {
+		return false, nil
 	}
 	issue, _, err := c.gh.Issues.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_closing_link"), owner, repo, n)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) || isGitHubStatus(err, http.StatusGone) {
-			c.noteClosingTargetKind(owner, repo, n, false)
+			c.noteClosingTarget(owner, repo, n, nil)
 			return false, nil
 		}
 		return false, fmt.Errorf("reading closing-keyword target %s/%s#%d: %w", owner, repo, n, err)
 	}
-	isPR = issue.IsPullRequest()
-	c.noteClosingTargetKind(owner, repo, n, isPR)
-	return isPR, nil
+	c.noteClosingTarget(owner, repo, n, issue)
+	return isOpenPullRequest(issue), nil
 }
 
 // commitClosingRefs returns the repo numbers the commit messages on the PR's

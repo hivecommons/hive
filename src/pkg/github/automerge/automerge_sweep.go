@@ -302,13 +302,13 @@ type Engine struct {
 	// adoption PR's original (automerge_adoption_original.go).
 	adoptionOriginalChecksMu sync.Mutex
 	adoptionOriginalChecks   map[string]time.Time
-	// scanCommitClosingKeywords, closingTargetKinds (repo#N → is a pull
-	// request) and closingCommitRefs (repo#PR@head → numbers its commit
+	// scanCommitClosingKeywords, closingNonPRTargets (repo#N known not to
+	// be a pull request) and closingCommitRefs (repo#PR@head → numbers its commit
 	// messages close) serve the closing-link gate
 	// (automerge_closing_link.go).
 	scanCommitClosingKeywords bool
 	closingLinkMu             sync.Mutex
-	closingTargetKinds        map[string]bool
+	closingNonPRTargets       map[string]bool
 	closingCommitRefs         map[string][]int
 
 	stageLabelPolicy  func() StageLabelPolicy

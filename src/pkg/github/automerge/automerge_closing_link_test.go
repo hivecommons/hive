@@ -159,7 +159,9 @@ func TestClosingKeywordInCommitMessageTargetingPR(t *testing.T) {
 		want   string
 	}{
 		{name: "open pull request", target: linkedIssue{state: "open", pr: true}, want: "closing-keyword-targets-pr:#1036"},
-		{name: "closed pull request", target: linkedIssue{state: "closed", pr: true}, want: "closing-keyword-targets-pr:#1036"},
+		// GitHub's close of a closed PR is a no-op, so "closed #N" about a
+		// merged PR does not hold the merge.
+		{name: "closed pull request", target: linkedIssue{state: "closed", pr: true}},
 		{name: "issue", target: linkedIssue{state: "open"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -178,20 +180,21 @@ func TestClosingKeywordInCommitMessageTargetingPR(t *testing.T) {
 			}
 			if tc.want == "" {
 				if merges != 1 {
-					t.Fatalf("merges = %d, want 1: a closing keyword for an issue behaves as before", merges)
+					t.Fatalf("merges = %d, want 1: a closing keyword for an issue or a closed pull request behaves as before", merges)
 				}
 				return
 			}
 			if merges != 0 {
 				t.Fatalf("merges = %d, want 0", merges)
 			}
-			// The next pass on the same head reads neither the commits nor
-			// the target again.
+			// The next pass on the same head reads the commits once per
+			// head, but reads the target pull request again: it may have
+			// closed since.
 			if _, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true); err != nil || reason != tc.want || merges != 0 {
 				t.Fatalf("second tick: reason = %q, err = %v, merges = %d", reason, err, merges)
 			}
-			if got := front.readsOf("acme/widget#1036"); got != 1 {
-				t.Fatalf("target reads = %d, want 1", got)
+			if got := front.readsOf("acme/widget#1036"); got != 2 {
+				t.Fatalf("target reads = %d, want 2: an open pull request is read every tick", got)
 			}
 			front.mu.Lock()
 			commitReads := front.commitReads
@@ -200,6 +203,27 @@ func TestClosingKeywordInCommitMessageTargetingPR(t *testing.T) {
 				t.Fatalf("commit list reads = %d, want 1 per head", commitReads)
 			}
 		})
+	}
+}
+
+// A held merge is released once the target PR closes: the next tick reads
+// it again and finds nothing left to close.
+func TestClosingKeywordTargetPRReleasesWhenClosed(t *testing.T) {
+	merges := 0
+	api := newSelfSweepGuardAPI(t, selfSweepFixture{mergeApplied: true, mergeCalls: &merges})
+	defer api.Close()
+	front := newCommitClosingFront(linkedIssue{state: "open", pr: true})
+	srv := newLinkedIssueFront(t, api.URL, front)
+	defer srv.Close()
+	c := newAutoMergeSweepClient(srv.URL)
+	c.scanCommitClosingKeywords = true
+
+	if _, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true); err != nil || reason != "closing-keyword-targets-pr:#1036" || merges != 0 {
+		t.Fatalf("open-target tick: reason = %q, err = %v, merges = %d", reason, err, merges)
+	}
+	front.set("acme/widget#1036", linkedIssue{state: "closed", pr: true})
+	if _, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true); err != nil || reason != "" || merges != 1 {
+		t.Fatalf("closed-target tick: reason = %q, err = %v, merges = %d; want a merge", reason, err, merges)
 	}
 }
 

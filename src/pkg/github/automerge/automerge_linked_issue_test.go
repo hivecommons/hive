@@ -229,10 +229,11 @@ var linkedIssueCases = []linkedIssueCase{
 	{name: "read error fails closed", issue: linkedIssue{status: http.StatusInternalServerError}, wantReason: linkedIssueReasonCheck, wantErr: true},
 	{name: "closed issue does not block", issue: linkedIssue{state: "closed", labels: []string{"hold"}}},
 	{name: "missing issue does not block", issue: linkedIssue{status: http.StatusNotFound}},
-	// "Fixes #42" where #42 is a pull request would close that PR on merge
-	// (hivecommons/hive#15025), whatever its labels; the issue read above
-	// it is not repeated.
-	{name: "pull request target holds the merge", issue: linkedIssue{state: "open", labels: []string{"hold"}, pr: true}, wantReason: "closing-keyword-targets-pr:#42"},
+	// "Fixes #42" where #42 is an open pull request would close that PR on
+	// merge (hivecommons/hive#15025), whatever its labels; the issue read
+	// above it is not repeated. Closing a closed PR is a no-op.
+	{name: "open pull request target holds the merge", issue: linkedIssue{state: "open", labels: []string{"hold"}, pr: true}, wantReason: "closing-keyword-targets-pr:#42"},
+	{name: "closed pull request target does not block", issue: linkedIssue{state: "closed", labels: []string{"hold"}, pr: true}},
 	{name: "unlabelled issue does not block", issue: linkedIssue{state: "open", labels: []string{"bug"}}},
 }
 
