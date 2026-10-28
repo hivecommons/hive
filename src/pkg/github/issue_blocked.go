@@ -435,7 +435,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 					continue
 				}
 				if ySettled {
-					if err := c.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+					if err := c.unblockIssue(ctx, t.repo, t.number); err != nil {
 						res.Errors++
 						logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 						continue
@@ -476,7 +476,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 				continue
 			}
 
-			if err := c.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+			if err := c.unblockIssue(ctx, t.repo, t.number); err != nil {
 				res.Errors++
 				logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 				continue
@@ -532,7 +532,7 @@ func liftBlockedMarkerless(ctx context.Context, client *Client, t blockedIssueTa
 		}
 		return false
 	}
-	if err := client.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+	if err := client.unblockIssue(ctx, t.repo, t.number); err != nil {
 		res.Errors++
 		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 		return false
@@ -602,7 +602,7 @@ func liftBlockedDeadline(ctx context.Context, client *Client, t blockedIssueTarg
 	if noted {
 		return
 	}
-	if err := client.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+	if err := client.unblockIssue(ctx, t.repo, t.number); err != nil {
 		res.Errors++
 		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 		return

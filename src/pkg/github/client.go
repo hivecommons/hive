@@ -312,6 +312,8 @@ type Client struct {
 	// reviewVerdictHook is told when the relay records a verdict bound to a
 	// review dispatch (review_verdict_hook.go).
 	reviewVerdictHook atomic.Pointer[ReviewVerdictHook]
+	// itemRefreshHook queues targeted reads after hive-side issue unblocks.
+	itemRefreshHook atomic.Pointer[ItemRefreshHook]
 	// mergeAuthz gates merge requests from the merge-request watcher against the
 	// per-agent ACMM merge-policy (CanMerge) + forge-resistance AND the merge
 	// TARGET (pinned SHA + governor merge-eligible membership; see

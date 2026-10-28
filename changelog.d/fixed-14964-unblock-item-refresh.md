@@ -1,0 +1,1 @@
+- The tracker and cached actionable snapshot now queue a targeted re-read when the hive removes `blocked`, without waiting for an inbound GitHub webhook.

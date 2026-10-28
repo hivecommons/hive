@@ -328,6 +328,9 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		return
 	}
 	client.SetMergeFailureAlertSink(b.dashSrv)
+	// A hive-side unblock must reach the tracker and cached actionable snapshot
+	// even when its inbound unlabeled webhook is delayed or lost (#14964).
+	client.SetItemRefreshHook(b.dashSrv.RefreshHiveItem)
 	// Typed audit sink (#9587) for the attribution trail: repo and target land
 	// as first-class audit fields alongside the legacy repo=/number= detail
 	// pairs. Every hive-created PR/issue is recorded here whether or not the

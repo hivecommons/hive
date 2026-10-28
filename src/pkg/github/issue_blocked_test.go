@@ -270,6 +270,7 @@ func TestReconcileBlockedIssues(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := testClient(t, srv.URL)
+	expectIssueRefreshes(t, c, map[int]int{10: 1, 30: 1, 70: 1})
 	c.appBotLogin = testBot
 	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
 		"o/r": {Issues: []RepoWorkIssue{
@@ -508,6 +509,7 @@ func TestReconcileBlockedIssuesRecheckAfter(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := testClient(t, srv.URL)
+	expectIssueRefreshes(t, c, map[int]int{60: 1})
 	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
 		"o/r": {Issues: []RepoWorkIssue{
 			{Repo: "o/r", Number: 60, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: pastReason, RecheckAfter: past},
@@ -747,6 +749,7 @@ func TestReconcileBlockedIssuesSuperseded(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := testClient(t, srv.URL)
+	expectIssueRefreshes(t, c, map[int]int{2: 1, 3: 1})
 	c.appBotLogin = testBot
 	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
 		"o/r": {Issues: []RepoWorkIssue{
