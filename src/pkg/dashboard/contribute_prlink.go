@@ -118,13 +118,15 @@ func (r *prLinkResolver) resolve(ctx context.Context, repo string, number int) *
 	return status
 }
 
-// searchLinkedPR asks GitHub which PR (if any) references this issue. It runs ONE
+// searchLinkedPR asks GitHub which PR (if any) references this issue. It runs one
 // Search.Issues query scoped to the issue's repo, matching PRs that mention the
 // issue number — GitHub indexes the Fixes/Closes/Resolves cross-reference as well
 // as any plain "#N" body/title mention, so the closing PR is included. A merged
 // PR wins over a merely-open one (the fix landed), so results are scanned for a
-// merged hit first, then an open one. A nil client or empty result is "no linked
-// PR" (nil, nil) — never an error the caller must handle.
+// merged hit first, then an open one. When the search yields no merged PR it also
+// reads the issue's timeline, whose cross-referenced events catch a PR that names
+// the issue only in a commit message or comment. A nil client or empty result is
+// "no linked PR" (nil, nil) — never an error the caller must handle.
 func searchLinkedPR(ctx context.Context, gc *gh.Client, repo string, number int) (*prLinkStatus, error) {
 	if gc == nil || repo == "" || number <= 0 {
 		return nil, nil
@@ -141,32 +143,98 @@ func searchLinkedPR(ctx context.Context, gc *gh.Client, repo string, number int)
 	if err != nil {
 		return nil, err
 	}
-	if result == nil {
-		return nil, nil
-	}
 
 	var open *prLinkStatus
-	for _, iss := range result.Issues {
-		if iss == nil || iss.PullRequestLinks == nil {
-			continue // search can return issues too; keep only PRs
+	if result != nil {
+		for _, iss := range result.Issues {
+			if iss == nil || iss.PullRequestLinks == nil {
+				continue // search can return issues too; keep only PRs
+			}
+			if !prReferencesIssue(iss, number) {
+				continue
+			}
+			st, merged := prLinkCandidate(iss)
+			if merged {
+				return st, nil
+			}
+			if st != nil && open == nil {
+				open = st
+			}
 		}
-		if !prReferencesIssue(iss, number) {
-			continue
-		}
-		st := &prLinkStatus{Number: iss.GetNumber(), URL: iss.GetHTMLURL()}
-		// A closed PR that carries a merged_at (via PullRequestLinks) landed the
-		// fix — surface it as merged immediately (it also implies the issue is
-		// Closed in the triage ladder). Prefer it over any open candidate.
-		if iss.PullRequestLinks.MergedAt != nil {
-			st.State = prLinkStateMerged
+	}
+
+	// The title/body check above cannot see a PR that names the issue only in
+	// a commit message or a PR comment (hivecommons/hive#14859). GitHub
+	// records every such mention as a cross-referenced event on the issue's
+	// timeline, so one timeline read covers commits and comments alike. A
+	// timeline error keeps whatever the search already found.
+	for _, iss := range crossReferencingPRs(ctx, gc, repo, number) {
+		st, merged := prLinkCandidate(iss)
+		if merged {
 			return st, nil
 		}
-		if iss.GetState() == "open" && open == nil {
-			st.State = prLinkStateOpen
+		if st != nil && open == nil {
 			open = st
 		}
 	}
 	return open, nil
+}
+
+// prLinkCandidate grades one referencing PR: merged (the fix landed), open
+// (awaiting review), or nil for a PR closed without merging.
+func prLinkCandidate(iss *gh.Issue) (*prLinkStatus, bool) {
+	st := &prLinkStatus{Number: iss.GetNumber(), URL: iss.GetHTMLURL()}
+	// A closed PR that carries a merged_at (via PullRequestLinks) landed the
+	// fix — surface it as merged immediately (it also implies the issue is
+	// Closed in the triage ladder). Prefer it over any open candidate.
+	if iss.PullRequestLinks != nil && iss.PullRequestLinks.MergedAt != nil {
+		st.State = prLinkStateMerged
+		return st, true
+	}
+	if iss.GetState() == "open" {
+		st.State = prLinkStateOpen
+		return st, false
+	}
+	return nil, false
+}
+
+// crossReferencingPRs returns the same-repo pull requests named by the
+// issue's timeline cross-referenced events — a reference from a PR's title,
+// body, commit messages, or comments. Errors yield what was read so far.
+func crossReferencingPRs(ctx context.Context, gc *gh.Client, repo string, number int) []*gh.Issue {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" {
+		return nil
+	}
+	var out []*gh.Issue
+	seen := map[int]bool{}
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		events, resp, err := gc.Issues.ListIssueTimeline(ctx, owner, name, number, opts)
+		if err != nil {
+			return out
+		}
+		for _, ev := range events {
+			if ev == nil || !strings.EqualFold(ev.GetEvent(), "cross-referenced") {
+				continue
+			}
+			src := ev.GetSource()
+			if src == nil || src.Issue == nil || !src.Issue.IsPullRequest() {
+				continue
+			}
+			if full := src.Issue.GetRepository().GetFullName(); full != "" && !strings.EqualFold(full, repo) {
+				continue
+			}
+			if n := src.Issue.GetNumber(); n > 0 && !seen[n] {
+				seen[n] = true
+				out = append(out, src.Issue)
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return out
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 // prLinkSearchPerPage caps how many candidate PRs one lookup inspects. A handful
