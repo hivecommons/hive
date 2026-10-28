@@ -167,3 +167,16 @@ func TestLinearScopeSource(t *testing.T) {
 		t.Fatal("nil Linear source")
 	}
 }
+
+func TestLinearScopeContractIssueStaleCacheOnRefetchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	src := NewLinearSource(LinearConfig{APIKey: "k", BaseURL: srv.URL}, nil)
+	seeded := seedScopeCache(src, time.Now().Add(-time.Hour))
+	got, err := src.ScopeContractIssue(context.Background(), "ONB-1")
+	if err != nil || got.Text != seeded.Text {
+		t.Fatalf("got %+v, err %v; want stale cached issue", got, err)
+	}
+}

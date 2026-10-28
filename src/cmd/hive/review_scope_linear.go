@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"time"
@@ -35,7 +36,7 @@ func reviewScopeLinearReader(cfg *config.Config, logger *slog.Logger) reviewScop
 		return nil
 	}
 	ws := cfg.Governor.WorkSource
-	key := ws.Linear.APIKey
+	key := reviewScopeLinearKey(ws.Linear)
 	reviewScopeLinear.mu.Lock()
 	defer reviewScopeLinear.mu.Unlock()
 	if reviewScopeLinear.src != nil && reviewScopeLinear.key == key {
@@ -50,6 +51,13 @@ func reviewScopeLinearReader(cfg *config.Config, logger *slog.Logger) reviewScop
 	}
 	reviewScopeLinear.key, reviewScopeLinear.src = key, src
 	return src
+}
+
+// reviewScopeLinearKey identifies the Linear settings the cached source was
+// built from, so a team or key change rebuilds it.
+func reviewScopeLinearKey(l config.LinearSourceConfig) string {
+	b, _ := json.Marshal(l)
+	return string(b)
 }
 
 // reviewScopeFailTTL bounds how long a failed Linear read is not retried, so

@@ -94,6 +94,11 @@ func (s *LinearSource) ScopeContractIssue(ctx context.Context, identifier string
 	}
 	raw, err := linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearScopeIssueQuery, map[string]interface{}{"id": identifier})
 	if err != nil {
+		if ok {
+			// The cached text is still the last known good scope; a Linear
+			// outage must not turn it into a fetch failure.
+			return cached.issue, nil
+		}
 		return LinearScopeIssue{}, fmt.Errorf("linear: read %s: %w", identifier, err)
 	}
 	var resp struct {

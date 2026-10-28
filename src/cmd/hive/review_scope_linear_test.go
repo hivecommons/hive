@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -57,5 +58,14 @@ func TestReviewScopeContractForCachesFailures(t *testing.T) {
 	reviewScopeContractFor(context.Background(), failing, &item, restoreTestLogger())
 	if len(failing.asked) != 1 {
 		t.Fatalf("asked = %v, want one fetch within the failure TTL", failing.asked)
+	}
+}
+
+func TestReviewScopeLinearKeyTracksTeams(t *testing.T) {
+	a := config.LinearSourceConfig{APIKey: "k", Teams: []config.LinearTeamSourceConfig{{Key: "ENG", Repo: "o/r"}}}
+	b := a
+	b.Teams = []config.LinearTeamSourceConfig{{Key: "ENG", Repo: "o/other"}}
+	if reviewScopeLinearKey(a) == reviewScopeLinearKey(b) {
+		t.Fatal("team change must change the key")
 	}
 }
