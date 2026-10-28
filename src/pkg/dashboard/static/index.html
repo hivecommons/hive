@@ -1558,7 +1558,7 @@
     /* Reroute pill (hive PR 15038): "● rerouted → @x"; the dot is
        the target clanker's presence (online = the ready status token). */
     .ham-badge-reroute { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); display: inline-flex; align-items: center; gap: var(--sp-1); }
-    .ham-badge-reroute .ham-presence-dot { width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--text-faint); flex: 0 0 auto; }
+    .ham-badge-reroute .ham-presence-dot { width: 0.5em; height: 0.5em; border-radius: var(--r-pill); background: var(--text-faint); flex: 0 0 auto; }
     .ham-badge-reroute.ham-reroute-online .ham-presence-dot { background: var(--status-ok); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
