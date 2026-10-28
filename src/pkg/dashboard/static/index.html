@@ -1505,6 +1505,8 @@
        status token the sentinel pill on the repo card already uses. */
     .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }
+    /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
+    .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
@@ -14165,6 +14167,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_BLOCKED_ON_PR_MERGED = 'merged; the blocked sweep lifts the label next';
     const STAGE_TRACKER_BLOCKED_ON_PR_CLOSED = 'closed unmerged; the blocked sweep re-triages it next';
 
+    // The 072 adoption line (`adoption`: {due, blocked_by, since, nudges,
+    // author_online, action, text} — hivecommons/hive#14524): the payload's
+    // plain-words text, '' when the row carries none.
+    function stageTrackerAdoptionTip(item) {
+      const a = item && item.adoption;
+      return a && a.text ? String(a.text) : '';
+    }
+    // Whether the row offers the owner's Adopt: the engine found adoption
+    // due and held it for a reason the owner settles (maintainer_policy:
+    // ask names `action: "decide:adopt"`).
+    function stageTrackerAdoptOffered(item) {
+      const a = item && item.kind === 'pr' ? item.adoption : null;
+      return !!(a && a.due && a.action === 'decide:adopt');
+    }
+    // The chip text: "adopt?" when the owner is asked, else "waiting on @x".
+    function stageTrackerAdoptionChipText(item) {
+      const a = item && item.adoption;
+      if (!a) return '';
+      if (stageTrackerAdoptOffered(item)) return 'adopt?';
+      return a.blocked_by ? 'not adopted' : ('waiting on ' + (a.author ? '@' + a.author : 'author'));
+    }
+    function stageTrackerAdoptionChipHtml(item) {
+      const tip = stageTrackerAdoptionTip(item);
+      if (!tip) return '';
+      const offered = stageTrackerAdoptOffered(item);
+      const cls = 'ham-badge ham-badge-adoption' + (offered ? ' ham-badge-adoption-ask' : '');
+      // "adopt?" opens the Needs-human popover (its decision_needed carries
+      // the Adopt option) when the popover helpers are present.
+      const decision = offered && typeof stageTrackerDecisionOf === 'function' && item.decision_needed ? stageTrackerDecisionOf(item) : null;
+      if (decision) return stageTrackerDecisionTriggerHtml(decision, esc(stageTrackerAdoptionChipText(item)), tip, cls);
+      return `<span class="${cls}" title="${esc(tip)}" aria-label="${esc('Adoption — ' + tip)}">${esc(stageTrackerAdoptionChipText(item))}</span>`;
+    }
+
     // "Sentinel flagged security-relevant changes at <head short sha>:
     // <reason>" — the sentinel wording for an item's tooltips and aria
     // labels; '' when the item carries no alert. Without a reason or a
@@ -14493,6 +14528,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (actorKind) lines.push('Next move: ' + actorKind);
       const blockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
       if (blockedPR) lines.push(blockedPR.tip);
+      // Guarded: the test harnesses load helpers by name, and this one is additive.
+      const adoption = typeof stageTrackerAdoptionTip === 'function' ? stageTrackerAdoptionTip(item) : '';
+      if (adoption) lines.push('Adoption: ' + adoption + (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item) ? ' (row menu → Adopt)' : ''));
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       const stale = stageTrackerStaleLabelsText(item);
       if (stale) lines.push(stale);
@@ -14515,7 +14553,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerChipsHtml(item) {
-      const sentinel = stageTrackerSentinelChipHtml(item);
+      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
@@ -14792,7 +14830,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, adoption: lp.adoption || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -16131,6 +16169,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
+      'decide:adopt': 'Adopt (hive takes over)',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
     };
@@ -16319,6 +16358,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
         out.push({ id: 'decide', label: 'Decide' + on + '…', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, submenu: stageTrackerDecideOptions(target, ctx), target });
       }
+      // A nudged contributor PR the engine would adopt but for the owner's
+      // say-so (maintainer_policy: ask) offers Adopt (hivecommons/hive#14524).
+      if (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item)) out.push({ id: 'decide:adopt', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt'] + '…', hint: 'adoption', enabled: write && !!ctx.user, why: write && ctx.user ? '' : STAGE_TRACKER_WHY_WRITE });
       out.push(has('hold')
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
@@ -17027,6 +17069,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const v = await stageTrackerAsk(id, 'prompt', { title: stageTrackerActionLabel(id), label: 'Comment for ' + refs + ' (optional)', placeholder: 'Why this is closed', confirmLabel: 'Close' });
           return v == null ? null : { comment: v };
         }
+        case 'decide:adopt': {
+          const why = items.map(it => stageTrackerAdoptionTip(it)).filter(Boolean).join('\n');
+          return (await hiveConfirm({ title: 'Adopt pull request' + (items.length > 1 ? 's' : ''), message: (why ? why + '\n\n' : '') + 'Have the hive adopt ' + refs + ' as ' + who + '? The author\'s commits and sign-off are kept; the hive rebases and fixes CI (in place when GitHub allows, else on a superseding hive PR that closes this one when it merges). Recorded as your decision on the PR.', confirmLabel: 'Adopt' })) ? {} : null;
+        }
         case 'needs-human': {
           const v = await stageTrackerAsk(id, 'prompt', { title: 'Mark needs-human', label: 'Why does ' + refs + ' need a human? (optional)', placeholder: 'Reason', confirmLabel: 'Mark' });
           return v == null ? null : { comment: v };
@@ -17215,7 +17261,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         } catch (e) { showToast('Could not copy: ' + (e && e.message ? e.message : 'clipboard unavailable'), 'error'); }
         return { toasts: [], pending: [] };
       }
-      if (id.indexOf('decide:') === 0) {
+      if (id === 'decide:adopt') {
+        // Adopt acts on the nudged PR row itself (072, not a decision park).
+        items = items.filter(stageTrackerAdoptOffered);
+        if (!items.length) return { toasts: [], pending: [] };
+      } else if (id.indexOf('decide:') === 0) {
         // A row decides its parked PR when it has one (the issue's stage is
         // only mirrored from it); dedupe when the PR row is selected too.
         const seen = {};
@@ -41914,6 +41964,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Stalled requires quiet', key: 'governor.labels.stage.stalled.require_quiet', text: 'stalled no activity quiet dwell head push comment review ci label governor.labels.stage.stalled.require_quiet governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Central stage engine', key: 'governor.labels.stage.engine.mode', text: 'stage engine mode shadow enforce dry run pause anomaly reconciler ADR-0025 governor.labels.stage.engine.mode' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
+      { tab: 'Labels', section: 'Labels', label: 'Adoption of a maintainer\'s PR', key: 'governor.labels.stage.adoption.maintainer_policy', text: 'adoption maintainer policy adopt ask never maintainer own pr clanker disconnected offline adopt action governor.labels.stage.adoption.maintainer_policy' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
@@ -48703,6 +48754,14 @@ function burnAreaChart() {
       const stageAdoptionOn = (_configState.dirty.labels && _configState.dirty.labels.stage_adoption_enabled !== undefined)
         ? _configState.dirty.labels.stage_adoption_enabled
         : (_configState.data.stageAdoptionEnabled !== false);
+      const stageAdoptionMaintainerPolicy = (_configState.dirty.labels && _configState.dirty.labels.stage_adoption_maintainer_policy !== undefined)
+        ? _configState.dirty.labels.stage_adoption_maintainer_policy
+        : (_configState.data.stageAdoptionMaintainerPolicy || 'adopt');
+      const stageAdoptionMaintainerOptions = [
+        ['adopt', 'adopt — a clanker PR whose hive disconnected is adopted whoever wrote it, repo role ignored (default)'],
+        ['ask', 'ask — never adopt a maintainer\'s PR on its own; mark it for an owner decision and offer Adopt in the activity monitor'],
+        ['never', 'never — the hive never takes over a maintainer\'s PR and releases any adoption of one'],
+      ].map(([v, label]) => `<option value="${v}" ${stageAdoptionMaintainerPolicy === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
       const stageStalledQuietOn = (_configState.dirty.labels && _configState.dirty.labels.stage_stalled_require_quiet !== undefined)
         ? _configState.dirty.labels.stage_stalled_require_quiet
         : (_configState.data.stageStalledRequireQuiet !== false);
@@ -48771,6 +48830,11 @@ function burnAreaChart() {
           <div class="config-help">A contributor counts as online when their relay heartbeat is within this window; online contributors get the fix-pr interrupt immediately, offline ones only the comment (their fix waits in the queue).</div>
         </div>
         <div class="config-toggle"><div class="config-toggle-switch ${stageAdoptionOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_adoption_enabled"></div><span class="config-toggle-label">Adopt red contributor PRs after the grace ${yamlHint('governor.labels.stage.adoption.enabled')} ${settingHelpMark('settings', 'labels', 'Adopt red contributor PRs', `When a nudged contributor PR is still red after its grace (online 2h / offline 1h, below) the hive moves it to stage/074-adopted-by-hive: it pushes hive/adopt-N at the contributor's head (commits and sign-off preserved), opens a superseding App PR carrying the original Closes lines, comments once on the original, and the scanner's red-PR fix-first kick rebases and fixes CI on that branch. The original closes automatically when the superseding PR merges. Off: the PR stays in 072 and just stalls. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-field">
+          <label for="cfg-stage-adoption-maintainer-policy">When the PR author maintains the repository ${yamlHint('governor.labels.stage.adoption.maintainer_policy')} ${settingHelpMark('settings', 'labels', 'Adoption of a maintainer\'s PR', `What adoption does when the author of a nudged author/clanker PR holds admin or maintain on the repository. adopt (default): the role is ignored — clanker PRs are adoptable on disconnect regardless of the owner's repo role (hivecommons/hive#14524: a maintainer's own hive PR sat at 072 for 26h with its hive offline). ask: the hive never adopts such a PR by itself; the activity monitor row reads "waiting on @author (maintainer, offline Nh) — adopt?" and its menu offers Adopt, which queues the same adoption as a contributor going offline. never: the pre-#14524 rule — a maintainer's PR is never taken over and an existing adoption of one is released. Human-authored PRs are never adopted under any setting.`)}</label>
+          <select id="cfg-stage-adoption-maintainer-policy" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_adoption_maintainer_policy" data-arg-types="s,s,v">${stageAdoptionMaintainerOptions}</select>
+          <div class="config-help">adopt: repo role ignored, adopt on disconnect like any clanker PR. ask: park it for an owner decision with an Adopt action. never: hands-off and release.</div>
+        </div>
         <div class="config-field">
           <label for="cfg-stage-grace-online">Online contributor grace ${yamlHint('governor.labels.stage.contributor_grace_online')}</label>
           <input type="text" id="cfg-stage-grace-online" value="${esc(stageGraceOnline)}" placeholder="2h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_grace_online" data-arg-types="s,s,w">

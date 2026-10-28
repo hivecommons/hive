@@ -88,6 +88,11 @@ type StageLabelPolicy struct {
 	// Every other contributor-lane gate still applies; the head must be
 	// exactly the one the stage store records as adopted/pushed by the hive.
 	AdoptionAutoMerge bool
+	// AdoptionMaintainerPolicy is governor.labels.stage.adoption.maintainer_policy
+	// (config.AdoptionMaintainerPolicy*): what adoption does when the PR
+	// author holds admin or maintain on the repository. "" reads as the
+	// default, adopt (hivecommons/hive#14524).
+	AdoptionMaintainerPolicy string
 	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
 	// override for "owner/repo"; ok false means "detect" (a DCO context in
 	// the branch's required checks or on the head). nil = always detect.

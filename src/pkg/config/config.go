@@ -2827,6 +2827,41 @@ type StageAdoptionConfig struct {
 	// requiring the original author's trust tier. nil = true. Off, an
 	// adopted PR by an untrusted contributor waits for a human /lgtm.
 	AutoMerge *bool `yaml:"auto_merge,omitempty"`
+	// MaintainerPolicy says what adoption does when the PR's author holds
+	// admin or maintain on the repository (hivecommons/hive#14524):
+	// AdoptionMaintainerPolicyAdopt (default) ignores the role — a
+	// clanker PR whose hive disconnected is adopted like any other;
+	// AdoptionMaintainerPolicyAsk never adopts on its own but parks the
+	// question with the owner (an Adopt action in the activity monitor);
+	// AdoptionMaintainerPolicyNever is the pre-#14524 rule: the hive never
+	// takes a maintainer's PR over and releases any adoption of one.
+	MaintainerPolicy string `yaml:"maintainer_policy,omitempty"`
+}
+
+// Values for governor.labels.stage.adoption.maintainer_policy.
+const (
+	AdoptionMaintainerPolicyAdopt = "adopt"
+	AdoptionMaintainerPolicyAsk   = "ask"
+	AdoptionMaintainerPolicyNever = "never"
+	// DefaultAdoptionMaintainerPolicy: clanker PRs are adoptable on
+	// disconnect regardless of the author's repository role (owner
+	// decision 2026-10-28, hivecommons/hive#14524).
+	DefaultAdoptionMaintainerPolicy = AdoptionMaintainerPolicyAdopt
+)
+
+// AdoptionMaintainerPolicies lists the accepted values, default first.
+var AdoptionMaintainerPolicies = []string{AdoptionMaintainerPolicyAdopt, AdoptionMaintainerPolicyAsk, AdoptionMaintainerPolicyNever}
+
+// EffectiveMaintainerPolicy normalises MaintainerPolicy; empty or unknown
+// reads as the default (adopt).
+func (c StageAdoptionConfig) EffectiveMaintainerPolicy() string {
+	v := strings.ToLower(strings.TrimSpace(c.MaintainerPolicy))
+	for _, p := range AdoptionMaintainerPolicies {
+		if v == p {
+			return p
+		}
+	}
+	return DefaultAdoptionMaintainerPolicy
 }
 
 // IsEnabled reports whether adoption runs (default on).

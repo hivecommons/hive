@@ -1,0 +1,339 @@
+package dashboard
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
+	"github.com/hivecommons/hive/pkg/stagelabels"
+)
+
+// hivecommons/hive#14524: a maintainer's clanker PR sat at 072 for 26h,
+// nudged twice, its hive offline, while the row read a bare "Returned to
+// contributor". The tracker now carries `adoption{}` and says why in plain
+// words; under maintainer_policy: ask the row offers Adopt.
+
+func adoptionFixture(t *testing.T, now time.Time, policy string, presence func(string) (automerge.ContributorPresence, bool)) (*Server, *stagelabels.Store, *StatusPayload) {
+	t.Helper()
+	s := newTestServer()
+	clock := now
+	store := stagelabels.NewStore("", func() time.Time { return clock })
+	s.stageStore = store
+	s.presenceLookup = presence
+	s.deps = &Dependencies{Config: &config.Config{}}
+	s.deps.Config.Governor.Labels.Stage.Adoption.MaintainerPolicy = policy
+	key := stagelabels.Key("hivecommons/hive", 14524)
+	clock = now.Add(-26 * time.Hour)
+	store.Observe(key, stagelabels.ReturnedToContributor, "check-failing:ratchet")
+	store.MarkNudged(key, "feed", 1, false, clock)
+	clock = now.Add(-20 * time.Hour)
+	store.MarkNudged(key, "feed", 2, false, clock)
+	clock = now
+	status := minimalPayload()
+	status.HiveID = "hive"
+	status.Repos = []FrontendRepo{{
+		Name: "hive", Full: "hivecommons/hive",
+		OpenPrs: []any{FrontendPR{PullRequest: github.PullRequest{Number: 14524, Title: "Big change", Author: "hanthor", HeadSHA: "feed", Labels: []string{"stage/072-returned-to-contributor", "author/clanker", "role/contributor"}}}},
+	}}
+	s.UpdateStatus(status)
+	return s, store, status
+}
+
+func offlinePresence(lastSeen time.Time) func(string) (automerge.ContributorPresence, bool) {
+	return func(login string) (automerge.ContributorPresence, bool) {
+		if login != "hanthor" {
+			return automerge.ContributorPresence{}, false
+		}
+		return automerge.ContributorPresence{Registered: true, Online: false, LastSeen: lastSeen}, true
+	}
+}
+
+func TestStageTrackerAdoptionAskOffersAdopt(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyAsk, offlinePresence(now.Add(-26*time.Hour)))
+	store.NoteAdoptionBlocked(stagelabels.Key("hivecommons/hive", 14524), "feed", stagelabels.AdoptBlockedAuthorMaintainer, now.Add(-25*time.Hour))
+	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
+	a := it.Adoption
+	if a == nil {
+		t.Fatalf("no adoption payload: %+v", it)
+	}
+	if !a.Due || a.BlockedBy != "author-is-maintainer" || a.Nudges != 2 || a.AuthorOnline || !a.AuthorRegistered || !a.AuthorMaintainer || a.Policy != "ask" || a.Action != "decide:adopt" {
+		t.Fatalf("adoption = %+v", a)
+	}
+	if a.Since == nil || !a.Since.Equal(now.Add(-26*time.Hour)) {
+		t.Fatalf("since = %v", a.Since)
+	}
+	if a.Text != "waiting on @hanthor (maintainer, offline 26h) — adopt?" {
+		t.Fatalf("text = %q", a.Text)
+	}
+	if it.Caption != "Returned to @hanthor — a required check is failing (ratchet) — waiting on @hanthor (maintainer, offline 26h) — adopt?" && !strings.HasSuffix(it.Caption, " — waiting on @hanthor (maintainer, offline 26h) — adopt?") {
+		t.Fatalf("caption = %q", it.Caption)
+	}
+	if strings.Contains(it.Caption, "must act") {
+		t.Fatalf("caption keeps the bare clause: %q", it.Caption)
+	}
+	// The ask hold is a decision a person owes: decision_needed carries the
+	// question and leads with Adopt under the same action id (#14995).
+	d := it.DecisionNeeded
+	if d == nil || len(d.Options) == 0 || d.Options[0].Action != "decide:adopt" || !d.Options[0].Enabled {
+		t.Fatalf("decision_needed = %+v", d)
+	}
+	if !strings.HasPrefix(d.Question, "@hanthor maintains this repository and has been offline for 26h; adopt the PR?") || d.BlockerReason != "adoption:author-is-maintainer" || d.Since == nil || !d.Since.Equal(now.Add(-26*time.Hour)) {
+		t.Fatalf("decision question = %q reason=%q since=%v", d.Question, d.BlockerReason, d.Since)
+	}
+	// The wire shape the SPA reads.
+	raw, _ := json.Marshal(it)
+	for _, want := range []string{`"adoption":{`, `"due":true`, `"blocked_by":"author-is-maintainer"`, `"nudges":2`, `"author_online":false`, `"action":"decide:adopt"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("payload lacks %s: %s", want, raw)
+		}
+	}
+}
+
+func TestStageTrackerAdoptionNeverSaysSo(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyNever, offlinePresence(time.Time{}))
+	store.NoteAdoptionBlocked(stagelabels.Key("hivecommons/hive", 14524), "feed", stagelabels.AdoptBlockedAuthorMaintainer, now.Add(-25*time.Hour))
+	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
+	if a := it.Adoption; a == nil || a.Action != "" || a.Text != "waiting on @hanthor (maintainer, offline 26h) — not adopted: maintainer_policy is never" {
+		t.Fatalf("adoption = %+v", a)
+	}
+	if it.DecisionNeeded != nil {
+		t.Fatalf("never is not a person's decision: %+v", it.DecisionNeeded)
+	}
+}
+
+// adopt (default): nothing is held, so the row only reports the wait, the
+// nudges and the presence; no Adopt is offered.
+func TestStageTrackerAdoptionDefaultReportsWait(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	s, store, status := adoptionFixture(t, now, "", offlinePresence(now.Add(-3*time.Hour)))
+	a := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524).Adoption
+	if a == nil || a.Due || a.BlockedBy != "" || a.Action != "" || a.Policy != "adopt" {
+		t.Fatalf("adoption = %+v", a)
+	}
+	if a.Text != "waiting on @hanthor (offline 3h, 2 nudges)" {
+		t.Fatalf("text = %q", a.Text)
+	}
+	// Online author: no offline span.
+	s.presenceLookup = func(string) (automerge.ContributorPresence, bool) {
+		return automerge.ContributorPresence{Registered: true, Online: true}, true
+	}
+	if a = trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524).Adoption; a == nil || a.Text != "waiting on @hanthor (online, 2 nudges)" {
+		t.Fatalf("online text = %+v", a)
+	}
+}
+
+// A stale blocked mark (head moved) and an adopted record carry nothing.
+func TestStageTrackerAdoptionStaleAndAdopted(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyAsk, offlinePresence(time.Time{}))
+	key := stagelabels.Key("hivecommons/hive", 14524)
+	store.NoteAdoptionBlocked(key, "old", stagelabels.AdoptBlockedAuthorMaintainer, now.Add(-time.Hour))
+	if a := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524).Adoption; a == nil || a.Due || a.Action != "" {
+		t.Fatalf("stale head still blocks: %+v", a)
+	}
+	store.MarkAdopted(key, "feed", 14977, now)
+	if a := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524).Adoption; a != nil {
+		t.Fatalf("adopted record still carries adoption: %+v", a)
+	}
+}
+
+func TestStageTrackerAdoptionOfflineFor(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) *time.Time { t := now.Add(-d); return &t }
+	for _, tc := range []struct {
+		a    StageTrackerAdoption
+		want string
+	}{
+		{StageTrackerAdoption{Since: at(26 * time.Hour)}, " 26h"},
+		{StageTrackerAdoption{Since: at(26 * time.Hour), AuthorLastSeen: at(40 * time.Minute)}, " 40m"},
+		{StageTrackerAdoption{Since: at(26 * time.Hour), AuthorLastSeen: at(3 * 24 * time.Hour)}, " 26h"},
+		{StageTrackerAdoption{Since: at(5 * 24 * time.Hour)}, " 5d"},
+		{StageTrackerAdoption{Since: at(10 * time.Second)}, " 1m"},
+		{StageTrackerAdoption{}, ""},
+	} {
+		if got := stageTrackerAdoptionOfflineFor(tc.a, now); got != tc.want {
+			t.Errorf("%+v: got %q want %q", tc.a, got, tc.want)
+		}
+	}
+}
+
+func TestStageTrackerAdoptionCaption(t *testing.T) {
+	a := &StageTrackerAdoption{Text: "waiting on @x (offline 2h)"}
+	for in, want := range map[string]string{
+		"Returned to @x — review swarm requested changes — @x must act (1 nudge sent)": "Returned to @x — review swarm requested changes — waiting on @x (offline 2h)",
+		"Returned to @x — @x must act": "Returned to @x — waiting on @x (offline 2h)",
+		"Returned to @x":               "Returned to @x — waiting on @x (offline 2h)",
+	} {
+		if got := stageTrackerAdoptionCaption(in, a); got != want {
+			t.Errorf("%q → %q, want %q", in, got, want)
+		}
+	}
+	if got := stageTrackerAdoptionCaption("Returned to @x — @x must act", nil); got != "Returned to @x — @x must act" {
+		t.Errorf("nil adoption changed the caption: %q", got)
+	}
+}
+
+// POST …/items/N/decision {"decision":"adopt"}: PR only, needs adoption
+// enabled, posts the attributed note, sets adoption/supersede, audits.
+func TestRepoItemDecisionAdopt(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true}
+	srv := newRepoItemDecisionServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.MaintainerPolicy = config.AdoptionMaintainerPolicyAsk
+
+	if w := postRepoItemDecision(t, srv, 7, "writer", `{"decision":"adopt","type":"issue"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("issue adopt: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if w := postRepoItemDecision(t, srv, 8, "reader", `{"decision":"adopt","type":"pr"}`); w.Code != http.StatusForbidden {
+		t.Fatalf("reader adopt: code=%d body=%s", w.Code, w.Body.String())
+	}
+	off := false
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = &off
+	if w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"adopt","type":"pr"}`); w.Code != http.StatusConflict {
+		t.Fatalf("adoption disabled: code=%d body=%s", w.Code, w.Body.String())
+	}
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = nil
+	if len(mock.added) != 0 || len(mock.comments) != 0 {
+		t.Fatalf("refused requests mutated GitHub: added=%v comments=%v", mock.added, mock.comments)
+	}
+
+	w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"adopt","type":"pr"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("adopt: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Decision != "adopt" || resp.Status != "adoption-queued" || resp.Label != delegatedecision.LabelAdoptSupersede {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if strings.Join(mock.added, ",") != delegatedecision.LabelAdoptSupersede {
+		t.Fatalf("added = %v", mock.added)
+	}
+	if len(mock.comments) != 1 || !strings.HasPrefix(mock.comments[0], "<!-- hive:adoption-requested by=writer -->") || !strings.Contains(mock.comments[0], "@writer asked the hive to adopt") {
+		t.Fatalf("comments = %v", mock.comments)
+	}
+	if acts := decisionAuditActions(srv); len(acts) == 0 || acts[0] != auditRepoItemDecisionAdopt {
+		t.Fatalf("audit = %v", acts)
+	}
+}
+
+// governor.labels.stage.adoption.maintainer_policy round-trips through the
+// Labels tab and rejects unknown values before touching the config.
+func TestGovernorLabelsAdoptionMaintainerPolicyRoundTrip(t *testing.T) {
+	s := covApiServer(t)
+	for _, bad := range []any{"always", "ASK ME", 7, true} {
+		if rec := doPut(s, "/api/config/governor/labels", map[string]any{"stage_adoption_maintainer_policy": bad}); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%v: expected 400, got %d — %s", bad, rec.Code, rec.Body.String())
+		}
+	}
+	if got := s.deps.Config.Governor.Labels.Stage.Adoption.MaintainerPolicy; got != "" {
+		t.Fatalf("a rejected PUT changed the policy to %q", got)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(doGet(s, "/api/config/governor").Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["stageAdoptionMaintainerPolicy"] != "adopt" {
+		t.Fatalf("default stageAdoptionMaintainerPolicy = %v, want adopt", got["stageAdoptionMaintainerPolicy"])
+	}
+	if rec := doPut(s, "/api/config/governor/labels", map[string]any{"stage_adoption_maintainer_policy": " Ask "}); rec.Code != http.StatusOK {
+		t.Fatalf("labels PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	if got := s.deps.Config.Governor.Labels.Stage.Adoption.MaintainerPolicy; got != "ask" {
+		t.Fatalf("policy = %q, want ask", got)
+	}
+	if err := json.Unmarshal(doGet(s, "/api/config/governor").Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["stageAdoptionMaintainerPolicy"] != "ask" {
+		t.Fatalf("stageAdoptionMaintainerPolicy after PUT = %v", got["stageAdoptionMaintainerPolicy"])
+	}
+
+	html := indexHTML(t)
+	labels := extractJSFunction(t, html, "renderGovLabels")
+	for _, want := range []string{
+		"yamlHint('governor.labels.stage.adoption.maintainer_policy')",
+		`id="cfg-stage-adoption-maintainer-policy" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_adoption_maintainer_policy" data-arg-types="s,s,v"`,
+		"_configState.data.stageAdoptionMaintainerPolicy || 'adopt'",
+		"['adopt',", "['ask',", "['never',",
+	} {
+		if !strings.Contains(labels, want) {
+			t.Errorf("renderGovLabels lacks %q", want)
+		}
+	}
+	if !strings.Contains(html, "key: 'governor.labels.stage.adoption.maintainer_policy'") {
+		t.Error("settings search index has no entry for governor.labels.stage.adoption.maintainer_policy")
+	}
+}
+
+// The SPA's pure helpers: the chip text/tooltip, the Adopt row action
+// (only when the payload offers it, only with write), and the confirm.
+func TestStageTrackerAdoptionJS(t *testing.T) {
+	html := indexHTML(t)
+	script := strings.Join([]string{
+		stageTrackerRowActionsPreamble(t, html),
+		jsFunc(t, html, "stageTrackerAdoptionTip"),
+		jsFunc(t, html, "stageTrackerAdoptOffered"),
+		jsFunc(t, html, "stageTrackerAdoptionChipText"),
+		jsFunc(t, html, "stageTrackerAdoptionChipHtml"),
+		`
+const ask = { kind: 'pr', repo: 'hivecommons/hive', number: 14524, stage: 72, stage_label: 'stage/072-returned-to-contributor', author: 'hanthor', labels: [],
+  adoption: { author: 'hanthor', due: true, blocked_by: 'author-is-maintainer', nudges: 2, author_online: false, author_maintainer: true, policy: 'ask', action: 'decide:adopt', text: 'waiting on @hanthor (maintainer, offline 26h) — adopt?' } };
+const plain = { kind: 'pr', repo: 'hivecommons/hive', number: 1, stage: 72, stage_label: 'stage/072-returned-to-contributor', author: 'zoe', labels: [],
+  adoption: { author: 'zoe', due: false, nudges: 1, author_online: true, policy: 'adopt', text: 'waiting on @zoe (online, 1 nudge)' } };
+const none = { kind: 'pr', repo: 'hivecommons/hive', number: 2, stage: 72, stage_label: 'stage/072-returned-to-contributor', author: 'zoe', labels: [] };
+assert.strictEqual(stageTrackerAdoptionTip(ask), 'waiting on @hanthor (maintainer, offline 26h) — adopt?');
+assert.strictEqual(stageTrackerAdoptionTip(none), '');
+assert.strictEqual(stageTrackerAdoptOffered(ask), true);
+assert.strictEqual(stageTrackerAdoptOffered(plain), false);
+assert.strictEqual(stageTrackerAdoptionChipText(ask), 'adopt?');
+assert.strictEqual(stageTrackerAdoptionChipText(plain), 'waiting on @zoe');
+assert.ok(stageTrackerAdoptionChipHtml(ask).includes('ham-badge-adoption-ask'));
+assert.ok(stageTrackerAdoptionChipHtml(ask).includes('offline 26h'));
+assert.strictEqual(stageTrackerAdoptionChipHtml(none), '');
+const ids = (item, ctx) => stageTrackerRowActions(item, ctx).map(a => a.id);
+const w = { write: true, user: 'owner' };
+assert.ok(ids(ask, w).includes('decide:adopt'), 'ask row offers Adopt: ' + ids(ask, w));
+assert.ok(!ids(plain, w).includes('decide:adopt'), 'plain 072 row must not offer Adopt');
+assert.ok(!ids(none, w).includes('decide:adopt'));
+const ro = stageTrackerRowActions(ask, { write: false, user: '' }).find(a => a.id === 'decide:adopt');
+assert.ok(ro && ro.enabled === false && ro.why, 'read-only Adopt is listed but disabled');
+assert.strictEqual(STAGE_TRACKER_ACTION_LABELS['decide:adopt'], 'Adopt (hive takes over)');
+`,
+	}, "\n")
+	runStageTrackerRowActionsScript(t, script)
+	for _, want := range []string{
+		"case 'decide:adopt': {",
+		"'Adoption: ' + adoption",
+		".ham-badge-adoption {",
+		"adoption: lp.adoption",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html lacks %q", want)
+		}
+	}
+}
+
+// The tracker endpoint serialises adoption on the nested PR of an issue
+// row too (the issue carrying its covering PR).
+func TestStageTrackerAdoptionEndpointShape(t *testing.T) {
+	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
+	s, store, _ := adoptionFixture(t, now, config.AdoptionMaintainerPolicyAsk, offlinePresence(now.Add(-26*time.Hour)))
+	store.NoteAdoptionBlocked(stagelabels.Key("hivecommons/hive", 14524), "feed", stagelabels.AdoptBlockedAuthorMaintainer, now.Add(-25*time.Hour))
+	rr := httptest.NewRecorder()
+	s.handleStageTracker(rr, httptest.NewRequest(http.MethodGet, "/api/stage-tracker", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"blocked_by":"author-is-maintainer"`) {
+		t.Fatalf("endpoint body lacks adoption: %s", rr.Body.String())
+	}
+}

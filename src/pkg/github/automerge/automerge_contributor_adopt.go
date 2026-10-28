@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
@@ -591,10 +592,18 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
 	}
-	if maintainer, err := c.authorMaintainsRepo(ctx, obs, now); maintainer || err != nil {
-		c.info("stage labels: adoption due but the author maintains the repository; not adopting", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "deferred", err != nil)
+	if held, deferred := c.maintainerHoldsAdoption(ctx, obs, policy, requested, now); held || deferred {
+		if held && !deferred {
+			// Recorded so the activity monitor says why (hivecommons/hive#14524):
+			// under ask the row offers Adopt, under never it names the policy.
+			store.NoteAdoptionBlocked(key, obs.HeadSHA, stagelabels.AdoptBlockedAuthorMaintainer, now)
+			c.info("stage labels: adoption due but the author maintains the repository; not adopting", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "policy", policy.maintainerPolicy(), "deferred", false)
+		} else {
+			c.info("stage labels: adoption due but the author's repository permission is unreadable; deferred", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "policy", policy.maintainerPolicy())
+		}
 		return 0, nil
 	}
+	store.ClearAdoptionBlocked(key)
 	fence, err := c.adoptionDiffRefusal(ctx, obs)
 	if fence != "" && (err != nil || adoptionFenceDefers(fence)) {
 		// The fence could not judge this head (it moved, or its file list
@@ -670,13 +679,12 @@ func delegatedAdoptionAttempted(before, after stagelabels.Record) bool {
 }
 
 func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, grace time.Duration, online bool, dcoRehome bool, now time.Time) (int, error) {
-	maintainer, err := c.authorMaintainsRepo(ctx, obs, now)
-	if err != nil {
+	if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
 		return 0, nil
-	}
-	if maintainer {
-		// Backstop for every re-home path (dco-rehome, in-place-stalled):
-		// a maintainer's PR is never closed in favour of a hive copy.
+	} else if maintainer {
+		// Backstop for every re-home path (dco-rehome, in-place-stalled)
+		// under maintainer_policy: never — a maintainer's PR is never
+		// closed in favour of a hive copy.
 		c.info("stage labels: not superseding a repository maintainer's PR; adoption released", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "reason", reason)
 		return c.releaseMaintainerAdoption(ctx, store, key, obs, rec.AdoptedBy)
 	}
@@ -915,14 +923,12 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	if !ok {
 		return 0, nil
 	}
-	maintainer, err := c.authorMaintainsRepo(ctx, obs, now)
-	if err != nil {
+	if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
 		// No evidence either way: neither re-home nor release this pass.
 		return 0, nil
-	}
-	if maintainer {
-		// Supersede adoption taken before this rule, or before the
-		// author's permission was raised: hand the PR back.
+	} else if maintainer {
+		// maintainer_policy: never — a supersede adoption taken before the
+		// rule, or before the author's permission was raised, is handed back.
 		c.info("stage labels: adoption of a repository maintainer's PR released", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "superseded_by", rec.AdoptedBy)
 		return c.releaseMaintainerAdoption(ctx, store, key, obs, rec.AdoptedBy)
 	}
@@ -1119,6 +1125,56 @@ func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, 
 	return maintainer, nil
 }
 
+// maintainerPolicy resolves the policy's maintainer rule ("" = adopt).
+func (p StageLabelPolicy) maintainerPolicy() string {
+	switch strings.ToLower(strings.TrimSpace(p.AdoptionMaintainerPolicy)) {
+	case config.AdoptionMaintainerPolicyAsk:
+		return config.AdoptionMaintainerPolicyAsk
+	case config.AdoptionMaintainerPolicyNever:
+		return config.AdoptionMaintainerPolicyNever
+	}
+	return config.AdoptionMaintainerPolicyAdopt
+}
+
+// maintainerHoldsAdoption applies governor.labels.stage.adoption.maintainer_policy
+// to an adoption that is due (hivecommons/hive#14524). adopt: the author's
+// role is not read and never holds (a clanker PR whose hive disconnected
+// is adoptable whoever its author is). never: a maintainer's PR is held
+// outright. ask: held until a person asks for it — the owner's Adopt
+// (the adoption/supersede request label, `requested`) lifts the hold.
+// deferred is true when the role could not be read; the caller then
+// neither adopts nor records anything.
+func (c *Engine) maintainerHoldsAdoption(ctx context.Context, obs stageObservation, policy StageLabelPolicy, requested bool, now time.Time) (held, deferred bool) {
+	switch policy.maintainerPolicy() {
+	case config.AdoptionMaintainerPolicyAdopt:
+		return false, false
+	case config.AdoptionMaintainerPolicyAsk:
+		if requested {
+			return false, false
+		}
+	}
+	maintainer, err := c.authorMaintainsRepo(ctx, obs, now)
+	if err != nil {
+		return false, true
+	}
+	return maintainer, false
+}
+
+// maintainerReleasesAdoption is the settle-side twin: only under
+// maintainer_policy: never does an existing adoption of a maintainer's PR
+// get released (or a re-home refused). Under adopt and ask the adoption
+// stands — under ask it was a person's decision.
+func (c *Engine) maintainerReleasesAdoption(ctx context.Context, obs stageObservation, policy StageLabelPolicy, now time.Time) (maintainer, deferred bool) {
+	if policy.maintainerPolicy() != config.AdoptionMaintainerPolicyNever {
+		return false, false
+	}
+	m, err := c.authorMaintainsRepo(ctx, obs, now)
+	if err != nil {
+		return false, true
+	}
+	return m, false
+}
+
 // AdoptionMaintainerSupersederMarker is stamped on the note that closes the
 // hive's superseding PR when the original turns out to be a maintainer's.
 const AdoptionMaintainerSupersederMarker = "<!-- hive:adoption-maintainer-superseder -->"
@@ -1248,14 +1304,13 @@ func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservat
 // Returns the number of comments posted.
 func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, prev stagelabels.Record, policy StageLabelPolicy, now time.Time) (int, error) {
 	if prev.AdoptedInPlace() {
-		maintainer, err := c.authorMaintainsRepo(ctx, obs, now)
-		if err != nil {
+		if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
 			// No evidence either way: keep the adoption as it is.
 			return 0, nil
-		}
-		if maintainer {
-			// Taken over before this rule, or before the author's permission
-			// was raised: hand the PR back rather than keep or re-home it.
+		} else if maintainer {
+			// maintainer_policy: never — taken over before the rule, or
+			// before the author's permission was raised: hand the PR back
+			// rather than keep or re-home it.
 			c.info("stage labels: in-place adoption of a repository maintainer's PR released", "repo", obs.Display, "pr", obs.Number, "author", obs.Author)
 			return c.releaseMaintainerAdoption(ctx, store, key, obs, prev.AdoptedBy)
 		}
@@ -1531,7 +1586,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		// Read the author's permission before the attempt is recorded: an
 		// unreadable answer leaves the in-place adoption untouched, and a
 		// maintainer's adoption is released by settleInPlaceAdoption.
-		if maintainer, err := c.authorMaintainsRepo(ctx, obs, now); maintainer || err != nil {
+		if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); maintainer || deferred {
 			return adoptionEscape{}, 0, nil
 		}
 		// Re-read the current diff before copying a head. A concurrent push

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -39,6 +40,16 @@ import (
 //     (and, when given, the superseding PR), then a not_planned close (a PR
 //     takes the supersession sweep's own labelled close path).
 //
+// //   - adopt       → on a PR only: the owner's answer to "the author
+//
+//	maintains this repository; adopt it?" that
+//	governor.labels.stage.adoption.maintainer_policy: ask parks a nudged
+//	contributor PR with (hivecommons/hive#14524). One attributed comment,
+//	then the `adoption/supersede` request label — the same path the
+//	owner-delegate's adopt-supersede verdict takes — so the adoption
+//	engine's next pass adopts the head (in place or by supersession)
+//	exactly as it would a contributor who went offline.
+//
 // Authorisation is the repo-hold bar (canToggleRepoHold): a verified owner,
 // or a signed-in GitHub user with write on the repository — which is exactly
 // the permission the un-park sweep checks on a commenter.
@@ -47,6 +58,7 @@ const (
 	repoItemDecisionDirection       = "direction"
 	repoItemDecisionCloseSuperseded = "close-superseded"
 	repoItemDecisionCloseWontFix    = "close-wontfix"
+	repoItemDecisionAdopt           = "adopt"
 
 	repoItemDecisionMaxBody    = 16 << 10
 	repoItemDecisionMaxComment = 4000
@@ -54,6 +66,13 @@ const (
 	auditRepoItemDecisionApprove   = "repo_item_decision_approve"
 	auditRepoItemDecisionDirection = "repo_item_decision_direction"
 	auditRepoItemDecisionClose     = "repo_item_decision_close"
+	auditRepoItemDecisionAdopt     = "repo_item_decision_adopt"
+
+	// repoItemDecisionAdoptMarker opens the attributed note an Adopt
+	// decision leaves on the PR.
+	repoItemDecisionAdoptMarker = "<!-- hive:adoption-requested"
+	adoptRequestLabelColor      = "5319e7"
+	adoptRequestLabelDesc       = "Owner-delegate request: adopt now in supersede mode"
 
 	issueStateReasonNotPlanned = "not_planned"
 )
@@ -165,6 +184,10 @@ func repoItemDecisionResult(repoFull string, number int, itemType, decision, com
 		out.Action = rowActionClosed
 		out.Outcome = "Closed as won't fix (not planned)."
 		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
+	case repoItemDecisionAdopt:
+		out.Action = rowActionAdopted
+		out.Outcome = "Adoption queued: `" + label + "` applied."
+		out.Next = "The hive opens its own PR carrying the author's commits and sign-off on its next cycle; the original is closed as superseded."
 	}
 	return out
 }
@@ -304,9 +327,43 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		s.audit.LogRecord(user, auditRepoItemDecisionClose, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "reason", verb, "superseded_by", supersededBy), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "closed", Label: label,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, supersededBy, label, nil)})
+	case repoItemDecisionAdopt:
+		if itemType != "pr" {
+			jsonError(w, "adopt applies to pull requests", http.StatusBadRequest)
+			return
+		}
+		if !s.stageAdoptionEnabled() {
+			jsonError(w, "adoption requires governor.labels.stage.adoption to be enabled on this hive", http.StatusConflict)
+			return
+		}
+		if err := gh.CreateIssueComment(ctx, repoFull, number, renderRepoItemDecisionAdoptComment(user, comment)); err != nil {
+			jsonError(w, "posting adoption note: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		if err := gh.EnsureIssueLabel(ctx, repoFull, delegatedecision.LabelAdoptSupersede, adoptRequestLabelColor, adoptRequestLabelDesc); err != nil {
+			jsonError(w, "ensuring adoption request label: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		if err := gh.AddLabels(ctx, repoFull, number, []string{delegatedecision.LabelAdoptSupersede}); err != nil {
+			jsonError(w, "queuing adoption: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		s.audit.LogRecord(user, auditRepoItemDecisionAdopt, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "label", delegatedecision.LabelAdoptSupersede), "", repoFull, number)
+		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "adoption-queued", Label: delegatedecision.LabelAdoptSupersede,
+			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, "", delegatedecision.LabelAdoptSupersede, nil)})
 	default:
-		jsonError(w, "unknown decision; want approve, direction, close-superseded or close-wontfix", http.StatusBadRequest)
+		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix or adopt", http.StatusBadRequest)
 	}
+}
+
+// renderRepoItemDecisionAdoptComment is the attributed note an Adopt
+// decision leaves on the PR before the request label is applied.
+func renderRepoItemDecisionAdoptComment(user, comment string) string {
+	body := fmt.Sprintf("%s by=%s -->\n@%s asked the hive to adopt this pull request: its author maintains the repository and their hive has been offline since the nudge, so adoption waited for an owner's decision (`governor.labels.stage.adoption.maintainer_policy: ask`). The adoption engine takes it from here on its next pass; the author's commits and sign-off are kept.", repoItemDecisionAdoptMarker, user, user)
+	if comment != "" {
+		body += "\n\n> " + strings.ReplaceAll(comment, "\n", "\n> ")
+	}
+	return body
 }
 
 // handlePullRequestDecision answers approve / direction on a pull request.
