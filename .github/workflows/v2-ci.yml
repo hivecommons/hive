@@ -1009,6 +1009,15 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_ttyd_default_socket_uid.sh
 
+      # #14798: sandbox.runtime: job agents run each kick as a Kubernetes Job
+      # in its own pod, so no hive-<agent> tmux session ever exists and the
+      # dashboard terminal waited for one until it timed out. The helper now
+      # streams the newest Job pod's log instead. This stubs curl as a fake
+      # API server and asserts the log, exit status and "no run yet" message.
+      - name: ttyd streams Job pod logs for sandbox.runtime job agents (#14798)
+        working-directory: .
+        run: bash src/deploy/test_ttyd_kubejob_logs.sh
+
       # #5435: hive-discord.service ran `node bot.js` with
       # WorkingDirectory=/tmp/hive/discord, resolving the executed code out of a
       # world-writable parent that is cleared on every reboot — a local user who

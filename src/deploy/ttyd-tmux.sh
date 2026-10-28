@@ -148,8 +148,112 @@ if [ "$SESSION_FROM_ARG" -eq 0 ]; then
   exit 1
 fi
 
+# sandbox.runtime: job agents (#14798). Such an agent runs each kick as a
+# Kubernetes Job in its own pod (src/crux/kubejob), so no hive-<agent> tmux
+# session ever appears here and the wait below could only ever time out. When
+# the hive pod has its ServiceAccount mounted, look for that agent's Job pods
+# by the labels the launcher sets and stream the newest one's log read-only
+# instead. The RBAC (pods, pods/log get+list) is the launcher's own, from
+# src/deploy/k8s/sandbox-job-rbac.yaml. The image has no jq, so the few fields
+# needed are read with grep/sed from the API server's compact JSON.
+KUBEJOB_SA_DIR="${HIVE_TTYD_KUBE_SA_DIR:-/var/run/secrets/kubernetes.io/serviceaccount}"
+KUBEJOB_API="${HIVE_TTYD_KUBE_API:-https://kubernetes.default.svc}"
+KUBEJOB_API="${KUBEJOB_API%/}"
+
+kubejob_enabled() {
+  [ -r "${KUBEJOB_SA_DIR}/token" ] && [ -s "${KUBEJOB_SA_DIR}/namespace" ] && command -v curl >/dev/null 2>&1
+}
+
+kubejob_namespace() {
+  tr -d '[:space:]' < "${KUBEJOB_SA_DIR}/namespace"
+}
+
+# kubejob_agent_label mirrors the launcher: LaunchSpec.Name is
+# "hive-<sanitizeBranchPart(agent)>-sandbox" and the label is its
+# sanitizeLabel — lowercase, every run of other characters one dash, trimmed.
+kubejob_agent_label() {
+  printf '%s-sandbox' "$SESSION" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//'
+}
+
+kube_curl() {
+  local args=(-sS --fail -H "Authorization: Bearer $(cat "${KUBEJOB_SA_DIR}/token" 2>/dev/null)")
+  if [ -r "${KUBEJOB_SA_DIR}/ca.crt" ]; then
+    args+=(--cacert "${KUBEJOB_SA_DIR}/ca.crt")
+  fi
+  curl "${args[@]}" "$@"
+}
+
+# kubejob_latest_pod prints the newest Job pod for this agent, or nothing. Pod
+# names are <job>-<random> and the job is hive-kick-<agent>-<unix>, so the
+# second-to-last dash field orders the runs.
+kubejob_latest_pod() {
+  local ns label raw
+  ns=$(kubejob_namespace)
+  label=$(kubejob_agent_label)
+  raw=$(kube_curl --max-time 10 "${KUBEJOB_API}/api/v1/namespaces/${ns}/pods?labelSelector=app.kubernetes.io%2Fmanaged-by%3Dhive-kubejob%2Chive.kubestellar.io%2Fagent%3D${label}" 2>/dev/null) || return 0
+  printf '%s' "$raw" \
+    | grep -oE '"metadata": *\{ *"name": *"[a-z0-9.-]+"' \
+    | sed -E 's/.*"([a-z0-9.-]+)"$/\1/' \
+    | awk -F- 'NF > 2 { print $(NF-1), $0 }' \
+    | sort -n | tail -n 1 | cut -d' ' -f2 || true
+}
+
+kubejob_pod_json() {
+  kube_curl --max-time 10 "${KUBEJOB_API}/api/v1/namespaces/$(kubejob_namespace)/pods/$1" 2>/dev/null || true
+}
+
+kubejob_field() {
+  # $1 JSON, $2 field name; prints the first string or integer value.
+  printf '%s' "$1" | grep -oE "\"$2\": *(\"[^\"]*\"|-?[0-9]+)" | head -n 1 | sed -E 's/^[^:]*: *"?([^"]*)"?$/\1/' || true
+}
+
+kubejob_stream() {
+  local pod="$1" ns phase pod_json code waited=0
+  ns=$(kubejob_namespace)
+  echo "agent '${SESSION#hive-}' runs as a Kubernetes Job (sandbox.runtime: job); there is no tmux session to attach to." >&2
+  # A Pending pod has no log yet (the API answers 400 "waiting to start").
+  phase=$(kubejob_field "$(kubejob_pod_json "$pod")" phase)
+  while [ "$phase" = "Pending" ] && [ "$waited" -lt "$TTYD_WAIT_SEC" ]; do
+    echo "Job pod '${pod}' is Pending; waiting for it to start..." >&2
+    sleep "$TTYD_POLL_SEC"
+    waited=$((waited + TTYD_POLL_SEC))
+    phase=$(kubejob_field "$(kubejob_pod_json "$pod")" phase)
+  done
+  echo "streaming the log of Job pod '${pod}' (read-only; follows while the pod runs)..." >&2
+  echo "----------------------------------------------------------------------" >&2
+  if ! kube_curl -N "${KUBEJOB_API}/api/v1/namespaces/${ns}/pods/${pod}/log?container=kick&follow=true"; then
+    echo "warning: could not read the log of Job pod '${pod}' (it may have been cleaned up)" >&2
+  fi
+  echo "----------------------------------------------------------------------" >&2
+  pod_json=$(kubejob_pod_json "$pod")
+  phase=$(kubejob_field "$pod_json" phase)
+  code=$(kubejob_field "$pod_json" exitCode)
+  if [ -n "$code" ]; then
+    echo "Job pod '${pod}' finished: phase ${phase:-unknown}, exit code ${code}." >&2
+  else
+    echo "log stream for Job pod '${pod}' ended; pod phase ${phase:-unknown (pod gone)}." >&2
+  fi
+  echo "reopen this terminal to follow the agent's next run." >&2
+}
+
+KUBEJOB_POD=""
+kubejob_check() {
+  KUBEJOB_POD=""
+  kubejob_enabled || return 1
+  KUBEJOB_POD=$(kubejob_latest_pod)
+  [ -n "$KUBEJOB_POD" ]
+}
+
 if ! find_tmux_socket; then
+  if kubejob_check; then
+    kubejob_stream "$KUBEJOB_POD"
+    exit 0
+  fi
   echo "waiting for agent '${SESSION#hive-}' to start (tmux session not created yet); polling up to ${TTYD_WAIT_SEC}s..." >&2
+  if kubejob_enabled; then
+    echo "no sandbox Job pod for agent '${SESSION#hive-}' either: if it runs with sandbox.runtime: job, it has had no run yet" >&2
+    echo "(or its last run succeeded and the Job was cleaned up); its next Job pod's log will be streamed here when it starts." >&2
+  fi
   WAITED=0
   while [ "$WAITED" -lt "$TTYD_WAIT_SEC" ]; do
     sleep "$TTYD_POLL_SEC"
@@ -158,10 +262,17 @@ if ! find_tmux_socket; then
       echo "agent '${SESSION#hive-}' tmux session is ready after ${WAITED}s; attaching..." >&2
       break
     fi
+    if kubejob_check; then
+      kubejob_stream "$KUBEJOB_POD"
+      exit 0
+    fi
   done
   if [ -z "$TMUX_SOCKET" ]; then
     echo "error: no tmux socket found for session '${SESSION}' after waiting ${TTYD_WAIT_SEC}s" >&2
     echo "hint: '${SESSION}' was requested, but no matching tmux session was created before the wait expired." >&2
+    if kubejob_enabled; then
+      echo "hint: no sandbox Job pod (sandbox.runtime: job) ran for it in that time either." >&2
+    fi
     list_available_sessions
     exit 1
   fi
