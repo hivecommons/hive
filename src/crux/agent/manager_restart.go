@@ -495,15 +495,22 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	// Released the lock before sleeping so other manager operations aren't blocked.
 	time.Sleep(sessionReadyDelay)
 
+	// Same unlocked window as Start: an evicted pool agent needs its slot back.
+	leaseID, err := m.acquireSharedPoolLeaseForRelaunchUnlocked(ctx, name)
+	if err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Re-verify under the re-acquired lock: a concurrent Stop/Remove during
 	// the unlocked window could have deleted this agent from the map (same
 	// guard Start applies after its unlocked phase).
 	if cur, ok := m.agents[name]; !ok || cur != agent {
+		m.discardSharedPoolLeaseLocked(name, leaseID)
 		return fmt.Errorf("agent %s removed during restart", name)
 	}
-	return m.launchInTmux(ctx, agent)
+	return m.launchInTmuxWithLeaseLocked(ctx, agent, leaseID)
 }
 
 // RestartThenSendKick restarts the agent with a clean slate (no bootstrap
@@ -776,15 +783,21 @@ func (m *Manager) RestartMissingSessionWithReason(ctx context.Context, name, rea
 	m.mu.Unlock()
 	m.mintAgentTokenUnlocked(ctx, agent)
 	m.bobPreflightUnlocked(agent)
+	leaseID, leaseErr := m.acquireSharedPoolLeaseForRelaunchUnlocked(ctx, name)
 	m.mu.Lock()
+	if leaseErr != nil {
+		return false, leaseErr
+	}
 	if cur, ok := m.agents[name]; !ok || cur != agent {
+		m.discardSharedPoolLeaseLocked(name, leaseID)
 		return false, fmt.Errorf("agent %s removed during missing-session recovery", name)
 	}
 	if agent.launchGen != genBeforeMint {
+		m.discardSharedPoolLeaseLocked(name, leaseID)
 		return false, nil
 	}
 
-	return true, m.launchInTmux(ctx, agent)
+	return true, m.launchInTmuxWithLeaseLocked(ctx, agent, leaseID)
 }
 
 // restartForKick is the restart a kick delivery performs on its OWN behalf
@@ -926,16 +939,26 @@ func (m *Manager) restartWithReason(ctx context.Context, name, reason string, ki
 	m.mu.Unlock()
 	m.mintAgentTokenUnlocked(ctx, agent)
 	m.bobPreflightUnlocked(agent)
+	// An evicted pool agent (StateStopped, no lease) restarted from the
+	// dashboard or by recovery must re-acquire its slot in this same
+	// unlocked window, exactly as Start does; otherwise the relaunch runs
+	// with no lease and no watcher and the fleet-wide cap is bypassed.
+	leaseID, leaseErr := m.acquireSharedPoolLeaseForRelaunchUnlocked(ctx, name)
 	m.mu.Lock()
+	if leaseErr != nil {
+		return leaseErr
+	}
 	if cur, ok := m.agents[name]; !ok || cur != agent {
+		m.discardSharedPoolLeaseLocked(name, leaseID)
 		return fmt.Errorf("agent %s removed during restart", name)
 	}
 	if agent.launchGen != genBeforeMint {
 		// Another path won the launch race while we were unlocked.
+		m.discardSharedPoolLeaseLocked(name, leaseID)
 		return nil
 	}
 
-	return m.launchInTmux(ctx, agent)
+	return m.launchInTmuxWithLeaseLocked(ctx, agent, leaseID)
 }
 
 func isTmuxDuplicateSessionError(err error) bool {

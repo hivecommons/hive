@@ -39,6 +39,7 @@ type sharedAgentPool struct {
 	mu           sync.Mutex
 	path         string
 	max          int
+	maxPerHive   int // per-tenant ceiling; 0 means derive from max (see perHiveCap)
 	ttl          time.Duration
 	leases       map[string]sharedAgentLease
 	waitingHives map[string]time.Time // hive_id -> first 409 (FIFO position)
@@ -52,9 +53,14 @@ func newSharedAgentPool() *sharedAgentPool {
 	if seconds, err := strconv.Atoi(strings.TrimSpace(os.Getenv("HIVE_SHARED_AGENT_POOL_LEASE_SECONDS"))); err == nil && seconds >= 30 {
 		ttl = time.Duration(seconds) * time.Second
 	}
+	maxPerHive, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("HIVE_SHARED_AGENT_POOL_MAX_PER_HIVE")))
+	if maxPerHive < 0 {
+		maxPerHive = 0
+	}
 	p := &sharedAgentPool{
 		path:         sharedAgentPoolPath,
 		max:          max,
+		maxPerHive:   maxPerHive,
 		ttl:          ttl,
 		leases:       make(map[string]sharedAgentLease),
 		waitingHives: make(map[string]time.Time),
@@ -62,6 +68,34 @@ func newSharedAgentPool() *sharedAgentPool {
 	}
 	p.load()
 	return p
+}
+
+// perHiveCap is the number of live leases one tenant may hold at once. It
+// defaults to half the fleet-wide max (rounded up, so a max of 1 still admits
+// one lease) and is clamped to max, so a single spoke can never monopolize
+// the whole pool by acquiring under distinct agent names.
+func (p *sharedAgentPool) perHiveCap() int {
+	limit := p.maxPerHive
+	if limit < 1 {
+		limit = (p.max + 1) / 2
+	}
+	if limit > p.max {
+		limit = p.max
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	return limit
+}
+
+func (p *sharedAgentPool) leasesHeldByLocked(hiveID string) int {
+	n := 0
+	for _, lease := range p.leases {
+		if lease.HiveID == hiveID {
+			n++
+		}
+	}
+	return n
 }
 
 func sharedPoolOwnerKey(hiveID, agentName string) string { return hiveID + "\x00" + agentName }
@@ -193,6 +227,16 @@ func (p *sharedAgentPool) handle(w http.ResponseWriter, r *http.Request, s *HubS
 				return
 			}
 			writeSharedPoolLease(w, lease.ID)
+			return
+		}
+		// Per-tenant ceiling: a hive already holding its share is refused
+		// WITHOUT taking a FIFO position, so it cannot park at the head of
+		// the queue and starve the other tenants while it waits on itself.
+		if p.leasesHeldByLocked(req.HiveID) >= p.perHiveCap() {
+			delete(p.waitingHives, req.HiveID)
+			delete(p.lastSeen, req.HiveID)
+			w.Header().Set("Retry-After", "3")
+			http.Error(w, "shared agent pool per-hive limit reached", http.StatusConflict)
 			return
 		}
 		if len(p.leases) >= p.max || p.hasEarlierWaitingHive(req.HiveID, now) {
