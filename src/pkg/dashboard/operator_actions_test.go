@@ -127,6 +127,41 @@ func TestSettleOperatorActionNoOp(t *testing.T) {
 	}
 }
 
+// A job that settles immediately must see the pending row, including when
+// the handler has already returned its 202 response.
+func TestOperatorActionRecordedBeforeDelegatedStart(t *testing.T) {
+	for _, outcome := range []string{operatorActionOutcomeApplied, operatorActionOutcomeNoOp, operatorActionOutcomeFailed} {
+		t.Run(outcome, func(t *testing.T) {
+			s := &Server{operatorActionStore: newOperatorActionStore("")}
+			started := false
+			h := s.recordOperatorAction(func(w http.ResponseWriter, r *http.Request) {
+				w.(*operatorActionWriter).afterRecord = func() {
+					started = true
+					ok, err := s.operatorActions().Settle("org/repo", 7, operatorActionLetHiveDecide, outcome, "finished immediately")
+					if !ok || err != nil {
+						t.Errorf("settle before record: ok=%v err=%v", ok, err)
+					}
+				}
+				w.WriteHeader(http.StatusAccepted)
+				jsonResponse(w, map[string]string{"status": delegatedJobStatusRunning})
+				if started {
+					t.Error("job started before handler returned")
+				}
+			})
+			r := httptest.NewRequest(http.MethodPost, "/api/repos/org/repo/items/7/decide-delegated", strings.NewReader(`{}`))
+			r.SetPathValue("owner", "org")
+			r.SetPathValue("repo", "repo")
+			r.SetPathValue("number", "7")
+			w := httptest.NewRecorder()
+			h(w, r)
+			got := s.operatorActions().List("org/repo", 7)
+			if w.Code != http.StatusAccepted || !started || len(got) != 1 || got[0].Outcome != outcome || got[0].Detail != "finished immediately" {
+				t.Fatalf("code=%d started=%v records=%+v", w.Code, started, got)
+			}
+		})
+	}
+}
+
 func TestStageTrackerOperatorActionStates(t *testing.T) {
 	now := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
 	window := 30 * time.Minute

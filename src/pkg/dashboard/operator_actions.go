@@ -384,6 +384,8 @@ type operatorActionWriter struct {
 	http.ResponseWriter
 	status int
 	body   bytes.Buffer
+	// afterRecord starts delegated work only after the pending row is written.
+	afterRecord func()
 }
 
 func (w *operatorActionWriter) WriteHeader(code int) {
@@ -422,6 +424,11 @@ func (s *Server) recordOperatorAction(h http.HandlerFunc) http.HandlerFunc {
 		endpoint := segs[len(segs)-1]
 		req, known := operatorActionFromBody(endpoint, body)
 		cw := &operatorActionWriter{ResponseWriter: w}
+		defer func() {
+			if cw.afterRecord != nil {
+				cw.afterRecord()
+			}
+		}()
 		h(cw, r)
 		if !known {
 			return

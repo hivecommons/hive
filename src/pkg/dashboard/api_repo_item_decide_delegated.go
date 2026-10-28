@@ -270,7 +270,14 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 		s.runDelegatedDecision(ctx, key, repoFull, number, itemType, user, mergerRole, body)
 	}
 	if delegatedDecisionRunAsync {
-		go run()
+		// The response wrapper records the pending action after this handler
+		// returns. Starting sooner lets a fast job settle a nonexistent row.
+		start := func() { go run() }
+		if recorder, ok := w.(*operatorActionWriter); ok {
+			recorder.afterRecord = start
+		} else {
+			start()
+		}
 		w.WriteHeader(http.StatusAccepted)
 		jsonResponse(w, snapshot)
 		return

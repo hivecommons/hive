@@ -647,3 +647,37 @@ func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T
 		t.Errorf("merge-now for a writer = %+v", o)
 	}
 }
+
+// All nested PR jobs already running is a fast finish with no GitHub calls.
+// The async parent still needs a settled ledger entry rather than an orphaned
+// pending entry (hivecommons/hive#15064).
+func TestDelegatedAsyncFanOutSettlesOperatorAction(t *testing.T) {
+	srv := newDelegatedServer(t, &repoItemDecisionMock{})
+	delegatedDecisionRunAsync = true
+	srv.operatorActionStore = newOperatorActionStore("")
+	for _, number := range []int{17, 20} {
+		key := delegatedJobKey("testorg/testrepo", number)
+		srv.delegatedJobs.start(key, &delegatedDecisionJob{Status: delegatedJobStatusRunning}, time.Now())
+	}
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","prs":[17,20]}`, nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		got := srv.operatorActions().List("testorg/testrepo", 7)
+		if len(got) == 1 && got[0].Outcome == operatorActionOutcomeFailed {
+			if !strings.Contains(got[0].Detail, "already running") {
+				t.Fatalf("missing failure detail: %+v", got)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("async action never settled: %+v", got)
+		case <-tick.C:
+		}
+	}
+}
