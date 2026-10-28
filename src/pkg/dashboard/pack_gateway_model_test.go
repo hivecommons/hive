@@ -247,7 +247,9 @@ func TestApplyPackKeepsPackBackendWhenGatewayNotShared(t *testing.T) {
 
 // TestApplyPackDoesNotMigrateFleetForOneGatewayAgent: an operator who moved a
 // single agent onto a gateway has not moved the hive, so the pack-owned CLI
-// agents stay where the pack put them (#14678 review).
+// agents stay where the pack put them (#14678 review). This pins the "at least
+// two operator picks" rule of hiveGatewayBackend: a lone pick never moves an
+// otherwise all-pack-CLI roster.
 func TestApplyPackDoesNotMigrateFleetForOneGatewayAgent(t *testing.T) {
 	srv := newFullServer(t)
 	for _, name := range []string{"scanner", "quality"} {
@@ -319,10 +321,12 @@ func TestApplyPackGatewayWithPreexistingPackCLIAgents(t *testing.T) {
 	}
 }
 
-// TestApplyPackKeepsPackBackendWhenOperatorPicksAreMinority: three operator
-// gateway agents that are at most half of the other enabled agents is not
-// "the hive moved", so the pack's CLI placements stay. The three pack CLI
-// agents outside the L2 roster keep the operator picks at half of the others.
+// TestApplyPackKeepsPackBackendWhenOperatorPicksAreMinority: three unanimous
+// operator gateway picks that are at most half of the agents NOT waiting on
+// this apply is not "the hive moved", so the pack's CLI placements stay. Of
+// the five pack CLI agents, supervisor/brainstorm are L2 roster peers and are
+// excluded from the count; ci-maintainer, triage and release are not, so they
+// keep the picks at 3 of 6 non-waiting agents.
 func TestApplyPackKeepsPackBackendWhenOperatorPicksAreMinority(t *testing.T) {
 	srv := gatewayHive(t, "litellm")
 	packCLI := []string{"supervisor", "brainstorm", "ci-maintainer", "triage", "release"}
@@ -367,7 +371,10 @@ func TestApplyPackGatewayHoldsAcrossLevels(t *testing.T) {
 
 // TestApplyPackRepairsTwoLateAddedPackAgents covers #14721: two pack-owned
 // copilot agents added after the operator's gateway move each counted as a CLI
-// agent for the other, so neither was moved onto the gateway.
+// agent for the other, so neither was moved onto the gateway. It pins the
+// stated rule of hiveGatewayBackend: two unanimous operator picks in an
+// otherwise all-pack-CLI L2 roster do move the roster peers (the majority is
+// measured among agents not waiting on this apply).
 func TestApplyPackRepairsTwoLateAddedPackAgents(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.Agents["scanner"] = config.AgentConfig{

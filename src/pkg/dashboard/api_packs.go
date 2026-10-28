@@ -1186,31 +1186,43 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 }
 
 // hiveGatewayBackend is the inference gateway the operator moved the hive
-// onto, or "" when there is no such gateway. The candidates are the enabled
-// agents in backends other than except, the pack agent being placed, so its
-// own placement is not counted against the move. The gateway is chosen by
-// unanimity of the operator-owned backends among those candidates: every one
-// must name the same inference backend or configured gateway, and there must
-// be at least one. Any operator pick of a subscription CLI, of the hive
-// default or of a different gateway yields "". The chosen gateway must then
-// clear a majority bar: more than half of the candidates, whoever placed
-// them, already run on it; otherwise the result is "".
+// onto, or "" when there is no such gateway. The agents considered are the
+// enabled ones in backends other than except, the pack agent being placed, so
+// its own placement is not counted against the move.
+//
+// The rule, in order:
+//  1. Unanimity: the operator-owned backends among those agents must all name
+//     the same inference backend or configured gateway. Any operator pick of
+//     a subscription CLI, of the hive default or of a different gateway, or no
+//     operator pick at all, yields "".
+//  2. At least two operator picks: one agent moved onto a gateway is not the
+//     hive moving, so the pack's CLI agents are not migrated with it.
+//  3. Majority: more than half of the agents NOT waiting on this apply run on
+//     the chosen gateway, whoever placed them there. Roster peers still on
+//     their pack CLI are excluded from that denominator (and from the
+//     numerator): they are the agents this apply is about to move, and
+//     counting them would make two late-added agents veto each other (#14721).
+//
+// Because roster peers on their pack CLI drop out, in a hive whose roster is
+// all on the pack CLI except the operator's picks, rule 3 reduces to rules 1
+// and 2: unanimous operator picks, at least two of them, move the pack agents.
+// The bar only bites against agents outside the level's roster, such as an
+// operator-owned subscription agent or a pack agent of another level.
+//
+// The answer therefore depends on the level being applied: ci-maintainer is in
+// the L3 roster but not the L2 one, so under ApplyPack(2) a ci-maintainer on
+// its pack CLI counts as a non-waiting agent and can hold the bar down, while
+// under ApplyPack(3) it is waiting, is excluded, and cannot.
 //
 // A pack agent a level adds later is placed on this backend instead of its
 // pack CLI (#14678): an operator who moved scanner/quality/guide onto a LiteLLM
-// gateway found the L2 `reviewer`, added afterwards, on copilot — the only
-// agent in the hive still calling an inference provider they had moved off.
-// Only operator-owned backends choose the gateway, so the pack's own CLI
+// gateway found the L2 `reviewer`, added afterwards, on copilot. Only
+// operator-owned backends choose the gateway, so the pack's own CLI
 // placements (the L2 `supervisor`/`brainstorm`, or a reviewer the pack
-// created before this fix) cannot veto the move they are the subject of, and
-// the majority bar keeps one agent moved onto a gateway from migrating the
-// pack's CLI agents with it. Every agent already on the chosen gateway counts
-// toward that majority, whoever placed it there: the pack agents an earlier
-// level moved onto it must not dilute the bar for the agent the next level
-// adds, or the L3 `ci-maintainer` would land on copilot one level up. Other
-// agents of roster still on their pack CLI are left out of the count like
-// except, so two late-added agents do not veto each other's move (#14721); a
-// single operator pick is never enough to move the hive.
+// created before this fix) cannot veto the move they are the subject of.
+// Every agent already on the chosen gateway counts toward the majority,
+// whoever placed it there, so the pack agents an earlier level moved onto it
+// do not dilute the bar for the agent the next level adds.
 func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except string, roster map[string]bool) string {
 	shared := ""
 	for name, vote := range backends {
