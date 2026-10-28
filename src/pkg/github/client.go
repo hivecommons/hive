@@ -1132,6 +1132,14 @@ type ActionableResult struct {
 	// it, since GeneratedAt then says nothing about an item's age. Keyed by
 	// ItemPatchKey.
 	ItemPatches map[string]ItemPatchMeta `json:"item_patches,omitempty"`
+	// WebhookPatches remembers the re-reads ApplyWebhookItem applied, keyed
+	// like ItemPatches, so a reconcile pass that started before them can
+	// replay them onto its result before publishing
+	// (ReplayWebhookPatches). Without it a self-initiated unblock, re-read
+	// into the cached snapshot while an enumeration was already listing, was
+	// overwritten by that enumeration's pre-unblock copy and the row showed
+	// `blocked` until the next pass. Process-local: never serialised.
+	WebhookPatches map[string]WebhookItemSnapshot `json:"-"`
 }
 
 // ItemPatchMeta is the audit record of one webhook-driven upsert.

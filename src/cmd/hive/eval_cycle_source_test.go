@@ -204,3 +204,71 @@ func TestEvalCycleSourceCachedSkipsListingAndReconcileOverwrites(t *testing.T) {
 		t.Fatalf("recovery: err=%v stale=%v", err, full3 != nil && full3.Stale())
 	}
 }
+
+// A reconcile pass whose listing began before a webhook re-read publishes
+// the re-read, not its own older copy: without this the hive's own
+// `blocked` removal was rolled back by the enumeration already in flight
+// and the Activity Monitor showed the issue blocked until the next pass
+// (hivecommons/hive#14863). A read older than the listing is not replayed.
+func TestPublishEnumeratedSnapshotReplaysNewerWebhookReads(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(&strings.Builder{}, nil))
+	listedAt := time.Date(2026, 10, 28, 6, 5, 0, 0, time.UTC)
+	started := time.Date(2026, 10, 28, 12, 38, 0, 0, time.UTC)
+	blocked := func() *github.ActionableResult {
+		return &github.ActionableResult{
+			GeneratedAt: started,
+			TotalByRepo: map[string]github.RepoCounts{"org/repo": {Issues: 1}},
+			WorkDetailsByRepo: map[string]github.RepoWorkDetails{"org/repo": {Issues: []github.RepoWorkIssue{
+				{Repo: "org/repo", Number: 14863, Title: "Review backlog", Labels: []string{"agent/reviewer", github.BlockedLabel}, UpdatedAt: listedAt, Bucket: "filtered", Reason: "blocked on org/repo#14862"},
+			}}},
+		}
+	}
+	var last atomic.Pointer[github.ActionableResult]
+	prev := blocked()
+	prev.GeneratedAt = started.Add(-time.Hour)
+	last.Store(prev)
+
+	p := &snapshotPatcher{target: &last, logger: logger}
+	unblockedAt := started.Add(3 * time.Minute)
+	if p.apply([]github.WebhookItemSnapshot{{Repo: "org/repo", Number: 14863, State: "open", Title: "Review backlog", Labels: []string{"agent/reviewer"},
+		UpdatedAt: unblockedAt, FetchedAt: unblockedAt.Add(time.Second), DeliveryID: "self:edit",
+		Patch: github.WebhookItemPatch{Bucket: github.WebhookBucketActionable, Issue: &github.Issue{Repo: "org/repo", Number: 14863, Title: "Review backlog", Labels: []string{"agent/reviewer"}, UpdatedAt: unblockedAt}}}}) != 1 {
+		t.Fatal("unblock re-read not applied")
+	}
+	if last.Load().Issues.Count != 1 {
+		t.Fatalf("patched snapshot = %+v", last.Load().Issues)
+	}
+
+	// The in-flight listing (started 12:38, stored after the 12:41 unblock).
+	fresh := blocked()
+	publishEnumeratedSnapshot(&last, fresh, logger)
+	got := last.Load()
+	if got != fresh {
+		t.Fatal("reconcile result must be the published snapshot")
+	}
+	if got.Issues.Count != 1 || got.Issues.Items[0].Number != 14863 || len(got.Issues.Items[0].Labels) != 1 {
+		t.Fatalf("unblock lost on publish: %+v", got.Issues)
+	}
+	if n := len(got.WorkDetailsByRepo["org/repo"].Issues); n != 0 {
+		t.Fatalf("14863 still sidelined after publish: %d rows", n)
+	}
+
+	// A later listing that itself post-dates the unblock and still shows
+	// the label (re-blocked on GitHub) is the truth: nothing replays.
+	reblocked := blocked()
+	reblocked.GeneratedAt = unblockedAt.Add(10 * time.Minute)
+	for i := range reblocked.WorkDetailsByRepo["org/repo"].Issues {
+		reblocked.WorkDetailsByRepo["org/repo"].Issues[i].UpdatedAt = reblocked.GeneratedAt
+	}
+	publishEnumeratedSnapshot(&last, reblocked, logger)
+	if got := last.Load(); got != reblocked || got.Issues.Count != 0 {
+		t.Fatalf("newer listing must stand: %+v", got.Issues)
+	}
+
+	// Nil guards.
+	publishEnumeratedSnapshot(nil, fresh, logger)
+	publishEnumeratedSnapshot(&last, nil, logger)
+	if last.Load() != reblocked {
+		t.Fatal("nil publish must not move the snapshot")
+	}
+}

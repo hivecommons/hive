@@ -81,7 +81,7 @@ func (s githubIssueBacklogSink) LiftBlock(ctx context.Context, repo string, ref 
 	if ref.Number <= 0 {
 		return fmt.Errorf("review backlog: GitHub item %q has no issue number", ref.ID)
 	}
-	if err := s.c.RemoveLabel(ctx, repo, ref.Number, BlockedLabel); err != nil {
+	if err := s.c.unblockIssue(ctx, repo, ref.Number); err != nil {
 		return err
 	}
 	return s.c.CreateIssueCommentBudgeted(ctx, repo, ref.Number, note)

@@ -340,10 +340,18 @@ type StageTrackerItem struct {
 	// (scheduler.partitionBlockedIssues). Without it a sequenced sub-issue
 	// read as plain Actionable nobody was picking up (hivecommons/hive#14765);
 	// the row wears the `blocked` modifier and the caption names the wait.
-	BlockedOn   []string   `json:"blocked_on,omitempty"`
-	NudgeCount  int        `json:"nudge_count,omitempty"`
-	LastNudgeAt *time.Time `json:"last_nudge_at,omitempty"`
-	AdoptedBy   int        `json:"adopted_by,omitempty"`
+	BlockedOn []string `json:"blocked_on,omitempty"`
+	// BlockedOnPR names the pull request a `blocked` issue waits on, from
+	// the `<!-- hive:blocked-on pr=owner/repo#N -->` marker the review-
+	// backlog filer and the blocked sweep write (or the enumeration's
+	// "blocked on owner/repo#N" reason when only that is at hand). The pill
+	// reads "blocked on #N" and links to it; the caption says what lifts
+	// the block. State comes from the hive's caches only, never a fresh
+	// GitHub call (hivecommons/hive#14952; #14863 wore a bare grey `blocked`).
+	BlockedOnPR *StageTrackerBlockedOnPR `json:"blocked_on_pr,omitempty"`
+	NudgeCount  int                      `json:"nudge_count,omitempty"`
+	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
+	AdoptedBy   int                      `json:"adopted_by,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -834,6 +842,106 @@ func stageTrackerBlockedBy(it *StageTrackerItem, blockers []string) {
 	}
 	it.Caption = joinClause(it.Caption, "waiting on "+stageTrackerBlockerList(it.Repo, blockers))
 	it.Actor = "its blockers"
+}
+
+// StageTrackerBlockedOnPR is the pull request a blocked issue waits on.
+type StageTrackerBlockedOnPR struct {
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	URL    string `json:"url"`
+	// State is "open", "merged" or "closed" when a cache knows it, else "".
+	State string `json:"state,omitempty"`
+}
+
+// Blocked-on PR states as the caches report them.
+const (
+	blockedOnPRStateOpen   = "open"
+	blockedOnPRStateMerged = "merged"
+	blockedOnPRStateClosed = "closed"
+)
+
+// stageTrackerBlockedOnPR fills the row's BlockedOnPR from the issue's
+// marker (or reason) and rewrites the default caption to name the blocker:
+// "Blocked on PR #N" (same repo) / "Blocked on PR owner/repo#N", with what
+// a merged or closed-unmerged blocker means for the row. It never adds the
+// `blocked` modifier: the label does that (finish), and an issue whose
+// label was lifted but whose body still carries the marker is not blocked.
+func stageTrackerBlockedOnPR(it *StageTrackerItem, body, reason string, baseURL string, state func(repo string, number int) string) {
+	if it == nil || !slices.Contains(it.Modifiers, modBlocked) {
+		return
+	}
+	repo, number, ok := github.BlockedOnTarget(body, reason)
+	if !ok {
+		return
+	}
+	ref := &StageTrackerBlockedOnPR{Repo: repo, Number: number, URL: overviewItemURL("", repo, number, "pr", baseURL)}
+	if state != nil {
+		ref.State = state(repo, number)
+	}
+	it.BlockedOnPR = ref
+	short := stageTrackerBlockerList(it.Repo, []string{repo + "#" + strconv.Itoa(number)})
+	clause := "Blocked on PR " + short
+	switch ref.State {
+	case blockedOnPRStateMerged:
+		clause += " — merged; the blocked sweep lifts the label next"
+	case blockedOnPRStateClosed:
+		clause += " — closed unmerged; the blocked sweep re-triages it next"
+	default:
+		clause += " — lifts when it merges"
+	}
+	if it.Stage == 0 {
+		it.Caption = clause
+		it.Actor = "PR " + short
+		return
+	}
+	it.Caption = joinClause(it.Caption, clause)
+}
+
+// stageTrackerPRStateResolver answers a blocked-on PR's state from what the
+// hive already holds, cheapest first: the status snapshot's open PRs, the
+// forgestate cache (when attached), the recent-merge audit ring. Unknown
+// is "" — never a GitHub call from the tracker build.
+func (s *Server) stageTrackerPRStateResolver(status *StatusPayload, merged []StageTrackerMerged) func(repo string, number int) string {
+	var open map[string]bool
+	openKey := func(repo string, number int) string { return strings.ToLower(repo) + "#" + strconv.Itoa(number) }
+	return func(repo string, number int) string {
+		if open == nil {
+			open = map[string]bool{}
+			if status != nil {
+				for _, r := range status.Repos {
+					name := overviewRepoName(r)
+					for _, it := range repoOpenItems(r) {
+						if it.Kind == "pr" {
+							open[openKey(name, it.Number)] = true
+						}
+					}
+				}
+			}
+		}
+		if open[openKey(repo, number)] {
+			return blockedOnPRStateOpen
+		}
+		if s != nil && s.deps != nil && s.deps.GHClient != nil {
+			if fs := s.deps.GHClient.ForgeState(); fs != nil {
+				if item, ok := fs.PR(repo, number); ok {
+					switch {
+					case item.Merged:
+						return blockedOnPRStateMerged
+					case item.Closed || strings.EqualFold(item.State, "closed"):
+						return blockedOnPRStateClosed
+					case strings.EqualFold(item.State, "open"):
+						return blockedOnPRStateOpen
+					}
+				}
+			}
+		}
+		for _, m := range merged {
+			if m.Number == number && strings.EqualFold(m.Repo, repo) {
+				return blockedOnPRStateMerged
+			}
+		}
+		return ""
+	}
 }
 
 // stageTrackerBlockerList renders blocker keys ("repo#N") for a caption,
@@ -1413,6 +1521,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		seen[key] = true
 		resp.Items = append(resp.Items, it)
 	}
+	prState := s.stageTrackerPRStateResolver(status, resp.RecentlyMerged)
 	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren) {
 		// A closed issue has no stage; a stage label it closed wearing is
 		// the closed-issue sweep's to remove, not a row to render
@@ -1462,6 +1571,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		finish(&it, issue.Labels, stage, rec, ok, false)
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
+		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL, prState)
 		if it.Stage == trackerNumberClaimed {
 			it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
 		}

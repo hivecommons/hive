@@ -3691,6 +3691,10 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
+	// The hive's own unblock (blocked sweep, review-backlog block lift)
+	// re-reads the issue into the cached snapshot and the Activity Monitor
+	// the way an inbound label webhook does (hivecommons/hive#14952).
+	github.SetItemRefreshHook(b.dashSrv.RefreshSelfEditedItem)
 	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	ghClientFn := func() *github.Client { return b.ghClient }
@@ -7211,7 +7215,7 @@ func runEvalCycle(
 	// on a copy, and storing it back would overwrite a webhook patch that
 	// landed while the cycle ran.
 	if cachedSnapshot == nil {
-		lastActionable.Store(actionable)
+		publishEnumeratedSnapshot(lastActionable, actionable, logger)
 		if data, err := json.Marshal(actionable); err == nil {
 			atomicWrite(lastActionablePath, data)
 		}
