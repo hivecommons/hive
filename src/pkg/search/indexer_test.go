@@ -697,3 +697,92 @@ func TestIndexerUnreadableSubtreeKept(t *testing.T) {
 		t.Errorf("evidence docs = %v, want the bundle kept", ids(res))
 	}
 }
+
+// A repo over max_index_bytes_per_repo is a per-repo *CoverageError that can
+// persist for many passes: only that repo's sources are forgotten and
+// retried, the other repos stay incremental and reconcile still sweeps them.
+func TestIndexerOverBudgetRepoIsolated(t *testing.T) {
+	f, ix := newIndexerFixture(t)
+	// A leftover from an earlier process in each repo: reconcile must sweep
+	// org/b's but leave org/a's alone while org/a is over budget.
+	for _, repo := range []string{"org/a", "org/b"} {
+		if err := f.backend.Embedded.Index(context.Background(), []Document{
+			doc(repo, "evidence/9/gone", KindEvidence, f.clock.t, "gone", "", nil)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.backend.Embedded = newBackend(t, Options{Dir: f.backend.Embedded.dir, MaxIndexBytesPerRepo: 4 << 10})
+	updated := f.clock.t.Add(-time.Hour)
+	big := testBundle("org/a", 1, "aaa", updated)
+	big.Verdicts[0].Findings[0].Summary = strings.Repeat("token refresh skips expiry check ", 400)
+	writeBundle(t, f.root, big)
+	writeBundle(t, f.root, testBundle("org/b", 2, "bbb", updated))
+
+	st, err := ix.Rebuild(context.Background())
+	var ce *CoverageError
+	if !errors.As(err, &ce) || ce.Repo != "org/a" || !errors.Is(err, ErrIndexBudget) {
+		t.Fatalf("Rebuild with over-budget repo: err=%v, want org/a CoverageError wrapping ErrIndexBudget", err)
+	}
+	if st.Indexed != 3 || st.Deleted != 1 {
+		t.Fatalf("stats = %+v, want org/b's 3 docs indexed and its leftover deleted", st)
+	}
+	if ix.reconciled || !ix.pending["org/a"] || len(ix.pending) != 1 {
+		t.Fatalf("reconciled=%v pending=%v, want only org/a pending", ix.reconciled, ix.pending)
+	}
+	for _, key := range []string{"org/a", "org/b"} {
+		res := query(t, f.backend.Embedded, Query{Filters: map[string][]string{FieldRepo: {key}}, Limit: 100})
+		if key == "org/a" && (res.Total != 1 || res.Coverage[key] == nil) {
+			t.Errorf("org/a docs = %v coverage=%v, want only the leftover kept with a coverage error", ids(res), res.Coverage)
+		}
+		if key == "org/b" && res.Total != 3 {
+			t.Errorf("org/b docs = %v, want 3", ids(res))
+		}
+	}
+
+	// The next pass re-reads only org/a; org/b is unchanged.
+	f.backend.take()
+	st, err = ix.Rebuild(context.Background())
+	if !errors.Is(err, ErrIndexBudget) || st.Indexed != 0 || st.Unchanged != 1 {
+		t.Fatalf("second pass = %+v, %v; want org/a retried and org/b unchanged", st, err)
+	}
+	if got := f.backend.take(); len(got) != 3 || !strings.HasPrefix(got[0], "org/a#") {
+		t.Fatalf("second pass asked the backend to index %v, want only org/a's 3 docs", got)
+	}
+
+	// Once org/a fits, it publishes, org/b stays unchanged and reconcile
+	// completes by sweeping org/a's leftover.
+	small := testBundle("org/a", 1, "aaa", updated.Add(time.Minute))
+	writeBundle(t, f.root, small)
+	if st := rebuildOK(t, ix); st.Indexed != 3 || st.Unchanged != 1 || st.Deleted != 1 || !ix.reconciled {
+		t.Fatalf("recovery pass = %+v reconciled=%v, want org/a indexed, org/b unchanged, leftover swept", st, ix.reconciled)
+	}
+	if res := query(t, f.backend.Embedded, Query{Filters: map[string][]string{FieldKind: indexerKinds}, Limit: 100}); res.Total != 6 || len(res.Coverage) != 0 {
+		t.Errorf("final docs = %v coverage=%v, want 6 with full coverage", ids(res), res.Coverage)
+	}
+	if st := rebuildOK(t, ix); st.Indexed != 0 || st.Unchanged != 2 {
+		t.Errorf("steady pass = %+v, want both bundles unchanged", st)
+	}
+}
+
+// A missing evidence root (for example a volume that is transiently absent)
+// keeps what was indexed rather than deleting every evidence document.
+func TestIndexerMissingEvidenceRootKept(t *testing.T) {
+	f, ix := newIndexerFixture(t)
+	writeBundle(t, f.root, testBundle("org/a", 1, "aaa", f.clock.t.Add(-time.Hour)))
+	rebuildOK(t, ix)
+	if err := os.Rename(f.root, f.root+".away"); err != nil {
+		t.Fatal(err)
+	}
+	if st := rebuildOK(t, ix); st.Deleted != 0 || st.Indexed != 0 {
+		t.Errorf("rebuild with missing root = %+v, want nothing deleted or indexed", st)
+	}
+	if res := query(t, f.backend.Embedded, Query{Filters: map[string][]string{FieldKind: {KindEvidence}}}); res.Total != 1 {
+		t.Errorf("evidence docs = %v, want the bundle kept", ids(res))
+	}
+	if err := os.Rename(f.root+".away", f.root); err != nil {
+		t.Fatal(err)
+	}
+	if st := rebuildOK(t, ix); st.Indexed != 0 || st.Unchanged != 1 {
+		t.Errorf("rebuild after root returns = %+v, want the bundle unchanged", st)
+	}
+}

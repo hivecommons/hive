@@ -29,6 +29,12 @@ func (i *Indexer) ingestEvidence(ctx context.Context, r *rebuild) error {
 	}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			if path == root && errors.Is(err, os.ErrNotExist) {
+				// A missing root is not "every bundle was removed": keep
+				// what was indexed until it is back.
+				i.markSeenUnder(r, root)
+				return nil
+			}
 			if errors.Is(err, os.ErrNotExist) {
 				return nil
 			}

@@ -75,6 +75,8 @@ type Indexer struct {
 	mu         sync.Mutex // serialises rebuilds and guards the state below
 	entries    map[string]*sourceEntry
 	reconciled bool
+	// pending lists the repos reconcile still has to sweep (nil: every repo).
+	pending map[string]bool
 }
 
 // sourceEntry is what the indexer remembers about one source record.
@@ -164,10 +166,12 @@ func (i *Indexer) Rebuild(ctx context.Context) (RebuildStats, error) {
 		touched: map[string]*sourceEntry{}, stale: map[string][]string{}}
 
 	var errs []error
+	walkFailed := false
 	if err := i.ingestEvidence(ctx, r); err != nil {
 		// A failed walk must not read as "every bundle was removed".
 		i.markSeenUnder(r, i.EvidenceRoot)
 		errs = append(errs, err)
+		walkFailed = true
 	}
 	i.ingestBeads(r)
 	if i.Facts != nil {
@@ -179,6 +183,11 @@ func (i *Indexer) Rebuild(ctx context.Context) (RebuildStats, error) {
 	}
 	i.expire(r)
 
+	// A *CoverageError is a per-repo failure (for example a repo over its
+	// index budget, which can persist for many passes): only that repo's
+	// sources are forgotten and retried, so the other repos stay incremental.
+	// Any other error forgets the whole pass.
+	failed := map[string]bool{}
 	repos := make([]string, 0, len(r.stale))
 	for repo := range r.stale {
 		repos = append(repos, repo)
@@ -186,41 +195,111 @@ func (i *Indexer) Rebuild(ctx context.Context) (RebuildStats, error) {
 	sort.Strings(repos)
 	for _, repo := range repos {
 		if err := i.Backend.Delete(ctx, repo, r.stale[repo]); err != nil {
-			// Forget what this pass changed so the next pass retries it.
-			i.rollback(r)
-			return r.stats, errors.Join(append(errs, err)...)
+			if _, ok := coverageRepos(err); !ok {
+				i.rollback(r)
+				return r.stats, errors.Join(append(errs, err)...)
+			}
+			failed[repo] = true
+			errs = append(errs, err)
+			continue
 		}
 		r.stats.Deleted += len(r.stale[repo])
 	}
 	if len(r.docs) > 0 {
 		if err := i.Backend.Index(ctx, r.docs); err != nil {
-			// Forget what this pass changed so the next pass retries it.
-			i.rollback(r)
-			return r.stats, errors.Join(append(errs, err)...)
+			cov, ok := coverageRepos(err)
+			if !ok {
+				i.rollback(r)
+				return r.stats, errors.Join(append(errs, err)...)
+			}
+			for repo := range cov {
+				failed[repo] = true
+			}
+			errs = append(errs, err)
 		}
-		r.stats.Indexed = len(r.docs)
+		for _, d := range r.docs {
+			if !failed[d.Repo] {
+				r.stats.Indexed++
+			}
+		}
 	}
-	if !i.reconciled && len(errs) == 0 {
-		n, err := i.reconcile(ctx)
+	if len(failed) > 0 {
+		i.rollbackRepos(r, failed)
+	}
+	if !i.reconciled && !walkFailed {
+		n, err := i.reconcile(ctx, failed)
 		if err != nil {
 			errs = append(errs, err)
-		} else {
-			i.reconciled = true
-			r.stats.Deleted += n
 		}
+		r.stats.Deleted += n
 	}
 	return r.stats, errors.Join(errs...)
+}
+
+// coverageRepos reports the repos named by err when every error it wraps
+// (through errors.Join) is a *CoverageError; ok is false otherwise.
+func coverageRepos(err error) (repos map[string]bool, ok bool) {
+	repos = map[string]bool{}
+	var walk func(error) bool
+	walk = func(err error) bool {
+		if j, isJoin := err.(interface{ Unwrap() []error }); isJoin {
+			for _, e := range j.Unwrap() {
+				if !walk(e) {
+					return false
+				}
+			}
+			return true
+		}
+		var ce *CoverageError
+		if errors.As(err, &ce) {
+			repos[ce.Repo] = true
+			return true
+		}
+		return false
+	}
+	if err == nil || !walk(err) {
+		return nil, false
+	}
+	return repos, true
 }
 
 // rollback restores the entries changed in r to their previous state.
 func (i *Indexer) rollback(r *rebuild) {
 	for key, prev := range r.touched {
-		if prev == nil {
-			delete(i.entries, key)
-		} else {
-			i.entries[key] = prev
+		i.restore(key, prev)
+	}
+}
+
+// rollbackRepos restores the entries changed in r whose previous or new
+// documents include any of repos, so the next pass retries only those
+// sources.
+func (i *Indexer) rollbackRepos(r *rebuild, repos map[string]bool) {
+	for key, prev := range r.touched {
+		if prev.touches(repos) || i.entries[key].touches(repos) {
+			i.restore(key, prev)
 		}
 	}
+}
+
+func (i *Indexer) restore(key string, prev *sourceEntry) {
+	if prev == nil {
+		delete(i.entries, key)
+	} else {
+		i.entries[key] = prev
+	}
+}
+
+// touches reports whether any of e's documents belongs to one of repos.
+func (e *sourceEntry) touches(repos map[string]bool) bool {
+	if e == nil {
+		return false
+	}
+	for _, ref := range e.docs {
+		if repos[ref.repo] {
+			return true
+		}
+	}
+	return false
 }
 
 // unchanged reports whether key's stamp matches the last pass, marking it
@@ -316,24 +395,45 @@ func (i *Indexer) expire(r *rebuild) {
 	}
 }
 
-// reconcile runs once per process: documents of indexer kinds left in the
-// backend by an earlier process that no current source produces (deleted
-// sources, expired documents) are removed.
-func (i *Indexer) reconcile(ctx context.Context) (int, error) {
+// reconcile runs until it has swept every repo once per process: documents
+// of indexer kinds left in the backend by an earlier process that no current
+// source produces (deleted sources, expired documents) are removed. Repos in
+// skip (per-repo failures this pass), repos the backend could not read and
+// repos whose deletes fail stay pending and are retried on the next pass;
+// once none are pending the indexer is reconciled.
+func (i *Indexer) reconcile(ctx context.Context, skip map[string]bool) (int, error) {
 	live := map[docRef]bool{}
 	for _, e := range i.entries {
 		for _, ref := range e.docs {
 			live[docRef{repo: ref.repo, id: ref.id}] = true
 		}
 	}
-	res, err := i.Backend.Query(ctx, Query{Filters: map[string][]string{FieldKind: indexerKinds}, Limit: math.MaxInt32})
+	q := Query{Filters: map[string][]string{FieldKind: indexerKinds}, Limit: math.MaxInt32}
+	if i.pending != nil {
+		repos := make([]string, 0, len(i.pending))
+		for repo := range i.pending {
+			repos = append(repos, repo)
+		}
+		sort.Strings(repos)
+		q.Filters[FieldRepo] = repos
+	}
+	res, err := i.Backend.Query(ctx, q)
 	if err != nil {
 		return 0, err
 	}
+	pending := map[string]bool{}
+	for repo := range skip {
+		if i.pending == nil || i.pending[repo] {
+			pending[repo] = true
+		}
+	}
+	for repo := range res.Coverage {
+		pending[repo] = true
+	}
 	gone := map[string][]string{}
 	for _, h := range res.Hits {
-		if !live[docRef{repo: h.Document.Repo, id: h.Document.ID}] {
-			gone[h.Document.Repo] = append(gone[h.Document.Repo], h.Document.ID)
+		if d := h.Document; !pending[d.Repo] && !live[docRef{repo: d.Repo, id: d.ID}] {
+			gone[d.Repo] = append(gone[d.Repo], d.ID)
 		}
 	}
 	repos := make([]string, 0, len(gone))
@@ -345,11 +445,14 @@ func (i *Indexer) reconcile(ctx context.Context) (int, error) {
 	var errs []error
 	for _, repo := range repos {
 		if err := i.Backend.Delete(ctx, repo, gone[repo]); err != nil {
+			pending[repo] = true
 			errs = append(errs, err)
 			continue
 		}
 		n += len(gone[repo])
 	}
+	i.pending = pending
+	i.reconciled = len(pending) == 0
 	return n, errors.Join(errs...)
 }
 
