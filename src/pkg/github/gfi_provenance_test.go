@@ -38,3 +38,29 @@ func TestGFIMaintainerAppliedLabels(t *testing.T) {
 		})
 	}
 }
+
+func TestGFIMaintainerAppliedLabelsUsesConfiguredPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy func(string) (LabelApprovalPolicy, bool)
+		actor  string
+		want   int
+	}{
+		{"unconfigured trusts org members", nil, laOrgOnly, 1},
+		{"configured without org trust", laPolicyFn(LabelApprovalPolicy{Labels: []string{"triage/accepted"}}, true), laOrgOnly, 0},
+		{"configured trusted bot", laPolicyFn(laPolicy(), true), laProwBot, 1},
+		{"configured policy still trusts writers", laPolicyFn(LabelApprovalPolicy{Labels: []string{"triage/accepted"}}, true), laWriter, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rec := laServer(t, nil)
+			if tc.policy != nil {
+				c.SetLabelApprovalPolicy(tc.policy)
+			}
+			rec.timelines[35] = []unparkWireTimelineEvent{labeledAt(1, tc.actor, "help wanted", laBase)}
+			got, err := c.MaintainerAppliedLabels(context.Background(), "org/repo", 35, []string{"help wanted"})
+			if err != nil || len(got) != tc.want {
+				t.Fatalf("labels = %v, err = %v, want %d", got, err, tc.want)
+			}
+		})
+	}
+}

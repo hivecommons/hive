@@ -79,6 +79,7 @@ func (c *Client) MaintainerAppliedLabels(ctx context.Context, repo string, numbe
 	if err != nil {
 		return nil, err
 	}
+	policy := c.gfiLabelApprovalPolicy(repo, owner, name)
 	var verified []string
 	for _, label := range labels {
 		var latest *issueLabelEvent
@@ -91,7 +92,7 @@ func (c *Client) MaintainerAppliedLabels(ctx context.Context, repo string, numbe
 		if latest == nil || latest.Event != "labeled" {
 			continue
 		}
-		_, trusted, err := c.labelApplierTrusted(ctx, owner, name, latest.Actor, LabelApprovalPolicy{TrustOrgMembers: true})
+		_, trusted, err := c.labelApplierTrusted(ctx, owner, name, latest.Actor, policy)
 		if err != nil {
 			return nil, err
 		}
@@ -100,6 +101,21 @@ func (c *Client) MaintainerAppliedLabels(ctx context.Context, repo string, numbe
 		}
 	}
 	return verified, nil
+}
+
+// gfiLabelApprovalPolicy is the repo's configured label-approval policy, so
+// its trusted-bot allowlist and org-member setting decide who counts as a
+// maintainer. A repo with no configured policy keeps the default of trusting
+// organisation members.
+func (c *Client) gfiLabelApprovalPolicy(repo, owner, name string) LabelApprovalPolicy {
+	policy, ok := c.labelApprovalPolicyFor(repo)
+	if !ok {
+		policy, ok = c.labelApprovalPolicyFor(owner + "/" + name)
+	}
+	if !ok {
+		return LabelApprovalPolicy{TrustOrgMembers: true}
+	}
+	return policy
 }
 
 var _ gfi.MaintainerLabelReader = (*Client)(nil)
