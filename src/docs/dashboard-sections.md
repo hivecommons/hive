@@ -531,7 +531,7 @@ This section exists on the v6 line only.
 
 **Example.** You search `flaky` and click the **sentinel** kind chip. You see the two pull requests where a safety check fired on a flaky-test change.
 
-**When it appears.** On v6 only, when search is switched on and you are an owner or maintainer. With search off, the section and the health badges stay hidden.
+**When it appears.** On v6 only, when search is switched on and you are an owner or merger (the `merger` dashboard role). With search off, the section and the health badges stay hidden.
 
 **Settings that change it.** `search.enabled` switches search on. See the `search` row in the [operator reference](operator-reference.md).
 

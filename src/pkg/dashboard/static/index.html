@@ -7312,7 +7312,7 @@
   </div>
 
   <!-- Portfolio search (#14888). Hidden until GET /api/search answers: a 404
-       ("search not enabled") or 403 (not an owner or maintainer) keeps it hidden. -->
+       ("search not enabled") or 403 (not an owner or merger) keeps it hidden. -->
   <div class="mt-6 mb-8" id="search-section" data-dashboard-section="search-section" style="display:none">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="search-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Search section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔍 Search</h2>
     <div class="section-body">
@@ -30564,7 +30564,7 @@ function burnAreaChart() {
     // ---- Portfolio search pane and repo health badge (#14888) ------------
     // The Search section reads GET /api/search (#14637) and stays hidden
     // while search is off (404 "search not enabled") or the viewer is not an
-    // owner or maintainer (403). kind and repo facets narrow the query on the
+    // owner or merger (403). kind and repo facets narrow the query on the
     // server; verdict and sentinel.rule narrow the returned hits here, since
     // the endpoint facets on them but does not filter by them. Each project
     // card's health badge reads GET /api/repos/{owner}/{repo}/health (#14638);
