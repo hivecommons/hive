@@ -100,8 +100,13 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, labels []str
 	if ra, ok := issueFilter.(ReporterAdmitter); ok && ra.ReporterTrustEnabled() && authorIsHuman {
 		if !ra.AdmitsReporter(labels, author, issue.GetAuthorAssociation()) {
 			// The full pass parks the issue with a label write; a display
-			// read must not. Leave placement to the reconcile pass.
-			return WebhookItemPatch{Bucket: WebhookBucketUnknown}
+			// read must not. Placement of a listed row is left to the
+			// reconcile pass, but the row the pass would list (the
+			// reporter_triage bucket) rides along so a brand-new issue
+			// is visible from its `opened` delivery rather than from the
+			// next enumeration (hivecommons/hive#15094).
+			row := repoWorkIssue(repo, issue, labels, workBucketReporterTriage, reporterTriageAwaitingReason)
+			return WebhookItemPatch{Bucket: WebhookBucketUnknown, WorkIssue: &row}
 		}
 	}
 	if !issueFilter.Admits(labels) {
@@ -504,7 +509,23 @@ func (r *ActionableResult) applyWebhookItem(snap WebhookItemSnapshot) bool {
 		}
 	default:
 		if !wasListed {
-			return false
+			// Unknown bucket, never listed: an `opened` delivery for an
+			// item the single read could not place. It is still an open
+			// item the hive is responsible for, so it enters the sidelined
+			// set with whatever row the classifier could offer rather than
+			// staying invisible until the next enumeration
+			// (hivecommons/hive#15094).
+			switch {
+			case !snap.IsPR && p.WorkIssue != nil:
+				r.addWorkIssue(repoKey, *p.WorkIssue)
+			case snap.IsPR && p.WorkPR != nil:
+				r.addWorkPR(repoKey, *p.WorkPR)
+			default:
+				return false
+			}
+			r.adjustRepoCount(repoKey, snap.IsPR, 1)
+			r.recount()
+			return true
 		}
 		// Unknown bucket: keep the row where it was, with fresh fields.
 		return r.restoreUnknown(snap, prev)

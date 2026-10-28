@@ -1551,6 +1551,10 @@
     .ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-draft { background: var(--band-draft); color: var(--surface-0); }
     .ham-seg.active.ham-open-draft .ham-seg-t::before { content: '✎'; margin-right: var(--sp-1); }
+    /* 000-new: open, nothing placed it yet; blue says "fresh, nobody owes
+       it a move but the next pass" (hivecommons/hive#15094). */
+    .ham-seg.active.ham-open-new { background: var(--blue); color: var(--surface-0); }
+    .ham-seg.active.ham-open-new .ham-seg-t::before { content: '✦'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
@@ -14137,6 +14141,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (n === 0 && mods.indexOf('hold') >= 0) return 'Open · on hold' + (holdLabels.length ? ' (' + holdLabels.join(', ') + ')' : '');
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
+      // Guarded: test harnesses lift this function by name without the 000-new helpers.
+      if (n === 0 && typeof stageTrackerNewState === 'function' && stageTrackerNewState(item)) return 'New';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
       const viaPR = item.kind === 'issue' && n >= 50 && (n !== 85 || item.via_pr) ? ' (its PR)' : '';
@@ -14428,9 +14434,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // A draft PR with no stage is the author's, not the hive's: the
         // Open word says so, muted, and it never tints stale (#14572).
         const openDraft = n === 0 && state === 'active' && !openHold && !openBlocked && mods.indexOf('draft') >= 0;
+        // 000-new: the payload says nothing has placed the item yet and
+        // names who moves it next (hivecommons/hive#15094).
+        const openNew = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && typeof stageTrackerNewState === 'function' && !!stageTrackerNewState(item);
         if (openHold) word = 'Open · hold';
         else if (openBlocked) word = 'Open · blocked';
         else if (openDraft) word = 'Draft';
+        else if (openNew) word = 'New';
         // A plain, blocked or draft Open step (no stage label, not held)
         // says how long it has sat there, from the same instant the since
         // column shows — a stale blocked item is exactly what should stand out.
@@ -14439,7 +14449,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const os = stageTrackerOpenSince(item);
           if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
         }
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, draft: openDraft, openSince };
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, draft: openDraft, isNew: openNew, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;
@@ -14489,6 +14499,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Author kind of whoever must move on the item's current stage ('' = none).
     function stageTrackerActorKind(item) {
+      // Guarded: test harnesses lift this function by name without the 000-new helpers.
+      const fresh = typeof stageTrackerNewState === 'function' ? stageTrackerNewState(item) : null;
+      if (fresh) return fresh.next_mover === 'maintainer' ? 'human' : 'hive';
       const role = STAGE_TRACKER_ACTOR[Number(item.stage) || 0] || '';
       if (role === 'claimant') return item.claimant_kind || '';
       if (role === 'author') {
@@ -14497,6 +14510,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return (lp && lp.author_kind) || '';
       }
       return role;
+    }
+
+    // 000-new (hivecommons/hive#15094): a payload `new` block on a stage-0
+    // row means nothing has placed the item yet. These are pure so the
+    // fixture tests can lift them by name.
+    const STAGE_TRACKER_NEW_GATE_MARK = { done: ' ✓', next: ' (next)' };
+    function stageTrackerNewState(item) {
+      if (!item || (Number(item.stage) || 0) !== 0 || !item.new || typeof item.new !== 'object') return null;
+      return item.new;
+    }
+    // "Next: …" and "Gates ahead: triage ✓ → actionable → claimed" for the
+    // row tooltip and the lit chevron. nowMs refreshes the next-pass countdown.
+    function stageTrackerNewLines(item, nowMs) {
+      const fresh = stageTrackerNewState(item);
+      if (!fresh) return [];
+      let next = 'Next: ' + (fresh.next_mover_text || fresh.next_mover || 'the next pass');
+      const passMs = Date.parse(fresh.next_pass_at || '');
+      if (passMs && nowMs) {
+        const left = passMs - nowMs;
+        next += left > 0 ? ' · next hive pass in ' + stageTrackerShortAgo(left) : ' · next hive pass due now';
+      }
+      const lines = [next];
+      const gates = Array.isArray(fresh.gates) ? fresh.gates : [];
+      if (gates.length) {
+        lines.push('Gates ahead: ' + gates.map(g => (g.name || '') + (STAGE_TRACKER_NEW_GATE_MARK[g.state] || '')).join(' → '));
+        gates.forEach(g => { if (g.text) lines.push('  ' + (g.name || '') + ': ' + g.text); });
+      }
+      return lines;
     }
 
     // An Open item is tinted stale once it has sat unlabelled this long.
@@ -14557,13 +14598,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         if (active) {
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
+          if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = 'New — ' + stageTrackerNewLines(item, nowMs).join(' — ');
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
           // With merge_gate in the payload the sentence is the gate's own
@@ -14703,6 +14745,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr);
       const actorKind = stageTrackerActorKind(item);
       if (actorKind) lines.push('Next move: ' + actorKind);
+      if (typeof stageTrackerNewLines === 'function') lines.push(...stageTrackerNewLines(item, nowMs));
       const blockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
       if (blockedPR) lines.push(blockedPR.tip);
       // Guarded: the test harnesses load helpers by name, and this one is additive.

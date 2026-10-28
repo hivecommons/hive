@@ -141,6 +141,9 @@ const (
 	// trust gate holds until a maintainer adds the triage label
 	// (stageengine.BucketReporterTriage).
 	workBucketReporterTriage = string(stageengine.BucketReporterTriage)
+	// reporterTriageAwaitingReason is the work-detail note on an issue in
+	// that bucket, from the full pass and the webhook re-read alike.
+	reporterTriageAwaitingReason = "Awaiting maintainer triage label"
 )
 
 // Triage evidence for stage/015-triage-needed (stagelabels.TriageNeeded):

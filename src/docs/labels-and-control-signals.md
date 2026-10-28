@@ -442,6 +442,28 @@ not read as the issue regressing.
 > [operator-reference.md](operator-reference.md#central-stage-engine-rollout)
 > and the plan in [stage-engine-plan.md](stage-engine-plan.md).
 
+### Before any stage: `000-new` in the activity monitor
+
+A freshly opened issue or pull request carries no `stage/*` label and no
+stage record until the stage-label pass of the next enumeration cycle
+looks at it (and, for a human contributor's issue, until a maintainer
+adds a reporter-trust label — `triage/accepted` by default,
+`issues.filter.reporter_trust.untrusted_require_labels`). That gap is not a
+label: nothing is written on GitHub for it. It *is* a state the dashboard
+shows ([#15094](https://github.com/hivecommons/hive/issues/15094)): the
+`opened` webhook re-read inserts the item into the activity monitor at once,
+and until something places it the row reads `000-new` in the **Open** column
+with a caption naming the next mover — a maintainer (the triage gate is the
+next hop; the caption says which label to add) or the hive (the stage-label
+pass marks it `010-actionable`, then the scanner claims it, `020`) — and the
+governor's next-pass countdown. The gates ahead are always the same three,
+in order: **triage** (reporter gate, skipped for admitted reporters and the
+hive's own filings) → **actionable** (`010`, written by the stage-label pass)
+→ **claimed** (`020`, the scanner). `triage/accepted` plus `help wanted` on
+a human-filed issue is actionable work at every level: once the label lands
+the next pass writes `010` and the scanner may claim it. The dashboard
+legend is in [dashboard-sections.md](dashboard-sections.md#hive-activity-monitor).
+
 ### How a PR's stage is decided
 
 The automerge sweep already computes one reason per PR per lane each cycle

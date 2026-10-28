@@ -1,0 +1,183 @@
+package dashboard
+
+import (
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
+)
+
+// StageTrackerNewSlug is the pre-stage slug a brand-new open item wears in
+// the Open column before any stage pass has placed it: it has no stage/*
+// label and no store record, nothing holds or blocks it, and the only
+// thing between it and 010/050 is the next pass of whoever moves it
+// (hivecommons/hive#15094). Stage stays 0 so the column keys are unchanged.
+const StageTrackerNewSlug = "000-new"
+
+// Next movers of a 000-new item.
+const (
+	// StageTrackerMoverMaintainer: a human must accept triage first (the
+	// reporter-trust gate holds an un-admitted reporter's issue).
+	StageTrackerMoverMaintainer = "maintainer"
+	// StageTrackerMoverHive: the hive's own stage-label pass places it on
+	// its next governor cycle.
+	StageTrackerMoverHive = "hive"
+)
+
+// Gate states on a 000-new item.
+const (
+	StageTrackerGateDone  = "done"
+	StageTrackerGateNext  = "next"
+	StageTrackerGateLater = "later"
+)
+
+// StageTrackerGate is one gate ahead of a 000-new item.
+type StageTrackerGate struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+	Text  string `json:"text"`
+}
+
+// StageTrackerNew narrates a 000-new item: who moves it next, when that
+// pass is due, and the gates between it and a claim.
+type StageTrackerNew struct {
+	// Since is when the item was opened (the row's since-time).
+	Since *time.Time `json:"since,omitempty"`
+	// NextMover is maintainer or hive; NextMoverText the plain words.
+	NextMover     string `json:"next_mover"`
+	NextMoverText string `json:"next_mover_text"`
+	// NextPassAt / NextPassInSeconds: the governor's next cycle, when the
+	// hive is the mover and the governor has published one.
+	NextPassAt        *time.Time         `json:"next_pass_at,omitempty"`
+	NextPassInSeconds int64              `json:"next_pass_in_s,omitempty"`
+	Gates             []StageTrackerGate `json:"gates"`
+	// Text is the row caption: "New · waiting for <mover> (next pass in Nm)".
+	Text string `json:"text"`
+}
+
+// stageTrackerIsNew reports whether a finished row is a 000-new item: no
+// stage, no record, nothing holding or blocking it, not a draft, and in a
+// bucket that means "not placed yet" rather than "placed outside the
+// actionable set" (filtered, hive_advisory, claimed, …).
+func stageTrackerIsNew(it StageTrackerItem, hasRec bool) bool {
+	if it.Stage != 0 || hasRec || it.Hold != nil || len(it.BlockedOn) > 0 || it.BlockedOnPR != nil {
+		return false
+	}
+	for _, m := range it.Modifiers {
+		if m != modNeedsTriage {
+			return false
+		}
+	}
+	switch it.Bucket {
+	case "", stageengineReporterTriageBucket:
+		return true
+	case "other":
+		return it.BucketReason == forgeUnclassifiedReason || it.BucketReason == webhookUnclassifiedReason
+	}
+	return false
+}
+
+// stageengineReporterTriageBucket mirrors github's workBucketReporterTriage.
+const stageengineReporterTriageBucket = "reporter_triage"
+
+// stageTrackerNewState builds the 000-new narration for it, or nil when
+// the row is not new. filter is the project's issue filter (nil-safe);
+// governor carries the next cycle when published.
+func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.IssueFilterConfig, governor FrontendGovernor, now time.Time) *StageTrackerNew {
+	if !stageTrackerIsNew(it, hasRec) {
+		return nil
+	}
+	n := &StageTrackerNew{Since: it.CreatedAt}
+	if n.Since == nil {
+		n.Since = it.UpdatedAt
+	}
+	triagePending := it.Kind == "issue" && (it.Bucket == stageengineReporterTriageBucket || slices.Contains(it.Modifiers, modNeedsTriage))
+	if t, ok := parseGovernorNextKick(governor.NextKickAt); ok {
+		n.NextPassAt = &t
+		if left := t.Sub(now); left > 0 {
+			n.NextPassInSeconds = int64(left / time.Second)
+		}
+	}
+	var pass string
+	switch {
+	case n.NextPassAt != nil && n.NextPassInSeconds > 0:
+		pass = "next pass in " + formatETA(time.Duration(n.NextPassInSeconds)*time.Second)
+	case n.NextPassAt != nil:
+		pass = "next pass due now"
+	}
+	switch {
+	case triagePending:
+		n.NextMover = StageTrackerMoverMaintainer
+		labels := []string{"triage/accepted"}
+		if filter != nil {
+			if l := filter.ReporterTrustRequiredLabelsForNotice(); len(l) > 0 {
+				labels = l
+			}
+		}
+		n.NextMoverText = "a maintainer's triage (add `" + strings.Join(labels, "` or `") + "`)"
+		n.Gates = []StageTrackerGate{
+			{Name: "triage", State: StageTrackerGateNext, Text: "a maintainer accepts triage (" + strings.Join(labels, " / ") + ")"},
+			{Name: "actionable", State: StageTrackerGateLater, Text: "the stage-label pass marks it 010 actionable"},
+			{Name: "claimed", State: StageTrackerGateLater, Text: "the scanner claims it (020)"},
+		}
+	case it.Kind == "pr":
+		n.NextMover = StageTrackerMoverHive
+		n.NextMoverText = "the stage-label pass (→ 050 review pending)"
+		n.Gates = []StageTrackerGate{
+			{Name: "review", State: StageTrackerGateNext, Text: "the stage-label pass places it at 050 review pending"},
+			{Name: "merge-gate", State: StageTrackerGateLater, Text: "reviews and checks admit it to the merge gate"},
+		}
+	default:
+		n.NextMover = StageTrackerMoverHive
+		n.NextMoverText = "the stage-label pass (→ 010 actionable), then the scanner"
+		n.Gates = []StageTrackerGate{
+			{Name: "triage", State: StageTrackerGateDone, Text: "reporter admitted; no triage label needed"},
+			{Name: "actionable", State: StageTrackerGateNext, Text: "the stage-label pass marks it 010 actionable"},
+			{Name: "claimed", State: StageTrackerGateLater, Text: "the scanner claims it (020)"},
+		}
+	}
+	n.Text = "New · waiting for " + n.NextMoverText
+	if pass != "" && n.NextMover == StageTrackerMoverHive {
+		n.Text += " (" + pass + ")"
+	} else if pass != "" {
+		n.Text += fmt.Sprintf("; the hive's %s", pass)
+	}
+	return n
+}
+
+// parseGovernorNextKick reads FrontendGovernor.NextKickAt (RFC3339).
+func parseGovernorNextKick(s string) (time.Time, bool) {
+	if s == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// applyStageTrackerNew stamps the 000-new state on a finished row: slug,
+// caption, actor and since-time all read from it.
+func applyStageTrackerNew(it *StageTrackerItem, n *StageTrackerNew) {
+	if n == nil {
+		return
+	}
+	it.New = n
+	it.StageSlug = StageTrackerNewSlug
+	it.Caption = n.Text
+	it.Actor = n.NextMover
+	if n.Since != nil && it.StageSince == nil {
+		it.StageSince = n.Since
+	}
+}
+
+// issueFilterConfig is the project's issue filter, or nil without deps.
+func (s *Server) issueFilterConfig() *config.IssueFilterConfig {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return nil
+	}
+	return &s.deps.Config.Project.IssueFilter
+}

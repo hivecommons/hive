@@ -360,6 +360,10 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) i
 		s.statusMu.Unlock()
 		return 0
 	}
+	// An open read no list carries is inserted — unless a remembered
+	// close for the same item is newer: that is the out-of-order
+	// `unlabeled` read after a `closed` one, not a reopen.
+	noInsert := s.webhookOpenReadsSupersededLocked(snaps)
 	// Remembered before the lists are patched: a snapshot the governor is
 	// building right now (from the enumeration its cycle began with) still
 	// lists the item as it was, and will have these re-applied on publish.
@@ -378,7 +382,11 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) i
 			if snap.Open() && snapshotOlderThanListed(*repo, snap) {
 				continue
 			}
-			repoChanged += patchFrontendRepoItem(repo, snap)
+			n := patchFrontendRepoItem(repo, snap)
+			if n == 0 && snap.Open() && !noInsert[github.ItemPatchKey(snap.Repo, snap.Number, snap.IsPR)] {
+				n = insertFrontendRepoItem(repo, snap)
+			}
+			repoChanged += n
 		}
 		if repoChanged > 0 {
 			recountRepoOpenItems(repo)
@@ -430,6 +438,31 @@ func (s *Server) webhookPatchReplayWindow() time.Duration {
 // that is older than the remembered one (a `labeled` delivery's read landing
 // after the `closed` delivery's) cannot un-remember the close; a closed read
 // always replaces. Entries past the window or over the cap go.
+// webhookOpenReadsSupersededLocked lists (statusMu held) the open reads in
+// snaps that a remembered close for the same item outranks: a read with no
+// timestamp, or one GitHub stamped no later than the close. Such a read
+// may not re-list the item.
+func (s *Server) webhookOpenReadsSupersededLocked(snaps []github.WebhookItemSnapshot) map[string]bool {
+	var out map[string]bool
+	for _, snap := range snaps {
+		if !snap.Open() || snap.Number <= 0 || snap.Repo == "" {
+			continue
+		}
+		key := github.ItemPatchKey(snap.Repo, snap.Number, snap.IsPR)
+		prev, ok := s.webhookPatches[key]
+		if !ok || prev.snap.Open() {
+			continue
+		}
+		if snap.UpdatedAt.IsZero() || !snap.UpdatedAt.After(prev.snap.UpdatedAt) {
+			if out == nil {
+				out = map[string]bool{}
+			}
+			out[key] = true
+		}
+	}
+	return out
+}
+
 func (s *Server) rememberWebhookPatchesLocked(snaps []github.WebhookItemSnapshot, now time.Time) {
 	if s.webhookPatches == nil {
 		s.webhookPatches = map[string]webhookPatchEntry{}
@@ -490,7 +523,11 @@ func (s *Server) replayWebhookPatchesLocked(status *StatusPayload, now time.Time
 			if held := frontendRepoItemUpdatedAt(*repo, snap.Number, snap.IsPR); !held.IsZero() && !snap.UpdatedAt.IsZero() && held.After(snap.UpdatedAt) {
 				continue
 			}
-			repoChanged += patchFrontendRepoItem(repo, snap)
+			n := patchFrontendRepoItem(repo, snap)
+			if n == 0 && snap.Open() {
+				n = insertFrontendRepoItem(repo, snap)
+			}
+			repoChanged += n
 		}
 		if repoChanged > 0 {
 			recountRepoOpenItems(repo)
@@ -529,8 +566,67 @@ func frontendRepoItemUpdatedAt(repo FrontendRepo, number int, isPR bool) time.Ti
 // patched item lists. Unlike reconcileRepoOpenItems it leaves the unlisted
 // remainder alone: an item a webhook took out was listed, not unlisted.
 func recountRepoOpenItems(r *FrontendRepo) {
-	counts := countOpenItems(repoOpenItems(*r))
+	items := repoOpenItems(*r)
+	counts := countOpenItems(items)
 	r.Issues, r.PRs = counts.Issues, counts.PRs
+	refitRepoWorkBreakdown(r, items, counts)
+}
+
+// webhookUnclassifiedReason is the work-detail reason on an open item a
+// webhook re-read brought in before any enumeration or classifier placed it.
+const webhookUnclassifiedReason = "Opened on GitHub; not yet classified by the scanner"
+
+// insertFrontendRepoItem adds an open item none of repo's lists carry, so a
+// brand-new issue or PR is in the status payload — and the activity
+// monitor — from its `opened` delivery rather than from the governor's next
+// publish (hivecommons/hive#15094). The governor-side classification rides
+// on the snapshot: an actionable row joins the actionable list, a held row
+// the held list, and anything sidelined (or unplaced) the sidelined list
+// with the classifier's bucket or an "other" placeholder the next
+// enumeration settles. Returns the number of entries added (0 or 1).
+func insertFrontendRepoItem(repo *FrontendRepo, snap github.WebhookItemSnapshot) int {
+	if repo == nil || !snap.Open() || snap.Number <= 0 {
+		return 0
+	}
+	full := overviewRepoName(*repo)
+	p := snap.Patch
+	if snap.IsPR {
+		switch {
+		case p.Bucket == github.WebhookBucketActionable && p.PR != nil:
+			repo.OpenPrs = append(append([]any(nil), repo.OpenPrs...), FrontendPR{PullRequest: *p.PR})
+		case p.Bucket == github.WebhookBucketHeld && p.PR != nil:
+			repo.HeldPrs = append(append([]any(nil), repo.HeldPrs...), FrontendPR{PullRequest: *p.PR})
+		case p.WorkPR != nil:
+			repo.NonActionablePrs = append(append([]any(nil), repo.NonActionablePrs...), *p.WorkPR)
+		default:
+			bucket := "other"
+			if snap.Draft {
+				bucket = "draft"
+			}
+			repo.NonActionablePrs = append(append([]any(nil), repo.NonActionablePrs...), github.RepoWorkPR{
+				Repo: full, Number: snap.Number, Title: snap.Title, Author: snap.Author,
+				Labels: append([]string(nil), snap.Labels...), Draft: snap.Draft,
+				AppAuthored: snap.AppAuthored, HiveAttributed: snap.HiveAttributed,
+				UpdatedAt: snap.UpdatedAt, URL: snap.URL, Bucket: bucket, Reason: webhookUnclassifiedReason,
+			})
+		}
+		return 1
+	}
+	switch {
+	case p.Bucket == github.WebhookBucketActionable && p.Issue != nil:
+		repo.ActionableIssues = append(append([]any(nil), repo.ActionableIssues...), *p.Issue)
+	case p.Bucket == github.WebhookBucketHeld && p.Hold != nil:
+		repo.HeldIssues = append(append([]any(nil), repo.HeldIssues...), *p.Hold)
+	case p.WorkIssue != nil:
+		repo.NonActionableIssues = append(append([]any(nil), repo.NonActionableIssues...), *p.WorkIssue)
+	default:
+		repo.NonActionableIssues = append(append([]any(nil), repo.NonActionableIssues...), github.RepoWorkIssue{
+			Repo: full, Number: snap.Number, Title: snap.Title, Author: snap.Author,
+			Labels: append([]string(nil), snap.Labels...), UpdatedAt: snap.UpdatedAt, URL: snap.URL,
+			Bucket: "other", Reason: webhookUnclassifiedReason,
+		})
+	}
+	return 1
 }
 
 // patchFrontendRepoItem rewrites every list entry of repo that names the

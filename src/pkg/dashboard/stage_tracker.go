@@ -442,7 +442,11 @@ type StageTrackerItem struct {
 	// row's ✓ badge and its hover read these (operator_actions.go).
 	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
 	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
-	History             []StageTrackerHop           `json:"history"`
+	// New is set on a 000-new item — open, unplaced, nothing holding it —
+	// with who moves it next and the gates ahead; the Open column renders
+	// it as "New · waiting for …" (hivecommons/hive#15094).
+	New     *StageTrackerNew  `json:"new,omitempty"`
+	History []StageTrackerHop `json:"history"`
 }
 
 // StageTrackerLinkedIssue is one issue a PR closes, as its row's issue
@@ -1682,6 +1686,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		resp.Items = append(resp.Items, it)
 	}
 	prState := s.stageTrackerPRStateResolver(status, resp.RecentlyMerged)
+	issueFilter := s.issueFilterConfig()
 	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren) {
 		// A closed issue has no stage; a stage label it closed wearing is
 		// the closed-issue sweep's to remove, not a row to render
@@ -1732,6 +1737,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		finish(&it, issue.Labels, stage, rec, ok, false)
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
 		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL, prState)
+		applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
 		if it.Stage == trackerNumberClaimed {
 			it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
 		}
@@ -1770,6 +1776,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Lane = laneHive
 		}
 		finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
+		applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
 		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
 		// The sentinel chip is a merge-gate pill too (the trusted-author
 		// notice and the real alert alike): sentinel_alert stays truthful

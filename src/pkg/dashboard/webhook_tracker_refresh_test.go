@@ -187,8 +187,8 @@ func TestWebhookTrackerKeysFromEventResult(t *testing.T) {
 // TestApplyWebhookItemSnapshotsPatchesRowsAndInvalidatesTracker: the
 // re-read item's labels, title, draft flag and activity time replace the
 // snapshot's copy in every list that carries it (actionable, held,
-// sidelined; value or pointer), a closed item leaves, an unknown item is
-// left for the next cycle, readers of the old snapshot are unaffected, and
+// sidelined; value or pointer), a closed item leaves, an unlisted open item
+// is inserted as 000-new, readers of the old snapshot are unaffected, and
 // the tracker cache is dropped so the next GET shows the change.
 func TestApplyWebhookItemSnapshotsPatchesRowsAndInvalidatesTracker(t *testing.T) {
 	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
@@ -252,13 +252,22 @@ func TestApplyWebhookItemSnapshotsPatchesRowsAndInvalidatesTracker(t *testing.T)
 	if got106.Title != "Ready now" || hasMod(got106, modDraft) {
 		t.Fatalf("sidelined draft 106 should now read as ready: %+v", got106)
 	}
+	brandNew := false
 	for _, it := range after.Items {
 		if (it.Kind == "pr" && it.Number == 107) || (it.Kind == "issue" && it.Number == 21) {
 			t.Fatalf("closed item still listed: %+v", it)
 		}
-		if it.Number == 999 {
-			t.Fatal("an item the snapshot never listed must wait for the next cycle")
+		if it.Kind == "pr" && it.Number == 999 {
+			// hivecommons/hive#15094: an open item the snapshot never
+			// listed is inserted as a 000-new row, not left for the cycle.
+			brandNew = true
+			if it.StageSlug != StageTrackerNewSlug || it.New == nil {
+				t.Fatalf("brand-new PR = slug %q new %+v, want 000-new", it.StageSlug, it.New)
+			}
 		}
+	}
+	if !brandNew {
+		t.Fatal("an open item the snapshot never listed must be inserted from its re-read")
 	}
 	if got20 := trackerItem(t, after, "issue", 20); got20.Title != "Held (renamed)" || len(got20.Labels) != 2 {
 		t.Fatalf("held issue 20 = %+v", got20)
@@ -281,8 +290,11 @@ func TestApplyWebhookItemSnapshotsPatchesRowsAndInvalidatesTracker(t *testing.T)
 		t.Fatalf("tracker_invalidations_1h = %d, want 1", snap.TrackerInvalidations1h)
 	}
 
-	// Nothing matched: no publish, no invalidation.
-	s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{{Repo: "acme/console", Number: 4242, IsPR: true, State: "open"}})
+	// Nothing matched (a repo the status does not carry): no publish, no
+	// invalidation. An open read for an unlisted item of a listed repo is
+	// no longer a no-op — it is inserted (hivecommons/hive#15094,
+	// TestWebhookOpenedItemInsertedIntoTracker).
+	s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{{Repo: "acme/elsewhere", Number: 4242, IsPR: true, State: "open"}})
 	s.statusMu.RLock()
 	same := s.status == cur
 	s.statusMu.RUnlock()

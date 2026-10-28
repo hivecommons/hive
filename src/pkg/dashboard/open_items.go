@@ -192,17 +192,24 @@ func reconcileRepoOpenItems(r *FrontendRepo) openItemCounts {
 	r.UnlistedPRs = max(0, r.PRs-counts.PRs)
 	r.Issues = counts.Issues
 	r.PRs = counts.PRs
-	if r.WorkBreakdown != nil {
-		wb := *r.WorkBreakdown
-		if wb.Issues.Total() != counts.Issues {
-			wb.Issues = rebuildIssueBreakdown(wb.Issues, items)
-		}
-		if wb.PRs.Total() != counts.PRs {
-			wb.PRs = rebuildPRBreakdown(items)
-		}
-		r.WorkBreakdown = &wb
-	}
+	refitRepoWorkBreakdown(r, items, counts)
 	return counts
+}
+
+// refitRepoWorkBreakdown rebuilds the coarse work buckets from the items
+// when the breakdown's totals no longer match the item lists.
+func refitRepoWorkBreakdown(r *FrontendRepo, items []openItemRef, counts openItemCounts) {
+	if r.WorkBreakdown == nil {
+		return
+	}
+	wb := *r.WorkBreakdown
+	if wb.Issues.Total() != counts.Issues {
+		wb.Issues = rebuildIssueBreakdown(wb.Issues, items)
+	}
+	if wb.PRs.Total() != counts.PRs {
+		wb.PRs = rebuildPRBreakdown(items)
+	}
+	r.WorkBreakdown = &wb
 }
 
 // rebuildIssueBreakdown recounts the coarse issue buckets from the items.
