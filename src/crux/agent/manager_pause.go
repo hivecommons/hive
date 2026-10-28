@@ -227,17 +227,23 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 		m.mu.Unlock()
 		m.mintAgentTokenUnlocked(ctx, agent)
 		m.bobPreflightUnlocked(agent)
+		leaseID, leaseErr := m.acquireSharedPoolLeaseUnlocked(ctx, name)
+		if leaseErr != nil {
+			return leaseErr
+		}
 		m.mu.Lock()
 		if cur, ok := m.agents[name]; !ok || cur != agent {
+			m.discardSharedPoolLeaseLocked(name, leaseID)
 			m.mu.Unlock()
 			return fmt.Errorf("agent %s removed during resume", name)
 		}
 		if agent.State == StateRunning {
 			// Another path won the launch race while we were unlocked.
+			m.discardSharedPoolLeaseLocked(name, leaseID)
 			m.mu.Unlock()
 			return nil
 		}
-		err := m.launchInTmux(ctx, agent)
+		err := m.launchWithSharedPoolLeaseLocked(ctx, agent, name, leaseID)
 		m.mu.Unlock()
 		return err
 	}
