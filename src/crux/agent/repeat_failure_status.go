@@ -113,6 +113,9 @@ type repeatFailureMonitor struct {
 	// openhands holds each OpenHands agent's saved-events reader
 	// (repeat_failure_openhands.go).
 	openhands map[string]*openhandsRecordReader
+	// muse holds each Muse Code agent's session-log reader
+	// (repeat_failure_muse.go).
+	muse map[string]*museRecordReader
 }
 
 // SetRepeatFailureConfigResolver injects the live repeat_failure block so the
@@ -171,7 +174,7 @@ func (m *Manager) CollectRepeatFailures(now time.Time) {
 	mon := &m.repeatFailure
 	if !m.repeatFailureEnabled() {
 		mon.mu.Lock()
-		mon.detector, mon.detectorKey, mon.agents, mon.copilot, mon.openhands = nil, "", nil, nil, nil
+		mon.detector, mon.detectorKey, mon.agents, mon.copilot, mon.openhands, mon.muse = nil, "", nil, nil, nil, nil
 		mon.mu.Unlock()
 		m.mu.Lock()
 		for _, a := range m.agents {
@@ -184,6 +187,7 @@ func (m *Manager) CollectRepeatFailures(now time.Time) {
 	mon.configure(cfg)
 	m.readCopilotRepeatFailureRecords()
 	m.readOpenHandsRepeatFailureRecords()
+	m.readMuseRepeatFailureRecords()
 	collector := NewRepeatFailureCollector(cfg, m.repeatFailureRecordPaths, func(rec RepeatFailureRecord) {
 		m.recordRepeatFailure(rec, now)
 	}, m.logger)
