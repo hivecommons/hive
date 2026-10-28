@@ -906,6 +906,26 @@ func routeConflictFixAgent(agent string, cfg *config.Config) (string, string) {
 	return owner, ""
 }
 
+// markAdoptedFixerQueued records that an adopted PR sits in the fixer queue
+// so the 074 dwell can wait for a fixer that has not reached it
+// (hivecommons/hive#15036). An unavailable fixer is not recorded: its rows
+// must still escalate at the dwell.
+func markAdoptedFixerQueued(repo string, number int, head, agent string, cfg *config.Config) {
+	if head == "" || !fixerAvailable(agent, cfg) {
+		return
+	}
+	stagelabels.Shared().MarkFixerQueued(stagelabels.Key(repo, number), head)
+}
+
+func fixerAvailable(agent string, cfg *config.Config) bool {
+	if cfg == nil {
+		return true
+	}
+	base := cfg.BaseAgentName(agent)
+	ac, ok := cfg.Agents[base]
+	return ok && !ac.Paused && cfg.HasAnyCadence(base) && !allConfiguredCadencesPaused(cfg, base)
+}
+
 func allConfiguredCadencesPaused(cfg *config.Config, agent string) bool {
 	if cfg == nil {
 		return false
@@ -1217,6 +1237,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			row.ReroutedFrom = reroutedFrom
 			row.DeferredIncident = pr.SharedCIIncident
 			if adopted {
+				markAdoptedFixerQueued(fullRepo, pr.Number, pr.HeadSHA, agent, cfg)
 				logger.Info("adopted PR routed to fixer", "repo", fullRepo, "number", pr.Number, "work", "rebase", "mergeable_state", pr.MergeableState, "fixer", agent, "sentinel_alert", row.SentinelAlert)
 			}
 			failing = append(failing, row)
@@ -1234,6 +1255,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			row.DeferredIncident = pr.SharedCIIncident
 			row.DeferredExternal = pr.ExternalCIDeferred
 			if adopted {
+				markAdoptedFixerQueued(fullRepo, pr.Number, pr.HeadSHA, agent, cfg)
 				logger.Info("adopted PR routed to fixer", "repo", fullRepo, "number", pr.Number, "work", "fix-ci", "failing_checks", pr.FailingChecks, "fixer", agent, "sentinel_alert", row.SentinelAlert)
 			}
 			failing = append(failing, row)

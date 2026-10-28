@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const (
@@ -199,6 +200,15 @@ func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
 	return appendKickSection(message, section)
 }
 
+// markAdoptedFixerAttempt records that a fixer kick carried an adopted row, so
+// the 074 stall clock stops waiting for the fixer to reach it
+// (hivecommons/hive#15036). A var so tests can observe it.
+var markAdoptedFixerAttempt = func(repo string, number int, head string) {
+	if head != "" {
+		stagelabels.Shared().MarkFixerAttempted(stagelabels.Key(repo, number), head)
+	}
+}
+
 // heldRedPRNote is appended to a held PR's entry in the fix-before-new
 // block: the hold is a merge checkpoint, not a repair checkpoint
 // (hivecommons/hive#7438), and the agent's own policy says never to touch a
@@ -235,6 +245,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 		FromFork         bool     `json:"from_fork"`
 		ReachableAction  string   `json:"reachable_action"`
 		Adopted          bool     `json:"adopted"`
+		HeadSHA          string   `json:"head_sha"`
 		SentinelAlert    bool     `json:"sentinel_alert"`
 		HeadRepo         string   `json:"head_repo"`
 		Held             bool     `json:"held"`
@@ -341,6 +352,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
 		if pr.Adopted {
+			markAdoptedFixerAttempt(pr.Repo, pr.Number, pr.HeadSHA)
 			b.WriteString(fmt.Sprintf("    ADOPTED contributor PR (stage 074, head repo %s): the author is offline; `gh pr checkout` then push to the PR's own branch — maintainer_can_modify grants access.\n", pr.HeadRepo))
 			b.WriteString(adoptedPRStatusRule)
 			if pr.SentinelAlert {
