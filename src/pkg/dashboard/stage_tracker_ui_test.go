@@ -194,6 +194,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerMoveAttrs"),
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 		jsFunc(t, html, "stageTrackerVisible"),
+		stageTrackerCuesJS(t, html),
 	}, "\n") + `
 const assert = require('assert');
 const now = Date.parse('2026-01-01T12:00:00Z');
@@ -761,7 +762,12 @@ assert.ok(/<a class="ham-ref"[^>]*title="[^"]*@ann[^"]*"/.test(row), 'the #N lin
 row = stageTrackerRowHtml(g[1], stages, ctx);
 expectTitles(row, ['a.ham-ref', 'span.ham-title', 'a.ham-pr-ref', 'li.ham-seg'], 'issue with one PR');
 assert.ok(/<a class="ham-pr-ref"[^>]*title="The one PR Author: hive · @hive-bot · linked PR, shown on its issue&#39;s row"/.test(row), 'the PR link also explains the shared row: ' + row);
-assert.ok(/<li class="ham-seg active" data-motion="active" title="Review pending · Next move: hive" aria-current="step">/.test(row), 'active chevron: stage + whose move (hive acting: pulses): ' + row);
+// tracker-cues: with no agent on the item the chevron is static (waiting);
+// the pulse and the "Working now" lead need a worker in ctx.workers.
+assert.ok(/<li class="ham-seg active" title="Review pending · Next move: hive" aria-current="step">/.test(row), 'active chevron: stage + whose move (nobody working: static): ' + row);
+row = stageTrackerRowHtml(g[1], stages, Object.assign({}, ctx, { workers: { 'g/r#21': { agent: 'scout', action: 'agent_comment_created', at: new Date(now - 120000).toISOString() } } }));
+assert.ok(/<li class="ham-seg active" data-motion="active" title="Working now: scout commented · 2m ago — Review pending · Next move: hive" aria-current="step">/.test(row), 'active chevron: working lead + pulse when an agent is on the nested PR: ' + row);
+assert.ok(/class="ham-row cue-working"/.test(row), 'the row carries the working cue: ' + row);
 assert.ok(!/<li class="ham-seg active" data-motion=[^>]*title="Claimed"/.test(stageTrackerRowHtml(g[0], stages, ctx)), 'Claimed is static: no data-motion');
 // Issue with two PRs: #N link + title on the issue line, nothing lit there;
 // each sub-row has its PR link (full PR tooltip) and its active chevron.

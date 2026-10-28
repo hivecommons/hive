@@ -87,6 +87,11 @@ type StageTrackerResponse struct {
 	// the SPA tell "merged" from "closed" between two polls and play its
 	// opt-in merge sound for the right rows.
 	RecentlyMerged []StageTrackerMerged `json:"recently_merged,omitempty"`
+	// Merged24h is the same list over the last 24 hours, newest first, so
+	// the SPA's "Merged today" counter is right after a reload (it counts
+	// the entries since the viewer's local midnight). Best effort: the
+	// in-memory audit ring is the only source, as for RecentlyMerged.
+	Merged24h []StageTrackerMerged `json:"merged_24h,omitempty"`
 }
 
 // StageTrackerMerged is one recently merged pull request.
@@ -101,6 +106,9 @@ type StageTrackerMerged struct {
 // few polls (throttled in the background) still sees the merge it was
 // watching for, and the SPA dedupes per PR so a longer list never replays.
 const stageTrackerMergedWindow = 30 * time.Minute
+
+// stageTrackerMergedDayWindow bounds Merged24h.
+const stageTrackerMergedDayWindow = 24 * time.Hour
 
 var stageTrackerAuditNumberRe = regexp.MustCompile(`(?:^|[,\s])number=(\d+)`)
 
@@ -141,6 +149,11 @@ func stageTrackerRepoQualifier(status *StatusPayload) func(string) string {
 // only source consulted — a window this short never needs the on-disk log,
 // and reading files on every tracker build would defeat its cache.
 func (s *Server) stageTrackerRecentlyMerged(now time.Time, qualify func(string) string) []StageTrackerMerged {
+	return s.stageTrackerMergedSince(now, stageTrackerMergedWindow, qualify)
+}
+
+// stageTrackerMergedSince is stageTrackerRecentlyMerged over any window.
+func (s *Server) stageTrackerMergedSince(now time.Time, window time.Duration, qualify func(string) string) []StageTrackerMerged {
 	if s == nil || s.audit == nil {
 		return nil
 	}
@@ -149,7 +162,7 @@ func (s *Server) stageTrackerRecentlyMerged(now time.Time, qualify func(string) 
 	}
 	seen := map[string]bool{}
 	var out []StageTrackerMerged
-	for _, e := range s.audit.RecentWithPrefixSince(now.Add(-stageTrackerMergedWindow), github.AuditActionPRMerged) {
+	for _, e := range s.audit.RecentWithPrefixSince(now.Add(-window), github.AuditActionPRMerged) {
 		if e.Action != github.AuditActionPRMerged {
 			continue
 		}
@@ -1472,7 +1485,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		st := s.deps.StageEngineStatus()
 		resp.Engine = &st
 	}
-	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now, stageTrackerRepoQualifier(status))
+	qualify := stageTrackerRepoQualifier(status)
+	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now, qualify)
+	resp.Merged24h = s.stageTrackerMergedSince(now, stageTrackerMergedDayWindow, qualify)
 	if status == nil {
 		return resp
 	}

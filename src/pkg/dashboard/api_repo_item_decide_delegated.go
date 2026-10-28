@@ -87,6 +87,9 @@ type delegatedDecisionJob struct {
 	Notes     []string                   `json:"notes,omitempty"`
 	Error     string                     `json:"error,omitempty"`
 	Marker    string                     `json:"marker,omitempty"`
+	// Result is the shared row-action outcome (what was decided, on which
+	// item, what happens next), added for the dashboard's result toast.
+	Result *RowActionResult `json:"result,omitempty"`
 }
 
 type delegatedDecisionJobs struct {
@@ -252,11 +255,35 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 		return
 	}
 	d, deciderNotes := s.decideDelegated(ctx, in)
+	// The same rule firing again on an item the hive already decided would
+	// only repeat the comment: report it as a no-op instead of writing.
+	if prior, ok := s.delegatedPriorDecision(ctx, repoFull, number, d.Rule); ok {
+		kind := rowActionTargetIssue
+		if in.Kind == delegatedecision.KindPR {
+			kind = rowActionTargetPR
+		}
+		blocked := strings.TrimSpace(req.Caption)
+		if blocked == "" {
+			blocked = strings.TrimSpace(req.Reason)
+		}
+		res := rowActionNoopResult(rowActionTarget(repoFull, kind, number), "hive already recorded this decision (rule `"+d.Rule+"`)", prior, blocked)
+		s.delegatedJobs.finish(key, func(j *delegatedDecisionJob) {
+			j.Decision = &d
+			j.Notes = append(deciderNotes, "already applied; nothing written")
+			j.Result = &res
+			j.Status = delegatedJobStatusDone
+		})
+		s.audit.LogRecord(user, auditRepoItemDecisionDelegated, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", itemType,
+			"verdict", string(d.Verdict), "rule", d.Rule, "actions", "", "noop", "already-applied", "policy", delegatedecision.PolicyName, "decision", d.Text), "", repoFull, number)
+		return
+	}
 	notes, execErr := s.executeDelegatedDecision(ctx, in, d, user, mergerRole)
 	notes = append(deciderNotes, notes...)
+	result := delegatedRowActionResult(in, d, notes)
 	s.delegatedJobs.finish(key, func(j *delegatedDecisionJob) {
 		j.Decision = &d
 		j.Notes = notes
+		j.Result = &result
 		if execErr != nil {
 			j.Status = delegatedJobStatusFailed
 			j.Error = execErr.Error()
@@ -279,6 +306,35 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 		detail = auditDetail("repo", repoFull, "number", strconv.Itoa(number), "verdict", string(d.Verdict), "rule", d.Rule, "error", execErr.Error())
 	}
 	s.audit.LogRecord(user, action, detail, "", repoFull, number)
+}
+
+// delegatedPriorDecision reports when the hive last recorded a delegated
+// decision under the same rule on the item (the marker plus the rule tag
+// CommentBody writes), so a repeat click is answered as a no-op. A comment
+// listing failure reads as "no prior decision": deciding twice is the
+// cheaper mistake.
+func (s *Server) delegatedPriorDecision(ctx context.Context, repoFull string, number int, rule string) (time.Time, bool) {
+	if rule == "" || s.deps == nil || s.deps.GHClient == nil || s.deps.GHClient.GoGitHub() == nil {
+		return time.Time{}, false
+	}
+	owner, repoName, _ := strings.Cut(repoFull, "/")
+	comments, _, err := s.deps.GHClient.GoGitHub().Issues.ListComments(ctx, owner, repoName, number, &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: delegatedDecisionGatherLimit}})
+	if err != nil {
+		return time.Time{}, false
+	}
+	tag := "(rule `" + rule + "`)"
+	var at time.Time
+	found := false
+	for _, c := range comments {
+		body := c.GetBody()
+		if !delegatedecision.IsDelegatedComment(body) || !strings.Contains(body, tag) {
+			continue
+		}
+		if t := c.GetCreatedAt().Time; !found || t.After(at) {
+			at, found = t, true
+		}
+	}
+	return at, found
 }
 
 // gatherDelegatedInput reads what the decider needs from GitHub.

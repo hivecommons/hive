@@ -121,13 +121,22 @@ func TestHivePromptAndConfirmNode(t *testing.T) {
   await tick(); document.querySelector('.primary').click(); out.push(await p);
   p = hiveConfirm({title:'Delete?', message:'Delete repo?'});
   await tick(); document.querySelector('.cancel').click(); out.push(await p);
+  // cfg.check: a remember-my-choice box; confirm resolves { checked }.
+  p = hiveConfirm({title:'T', message:'m', check:{label:'Skip'}});
+  await tick(); out.push(!!document.querySelector('.hive-dialog-check-input')); document.querySelector('.hive-dialog-check-input').checked = true; document.querySelector('.primary').click(); out.push(await p);
+  p = hiveConfirm({title:'T', message:'m', check:{label:'Skip'}});
+  await tick(); document.querySelector('.primary').click(); out.push(await p);
+  p = hiveConfirm({title:'T', message:'m', check:{label:'Skip'}});
+  await tick(); document.querySelector('.cancel').click(); out.push(await p);
+  p = hiveConfirm({title:'T', message:'m'});
+  await tick(); out.push(document.querySelector('.hive-dialog-check-input')); dispatchKey('Escape'); await p;
   console.log(JSON.stringify(out));
 })();`
 	out, err := exec.Command("node", "-e", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("node dialog test failed: %v\n%s", err, out)
 	}
-	if got := strings.TrimSpace(string(out)); got != `["new/repo",null,true,false]` {
+	if got := strings.TrimSpace(string(out)); got != `["new/repo",null,true,false,true,{"checked":true},{"checked":false},false,null]` {
 		t.Fatalf("unexpected dialog results: %s", got)
 	}
 }

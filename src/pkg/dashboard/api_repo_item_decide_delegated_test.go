@@ -65,6 +65,11 @@ func TestDelegatedDecisionIssueDefaultApproveUnparksWithMarker(t *testing.T) {
 	if job.Marker != "<!-- hive:delegated-decision by=h1 policy=owner-delegate -->" {
 		t.Fatalf("marker = %q", job.Marker)
 	}
+	// The shared row-action result says what hive decided, on what, and
+	// what happens next (the dashboard's persistent toast).
+	if job.Result == nil || job.Result.Action != rowActionApproved || job.Result.Rule != "default-approve" || job.Result.Target.Kind != rowActionTargetIssue || job.Result.Target.Number != 7 || job.Result.Outcome == "" || job.Result.Next == "" {
+		t.Fatalf("result = %+v", job.Result)
+	}
 	// The `/hive decision` comment with the marker lands first, then the
 	// un-park reply the sweep would post; approved-direction and
 	// triage/accepted are written; nothing closes.
@@ -320,5 +325,32 @@ func TestDelegatedSupersedeRefusedWhenAdoptionDisabled(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
 		t.Fatalf("request label queued despite disabled adoption: %v", mock.added)
+	}
+}
+
+// TestDelegatedDecisionRepeatIsNoop (owner request): clicking "Let hive
+// decide" again after the same rule already decided the item records
+// nothing new and says so plainly, with when the decision was first
+// recorded and what still blocks the item.
+func TestDelegatedDecisionRepeatIsNoop(t *testing.T) {
+	mock := &repoItemDecisionMock{issueLabels: []string{"bug", "stage/045-needs-decision"}}
+	mock.priorComments = []string{delegatedecision.CommentBody(delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: "default-approve", Rationale: "r"}, "h1", "writer")}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action != rowActionNoop {
+		t.Fatalf("result = %+v", job.Result)
+	}
+	if !strings.HasPrefix(job.Result.Outcome, "No change — hive already recorded this decision") || !strings.Contains(job.Result.Outcome, "2026-10-28T12:01:00Z") {
+		t.Fatalf("outcome = %q", job.Result.Outcome)
+	}
+	if job.Result.AppliedAt == nil || !strings.Contains(job.Result.Next, "blocked") {
+		t.Fatalf("next = %q applied_at = %v", job.Result.Next, job.Result.AppliedAt)
+	}
+	if len(mock.comments) != 0 || len(mock.added) != 0 {
+		t.Fatalf("a repeat must write nothing: comments=%v added=%v", mock.comments, mock.added)
 	}
 }

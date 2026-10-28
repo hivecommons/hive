@@ -177,6 +177,9 @@ func TestRepoItemAcceptTriageIdempotentAndIssuesOnly(t *testing.T) {
 	if !resp.AlreadyAccepted || len(mock.added)+len(mock.removed)+len(mock.created) != 0 {
 		t.Fatalf("already accepted must be a no-op: resp=%+v added=%v removed=%v created=%v", resp, mock.added, mock.removed, mock.created)
 	}
+	if resp.Result == nil || resp.Result.Action != rowActionNoop || !strings.HasPrefix(resp.Result.Outcome, "No change — ") {
+		t.Fatalf("no-op result = %+v", resp.Result)
+	}
 	for _, entry := range srv.GetAudit().Recent(10) {
 		if entry.Action == acceptTriageAuditAction {
 			t.Fatal("a no-op must not be audited as a write")
@@ -191,6 +194,11 @@ func TestRepoItemAcceptTriageIdempotentAndIssuesOnly(t *testing.T) {
 	}
 	if len(mock.added) != 0 || strings.Join(mock.removed, ",") != "needs-triage" {
 		t.Fatalf("lingering awaiting: added=%v removed=%v", mock.added, mock.removed)
+	}
+	resp = repoAcceptTriageResponse{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Result == nil || resp.Result.Action != rowActionTriaged || resp.Result.Target.Kind != rowActionTargetIssue {
+		t.Fatalf("result = %+v", resp.Result)
 	}
 
 	// A pull request has no triage state.

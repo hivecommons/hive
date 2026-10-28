@@ -27,6 +27,23 @@ type repoHoldResponse struct {
 	HoldLabel    string   `json:"hold_label"`
 	Removed      []string `json:"removed"`
 	MinStatusSeq uint64   `json:"minStatusSeq"`
+	// Result is the shared row-action outcome for the dashboard's toast.
+	Result *RowActionResult `json:"result,omitempty"`
+}
+
+// repoHoldResult reads a hold toggle into the shared row-action result.
+func repoHoldResult(repoFull string, number int, itemType string, held bool, label string, removed []string) *RowActionResult {
+	target := rowActionTarget(repoFull, itemType, number)
+	if held {
+		return &RowActionResult{Action: rowActionHeld, Target: target, Outcome: "`" + label + "` applied.",
+			Next: "Agents leave this item alone until the hold is released; the chevron reads hold on the next refresh."}
+	}
+	if len(removed) == 0 {
+		res := rowActionNoopResult(target, "no hold label was on this item", time.Time{}, "")
+		return &res
+	}
+	return &RowActionResult{Action: rowActionReleased, Target: target, Outcome: "Hold released: `" + strings.Join(removed, "`, `") + "` removed.",
+		Next: "The hive picks it up on its next pass."}
 }
 
 type repoHoldPermissionCacheEntry struct {
@@ -652,5 +669,6 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 		HoldLabel:    canonical,
 		Removed:      removed,
 		MinStatusSeq: minStatusSeq,
+		Result:       repoHoldResult(repoFull, number, itemType, body.Held, canonical, removed),
 	})
 }
