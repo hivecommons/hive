@@ -10861,6 +10861,7 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		return ri > 0 && rj <= 0
 	})
 
+	scopeReader := reviewScopeLinearReader(cfg, logger)
 	prs := make([]review.PullRequest, 0, len(candidates))
 	for _, pr := range candidates {
 		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
@@ -10912,6 +10913,9 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		// Changed paths for the bot-author model route's path exceptions
 		// (review.bot_author_full_review_paths); fetched only for a listed
 		// bot's PR that is about to be reviewed.
+		// The linked Linear issue's text for the scope contract, read here
+		// so reviewers never need a Linear token (hivecommons/hive#14906).
+		reviewScopeContractFor(ctx, scopeReader, &item, logger)
 		item.ChangedFiles, item.ChangedFilesKnown = reviewBotRouteFilesFor(ctx, cfg, ghr, botRoute, artifact, state, fullRepo, pr.Number, pr.Author, pr.HeadSHA, pr.BodyDigest)
 		prs = append(prs, item)
 	}
