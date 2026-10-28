@@ -26,6 +26,11 @@ type copilotTranscriptEvent struct {
 		Success *bool           `json:"success"`
 		Result  json.RawMessage `json:"result"`
 		Error   json.RawMessage `json:"error"`
+		// ShellExecution ({"exitCode":N}) and ToolTelemetry are read by the
+		// repeat-failure reader (repeat_failure_copilot.go); raw so a shape
+		// change never breaks the kick log.
+		ShellExecution json.RawMessage `json:"shellExecution"`
+		ToolTelemetry  json.RawMessage `json:"toolTelemetry"`
 	} `json:"data"`
 }
 

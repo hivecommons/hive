@@ -190,6 +190,9 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if advisorFlag := m.advisorLaunchFlag(agent, backend, isInference); advisorFlag != "" {
 		launchCmd += advisorFlag
 	}
+	// Repeat-failure check (#14550): omp loads Hive's record extension with
+	// its own --extension, whether or not the advisor is on.
+	launchCmd += m.repeatFailureOmpLaunchFlag(agent, backend)
 
 	if bootstrapPrompt == "" && isInference {
 		bootstrapPrompt = "You are an AI agent. Await further instructions."
@@ -301,6 +304,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	// Repeat-failure check (#14550): write the BASH_ENV route the env prefix
 	// below points at, or remove it when the check is now off.
 	m.provisionRepeatFailureBashEnv(agent, backend)
+	m.provisionRepeatFailureAgyRecordDir(agent, backend)
 
 	// NOTE on Copilot's "Confirm folder trust" modal (≥1.0.78): #4563 tried to
 	// pre-seed config.json trusted_folders here so it never appears. That does
@@ -1181,8 +1185,9 @@ var agyTurnRunnerBinary = func() string {
 
 // agyHeadlessTurnShellCommand is the line a kick types into a headless agy
 // pane: one `hive agy-turn` run, then the ready marker. The prompt stays in a
-// file and reaches agy on stdin (see agy_turn.go for why not argv).
-func agyHeadlessTurnShellCommand(hiveBinary, agyBinary, model, effort, promptFile string, newConversation bool) string {
+// file and reaches agy on stdin (see agy_turn.go for why not argv). A
+// non-empty recordFile turns on the repeat-failure route for this turn.
+func agyHeadlessTurnShellCommand(hiveBinary, agyBinary, model, effort, promptFile string, newConversation bool, recordFile string) string {
 	args := []string{shellQuote(hiveBinary), agyTurnSubcommand, "--agy", shellQuote(agyBinary)}
 	if model != "" {
 		args = append(args, "--model", shellQuote(model), "--effort", shellQuote(agyLaunchEffort(model, effort)))
@@ -1191,6 +1196,9 @@ func agyHeadlessTurnShellCommand(hiveBinary, agyBinary, model, effort, promptFil
 		"--conversation-file", fmt.Sprintf(`"${%s:-}"`, agyConversationFileVar))
 	if newConversation {
 		args = append(args, "--new-conversation")
+	}
+	if recordFile != "" {
+		args = append(args, "--"+agyRepeatFailureRecordFlag, shellQuote(recordFile))
 	}
 	return fmt.Sprintf("printf '\\n%s\\n'; %s; echo %s",
 		agyHeadlessRunningMarker, strings.Join(args, " "), agyHeadlessReadyMarker)

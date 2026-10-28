@@ -124,6 +124,9 @@ type agyTurnOptions struct {
 	promptFile       string
 	conversationFile string
 	newConversation  bool
+	// recordFile is the repeat-failure raw record file; empty while the
+	// check is off (repeat_failure_agy.go).
+	recordFile string
 }
 
 // RunAgyTurn implements `hive agy-turn`. It returns the process exit code.
@@ -149,6 +152,7 @@ func parseAgyTurnArgs(args []string, stderr io.Writer) (agyTurnOptions, error) {
 	fs.StringVar(&opts.promptFile, "prompt-file", "", "file holding the prompt for this turn (required)")
 	fs.StringVar(&opts.conversationFile, "conversation-file", "", "file recording the conversation id to resume; empty disables continuity")
 	fs.BoolVar(&opts.newConversation, "new-conversation", false, "ignore the recorded conversation and start a new one")
+	fs.StringVar(&opts.recordFile, agyRepeatFailureRecordFlag, "", "repeat-failure record file to append one record per run_command to; empty records nothing")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}
@@ -205,6 +209,7 @@ func runAgyTurn(opts agyTurnOptions, stdout, stderr io.Writer) int {
 	}
 
 	r := newAgyTurnRenderer(stdout, time.Now())
+	r.recordFile = opts.recordFile
 	r.status()
 	if err := cmd.Start(); err != nil {
 		r.finish()
@@ -366,6 +371,12 @@ type agyTurnRenderer struct {
 	pending     map[int]string // step index → assistant text not yet ended by a newline
 	lastTool    string
 	result      *agyTurnResult
+	// recordFile receives one repeat-failure record per run_command step that
+	// ends; empty records nothing. commands holds each run_command step's
+	// CommandLine from its ACTIVE update, recorded the steps already written.
+	recordFile string
+	commands   map[int]string
+	recorded   map[int]bool
 }
 
 func newAgyTurnRenderer(w io.Writer, started time.Time) *agyTurnRenderer {
@@ -503,6 +514,9 @@ func (r *agyTurnRenderer) handleStep(s *agyStepUpdate) {
 		if name == "" && s.ToolInfo != nil {
 			name = s.ToolInfo.Name
 		}
+		if name == "run_command" {
+			r.recordRunCommand(s)
+		}
 		switch s.State {
 		case "ACTIVE":
 			r.mu.Lock()
@@ -522,6 +536,37 @@ func (r *agyTurnRenderer) handleStep(s *agyStepUpdate) {
 			r.mu.Unlock()
 			r.emit(fmt.Sprintf("▸ %s %s\n", name, strings.ToLower(s.State)))
 		}
+	}
+}
+
+// recordRunCommand appends the repeat-failure record of a run_command step
+// once it ends, at most once per step. Fails open: an unwritable record file
+// means no record and nothing else.
+func (r *agyTurnRenderer) recordRunCommand(s *agyStepUpdate) {
+	if r.recordFile == "" {
+		return
+	}
+	r.mu.Lock()
+	if r.commands == nil {
+		r.commands, r.recorded = map[int]string{}, map[int]bool{}
+	}
+	command := agyRunCommandLine(s.ToolInfo)
+	if command == "" {
+		command = r.commands[s.StepIndex]
+	} else {
+		r.commands[s.StepIndex] = command
+	}
+	rec, ok := agyRunCommandRecord(s, command)
+	if ok && !r.recorded[s.StepIndex] {
+		r.recorded[s.StepIndex] = true
+		delete(r.commands, s.StepIndex)
+	} else {
+		ok = false
+	}
+	r.mu.Unlock()
+	if ok {
+		rec.Time = r.now()
+		_ = AppendRepeatFailureRecord(r.recordFile, rec)
 	}
 }
 

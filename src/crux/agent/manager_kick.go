@@ -428,7 +428,9 @@ func (m *Manager) deliverAgyHeadlessKickLocked(agent *AgentProcess, message, tri
 	}
 	model = normalizeModelNameForBackend(model, "agy", false)
 	// ClearOnKick maps to a new agy conversation: there is no TUI to /clear.
-	cmd := agyHeadlessTurnShellCommand(agyTurnRunnerBinary(), "agy", model, agent.Config.ReasoningEffort, promptFile, agent.Config.ClearOnKick)
+	// The repeat-failure switch is read per kick, so turning it off stops the
+	// next turn's records without a relaunch.
+	cmd := agyHeadlessTurnShellCommand(agyTurnRunnerBinary(), "agy", model, agent.Config.ReasoningEffort, promptFile, agent.Config.ClearOnKick, m.repeatFailureAgyRecordFile(agent))
 	if err := m.tmuxSendLiteralForAgent(agent, cmd); err != nil {
 		return m.kickDeliveryFailedLocked(agent, "send text", err)
 	}

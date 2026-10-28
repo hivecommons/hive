@@ -130,7 +130,7 @@ func TestAgyLaunchCommandLine_DerivesEffortFromModelSuffix(t *testing.T) {
 }
 
 func TestAgyHeadlessTurnCommandRunsTurnRunner(t *testing.T) {
-	cmd := agyHeadlessTurnShellCommand("/usr/local/bin/hive", "agy", "gemini-pro", "high", "/data/agents/a/.hive-agy-prompt-a.txt", false)
+	cmd := agyHeadlessTurnShellCommand("/usr/local/bin/hive", "agy", "gemini-pro", "high", "/data/agents/a/.hive-agy-prompt-a.txt", false, "")
 
 	if strings.Contains(cmd, "do the task") || strings.Contains(cmd, "$(cat") {
 		t.Fatalf("headless turn command must not expand the prompt into argv (E2BIG past 128 KiB); cmd: %q", cmd)
@@ -148,10 +148,10 @@ func TestAgyHeadlessTurnCommandRunsTurnRunner(t *testing.T) {
 	if strings.Contains(cmd, "--new-conversation") {
 		t.Errorf("a normal kick must continue the agent's conversation; cmd: %q", cmd)
 	}
-	if cmd := agyHeadlessTurnShellCommand("hive", "agy", "", "", "/p", true); !strings.Contains(cmd, "--new-conversation") {
+	if cmd := agyHeadlessTurnShellCommand("hive", "agy", "", "", "/p", true, ""); !strings.Contains(cmd, "--new-conversation") {
 		t.Errorf("ClearOnKick must start a new conversation; cmd: %q", cmd)
 	}
-	if cmd := agyHeadlessTurnShellCommand("hive", "agy", "", "high", "/p", false); strings.Contains(cmd, "--model") || strings.Contains(cmd, "--effort") {
+	if cmd := agyHeadlessTurnShellCommand("hive", "agy", "", "high", "/p", false, ""); strings.Contains(cmd, "--model") || strings.Contains(cmd, "--effort") {
 		t.Errorf("no model configured must pass neither --model nor --effort; cmd: %q", cmd)
 	}
 }

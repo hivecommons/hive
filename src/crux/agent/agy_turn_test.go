@@ -321,7 +321,7 @@ func TestAgyHeadlessLaunchShim_ExportsEnvAndConversationFile(t *testing.T) {
 	launch := agyHeadlessFullLaunchCmd(
 		shellEnvVar("HIVE_AGENT_MODE", "issues-only")+" "+shellEnvVar("HTTPS_PROXY", "http://127.0.0.1:18443")+" ",
 		agyHeadlessLaunchCmd())
-	kick := agyHeadlessTurnShellCommand(runner, "agy", "", "", "/tmp/p", false)
+	kick := agyHeadlessTurnShellCommand(runner, "agy", "", "", "/tmp/p", false, "")
 	line := launch + "\n" + kick + "\n" + kick + "\n" + launch + "\n" + kick + "\n"
 
 	out, err := exec.Command(bash, "--noprofile", "--norc", "-c", line).CombinedOutput()

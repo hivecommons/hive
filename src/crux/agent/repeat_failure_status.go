@@ -107,6 +107,9 @@ type repeatFailureMonitor struct {
 	detectorKey string
 	window      time.Duration
 	agents      map[string]*repeatFailureAgentState
+	// copilot holds each Copilot agent's session-log reader
+	// (repeat_failure_copilot.go).
+	copilot map[string]*copilotRecordReader
 }
 
 // SetRepeatFailureConfigResolver injects the live repeat_failure block so the
@@ -165,7 +168,7 @@ func (m *Manager) CollectRepeatFailures(now time.Time) {
 	mon := &m.repeatFailure
 	if !m.repeatFailureEnabled() {
 		mon.mu.Lock()
-		mon.detector, mon.detectorKey, mon.agents = nil, "", nil
+		mon.detector, mon.detectorKey, mon.agents, mon.copilot = nil, "", nil, nil
 		mon.mu.Unlock()
 		m.mu.Lock()
 		for _, a := range m.agents {
@@ -176,6 +179,7 @@ func (m *Manager) CollectRepeatFailures(now time.Time) {
 	}
 	cfg := m.repeatFailureConfig()
 	mon.configure(cfg)
+	m.readCopilotRepeatFailureRecords()
 	collector := NewRepeatFailureCollector(cfg, m.repeatFailureRecordPaths, func(rec RepeatFailureRecord) {
 		m.recordRepeatFailure(rec, now)
 	}, m.logger)

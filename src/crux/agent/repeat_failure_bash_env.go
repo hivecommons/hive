@@ -245,21 +245,32 @@ func (m *Manager) provisionRepeatFailureBashEnv(agent *AgentProcess, backend str
 	}
 }
 
-// writeRepeatFailureBashEnv creates the 0700 record directory and writes the
-// script into it, as the agent's user when there is one (the same su-exec
-// discipline as the advisor hook files) and directly otherwise.
+// writeRepeatFailureBashEnv creates the 0700 record directory and writes a
+// route file (the BASH_ENV script, the omp extension) into it, as the agent's
+// user when there is one (the same su-exec discipline as the advisor hook
+// files) and directly otherwise.
 func writeRepeatFailureBashEnv(userSpec, recordPath, script string, content []byte) error {
+	if err := ensureRepeatFailureRecordDirAs(userSpec, recordPath); err != nil {
+		return err
+	}
 	if userSpec == "" {
-		if err := EnsureRepeatFailureRecordDir(recordPath, 0); err != nil {
-			return err
-		}
 		return writeRepeatFailureBashEnvFile(script, content)
+	}
+	return writeFileAsUser(userSpec, script, content)
+}
+
+// ensureRepeatFailureRecordDirAs creates the 0700 record directory as the
+// agent's user, or directly when there is none, so a producer running as the
+// agent can append to the record file inside it.
+func ensureRepeatFailureRecordDirAs(userSpec, recordPath string) error {
+	if userSpec == "" {
+		return EnsureRepeatFailureRecordDir(recordPath, 0)
 	}
 	dir := filepath.Dir(recordPath)
 	if out, err := exec.Command("su-exec", userSpec, "sh", "-c", `umask 077 && mkdir -p "$1" && chmod 700 "$1"`, "sh", dir).CombinedOutput(); err != nil {
 		return outputErr("creating "+dir+" as "+userSpec, err, out)
 	}
-	return writeFileAsUser(userSpec, script, content)
+	return nil
 }
 
 // writeRepeatFailureBashEnvFile replaces script atomically, never following a
@@ -294,29 +305,38 @@ func writeFileNoFollow(path string, content []byte, mode os.FileMode) error {
 // header) and drops the BASH_ENV Hive put into an existing tmux session, so a
 // switched-off check leaves nothing behind at the next launch.
 func (m *Manager) removeRepeatFailureBashEnv(agent *AgentProcess, script string) {
+	if m.removeRepeatFailureFile(agent, script, repeatFailureBashEnvHeader) {
+		m.clearRepeatFailureSessionEnv(agent, script)
+	}
+}
+
+// removeRepeatFailureFile deletes a route file Hive wrote, recognised by its
+// header line, and reports whether there was one. A file Hive did not write
+// is left alone.
+func (m *Manager) removeRepeatFailureFile(agent *AgentProcess, path, header string) bool {
 	userSpec := m.agentExecUserSpec(agent)
 	var existing []byte
 	var err error
 	if userSpec == "" {
-		existing, err = os.ReadFile(script)
+		existing, err = os.ReadFile(path)
 	} else {
-		existing, err = readFileAsUser(userSpec, script)
+		existing, err = readFileAsUser(userSpec, path)
 	}
-	if err != nil || !strings.HasPrefix(string(existing), repeatFailureBashEnvHeader) {
-		return
+	if err != nil || !strings.HasPrefix(string(existing), header) {
+		return false
 	}
 	if userSpec == "" {
-		err = os.Remove(script)
+		err = os.Remove(path)
 		if errors.Is(err, os.ErrNotExist) {
 			err = nil
 		}
 	} else {
-		err = exec.Command("su-exec", userSpec, "rm", "-f", script).Run()
+		err = exec.Command("su-exec", userSpec, "rm", "-f", path).Run()
 	}
 	if err != nil {
-		m.logger.Warn("repeat-failure: removing the stale BASH_ENV route failed", "agent", agent.Name, "path", script, "error", err)
+		m.logger.Warn("repeat-failure: removing a stale route file failed", "agent", agent.Name, "path", path, "error", err)
 	}
-	m.clearRepeatFailureSessionEnv(agent, script)
+	return true
 }
 
 // clearRepeatFailureSessionEnv removes BASH_ENV from the agent's tmux session
