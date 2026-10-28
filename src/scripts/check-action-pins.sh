@@ -30,7 +30,9 @@ while IFS= read -r line; do
     [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
     *) echo "NOT-PINNED $file: $ref (use a 40-hex commit SHA)"; fail=1; continue ;;
   esac
-done < <(grep -rhnE '^\s*(-\s*)?uses:\s*[a-zA-Z0-9._-]+/' "$DIR" 2>/dev/null | grep -v '^\s*#')
+# -H keeps the file name in front of the line number even for a single-file
+# DIR, so `${line%%:*}` names the workflow and not its line number.
+done < <(grep -rHnE '^\s*(-\s*)?uses:\s*[a-zA-Z0-9._-]+/' "$DIR" 2>/dev/null | grep -v '^\s*#')
 
 # Resolve each unique pin. Skipped without a token so the script stays usable
 # offline; CI always has one.
@@ -38,15 +40,22 @@ if command -v gh >/dev/null 2>&1; then
   # Extract owner/repo from the `uses:` VALUE, taking only the first two path
   # segments: a reusable workflow is `owner/repo/.github/workflows/x.yml@SHA`,
   # so naively splitting on the last '/' asks the API about a path, not a repo.
-  grep -rhoE 'uses:[[:space:]]*[a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+@[0-9a-f]{40}' "$DIR" 2>/dev/null \
-    | sed -E 's/^uses:[[:space:]]*//' | sort -u | while read -r ref; do
+  #
+  # Collected first, then iterated: when the pipeline's status fed `|| fail=1`
+  # directly, a tree with no SHA-pinned `uses:` at all made grep exit 1 and
+  # pipefail turned that into a FAILED verdict with no finding printed.
+  # Nothing to resolve is a pass, not a failure.
+  pins="$(grep -rhoE 'uses:[[:space:]]*[a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+@[0-9a-f]{40}' "$DIR" 2>/dev/null \
+    | sed -E 's/^uses:[[:space:]]*//' | sort -u)"
+  while read -r ref; do
+    [ -z "$ref" ] && continue
     sha="${ref#*@}"; path="${ref%@*}"
     repo="$(printf '%s' "$path" | cut -d/ -f1,2)"
     if ! gh api "repos/$repo/commits/$sha" --jq '.sha' >/dev/null 2>&1; then
       echo "MISSING-SHA $repo@$sha does not exist in that repository"
-      exit 1
+      fail=1
     fi
-  done || fail=1
+  done <<<"$pins"
 fi
 
 # An EMPTY workflow-expression delimiter pair anywhere in a workflow file is a
