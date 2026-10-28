@@ -763,7 +763,29 @@ between. Two mechanisms close that gap
   already links this issue (claim skipped)* with the PR as evidence
   (reason `open_pr_linked`). A failed listing fails **open**: the
   ledger-backed guards still apply, and a flaky listing must not stall every
-  claim.
+  claim. The gate also refuses an issue the confirming read says is already
+  **closed** (`issue closed`), so an issue closed between enumerations is
+  never dispatched from the cached snapshot.
+- **Webhook claim linking.** A `pull_request` delivery (opened, reopened,
+  edited, synchronize, ready-for-review, draft, closed) is parsed with the
+  same closing-keyword and branch-name grammar and written into the claim
+  ledger the moment it lands
+  ([#14814](https://github.com/hivecommons/hive/issues/14814);
+  `src/pkg/github/webhook_pr_claims.go`): an open PR's claims are recorded
+  (and the cached actionable snapshot re-filtered, so the hub's own agents
+  stop seeing the issue too), a PR edited to stop naming an issue or closed
+  without merging releases it, and a merged PR's claims become merged
+  claims. Before this the link was only made on the full reconcile pass —
+  about an hour apart on a busy spoke — and an owner PR opened with
+  `Fixes #N` in between left #N offerable for that long; the `/contribute`
+  lane handed [#14765](https://github.com/hivecommons/hive/issues/14765) out
+  nine minutes after #14772 (Fixes #14765) opened. The receiver's response
+  lists the issues as `claimed_issues`, the governor logs `webhook PR claims
+  applied to claim ledger` with the PR, state and counts, and the open-PR
+  listing cache for the repo is invalidated so the pre-dispatch guard
+  re-lists on its next call. An `issues` closed delivery (or a PR merged
+  with a closing keyword, which GitHub delivers as the issue's own close)
+  already evicts the issue from the status snapshot the lane offers from.
 - **Duplicate-fix sweep.** Every ~15 minutes (an unstick step, alongside the
   supersession sweep) the hive looks for an open issue two or more open PRs
   close and resolves the pair deterministically. The **earlier-created PR

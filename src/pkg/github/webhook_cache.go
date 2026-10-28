@@ -57,6 +57,10 @@ type WebhookEventResult struct {
 	// reported on; a reader with its own PR set (forgestate) resolves it to
 	// a PR the detail cache may not hold (hivecommons/hive#13377).
 	HeadSHA string `json:"head_sha,omitempty"`
+	// ClaimedIssues lists the issues a `pull_request` delivery's PR claims
+	// (closing keyword, branch name or reference) in its own repository,
+	// as recorded into the claim ledger on the event (hivecommons/hive#14814).
+	ClaimedIssues []int `json:"claimed_issues,omitempty"`
 	// Item is the payload's own view of the issue or pull request the
 	// delivery named (every `issues`, `issue_comment` and `pull_request*`
 	// payload embeds the full object with its state), nil for deliveries
@@ -416,9 +420,16 @@ type webhookEventPayload struct {
 		State     string     `json:"state"`
 		Merged    bool       `json:"merged"`
 		MergedAt  *time.Time `json:"merged_at"`
+		ClosedAt  *time.Time `json:"closed_at"`
+		CreatedAt *time.Time `json:"created_at"`
 		UpdatedAt *time.Time `json:"updated_at"`
-		Head      struct {
+		HTMLURL   string     `json:"html_url"`
+		User      *struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		Head struct {
 			SHA string `json:"sha"`
+			Ref string `json:"ref"`
 		} `json:"head"`
 	} `json:"pull_request"`
 	Issue *struct {
@@ -484,6 +495,16 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		res.ReopenedIssue = n
 		if hook := issueReopenedHook(); hook != nil {
 			hook(configured, n, sharedWebhookTracker.now())
+		}
+	}
+	if d, ok := c.webhookPRClaimDelivery(event, configured, p, sharedWebhookTracker.now()); ok {
+		// The PR's claims take effect now, not on the next reconcile pass
+		// (hivecommons/hive#14814); the live open-PR index for the repo is
+		// stale the same instant, so the next guard call lists again.
+		res.ClaimedIssues = d.ClaimedIssues()
+		c.InvalidateOpenPRLinks(configured)
+		if hook := prClaimsHook(); hook != nil {
+			hook(d)
 		}
 	}
 	if merged, ok := webhookMergedPR(event, p); ok {
