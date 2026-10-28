@@ -69,13 +69,13 @@ test('open, open · hold and claimed never move', () => {
 
 test('a PR in progress pulses only when an agent is working it', () => {
   for (const stage of [30, 40]) {
-    assert.strictEqual(motion({ stage, kind: 'pr', author_kind: 'hive' }), 'active', stage + ' hive author');
-    assert.strictEqual(motion({ stage, kind: 'pr', author_kind: 'clanker' }), 'active', stage + ' clanker author');
+    assert.strictEqual(motion({ stage, kind: 'pr', author_kind: 'hive', stage_actor: { kind: 'hive' } }), 'active', stage + ' hive author');
+    assert.strictEqual(motion({ stage, kind: 'pr', author_kind: 'clanker', stage_actor: { kind: 'clanker' } }), 'active', stage + ' clanker author');
     assert.strictEqual(motion({ stage, kind: 'pr', author_kind: 'human' }), 'static', stage + ' human author');
     assert.strictEqual(motion({ stage, kind: 'pr' }), 'static', stage + ' unknown author');
   }
-  // An issue at 030 (kick running, no PR yet) reads the linked PR's author kind.
-  assert.strictEqual(motion({ stage: 30, kind: 'issue', linked_prs: [{ author_kind: 'hive' }] }), 'active');
+  // A mirrored issue carries the server-derived stage actor too.
+  assert.strictEqual(motion({ stage: 30, kind: 'issue', stage_actor: { kind: 'hive' }, linked_prs: [{ author_kind: 'hive' }] }), 'active');
   assert.strictEqual(motion({ stage: 30, kind: 'issue', linked_prs: [] }), 'static');
 });
 

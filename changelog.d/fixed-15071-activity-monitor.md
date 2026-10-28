@@ -1,0 +1,1 @@
+- The Activity Monitor names server-derived stage actors, shows idle bot PRs as waiting or conflicting, draws shared covering PRs only once, and keeps the merged-today counter above the merge gate.

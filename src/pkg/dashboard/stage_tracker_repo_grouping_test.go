@@ -215,7 +215,7 @@ const stages = [
   { number: 90, label: 'Ready for human merge', short: 'Ready for human merge', branch_from: 80 },
   { number: 100, label: 'Merge queue', short: 'Merge queue' }, { number: 110, label: 'Merged', short: 'Merged' },
 ];
-const P = (repo, n, stage, extra) => Object.assign({ kind: 'pr', repo, number: n, stage, title: 'PR ' + n, url: 'https://x/' + n, author: 'ann', author_kind: 'human', stage_since: '2026-01-01T11:00:00Z', created_at: '2026-01-01T10:00:00Z', modifiers: [] }, extra || {});
+const P = (repo, n, stage, extra) => Object.assign({ kind: 'pr', repo, number: n, stage, stage_actor: { kind: stage === 85 || stage === 90 ? 'human' : 'hive' }, title: 'PR ' + n, url: 'https://x/' + n, author: 'ann', author_kind: 'human', stage_since: '2026-01-01T11:00:00Z', created_at: '2026-01-01T10:00:00Z', modifiers: [] }, extra || {});
 const I = (repo, n, stage, extra) => Object.assign({ kind: 'issue', repo, number: n, stage, title: 'Issue ' + n, url: 'https://x/' + n, stage_since: '2026-01-01T11:00:00Z', created_at: '2026-01-01T10:00:00Z', modifiers: [] }, extra || {});
 `
 }

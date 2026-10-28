@@ -1386,6 +1386,8 @@
     .ham-pager .ham-chip:disabled { opacity: 0.4; cursor: default; }
     .ham-cols { padding: 0 var(--sp-2) var(--sp-2); border-bottom: var(--line-width) solid var(--line-subtle); margin-bottom: var(--sp-2); }
     .ham-cols .ham-strip { height: auto; }
+    .ham-counter-header { border-bottom: 0; margin-bottom: 0; }
+    .ham-counter-align { justify-content: flex-end; }
     .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
     .ham-cols .ham-since { color: var(--text-faint); font-family: inherit; }
     .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-5) var(--sp-2); }
@@ -7213,11 +7215,11 @@
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
         <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Sound off — turn on (merge zap + new-item buzz; plays a test of each)" title="Sound off — turn on (merge zap + new-item buzz; plays a test of each)">🔇</button>
-        <span class="ham-chip ham-merged-count" id="activity-monitor-merged" role="status" aria-live="polite" title="Merged today: 0"><svg class="ham-merged-ico" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/></svg>Merged today: <span class="ham-merged-n">0</span></span>
       </div>
       <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
       <div class="ham-selbar" id="activity-monitor-selbar" role="toolbar" aria-label="Selected rows" hidden></div>
+      <div class="ham-cols ham-counter-header" id="activity-monitor-header" role="region" aria-label="Merge gate totals"><div class="ham-strip-row"><div class="ham-strip ham-counter-align"><span class="ham-chip ham-merged-count" id="activity-monitor-merged" role="status" aria-live="polite" title="Merged today: 0"><svg class="ham-merged-ico" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/></svg>Merged today: <span class="ham-merged-n">0</span></span></div><span class="ham-since" aria-hidden="true"></span></div></div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
       <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
     </div>
@@ -14103,6 +14105,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerLabelQuery = '';
 
     function stageTrackerHeadline(item) {
+      if (item.stage_state) return item.stage_state;
       if (item.superseded && item.superseded.closer_pr) return 'Superseded by #' + item.superseded.closer_pr + ' — decide';
       const n = Number(item.stage) || 0;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
@@ -14325,6 +14328,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       110: '<path d="M3 8l3 3 7-7"/>',
       issue: '<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.5"/>',
       human: '<circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/>',
+      bot: '<rect x="3" y="5" width="10" height="8" rx="1.5"/><path d="M8 5V2M5 2h6"/><circle cx="6" cy="9" r="0.9"/><circle cx="10" cy="9" r="0.9"/>',
       clanker: '<rect x="3" y="5" width="10" height="8" rx="1.5"/><path d="M8 5V2M5 2h6"/><circle cx="6" cy="9" r="0.9"/><circle cx="10" cy="9" r="0.9"/>',
       hive: '<path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/>',
       pr: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="13" r="1.5"/><path d="M4 4.5v7M12 11.5V7a2 2 0 0 0-2-2H8"/>',
@@ -14340,21 +14344,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // "[author icon] #N title" for the PR in progress column of the title line.
     // tip, when given, replaces the default "title / Author" hover text.
     function stageTrackerPRRef(number, url, authorKind, author, title, tip) {
-      const ak = authorKind || 'hive';
+      const ak = authorKind || '';
       const who = ak + (author ? ' · @' + author : '');
       return `<a class="ham-pr-ref" href="${esc(url || '#')}" target="_blank" rel="noopener" title="${esc(tip || ((title ? title + '\n' : '') + 'Author: ' + who))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who)}<span class="ham-pr-num">#${Number(number) || 0}</span>${title ? `<span class="ham-pr-title">${esc(title)}</span>` : ''}</a>`;
     }
 
     // Author kind of whoever must move on the item's current stage ('' = none).
     function stageTrackerActorKind(item) {
-      const role = STAGE_TRACKER_ACTOR[Number(item.stage) || 0] || '';
-      if (role === 'claimant') return item.claimant_kind || '';
-      if (role === 'author') {
-        if (item.kind === 'pr') return item.author_kind || '';
-        const lp = Array.isArray(item.linked_prs) ? item.linked_prs[0] : null;
-        return (lp && lp.author_kind) || '';
-      }
-      return role;
+      const actor = item && item.stage_actor;
+      return actor && actor.kind !== 'none' ? actor.kind : '';
     }
 
     // An Open item is tinted stale once it has sat unlabelled this long.
@@ -14401,7 +14399,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const from = range && range.from != null ? range.from : -Infinity;
       const to = range && range.to != null ? range.to : Infinity;
       const actorKind = stageTrackerActorKind(item);
-      const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
+      const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : (item.stage_state && (item.stage_author_kind || item.author_kind) === 'bot' ? stageTrackerIcon('bot', 'ham-ico ham-author-ico', 'PR author: bot') : '');
       // Static chevrons carry no data-motion: the CSS only animates the two
       // moving buckets. The hive-acting pulse needs an agent actually on
       // the item (tracker-cues: working); a hive stage with nobody on it is
@@ -14429,7 +14427,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
           else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim() + (sg.description ? ' — ' + sg.description : '');
+          if (item.stage_state && !sg.cap) tip = item.stage_state;
           if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
+          else if (!sg.cap && item.stage_actor) tip += ' · no one is working on this right now — ' + item.stage_actor.why;
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.
           if (sentinel) tip = stageTrackerSentinelTip(item) + ' — ' + tip;
@@ -14442,6 +14442,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // becomes a button and the chevron drops its native title so the
         // popover (which repeats the stage line) is its one hover text.
         const decision = active && !sg.cap && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
+        if (active && item.stage_state) { sg.short = item.stage_state; if (sg.detour) sg.detour.text = item.stage_state; }
         const word = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`;
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
         else if (active) inner = stageTrackerIcon(sg.number, 'ham-ico ham-active-ico') + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;
@@ -14460,7 +14461,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!active) return '';
       const actor = active.cap ? '' : stageTrackerActorKind(item);
       const regressed = stageTrackerRegressionText(item, Date.now());
-      const text = active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + (actor ? ' · Next move: ' + actor : '') + (regressed ? ' · ' + regressed : '');
+      const text = (item.stage_state || active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '')) + (actor ? ' · Next move: ' + actor : '') + (regressed ? ' · ' + regressed : '');
       return `<p class="ham-current-stage">${esc(text)}</p>`;
     }
 
@@ -14851,7 +14852,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // PRs under it (the superseded-by prompt pre-fills the one sibling).
     function stageTrackerLinkedPRItem(issue, lp) {
       const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x)) : [];
-      return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
+      return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '', stage_actor: lp.stage_actor, stage_state: lp.stage_state || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, superseded: !!lp.superseded, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
@@ -14864,7 +14865,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: an issue's open nested PRs as row items.
     function stageTrackerNestedOpenPRs(issue) {
       if (!issue || issue.kind === 'pr') return [];
-      return (Array.isArray(issue.linked_prs) ? issue.linked_prs : []).filter(stageTrackerLinkedPROpen).map(lp => stageTrackerLinkedPRItem(issue, lp));
+      return (Array.isArray(issue.linked_prs) ? issue.linked_prs : []).filter(lp => stageTrackerLinkedPROpen(lp) && (!lp.drawn_under || Number(lp.drawn_under) === Number(issue.number))).map(lp => stageTrackerLinkedPRItem(issue, lp));
     }
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = stageTrackerLinkedPRItem(issue, lp);
@@ -15041,13 +15042,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const title = item.title || '';
       let prRefs = [], shown = item, range = null, subs = '';
       if (isIssue) {
-        const linked = stageTrackerLinkedSorted(item, stages);
+        const allLinked = stageTrackerLinkedSorted(item, stages);
+        const linked = allLinked.filter(lp => !lp.drawn_under || Number(lp.drawn_under) === Number(item.number));
+        const elsewhere = allLinked.filter(lp => lp.drawn_under && Number(lp.drawn_under) !== Number(item.number));
+        const references = elsewhere.map(lp => `<a class="ham-badge" href="#${encodeURIComponent('ham-row-' + stageTrackerItemKey({ repo: item.repo, kind: 'issue', number: lp.drawn_under }))}">#${Number(lp.number)} · shown under issue #${Number(lp.drawn_under)}</a>`);
+        if (!linked.length && elsewhere.length) { range = { to: 20 }; shown = Object.assign({}, item, { stage: 40 }); }
+        prRefs = references;
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
-          const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
+          const who = (lp.author_kind || 'unknown') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
-          shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
+          shown = Object.assign({}, item, { via_pr: true, stage_actor: lp.stage_actor, stage_state: lp.stage_state || '', stage_author_kind: lp.author_kind || '', stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, adoption: lp.adoption || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
@@ -15056,6 +15062,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (stageTrackerAnchor(item.stage, stages, item.kind) <= 20) shown = Object.assign({}, item, { stage: 40 });
           subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs, ctx)).join('');
         }
+        if (linked.length) prRefs = prRefs.concat(references);
       }
       // Invariant (owner): the issue slot on the left never holds a PR. A
       // PR whose issue is listed is nested under it; a PR seen on its own
@@ -15086,7 +15093,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const ci = item.closed_issue;
         const notPlanned = String(ci.state_reason || '').toLowerCase() === 'not_planned';
         const ciTip = (ci.title || STAGE_TRACKER_CLOSED_ISSUE_TITLE) + ' · closed' + (notPlanned ? ' (not planned)' : '') + ' · PR still open';
-        const ak = item.author_kind || 'hive';
+        const ak = item.author_kind || '';
         leadHtml = `<div class="ham-head-main ham-head-pr-anchor">
             ${stageTrackerIcon('pr', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc((title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), ak + (item.author ? ' · @' + item.author : ''))}#${Number(item.number) || 0}</a>
@@ -15108,7 +15115,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           </div>`;
       }
       const prs = typeof stageTrackerRowPRKeys === 'function' ? stageTrackerRowPRKeys(item) : '';
-      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}>
+      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}" tabindex="0" id="${esc('ham-row-' + stageTrackerItemKey(item))}" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown))}
@@ -17789,7 +17796,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        merge count." A merged PR's row does not vanish on the next refresh:
        it is pinned for STAGE_TRACKER_CELEBRATE_PIN_MS, its ✓ cell glows, a
        small brand-amber hex token lifts out of that cell and arcs to the
-       toolbar's "Merged today" count, the count ticks +1 with a soft pop
+       gate header's "Merged today" count, the count ticks +1 with a soft pop
        (the zap plays on arrival when sound is on), then the row leaves by
        the usual exit. Several merges in one refresh stagger 200 ms apart
        and at most STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS tokens fly at once;
@@ -17894,7 +17901,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerRowPRKeys(item) {
       if (!item) return '';
       if (item.kind === 'pr') return stageTrackerPRKey(item.repo, item.number);
-      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && Number(lp.number) > 0).map(lp => stageTrackerPRKey(lp.repo || item.repo, lp.number)).join(' ');
+      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && Number(lp.number) > 0 && (!lp.drawn_under || Number(lp.drawn_under) === Number(item.number))).map(lp => stageTrackerPRKey(lp.repo || item.repo, lp.number)).join(' ');
     }
     // PR key → the row key it was last drawn on (from the previous payload's
     // nested_under / linked_prs), for a merge whose row left the DOM
@@ -17905,7 +17912,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of (d && Array.isArray(d.items) ? d.items : [])) {
         if (!it) continue;
         if (it.kind === 'pr') out[stageTrackerPRKey(it.repo, it.number)] = Number(it.nested_under) > 0 ? stageTrackerItemKey({ repo: it.repo, kind: 'issue', number: it.nested_under }) : stageTrackerItemKey(it);
-        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) if (lp && Number(lp.number) > 0) out[stageTrackerPRKey(lp.repo || it.repo, lp.number)] = stageTrackerItemKey(it);
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) if (lp && Number(lp.number) > 0 && (!lp.drawn_under || Number(lp.drawn_under) === Number(it.number))) out[stageTrackerPRKey(lp.repo || it.repo, lp.number)] = stageTrackerItemKey(it);
       }
       return out;
     }
@@ -18434,7 +18441,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerCelebrateSectionHtml(on) {
       return `<section class="overview-settings-section" id="sts-celebrate" aria-labelledby="sts-celebrate-title">
           <div class="overview-settings-card-title" id="sts-celebrate-title">Merges</div>
-          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a small token rises into the toolbar's "Merged today" count, which ticks up. Under reduced motion the count ticks and the row glows, nothing flies. The count resets at midnight.</p>
+          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a small token rises into the gate header's "Merged today" count, which ticks up. Under reduced motion the count ticks and the row glows, nothing flies. The count resets at midnight.</p>
           <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-celebrate-on" data-change-action="stageTrackerCelebrateChange" data-arg-types="c"${on ? ' checked' : ''}>Celebrate merges <span class="text-muted">(default on)</span></label><button type="button" class="hv-btn btn-sm" data-action="stageTrackerTestCelebration" data-stop="1" title="Play one celebration on the first row of the list — the count does not change">Test celebration</button></div>
         </section>`;
     }

@@ -233,8 +233,20 @@ type StageTrackerHop struct {
 	Regressed bool `json:"regressed,omitempty"`
 }
 
+// StageTrackerActor names current work or the next responsible actor.
+type StageTrackerActor struct {
+	Kind  string     `json:"kind"`
+	Login string     `json:"login"`
+	Since *time.Time `json:"since"`
+	Why   string     `json:"why"`
+}
+
 // StageTrackerItem is one open issue or PR on the tracker.
 type StageTrackerItem struct {
+	StageActor StageTrackerActor `json:"stage_actor"`
+	StageState string            `json:"stage_state,omitempty"`
+	// DrawnUnder is the single issue row that draws this PR (0 = standalone).
+	DrawnUnder int                           `json:"drawn_under,omitempty"`
 	Superseded *github.ReviewQueueSuperseded `json:"superseded,omitempty"`
 	Repo       string                        `json:"repo"`
 	Number     int                           `json:"number"`
@@ -260,7 +272,7 @@ type StageTrackerItem struct {
 	// both empty for an actionable or held item.
 	Bucket       string `json:"bucket,omitempty"`
 	BucketReason string `json:"bucket_reason,omitempty"`
-	// AuthorKind is human / clanker / hive ("" = unknown) and
+	// AuthorKind is human / clanker / hive / bot ("" = unknown) and
 	// AuthorKindSource says whether it came from an author/<kind> label
 	// ("label") or was inferred from the PR's hive markers ("inferred").
 	AuthorKind       string `json:"author_kind,omitempty"`
@@ -458,16 +470,19 @@ type StageTrackerLinkedIssue struct {
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
 type StageTrackerLinkedPR struct {
-	BaseRef    string     `json:"base_ref,omitempty"`
-	Number     int        `json:"number"`
-	Title      string     `json:"title,omitempty"`
-	URL        string     `json:"url,omitempty"`
-	Author     string     `json:"author,omitempty"`
-	AuthorKind string     `json:"author_kind,omitempty"`
-	Stage      int        `json:"stage,omitempty"`
-	StageSince *time.Time `json:"stage_since,omitempty"`
-	Caption    string     `json:"caption,omitempty"`
-	Modifiers  []string   `json:"modifiers,omitempty"`
+	StageActor StageTrackerActor `json:"stage_actor"`
+	StageState string            `json:"stage_state,omitempty"`
+	DrawnUnder int               `json:"drawn_under,omitempty"`
+	BaseRef    string            `json:"base_ref,omitempty"`
+	Number     int               `json:"number"`
+	Title      string            `json:"title,omitempty"`
+	URL        string            `json:"url,omitempty"`
+	Author     string            `json:"author,omitempty"`
+	AuthorKind string            `json:"author_kind,omitempty"`
+	Stage      int               `json:"stage,omitempty"`
+	StageSince *time.Time        `json:"stage_since,omitempty"`
+	Caption    string            `json:"caption,omitempty"`
+	Modifiers  []string          `json:"modifiers,omitempty"`
 	// DeferredModifiers mirrors the nested PR's own row field: the
 	// merge-gate pills it is not yet drawing.
 	DeferredModifiers []string `json:"deferred_modifiers,omitempty"`
@@ -698,7 +713,7 @@ func stageTrackerAuthorKind(labels []string, author string, appAuthored, hiveAtt
 		}
 	}
 	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(author)), botLoginSuffix) {
-		return "", ""
+		return "bot", authorKindSrcInfer
 	}
 	if strings.TrimSpace(author) == "" {
 		return "", ""
@@ -1777,6 +1792,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
+	for i := range resp.Items {
+		stageTrackerSetActor(&resp.Items[i], status.Agents)
+	}
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
@@ -2500,6 +2518,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 			if pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]; pr != nil {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
+				lp.StageActor, lp.StageState = pr.StageActor, pr.StageState
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
 				lp.Adoption = pr.Adoption
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
@@ -2541,7 +2560,17 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 	}
 	for i := range items {
 		if items[i].Kind == "pr" {
+			items[i].DrawnUnder = items[i].NestedUnder
 			items[i].ClosedIssue = stageTrackerClosedIssueAnchor(items[i])
+		}
+	}
+	// Publish the final owner only after every issue has been considered.
+	for i := range items {
+		for j := range items[i].LinkedPRs {
+			lp := &items[i].LinkedPRs[j]
+			if pr := prs[items[i].Repo+"#"+strconv.Itoa(lp.Number)]; pr != nil {
+				lp.DrawnUnder = pr.DrawnUnder
+			}
 		}
 	}
 }
