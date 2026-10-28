@@ -593,9 +593,11 @@ func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Ac
 	// Checks still running, or a review-pending head with no reviewer
 	// verdict yet, is waiting on the hive, not on a person. A contributor PR
 	// the lane skipped for want of a linked issue gets no verdict until the
-	// contributor or a maintainer acts, so it never waits on the hive.
+	// contributor or a maintainer acts, so the missing verdict alone does
+	// not make it wait on the hive (ApplyStageLabels still honours the
+	// head's running checks from the human route's digest).
 	a.WaitingOnHive = ci == ciReasonPending || stageReasonWaitsOnHive(obs.Reason) ||
-		(stage == stagelabels.ReviewPending && obs.Reason != prstage.ContributorLaneReasonNoLinkedIssue &&
+		(stage == stagelabels.ReviewPending && obs.Reason != contributorLaneReasonNoLinkedIssue &&
 			!(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
 	return a
 }
@@ -953,7 +955,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if verdict.Stage != stagelabels.ReturnedToContributor && verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
 			}
-			store.NoteActivity(key, stageActivity(obs, verdict.Stage))
+			act := stageActivity(obs, verdict.Stage)
+			if !act.WaitingOnHive && verdict.Stage == stagelabels.ReviewPending && pass.Route != nil && pass.Route.Checks.Known && pass.Route.Checks.Pending > 0 {
+				// An admission reason decided before CI was read (no
+				// linked issue) says nothing about the checks; the human
+				// route's digest of the head does, and running checks
+				// wait on the hive.
+				act.WaitingOnHive = true
+			}
+			store.NoteActivity(key, act)
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{
 				Stage:       verdict.Stage,
