@@ -148,6 +148,9 @@ type Config struct {
 	// `<!-- hive-shared-ci-<n> -->` once incident #n closes
 	// (hivecommons/hive#12253). Default on.
 	SharedCIRerun SharedCIRerunConfig `yaml:"shared_ci_rerun,omitempty" json:"shared_ci_rerun,omitempty"`
+	// Search controls the portfolio search indexer (hivecommons/hive#14635).
+	// Default off.
+	Search SearchConfig `yaml:"search,omitempty" json:"search,omitempty"`
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`

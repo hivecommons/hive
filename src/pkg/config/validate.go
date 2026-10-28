@@ -251,6 +251,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Compliance.Validate(); err != nil {
 		return err
 	}
+	if err := c.Search.Validate(); err != nil {
+		return err
+	}
 	if err := c.Review.Severity.Validate(); err != nil {
 		return err
 	}

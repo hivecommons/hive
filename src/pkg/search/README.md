@@ -2,9 +2,9 @@
 
 `search` is the storage and query core of the portfolio search RFC (#14491,
 Part A, #14634). It defines the document model and the `Backend` contract, and
-ships the default embedded backend. Nothing is wired to it yet: ingest, the
-`/api/search` endpoint, the dashboard pane and the `search.*` configuration
-keys build on this package in follow-up issues.
+ships the default embedded backend and the `Indexer` that feeds it (#14635).
+The `/api/search` endpoint, the dashboard pane, forge metadata and metrics
+ingest build on this package in follow-up issues.
 
 ## Document model
 
@@ -43,3 +43,30 @@ postings rather than adopt bleve; no new module):
 
 As with `codeindex`, a repo listed in `Result.Coverage` may be incomplete;
 missing hits there are not proof that no matching document exists.
+
+## Indexer
+
+`Indexer` (#14635) is started by `cmd/hive` only when `search.enabled: true`;
+otherwise there is no goroutine and no `/data/search` directory. Every 30
+minutes (`DefaultRebuildInterval`, the prior-art code index cadence) it runs
+one incremental rebuild off the hot path:
+
+- One walk of the evidence root: each review bundle
+  (`<owner>/<repo>/<n>/<head>.json`) becomes an `evidence` document plus one
+  `finding` document per verdict finding and one `sentinel` document per
+  sentinel hit; each complexity snapshot becomes a `complexity` document.
+  Facets include `verdict` and `sentinel.rule`.
+- Beads (`bead`, under the repo of an `owner/repo#N` external ref, else the
+  primary repo) and knowledge facts (`fact`, under the primary repo).
+- Sources are read through their package APIs and never written. A source is
+  re-indexed only when its stamp changes: bundle `updated_at`, snapshot
+  `captured_at`, bead `updated_at`/status, or a hash of the fact content.
+  Documents a source no longer yields, or whose source disappeared, are
+  deleted.
+- Documents older than `search.retention` months (by `At`) are not indexed
+  and age out; the first rebuild of a process also removes leftovers of the
+  indexer's kinds that no current source produces.
+- Every title, text and field value passes through `crux/logscrub` first.
+- No ingest runs during the hosted startup budget (#14389).
+- Documents are `private` (never federated) unless the `Visibility` hook
+  reports the repo `public`.

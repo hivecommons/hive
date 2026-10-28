@@ -3578,6 +3578,9 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	// before stores are registered with the primer below.
 	b.startCodeMaps()
 
+	// Portfolio search indexer (#14635); a no-op unless search.enabled.
+	b.startSearchIndexer()
+
 	// Register everything connected above with the boot-time primer. With
 	// knowledge.enabled false there is none, and the stores are only primed
 	// once the dashboard toggle builds one (#9231).

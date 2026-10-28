@@ -2,8 +2,9 @@
 // document model, the pluggable Backend interface and the default embedded,
 // dependency-free inverted-index backend. It mirrors pkg/codeindex: tokenised
 // posting lists, immutable snapshots published atomically, and per-repo
-// coverage errors instead of silently partial results. Nothing is wired to it
-// by default; ingest, APIs and UI build on this package separately.
+// coverage errors instead of silently partial results. Indexer feeds it from
+// the hive's local stores when search.enabled is set; APIs and UI build on
+// this package separately.
 package search
 
 import (
