@@ -519,16 +519,6 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	return delegatedOutcome{Decision: &d, Notes: notes, Result: &result, Err: execErr}
 }
 
-// delegatedPriorDecision reports when the hive last recorded a delegated
-// decision under the same rule on the item (the marker plus the rule tag
-// CommentBody writes), so a repeat click is answered as a no-op. A comment
-// listing failure reads as "no prior decision": deciding twice is the
-// cheaper mistake.
-func (s *Server) delegatedPriorDecision(ctx context.Context, repoFull string, number int, rule string) (time.Time, bool) {
-	st := s.delegatedPriorDecisionState(ctx, repoFull, number, rule)
-	return st.At, st.Found
-}
-
 // gatherDelegatedInput reads what the decider needs from GitHub.
 func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, number int, itemType string, req delegatedDecisionRequest) (delegatedecision.Input, error) {
 	client := s.deps.GHClient
