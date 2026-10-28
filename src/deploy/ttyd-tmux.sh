@@ -1,11 +1,19 @@
 #!/bin/bash
 set -euo pipefail
 
-# ttyd runs as dev (uid 1001) but tmux sessions are owned by per-agent UIDs.
-# tmux enforces that only the socket owner can attach, so we must use su-exec
-# to attach as the agent user. The socket path encodes the UID:
+# ttyd normally runs as dev (uid 1001) but tmux sessions are owned by per-agent
+# UIDs. tmux enforces that only the socket owner can attach, so we must use
+# su-exec to attach as the agent user. The socket path encodes the UID:
 #   /tmp/tmux-{agent_uid}/hive-{name}
 # We extract the owner from the socket and su-exec as that user.
+#
+# When there is no per-agent UID map every session lives on the DEFAULT server
+# socket of whatever UID the container runs as. That UID is not necessarily
+# dev's passwd UID: under OpenShift's restricted SCC the container runs as an
+# arbitrary UID (e.g. 1000840000) with no passwd entry, so the default socket
+# is /tmp/tmux-1000840000/default while `id -u dev` still answers 1001. The
+# fallback therefore tries every plausible default socket — the current UID's,
+# dev's, and any /tmp/tmux-*/default — rather than assuming one of them.
 
 # Remember whether ttyd actually forwarded a session name. When it did not, the
 # fallback below picks a session the operator never asked for, and the resulting
@@ -31,29 +39,60 @@ if ! [[ "$TTYD_POLL_SEC" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
+# tmux puts its socket directories under $TMUX_TMPDIR (default /tmp). Honouring
+# it here keeps the lookup consistent with the servers the agent manager
+# started, and lets the tests point the whole lookup at a scratch directory.
+TMUX_SOCKET_ROOT="${TMUX_TMPDIR:-/tmp}"
+TMUX_SOCKET_ROOT="${TMUX_SOCKET_ROOT%/}"
+
 list_available_sessions() {
   # Real sessions are named hive-<agent>, so listing them turns a dead end into
   # the one thing the caller needs: a name that would have worked.
   local found=""
   local sock
-  for sock in /tmp/tmux-*/*; do
+  for sock in "${TMUX_SOCKET_ROOT}"/tmux-*/*; do
     [ -S "$sock" ] || continue
+    [ "$(basename "$sock")" = "default" ] && continue
     found="${found} $(basename "$sock")"
   done
-  local dev_uid default_socket session
-  dev_uid=$(id -u dev 2>/dev/null || echo "1001")
-  default_socket="/tmp/tmux-${dev_uid}/default"
-  if [ -S "$default_socket" ]; then
+  local default_socket session
+  while IFS= read -r default_socket; do
+    [ -S "$default_socket" ] || continue
     while IFS= read -r session; do
       [ -n "$session" ] || continue
       found="${found} ${session}"
     done < <(tmux -S "$default_socket" list-sessions -F '#S' 2>/dev/null || true)
-  fi
+  done < <(default_socket_candidates)
   if [ -n "$found" ]; then
     echo "available sessions:${found}" >&2
   else
-    echo "available sessions: none — no agent tmux sockets exist under /tmp/tmux-*/" >&2
+    echo "available sessions: none — no agent tmux sockets exist under ${TMUX_SOCKET_ROOT}/tmux-*/" >&2
   fi
+}
+
+# default_socket_candidates prints, one per line and deduplicated, every path
+# the default tmux server socket could be at. Order is by likelihood: the UID
+# this process actually runs as (the only correct answer under an arbitrary
+# OpenShift UID), then dev's passwd UID (the historical assumption, still right
+# on Compose/Podman), then any other default socket present (a server started
+# by a UID that is neither, e.g. after a UID remap mid-upgrade).
+default_socket_candidates() {
+  local dev_uid current_uid sock seen=" "
+  current_uid=$(id -u)
+  dev_uid=$(id -u dev 2>/dev/null || echo "1001")
+  emit() {
+    case "$seen" in *" $1 "*) return 0 ;; esac
+    seen="${seen}$1 "
+    echo "$1"
+  }
+  emit "${TMUX_SOCKET_ROOT}/tmux-${current_uid}/default"
+  emit "${TMUX_SOCKET_ROOT}/tmux-${dev_uid}/default"
+  # nullglob is not set (and must not leak into the rest of the script), so an
+  # unmatched glob comes back literally; the -S test below discards it.
+  for sock in "${TMUX_SOCKET_ROOT}"/tmux-*/default; do
+    [ -S "$sock" ] || continue
+    emit "$sock"
+  done
 }
 
 socket_has_session() {
@@ -73,24 +112,26 @@ socket_has_session() {
 find_tmux_socket() {
   local sock
   TMUX_SOCKET=""
-  for sock in /tmp/tmux-*/"${SESSION}"; do
+  for sock in "${TMUX_SOCKET_ROOT}"/tmux-*/"${SESSION}"; do
     if [ -S "$sock" ] && socket_has_session "$sock"; then
       TMUX_SOCKET="$sock"
       return 0
     fi
   done
 
-  # Fallback: session may be on the default tmux server (no UID isolation). A
+  # Fallback: session may be on a default tmux server (no UID isolation). A
   # bare default socket is not enough: during boot it may exist before the
   # requested hive-<agent> session does, and attaching immediately would fail
-  # tight-loop instead of waiting for that session to be created.
-  local dev_uid default_socket
-  dev_uid=$(id -u dev 2>/dev/null || echo "1001")
-  default_socket="/tmp/tmux-${dev_uid}/default"
-  if [ -S "$default_socket" ] && socket_has_session "$default_socket"; then
-    TMUX_SOCKET="$default_socket"
-    return 0
-  fi
+  # tight-loop instead of waiting for that session to be created. Which
+  # default socket is in use depends on the UID the container runs as, hence
+  # the candidate walk (see default_socket_candidates).
+  local default_socket
+  while IFS= read -r default_socket; do
+    if [ -S "$default_socket" ] && socket_has_session "$default_socket"; then
+      TMUX_SOCKET="$default_socket"
+      return 0
+    fi
+  done < <(default_socket_candidates)
 
   return 1
 }

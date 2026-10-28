@@ -996,6 +996,19 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_ttyd_url_arg.sh
 
+      # The browser terminal's attach helper falls back to the DEFAULT tmux
+      # socket when agents share one UID. It assumed that socket lived under
+      # dev's passwd uid (/tmp/tmux-1001), but under OpenShift's restricted
+      # SCC the container runs as an arbitrary uid with no passwd entry, so
+      # every session was alive on /tmp/tmux-<arbitrary>/default while the
+      # dashboard polled /tmp/tmux-1001/default for 900s. This stubs `id`,
+      # starts real tmux servers at the paths each uid layout would use, and
+      # asserts the helper attaches to the right one. Skips where tmux is
+      # absent.
+      - name: ttyd finds the default tmux socket under an arbitrary container UID
+        working-directory: .
+        run: bash src/deploy/test_ttyd_default_socket_uid.sh
+
       # #5435: hive-discord.service ran `node bot.js` with
       # WorkingDirectory=/tmp/hive/discord, resolving the executed code out of a
       # world-writable parent that is cleared on every reboot — a local user who
