@@ -296,10 +296,11 @@ func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
 		}
 		_, _ = fmt.Fprintln(&buf, line)
 	}
-	// printer's table renderer only understands maps and slices of maps; the
-	// hive list is a fixed set of columns with a leading active marker, so it
-	// is laid out here and handed over as preformatted text.
-	_ = printer{format: "table", out: out}.print(strings.TrimRight(buf.String(), "\n"))
+	// printer's table renderer only understands maps and slices of maps, and
+	// its string path compacts server-derived text into one line; the hive
+	// list is a fixed set of columns laid out here from the local profile
+	// store, so it is written as-is to keep its rows and tab stops.
+	_, _ = fmt.Fprintln(out, strings.TrimRight(buf.String(), "\n"))
 	_, _ = fmt.Fprintln(out, "\n* = active: the hub the relay solicits from first.")
 }
 
