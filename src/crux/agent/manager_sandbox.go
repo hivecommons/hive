@@ -203,6 +203,19 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 	}
 	res, err := exec.Run(ctx, spec)
 	ended := time.Now()
+	// The run record is written to disk after m.mu is released (defers run
+	// LIFO), so a slow volume never stalls every status reader.
+	var pending *SandboxRunHistoryEntry
+	var persist func(string, SandboxRunHistoryEntry) error
+	workDir := ""
+	defer func() {
+		if pending == nil {
+			return
+		}
+		if perr := persist(workDir, *pending); perr != nil {
+			m.logger.Warn("sandbox run record not persisted", "name", name, "error", perr)
+		}
+	}()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	agent, ok := m.agents[name]
@@ -222,8 +235,11 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 			agent.KickOutcome.KickAt = *agent.LastKick
 		}
 		entry := SandboxRunHistoryEntry{Agent: name, Backend: effectiveBackend(agent), Model: agent.Config.Model, Run: run}
-		if perr := persistSandboxRun(m.workDir, entry); perr != nil {
-			m.logger.Warn("sandbox run record not persisted", "name", name, "error", perr)
+		pending = &entry
+		workDir = m.workDir
+		persist = m.sandboxRunPersister
+		if persist == nil {
+			persist = persistSandboxRun
 		}
 	}
 	if err != nil {

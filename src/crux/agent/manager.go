@@ -739,6 +739,8 @@ type Manager struct {
 	// launcher; tests inject a fake through setSandboxJobLauncherFactoryForTest.
 	sandboxJobLauncherFactory func(config.SandboxJobConfig) sandbox.Launcher
 	sandboxRunner             sandboxCommandRunner
+	// sandboxRunPersister overrides persistSandboxRun in tests.
+	sandboxRunPersister func(workDir string, entry SandboxRunHistoryEntry) error
 	sandboxPushMinter         pushbroker.TokenMinter
 	sandboxPRClient           PRCreator
 	sandboxMutation           effects.Boundary

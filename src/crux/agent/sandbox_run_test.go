@@ -4,11 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/outputschema"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
@@ -124,5 +126,61 @@ func TestPersistAndLoadSandboxRun(t *testing.T) {
 	}
 	if got, err := loadSandboxRun(workDir, "quality"); err != nil || got != nil {
 		t.Errorf("other agent must have no record, got %+v, %v", got, err)
+	}
+}
+
+func TestCompactSandboxRunHistoryKeepsNewestLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs.jsonl")
+	var b strings.Builder
+	for i := 0; i < 10; i++ {
+		b.WriteString(`{"agent":"deps","n":` + strconv.Itoa(i) + "}\n")
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o660); err != nil {
+		t.Fatal(err)
+	}
+	if err := compactSandboxRunHistory(path, 1<<20, 3); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != b.String() {
+		t.Fatalf("a file under the cap must be left alone, got %q", got)
+	}
+	if err := compactSandboxRunHistory(path, 10, 3); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "{\"agent\":\"deps\",\"n\":7}\n{\"agent\":\"deps\",\"n\":8}\n{\"agent\":\"deps\",\"n\":9}\n"
+	if string(got) != want {
+		t.Errorf("compacted history = %q, want %q", got, want)
+	}
+}
+
+func TestSandboxRunPersistedWithoutManagerLock(t *testing.T) {
+	yes := true
+	m, _, _ := jobRuntimeManager(t,
+		&config.AgentSandboxOverride{Enabled: &yes},
+		config.AgentSandboxConfig{Enabled: true, Image: "agent-image",
+			Job: &config.SandboxJobConfig{WorkspaceClaim: "hive-data"}})
+	held := make(chan bool, 1)
+	m.mu.Lock()
+	m.sandboxRunPersister = func(string, SandboxRunHistoryEntry) error {
+		if m.mu.TryLock() {
+			m.mu.Unlock()
+			held <- false
+		} else {
+			held <- true
+		}
+		return nil
+	}
+	m.mu.Unlock()
+	if err := m.SendKick("deps", "fix"); err != nil {
+		t.Fatalf("SendKick: %v", err)
+	}
+	select {
+	case wasHeld := <-held:
+		if wasHeld {
+			t.Error("sandbox run was persisted while m.mu was held")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("sandbox run was never persisted")
 	}
 }
