@@ -1,0 +1,1 @@
+- Terminal attach finds default tmux sessions under arbitrary container UIDs, including OpenShift restricted SCC deployments, and respects `TMUX_TMPDIR` ([#14789](https://github.com/hivecommons/hive/issues/14789)).

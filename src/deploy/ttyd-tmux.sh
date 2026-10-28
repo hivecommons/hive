@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# ttyd runs as dev (uid 1001) but tmux sessions are owned by per-agent UIDs.
+# ttyd may run as dev or an arbitrary container UID; sessions can belong to
+# per-agent UIDs.
 # tmux enforces that only the socket owner can attach, so we must use su-exec
 # to attach as the agent user. The socket path encodes the UID:
 #   /tmp/tmux-{agent_uid}/hive-{name}
@@ -31,33 +32,51 @@ if ! [[ "$TTYD_POLL_SEC" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
+# Use the same search order for attach and diagnostics. OpenShift can run dev
+# under a UID absent from passwd; retain the passwd UID and other servers as
+# fallbacks for deployments with per-agent ownership.
+TMUX_ROOT="${TMUX_TMPDIR:-/tmp}"
+default_socket_candidates() {
+  local current_uid dev_uid sock
+  local -A seen=()
+  current_uid=$(id -u)
+  dev_uid=$(id -u dev 2>/dev/null || echo "1001")
+  for sock in "$TMUX_ROOT/tmux-${current_uid}/default" \
+              "$TMUX_ROOT/tmux-${dev_uid}/default" \
+              "$TMUX_ROOT"/tmux-*/default; do
+    [ -z "${seen[$sock]:-}" ] || continue
+    seen[$sock]=1
+    printf '%s\n' "$sock"
+  done
+}
+
 list_available_sessions() {
   # Real sessions are named hive-<agent>, so listing them turns a dead end into
   # the one thing the caller needs: a name that would have worked.
   local found=""
-  local sock
-  for sock in /tmp/tmux-*/*; do
+  local sock session
+  for sock in "$TMUX_ROOT"/tmux-*/*; do
     [ -S "$sock" ] || continue
+    [ "${sock##*/}" = default ] && continue
     found="${found} $(basename "$sock")"
   done
-  local dev_uid default_socket session
-  dev_uid=$(id -u dev 2>/dev/null || echo "1001")
-  default_socket="/tmp/tmux-${dev_uid}/default"
-  if [ -S "$default_socket" ]; then
+  while IFS= read -r sock; do
+    [ -S "$sock" ] || continue
     while IFS= read -r session; do
       [ -n "$session" ] || continue
       found="${found} ${session}"
-    done < <(tmux -S "$default_socket" list-sessions -F '#S' 2>/dev/null || true)
-  fi
+    done < <(socket_tmux "$sock" list-sessions -F '#S' 2>/dev/null || true)
+  done < <(default_socket_candidates)
   if [ -n "$found" ]; then
     echo "available sessions:${found}" >&2
   else
-    echo "available sessions: none — no agent tmux sockets exist under /tmp/tmux-*/" >&2
+    echo "available sessions: none — no agent tmux sockets exist under ${TMUX_ROOT}/tmux-*/" >&2
   fi
 }
 
-socket_has_session() {
+socket_tmux() {
   local socket="$1"
+  shift
   local owner_uid owner_gid owner_spec current_uid
   local run=()
   owner_uid=$(stat -c '%u' "$socket" 2>/dev/null || echo "")
@@ -67,13 +86,17 @@ socket_has_session() {
     owner_spec="${owner_uid}:${owner_gid}"
     run=(su-exec "$owner_spec")
   fi
-  "${run[@]}" tmux -S "$socket" has-session -t "$SESSION" 2>/dev/null
+  "${run[@]}" tmux -S "$socket" "$@"
+}
+
+socket_has_session() {
+  socket_tmux "$1" has-session -t "$SESSION" 2>/dev/null
 }
 
 find_tmux_socket() {
   local sock
   TMUX_SOCKET=""
-  for sock in /tmp/tmux-*/"${SESSION}"; do
+  for sock in "$TMUX_ROOT"/tmux-*/"${SESSION}"; do
     if [ -S "$sock" ] && socket_has_session "$sock"; then
       TMUX_SOCKET="$sock"
       return 0
@@ -84,13 +107,12 @@ find_tmux_socket() {
   # bare default socket is not enough: during boot it may exist before the
   # requested hive-<agent> session does, and attaching immediately would fail
   # tight-loop instead of waiting for that session to be created.
-  local dev_uid default_socket
-  dev_uid=$(id -u dev 2>/dev/null || echo "1001")
-  default_socket="/tmp/tmux-${dev_uid}/default"
-  if [ -S "$default_socket" ] && socket_has_session "$default_socket"; then
-    TMUX_SOCKET="$default_socket"
-    return 0
-  fi
+  while IFS= read -r sock; do
+    if [ -S "$sock" ] && socket_has_session "$sock"; then
+      TMUX_SOCKET="$sock"
+      return 0
+    fi
+  done < <(default_socket_candidates)
 
   return 1
 }

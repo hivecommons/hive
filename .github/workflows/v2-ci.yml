@@ -983,6 +983,10 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_terminal_scrollback_status.sh
 
+      - name: ttyd discovers default sockets under arbitrary UIDs (#14789)
+        working-directory: .
+        run: bash src/deploy/test_ttyd_socket_discovery.sh
+
       # #4593: the dashboard's per-agent terminal link carries the session as
       # ?arg=hive-<agent>, which ttyd only forwards when started with -a
       # (--url-arg). The credential branch added in #2178 REPLACED the variable
