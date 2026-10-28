@@ -47,6 +47,11 @@ func TestDecideIssueRules(t *testing.T) {
 			verdict: VerdictRecommendOnly, rule: "hive-policy", keepsPark: true,
 		},
 		{
+			name:    "capability gap keeps the park instead of looping",
+			in:      Input{Kind: KindIssue, Number: 14976, Title: "Retry wrappers", Reasons: []string{"workflow files which the App token cannot push (no `workflows` permission); needs a human"}},
+			verdict: VerdictRecommendOnly, rule: "capability-gap", kinds: []ActionKind{ActionRecommendOnly}, keepsPark: true,
+		},
+		{
 			name:    "secrets item is owner-only",
 			in:      Input{Kind: KindIssue, Number: 11, Title: "Workflow fails: GITHUB_TOKEN lacks packages:write"},
 			verdict: VerdictOwnerOnly, rule: "owner-only", kinds: []ActionKind{ActionLabelsAdd, ActionRecommendOnly}, keepsPark: true,
