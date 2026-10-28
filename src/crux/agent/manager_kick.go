@@ -129,11 +129,14 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 
 	if agent.State != StateRunning {
 		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+			// Re-lock before every return: the deferred Unlock above must
+			// always pair with a held mutex.
 			m.mu.Unlock()
-			if err := m.Start(context.Background(), name); err != nil {
+			err := m.Start(context.Background(), name)
+			m.mu.Lock()
+			if err != nil {
 				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
 			}
-			m.mu.Lock()
 			agent, ok = m.agents[name]
 			if !ok || agent.State != StateRunning {
 				return fmt.Errorf("agent %s failed to enter running state", name)

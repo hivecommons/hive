@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +15,18 @@ import (
 const sharedSessionPoolPath = "/api/shared-agent-pool"
 const sharedPoolIdleEvictionDelay = 5 * time.Minute
 
+// Lease renewals tick every 20s against the Hub's default 90s TTL. A single
+// failed renewal must not kill an in-flight CLI turn: the watcher tolerates
+// transient failures until this much time has passed since the last successful
+// renewal (three missed ticks), which still leaves a margin before the Hub
+// expires the lease. A definitive "lease not found" from the Hub evicts at once.
+const sharedPoolRenewGrace = 60 * time.Second
+
 var errSharedSessionPoolBusy = fmt.Errorf("shared session pool is busy")
+
+// ErrSharedSessionLeaseNotFound reports that the Hub no longer recognises the
+// lease: the slot has been reclaimed, so the spoke must stop using it.
+var ErrSharedSessionLeaseNotFound = fmt.Errorf("shared session pool lease not found")
 
 // SharedSessionPool coordinates heavyweight CLI sessions across Hive tenants.
 // Each tenant keeps its own tmux session, UID, credentials, and workspace; only
@@ -78,6 +90,9 @@ func (c *sharedSessionPoolClient) request(ctx context.Context, method, path stri
 	if resp.StatusCode == http.StatusConflict {
 		return sharedPoolResponse{}, errSharedSessionPoolBusy
 	}
+	if resp.StatusCode == http.StatusNotFound && body.LeaseID != "" {
+		return sharedPoolResponse{}, ErrSharedSessionLeaseNotFound
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return sharedPoolResponse{}, fmt.Errorf("shared session pool returned %s: %s", resp.Status, strings.TrimSpace(string(message)))
@@ -136,6 +151,7 @@ func (c *sharedSessionPoolClient) Release(ctx context.Context, leaseID string) e
 func (m *Manager) watchSharedPoolLease(ctx context.Context, name, leaseID string) {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
+	lastRenewed := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -168,12 +184,91 @@ func (m *Manager) watchSharedPoolLease(ctx context.Context, name, leaseID string
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		err := m.sharedPool.Renew(ctx, leaseID)
 		cancel()
-		if err != nil {
+		if err == nil {
+			lastRenewed = time.Now()
+			continue
+		}
+		if m.sharedPoolRenewFailureEvicts(err, lastRenewed, time.Now()) {
 			m.logger.Warn("shared agent pool lease renewal failed; evicting CLI session", "agent", name, "error", err)
 			m.evictSharedPoolSession(name, leaseID)
 			return
 		}
+		m.logger.Warn("shared agent pool lease renewal failed; retrying before eviction",
+			"agent", name, "error", err, "since_last_renewal", time.Since(lastRenewed).Round(time.Second))
 	}
+}
+
+// sharedPoolRenewFailureEvicts decides whether a failed renewal ends the CLI
+// session now. A Hub that no longer knows the lease is definitive; any other
+// error (Hub restart, network blip, timeout) is tolerated until
+// sharedPoolRenewGrace has elapsed since the last successful renewal.
+func (m *Manager) sharedPoolRenewFailureEvicts(err error, lastRenewed, now time.Time) bool {
+	if errors.Is(err, ErrSharedSessionLeaseNotFound) {
+		return true
+	}
+	return now.Sub(lastRenewed) >= sharedPoolRenewGrace
+}
+
+// acquireSharedPoolLeaseUnlocked obtains the live-session lease a relaunch
+// outside Start needs (restart, missing-session recovery, resume). It MUST be
+// called with m.mu released: Acquire may block on a busy pool. A lease the
+// agent already holds is reused (fresh=false); otherwise a new one is taken
+// (fresh=true) and the caller owns releasing it if the launch fails. With no
+// shared pool configured it returns an empty lease.
+func (m *Manager) acquireSharedPoolLeaseUnlocked(ctx context.Context, agent *AgentProcess, name string) (leaseID string, fresh bool, err error) {
+	if m.sharedPool == nil {
+		return "", false, nil
+	}
+	m.mu.RLock()
+	leaseID = agent.poolLeaseID
+	m.mu.RUnlock()
+	if leaseID != "" {
+		return leaseID, false, nil
+	}
+	leaseID, err = m.sharedPool.Acquire(ctx, name)
+	if err != nil {
+		return "", false, fmt.Errorf("acquire shared CLI session slot: %w", err)
+	}
+	return leaseID, true, nil
+}
+
+// abandonFreshSharedPoolLeaseLocked returns a lease acquired for a relaunch
+// that will not happen (agent removed, or another path won the launch race).
+// Caller holds m.mu; the Hub call runs with the lock dropped and re-acquired.
+func (m *Manager) abandonFreshSharedPoolLeaseLocked(name, leaseID string, fresh bool) {
+	if leaseID == "" || !fresh {
+		return
+	}
+	m.mu.Unlock()
+	m.releaseSharedPoolLease(name, leaseID)
+	m.mu.Lock()
+}
+
+// launchInTmuxLeasedLocked is launchInTmux for the relaunch paths that do not
+// go through Start. Caller holds m.mu and passes the lease obtained from
+// acquireSharedPoolLeaseUnlocked. On success the lease is bound to the agent
+// and its renewal watcher started; on failure a freshly acquired lease is
+// returned to the Hub (m.mu is dropped around that network call and
+// re-acquired before returning, so the caller's deferred Unlock stays
+// balanced).
+func (m *Manager) launchInTmuxLeasedLocked(ctx context.Context, agent *AgentProcess, name, leaseID string, fresh bool) error {
+	if leaseID != "" {
+		agent.poolLeaseID = leaseID
+	}
+	err := m.launchInTmux(ctx, agent)
+	if leaseID == "" {
+		return err
+	}
+	if err == nil {
+		m.startSharedPoolLeaseWatcherLocked(agent, name, leaseID)
+		return nil
+	}
+	if fresh {
+		m.mu.Unlock()
+		m.releaseSharedPoolLease(name, leaseID)
+		m.mu.Lock()
+	}
+	return err
 }
 
 func (m *Manager) evictSharedPoolSession(name, leaseID string) {

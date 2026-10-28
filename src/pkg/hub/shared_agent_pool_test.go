@@ -198,3 +198,53 @@ func TestSharedAgentPoolFIFOWaitersAndStaleExpiry(t *testing.T) {
 		t.Fatalf("h3 acquire status = %d, want 200 after stale waiter pruned", r3.Code)
 	}
 }
+
+func TestSharedAgentPoolPerHiveCapDoesNotStarveOtherTenants(t *testing.T) {
+	pool := &sharedAgentPool{
+		path:         filepath.Join(t.TempDir(), "shared-agent-pool.json"),
+		max:          3,
+		maxPerHive:   1,
+		ttl:          time.Minute,
+		leases:       make(map[string]sharedAgentLease),
+		waitingHives: make(map[string]time.Time),
+		lastSeen:     make(map[string]time.Time),
+	}
+	s := &HubServer{logger: slog.Default()}
+	s.setHubSecret("test-per-hive-cap-master")
+
+	if r := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h0", map[string]string{"hive_id": "h0", "agent_name": "a"}); r.Code != http.StatusOK {
+		t.Fatalf("h0 first acquire status = %d, want 200", r.Code)
+	}
+	// Second agent on the same tenant exceeds its cap even though the fleet
+	// still has two free slots.
+	r := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h0", map[string]string{"hive_id": "h0", "agent_name": "b"})
+	if r.Code != http.StatusConflict {
+		t.Fatalf("h0 second acquire status = %d, want 409", r.Code)
+	}
+	pool.mu.Lock()
+	_, waiting := pool.waitingHives["h0"]
+	pool.mu.Unlock()
+	if waiting {
+		t.Fatal("tenant at its per-hive cap must not take a FIFO waiter position")
+	}
+	// Another tenant is not blocked by h0's capped request.
+	if r := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h1", map[string]string{"hive_id": "h1", "agent_name": "c"}); r.Code != http.StatusOK {
+		t.Fatalf("h1 acquire status = %d, want 200", r.Code)
+	}
+	// Re-acquiring an existing lease (same hive+agent) is a renewal, not a new slot.
+	if r := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h0", map[string]string{"hive_id": "h0", "agent_name": "a"}); r.Code != http.StatusOK {
+		t.Fatalf("h0 renew-by-acquire status = %d, want 200", r.Code)
+	}
+}
+
+func TestNewSharedAgentPoolReadsPerHiveCap(t *testing.T) {
+	t.Setenv("HIVE_SHARED_AGENT_POOL_MAX_SESSIONS", "4")
+	t.Setenv("HIVE_SHARED_AGENT_POOL_MAX_PER_HIVE", "2")
+	if got := newSharedAgentPool().maxPerHive; got != 2 {
+		t.Fatalf("maxPerHive = %d, want 2", got)
+	}
+	t.Setenv("HIVE_SHARED_AGENT_POOL_MAX_PER_HIVE", "-1")
+	if got := newSharedAgentPool().maxPerHive; got != 0 {
+		t.Fatalf("maxPerHive = %d, want 0 for negative input", got)
+	}
+}
