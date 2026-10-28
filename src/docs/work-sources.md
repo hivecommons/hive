@@ -251,7 +251,7 @@ governor:
 
 A team's (or project's) `repo` also gates review scope-contract recognition: a Linear key found in a PR's body, title, or branch is treated as its scope contract only when that key maps to the PR's repository.
 
-The hive then reads that issue read-only through this work source when it plans the review kick — identifier, title, state, description and the last few comments, capped at 10 KiB with a truncation note — and inlines it into the kick as untrusted data from the issue tracker, so reviewers judge against the acceptance criteria without ever holding the Linear key. The text is cached per issue and refetched only when its `updatedAt` changes (checked at most every five minutes). If the read fails, the kick names the identifier it could not fetch.
+The hive then reads that issue read-only through this work source when it plans the review kick — identifier, title, state, description and the last few comments, capped at 10 KiB with a truncation note — and inlines it into the kick as untrusted data from the issue tracker, so reviewers judge against the acceptance criteria without ever holding the Linear key. The text is cached per issue and refetched only when its `updatedAt` changes (checked at most every five minutes). If a refresh fails, the last known-good text for that issue is reused (and not retried until the next recheck); only an issue never fetched before makes the kick name the identifier it could not fetch.
 
 `api_key` and at least one `teams[].key`/`teams[].repo` are required —
 construction fails closed with an explicit error naming the missing field

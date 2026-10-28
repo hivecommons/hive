@@ -96,7 +96,9 @@ func (s *LinearSource) ScopeContractIssue(ctx context.Context, identifier string
 	if err != nil {
 		if ok {
 			// The cached text is still the last known good scope; a Linear
-			// outage must not turn it into a fetch failure.
+			// outage must not turn it into a fetch failure. Refresh checkedAt
+			// so the outage costs one probe+fetch per recheck interval.
+			s.storeScopeIssue(identifier, cached.issue, now)
 			return cached.issue, nil
 		}
 		return LinearScopeIssue{}, fmt.Errorf("linear: read %s: %w", identifier, err)

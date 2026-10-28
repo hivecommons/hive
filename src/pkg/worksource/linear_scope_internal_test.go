@@ -177,14 +177,21 @@ func TestLinearScopeSource(t *testing.T) {
 }
 
 func TestLinearScopeContractIssueStaleCacheOnRefetchError(t *testing.T) {
+	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 	src := NewLinearSource(LinearConfig{APIKey: "k", BaseURL: srv.URL}, nil)
 	seeded := seedScopeCache(src, time.Now().Add(-time.Hour))
-	got, err := src.ScopeContractIssue(context.Background(), "ONB-1")
-	if err != nil || got.Text != seeded.Text {
-		t.Fatalf("got %+v, err %v; want stale cached issue", got, err)
+	for i := 0; i < 2; i++ {
+		got, err := src.ScopeContractIssue(context.Background(), "ONB-1")
+		if err != nil || got.Text != seeded.Text {
+			t.Fatalf("call %d: got %+v, err %v; want stale cached issue", i, got, err)
+		}
+	}
+	if n := requests.Load(); n != 2 {
+		t.Fatalf("server requests = %d, want 2 (probe+fetch once, then recheck window)", n)
 	}
 }
