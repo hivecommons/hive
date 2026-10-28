@@ -321,12 +321,11 @@ func TestApplyPackGatewayWithPreexistingPackCLIAgents(t *testing.T) {
 
 // TestApplyPackKeepsPackBackendWhenOperatorPicksAreMinority: three operator
 // gateway agents that are at most half of the other enabled agents is not
-// "the hive moved", so the pack's CLI placements stay. Four pack CLI agents
-// so that every pack agent, which does not count itself, still sees three
-// operator picks among six others.
+// "the hive moved", so the pack's CLI placements stay. The three pack CLI
+// agents outside the L2 roster keep the operator picks at half of the others.
 func TestApplyPackKeepsPackBackendWhenOperatorPicksAreMinority(t *testing.T) {
 	srv := gatewayHive(t, "litellm")
-	packCLI := []string{"supervisor", "brainstorm", "ci-maintainer", "triage"}
+	packCLI := []string{"supervisor", "brainstorm", "ci-maintainer", "triage", "release"}
 	for _, name := range packCLI {
 		srv.deps.Config.Agents[name] = packCLIAgent(name)
 	}
@@ -363,5 +362,33 @@ func TestApplyPackGatewayHoldsAcrossLevels(t *testing.T) {
 	}
 	if got.Backend != "litellm" || got.Model != "" {
 		t.Errorf("ci-maintainer backend=%q model=%q, want litellm with no model: the agents L2 moved onto the gateway count toward the hive's gateway", got.Backend, got.Model)
+	}
+}
+
+// TestApplyPackRepairsTwoLateAddedPackAgents covers #14721: two pack-owned
+// copilot agents added after the operator's gateway move each counted as a CLI
+// agent for the other, so neither was moved onto the gateway.
+func TestApplyPackRepairsTwoLateAddedPackAgents(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Agents["scanner"] = config.AgentConfig{
+		ID: "scanner", Role: "scanner", Enabled: true,
+		Backend: "litellm", BackendOwner: config.FieldOwnerOperator,
+	}
+	srv.deps.Config.Agents["quality"] = config.AgentConfig{
+		ID: "quality", Role: "quality", Enabled: true,
+		Backend: "litellm", BackendOwner: config.FieldOwnerOperator,
+	}
+	srv.deps.Config.Agents["guide"] = packCLIAgent("guide")
+	for _, name := range []string{"reviewer", "brainstorm"} {
+		srv.deps.Config.Agents[name] = packCLIAgent(name)
+	}
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	for _, name := range []string{"reviewer", "brainstorm"} {
+		got := srv.deps.Config.Agents[name]
+		if got.Backend != "litellm" || got.Model != "" {
+			t.Errorf("%s backend=%q model=%q, want litellm with no model", name, got.Backend, got.Model)
+		}
 	}
 }

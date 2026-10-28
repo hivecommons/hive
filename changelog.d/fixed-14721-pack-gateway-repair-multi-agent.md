@@ -1,0 +1,1 @@
+- Pack apply now moves every late-added pack-owned CLI agent onto the hive's inference gateway, not just one (#14721)

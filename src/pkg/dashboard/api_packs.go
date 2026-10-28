@@ -151,6 +151,10 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// agent judges the hive's gateway on the same pre-apply roster rather
 	// than on agents this apply already moved.
 	hiveBackends := s.hiveAgentBackends()
+	roster := make(map[string]bool, len(pack.Agents))
+	for _, pa := range pack.Agents {
+		roster[strings.ToLower(pa.Name)] = true
+	}
 	for _, pa := range pack.Agents {
 		// A deliberately deleted agent is NOT re-created, at any level. The
 		// pack listing it is exactly why deletion did not stick: ApplyPack
@@ -160,7 +164,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			tombstoned = append(tombstoned, pa.Name)
 			continue
 		}
-		hiveGateway := s.hiveGatewayBackend(hiveBackends, pa.Name)
+		hiveGateway := s.hiveGatewayBackend(hiveBackends, pa.Name, roster)
 		if existing, exists := s.deps.Config.Agents[pa.Name]; exists {
 			changed := false
 
@@ -1161,6 +1165,7 @@ func (s *Server) packAgentBackend(pa config.PackAgent) (backend string, replaced
 type agentBackendVote struct {
 	backend       string
 	operatorOwned bool
+	packCLI       bool
 }
 
 // hiveAgentBackends snapshots the backend of every enabled agent, keyed by
@@ -1174,6 +1179,7 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 		backends[name] = agentBackendVote{
 			backend:       strings.TrimSpace(agent.Backend),
 			operatorOwned: agent.BackendIsOperatorOwned(),
+			packCLI:       agent.BackendIsPackOwned() && config.IsCLIBackend(strings.TrimSpace(agent.Backend)),
 		}
 	}
 	return backends
@@ -1201,8 +1207,11 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 // pack's CLI agents with it. Every agent already on the chosen gateway counts
 // toward that majority, whoever placed it there: the pack agents an earlier
 // level moved onto it must not dilute the bar for the agent the next level
-// adds, or the L3 `ci-maintainer` would land on copilot one level up.
-func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except string) string {
+// adds, or the L3 `ci-maintainer` would land on copilot one level up. Other
+// agents of roster still on their pack CLI are left out of the count like
+// except, so two late-added agents do not veto each other's move (#14721); a
+// single operator pick is never enough to move the hive.
+func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except string, roster map[string]bool) string {
 	shared := ""
 	for name, vote := range backends {
 		if strings.EqualFold(name, except) || !vote.operatorOwned {
@@ -1219,9 +1228,18 @@ func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except
 	if shared == "" || !s.deps.Config.BackendAllowed(shared) {
 		return ""
 	}
-	onGateway, others := 0, 0
+	onGateway, others, operatorPicks := 0, 0, 0
 	for name, vote := range backends {
 		if strings.EqualFold(name, except) {
+			continue
+		}
+		if vote.operatorOwned {
+			operatorPicks++
+		}
+		// A roster peer still on its pack CLI is itself waiting to be placed,
+		// as `except` is; counting it would let two late-added agents each
+		// veto the other's move (#14721).
+		if vote.packCLI && roster[strings.ToLower(name)] {
 			continue
 		}
 		others++
@@ -1229,7 +1247,7 @@ func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except
 			onGateway++
 		}
 	}
-	if onGateway*2 <= others {
+	if onGateway*2 <= others || operatorPicks < 2 {
 		return ""
 	}
 	return shared
