@@ -1,0 +1,1 @@
+- Fix `hivectl` table output printing top-level string results without control-character sanitisation, and disambiguate table headers that collapse to the same label after sanitising (#14903, #14904).

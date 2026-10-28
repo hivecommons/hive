@@ -53,7 +53,7 @@ func (p printer) printJSONL(value any) error {
 
 func (p printer) printTable(value any) error {
 	if text, ok := value.(string); ok {
-		_, err := fmt.Fprintln(p.out, text)
+		_, err := fmt.Fprintln(p.out, compactString(text))
 		return err
 	}
 	writer := tabwriter.NewWriter(p.out, 0, 4, 2, ' ', 0)
@@ -92,8 +92,14 @@ func (p printer) printTable(value any) error {
 		}
 		sort.Strings(headers)
 		sanitisedHeaders := make([]string, len(headers))
+		seenLabels := map[string]int{}
 		for i, h := range headers {
-			sanitisedHeaders[i] = compactString(h)
+			label := compactString(h)
+			seenLabels[label]++
+			if n := seenLabels[label]; n > 1 {
+				label = fmt.Sprintf("%s (%d)", label, n)
+			}
+			sanitisedHeaders[i] = label
 		}
 		_, _ = fmt.Fprintln(writer, strings.Join(sanitisedHeaders, "\t")) // buffered by tabwriter; Flush error is captured above
 		for _, row := range rows {

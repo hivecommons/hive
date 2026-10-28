@@ -178,7 +178,7 @@ func TestPrinterTableMapKeyWithControlCharsAndTab(t *testing.T) {
 	p := printer{format: "table", out: &buf}
 	if err := p.print(map[string]any{
 		"key\x1b[31mred\x1b[0m\ttab": "value1",
-		"normalkey":                   "value2",
+		"normalkey":                  "value2",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -214,5 +214,85 @@ func TestPrinterTableArrayOfMapsHeaderWithControlChars(t *testing.T) {
 	// The original key must still be used for row lookups (values are correct)
 	if !strings.Contains(out, "value1") || !strings.Contains(out, "value3") {
 		t.Fatalf("values not found in output: %q", out)
+	}
+}
+
+// TestPrinterTableStringValueIsSanitised covers the early string-value
+// branch: a server-derived top-level string must not carry control
+// sequences to the terminal.
+func TestPrinterTableStringValueIsSanitised(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"ansi escape", "\x1b[31mred\x1b[0m", "[31mred[0m"},
+		{"osc sequence", "a\x1b]0;title\x07b", "a]0;titleb"},
+		{"newline", "one\ntwo", "one\\ntwo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			p := printer{format: "table", out: &buf}
+			if err := p.print(tt.input); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSuffix(buf.String(), "\n"); got != tt.want {
+				t.Fatalf("output = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPrinterTableArrayOfMapsCollidingHeadersAreDistinct covers raw keys
+// that sanitise to the same label: the displayed headers must differ while
+// each column keeps reading its own raw key.
+func TestPrinterTableArrayOfMapsCollidingHeadersAreDistinct(t *testing.T) {
+	tests := []struct {
+		name        string
+		rows        []any
+		wantHeader  []string
+		wantRowCols []string
+	}{
+		{
+			name: "two keys collide",
+			rows: []any{
+				map[string]any{"a\x1bb": "esc", "ab": "plain"},
+			},
+			wantHeader:  []string{"ab", "ab (2)"},
+			wantRowCols: []string{"esc", "plain"},
+		},
+		{
+			name: "three keys collide",
+			rows: []any{
+				map[string]any{"a\x1bb": "one", "ab": "two", "a\x07b": "three"},
+			},
+			wantHeader:  []string{"ab", "ab (2)", "ab (3)"},
+			wantRowCols: []string{"three", "one", "two"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			p := printer{format: "table", out: &buf}
+			if err := p.print(tt.rows); err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			if len(lines) != 2 {
+				t.Fatalf("lines = %q", lines)
+			}
+			if got := strings.Fields(strings.ReplaceAll(lines[0], " (", "_(")); len(got) != len(tt.wantHeader) {
+				t.Fatalf("header = %q", lines[0])
+			}
+			for i, want := range tt.wantHeader {
+				if !strings.Contains(lines[0], want) {
+					t.Fatalf("header %d %q missing in %q", i, want, lines[0])
+				}
+			}
+			if got := strings.Fields(lines[1]); strings.Join(got, ",") != strings.Join(tt.wantRowCols, ",") {
+				t.Fatalf("row = %q, want %q", got, tt.wantRowCols)
+			}
+		})
 	}
 }
