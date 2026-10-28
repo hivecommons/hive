@@ -2570,6 +2570,15 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
 	}
+	// Merge train (#15117): read live so a reload applies. RebaseResolver
+	// stays nil until the rebase-then-merge follow-through (#15104) lands
+	// and is wired here; a conflicting front then keeps its conflicting path.
+	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
+		if b.cfg == nil {
+			return automerge.DefaultMergeTrainPolicy
+		}
+		return automerge.MergeTrainPolicy{Enabled: b.cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: b.cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
+	}
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
 		laneGate := relayLanePolicyGate(autoMergeOpts)(client)
 		setMergeEligibleLaneGate(laneGate)
@@ -9374,6 +9383,9 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
+		opts.MergeTrain = func() automerge.MergeTrainPolicy {
+			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
+		}
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	}
 	audit := func(event automerge.AutoMergeSweepEvent) {

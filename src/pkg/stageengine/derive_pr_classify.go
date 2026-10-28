@@ -359,6 +359,15 @@ func ClassifyStage(o stageObservation) stageVerdict {
 	if stageHandoffReasons[reason] {
 		return stageVerdict{}
 	}
+	if train, ok := prstage.ParseMergeTrain(reason); ok {
+		// The merge train parked this PR behind an overlapping front
+		// (hivecommons/hive#15117): a hive-side wait at the merge gate,
+		// never a human stage — unless the train gave up rebasing it.
+		if train.State == prstage.MergeTrainStateRebaseExhausted {
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+		}
+		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned}, humanApprovalReason)
+	}
 	if rank := stageAdmissionReasons[reason]; rank != stageRankNone {
 		if HasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}

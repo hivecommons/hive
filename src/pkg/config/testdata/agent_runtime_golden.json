@@ -713,7 +713,8 @@
     "bot_takeover": {},
     "trusted_authors": {},
     "contributor_lane": {},
-    "contributor_tier": {}
+    "contributor_tier": {},
+    "merge_train": {}
   },
   "decisions": {
     "delegate": {}
