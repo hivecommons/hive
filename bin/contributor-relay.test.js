@@ -14700,6 +14700,58 @@ function authIdleRelay(relay) {
   assert.strictEqual(readyFrames(relay).length, 1, 'auth_ok should request initial work');
 }
 
+// #14831: standby must stay passive through the shared request path, even
+// when one subscribed hub cannot negotiate standby and a retry rotates hubs.
+for (const standby of [true, false]) {
+  test(`#14831 CLI readiness respects standby on mixed-capability hubs (standby: ${standby})`, async () => {
+    const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_STANDBY: standby ? '1' : '0' }, cliStates: ['ready'] });
+    try {
+      const { hubs, sentA, sentB } = attachHubSinks(relay);
+      scopeAuth(relay, hubs[0], []);
+      scopeAuth(relay, hubs[1], ['standby_v1']);
+      relay.handleMessage(JSON.stringify({ type: 'standby_ack', standby: { accepted: [{ lane: 'scanner' }], rejected: [] } }), hubs[1]);
+      sentA.length = 0;
+      sentB.length = 0;
+
+      relay.armCLIReadyWait();
+      await flushMicrotasks();
+      assert.strictEqual(relay.getCliReady(), true, 'the CLI still becomes ready');
+      assert.strictEqual(relay.getCliReadyFailed(), false);
+      assert.strictEqual(sentA.filter(m => m.type === 'ready').length, standby ? 0 : 1,
+        'a hub without standby support must not turn standby into ordinary polling');
+      assert.strictEqual(sentB.filter(m => m.type === 'ready').length, 0);
+      assert.strictEqual(relay.requestWork(hubs[1], 'future_caller'), !standby,
+        'the shared guard also covers direct requests to the standby hub');
+      assert.strictEqual(sentB.filter(m => m.type === 'ready').length, standby ? 0 : 1);
+    } finally { teardown(relay); }
+  });
+
+  test(`#14831 multi-hub no-work retry respects standby (standby: ${standby})`, () => {
+    withCapturedReadyRetryTimers((timers) => {
+      const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_STANDBY: standby ? '1' : '0' } });
+      try {
+        const { hubs, sentA, sentB } = attachHubSinks(relay);
+        relay.setCliReady(true);
+        scopeAuth(relay, hubs[0], []);
+        scopeAuth(relay, hubs[1], ['standby_v1']);
+        relay.handleMessage(JSON.stringify({ type: 'standby_ack', standby: { accepted: [{ lane: 'scanner' }], rejected: [] } }), hubs[1]);
+        sentA.length = 0;
+        sentB.length = 0;
+
+        // Model a no-work reply already in flight from the unsupported hub.
+        relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_matching_work' }), hubs[0]);
+        assert.strictEqual(timers.length, 1, 'capture the retry instead of waiting');
+        timers[0].cb();
+        assert.strictEqual(sentA.filter(m => m.type === 'ready').length, 0);
+        assert.strictEqual(sentB.filter(m => m.type === 'ready').length, standby ? 0 : 1,
+          'rotation must not request ordinary work from the standby hub');
+        assert.strictEqual(hubs[1].readyOutstanding, !standby);
+        assert.strictEqual(relay.getCurrentTask(), null);
+      } finally { teardown(relay); }
+    });
+  });
+}
+
 test('#9063 stale task_unavailable retry does not duplicate a CLI readiness ready', async () => {
   await withCapturedReadyRetryTimers(async (timers) => {
     const relay = loadRelay({ cliStates: ['ready'] });

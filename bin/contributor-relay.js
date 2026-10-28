@@ -2311,6 +2311,13 @@ function invalidateAllReadyRetries(reason) {
 }
 
 function requestWork(hub, trigger, expectedConnectGeneration = null) {
+  // Standby is passive on every hub, including peers without standby_v1.
+  // Guard the shared request path so CLI startup and cross-hub retries cannot
+  // bypass the auth/task-exit guards and acquire ordinary work (#14831).
+  if (STANDBY_MODE) {
+    logSkippedWorkRequest(hub, trigger, 'standby mode');
+    return false;
+  }
   if (!hubScopeReady(hub)) return false;
   const conn = readyConnLabel(hub);
   if (expectedConnectGeneration !== null && hub.connectGeneration !== expectedConnectGeneration) {
