@@ -35,7 +35,7 @@ import (
 
 // DefaultMaxPromptBytes caps how large a fetched prompt body may be
 // (hivecommons/hive#12130). A kick prompt is a markdown template; the largest
-// shipped policy (src/policies/scanner-automerge.md) is ~28 KiB, so 64 KiB
+// shipped policy (src/policies/scanner-automerge.md) is ~33 KiB, so 96 KiB
 // leaves better than 2x headroom for a real template while refusing a
 // mis-pointed prompt_source before it costs a ~100K-token kick. This is a token
 // budget, not just a memory bound — the old 512 KiB cap was the latter.
@@ -46,7 +46,7 @@ import (
 // then to the caller's inline template, and logs the rejection with the
 // source and the observed size. TestShippedTemplatesFitUnderCap pins the
 // headroom against every shipped template.
-const DefaultMaxPromptBytes = 64 * 1024 // 64 KiB
+const DefaultMaxPromptBytes = 96 * 1024 // 96 KiB
 
 // MaxPromptBytesEnv names the environment variable that overrides
 // DefaultMaxPromptBytes. It accepts a positive byte count (e.g. "131072") or a

@@ -25,8 +25,10 @@ type repoItemDecisionMock struct {
 	removed     []string
 	comments    []string
 	edits       []map[string]any
-	// prForeign makes PR #8 look like a human opened it.
+	// prForeign makes PR #8 look like a human opened it; prLabels are the
+	// labels pulls/8 reports.
 	prForeign bool
+	prLabels  []string
 	// prMergeState is PR #8's mergeable_state ("" = clean); prRedCI and
 	// prNoCI shape the head's combined status when the state alone does not
 	// settle CI (e.g. "blocked").
@@ -64,7 +66,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			if mergeState == "" {
 				mergeState = "clean"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "labels": []any{}, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}})
+			prLabels := make([]map[string]string, 0, len(m.prLabels))
+			for _, label := range m.prLabels {
+				prLabels = append(prLabels, map[string]string{"name": label})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "labels": prLabels, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/commits/feedfacefeedfacefeedfacefeedfacefeedface/status"):
 			switch {
 			case m.prRedCI:
@@ -281,6 +287,51 @@ func TestRepoItemDecisionApprovePRPostsLgtmAndApproveComments(t *testing.T) {
 	}
 	if actions := decisionAuditActions(srv); len(actions) == 0 || actions[0] != auditRepoItemDecisionApprove {
 		t.Fatalf("audit = %v", actions)
+	}
+}
+
+// TestRepoItemDecisionApprovePRReleasesThePark: the owner's Approve on a
+// parked PR is the human review it waited for — the approval is recorded
+// against the head (the lanes and the stage engine read it as the answer to
+// requires_human / decision-requested), `needs-human` and the sentinel label
+// come off, and the tracker cache is dropped so the next read re-derives the
+// stage (hivecommons/hive#14821, #14822, crux#30 stayed at 085 with only the
+// command comments written).
+func TestRepoItemDecisionApprovePRReleasesThePark(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/085-needs-decision", "needs-human", "sentinel-alert", "role/trusted"}}
+	srv := newRepoItemDecisionServer(t, mock)
+	srv.stageTrackerCacheMu.Lock()
+	gen := srv.stageTrackerGen
+	srv.stageTrackerCacheMu.Unlock()
+
+	w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"approve","type":"pr"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("approve PR: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != "approval-commented" || strings.Join(resp.Released, ",") != "approval-recorded,needs-human,sentinel-label" {
+		t.Fatalf("response = %+v", resp)
+	}
+	req, ok := repoItemDecisionChangeRequests().For("testorg/testrepo", 8, "feedfacefeedfacefeedfacefeedfacefeedface")
+	if !ok || !req.IsApproval() || req.Actor != "writer" {
+		t.Fatalf("approval must stand against the head: %+v ok=%v", req, ok)
+	}
+	if strings.Join(mock.removed, ",") != "needs-human,sentinel-alert" {
+		t.Fatalf("removed = %v", mock.removed)
+	}
+	if len(mock.comments) != 2 || len(mock.added)+len(mock.edits) != 0 {
+		t.Fatalf("approval still posts the two commands and nothing else: comments=%d added=%v edits=%v", len(mock.comments), mock.added, mock.edits)
+	}
+	srv.stageTrackerCacheMu.Lock()
+	stale, after := srv.stageTrackerCache.stale, srv.stageTrackerGen
+	srv.stageTrackerCacheMu.Unlock()
+	if !stale || after == gen {
+		t.Fatalf("tracker cache must be invalidated: stale=%v gen %d -> %d", stale, gen, after)
+	}
+	detail := srv.GetAudit().Recent(1)[0].Detail
+	if !strings.Contains(detail, "released=approval-recorded,needs-human,sentinel-label") {
+		t.Fatalf("audit detail = %q", detail)
 	}
 }
 

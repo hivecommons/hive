@@ -260,6 +260,29 @@ func (s *Server) scheduleWebhookTrackerRefresh(res github.WebhookEventResult, de
 	return len(keys)
 }
 
+// selfEditDeliveryID tags the re-reads the hive's own GitHub edits ask for,
+// in place of a webhook delivery id, in ItemPatches and the logs.
+const selfEditDeliveryID = "self:edit"
+
+// RefreshSelfEditedItem is the github.ItemRefreshHook: the hive itself just
+// changed an issue or PR on GitHub (removed `blocked`, for one), so the
+// tracker cache is dropped and the item queued for the same targeted re-read
+// an inbound webhook gets. The re-read patches the cached actionable
+// snapshot and the tracker live, so the row re-derives now rather than after
+// the next full enumeration. Without a GitHub client, or with the webhook
+// refresh disabled, only the cache invalidation happens; the enumeration
+// pass is then the fallback, as for an undelivered webhook.
+func (s *Server) RefreshSelfEditedItem(repo string, number int, isPR bool) {
+	if s == nil || repo == "" || number <= 0 {
+		return
+	}
+	s.invalidateStageTrackerForWebhook()
+	if !s.webhookTrackerRefreshEnabled() || s.deps == nil || s.deps.GHClient == nil {
+		return
+	}
+	s.trackerRefresher().enqueue([]trackerRefreshKey{{repo: repo, number: number, pr: isPR}}, selfEditDeliveryID)
+}
+
 // evictClosedWebhookItem applies the one payload fact the tracker trusts
 // without a confirming read: the item the delivery embeds is closed or
 // merged. Every `issues`, `issue_comment` and `pull_request*` payload carries

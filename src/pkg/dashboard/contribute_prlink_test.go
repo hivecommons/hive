@@ -3,6 +3,9 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -374,3 +377,134 @@ func TestHumanizeAge(t *testing.T) {
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func strPtr(s string) *string { return &s }
+
+// ── searchLinkedPR: commit / comment / timeline references (#14859) ────────
+
+// TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences pins
+// hivecommons/hive#14859: a PR that names the issue only in a commit message
+// or a PR comment must still count as linked. GitHub records those mentions
+// as cross-referenced events on the issue's timeline; before the fix only the
+// PR title/body was consulted, so such a PR read as "no linked PR".
+func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
+	const issue = 13135
+	// A search hit whose title/body does not name the issue: GitHub search
+	// matched it on a comment or commit mention.
+	searchHit := `{"number":14656,"state":"open","title":"keep the header chips from overlapping the title","body":"Hive Agent","html_url":"https://github.com/o/r/pull/14656","pull_request":{"url":"x"}}`
+	crossRef := func(src string) string {
+		return `{"event":"cross-referenced","created_at":"2026-10-27T00:00:00Z","source":{"type":"issue","issue":` + src + `}}`
+	}
+	openPR := `{"number":14656,"state":"open","html_url":"https://github.com/o/r/pull/14656","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
+	mergedPR := `{"number":14656,"state":"closed","html_url":"https://github.com/o/r/pull/14656","repository":{"full_name":"o/r"},"pull_request":{"url":"x","merged_at":"2026-10-28T00:00:00Z"}}`
+	otherRepoPR := `{"number":77,"state":"open","html_url":"https://github.com/x/y/pull/77","repository":{"full_name":"x/y"},"pull_request":{"url":"x"}}`
+	plainIssue := `{"number":14859,"state":"open","html_url":"https://github.com/o/r/issues/14859","repository":{"full_name":"o/r"}}`
+
+	cases := []struct {
+		name       string
+		search     string
+		timeline   string
+		wantNumber int
+		wantState  string
+	}{
+		{
+			name:       "comment reference only (cross-referenced event, search miss)",
+			search:     `[]`,
+			timeline:   `[` + crossRef(openPR) + `]`,
+			wantNumber: 14656,
+			wantState:  prLinkStateOpen,
+		},
+		{
+			name:       "PR comment reference only (search hit rejected by title/body)",
+			search:     `[` + searchHit + `]`,
+			timeline:   `[` + crossRef(openPR) + `]`,
+			wantNumber: 14656,
+			wantState:  prLinkStateOpen,
+		},
+		{
+			name:       "timeline cross-reference from a merged PR",
+			search:     `[]`,
+			timeline:   `[{"event":"labeled","created_at":"2026-10-26T00:00:00Z"},` + crossRef(mergedPR) + `]`,
+			wantNumber: 14656,
+			wantState:  prLinkStateMerged,
+		},
+		{
+			name:     "no reference anywhere",
+			search:   `[` + searchHit + `]`,
+			timeline: `[{"event":"labeled","created_at":"2026-10-26T00:00:00Z"},` + crossRef(otherRepoPR) + `,` + crossRef(plainIssue) + `]`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/search/issues", func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprintf(w, `{"total_count":1,"items":%s}`, tc.search)
+			})
+			mux.HandleFunc(fmt.Sprintf("/repos/o/r/issues/%d/timeline", issue), func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprint(w, tc.timeline)
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			gc := gh.NewClient(nil)
+			base, err := url.Parse(srv.URL + "/")
+			if err != nil {
+				t.Fatal(err)
+			}
+			gc.BaseURL = base
+
+			got, err := searchLinkedPR(context.Background(), gc, "o/r", issue)
+			if err != nil {
+				t.Fatalf("searchLinkedPR: %v", err)
+			}
+			if tc.wantNumber == 0 {
+				if got != nil {
+					t.Fatalf("got linked PR %+v, want none", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("got no linked PR, want #%d (%s)", tc.wantNumber, tc.wantState)
+			}
+			if got.Number != tc.wantNumber || got.State != tc.wantState {
+				t.Fatalf("got #%d (%s), want #%d (%s)", got.Number, got.State, tc.wantNumber, tc.wantState)
+			}
+		})
+	}
+}
+
+// TestCrossReferencingPRs_PageCap pins the prLinkTimelineMaxPages bound: a
+// timeline that keeps advertising a next page is read at most that many
+// times, and the lookup keeps what it has read instead of walking to
+// exhaustion — the design note on prLinkSearchPerPage applies to the timeline
+// read too.
+func TestCrossReferencingPRs_PageCap(t *testing.T) {
+	const issue = 13135
+	var calls int
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/o/r/issues/%d/timeline", issue), func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		page := r.URL.Query().Get("page")
+		if page == "" {
+			page = "1"
+		}
+		w.Header().Set("Link", fmt.Sprintf(`<%s?page=%d>; rel="next"`, "http://x"+r.URL.Path, calls+1))
+		fmt.Fprintf(w, `[{"event":"cross-referenced","created_at":"2026-10-27T00:00:00Z","source":{"type":"issue","issue":{"number":%s00,"state":"open","html_url":"https://github.com/o/r/pull/%s00","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}}}]`, page, page)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	gc := gh.NewClient(nil)
+	base, err := url.Parse(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gc.BaseURL = base
+
+	got := crossReferencingPRs(context.Background(), gc, "o/r", issue)
+	if calls != prLinkTimelineMaxPages {
+		t.Fatalf("timeline requests = %d, want exactly %d (page cap)", calls, prLinkTimelineMaxPages)
+	}
+	if len(got) != prLinkTimelineMaxPages {
+		t.Fatalf("got %d PRs from %d pages, want one per page", len(got), prLinkTimelineMaxPages)
+	}
+	if got[0].GetNumber() != 100 || got[len(got)-1].GetNumber() != prLinkTimelineMaxPages*100 {
+		t.Fatalf("got PRs %d..%d, want 100..%d in page order", got[0].GetNumber(), got[len(got)-1].GetNumber(), prLinkTimelineMaxPages*100)
+	}
+}
