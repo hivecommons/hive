@@ -78,7 +78,8 @@ func (e *InceptionEngine) Start(rawIdea string) (*InceptionState, error) {
 		slug = slug + "-" + fmt.Sprintf("%d", time.Now().UnixMilli()%100000)
 	}
 
-	if e.api != nil {
+	// The local inception wiki works without an optional remote project layer.
+	if e.api != nil && e.api.clientForLayer(LayerProject) != nil {
 		ctx := context.Background()
 		err := e.api.CreateFact(ctx, CreateFactRequest{
 			Title:      rawIdea,
@@ -306,7 +307,9 @@ func (e *InceptionEngine) RecordFacts(ctx context.Context, facts []IdeationFact)
 			}
 		}
 
-		if e.api == nil {
+		// Facts are also persisted to the local wiki below. Mirror remotely only
+		// when a project endpoint is configured.
+		if e.api == nil || e.api.clientForLayer(LayerProject) == nil {
 			slug := slugify(string(f.Type) + "-" + truncateSlug(f.Title))
 			e.state.FactSlugs = append(e.state.FactSlugs, slug)
 			continue
