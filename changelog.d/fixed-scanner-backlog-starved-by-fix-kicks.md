@@ -1,0 +1,1 @@
+- The scanner's governor (backlog) kick is no longer deferred indefinitely behind review-fix kicks: after an agent's governor kick has been displaced by a delivered fix kick on two consecutive cycles, the governor kick goes first for that cycle and the fix kick is re-planned, so actionable issues are offered to the agent again instead of sitting unclaimed for hours (#15166).

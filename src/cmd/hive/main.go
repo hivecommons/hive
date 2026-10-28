@@ -6574,6 +6574,12 @@ var providerBudgetNotify governor.ProviderBudgetNotifyState
 // providerBudgetNotify: runEvalCycle has no state of its own.
 var providerBudgetProbe governor.ProviderBudgetProbeState
 
+// governorKickFairness remembers, per agent, how many cycles in a row the
+// governor kick was deferred behind a delivered review-fix kick
+// (hivecommons/hive#15166). Package-level for the same reason as
+// providerBudgetProbe: runEvalCycle has no state of its own.
+var governorKickFairness = newKickLaneFairness()
+
 var evalAPIBudgetCycle atomic.Uint64
 
 // applyBudgetAlerts is a thin wrapper around spokealerts.ApplyBudget, kept so
@@ -7594,7 +7600,13 @@ func runEvalCycle(
 	// the swarm's) goes ahead of the governor kick for the same agent, or
 	// the governor kick owns the agent and the fix kick times out every
 	// cycle (hivecommons/hive#13100).
-	messages = orderReviewFixKicksFirst(messages, reviewKickByMessage)
+	for _, agent := range pendingKickAgentsFromMessages(messages) {
+		if governorKickFairness.GovernorFirst(agent) {
+			logger.Warn("governor kick displaced by fix kicks on consecutive cycles; governor kick goes first this cycle",
+				"agent", agent, "displaced_cycles", governorKickFairness.Displaced(agent), "limit", governorKickDisplacementLimit)
+		}
+	}
+	messages = orderReviewFixKicksFirst(messages, reviewKickByMessage, governorKickFairness.GovernorFirst)
 	// Freshness bound before a kick (#13375): a ref older than
 	// github.DecisionFreshnessBound in a cache-served or last-good snapshot
 	// is confirmed with one targeted GET; a stale repo's refs are withheld.
@@ -7711,6 +7723,7 @@ func runEvalCycle(
 	// single-probe rule are the decisions worth testing, and they were
 	// previously unreachable without a tmux session and a live governor.
 	var deliveredReviewKicks []review.DispatchKick
+	var deliveredKicks []scheduler.KickMessage
 	if len(messages) > 0 {
 		// governor.kick wraps the whole dispatch pass; each delivered kick
 		// still gets its own agent.kick child via startKickSpan below.
@@ -7765,6 +7778,7 @@ func runEvalCycle(
 				}
 			},
 			onDelivered: func(msg scheduler.KickMessage, deliveredAt time.Time) {
+				deliveredKicks = append(deliveredKicks, msg)
 				gov.RecordKickForRepoAt(msg.Agent, msg.Repo, deliveredAt)
 				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 
@@ -7812,6 +7826,7 @@ func runEvalCycle(
 		kickPassSpan.SetAttributes(attribute.Int("hive.kicks.review_delivered", len(deliveredReviewKicks)))
 		kickPassSpan.End()
 	}
+	governorKickFairness.ObserveCycle(messages, deliveredKicks, reviewKickByMessage)
 	persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
 
 	if actionable.Issues.SLAViolations > 0 {
