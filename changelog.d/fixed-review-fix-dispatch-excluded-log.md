@@ -1,0 +1,1 @@
+- The "review fix dispatch excluded" line for PRs the hive did not author (`not-hive-authored`) is now logged at INFO instead of WARN, so the expected policy skip is no longer filed as an `unclassified_error_repeated` fleet issue ([#14870](https://github.com/hivecommons/hive/issues/14870)).

@@ -11150,7 +11150,12 @@ func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor
 	// kick: a PR shown as "Fixing" that nobody is fixing must be loud
 	// (hivecommons/hive#14665).
 	for _, x := range plan.FixExclusions {
-		logger.Warn("review fix dispatch excluded",
+		level := slog.LevelWarn
+		if x.Reason == review.FixDispatchExcludedNotHiveAuthored || x.Reason == review.FixDispatchExcludedNotHiveAuthoredDCO {
+			// Policy skip (the hive never pushes to PRs it did not author), not a fault.
+			level = slog.LevelInfo
+		}
+		logger.Log(context.Background(), level, "review fix dispatch excluded",
 			"repo", x.Repo, "pr", x.Number, "head_sha", x.HeadSHA, "author", x.Author, "reason", x.Reason, "attempts", x.Attempts)
 	}
 	for _, w := range plan.WithheldFixes {
