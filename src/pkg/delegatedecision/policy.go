@@ -185,9 +185,18 @@ type Input struct {
 	ReporterTrustHold bool
 	// AdoptionStalled: a contributor PR whose adoption parked at 085.
 	AdoptionStalled bool
+	// AdoptionGraceElapsed: a contributor PR at 072 whose offline grace
+	// has run out and whose adoption the engine holds (maintainer policy,
+	// or nothing moved). The delegate picks Adopt now
+	// (RuleAdoptNow) rather than wait any longer (hivecommons/hive#15038).
+	AdoptionGraceElapsed bool
 	// BlockedOnPRClosed: a review-backlog item whose PR closed unmerged.
 	BlockedOnPRClosed bool
 }
+
+// RuleAdoptNow is the rule name of the grace-elapsed Adopt now decision;
+// the dashboard runs it as a forced adoption (Adopt now), not a queued one.
+const RuleAdoptNow = "grace-elapsed-adopt-now"
 
 // Decision is what the delegate decided and how to record it.
 type Decision struct {
@@ -449,6 +458,14 @@ func decidePR(in Input) Decision {
 	if !in.DCOMissing && !in.ReporterTrustHold {
 		if d, ok := decideCompeting(in, ref); ok {
 			return d
+		}
+	}
+	if !in.HiveAuthored && in.Kind == KindPR && in.AdoptionGraceElapsed {
+		text := "adopt now: the offline grace on " + ref + " has already elapsed; adopt in supersede mode at once, preserving the author's commits and sign-off"
+		return Decision{
+			Verdict: VerdictAdoptSupersede, Rule: RuleAdoptNow, Text: text,
+			Rationale: "the contributor's grace window has run out and nothing moved; waiting longer helps no one (hivecommons/hive#15038)",
+			Actions:   []Action{decisionComment(text), {Kind: ActionAdoptSupersede}},
 		}
 	}
 	if !in.HiveAuthored && !in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing) {

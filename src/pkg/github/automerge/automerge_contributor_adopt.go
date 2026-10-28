@@ -120,6 +120,10 @@ const (
 	AdoptReasonRebaseRehome = "rebase-rehome"
 	// AdoptReasonPushRehome recovers an adoption that lost fork push access.
 	AdoptReasonPushRehome = "push-rehome"
+	// AdoptReasonOperatorForced marks an operator's "Adopt now": adoption
+	// taken at once by supersession, regardless of the author's presence,
+	// the grace window and maintainer_policy. The marker carries by=@login.
+	AdoptReasonOperatorForced = "operator-forced"
 )
 
 // AdoptionStalledMarker opens the one note posted when an adopted PR is
@@ -206,6 +210,11 @@ func adoptReasonText(reason string, grace time.Duration, online bool) string {
 		return "the hive can no longer push to the contributor branch"
 	case AdoptReasonInPlaceStalled:
 		return "the review swarm's finding on this head went unaddressed past the stage dwell and the in-place fix lane only repairs CI"
+	case AdoptReasonOperatorForced:
+		if online {
+			return "a maintainer asked the hive to take it over now rather than wait for your hive, which is online — no fault of yours"
+		}
+		return "a maintainer asked the hive to take it over now rather than wait out the offline grace window"
 	}
 	if online {
 		return fmt.Sprintf("CI stayed red for %s after the nudge and the relay nudge went unanswered", formatGrace(grace))
@@ -526,10 +535,21 @@ func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
 // AdoptionComment is the one note left on the original PR when adopted by
 // supersession.
 func AdoptionComment(obs stageObservation, hiveID string, superseding int, reason string, grace time.Duration, online bool) string {
+	return adoptionCommentBy(obs, nonEmpty(hiveID, "hive"), superseding, reason, grace, online)
+}
+
+// AdoptionForcedComment is the adoption note for an operator's "Adopt now":
+// the marker names the operator (by=@login reason=operator-forced) and the
+// text tells the author a maintainer took the PR over.
+func AdoptionForcedComment(obs stageObservation, by string, superseding int, online bool) string {
+	return adoptionCommentBy(obs, "@"+strings.TrimPrefix(strings.TrimSpace(by), "@"), superseding, AdoptReasonOperatorForced, 0, online)
+}
+
+func adoptionCommentBy(obs stageObservation, by string, superseding int, reason string, grace time.Duration, online bool) string {
 	return fmt.Sprintf("%s by=%s reason=%s mode=%s superseded_by=%d head=%s -->\n@%s the hive has adopted this PR (`%s`): %s. "+
 		"It is being finished as #%d, which carries your commits (and sign-off) unchanged; the hive will rebase and fix CI there. "+
 		"This PR is closed automatically once #%d merges. If you would rather finish it yourself, push a new head here and say so on #%d.",
-		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), reason, stagelabels.AdoptModeSupersede, superseding, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), adoptReasonText(reason, grace, online), superseding, superseding, superseding)
+		AdoptionMarkerPrefix, by, reason, stagelabels.AdoptModeSupersede, superseding, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), adoptReasonText(reason, grace, online), superseding, superseding, superseding)
 }
 
 // AdoptionInPlaceComment is the one note left when the hive adopts the PR on
@@ -586,13 +606,15 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		return 0, nil
 	}
 	requested := hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede)
+	forcedBy, forced := rec.AdoptionForced()
+	forced = forced && obs.HeadSHA != "" && !(rec.Adopted(obs.HeadSHA) && rec.AdoptedBy > 0)
 	if obs.Lane == stageLaneSelf {
 		// The self-authored sweep also carries trusted-bot PRs
 		// (github-actions and friends): a delegated supersede of one of
 		// those runs like any contributor PR. Only the App's own PR has no
 		// branch to re-home; that request is consumed with one note
 		// instead of a silent no-op every sweep (hivecommons/docs#500).
-		if !requested {
+		if !requested && !forced {
 			return 0, nil
 		}
 		if normalizeBotLogin(obs.Author) == normalizeBotLogin(c.transport.AppBotLogin()) {
@@ -601,7 +623,12 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: delegated supersede of a trusted-bot PR on the self-authored lane", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA)
 	}
 	due, reason := adoptionDue(rec, obs.HeadSHA, policy, now, presence, hasPresence)
-	if requested && obs.HeadSHA != "" && !(rec.Adopted(obs.HeadSHA) && rec.AdoptedBy > 0 && !rec.AdoptionCopyFailed()) {
+	if forced {
+		// An operator's "Adopt now" (hivecommons/hive#15038): adopt at
+		// once by supersession, whatever the author's presence, the grace
+		// window and maintainer_policy say. Only a hold label stops it.
+		due, reason = true, AdoptReasonOperatorForced
+	} else if requested && obs.HeadSHA != "" && !(rec.Adopted(obs.HeadSHA) && rec.AdoptedBy > 0 && !rec.AdoptionCopyFailed()) {
 		// An explicit owner-delegate decision bypasses the nudge/grace and
 		// re-homes a stalled in-place adoption through the same supersede path.
 		due, reason = true, AdoptReasonOperator
@@ -613,10 +640,11 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
 	}
-	if c.adoptionRefusedByAdmission(store, key, obs, requested, now) {
+	if forced {
+		c.info("stage labels: operator forced adoption; maintainer policy, admission and presence bypassed", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "by", forcedBy, "online", presence.Online, "policy", policy.maintainerPolicy())
+	} else if c.adoptionRefusedByAdmission(store, key, obs, requested, now) {
 		return 0, nil
-	}
-	if held, deferred := c.maintainerHoldsAdoption(ctx, obs, policy, requested, now); held || deferred {
+	} else if held, deferred := c.maintainerHoldsAdoption(ctx, obs, policy, requested, now); held || deferred {
 		if held && !deferred {
 			// Recorded so the activity monitor says why (hivecommons/hive#14524):
 			// under ask the row offers Adopt, under never it names the policy.
@@ -645,7 +673,7 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	grace := adoptionGrace(rec, policy)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
 	canPushInPlace := false
-	if policy.AdoptInPlace && !requested {
+	if policy.AdoptInPlace && !requested && !forced {
 		canPushInPlace = c.canPushToPRBranch(ctx, obs)
 	}
 	dcoRehome := adoptionNeedsDCORehome(obs, canPushInPlace)
@@ -689,7 +717,12 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		return 1, nil
 	}
 
-	return c.supersedeAdoptedPR(ctx, store, key, obs, rec, policy, reason, grace, rec.NudgeOnline, dcoRehome, now)
+	online := rec.NudgeOnline
+	if forced && hasPresence {
+		// The forced note tells an online author the maintainer took over.
+		online = presence.Online
+	}
+	return c.supersedeAdoptedPR(ctx, store, key, obs, rec, policy, reason, grace, online, dcoRehome, now)
 }
 
 // AdoptionSelfRefusedMarker stamps the note a delegated supersede of the
@@ -731,7 +764,14 @@ func delegatedAdoptionAttempted(before, after stagelabels.Record) bool {
 }
 
 func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, grace time.Duration, online bool, dcoRehome bool, now time.Time) (int, error) {
-	if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
+	forcedBy := ""
+	if reason == AdoptReasonOperatorForced {
+		forcedBy, _ = rec.AdoptionForced()
+	}
+	if forcedBy != "" {
+		// An operator's Adopt now is not released under maintainer_policy:
+		// never — the person the policy defers to has decided.
+	} else if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
 		return 0, nil
 	} else if maintainer {
 		// Backstop for every re-home path (dco-rehome, in-place-stalled)
@@ -829,7 +869,8 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	}
 	superseding := created.GetNumber()
 	store.MarkAdopted(key, obs.HeadSHA, superseding, now)
-	c.info("stage labels: contributor PR adopted", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "branch", branch, "fence", rec.AdoptDiffFence)
+	store.NoteAdoptReason(key, reason)
+	c.info("stage labels: contributor PR adopted", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "branch", branch, "fence", rec.AdoptDiffFence, "forced_by", forcedBy)
 
 	if policy.AdoptSupersedeCloseFirst {
 		// hivecommons/hive#15135: one PR per issue — the original closes
@@ -837,6 +878,9 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		return c.closeSupersededOriginalFirst(ctx, store, key, obs, policy, superseding, reason, rec.AdoptDiffFence, now)
 	}
 	body := AdoptionComment(obs, policy.HiveID, superseding, reason, grace, online)
+	if forcedBy != "" {
+		body = AdoptionForcedComment(obs, forcedBy, superseding, online)
+	}
 	if dcoRehome {
 		body = AdoptionDCORehomeComment(obs, policy.HiveID, superseding)
 	}
@@ -1066,7 +1110,10 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	if !ok {
 		return 0, nil
 	}
-	if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
+	if rec.AdoptReason == AdoptReasonOperatorForced {
+		// An operator forced this adoption; maintainer_policy: never does
+		// not hand it back.
+	} else if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
 		// No evidence either way: neither re-home nor release this pass.
 		return 0, nil
 	} else if maintainer {

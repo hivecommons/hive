@@ -634,9 +634,22 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	in.SentinelReason = strings.TrimSpace(req.SentinelReason)
 	lowerReason := strings.ToLower(reason)
 	in.AdoptionStalled = strings.HasPrefix(lowerReason, stagelabels.LaneReasonAdoptionStalledPrefix)
+	if in.Kind == delegatedecision.KindPR && !in.HiveAuthored {
+		in.AdoptionGraceElapsed = s.delegatedAdoptionGraceElapsed(repoFull, number)
+	}
 	in.ReporterTrustHold = strings.Contains(lowerReason, "reporter-trust") || strings.Contains(lowerReason, "reporter trust")
 	in.DCOMissing = strings.Contains(lowerReason, "dco")
 	return in, nil
+}
+
+// delegatedAdoptionGraceElapsed reads the stage store: adoption at the PR's
+// nudged head came due and the engine held it (hivecommons/hive#15038).
+func (s *Server) delegatedAdoptionGraceElapsed(repoFull string, number int) bool {
+	rec, ok := s.stageStoreOrShared().Get(stagelabels.Key(repoFull, number))
+	if !ok || rec.NudgeHead == "" {
+		return false
+	}
+	return rec.AdoptionBlocked(rec.NudgeHead) != ""
 }
 
 // delegatedHeadCIGreen decides Input.CIGreen for the PR under decision.
@@ -789,6 +802,21 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			}
 			if err := client.AddLabels(ctx, repoFull, number, []string{delegatedecision.LabelAdoptSupersede}); err != nil {
 				return notes, fmt.Errorf("queuing supersede adoption: %w", err)
+			}
+			if d.Rule == delegatedecision.RuleAdoptNow {
+				// Grace already elapsed: run it as Adopt now — the forced
+				// mark bypasses presence and maintainer_policy and the
+				// sweep is nudged (api_repo_item_decision_reroute.go).
+				store := s.stageStoreOrShared()
+				key := stagelabels.Key(repoFull, number)
+				ensureStageRecord(store, key)
+				store.NoteAdoptionForced(key, user, time.Now())
+				if superseding := s.nudgeSweepAndAwaitAdoption(ctx, store, key, repoFull, number); superseding > 0 {
+					notes = append(notes, fmt.Sprintf("adopted now → #%d (hive's copy)", superseding))
+				} else {
+					notes = append(notes, "adoption forced (adopt-now): the hive opens its copy on the pass now running")
+				}
+				break
 			}
 			notes = append(notes, "supersede adoption queued for the adoption engine's next pass")
 		case delegatedecision.ActionRecommendOnly:

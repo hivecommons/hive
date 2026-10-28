@@ -169,6 +169,11 @@ func stageTrackerDecisionNeededAt(it StageTrackerItem, verdict *review.Aggregate
 		return decisionForUnauthorized(it, held)
 	case it.Kind == "pr" && it.Adoption != nil && it.Adoption.Action == decisionActionAdopt:
 		return decisionForAdoption(it, held, now)
+	case it.Kind == "pr" && it.Takeover != nil && it.Takeover.GraceElapsed && it.Adoption != nil && it.Adoption.BlockedBy != stagelabels.AdoptBlockedAuthorMaintainer:
+		// The nudge grace ran out and the engine has not adopted (ask is
+		// the case above; never stays the policy's word): the wait is a
+		// person's to end (Adopt now / Reroute) — hivecommons/hive#15038.
+		return decisionForWaitingOnContributor(it, held, now)
 	case it.Kind == "pr" && it.AuthorKind == authorKindHuman && slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage):
 		return decisionForWaitingOnAuthor(it, held)
 	case stageTrackerNeedsHuman(it) || (held && stageTrackerNeedsHuman(stageTrackerWithoutHold(it))):
@@ -405,6 +410,31 @@ func decisionForWaitingOnAuthor(it StageTrackerItem, held bool) *StageTrackerDec
 	return d
 }
 
+// decisionForWaitingOnContributor: a 072 clanker PR whose adoption came due
+// and is held (hivecommons/hive#15038). The options are the takeover's.
+func decisionForWaitingOnContributor(it StageTrackerItem, held bool, now time.Time) *StageTrackerDecision {
+	a := it.Adoption
+	who := "the author"
+	if a.Author != "" {
+		who = "@" + a.Author
+	}
+	d := &StageTrackerDecision{Since: a.Since, AskedBy: decisionAskedByLane, BlockerReason: "adoption:" + a.BlockerReason()}
+	gone := "has been offline since the nudge"
+	if off := strings.TrimSpace(stageTrackerAdoptionOfflineFor(*a, now)); off != "" {
+		gone = "has been offline for " + off
+	}
+	if a.AuthorOnline {
+		gone = "is online but has not answered " + plural(a.Nudges, "nudge")
+	}
+	d.Question = who + " " + gone + " and the hive is not adopting on its own; take the PR over now, or reroute its follow-up work to another clanker?"
+	d.Blocker = "The PR waits on " + who + "'s hive; adoption is held (" + a.BlockerReason() + ")."
+	if held {
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
+	}
+	d.Options = append(takeoverDecisionOptions(it.Takeover, held), decisionHoldOption(held))
+	return d
+}
+
 // decisionForAdoption: a nudged 072 PR whose author maintains the
 // repository, held for an owner under
 // governor.labels.stage.adoption.maintainer_policy: ask
@@ -431,8 +461,9 @@ func decisionForAdoption(it StageTrackerItem, held bool, now time.Time) *StageTr
 	}
 	d.Options = []StageTrackerDecisionOption{
 		decisionOption(decisionActionAdopt, "Adopt (hive takes over)", !held, "Release the hold first"),
-		decisionHoldOption(held),
 	}
+	d.Options = append(d.Options, takeoverDecisionOptions(it.Takeover, held)...)
+	d.Options = append(d.Options, decisionHoldOption(held))
 	return d
 }
 
@@ -744,7 +775,11 @@ func decisionForNeedsHuman(it StageTrackerItem, held bool) *StageTrackerDecision
 	} else {
 		resolve.Consequence = "lifts needs-human and records /hive approve as you; the hive carries on"
 	}
-	d.Options = []StageTrackerDecisionOption{resolve, decisionDelegateOption(held, "the hive reviews it as the owner's delegate and either lifts needs-human or says in plain words why it kept it"), decisionHoldOption(held)}
+	d.Options = []StageTrackerDecisionOption{resolve}
+	// A needs-human PR still waiting on its contributor's clanker offers
+	// the takeover actions too (hivecommons/hive#15038).
+	d.Options = append(d.Options, takeoverDecisionOptions(it.Takeover, held)...)
+	d.Options = append(d.Options, decisionDelegateOption(held, "the hive reviews it as the owner's delegate and either lifts needs-human or says in plain words why it kept it"), decisionHoldOption(held))
 	return d
 }
 

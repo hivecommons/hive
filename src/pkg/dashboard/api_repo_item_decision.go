@@ -108,6 +108,12 @@ type repoItemDecisionRequest struct {
 	// SupersededBy names the pull request that replaces a close-superseded
 	// item: "458", "#458", "owner/repo#458" or a GitHub URL. Optional.
 	SupersededBy string `json:"superseded_by"`
+	// Force with decision "adopt" is the operator's Adopt now: adopt at
+	// once, bypassing the author's presence, the grace window and
+	// maintainer_policy (api_repo_item_decision_reroute.go).
+	Force bool `json:"force,omitempty"`
+	// To with decision "reroute" is the target clanker's login, or "any".
+	To string `json:"to,omitempty"`
 }
 
 // parseRepoItemSupersededBy resolves a "superseded by" reference the way an
@@ -399,6 +405,12 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		s.audit.LogRecord(user, auditRepoItemDecisionClose, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "reason", verb, "superseded_by", supersededBy), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "closed", Label: label,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, supersededBy, label, nil)})
+	case repoItemDecisionReroute:
+		if itemType != "pr" {
+			jsonError(w, "reroute applies to pull requests", http.StatusBadRequest)
+			return
+		}
+		s.handleRepoItemReroute(ctx, w, repoFull, number, user, comment, body.To)
 	case repoItemDecisionAdopt, repoItemDecisionReauthor:
 		if itemType != "pr" {
 			jsonError(w, decision+" applies to pull requests", http.StatusBadRequest)
@@ -406,6 +418,10 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		}
 		if !s.stageAdoptionEnabled() {
 			jsonError(w, "adoption requires governor.labels.stage.adoption to be enabled on this hive", http.StatusConflict)
+			return
+		}
+		if body.Force && decision == repoItemDecisionAdopt {
+			s.handleRepoItemAdoptNow(ctx, w, repoFull, number, user, comment)
 			return
 		}
 		note := renderRepoItemDecisionAdoptComment(user, comment)
@@ -438,7 +454,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		}
 		s.handlePullRequestMergeDecision(ctx, w, repoFull, number, user, decision, comment)
 	default:
-		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, adopt, re-author, merge-now or queue-merge", http.StatusBadRequest)
+		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
 	}
 }
 

@@ -1174,7 +1174,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		// regardless of author kind or whether a nudge was ever sent.
 		if policy.Adoption && !obs.Merged && hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) {
 			before, _ := store.Get(key)
-			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, ContributorPresence{}, false, now)
+			// Presence is read so a forced adoption's note can tell an
+			// online author the maintainer took over; the request itself
+			// does not depend on it.
+			presence, hasPresence := c.contributorPresence(ctx, obs.Author)
+			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, presence, hasPresence, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err

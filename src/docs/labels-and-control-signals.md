@@ -941,6 +941,24 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    unregistered clock). A held adoption (`ask` / `never`, or
    `adoption.enabled: false`) keeps `next: wait` with no `adopt_at`, so the
    indicator never promises an adoption the pill text denies.
+   An operator can end the wait early from the activity monitor
+   row (hivecommons/hive#15038): **Adopt now** (decision API `adopt` with
+   `force: true`) posts `<!-- hive:adoption-requested by=<login>
+   force=true -->`, sets `adoption/supersede` and marks the stage record
+   forced, so the next sweep adopts at once in supersede mode whatever the
+   author's presence, the grace windows or `maintainer_policy` say (`hold`
+   still blocks it); the marker that follows reads `reason=operator-forced
+   by=@<login>` and, when the author's hive is online, the adoption comment
+   says the maintainer took it over. **Reroute** (decision API `reroute`
+   with `to: <login>|any`) hands the follow-up work to another online
+   clanker's fix queue and posts `<!-- hive:rerouted to=@X by=@op
+   reason=… -->` on the PR; if that relay has not picked the task up within
+   `governor.reroute.pickup_timeout` (default 30m) the hive posts
+   `<!-- hive:rerouted to=@X by=@op lapsed=true -->` and falls back to
+   Adopt now on its own.
+   - `reason=operator-forced by=@<login>` — an operator's Adopt now (or the
+     reroute pickup fallback acting for them); presence, grace and
+     `maintainer_policy` were not consulted;
    - `reason=contributor-offline` — the author has a contributor profile
      here and no relay heartbeat within `governor.labels.stage.presence_window`:
      adopted `governor.labels.stage.adoption.after_offline` (default 15m)

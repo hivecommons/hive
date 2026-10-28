@@ -1475,6 +1475,7 @@ func (b *boot) wireBootClosures() {
 			ReviewerAutoscaleStatus: func() autoscale.Status { return reviewerAutoscaler.Status() },
 			ReviewEvents:            b.reviewEvents,
 			WebhookWake:             b.webhookWakeFunc(),
+			SweepNudge:              b.sweepNudgeFunc(),
 			ApplyWebhookItems:       b.applyWebhookItemsFunc(),
 			WebhookDelivery:         b.webhookDeliveryFunc(),
 			EvalLoop:                b.evalLoopStatusFunc(),

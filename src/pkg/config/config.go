@@ -1586,6 +1586,10 @@ type GovernorConfig struct {
 	// (governor) config surface rather than only through HIVE_BACKUP_KEY.
 	Backup BackupConfig `yaml:"backup,omitempty" json:"backup,omitempty"`
 	Replan ReplanConfig `yaml:"replan"`
+	// Reroute is governor.reroute: the operator's "Reroute to another
+	// clanker" row action (re-dispatching a returned PR's follow-up work to
+	// another online contributor clanker).
+	Reroute RerouteConfig `yaml:"reroute,omitempty" json:"reroute,omitempty"`
 	// AttributionTrailer controls the VISIBLE invocation-attribution line
 	// ("— hive: agent=… backend=… model=…") appended at creation time to the
 	// body of PRs the hive opens for agents (the PR-request watcher) and issues
@@ -2914,6 +2918,22 @@ func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
 // EffectiveAfterUnregistered parses AfterUnregistered (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
 	return parseDurationOr(c.AfterUnregistered, DefaultAdoptAfterUnregistered)
+}
+
+// RerouteConfig is governor.reroute.
+type RerouteConfig struct {
+	// PickupTimeout is how long a rerouted PR's work may sit in the target
+	// clanker's queue before the hive gives up on the reroute and falls
+	// back to Adopt now (default 30m). Go duration syntax ("30m", "1h").
+	PickupTimeout string `yaml:"pickup_timeout,omitempty" json:"pickup_timeout,omitempty"`
+}
+
+// DefaultReroutePickupTimeout is governor.reroute.pickup_timeout's default.
+const DefaultReroutePickupTimeout = 30 * time.Minute
+
+// EffectivePickupTimeout parses PickupTimeout (default 30m).
+func (c RerouteConfig) EffectivePickupTimeout() time.Duration {
+	return parseDurationOr(c.PickupTimeout, DefaultReroutePickupTimeout)
 }
 
 // Default graces before a red contributor PR is adopted (stage 074).

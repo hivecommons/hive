@@ -213,6 +213,24 @@ type Record struct {
 	AdmittedHead string    `json:"admitted_head,omitempty"`
 	AdmittedBy   string    `json:"admitted_by,omitempty"`
 	AdmittedAt   time.Time `json:"admitted_at,omitempty"`
+	// AdoptForcedBy / AdoptForcedAt record an operator's "Adopt now": the
+	// login that forced adoption and when. The next sweep adopts by
+	// supersession at once, regardless of the author's presence and of
+	// maintainer_policy; the attempt clears it (MarkAdopted).
+	AdoptForcedBy string    `json:"adopt_forced_by,omitempty"`
+	AdoptForcedAt time.Time `json:"adopt_forced_at,omitempty"`
+	// RerouteTo / RerouteBy / RerouteAt / RerouteReason record an
+	// operator's "Reroute to another clanker": the PR's follow-up work was
+	// offered to RerouteTo's queue instead of waiting on the author.
+	// RerouteHead is the head the reroute was issued for; a new head (the
+	// target or the author pushed) ends the reroute. RerouteFallbackAt is
+	// when the pickup window lapsed and the hive fell back to Adopt now.
+	RerouteTo         string    `json:"reroute_to,omitempty"`
+	RerouteBy         string    `json:"reroute_by,omitempty"`
+	RerouteAt         time.Time `json:"reroute_at,omitempty"`
+	RerouteReason     string    `json:"reroute_reason,omitempty"`
+	RerouteHead       string    `json:"reroute_head,omitempty"`
+	RerouteFallbackAt time.Time `json:"reroute_fallback_at,omitempty"`
 	// DCORepairHead is the in-place-adopted head whose unsigned hive
 	// commits the hive last rewrote with its sign-off on the contributor
 	// branch (hivecommons/hive#14666); one attempt per head.
@@ -1118,6 +1136,8 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, by, now, now
 	r.AdoptMode = AdoptModeSupersede
 	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
+	r.AdoptForcedBy, r.AdoptForcedAt = "", time.Time{}
+	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
 	s.items[key] = r
 	s.dirty = true
 }
@@ -1293,6 +1313,82 @@ func (r Record) Admission(head string) string {
 		return ""
 	}
 	return r.AdmittedBy
+}
+
+// NoteAdoptionForced records an operator's "Adopt now" by login at now. The
+// pending reroute (if any) is dropped: a forced adoption supersedes it.
+func (s *Store) NoteAdoptionForced(key, login string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || login == "" {
+		return
+	}
+	r.AdoptForcedBy, r.AdoptForcedAt = login, now
+	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearAdoptionForced forgets a forced adoption (it was attempted).
+func (s *Store) ClearAdoptionForced(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptForcedBy == "" {
+		return
+	}
+	r.AdoptForcedBy, r.AdoptForcedAt = "", time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// AdoptionForced reports the operator who forced adoption of this PR and
+// whether that force is still pending (no attempt recorded yet).
+func (r Record) AdoptionForced() (string, bool) {
+	return r.AdoptForcedBy, r.AdoptForcedBy != ""
+}
+
+// NoteReroute records that by rerouted the PR's follow-up work at head to
+// login for reason.
+func (s *Store) NoteReroute(key, head, login, by, reason string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || login == "" {
+		return
+	}
+	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = login, by, now, reason, head
+	r.RerouteFallbackAt = time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearReroute ends a reroute (picked up, head moved, adopted, or fallen
+// back). fallback stamps RerouteFallbackAt so the row can say the pickup
+// window lapsed.
+func (s *Store) ClearReroute(key string, fallback bool, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.RerouteTo == "" {
+		return
+	}
+	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
+	if fallback {
+		r.RerouteFallbackAt = now
+	}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// Rerouted reports the clanker login the PR's work at head is currently
+// rerouted to, or "" (no reroute, or the head has moved since).
+func (r Record) Rerouted(head string) string {
+	if r.RerouteTo == "" || (head != "" && r.RerouteHead != "" && r.RerouteHead != head) {
+		return ""
+	}
+	return r.RerouteTo
 }
 
 // NoteAdoptReason records why the current adoption happened (the marker's

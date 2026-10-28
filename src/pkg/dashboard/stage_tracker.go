@@ -447,6 +447,10 @@ type StageTrackerItem struct {
 	// hive's likely next move (wait or adopt, with the adopt-at time), so
 	// the waiting-on pill can carry an indicator (hivecommons/hive#15051).
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
+	// Takeover is, on a 072 / 071 clanker PR, the operator's Adopt now /
+	// Reroute offer and any pending reroute or forced adoption
+	// (hivecommons/hive#15038, stage_tracker_takeover.go).
+	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -575,6 +579,8 @@ type StageTrackerLinkedPR struct {
 	DrawnUnder int `json:"drawn_under,omitempty"`
 	// Presence mirrors the nested PR's own row field (hivecommons/hive#15051).
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
+	// Takeover mirrors the nested PR's own row field (hivecommons/hive#15038).
+	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
 }
 
 // StageTrackerHold is the row's hold provenance (stagelabels.HoldProvenance
@@ -1765,6 +1771,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	sweep := s.stageTrackerSweepState()
 	workers := stageTrackerWorkersFromStatus(status)
 	adoptionClock := s.stageTrackerAdoptionClock()
+	rerouteCandidates, adoptionEnabled, takeoverGrace := s.stageTrackerRerouteCandidates(), s.stageAdoptionEnabled(), s.takeoverGrace()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
 		// "Needs human decision" is read from the item's current labels, not
 		// a store record that outlived them: once the park label is gone
@@ -1843,6 +1850,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		if login := stageTrackerWaitingOn(*it, stage); login != "" {
 			it.Presence = stageTrackerPresenceFor(*it, login, stage, rec, hasRec, presence, adoptionClock, now)
+		}
+		if it.Takeover = stageTrackerTakeover(*it, rec, hasRec, presence, rerouteCandidates, adoptionEnabled, takeoverGrace, now); it.Takeover != nil {
+			it.Caption = stageTrackerTakeoverCaption(it.Caption, it.Takeover)
 		}
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
 		it.HumanApprover = approver
@@ -2766,6 +2776,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
 				lp.Adoption = pr.Adoption
 				lp.Presence = pr.Presence
+				lp.Takeover = pr.Takeover
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.AdmittedBy, lp.DCOUnsigned, lp.DCOTotal = pr.AdmittedBy, pr.DCOUnsigned, pr.DCOTotal

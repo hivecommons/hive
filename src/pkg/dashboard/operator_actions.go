@@ -47,6 +47,11 @@ const (
 	// The operator's explicit re-authoring of a head that cannot merge
 	// as-is (hivecommons/hive#15136).
 	operatorActionReauthor = "re-author"
+	// operatorActionAdopt / AdoptNow / Reroute are the 072 takeover
+	// decisions (hivecommons/hive#15038): adopt-now is adopt with force.
+	operatorActionAdopt    = "adopt"
+	operatorActionAdoptNow = "adopt-now"
+	operatorActionReroute  = "reroute"
 
 	// Stored outcomes: what the endpoint answered when the action was
 	// submitted. `pending` is a delegated decision still running; the job's
@@ -260,6 +265,8 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 		Held         *bool  `json:"held"`
 		Reason       string `json:"reason"`
 		Head         string `json:"head"`
+		Force        bool   `json:"force"`
+		To           string `json:"to"`
 	}
 	if len(bytes.TrimSpace(body)) > 0 {
 		_ = json.Unmarshal(body, &raw)
@@ -283,6 +290,14 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			out.Action = operatorActionQueueMerge
 		case repoItemDecisionReauthor:
 			out.Action = operatorActionReauthor
+		case repoItemDecisionAdopt:
+			out.Action = operatorActionAdopt
+			if raw.Force {
+				out.Action = operatorActionAdoptNow
+			}
+		case repoItemDecisionReroute:
+			out.Action = operatorActionReroute
+			out.Target = strings.TrimPrefix(strings.TrimSpace(raw.To), "@")
 		default:
 			return out, false
 		}

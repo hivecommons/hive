@@ -56,6 +56,14 @@ type StageTrackerAdoption struct {
 	Text string `json:"text"`
 }
 
+// BlockerReason is the hold reason, or "policy" when the engine recorded none.
+func (a StageTrackerAdoption) BlockerReason() string {
+	if a.BlockedBy != "" {
+		return a.BlockedBy
+	}
+	return "policy"
+}
+
 // decisionActionAdopt is the row action id for the owner's Adopt, in the
 // context menu's "decide:<verb>" vocabulary (POST …/decision adopt).
 const decisionActionAdopt = "decide:adopt"

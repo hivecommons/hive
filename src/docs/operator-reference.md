@@ -726,7 +726,22 @@ hive's to stand in for when that hive disconnects, maintainer or not).
 `never` keeps the earlier hands-off rule and releases any existing adoption
 of a maintainer's head. Human-authored PRs stay unadopted under all three.
 Dashboard: Settings → Labels → "When the PR author maintains the
-repository". When the
+repository". Whatever the policy and the clocks say, the row's ⋯ menu on a
+072 / 071 clanker PR offers the operator **Adopt now — hive takes it over**
+(decision API `adopt` + `force: true`: supersede adoption on the next nudged
+sweep, bypassing presence, grace and `maintainer_policy`; `hold` still
+stops it; marker `hive:adopted reason=operator-forced by=@login`) and
+**Reroute to another clanker** (decision API `reroute` + `to: <login>|any`:
+the follow-up work goes to an online contributor clanker's fix queue as a
+`fix-pr` interrupt — the same mechanism as the 072 nudge — with a
+`hive:rerouted` note on the PR). A rerouted task the target relay has not
+taken within `governor.reroute.pickup_timeout` (default `30m`) falls back to
+Adopt now by itself, with a system alert and a `repo_item_reroute_fallback`
+audit entry; with no clanker online the Reroute item is disabled ("no
+clankers online — use Adopt now"). Both are also options in the
+Needs-human popover once the nudge grace has elapsed, and "Let hive decide"
+picks Adopt now then (hivecommons/hive#15038;
+[dashboard-sections.md](dashboard-sections.md#hive-activity-monitor)). When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
 `ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR

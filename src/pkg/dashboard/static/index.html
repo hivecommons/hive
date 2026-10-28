@@ -1555,6 +1555,11 @@
     @keyframes ham-presence-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
     @media (prefers-reduced-motion: reduce) { .ham-presence-online { animation: none; } }
     .ham-decision-presence { font-size: var(--fs-xs); color: var(--muted); }
+    /* Reroute pill (hive PR 15038): "● rerouted → @x"; the dot is
+       the target clanker's presence (online = the ready status token). */
+    .ham-badge-reroute { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); display: inline-flex; align-items: center; gap: var(--sp-1); }
+    .ham-badge-reroute .ham-presence-dot { width: 0.5em; height: 0.5em; border-radius: 50%; background: var(--text-faint); flex: 0 0 auto; }
+    .ham-badge-reroute.ham-reroute-online .ham-presence-dot { background: var(--status-ok); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
@@ -1743,6 +1748,8 @@
     .ham-menu.ham-menu-hinted { max-width: min(45em, calc(100vw - 2 * var(--sp-3))); }
     .ham-menu-item.ham-menu-item-hinted { flex-direction: column; align-items: flex-start; gap: var(--sp-1); white-space: normal; }
     .ham-menu-item .ham-menu-hint { display: block; color: var(--text-faint); font-size: var(--fs-xs); white-space: normal; overflow-wrap: anywhere; }
+    .ham-menu-text { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+    .ham-menu-note { font-size: var(--fs-xs); color: var(--text-faint); white-space: normal; }
     .ham-submenu { display: none; margin: 0 0 0 var(--sp-3); padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-menu-item[aria-expanded="true"] + .ham-submenu { display: block; }
     /* tracker-cues: the Activity Monitor's shared cue vocabulary (owner,
@@ -14707,6 +14714,68 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tip = stageTrackerPresenceTip(item, Date.now());
       return `<span class="ham-badge ham-badge-waiting" title="${esc(tip)}" aria-label="${esc('Waiting on — ' + tip)}">${stageTrackerPresenceInPillHtml(item, stageTrackerPresenceChipText(item))}</span>`;
     }
+    /* Takeover (hivecommons/hive#15038): a PR waiting on a contributor's
+       clanker (072 returned-to-contributor / 071 needs-author) carries
+       `takeover` {author, author_online, adopt_now, adopt_now_reason,
+       reroute, reroute_reason, clankers[], rerouted, grace_elapsed}. The
+       row menu then offers Adopt now (forced adoption, no grace wait) and
+       Reroute to another clanker (an online registered contributor hive,
+       or "any available"); the server disables each with a reason. */
+    const STAGE_TRACKER_ADOPT_NOW_CONSEQUENCE = "closes the contributor's PR after hive opens its copy; their commits + sign-off are preserved";
+    const STAGE_TRACKER_REROUTE_ANY = 'any';
+    const STAGE_TRACKER_REROUTE_PREFIX = 'decide:reroute:';
+    function stageTrackerTakeoverOf(item) {
+      return item && item.kind === 'pr' && item.takeover && typeof item.takeover === 'object' ? item.takeover : null;
+    }
+    // Pure: the base action id — "decide:reroute:<login>" acts as "decide:reroute".
+    function stageTrackerActionBase(id) {
+      return String(id || '').indexOf(STAGE_TRACKER_REROUTE_PREFIX) === 0 ? 'decide:reroute' : String(id || '');
+    }
+    function stageTrackerRerouteTargetOf(id) {
+      return String(id || '').indexOf(STAGE_TRACKER_REROUTE_PREFIX) === 0 ? String(id).slice(STAGE_TRACKER_REROUTE_PREFIX.length) : '';
+    }
+    // Pure: one submenu line per online clanker — "@login · hive · online 2h · 1 in hand".
+    function stageTrackerClankerLabel(c, nowMs) {
+      const since = Date.parse(c.online_since || '');
+      const parts = ['@' + (c.login || '?')];
+      if (c.hive_name) parts.push(String(c.hive_name));
+      if (since && typeof agentNowAgo === 'function') parts.push('online ' + agentNowAgo((typeof nowMs === 'number' ? nowMs : Date.now()) - since));
+      const load = Number(c.load) || 0;
+      parts.push(load ? load + ' in hand' : 'idle');
+      return parts.join(' · ');
+    }
+    // Pure: the Reroute submenu — the clankers online now, then "any available".
+    function stageTrackerRerouteOptions(tk, enabled, why, nowMs) {
+      const out = (tk && Array.isArray(tk.clankers) ? tk.clankers : []).map(c => ({ id: STAGE_TRACKER_REROUTE_PREFIX + (c.login || ''), label: stageTrackerClankerLabel(c, nowMs), enabled, why, clanker: c }));
+      out.push({ id: STAGE_TRACKER_REROUTE_PREFIX + STAGE_TRACKER_REROUTE_ANY, label: 'any available' + (out.length ? ' (' + out.length + ' online)' : ''), enabled, why });
+      return out;
+    }
+    // Pure: the takeover items of a row menu; [] when the row has none.
+    function stageTrackerTakeoverActions(item, ctx, nowMs) {
+      const tk = stageTrackerTakeoverOf(item);
+      if (!tk) return [];
+      ctx = ctx || {};
+      const write = ctx.canHold !== false && !!ctx.user;
+      const whyWrite = write ? '' : STAGE_TRACKER_WHY_WRITE;
+      const adoptOk = write && !!tk.adopt_now;
+      const adoptWhy = adoptOk ? '' : (whyWrite || tk.adopt_now_reason || 'Not available on this row');
+      const rerouteOk = write && !!tk.reroute;
+      const rerouteWhy = rerouteOk ? '' : (whyWrite || tk.reroute_reason || 'Not available on this row');
+      return [
+        { id: 'decide:adopt-now', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt-now'] + '…', note: STAGE_TRACKER_ADOPT_NOW_CONSEQUENCE, enabled: adoptOk, why: adoptWhy, danger: true },
+        { id: 'decide:reroute', label: STAGE_TRACKER_ACTION_LABELS['decide:reroute'], note: tk.rerouted && tk.rerouted.to ? 'rerouted → @' + tk.rerouted.to + ' already; pick again to move it' : (rerouteOk ? 'hands the reviewer\'s requested changes to another online clanker' : ''), enabled: rerouteOk, why: rerouteWhy, submenu: stageTrackerRerouteOptions(tk, rerouteOk, rerouteWhy, nowMs) },
+      ];
+    }
+    // Pure: the "rerouted → @x" pill with the target's presence dot; '' when
+    // the row is not rerouted.
+    function stageTrackerReroutePillHtml(item) {
+      const tk = stageTrackerTakeoverOf(item);
+      const r = tk && tk.rerouted && tk.rerouted.to ? tk.rerouted : null;
+      if (!r) return '';
+      const tip = r.text || ('Rerouted to @' + r.to + (r.by ? ' by @' + r.by : ''));
+      const presence = r.target_online ? 'online' : 'offline';
+      return `<span class="ham-badge ham-badge-reroute${r.target_online ? ' ham-reroute-online' : ''}" title="${esc(tip)}" aria-label="${esc('Rerouted — ' + tip + ' (@' + r.to + ' ' + presence + ')')}"><span class="ham-presence-dot" aria-hidden="true"></span>rerouted → @${esc(r.to)}</span>`;
+    }
 
     // "Sentinel flagged security-relevant changes at <head short sha>:
     // <reason>" — the sentinel wording for an item's tooltips and aria
@@ -15176,7 +15245,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerChipsHtml(item) {
-      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '');
+      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
@@ -15244,6 +15313,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix",
       'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
       'merge-now': 'Approve & merge as maintainer', 'queue-merge': 'Approve — let hive merge',
+      adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',
     };
     const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed'];
     const STAGE_TRACKER_ACTED_FILTERS = ['any', 'awaiting', 'acted', 'stuck'];
@@ -15327,7 +15397,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Row-menu action id each ledger action was submitted under, so the
     // option the owner just took is not offered back to them.
-    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'accept-triage': 'accept-triage', hold: 'hold', 'merge-now': 'decide:merge-now', 'queue-merge': 'decide:queue-merge', 're-author': 'decide:re-author' };
+    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'accept-triage': 'accept-triage', hold: 'hold', 'merge-now': 'decide:merge-now', 'queue-merge': 'decide:queue-merge', 're-author': 'decide:re-author', adopt: 'decide:adopt', 'adopt-now': 'decide:adopt-now', reroute: 'decide:reroute' };
     // Pure: what the owner can still do when their action changed nothing
     // (no-op) or the item has not moved (stuck): the enabled options from
     // the row's decision_needed payload, minus the one just taken.
@@ -15463,7 +15533,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
-        adoption: lp.adoption || null, superseded: !!lp.superseded, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
+        adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, presence: lp.presence || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null };
     }
     // Pure: whether a linked PR is still open (not merged / closed / superseded).
@@ -17185,6 +17255,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:merge-now': 'Approve & merge as maintainer', 'decide:queue-merge': 'Approve — let hive merge',
       'decide:re-author': 'Re-author as hive PR',
+      'decide:adopt-now': 'Adopt now — hive takes it over', 'decide:reroute': 'Reroute to another clanker',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
     };
@@ -17471,6 +17542,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // A nudged contributor PR the engine would adopt but for the owner's
       // say-so (maintainer_policy: ask) offers Adopt (hivecommons/hive#14524).
       if (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item)) out.push({ id: 'decide:adopt', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt'] + '…', hint: 'adoption', enabled: write && !!ctx.user, why: write && ctx.user ? '' : STAGE_TRACKER_WHY_WRITE });
+      // A PR waiting on a contributor's clanker offers Adopt now and Reroute
+      // (hivecommons/hive#15038); each disabled with the server's reason.
+      if (typeof stageTrackerTakeoverActions === 'function') for (const a of stageTrackerTakeoverActions(item, ctx, ctx.nowMs)) out.push(a);
       out.push(has('hold')
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
@@ -17525,15 +17599,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMenuItemHtml(a) {
       const dis = a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`;
       if (a.submenu) {
-        return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item" data-ham-act="${esc(a.id)}" aria-haspopup="menu" aria-expanded="false" tabindex="-1"${dis}>${esc(a.label)}<span class="ham-menu-more" aria-hidden="true">▸</span></button><div class="ham-submenu" role="menu" aria-label="${esc(a.label)}">${a.submenu.map(stageTrackerMenuItemHtml).join('')}</div>`;
+        return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item" data-ham-act="${esc(a.id)}" aria-haspopup="menu" aria-expanded="false" tabindex="-1"${dis}>${stageTrackerMenuTextHtml(a)}<span class="ham-menu-more" aria-hidden="true">▸</span></button><div class="ham-submenu" role="menu" aria-label="${esc(a.label)}">${a.submenu.map(stageTrackerMenuItemHtml).join('')}</div>`;
       }
       // A hint stacks under the label (ham-menu-item-hinted) and wraps, so
       // the consequence line never overflows the menu (#15165).
-      return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item${a.danger ? ' ham-menu-danger' : ''}${a.hint ? ' ham-menu-item-hinted' : ''}" data-ham-act="${esc(a.id)}" tabindex="-1"${dis}>${esc(a.label)}${a.hint ? `<span class="ham-menu-hint">${esc(a.hint)}</span>` : ''}</button>`;
+      return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item${a.danger ? ' ham-menu-danger' : ''}${a.hint ? ' ham-menu-item-hinted' : ''}" data-ham-act="${esc(a.id)}" tabindex="-1"${dis}>${stageTrackerMenuTextHtml(a)}${a.hint ? `<span class="ham-menu-hint">${esc(a.hint)}</span>` : ''}</button>`;
     }
     // Pure: true when any action (or submenu action) carries a hint.
     function stageTrackerMenuHasHints(actions) {
       return (actions || []).some(a => !!a.hint || (a.submenu && stageTrackerMenuHasHints(a.submenu)));
+    }
+    // Pure: the label, with its consequence line under it when the action has one.
+    function stageTrackerMenuTextHtml(a) {
+      if (!a.note) return esc(a.label);
+      return `<span class="ham-menu-text"><span>${esc(a.label)}</span><span class="ham-menu-note">${esc(a.note)}</span></span>`;
     }
     // Pure: the menu markup (roles menu / menuitem, the Decide group as a
     // nested menu toggled by its item). A menu with hints is ham-menu-hinted
@@ -17725,6 +17804,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const d = item && item.decision_needed;
       const server = d && Array.isArray(d.options) ? d.options : [];
       const flat = stageTrackerFlatActions(stageTrackerRowActions(item, ctx || { user: false, canHold: false, canHuman: false }));
+      // An issue row's popover may name its nested PR's takeover options.
+      const tkTarget = typeof stageTrackerTakeoverTarget === 'function' ? stageTrackerTakeoverTarget(item) : null;
+      if (tkTarget && tkTarget !== item) for (const a of stageTrackerTakeoverActions(tkTarget, ctx || { user: false, canHold: false, canHuman: false })) if (!flat[a.id]) flat[a.id] = a;
       const out = server.map(o => {
         const c = flat[o.action];
         const enabled = !!o.enabled && !!(c && c.enabled);
@@ -17929,7 +18011,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const html = stageTrackerSelBarHtml(items, stageTrackerSelectionActions(items, stageTrackerActionCtx));
       if (bar.innerHTML !== html) bar.innerHTML = html;
     }
-    function stageTrackerActionLabel(id) { return STAGE_TRACKER_ACTION_LABELS[id] || id; }
+    function stageTrackerActionLabel(id) {
+      const base = typeof stageTrackerActionBase === 'function' ? stageTrackerActionBase(id) : id;
+      return STAGE_TRACKER_ACTION_LABELS[base] || id;
+    }
     // Pure: which endpoint an action hits for one item. `once` marks a
     // hive-wide call made one time per batch.
     function stageTrackerActionRequest(item, id, payload) {
@@ -17958,6 +18043,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const prs = stageTrackerNestedOpenPRs(item).map(p => p.number);
         if (type !== 'issue' || prs.length < STAGE_TRACKER_DELEGATE_ALL_MIN) return null;
         return { url: '/api/repos/' + seg + '/items/' + n + '/decide-delegated', body: { type, prs, reason: item.reason || '', caption: item.caption || '', sentinel_reason: item.sentinel_reason || '' }, poll: true };
+      }
+      if (id === 'decide:adopt-now') {
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'adopt', force: true, comment: payload.comment || '', type } };
+      }
+      if (stageTrackerActionBase(id) === 'decide:reroute') {
+        const to = payload.to || stageTrackerRerouteTargetOf(id) || STAGE_TRACKER_REROUTE_ANY;
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: 'reroute', to, comment: payload.comment || '', type } };
       }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
@@ -18280,8 +18372,44 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const v = await stageTrackerAsk(id, 'prompt', { title: 'Mark needs-human', label: 'Why does ' + refs + ' need a human? (optional)', placeholder: 'Reason', confirmLabel: 'Mark' });
           return v == null ? null : { comment: v };
         }
+        case 'decide:adopt-now': {
+          const online = items.some(it => { const tk = stageTrackerTakeoverOf(it); return tk && tk.author_online; });
+          return (await stageTrackerAsk(id, 'confirm', stageTrackerAdoptNowConfirm(refs, who, online, preface))) ? {} : null;
+        }
+        case 'decide:reroute': {
+          // No target yet (the Needs-human popover's option): ask for one —
+          // required, so this prompt is never skipped — then confirm.
+          const tk = stageTrackerTakeoverOf(items[0]) || {};
+          const options = stageTrackerRerouteOptions(tk, true, '').map(o => ({ value: stageTrackerRerouteTargetOf(o.id), label: o.label }));
+          const to = await hivePrompt({ title: stageTrackerActionLabel(id), label: 'Which clanker takes ' + refs + ' over? (a login from the list, or "any")', placeholder: STAGE_TRACKER_REROUTE_ANY, defaultValue: STAGE_TRACKER_REROUTE_ANY, options, validate: v => stageTrackerRerouteTargetValid(v, tk), confirmLabel: 'Next' });
+          if (to == null) return null;
+          const target = String(typeof to === 'object' ? to.value : to).replace(/^@/, '').trim() || STAGE_TRACKER_REROUTE_ANY;
+          return (await stageTrackerAsk(id, 'confirm', stageTrackerRerouteConfirm(refs, who, target, tk))) ? { to: target } : null;
+        }
+      }
+      if (stageTrackerActionBase(id) === 'decide:reroute') {
+        const target = stageTrackerRerouteTargetOf(id) || STAGE_TRACKER_REROUTE_ANY;
+        return (await stageTrackerAsk('decide:reroute', 'confirm', stageTrackerRerouteConfirm(refs, who, target, stageTrackerTakeoverOf(items[0])))) ? { to: target } : null;
       }
       return {};
+    }
+    // Pure: the Adopt now confirm — the consequence line is the message.
+    function stageTrackerAdoptNowConfirm(refs, who, authorOnline, preface) {
+      const tail = authorOnline ? ' The author\'s clanker is online: the adoption comment tells it, politely, that the maintainer took the PR over.' : '';
+      return { title: 'Adopt now', message: (preface || '') + 'Have the hive adopt ' + refs + ' now as ' + who + ', without waiting for the offline grace window or the maintainer policy? This ' + STAGE_TRACKER_ADOPT_NOW_CONSEQUENCE + '.' + tail, confirmLabel: 'Adopt now', danger: true };
+    }
+    function stageTrackerRerouteConfirm(refs, who, target, tk) {
+      const any = !target || target === STAGE_TRACKER_REROUTE_ANY;
+      const toWho = any ? 'any available clanker' : '@' + target + '\'s clanker';
+      const author = tk && tk.author ? '@' + tk.author : 'the author';
+      return { title: stageTrackerActionLabel('decide:reroute'), message: 'Hand the reviewer\'s requested changes on ' + refs + ' to ' + toWho + ' as ' + who + '? ' + author + ' is told by comment; the target fixes the PR or opens a replacement carrying ' + author + '\'s commits and sign-off. If nobody picks it up within the pickup window the hive falls back to Adopt now.', confirmLabel: 'Reroute' };
+    }
+    // Pure: a reroute target is "any" or a clanker the row lists as online.
+    function stageTrackerRerouteTargetValid(v, tk) {
+      const t = String(v || '').replace(/^@/, '').trim();
+      if (!t || t === STAGE_TRACKER_REROUTE_ANY) return true;
+      const list = tk && Array.isArray(tk.clankers) ? tk.clankers : [];
+      return list.some(c => String(c.login || '').toLowerCase() === t.toLowerCase()) ? true : '@' + t + ' is not online now — pick a listed clanker or "any"';
     }
     /* Every menu item goes through runRowAction(action, row): it asks what
        the action needs (in-app dialogs, each skippable per action), marks
@@ -18301,14 +18429,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'decide:delegate': 'Hive is deciding…', 'decide:delegate-all': 'Hive is deciding each PR…', 'decide:delegate:rerun': 'Hive is deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…', 'decide:re-author': 'Queuing re-authoring…',
+      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…',
+      'decide:adopt': 'Adopting…', 'decide:adopt-now': 'Adopting now…', 'decide:reroute': 'Rerouting…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
       merged: 'merged', 'queued-for-merge': 'queued for merge',
-      held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
+      held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: "decided, but it hasn't taken effect",
     };
-    function stageTrackerActingCaption(id) { return STAGE_TRACKER_ACTING_CAPTIONS[id] || 'acting…'; }
+    function stageTrackerActingCaption(id) { return STAGE_TRACKER_ACTING_CAPTIONS[stageTrackerActionBase(id)] || 'acting…'; }
     // Pure: the state signature a toast / acting row waits to see change.
     function stageTrackerItemState(it) {
       if (!it) return '';
@@ -18349,7 +18479,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const error = result.action === 'error';
       let head;
       if (error) head = stageTrackerActionLabel(ctx.id || '') + ' failed on ' + rowRef + toward;
-      else if (result.rule || result.action === 'adopted' || result.action === 'recommended') head = 'Hive decided on ' + rowRef + toward;
+      else if (result.rule || result.action === 'recommended' || (result.action === 'adopted' && ctx.id !== 'decide:adopt-now')) head = 'Hive decided on ' + rowRef + toward;
       else head = stageTrackerActionLabel(ctx.id || '') + ' on ' + rowRef + toward;
       const word = error ? '' : (STAGE_TRACKER_ACTION_WORDS[result.action] || result.action || '');
       // The rule in plain words from the glossary, never the bare slug.
@@ -18510,6 +18640,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } else if (id === 'decide:delegate-all') {
         // The issue row itself is the request; the server fans out per PR.
         items = items.filter(it => stageTrackerNestedOpenPRs(it).length >= STAGE_TRACKER_DELEGATE_ALL_MIN);
+      } else if (id === 'decide:adopt-now' || stageTrackerActionBase(id) === 'decide:reroute') {
+        // Adopt now / Reroute act on the PR waiting on its contributor (072 / 071).
+        items = items.map(stageTrackerTakeoverTarget).filter(Boolean);
         if (!items.length) return { toasts: [], pending: [] };
       } else if (id.indexOf('decide:') === 0) {
         // A row decides its parked PR when it has one (the issue's stage is
@@ -18528,6 +18661,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
       const results = await stageTrackerRunActions(items, id, payload, rows);
       return { toast: results.toasts[0] || null, toasts: results.toasts, pending: results.pending, results };
+    }
+    // Pure: the PR a takeover action acts on — the PR row itself, or the
+    // issue's nested PR waiting on its contributor.
+    function stageTrackerTakeoverTarget(item) {
+      if (!item) return null;
+      if (item.kind === 'pr') return stageTrackerTakeoverOf(item) ? item : null;
+      for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
+        if (lp && lp.takeover) return stageTrackerItemByKey(_stageTracker, stageTrackerItemKey({ repo: item.repo, kind: 'pr', number: lp.number })) || stageTrackerLinkedPRItem(item, lp);
+      }
+      return null;
     }
     // Menu / selection bar entry point: items are the clicked or selected rows.
     async function stageTrackerDoAction(items, id) { return runRowAction(id, items); }

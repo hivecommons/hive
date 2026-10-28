@@ -126,6 +126,14 @@ type Server struct {
 	// sweepState overrides the automerge lanes' live sweep state for the
 	// tracker's merge-gate rows (stage_tracker_merge_gate.go); tests only.
 	sweepState func() automerge.SweepState
+	// adoptNowWait / rerouteAfterFunc let tests shorten the Adopt now
+	// sweep wait and run the reroute pickup timer by hand
+	// (api_repo_item_decision_reroute.go); zero/nil use the real clock.
+	adoptNowWait     time.Duration
+	rerouteAfterFunc func(time.Duration, func())
+	// rerouteCandidates overrides the contribute hub as the tracker's
+	// online-clanker source for the Reroute submenu; tests only.
+	rerouteCandidates func(author string) []RerouteCandidate
 	// stageTrackerCache is the last /api/stage-tracker payload built from
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache
