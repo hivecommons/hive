@@ -119,6 +119,7 @@ func TestStageTrackerAttentionOrderJS(t *testing.T) {
 		jsFunc(t, html, "stageTrackerRegressionHandled"),
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 		jsFunc(t, html, "stageTrackerWaitSince"),
+		stageTrackerActedJS(t, html),
 		jsFunc(t, html, "stageTrackerNormalizeFilter"),
 		jsFunc(t, html, "stageTrackerSort"),
 	}, "\n") + `

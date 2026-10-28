@@ -223,7 +223,9 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 
 func (m *Manager) validatePaneKickLocked(agent *AgentProcess, name string) error {
 	if agent.State != StateRunning {
-		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
+		if m.sharedPool == nil || agent.State != StateStopped || agent.Paused || agent.OperatorStopped {
+			return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
+		}
 	}
 	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
 		class, line := agent.ProviderErrorClass, agent.ProviderErrorLine
@@ -233,7 +235,7 @@ func (m *Manager) validatePaneKickLocked(agent *AgentProcess, name string) error
 	if err := m.restartKickHoldErrLocked(agent, time.Now()); err != nil {
 		return err
 	}
-	if !m.tmuxSessionExistsForAgent(agent) {
+	if agent.State == StateRunning && !m.tmuxSessionExistsForAgent(agent) {
 		return fmt.Errorf("tmux session %s not found", agent.tmuxSession)
 	}
 	return nil
@@ -255,9 +257,22 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 	if agent.State != StateRunning {
-		reason := notRunningReason(agent)
-		m.mu.Unlock()
-		return fmt.Errorf("agent %s cannot be kicked: %s", name, reason)
+		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+			m.mu.Unlock()
+			if err := m.Start(context.Background(), name); err != nil {
+				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
+			}
+			m.mu.Lock()
+			agent, ok = m.agents[name]
+			if !ok || agent.State != StateRunning {
+				m.mu.Unlock()
+				return fmt.Errorf("agent %s failed to enter running state", name)
+			}
+		} else {
+			reason := notRunningReason(agent)
+			m.mu.Unlock()
+			return fmt.Errorf("agent %s cannot be kicked: %s", name, reason)
+		}
 	}
 	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
 		class, line := agent.ProviderErrorClass, agent.ProviderErrorLine

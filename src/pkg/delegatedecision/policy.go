@@ -565,22 +565,9 @@ func Run(in Input) Decision {
 
 // CommentBody renders the comment the delegate posts for a decision: the
 // `/hive decision <text>` line a maintainer would type (or the
-// recommendation when the park is kept), the rationale, the attribution and
-// the audit marker.
+// recommendation when the park is kept), the rationale, the plain-words
+// block (PlainWords), the attribution and the audit marker. Callers that
+// know the item kind and the effect timeout use CommentBodyWith.
 func CommentBody(d Decision, hiveID, requester string) string {
-	var b strings.Builder
-	switch {
-	case d.Verdict == VerdictRefused:
-		fmt.Fprintf(&b, "Hive (owner-delegate) did not decide this item: %s.", d.Rationale)
-	case d.KeepsPark:
-		fmt.Fprintf(&b, "%s\n\nRationale: %s. `%s` stays.", d.Text, d.Rationale, LabelNeedsDecision)
-	default:
-		fmt.Fprintf(&b, "/hive decision %s\n\nRationale: %s.", d.Text, d.Rationale)
-	}
-	by := "the hive"
-	if r := strings.TrimSpace(requester); r != "" {
-		by = "the hive at @" + r + "'s request"
-	}
-	fmt.Fprintf(&b, "\n\n_Decided by %s as the owner's delegate under the %s policy (rule `%s`)._\n%s", by, PolicyName, d.Rule, Marker(hiveID))
-	return b.String()
+	return CommentBodyWith(d, hiveID, requester, CommentOptions{})
 }

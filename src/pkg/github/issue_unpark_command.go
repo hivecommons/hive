@@ -899,7 +899,7 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 		if !isCommand && !isUnparkProseAssent(cm.GetBody()) {
 			continue
 		}
-		if !c.isHumanAuthor(cm.GetUser()) {
+		if !c.isHumanAuthor(cm.GetUser()) || isHiveSelfDecisionComment(cm.GetBody()) {
 			continue
 		}
 		checked++

@@ -173,9 +173,11 @@ console.log('ok');
 // then the row takes its normal exit; several merges stagger 200 ms apart
 // under a flight cap; reduced motion flies nothing and ticks at once; the
 // toggle off keeps the old immediate zap and no pin.
-func TestStageTrackerCelebrateNode(t *testing.T) {
-	html := indexHTML(t)
-	lifted := strings.Join([]string{
+// stageTrackerCelebrateJS lifts the merge detector and the celebration
+// module (counter, token flight, pinned rows) out of index.html.
+func stageTrackerCelebrateJS(t *testing.T, html string) string {
+	t.Helper()
+	return strings.Join([]string{
 		"function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }",
 		jsConstLine(t, html, "STAGE_TRACKER_EVENT_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGED_TIP_MAX"),
@@ -211,8 +213,19 @@ func TestStageTrackerCelebrateNode(t *testing.T) {
 		jsFunc(t, html, "stageTrackerMergeState"),
 		jsFunc(t, html, "stageTrackerCarryOpen"),
 		jsFunc(t, html, "stageTrackerNewlyMerged"),
+		jsFunc(t, html, "stageTrackerRowPRKeys"),
+		jsFunc(t, html, "stageTrackerPRHosts"),
+		jsFunc(t, html, "stageTrackerItemKey"),
+		jsFunc(t, html, "stageTrackerTestCelebration"),
+		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_TEST_KEY"),
 	}, "\n")
-	runStageTrackerRowActionsScript(t, lifted+`
+}
+
+// stageTrackerCelebrateFixture is the fake clock + DOM the celebration
+// tests run against: timers advance with tick(ms); elements support the
+// few selectors the module uses (`[a="v"]`, `[a~="v"][data-ham-key]`,
+// `.cls`, `.ham-row[data-ham-key] .ham-seg.cap`).
+const stageTrackerCelebrateFixture = `
 const assert = require('assert');
 // ---- fake clock + DOM ----
 let clock = Date.parse('2026-10-28T16:30:00Z');
@@ -234,7 +247,7 @@ function el(tag, attrs) {
     getBoundingClientRect() { return e.rect || { left: 0, top: 0, width: 10, height: 10 }; },
     get outerHTML() { return '<div class="' + e.className + '"></div>'; },
     querySelector(sel) { return e.querySelectorAll(sel)[0] || null; },
-    querySelectorAll(sel) { const out = []; const m = sel.match(/^\[([\w-]+)="(.*)"\]$/); const cls = sel.match(/^\.([\w-]+)/); const walk = n => { for (const c of n.children) { if (m && c.attrs[m[1]] === m[2].replace(/\\(.)/g, '$1')) out.push(c); else if (cls && c.classList.contains(cls[1]) && (!sel.includes('[data-at]') || c.attrs['data-at'] != null)) out.push(c); walk(c); } }; walk(e); return out; },
+    querySelectorAll(sel) { const out = []; const unesc = v => v.replace(/\\(.)/g, '$1'); const m = sel.match(/^\[([\w-]+)="(.*)"\]$/); const word = sel.match(/^\[([\w-]+)~="(.*)"\]\[data-ham-key\]$/); const cls = sel.match(/^\.([\w-]+)/); const capOfRow = sel === '.ham-row[data-ham-key] .ham-seg.cap'; const walk = n => { for (const c of n.children) { if (capOfRow) { if (c.classList.contains('cap') && c.closest('.ham-row') && c.closest('.ham-row').classList.contains('ham-row')) out.push(c); } else if (m && c.attrs[m[1]] === unesc(m[2])) out.push(c); else if (word && c.attrs['data-ham-key'] != null && String(c.attrs[word[1]] || '').split(' ').includes(unesc(word[2]))) out.push(c); else if (!m && !word && cls && c.classList.contains(cls[1]) && (!sel.includes('[data-at]') || c.attrs['data-at'] != null)) out.push(c); walk(c); } }; walk(e); return out; },
     closest(sel) { let n = e; while (n) { if (n.attrs && n.attrs['data-ham-key'] != null) return n; n = n.parentNode; } return null; },
   };
   return e;
@@ -246,16 +259,22 @@ const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] :
 let reduced = false; function stageTrackerReducedMotion() { return reduced; }
 let soundOn = true; function stageTrackerSoundGate() { return soundOn; }
 const zaps = []; function stageTrackerPlayZap(c) { zaps.push(c); }
+const toasts = []; function showToast(msg, type) { toasts.push([type, msg]); }
 let renders = 0; function renderStageTracker() { renders++; }
 const srcs = new Map(); function stageTrackerRowSrcOf(node) { return srcs.get(node); }
 let _stageTrackerEvents = {};
 const STAGE_TRACKER_TERMINAL = 110;
-var _stageTrackerMergeState = null, _stageTrackerZapped = {}, _stageTrackerMergedToday = {}, _stageTrackerMergedTodayCount = -1, _stageTrackerCelebrating = {}, _stageTrackerCelebratePending = {}, _stageTrackerFlights = 0, _stageTrackerReleaseTimer = 0;
-function row(key) { const r = el('div', { 'data-ham-key': key }); const strip = el('div'); strip.classList.add('ham-strip-row'); const cap = el('li'); cap.classList.add('ham-seg'); cap.classList.add('cap'); cap.rect = { left: 300, top: 400, width: 20, height: 20 }; strip.appendChild(cap); r.appendChild(strip); srcs.set(r, '<row ' + key + '>'); return r; }
+var _stageTrackerPRHost = {}; var _stageTrackerMergeState = null, _stageTrackerZapped = {}, _stageTrackerMergedToday = {}, _stageTrackerMergedTodayCount = -1, _stageTrackerCelebrating = {}, _stageTrackerCelebratePending = {}, _stageTrackerFlights = 0, _stageTrackerReleaseTimer = 0;
+function row(key, prs) { const r = el('div', { 'data-ham-key': key }); r.classList.add('ham-row'); if (prs) r.attrs['data-ham-prs'] = prs; const strip = el('div'); strip.classList.add('ham-strip-row'); const cap = el('li'); cap.classList.add('ham-seg'); cap.classList.add('cap'); cap.rect = { left: 300, top: 400, width: 20, height: 20 }; strip.appendChild(cap); r.appendChild(strip); srcs.set(r, '<row ' + key + '>'); return r; }
 const header = { key: '__header__', html: 'h' };
 const items = (...nums) => ({ items: nums.map(x => ({ repo: 'o/r', kind: 'pr', number: x, stage: 50 })) });
 const payloadMerged = (...nums) => ({ items: [], recently_merged: nums.map(x => ({ repo: 'o/r', number: x, merged_at: new Date(clock).toISOString() })) });
 
+`
+
+func TestStageTrackerCelebrateNode(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerCelebrateJS(t, html)+stageTrackerCelebrateFixture+`
 // 1. A merge: pinned ≥ 2 s, glow, token to the counter, count ticks, zap on arrival, then released.
 panel.appendChild(row('o/r/pr#1')); panel.appendChild(row('o/r/pr#2'));
 stageTrackerNoteMerges(items(1, 2));
@@ -320,5 +339,81 @@ const out = celebrateRow(r11, { kind: 'closed-by-merge', number: 77 });
 assert.deepStrictEqual(out, { flew: false }); assert.ok(r11.classList.contains('cue-merged'));
 assert.ok(r11.children.some(c => c.classList.contains('cue-event') && /closed by merge of #77/.test(c.textContent)));
 console.log('ok');
+`)
+}
+
+// TestStageTrackerCelebrateNestedPRRow replays the payload shape hive's hive
+// serves (captured 2026-10-28 from /api/stage-tracker): a PR nested under
+// its issue is drawn inline on the issue row — no sub-row, no
+// data-ham-sub-key — and on merge the payload drops both the PR and the
+// issue while recently_merged lists the PR. The flight must leave from the
+// issue row; before the fix only the counter popped.
+func TestStageTrackerCelebrateNestedPRRow(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerCelebrateJS(t, html)+stageTrackerCelebrateFixture+`
+const before = { items: [
+  { repo: 'hivecommons/hive', number: 14816, kind: 'issue', stage: 85, linked_prs: [{ number: 14822, stage: 85, url: 'https://github.com/hivecommons/hive/pull/14822' }] },
+  { repo: 'hivecommons/hive', number: 14822, kind: 'pr', stage: 85, nested_under: 14816 },
+  { repo: 'hivecommons/hive', number: 15009, kind: 'issue', stage: 40, linked_prs: [{ number: 15017, stage: 60 }, { number: 15020, stage: 85 }] },
+  { repo: 'hivecommons/hive', number: 15017, kind: 'pr', stage: 60, nested_under: 15009 },
+  { repo: 'hivecommons/hive', number: 15020, kind: 'pr', stage: 85, nested_under: 15009 },
+  { repo: 'hivecommons/docs', number: 500, kind: 'pr', stage: 70 },
+], recently_merged: [{ repo: 'hivecommons/hive', number: 14992, merged_at: '2026-10-28T18:47:47Z' }], merged_24h: [{ repo: 'hivecommons/hive', number: 14992, merged_at: '2026-10-28T18:47:47Z' }] };
+const after = { items: before.items.filter(it => it.number !== 14816 && it.number !== 14822), recently_merged: [{ repo: 'hivecommons/hive', number: 14822, merged_at: new Date(clock).toISOString() }].concat(before.recently_merged), merged_24h: [{ repo: 'hivecommons/hive', number: 14822, merged_at: new Date(clock).toISOString() }].concat(before.merged_24h) };
+
+// The row stamps the PR keys it draws (the real renderer does this via stageTrackerRowPRKeys).
+assert.strictEqual(stageTrackerRowPRKeys(before.items[0]), 'hivecommons/hive/pr#14822');
+assert.strictEqual(stageTrackerRowPRKeys(before.items[2]), 'hivecommons/hive/pr#15017 hivecommons/hive/pr#15020');
+assert.strictEqual(stageTrackerRowPRKeys(before.items[5]), 'hivecommons/docs/pr#500');
+assert.deepStrictEqual(stageTrackerPRHosts(before), {
+  'hivecommons/hive/pr#14822': 'hivecommons/hive/issue#14816',
+  'hivecommons/hive/pr#15017': 'hivecommons/hive/issue#15009',
+  'hivecommons/hive/pr#15020': 'hivecommons/hive/issue#15009',
+  'hivecommons/docs/pr#500': 'hivecommons/docs/pr#500',
+});
+
+// Board as drawn: the issue rows (inline PR, no sub-row) and the standalone PR row.
+panel.appendChild(row('hivecommons/hive/issue#14816', 'hivecommons/hive/pr#14822'));
+panel.appendChild(row('hivecommons/hive/issue#15009', 'hivecommons/hive/pr#15017 hivecommons/hive/pr#15020'));
+panel.appendChild(row('hivecommons/docs/pr#500', 'hivecommons/docs/pr#500'));
+stageTrackerNoteMerges(before);
+assert.strictEqual(n.textContent, '1', 'seeded from merged_24h, no flourish');
+assert.strictEqual(stageTrackerCelebrateRowKey('hivecommons/hive/pr#14822', panel), 'hivecommons/hive/issue#14816', 'inline PR resolves to its issue row');
+assert.strictEqual(stageTrackerCelebrateRowKey('hivecommons/hive/pr#15020', panel), 'hivecommons/hive/issue#15009');
+assert.strictEqual(stageTrackerCelebrateRowKey('hivecommons/docs/pr#500', panel), 'hivecommons/docs/pr#500');
+
+// The merge: the issue row is pinned and celebrated, a token flies, the count ticks on landing.
+stageTrackerNoteMerges(after);
+assert.deepStrictEqual(Object.keys(_stageTrackerCelebrating), ['hivecommons/hive/issue#14816'], 'the issue row is the celebrating row');
+let rows = stageTrackerPinnedRows(panel, [{ key: '__header__', html: 'h' }, { key: 'hivecommons/hive/issue#15009', html: 'x' }, { key: 'hivecommons/docs/pr#500', html: 'y' }], clock);
+assert.ok(rows.some(r => r.key === 'hivecommons/hive/issue#14816' && r.pinned), 'the dropped issue row is pinned');
+assert.strictEqual(n.textContent, '1', 'count waits for the token');
+tick(0);
+const issueRow = panel.children[0];
+assert.ok(issueRow.classList.contains('cue-merged'), 'issue row glows: ' + issueRow.className);
+assert.ok(issueRow.children.some(c => c.classList.contains('cue-event') && /merged #14822 · by hive/.test(c.textContent)), 'event line names the merged PR');
+assert.strictEqual(body.children.length, 1, 'a token is in flight');
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
+assert.strictEqual(body.children.length, 0); assert.strictEqual(n.textContent, '2', 'count ticked on landing'); assert.deepStrictEqual(zaps, [1]);
+
+// Host memory: a PR whose row left the DOM between renders (no stamp to find) still resolves through the last payload.
+panel.children.length = 0;
+panel.appendChild(row('hivecommons/hive/issue#15009'));
+assert.strictEqual(stageTrackerCelebrateRowKey('hivecommons/hive/pr#15017', panel), 'hivecommons/hive/issue#15009', 'resolved via nested_under from the last payload');
+assert.strictEqual(stageTrackerCelebrateRowKey('hivecommons/hive/pr#99999', panel), '', 'unknown PR: counter only');
+
+// ⚙ → Merges → Test celebration: one flight from the first row, pop + zap, the count unchanged.
+zaps.length = 0; chip.classList.remove('cue-tick');
+const r = stageTrackerTestCelebration();
+assert.deepStrictEqual(r, { flew: true }, JSON.stringify(toasts));
+assert.strictEqual(body.children.length, 1, 'test token in flight');
+tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
+assert.strictEqual(n.textContent, '2', 'the test does not count'); assert.ok(chip.classList.contains('cue-tick'), 'but pops'); assert.deepStrictEqual(zaps, [1], 'and zaps');
+assert.ok(!panel.children[0].children.some(c => c.classList.contains('cue-event')), 'no event line is written for a test');
+tick(STAGE_TRACKER_CELEBRATE_PIN_MS + 1);
+assert.ok(!panel.children[0].classList.contains('cue-merged'), 'test glow clears');
+panel.children.length = 0;
+assert.deepStrictEqual(stageTrackerTestCelebration(), { flew: false });
+assert.ok(toasts.some(x => x[0] === 'warning' && /No row to celebrate on/.test(x[1])), JSON.stringify(toasts));
 `)
 }

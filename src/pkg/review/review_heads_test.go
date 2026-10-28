@@ -251,12 +251,127 @@ func TestNoHeadsKeepsTodaysDispatch(t *testing.T) {
 	}
 }
 
-func TestCombinedModeIgnoresHeads(t *testing.T) {
+// Combined heads (hivecommons/hive#15058): one record-only kick per head
+// carrying every perspective it owes, not one per (perspective, head), with
+// the pending entries still kept per pair.
+func TestCombinedHeadsDispatchOneKickPerHead(t *testing.T) {
 	opts := headsOpts()
 	opts.CombinedPerspectives = true
 	plan := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, opts)
-	if len(plan.ReviewKicks) != 1 || plan.ReviewKicks[0].Agent != "cr" || plan.ReviewKicks[0].Head != "" {
-		t.Fatalf("combined kicks = %+v, want one combined kick to the base", plan.ReviewKicks)
+	if len(plan.ReviewKicks) != 2 {
+		t.Fatalf("kicks = %+v, want one per head", plan.ReviewKicks)
+	}
+	heads := map[string]bool{}
+	for _, k := range plan.ReviewKicks {
+		if k.Agent == "cr" || k.Head == "" || !strings.HasPrefix(k.Agent, k.Head+"-") {
+			t.Fatalf("combined head kick went to the wrong agent: %+v", k)
+		}
+		heads[k.Head] = true
+		if len(k.Perspectives) != 2 || k.Perspectives[0] != PerspectiveCorrectness || k.Perspectives[1] != PerspectiveSecurity {
+			t.Fatalf("kick for %s carries %v, want every perspective", k.Head, k.Perspectives)
+		}
+		for _, want := range []string{
+			"[review-perspective:correctness,security]",
+			"INDEPENDENT REVIEW HEAD (" + k.Head + ")",
+			"--record-verdict --verdict-file <verdict>",
+			"ONE JSON array",
+			"Do NOT post anything on the PR",
+		} {
+			if !strings.Contains(k.Message, want) {
+				t.Errorf("combined head kick missing %q", want)
+			}
+		}
+		if strings.Contains(k.Message, "--comment --body-file") || strings.Contains(k.Message, "ONE COMMENT, EVERY PERSPECTIVE") {
+			t.Fatalf("combined head kick tells the head to post a comment:\n%s", k.Message)
+		}
+	}
+	if !heads["cr-sol"] || !heads["cr-sonnet"] {
+		t.Fatalf("heads kicked = %v, want cr-sol and cr-sonnet", heads)
+	}
+	pairs := map[string]bool{}
+	for _, p := range plan.State.Pending {
+		pairs[string(p.Perspective)+"/"+p.Head] = true
+	}
+	if len(plan.State.Pending) != 4 || len(pairs) != 4 {
+		t.Fatalf("pending = %+v, want one entry per (perspective, head)", plan.State.Pending)
+	}
+	if again := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, plan.State, opts); len(again.ReviewKicks) != 0 {
+		t.Fatalf("re-dispatched pending combined heads: %+v", again.ReviewKicks)
+	}
+}
+
+// A combined head that answers some perspectives settles only those pairs;
+// the next plan re-asks that head for the rest only, in one kick.
+func TestCombinedHeadsReaskOnlyMissingPerspectives(t *testing.T) {
+	opts := headsOpts()
+	opts.CombinedPerspectives = true
+	opts.Perspectives = PerspectiveSet{} // the five built-in perspectives
+	all := opts.Perspectives.List()
+	if len(all) != 5 {
+		t.Fatalf("built-in perspectives = %v, want five", all)
+	}
+	plan := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, opts)
+	if len(plan.ReviewKicks) != 2 || len(plan.State.Pending) != 10 {
+		t.Fatalf("kicks=%d pending=%d, want 2 kicks and 10 pending pairs", len(plan.ReviewKicks), len(plan.State.Pending))
+	}
+	// sol records an array with 3 of 5 verdicts; sonnet answers all 5.
+	var reports []PerspectiveReport
+	for i, p := range all {
+		if i < 3 {
+			reports = append(reports, PerspectiveReport{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: p, Verdict: VerdictApprove, Head: "cr-sol"})
+		}
+		reports = append(reports, PerspectiveReport{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: p, Verdict: VerdictApprove, Head: "cr-sonnet"})
+	}
+	agg := AggregateReports(reports, AggregateOptions{Perspectives: opts.Perspectives, ExpectedHeads: []string{"cr-sol", "cr-sonnet"}})
+	if agg.Verdict != VerdictIncomplete {
+		t.Fatalf("aggregate = %s, want incomplete while sol owes two perspectives", agg.Verdict)
+	}
+	next := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{Items: []Aggregate{agg}}, plan.State, opts)
+	if len(next.ReviewKicks) != 0 {
+		t.Fatalf("re-asked while sol's missing pairs are still pending: %+v", next.ReviewKicks)
+	}
+	for _, p := range next.State.Pending {
+		if p.Head != "cr-sol" || p.Perspective == all[0] || p.Perspective == all[1] || p.Perspective == all[2] {
+			t.Fatalf("settled pair still pending: %+v", p)
+		}
+	}
+	if len(next.State.Pending) != 2 {
+		t.Fatalf("pending = %+v, want only sol's two unanswered pairs", next.State.Pending)
+	}
+	// With sol's entries gone (e.g. expired), sol is re-asked the two it
+	// missed, in one kick, and sonnet is not asked again.
+	again := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{Items: []Aggregate{agg}}, DispatchState{}, opts)
+	if len(again.ReviewKicks) != 1 {
+		t.Fatalf("kicks = %+v, want one re-ask for cr-sol", again.ReviewKicks)
+	}
+	k := again.ReviewKicks[0]
+	if k.Head != "cr-sol" || len(k.Perspectives) != 2 || k.Perspectives[0] != all[3] || k.Perspectives[1] != all[4] {
+		t.Fatalf("re-ask = head %s perspectives %v, want cr-sol for %v", k.Head, k.Perspectives, all[3:])
+	}
+}
+
+// The decision step is unchanged under combined heads: it fires once every
+// head has settled every perspective, with the same prompt.
+func TestCombinedHeadsDecisionOnceEveryHeadSettled(t *testing.T) {
+	split := headsOpts()
+	opts := headsOpts()
+	opts.CombinedPerspectives = true
+	unsettled := AggregateReports([]PerspectiveReport{
+		headRep(PerspectiveCorrectness, "cr-sol", VerdictChangesRequested, nilDeref),
+		headRep(PerspectiveCorrectness, "cr-sonnet", VerdictApprove),
+		headRep(PerspectiveSecurity, "cr-sonnet", VerdictApprove),
+	}, headAggOpts())
+	early := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{Items: []Aggregate{unsettled}}, DispatchState{}, opts)
+	if len(early.ReviewKicks) != 1 || early.ReviewKicks[0].Decision || early.ReviewKicks[0].Head != "cr-sol" || len(early.ReviewKicks[0].Perspectives) != 1 || early.ReviewKicks[0].Perspectives[0] != PerspectiveSecurity {
+		t.Fatalf("early kicks = %+v, want only security re-asked of cr-sol", early.ReviewKicks)
+	}
+	plan := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{Items: []Aggregate{awaitingAgg()}}, DispatchState{}, opts)
+	if len(plan.ReviewKicks) != 1 || !plan.ReviewKicks[0].Decision || plan.ReviewKicks[0].Agent != "cr" {
+		t.Fatalf("kicks = %+v, want exactly the decision kick", plan.ReviewKicks)
+	}
+	want := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{Items: []Aggregate{awaitingAgg()}}, DispatchState{}, split)
+	if plan.ReviewKicks[0].Message != want.ReviewKicks[0].Message {
+		t.Fatal("decision prompt differs under combined perspectives")
 	}
 }
 
@@ -288,7 +403,7 @@ func TestHeadsKeepPlainReviewersOnTheOrdinaryPath(t *testing.T) {
 	opts := headsOpts()
 	opts.Agents = append(headsFleet(), replica("cr-2", "cr"), reviewer("sec"))
 	opts.ReviewerAgents = []string{"cr", "sec"}
-	heads, others := dispatchReviewers(reviewCapableAgents(opts), false)
+	heads, others := dispatchReviewers(reviewCapableAgents(opts))
 	if len(heads) != 3 {
 		t.Fatalf("heads = %+v, want the three head replicas", heads)
 	}

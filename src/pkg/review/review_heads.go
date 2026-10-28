@@ -7,29 +7,31 @@ import (
 	"time"
 )
 
-// Review heads (hivecommons/hive#13542): with split perspectives, a base
-// reviewer's agents.<name>.review_heads each review every perspective, so two
-// or more models judge the same perspective independently. This file holds
-// the planner side: choosing the head reviewers, working out which
-// (perspective, head) pairs a PR head still needs, and planning one
-// record-only kick per pair.
+// Review heads (hivecommons/hive#13542): a base reviewer's
+// agents.<name>.review_heads each review every perspective, so two or more
+// models judge the same perspective independently. This file holds the
+// planner side: choosing the head reviewers, working out which
+// (perspective, head) pairs a PR head still needs, and planning record-only
+// kicks for them: one per pair with split perspectives, one per head carrying
+// all of that head's missing pairs under combined perspectives
+// (hivecommons/hive#15058).
 
 // dispatchReviewers splits the review-capable agents into the heads this
 // cycle dispatches to and the plain reviewers that follow the ordinary path.
-// Agents derived from review_heads only review with split perspectives
-// (combined_perspectives off); there the bases that declare them, and those
-// bases' plain replicas, are left for the decision step and every other
-// reviewer stays on the ordinary path, so a lane without heads is never
-// silently dropped (config.validateReviewHeads rejects such a mix, since
-// head dispatch leaves it nothing to review). Under combined perspectives
-// heads are dropped and every other reviewer works exactly as before.
-func dispatchReviewers(reviewers []AgentCapability, combined bool) (heads, others []AgentCapability) {
+// Agents derived from review_heads are heads with split and combined
+// perspectives alike; the bases that declare them, and those bases' plain
+// replicas, are left for the decision step and every other reviewer stays on
+// the ordinary path, so a lane without heads is never silently dropped
+// (config.validateReviewHeads rejects such a mix, since head dispatch leaves
+// it nothing to review). Combined perspectives only change how many kicks a
+// head gets per PR head (dispatchHeads), not who reviews.
+func dispatchReviewers(reviewers []AgentCapability) (heads, others []AgentCapability) {
 	declaring := map[string]bool{}
 	for _, r := range reviewers {
 		if r.HasReviewHeads {
 			declaring[r.Name] = true
 		}
-		if r.ReviewHead != "" && !combined {
+		if r.ReviewHead != "" {
 			heads = append(heads, r)
 		}
 	}
@@ -129,6 +131,16 @@ func pendingMissingHeadPerspectives(state DispatchState, pr PullRequest, perspec
 // bounds how many perspectives a PR head receives; an admitted perspective is
 // asked of every head so it is judged by all of them.
 //
+// Under combined perspectives (hivecommons/hive#15058) each head instead gets
+// ONE kick carrying every perspective it still owes, so a PR costs one kick
+// per head rather than heads × perspectives, and each model reads the diff
+// once. The head records a JSON array with one verdict per perspective, and
+// the pending entries stay one per (perspective, head), so settling, expiry,
+// head_max_retries and the decision step work per pair exactly as with split
+// perspectives: a head that answers only some perspectives is re-asked for
+// the rest. As with any combined review, max_perspectives_per_pr does not
+// apply, and the kick costs one slot.
+//
 // Heads run with their own backend and model, so no review_models pool or
 // perspective_models override applies: the head IS the model.
 func (p *DispatchPlan) dispatchHeads(pr PullRequest, reviewers []AgentCapability, opts DispatchOptions, delivered map[Perspective]Verdict, deliveredHeads map[Perspective][]string, revisiting bool, delta *DeltaContext, availableSlots int, now time.Time) int {
@@ -137,6 +149,9 @@ func (p *DispatchPlan) dispatchHeads(pr PullRequest, reviewers []AgentCapability
 		return availableSlots
 	}
 	missing := pendingMissingHeadPerspectives(p.State, pr, opts.Perspectives.List(), keys, delivered, deliveredHeads)
+	if opts.CombinedPerspectives {
+		return p.dispatchCombinedHeads(pr, keys, groups, missing, opts, revisiting, delta, availableSlots, now)
+	}
 	if perPR := opts.effectiveMaxPerspectivesPerPR(); perPR > 0 {
 		admitted := map[Perspective]bool{}
 		for _, e := range p.State.Pending {
@@ -183,6 +198,47 @@ func (p *DispatchPlan) dispatchHeads(pr PullRequest, reviewers []AgentCapability
 		})
 		p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: reviewer.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: m.Perspective, Head: m.Head, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: reviewer.Backend, ReviewModel: reviewer.Model, DeltaPreviousHead: deltaPreviousHead(delta)})
 		p.State.Pending = append(p.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: m.Perspective, Agent: reviewer.Name, Head: m.Head, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: strings.TrimSpace(reviewer.Model), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
+		availableSlots--
+	}
+	return availableSlots
+}
+
+// dispatchCombinedHeads is dispatchHeads under combined perspectives: one
+// record-only kick per head with a free replica, carrying every missing
+// perspective of that head, and one pending entry per (perspective, head).
+func (p *DispatchPlan) dispatchCombinedHeads(pr PullRequest, keys []string, groups map[string][]AgentCapability, missing []headPerspective, opts DispatchOptions, revisiting bool, delta *DeltaContext, availableSlots int, now time.Time) int {
+	byHead := map[string][]Perspective{}
+	for _, m := range missing {
+		byHead[m.Head] = append(byHead[m.Head], m.Perspective)
+	}
+	for _, head := range keys {
+		perspectives := byHead[head]
+		if len(perspectives) == 0 {
+			continue
+		}
+		if availableSlots <= 0 {
+			break
+		}
+		reviewer, free := freeReviewer(groups[head], p.inFlight(opts, now))
+		if !free {
+			continue
+		}
+		msg := BuildCombinedPrompt(pr, perspectives, PromptOptions{
+			HeadRecordOnly:       head,
+			Revise:               revisiting,
+			Perspectives:         opts.Perspectives,
+			ProposeFixesOnly:     !fixPushAllowed(pr, opts),
+			WritingGuideSection:  opts.WritingGuideSection,
+			ReviewBotLogins:      opts.ReviewBotLogins,
+			ReviewBotMinPriority: opts.ReviewBotMinPriority,
+			ReviewBackend:        reviewer.Backend,
+			ReviewModel:          reviewer.Model,
+			Delta:                delta,
+		})
+		p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: reviewer.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspectives[0], Perspectives: perspectives, Head: head, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: reviewer.Backend, ReviewModel: reviewer.Model, DeltaPreviousHead: deltaPreviousHead(delta)})
+		for _, persp := range perspectives {
+			p.State.Pending = append(p.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: persp, Agent: reviewer.Name, Head: head, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: strings.TrimSpace(reviewer.Model), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
+		}
 		availableSlots--
 	}
 	return availableSlots

@@ -8,14 +8,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // projectbluefin/utah-packages#619: the author was a repository admin. The
 // hive nudged the PR at 072, adopted it as contributor-offline 16 minutes
-// later and then re-homed it, closing the admin's own PR. Adoption stands in
-// for a quiet contributor relay, never for a maintainer.
+// later and then re-homed it, closing the admin's own PR. That rule became
+// governor.labels.stage.adoption.maintainer_policy: never. The default is
+// adopt since hivecommons/hive#14524 (a maintainer's own clanker PR sat at
+// 072 for 26h with its hive offline): clanker PRs are adoptable on
+// disconnect regardless of the owner's repo role. The tests below pin
+// `never` where they exercise the hands-off rule; see
+// automerge_adopt_maintainer_policy_test.go for adopt and ask.
+
+// maintainerNeverPolicy is adoptPolicy() under maintainer_policy: never.
+func maintainerNeverPolicy() StageLabelPolicy {
+	p := adoptPolicy()
+	p.AdoptionMaintainerPolicy = config.AdoptionMaintainerPolicyNever
+	return p
+}
 
 func TestRepoMaintainerLevel(t *testing.T) {
 	for _, tc := range []struct {
@@ -39,7 +52,7 @@ func TestRepoMaintainerLevel(t *testing.T) {
 func TestAdoptionSkipsRepositoryMaintainer(t *testing.T) {
 	for _, role := range []string{"admin", "maintain"} {
 		t.Run(role, func(t *testing.T) {
-			p := adoptPolicy()
+			p := maintainerNeverPolicy()
 			p.AdoptInPlace = true
 			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
 			defer done()
@@ -67,7 +80,7 @@ func TestAdoptionSkipsRepositoryMaintainer(t *testing.T) {
 }
 
 func TestAdoptionFailsClosedOnPermissionError(t *testing.T) {
-	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, maintainerNeverPolicy())
 	defer done()
 	h.adopt.failPermission = true
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
@@ -89,7 +102,7 @@ func TestAdoptionFailsClosedOnPermissionError(t *testing.T) {
 // An in-place adoption taken before the author was known to maintain the
 // repository is released on the next pass and never re-homed.
 func TestInPlaceAdoptionOfMaintainerIsReleased(t *testing.T) {
-	p := adoptPolicy()
+	p := maintainerNeverPolicy()
 	p.AdoptInPlace = true
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
 	defer done()
@@ -119,7 +132,7 @@ func TestInPlaceAdoptionOfMaintainerIsReleased(t *testing.T) {
 // The permission cache is keyed by repository and author, expires after
 // maintainerPermTTL, and never caches a failed read.
 func TestMaintainerPermissionCache(t *testing.T) {
-	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, maintainerNeverPolicy())
 	defer done()
 	h.adopt.permissions = map[string]string{"mallory": "admin"}
 	ctx := context.Background()
@@ -164,7 +177,7 @@ func TestMaintainerPermissionCache(t *testing.T) {
 // hivecommons/hive#14313: the cache mutex guards map access only; it is not
 // held while GetPermissionLevel is in flight.
 func TestMaintainerPermissionLockNotHeldAcrossAPICall(t *testing.T) {
-	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, maintainerNeverPolicy())
 	defer done()
 	var held atomic.Bool
 	h.adopt.onPermission = func() {
@@ -187,7 +200,7 @@ func TestMaintainerPermissionLockNotHeldAcrossAPICall(t *testing.T) {
 // is neither released nor re-homed until the read succeeds.
 func TestPermissionUnreadableKeepsLiveAdoption(t *testing.T) {
 	t.Run("in-place", func(t *testing.T) {
-		p := adoptPolicy()
+		p := maintainerNeverPolicy()
 		p.AdoptInPlace = true
 		h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
 		defer done()
@@ -212,7 +225,7 @@ func TestPermissionUnreadableKeepsLiveAdoption(t *testing.T) {
 		}
 	})
 	t.Run("supersede", func(t *testing.T) {
-		h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+		h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, maintainerNeverPolicy())
 		defer done()
 		h.observe(adoptPR(7, "aaa"), "check-failing:unit")
 		key := stageKey("acme", "widget", 7)
@@ -247,7 +260,7 @@ func TestMaintainerAdoptionReleaseClosesOpenSuperseder(t *testing.T) {
 		{name: "merged", state: "closed", merged: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, maintainerNeverPolicy())
 			defer done()
 			h.adopt.permissions = map[string]string{"mallory": "admin"}
 			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
@@ -289,7 +302,7 @@ func TestMaintainerAdoptionReleaseClosesOpenSuperseder(t *testing.T) {
 }
 
 func TestMaintainerSupersederCloseFailureKeepsAdoption(t *testing.T) {
-	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, maintainerNeverPolicy())
 	defer done()
 	h.adopt.permissions = map[string]string{"mallory": "admin"}
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
@@ -308,11 +321,11 @@ func TestMaintainerSupersederCloseFailureKeepsAdoption(t *testing.T) {
 }
 
 func TestSupersedeMaintainerRefusesBeforeMutation(t *testing.T) {
-	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, maintainerNeverPolicy())
 	defer done()
 	h.adopt.permissions = map[string]string{"mallory": "admin"}
 	obs := stageObservation{Owner: "acme", Repo: "widget", Author: "mallory", Number: 7, HeadSHA: "aaa", BaseRef: "v5"}
-	if _, err := h.e.supersedeAdoptedPR(context.Background(), h.e.stageStoreOrShared(), stageKey("acme", "widget", 7), obs, stagelabels.Record{}, adoptPolicy(), AdoptReasonDCORehome, 0, false, true, h.clock.at); err != nil {
+	if _, err := h.e.supersedeAdoptedPR(context.Background(), h.e.stageStoreOrShared(), stageKey("acme", "widget", 7), obs, stagelabels.Record{}, maintainerNeverPolicy(), AdoptReasonDCORehome, 0, false, true, h.clock.at); err != nil {
 		t.Fatal(err)
 	}
 	if h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
@@ -321,7 +334,7 @@ func TestSupersedeMaintainerRefusesBeforeMutation(t *testing.T) {
 }
 
 func TestDelegatedSupersedeCannotTakeOverMaintainer(t *testing.T) {
-	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, maintainerNeverPolicy())
 	defer done()
 	h.adopt.permissions = map[string]string{"mallory": "maintain"}
 	labels := []string{"stage/085-needs-decision", delegatedecision.LabelAdoptSupersede}

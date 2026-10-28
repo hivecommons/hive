@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -89,13 +90,14 @@ const (
 const (
 	decisionBlockerSentinel = "sentinel-alert"
 	decisionBlockerHold     = "hold"
+	decisionBlockerHoldHive = "hold:hive"
 )
 
 const (
 	decisionWhyHeld           = "On hold — release the hold first"
 	decisionWhyNoPermission   = "Only a person with the permission can do this"
 	decisionWhyApproveNoGrant = "Approving does not grant the missing permission"
-	decisionHeldBlocker       = "On hold — the hive does nothing until the hold is released."
+	decisionHeldBlockerPlain  = "On hold — the hive does nothing until the hold is released."
 )
 
 // stageTrackerVerdictLookup returns a lookup over review-verdicts.json for
@@ -128,6 +130,12 @@ func stageTrackerVerdictLookup(artifact *review.Artifact) func(repo string, numb
 // aggregate for the PR's current head when the artifact has one;
 // sentinelLabel is the configured sentinel alert label.
 func stageTrackerDecisionNeeded(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel string) *StageTrackerDecision {
+	return stageTrackerDecisionNeededAt(it, verdict, sentinelLabel, time.Now())
+}
+
+// stageTrackerDecisionNeededAt is stageTrackerDecisionNeeded with the clock
+// the tracker build uses, so spans in questions match the row's pill.
+func stageTrackerDecisionNeededAt(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel string, now time.Time) *StageTrackerDecision {
 	held := slices.Contains(it.Modifiers, modHold)
 	switch {
 	case it.Kind == "pr" && (it.Stage == stagelabels.NeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
@@ -142,8 +150,41 @@ func stageTrackerDecisionNeeded(it StageTrackerItem, verdict *review.Aggregate, 
 		return decisionForTriage(it, held)
 	case slices.Contains(it.Modifiers, modNeedsHuman):
 		return decisionForNeedsHuman(it, held)
+	case it.Kind == "pr" && it.Adoption != nil && it.Adoption.Action == decisionActionAdopt:
+		return decisionForAdoption(it, held, now)
 	}
 	return nil
+}
+
+// decisionForAdoption: a nudged 072 PR whose author maintains the
+// repository, held for an owner under
+// governor.labels.stage.adoption.maintainer_policy: ask
+// (hivecommons/hive#14524). The question names the author and how long
+// their hive has been gone; the lead option is Adopt.
+func decisionForAdoption(it StageTrackerItem, held bool, now time.Time) *StageTrackerDecision {
+	a := it.Adoption
+	who := "the author"
+	if a.Author != "" {
+		who = "@" + a.Author
+	}
+	d := &StageTrackerDecision{Since: a.Since, AskedBy: decisionAskedByLane, BlockerReason: "adoption:" + a.BlockedBy}
+	gone := "has been offline since the nudge"
+	if off := strings.TrimSpace(stageTrackerAdoptionOfflineFor(*a, now)); off != "" {
+		gone = "has been offline for " + off
+	}
+	if a.AuthorOnline {
+		gone = "is online but has not answered " + plural(a.Nudges, "nudge")
+	}
+	d.Question = who + " maintains this repository and " + gone + "; adopt the PR? The hive would take it over as it does any contributor's (the author's commits and sign-off are kept)."
+	d.Blocker = "maintainer_policy is ask: the hive never adopts a maintainer's PR on its own; a person decides."
+	if held {
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
+	}
+	d.Options = []StageTrackerDecisionOption{
+		decisionOption(decisionActionAdopt, "Adopt (hive takes over)", !held, "Release the hold first"),
+		decisionHoldOption(held),
+	}
+	return d
 }
 
 func decisionHoldOption(held bool) StageTrackerDecisionOption {
@@ -203,7 +244,7 @@ func decisionPlainReason(base string) string {
 	case stageengineprstage.ContributorLaneReasonNoReviewer:
 		return "no reviewer is configured for this repo"
 	case stageengineprstage.ContributorLaneReasonReporterTrustHold:
-		return "the author's trust level is not yet known"
+		return "the hive held it for the trust level of the linked issue's reporter"
 	case stageengineprstage.ContributorLaneReasonNoAppBotLogin, stageengineprstage.AutoMergeReasonNoAppBotLogin:
 		return "the hive's GitHub App login is not known"
 	case stageengineprstage.ContributorLaneReasonFilesEvidence:
@@ -216,6 +257,13 @@ func decisionPlainReason(base string) string {
 		return "GitHub requires a review the hive cannot give"
 	case stageengineprstage.AutoMergeReasonMergeRefusedMethod:
 		return "GitHub refused the hive's merge method"
+	}
+	// The shared decision glossary (pkg/delegatedecision) covers the
+	// reasons the lane shares with the delegate — changes requested,
+	// sentinel, conflicts, red CI, DCO — in the same words the toast and
+	// the PR comment use (hivecommons/hive#14822).
+	if e, ok := delegatedecision.Explain(base); ok && e.Kind == delegatedecision.GlossaryReason {
+		return e.Plain
 	}
 	if text := humanizeStageReason(base); text != "" {
 		return text
@@ -235,6 +283,10 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByLane, BlockerReason: base}
 	approveOK, approveWhy := true, ""
 	delegateOK, delegateWhy := !held, decisionWhyHeld
+	var selfHold *StageTrackerHold
+	if held && it.Hold != nil && strings.EqualFold(it.Hold.By, stagelabels.HoldByHive) && it.Hold.Source != "" && it.Hold.Source != stagelabels.HoldSourceLabel {
+		selfHold = it.Hold
+	}
 
 	sentinel := it.SentinelAlert || lower == "sentinel" || lower == stageengineprstage.ContributorLaneReasonSentinelBlocked
 	changes := decisionChangesRequested(base)
@@ -261,6 +313,17 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 			t := verdict.RecordedAt
 			d.Since = &t
 		}
+	case selfHold != nil:
+		// The hive held the PR itself (hivecommons/hive#15020): say so,
+		// name the gate and the issue, and offer release / keep.
+		d.AskedBy = decisionAskedByLane
+		d.Question = "The hive held this PR itself for " + decisionHoldReason(selfHold) + ". Release the hold (the lane then merges it on its next pass once the other gates are clear), or keep it?"
+		if selfHold.Since != nil {
+			t := *selfHold.Since
+			d.Since = &t
+		}
+		d.Blocker = "The hive set `hold` on its own: " + decisionHoldReason(selfHold) + ". It does nothing more until the hold is released."
+		d.BlockerReason = decisionBlockerHoldHive
 	case verdict != nil && decisionFirstNonEmpty(verdict.HumanSummaries) != "":
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = "A reviewer handed this to a person: " + decisionFirstNonEmpty(verdict.HumanSummaries)
@@ -317,11 +380,11 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	case reviewerDeferred:
 		d.Blocker = "The hive will not merge until a person decides."
 	}
-	if held {
+	if held && selfHold == nil {
 		if d.Blocker != "" {
 			d.Blocker += " "
 		}
-		d.Blocker += decisionHeldBlocker
+		d.Blocker += decisionHeldBlocker(it.Hold)
 		if d.BlockerReason == "" {
 			d.BlockerReason = decisionBlockerHold
 		}
@@ -335,7 +398,38 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, ""),
 		decisionHoldOption(held),
 	}
+	if selfHold != nil {
+		// Release leads: it is the one action that answers the question.
+		d.Options = append([]StageTrackerDecisionOption{decisionHoldOption(true)}, d.Options[:len(d.Options)-1]...)
+	}
 	return d
+}
+
+// decisionHoldReason is the hold's plain-words reason for the popover.
+func decisionHoldReason(h *StageTrackerHold) string {
+	if h != nil {
+		if reason := strings.TrimSpace(h.Reason); reason != "" {
+			return reason
+		}
+	}
+	return "its own gate"
+}
+
+// decisionHeldBlocker is the "On hold" blocker sentence, naming who set the
+// hold when the row knows (hivecommons/hive#15020).
+func decisionHeldBlocker(h *StageTrackerHold) string {
+	if h == nil || strings.TrimSpace(h.By) == "" {
+		return decisionHeldBlockerPlain
+	}
+	who := "@" + strings.TrimSpace(h.By)
+	if strings.EqualFold(h.By, stagelabels.HoldByHive) {
+		who = "the hive"
+	}
+	s := "On hold (set by " + who
+	if reason := strings.TrimSpace(h.Reason); reason != "" {
+		s += ": " + reason
+	}
+	return s + ") — the hive does nothing until the hold is released."
 }
 
 func decisionForIssue(it StageTrackerItem, held bool) *StageTrackerDecision {
@@ -343,7 +437,7 @@ func decisionForIssue(it StageTrackerItem, held bool) *StageTrackerDecision {
 	d.Question = "The hive parked this issue for a person. Approve the direction, send it back with direction, or close it?"
 	d.Blocker = "No agent picks this up until a person answers. The hive's question is in its latest comment on the issue."
 	if held {
-		d.Blocker += " " + decisionHeldBlocker
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 		if d.BlockerReason == "" {
 			d.BlockerReason = decisionBlockerHold
 		}
@@ -364,7 +458,7 @@ func decisionForTriage(it StageTrackerItem, held bool) *StageTrackerDecision {
 	d.Question = "Should the hive work on this issue? Accept triage so an agent can take it, hold it, or mark it needs-human."
 	d.Blocker = "No agent picks up an issue until a maintainer accepts triage."
 	if held {
-		d.Blocker += " " + decisionHeldBlocker
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
 	d.Options = []StageTrackerDecisionOption{
 		decisionOption(decisionActionAcceptTriage, "Accept triage", true, ""),
@@ -385,7 +479,7 @@ func decisionForNeedsHuman(it StageTrackerItem, held bool) *StageTrackerDecision
 	d.Question = "This " + what + " is marked needs-human: automated fixes ran out, or a person flagged it. Review it on GitHub and remove the label when the hive may continue."
 	d.Blocker = "The hive does nothing with a needs-human item until a person removes the label."
 	if held {
-		d.Blocker += " " + decisionHeldBlocker
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
 	d.Options = []StageTrackerDecisionOption{decisionHoldOption(held)}
 	return d

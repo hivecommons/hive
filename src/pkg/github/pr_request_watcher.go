@@ -583,9 +583,18 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// what stops the level-hold release from lifting the label on promotion
 	// to L6 — the whole point is that a stranger's request waits for a human
 	// at every level. Same duplicate-tree precedence as the other two.
+	//
+	// The PR the watcher opened is the hive's own, so with the App login
+	// known the gate skips it outright (hivecommons/hive#15020); the author
+	// GitHub recorded is passed so a PAT-backed hive whose login is not in
+	// the hive identity is still judged by what the gate can see.
 	var reporter ReporterTrust
 	if !res.IsDuplicate() && c.reporterTrustHoldActive(req.Repo) {
-		reporter = c.EvaluateReporterTrust(ctx, req.Repo, title, body, req.IssueN)
+		prAuthor := strings.TrimSpace(res.Author)
+		if prAuthor == "" {
+			prAuthor = strings.TrimSpace(c.appBotLogin)
+		}
+		reporter = c.EvaluateReporterTrust(ctx, req.Repo, title, body, req.IssueN, prAuthor)
 		resp.ReporterTrustHeld = reporter.Held
 	}
 	if !res.IsDuplicate() && (holdByLevel || selfAuth.Held || reporter.Held) {

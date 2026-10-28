@@ -258,6 +258,8 @@ type AgentProcess struct {
 	KickRefusalReason string
 	LaunchedMode      AgentMode
 	HasLaunched       bool
+	poolLeaseID       string
+	poolLeaseCancel   context.CancelFunc
 	baseConfig        config.AgentConfig
 	agentSpecPrompt   string
 	tmuxSession       string
@@ -575,6 +577,7 @@ type Manager struct {
 	copilotAuthTokenRejected bool
 	claudeAuthToken          string
 	uidMap                   *UIDMap
+	sharedPool               SharedSessionPool
 	uidMapPath               string
 	appAuth                  AppTokenMinter
 	appNotInstalledWarned    sync.Map        // agent name -> struct{}: not-installed mint failure already logged
@@ -789,6 +792,7 @@ type ManagerOption func(*managerOptions)
 type managerOptions struct {
 	uidMapPath    string
 	uidMapPathSet bool
+	sharedPool    SharedSessionPool
 }
 
 // WithUIDMapPath points a manager at a specific persisted UID map. Production
@@ -798,6 +802,13 @@ func WithUIDMapPath(path string) ManagerOption {
 		opts.uidMapPath = path
 		opts.uidMapPathSet = true
 	}
+}
+
+// WithSharedSessionPool opts a manager into a Hub-coordinated live CLI slot.
+// Every Hive retains separate sessions and tenant data; the lease only limits
+// how many CLI sessions across the participating Hives remain live.
+func WithSharedSessionPool(pool SharedSessionPool) ManagerOption {
+	return func(opts *managerOptions) { opts.sharedPool = pool }
 }
 
 func (m *Manager) effectiveUIDMapPath() string {
@@ -889,6 +900,7 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 		copilotAuthTokenSource:        copilotTokenSource,
 		claudeAuthToken:               claudeToken,
 		uidMap:                        uidMap,
+		sharedPool:                    opts.sharedPool,
 		uidMapPath:                    selectedUIDMapPath,
 		kickLogDir:                    kickLogDir,
 		kickLogRetention:              kickLogRetention,
@@ -1148,22 +1160,62 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	//
 	// The remaining subprocess sends below are the actual tmux launch boundary;
 	// Bob's shared-home/file probes have already run lock-free above.
+	m.mu.RLock()
+	leaseID := agent.poolLeaseID
+	hasLeaseWatcher := agent.poolLeaseCancel != nil
+	m.mu.RUnlock()
+	if m.sharedPool != nil && leaseID == "" {
+		var err error
+		leaseID, err = m.sharedPool.Acquire(ctx, name)
+		if err != nil {
+			return fmt.Errorf("acquire shared CLI session slot: %w", err)
+		}
+	}
+	launchSucceeded := false
+	defer func() {
+		if leaseID != "" && !launchSucceeded {
+			m.releaseSharedPoolLease(name, leaseID)
+		}
+	}()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Re-verify under the re-acquired lock: while m.mu was released for Phase 2,
 	// a concurrent Stop/Remove could have deleted this agent from the map or a
-	// racing path could have started it. The launching guard prevents a second
-	// concurrent Start of THIS agent, but not a Stop/delete, so re-check both
-	// before mutating launch state. (agent still points at the same struct; the
-	// map re-lookup is what detects a delete.)
+	// racing path could have started it.
 	if cur, ok := m.agents[name]; !ok || cur != agent {
 		return fmt.Errorf("agent %s removed during launch", name)
 	}
 	if agent.State == StateRunning {
-		// Another path won the launch race while we were unlocked; nothing to do.
+		if leaseID != "" {
+			agent.poolLeaseID = leaseID
+			launchSucceeded = true
+			if !hasLeaseWatcher {
+				m.startSharedPoolLeaseWatcherLocked(agent, name, leaseID)
+			}
+		}
 		return nil
 	}
-	return m.launchInTmux(ctx, agent)
+	if agent.OperatorStopped {
+		return fmt.Errorf("agent %s was stopped during launch", name)
+	}
+	agent.poolLeaseID = leaseID
+	err := m.launchInTmux(ctx, agent)
+	if err == nil && leaseID != "" {
+		launchSucceeded = true
+		if !hasLeaseWatcher {
+			m.startSharedPoolLeaseWatcherLocked(agent, name, leaseID)
+		}
+	}
+	return err
+}
+
+func (m *Manager) startSharedPoolLeaseWatcherLocked(agent *AgentProcess, name, leaseID string) {
+	if agent.poolLeaseCancel == nil {
+		leaseCtx, cancel := context.WithCancel(context.Background())
+		agent.poolLeaseCancel = cancel
+		go m.watchSharedPoolLease(leaseCtx, name, leaseID)
+	}
 }
 
 // kickOutcomePollEvery throttles the post-kick turn-ended check to one visible
@@ -1262,35 +1314,33 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 
 func (m *Manager) Stop(name string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	agent, ok := m.agents[name]
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("agent %s not found", name)
 	}
-
 	if agent.State == StateStopped {
 		agent.OperatorStopped = true
 	}
-	if agent.State != StateRunning {
-		return nil
+	leaseID := agent.poolLeaseID
+	if agent.State == StateRunning {
+		if agent.cancel != nil {
+			agent.cancel()
+		}
+		m.tmuxSendKeysForAgent(agent, "C-c", "")
+		agent.State = StateStopped
+		agent.OperatorStopped = true
+		m.logger.Info("audit: agent stopped", "name", name)
+		m.audit(AuditAgentStopped, name, auditFields(
+			"outcome", "success",
+			"backend", agent.effectiveBackend(),
+			"model", agent.effectiveModel(),
+		))
 	}
-
-	if agent.cancel != nil {
-		agent.cancel()
+	m.mu.Unlock()
+	if leaseID != "" {
+		m.evictSharedPoolSession(name, leaseID)
 	}
-
-	m.tmuxSendKeysForAgent(agent, "C-c", "")
-
-	agent.State = StateStopped
-	agent.OperatorStopped = true
-	m.logger.Info("audit: agent stopped", "name", name)
-	m.audit(AuditAgentStopped, name, auditFields(
-		"outcome", "success",
-		"backend", agent.effectiveBackend(),
-		"model", agent.effectiveModel(),
-	))
-
 	return nil
 }
 

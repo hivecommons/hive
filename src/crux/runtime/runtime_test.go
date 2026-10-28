@@ -239,3 +239,30 @@ func TestRunAgyTurnHelp(t *testing.T) {
 		t.Fatalf("RunAgyTurn(-h) = %d, stderr %q", code, stderr.String())
 	}
 }
+
+type stubSharedSessionPool struct{}
+
+func (stubSharedSessionPool) Acquire(context.Context, string) (string, error) { return "lease", nil }
+func (stubSharedSessionPool) Renew(context.Context, string) error             { return nil }
+func (stubSharedSessionPool) Release(context.Context, string) error           { return nil }
+
+func TestWithSharedSessionPool(t *testing.T) {
+	t.Setenv("HIVE_WORK_DIR", t.TempDir())
+	pool := stubSharedSessionPool{}
+	rt, err := cruxruntime.New(config.RuntimeConfig{Mode: config.ModeInProcess},
+		cruxruntime.WithSharedSessionPool(pool),
+	)
+	if err != nil {
+		t.Fatalf("in-process with shared pool: %v", err)
+	}
+	if rt == nil {
+		t.Fatal("expected non-nil runtime")
+	}
+
+	_, err = cruxruntime.New(config.RuntimeConfig{Mode: config.ModeSidecar, Server: "http://127.0.0.1:9", Token: "t"},
+		cruxruntime.WithSharedSessionPool(pool),
+	)
+	if err == nil || !strings.Contains(err.Error(), "shared session pool is not supported") {
+		t.Fatalf("sidecar with shared pool err = %v, want unsupported error", err)
+	}
+}

@@ -311,6 +311,11 @@ type StageTrackerItem struct {
 	// OnHold is true when the item wears a hold pill: paused on purpose,
 	// waiting on nobody.
 	OnHold bool `json:"on_hold,omitempty"`
+	// Hold says who set the `hold` label and why, when the stage-label
+	// pass could read it (hivecommons/hive#15020): the pill then reads
+	// "Held by hive · reporter trust (issue #N by @X, contributor)" or
+	// "Held by @login" instead of a bare "hold".
+	Hold *StageTrackerHold `json:"hold,omitempty"`
 	// RegressedFrom / RegressedTo / RegressedAt / RegressedReason narrate
 	// the unresolved regression behind the `regressed` modifier: the
 	// high-water stage the item fell from, the stage that fall landed on
@@ -325,6 +330,10 @@ type StageTrackerItem struct {
 	// `soaking(remaining=…)` reason aged by the time since it was recorded);
 	// 0 when unknown or not soaking.
 	SoakRemainingSeconds int64 `json:"soak_remaining_seconds,omitempty"`
+	// MergeGate narrates a PR's position at the merge gate (060 / 080 /
+	// 095 / 100): state, what holds it, whether hive's merge sweep is on
+	// it now, the next pass and the soak countdown (hivecommons/hive#15073).
+	MergeGate *StageTrackerMergeGate `json:"merge_gate,omitempty"`
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head
@@ -393,6 +402,11 @@ type StageTrackerItem struct {
 	NudgeCount  int                      `json:"nudge_count,omitempty"`
 	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
 	AdoptedBy   int                      `json:"adopted_by,omitempty"`
+	// Adoption is, on a nudged PR at stage/072, whether adoption is due,
+	// what holds it, and the author's live presence, with the plain-words
+	// line the row shows instead of a bare "Returned to contributor"
+	// (hivecommons/hive#14524).
+	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -422,7 +436,13 @@ type StageTrackerItem struct {
 	// chip. StateReason "not_planned" adds an "issue closed (not planned)"
 	// chip so the reader can tell the PR may be moot (hivecommons/hive#14655).
 	ClosedIssue *StageTrackerLinkedIssue `json:"closed_issue,omitempty"`
-	History     []StageTrackerHop        `json:"history"`
+	// LastOperatorAction is the newest owner row action recorded for the
+	// item (approve, give-direction, hold, let-hive-decide, …) with what
+	// became of it, and OperatorActionCount how many were recorded; the
+	// row's ✓ badge and its hover read these (operator_actions.go).
+	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
+	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
+	History             []StageTrackerHop           `json:"history"`
 }
 
 // StageTrackerLinkedIssue is one issue a PR closes, as its row's issue
@@ -475,6 +495,47 @@ type StageTrackerLinkedPR struct {
 	// DecisionNeeded mirrors the nested PR's own row field so the issue's
 	// sub-row can open the same "Needs human" popover.
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
+	// SoakRemainingSeconds / MergeGate mirror the PR item's (#15073): a
+	// nested Soaking sub-row shows its time left too.
+	SoakRemainingSeconds int64                  `json:"soak_remaining_seconds,omitempty"`
+	MergeGate            *StageTrackerMergeGate `json:"merge_gate,omitempty"`
+	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
+	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
+	// LastOperatorAction / OperatorActionCount mirror the nested PR's own
+	// row fields so its sub-row wears the ✓ badge too.
+	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
+	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
+	// Hold mirrors the nested PR's own row field (hivecommons/hive#15020).
+	Hold *StageTrackerHold `json:"hold,omitempty"`
+}
+
+// StageTrackerHold is the row's hold provenance (stagelabels.HoldProvenance
+// in payload shape). By is "hive" for the hive's own holds, else the login.
+type StageTrackerHold struct {
+	By          string     `json:"by"`
+	Source      string     `json:"source,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
+	Since       *time.Time `json:"since,omitempty"`
+	Issue       int        `json:"issue,omitempty"`
+	Reporter    string     `json:"reporter,omitempty"`
+	Association string     `json:"association,omitempty"`
+	// Pill is the ready-made pill text ("Held by hive · reporter trust
+	// (issue #15017 by @Karibhou, contributor)").
+	Pill string `json:"pill"`
+}
+
+// stageTrackerHoldFrom maps the store's provenance to the payload; nil when
+// the record has none or the row no longer wears `hold`.
+func stageTrackerHoldFrom(rec stagelabels.Record, hasRec bool, labels []string) *StageTrackerHold {
+	if !hasRec || rec.Hold == nil || strings.TrimSpace(rec.Hold.By) == "" || !slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(strings.TrimSpace(l), modHold) }) {
+		return nil
+	}
+	h := &StageTrackerHold{By: rec.Hold.By, Source: rec.Hold.Source, Reason: rec.Hold.Reason, Issue: rec.Hold.Issue, Reporter: rec.Hold.Reporter, Association: strings.ToLower(rec.Hold.Association), Pill: rec.Hold.Pill()}
+	if !rec.Hold.Since.IsZero() {
+		t := rec.Hold.Since
+		h.Since = &t
+	}
+	return h
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -1526,6 +1587,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		return store.Get(stagelabels.Key(repo, number))
 	}
+	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
+	sweep := s.stageTrackerSweepState()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
 		// "Needs human decision" is read from the item's current labels, not
 		// a store record that outlived them: once the park label is gone
@@ -1557,9 +1620,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.AdoptedBy = rec.AdoptedBy
 			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
 		}
+		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)
 		it.Stage = stage.Number()
 		it.StageSlug = stage.Slug()
 		it.StageLabel = stage.Label()
+		if it.Kind == "pr" {
+			it.MergeGate = stageTrackerMergeGate(it.Repo, it.Number, stage, rec, hasRec, sweep, now)
+		}
 		if m := trackerPRNumberRE.FindStringSubmatch(it.Reason); m != nil && it.Kind == "issue" {
 			it.LinkedPR, _ = strconv.Atoi(m[1])
 		}
@@ -1585,6 +1652,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		// Adoption is clanker-only (a human's PR is never adopted), so a
+		// human-authored 072 row keeps its plain caption.
+		if stage == stagelabels.ReturnedToContributor && it.Kind == "pr" && it.AuthorKind != authorKindHuman {
+			if it.Adoption = stageTrackerAdoption(*it, rec, hasRec, presence, maintainerPolicy, now); it.Adoption != nil {
+				it.Caption = stageTrackerAdoptionCaption(it.Caption, it.Adoption)
+			}
+		}
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
@@ -1666,7 +1740,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
 			}
 		}
-		it.DecisionNeeded = stageTrackerDecisionNeeded(it, nil, sentinelLabel)
+		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, nil, sentinelLabel, now)
 		add(it)
 	}
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
@@ -1721,7 +1795,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA); ok {
 			agg = &a
 		}
-		it.DecisionNeeded = stageTrackerDecisionNeeded(it, agg, sentinelLabel)
+		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, agg, sentinelLabel, now)
 		add(it)
 	}
 	for _, repo := range status.Repos {
@@ -1750,6 +1824,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
+	s.applyOperatorActions(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
@@ -2475,10 +2550,14 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
+				lp.Adoption = pr.Adoption
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
 				lp.DecisionNeeded = pr.DecisionNeeded
+				lp.SoakRemainingSeconds, lp.MergeGate = pr.SoakRemainingSeconds, pr.MergeGate
+				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
+				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
 				}

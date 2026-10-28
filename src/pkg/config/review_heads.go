@@ -146,13 +146,13 @@ func (c *Config) dispatchedReviewerBases() []string {
 
 // ExpectedReviewHeads lists every head key the swarm dispatches each
 // perspective to: the review_heads of every enabled base agent the
-// dispatcher admits as a reviewer, sorted, when perspectives are split. A
-// base review.reviewer_agents does not name is not dispatched, so its heads
-// are not expected either, and an all-approve aggregate never waits on
-// them. Empty under combined_perspectives (heads are not used there) or
-// when no admitted agent declares heads.
+// dispatcher admits as a reviewer, sorted, with split and combined
+// perspectives alike (hivecommons/hive#15058). A base review.reviewer_agents
+// does not name is not dispatched, so its heads are not expected either, and
+// an all-approve aggregate never waits on them. Empty when no admitted agent
+// declares heads.
 func (c *Config) ExpectedReviewHeads() []string {
-	if c == nil || c.Review.CombinedPerspectives {
+	if c == nil {
 		return nil
 	}
 	var keys []string
@@ -177,10 +177,12 @@ func (r ReviewConfig) EffectiveHeadMaxRetries() int {
 // perspectives the admitted reviewers either all declare review_heads or
 // none do. Head dispatch asks every perspective of every head and leaves
 // nothing for a plain reviewer lane alongside them, so a mixed set would
-// silently idle the lanes without heads (hivecommons/hive#13542). Structural
-// checks (required fields, aliases, replicas, name collisions) run where the
-// heads are expanded, so a bad head fails config load the same way a bad
-// replicas value does.
+// silently idle the lanes without heads (hivecommons/hive#13542). Under
+// combined perspectives that mix loaded before heads were dispatched there
+// (hivecommons/hive#15058), so it stays loadable and ReviewHeadsWarnings
+// reports it instead. Structural checks (required fields, aliases, replicas,
+// name collisions) run where the heads are expanded, so a bad head fails
+// config load the same way a bad replicas value does.
 func (c *Config) validateReviewHeads() error {
 	if c.Review.HeadMaxRetries < 0 {
 		return fmt.Errorf("review.head_max_retries must be >= 0")
@@ -200,7 +202,37 @@ func (c *Config) validateReviewHeads() error {
 	if c.Review.CombinedPerspectives {
 		return nil
 	}
-	var withHeads, without []string
+	if withHeads, without := c.mixedReviewHeadBases(); len(withHeads) > 0 {
+		return fmt.Errorf("review_heads: with review.combined_perspectives: false every reviewer must declare review_heads: %s do, %s do not; add review_heads to them or leave them out of review.reviewer_agents",
+			strings.Join(withHeads, ", "), strings.Join(without, ", "))
+	}
+	return nil
+}
+
+// ReviewHeadsWarnings reports, under combined perspectives, an admitted
+// reviewer set that mixes bases with and without review_heads. Combined head
+// dispatch (hivecommons/hive#15058) asks every perspective of every head, so
+// the lanes without heads receive no combined perspectives while the heads
+// cover them. Split perspectives reject the same mix at load
+// (validateReviewHeads); here it is a warning because the mix loaded fine
+// before heads were dispatched under combined perspectives.
+func ReviewHeadsWarnings(cfg *Config) []string {
+	if cfg == nil || !cfg.Review.CombinedPerspectives {
+		return nil
+	}
+	withHeads, without := cfg.mixedReviewHeadBases()
+	if len(withHeads) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"review_heads under review.combined_perspectives: %s declare review_heads, %s do not — while the heads cover every perspective, %s will receive no combined perspectives; add review_heads to them or leave them out of review.reviewer_agents",
+		strings.Join(withHeads, ", "), strings.Join(without, ", "), strings.Join(without, ", "))}
+}
+
+// mixedReviewHeadBases splits the dispatched reviewer bases into those that
+// declare review_heads and those that do not, returning both only when the
+// set mixes them.
+func (c *Config) mixedReviewHeadBases() (withHeads, without []string) {
 	for _, name := range c.dispatchedReviewerBases() {
 		if len(c.Agents[name].ReviewHeads) > 0 {
 			withHeads = append(withHeads, name)
@@ -208,9 +240,8 @@ func (c *Config) validateReviewHeads() error {
 			without = append(without, name)
 		}
 	}
-	if len(withHeads) > 0 && len(without) > 0 {
-		return fmt.Errorf("review_heads: with review.combined_perspectives: false every reviewer must declare review_heads: %s do, %s do not; add review_heads to them or leave them out of review.reviewer_agents",
-			strings.Join(withHeads, ", "), strings.Join(without, ", "))
+	if len(withHeads) == 0 || len(without) == 0 {
+		return nil, nil
 	}
-	return nil
+	return withHeads, without
 }

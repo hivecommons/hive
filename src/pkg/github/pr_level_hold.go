@@ -219,7 +219,7 @@ func (c *Client) levelHoldReleaseBlockedByOtherPolicy(ctx context.Context, owner
 		return true, nil
 	}
 	if c.reporterTrustHoldActive(repoRef) {
-		reporter := c.EvaluateReporterTrust(ctx, repoRef, pr.GetTitle(), pr.GetBody(), nil)
+		reporter := c.EvaluateReporterTrust(ctx, repoRef, pr.GetTitle(), pr.GetBody(), nil, pr.GetUser().GetLogin())
 		if reporter.Held {
 			if err := c.AddLabels(ctx, repoRef, number, []string{issueNeedsHumanLabel}); err != nil {
 				return true, fmt.Errorf("applying needs-human for reporter-trust hold on %s#%d: %w", repoRef, number, err)

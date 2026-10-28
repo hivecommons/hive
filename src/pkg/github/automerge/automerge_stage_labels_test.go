@@ -45,6 +45,11 @@ type stageAPI struct {
 	// extra handles routes beyond labels/comments (returns true when it
 	// served the request); the adoption tests use it for refs and pulls.
 	extra func(w http.ResponseWriter, r *http.Request) bool
+	// issueComments / issueEvents are what GET /issues/N/comments and
+	// /issues/N/events answer: the hold-provenance read a held PR takes
+	// (hivecommons/hive#15020). Unlisted PRs answer empty lists.
+	issueComments map[int][]map[string]any
+	issueEvents   map[int][]map[string]any
 }
 
 type stageCommitFixture struct {
@@ -103,6 +108,20 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 			}
 			stagePRTruthMu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels})
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/issues/") && strings.HasSuffix(path, "/comments"):
+			n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/issues/"), "/comments"))
+			out := api.issueComments[n]
+			if out == nil {
+				out = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/issues/") && strings.HasSuffix(path, "/events"):
+			n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/issues/"), "/events"))
+			out := api.issueEvents[n]
+			if out == nil {
+				out = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/commits"):
 			n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), "/commits"))
 			api.commitReads++

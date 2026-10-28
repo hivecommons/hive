@@ -28,6 +28,10 @@ type selfAuthIssue struct {
 	Comments  []selfAuthComment
 	Status    int // non-zero to fail the GET
 	FailList  bool
+	// PullRequest marks the number as a pull request (GitHub serves PRs
+	// from /issues/N too, with a pull_request block); Body is its body.
+	PullRequest bool
+	Body        string
 	// Timeline is the issue's label events for the #11313 label-approval
 	// signal; nil serves an empty timeline.
 	Timeline []unparkWireTimelineEvent
@@ -46,6 +50,10 @@ type selfAuthServer struct {
 	// roles maps login to the role_name the collaborator permission
 	// endpoint reports (#11313); unknown logins report "read"/"none".
 	roles map[string]string
+
+	// prAuthor is the login the fake records as the opener of a created
+	// PR; "" omits the user, as an abbreviated payload would.
+	prAuthor string
 
 	mu            sync.Mutex
 	labelsApplied []string
@@ -153,6 +161,12 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 			if issue.State != "" {
 				payload["state"] = issue.State
 			}
+			if issue.PullRequest {
+				payload["pull_request"] = map[string]any{"url": fmt.Sprintf("https://api.github.com/repos/o/r/pulls/%d", num)}
+			}
+			if issue.Body != "" {
+				payload["body"] = issue.Body
+			}
 			if issue.Association != "" {
 				payload["author_association"] = issue.Association
 			}
@@ -197,7 +211,11 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 			s.prBodies = append(s.prBodies, pr.Body)
 			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"number":583,"html_url":"https://github.com/o/r/pull/583"}`)
+			created := map[string]any{"number": 583, "html_url": "https://github.com/o/r/pull/583"}
+			if s.prAuthor != "" {
+				created["user"] = userJSON(s.prAuthor, "")
+			}
+			_ = json.NewEncoder(w).Encode(created)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)

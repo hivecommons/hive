@@ -136,6 +136,10 @@ type Observation struct {
 	// because it is from a fork (StageLabelPolicy.ForkGuard); non-empty only
 	// when every failing check does.
 	ForkGuardChecks []string
+	// Hold is who set the `hold` label the PR wears and why, read by
+	// ApplyStageLabels from the label event and the hive's notice comment
+	// (hivecommons/hive#15020); nil when not held or unreadable.
+	Hold *stagelabels.HoldProvenance
 }
 
 // Verdict is a lane's opinion about a PR's stage.

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
@@ -479,5 +480,58 @@ func TestSweepIssueUnparkCommandsDecisionOnHivePRWithoutStoreIsSkippedLoudly(t *
 	// No store: the sweep must not claim the fix is coming.
 	if result.Skipped != 1 || len(result.PRDecisions) != 0 || len(rec.posted[liveDecisionPR]) != 0 {
 		t.Fatalf("result = %+v posted=%v", result, rec.posted[liveDecisionPR])
+	}
+}
+
+// hivecommons/hive#14822 regression: a `/hive decision …` the hive itself
+// posted as the owner's delegate (the delegated-decision marker) is never
+// read as a maintainer's change request, even when it lands under a human
+// trusted merger's login (the dashboard posts through the operator's
+// token). Reading it as one made the delegate's decision block the PR it
+// meant to advance (`contributor-lane:changes-requested` every sweep).
+func TestSweepIssueUnparkCommandsIgnoresHiveSelfDecision(t *testing.T) {
+	body := delegatedecision.CommentBody(delegatedecision.Decision{
+		Verdict: delegatedecision.VerdictAdoptSupersede, Rule: "contributor-offline",
+		Text: "supersede now: adopt #12968 in supersede mode", Rationale: "offline",
+	}, "hive-a", "clubanderson")
+	if !strings.HasPrefix(body, "/hive decision ") {
+		t.Fatalf("fixture must look like a maintainer decision: %q", body)
+	}
+	issues := []unparkWireIssue{hiveParkedPR(humanComment(4300, "clubanderson", body))}
+	c, rec := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+	store := review.NewHumanChangeRequests("")
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{
+		HumanChangeRequests: store,
+		TrustedMerger:       trustedMergerSet("clubanderson"),
+	})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.PRDecisions) != 0 || store.Len() != 0 || len(rec.posted[liveDecisionPR]) != 0 || len(prDecisionFacts(t, c)) != 0 {
+		t.Fatalf("hive's own decision was read as a change request: %+v store=%d posted=%v", result, store.Len(), rec.posted[liveDecisionPR])
+	}
+
+	// The reconcile path (reply present, store empty after a restart) must
+	// not rebuild a change request from it either.
+	reply := unparkReplyMarkerPrefix + "4300 -->\n" + renderPRDecisionRecordedReply("clubanderson", liveDecisionHead)
+	issues[0].Comments = append(issues[0].Comments, unparkWireComment{ID: 9300, Body: reply, User: wireUser{Login: "hive[bot]"}, CreatedAt: unparkNow(), UpdatedAt: unparkNow()})
+	c2, _ := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+	store2 := review.NewHumanChangeRequests("")
+	if _, err := c2.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store2, TrustedMerger: trustedMergerSet("clubanderson")}); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if store2.Len() != 0 {
+		t.Fatalf("reconcile rebuilt a change request from the hive's own decision: %+v", store2)
+	}
+	// A real maintainer decision on the same thread is still honoured.
+	issues[0].Comments = append(issues[0].Comments, humanComment(4301, "clubanderson", "/hive decision "+liveDecisionText))
+	c3, _ := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+	store3 := review.NewHumanChangeRequests("")
+	result3, err := c3.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store3, TrustedMerger: trustedMergerSet("clubanderson")})
+	if err != nil {
+		t.Fatalf("third sweep: %v", err)
+	}
+	if len(result3.PRDecisions) != 1 || result3.PRDecisions[0].Decision != liveDecisionText {
+		t.Fatalf("real maintainer decision not recorded: %+v", result3)
 	}
 }

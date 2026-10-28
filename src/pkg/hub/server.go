@@ -1032,12 +1032,13 @@ type HubServer struct {
 	// goroutine — which outlives test servers, since nothing closes saveCh —
 	// only ever sees its own path and cannot race a test redirecting the
 	// global for the next server (the TestLoadRegistry -race failure).
-	registryPath   string
-	hubGitHash     string
-	hubGitBranch   string
-	hubSecret      string
-	myHivesCacheMu sync.Mutex
-	myHivesCache   map[string]myHivesSnapshot
+	registryPath    string
+	hubGitHash      string
+	hubGitBranch    string
+	sharedAgentPool *sharedAgentPool
+	hubSecret       string
+	myHivesCacheMu  sync.Mutex
+	myHivesCache    map[string]myHivesSnapshot
 	// keyGenerations is the ordered set of master generations this hub accepts
 	// (hub_generations.go). Until a rotation happens it holds exactly ONE
 	// generation whose secret IS hubSecret, so every derived key is
@@ -1548,15 +1549,16 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		logger.Info("generated hub secret", "path", hubSecretPath)
 	}
 	s := &HubServer{
-		mux:          http.NewServeMux(),
-		logger:       logger,
-		saveCh:       make(chan struct{}, 1),
-		saveLoopStop: make(chan struct{}),
-		saveLoopDone: make(chan struct{}),
-		registryPath: registryPath,
-		hubGitHash:   gitHash,
-		hubGitBranch: gitBranch,
-		hubSecret:    secret,
+		mux:             http.NewServeMux(),
+		logger:          logger,
+		saveCh:          make(chan struct{}, 1),
+		saveLoopStop:    make(chan struct{}),
+		saveLoopDone:    make(chan struct{}),
+		registryPath:    registryPath,
+		hubGitHash:      gitHash,
+		hubGitBranch:    gitBranch,
+		sharedAgentPool: newSharedAgentPool(),
+		hubSecret:       secret,
 		// Provisional single generation holding the existing master. Replaced
 		// immediately below by loadGenerations, which reads any persisted
 		// rotation off the PVC. It is set here too so the field is never nil
@@ -1699,6 +1701,12 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// a hub that has just rolled never honours a session revoked before it.
 	s.loadRevokedSessions()
 
+	handleSharedPoolLeases := func(w http.ResponseWriter, r *http.Request) {
+		s.sharedAgentPool.handle(w, r, s)
+	}
+	s.mux.HandleFunc("POST /api/shared-agent-pool/leases", handleSharedPoolLeases)
+	s.mux.HandleFunc("PUT /api/shared-agent-pool/leases", handleSharedPoolLeases)
+	s.mux.HandleFunc("DELETE /api/shared-agent-pool/leases", handleSharedPoolLeases)
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/task-status", s.handleTaskStatus)
 	// NPS feedback forwarded by spokes (#9610): per-hive heartbeat bearer, the

@@ -1,0 +1,1 @@
+- Activity Monitor: the merge celebration (✓ glow, token to "Merged today") now plays for a PR drawn inline on its issue's row — before, only the counter ticked because such rows carried no sub-row key; rows stamp the PR keys they draw and ⚙ → Merges gains a **Test celebration** button. Reported by @clubanderson.

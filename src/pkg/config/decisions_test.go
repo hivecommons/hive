@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -86,5 +87,23 @@ func TestDelegateDecisionLLMConfig(t *testing.T) {
 	}
 	if !cfg.Decisions.Delegate.LLMEnabled() || cfg.Decisions.Delegate.LLMModel() != "gpt-x" || !cfg.Decisions.Delegate.IsEnabled() {
 		t.Fatalf("parsed = %+v", cfg.Decisions.Delegate)
+	}
+}
+
+func TestDelegateDecisionEffectTimeout(t *testing.T) {
+	cases := map[string]time.Duration{
+		"":       DefaultDelegateDecisionEffectTimeout,
+		"  ":     DefaultDelegateDecisionEffectTimeout,
+		"bogus":  DefaultDelegateDecisionEffectTimeout,
+		"-5m":    DefaultDelegateDecisionEffectTimeout,
+		"0":      DefaultDelegateDecisionEffectTimeout,
+		"45m":    45 * time.Minute,
+		"2h30m":  150 * time.Minute,
+		" 90s\n": 90 * time.Second,
+	}
+	for raw, want := range cases {
+		if got := (DelegateDecisionConfig{EffectTimeout: raw}).EffectTimeoutDuration(); got != want {
+			t.Errorf("EffectTimeout %q → %v, want %v", raw, got, want)
+		}
 	}
 }

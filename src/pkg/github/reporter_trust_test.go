@@ -577,6 +577,8 @@ func TestEvaluateReporterTrust(t *testing.T) {
 		issues   map[int]*selfAuthIssue
 		body     string
 		declared []int
+		// author is the PR's author login; "" means a human contributor.
+		author   string
 		wantHeld bool
 		wantWhy  string
 	}{{
@@ -584,6 +586,28 @@ func TestEvaluateReporterTrust(t *testing.T) {
 		issues:   map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}},
 		body:     "Closes #581",
 		wantHeld: true, wantWhy: "not a trusted reporter",
+	}, {
+		name:     "the hive authored the PR: the reporter's trust does not gate the hive's own fix (#15020)",
+		issues:   map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}},
+		body:     "Closes #581",
+		author:   botLogin,
+		wantHeld: false,
+	}, {
+		name:     "a cited number that is a pull request decides nothing (#15020: 'closed by #15017')",
+		issues:   map[int]*selfAuthIssue{15017: {Author: "Karibhou", Association: "CONTRIBUTOR", PullRequest: true}},
+		body:     "Refs #15009 (closed by #15017, which classifies the warning as benign)",
+		declared: []int{15017},
+		wantHeld: false,
+	}, {
+		name:     "a bare mention is not the PR's rationale: only closing keywords and declared issues are judged",
+		issues:   map[int]*selfAuthIssue{590: {Author: "stranger", Association: "NONE"}},
+		body:     "Refs #590",
+		wantHeld: false,
+	}, {
+		name:     "a hive self-report's reporter is the hive, whatever account filed it",
+		issues:   map[int]*selfAuthIssue{15009: {Author: "operator-pat", Association: "CONTRIBUTOR", Body: "<!-- hive:selfreport fp=abc hive=x -->\n\nA hive hit an unusual runtime error"}},
+		body:     "Fixes #15009",
+		wantHeld: false,
 	}, {
 		name:     "a maintainer accepted a stranger's issue: no hold",
 		issues:   map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE", Labels: []string{"triage/accepted"}}},
@@ -595,7 +619,7 @@ func TestEvaluateReporterTrust(t *testing.T) {
 			581: {Author: "stranger", Association: "NONE", Labels: []string{"triage/accepted"}},
 			590: {Author: "another-stranger", Association: "NONE"},
 		},
-		body:     "Closes #581\nRefs #590",
+		body:     "Closes #581\nCloses #590",
 		wantHeld: true,
 	}, {
 		name:     "a maintainer asked: no hold",
@@ -623,7 +647,7 @@ func TestEvaluateReporterTrust(t *testing.T) {
 			581: {Author: "maintainer", Association: "OWNER"},
 			590: {Author: "stranger", Association: "FIRST_TIME_CONTRIBUTOR"},
 		},
-		body:     "Closes #581\nRefs #590",
+		body:     "Closes #581\nCloses #590",
 		wantHeld: true,
 	}, {
 		name:     "the request's declared issue list counts",
@@ -646,7 +670,11 @@ func TestEvaluateReporterTrust(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := &selfAuthServer{issues: tc.issues}
 			c := reporterTrustTestClient(t, srv, true)
-			got := c.EvaluateReporterTrust(context.Background(), "o/r", "t", tc.body, tc.declared)
+			author := tc.author
+			if author == "" {
+				author = "contributor"
+			}
+			got := c.EvaluateReporterTrust(context.Background(), "o/r", "t", tc.body, tc.declared, author)
 			if got.Held != tc.wantHeld {
 				t.Fatalf("Held = %v, want %v (reason %q)", got.Held, tc.wantHeld, got.Reason)
 			}
@@ -675,8 +703,47 @@ func runReporterTrustWatcher(t *testing.T, c *Client) (reqPath string) {
 	return reqPath
 }
 
+// outsideAccountPR is the login the fake attributes a created PR to in the
+// tests that exercise the hold itself: an account outside the hive identity
+// (a shared PAT the hive does not list as project.ai_author). A PR GitHub
+// attributes to the hive is never reporter-trust held (hivecommons/hive#15020),
+// so those tests opt out of that skip explicitly.
+const outsideAccountPR = "shared-pat-account"
+
+func TestPRRequestWatcher_HiveAuthoredPRNeverReporterTrustHeld(t *testing.T) {
+	// hivecommons/hive#15020: the hive held its own approved fix for the
+	// trust level of the issue reporter. The App-authored PR (the author the
+	// fake omits resolves to the App login; an explicit App login likewise)
+	// is never held by this gate, whatever the rationale's reporter.
+	for _, author := range []string{"", "kubestellar-hive[bot]"} {
+		t.Run("author="+author, func(t *testing.T) {
+			srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}, prAuthor: author}
+			c := reporterTrustTestClient(t, srv, true)
+			c.prHoldLabel = func(string, string) bool { return false }
+			reqPath := runReporterTrustWatcher(t, c)
+			if applied := srv.applied(); len(applied) != 0 {
+				t.Fatalf("labels applied = %v, want none on a hive-authored PR", applied)
+			}
+			if comments := srv.postedComments(); len(comments) != 0 {
+				t.Fatalf("posted %d comments, want none: %v", len(comments), comments)
+			}
+			raw, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var resp PRResponse
+			if err := json.Unmarshal(raw, &resp); err != nil {
+				t.Fatal(err)
+			}
+			if !resp.OK || resp.ReporterTrustHeld {
+				t.Fatalf("result = %+v, want OK and not reporter_trust_held", resp)
+			}
+		})
+	}
+}
+
 func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
-	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}}
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}, prAuthor: outsideAccountPR}
 	c := reporterTrustTestClient(t, srv, true)
 	// L6: no level hold. The reporter gate is the only thing between a
 	// stranger's request and an unattended merge.
@@ -700,7 +767,7 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	if len(comments) != 1 {
 		t.Fatalf("posted %d comments, want 1 explaining the hold", len(comments))
 	}
-	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "issue reporter, not the PR author", "authored by the hive", "untrusted **reporter**", "`needs-human`", "reporter-trust hold — issue #581 filed by @stranger"} {
+	for _, want := range []string{ReporterTrustNoticeMarker, "#581", "@stranger", "NONE", "9665", "issue reporter, not the PR author", "not this PR's author", "untrusted **reporter**", "`needs-human`", "reporter-trust hold — issue #581 filed by @stranger"} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("hold explanation does not mention %q:\n%s", want, comments[0])
 		}
@@ -756,15 +823,15 @@ func TestPRRequestWatcher_UntrustedReporterAcceptance(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "CONTRIBUTOR", Labels: tc.labels}}}
+			srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "CONTRIBUTOR", Labels: tc.labels}}, prAuthor: outsideAccountPR}
 			c := reporterTrustTestClient(t, srv, true)
 			filter := enabledReporterTrust()
 			filter.ReporterTrust.UntrustedRequireLabels = tc.required
 			filter.ReporterTrust.Enabled = gh.Ptr(!tc.gateOff)
 			c.SetIssueFilter(filter)
 			c.prHoldLabel = func(string, string) bool { return false }
-			// The watcher creates an App-authored PR; only its rationale's
-			// reporter and acceptance labels should decide this hold.
+			// Only the rationale's reporter and acceptance labels decide
+			// this hold on a PR the hive identity does not cover.
 			reqPath := runReporterTrustWatcher(t, c)
 			labels := srv.applied()
 			comments := srv.postedComments()
@@ -792,7 +859,7 @@ func TestPRRequestWatcher_UntrustedReporterAcceptance(t *testing.T) {
 }
 
 func TestPRRequestWatcher_TrustedReporterPRNotHeld(t *testing.T) {
-	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "maintainer", Association: "COLLABORATOR"}}}
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "maintainer", Association: "COLLABORATOR"}}, prAuthor: outsideAccountPR}
 	c := reporterTrustTestClient(t, srv, true)
 	c.prHoldLabel = func(string, string) bool { return false }
 	runReporterTrustWatcher(t, c)
@@ -805,7 +872,7 @@ func TestPRRequestWatcher_TrustedReporterPRNotHeld(t *testing.T) {
 }
 
 func TestPRRequestWatcher_ReporterTrustOffDoesNothing(t *testing.T) {
-	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}}
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}, prAuthor: outsideAccountPR}
 	c := reporterTrustTestClient(t, srv, false)
 	c.prHoldLabel = func(string, string) bool { return false }
 	runReporterTrustWatcher(t, c)
@@ -818,7 +885,7 @@ func TestPRRequestWatcher_ReporterTrustOffDoesNothing(t *testing.T) {
 // the reporter-trust notice ALSO lands, because it is what stops the level
 // hold release from lifting the label on promotion to L6.
 func TestPRRequestWatcher_HoldGatedLevelStillPostsReporterTrustNotice(t *testing.T) {
-	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}}
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}, prAuthor: outsideAccountPR}
 	c := reporterTrustTestClient(t, srv, true)
 	c.prHoldLabel = func(string, string) bool { return true }
 	runReporterTrustWatcher(t, c)
@@ -843,6 +910,7 @@ func TestPRRequestWatcher_HoldGatedLevelStillPostsReporterTrustNotice(t *testing
 func reporterHeldPR(number int) *gh.PullRequest {
 	return &gh.PullRequest{
 		Number: gh.Ptr(number),
+		User:   &gh.User{Login: gh.Ptr(outsideAccountPR)},
 		Title:  gh.Ptr("make the default dashboard theme Barbie"),
 		Body:   gh.Ptr("Closes #581"),
 		Labels: []*gh.Label{{Name: gh.Ptr("hold")}},
@@ -879,6 +947,27 @@ func TestReleaseLevelHold_ReEvaluatesAndPostsMissingReporterNotice(t *testing.T)
 	}
 	if released || reason != "hold" {
 		t.Fatalf("released=%v reason=%q; the hold must survive", released, reason)
+	}
+}
+
+func TestReleaseLevelHold_HiveAuthoredPRNotReporterHeld(t *testing.T) {
+	// A hive-authored level-held PR promoted to L6: the reporter gate does
+	// not re-hold it for the issue reporter's trust (hivecommons/hive#15020).
+	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}}
+	srv.comments = []string{levelHoldNotice("quality")}
+	c := reporterTrustTestClient(t, srv, true)
+	c.prHoldLabel = func(string, string) bool { return false }
+
+	pr := reporterHeldPR(583)
+	pr.User = &gh.User{Login: gh.Ptr("kubestellar-hive[bot]"), Type: gh.Ptr("Bot")}
+	_, reason, _ := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", pr)
+	if reason != "hold" {
+		t.Fatalf("reason = %q; a hive-authored PR must not be held by the reporter gate", reason)
+	}
+	for _, body := range srv.postedComments() {
+		if IsReporterTrustHoldNotice(body) {
+			t.Fatalf("a reporter-trust notice was posted on a hive-authored PR:\n%s", body)
+		}
 	}
 }
 
