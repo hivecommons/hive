@@ -1,0 +1,1 @@
+- Adopted contributor PRs whose unsigned commits are the hive's own no longer hold at stage 074 with `dco-missing`: the stage engine re-signs them itself (in place on base-repo heads, re-homed onto `hive/adopt-<n>` on forks) and the replay now carries merge commits from a base sync instead of refusing to re-sign (#14666)

@@ -52,6 +52,9 @@ type stageCommitFixture struct {
 	authorLogin string
 	authorName  string
 	authorEmail string
+	// parents overrides the default single parent "p"; two entries make
+	// the commit a merge (served as c<i>, so "c0" names the first commit).
+	parents []string
 }
 
 func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
@@ -110,7 +113,14 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 					if c.authorLogin != "" {
 						author = map[string]string{"login": c.authorLogin}
 					}
-					out = append(out, map[string]any{"sha": fmt.Sprintf("c%d", i), "author": author, "committer": author, "commit": map[string]any{"message": c.message, "author": map[string]any{"name": c.authorName, "email": c.authorEmail}, "committer": map[string]any{"name": c.authorName, "email": c.authorEmail}}, "parents": []map[string]string{{"sha": "p"}}})
+					parents := []map[string]string{{"sha": "p"}}
+					if len(c.parents) > 0 {
+						parents = parents[:0]
+						for _, p := range c.parents {
+							parents = append(parents, map[string]string{"sha": p})
+						}
+					}
+					out = append(out, map[string]any{"sha": fmt.Sprintf("c%d", i), "author": author, "committer": author, "commit": map[string]any{"message": c.message, "author": map[string]any{"name": c.authorName, "email": c.authorEmail}, "committer": map[string]any{"name": c.authorName, "email": c.authorEmail}}, "parents": parents})
 				}
 			} else {
 				for i, msg := range api.commits[n] {

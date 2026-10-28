@@ -1082,17 +1082,23 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    contributor-controlled and never count. The stage pass caches that split
    with the commit check (`dco_unsigned_hive`), so the decision does not
    depend on which labels the PR currently carries. When every unsigned
-   commit is App-linked and the branch is still pushable (base-repo head, or
-   `maintainer_can_modify` re-checked with one `GET pulls/N`), an in-place
-   adoption stays in place and the fixer rewrites just that unsigned range
-   with `-s` and force-pushes with lease. If any unsigned commit is
-   contributor-authored or unknown, or the branch cannot be pushed, the
-   adoption converts to `mode=supersede` (`reason=dco-rehome`): the hive
-   pushes `hive/adopt-<n>` at the head, opens the superseding PR and the fix
-   agent re-homes the diff onto that hive-owned branch from the base:
-   cherry-pick each original commit with `git cherry-pick -s`, or squash with
-   `git commit --author=<original author> -s`, preserving authorship/credits
-   while adding the hive submitter sign-off. The replacement PR keeps the
+   commit is App-linked and the head lives in the **base repo**, an in-place
+   adoption stays in place and the stage engine itself re-signs the branch
+   once per head (`reason=dco-rehomed`): it replays the PR's commits through
+   the git-data API, keeping each author, message, tree and parents (merge
+   commits from a base sync included) and appending the App's
+   `Signed-off-by`, then force-updates the ref only if it still points at the
+   observed head. The engine's installation token cannot rewrite a fork
+   branch, so a fork head — even one whose only unsigned commits are the
+   hive's own — and any head with a contributor-authored or unknown unsigned
+   commit converts to `mode=supersede` (`reason=dco-rehome`): the hive
+   pushes `hive/adopt-<n>` at the head with the same re-signed replay
+   (falling back to the unsigned head only when the replay cannot be
+   built), opens the superseding PR and the fix agent re-homes the diff onto
+   that hive-owned branch from the base: cherry-pick each original commit
+   with `git cherry-pick -s`, or squash with `git commit --author=<original
+   author> -s`, preserving authorship/credits while adding the hive
+   submitter sign-off ([#14666](https://github.com/hivecommons/hive/issues/14666)). The replacement PR keeps the
    original title, starts with `Supersedes #N`, carries the original
    `Fixes/Closes/Resolves` target (including `Hive-Run: owner/repo#NN` as
    `Fixes #NN`), and the original PR is commented and closed so it does not
