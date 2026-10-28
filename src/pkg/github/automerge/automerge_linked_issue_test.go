@@ -86,6 +86,26 @@ func newLinkedIssueFront(t *testing.T, backend string, f *linkedIssueFront) *htt
 	f.reads = map[string]int{}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A named base ref makes the sweep read the base branch (protection
+		// for the required-check set, tip status for the release hold); the
+		// backend fixture only knows PR 7's head, so answer those here.
+		f.mu.Lock()
+		baseRef := f.baseRef
+		f.mu.Unlock()
+		if baseRef != "" && r.Method == http.MethodGet {
+			switch r.URL.Path {
+			case "/repos/acme/widget/branches/" + baseRef:
+				json.NewEncoder(w).Encode(map[string]any{"name": baseRef, "commit": map[string]string{"sha": "base1"}})
+				return
+			case "/repos/acme/widget/branches/" + baseRef + "/protection/required_status_checks":
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{"message": "Branch not protected"})
+				return
+			case "/repos/acme/widget/commits/base1/status":
+				json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []any{}})
+				return
+			}
+		}
 		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/commits" {
 			f.mu.Lock()
 			messages, status := f.commits, f.commitsStatus
