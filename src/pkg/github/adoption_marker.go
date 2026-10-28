@@ -18,7 +18,7 @@ type SupersedeAdoption struct {
 // merely the first adoption: a release invalidates earlier markers.
 func ReadSupersedeAdoption(ctx context.Context, client *gh.Client, owner, repo string, number int, trusted func(string) bool) (SupersedeAdoption, error) {
 	var latest SupersedeAdoption
-	opts := &gh.ListOptions{PerPage: 100}
+	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	for {
 		comments, resp, err := client.Issues.ListComments(ctx, owner, repo, number, opts)
 		if err != nil {
