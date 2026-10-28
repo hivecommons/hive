@@ -64,6 +64,9 @@ type StageTrackerDecisionOption struct {
 	// you"); the ⋯ menu and the popover print it under the label
 	// (hivecommons/hive#15078).
 	Consequence string `json:"consequence,omitempty"`
+	// URL is set on link options (open:app-settings): the SPA opens it
+	// instead of posting an action (hivecommons/hive#15099).
+	URL string `json:"url,omitempty"`
 }
 
 // Action ids shared with the SPA's row context menu
@@ -147,10 +150,21 @@ func stageTrackerDecisionNeeded(it StageTrackerItem, verdict *review.Aggregate, 
 // stageTrackerDecisionNeededAt is stageTrackerDecisionNeeded with the clock
 // the tracker build uses, so spans in questions match the row's pill.
 func stageTrackerDecisionNeededAt(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel string, now time.Time) *StageTrackerDecision {
+	return stageTrackerDecisionNeededWith(it, verdict, sentinelLabel, now, blockerOptionsContext{})
+}
+
+// stageTrackerDecisionNeededWith is stageTrackerDecisionNeededAt with the
+// server context a blocked row's options need (the App settings link).
+func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel string, now time.Time, bctx blockerOptionsContext) *StageTrackerDecision {
 	held := slices.Contains(it.Modifiers, modHold)
 	switch {
 	case it.Kind == "pr" && it.MergeTrain != nil && it.MergeTrain.State == MergeGateStateRebaseExhausted:
 		return decisionForMergeTrain(it, held)
+	case it.Kind == "issue" && it.Blocker != nil && !it.Mirrored && (slices.Contains(it.Modifiers, modNeedsHuman) || it.Stage == stagelabels.IssueNeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
+		// A structured blocker outranks the generic park wording: the
+		// person is not being asked to decide, the hive is saying what it
+		// cannot do (hivecommons/hive#15099).
+		return decisionForBlocker(it, held, bctx)
 	case it.Kind == "pr" && (it.Stage == stagelabels.NeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
 		return decisionForPR(it, verdict, sentinelLabel, held)
 	case it.Kind == "pr" && it.Stage == stagelabels.ReadyForHumanMerge.Number():

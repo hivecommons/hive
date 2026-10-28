@@ -73,6 +73,7 @@ const (
 	GlossaryWorkflowPath      = "workflow-path"
 	GlossaryAdoptionExecuting = "adoption-executing"
 	GlossaryAdoptionUndone    = "adoption-undone"
+	GlossaryBlocker           = "blocker"
 	glossaryFallbackUnknown   = "the hive did not say why"
 )
 
@@ -182,6 +183,9 @@ var glossary = []GlossaryEntry{
 		Detail: "The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub."},
 	{Slug: GlossaryAdoptionOff, Kind: GlossaryReason, Plain: "adoption is switched off on this hive",
 		Detail: "Stage adoption is disabled on this hive (governor.labels.stage.adoption), so a request to take a PR over is never carried out."},
+	{Slug: GlossaryBlocker, Kind: GlossaryReason, Plain: "the hive can't do this itself",
+		Detail:  "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099).",
+		Aliases: []string{"capability", "human-only"}},
 	{Slug: GlossaryStillParked, Kind: GlossaryReason, Plain: "the item is still waiting on a person",
 		Detail: "The item is still parked for a person's decision; the recorded decision did not move it."},
 	{Slug: GlossaryNotMergedYet, Kind: GlossaryReason, Plain: "the merge gate hasn't merged it",
@@ -246,6 +250,13 @@ func Explain(slug string) (GlossaryEntry, bool) {
 	}
 	if i := strings.LastIndex(key, ":"); i > 0 {
 		if e, ok := glossaryIndex[key[i+1:]]; ok {
+			return *e, true
+		}
+	}
+	// A family token ("blocker:capability:workflows-permission") resolves
+	// to its family the way the SPA's stageTrackerPlainWords does.
+	if i := strings.Index(key, ":"); i > 0 {
+		if e, ok := glossaryIndex[key[:i]]; ok {
 			return *e, true
 		}
 	}

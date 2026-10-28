@@ -1831,6 +1831,7 @@
     .ham-decision-head { font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-decision-q { font-weight: var(--fw-semibold); color: var(--text); }
     .ham-decision-blocker { font-size: var(--fs-xs); color: var(--text-muted); }
+    .ham-capability-gap { color: var(--amber); }
     .ham-decision-meta, .ham-decision-stage { font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-decision-acts { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-2); }
     .ham-decision-act { padding: var(--sp-1) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-pill); background: transparent; color: var(--text); font: inherit; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; }
@@ -14133,6 +14134,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const step = String((item && item.unauthorized_step) || '').trim();
       return step ? STAGE_TRACKER_UNAUTHORIZED_WORD + ': ' + step : '';
     }
+    // A parked issue with a structured blocker (item.blocker, #15099) reads
+    // "Blocked · App lacks workflows permission", never "Needs human
+    // decision": nobody is being asked to decide, the hive cannot act.
+    const STAGE_TRACKER_BLOCKED_WORD = 'Blocked';
+    function stageTrackerBlockerWord(item) {
+      const b = item && item.blocker;
+      const short = String((b && b.short) || '').trim();
+      return short ? STAGE_TRACKER_BLOCKED_WORD + ' · ' + short : '';
+    }
     // Issue-slot placeholders for a closing reference whose title the server
     // could not resolve (the issue is closed and unreadable, or of unknown state).
     const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';
@@ -15210,7 +15220,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
       if (detour && (cur === 71 || cur === 72) && typeof stageTrackerReturnedWord === 'function') {
         detour.text = stageTrackerReturnedWord(item, detour.text);
@@ -17660,6 +17670,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "author-online": {"kind": "reason", "plain": "the author's clanker is connected, so hive won't take the PR over", "detail": "Adoption is for authors whose clanker has gone offline; this author's clanker is connected, so the hive leaves the PR with them."},
       "behind": {"kind": "reason", "plain": "the branch is behind the base branch", "detail": "The branch is behind the base branch and must be updated before it can merge."},
+      "blocker": {"kind": "reason", "plain": "the hive can't do this itself", "detail": "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099)."},
+      "capability": {"kind": "reason", "plain": "the hive can't do this itself", "detail": "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099)."},
       "capability-gap": {"kind": "rule", "plain": "the GitHub App lacks a permission; deciding cannot clear it", "detail": "The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change."},
       "capability:workflows-permission": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
       "changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
@@ -17696,6 +17708,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "hold": {"kind": "reason", "plain": "on hold; the hive does nothing until it is released", "detail": "The item is on hold. The hive does nothing with it until a person releases the hold."},
       "human-changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
       "human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "human-only": {"kind": "reason", "plain": "the hive can't do this itself", "detail": "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099)."},
       "label:needs-human": {"kind": "reason", "plain": "marked needs-human; a person must remove the label", "detail": "The item is marked needs-human: automated fixes ran out or a person flagged it. The hive waits until the label is removed."},
       "labels-add": {"kind": "action", "plain": "added labels", "detail": "The hive added labels to the item."},
       "labels-remove": {"kind": "action", "plain": "removed labels", "detail": "The hive removed labels from the item."},
@@ -17771,6 +17784,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'decide:adopt-now': 'Adopt now — hive takes it over', 'decide:reroute': 'Reroute to another clanker',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
+      'open:app-settings': 'Grant the App permission', 'blocker:recheck': 'Re-check permissions', 'blocker:patch': 'Prepare the patch for a person to push',
+      'blocker:close-partial': 'Mark partially-addressed and close', 'blocker:wait': 'Keep waiting',
     };
     // Actions that end with a commit on the base branch (merge now, or an
     // approval the hive's sweep merges on): merger or owner only, like
@@ -18126,6 +18141,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       // A nudged contributor PR the engine would adopt but for the owner's
       // say-so (maintainer_policy: ask) offers Adopt (hivecommons/hive#14524).
+      if (typeof stageTrackerBlockerActions === 'function') for (const a of stageTrackerBlockerActions(item, ctx)) out.push(a);
       if (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item)) out.push({ id: 'decide:adopt', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt'] + '…', hint: 'adoption', enabled: write && !!ctx.user, why: write && ctx.user ? '' : STAGE_TRACKER_WHY_WRITE });
       // A PR waiting on a contributor's clanker offers Adopt now and Reroute
       // (hivecommons/hive#15038); each disabled with the server's reason.
@@ -18137,6 +18153,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!has('needs-human')) out.push({ id: 'needs-human', label: 'Mark needs-human…', enabled: !!ctx.canHuman, why: ctx.canHuman ? '' : STAGE_TRACKER_WHY_ROLE });
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
+      return out;
+    }
+    // Pure: the actions for a row parked on a blocker (hivecommons/hive#15099):
+    // the server lists them in decision_needed.options (a capability gap
+    // offers the App settings link, a permission re-check and the disabled
+    // patch hand-off; every blocker offers close-as-partial and wait). The
+    // link opens for anyone; the rest need write access.
+    const STAGE_TRACKER_BLOCKER_ACTIONS = ['open:app-settings', 'blocker:recheck', 'blocker:patch', 'blocker:close-partial', 'blocker:wait'];
+    function stageTrackerBlockerActions(item, ctx) {
+      ctx = ctx || {};
+      if (!item || !item.blocker || !item.decision_needed) return [];
+      const write = ctx.canHold !== false && !!ctx.user;
+      const server = Array.isArray(item.decision_needed.options) ? item.decision_needed.options : [];
+      const out = [];
+      for (const o of server) {
+        if (STAGE_TRACKER_BLOCKER_ACTIONS.indexOf(o.action) < 0) continue;
+        const link = o.action === 'open:app-settings';
+        const enabled = !!o.enabled && (link || o.action === 'blocker:wait' || write);
+        const why = enabled ? '' : (o.enabled ? STAGE_TRACKER_WHY_WRITE : (o.reason_if_disabled || ''));
+        out.push({ id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, hint: 'blocked', enabled, why, url: o.url || '', danger: o.action === 'blocker:close-partial' });
+      }
       return out;
     }
     function stageTrackerFlatActions(actions) {
@@ -18395,7 +18432,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const c = flat[o.action];
         const enabled = !!o.enabled && !!(c && c.enabled);
         const why = enabled ? '' : (o.reason_if_disabled || (c ? c.why : 'Not available on this row') || '');
-        return { id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, enabled, why, consequence: o.consequence || '', danger: !!(c && c.danger) || /^decide:close-/.test(o.action) };
+        return { id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, enabled, why, consequence: o.consequence || '', danger: !!(c && c.danger) || /^decide:close-/.test(o.action), url: o.url || (c && c.url) || '' };
       });
       // "Let hive decide" leads — except where the server's first option
       // is the merge the pill asks for (090: hivecommons/hive#15078).
@@ -18614,6 +18651,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
         case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
+        case 'blocker:recheck': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/recheck', body: {} };
+        case 'blocker:close-partial': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/close-partial', body: { comment: payload.comment || '' } };
       }
       if (id === 'decide:delegate' || id === 'decide:delegate:rerun') {
         const body = { type, reason: item.reason || '', caption: item.caption || '', sentinel_reason: item.sentinel_reason || '' };
@@ -18991,6 +19030,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // Offered only from a "hasn't taken effect" toast the operator
           // has already read; no second confirmation.
           return {};
+        case 'blocker:recheck':
+          return {};
+        case 'blocker:close-partial':
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Close as partially addressed', message: 'Label ' + refs + ' hive/partially-addressed and close ' + (items.length > 1 ? 'them' : 'it') + ' as ' + who + '? The remaining work stays described in the closing comment; nothing is merged.', confirmLabel: 'Close as partial', danger: true })) ? {} : null;
         case 'decide:approve':
           if (prs) {
             return (await stageTrackerAsk(id, 'confirm', { title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge gate takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
@@ -19090,6 +19133,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
+      'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…', 'decide:re-author': 'Queuing re-authoring…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…',
@@ -19202,6 +19246,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             e.stopPropagation();
             if (o.enabled === false) return;
             if (o.action === 'open:github') { if (text.url) window.open(text.url, '_blank', 'noopener'); return; }
+            if (o.action === 'open:app-settings') { if (o.url) window.open(o.url, '_blank', 'noopener'); return; }
             el.remove();
             runRowAction(o.action, [target]);
           });
@@ -19317,6 +19362,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         for (const it of items) if (it.url) window.open(it.url, '_blank', 'noopener');
         return { toasts: [], pending: [] };
       }
+      if (id === 'open:app-settings') {
+        // The App settings page: the link the server put on the option.
+        const url = stageTrackerBlockerOptionUrl(items[0], id);
+        if (url) window.open(url, '_blank', 'noopener'); else showToast('No App settings link — the GitHub App slug is not configured', 'error');
+        return { toasts: [], pending: [] };
+      }
+      if (id === 'blocker:wait' || id === 'blocker:patch') {
+        showToast(id === 'blocker:wait' ? 'Left as is — the row stays blocked until the permission is granted or a person acts.' : 'Not available: the hive has no identity that may push workflow files.', 'info');
+        return { toasts: [], pending: [] };
+      }
       if (id === 'copy') {
         const text = items.map(it => it.url).filter(Boolean).join('\n');
         try {
@@ -19364,6 +19419,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (lp && lp.takeover) return stageTrackerItemByKey(_stageTracker, stageTrackerItemKey({ repo: item.repo, kind: 'pr', number: lp.number })) || stageTrackerLinkedPRItem(item, lp);
       }
       return null;
+    }
+    // Pure: the link a blocker option carries (decision_needed.options[].url).
+    function stageTrackerBlockerOptionUrl(item, id) {
+      const d = item && item.decision_needed;
+      const opts = d && Array.isArray(d.options) ? d.options : [];
+      for (const o of opts) if (o && o.action === id && o.url) return o.url;
+      return (item && item.optionUrls && item.optionUrls[id]) || '';
     }
     // Menu / selection bar entry point: items are the clicked or selected rows.
     async function stageTrackerDoAction(items, id) { return runRowAction(id, items); }
@@ -53026,6 +53088,26 @@ function burnAreaChart() {
       return '<div style="border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);background:color-mix(in srgb, var(--amber) 10%, transparent);border-radius:8px;padding:10px 12px;margin:0 0 14px;color:var(--amber);font-size:0.76rem;line-height:1.5"><strong>Coherence warnings (non-blocking)</strong><ul style="margin:6px 0 0 18px;padding:var(--sp-0)">' + warnings.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul></div>';
     }
 
+    // Pure: the capability gaps line(s) for ⚙ → Security
+    // (hivecommons/hive#15099): /api/status.capabilities lists the GitHub
+    // App permissions items are blocked on and how many rows wait on them.
+    // '' when the App has every permission the parked work needs.
+    function capabilityGapsText(caps) {
+      caps = caps || {};
+      const missing = Array.isArray(caps.missing) ? caps.missing.filter(Boolean) : [];
+      if (!missing.length) return '';
+      const n = Number(caps.blocked_items) || 0;
+      const by = caps.by_permission || {};
+      const perms = missing.map(p => '`' + p + '`' + (by[p] ? ' (' + by[p] + ')' : '')).join(', ');
+      return 'GitHub App permissions: missing ' + perms + ' · ' + n + ' item' + (n === 1 ? '' : 's') + ' blocked';
+    }
+    function securityCapabilitiesHtml(caps, appSettingsUrl) {
+      const text = capabilityGapsText(caps);
+      if (!text) return '<p class="config-help">GitHub App permissions: no item is blocked on a missing permission.</p>';
+      const link = appSettingsUrl ? ' <a href="' + esc(appSettingsUrl) + '" target="_blank" rel="noopener">Grant it in the App settings ↗</a>' : '';
+      return '<p class="config-help ham-capability-gap" role="status">' + esc(text) + '.' + link + ' Hive re-tries blocked items on its own once it sees the permission (Re-check permissions on a row probes it now).</p>';
+    }
+
     function securityModelDatalistHtml() {
       const seen = new Set();
       const options = [];
@@ -53537,6 +53619,7 @@ function burnAreaChart() {
         ${renderSecuritySection('Suspicious Activity', suspicious + suspiciousFindings)}
         ${renderSecuritySection('Isolation', isolation)}
         ${renderSecuritySection('Write Surface', writeSurface)}
+        ${renderSecuritySection('GitHub App permissions', securityCapabilitiesHtml((window._lastStatus || {}).capabilities, (window._lastStatus || {}).githubAppInstallURL))}
         ${renderSecuritySection('Backup', backupKey)}`;
     }
 

@@ -1787,6 +1787,36 @@ means the App/key/installation are healthy, but the hive still names the old
 repository owner after an org transfer; update the configured project org rather
 than trying to add the moved repository back to the old installation.
 
+### GitHub App permissions the hive needs, and what each one unblocks
+
+The App's repository permissions decide which steps the hive can take itself.
+A step the App cannot take is not a question for a person to *decide*; it is
+a **capability gap** the hive records as a structured blocker
+(`<!-- hive:blocker kind=capability:… -->`, see
+[labels-and-control-signals.md](labels-and-control-signals.md#blockers----hiveblocker-kind--)),
+parks the item on, and surfaces at ⚙ → Security as *GitHub App permissions:
+missing `<permission>` · N items blocked* ([#15099](https://github.com/hivecommons/hive/issues/15099)).
+
+| Permission | Level | Without it the hive cannot… | Blocker kind |
+|---|---|---|---|
+| Contents | read/write | push branches, read files | `capability:repo-write` |
+| Pull requests | read/write | open, approve, merge PRs | — (nothing starts) |
+| Issues | read/write | comment, label, file issues | — (nothing starts) |
+| Workflows | write | push any change under `.github/workflows/*` (GitHub refuses the push with *refusing to allow a GitHub App to create or update workflow*) | `capability:workflows-permission` |
+| Actions | write | approve workflow runs from forks (the 085 *Awaiting human: approve workflow runs* pill) | — (`hive:unauthorized`) |
+| Checks / Commit statuses | read | gate merges on CI | — |
+| Administration | read | verify branch protection before a merge request | `capability:branch-protection` when a rule the App cannot satisfy stands |
+| Metadata | read | anything (required by GitHub) | — |
+
+Granting a permission on an existing installation needs the installation
+owner to accept the new permission request in the App settings page the
+dashboard links to (`githubAppInstallURL`). The hive re-checks on its own on
+the next stage pass; *Re-check permissions* on a blocked row
+(`POST /api/repos/{owner}/{repo}/items/{number}/blocker/recheck`) probes the
+installation now and releases every item blocked on that permission when it is
+there. `GET /api/status` carries the same picture as
+`capabilities: {missing: ["workflows"], blocked_items: N, by_permission: {workflows: N}}`.
+
 ## Runtime diagnostics (`debug`, `GOMEMLIMIT`, `mem:` log line)
 
 Added for [#14681](https://github.com/hivecommons/hive/issues/14681) (hive

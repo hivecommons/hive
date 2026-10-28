@@ -88,6 +88,10 @@ func TestGlossaryResolvesComposedLaneTokens(t *testing.T) {
 			t.Errorf("Explain(%q) = %+v, %v; want slug %q", in, e, ok, want)
 		}
 	}
+	// A blocker token resolves to its family (hivecommons/hive#15099).
+	if e, ok := Explain("blocker:capability:workflows-permission"); !ok || e.Slug != GlossaryBlocker {
+		t.Errorf("blocker family lookup = %+v, %v", e, ok)
+	}
 	if got := Plain("some-unknown_token"); got != "some unknown token" {
 		t.Errorf("unknown slug is humanised, got %q", got)
 	}

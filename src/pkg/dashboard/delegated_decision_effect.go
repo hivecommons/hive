@@ -121,6 +121,25 @@ func reparkFromEvents(events []ghpkg.IssueEvent) (delegatedRepark, bool) {
 	return out, !out.At.IsZero()
 }
 
+// delegatedCommentTexts lists the item's recent comments as body + time
+// for the blocker ledger; nil when the client is missing or the read
+// fails (the ledger then answers from what it already knows).
+func (s *Server) delegatedCommentTexts(ctx context.Context, repoFull string, number int) []commentText {
+	if s.deps == nil || s.deps.GHClient == nil || s.deps.GHClient.GoGitHub() == nil {
+		return nil
+	}
+	owner, repoName, _ := strings.Cut(repoFull, "/")
+	comments, _, err := s.deps.GHClient.GoGitHub().Issues.ListComments(ctx, owner, repoName, number, &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: delegatedDecisionGatherLimit}})
+	if err != nil {
+		return nil
+	}
+	out := make([]commentText, 0, len(comments))
+	for _, c := range comments {
+		out = append(out, commentText{Body: c.GetBody(), At: c.GetCreatedAt().Time})
+	}
+	return out
+}
+
 // delegatedEffectTimeout is decisions.delegate.effect_timeout (default 30m).
 func (s *Server) delegatedEffectTimeout() time.Duration {
 	if s == nil || s.deps == nil || s.deps.Config == nil {

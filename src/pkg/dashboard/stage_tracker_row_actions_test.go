@@ -88,6 +88,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerAdoptNowConfirm"),
 		jsFunc(t, html, "stageTrackerRerouteConfirm"),
 		jsFunc(t, html, "stageTrackerRerouteTargetValid"),
+		jsConstLine(t, html, "STAGE_TRACKER_BLOCKER_ACTIONS"),
+		jsFunc(t, html, "stageTrackerBlockerActions"),
 		jsFunc(t, html, "stageTrackerRowActions"),
 		jsFunc(t, html, "stageTrackerMenuTextHtml"),
 		jsFunc(t, html, "stageTrackerFlatActions"),

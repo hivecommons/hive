@@ -1506,6 +1506,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `adoption-undone` | the hive's copy was closed without merging and the adoption was undone | The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub. |
 | `author-association`, `contributor-lane:author-association`, `human-merge`, `ready-for-human-merge`, `untrusted-author` | no merge lane vouches for this PR's author; a maintainer merges | The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors. |
 | `author-online` | the author's clanker is connected, so hive won't take the PR over | Adoption is for authors whose clanker has gone offline; this author's clanker is connected, so the hive leaves the PR with them. |
+| `blocker`, `capability`, `human-only` | the hive can't do this itself | The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099). |
 | `behind` | the branch is behind the base branch | The branch is behind the base branch and must be updated before it can merge. |
 | `changes-requested`, `changes_requested`, `contributor-lane:changes-requested`, `human-changes-requested`, `request_changes`, `reviewer-verdict:request_changes` | a reviewer asked for changes; a new commit is needed | A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it. |
 | `checks-failing`, `ci-failing`, `ci-red`, `red` | CI is failing on this branch | Required checks are failing on this branch; nothing merges until they are green. |
@@ -1523,6 +1524,36 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `still-parked` | the item is still waiting on a person | The item is still parked for a person's decision; the recorded decision did not move it. |
 
 A `/hive decision …` comment the hive itself wrote as the owner's delegate (it carries the delegated-decision marker) is never read as a maintainer's command: not as a change request on the PR, not as an approval. [#14822](https://github.com/hivecommons/hive/pull/14822) fixes the parse of `/hive decision approve <rationale>`; the marker guard covers every other decision text the delegate can post, whichever login it was posted under.
+
+## Blockers: `<!-- hive:blocker kind=… -->`
+
+`needs-human` says *a person is needed*; it does not say *what for*. When the reason is a **capability gap** — the GitHub App cannot do the next step at all — a direction decision answers a question nobody asked, and "Let hive decide" would un-park the issue only for the next sweep to re-park it with the same text (hivecommons/hive#14976 → #15099). So an agent that parks an item because the hive *cannot* act records a structured blocker next to the label:
+
+```
+<!-- hive:blocker kind=capability:workflows-permission -->
+```
+
+| Kind | Meaning | Clears when |
+|---|---|---|
+| `capability:workflows-permission` | the App token cannot push `.github/workflows/*` (no `workflows: write`) | the permission is granted and re-checked |
+| `capability:repo-write` | the App has no `contents: write` on the repo | the permission is granted and re-checked |
+| `capability:branch-protection` | a protection rule the App cannot satisfy or bypass | a person changes the rule |
+| `capability:secret` | a secret or token only the owner holds | a person sets it |
+| `human-only:cla` | a CLA / legal sign-off only a person can give | a person signs |
+| `human-only:re-asked` | the same needs-human reason came back after a delegated un-park (loop guard) | the reason text changes |
+
+Where it comes from:
+
+- **Agents** put the marker in the body of the needs-human report (the task-list sweep copies a merged PR's remainder into its progress comment and adds the marker when the prose names a capability). `bin/gh-wrapper.sh` adds the marker itself when a needs-human comment says "the App cannot … (no `workflows` permission)" and no marker is present, so a report written in plain prose still lands structured.
+- **The hive** reads it at every comment path — the `issue_comment` webhook, the task-list sweep, the stage pass — into `pkg/blocker`'s ledger (`/data/item-blockers.json`), inferring the kind from the prose when the marker is missing.
+
+What it changes:
+
+- The issue stays 045 with the reason `blocked: App lacks workflows permission`; the tracker pill reads **Blocked · App lacks workflows permission** and its popover says in plain words what the hive cannot do and lists the ways out (grant the permission, re-check, prepare the patch for a person where an identity exists, mark partially addressed and close, keep waiting).
+- **"Let hive decide" returns `no-effect`** (reason `blocker`) instead of applying `approved-direction`; it is shown disabled with that sentence, not greyed silently.
+- **Loop guard**: a delegated un-park records the reason it cleared. If the same reason is re-applied afterwards, the item is parked with a blocker (`human-only:re-asked` when no capability is named) and "Let hive decide" stays disabled on it until the reason changes.
+- **Label consistency**: `stage/045-needs-decision` and `approved-direction` cannot coexist. `needs-human` is always the newer signal next to `approved-direction` (the un-park removes `needs-human` when it applies the ack), so the stage pass keeps 045 and clears `approved-direction` — a person or sweep that re-parked after a delegated decision is never silently un-parked again.
+- `/api/status.capabilities` lists the missing permissions and the count of items blocked on them; ⚙ → Security shows the same line with a link to the App settings page. **Re-check permissions** on a row probes the installation and clears the blocker when the permission is there.
 
 ## Matching rules
 

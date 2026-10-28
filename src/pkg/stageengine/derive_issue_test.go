@@ -132,3 +132,48 @@ func TestDeriveIssueFlags(t *testing.T) {
 		t.Fatalf("pr facts: %+v", d)
 	}
 }
+
+// hivecommons/hive#15099: `needs-human` with a structured blocker stays
+// 045 and names the blocker. `approved-direction` next to `needs-human`
+// is the stale label either way (the un-park that applies the ack removes
+// the park label, so a surviving park label came later) and is cleared.
+func TestDeriveIssueBlockerAndApprovedDirection(t *testing.T) {
+	blocked := func(f *Facts) {
+		f.Issue.Bucket = BucketFiltered
+		f.Park.NeedsHuman = true
+		f.Issue.Blocker = "capability:workflows-permission"
+		f.Issue.BlockerShort = "App lacks workflows permission"
+	}
+	d := DeriveIssue(derivedIssueFacts(blocked))
+	if d.Stage != stagelabels.IssueNeedsDecision || d.Reason != "blocked: App lacks workflows permission" || len(d.Clear) != 0 {
+		t.Fatalf("blocked: %+v", d)
+	}
+	d = DeriveIssue(derivedIssueFacts(func(f *Facts) { blocked(f); f.Issue.ApprovedDirectionLabel = "approved-direction" }))
+	if d.Stage != stagelabels.IssueNeedsDecision || d.Reason != "blocked: App lacks workflows permission" {
+		t.Fatalf("blocked + ack: %+v", d)
+	}
+	if len(d.Clear) != 1 || d.Clear[0] != "approved-direction" {
+		t.Fatalf("blocked + ack must clear the ack, got %v", d.Clear)
+	}
+	d = DeriveIssue(derivedIssueFacts(func(f *Facts) {
+		f.Issue.Bucket = BucketFiltered
+		f.Park.NeedsHuman = true
+		f.Issue.ApprovedDirectionLabel = "approved-direction"
+	}))
+	if d.Stage != stagelabels.IssueNeedsDecision || d.Reason != "held for a person: needs-human" || len(d.Clear) != 1 || d.Clear[0] != "approved-direction" {
+		t.Fatalf("a later needs-human outranks the ack: %+v", d)
+	}
+	d = DeriveIssue(derivedIssueFacts(func(f *Facts) { blocked(f); f.Issue.BlockerShort = "" }))
+	if d.Reason != "blocked: capability:workflows-permission" {
+		t.Fatalf("blocker without short falls back to the kind: %+v", d)
+	}
+	// Hold still outranks the park; nothing is cleared while held.
+	d = DeriveIssue(derivedIssueFacts(func(f *Facts) {
+		blocked(f)
+		f.Issue.HoldLabel = "hold"
+		f.Issue.ApprovedDirectionLabel = "approved-direction"
+	}))
+	if d.Stage != stagelabels.None || len(d.Clear) != 0 {
+		t.Fatalf("held: %+v", d)
+	}
+}

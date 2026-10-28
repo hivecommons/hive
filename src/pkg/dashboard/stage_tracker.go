@@ -407,6 +407,12 @@ type StageTrackerItem struct {
 	// advance it, under the row context menu's action ids. See
 	// stage_tracker_decision.go.
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
+	// Blocker is the structured blocker recorded on a parked issue — what
+	// the hive cannot do itself (a missing App permission, a CLA) — from
+	// pkg/blocker's ledger. The pill reads "Blocked · <short>" instead of
+	// "Needs human decision" and "Let hive decide" is disabled with the
+	// reason (hivecommons/hive#15099).
+	Blocker *StageTrackerBlocker `json:"blocker,omitempty"`
 	// StaleLabels are control labels the row still wears that its stage
 	// has outrun, so they are not read as modifiers: `needs-triage` on an
 	// issue at 020 or later (015 is not a gate; the reconciler removes the
@@ -1914,6 +1920,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		dispatchState = st
 	}
 	sentinelLabel := s.sentinelLabel()
+	bctx := s.blockerOptionsContext()
 	lookup := func(repo string, number int) (stagelabels.Record, bool) {
 		if store == nil {
 			return stagelabels.Record{}, false
@@ -2131,7 +2138,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
 			}
 		}
-		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, nil, sentinelLabel, now)
+		if slices.Contains(it.Modifiers, modNeedsHuman) || it.Stage == stagelabels.IssueNeedsDecision.Number() {
+			it.Blocker = stageTrackerBlockerFor(repoName, issue.Number)
+		}
+		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, nil, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
 		add(it)
 	}
@@ -2209,7 +2219,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.Caption = joinClause(it.Caption, clause)
 			}
 		}
-		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, agg, sentinelLabel, now)
+		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, agg, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
 		add(it)
 	}

@@ -636,8 +636,13 @@ type StatusPayload struct {
 	SystemResources     *SystemResources            `json:"systemResources,omitempty"`
 	GitHubAppRequired   bool                        `json:"githubAppRequired,omitempty"`
 	GitHubAppInstallURL string                      `json:"githubAppInstallURL,omitempty"`
-	GitHubAppPermIssue  string                      `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState      string                      `json:"githubAppState,omitempty"`
+	// Capabilities summarises the GitHub App permissions tracker items are
+	// blocked on (pkg/blocker ledger): ⚙ → Security/Features reads
+	// "GitHub App permissions: missing `workflows` · N items blocked"
+	// (hivecommons/hive#15099).
+	Capabilities       *FrontendCapabilities `json:"capabilities,omitempty"`
+	GitHubAppPermIssue string                `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState     string                `json:"githubAppState,omitempty"`
 	// GitHubAppInstallMissing is CONFIG TRUTH, independent of any auth probe
 	// or classification: a real App is named (app_id set, not the placeholder)
 	// but installation_id is 0. That state alone means every token is a
@@ -2630,6 +2635,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	s.githubAppMu.RLock()
 	status.GitHubAppRequired = s.githubAppRequired
 	status.GitHubAppInstallURL = s.githubAppInstallURL
+	status.Capabilities = s.capabilitiesStatus()
 	status.GitHubAppPermIssue = s.githubAppPermIssue
 	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()

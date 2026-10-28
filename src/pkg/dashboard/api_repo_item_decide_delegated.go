@@ -484,6 +484,22 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated+"_failed", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "error", err.Error()), "", repoFull, number)
 		return delegatedOutcome{Err: err}
 	}
+	// A structured blocker — the App lacks a permission, a CLA must be
+	// signed — is not a question the hive can answer: a direction would
+	// un-park the issue only for the agent to re-park it with the same
+	// reason (hivecommons/hive#14976). Say what would unblock it instead
+	// and write nothing (hivecommons/hive#15099).
+	if in.Kind == delegatedecision.KindIssue {
+		if b := s.delegatedBlocker(ctx, repoFull, number, s.delegatedCommentTexts(ctx, repoFull, number)); b != nil {
+			held := slices.Contains(in.Labels, delegatedecision.LabelHold)
+			res := blockerNoEffectResult(rowActionTarget(repoFull, rowActionTargetIssue, number), *b, held, s.blockerOptionsContext())
+			d := delegatedecision.Decision{Verdict: delegatedecision.VerdictRefused, Rule: "blocker:" + b.Kind, Text: res.Outcome, Rationale: res.Outcome, KeepsPark: true}
+			notes := []string{"blocked: " + b.Short + "; nothing written"}
+			s.audit.LogRecord(user, auditRepoItemDecisionDelegated, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", itemType,
+				"verdict", string(d.Verdict), "rule", d.Rule, "actions", "", "noop", "no-effect:blocker:"+b.Kind, "policy", delegatedecision.PolicyName, "decision", d.Text), "", repoFull, number)
+			return delegatedOutcome{Decision: &d, Notes: notes, Result: &res}
+		}
+	}
 	// A PR at 090 held only for its author's trust is decided here: approve
 	// when nothing is wrong with it, adopt otherwise (hivecommons/hive#15173).
 	// Any other 090 PR is one no policy run changes, so answer at once in
@@ -749,6 +765,7 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 					return notes, fmt.Errorf("un-parking issue: %w", err)
 				default:
 					notes = append(notes, "parking labels lifted, `"+ghpkg.HumanAckLabel+"` applied")
+					s.noteDelegatedUnpark(repoFull, number)
 				}
 			} else if d.Verdict == delegatedecision.VerdictDirection && in.HiveAuthored {
 				if _, err := client.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, d.Text, repoItemDecisionChangeRequests()); err != nil && !errors.Is(err, ghpkg.ErrPullRequestNotHiveAuthored) {

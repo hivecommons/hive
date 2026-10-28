@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/blocker"
 )
 
 // DefaultWebhookHealthWindow is the "healthy" window used until the governor
@@ -44,6 +46,9 @@ type WebhookEventResult struct {
 	DirtyIssues []int `json:"dirty_issues,omitempty"`
 	// ReopenedIssue is the issue an `issues` reopened event named, if any.
 	ReopenedIssue int `json:"reopened_issue,omitempty"`
+	// BlockerKind is the structured blocker an issue_comment delivery
+	// recorded on the issue, if any (hivecommons/hive#15099).
+	BlockerKind string `json:"blocker_kind,omitempty"`
 	// TouchedIssues lists the non-PR issues an `issues` or `issue_comment`
 	// event named, whatever the action: the stage tracker re-reads them.
 	TouchedIssues []int `json:"touched_issues,omitempty"`
@@ -438,6 +443,13 @@ type webhookEventPayload struct {
 		UpdatedAt   *time.Time       `json:"updated_at"`
 		PullRequest *json.RawMessage `json:"pull_request"`
 	} `json:"issue"`
+	Comment *struct {
+		Body      string     `json:"body"`
+		CreatedAt *time.Time `json:"created_at"`
+		User      *struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	} `json:"comment"`
 	CheckSuite *struct {
 		HeadSHA      string         `json:"head_sha"`
 		PullRequests []webhookPRRef `json:"pull_requests"`
@@ -480,6 +492,15 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 
 	if n, ok := webhookTouchedIssue(event, p); ok {
 		res.TouchedIssues = []int{n}
+		if body, at, ok := webhookIssueCommentBody(event, p); ok {
+			// A needs-human report that names a capability the App lacks
+			// becomes a structured blocker the moment it lands, so the
+			// tracker and "Let hive decide" read it before the next
+			// enumeration (hivecommons/hive#15099).
+			if e, changed := blocker.Shared().Observe(configured, n, body, at); changed && e.Blocks() {
+				res.BlockerKind = string(e.Blocker.Kind)
+			}
+		}
 	}
 	res.Item = webhookItemHint(event, p)
 	if reviewRequestWakeEvent(event, p) {
@@ -597,6 +618,19 @@ func webhookTouchedIssue(event string, p webhookEventPayload) (int, bool) {
 		return 0, false
 	}
 	return p.Issue.Number, true
+}
+
+// webhookIssueCommentBody returns the body and time of a created or edited
+// issue_comment delivery on a non-PR issue.
+func webhookIssueCommentBody(event string, p webhookEventPayload) (string, time.Time, bool) {
+	if event != "issue_comment" || p.Comment == nil || (p.Action != "created" && p.Action != "edited") {
+		return "", time.Time{}, false
+	}
+	at := sharedWebhookTracker.now()
+	if p.Comment.CreatedAt != nil && !p.Comment.CreatedAt.IsZero() {
+		at = *p.Comment.CreatedAt
+	}
+	return p.Comment.Body, at, true
 }
 
 // webhookIssueReopenedTarget returns the issue number of an `issues` event
