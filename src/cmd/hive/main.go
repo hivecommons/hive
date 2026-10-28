@@ -7207,6 +7207,10 @@ func runEvalCycle(
 	if !budgetDecision.SkipOptional {
 		applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 	}
+	// Every cycle, cached ones included: heal issue stage records the
+	// claim ledger says an open PR covers but the store still holds below
+	// 040 (a claim release written over the cover between reconcile passes).
+	reconcileLedgerCoverRecords(ctx, cfg, ghClient, actionable, logger)
 
 	// PR review queue (#9590): stamp each PR's rank, priority and reasons
 	// onto the snapshot so last-actionable.json carries them next to
@@ -10119,6 +10123,26 @@ func recheckSoakHubURL(cfg *config.Config) string {
 // applyDuplicatePRGuard filters issues already claimed by an open hive-authored
 // PR out of the actionable set. Failures are logged, never fatal: the guard is
 // a safety net, and a broken net must not take the hive down with it.
+// reconcileLedgerCoverRecords runs github.BackfillCoveredByLedger with the
+// cycle's red+stale valve. It is not an optional step: with webhook-driven
+// cached cycles the reconcile pass (and the stage sweep with it) can be
+// hours apart, and a record at 010 under an open covering PR re-offers the
+// issue to the scanner for all of that time.
+func reconcileLedgerCoverRecords(ctx context.Context, cfg *config.Config, ghClient *github.Client, actionable *github.ActionableResult, logger *slog.Logger) {
+	ledger := getClaimLedger(logger)
+	if ledger == nil || ledger.Len() == 0 || ghClient == nil {
+		return
+	}
+	backfillCtx, cancel := context.WithTimeout(ctx, issueStageSyncTimeout)
+	defer cancel()
+	res := ghClient.BackfillCoveredByLedger(backfillCtx, ledger, claimingPRRedStale(cfg, actionable))
+	if res.Covered+res.Errors > 0 && logger != nil {
+		logger.Info("stage backfill: issue records reconciled with the claim ledger",
+			"checked", res.Checked, "covered", res.Covered, "skipped_red_stale", res.SkippedRedStale,
+			"skipped_not_open", res.SkippedNotOpen, "errors", res.Errors)
+	}
+}
+
 func applyDuplicatePRGuard(
 	ctx context.Context,
 	cfg *config.Config,

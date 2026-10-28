@@ -319,6 +319,18 @@ func (c IssueClaim) Settled() bool {
 	return c.MergedPR && !c.Reference && !c.ExternalAuthor
 }
 
+// CoversOpenIssue reports whether the claim is one FilterClaimedIssues
+// suppresses the issue for: an OPEN pull request that either closes the
+// issue or was opened by someone other than this hive. A merged claim is a
+// verification matter, a hive-authored non-closing reference only annotates.
+// The red+stale release valve is not part of this predicate.
+func (c IssueClaim) CoversOpenIssue() bool {
+	if c.PRNumber <= 0 || c.MergedPR {
+		return false
+	}
+	return c.ExternalAuthor || !c.Reference
+}
+
 // SettledAt is the instant the settled evidence was produced: the merge for
 // a merged-PR claim, otherwise the first observation. Zero for an unsettled
 // claim.

@@ -72,3 +72,40 @@ func TestCloseOnMergeBackfillSkipsOtherForgeRepos(t *testing.T) {
 		t.Fatalf("results = %+v, want none", results)
 	}
 }
+
+// The webhook path restricts the ledger sweep to the PR that just merged:
+// the other merged claims cost no API call and stay unsettled for the
+// scheduled sweep.
+func TestCloseOnMergeLedgerSweepOnlyPRFilter(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	f := newLedgerSweepFixture(t, 7, 8)
+	srv := f.server()
+	defer srv.Close()
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), nil)
+	merged := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	for _, issue := range []int{7, 8} {
+		if err := ledger.Record(mergedLedgerClaim(issue, merged)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := newTestClient(t, srv, "o", []string{"r"})
+	opts := CloseOnMergeOptions{
+		Identity:     HiveIdentity{AppLogin: "hive[bot]"},
+		Now:          func() time.Time { return merged.Add(time.Hour) },
+		OnlyPRRepo:   "r",
+		OnlyPRNumber: 8,
+	}
+
+	sweep := c.CloseOnMergeLedgerSweep(context.Background(), ledger, opts)
+	if len(sweep.Results) != 1 || sweep.Results[0].Issue != 8 || sweep.Results[0].Action != CloseOnMergeClosed {
+		t.Fatalf("results = %+v, want only issue 8 closed", sweep.Results)
+	}
+	if got := f.count("pull_get"); got != 1 {
+		t.Fatalf("PR GETs = %d, want 1", got)
+	}
+	for _, claim := range ledger.Claims() {
+		if settled := !claim.CloseOnMergeSettledAt.IsZero(); settled != (claim.Issue == 8) {
+			t.Fatalf("claim %d settled=%v", claim.Issue, settled)
+		}
+	}
+}

@@ -141,6 +141,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// in-progress sweep: a ledger claim whose 🔒 comment was budget-suppressed
 	// must still read as a claim (claimswire.go, ledgerClaimLookup).
 	client.SetIssueClaimLedger(ledgerClaimLookup(func() *claims.Ledger { return b.issueClaims }))
+	// Duplicate-PR claim ledger fallback for the out-of-cycle stage facts:
+	// a claim release on an issue whose covering PR the ledger already holds
+	// re-derives 040, not 010 (stage_facts_sink.go, ledgerCoveringPR).
+	client.SetPRClaimLookup(b.prClaimCoverLookup())
 	// A marker this hive wrote is live only while its ledger still holds the
 	// claim (hivecommons/hive#13579, issue_claims.go). The ledger itself is
 	// built after this client (main.go), so the hive is resolved per call

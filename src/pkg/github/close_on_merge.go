@@ -53,6 +53,13 @@ type CloseOnMergeOptions struct {
 	MergedAfter time.Time
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// OnlyPRRepo/OnlyPRNumber, when OnlyPRNumber is set, restrict the ledger
+	// sweep to the claims one pull request makes: the webhook path, which
+	// closes a just-merged PR's issues on the delivery instead of waiting for
+	// the reconcile pass (whose sweep a cached cycle skips). OnlyPRRepo is
+	// matched by bare repository name; empty matches any.
+	OnlyPRRepo   string
+	OnlyPRNumber int
 	// LabelDriven reports a repo that opted in to label-driven triage; the
 	// backfill posts no "What to reply" notice there when it reclassifies a
 	// dedupe checklist as needs-decision. nil means no repo opts in.
@@ -74,6 +81,25 @@ func (o CloseOnMergeOptions) now() time.Time {
 
 func (o CloseOnMergeOptions) onGitHub(repo string) bool {
 	return o.RepoOnGitHub == nil || o.RepoOnGitHub(repo)
+}
+
+// wantsPR reports whether the OnlyPR filter admits a claim by (repo, number).
+func (o CloseOnMergeOptions) wantsPR(repo string, number int) bool {
+	if o.OnlyPRNumber <= 0 {
+		return true
+	}
+	if number != o.OnlyPRNumber {
+		return false
+	}
+	return o.OnlyPRRepo == "" || strings.EqualFold(bareRepo(o.OnlyPRRepo), bareRepo(repo))
+}
+
+// bareRepo strips an owner/ prefix.
+func bareRepo(repo string) string {
+	if i := strings.LastIndex(repo, "/"); i >= 0 {
+		return repo[i+1:]
+	}
+	return repo
 }
 
 func (o CloseOnMergeOptions) recheckAfter() time.Duration {
@@ -194,7 +220,7 @@ func (c *Client) CloseOnMergeLedgerSweep(ctx context.Context, ledger *ClaimLedge
 		if !claim.MergedPR || claim.PRNumber <= 0 || claim.Issue <= 0 || strings.TrimSpace(claim.Repo) == "" {
 			continue
 		}
-		if claim.Reference {
+		if claim.Reference || !opts.wantsPR(claim.PRRepo, claim.PRNumber) {
 			continue
 		}
 		if !opts.onGitHub(claim.Repo) || (claim.PRRepo != "" && !opts.onGitHub(claim.PRRepo)) {
