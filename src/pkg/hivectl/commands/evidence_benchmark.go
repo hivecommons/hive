@@ -22,7 +22,7 @@ var evidenceBenchmarkNow = func() time.Time { return time.Now().UTC() }
 const benchmarkReadmeDocDir = "src/docs/benchmarks"
 
 func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
-	var root, month, now, spendPath, hubPath, storiesPath, redTeamPath, outDir, readme, source string
+	var root, month, now, spendPath, hubPath, storiesPath, redTeamPath, outDir, readme, source, fromJSON string
 	var readmeMinBase int
 	cmd := &cobra.Command{
 		Use:   "benchmark",
@@ -38,9 +38,20 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 			"for the story card; --red-team the prompt-injection eval summary. --readme rewrites the <!-- outcomes:start --> … <!-- outcomes:end --> block of that README\n" +
 			"from the same report, so the README never drifts from the committed report (a test asserts they match).",
 		Example: "  hivectl evidence benchmark --root ./evidence --month 2026-10 --spend cost.json --out-dir src/docs/benchmarks --readme README.md\n" +
-			"  hivectl evidence benchmark --root /data/evidence --month 2026-10 --out-dir /tmp/bench",
+			"  hivectl evidence benchmark --root /data/evidence --month 2026-10 --out-dir /tmp/bench\n" +
+			"  hivectl evidence benchmark --from-json src/docs/benchmarks/outcomes-2026-10.json --out-dir src/docs/benchmarks --readme README.md",
 		Args: argsNone(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if fromJSON != "" {
+				if cmd.Flags().Changed("root") || cmd.Flags().Changed("month") || spendPath != "" || hubPath != "" || storiesPath != "" || redTeamPath != "" {
+					return &usageError{message: "--from-json re-renders a saved report and takes no evidence inputs"}
+				}
+				rep, err := loadBenchmarkReport(fromJSON)
+				if err != nil {
+					return err
+				}
+				return emitBenchmark(cmd, rep, outDir, readme)
+			}
 			var opts outcomebench.Options
 			var err error
 			if strings.TrimSpace(month) != "" {
@@ -86,32 +97,10 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 			if unreadable > 0 {
 				fmt.Fprintf(cmd.ErrOrStderr(), "skipped %d unreadable or non-v1 bundle(s) under %s\n", unreadable, root)
 			}
-			rep := outcomebench.Compute(bundles, unreadable, opts)
-			paths, err := writeBenchmark(rep, outDir)
-			if err != nil {
-				return err
-			}
-			for _, p := range paths {
-				fmt.Fprintf(cmd.ErrOrStderr(), "wrote %s\n", p)
-			}
-			if readme != "" {
-				data, err := os.ReadFile(readme)
-				if err != nil {
-					return fmt.Errorf("reading %s: %w", readme, err)
-				}
-				updated, err := outcomebench.UpdateReadme(string(data), rep.ReadmeBlock(benchmarkReadmeDocDir))
-				if err != nil {
-					return fmt.Errorf("%s: %w", readme, err)
-				}
-				if err := os.WriteFile(readme, []byte(updated), 0o644); err != nil {
-					return fmt.Errorf("writing %s: %w", readme, err)
-				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "updated outcomes block in %s\n", readme)
-			}
-			fmt.Fprint(cmd.OutOrStdout(), benchmarkSummary(rep))
-			return nil
+			return emitBenchmark(cmd, outcomebench.Compute(bundles, unreadable, opts), outDir, readme)
 		},
 	}
+	cmd.Flags().StringVar(&fromJSON, "from-json", "", "re-render markdown, assets and the README block from a saved outcomes-YYYY-MM.json instead of recomputing from evidence")
 	cmd.Flags().StringVar(&root, "root", ghpkg.ReviewEvidenceRoot, "evidence root holding <org>/<repo>/<pr>/<sha>.json bundles")
 	cmd.Flags().StringVar(&month, "month", "", "only PRs merged in this YYYY-MM month (default: all)")
 	cmd.Flags().StringVar(&now, "now", "", "observation time (RFC3339) for the maturation window; default now")
@@ -126,8 +115,48 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 	return cmd
 }
 
-// writeBenchmark writes the markdown, JSON and SVG outputs and returns their
-// paths.
+// loadBenchmarkReport reads a committed outcomes-YYYY-MM.json.
+func loadBenchmarkReport(path string) (outcomebench.Report, error) {
+	var rep outcomebench.Report
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return rep, err
+	}
+	if err := json.Unmarshal(data, &rep); err != nil {
+		return rep, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return rep, nil
+}
+
+// emitBenchmark writes the report's outputs and, if asked, the README block.
+func emitBenchmark(cmd *cobra.Command, rep outcomebench.Report, outDir, readme string) error {
+	paths, err := writeBenchmark(rep, outDir)
+	if err != nil {
+		return err
+	}
+	for _, p := range paths {
+		fmt.Fprintf(cmd.ErrOrStderr(), "wrote %s\n", p)
+	}
+	if readme != "" {
+		data, err := os.ReadFile(readme)
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", readme, err)
+		}
+		updated, err := outcomebench.UpdateReadme(string(data), rep.ReadmeBlock(benchmarkReadmeDocDir))
+		if err != nil {
+			return fmt.Errorf("%s: %w", readme, err)
+		}
+		if err := os.WriteFile(readme, []byte(updated), 0o644); err != nil {
+			return fmt.Errorf("writing %s: %w", readme, err)
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "updated outcomes block in %s\n", readme)
+	}
+	fmt.Fprint(cmd.OutOrStdout(), benchmarkSummary(rep))
+	return nil
+}
+
+// writeBenchmark writes the markdown, JSON, SVG and PNG outputs and returns
+// their paths.
 func writeBenchmark(rep outcomebench.Report, outDir string) ([]string, error) {
 	if err := os.MkdirAll(filepath.Join(outDir, "assets"), 0o755); err != nil {
 		return nil, err
@@ -145,12 +174,21 @@ func writeBenchmark(rep outcomebench.Report, outDir string) ([]string, error) {
 	}
 	order := []string{base + ".md", base + ".json", filepath.Join(outDir, "assets", rep.AssetBase()+"-bars.svg"), filepath.Join(outDir, "assets", rep.AssetBase()+"-trend.svg")}
 	cards := rep.Cards()
+	pngs, err := rep.CardPNGs()
+	if err != nil {
+		return nil, err
+	}
 	for _, name := range outcomebench.CardNames() {
 		for _, theme := range []string{"dark", "light"} {
 			file := rep.CardFile(name, theme)
 			if svg, ok := cards[file]; ok {
 				p := filepath.Join(outDir, "assets", file)
 				files[p] = []byte(svg)
+				order = append(order, p)
+			}
+			if png, ok := pngs[rep.CardPNGFile(name, theme)]; ok {
+				p := filepath.Join(outDir, "assets", rep.CardPNGFile(name, theme))
+				files[p] = png
 				order = append(order, p)
 			}
 		}

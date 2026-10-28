@@ -17,7 +17,7 @@ var ErrNoMarkers = errors.New("README has no " + ReadmeStart + " … " + ReadmeE
 
 // ReadmeBlock renders the README evidence section for a general reader:
 // one line of scale, then Accuracy / Security / Cost / Also, each a card
-// (a <picture> with a dark and a light SVG) and at most two flat sentences,
+// (a <picture> with a dark and a light PNG) and at most two flat sentences,
 // one of which states the limit of the number. No statistical vocabulary
 // appears here; it lives in the report. docDir is the path from the README
 // to the benchmark directory.
@@ -85,8 +85,9 @@ func (r Report) HeroLine() string {
 	return s + " " + monthLabel(r.GeneratedAt) + "."
 }
 
-// picture is the GitHub-flavoured <picture> that swaps the card SVG with
+// picture is the GitHub-flavoured <picture> that swaps the card PNG with
 // the reader's colour scheme; the alt text is the card's title sentence.
+// The PNG, not the SVG, is embedded: see raster.go.
 func (r Report) picture(docDir, card string, width int) string {
 	alt := card
 	if svg, ok := r.Card(card, cardThemes[0]); ok {
@@ -95,7 +96,7 @@ func (r Report) picture(docDir, card string, width int) string {
 		}
 	}
 	return fmt.Sprintf(`<picture><source media="(prefers-color-scheme: dark)" srcset="%s/assets/%s"><img alt="%s" width="%d" src="%s/assets/%s"></picture>`,
-		docDir, r.CardFile(card, "dark"), alt, width, docDir, r.CardFile(card, "light"))
+		docDir, r.CardPNGFile(card, "dark"), alt, width, docDir, r.CardPNGFile(card, "light"))
 }
 
 // HowItWorksPicture is the ladder card for the README's own section.

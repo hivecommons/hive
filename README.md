@@ -17,27 +17,27 @@ Numbers below: 11,571 pull requests, 10 repositories, 15,054 AI reviews (oct '26
 
 ## Accuracy
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-accuracy-dark.svg"><img alt="2 in 3 pull requests the review agent sent back came back fixed and were approved; 24 minutes typical from sent back to approved" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-accuracy-light.svg"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-accuracy-dark.png"><img alt="2 in 3 pull requests the review agent sent back came back fixed and were approved; 24 minutes typical from sent back to approved" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-accuracy-light.png"></picture>
 
 Humans still merge; what reaches them has passed review and CI. Start at "open PRs only"; once you trust it, turn the [setting](src/docs/acmm-policy-matrix.md) up to merge on green, like a merge queue.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-stories-dark.svg"><img alt="Before and after: hivecommons/hive #13523 was sent back once and merged 16 minutes after opening" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-stories-light.svg"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-stories-dark.png"><img alt="Before and after: hivecommons/hive #13523 was sent back once and merged 16 minutes after opening" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-stories-light.png"></picture>
 
 ## Security
 
 Hidden instructions in issues or files are screened out before an agent reads them; agents run as a GitHub App, not your PAT.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-prompt-injection-dark.svg"><img alt="97% of planted text that tries to redirect an agent (prompt injection) was screened out before an agent read it, with 1 false alarm in 12 harmless texts" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-prompt-injection-light.svg"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-prompt-injection-dark.png"><img alt="97% of planted text that tries to redirect an agent (prompt injection) was screened out before an agent read it, with 1 false alarm in 12 harmless texts" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-prompt-injection-light.png"></picture>
 
 ## Cost
 
 Tracked like CI minutes; each job's cost is on the dashboard.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-cost-dark.svg"><img alt="about $2 of agent spend per merged pull request" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-cost-light.svg"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-cost-dark.png"><img alt="about $2 of agent spend per merged pull request" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-cost-light.png"></picture>
 
 ## Also
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-also-dark.svg"><img alt="Also: consistent, readable, efficient, fast" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-also-light.svg"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-also-dark.png"><img alt="Also: consistent, readable, efficient, fast" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-also-light.png"></picture>
 
 Production data, not a lab run; counts regenerate from live records. Reverts are too new to report. [How we count →](src/docs/benchmarks/outcomes-2026-10.md)
 <!-- outcomes:end -->
@@ -45,7 +45,7 @@ Production data, not a lab run; counts regenerate from live records. Reverts are
 ## How it works
 
 <p align="center">
-<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-how-it-works-dark.svg"><img alt="How Hive works: scan, claim, work, verify, merge, credit" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-how-it-works-light.svg"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="src/docs/benchmarks/assets/outcomes-2026-10-card-how-it-works-dark.png"><img alt="How Hive works: scan, claim, work, verify, merge, credit" width="880" src="src/docs/benchmarks/assets/outcomes-2026-10-card-how-it-works-light.png"></picture>
 </p>
 
 ## Run it

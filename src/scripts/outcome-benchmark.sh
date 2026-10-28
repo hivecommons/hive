@@ -3,15 +3,20 @@
 # evidence and, with --readme, the README's <!-- outcomes:start/end --> block.
 #
 #   src/scripts/outcome-benchmark.sh --root ./evidence --month 2026-10 --spend cost.json --readme
+#   src/scripts/outcome-benchmark.sh --rerender --readme   # redraw from the committed JSON
 #
 # Flags are passed through to `hivectl evidence benchmark`; --readme (no
 # argument) rewrites the repository README. Defaults: --root /data/evidence,
 # --month = current UTC month, --out-dir src/docs/benchmarks. A saved
 # GET /api/cost response (--spend) adds cost per merged PR; a saved
-# GET /api/hub/evidence response (--hub) adds fleet context. Nothing here
-# contacts a hive or adds telemetry; a test (pkg/outcomebench
-# TestCommittedReportMatchesReadme) fails when the README block, report or
-# charts no longer match the committed JSON.
+# GET /api/hub/evidence response (--hub) adds fleet context. --rerender
+# skips the evidence tree and redraws the markdown, SVG and PNG cards and
+# the README block from the newest committed outcomes-YYYY-MM.json (use it
+# after changing the card layout). The PNG cards are drawn in Go with an
+# embedded font; no external renderer is needed. Nothing here contacts a
+# hive or adds telemetry; a test (pkg/outcomebench
+# TestCommittedReportMatchesReadme) fails when the README block, report,
+# charts or cards no longer match the committed JSON.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -20,16 +25,25 @@ cd "$repo_root/src"
 args=()
 readme=""
 month=""
+rerender=""
 out_dir="docs/benchmarks"
 while [ $# -gt 0 ]; do
   case "$1" in
     --readme) readme="$repo_root/README.md"; shift ;;
+    --rerender) rerender=1; shift ;;
     --month) month="$2"; shift 2 ;;
     --out-dir) out_dir="$2"; shift 2 ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     *) args+=("$1"); shift ;;
   esac
 done
+if [ -n "$rerender" ]; then
+  latest="$(ls "$out_dir"/outcomes-*.json 2>/dev/null | sort | tail -n 1)"
+  [ -n "$latest" ] || { echo "no $out_dir/outcomes-*.json to re-render" >&2; exit 1; }
+  cmd=(go run ./cmd/hivectl evidence benchmark --from-json "$latest" --out-dir "$out_dir")
+  [ -n "$readme" ] && cmd+=(--readme "$readme")
+  exec "${cmd[@]}" "${args[@]}"
+fi
 [ -n "$month" ] || month="$(date -u +%Y-%m)"
 
 cmd=(go run ./cmd/hivectl evidence benchmark --month "$month" --out-dir "$out_dir")

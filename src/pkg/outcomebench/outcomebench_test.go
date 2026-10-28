@@ -228,12 +228,12 @@ func TestReadmeBlockRoundTrip(t *testing.T) {
 		RedTeam: &RedTeam{Attacks: 10, Caught: 9, Benign: 5, FalseAlarms: 1, RunAt: now}})
 	block := rep.ReadmeBlock("src/docs/benchmarks")
 	for _, want := range []string{ReadmeStart, ReadmeEnd, "## Accuracy", "## Security", "## Cost", "## Also", "46 pull requests, 2 repositories", "(oct '26)", "Humans still merge", "open PRs only", "src/docs/benchmarks/outcomes-2026-10.md",
-		"card-accuracy-dark.svg", "card-accuracy-light.svg", "card-stories-dark.svg", "card-prompt-injection-light.svg", "card-cost-dark.svg", "card-also-light.svg", "prefers-color-scheme: dark", "How we count"} {
+		"card-accuracy-dark.png", "card-accuracy-light.png", "card-stories-dark.png", "card-prompt-injection-light.png", "card-cost-dark.png", "card-also-light.png", "prefers-color-scheme: dark", "How we count"} {
 		if !strings.Contains(block, want) {
 			t.Errorf("block missing %q:\n%s", want, block)
 		}
 	}
-	for _, banned := range []string{"Wilson", "interval", "(n=", " n=", "median", "mediated", "95%", "≈"} {
+	for _, banned := range []string{"Wilson", "interval", "(n=", " n=", "median", "mediated", "95%", "≈", ".svg"} {
 		if strings.Contains(block, banned) {
 			t.Errorf("block contains %q; statistical vocabulary belongs in the report", banned)
 		}

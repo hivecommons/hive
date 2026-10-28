@@ -293,6 +293,7 @@ Reporting only: nothing here reads into or alters merge eligibility. See
 ```bash
 hivectl evidence benchmark --month 2026-10 --out-dir src/docs/benchmarks --readme README.md
 hivectl evidence benchmark --root ./evidence --month 2026-10 --spend cost.json --hub hub.json --source "hive-oke snapshot"
+hivectl evidence benchmark --from-json src/docs/benchmarks/outcomes-2026-10.json --out-dir src/docs/benchmarks --readme README.md
 ```
 
 `evidence benchmark` folds the schema v1 bundles under `--root` per PR and compares the pull requests Hive's review
@@ -304,12 +305,15 @@ interval; n < 10 is `not reported`. `--month YYYY-MM` bounds the merge time (def
 observation time for maturation, `--hub` adds a saved `GET /api/hub/evidence` response as fleet context, `--source`
 names the data in the methodology section. It writes `outcomes-YYYY-MM.{md,json}`,
 `assets/outcomes-YYYY-MM-{bars,trend}.svg` and the plain-language README cards
-`assets/outcomes-YYYY-MM-card-<name>-{dark,light}.svg` under `--out-dir`, and `--readme FILE` rewrites that file's
+`assets/outcomes-YYYY-MM-card-<name>-{dark,light}.{svg,png}` under `--out-dir` (the PNG is drawn in-process with an
+embedded font and is what the README embeds), and `--readme FILE` rewrites that file's
 `<!-- outcomes:start -->…<!-- outcomes:end -->` block from the same report. The README block carries only the cards
 and flat sentences, no intervals: `--readme-min-base N` (default 200) is the smallest base a production-count card
 may rest on, separate from the n ≥ 10 report threshold; `--stories FILE` supplies curated caught → fixed → merged
 examples and `--red-team FILE` the prompt-injection evaluation counts (see [benchmarks/](benchmarks/README.md) for
-both formats). Local filesystem only; no hive session, no telemetry. `src/scripts/outcome-benchmark.sh` wraps it; see [benchmarks/](benchmarks/README.md).
+both formats). `--from-json FILE` skips the evidence tree and re-renders every output from a saved report, for
+redrawing committed assets after a layout change. Local filesystem only; no hive session, no telemetry.
+`src/scripts/outcome-benchmark.sh` wraps it (`--rerender` = `--from-json` on the newest committed report); see [benchmarks/](benchmarks/README.md).
 
 ### evidence — backfill bundles from GitHub history
 
