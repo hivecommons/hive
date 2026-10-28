@@ -517,6 +517,8 @@ func (a *AgentProcess) snapshot() crux.Process {
 		WatchdogConditions:        conds,
 		StallNudges:               a.StallNudges,
 		StallRecoveries:           a.StallRecoveries,
+		SessionRSSMB:              a.SessionRSSMB,
+		SessionRecycles:           a.SessionRecycles,
 		CIPollNudges:              a.CIPollNudges,
 		AwaitingCI:                a.AwaitingCI,
 		ActionNudges:              a.ActionNudges,

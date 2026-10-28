@@ -1,0 +1,1 @@
+- Agents: idle CLI sessions over an RSS (`agents.session_recycle.max_rss_mb`, default 1536 MiB) or age (`max_age`, default 6h) budget are recycled through the normal restart path, bounding the V8 heap growth that was OOM-killing the pod; the dashboard shows each agent's session RSS and age (#14842).

@@ -117,6 +117,12 @@ func ConfigLeaves(repoRoot string) ([]Leaf, error) {
 	}
 	walk(structs["Config"], "")
 	leaves = append(leaves, Leaf{Path: "agents.github_api_hourly_cap", Type: "int"})
+	leaves = append(leaves,
+		Leaf{Path: "agents.session_recycle.enabled", Type: "*bool"},
+		Leaf{Path: "agents.session_recycle.max_rss_mb", Type: "int"},
+		Leaf{Path: "agents.session_recycle.max_age", Type: "time.Duration"},
+		Leaf{Path: "agents.session_recycle.min_idle", Type: "time.Duration"},
+	)
 	byPath := map[string]Leaf{}
 	for _, leaf := range leaves {
 		if leaf.Path == "" || strings.Contains(leaf.Path, ".-") {

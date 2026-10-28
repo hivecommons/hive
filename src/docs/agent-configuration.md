@@ -287,6 +287,10 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
                                  #   kick_failed_repeatedly self-report is filed
                                  #   only if kicks still fail after that restart
     max_turn_duration: 0s        # optional visibility-only Working ceiling; 0 disables
+    session_recycle:             # optional override of the fleet agents.session_recycle
+      max_rss_mb: 1536           #   policy: recycle this agent's CLI session (a normal
+      max_age: 6h                #   restart) once idle at the prompt and over the RSS
+      min_idle: 2m               #   or age budget; enabled: false turns it off
     restart_strategy: immediate  # how to bring a dead session back
     beads_dir: /data/beads/scanner   # work-record (bead) storage; default per-agent
     replicas: 3                  # materialize scanner, scanner-2, scanner-3 (max 5)

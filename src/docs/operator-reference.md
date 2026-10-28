@@ -206,7 +206,7 @@ The keys the agent runtime owns — the part of Hive being carved out as **Crux*
 
 | Struct | Embedded in | YAML keys (unchanged position) |
 |---|---|---|
-| `AgentRuntimeConfig` (`pkg/config/agent_config.go`) | `Config` | `agents` (including the `agents.github_api_hourly_cap` scalar), `backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn` |
+| `AgentRuntimeConfig` (`pkg/config/agent_config.go`) | `Config` | `agents` (including the `agents.github_api_hourly_cap` scalar and the `agents.session_recycle` block), `backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn` |
 | `AgentRuntimeGovernorConfig` (`pkg/config/agent_config.go`) | `GovernorConfig` | `governor.watchdog`, `governor.litellm`, `governor.vllm`, `governor.llm-d`, `governor.bob`, `governor.trajectory`, `governor.kick_limits`, `governor.gateways`, `governor.rotation`, `governor.provider_budget` |
 
 Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through field promotion; only composite literals name the embedded struct (`config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: …}}`). `pkg/config/testdata/agent_runtime_golden.{yaml,json}` pins the parse of a representative file so the boundary cannot drift the schema.
@@ -1137,6 +1137,33 @@ through the hub (`POST /api/selfreport/ingest`, heartbeat bearer). The
 dashboard shows "Self-reports: N open (last: <class> → #NNN)" in the Fleet
 Report panel and the toggle/repo/cap under Settings → Governor →
 "Self-Reported Issues". Full details: [fleet-report.md](fleet-report.md).
+
+## Agent CLI session recycling
+
+Each agent's CLI (Copilot, Claude, …) is a long-lived Node/V8 process whose
+heap grows with every turn and never shrinks while idle. The health tick
+samples the resident memory of the whole process tree under each agent's
+tmux pane and recycles a session that is over budget — but only while the
+agent is idle at its input prompt with no kick pending, so a turn is never
+interrupted. A recycle is an ordinary restart (`last_restart_reason: session
+recycle`): claims, queues and the kick log are preserved exactly as on any
+other restart, and the governor re-kicks on the next cadence. After a recycle
+the same agent is left alone for ten minutes even if it is over budget again.
+
+```yaml
+agents:
+  session_recycle:        # fleet default; on unless enabled: false
+    max_rss_mb: 1536      # recycle an idle session whose process tree exceeds this (MiB)
+    max_age: 6h           # …or whose CLI session is older than this
+    min_idle: 2m          # pane + transcript must be silent this long first
+  scanner:
+    session_recycle:      # optional per-agent override; absent fields inherit the fleet value
+      max_rss_mb: 2048
+```
+
+The sampled value is shown as **Session RSS** (with the session age and a
+`↻N` recycle count) in the agent detail panel. The log line is
+`agent session recycled` with `rss_mb`, `age` and `reason`.
 
 ## GitHub API quota
 

@@ -78,6 +78,7 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 		busyNoActivity        bool
 	}
 	var hungSessions []sessionRestart
+	var recycleCandidates []sessionRecycleCandidate
 	for name, agent := range m.agents {
 		if agent.State != StateRunning {
 			continue
@@ -155,6 +156,10 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 			// No replayed kick: the governor re-kicks once the pane is
 			// idle, and the storm breaker bounds repeat restarts.
 			hungSessions = append(hungSessions, sessionRestart{name: name, reason: reason, busyNoActivity: true})
+		} else if agent.Config.SessionRecycle.IsEnabled() {
+			// #14842: a live, non-stalled session is sampled for RSS and
+			// may be recycled if over budget and idle (session_recycle.go).
+			recycleCandidates = append(recycleCandidates, sessionRecycleCandidate{name: name, pane: pane})
 		}
 		// Plain claude agents launch with --dangerously-skip-permissions too,
 		// so they can park on the same bypass consent screen (#14307).
@@ -216,6 +221,8 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 			}
 		}
 	}
+
+	m.sampleAndRecycleSessions(ctx, recycleCandidates)
 
 	var restarted []string
 	for _, crash := range crashed {

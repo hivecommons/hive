@@ -16,50 +16,55 @@ import (
 // The field meanings are documented on agent.AgentProcess. A snapshot is a
 // read-only display value; writing to one does not change the runtime.
 type Process struct {
-	Name                      string
-	ID                        string
-	Config                    config.AgentConfig
-	State                     ProcessState
-	PID                       int
-	UID                       int
-	StartedAt                 *time.Time
-	LastKick                  *time.Time
-	KicksUndeliverable        int
-	BusySince                 time.Time
-	LastTranscriptActivity    time.Time
-	BusyCondition             string
-	BusyConditionMessage      string
-	Paused                    bool
-	PausedAt                  time.Time
-	PausedReason              string
-	PausedTrigger             string
-	PausedBy                  string
-	OperatorStopped           bool
-	PinnedCLI                 string
-	PinnedModel               string
-	ModelOverride             string
-	BackendOverride           string
-	RestartCount              int
-	RestartEvents             []RestartEvent
-	LastRestartReason         string
-	OutputBuffer              *RingBuffer
-	SubAgentModels            []SubAgentModel
-	KickHistory               []KickRecord
-	LastKickMessage           string
-	KickRefused               bool
-	KickRefusalReason         string
-	LaunchedMode              AgentMode
-	HasLaunched               bool
-	BootstrapOverride         string
-	LastError                 string
-	NeedsLogin                bool
-	LoginURL                  string
-	Starting                  bool
-	QuotaExhausted            bool
-	WatchdogConditions        []Condition
-	LastPaneChange            time.Time
-	StallNudges               int
-	StallRecoveries           int
+	Name                   string
+	ID                     string
+	Config                 config.AgentConfig
+	State                  ProcessState
+	PID                    int
+	UID                    int
+	StartedAt              *time.Time
+	LastKick               *time.Time
+	KicksUndeliverable     int
+	BusySince              time.Time
+	LastTranscriptActivity time.Time
+	BusyCondition          string
+	BusyConditionMessage   string
+	Paused                 bool
+	PausedAt               time.Time
+	PausedReason           string
+	PausedTrigger          string
+	PausedBy               string
+	OperatorStopped        bool
+	PinnedCLI              string
+	PinnedModel            string
+	ModelOverride          string
+	BackendOverride        string
+	RestartCount           int
+	RestartEvents          []RestartEvent
+	LastRestartReason      string
+	OutputBuffer           *RingBuffer
+	SubAgentModels         []SubAgentModel
+	KickHistory            []KickRecord
+	LastKickMessage        string
+	KickRefused            bool
+	KickRefusalReason      string
+	LaunchedMode           AgentMode
+	HasLaunched            bool
+	BootstrapOverride      string
+	LastError              string
+	NeedsLogin             bool
+	LoginURL               string
+	Starting               bool
+	QuotaExhausted         bool
+	WatchdogConditions     []Condition
+	LastPaneChange         time.Time
+	StallNudges            int
+	StallRecoveries        int
+	// SessionRSSMB is the resident memory of the CLI process tree under the
+	// agent's tmux pane, in MiB, as of the last health tick (#14842). 0 when
+	// never sampled. SessionRecycles counts policy recycles since boot.
+	SessionRSSMB              int
+	SessionRecycles           int
 	CIPollNudges              int
 	AwaitingCI                bool
 	TransientNudges           int

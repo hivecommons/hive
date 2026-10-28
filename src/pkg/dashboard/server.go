@@ -833,12 +833,19 @@ type FrontendAgent struct {
 	// from it (sandbox_health.go). Present only for sandboxed agents; the
 	// SPA reads health from here instead of State, which is "idle" between
 	// kicks for an agent that has no session to be down.
-	SandboxRun *FrontendSandboxRun `json:"sandboxRun,omitempty"`
-	LastError  string              `json:"lastError,omitempty"`
-	StallNudges            int    `json:"stallNudges,omitempty"`
-	StallRecoveries        int    `json:"stallRecoveries,omitempty"`
-	ActionNudges           int    `json:"actionNudges,omitempty"`
-	TransientNudges        int    `json:"transientNudges,omitempty"`
+	SandboxRun      *FrontendSandboxRun `json:"sandboxRun,omitempty"`
+	LastError       string              `json:"lastError,omitempty"`
+	StallNudges     int                 `json:"stallNudges,omitempty"`
+	StallRecoveries int                 `json:"stallRecoveries,omitempty"`
+	ActionNudges    int                 `json:"actionNudges,omitempty"`
+	TransientNudges int                 `json:"transientNudges,omitempty"`
+	// SessionRssMb is the resident memory of the agent's CLI process tree
+	// (MiB) and SessionAge how long the current CLI session has been up,
+	// both sampled on the health tick (#14842). SessionRecycles counts
+	// RSS/age-budget recycles since boot.
+	SessionRssMb    int    `json:"sessionRssMb,omitempty"`
+	SessionAge      string `json:"sessionAge,omitempty"`
+	SessionRecycles int    `json:"sessionRecycles,omitempty"`
 	// LastAction is the last issue or PR the agent acted on through the hive
 	// (#10925); see FrontendAgentLastAction.
 	LastAction *FrontendAgentLastAction `json:"lastAction,omitempty"`
