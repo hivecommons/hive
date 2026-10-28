@@ -7374,8 +7374,9 @@ function restartBackoffMs(attempt) {
 // relaunch already in flight is not nested inside another one.
 //
 // opts.outputTail is the caller's already-captured (and redacted) output lines.
-// Headless mode has no tmux session, so it is the evidence reported when the
-// pane capture is empty.
+// Only headless callers pass it: they have no pane of their own, and any tmux
+// session that happens to share TMUX_SESSION's name on the host belongs to
+// someone else, so when it is supplied it is used instead of a pane capture.
 function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
@@ -7385,9 +7386,9 @@ function failCurrentTask(reason, opts) {
   // Captured BEFORE the agent is stopped: the pane text is the evidence the
   // hub and the operator read to understand the failure, and quitLiveCLI()
   // followed by a relaunch overwrites it with launch chrome.
-  let tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
-  // An empty pane capture is [''] (''.split yields one element), not [].
-  if (!tmuxLines.some(l => l.trim()) && opts && Array.isArray(opts.outputTail)) tmuxLines = opts.outputTail;
+  const tmuxLines = (opts && Array.isArray(opts.outputTail))
+    ? opts.outputTail
+    : captureTmuxLines(TMUX_TAIL_LINES);
   // Cause B (#5353): the hub is about to release this issue and offer it to
   // someone else. Stop the agent and drop its token FIRST, so the report and
   // the reality agree at the instant the hub acts on it.
