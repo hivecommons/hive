@@ -25,6 +25,8 @@ func TestHiveUnblockRefreshesSnapshotsWithoutWebhook(t *testing.T) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/7/comments":
+			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/1":
 			_, _ = w.Write([]byte(`{"number":1,"state":"closed","merged":true}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/repos/o/r/issues/7/labels/blocked":
@@ -79,9 +81,9 @@ func TestHiveUnblockRefreshesSnapshotsWithoutWebhook(t *testing.T) {
 	if !reflect.DeepEqual(status.Repos[0].ActionableIssues[0].(github.Issue).Labels, []string{"blocked"}) {
 		t.Fatal("refresh mutated the previously published snapshot")
 	}
-	if want := []string{"GET /repos/o/r/pulls/1", "DELETE /repos/o/r/issues/7/labels/blocked",
+	if want := []string{"GET /repos/o/r/issues/7/comments", "GET /repos/o/r/pulls/1", "DELETE /repos/o/r/issues/7/labels/blocked",
 		"POST /repos/o/r/issues/7/comments", "GET /repos/o/r/issues/7"}; !reflect.DeepEqual(paths, want) {
-		t.Fatalf("GitHub calls = %v, want %v (no list or webhook)", paths, want)
+		t.Fatalf("GitHub calls = %v, want %v (no issue list or webhook)", paths, want)
 	}
 }
 
