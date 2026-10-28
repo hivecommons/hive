@@ -1,1 +1,1 @@
-The dashboard no longer marks an issue as Reviewing just because an open pull request mentions it; a timeline cross-reference now counts as the linked PR only when that PR's title or body closes the issue (Closes/Fixes/Resolves).
+- The dashboard no longer marks an issue as Reviewing just because an open pull request mentions it; a timeline cross-reference now counts as the linked PR only when that PR's title or body closes the issue (Closes/Fixes/Resolves) ([#14966](https://github.com/hivecommons/hive/issues/14966)).
