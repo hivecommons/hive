@@ -1,0 +1,1 @@
+- Activity Monitor rows with a recorded operator action show a persistent, keyboard-focusable ✓ decision trail, turn amber after 30 minutes without a stage change, and can be filtered by awaiting a decision, acted, or acted and still stuck.

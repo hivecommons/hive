@@ -7182,6 +7182,12 @@
         <input id="activity-monitor-q" class="ham-input" type="search" placeholder="Search # or title…" autocomplete="off" spellcheck="false" aria-label="Search by number or title" data-input-action="hamFilter" data-arg0="q" data-arg-types="s,w">
         <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
+        <span class="ham-chips" role="group" aria-label="Decisions">
+          <span>Decisions</span>
+          <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="decision" data-arg1="awaiting" aria-pressed="false" title="Items needing your decision with no recorded operator action">Awaiting my decision</button>
+          <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="decision" data-arg1="acted" aria-pressed="false" title="Items with a recorded operator action">I acted</button>
+          <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="decision" data-arg1="stuck" aria-pressed="false" title="Items still on the same step more than 30 minutes after an operator action">Acted, still stuck</button>
+        </span>
         <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, unauthorized, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person. Merge-gate pills (sentinel, needs-human, needs-decision) count only once the PR reaches the merge gate">Needs attention</button>
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
         <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
@@ -7190,6 +7196,7 @@
         <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Sound off — turn on (merge zap + new-item buzz; plays a test of each)" title="Sound off — turn on (merge zap + new-item buzz; plays a test of each)">🔇</button>
         <span class="ham-chip ham-merged-count" id="activity-monitor-merged" role="status" aria-live="polite" title="Merged today: 0"><svg class="ham-merged-ico" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/></svg>Merged today: <span class="ham-merged-n">0</span></span>
       </div>
+      <p class="ham-meta">✓ Addressed: an operator chose an action; focus the badge for the decision trail. Amber ✓: still on the same step after 30 minutes. The moving indicator on the progress arrow means work is in flight, not that a decision was recorded.</p>
       <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
       <div class="ham-selbar" id="activity-monitor-selbar" role="toolbar" aria-label="Selected rows" hidden></div>
@@ -14071,7 +14078,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
     function stageTrackerDefaultFilter() {
-      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, age: 'any', author: 'any', attention: false, sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
+      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, decision: '', age: 'any', author: 'any', attention: false, sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
     var _stageTrackerFilter = stageTrackerDefaultFilter();
     // Type-to-filter text of the "all labels" dialog (not persisted).
@@ -14113,6 +14120,64 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 110: return 'Merged';
         default: return item.stage_label || 'Tracking';
       }
+    }
+
+    // One clock/predicate for both the persistent badge and Decisions filter.
+    const STAGE_TRACKER_OPERATOR_STUCK_MS = 30 * 60 * 1000;
+    var _stageTrackerOperatorMinute = -1;
+    function stageTrackerOperatorStuck(item, nowMs) {
+      const action = item && item.last_operator_action;
+      const at = action && Date.parse(action.at);
+      return !!action && action.stage != null && item.stage != null && Number(action.stage) === Number(item.stage) &&
+        Number.isFinite(at) && nowMs - at > STAGE_TRACKER_OPERATOR_STUCK_MS;
+    }
+    function stageTrackerDecisionMatches(item, bucket, nowMs) {
+      const acted = !!item.last_operator_action;
+      if (bucket === 'acted') return acted;
+      if (bucket === 'stuck') return stageTrackerOperatorStuck(item, nowMs);
+      if (bucket !== 'awaiting') return true;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      return !acted && (!!item.superseded || [15, 17, 45, 85, 90].includes(Number(item.stage)) ||
+        mods.some(m => ['needs-human', 'needs-decision', 'needs-triage', 'possible-dupe'].includes(m)));
+    }
+    function stageTrackerOperatorStage(stage) {
+      // Reuse the row's human headline, not a stage/NNN label or reason token.
+      return stageTrackerHeadline({ stage: Number(stage) || 0 });
+    }
+    function stageTrackerOperatorTooltip(item, nowMs) {
+      const action = item && item.last_operator_action;
+      if (!action) return '';
+      const words = text => String(text || '').replace(/\s+/g, ' ').trim();
+      const labels = { hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'needs-human': 'Ask a human',
+        'accept-triage': 'Accept triage', 'decide:approve': 'Approve', 'decide:delegate': 'Let hive decide',
+        'decide:direction': 'Give direction', 'decide:close-superseded': 'Close as superseded',
+        'decide:close-wontfix': "Close as won't-fix" };
+      const chosen = labels[action.action] || 'Submit an action';
+      const at = Date.parse(action.at);
+      const minutes = Number.isFinite(at) ? Math.max(0, Math.floor((nowMs - at) / 60000)) : null;
+      const when = minutes === null ? 'time unavailable' : minutes + ' min ago';
+      const current = stageTrackerOperatorStage(item.stage);
+      const previous = action.stage == null ? 'the current step' : stageTrackerOperatorStage(action.stage);
+      const moved = action.stage != null && item.stage != null && Number(action.stage) !== Number(item.stage);
+      const failed = action.outcome && action.outcome !== 'ok';
+      const next = failed ? 'action failed: ' + words(action.outcome) : moved ? 'Addressed — now at ' + current : 'action recorded; waiting for progress';
+      let tip = 'Waiting on: ' + previous + '. You chose: ' + chosen + ', ' + when + '. Hive: ' + next + '.';
+      if (stageTrackerOperatorStuck(item, nowMs)) {
+        // Caption is already human copy; never expose the raw reason token.
+        const reason = failed ? words(action.outcome) : words(item.caption) || 'no further progress reported';
+        tip += ' Still at ' + current + ' ' + minutes + ' min after you asked — hive says: ' + reason + '.';
+      }
+      return tip;
+    }
+    function stageTrackerOperatorBadgeHtml(item, nowMs) {
+      if (!item || !item.last_operator_action) return '';
+      const tip = esc(stageTrackerOperatorTooltip(item, nowMs));
+      return `<span class="ham-badge ham-operator-badge${stageTrackerOperatorStuck(item, nowMs) ? ' ham-operator-stuck' : ''}" tabindex="0" title="${tip}" aria-label="${tip}">✓</span>`;
+    }
+    function stageTrackerOperatorPRBadge(lp, issue, nowMs, ctx) {
+      const key = (issue.repo || '') + '/pr#' + lp.number;
+      const item = ctx && ctx.operatorItems && ctx.operatorItems.get(key);
+      return stageTrackerOperatorBadgeHtml(item || lp, nowMs);
     }
 
     // " — Xm left" for a 095 row whose payload carries the soak remaining.
@@ -14614,6 +14679,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null };
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
+      ref += stageTrackerOperatorPRBadge(lp, issue, nowMs, ctx);
       if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
@@ -14790,7 +14856,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + stageTrackerOperatorPRBadge(lp, item, nowMs, ctx) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null });
         } else if (linked.length) {
@@ -14815,7 +14881,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (isIssue) {
         leadHtml = `<div class="ham-head-main">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
-            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
+            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>${stageTrackerOperatorBadgeHtml(item, nowMs)}
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
             ${item.claim_reference ? `<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}
             ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
@@ -14833,13 +14899,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const ak = item.author_kind || 'hive';
         leadHtml = `<div class="ham-head-main ham-head-pr-anchor">
             ${stageTrackerIcon('pr', 'ham-kind-ico')}${chip}
-            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc((title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), ak + (item.author ? ' · @' + item.author : ''))}#${Number(item.number) || 0}</a>
+            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc((title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), ak + (item.author ? ' · @' + item.author : ''))}#${Number(item.number) || 0}</a>${stageTrackerOperatorBadgeHtml(item, nowMs)}
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
             <a class="ham-badge ham-issue-closed-chip ham-closed-issue-ref" href="${esc(ci.url || '#')}" target="_blank" rel="noopener" title="${esc(ciTip)}">closes <s>#${Number(ci.number)}</s> · closed</a>${notPlanned ? ' <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned" title="The issue this PR closes was closed as not planned; the PR may be moot.">issue closed (not planned)</span>' : ''}
           </div>`;
       } else {
         const li = stageTrackerPRIssueSlot(item);
-        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))];
+        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs)) + stageTrackerOperatorBadgeHtml(item, nowMs)];
         leadHtml = li.number
           ? `<div class="ham-head-main${li.closed ? ' ham-issue-closed' : ''}">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
@@ -15511,6 +15577,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       f.labels = Array.isArray(f.labels) ? f.labels.filter(l => typeof l === 'string' && l).map(l => l.toLowerCase()) : [];
       f.needsHuman = !!f.needsHuman;
       f.onHold = !!f.onHold;
+      if (!['', 'awaiting', 'acted', 'stuck'].includes(f.decision)) f.decision = '';
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
@@ -15523,7 +15590,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // True when any narrowing filter (not sort / paging) is set.
     function stageTrackerFilterActive(f) {
-      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || f.age !== 'any' || f.author !== 'any' || f.attention;
+      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || !!f.decision || f.age !== 'any' || f.author !== 'any' || f.attention;
     }
 
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
@@ -15549,6 +15616,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (f.needsHuman && !stageTrackerItemNeedsHuman(item)) return false;
       if (f.onHold && !stageTrackerItemOnHold(item)) return false;
+      if (!stageTrackerDecisionMatches(item, f.decision, Number(ctx.nowMs) || Date.now())) return false;
       if (f.author !== 'any' && (item.author_kind || '') !== f.author) return false;
       if (f.attention && !stageTrackerNeedsAttention(item)) return false;
       if (f.age !== 'any') {
@@ -15765,6 +15833,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'q': f.q = value || ''; break;
         case 'age': f.age = value || 'any'; break;
         case 'author': f.author = value || 'any'; break;
+        case 'decision': f.decision = f.decision === value ? '' : value; break;
         case 'attention': f.attention = value === 'toggle' ? !f.attention : !!value; break;
         case 'sort': f.sort = value || 'furthest'; break;
         case 'dir': f.dir = value === 'toggle' ? (f.dir === 'asc' ? 'desc' : 'asc') : value; break;
@@ -15787,6 +15856,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSyncToolbar(f) {
       document.querySelectorAll('#activity-monitor-toolbar .ham-chip[data-arg0="kind"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === f.kind ? 'true' : 'false'));
       const setVal = (id, v) => { const el = document.getElementById(id); if (el && el.value !== String(v) && document.activeElement !== el) el.value = String(v); };
+      document.querySelectorAll('#activity-monitor-toolbar .ham-chip[data-arg0="decision"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === f.decision ? 'true' : 'false'));
       setVal('activity-monitor-q', f.q);
       setVal('activity-monitor-age', f.age);
       setVal('activity-monitor-author', f.author);
@@ -15926,6 +15996,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + '</span>';
     }
     function stageTrackerTickClock() {
+      // A quiet/304 payload still ages into amber and into the stuck bucket.
+      const minute = Math.floor(Date.now() / 60000);
+      if (_stageTracker && Array.isArray(_stageTracker.items) && minute !== _stageTrackerOperatorMinute) {
+        _stageTrackerOperatorMinute = minute;
+        if (_stageTracker.items.some(it => it.last_operator_action)) renderStageTracker();
+      }
       const el = document.querySelector('#activity-monitor-meta .ham-updated');
       if (!el || !_stageTracker) return;
       const wrap = document.createElement('span');
@@ -15964,7 +16040,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (sel.innerHTML !== want) sel.innerHTML = want;
       }
       stageTrackerSyncToolbar(f);
-      const ctx = { nowMs, stages, moves: _stageTrackerMoves };
+      const ctx = { nowMs, stages, moves: _stageTrackerMoves, operatorItems: new Map(d.items.map(it => [stageTrackerItemKey(it), it])) };
       ctx.workers = stageTrackerWorkers(window._lastStatus);
       ctx.events = _stageTrackerEvents;
       ctx.sharedPRs = stageTrackerSharedPRs(d.items);
