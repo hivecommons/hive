@@ -1259,6 +1259,12 @@ func (s *HubServer) triggerAutoUpgrades() {
 							// still stamped by beginUpgrade.
 							s.registry.Hives[i].UpgradeTarget = recoverTarget
 							s.beginUpgrade(i, recoverTarget)
+							if recoverTarget != upgradeTarget {
+								// The promoted target still causes a rollout. Record it
+								// separately so its restart is not counted as a crash,
+								// without resetting the attempt's hold clock.
+								s.alerts.noteUpgrade(h.ID, time.Now())
+							}
 							break
 						}
 					}

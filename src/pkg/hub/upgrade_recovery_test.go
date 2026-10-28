@@ -428,6 +428,7 @@ func TestTriggerAutoUpgradesPromotionPreservesHoldDeadline(t *testing.T) {
 	started := time.Now().Add(-23 * time.Minute)
 	s := &HubServer{
 		logger: slog.Default(), heartbeatUpgrade: make(map[string]string),
+		alerts:   newAlertState(),
 		clusters: map[string]ClusterConfig{"remote": {ID: "remote"}},
 	}
 	s.registry.Hives = []RegistryEntry{{
@@ -436,7 +437,8 @@ func TestTriggerAutoUpgradesPromotionPreservesHoldDeadline(t *testing.T) {
 		Upgrading: true, UpgradeTarget: "2222222", UpgradeStartedAt: started,
 		LastHeartbeat: rfc3339At(time.Now()),
 	}}
-	for _, target := range []string{"3333333", "4444444"} {
+	s.alerts.noteUpgrade("stable-hold", started)
+	for promotion, target := range []string{"3333333", "4444444"} {
 		stubChannelRevisions(t, map[string]string{"stable": target})
 		s.triggerAutoUpgrades()
 		entry := s.registry.Hives[0]
@@ -445,6 +447,12 @@ func TestTriggerAutoUpgradesPromotionPreservesHoldDeadline(t *testing.T) {
 		}
 		if !entry.UpgradeStartedAt.Equal(started) {
 			t.Fatalf("promotion reset the original start: got %v, want %v", entry.UpgradeStartedAt, started)
+		}
+		// Distinct starts after each promotion are planned rollouts, even
+		// though the preserved attempt clock is beyond the upgrade grace.
+		restarted := time.Now().Add(time.Duration(promotion+1) * time.Minute)
+		if crashes := s.alerts.observeStart(entry.ID, rfc3339At(restarted), restarted); crashes != 0 {
+			t.Fatalf("promotion restart must not count as a crash: got %d", crashes)
 		}
 		if ev := evaluateOrphanedUpgrade(&entry, started.Add(silentDrainClearAfter-time.Second), ""); ev.orphaned {
 			t.Fatalf("original silent-drain window must still hold: %+v", ev)
