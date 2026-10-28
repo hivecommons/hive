@@ -80,7 +80,7 @@ The root [`Justfile`](Justfile) exposes the public contributor relay workflow. R
 | `just contribute-tui` | Opens the Hives overlay in `hivectl tui --hives`, so contributors can list, switch, add, rename and remove profiles. If this checkout has no `hivectl`, the recipe stages `./bin/hivectl` from the checkout's release-tag image when available, otherwise from the branch channel, and records the source digest so later runs refresh or refuse instead of using a stale binary. Use `HIVECTL_BOOTSTRAP_IMAGE=...` to pick a different image, or `HIVECTL=...` to use an explicit binary. |
 | `just contribute-hives [args]` | Manages the named hive profiles in `${HOME}/.config/hive/profiles.yml` — `list` (the default), `add`, `use`, `rename`, `remove`. A thin alias for `hivectl hives` that uses the same checkout-local bootstrap and skew refusal as `contribute-tui`; see [src/docs/hivectl.md](src/docs/hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to). |
 | `just contribute-browse` | Discovers available public hive projects. |
-| `just contribute-stop` | Stops a background contributor relay if one is running. |
+| `just contribute-stop` | Stops a background contributor relay if one is running: `hive-contributor-*` containers and the local-mode relay recorded in `~/.config/hive/contributor-relay.pid`. |
 | `just contribute-k8s [namespace] [outfile] [image_tag]` | Emits Kubernetes manifests for a headless contributor workload. It writes to stdout or the requested file; it does not apply the manifest. |
 | `just hive-api <endpoint>` | Calls a hub API endpoint, defaulting to `/status`, using the configured hive URL. |
 | `just hive-api-docs` | Opens the hub API documentation in a browser. |

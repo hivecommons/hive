@@ -2734,6 +2734,9 @@ function writeRelayPidFile() {
       pid: process.pid,
       started_at: relayStartedAt,
       session: relaySession,
+      // The tmux session the relay drives, so `just contribute-stop` can end
+      // it with the relay it stops (hivecommons/hive#14833).
+      agent_session: (process.env.HIVE_AGENT_SESSION || '').trim() || undefined,
       env_file: CONTRIBUTOR_ENV_FILE,
       container_runtime: (process.env.HIVE_CONTAINER_RUNTIME || '').trim() || undefined,
       container_name: (process.env.HIVE_CONTAINER_NAME || '').trim() || undefined,
@@ -5807,6 +5810,39 @@ function isToolingFailureBlockedReason(reason) {
   reason = String(reason || '').trim();
   return !!reason && BLOCKED_TOOLING_FAILURE_RE.test(reason);
 }
+
+// ENVIRONMENT_FAILURE_REASON_PATTERNS (hivecommons/hive#14832): a verdict whose
+// reason says the agent's OWN runtime cannot run commands at all. On Ubuntu's
+// AppArmor user-namespace restriction, Claude's native sandbox started, then
+// every Bash call failed (`apply-seccomp: write /proc/self/setgroups ...`), and
+// the agent printed `HIVE_VERDICT: complete — environment failure: Bash tool
+// broken ...`. Booked as complete, the hub counted it as a finished task and
+// the relay took the next issue to drop it the same way. Such a verdict — under
+// any token except wrong_base — is read as blocked on this contributor's own
+// environment and handed back as an `environment` task failure (see
+// finishCurrentTask), never labelled and never booked as completed.
+//
+// Kept deliberately narrow: each entry names the runtime itself being broken,
+// not a repository problem the agent could legitimately report. A verdict
+// backed by a PR this task opened is unaffected — a confirmed PR suppresses the
+// verdict before it is acted on.
+const ENVIRONMENT_FAILURE_REASON_PATTERNS = [
+  String.raw`\benvironment(?:al)?\s+(?:failure|failed|is broken|broken)\b`,
+  String.raw`\bbroken\s+(?:environment|sandbox)\b`,
+  String.raw`\b(?:bash|shell)\s+tool\b.{0,40}\b(?:broken|unusable|unavailable)\b`,
+  String.raw`\bsandbox\b.{0,40}\b(?:is |was )?(?:broken|unusable)\b`,
+  String.raw`\bevery\s+(?:shell\s+|bash\s+)?command\b.{0,60}\bfail(?:s|ed|ing)?\b`,
+  String.raw`\bapply-seccomp\b`,
+  String.raw`/proc/self/setgroups\b`,
+];
+const ENVIRONMENT_FAILURE_REASON_RE = new RegExp(ENVIRONMENT_FAILURE_REASON_PATTERNS.join('|'), 'i');
+
+// isEnvironmentFailureReason says whether a verdict's reason reports the
+// agent's own runtime as unable to run commands.
+function isEnvironmentFailureReason(reason) {
+  reason = String(reason || '').trim();
+  return !!reason && ENVIRONMENT_FAILURE_REASON_RE.test(reason);
+}
 const NO_WORK_NEEDS_DECISION_REASON_RE = /^(?:decision|needs[_ -]?decision|maintainer[_ -]?decision)\s*[:—–-]\s*/i;
 const NATURAL_NEEDS_DECISION_REASON_RE = /(?:maintainer|design|policy|approval|\/approve).{0,80}(?:decision|approval|\/approve)|(?:decision|approval).{0,80}maintainer/i;
 const ALREADY_DONE_REASON_KIND = 'already_done';
@@ -5936,6 +5972,7 @@ function withoutPaneIndex(v) {
   const out = { verdict: v.verdict, reason: v.reason, line: v.line };
   if (v.needsDecision) out.needsDecision = true;
   if (v.toolingFailure) out.toolingFailure = true;
+  if (v.environmentFailure) out.environmentFailure = true;
   if (v.targetBranch) out.targetBranch = v.targetBranch;
   return out;
 }
@@ -5989,9 +6026,19 @@ function detectHiveVerdicts(lines, wanted) {
     // hivecommons/hive#11775: a blocked verdict about the contributor's own
     // push/token/credential failure is demoted — the issue is not blocked on
     // anything outside the repo and must not be labelled as such.
-    const toolingFailure = verdict === HIVE_VERDICT_BLOCKED && isToolingFailureBlockedReason(reason);
+    // hivecommons/hive#14832: a verdict saying the agent's own runtime is
+    // broken is blocked on this contributor's environment, whatever token
+    // the agent chose — most often `complete`, which the hub would otherwise
+    // count as a finished task.
+    let environmentFailure = false;
+    if (verdict !== HIVE_VERDICT_WRONG_BASE && isEnvironmentFailureReason(reason)) {
+      verdict = HIVE_VERDICT_BLOCKED;
+      needsDecision = false;
+      environmentFailure = true;
+    }
+    const toolingFailure = verdict === HIVE_VERDICT_BLOCKED && (environmentFailure || isToolingFailureBlockedReason(reason));
     const targetBranch = verdict === HIVE_VERDICT_WRONG_BASE ? wrongBaseTarget(reason) : undefined;
-    found.push({ verdict, reason, line: lines[i], index: i, needsDecision, toolingFailure, targetBranch });
+    found.push({ verdict, reason, line: lines[i], index: i, needsDecision, toolingFailure, environmentFailure, targetBranch });
   }
   return found;
 }
@@ -7473,7 +7520,7 @@ function markIssueLabel(task, reason, label, description, issueTag) {
 }
 
 function markIssueBlocked(task, reason) {
-  if (isToolingFailureBlockedReason(reason)) {
+  if (isToolingFailureBlockedReason(reason) || isEnvironmentFailureReason(reason)) {
     console.log(`Task ${task && task.task_id ? task.task_id : '(unknown)'}: blocked verdict describes this contributor's own tooling (${String(reason).trim().slice(0, 160)}) — not applying the '${BLOCKED_WORKFLOW_LABEL}' label; the hub re-offers the issue on the short cooldown (hivecommons/hive#11775)`);
     return;
   }
@@ -7521,6 +7568,15 @@ function markIssueAlreadyDone(task, reason) {
 
 function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork, unaddressedNotes = [] }) {
   if (!currentTask) return;
+  // hivecommons/hive#14832: the agent ended the task because its own runtime
+  // cannot run commands. That is not a completion: hand it back as an
+  // `environment` failure so the hub books outcome=failed and keeps this
+  // contributor off the issue, instead of counting a finished task.
+  if (noWork && noWork.environmentFailure) {
+    console.warn(`Task ${currentTask.task_id}: the agent's HIVE_VERDICT reports a broken environment (${String(noWork.reason || '').slice(0, 160)}) — reporting the task failed [environment] instead of complete (hivecommons/hive#14832)`);
+    failCurrentTask(`agent reported an environment failure: ${noWork.reason || '(no reason given)'}`, { kind: 'environment' });
+    return;
+  }
   // #7879: the PR comment must go out BEFORE stopAgentForTaskExit drops the
   // task credential below — it is posted with the same token the agent used.
   if (prURL && unaddressedNotes.length) postUnaddressedNotesComment(prURL, unaddressedNotes);
@@ -9568,6 +9624,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     isNoWorkVerdict,
     isAlreadyDoneNoWork,
     isToolingFailureBlockedReason,
+    isEnvironmentFailureReason,
+    ENVIRONMENT_FAILURE_REASON_PATTERNS,
     verdictWireFields,
     alreadyDoneVerdictFields,
     markIssueBlocked,

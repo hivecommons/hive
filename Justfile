@@ -997,6 +997,15 @@ contribute-hive backend="" mode="docker": check-version
     if [[ "$_MODE" == "local" ]]; then
       # ── Local mode: tmux session + relay (same as container, but on host) ──
       #
+      # One local relay per contributor (#14833): contributor-relay.pid is the
+      # only record of a running local relay. Starting a second one would
+      # connect it under the same contributor ID and overwrite that record,
+      # leaving the first relay taking tasks with nothing able to stop it.
+      source "{{justfile_directory()}}/bin/contributor-local-relay.sh"
+      if ! hive_refuse_if_local_relay_running; then
+        exit 1
+      fi
+
       # SAY WHAT THIS MODE COSTS (#4918). The backend CLI runs as THIS user on
       # THIS machine. Claude-family agents now get Claude Code's native OS
       # sandbox on this path, and Codex keeps its workspace-write sandbox.
@@ -1239,6 +1248,13 @@ contribute-hive backend="" mode="docker": check-version
             exit 1
           fi
         done
+        # Installed is not the same as usable (#14832). On Ubuntu the AppArmor
+        # user-namespace restriction lets the sandbox start and then fails
+        # every command it runs, so run one sandboxed no-op now, before the
+        # relay connects and advertises readiness.
+        if ! hive_local_sandbox_preflight "$BACKEND"; then
+          exit 1
+        fi
       fi
 
       # LiteLLM: point Claude Code at the contributor's own proxy.
@@ -2204,6 +2220,12 @@ contribute-stop:
         echo "$NAMES" | xargs -r "$RT" stop 2>/dev/null && STOPPED=true
       fi
     done
+    # And a local-mode relay (#14833): it runs no container, and
+    # contributor-relay.pid is the only record that it exists.
+    source "{{justfile_directory()}}/bin/contributor-local-relay.sh"
+    if hive_stop_local_relay; then
+      STOPPED=true
+    fi
     $STOPPED && echo "Stopped." || echo "Not running."
 
 # Scoped contributor quota-guard controls (hivecommons/hive#6953).
