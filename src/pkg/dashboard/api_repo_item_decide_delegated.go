@@ -276,6 +276,9 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 			j.Result = &res
 			j.Status = delegatedJobStatusDone
 		})
+		if done, ok := s.delegatedJobs.get(key); ok {
+			s.settleOperatorAction(repoFull, number, &done)
+		}
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", itemType,
 			"verdict", string(d.Verdict), "rule", d.Rule, "actions", "", "noop", "already-applied", "policy", delegatedecision.PolicyName, "decision", d.Text), "", repoFull, number)
 		return

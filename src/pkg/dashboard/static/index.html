@@ -14640,7 +14640,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.last_operator_action) return { item, action: item.last_operator_action, count: Number(item.operator_action_count) || 1 };
       const linked = Array.isArray(item.linked_prs) ? item.linked_prs : [];
       if (item.kind === 'issue' && linked.length === 1 && linked[0].last_operator_action) {
-        return { item: { repo: item.repo, number: linked[0].number, kind: 'pr', stage: linked[0].stage || 0, modifiers: linked[0].modifiers || [], reason: linked[0].reason || '', caption: linked[0].caption || '' }, action: linked[0].last_operator_action, count: Number(linked[0].operator_action_count) || 1 };
+        return { item: { repo: item.repo, number: linked[0].number, kind: 'pr', stage: linked[0].stage || 0, modifiers: linked[0].modifiers || [], reason: linked[0].reason || '', caption: linked[0].caption || '', decision_needed: linked[0].decision_needed || null }, action: linked[0].last_operator_action, count: Number(linked[0].operator_action_count) || 1 };
       }
       return null;
     }
@@ -14669,7 +14669,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerActedOutcomeWords(action) {
       switch (action.outcome) {
         case 'applied': return 'done' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
-        case 'no-op': return 'nothing to change' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
+        case 'no-op': return 'nothing changed' + (action.detail ? ': ' + stageTrackerActedPlain(action.detail) : '');
         case 'failed': return 'failed' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'pending': return 'the hive is deciding…';
         case 'superseded-by-state-change': return 'the item moved on by itself';
@@ -14704,7 +14704,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!t) return '';
       if (STAGE_TRACKER_ACTED_PLAIN[t]) return STAGE_TRACKER_ACTED_PLAIN[t];
       if (/^hive decided: /.test(t)) return t.replace(/^hive decided: /, 'the hive decided: ').replace(/ \(([^)]+)\)/, (m, r) => ' (rule: ' + r.replace(/[-_:]/g, ' ') + ')');
-      return /^[a-z0-9]+([-_:][a-z0-9]+)+$/.test(t) ? t.replace(/[-_:]/g, ' ') : t;
+      if (/^[a-z0-9]+([-_:][a-z0-9]+)+$/.test(t)) return t.replace(/[-_:]/g, ' ');
+      // Slugs inside a sentence ("… — contributor-lane:changes-requested blocks it").
+      return t.replace(/\b[a-z0-9]+(?:[-_:][a-z0-9]+)+\b/g, m => STAGE_TRACKER_ACTED_PLAIN[m] || (/[a-z]/.test(m) ? m.replace(/[-_:]/g, ' ') : m));
+    }
+    // Row-menu action id each ledger action was submitted under, so the
+    // option the owner just took is not offered back to them.
+    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'accept-triage': 'accept-triage', hold: 'hold' };
+    // Pure: what the owner can still do when their action changed nothing
+    // (no-op) or the item has not moved (stuck): the enabled options from
+    // the row's decision_needed payload, minus the one just taken.
+    function stageTrackerActedOptions(item, action, state) {
+      if (!(action.outcome === 'no-op' || state === 'stuck' || state === 'failed')) return '';
+      const dn = item && item.decision_needed;
+      const opts = dn && Array.isArray(dn.options) ? dn.options : [];
+      const taken = STAGE_TRACKER_ACTED_OPTION_ID[action.action] || '';
+      return opts.filter(o => o && o.enabled && o.action !== taken && o.label).map(o => o.label).join(' · ');
     }
     // Pure: the tooltip — the decision trail in plain words, in the order
     // every cue on the row uses: what it is waiting on → what you chose →
@@ -14730,6 +14745,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else lines.push('At ' + stageNow + (waitingOn ? ' — ' + waitingOn : '') + '.');
       lines.push(who + ' chose ' + label + ' · ' + agentNowClockTime(atMs, nowMs) + ' (' + ago + ') · ' + stageTrackerActedOutcomeWords(a) + '.');
       if (a.note) lines.push('Your note: ' + a.note);
+      const options = stageTrackerActedOptions(src.item, a, state);
+      if (options) lines.push('Options: ' + options + '.');
       const followed = Array.isArray(a.followed) ? a.followed : [];
       followed.slice(-3).forEach(h => {
         const hopMs = Date.parse(h.at || '') || nowMs;

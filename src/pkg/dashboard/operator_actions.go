@@ -335,6 +335,19 @@ func operatorActionOutcome(status int, body []byte) (outcome, detail, head strin
 				detail = strings.Join(parts, ", ")
 			}
 		}
+		if res, ok := resp["result"].(map[string]any); ok {
+			if action, _ := res["action"].(string); action == rowActionNoop {
+				verdict := ""
+				if d, ok := resp["decision"].(map[string]any); ok {
+					verdict, _ = d["verdict"].(string)
+				}
+				var rr RowActionResult
+				if raw, err := json.Marshal(res); err == nil {
+					_ = json.Unmarshal(raw, &rr)
+				}
+				return operatorActionOutcomeNoOp, operatorActionNoopDetail(verdict, &rr), head, true
+			}
+		}
 		if d, ok := resp["decision"].(map[string]any); ok && status == http.StatusOK {
 			if v, _ := d["verdict"].(string); v != "" {
 				detail = "hive decided: " + v
@@ -447,6 +460,13 @@ func (s *Server) settleOperatorAction(repoFull string, number int, job *delegate
 			detail += " — kept for the owner"
 		}
 	}
+	if job.Result != nil && job.Result.Action == rowActionNoop {
+		verdict := ""
+		if job.Decision != nil {
+			verdict = string(job.Decision.Verdict)
+		}
+		outcome, detail = operatorActionOutcomeNoOp, operatorActionNoopDetail(verdict, job.Result)
+	}
 	if job.Status == delegatedJobStatusFailed {
 		outcome, detail = operatorActionOutcomeFailed, job.Error
 	}
@@ -454,6 +474,24 @@ func (s *Server) settleOperatorAction(repoFull string, number int, job *delegate
 		s.logger.Warn("operator action ledger write failed", "path", operatorActionsPath, "error", err)
 	}
 	s.invalidateStageTrackerCache()
+}
+
+// operatorActionNoopDetail spells a repeat decision out in plain words:
+// what the hive had already decided, when, and what still blocks it.
+func operatorActionNoopDetail(verdict string, res *RowActionResult) string {
+	out := "the hive had already decided"
+	if verdict != "" {
+		out += " '" + verdict + "'"
+	}
+	if res != nil && res.AppliedAt != nil && !res.AppliedAt.IsZero() {
+		out += " at " + res.AppliedAt.UTC().Format("15:04 UTC")
+	}
+	if res != nil {
+		if b, ok := strings.CutPrefix(res.Next, "Still blocked by "); ok {
+			out += " and it has not taken effect — still blocked: " + strings.TrimSuffix(b, ".")
+		}
+	}
+	return out
 }
 
 // StageTrackerOperatorAction is the row-payload view of the newest recorded

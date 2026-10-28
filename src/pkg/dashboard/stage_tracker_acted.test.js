@@ -38,6 +38,8 @@ const src = [
   pick(/function stageTrackerActedStageName\(n\) \{[\s\S]*?\n    \}\n/, 'stageTrackerActedStageName'),
   pick(/const STAGE_TRACKER_ACTED_PLAIN = \{[\s\S]*?\n    \};\n/, 'STAGE_TRACKER_ACTED_PLAIN'),
   pick(/function stageTrackerActedPlain\(text\) \{[\s\S]*?\n    \}\n/, 'stageTrackerActedPlain'),
+  pick(/const STAGE_TRACKER_ACTED_OPTION_ID = [^\n]*\n/, 'STAGE_TRACKER_ACTED_OPTION_ID'),
+  pick(/function stageTrackerActedOptions\(item, action, state\) \{[\s\S]*?\n    \}\n/, 'stageTrackerActedOptions'),
   pick(/function stageTrackerActedTip\(item, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerActedTip'),
   pick(/function stageTrackerActedBadgeHtml\(item, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerActedBadgeHtml'),
   pick(/function stageTrackerActedMatches\(item, mode, nowMs\) \{[\s\S]*?\n    \}\n/, 'stageTrackerActedMatches'),
@@ -160,4 +162,23 @@ test('plain words: no slugs or codes reach the operator', () => {
   assert.strictEqual(api.plain('hive decided: approve (auto-merge-when-green)'), 'the hive decided: approve (rule: auto merge when green)');
   assert.strictEqual(api.plain('Waiting on CI'), 'Waiting on CI');
   assert.strictEqual(api.plain(''), '');
+});
+
+test('no-op outcome still shows the badge and says what hive had already decided plus the remaining options', () => {
+  const a = act({ action: 'let-hive-decide', outcome: 'no-op', detail: "the hive had already decided 'supersede' at 13:01 UTC and it has not taken effect — still blocked: contributor-lane:changes-requested" });
+  const item = { number: 14822, kind: 'pr', stage: 85, modifiers: [], last_operator_action: a, operator_action_count: 1,
+    decision_needed: { question: 'Merge or send back?', options: [
+      { action: 'decide:delegate', label: 'Let hive decide', enabled: true },
+      { action: 'decide:approve', label: 'Merge as maintainer', enabled: true },
+      { action: 'decide:direction', label: 'Send back for a new commit', enabled: true },
+      { action: 'hold', label: 'Hold', enabled: false, reason_if_disabled: 'already held' },
+    ] } };
+  const html = api.badge(item, NOW);
+  assert.match(html, /ham-acted/, 'badge renders for a no-op');
+  const tip = api.tip(item, NOW);
+  assert.match(tip, /You chose Let hive decide/);
+  assert.match(tip, /nothing changed: the hive had already decided 'supersede' at 13:01 UTC/);
+  assert.match(tip, /still blocked: a reviewer requested changes; needs a new commit/, 'lane slug translated to plain words');
+  assert.doesNotMatch(tip, /contributor-lane/);
+  assert.match(tip, /Options: Merge as maintainer · Send back for a new commit\./, 'offers the other enabled options, not the one just taken nor disabled ones');
 });

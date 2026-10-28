@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -89,6 +90,7 @@ func TestOperatorActionOutcome(t *testing.T) {
 		{200, `{"ok":true,"alreadyAccepted":true}`, operatorActionOutcomeNoOp, "already accepted", "", true, "accept-triage twice"},
 		{200, `{"ok":true,"released":["hold","needs-human"]}`, operatorActionOutcomeApplied, "hold, needs-human", "", true, "release"},
 		{200, `{"status":"done","decision":{"verdict":"approve","rule":"auto-merge"}}`, operatorActionOutcomeApplied, "hive decided: approve (auto-merge)", "", true, "delegated sync done"},
+		{200, `{"status":"done","decision":{"verdict":"supersede","rule":"dup"},"result":{"action":"noop-already-applied","outcome":"No change — superseded at 2026-10-28T13:01:00Z","applied_at":"2026-10-28T13:01:00Z","next":"Still blocked by contributor-lane:changes-requested."}}`, operatorActionOutcomeNoOp, "the hive had already decided 'supersede' at 13:01 UTC and it has not taken effect — still blocked: contributor-lane:changes-requested", "", true, "delegated sync no-op"},
 		{200, `{"status":"failed","error":"boom","decision":{"verdict":""}}`, operatorActionOutcomeFailed, "boom", "", true, "delegated sync failed"},
 		{202, `{"status":"running"}`, operatorActionOutcomePending, "running", "", true, "delegated async"},
 		{409, `{"error":"not parked"}`, operatorActionOutcomeNoOp, "not parked", "", true, "conflict"},
@@ -101,6 +103,25 @@ func TestOperatorActionOutcome(t *testing.T) {
 		if outcome != c.outcome || detail != c.detail || head != c.head || record != c.record {
 			t.Errorf("%s: got (%q,%q,%q,%v) want (%q,%q,%q,%v)", c.description, outcome, detail, head, record, c.outcome, c.detail, c.head, c.record)
 		}
+	}
+}
+
+func TestSettleOperatorActionNoOp(t *testing.T) {
+	s := &Server{operatorActionStore: newOperatorActionStore(filepath.Join(t.TempDir(), "ops.json"))}
+	at := time.Date(2026, 10, 28, 14, 23, 0, 0, time.UTC)
+	if err := s.operatorActions().Record("org/repo", 14822, OperatorAction{Action: operatorActionLetHiveDecide, Actor: "clubanderson", At: at, Outcome: operatorActionOutcomePending, Stage: 85}); err != nil {
+		t.Fatal(err)
+	}
+	res := rowActionNoopResult(rowActionTarget("org/repo", rowActionTargetPR, 14822), "superseded", at.Add(-82*time.Minute), "contributor-lane:changes-requested")
+	job := &delegatedDecisionJob{Status: delegatedJobStatusDone, Decision: &delegatedecision.Decision{Verdict: "supersede", Rule: "dup"}, Result: &res}
+	s.settleOperatorAction("org/repo", 14822, job)
+	got := s.operatorActions().List("org/repo", 14822)
+	if len(got) != 1 || got[0].Outcome != operatorActionOutcomeNoOp {
+		t.Fatalf("settle no-op = %+v", got)
+	}
+	want := "the hive had already decided 'supersede' at 13:01 UTC and it has not taken effect — still blocked: contributor-lane:changes-requested"
+	if got[0].Detail != want {
+		t.Fatalf("detail = %q\nwant   %q", got[0].Detail, want)
 	}
 }
 
@@ -268,6 +289,8 @@ func stageTrackerActedJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerActedOutcomeWords"),
 		jsFunc(t, html, "stageTrackerActedStageName"),
 		jsFunc(t, html, "stageTrackerActedPlain"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTED_OPTION_ID"),
+		jsFunc(t, html, "stageTrackerActedOptions"),
 		jsFunc(t, html, "stageTrackerActedTip"),
 		jsFunc(t, html, "stageTrackerActedBadgeHtml"),
 		jsFunc(t, html, "stageTrackerActedMatches"),
