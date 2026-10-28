@@ -59,6 +59,18 @@ func TestDeriveIssueTable(t *testing.T) {
 			f.Issue.CoveringPR = pr99
 			f.Issue.CoveringPRStage = stagelabels.MergeQueue
 		}, stagelabels.CoveredByPR, true, "open PR #99 covers it (PR at 100-merge-queue)"},
+		// hivecommons/hive#15008: a "Refs #N" PR stages 040 but never "covers".
+		{"partial (Refs), PR not staged", func(f *Facts) {
+			f.Issue.Bucket = BucketCoveredByPR
+			f.Issue.CoveringPR = pr99
+			f.Issue.Claim = &ClaimFact{PRNumber: 99, Partial: true}
+		}, stagelabels.CoveredByPR, false, "open PR addresses part of it (references it without a closing keyword)"},
+		{"partial (Refs), PR staged", func(f *Facts) {
+			f.Issue.Bucket = BucketCoveredByPR
+			f.Issue.CoveringPR = pr99
+			f.Issue.CoveringPRStage = stagelabels.MergeQueue
+			f.Issue.Claim = &ClaimFact{PRNumber: 99, Partial: true}
+		}, stagelabels.CoveredByPR, true, "open PR #99 addresses part of it (references it without a closing keyword; PR at 100-merge-queue)"},
 		{"likely done", func(f *Facts) { f.Issue.LikelyDone = true }, stagelabels.None, false, "merged PR awaiting confirmation"},
 		{"filtered", func(f *Facts) { f.Issue.Bucket = BucketFiltered; f.Issue.FilteredReason = "Exempt label" }, stagelabels.None, false, "outside the pipeline: filtered"},
 		{"needs-human", func(f *Facts) { f.Issue.Bucket = BucketFiltered; f.Park.NeedsHuman = true }, stagelabels.IssueNeedsDecision, false, "held for a person: needs-human"},

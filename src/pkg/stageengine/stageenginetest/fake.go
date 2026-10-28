@@ -207,6 +207,9 @@ func (r *Recorder) InProgress(_ context.Context, ref stageengine.Ref, agent stri
 func (r *Recorder) CoveredBy(_ context.Context, issue, pr stageengine.Ref) error {
 	return r.record(Recorded{Method: "CoveredBy", Ref: issue, PR: &pr})
 }
+func (r *Recorder) AddressedBy(_ context.Context, issue, pr stageengine.Ref) error {
+	return r.record(Recorded{Method: "AddressedBy", Ref: issue, PR: &pr})
+}
 func (r *Recorder) Uncovered(_ context.Context, issue, pr stageengine.Ref) error {
 	return r.record(Recorded{Method: "Uncovered", Ref: issue, PR: &pr})
 }

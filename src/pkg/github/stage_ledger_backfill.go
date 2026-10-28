@@ -88,7 +88,14 @@ func (c *Client) BackfillCoveredByLedger(ctx context.Context, ledger *ClaimLedge
 			c.warnLedgerBackfill("ensuring covered-by-pr label failed", issue, pr, err)
 			continue
 		}
-		if err := c.StageFacts().CoveredBy(ctx, issue, pr); err != nil {
+		// A non-closing "Refs #N" claim stages 040 as "addresses part of
+		// it", never "covers it" (hivecommons/hive#15008).
+		if claim.Reference && !claim.Closing {
+			err = c.StageFacts().AddressedBy(ctx, issue, pr)
+		} else {
+			err = c.StageFacts().CoveredBy(ctx, issue, pr)
+		}
+		if err != nil {
 			res.Errors++
 			c.warnLedgerBackfill("moving issue to covered-by-pr failed", issue, pr, err)
 			continue

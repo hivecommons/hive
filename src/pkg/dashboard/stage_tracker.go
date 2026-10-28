@@ -64,9 +64,17 @@ type StageTrackerResponse struct {
 	// inferred from the PR's hive markers.
 	AuthorKindLabels bool `json:"author_kind_labels"`
 	// NeedsHumanLabels is the "a person must act" label set
-	// (needsHumanPresetLabels) behind the tracker's synthetic Needs human
-	// facet, so the page and the Projects preset cannot disagree.
+	// (needsHumanPresetLabels) the Projects preset filters by. The
+	// tracker's own "Needs human" chip no longer reads it: it counts
+	// StageTrackerItem.NeedsHuman (hivecommons/hive#15008).
 	NeedsHumanLabels []string `json:"needs_human_labels,omitempty"`
+	// NeedsHuman counts Items whose NeedsHuman flag is set — the number the
+	// SPA's "Needs human" chip shows; OnHold likewise for the "On hold"
+	// chip. Both come from the same predicates the per-item flags do
+	// (stageTrackerNeedsHuman / stageTrackerOnHold), so chip, count and
+	// filter cannot disagree.
+	NeedsHuman int `json:"needs_human"`
+	OnHold     int `json:"on_hold"`
 	// Engine is the ADR-0025 central stage engine's mode and counters for
 	// the tracker's status strip; absent when the hive has no engine.
 	Engine *stageengine.Status `json:"engine,omitempty"`
@@ -276,6 +284,18 @@ type StageTrackerItem struct {
 	// does not count them until the PR reaches stage/080 or later. The
 	// labels themselves are untouched; this is presentation only.
 	DeferredModifiers []string `json:"deferred_modifiers,omitempty"`
+	// NeedsHuman is true when a person's decision or action is the ONLY
+	// thing that advances the item (stageTrackerNeedsHuman): stages 015
+	// triage-needed, 045/085 needs-decision, 071/072 needs-author /
+	// returned-to-contributor with a human author, 090 ready-for-human-
+	// merge, or a needs-human / needs-decision / unauthorized pill. A
+	// hold is NOT this (OnHold): the owner chose to pause it. Neither are
+	// stalled, a handled regression, blocked-on-pr, 040 covered or a PR
+	// ready for auto-merge — the hive advances those (hivecommons/hive#15008).
+	NeedsHuman bool `json:"needs_human,omitempty"`
+	// OnHold is true when the item wears a hold pill: paused on purpose,
+	// waiting on nobody.
+	OnHold bool `json:"on_hold,omitempty"`
 	// RegressedFrom / RegressedTo / RegressedAt / RegressedReason narrate
 	// the unresolved regression behind the `regressed` modifier: the
 	// high-water stage the item fell from, the stage that fall landed on
@@ -1026,6 +1046,11 @@ func humanizeStageReason(reason string) string {
 	switch lower {
 	case "actionable", "live agent claim", "live issue claim", "open pr covers it":
 		return ""
+	}
+	if stageengine.ReasonIsPartialCover(r) {
+		return "the PR references it without closing it (partial)"
+	}
+	switch lower {
 	case "held":
 		return "held by a hold label"
 	case "label:needs-rebase":
@@ -1282,6 +1307,9 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.PRInProgress:
 		return joinClause("An agent has a PR under way; not yet opened", clause), "hive"
 	case stagelabels.CoveredByPR:
+		if stageengine.ReasonIsPartialCover(reason) {
+			return "An open PR" + prRef + " addresses part of this issue — it references it without a closing keyword, so the remainder stays open when it merges", "its PR"
+		}
 		return joinClause("An open PR"+prRef+" covers this issue", clause), "its PR"
 	case stagelabels.ReviewPending:
 		return joinClause("Review swarm requested; waiting for a verdict on the current head", clause), "review swarm"
@@ -1660,6 +1688,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
+	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
@@ -1682,6 +1711,63 @@ var stageTrackerAttentionStages = []int{stagelabels.IssueNeedsDecision.Number(),
 // stageTrackerHumanMods are the modifiers that park an item on a person
 // (dashboard STAGE_TRACKER_HUMAN_MODS).
 var stageTrackerHumanMods = []string{modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsRebase, modBlocked, modStalled}
+
+// stageTrackerNeedsHumanStages are the stages where only a person can
+// advance the item (dashboard STAGE_TRACKER_NEEDS_HUMAN_STAGES): 015
+// triage-needed, 045 issue needs-decision, 085 PR needs-decision, 090
+// ready-for-human-merge; 071 needs-author and 072 returned-to-contributor
+// count only when the author is a human (stageTrackerNeedsHumanAuthorStages).
+var stageTrackerNeedsHumanStages = []int{stagelabels.TriageNeeded.Number(), stagelabels.IssueNeedsDecision.Number(), stagelabels.NeedsDecision.Number(), stagelabels.ReadyForHumanMerge.Number()}
+
+// stageTrackerNeedsHumanAuthorStages park the PR on its author; a human
+// author must act, a clanker's or hive's PR is re-kicked by the hive.
+var stageTrackerNeedsHumanAuthorStages = []int{stagelabels.NeedsAuthor.Number(), stagelabels.ReturnedToContributor.Number()}
+
+// stageTrackerNeedsHumanMods are the pills that mean "a person must decide
+// or act" (dashboard STAGE_TRACKER_NEEDS_HUMAN_MODS). hold is deliberately
+// absent (On hold is its own chip); stalled, regressed, blocked,
+// needs-rebase and draft are the hive's or nobody's to move.
+var stageTrackerNeedsHumanMods = []string{modNeedsHuman, modNeedsDecision, modUnauthorized}
+
+// stageTrackerNeedsHuman is the ONE definition of "Needs human" behind the
+// payload's per-item flag, its count and the SPA's chip + filter
+// (dashboard stageTrackerItemNeedsHuman mirrors it): a human decision or
+// action is the only thing that advances the item. A hold wins: a held
+// item is paused, not waiting on a person (hivecommons/hive#15008).
+func stageTrackerNeedsHuman(it StageTrackerItem) bool {
+	if stageTrackerOnHold(it) {
+		return false
+	}
+	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerNeedsHumanMods, m) }) {
+		return true
+	}
+	if slices.Contains(stageTrackerNeedsHumanStages, it.Stage) {
+		return true
+	}
+	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && it.AuthorKind == authorKindHuman
+}
+
+// stageTrackerOnHold mirrors the dashboard's stageTrackerItemOnHold: the
+// row wears the hold pill.
+func stageTrackerOnHold(it StageTrackerItem) bool {
+	return slices.Contains(it.Modifiers, modHold)
+}
+
+// stageTrackerHumanCounts sets every item's NeedsHuman / OnHold flag and
+// returns the two totals for the payload header.
+func stageTrackerHumanCounts(items []StageTrackerItem) (needsHuman, onHold int) {
+	for i := range items {
+		items[i].NeedsHuman = stageTrackerNeedsHuman(items[i])
+		items[i].OnHold = stageTrackerOnHold(items[i])
+		if items[i].NeedsHuman {
+			needsHuman++
+		}
+		if items[i].OnHold {
+			onHold++
+		}
+	}
+	return needsHuman, onHold
+}
 
 // stageTrackerSunkMods are the modifiers that sink a row to the bottom of
 // its stage (dashboard STAGE_TRACKER_SUNK_MODS): a person parked it, or it

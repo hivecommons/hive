@@ -176,6 +176,12 @@ type ClaimFact struct {
 	PRStarted bool
 	PRRepo    string
 	PRNumber  int
+	// Partial says the covering PR references the issue without a closing
+	// keyword ("Refs #N", "Part of #N") — it works the issue but does not
+	// claim to finish it (hivecommons/hive#15008). The deriver still stages
+	// 040 (the hive is on it; dispatch is withheld, #13747) but the reason
+	// and the activity monitor say "addresses part of", never "covers".
+	Partial bool
 }
 
 // PRFacts is the pull-request-side evidence.

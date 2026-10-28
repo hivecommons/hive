@@ -18,6 +18,11 @@ type FactSink interface {
 	ClaimReleased(ctx context.Context, ref Ref, holder string) error
 	InProgress(ctx context.Context, ref Ref, agent string, until time.Time) error
 	CoveredBy(ctx context.Context, issue Ref, pr Ref) error
+	// AddressedBy is CoveredBy for a PR that references the issue without
+	// a closing keyword ("Refs #N"): still 040 — the hive is working it —
+	// but the reason says "addresses part of", never "covers"
+	// (ClaimFact.Partial; hivecommons/hive#15008).
+	AddressedBy(ctx context.Context, issue Ref, pr Ref) error
 	Uncovered(ctx context.Context, issue Ref, pr Ref) error
 	Parked(ctx context.Context, ref Ref, label string) error // agent escalation (045/085/needs-human)
 	Unparked(ctx context.Context, ref Ref, by string) error  // /hive approve|decision
@@ -161,6 +166,17 @@ func (s *factSink) CoveredBy(ctx context.Context, issue Ref, pr Ref) error {
 		Bucket:     BucketCoveredByPR,
 		CoveringPR: &pr,
 		Claim:      &ClaimFact{PRRepo: pr.FullRepo(), PRNumber: pr.Number},
+	}))
+}
+
+// AddressedBy implements FactSink: an open PR references the issue
+// without closing it → 040 with the partial reason.
+func (s *factSink) AddressedBy(ctx context.Context, issue Ref, pr Ref) error {
+	pr.Kind = stagelabels.PRItem
+	return s.submit(ctx, issueFacts(issue, IssueFacts{
+		Bucket:     BucketCoveredByPR,
+		CoveringPR: &pr,
+		Claim:      &ClaimFact{PRRepo: pr.FullRepo(), PRNumber: pr.Number, Partial: true},
 	}))
 }
 

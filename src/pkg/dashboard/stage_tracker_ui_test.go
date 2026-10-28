@@ -122,8 +122,10 @@ func TestStageTrackerRows(t *testing.T) {
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
 		jsFunc(t, html, "stageTrackerWaitSince"),
 		jsFunc(t, html, "stageTrackerLabelFamily"),
-		jsFunc(t, html, "stageTrackerNeedsHumanLabels"),
-		jsFunc(t, html, "stageTrackerLabelNeedsHuman"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_STAGES"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_MODS"),
+		jsFunc(t, html, "stageTrackerItemOnHold"),
 		jsFunc(t, html, "stageTrackerItemNeedsHuman"),
 		jsFunc(t, html, "stageTrackerLabelCompare"),
 		jsFunc(t, html, "stageTrackerLabelDialogData"),
@@ -832,8 +834,10 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 		jsFunc(t, html, "stageTrackerWaitSince"),
 		jsFunc(t, html, "stageTrackerLabelFamily"),
-		jsFunc(t, html, "stageTrackerNeedsHumanLabels"),
-		jsFunc(t, html, "stageTrackerLabelNeedsHuman"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_STAGES"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_MODS"),
+		jsFunc(t, html, "stageTrackerItemOnHold"),
 		jsFunc(t, html, "stageTrackerItemNeedsHuman"),
 		jsFunc(t, html, "stageTrackerLabelCompare"),
 		jsFunc(t, html, "stageTrackerLabelDialogData"),
@@ -977,7 +981,7 @@ assert.deepStrictEqual(fac.chips.map(x => x.label), ['stage/010-actionable', 'st
 assert.deepStrictEqual(fac.chips.find(x => x.label === 'author/clanker').count, 2);
 assert.deepStrictEqual(fac.all.map(x => x.label), fac.chips.map(x => x.label), 'under the limit the dialog list equals the row');
 assert.strictEqual(fac.hidden, 0);
-assert.strictEqual(fac.needsHuman, null, 'no needs-human set in the payload, no synthetic chip');
+assert.deepStrictEqual([fac.needsHuman.count, fac.needsHuman.on, fac.onHold.count, fac.onHold.on], [0, false, 0, false], 'synthetic chips always exist; nothing here is human-gated or held');
 assert.ok(stageTrackerLabelFacets(items.concat([{ kind: 'issue', repo: 'a/b', number: 7, labels: ['solo'] }]), F()).chips.some(x => x.label === 'solo'), 'single-item labels are offered too (no hidden labels)');
 // Over the limit: the row shows the first N in order plus any selected label; all keeps every label and hidden the overflow.
 const wide = items.concat(Array.from({ length: 30 }, (_, i) => ({ kind: 'issue', repo: 'a/b', number: 100 + i, labels: ['zz-' + String(i).padStart(2, '0')] })));
@@ -991,24 +995,34 @@ let dlg = stageTrackerLabelDialogData(fac, 'ZZ-1');
 assert.deepStrictEqual(dlg.rows.map(x => x.label), ['zz-10', 'zz-11', 'zz-12', 'zz-13', 'zz-14', 'zz-15', 'zz-16', 'zz-17', 'zz-18', 'zz-19', 'zz-29'], 'query is a case-insensitive substring; selected labels stay listed');
 assert.deepStrictEqual([dlg.total, dlg.selected, dlg.query], [40, 1, 'zz-1']);
 
-// Needs human: one synthetic facet over the payload's set; count = distinct items, prefix children match, filter is OR across the set.
-const nh = stageTrackerNeedsHumanLabels({ needs_human_labels: ['stage/045-needs-decision', 'Needs-Human', 'hold', ' stage/071-needs-author '] });
-assert.deepStrictEqual(nh, ['stage/045-needs-decision', 'needs-human', 'hold', 'stage/071-needs-author']);
+// Needs human (hivecommons/hive#15008): stage/modifier predicate shared with the count — labels alone never qualify.
 const parked = items.concat([
-  { kind: 'issue', repo: 'a/b', number: 20, labels: ['stage/045-needs-decision', 'needs-human', 'hold'] },
-  { kind: 'issue', repo: 'a/b', number: 21, labels: ['needs-human/agent-ready'] },
-  { kind: 'pr', repo: 'a/b', number: 22, labels: ['stage/071-needs-author', 'author/human'] },
-  { kind: 'issue', repo: 'a/b', number: 23, labels: ['holder'] },
+  { kind: 'issue', repo: 'a/b', number: 20, stage: 45, modifiers: [], labels: ['stage/045-needs-decision'] },
+  { kind: 'issue', repo: 'a/b', number: 21, stage: 20, modifiers: ['needs-human'], labels: ['needs-human/agent-ready'] },
+  { kind: 'pr', repo: 'a/b', number: 22, stage: 71, author_kind: 'human', modifiers: [], labels: ['stage/071-needs-author', 'author/human'] },
+  { kind: 'pr', repo: 'a/b', number: 23, stage: 71, author_kind: 'clanker', modifiers: [], labels: ['stage/071-needs-author'] },
+  { kind: 'issue', repo: 'a/b', number: 24, stage: 40, modifiers: [], labels: ['needs-signal'] },
+  { kind: 'issue', repo: 'a/b', number: 25, stage: 45, modifiers: ['hold'], labels: ['stage/045-needs-decision', 'hold'] },
+  { kind: 'pr', repo: 'a/b', number: 26, stage: 80, modifiers: ['hold'], labels: ['hold'] },
+  { kind: 'pr', repo: 'a/b', number: 27, stage: 60, modifiers: ['stalled', 'blocked-on-pr'], labels: [] },
+  { kind: 'issue', repo: 'a/b', number: 28, stage: 15, modifiers: [], labels: [] },
+  { kind: 'pr', repo: 'a/b', number: 29, stage: 90, modifiers: [], labels: [] },
+  { kind: 'pr', repo: 'a/b', number: 30, stage: 50, modifiers: ['unauthorized'], labels: [] },
 ]);
-assert.strictEqual(stageTrackerLabelNeedsHuman('needs-human/agent-ready', nh), true);
-assert.strictEqual(stageTrackerLabelNeedsHuman('holder', nh), false, 'prefix match needs the / separator');
-fac = stageTrackerLabelFacets(parked, F(), { needsHumanLabels: nh });
-assert.deepStrictEqual([fac.needsHuman.count, fac.needsHuman.on], [3, false], 'three distinct items, not five label hits');
-assert.deepStrictEqual(nums(stageTrackerVisible(parked, F({ needsHuman: true }), Object.assign({ needsHumanLabels: nh }, ctx))), [20, 21, 22]);
-assert.deepStrictEqual(nums(stageTrackerVisible(parked, F({ needsHuman: true, labels: ['author/human'] }), Object.assign({ needsHumanLabels: nh }, ctx))), [22], 'needs-human ANDs with label chips');
+assert.strictEqual(stageTrackerItemNeedsHuman(parked.find(x => x.number === 24)), false, '040 "PR in progress" needs no human (#14976)');
+assert.strictEqual(stageTrackerItemNeedsHuman(parked.find(x => x.number === 23)), false, '071 with a clanker author is the bot\'s turn');
+assert.strictEqual(stageTrackerItemNeedsHuman(parked.find(x => x.number === 25)), false, 'hold wins: a held row is paused, not waiting');
+assert.strictEqual(stageTrackerItemOnHold(parked.find(x => x.number === 25)), true);
+fac = stageTrackerLabelFacets(parked, F());
+assert.deepStrictEqual([fac.needsHuman.count, fac.needsHuman.on, fac.onHold.count, fac.onHold.on], [6, false, 2, false]);
+assert.deepStrictEqual(nums(stageTrackerVisible(parked, F({ needsHuman: true }), ctx)), [20, 21, 22, 28, 29, 30], 'filter and chip count agree');
+assert.deepStrictEqual(nums(stageTrackerVisible(parked, F({ onHold: true }), ctx)), [25, 26]);
+assert.deepStrictEqual(nums(stageTrackerVisible(parked, F({ needsHuman: true, labels: ['author/human'] }), ctx)), [22], 'needs-human ANDs with label chips');
 assert.strictEqual(stageTrackerFilterActive(F({ needsHuman: true })), true);
+assert.strictEqual(stageTrackerFilterActive(F({ onHold: true })), true);
 assert.strictEqual(stageTrackerNormalizeFilter({ needsHuman: 'yes' }).needsHuman, true);
-assert.deepStrictEqual(nums(stageTrackerVisible(parked, F({ needsHuman: true }), ctx)), [], 'without a set nothing can need a human');
+assert.strictEqual(stageTrackerNormalizeFilter({ onHold: 1 }).onHold, true);
+assert.strictEqual(stageTrackerLabelDialogData(stageTrackerLabelFacets(parked, F({ needsHuman: true, onHold: true }))).selected, 2);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

@@ -191,8 +191,15 @@ func (c *Client) enrichCoveringPR(ctx context.Context, store *stagelabels.Store,
 		return f, nil
 	}
 	pr, ok := c.rememberedCoveringPR(store, f.Ref)
-	if !ok {
-		pr, ok = c.ledgerCoveringPR(f.Ref)
+	partial := false
+	if ok {
+		// The store remembers the PR, not whether it closes the issue; the
+		// ledger does (a "Refs #N" claim is Reference, hivecommons/hive#15008).
+		if claim, found := c.ledgerClaim(f.Ref); found && claim.PRNumber == pr.Number {
+			partial = claim.Reference && !claim.Closing
+		}
+	} else {
+		pr, partial, ok = c.ledgerCoveringPR(f.Ref)
 	}
 	if !ok || (f.Issue.ClosedPR != nil && f.Issue.ClosedPR.Key() == pr.Key()) {
 		return f, nil
@@ -213,6 +220,7 @@ func (c *Client) enrichCoveringPR(ctx context.Context, store *stagelabels.Store,
 		f.Issue.Claim = &stageengine.ClaimFact{}
 	}
 	f.Issue.Claim.PRRepo, f.Issue.Claim.PRNumber = pr.FullRepo(), pr.Number
+	f.Issue.Claim.Partial = partial
 	return f, nil
 }
 
@@ -238,18 +246,26 @@ func (c *Client) rememberedCoveringPR(store *stagelabels.Store, issue stageengin
 // suppress the issue for counts (IssueClaim.CoversOpenIssue); the ledger is
 // keyed by the configured repo spelling, so both the bare and the
 // owner-qualified name are tried.
-func (c *Client) ledgerCoveringPR(issue stageengine.Ref) (stageengine.Ref, bool) {
+func (c *Client) ledgerCoveringPR(issue stageengine.Ref) (pr stageengine.Ref, partial bool, ok bool) {
+	claim, found := c.ledgerClaim(issue)
+	if !found || !claim.CoversOpenIssue() {
+		return stageengine.Ref{}, false, false
+	}
+	pr, ok = c.claimPRRef(claim, issue)
+	return pr, claim.Reference && !claim.Closing, ok
+}
+
+// ledgerClaim is the duplicate-PR claim ledger's live claim on issue, tried
+// under both the bare and the owner-qualified repo spelling.
+func (c *Client) ledgerClaim(issue stageengine.Ref) (IssueClaim, bool) {
 	if c == nil || c.prClaimLookup == nil || !issue.IsDefaultSource() {
-		return stageengine.Ref{}, false
+		return IssueClaim{}, false
 	}
 	claim, ok := c.prClaimLookup(issue.Repo, issue.Number)
 	if !ok && issue.Owner != "" {
 		claim, ok = c.prClaimLookup(issue.Owner+"/"+issue.Repo, issue.Number)
 	}
-	if !ok || !claim.CoversOpenIssue() {
-		return stageengine.Ref{}, false
-	}
-	return c.claimPRRef(claim, issue)
+	return claim, ok
 }
 
 // SetPRClaimLookup installs the duplicate-PR claim ledger read the fact sink

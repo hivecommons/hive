@@ -24,15 +24,87 @@ import (
 func TestPRCoveredIssues_UnionOfDeclaredAndBodyCloses(t *testing.T) {
 	c := testClient(t, "http://127.0.0.1:0")
 	body := "Builds on #14912.\n\nCloses #14906\nCloses #14910\nCloses #14911\nRefs #14909\nFixes other/repo#5"
-	got := c.prCoveredIssues("o/r", body, []int{14906, 0, 14906})
-	if want := []int{14906, 14910, 14911}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("prCoveredIssues = %v, want %v", got, want)
+	got, partial := c.prCoveredIssues("o/r", body, []int{14906, 0, 14906})
+	if want := []int{14906, 14910, 14911}; !reflect.DeepEqual(got, want) || partial != nil {
+		t.Fatalf("prCoveredIssues = %v (partial %v), want %v", got, partial, want)
 	}
-	if got := c.prCoveredIssues("o/r", "no closing keyword here, see #3", nil); got != nil {
-		t.Fatalf("prCoveredIssues with no closes = %v, want nil", got)
+	if got, partial := c.prCoveredIssues("o/r", "no closing keyword here, see #3", nil); got != nil || partial != nil {
+		t.Fatalf("prCoveredIssues with no closes = %v / %v, want nil", got, partial)
 	}
-	if got := c.prCoveredIssues("o/r", "", []int{7}); !reflect.DeepEqual(got, []int{7}) {
-		t.Fatalf("declared-only = %v, want [7]", got)
+	if got, partial := c.prCoveredIssues("o/r", "", []int{7}); !reflect.DeepEqual(got, []int{7}) || partial != nil {
+		t.Fatalf("declared-only = %v / %v, want [7]", got, partial)
+	}
+}
+
+// hivecommons/hive#15008: the scanner's partial fix #14990 for the shared-CI
+// incident #14976 declared the issue but its body read "Refs #14976
+// (needs-human: …)" — the agent deliberately not claiming to finish it. The
+// relay still staged the incident "open PR covers it". A declared issue the
+// body references without a closing keyword is partial, never covered; a
+// closing keyword on the same issue wins; a bare mention is nothing.
+func TestPRCoveredIssues_DeclaredRefsIsPartialNotCovered(t *testing.T) {
+	c := testClient(t, "http://127.0.0.1:0")
+	body := "Retry go mod download in the Docker builder stages.\n\nRefs #14976 (needs-human: the workflow steps need the same retry; the App token cannot edit workflows)"
+	covered, partial := c.prCoveredIssues("o/r", body, []int{14976})
+	if covered != nil || !reflect.DeepEqual(partial, []int{14976}) {
+		t.Fatalf("declared + Refs: covered %v partial %v, want nil / [14976]", covered, partial)
+	}
+	covered, partial = c.prCoveredIssues("o/r", "Refs #14976\nFixes #14976", []int{14976})
+	if !reflect.DeepEqual(covered, []int{14976}) || partial != nil {
+		t.Fatalf("Refs + Fixes: covered %v partial %v, want [14976] / nil", covered, partial)
+	}
+	// The hive's own deferral comment text names the incident, but it is
+	// neither a closing nor a reference keyword: no claim of any tier.
+	deferral := "<!-- hive-shared-ci-14976 -->\nDeferred to shared-CI incident #14976 (Go module proxy stream resets); the failing checks are not this PR's fault."
+	if got := ParseClaimedIssues(deferral, "o/r"); got != nil {
+		t.Fatalf("deferral comment parsed as closing claims: %v", got)
+	}
+	if got := ParseReferencedIssues(deferral, "o/r"); got != nil {
+		t.Fatalf("deferral comment parsed as reference claims: %v", got)
+	}
+	covered, partial = c.prCoveredIssues("o/r", deferral, nil)
+	if covered != nil || partial != nil {
+		t.Fatalf("deferral text covers %v / %v, want nothing", covered, partial)
+	}
+}
+
+// Through the relay: the declared-but-only-referenced issue is an
+// AddressedBy fact (040, "addresses part of it"), not CoveredBy.
+func TestPRRequestWatcher_DeclaredRefsIssueIsAddressedNotCovered(t *testing.T) {
+	created := 0
+	srv := newPRMockServer(t, "", &created)
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	enableInProgress(c, "hive-a", time.Hour)
+	sink := &stageenginetest.Recorder{}
+	c.SetStageFactSink(sink)
+	c.coveredByPRLabel.mark("o/r")
+
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	body := "Retry go mod download.\n\nRefs #14976 (needs-human: workflow files need the same retry)"
+	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/fix-14976", Title: "🐛 fix(ci): retry", Body: body, Agent: "scanner", IssueN: []int{14976}}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessPRRequestsOnce(context.Background())
+	if created != 1 {
+		t.Fatalf("expected 1 PR created, got %d", created)
+	}
+	var methods []string
+	for _, f := range sink.All() {
+		if f.Method != "CoveredBy" && f.Method != "AddressedBy" {
+			continue
+		}
+		if f.Ref.Number != 14976 || f.PR == nil || f.PR.Number != 42 {
+			t.Errorf("fact = %+v, want (issue #14976, PR #42)", f)
+		}
+		methods = append(methods, f.Method)
+	}
+	if !reflect.DeepEqual(methods, []string{"AddressedBy"}) {
+		t.Fatalf("facts = %v, want exactly one AddressedBy (no CoveredBy for a Refs-only declared issue)", methods)
 	}
 }
 

@@ -183,6 +183,15 @@ func (c *Client) clearInProgressForPR(ctx context.Context, repo string, prNumber
 	c.coverIssuesByPR(ctx, repo, prNumber, issues)
 }
 
+// addressInProgressForPR is clearInProgressForPR for the declared issues
+// the PR's body references without closing (prCoveredIssues' partial set).
+func (c *Client) addressInProgressForPR(ctx context.Context, repo string, prNumber int, issues []int) {
+	if !c.inProgressSetting().Enabled || len(issues) == 0 {
+		return
+	}
+	c.addressIssuesByPR(ctx, repo, prNumber, issues)
+}
+
 // prCoveredIssues is every same-repo issue a freshly opened PR covers: the
 // issues the request declared (hive-open-pr --issue) plus the ones its body
 // closes with a GitHub closing keyword. The request names the issue the
@@ -192,31 +201,61 @@ func (c *Client) clearInProgressForPR(ctx context.Context, repo string, prNumber
 // with the scanner as their actor while the PR was in CI
 // (hivecommons/hive#14910, #14911 under #14921). Ascending, deduplicated,
 // non-positive numbers dropped.
-func (c *Client) prCoveredIssues(repo, body string, declared []int) []int {
+//
+// partial is the declared issues the body references WITHOUT closing
+// ("Refs #N (needs-human: …)"): the agent chose not to claim it finishes
+// the issue — the same rule claimsFromPR applies to a branch-name claim
+// (hivecommons/hive#12144) — so those get an AddressedBy fact (040, reason
+// "addresses part of it"), never a "covers it". hivecommons/hive#14976 was
+// staged "open PR covers it" under its own partial fix #14990 this way
+// (hivecommons/hive#15008). A bare mention ("see #N", a hive deferral
+// comment) is neither: it is not in the body's claims at all.
+func (c *Client) prCoveredIssues(repo, body string, declared []int) (covered, partial []int) {
 	owner, name := c.splitRepo(repo)
 	seen := map[int]bool{}
-	var out []int
-	add := func(n int) {
+	add := func(dst *[]int, n int) {
 		if n <= 0 || seen[n] {
 			return
 		}
 		seen[n] = true
-		out = append(out, n)
+		*dst = append(*dst, n)
+	}
+	closing := closingIssueRefs(body, owner, name)
+	referenced := map[int]bool{}
+	for _, ref := range ParseReferencedIssues(body, repo) {
+		if ref.Repo == repo || strings.EqualFold(ref.Repo, repo) {
+			referenced[ref.Issue] = true
+		}
 	}
 	for _, n := range declared {
-		add(n)
+		if referenced[n] && !closing[n] {
+			add(&partial, n)
+			continue
+		}
+		add(&covered, n)
 	}
-	for n := range closingIssueRefs(body, owner, name) {
-		add(n)
+	for n := range closing {
+		add(&covered, n)
 	}
-	sort.Ints(out)
-	return out
+	sort.Ints(covered)
+	sort.Ints(partial)
+	return covered, partial
 }
 
 // coverIssuesByPR submits one CoveredBy fact per issue naming the open PR,
 // after making sure the repo defines the covered-by-pr label. Best-effort:
 // a failure is logged and the stage sweep converges the labels later.
 func (c *Client) coverIssuesByPR(ctx context.Context, repo string, prNumber int, issues []int) {
+	c.stageIssuesUnderPR(ctx, repo, prNumber, issues, false)
+}
+
+// addressIssuesByPR is coverIssuesByPR for the issues the PR references
+// without closing (AddressedBy: 040, reason "addresses part of it").
+func (c *Client) addressIssuesByPR(ctx context.Context, repo string, prNumber int, issues []int) {
+	c.stageIssuesUnderPR(ctx, repo, prNumber, issues, true)
+}
+
+func (c *Client) stageIssuesUnderPR(ctx context.Context, repo string, prNumber int, issues []int, partial bool) {
 	if len(issues) == 0 {
 		return
 	}
@@ -231,8 +270,14 @@ func (c *Client) coverIssuesByPR(ctx context.Context, repo string, prNumber int,
 			}
 			continue
 		}
-		if err := c.StageFacts().CoveredBy(ctx, c.IssueStageRef(repo, n), pr); err != nil && c.logger != nil {
-			c.logger.Warn("in-progress: moving issue to covered-by-pr after PR open failed", "repo", repo, "issue", n, "error", err)
+		var err error
+		if partial {
+			err = c.StageFacts().AddressedBy(ctx, c.IssueStageRef(repo, n), pr)
+		} else {
+			err = c.StageFacts().CoveredBy(ctx, c.IssueStageRef(repo, n), pr)
+		}
+		if err != nil && c.logger != nil {
+			c.logger.Warn("in-progress: moving issue to covered-by-pr after PR open failed", "repo", repo, "issue", n, "partial", partial, "error", err)
 		}
 	}
 }

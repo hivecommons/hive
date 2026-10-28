@@ -51,11 +51,11 @@ const (
 //   - the reporter-trust awaiting label (default needs-triage): the issue
 //     waits for a maintainer to triage it before the hive may pick it up.
 //
-// The Hive activity monitor's synthetic "Needs human" facet reads the same
-// list (StageTrackerResponse.NeedsHumanLabels); a label matches when it
-// equals an entry or sits under it as `entry/...` (needs-human/agent-ready),
-// or matches the needs-human*, *needs-decision or *needs-author patterns
-// (stageTrackerLabelNeedsHuman).
+// The list still rides the stage-tracker payload
+// (StageTrackerResponse.NeedsHumanLabels) for the Projects preset, but the
+// Hive activity monitor's own "Needs human" chip no longer reads it —
+// labels such as needs-signal or hold put rows nobody waits on under the
+// chip (hivecommons/hive#15008); it uses stageTrackerNeedsHuman instead.
 //
 // "blocked" is deliberately absent: the codebase treats it as a contributor
 // skip marker and a PR mergeability state, not as a parked-on-a-person label.

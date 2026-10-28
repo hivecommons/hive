@@ -23,7 +23,17 @@ const (
 	reasonIssueLikelyDone = "merged PR awaiting confirmation"
 	reasonIssueActionable = "actionable"
 	reasonIssueOpenPR     = "open PR covers it"
+	// reasonIssueOpenPRPartial is 040 under a PR that references the issue
+	// without closing it (ClaimFact.Partial); ReasonIsPartialCover reads it.
+	reasonIssueOpenPRPartial = "open PR addresses part of it (references it without a closing keyword)"
 )
+
+// ReasonIsPartialCover reports whether a 040 reason describes a PR that
+// references the issue without closing it, so presentation layers can say
+// "addresses part of" rather than "covers".
+func ReasonIsPartialCover(reason string) bool {
+	return strings.HasPrefix(strings.TrimSpace(reason), "open PR addresses part of it")
+}
 
 // deriveIssue maps issue Facts to a Decision. Pure: same Facts → same
 // Decision. An issue never goes past 040-covered-by-pr: 050+ are PR stages
@@ -141,10 +151,17 @@ func issueStage(f Facts) (stage stagelabels.Stage, covered bool, reason string) 
 		}
 		return stagelabels.Claimed, false, "in-progress start mark (no PR yet)"
 	case BucketCoveredByPR:
+		partial := claim != nil && claim.Partial
 		if pr := is.CoveringPR; pr != nil && pr.Number > 0 {
 			if s := is.CoveringPRStage; s != stagelabels.None && !s.Before(stagelabels.CoveredByPR) {
+				if partial {
+					return stagelabels.CoveredByPR, true, "open PR #" + strconv.Itoa(pr.Number) + " addresses part of it (references it without a closing keyword; PR at " + s.String() + ")"
+				}
 				return stagelabels.CoveredByPR, true, "open PR #" + strconv.Itoa(pr.Number) + " covers it (PR at " + s.String() + ")"
 			}
+		}
+		if partial {
+			return stagelabels.CoveredByPR, false, reasonIssueOpenPRPartial
 		}
 		return stagelabels.CoveredByPR, false, reasonIssueOpenPR
 	}

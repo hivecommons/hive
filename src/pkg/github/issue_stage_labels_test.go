@@ -18,6 +18,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -324,6 +325,9 @@ func TestIssueStageFor(t *testing.T) {
 		// as the issue's label — 050+ are PR-only stages.
 		{"covered, PR staged: stays 040", IssueStageInput{Repo: "acme/widgets", Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 99}}, stagelabels.CoveredByPR, true},
 		{"covered, cross-repo PR staged: stays 040", IssueStageInput{Repo: "acme/other", Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 99, PRRepo: "acme/widgets"}}, stagelabels.CoveredByPR, true},
+		// hivecommons/hive#15008: a live "Refs #N" claim (#13747) is 040 as
+		// "addresses part of it", never "covers it".
+		{"partial: Refs claim is 040 but not a cover", IssueStageInput{Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 5, Reference: true, Decision: ClaimDecisionCoveredByOpenPR}}, stagelabels.CoveredByPR, false},
 		{"likely-done is no stage", IssueStageInput{Labels: []string{LikelyDoneLabel}}, stagelabels.None, false},
 		{"filtered out", IssueStageInput{Bucket: "filtered"}, stagelabels.None, false},
 		// Owner decision: an issue parked on a person wears 045, never 085
@@ -356,6 +360,9 @@ func TestIssueStageFor(t *testing.T) {
 			got, covered, reason := IssueStageFor(tc.in, prStage)
 			if strings.HasPrefix(tc.name, "held:") && !strings.HasPrefix(reason, "held: ") {
 				t.Fatalf("reason %q must name the hold label", reason)
+			}
+			if partial := strings.HasPrefix(tc.name, "partial:"); partial != stageengine.ReasonIsPartialCover(reason) || (!partial && strings.HasPrefix(tc.name, "covered") && reason != "open PR covers it" && !strings.Contains(reason, " covers it (PR at ")) {
+				t.Fatalf("reason %q: partial-cover wording must follow the claim's Reference flag", reason)
 			}
 			if got != tc.want || covered != tc.covered {
 				t.Fatalf("IssueStageFor = %s/%v, want %s/%v", got, covered, tc.want, tc.covered)
