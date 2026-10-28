@@ -402,3 +402,22 @@ func TestHasSandboxReviewSpools_EmptyAndMissing(t *testing.T) {
 		t.Error("manifest dir holding only a staging dir reported spools")
 	}
 }
+
+func TestHasSandboxReviewSpools_IgnoresUntrustedDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "k.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !hasSandboxReviewSpools(dir) {
+		t.Fatal("trusted manifest dir with a manifest reported no spools")
+	}
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if hasSandboxReviewSpools(dir) {
+		t.Error("world-writable manifest dir kept the fast poll cadence")
+	}
+}

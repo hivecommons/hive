@@ -141,10 +141,15 @@ func (c *Client) processSandboxReviewSpools(ctx context.Context, nowFn func() ti
 }
 
 // hasSandboxReviewSpools reports whether any manifest is registered in dir.
+// A dir the relay does not trust is never read or pruned, so it counts as
+// holding none; otherwise the watcher would poll fast forever.
 // While one is, the watcher keeps its short poll cadence: a Job writes its
 // spool over a shared volume from another node, where a change notification
 // never fires.
 func hasSandboxReviewSpools(dir string) bool {
+	if fi, err := os.Lstat(dir); err != nil || untrustedOwnerReason(fi) != "" {
+		return false
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
