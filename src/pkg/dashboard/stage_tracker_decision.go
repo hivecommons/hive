@@ -439,7 +439,7 @@ func decisionForWaitingOnContributor(it StageTrackerItem, held bool, now time.Ti
 // repository, held for an owner under
 // governor.labels.stage.adoption.maintainer_policy: ask
 // (hivecommons/hive#14524). The question names the author and how long
-// their hive has been gone; the lead option is Adopt.
+// their clanker has been gone; the lead option is Adopt.
 func decisionForAdoption(it StageTrackerItem, held bool, now time.Time) *StageTrackerDecision {
 	a := it.Adoption
 	who := "the author"

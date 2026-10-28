@@ -134,8 +134,16 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 		out.Next = "Stays at " + parkedAt + " — release the hold or decide it yourself."
 	case d.Verdict == delegatedecision.VerdictAdoptSupersede:
 		out.Action = rowActionAdopted
-		out.Outcome = "Adopted in supersede mode" + ruleTag + "."
-		out.Next = "The adoption engine takes it on its next pass: a hive PR supersedes this one and rebases and merges unattended."
+		// Outcome first, in one line; the head already names the rule, so
+		// it is not repeated here (hivecommons/hive#15126).
+		ref := "#" + strconv.Itoa(in.Number)
+		if actionTarget > 0 {
+			out.Outcome = fmt.Sprintf("Adopted: hive opened #%d with the same commits and will merge it; %s will be closed as superseded.", actionTarget, ref)
+			out.Next = "The hive's copy rebases, soaks and merges unattended; " + ref + " closes when it lands."
+		} else {
+			out.Outcome = "Adopted — hive will re-author " + ref + " as a hive PR with the same commits and merge it next pass; " + ref + " will be closed as superseded."
+			out.Next = "Until the copy opens the row reads Adopted at the merge gate; the copy then carries the chevron and " + ref + " is listed under it as superseded."
+		}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate || d.Verdict == delegatedecision.VerdictCloseSuperseded:
 		out.Action = rowActionClosed
 		if actionTarget > 0 {

@@ -84,6 +84,9 @@ type delegatedDecisionRequest struct {
 	// Force re-runs the decision past the "already recorded" dedup (the
 	// `decide:delegate:rerun` option on a stuck decision).
 	Force bool `json:"force,omitempty"`
+	// Chosen names the preview button that sent this request
+	// (hivecommons/hive#15126); the ledger records it as the action's note.
+	Chosen string `json:"chosen,omitempty"`
 }
 
 // delegatedDecisionJob is the wire shape of one job.
@@ -786,7 +789,7 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			notes = append(notes, "labels added: "+strings.Join(a.Labels, ", "))
 		case delegatedecision.ActionLabelsRemove:
 			for _, l := range a.Labels {
-				if err := client.RemoveLabel(ctx, repoFull, number, l); err != nil {
+				if err := delegatedRemoveLabel(ctx, client, repoFull, number, l); err != nil {
 					return notes, fmt.Errorf("removing label %s: %w", l, err)
 				}
 			}
@@ -855,10 +858,65 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			notes = append(notes, "recommendation posted; `"+delegatedecision.LabelNeedsDecision+"` kept for the owner")
 		}
 	}
+	if lifted := s.liftDelegatedParkLabels(ctx, in, d); len(lifted) > 0 {
+		notes = append(notes, "park labels lifted: "+strings.Join(lifted, ", "))
+	}
 	for _, r := range d.Refusals {
 		notes = append(notes, "refused: "+r)
 	}
 	return notes, nil
+}
+
+// delegatedParkLabels are the labels that asked a person to decide and
+// that a resolving delegated decision answers: the needs-human ask and the
+// 085 needs-decision stage label (PR and issue forms). `hold` is never
+// among them.
+var delegatedParkLabels = []string{config.DefaultNeedsHumanLabel, stagelabels.NeedsDecision.Label(), ghpkg.NeedsDecisionStageLabel}
+
+// delegatedDecisionResolves reports whether verdict settles the park
+// (approve / direction / adopt / close); recommend-only, owner-only and
+// refused keep the item with the person.
+func delegatedDecisionResolves(v delegatedecision.Verdict) bool {
+	switch v {
+	case delegatedecision.VerdictApprove, delegatedecision.VerdictDirection, delegatedecision.VerdictAdoptSupersede,
+		delegatedecision.VerdictCloseDuplicate, delegatedecision.VerdictCloseSuperseded,
+		delegatedecision.VerdictQuarantineFlaky, delegatedecision.VerdictAcceptRatchet, delegatedecision.VerdictAcceptProposal:
+		return true
+	}
+	return false
+}
+
+// liftDelegatedParkLabels takes the delegatedParkLabels still on a PR off
+// once the delegate has resolved it (hivecommons/hive#15096 N13: the
+// decision landed, `needs-human` stayed, the label-derived pass re-parked
+// the row in 085 and the popover re-asked). Returns the labels removed; a
+// failed removal is logged, not returned — the decision record stands and
+// the tracker projection ranks it above the stale label.
+func (s *Server) liftDelegatedParkLabels(ctx context.Context, in delegatedecision.Input, d delegatedecision.Decision) []string {
+	if in.Kind != delegatedecision.KindPR || !delegatedDecisionResolves(d.Verdict) {
+		return nil
+	}
+	var lifted []string
+	for _, label := range delegatedParkLabels {
+		if !slices.ContainsFunc(in.Labels, func(l string) bool { return strings.EqualFold(l, label) }) {
+			continue
+		}
+		if err := delegatedRemoveLabel(ctx, s.deps.GHClient, in.Repo, in.Number, label); err != nil {
+			if s.deps.Logger != nil {
+				s.deps.Logger.Warn("delegated decision: park label not lifted", "repo", in.Repo, "pr", in.Number, "label", label, "error", err)
+			}
+			continue
+		}
+		lifted = append(lifted, label)
+	}
+	return lifted
+}
+
+// delegatedRemoveLabel is the one label-removal write of the delegate: a
+// solicited write (the operator chose Let hive decide), shared by the
+// decision's own label actions and the park-label lift.
+func delegatedRemoveLabel(ctx context.Context, client *ghpkg.Client, repo string, number int, label string) error {
+	return client.RemoveLabel(ctx, repo, number, label)
 }
 
 func delegatedLabelMeta(label string) (color, description string) {

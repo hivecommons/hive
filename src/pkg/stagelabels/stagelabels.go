@@ -155,7 +155,7 @@ const RegressedLabel = Prefix + "regressed"
 // lists; the health marker is red; role/* is neutral grey except the one
 // tier that means "the hive will merge this". The author/* kinds each get
 // their own hue so the three read apart at a glance: human is the same
-// neutral grey as the non-trusted roles, clanker (a contributor's hive)
+// neutral grey as the non-trusted roles, clanker (a contributor's own agent)
 // is purple, hive (this repo's own hive) is blue.
 const (
 	StageColor         = "f5a623"
@@ -282,7 +282,7 @@ var Table = []Definition{
 // FixingStageFor is the "author must act" stage for a red or blocked PR by
 // who wrote it: the hive's own PR (selfAuthored, or author/hive) goes to 070
 // fixing — a hive agent reworks it; an author/clanker PR goes to 072
-// returned-to-contributor — the contributor's hive is handed it back; a
+// returned-to-contributor — the contributor's clanker is handed it back; a
 // human (or unknown-kind) PR goes to 071 needs-author — the person must act.
 // The three carry the same evidence and leave through the same transitions;
 // only who is on the hook differs (docs: "Stage 07x by author kind").

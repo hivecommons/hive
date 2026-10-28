@@ -212,7 +212,7 @@ const blocked = { repo: 'hivecommons/hive', number: 15180, kind: 'pr', stage: 60
   soak: { started_at: iso(now - 5 * 60000), until: iso(now + 25 * 60000), window_s: 1800, head_sha: '0123456789a' },
   merge_gate: { state: 'gate-pending', reason: 'contributor-lane:claim-tier-untrusted', next_sweep_at: iso(now + 42000) } };
 info = stageTrackerMergeGateInfo(blocked, now);
-assert.strictEqual(info.word, 'Awaiting merge gate'); assert.strictEqual(info.detail, 'soak 25m left'); assert.strictEqual(info.cue, 'soaking');
+assert.strictEqual(info.word, 'Review passed'); assert.strictEqual(info.detail, 'soak 25m left'); assert.strictEqual(info.cue, 'soaking');
 assert.ok(info.tip.startsWith('Head 0123456 must sit 30 minutes without new commits before the hive merges it · 25m left · soak ends '), info.tip);
 assert.strictEqual(stageTrackerMergeGateInfo(Object.assign({}, blocked, { soak: Object.assign({}, blocked.soak, { until: iso(now - 1000) }) }), now).detail, 'soaked — next sweep in 42s');
 // Without a soak clock a 060 row reads as before.

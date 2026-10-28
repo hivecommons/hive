@@ -25,7 +25,7 @@ Hive-authored labels answer different questions. Read them as independent axes, 
 | **Agent** | `agent/<lane>` | Which agent works it and, for agent-filed issues, which lane filed it? | Routing + ownership + lane provenance | The suffix is always the lane name from `HIVE_AGENT`. The classifier routes on it, PR ownership compares against it, and `authorkind` treats it as this hive's author stamp. Agent-filed issues carry exactly one lane/provenance label: `agent/<lane>`. |
 | **Origin** | `origin/<source>` | Which non-lane hive component created this item? | Provenance only, never a gate | Reserved for hive filers that have no `agent/<lane>` equivalent: `origin/selfreport`, `origin/governor`, `origin/dashboard`, `origin/forge`, and `origin/convergence`. Agent lanes do not use `origin/<lane>`; the startup reconciler (`Client.MigrateOriginLabels`, `src/pkg/github/origin_labels.go`) removes redundant lane-origin and bare-lane labels while ensuring `agent/<lane>`. `origin/reviewer`, `origin/review`, and `from-review` are retired reviewer-lane spellings and map to `agent/reviewer`. |
 | **Role** | `role/<tier>` | How far does the hive trust the author's login? | Control (auto-merge) | Was `author/<tier>` before #12581; the reconciler rewrites the old spelling. See [`role/*`](#role--would-the-hive-auto-merge-this). |
-| **Author** | `author/<kind>` | Who wrote it — a person, a contributor's hive, or this repo's hive? | Informational (gates the 072 nudge/adoption) | `author/human`, `author/clanker`, `author/hive`; names configurable under `governor.labels.author`. See [`author/*`](#author--who-wrote-this-pr). |
+| **Author** | `author/<kind>` | Who wrote it — a person, a contributor's clanker, or this repo's hive? | Informational (gates the 072 nudge/adoption) | `author/human`, `author/clanker`, `author/hive`; names configurable under `governor.labels.author`. See [`author/*`](#author--who-wrote-this-pr). |
 | **Modifiers** | `blocked`, `hold`, `needs-*`, `hive-pause/<hive-id>` | What is stopping it right now? | Hold / suppress | See the reference table; these are the hard gates. |
 
 ### Origin sources
@@ -557,7 +557,7 @@ stage but written only on change:
 
 **Renamed from `author/<tier>`** ([#12581](https://github.com/hivecommons/hive/issues/12581)).
 The old prefix conflated trust with authorship: `author/trusted` sat on PRs a
-maintainer pushed by hand and on PRs a contributor's hive opened under that
+maintainer pushed by hand and on PRs a contributor's clanker opened under that
 contributor's login. Trust is now `role/*`; `author/*` says who wrote it (next
 section). Migration is automatic: every reconcile that writes a PR removes a
 retired `author/trusted|contributor|newcomer|untrusted` and adds the `role/*`
@@ -634,7 +634,7 @@ revert-rate-by-author-kind drill-down (#12428) reads it.
 | Label | Meaning | Example |
 |---|---|---|
 | `author/human` | a person pushed the PR themselves | a maintainer's hand-written PR |
-| `author/clanker` | a **contributor's own hive** (relay) authored the PR under that contributor's GitHub login — "clanker" is the project's word for a contributor's hive | mendezr's or Karibhou's relay-opened PRs: human login, `— hive:` trailer |
+| `author/clanker` | a **contributor's own agent** (relay) authored the PR under that contributor's GitHub login — "clanker" is the project's word for a contributor's agent (it is their clanker, not a hive) | mendezr's or Karibhou's relay-opened PRs: human login, `— hive:` trailer |
 | `author/hive` | **this repository's own hive** — the App or one of its agent lanes — authored the PR | `app/hivecommons-hive` PRs, anything stamped `agent/<lane>` |
 
 Detection rules, first match wins (`authorkind.Explain` returns the rule
@@ -678,7 +678,7 @@ the label, and with it the tracker word and whether the hive has anyone to
 | Kind | Stage | Tracker word | Contributor nudge (`<!-- hive:contributor-nudge -->` + relay interrupt) | Offline adoption (074) |
 |---|---|---|---|---|
 | `author/human` | `stage/071-needs-author` | Needs author | no — plain wait on the person; they push or comment (a `role/trusted` human still gets one `<!-- hive:human-071-note head=… -->` comment per head naming the reason, always on and not gated on `ContributorNudge`, [#13636](https://github.com/hivecommons/hive/issues/13636)) | no |
-| `author/clanker` | `stage/072-returned-to-contributor` | Returned to contributor | yes — the contributor's hive is poked to fix its own PR | yes — after the grace, the hive adopts |
+| `author/clanker` | `stage/072-returned-to-contributor` | Returned to contributor | yes — the contributor's clanker is poked to fix its own PR | yes — after the grace, the hive adopts |
 | `author/hive` (and any self-authored PR) | `stage/070-fixing` | Fixing | n/a — the hive's own lanes rework the head | n/a |
 
 The split also covers a head whose commits GitHub links to the hive App while
@@ -915,7 +915,7 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    owner decision 2026-10-28 on hivecommons/hive#14524, where a
    maintainer's own `author/clanker` PR sat at 072 for 26h with its hive
    gone while every sweep logged "author maintains the repository; not
-   adopting"): a PR a contributor's hive opened is the hive's to stand in
+   adopting"): a PR a contributor's clanker opened is the hive's to stand in
    for when that hive goes away, whoever owns the account. `ask` holds a
    maintainer's PR for an owner's decision instead — the stage record
    notes `author-is-maintainer`, the activity monitor row reads
@@ -1458,7 +1458,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 |---|---|---|
 | `capability-gap` | the GitHub App lacks a permission; deciding cannot clear it | The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change. |
 | `ci-ratchet` | a CI hygiene gate, landed as a ratchet | A new CI hygiene gate lands as a ratchet: it records today's baseline and fails only on increases, so existing work is never blocked. |
-| `contributor-offline` | the author's hive hasn't been connected since the nudge | The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting. |
+| `contributor-offline` | the author's clanker hasn't been connected since the nudge | The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting. |
 | `dedupe` | an older issue already tracks this | An older issue already tracks the same work; one thread keeps it moving. |
 | `default-approve` | no special rule applies; the hive took its own recommendation | No owner rule singles this issue out, so the hive went with its own recommendation — the reversible choice that keeps work moving. |
 | `default-release` | no special rule applies; a green branch is approved | No owner rule holds this PR back; its branch is green and a merge is reversible, so it is approved. |
@@ -1505,7 +1505,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `adoption-stalled:contributor-lane:workflow-path`, `capability:workflows-permission`, `contributor-lane:workflow-path`, `workflow-path` | the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it | The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded. |
 | `adoption-undone` | the hive's copy was closed without merging and the adoption was undone | The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub. |
 | `author-association`, `contributor-lane:author-association`, `human-merge`, `ready-for-human-merge`, `untrusted-author` | no merge lane vouches for this PR's author; a maintainer merges | The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors. |
-| `author-online` | the author's hive is connected, so hive won't take the PR over | Adoption is for authors whose hive has gone offline; this author's hive is connected, so the hive leaves the PR with them. |
+| `author-online` | the author's clanker is connected, so hive won't take the PR over | Adoption is for authors whose clanker has gone offline; this author's clanker is connected, so the hive leaves the PR with them. |
 | `behind` | the branch is behind the base branch | The branch is behind the base branch and must be updated before it can merge. |
 | `changes-requested`, `changes_requested`, `contributor-lane:changes-requested`, `human-changes-requested`, `request_changes`, `reviewer-verdict:request_changes` | a reviewer asked for changes; a new commit is needed | A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it. |
 | `checks-failing`, `ci-failing`, `ci-red`, `red` | CI is failing on this branch | Required checks are failing on this branch; nothing merges until they are green. |

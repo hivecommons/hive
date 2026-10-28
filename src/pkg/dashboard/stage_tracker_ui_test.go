@@ -488,9 +488,9 @@ assert.strictEqual(chips(row), 1, 'author kind is an icon, not a chip');
 assert.ok(row.includes('ham-mod-needs-human">needs human +1</span>'), row);
 assert.ok(tooltip(row).includes('Flags: needs-rebase, needs-human') && tooltip(row).includes('Trail: CI / Review → Reviewed → Returned to contributor'), tooltip(row));
 
-// PR reviewed (060): Review done, Merge gate lit, no detour.
+// PR reviewed (060): pre-admission (CI pending or soak), so CI / Review stays lit; the merge gate starts at 080.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 60 }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active', T, 'todo cap'], '060 reviewed lights CI / Review, not the merge gate: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 80, caption: 'soak 20m left' }, stages, ctx);
 assert.ok(row.includes('<span class="ham-seg-t">Ready for auto merge</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left · Next move: hive"'), 'chevron tooltip carries 080: ' + row);
 
@@ -736,7 +736,7 @@ assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 // is what the chevron says, the actor is whose move it is. The active
 // chevron now leads with its stage icon, so the regex skips that svg.
 const prWords = {};
-for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Awaiting merge gate', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
+for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passed', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
   const m = /aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
   assert.ok(m, 'stage ' + st + ' has no active word + actor: ' + r);
@@ -747,7 +747,7 @@ for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Awaiting mer
 // and the next mover for the strip's active segment; it stays empty when no
 // active segment is in range.
 assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages), '<p class="ham-current-stage">CI / Review · Fixing · Next move: clanker</p>');
-assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 560, kind: 'pr', stage: 60 }, stages), '<p class="ham-current-stage">Awaiting merge gate · Next move: hive</p>', 'no detour → column word only');
+assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 560, kind: 'pr', stage: 60 }, stages), '<p class="ham-current-stage">Review passed · Next move: hive</p>', 'no detour → column word only');
 assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages, { from: 500 }), '', 'no caption when the active segment is out of range');
 assert.strictEqual(STAGE_TRACKER_ACTOR[70], 'author', '070 fixing is the author\'s move');
 // Filters.

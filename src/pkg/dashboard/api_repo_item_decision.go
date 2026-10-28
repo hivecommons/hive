@@ -579,7 +579,7 @@ func renderRepoItemDecisionQueueNote(user, comment string) string {
 // renderRepoItemDecisionAdoptComment is the attributed note an Adopt
 // decision leaves on the PR before the request label is applied.
 func renderRepoItemDecisionAdoptComment(user, comment string) string {
-	body := fmt.Sprintf("%s by=%s -->\n@%s asked the hive to adopt this pull request: its author maintains the repository and their hive has been offline since the nudge, so adoption waited for an owner's decision (`governor.labels.stage.adoption.maintainer_policy: ask`). The adoption engine takes it from here on its next pass; the author's commits and sign-off are kept.", repoItemDecisionAdoptMarker, user, user)
+	body := fmt.Sprintf("%s by=%s -->\n@%s asked the hive to adopt this pull request: its author maintains the repository and their clanker has been offline since the nudge, so adoption waited for an owner's decision (`governor.labels.stage.adoption.maintainer_policy: ask`). The adoption engine takes it from here on its next pass; the author's commits and sign-off are kept.", repoItemDecisionAdoptMarker, user, user)
 	if comment != "" {
 		body += "\n\n> " + strings.ReplaceAll(comment, "\n", "\n> ")
 	}

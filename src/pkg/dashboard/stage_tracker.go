@@ -507,8 +507,16 @@ type StageTrackerItem struct {
 	// item (approve, give-direction, hold, let-hive-decide, …) with what
 	// became of it, and OperatorActionCount how many were recorded; the
 	// row's ✓ badge and its hover read these (operator_actions.go).
-	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
-	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
+	LastOperatorAction *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
+	// Decided is the post-decision state machine (hivecommons/hive#15126):
+	// set once the newest recorded operator action is a decision (let hive
+	// decide with a verdict, approve, queue-merge, merge-now). While its
+	// effect is pending the row is projected onto the decided stage.
+	Decided *StageTrackerDecided `json:"decided,omitempty"`
+	// AdoptedFrom is set on the hive's copy of an adopted PR: the original
+	// and the decision that led to the adoption.
+	AdoptedFrom         *StageTrackerAdoptedFrom `json:"adopted_from,omitempty"`
+	OperatorActionCount int                      `json:"operator_action_count,omitempty"`
 	// New is set on a 000-new item — open, unplaced, nothing holding it —
 	// with who moves it next and the gates ahead; the Open column renders
 	// it as "New · waiting for …" (hivecommons/hive#15094).
@@ -591,6 +599,20 @@ type StageTrackerLinkedPR struct {
 	// row fields so its sub-row wears the ✓ badge too.
 	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
 	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
+	// Decided / AdoptedBy / AdoptedByState / AdoptedFrom mirror the nested
+	// PR's own row fields (hivecommons/hive#15126): the sub-row reads the
+	// decided state and its adoption pairing.
+	Decided        *StageTrackerDecided     `json:"decided,omitempty"`
+	AdoptedBy      int                      `json:"adopted_by,omitempty"`
+	AdoptedByState string                   `json:"adopted_by_state,omitempty"`
+	AdoptedFrom    *StageTrackerAdoptedFrom `json:"adopted_from,omitempty"`
+	// State is "closed" for an adopted original the hive (or a person)
+	// closed once its copy existed (hivecommons/hive#15126): the sub-row
+	// is one dimmed line "#N <title> · closed · superseded by #M" with no
+	// chevron track. SupersededBy is the copy; Title is cached from the
+	// copy (same commits, same title), never fetched live.
+	State        string `json:"state,omitempty"`
+	SupersededBy int    `json:"superseded_by,omitempty"`
 	// Hold mirrors the nested PR's own row field (hivecommons/hive#15020).
 	Hold *StageTrackerHold `json:"hold,omitempty"`
 	// StageActor mirrors the nested PR's own row field so the sub-row's
@@ -732,9 +754,9 @@ const (
 )
 
 // stageTrackerBranchFrom says which main segment a detour stage hangs off.
-// The PR strip collapses 050 and 060 into one "CI / Review" chevron (lit during
-// 050, ticked from 060 on), so review-side detours hang off 050; 060 itself
-// lights the "Merge admission" chevron.
+// The PR strip collapses 050 and 060 into one "CI / Review" chevron (060 is
+// pre-admission: approved, CI still pending or red), so review-side detours
+// hang off 050; see stageTrackerColumn for the full stage → column table.
 func stageTrackerBranchFrom(number int) int {
 	switch number {
 	case trackerNumberFixing, trackerNumberNeedsAuthor, trackerNumberReturned, trackerNumberAdopted:
@@ -765,7 +787,7 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.ReviewPending:
 		return "CI / Review"
 	case stagelabels.Reviewed:
-		return "Reviewed"
+		return "Review passed"
 	case stagelabels.Fixing:
 		return "Fixing"
 	case stagelabels.NeedsAuthor:
@@ -1263,6 +1285,9 @@ func humanizeStageReason(reason string) string {
 	if stageengine.ReasonIsPartialCover(r) {
 		return "the PR references it without closing it (partial)"
 	}
+	if clause, ok := humanizeCoverReason(r); ok {
+		return clause
+	}
 	switch lower {
 	case stagelabels.LaneReasonAdoptionChildClosedTwice:
 		return "the hive's copies of this PR were closed without merging twice within an hour"
@@ -1354,7 +1379,7 @@ func humanizeStageReason(reason string) string {
 	if rest, ok := strings.CutPrefix(lower, "contributor-lane:"); ok {
 		return strings.ReplaceAll(strings.ReplaceAll(rest, "-", " "), "_", " ")
 	}
-	return strings.NewReplacer("-", " ", "_", " ", ":", ": ").Replace(r)
+	return stageTrackerPlainStages(strings.NewReplacer("-", " ", "_", " ", ":", ": ").Replace(stageTrackerPlainStages(r)))
 }
 
 // unauthorizedStepWords renders an `unauthorized:<step>` step as words.
@@ -1618,7 +1643,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.ReviewPending:
 		return joinClause("Review swarm requested; waiting for a verdict on the current head", clause), "review swarm"
 	case stagelabels.Reviewed:
-		return joinClause("Review swarm approved; a gate is still pending", clause), "CI"
+		return joinClause("Review passed; waiting for merge admission", clause), "CI"
 	case stagelabels.Fixing:
 		return joinClause("Red or changes requested; a hive agent is fixing it", clause), "hive"
 	case stagelabels.NeedsAuthor:
@@ -2216,6 +2241,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	stageTrackerMergeTrainPostPass(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
+	s.applyDecidedProjection(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
@@ -2968,6 +2994,8 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.MergeTrain = pr.MergeTrain
 				lp.Soak = pr.Soak
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
+				lp.Decided, lp.AdoptedFrom = pr.Decided, pr.AdoptedFrom
+				lp.AdoptedBy, lp.AdoptedByState = pr.AdoptedBy, pr.AdoptedByState
 				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)

@@ -145,8 +145,11 @@ text = stageTrackerResultText({ action: 'rerouted', target: adoptedResult.target
 assert.strictEqual(text.head, 'Reroute to another clanker on hivecommons/hive#15038: rerouted');
 assert.ok(text.outcome.indexOf('Rerouted → @bee2') === 0, text.outcome);
 assert.ok(text.next.indexOf('falls back to Adopt now') > 0, text.next);
-// A delegated adoption still reads as the hive's decision.
-assert.ok(stageTrackerResultText(Object.assign({ rule: 'grace-elapsed-adopt-now' }, adoptedResult), waiting, { id: 'decide:delegate' }).head.indexOf('Hive decided on') === 0);
+// A delegated adoption still reads as the hive's decision: the outcome
+// leads (#15126) and "Hive decided on …" is the second line.
+const delegated = stageTrackerResultText(Object.assign({ rule: 'grace-elapsed-adopt-now' }, adoptedResult), waiting, { id: 'decide:delegate' });
+assert.strictEqual(delegated.head, adoptedResult.outcome);
+assert.ok(delegated.outcome.indexOf('Hive decided on') === 0, delegated.outcome);
 console.log('takeover menu ok');
 `)
 }

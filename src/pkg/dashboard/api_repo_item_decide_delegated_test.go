@@ -506,7 +506,7 @@ func TestDelegatedDecisionStuckReportsNoEffect(t *testing.T) {
 		t.Fatalf("why = %q", res.Why)
 	}
 	labels := optionLabels(res.Options)
-	for _, want := range []string{"Merge as maintainer (on GitHub)", "Re-run decision", "Close as superseded", "Send back for a new commit"} {
+	for _, want := range []string{"Merge as maintainer", "Re-run decision", "Close as superseded", "Send back for a new commit"} {
 		if !strings.Contains(strings.Join(labels, "|"), want) || !strings.Contains(res.Next, want) {
 			t.Fatalf("options %v / next %q missing %q", labels, res.Next, want)
 		}
@@ -840,5 +840,42 @@ func TestDelegatedWorkflowPathIsCapabilityGap(t *testing.T) {
 	}
 	if got := srv.delegatedStuckWhy(delegatedecision.Input{Kind: delegatedecision.KindPR, WorkflowPath: true}, delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede}, delegatedDecisionRequest{}, delegatedPriorState{Found: true}); got != delegatedecision.GlossaryWorkflowPath {
 		t.Fatalf("stuck why = %q", got)
+	}
+}
+
+// hivecommons/hive#15096 N13: a resolving delegated decision on a PR takes
+// `needs-human` and the 085 stage label off in the same write, or the next
+// label-derived pass re-parks the row the decision just answered.
+func TestDelegatedDecisionLiftsStaleNeedsHuman(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"needs-human", stagelabels.NeedsDecision.Label(), "kind/bug"}}
+	srv := newDelegatedServer(t, mock)
+	in := delegatedecision.Input{Repo: "testorg/testrepo", Number: 8, Kind: delegatedecision.KindPR, AdoptionStalled: true, Labels: mock.prLabels}
+	d := delegatedecision.Run(in)
+	if d.Verdict != delegatedecision.VerdictAdoptSupersede {
+		t.Fatalf("decision: %+v", d)
+	}
+	notes, err := srv.executeDelegatedDecision(context.Background(), in, d, "writer", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed := strings.Join(mock.removed, ",")
+	if !strings.Contains(removed, "needs-human") || !strings.Contains(removed, "085-needs-decision") {
+		t.Fatalf("park labels not lifted: removed=%v", mock.removed)
+	}
+	if strings.Contains(removed, "kind/bug") {
+		t.Fatalf("unrelated label removed: %v", mock.removed)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "park labels lifted: needs-human") {
+		t.Fatalf("notes: %v", notes)
+	}
+
+	// Recommend-only keeps the item with the person: nothing comes off.
+	mock.removed = nil
+	rec := delegatedecision.Decision{Verdict: delegatedecision.VerdictRecommendOnly, Rule: "hive-policy", Text: "x", Actions: []delegatedecision.Action{{Kind: delegatedecision.ActionRecommendOnly}}}
+	if _, err := srv.executeDelegatedDecision(context.Background(), in, rec, "writer", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.removed) != 0 {
+		t.Fatalf("recommend-only lifted labels: %v", mock.removed)
 	}
 }

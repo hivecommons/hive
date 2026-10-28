@@ -718,7 +718,7 @@ the hub reports no presence). `hold`/`do-not-merge` blocks adoption. The
 author's repository role does not: clanker PRs are adoptable on disconnect
 regardless of the owner's repo role
 (`governor.labels.stage.adoption.maintainer_policy`, default `adopt`; owner
-decision on hivecommons/hive#14524 — the PR a contributor's hive opened is the
+decision on hivecommons/hive#14524 — the PR a contributor's clanker opened is the
 hive's to stand in for when that hive disconnects, maintainer or not).
 `ask` holds a maintainer's PR for an owner: the activity monitor row says
 "waiting on @author (maintainer, offline 26h) — adopt?" and offers **Adopt**

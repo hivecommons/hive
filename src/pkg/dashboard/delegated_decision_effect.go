@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,10 +39,6 @@ var delegatedDecisionNow = time.Now
 // decisionActionDelegateRerun re-runs the delegate past the "already
 // recorded" dedup (the request carries force=true).
 const decisionActionDelegateRerun = "decide:delegate:rerun"
-
-// decisionActionOpenGitHub is a link-style option: the SPA opens the target
-// on GitHub instead of calling an endpoint (merging stays a human act).
-const decisionActionOpenGitHub = "open:github"
 
 // delegatedPriorState is what the hive already wrote on the item under
 // one rule: when it last recorded the decision, the decision text it
@@ -203,15 +200,13 @@ func isApproveDecisionText(line string) bool {
 
 // delegatedStuckOptions are the concrete next actions for a decision that
 // has not taken effect, in the popover's option shape so the SPA renders
-// them as buttons. Merging is never done by the dashboard: that option
-// opens the PR on GitHub.
+// them as buttons. Merging is the in-tracker merge-now action
+// (hivecommons/hive#15087) for a merger, not a link out.
 func delegatedStuckOptions(in delegatedecision.Input, d delegatedecision.Decision, mergerRole bool) []StageTrackerDecisionOption {
 	var opts []StageTrackerDecisionOption
 	if in.Kind == delegatedecision.KindPR && d.Verdict != delegatedecision.VerdictCloseDuplicate && d.Verdict != delegatedecision.VerdictCloseSuperseded {
-		o := StageTrackerDecisionOption{Action: decisionActionOpenGitHub, Label: "Merge as maintainer (on GitHub)", Enabled: mergerRole}
-		if !mergerRole {
-			o.ReasonIfDisabled = "merger role required"
-		}
+		o := decisionOption(decisionActionMergeNow, "Merge as maintainer", mergerRole, decisionWhyMergerRole)
+		o.Consequence = "merges #" + strconv.Itoa(in.Number) + " now via hive's identity, attributed to you"
 		opts = append(opts, o)
 	}
 	opts = append(opts, StageTrackerDecisionOption{Action: decisionActionDelegateRerun, Label: "Re-run decision", Enabled: true})

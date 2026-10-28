@@ -32,7 +32,7 @@ const (
 )
 
 // GlossaryEntry is one slug in plain words. Plain is a short phrase that
-// fits a toast headline in parentheses ("adopted (the author's hive hasn't
+// fits a toast headline in parentheses ("adopted (the author's clanker hasn't
 // been connected since the nudge)"); Detail is one full sentence for a
 // popover, tooltip or PR comment. Aliases are other spellings of the same
 // slug (lane tokens, label names) that resolve to this entry.
@@ -78,7 +78,7 @@ const (
 
 var glossary = []GlossaryEntry{
 	// Rules — why the delegate chose what it chose.
-	{Slug: "contributor-offline", Kind: GlossaryRule, Plain: "the author's hive hasn't been connected since the nudge",
+	{Slug: "contributor-offline", Kind: GlossaryRule, Plain: "the author's clanker hasn't been connected since the nudge",
 		Detail: "The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting."},
 	{Slug: "dedupe", Kind: GlossaryRule, Plain: "an older issue already tracks this",
 		Detail: "An older issue already tracks the same work; one thread keeps it moving."},
@@ -164,8 +164,8 @@ var glossary = []GlossaryEntry{
 		Detail: "Required checks are failing on this branch; nothing merges until they are green.", Aliases: []string{"ci-failing", "checks-failing", "red"}},
 	{Slug: GlossaryBehind, Kind: GlossaryReason, Plain: "the branch is behind the base branch",
 		Detail: "The branch is behind the base branch and must be updated before it can merge."},
-	{Slug: GlossaryAuthorOnline, Kind: GlossaryReason, Plain: "the author's hive is connected, so hive won't take the PR over",
-		Detail: "Adoption is for authors whose hive has gone offline; this author's hive is connected, so the hive leaves the PR with them."},
+	{Slug: GlossaryAuthorOnline, Kind: GlossaryReason, Plain: "the author's clanker is connected, so hive won't take the PR over",
+		Detail: "Adoption is for authors whose clanker has gone offline; this author's clanker is connected, so the hive leaves the PR with them."},
 	{Slug: GlossaryHold, Kind: GlossaryReason, Plain: "on hold; the hive does nothing until it is released",
 		Detail: "The item is on hold. The hive does nothing with it until a person releases the hold."},
 	{Slug: GlossaryDCO, Kind: GlossaryReason, Plain: "a commit is missing its sign-off",

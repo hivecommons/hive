@@ -126,6 +126,12 @@ type OperatorAction struct {
 	// Stage is the item's stage number when the action was recorded (0 when
 	// unknown), so the tracker can tell "still at 085" from "moved on".
 	Stage int `json:"stage,omitempty"`
+	// Verdict / Rule are the delegate's structured answer on a settled
+	// let-hive-decide (delegatedecision.Verdict and rule slug), so the
+	// tracker can project the decision's effect onto the row without
+	// parsing Detail (hivecommons/hive#15126).
+	Verdict string `json:"verdict,omitempty"`
+	Rule    string `json:"rule,omitempty"`
 }
 
 type operatorActionStore struct {
@@ -201,6 +207,12 @@ func (st *operatorActionStore) Record(repo string, number int, a OperatorAction)
 // (a delegated decision whose job just ended). Returns false when there is
 // none.
 func (st *operatorActionStore) Settle(repo string, number int, action, outcome, detail string) (bool, error) {
+	return st.SettleDecision(repo, number, action, outcome, detail, "", "")
+}
+
+// SettleDecision is Settle with the delegate's structured verdict and
+// rule kept on the record.
+func (st *operatorActionStore) SettleDecision(repo string, number int, action, outcome, detail, verdict, rule string) (bool, error) {
 	if st == nil {
 		return false, nil
 	}
@@ -212,6 +224,8 @@ func (st *operatorActionStore) Settle(repo string, number int, action, outcome, 
 		if list[i].Action == action && list[i].Outcome == operatorActionOutcomePending {
 			list[i].Outcome = outcome
 			list[i].Detail = detail
+			list[i].Verdict = verdict
+			list[i].Rule = rule
 			return true, st.persist()
 		}
 	}
@@ -292,6 +306,9 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 		Head         string `json:"head"`
 		Force        bool   `json:"force"`
 		To           string `json:"to"`
+		// Chosen is the preview button the operator pressed ("Let hive do
+		// that · previewed adopt-supersede"), hivecommons/hive#15126.
+		Chosen string `json:"chosen"`
 	}
 	if len(bytes.TrimSpace(body)) > 0 {
 		_ = json.Unmarshal(body, &raw)
@@ -327,8 +344,12 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			return out, false
 		}
 		out.Note = truncateOperatorNote(raw.Comment)
+		if out.Note == "" {
+			out.Note = truncateOperatorNote(raw.Chosen)
+		}
 	case "decide-delegated":
 		out.Action = operatorActionLetHiveDecide
+		out.Note = truncateOperatorNote(raw.Chosen)
 	case "hold":
 		if raw.Held == nil {
 			return out, false
@@ -513,7 +534,11 @@ func (s *Server) settleOperatorAction(repoFull string, number int, job *delegate
 		return
 	}
 	outcome, detail := settledDelegatedOutcome(job)
-	if _, err := s.operatorActions().Settle(repoFull, number, operatorActionLetHiveDecide, outcome, detail); err != nil && s.logger != nil {
+	verdict, rule := "", ""
+	if job.Decision != nil {
+		verdict, rule = string(job.Decision.Verdict), job.Decision.Rule
+	}
+	if _, err := s.operatorActions().SettleDecision(repoFull, number, operatorActionLetHiveDecide, outcome, detail, verdict, rule); err != nil && s.logger != nil {
 		s.logger.Warn("operator action ledger write failed", "path", operatorActionsPath, "error", err)
 	}
 	s.invalidateStageTrackerCache()
@@ -626,6 +651,10 @@ type StageTrackerOperatorAction struct {
 	HeadSHA string    `json:"head_sha,omitempty"`
 	// StageAt is the stage the item was on when the action was recorded.
 	StageAt int `json:"stage_at,omitempty"`
+	// Verdict / Rule are the delegate's structured answer on a settled
+	// let-hive-decide (hivecommons/hive#15126).
+	Verdict string `json:"verdict,omitempty"`
+	Rule    string `json:"rule,omitempty"`
 	// State is the at-a-glance verdict: addressed (the item moved on, or
 	// the control the action asked for is in effect), waiting (same stage,
 	// recently), stuck (same stage past the stuck window), pending (a
@@ -786,7 +815,11 @@ func stageTrackerOperatorActionExec(actions []OperatorAction, stage int, modifie
 	out := &StageTrackerOperatorAction{
 		Action: a.Action, Actor: a.Actor, At: a.At, Note: a.Note, Target: a.Target, Outcome: a.Outcome, Detail: a.Detail,
 		HeadSHA: a.HeadSHA, StageAt: a.Stage, StuckAfterSeconds: int64(stuckAfter / time.Second),
+		Verdict: a.Verdict, Rule: a.Rule,
 		Followed: operatorActionFollowed(a, history),
+	}
+	if out.Verdict == "" {
+		out.Verdict, out.Rule = operatorActionVerdictFromDetail(a.Detail)
 	}
 	addressed := operatorActionAddressed(a, stage, modifiers)
 	switch {
@@ -823,6 +856,22 @@ func stageTrackerOperatorActionExec(actions []OperatorAction, stage int, modifie
 		out.State = operatorActionStateWaiting
 	}
 	return out
+}
+
+// operatorActionVerdictFromDetail recovers verdict and rule from a record
+// written before Verdict/Rule were stored ("hive decided: adopt-supersede
+// (contributor-offline) — kept for the owner").
+func operatorActionVerdictFromDetail(detail string) (verdict, rule string) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(detail), "hive decided: ")
+	if !ok {
+		return "", ""
+	}
+	rest, _, _ = strings.Cut(rest, " — ")
+	verdict, tail, hasRule := strings.Cut(rest, " (")
+	if hasRule {
+		rule = strings.TrimSuffix(strings.TrimSpace(tail), ")")
+	}
+	return strings.TrimSpace(verdict), rule
 }
 
 // applyOperatorActions stamps last_operator_action / operator_action_count

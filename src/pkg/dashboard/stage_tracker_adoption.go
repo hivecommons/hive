@@ -13,7 +13,7 @@ import (
 )
 
 // The 072 adoption state on a tracker row (hivecommons/hive#14524: PR
-// #14524 sat at stage/072 for 26h, nudged twice, its author's hive gone,
+// #14524 sat at stage/072 for 26h, nudged twice, its author's clanker gone,
 // while every cycle logged "author maintains the repository; not
 // adopting" and nothing in the UI said so). A nudged contributor PR
 // carries `adoption`: whether the engine found adoption due, what holds it

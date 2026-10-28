@@ -29079,6 +29079,157 @@
         }
       }
     },
+    "/api/repos/{owner}/{repo}/items/{number}/decide-delegated/plan": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Preview what *Let hive decide* would do on one parked item (dry run, no side effects)",
+        "description": "Backs the activity monitor's *Let hive decide* confirm popover. Runs the same owner-delegate policy as decide-delegated but writes nothing — no comment, no labels, no ledger entry, no job — and answers the decision the hive WOULD record in plain words (\"Hive would: re-author #15029 as a hive PR with the same commits and merge it; #15029 will be closed as superseded. Why: author @Karibhou is untrusted and their clanker is offline.\"), its consequences and the operator's alternatives (Approve & merge as-is when the requester may merge). The SPA shows Let hive do that / Approve & merge as-is / Cancel and only then posts decide-delegated with `chosen` naming the button. Same authorisation and feature gate as decide-delegated.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "issue",
+                      "pr"
+                    ],
+                    "description": "What the number names; defaults to issue"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "The row's park reason code (why the hive stopped), read by the policy"
+                  },
+                  "caption": {
+                    "type": "string",
+                    "description": "The row's lit-chevron caption"
+                  },
+                  "sentinel_reason": {
+                    "type": "string",
+                    "description": "The sentinel finding summary when the PR is flagged"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "issue",
+                        "pr"
+                      ]
+                    },
+                    "would": {
+                      "type": "string",
+                      "description": "The verdict the hive would record (adopt-supersede, approve, direction, recommend-only, …)"
+                    },
+                    "rule": {
+                      "type": "string",
+                      "description": "The policy rule behind it"
+                    },
+                    "acting": {
+                      "type": "string",
+                      "description": "The pill / progress vocabulary for the verdict while it runs"
+                    },
+                    "summary": {
+                      "type": "string",
+                      "description": "One line: what hive would do"
+                    },
+                    "why": {
+                      "type": "string",
+                      "description": "The plain reason"
+                    },
+                    "consequences": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "alternatives": {
+                      "type": "array",
+                      "description": "The other buttons, in the needs-human popover's option shape",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "writes": {
+                      "type": "boolean",
+                      "description": "Always false: the plan has no side effects"
+                    },
+                    "prior": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "Set when the hive already recorded this decision"
+                    },
+                    "notes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad owner/repo/number or body"
+          },
+          "401": {
+            "description": "No signed-in GitHub user"
+          },
+          "403": {
+            "description": "Not permitted, or decisions.delegate disabled for the repository"
+          }
+        }
+      }
+    },
     "/api/repos/{owner}/{repo}/items/{number}/accept-triage": {
       "post": {
         "tags": [

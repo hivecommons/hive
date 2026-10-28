@@ -145,8 +145,8 @@ func TestStageTrackerMergeGateInPayload(t *testing.T) {
 func TestStageTrackerMergeGateNode(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Awaiting merge gate', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };`,
-		`60: 'Awaiting merge gate', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging'`,
+		`const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };`,
+		`60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging'`,
 		`const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs) : '';`,
 		`else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;`,
 		`if (gateInfo) tip = sg.label + ' — ' + gateInfo.tip;`,
@@ -205,11 +205,12 @@ const merging = { repo: 'hivecommons/hive', number: 15061, kind: 'pr', stage: 10
 
 // Both 060 rows read the same word — neither is "Ready for auto merge" with CI pending.
 let a = stageTrackerMergeGateInfo(pr15042, now), b = stageTrackerMergeGateInfo(pr15054, now);
-assert.strictEqual(a.word, 'Awaiting merge gate'); assert.strictEqual(b.word, 'Awaiting merge gate');
-assert.strictEqual(a.cue, 'running'); assert.strictEqual(a.detail, 'merge sweep running');
-assert.strictEqual(a.tip, "hive's merge sweep is running on this PR now.");
-assert.strictEqual(b.cue, 'waiting'); assert.strictEqual(b.detail, 'CI still running (build-and-test)');
-assert.ok(b.tip.startsWith('Review approved, not yet admitted to auto merge — CI still running (build-and-test). hive re-checks the gate on its next sweep in 42s.'), b.tip);
+assert.strictEqual(a.word, 'Review passed'); assert.strictEqual(b.word, 'Review passed');
+assert.strictEqual(a.cue, 'running'); assert.strictEqual(a.detail, 'CI in progress');
+assert.strictEqual(a.tip, "Review passed, not yet admitted to auto merge — CI in progress; hive's merge sweep is running on this PR now.");
+// The pill uses the operator's wording; the tooltip keeps the lane's full reason.
+assert.strictEqual(b.cue, 'waiting'); assert.strictEqual(b.detail, 'CI in progress');
+assert.ok(b.tip.startsWith('Review passed, not yet admitted to auto merge — CI still running (build-and-test). hive re-checks the gate on its next sweep in 42s.'), b.tip);
 assert.ok(b.tip.includes('A GitHub event on the PR (check run, review, push) triggers a pass sooner.') && b.tip.endsWith('Last checked 2m ago.'), b.tip);
 
 // Every row on the gate gets the glyph; the sentence is its title AND aria-label.
@@ -228,7 +229,7 @@ assert.strictEqual(stageTrackerMergeGateWordHtml(ready, now), '<span class="ham-
 const soakHtml = stageTrackerMergeGateWordHtml(pr15044, now);
 assert.ok(soakHtml.startsWith('<span class="ham-seg-t">Soaking <span class="ham-gate-detail" data-ham-soak="1" data-ham-until="' + (now + 452000) + '" data-ham-until-kind="soaking"'), soakHtml);
 assert.ok(soakHtml.endsWith('>· 8m left</span></span>'), soakHtml);
-assert.strictEqual(stageTrackerMergeGateWordHtml(pr15042, now), '<span class="ham-seg-t">Awaiting merge gate <span class="ham-gate-detail">· merge sweep running</span></span>');
+assert.strictEqual(stageTrackerMergeGateWordHtml(pr15042, now), '<span class="ham-seg-t">Review passed <span class="ham-gate-detail">· CI in progress</span></span>');
 assert.strictEqual(stageTrackerMergeGateWordHtml(merging, now), '<span class="ham-seg-t">Merging</span>');
 assert.strictEqual(stageTrackerMergeGateWordHtml({ stage: 50 }, now), '');
 const soak = stageTrackerMergeGateInfo(pr15044, now);
@@ -272,7 +273,10 @@ func stageTrackerMergeGateInfoJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_PATH_WORDS") + "\n" +
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_FAILED_SHORT_MAX") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeFailedShort") + "\n" +
+		jsConstLine(t, html, "STAGE_TRACKER_STAGE_PHRASE") + "\n" +
+		jsFunc(t, html, "stageTrackerStagePhrase") + "\n" +
 		jsFunc(t, html, "stageTrackerCoverReasonText") + "\n" +
+		jsFunc(t, html, "stageTrackerReviewPassedDetail") + "\n" +
 		jsFunc(t, html, "stageTrackerCoveringPR") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeGateInfo") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeGateInfoFor") + "\n" +
@@ -327,33 +331,33 @@ const issue15088 = { repo: 'hivecommons/hive', number: 15088, kind: 'issue', sta
 
 // The pill is one line: the word plus the PR's gate fact, never the lane reason.
 const pill = stageTrackerMergeGateWordHtml(issue15088, now);
-assert.strictEqual(pill, '<span class="ham-seg-t">Awaiting merge gate <span class="ham-gate-detail">· CI still running (build-and-test)</span></span>', pill);
+assert.strictEqual(pill, '<span class="ham-seg-t">Review passed <span class="ham-gate-detail">· CI in progress</span></span>', pill);
 assert.ok(!leak.test(pill), 'pill label must not carry the cover reason: ' + pill);
 // The issue row and its PR sub-row agree on word, detail and cue.
 const a = stageTrackerMergeGateInfo(issue15088, now), b = stageTrackerMergeGateInfo(pr15090, now);
 assert.deepStrictEqual([a.word, a.detail, a.cue, a.state], [b.word, b.detail, b.cue, b.state]);
 // The cover reason leads the tooltip — "· at <stage>", not "(PR at <stage>)".
-assert.ok(a.tip.startsWith('Open PR #15090 covers it · at 060-reviewed — Review approved, not yet admitted to auto merge — CI still running (build-and-test).'), a.tip);
+assert.ok(a.tip.startsWith('Open PR #15090 covers it · its PR is review passed · waiting for merge admission — Review passed, not yet admitted to auto merge — CI still running (build-and-test).'), a.tip);
 assert.ok(!/\(PR at/.test(a.tip), a.tip);
 const glyph = stageTrackerGateCueHtml(issue15088, now);
 assert.ok(glyph.includes('title="' + esc(a.tip) + '"') && glyph.includes('aria-label="' + esc(a.tip) + '"'), glyph);
 assert.ok(!/title="[^"]*covers it/.test(pill), 'the pill itself has no title');
 // The PR row's tooltip does not grow the cover lead.
-assert.ok(b.tip.startsWith('Review approved, not yet admitted'), b.tip);
+assert.ok(b.tip.startsWith('Review passed, not yet admitted'), b.tip);
 
 // Older payload: the nested PR carries no merge_gate. The stage alone picks
 // the word and the lane reason still stays out of the pill.
 const bare = Object.assign({}, issue15088, { linked_prs: [{ number: 15090, stage: 60 }] });
 const bareInfo = stageTrackerMergeGateInfo(bare, now);
-assert.deepStrictEqual([bareInfo.word, bareInfo.detail], ['Awaiting merge gate', '']);
-assert.strictEqual(stageTrackerMergeGateWordHtml(bare, now), '<span class="ham-seg-t">Awaiting merge gate</span>');
-assert.ok(bareInfo.tip.startsWith('Open PR #15090 covers it · at 060-reviewed — Review approved, not yet admitted to auto merge.'), bareInfo.tip);
+assert.deepStrictEqual([bareInfo.word, bareInfo.detail], ['Review passed', 'waiting for merge admission']);
+assert.strictEqual(stageTrackerMergeGateWordHtml(bare, now), '<span class="ham-seg-t">Review passed <span class="ham-gate-detail">· waiting for merge admission</span></span>');
+assert.ok(bareInfo.tip.startsWith('Open PR #15090 covers it · its PR is review passed · waiting for merge admission — Review passed, not yet admitted to auto merge.'), bareInfo.tip);
 // No linked_prs at all (issue row alone): same.
 const alone = Object.assign({}, issue15088, { linked_prs: undefined });
 assert.ok(!leak.test(stageTrackerMergeGateWordHtml(alone, now)));
 // A reason that names no PR (older "open PR covers it" token) is not a gate reason either.
 const tok = Object.assign({}, alone, { reason: 'open PR covers it' });
-assert.strictEqual(stageTrackerMergeGateInfo(tok, now).detail, '');
+assert.strictEqual(stageTrackerMergeGateInfo(tok, now).detail, 'waiting for merge admission');
 
 // The issue row follows the PR's live gate state when the mirrored stage lags it
 // (soaking PR, issue still labelled 060): both rows say Soaking.
@@ -363,12 +367,13 @@ assert.strictEqual(stageTrackerMergeGateInfo(soakIssue, now).word, stageTrackerM
 assert.strictEqual(stageTrackerMergeGateInfo(soakIssue, now).detail, '5m left');
 // Two linked PRs: the one the reason names wins.
 const two = Object.assign({}, issue15088, { linked_prs: [{ number: 15001, stage: 60, merge_gate: { state: 'ready' } }, { number: 15090, stage: 60, merge_gate: pr15090.merge_gate }] });
-assert.strictEqual(stageTrackerMergeGateInfo(two, now).word, 'Awaiting merge gate');
+assert.strictEqual(stageTrackerMergeGateInfo(two, now).word, 'Review passed');
 assert.strictEqual(stageTrackerCoveringPR(two).number, 15090);
 assert.strictEqual(stageTrackerCoveringPR(pr15090), null, 'PR rows have no covering PR');
 
 // The cover reason parser.
-assert.strictEqual(stageTrackerCoverReasonText({ reason: 'open PR #15090 covers it (PR at 060-reviewed)' }), 'open PR #15090 covers it · at 060-reviewed');
+assert.strictEqual(stageTrackerCoverReasonText({ reason: 'open PR #15090 covers it (PR at 060-reviewed)' }), 'open PR #15090 covers it · its PR is review passed · waiting for merge admission');
+assert.strictEqual(stageTrackerCoverReasonText({ reason: 'open PR #15090 covers it (PR at stage/080-awaiting-merge-admission)' }), 'open PR #15090 covers it · its PR is at the merge gate');
 assert.strictEqual(stageTrackerCoverReasonText({ reason: 'open PR #7 covers it' }), 'open PR #7 covers it');
 assert.strictEqual(stageTrackerCoverReasonText({ reason: 'check-pending' }), '');
 assert.strictEqual(stageTrackerCoverReasonText({}), '');

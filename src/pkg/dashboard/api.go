@@ -338,6 +338,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decision", s.recordOperatorAction(s.handleRepoItemDecision))
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decide-delegated", s.recordOperatorAction(s.handleRepoItemDecideDelegated))
 	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/items/{number}/decide-delegated", s.handleRepoItemDecideDelegatedStatus)
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decide-delegated/plan", s.handleRepoItemDecideDelegatedPlan)
 
 	s.mux.HandleFunc("GET /api/acmm/evaluation", s.handleACMMEvaluation)
 	s.mux.HandleFunc("POST /api/acmm/issue", s.handleACMMCreateIssue)

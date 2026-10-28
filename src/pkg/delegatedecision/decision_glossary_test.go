@@ -124,7 +124,7 @@ func TestCommentBodyPlainWords(t *testing.T) {
 	for _, want := range []string{
 		"/hive decision supersede now",
 		"**Hive decided:** Close this PR and open a fresh hive-authored PR with the same commits.",
-		"**Why:** The author's hive hasn't been connected since the nudge.",
+		"**Why:** The author's clanker hasn't been connected since the nudge.",
 		"**What happens next:** The hive closes this PR and opens a fresh hive-authored PR with the same commits and sign-off, then finishes that one — expected within 30 min.",
 		"**If it doesn't happen:** A maintainer can merge this PR by hand, re-run the decision, close it as superseded, or send it back for a new commit.",
 		MarkerPrefix,

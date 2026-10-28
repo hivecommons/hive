@@ -378,7 +378,7 @@ func TestRepoItemDecisionApprovePRReleasesThePark(t *testing.T) {
 	if !ok || !req.IsApproval() || req.Actor != "writer" {
 		t.Fatalf("approval must stand against the head: %+v ok=%v", req, ok)
 	}
-	if strings.Join(mock.removed, ",") != "needs-human,sentinel-alert" {
+	if strings.Join(mock.removed, ",") != "needs-human,085-needs-decision,sentinel-alert" {
 		t.Fatalf("removed = %v", mock.removed)
 	}
 	if len(mock.comments) != 2 || len(mock.added)+len(mock.edits) != 0 {

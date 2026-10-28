@@ -646,7 +646,7 @@ why a person merges: `workflow-files` (`contributor-lane:workflow-path`),
 (`reviewer-verdict:requires_human` a trusted merger approved), and `policy` for
 any other lane reason, quoted in the tooltip; #14658), merged → no stage), plus one `role/*` label saying
 which admission tier the lane actually used, one `author/*` label saying who
-wrote the PR (`human`, `clanker` = a contributor's hive, `hive` = this repo's
+wrote the PR (`human`, `clanker` = a contributor's own agent, `hive` = this repo's
 own; #12581) and `stage/stalled` when nobody
 but the hive has touched the PR for the stage's dwell (never while checks run
 or the reviewer verdict is pending). Backward moves are a one-line stage
