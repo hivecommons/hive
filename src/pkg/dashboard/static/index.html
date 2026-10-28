@@ -15006,7 +15006,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     let _stageTrackerCueTimer = null;
     function stageTrackerCueTick() {
       if (_stageTrackerCueTimer) return;
-      _stageTrackerCueTimer = setInterval(() => { if (!document.hidden) stageTrackerCueAgeSync(document.getElementById('activity-monitor-panel')); }, STAGE_TRACKER_CUE_TICK_MS);
+      _stageTrackerCueTimer = dashboardSetInterval('stage-tracker-cue', () => stageTrackerCueAgeSync(document.getElementById('activity-monitor-panel')), STAGE_TRACKER_CUE_TICK_MS);
     }
 
     /* ---- Movement animation ------------------------------------------------

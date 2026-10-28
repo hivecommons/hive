@@ -121,7 +121,10 @@ func runStageTrackerRowActionsScript(t *testing.T, script string) {
 	if err != nil {
 		t.Skip("node not on PATH — row-actions helpers were NOT executed by this run")
 	}
-	cmd := exec.Command(node, "-e", script)
+	// The lifted fixture is well past Linux's per-argument limit, so the
+	// script travels over stdin rather than as a -e argument.
+	cmd := exec.Command(node, "-")
+	cmd.Stdin = strings.NewReader(script)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node failed: %v\n%s", err, out)

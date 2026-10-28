@@ -787,7 +787,9 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
 assert.ok(/<li class="ham-seg active cap merged" title="Merged — [^"]*" aria-current="step">/.test(row) && titled(strip(row)).length === 1, row);
 `
-	cmd := exec.Command(node, "-e", script)
+	// Over stdin: the lifted fixture exceeds Linux's per-argument limit.
+	cmd := exec.Command(node, "-")
+	cmd.Stdin = strings.NewReader(script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node Hive activity monitor fixture failed: %v\n%s", err, out)
 	}
