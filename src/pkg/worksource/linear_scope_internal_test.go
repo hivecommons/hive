@@ -74,7 +74,8 @@ func TestLinearScopeContractIssueRecheck(t *testing.T) {
 			srv := scopeTestServer(t, &probes, &fulls, tc.probeStatus, tc.probeUpdate, scopeFullBody)
 			defer srv.Close()
 			src := NewLinearSource(LinearConfig{APIKey: "k", BaseURL: srv.URL}, nil)
-			seeded := seedScopeCache(src, time.Now().Add(-tc.age))
+			seededAt := time.Now().Add(-tc.age)
+			seeded := seedScopeCache(src, seededAt)
 
 			got, err := src.ScopeContractIssue(context.Background(), "onb-1")
 			if err != nil {
@@ -89,8 +90,15 @@ func TestLinearScopeContractIssueRecheck(t *testing.T) {
 			if tc.wantFulls == 0 && got != seeded {
 				t.Fatalf("issue = %+v, want cached %+v", got, seeded)
 			}
-			if time.Since(src.scopeIssues["ONB-1"].checkedAt) > time.Minute {
-				t.Fatalf("checkedAt was not refreshed")
+			checkedAt := src.scopeIssues["ONB-1"].checkedAt
+			if tc.wantProbes == 0 {
+				// A cache hit inside the recheck interval asks Linear nothing,
+				// so it has no fresh observation to record.
+				if !checkedAt.Equal(seededAt) {
+					t.Fatalf("checkedAt = %v, want the seeded %v left alone", checkedAt, seededAt)
+				}
+			} else if checkedAt.Before(seededAt) || time.Since(checkedAt) > time.Minute {
+				t.Fatalf("checkedAt = %v was not refreshed past seeded %v", checkedAt, seededAt)
 			}
 		})
 	}
