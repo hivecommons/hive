@@ -7077,6 +7077,9 @@ func runEvalCycle(
 		return
 	}
 
+	// A reconcile pass replays webhook re-reads fetched after this instant
+	// onto its result before publishing it (publishReconciledSnapshot).
+	cycleStart := time.Now()
 	budgetMode, _ := ghClient.APIBudgetMode()
 	budgetDecision := decideEvalBudgetWork(budgetMode, cfg.Governor.OptionalSweepEveryNCycles, evalAPIBudgetCycle.Add(1))
 
@@ -7211,7 +7214,7 @@ func runEvalCycle(
 	// on a copy, and storing it back would overwrite a webhook patch that
 	// landed while the cycle ran.
 	if cachedSnapshot == nil {
-		lastActionable.Store(actionable)
+		publishReconciledSnapshot(lastActionable, actionable, cycleStart)
 		if data, err := json.Marshal(actionable); err == nil {
 			atomicWrite(lastActionablePath, data)
 		}

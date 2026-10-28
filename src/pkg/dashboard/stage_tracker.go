@@ -340,10 +340,15 @@ type StageTrackerItem struct {
 	// (scheduler.partitionBlockedIssues). Without it a sequenced sub-issue
 	// read as plain Actionable nobody was picking up (hivecommons/hive#14765);
 	// the row wears the `blocked` modifier and the caption names the wait.
-	BlockedOn   []string   `json:"blocked_on,omitempty"`
-	NudgeCount  int        `json:"nudge_count,omitempty"`
-	LastNudgeAt *time.Time `json:"last_nudge_at,omitempty"`
-	AdoptedBy   int        `json:"adopted_by,omitempty"`
+	BlockedOn []string `json:"blocked_on,omitempty"`
+	// BlockedOnPR names the pull request a `blocked` issue waits on, read
+	// from the review-backlog marker `<!-- hive:blocked-on pr=owner/repo#N -->`
+	// (or the enumeration's "blocked on owner/repo#N" reason), so the pill
+	// and caption say what lifts the block (hivecommons/hive#14952).
+	BlockedOnPR *StageTrackerBlockedOnPR `json:"blocked_on_pr,omitempty"`
+	NudgeCount  int                      `json:"nudge_count,omitempty"`
+	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
+	AdoptedBy   int                      `json:"adopted_by,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -1462,6 +1467,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		finish(&it, issue.Labels, stage, rec, ok, false)
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
+		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL)
 		if it.Stage == trackerNumberClaimed {
 			it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
 		}
@@ -1536,6 +1542,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
+	stageTrackerResolveBlockedOnPRState(resp.Items, resp.RecentlyMerged)
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp

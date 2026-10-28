@@ -1486,6 +1486,9 @@
     /* hive:unauthorized — the App lacks a permission for the next step; muted, never red: a person must take the step. */
     .ham-badge-mod.ham-mod-unauthorized { color: var(--text-muted); border-color: var(--line-subtle); border-style: dashed; }
     .ham-badge-mod.ham-mod-possible-dupe { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 45%, transparent); }
+    /* "blocked on #N": the blocked pill links to the PR it waits on (hivecommons/hive#14952). */
+    a.ham-badge-mod.ham-blocked-on-pr { text-decoration: none; }
+    a.ham-badge-mod.ham-blocked-on-pr:hover { color: var(--text); }
     /* Sentinel-flagged PR, #13535 follow-up: the chip beside needs rebase /
        regressed, and the human-decision chevron itself when its word
        reads "Sentinel alert · needs human". Danger-tinted from the
@@ -13998,9 +14001,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The Open · blocked chevron's reason: the blocker when the payload names
     // one (`blocked_on`: "owner/repo#N" or a list of them), else the label.
     function stageTrackerBlockedTip(item) {
+      const pr = typeof stageTrackerBlockedOnPRRef === 'function' ? stageTrackerBlockedOnPRRef(item) : '';
+      if (pr) return 'blocked on PR ' + pr;
       const on = item && item.blocked_on;
       const refs = (Array.isArray(on) ? on : (on ? [on] : [])).map(r => String(r || '').trim()).filter(Boolean);
       return refs.length ? 'blocked on ' + refs.join(', ') : 'carries the blocked label';
+    }
+
+    // The PR a `blocked` issue waits on (`blocked_on_pr`, from the
+    // review-backlog marker; hivecommons/hive#14952): "#N" in the row's own
+    // repo, else "owner/repo#N"; '' when the payload names none.
+    function stageTrackerBlockedOnPRRef(item) {
+      const b = item && item.blocked_on_pr;
+      const n = b ? Number(b.number) || 0 : 0;
+      if (!n) return '';
+      const repo = String(b.repo || '').trim();
+      const own = !repo || repo.toLowerCase() === String(item.repo || '').trim().toLowerCase();
+      return (own ? '' : repo) + '#' + n;
+    }
+
+    // Hover / aria text for that PR: what blocks the row, the PR's state
+    // when the hive knows it, and what lifts the block.
+    function stageTrackerBlockedOnPRTip(item) {
+      const b = item && item.blocked_on_pr;
+      const n = b ? Number(b.number) || 0 : 0;
+      if (!n) return '';
+      const repo = String(b.repo || '').trim();
+      const state = String(b.state || '').trim();
+      return 'Blocked on PR ' + repo + '#' + n + (state ? ' (' + state + ')' : '') + ' — lifts when it merges; re-triage if closed unmerged';
     }
 
     // "Sentinel flagged security-relevant changes at <head short sha>:
@@ -14307,6 +14335,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr);
+      const blockedOnPR = typeof stageTrackerBlockedOnPRTip === 'function' ? stageTrackerBlockedOnPRTip(item) : '';
+      if (blockedOnPR) lines.push(blockedOnPR);
       const actorKind = stageTrackerActorKind(item);
       if (actorKind) lines.push('Next move: ' + actorKind);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
@@ -14342,6 +14372,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let text = handled && mods[0] === 'regressed' ? STAGE_TRACKER_HANDLED_TEXT : (STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '));
       // A row the scheduler withholds for open GitHub "blocked by" dependencies names them (hivecommons/hive#14765).
       if (mods[0] === 'blocked' && Array.isArray(item.blocked_on) && item.blocked_on.length) text = stageTrackerBlockedTip(item);
+      // A row parked on an unmerged PR (the review-backlog marker) names it and links to it (hivecommons/hive#14952).
+      const blockedPR = mods[0] === 'blocked' && typeof stageTrackerBlockedOnPRRef === 'function' ? stageTrackerBlockedOnPRRef(item) : '';
+      const blockedPRTip = blockedPR ? stageTrackerBlockedOnPRTip(item) : '';
+      const blockedPRURL = blockedPR ? String((item.blocked_on_pr && item.blocked_on_pr.url) || '') : '';
+      if (blockedPR) text = 'blocked on ' + blockedPR;
       // A blocked row with a hive:recheck-after deadline ("blocked until <RFC3339>") names when the sweep re-checks it.
       const recheck = mods[0] === 'blocked' ? /^blocked until (\S+)/i.exec(String(item.bucket_reason || '')) : null;
       const recheckMs = recheck ? Date.parse(recheck[1]) : NaN;
@@ -14349,14 +14384,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The regressed pill (lead or folded into "+1") explains itself on
       // hover; failing that, a draft pill (lead or folded) does.
       const regressed = stageTrackerRegressionText(item, Date.now());
-      // An unauthorized pill names the missing App permission and the human step;
-      // the regressed pill explains itself; a blocked pill names what it waits on;
-      // failing all three, a draft pill does.
-      const tip = (mods.indexOf('unauthorized') >= 0 && String(item.unauthorized || '').trim()) || regressed
+      // A blocked-on-PR pill names the PR and what lifts it; an unauthorized
+      // pill names the missing App permission and the human step; the
+      // regressed pill explains itself; a blocked pill names what it waits
+      // on; failing all of those, a draft pill does.
+      const tip = blockedPRTip || (mods.indexOf('unauthorized') >= 0 && String(item.unauthorized || '').trim()) || regressed
         || (mods.indexOf('blocked') >= 0 && Array.isArray(item.blocked_on) && item.blocked_on.length ? 'Withheld from the scanner until ' + item.blocked_on.join(', ') + (item.blocked_on.length > 1 ? ' close' : ' closes') : '')
         || (mods.indexOf('draft') >= 0 ? STAGE_TRACKER_DRAFT_TIP : '');
       const cls = 'ham-mod-' + mods[0] + (handled && mods[0] === 'regressed' ? ' ham-mod-handled' : '');
-      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
+      const more = mods.length > 1 ? ' +' + (mods.length - 1) : '';
+      if (blockedPRURL) return sentinel + `<a class="ham-badge ham-badge-mod ham-blocked-on-pr ${esc(cls)}" href="${esc(blockedPRURL)}" target="_blank" rel="noopener" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(text)}${more}</a>`;
+      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}${more}</span>`;
     }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries

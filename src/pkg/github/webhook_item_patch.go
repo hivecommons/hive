@@ -222,6 +222,7 @@ func (r *ActionableResult) Clone() *ActionableResult {
 	out.PRs.Attributed = append([]PullRequest(nil), r.PRs.Attributed...)
 	out.Hold.Items = append([]HoldItem(nil), r.Hold.Items...)
 	out.StaleRepos = append([]string(nil), r.StaleRepos...)
+	out.WebhookReads = append([]WebhookItemSnapshot(nil), r.WebhookReads...)
 	if r.ItemPatches != nil {
 		out.ItemPatches = make(map[string]ItemPatchMeta, len(r.ItemPatches))
 		for k, v := range r.ItemPatches {
@@ -320,7 +321,9 @@ func (r *ActionableResult) olderThanHeld(snap WebhookItemSnapshot) bool {
 }
 
 // heldUpdatedAt is the updated_at of the listed copy of an item, zero when
-// the item is not listed or the list has no timestamp for it.
+// the item is not listed or the list has no timestamp for it. A sidelined
+// copy (WorkDetailsByRepo: a blocked or filtered issue, a draft PR) counts
+// too, so a replayed read never moves it backwards either.
 func (r *ActionableResult) heldUpdatedAt(repo string, number int, isPR bool) time.Time {
 	if isPR {
 		for _, list := range [][]PullRequest{r.PRs.Items, r.PRs.Held} {
@@ -330,9 +333,19 @@ func (r *ActionableResult) heldUpdatedAt(repo string, number int, isPR bool) tim
 				}
 			}
 		}
+		for _, pr := range r.WorkDetailsByRepo[r.repoKeyFor(repo)].PRs {
+			if sameItem(pr.Repo, pr.Number, repo, number) {
+				return pr.UpdatedAt
+			}
+		}
 		return time.Time{}
 	}
 	for _, issue := range r.Issues.Items {
+		if sameItem(issue.Repo, issue.Number, repo, number) {
+			return issue.UpdatedAt
+		}
+	}
+	for _, issue := range r.WorkDetailsByRepo[r.repoKeyFor(repo)].Issues {
 		if sameItem(issue.Repo, issue.Number, repo, number) {
 			return issue.UpdatedAt
 		}

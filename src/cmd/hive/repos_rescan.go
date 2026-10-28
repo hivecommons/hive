@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync/atomic"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -53,6 +54,7 @@ func rescanRepos(
 		return nil, errNoForgeCredentials
 	}
 
+	passStart := time.Now()
 	actionable, err := ghClient.EnumerateActionable(ctx)
 	if err != nil {
 		// Same tolerance as the eval cycle: on a hive whose issues come from a
@@ -77,7 +79,7 @@ func rescanRepos(
 	ghClient.EnrichLinkedIssueTitles(ctx, actionable.WorkDetailsByRepo, actionable.PRs.Items, actionable.PRs.Held, actionable.PRs.StaleDrafts)
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
-	lastActionable.Store(actionable)
+	publishReconciledSnapshot(lastActionable, actionable, passStart)
 	publishStageSharedCIIncidents(actionable)
 	if data, marshalErr := json.Marshal(actionable); marshalErr == nil {
 		atomicWrite(lastActionablePath, data)

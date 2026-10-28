@@ -1132,6 +1132,13 @@ type ActionableResult struct {
 	// it, since GeneratedAt then says nothing about an item's age. Keyed by
 	// ItemPatchKey.
 	ItemPatches map[string]ItemPatchMeta `json:"item_patches,omitempty"`
+	// WebhookReads are the webhook re-reads the governor has patched onto
+	// this snapshot, each stamped with its FetchedAt. A reconcile pass that
+	// started before a read and finishes after it replays the newer reads
+	// onto its own result before publishing, so its pre-read copy of the
+	// item never overwrites the patch (hivecommons/hive#14952). In-memory
+	// only; never persisted.
+	WebhookReads []WebhookItemSnapshot `json:"-"`
 }
 
 // ItemPatchMeta is the audit record of one webhook-driven upsert.

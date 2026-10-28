@@ -86,37 +86,96 @@ type snapshotPatcher struct {
 
 // apply upserts each snapshot into the stored result and returns how many
 // changed it. No stored result (before the first enumeration) is a no-op:
-// the first cycle lists everything anyway.
+// the first cycle lists everything anyway. Each applied read is remembered
+// on the published snapshot (WebhookReads) so a reconcile pass already in
+// flight can replay it (publishReconciledSnapshot). The swap is a
+// compare-and-swap: a reconcile result published meanwhile is patched
+// rather than overwritten.
 func (p *snapshotPatcher) apply(snaps []github.WebhookItemSnapshot) int {
 	if p == nil || p.target == nil || len(snaps) == 0 {
 		return 0
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	cur := p.target.Load()
-	if cur == nil {
-		return 0
+	for {
+		cur := p.target.Load()
+		if cur == nil {
+			return 0
+		}
+		next := cur.Clone()
+		now := time.Now()
+		applied := 0
+		for _, snap := range snaps {
+			if next.ApplyWebhookItem(snap) {
+				applied++
+				if snap.FetchedAt.IsZero() {
+					snap.FetchedAt = now
+				}
+				next.WebhookReads = append(next.WebhookReads, snap)
+			}
+		}
+		if applied == 0 {
+			return 0
+		}
+		next.WebhookReads = pruneWebhookReads(next.WebhookReads, now.Add(-webhookReadReplayWindow))
+		if !p.target.CompareAndSwap(cur, next) {
+			continue
+		}
+		if p.logger != nil {
+			p.logger.Info("webhook re-read patched the cached actionable snapshot",
+				"items", applied, "issues", next.Issues.Count, "prs", next.PRs.Count, "hold", next.Hold.Total,
+				"snapshot_age", time.Since(next.GeneratedAt).Round(time.Second).String())
+		}
+		if p.onPatch != nil {
+			p.onPatch(applied)
+		}
+		return applied
 	}
-	next := cur.Clone()
-	applied := 0
-	for _, snap := range snaps {
-		if next.ApplyWebhookItem(snap) {
-			applied++
+}
+
+// webhookReadReplayWindow bounds how long an applied webhook re-read is
+// remembered for replay: far longer than any reconcile pass runs.
+const webhookReadReplayWindow = 2 * time.Hour
+
+// pruneWebhookReads drops reads fetched before cutoff, into a fresh slice.
+func pruneWebhookReads(reads []github.WebhookItemSnapshot, cutoff time.Time) []github.WebhookItemSnapshot {
+	var out []github.WebhookItemSnapshot
+	for _, r := range reads {
+		if !r.FetchedAt.Before(cutoff) {
+			out = append(out, r)
 		}
 	}
-	if applied == 0 {
-		return 0
+	return out
+}
+
+// publishReconciledSnapshot stores a reconcile pass's result. Webhook
+// re-reads fetched after the pass started (passStart) describe a newer
+// GitHub state than the pass may have listed — the hive's own `blocked`
+// removal at 12:41 under a pass that listed at 12:38 — so they are replayed
+// onto the result first (ApplyWebhookItem drops any the pass already saw a
+// newer copy of) and kept on it for the next pass. Compare-and-swap, so a
+// patch landing meanwhile is replayed too rather than lost
+// (hivecommons/hive#14952).
+func publishReconciledSnapshot(last *atomic.Pointer[github.ActionableResult], actionable *github.ActionableResult, passStart time.Time) {
+	if last == nil || actionable == nil {
+		return
 	}
-	p.target.Store(next)
-	if p.logger != nil {
-		p.logger.Info("webhook re-read patched the cached actionable snapshot",
-			"items", applied, "issues", next.Issues.Count, "prs", next.PRs.Count, "hold", next.Hold.Total,
-			"snapshot_age", time.Since(next.GeneratedAt).Round(time.Second).String())
+	for {
+		prev := last.Load()
+		var reads []github.WebhookItemSnapshot
+		if prev != nil {
+			for _, r := range prev.WebhookReads {
+				if r.FetchedAt.After(passStart) {
+					actionable.ApplyWebhookItem(r)
+					reads = append(reads, r)
+				}
+			}
+		}
+		actionable.WebhookReads = reads
+		if last.CompareAndSwap(prev, actionable) {
+			return
+		}
 	}
-	if p.onPatch != nil {
-		p.onPatch(applied)
-	}
-	return applied
 }
 
 // applyWebhookItemsFunc is the dashboard.Dependencies.ApplyWebhookItems hook.

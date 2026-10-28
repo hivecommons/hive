@@ -124,6 +124,25 @@ func blockedFilterReason(body string) string {
 	return blockedFilterReasonPrefix
 }
 
+// ParseBlockedFilterReason reads the PR back out of a blocked issue's
+// filtered reason ("blocked on owner/repo#N", blockedFilterReason), for a
+// reader that holds the enumeration's row but not the issue body.
+func ParseBlockedFilterReason(reason string) (repo string, pr int, ok bool) {
+	rest, found := strings.CutPrefix(strings.TrimSpace(reason), blockedFilterReasonPrefix+" on ")
+	if !found {
+		return "", 0, false
+	}
+	r, num, found := strings.Cut(strings.TrimSpace(rest), "#")
+	if !found || !strings.Contains(r, "/") {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return r, n, true
+}
+
 // blockedRecheck reads a blocked issue's recheck-after deadline (zero when
 // absent) and whether the body carries the ops-tracking marker.
 func blockedRecheck(body string) (time.Time, bool) {
