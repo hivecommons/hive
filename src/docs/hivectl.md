@@ -267,6 +267,20 @@ hash, then checks the signature with `--pubkey` (hex, base64, or a file holding 
 key embedded in the file (a zip manifest's `public_key`). Unsigned bundles, hash mismatches and bad signatures exit
 non-zero. See [Review evidence bundle](review-evidence.md).
 
+### search / repo health — portfolio search
+
+```bash
+hivectl search flaky test                                         # hits as a table: kind, repo, date, title, link
+hivectl search --kind finding,sentinel --repo hivecommons/hive token
+hivectl search revert --from 2026-10-01 --to 2026-10-28 -o json   # full response with highlights and facets
+hivectl repo health hivecommons/hive                              # report-only health score and its components
+```
+
+`search` reads `GET /api/search` and needs owner or maintainer role; `repo health` reads
+`GET /api/repos/{owner}/{repo}/health`. Both query only the hive named by `--server` (no hub fan-out). When that
+hive runs with `search.enabled` off, both say `search is disabled on this hive` and exit non-zero. See
+[Portfolio search](search.md).
+
 ### evidence — export stored bundles
 
 ```bash
