@@ -469,3 +469,42 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 		})
 	}
 }
+
+// TestCrossReferencingPRs_PageCap pins the prLinkTimelineMaxPages bound: a
+// timeline that keeps advertising a next page is read at most that many
+// times, and the lookup keeps what it has read instead of walking to
+// exhaustion — the design note on prLinkSearchPerPage applies to the timeline
+// read too.
+func TestCrossReferencingPRs_PageCap(t *testing.T) {
+	const issue = 13135
+	var calls int
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/o/r/issues/%d/timeline", issue), func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		page := r.URL.Query().Get("page")
+		if page == "" {
+			page = "1"
+		}
+		w.Header().Set("Link", fmt.Sprintf(`<%s?page=%d>; rel="next"`, "http://x"+r.URL.Path, calls+1))
+		fmt.Fprintf(w, `[{"event":"cross-referenced","created_at":"2026-10-27T00:00:00Z","source":{"type":"issue","issue":{"number":%s00,"state":"open","html_url":"https://github.com/o/r/pull/%s00","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}}}]`, page, page)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	gc := gh.NewClient(nil)
+	base, err := url.Parse(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gc.BaseURL = base
+
+	got := crossReferencingPRs(context.Background(), gc, "o/r", issue)
+	if calls != prLinkTimelineMaxPages {
+		t.Fatalf("timeline requests = %d, want exactly %d (page cap)", calls, prLinkTimelineMaxPages)
+	}
+	if len(got) != prLinkTimelineMaxPages {
+		t.Fatalf("got %d PRs from %d pages, want one per page", len(got), prLinkTimelineMaxPages)
+	}
+	if got[0].GetNumber() != 100 || got[len(got)-1].GetNumber() != prLinkTimelineMaxPages*100 {
+		t.Fatalf("got PRs %d..%d, want 100..%d in page order", got[0].GetNumber(), got[len(got)-1].GetNumber(), prLinkTimelineMaxPages*100)
+	}
+}

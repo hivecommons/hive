@@ -185,7 +185,7 @@ Before you write that PR #P does not reference, link to, or mention issue #N:
 
 1. Read the issue timeline: `gh api repos/OWNER/REPO/issues/N/timeline --paginate --jq '.[] | select(.event=="cross-referenced") | .source.issue.number'`. If P is listed, the PR references the issue.
 2. Read the PR's commit messages and comments: `gh pr view P --repo OWNER/REPO --json commits,comments`.
-3. Only if all three checks come up empty, say the PR does not reference the issue.
+3. Only if both checks come up empty, say the PR does not reference the issue.
 
 If the only gap is that the PR body has no `Fixes`/`Closes`/`Resolves #N` line, say "no closing keyword in the PR body", not "does not reference". Merging such a PR will not close the issue, but GitHub still links the two.
 

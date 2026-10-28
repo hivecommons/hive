@@ -18,11 +18,20 @@ const (
 	// request. Mirrors the "cheap cached projection" cadence of the metrics rollup.
 	prLinkCacheTTL = 90 * time.Second
 
-	// prLinkLookupTimeout bounds a single GitHub Search call so one slow response
-	// can never wedge the resolver (and, transitively, the triage endpoint). On
-	// timeout the issue degrades to "no linked PR" for this cycle and is retried
-	// after the TTL, exactly like an error.
+	// prLinkLookupTimeout bounds one whole lookup — the GitHub Search call plus
+	// the issue-timeline read that follows it (at most prLinkTimelineMaxPages
+	// requests) — so one slow response can never wedge the resolver (and,
+	// transitively, the triage endpoint). On timeout the issue degrades to "no
+	// linked PR" for this cycle and is retried after the TTL, exactly like an
+	// error.
 	prLinkLookupTimeout = 4 * time.Second
+
+	// prLinkTimelineMaxPages caps how many 100-event timeline pages one lookup
+	// reads. Like prLinkSearchPerPage, the point is to stay cheap: a real issue
+	// has a few dozen events, and an issue busy enough to exceed 500 almost
+	// always has its referencing PR among the earlier ones. Past the cap the
+	// lookup keeps what it has read instead of walking the rest.
+	prLinkTimelineMaxPages = 5
 
 	// prLinkStateOpen / prLinkStateMerged are the two surfaced link states. A PR
 	// that is closed-but-not-merged is treated as "no active link" (nil) — it did
@@ -200,7 +209,8 @@ func prLinkCandidate(iss *gh.Issue) (*prLinkStatus, bool) {
 
 // crossReferencingPRs returns the same-repo pull requests named by the
 // issue's timeline cross-referenced events — a reference from a PR's title,
-// body, commit messages, or comments. Errors yield what was read so far.
+// body, commit messages, or comments. It reads at most prLinkTimelineMaxPages
+// pages; errors and the page cap yield what was read so far.
 func crossReferencingPRs(ctx context.Context, gc *gh.Client, repo string, number int) []*gh.Issue {
 	owner, name, ok := strings.Cut(repo, "/")
 	if !ok || owner == "" || name == "" {
@@ -209,7 +219,7 @@ func crossReferencingPRs(ctx context.Context, gc *gh.Client, repo string, number
 	var out []*gh.Issue
 	seen := map[int]bool{}
 	opts := &gh.ListOptions{PerPage: 100}
-	for {
+	for page := 0; page < prLinkTimelineMaxPages; page++ {
 		events, resp, err := gc.Issues.ListIssueTimeline(ctx, owner, name, number, opts)
 		if err != nil {
 			return out
@@ -235,6 +245,7 @@ func crossReferencingPRs(ctx context.Context, gc *gh.Client, repo string, number
 		}
 		opts.Page = resp.NextPage
 	}
+	return out
 }
 
 // prLinkSearchPerPage caps how many candidate PRs one lookup inspects. A handful
