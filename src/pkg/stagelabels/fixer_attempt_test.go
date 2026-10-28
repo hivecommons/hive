@@ -11,6 +11,7 @@ func TestFixerQueueRecordResetsOnNewHead(t *testing.T) {
 	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 	s := NewStore("", func() time.Time { return now })
 	key := Key("acme/widget", 7)
+	s.Observe(key, AdoptedByHive, "")
 	s.MarkAdoptedInPlace(key, "aaa", "grace", now)
 	s.MarkFixerQueued(key, "aaa")
 	rec, _ := s.Get(key)
