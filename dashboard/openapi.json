@@ -30080,6 +30080,110 @@
         }
       }
     },
+    "/api/repos/{owner}/{repo}/health": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Report-only repository health score from the search index",
+        "description": "Per-repo health score recomputed on each search index rebuild (requires search to be enabled). Returns score (0-100, null when no component is reported), status, window_days, min_n, computed_at and components[] (ci_pass_rate, time_to_merge, revert_followup_rate, review_verdict_mix, stale_issue_ratio, signoff_rate, dependency_freshness, security_doc_rot), each with name, status, score, weight, contribution, n, inputs and reason. A component below min_n or without local data is not_reported, never zero. Spoke-only; never an ACMM input and never read by merge decisions or Governor priority.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Health score with every component's inputs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "score": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "window_days": {
+                      "type": "integer"
+                    },
+                    "min_n": {
+                      "type": "integer"
+                    },
+                    "computed_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "components": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "score": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "weight": {
+                            "type": "number"
+                          },
+                          "contribution": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "n": {
+                            "type": "integer"
+                          },
+                          "inputs": {
+                            "type": "object"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repository"
+          },
+          "404": {
+            "description": "No review evidence indexed for the repository yet"
+          },
+          "503": {
+            "description": "Search is not enabled"
+          }
+        }
+      }
+    },
     "/api/repos/{owner}/{repo}/hold-permission": {
       "get": {
         "tags": [

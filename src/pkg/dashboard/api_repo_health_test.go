@@ -3,11 +3,22 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/search"
 )
+
+// getRepoHealth serves path through the route pattern RegisterAPI uses, so
+// PathValue resolves as in production without building full Dependencies.
+func getRepoHealth(s *Server, path string) *httptest.ResponseRecorder {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/repos/{owner}/{repo}/health", s.handleRepoHealth)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
 
 func TestRepoHealthEndpoint(t *testing.T) {
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -38,7 +49,7 @@ func TestRepoHealthEndpoint(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestServer()
 			s.SetRepoHealthSource(tc.lookup)
-			rec := doGet(s, tc.path)
+			rec := getRepoHealth(s, tc.path)
 			if rec.Code != tc.code {
 				t.Fatalf("code %d, want %d: %s", rec.Code, tc.code, rec.Body.String())
 			}
@@ -81,7 +92,7 @@ func TestRepoHealthSourceCanBeCleared(t *testing.T) {
 	s := newTestServer()
 	s.SetRepoHealthSource(func(string) (search.Health, bool) { return search.Health{}, true })
 	s.SetRepoHealthSource(nil)
-	if rec := doGet(s, "/api/repos/org/a/health"); rec.Code != http.StatusServiceUnavailable {
+	if rec := getRepoHealth(s, "/api/repos/org/a/health"); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("code %d, want 503", rec.Code)
 	}
 }

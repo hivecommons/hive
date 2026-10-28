@@ -77,6 +77,7 @@ func TestStartSearchIndexerWiresRepoHealth(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Search = config.SearchConfig{Enabled: &on}
 	srv := dashboard.NewServer(0, slog.Default())
+	srv.RegisterAPI(&dashboard.Dependencies{Config: &config.Config{}})
 	get := func() int {
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/repos/o/a/health", nil))

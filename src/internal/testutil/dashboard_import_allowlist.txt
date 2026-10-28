@@ -19,6 +19,7 @@
 # mergelane: serialized lane state view reads the merge-lane store (hivecommons/hive#10892).
 # crux/agent: the v6 Spek hub executor (spek_hub_executor.go) launches headless agents through crux/agent Headless*/UIDMap/proxy-env helpers; counted by the crux boundary ratchet (hivecommons/hive#14340 forward-merge), follow-up to lift those leaves onto crux.
 # crux/logscrub: pkg/logscrub moved into the Crux module with the cut (hivecommons/hive#13950).
+# search: GET /api/repos/{owner}/{repo}/health serves the report-only repo health score the search indexer computes (search.Health), wired through a setter so the dashboard never builds or walks the index (hivecommons/hive#14638).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agent
 github.com/hivecommons/hive/crux/agentparse
@@ -78,6 +79,7 @@ github.com/hivecommons/hive/pkg/review
 github.com/hivecommons/hive/pkg/rotation
 github.com/hivecommons/hive/pkg/runtimeobs
 github.com/hivecommons/hive/pkg/scheduler
+github.com/hivecommons/hive/pkg/search
 github.com/hivecommons/hive/pkg/spokebackup
 github.com/hivecommons/hive/pkg/stageengine
 github.com/hivecommons/hive/pkg/stagelabels
