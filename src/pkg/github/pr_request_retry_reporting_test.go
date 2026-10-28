@@ -32,3 +32,16 @@ func TestFailPRRequestReportsMissingHeadOnce(t *testing.T) {
 		})
 	}
 }
+
+func TestFailPRRequestMissingHeadErrorsOncePerRequest(t *testing.T) {
+	var logs bytes.Buffer
+	c := NewClientForTest("http://127.0.0.1:0", "o", nil, slog.New(slog.NewTextHandler(&logs, nil)))
+	path := filepath.Join(t.TempDir(), "request.json")
+	err := &errMissingHead{repo: "o/r", head: "branch", repoVisible: true}
+	for range 5 {
+		c.failPRRequest(path, PRRequest{Repo: "o/r", Head: "branch"}, err, time.Now)
+	}
+	if n := strings.Count(logs.String(), "head branch is not on the remote"); n != 1 {
+		t.Fatalf("got %d reports for one request, want 1: %s", n, logs.String())
+	}
+}
