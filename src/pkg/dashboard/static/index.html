@@ -18662,7 +18662,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergedPopHtml(txt, nowMs) {
       const fmtAt = at => { if (!at) return ''; const d = new Date(at); const sameDay = stageTrackerLocalMidnight(at) === stageTrackerLocalMidnight(nowMs); const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; return sameDay ? hm : `${typeof formatDashboardDate === 'function' ? formatDashboardDate(d, { month: 'short', day: 'numeric' }) : d.toISOString().slice(5, 10)} ${hm}`; };
       const rows = (txt.recent || []).map(e => {
-        const meta = [stageTrackerMergedByText(e.merged_by), e.lane ? esc(e.lane) : '', e.at ? fmtAt(e.at) : ''].filter(Boolean).join(' · ');
+        const meta = [esc(stageTrackerMergedByText(e.merged_by)), e.lane ? esc(e.lane) : '', e.at ? fmtAt(e.at) : ''].filter(Boolean).join(' · ');
         const num = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">#${esc(e.number)}</a>` : `#${esc(e.number)}`;
         return `<li><span class="ham-merged-num" title="${esc(e.repo)}#${esc(e.number)}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-meta">${meta}</span></li>`;
       }).join('');
@@ -18932,6 +18932,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!box) { box = document.createElement('div'); box.id = 'merge-banners'; box.className = 'merge-banners'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
       const recent = ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergedIdent(e.repo, e.number) === stageTrackerMergedIdent(b.repo, b.number));
       const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b);
+      // A live merge the ledger has not listed yet still links: the key carries owner/name.
+      if (!info.url && info.repo && info.repo.indexOf('/') > 0 && Number(info.number) > 0 && !info.preview) info.url = `https://github.com/${info.repo}/pull/${info.number}`;
       const t = stageTrackerMergeBannerText(info, Date.now());
       const el = document.createElement('div');
       el.className = 'merge-banner';

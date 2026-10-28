@@ -118,7 +118,7 @@ func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, numb
 		if snap.Merged {
 			snap.MergedAt = pr.GetMergedAt().Time
 			snap.MergedBy = safeGetLogin(pr.GetMergedBy())
-			snap.MergedByHive = prTerminalMergeAttribution(snap.MergedBy, c.getHiveIdentity(), c.appBotLogin) == "hive"
+			snap.MergedByHive = prTerminalMergeAttribution(snap.MergedBy, c.getHiveIdentity(), c.appBotLogin) == PRMergeAttributionHive
 		}
 		snap.UpdatedAt = pr.GetUpdatedAt().Time
 		snap.URL = pr.GetHTMLURL()

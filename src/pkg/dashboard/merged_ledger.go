@@ -52,7 +52,7 @@ const (
 	// MergedByHive is the merged_by value for a merge the hive performed
 	// itself (sweep, queue, relay or forge path). Any other value is the
 	// merger's GitHub login; "" means not known.
-	MergedByHive = "hive"
+	MergedByHive = github.PRMergeAttributionHive
 )
 
 // MergedLedgerEntry is one merged pull request.

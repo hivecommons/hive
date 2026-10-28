@@ -544,6 +544,8 @@ assert.strictEqual(n.textContent, '34', 'steady once the server lists it');
 panel.appendChild(row('o/r/pr#2'));
 stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 2, stage: 50, title: 'fix: two' }], merged: merged(34, [rec(1), rec(31), rec(30)]) });
 stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 2 }], merged: merged(34, [rec(1), rec(31), rec(30)]) });
+tick(0);
+assert.ok(banners.children[banners.children.length - 1].innerHTML.includes('href="https://github.com/o/r/pull/2"'), 'a banner the ledger has not enriched yet still links to the PR: ' + banners.children[banners.children.length - 1].innerHTML);
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
 assert.strictEqual(n.textContent, '35', 'local merge on top of the server number');
 assert.strictEqual(sub.textContent, '5 today · 10 this week');
