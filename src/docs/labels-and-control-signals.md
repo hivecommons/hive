@@ -1091,8 +1091,21 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    its attempt before touching GitHub, so a failed `hive/adopt-<n>` push is
    not retried on the next sweep. While in 074 the hive polls the superseder at most
    every 10 minutes: merged → one `<!-- hive:adopted-merged -->` note and the
-   original is closed; closed unmerged (a maintainer declined) → the adoption
-   is forgotten and the original returns to 072 (not a regression).
+   original is closed; closed unmerged (a maintainer declined, or an old
+   sweep lost the copy) → the adoption is orphaned and recovered, not
+   forgotten: if the contributor head is still the adopted head, adoption is
+   still enabled and no hold label blocks takeover, the hive re-adopts on a
+   fresh `hive/adopt-<n>-retry-<m>` copy (`<m>` is the closed superseder's
+   number) and the original stays 074. Otherwise — the head moved, adoption
+   is off, a hold label is present, or the fresh copy could not be opened —
+   the hive posts one `<!-- hive:adoption-reverted -->` note, releases
+   ownership (the closed copy's `hive:adopted` marker is no longer evidence)
+   and the original returns to its pre-adoption flow (not a regression).
+   Loop guard: a retry copy closed again within an hour parks the original
+   at 085 with reason `adoption-child-closed-twice` and one
+   `<!-- hive:adoption-orphan-parked -->` note; a person decides whether to
+   resume. A transient fence fault (unreadable diff) defers the re-adoption
+   to the next sweep rather than reverting.
    If an adopted head is DCO-red, an empty signed commit is never enough.
    "Hive-authored" is decided the same way as head attribution above: an
    unsigned commit is the hive's own only when GitHub links its author or
