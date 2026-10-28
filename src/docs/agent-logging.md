@@ -285,7 +285,8 @@ read the logs of the last several runs — not just the latest —
   `<kick-start>-sandbox.log` with `source: sandbox-podman` or
   `source: sandbox-job` and an outcome block (exit code, commits, branch,
   PR or `pr_withheld` reason, agent-report path and status, error) ahead of
-  the output. For these agents the `📄 full log` / `📋 log text` controls and
+  the output, followed by one `---- verify: <cmd> (<verdict>) ----` section
+  per `publish.verify` command that ran. For these agents the `📄 full log` / `📋 log text` controls and
   `GET /api/agents/{name}/log` serve the newest such archive — the only
   durable copy, since a completed Job is deleted at once and the sandbox
   workspace is swept after two hours — and an agent that has not run yet

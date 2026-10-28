@@ -140,14 +140,21 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 			Model:     agent.Config.Model,
 			LaunchCmd: agent.Config.LaunchCmd,
 		},
-		Message:      message,
-		Org:          m.project.Org,
-		Repo:         repo,
-		WorkspaceDir: m.sandboxWorkspaceDirLocked(),
-		Image:        agent.Config.SandboxImage(m.sandboxConfig),
-		EnvAllowlist: agent.Config.SandboxEnvAllowlist(m.sandboxConfig),
-		NetworkMode:  agent.Config.SandboxNetworkMode(m.sandboxConfig),
-		Timeout:      time.Duration(agent.Config.SandboxTimeoutS(m.sandboxConfig)) * time.Second,
+		Message:       message,
+		Org:           m.project.Org,
+		Repo:          repo,
+		WorkspaceDir:  m.sandboxWorkspaceDirLocked(),
+		Image:         agent.Config.SandboxImage(m.sandboxConfig),
+		EnvAllowlist:  agent.Config.SandboxEnvAllowlist(m.sandboxConfig),
+		NetworkMode:   agent.Config.SandboxNetworkMode(m.sandboxConfig),
+		Timeout:       time.Duration(agent.Config.SandboxTimeoutS(m.sandboxConfig)) * time.Second,
+		PublishVerify: agent.Config.SandboxPublishVerify(m.sandboxConfig),
+		VerifyTimeout: time.Duration(agent.Config.SandboxPublishVerifyTimeoutS(m.sandboxConfig)) * time.Second,
+	}
+	// A kick template's own verify block wins over config so the policy
+	// that asks for a proven result also says how hive checks it.
+	if cmds, ok := parsePublishVerifyDirective(message); ok {
+		spec.PublishVerify = cmds
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	agent.cancel = cancel

@@ -18029,7 +18029,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let html = esc(text);
       if (sr.prURL) html += ' \u00b7 <a href="' + esc(sr.prURL) + '" target="_blank" rel="noopener" data-stop="1">PR</a>';
       if (sr.prWithheld) {
-        html += ' \u00b7 <span title="' + esc(sr.prWithheld) + '">no PR opened: ' + esc(sr.prWithheld.length > 120 ? sr.prWithheld.slice(0, 120) + '\u2026' : sr.prWithheld) + '</span>';
+        // First line is the reason (verify failed / report status); the
+        // command's output tail follows on later lines and stays in the tooltip.
+        var reason = sr.prWithheld.split('\n')[0];
+        html += ' \u00b7 <span title="' + esc(sr.prWithheld) + '">no PR opened: ' + esc(reason.length > 120 ? reason.slice(0, 120) + '\u2026' : reason) + '</span>';
       } else if (sr.error && !sr.succeeded) {
         html += ' \u2014 ' + esc(sr.error.length > 160 ? sr.error.slice(0, 160) + '\u2026' : sr.error);
       }
