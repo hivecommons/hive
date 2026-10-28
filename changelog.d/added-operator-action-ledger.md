@@ -1,0 +1,1 @@
+- Activity Monitor row actions now persist their operator, outcome, note, head and stage across reloads, expose the latest action and retained count on tracker rows, and provide a per-item history API.

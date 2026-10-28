@@ -214,8 +214,11 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 		ID: key + "@" + strconv.FormatInt(now.UnixNano(), 36), Repo: repoFull, Number: number, Type: itemType,
 		Status: delegatedJobStatusRunning, Requester: user, StartedAt: now, Marker: delegatedecision.Marker(s.delegateHiveID()),
 	}
+	entry := s.newOperatorAction(repoFull, number, user, "decide:delegate", body.Reason)
 	snapshot, started := s.delegatedJobs.start(key, job, now)
 	if !started {
+		entry.Outcome = "a delegated decision is already running"
+		s.recordOperatorAction(repoFull, number, entry)
 		w.WriteHeader(http.StatusConflict)
 		jsonResponse(w, snapshot)
 		return
@@ -228,6 +231,10 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 			ctx = s.deps.Ctx
 		}
 		s.runDelegatedDecision(ctx, key, repoFull, number, itemType, user, mergerRole, body)
+		if done, ok := s.delegatedJobs.get(key); ok && done.Error != "" {
+			entry.Outcome = done.Error
+		}
+		s.recordOperatorAction(repoFull, number, entry)
 	}
 	if delegatedDecisionRunAsync {
 		go run()

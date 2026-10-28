@@ -607,6 +607,13 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	action := "release"
+	if body.Held {
+		action = "hold"
+	}
+	var finish func()
+	w, finish = s.observeOperatorAction(w, r, owner+"/"+repoName, number, action, "")
+	defer finish()
 	ctx := context.Background()
 	if s.deps.Ctx != nil {
 		ctx = s.deps.Ctx

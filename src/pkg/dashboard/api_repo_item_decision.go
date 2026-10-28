@@ -166,6 +166,13 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	decision := strings.ToLower(strings.TrimSpace(body.Decision))
+	note := strings.TrimSpace(body.Comment)
+	if body.SupersededBy != "" {
+		note += "\nSuperseded by: " + body.SupersededBy
+	}
+	var finish func()
+	w, finish = s.observeOperatorAction(w, r, owner+"/"+repoName, number, "decide:"+decision, note)
+	defer finish()
 	comment := strings.TrimSpace(body.Comment)
 	if len(comment) > repoItemDecisionMaxComment {
 		jsonError(w, fmt.Sprintf("comment exceeds %d characters", repoItemDecisionMaxComment), http.StatusBadRequest)

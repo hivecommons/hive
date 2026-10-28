@@ -2,6 +2,9 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"math"
 	"net/http"
 	"strconv"
@@ -57,6 +60,48 @@ type ReposRescanResult struct {
 // already see, and the far more expensive ACMM re-evaluation is ungated too.
 // The API budget is protected by repoRescanDebounce, not by a role.
 func (s *Server) handleReposRescan(w http.ResponseWriter, r *http.Request) {
+	// Activity Monitor retries identify their rows; other rescan callers keep
+	// the existing empty-body contract.
+	var body struct {
+		Items []struct {
+			Repo   string `json:"repo"`
+			Number int    `json:"number"`
+		} `json:"items"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+	}
+	if len(body.Items) > 500 {
+		jsonError(w, "too many retry items", http.StatusBadRequest)
+		return
+	}
+	seen := map[string]bool{}
+	for _, item := range body.Items {
+		if item.Number <= 0 || !s.prQueueRepoAllowed(item.Repo) {
+			jsonError(w, "invalid retry item", http.StatusBadRequest)
+			return
+		}
+	}
+	var finishes []func()
+	for _, item := range body.Items {
+		key := item.Repo + "#" + strconv.Itoa(item.Number)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		var finish func()
+		w, finish = s.observeOperatorAction(w, r, item.Repo, item.Number, "retry", "")
+		finishes = append(finishes, finish)
+	}
+	defer func() {
+		for _, finish := range finishes {
+			finish()
+		}
+	}()
+
 	if s.deps == nil || s.deps.RescanReposFunc == nil {
 		jsonError(w, "repository rescan is not available on this hive", http.StatusServiceUnavailable)
 		return

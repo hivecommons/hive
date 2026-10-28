@@ -16363,6 +16363,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         prog.update(i, it);
         const req = stageTrackerActionRequest(it, id, payload);
         if (!req) { results.push({ item: it, ok: false, error: 'not applicable' }); continue; }
+        if (id === 'retry') req.body.items = items.map(it => ({ repo: it.repo, number: Number(it.number) }));
         if (req.once && once[req.url]) { results.push({ item: it, ok: true, data: once[req.url] }); continue; }
         try {
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });

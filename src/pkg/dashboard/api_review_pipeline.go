@@ -194,6 +194,9 @@ func (s *Server) handleReviewPipelineSendToHuman(w http.ResponseWriter, r *http.
 		reason = "the review loop is at its safety cap"
 	}
 
+	var finish func()
+	w, finish = s.observeOperatorAction(w, r, repo, number, "needs-human", reason)
+	defer finish()
 	gh := s.deps.GHClient
 	if err := gh.AddLabels(r.Context(), repo, number, []string{config.DefaultNeedsHumanLabel}); err != nil {
 		jsonError(w, fmt.Sprintf("applying %s: %v", config.DefaultNeedsHumanLabel, err), http.StatusBadGateway)

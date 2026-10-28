@@ -398,6 +398,7 @@ let refreshed = 0; function stageTrackerAfterActions() { refreshed++; }
   calls.length = 0;
   const rr = await stageTrackerRunActions([i1, p2, i3], 'retry', {});
   assert.deepStrictEqual(calls.map(c => c.url), ['/api/repos/rescan'], 'the hive-wide rescan is posted once for the whole selection');
+  assert.deepStrictEqual(JSON.parse(calls[0].init.body), { items: [{ repo: 'o/r', number: 1 }, { repo: 'o/r', number: 2 }, { repo: 'o/x', number: 3 }] }, 'retry carries every selected item for the server ledger');
   assert.deepStrictEqual(rr.map(r => r.ok), [true, true, true]);
 
   const sum = stageTrackerActionSummary('Hold', [{ item: i1, ok: true }, { item: p2, ok: false, error: 'a' }, { item: i3, ok: false, error: 'b' }, { item: { repo: 'o/r', number: 4 }, ok: false, error: 'c' }, { item: { repo: 'o/r', number: 5 }, ok: false, error: 'd' }]);

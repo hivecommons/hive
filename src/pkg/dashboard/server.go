@@ -118,7 +118,8 @@ type Server struct {
 	deps       *Dependencies
 	// stageStore is the stage-label memory /api/stage-tracker reads; nil
 	// means the process-wide stagelabels.Shared(). Tests inject one.
-	stageStore *stagelabels.Store
+	stageStore         *stagelabels.Store
+	operatorActionPath string // Optional ledger path override for tests.
 	// stageTrackerCache is the last /api/stage-tracker payload built from
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache

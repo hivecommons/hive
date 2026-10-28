@@ -213,13 +213,15 @@ type StageTrackerHop struct {
 
 // StageTrackerItem is one open issue or PR on the tracker.
 type StageTrackerItem struct {
-	Superseded *github.ReviewQueueSuperseded `json:"superseded,omitempty"`
-	Repo       string                        `json:"repo"`
-	Number     int                           `json:"number"`
-	Kind       string                        `json:"kind"`
-	Title      string                        `json:"title"`
-	URL        string                        `json:"url,omitempty"`
-	Author     string                        `json:"author,omitempty"`
+	LastOperatorAction  *OperatorAction               `json:"last_operator_action,omitempty"`
+	OperatorActionCount int                           `json:"operator_action_count"`
+	Superseded          *github.ReviewQueueSuperseded `json:"superseded,omitempty"`
+	Repo                string                        `json:"repo"`
+	Number              int                           `json:"number"`
+	Kind                string                        `json:"kind"`
+	Title               string                        `json:"title"`
+	URL                 string                        `json:"url,omitempty"`
+	Author              string                        `json:"author,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so
 	// a "waiting for a verdict" caption can name the revision it waits on.
 	Head           string                `json:"head,omitempty"`
@@ -1970,6 +1972,7 @@ func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl ti
 		build = s.stageTrackerBuildFn
 	}
 	resp := build(status, s.stageStoreOrShared(), now)
+	s.attachOperatorActions(resp.Items)
 	s.stageTrackerEnrichSoftLinks(resp.Items, stageTrackerRepoQualifier(status), now)
 	resp.CacheTTLSeconds = int64(ttl / time.Second)
 	// The encoded body carries source=cache: that is what every later hit

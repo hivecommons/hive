@@ -141,6 +141,9 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 		jsonError(w, "GitHub client not configured", http.StatusServiceUnavailable)
 		return
 	}
+	var finish func()
+	w, finish = s.observeOperatorAction(w, r, owner+"/"+repoName, number, "accept-triage", "")
+	defer finish()
 	ctx := context.Background()
 	if s.deps.Ctx != nil {
 		ctx = s.deps.Ctx
