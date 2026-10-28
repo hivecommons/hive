@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -36,7 +38,11 @@ import (
 var claimsLedgerPath = "/data/issue-claims.json"
 
 // claimsGitHubTimeout bounds each best-effort GitHub side effect.
-const claimsGitHubTimeout = 15 * time.Second
+const (
+	claimsGitHubTimeout      = 15 * time.Second
+	claimsGitHubAttempts     = 4
+	claimsGitHubRetryBackoff = time.Second
+)
 
 // claimEffectQueue runs the GitHub side effects of one issue's ledger
 // transitions in the order the ledger fired them, one transition at a time
@@ -89,6 +95,56 @@ func (q *claimEffectQueue) drain(key string) {
 		fn()
 	}
 }
+
+// prepend is called by the active worker to keep a transition's remaining
+// effects, including retries, ahead of later transitions for the same issue.
+func (q *claimEffectQueue) prepend(key string, fns ...func()) {
+	q.mu.Lock()
+	q.pending[key] = append(fns, q.pending[key]...)
+	q.mu.Unlock()
+}
+
+// retryEffect re-queues only the failed effect, never successful earlier
+// effects (particularly comments). The worker waits for backoff, so there is
+// still only one goroutine per issue and a release cannot overtake a claim.
+func (q *claimEffectQueue) retryEffect(ctx context.Context, key, what string, logger *slog.Logger, timeout, backoff time.Duration, fn func(context.Context) error) func() {
+	attempt := 0
+	var run func()
+	run = func() {
+		if ctx.Err() != nil {
+			return
+		}
+		if attempt > 0 {
+			timer := time.NewTimer(backoff << (attempt - 1))
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+		}
+		attempt++
+		cctx, cancel := context.WithTimeout(ctx, timeout)
+		err := fn(cctx)
+		cancel()
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		if attempt < claimsGitHubAttempts && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, effects.ErrNeedsReconciliation)) {
+			if logger != nil {
+				logger.Info("issue-claims: retrying GitHub side effect", "what", what, "issue", key, "attempt", attempt+1, "error", err)
+			}
+			q.prepend(key, run)
+			return
+		}
+		if logger != nil {
+			logger.Warn("issue-claims: GitHub side effect failed", "what", what, "issue", key, "attempts", attempt, "error", err)
+		}
+	}
+	return run
+}
+
+type claimEffectScheduler func(string, claims.Claim, func(context.Context, *github.Client) error)
 
 // buildClaimsLedger constructs the ledger from config, or returns nil when
 // `claims.enabled: false`. A corrupt ledger file is logged and the ledger
@@ -147,20 +203,22 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 	comment := cfg.Governor.Claims.CommentEnabled()
 	label := cfg.Governor.Claims.LabelEnabled()
 	queue := &claimEffectQueue{}
-	run := func(what string, c claims.Claim, fn func(ctx context.Context, gh *github.Client) error) {
-		gh := client()
-		if gh == nil {
-			return
-		}
-		cctx, cancel := context.WithTimeout(ctx, claimsGitHubTimeout)
-		defer cancel()
-		if err := fn(cctx, gh); err != nil && logger != nil {
-			logger.Warn("issue-claims: GitHub side effect failed", "what", what, "issue", c.Key(), "error", err)
-		}
+	schedule := func(c claims.Claim, build func(claimEffectScheduler)) {
+		var pending []func()
+		build(func(what string, c claims.Claim, fn func(context.Context, *github.Client) error) {
+			pending = append(pending, queue.retryEffect(ctx, c.Key(), what, logger, claimsGitHubTimeout, claimsGitHubRetryBackoff, func(cctx context.Context) error {
+				gh := client()
+				if gh == nil {
+					return nil
+				}
+				return fn(cctx, gh)
+			}))
+		})
+		queue.run(c.Key(), func() { queue.prepend(c.Key(), pending...) })
 	}
 	return claims.Hooks{
 		OnClaimed: func(c claims.Claim, outcome claims.Outcome) {
-			queue.run(c.Key(), func() {
+			schedule(c, func(run claimEffectScheduler) {
 				if comment && outcome == claims.OutcomeClaimed {
 					run("claim comment", c, func(ctx context.Context, gh *github.Client) error {
 						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ClaimComment(c))
@@ -187,7 +245,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 			})
 		},
 		OnTakenOver: func(now, previous claims.Claim) {
-			queue.run(now.Key(), func() {
+			schedule(now, func(run claimEffectScheduler) {
 				if comment {
 					run("takeover comment", now, func(ctx context.Context, gh *github.Client) error {
 						return gh.CreateIssueComment(ctx, now.Repo, now.Issue, claims.TakeoverComment(now, previous))
@@ -211,7 +269,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 			})
 		},
 		OnReleased: func(c claims.Claim, reason string) {
-			queue.run(c.Key(), func() {
+			schedule(c, func(run claimEffectScheduler) {
 				if label {
 					// One fresh read, then only the "who" labels still present
 					// come off, journaled against that read: the plain remove

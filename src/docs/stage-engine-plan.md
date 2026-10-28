@@ -128,7 +128,7 @@ Scope: no out-of-cycle code names a stage label.
 
 - `src/cmd/hive/claimswire.go`: ledger hooks call `FactSink.Claimed` /
   `ClaimReleased` instead of `claimStageFor` + label writes
-  (`src/cmd/hive/claimswire.go:176-178`, `src/cmd/hive/claimswire.go:236-238`).
+  (`src/cmd/hive/claimswire.go:234-236`, `src/cmd/hive/claimswire.go:294-296`).
 - `src/pkg/github/issue_inprogress.go`: the `claim` request submits
   `InProgress`; the sweep's 040 swap becomes `CoveredBy`
   (`src/pkg/github/issue_inprogress.go:126-141`, `src/pkg/github/issue_inprogress.go:186`).

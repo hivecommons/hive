@@ -1,0 +1,1 @@
+- Retry claim and release GitHub side effects after transient deadlines or uncertain mutation outcomes, with fresh timeouts and bounded backoff while preserving per-issue ordering ([#14766](https://github.com/hivecommons/hive/issues/14766)).
