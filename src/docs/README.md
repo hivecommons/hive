@@ -50,6 +50,7 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
   or assignment helpers.
 - [Release channels](release-channels.md) — what `stable`, `candidate`, and `edge` each mean and what to expect from them.
 - [Security model](security-model.md) — agent safety control inventory, threats, enforcement modes, residual gaps and operator audit checklist.
+- [Hive trust levels vs Copilot assisted permissions](copilot-permissions-comparison.md) — what GitHub's per-action permission mode (GA 2026-10-26) does, what Hive's levels, lanes, proxy and gates do, and where each covers ground the other does not.
 - Security docs rule: `SECURITY.md` and every `src/docs/security*.md` / `ioscan*.md` page, plus `landscape.md`, must score Flesch-Kincaid grade 11 or lower (CI: `src/scripts/check-security-docs-readability.sh`).
 - Security docs rot rule: the same pages carry a `Last reviewed: YYYY-MM-DD` line in their first 15 lines, no older than 120 days, and may not say an item is "tracked in" / "in progress" / "planned" against an issue that is already closed (CI: `src/scripts/check-security-docs-rot.sh`).
 - [Data collection and telemetry](telemetry.md)
