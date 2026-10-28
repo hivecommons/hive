@@ -879,6 +879,18 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    stage transitions and simply wait at 071 for a push or a comment: no
    nudge, no adoption, no extra comment
    ([Stage 07x by author kind](#stage-07x-by-author-kind)).
+The Activity Monitor exposes the same hub presence on 071 and 072 waiting-on
+pills and linked PR sub-rows, even before a nudge. Its `presence` payload names
+`login`, `kind` (human/clanker), `state` (online/offline/unknown), `since`,
+`last_seen`, and `next` (wait/adopt), with `adopt_at` when a current-head nudge
+makes adoption predictable. `available: false` means presence could not be read;
+it does not claim that the author has no registered profile. The deadline uses
+the adoption engine's clock: online grace from the first nudge, `after_offline`
+from the later heartbeat or nudge, or `after_unregistered` from the nudge.
+Before the first nudge, after a head change, with adoption disabled or held, and
+for human-authored PRs, the pill promises no adoption time. An existing adoption
+hold still shows its reason and the owner's Adopt decision when applicable.
+
 3. If the author stays unavailable the hive adopts the PR
    (`governor.labels.stage.adoption.enabled`, default `true`). "Unavailable"
    is decided against the contributor's **live** presence on the hub at

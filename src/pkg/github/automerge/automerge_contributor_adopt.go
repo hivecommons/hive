@@ -150,15 +150,19 @@ func (c *Engine) contributorPresence(ctx context.Context, login string) (Contrib
 // no profile here (another hive posted the PR) is adopted after
 // AdoptAfterUnregistered. Without presence the nudge-time graces apply.
 func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, now time.Time, presence ContributorPresence, hasPresence bool) (bool, string) {
+	deadline, reason := AdoptionDeadline(rec, head, policy, presence, hasPresence)
+	return !deadline.IsZero() && !now.Before(deadline), reason
+}
+
+// AdoptionDeadline returns the earliest adoption time for the current nudged
+// head. The tracker uses the same clock rules as the adoption engine.
+func AdoptionDeadline(rec stagelabels.Record, head string, policy StageLabelPolicy, presence ContributorPresence, hasPresence bool) (time.Time, string) {
 	start := rec.NudgeStart()
-	if head == "" || rec.NudgeHead != head || rec.NudgeCount == 0 || start.IsZero() {
-		return false, ""
-	}
-	if rec.Adopted(head) || rec.AdoptedInPlace() {
-		return false, ""
+	if head == "" || rec.NudgeHead != head || rec.NudgeCount == 0 || start.IsZero() || rec.Adopted(head) || rec.AdoptedInPlace() {
+		return time.Time{}, ""
 	}
 	if !hasPresence {
-		return now.Sub(start) >= adoptionGrace(rec, policy), AdoptReasonGrace
+		return start.Add(adoptionGrace(rec, policy)), AdoptReasonGrace
 	}
 	switch {
 	case presence.Registered && presence.Online:
@@ -166,23 +170,22 @@ func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, n
 		if grace <= 0 {
 			grace = 2 * time.Hour
 		}
-		return now.Sub(start) >= grace, AdoptReasonGrace
+		return start.Add(grace), AdoptReasonGrace
 	case presence.Registered:
 		wait := policy.AdoptAfterOffline
 		if wait <= 0 {
 			wait = 15 * time.Minute
 		}
-		since := start
-		if presence.LastSeen.After(since) {
-			since = presence.LastSeen
+		if presence.LastSeen.After(start) {
+			start = presence.LastSeen
 		}
-		return now.Sub(since) >= wait, AdoptReasonOffline
+		return start.Add(wait), AdoptReasonOffline
 	default:
 		wait := policy.AdoptAfterUnregistered
 		if wait <= 0 {
 			wait = 15 * time.Minute
 		}
-		return now.Sub(start) >= wait, AdoptReasonUnregistered
+		return start.Add(wait), AdoptReasonUnregistered
 	}
 }
 

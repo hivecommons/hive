@@ -1,0 +1,1 @@
+- Activity Monitor waiting-on pills and PR sub-rows show clanker presence with accessible shapes, last-seen details, and the adoption deadline; human authors remain waiting for a reply ([#15051](https://github.com/hivecommons/hive/issues/15051)).

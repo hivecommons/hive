@@ -397,7 +397,8 @@ type StageTrackerItem struct {
 	// what holds it, and the author's live presence, with the plain-words
 	// line the row shows instead of a bare "Returned to contributor"
 	// (hivecommons/hive#14524).
-	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
+	Adoption *StageTrackerAdoption       `json:"adoption,omitempty"`
+	Presence *StageTrackerPersonPresence `json:"presence,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -487,7 +488,8 @@ type StageTrackerLinkedPR struct {
 	// sub-row can open the same "Needs human" popover.
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
 	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
-	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
+	Adoption *StageTrackerAdoption       `json:"adoption,omitempty"`
+	Presence *StageTrackerPersonPresence `json:"presence,omitempty"`
 	// LastOperatorAction / OperatorActionCount mirror the nested PR's own
 	// row fields so its sub-row wears the ✓ badge too.
 	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
@@ -1543,7 +1545,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		return store.Get(stagelabels.Key(repo, number))
 	}
-	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
+	presence, maintainerPolicy := cachedStageTrackerPresence(s.stageTrackerPresence()), s.stageTrackerMaintainerPolicy()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
 		// "Needs human decision" is read from the item's current labels, not
 		// a store record that outlived them: once the park label is gone
@@ -1602,6 +1604,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
+		it.Presence = s.stageTrackerPersonPresence(*it, rec, hasRec, presence)
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
 		// Adoption is clanker-only (a human's PR is never adopted), so a
 		// human-authored 072 row keeps its plain caption.
@@ -2502,6 +2505,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
 				lp.Adoption = pr.Adoption
+				lp.Presence = pr.Presence
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef

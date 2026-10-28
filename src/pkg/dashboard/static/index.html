@@ -1518,6 +1518,12 @@
        status token the sentinel pill on the repo card already uses. */
     .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }
+    .ham-presence { display:inline-block; width:8px; height:8px; margin-right:5px; vertical-align:middle; flex-shrink:0; }
+    .ham-presence-online { border-radius:50%; background:var(--cue-decision); animation:ham-presence-breathe 3s ease-in-out infinite; }
+    .ham-presence-offline { background:var(--cue-state); }
+    .ham-presence-unknown { border:1.5px solid var(--cue-work); border-radius:50%; }
+    @keyframes ham-presence-breathe { 50% { opacity:.5; } }
+    @media (prefers-reduced-motion: reduce) { .ham-presence-online { animation:none; } }
     /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
     .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
@@ -14182,6 +14188,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_BLOCKED_ON_PR_MERGED = 'merged; the blocked sweep lifts the label next';
     const STAGE_TRACKER_BLOCKED_ON_PR_CLOSED = 'closed unmerged; the blocked sweep re-triages it next';
 
+    function stageTrackerPresenceTip(item, nowMs) {
+      const p = item && item.presence;
+      if (!p) return '';
+      const who = '@' + p.login;
+      const ago = value => {
+        const ms = Date.parse(value || '');
+        return Number.isFinite(ms) ? stageTrackerShortAgo(Math.max(0, nowMs - ms)) : '';
+      };
+      let text;
+      if (!p.available) text = who + ': clanker presence unavailable';
+      else if (p.state === 'online') text = who + "'s clanker: online" + (p.last_seen ? ', last seen ' + ago(p.last_seen) + ' ago' : '');
+      else if (p.state === 'offline') text = who + "'s clanker: offline" + (p.since ? ' ' + ago(p.since) : '');
+      else text = who + ': no clanker registered';
+      const at = Date.parse(p.adopt_at || '');
+      if (p.next === 'adopt' && Number.isFinite(at)) {
+        text += at <= nowMs ? ' — adoption due' : ' — hive will adopt at ' + new Date(at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + ' (in ' + stageTrackerShortAgo(at - nowMs) + ')';
+      } else text += p.kind === 'human' ? ' — waiting for a human reply' : ' — hive is waiting for them';
+      return text;
+    }
+    function stageTrackerPresenceHtml(item, nowMs) {
+      const p = item && item.presence;
+      if (!p) return '';
+      const state = p.state === 'online' ? 'online' : p.state === 'offline' ? 'offline' : 'unknown';
+      return `<span class="ham-presence ham-presence-${state}" role="img" aria-label="${esc(stageTrackerPresenceTip(item, nowMs))}"></span>`;
+    }
+
     // The 072 adoption line (`adoption`: {due, blocked_by, since, nudges,
     // author_online, action, text} — hivecommons/hive#14524): the payload's
     // plain-words text, '' when the row carries none.
@@ -14204,15 +14236,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return a.blocked_by ? 'not adopted' : ('waiting on ' + (a.author ? '@' + a.author : 'author'));
     }
     function stageTrackerAdoptionChipHtml(item) {
-      const tip = stageTrackerAdoptionTip(item);
-      if (!tip) return '';
+      const tip = [typeof stageTrackerPresenceTip === 'function' ? stageTrackerPresenceTip(item, Date.now()) : '', stageTrackerAdoptionTip(item)].filter(Boolean).join(' · ');
+      if (!tip && !(item && item.presence)) return '';
       const offered = stageTrackerAdoptOffered(item);
+      const presenceHtml = typeof stageTrackerPresenceHtml === 'function' ? stageTrackerPresenceHtml(item, Date.now()) : '';
+      const p = item && item.presence;
+      const label = stageTrackerAdoptionChipText(item) || (p ? 'waiting on @' + p.login : '');
+      const content = presenceHtml + esc(label) + (p && p.available && p.kind === 'human' && p.state === 'unknown' ? ' · human · no clanker' : '');
       const cls = 'ham-badge ham-badge-adoption' + (offered ? ' ham-badge-adoption-ask' : '');
       // "adopt?" opens the Needs-human popover (its decision_needed carries
       // the Adopt option) when the popover helpers are present.
       const decision = offered && typeof stageTrackerDecisionOf === 'function' && item.decision_needed ? stageTrackerDecisionOf(item) : null;
-      if (decision) return stageTrackerDecisionTriggerHtml(decision, esc(stageTrackerAdoptionChipText(item)), tip, cls);
-      return `<span class="${cls}" title="${esc(tip)}" aria-label="${esc('Adoption — ' + tip)}">${esc(stageTrackerAdoptionChipText(item))}</span>`;
+      if (decision) return stageTrackerDecisionTriggerHtml(decision, content, tip, cls);
+      return `<span class="${cls}" title="${esc(tip)}" aria-label="${esc('Waiting — ' + tip)}">${content}</span>`;
     }
 
     // "Sentinel flagged security-relevant changes at <head short sha>:
@@ -14839,7 +14875,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null,
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', presence: lp.presence || null, adoption: lp.adoption || null, decision_needed: lp.decision_needed || null,
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0 };
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
@@ -15020,7 +15056,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, adoption: lp.adoption || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', presence: lp.presence || null, adoption: lp.adoption || null, decision_needed: lp.decision_needed || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -16448,7 +16484,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of d.items) if (stageTrackerItemKey(it) === key) return it;
       for (const it of d.items) {
         for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
-          const pr = { repo: it.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, stage_slug: lp.stage_slug || '', caption: lp.caption || '', modifiers: lp.modifiers || [], decision_needed: lp.decision_needed || null, sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '' };
+          const pr = { repo: it.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, stage_slug: lp.stage_slug || '', caption: lp.caption || '', modifiers: lp.modifiers || [], presence: lp.presence || null, adoption: lp.adoption || null, decision_needed: lp.decision_needed || null, sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '' };
           if (stageTrackerItemKey(pr) === key) return pr;
         }
       }
@@ -16480,7 +16516,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.kind === 'pr') return parked(item) ? item : null;
       for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
         const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], author: lp.author || '',
-          human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null };
+          human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', presence: lp.presence || null, adoption: lp.adoption || null, decision_needed: lp.decision_needed || null };
         if (parked(pr)) return pr;
       }
       if (item.mirrored) return null;
@@ -16813,6 +16849,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Order (owner): WHAT it is waiting on → WHAT you can do → WHO asked, when.
       return `<div class="ham-decision-pop" role="dialog" aria-label="${esc('Decision needed on ' + ref)}" tabindex="-1">
         <div class="ham-decision-head">${esc(ref)}${item.title ? ' · ' + esc(item.title) : ''}</div>
+        ${typeof stageTrackerPresenceHtml === 'function' && item.presence ? `<p>${stageTrackerPresenceHtml(item, nowMs)} ${esc(stageTrackerPresenceTip(item, nowMs))}</p>` : ''}
         <p class="ham-decision-q">${esc(d.question || '')}</p>
         ${d.blocker ? `<p class="ham-decision-blocker">${esc(d.blocker)}</p>` : ''}
         ${buttons ? `<div class="ham-decision-acts">${buttons}</div>` : ''}
