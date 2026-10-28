@@ -222,10 +222,8 @@ func (m *Manager) SendKickAsync(name string, message string) (started bool, err 
 }
 
 func (m *Manager) validatePaneKickLocked(agent *AgentProcess, name string) error {
-	if agent.State != StateRunning {
-		if m.sharedPool == nil || agent.State != StateStopped || agent.Paused || agent.OperatorStopped {
-			return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
-		}
+	if agent.State != StateRunning && !m.sharedPoolAutoStartEligibleLocked(agent) {
+		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
 	}
 	if remaining := m.providerErrorBackoffRemainingLocked(agent, time.Now()); remaining > 0 {
 		class, line := agent.ProviderErrorClass, agent.ProviderErrorLine
@@ -257,10 +255,23 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 	if agent.State != StateRunning {
-		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+		if m.sharedPoolAutoStartEligibleLocked(agent) {
 			m.mu.Unlock()
 			if err := m.Start(context.Background(), name); err != nil {
 				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
+			}
+			m.mu.RLock()
+			started := m.agents[name] == agent && agent.State == StateRunning
+			m.mu.RUnlock()
+			if !started {
+				return fmt.Errorf("agent %s failed to enter running state", name)
+			}
+			// launchInTmux returns as soon as the launch command is typed.
+			// Wait for the CLI here — this goroutine is already off the
+			// request path — so the marker check below does not misread a
+			// still-booting pane as a crashed CLI and restart it.
+			if !m.waitForCLIReadyForAgent(agent) {
+				return fmt.Errorf("agent %s CLI did not become ready after auto-start", name)
 			}
 			m.mu.Lock()
 			agent, ok = m.agents[name]

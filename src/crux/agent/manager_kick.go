@@ -122,12 +122,20 @@ func (m *Manager) SendKick(name string, message string) error {
 	}
 
 	if agent.State != StateRunning {
-		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+		if m.sharedPoolAutoStartEligibleLocked(agent) {
+			// Mark the launch as startup-owned BEFORE starting so the kick
+			// below is deferred to the readiness-gated startup delivery
+			// instead of being typed into a pane whose CLI is still booting
+			// (which paneHasCLIMarker would misread as a crash and restart).
+			agent.startupLaunchQueued = true
 			m.mu.Unlock()
-			if err := m.Start(context.Background(), name); err != nil {
+			err := m.Start(context.Background(), name)
+			// Re-lock unconditionally: the deferred Unlock above must always
+			// find the mutex held.
+			m.mu.Lock()
+			if err != nil {
 				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
 			}
-			m.mu.Lock()
 			agent, ok = m.agents[name]
 			if !ok || agent.State != StateRunning {
 				return fmt.Errorf("agent %s failed to enter running state", name)

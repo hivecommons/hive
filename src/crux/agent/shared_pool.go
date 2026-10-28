@@ -14,6 +14,15 @@ import (
 const sharedSessionPoolPath = "/api/shared-agent-pool"
 const sharedPoolIdleEvictionDelay = 5 * time.Minute
 
+// sharedPoolRenewInterval is the lease heartbeat cadence; sharedPoolRenewGrace
+// bounds how long renewals may keep failing before the spoke assumes the Hub
+// has expired the lease (default TTL 90s) and evicts the CLI session. A single
+// Hub blip or rolling restart must never tear down an in-flight turn.
+const (
+	sharedPoolRenewInterval = 20 * time.Second
+	sharedPoolRenewGrace    = 60 * time.Second
+)
+
 var errSharedSessionPoolBusy = fmt.Errorf("shared session pool is busy")
 
 // SharedSessionPool coordinates heavyweight CLI sessions across Hive tenants.
@@ -75,7 +84,7 @@ func (c *sharedSessionPoolClient) request(ctx context.Context, method, path stri
 		return sharedPoolResponse{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusConflict {
+	if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusTooManyRequests {
 		return sharedPoolResponse{}, errSharedSessionPoolBusy
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -134,46 +143,138 @@ func (c *sharedSessionPoolClient) Release(ctx context.Context, leaseID string) e
 }
 
 func (m *Manager) watchSharedPoolLease(ctx context.Context, name, leaseID string) {
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(sharedPoolRenewInterval)
 	defer ticker.Stop()
+	lastRenewed := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
-		m.mu.RLock()
-		a := m.agents[name]
-		if a == nil || a.poolLeaseID != leaseID {
-			m.mu.RUnlock()
-			return
-		}
-		state := a.State
-		idle := a.LastKick == nil || a.KickOutcome.Settled(a.LastKick)
-		delivering := a.kickDelivering.Load()
-		idleSince := time.Time{}
-		if a.StartedAt != nil {
-			idleSince = *a.StartedAt
-		}
-		if a.KickOutcome.At.After(idleSince) {
-			idleSince = a.KickOutcome.At
-		}
-		m.mu.RUnlock()
-		if state == StateRunning && idle && !delivering &&
-			time.Since(idleSince) >= sharedPoolIdleEvictionDelay &&
-			paneShowsInputPrompt(m.captureVisiblePaneForAgent(a)) {
-			m.evictSharedPoolSession(name, leaseID)
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		err := m.sharedPool.Renew(ctx, leaseID)
-		cancel()
-		if err != nil {
-			m.logger.Warn("shared agent pool lease renewal failed; evicting CLI session", "agent", name, "error", err)
-			m.evictSharedPoolSession(name, leaseID)
+		if done := m.sharedPoolLeaseTick(name, leaseID, &lastRenewed); done {
 			return
 		}
 	}
+}
+
+// sharedPoolLeaseTick runs one watcher iteration: evict an idle session, else
+// renew the lease. lastRenewed is advanced on success; a failed renewal only
+// evicts once the grace window since the last success has elapsed, so a Hub
+// blip never destroys an in-flight turn. Returns true when the watcher should
+// stop (lease gone or session evicted).
+func (m *Manager) sharedPoolLeaseTick(name, leaseID string, lastRenewed *time.Time) bool {
+	m.mu.RLock()
+	a := m.agents[name]
+	if a == nil || a.poolLeaseID != leaseID {
+		m.mu.RUnlock()
+		return true
+	}
+	state := a.State
+	idle := a.LastKick == nil || a.KickOutcome.Settled(a.LastKick)
+	delivering := a.kickDelivering.Load()
+	idleSince := time.Time{}
+	if a.StartedAt != nil {
+		idleSince = *a.StartedAt
+	}
+	if a.KickOutcome.At.After(idleSince) {
+		idleSince = a.KickOutcome.At
+	}
+	m.mu.RUnlock()
+	if state == StateRunning && idle && !delivering &&
+		time.Since(idleSince) >= sharedPoolIdleEvictionDelay &&
+		paneShowsInputPrompt(m.captureVisiblePaneForAgent(a)) {
+		m.evictSharedPoolSession(name, leaseID)
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	err := m.sharedPool.Renew(ctx, leaseID)
+	cancel()
+	if err == nil {
+		*lastRenewed = time.Now()
+		return false
+	}
+	if since := time.Since(*lastRenewed); since < sharedPoolRenewGrace {
+		m.logger.Warn("shared agent pool lease renewal failed; retrying before lease expiry",
+			"agent", name, "error", err, "since_last_renew", since.Round(time.Second))
+		return false
+	}
+	m.logger.Warn("shared agent pool lease renewal failed past grace window; evicting CLI session",
+		"agent", name, "error", err, "since_last_renew", time.Since(*lastRenewed).Round(time.Second))
+	m.evictSharedPoolSession(name, leaseID)
+	return true
+}
+
+// sharedPoolAutoStartEligibleLocked reports whether a kick may transparently
+// relaunch this agent: pooled agents are parked in StateStopped between turns
+// by eviction, so a kick to one is a request for a new session, not an error.
+// Operator stops and pauses still win. Caller holds m.mu.
+func (m *Manager) sharedPoolAutoStartEligibleLocked(agent *AgentProcess) bool {
+	return m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped
+}
+
+// acquireSharedPoolLeaseForRelaunchUnlocked obtains a pool lease for a restart
+// path that relaunches via launchInTmux directly (and so bypasses Start's
+// acquire). Returns "" when the pool is disabled or the agent already holds a
+// lease. MUST be called with m.mu released: Acquire blocks on the Hub.
+func (m *Manager) acquireSharedPoolLeaseForRelaunchUnlocked(ctx context.Context, agent *AgentProcess, name string) (string, error) {
+	if m.sharedPool == nil {
+		return "", nil
+	}
+	m.mu.RLock()
+	held := agent.poolLeaseID
+	m.mu.RUnlock()
+	if held != "" {
+		return "", nil
+	}
+	leaseID, err := m.sharedPool.Acquire(ctx, name)
+	if err != nil {
+		return "", fmt.Errorf("acquire shared CLI session slot: %w", err)
+	}
+	return leaseID, nil
+}
+
+// relaunchWithSharedPoolLeaseLocked binds leaseID (from
+// acquireSharedPoolLeaseForRelaunchUnlocked; "" when none was needed) to the
+// agent, arms the renewal watcher, and relaunches. A failed launch hands the
+// slot straight back so the global cap is not consumed by a dead session.
+// Caller holds m.mu.
+func (m *Manager) relaunchWithSharedPoolLeaseLocked(ctx context.Context, agent *AgentProcess, leaseID string) error {
+	if leaseID != "" {
+		agent.poolLeaseID = leaseID
+		m.startSharedPoolLeaseWatcherLocked(agent, agent.Name, leaseID)
+	}
+	err := m.launchInTmux(ctx, agent)
+	if err != nil && leaseID != "" {
+		m.discardSharedPoolLeaseLocked(agent, leaseID)
+	}
+	return err
+}
+
+// discardSharedPoolLeaseLocked detaches leaseID from the agent (if bound) and
+// returns it to the Hub off the lock. Caller holds m.mu.
+func (m *Manager) discardSharedPoolLeaseLocked(agent *AgentProcess, leaseID string) {
+	if leaseID == "" {
+		return
+	}
+	if agent != nil && agent.poolLeaseID == leaseID {
+		agent.poolLeaseID = ""
+		if cancel := agent.poolLeaseCancel; cancel != nil {
+			agent.poolLeaseCancel = nil
+			cancel()
+		}
+	}
+	name := ""
+	if agent != nil {
+		name = agent.Name
+	}
+	go func() {
+		ctx, done := context.WithTimeout(context.Background(), 8*time.Second)
+		defer done()
+		if err := m.sharedPool.Release(ctx, leaseID); err != nil {
+			m.logger.Warn("shared agent pool lease release failed", "agent", name, "error", err)
+		}
+	}()
 }
 
 func (m *Manager) evictSharedPoolSession(name, leaseID string) {
