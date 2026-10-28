@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/blocker"
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 )
 
 // DefaultWebhookHealthWindow is the "healthy" window used until the governor
@@ -497,7 +497,7 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 			// becomes a structured blocker the moment it lands, so the
 			// tracker and "Let hive decide" read it before the next
 			// enumeration (hivecommons/hive#15099).
-			if e, changed := blocker.Shared().Observe(configured, n, body, at); changed && e.Blocks() {
+			if e, changed := itemblocker.Shared().Observe(configured, n, body, at); changed && e.Blocks() {
 				res.BlockerKind = string(e.Blocker.Kind)
 			}
 		}

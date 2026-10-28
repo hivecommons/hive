@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/blocker"
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 	"github.com/hivecommons/hive/pkg/stageengine"
 )
 
@@ -17,11 +17,11 @@ import (
 
 const workflowsReport = "Verified: the remaining retry wrappers live in `.github/workflows/v2-ci.yml`, which the App token cannot push (no `workflows` permission); needs a human."
 
-func swapSharedLedger(t *testing.T) *blocker.Ledger {
+func swapSharedLedger(t *testing.T) *itemblocker.Ledger {
 	t.Helper()
-	l := blocker.NewLedger("")
-	prev := blocker.SetShared(l)
-	t.Cleanup(func() { blocker.SetShared(prev) })
+	l := itemblocker.NewLedger("")
+	prev := itemblocker.SetShared(l)
+	t.Cleanup(func() { itemblocker.SetShared(prev) })
 	return l
 }
 
@@ -33,17 +33,17 @@ func TestWebhookIssueCommentRecordsBlocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.BlockerKind != string(blocker.CapabilityWorkflowsPermission) {
+	if res.BlockerKind != string(itemblocker.CapabilityWorkflowsPermission) {
 		t.Fatalf("blocker kind = %q (res %+v)", res.BlockerKind, res)
 	}
 	b, ok := l.Blocking(res.ConfiguredRepo, 14976)
-	if !ok || b.Kind != blocker.CapabilityWorkflowsPermission || !b.Since.Equal(time.Date(2026, 10, 20, 19, 33, 0, 0, time.UTC)) {
+	if !ok || b.Kind != itemblocker.CapabilityWorkflowsPermission || !b.Since.Equal(time.Date(2026, 10, 20, 19, 33, 0, 0, time.UTC)) {
 		t.Fatalf("ledger = %+v, %v", b, ok)
 	}
 	// The marker alone is enough, prose or not; a PR comment is ignored; a
 	// plain comment records nothing.
 	res, err = c.HandleWebhookEvent("issue_comment", []byte(`{"action":"created","issue":{"number":15},"comment":{"body":"parked. <!-- hive:blocker kind=human-only:cla -->"},"repository":{"full_name":"org/repo"}}`))
-	if err != nil || res.BlockerKind != string(blocker.HumanOnlyCLA) {
+	if err != nil || res.BlockerKind != string(itemblocker.HumanOnlyCLA) {
 		t.Fatalf("marker comment: %+v %v", res, err)
 	}
 	res, err = c.HandleWebhookEvent("issue_comment", []byte(`{"action":"created","issue":{"number":16,"pull_request":{"url":"x"}},"comment":{"body":`+jsonString(workflowsReport)+`},"repository":{"full_name":"org/repo"}}`))
@@ -66,10 +66,10 @@ func jsonString(s string) string {
 func TestRefsRemainderCommentCarriesBlockerMarker(t *testing.T) {
 	merged := []mergedPRRef{{Number: 14990, Title: "retry wrappers", URL: "https://github.com/o/r/pull/14990", Remainder: workflowsReport, NeedsHuman: true}}
 	body := renderRefsRemainderComment(merged, true, nil)
-	if !strings.Contains(body, blocker.Marker(blocker.CapabilityWorkflowsPermission)) {
+	if !strings.Contains(body, itemblocker.Marker(itemblocker.CapabilityWorkflowsPermission)) {
 		t.Fatalf("marker missing:\n%s", body)
 	}
-	if k, ok := blocker.ParseMarker(body); !ok || k != blocker.CapabilityWorkflowsPermission {
+	if k, ok := itemblocker.ParseMarker(body); !ok || k != itemblocker.CapabilityWorkflowsPermission {
 		t.Fatalf("ParseMarker = %v, %v", k, ok)
 	}
 	// Without needs-human the remainder is a note, not a park: no marker.
@@ -91,7 +91,7 @@ func TestIssueStageFactsCarryBlocker(t *testing.T) {
 	in := IssueStageInput{Repo: "hivecommons/hive", Number: 14976, Bucket: workBucketFiltered, Reason: issueNeedsHumanLabel,
 		Labels: []string{issueNeedsHumanLabel, HumanAckLabel, "stage/045-needs-decision"}}
 	f := issueFactsFrom(in, nil)
-	if f.Issue == nil || f.Issue.Blocker != string(blocker.CapabilityWorkflowsPermission) || f.Issue.BlockerShort != "App lacks workflows permission" {
+	if f.Issue == nil || f.Issue.Blocker != string(itemblocker.CapabilityWorkflowsPermission) || f.Issue.BlockerShort != "App lacks workflows permission" {
 		t.Fatalf("facts = %+v", f.Issue)
 	}
 	if f.Issue.ApprovedDirectionLabel != HumanAckLabel || !f.Park.NeedsHuman {

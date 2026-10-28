@@ -129,6 +129,9 @@ func (l *Ledger) Observe(repo string, number int, text string, at time.Time) (En
 	if strings.TrimSpace(text) == "" {
 		return Entry{}, false
 	}
+	if e, ok := l.Get(repo, number); ok && !at.IsZero() && e.stale(at) {
+		return e, false
+	}
 	b, ok := Detect(text, at)
 	if !ok {
 		if !needsHumanRE.MatchString(stripMarkers(text)) {
@@ -155,14 +158,17 @@ func (l *Ledger) Record(repo string, number int, b Blocker, reason string) Entry
 	if e.stale(b.Since) {
 		return e
 	}
+	// The observation time drives the loop guard; Since stays the first
+	// report of this kind so the row's age does not reset on re-reports.
+	observedAt := b.Since
 	e.Repo, e.Number = repo, number
-	if e.Blocker != nil && e.Blocker.Kind == b.Kind && !e.Blocker.Since.IsZero() {
+	if e.Blocker != nil && e.Blocker.Kind == b.Kind && !e.Blocker.Since.IsZero() && e.Blocker.Since.Before(b.Since) {
 		b.Since = e.Blocker.Since
 	}
 	e.Blocker = &b
 	e.Reason = reason
-	e.ReportedAt = b.Since
-	e.Reapplied = e.Reapplied || l.reapplied(e, reason, b.Since)
+	e.ReportedAt = observedAt
+	e.Reapplied = e.Reapplied || l.reapplied(e, reason, observedAt)
 	l.entries[k] = e
 	_ = l.save()
 	return e

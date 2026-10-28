@@ -48,7 +48,7 @@ func TestDecisionForBlockerWorkflowsPermission(t *testing.T) {
 		t.Fatalf("pill word = %q", it.Blocker.Short)
 	}
 	bctx := blockerOptionsContext{AppSettingsURL: "https://github.com/apps/hive/installations/new", PatchWhy: decisionWhyPatchNoIdentity}
-	d := stageTrackerDecisionNeededWith(it, nil, "", bctx)
+	d := stageTrackerDecisionNeededWith(it, nil, "", at, bctx)
 	if d == nil {
 		t.Fatal("nil decision")
 	}
@@ -82,13 +82,13 @@ func TestDecisionForBlockerWorkflowsPermission(t *testing.T) {
 		t.Fatalf("delegate option = %+v", o)
 	}
 	// No App settings link known → the option says so.
-	d2 := stageTrackerDecisionNeededWith(it, nil, "", blockerOptionsContext{})
+	d2 := stageTrackerDecisionNeededWith(it, nil, "", at, blockerOptionsContext{})
 	if o := decisionOptionByAction(t, d2, blocker.ActionAppSettings); o.Enabled || o.ReasonIfDisabled != decisionWhyNoAppSettings {
 		t.Fatalf("settings option without URL = %+v", o)
 	}
 	// Held: close-partial waits for the hold to lift; the hold option leads.
 	it.Hold = &StageTrackerHold{By: "owner"}
-	d3 := stageTrackerDecisionNeededWith(it, nil, "", bctx)
+	d3 := stageTrackerDecisionNeededWith(it, nil, "", at, bctx)
 	if o := decisionOptionByAction(t, d3, blocker.ActionClosePartial); o.Enabled {
 		t.Fatalf("close-partial while held = %+v", o)
 	}
@@ -112,7 +112,7 @@ func TestDecisionForBlockerLoopGuardDisablesDelegate(t *testing.T) {
 	}
 	since := at
 	it := StageTrackerItem{Repo: "hivecommons/hive", Number: 14990, Kind: "issue", Stage: stagelabels.IssueNeedsDecision.Number(), StageSince: &since, Modifiers: []string{"needs-human"}, Blocker: b}
-	d := stageTrackerDecisionNeededWith(it, nil, "", blockerOptionsContext{})
+	d := stageTrackerDecisionNeededWith(it, nil, "", at, blockerOptionsContext{})
 	if o := decisionOptionByAction(t, d, decisionActionDelegate); o.Enabled || o.ReasonIfDisabled != decisionWhyBlockerReasked {
 		t.Fatalf("delegate option = %+v", o)
 	}

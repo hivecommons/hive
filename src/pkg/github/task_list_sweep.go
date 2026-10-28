@@ -11,7 +11,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/blocker"
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 )
 
 // DefaultTaskListSweepMaxCloses caps the closures a single
@@ -660,7 +660,7 @@ func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo str
 			// The remainder is the agent's needs-human report; record it
 			// so a capability gap parks the issue on a blocker rather than
 			// a bare label (hivecommons/hive#15099).
-			blocker.Shared().Observe(owner+"/"+repo, number, "needs-human: "+strings.TrimSpace(ref.Remainder), ref.MergedAt)
+			itemblocker.Shared().Observe(owner+"/"+repo, number, "needs-human: "+strings.TrimSpace(ref.Remainder), ref.MergedAt)
 		}
 	}
 	if unansweredNeedsHuman && !hasIssueNeedsHumanLabel(labels) {
@@ -841,8 +841,8 @@ func renderRefsRemainderComment(merged []mergedPRRef, partial bool, untouched []
 		// A remainder that names a capability the App lacks is a structured
 		// blocker, not a question: the marker lets the tracker and "Let hive
 		// decide" read it as one (hivecommons/hive#15099).
-		if kind, ok := blocker.Infer(ref.Remainder); ok && ref.NeedsHuman {
-			fmt.Fprintln(&b, blocker.Marker(kind))
+		if kind, ok := itemblocker.Infer(ref.Remainder); ok && ref.NeedsHuman {
+			fmt.Fprintln(&b, itemblocker.Marker(kind))
 		}
 	}
 	fmt.Fprintln(&b, "_This comment is edited in place by the task-list sweep on every cycle; it is not duplicated._")
