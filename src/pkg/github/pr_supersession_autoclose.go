@@ -390,7 +390,10 @@ func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owne
 	default:
 		event.Reason = decision.Reason
 		notice := supersessionDecisionNotice(owner, closer, decision.Reason)
-		if closingClaim {
+		// An unreadable review-thread query is a transient API failure, not
+		// a verdict: do not park the PR at 085 over it. The next sweep
+		// re-reads the threads and decides again.
+		if closingClaim && !facts.ThreadsUnknown {
 			return c.escalateSupersededPR(ctx, owner+"/"+repo, owner, repo, pr, event, closer, notice)
 		}
 		event.Action = SupersessionActionCommentedContributor

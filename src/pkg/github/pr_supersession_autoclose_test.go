@@ -278,6 +278,9 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 			}}},
 		}, autoCloseEnabled},
 		{"review threads unreadable", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, ThreadsBroken: true}, autoCloseEnabled},
+		// A transient thread-read failure on a closing-claim PR must not
+		// sticky-park it at 085; the next sweep re-reads and decides.
+		{"review threads unreadable, closing claim", supersessionPRFixture{Body: "Fixes #3", Comments: []supersessionCommentFixture{notice}, ThreadsBroken: true}, autoCloseEnabled},
 		{"operator kept open", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{"size/S", SupersessionKeepOpenLabel}}, autoCloseEnabled},
 		{"size/L", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{"size/L"}}, autoCloseEnabled},
 		{"large unlabeled", supersessionPRFixture{Comments: []supersessionCommentFixture{notice}, Labels: []string{}, Additions: 400}, autoCloseEnabled},
