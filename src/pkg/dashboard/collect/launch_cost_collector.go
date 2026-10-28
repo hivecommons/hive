@@ -36,6 +36,9 @@ type LaunchCostCollector struct {
 	rollup         map[string]map[string]LaunchCostRollupRef
 	rollupLive     map[string]launchCostLiveLaunch
 	rollupDayCache map[string][]LaunchCostRollupRef
+	// settledDayCache holds the sorted settled-only list per day for the store,
+	// invalidated alongside rollupDayCache.
+	settledDayCache map[string]LaunchCostDailyRollup
 }
 
 type persistedLaunchCost struct {
@@ -88,7 +91,8 @@ func (lc *LaunchCostCollector) EnablePersistence(path string) {
 
 // persistSnapshotLocked captures what persistLocked will write. It runs under
 // lc.mu; the marshal and file I/O in writePersist do not, so a tick holds the
-// lock only for the map-to-list fold of the days it changed.
+// lock only for the map-to-list fold of the days it changed (settled days are
+// cached per day).
 func (lc *LaunchCostCollector) persistSnapshotLocked() (persistedLaunchCost, bool) {
 	if lc.persistPath == "" {
 		return persistedLaunchCost{}, false

@@ -341,3 +341,26 @@ func TestLaunchCostDailyRollupDayCache(t *testing.T) {
 		t.Fatal("not-ready snapshot must not merge")
 	}
 }
+
+// The store's settled list is built once per day and reused until that day
+// changes, instead of being re-listed and re-sorted every tick.
+func TestLaunchCostSettledRollupListCached(t *testing.T) {
+	lc := NewLaunchCostCollector(&fakeLaunchReader{}, nil)
+	lc.seedRollupLocked([]LaunchCostDailyRollup{
+		{Day: "2026-10-01", ByRef: []LaunchCostRollupRef{{Ref: "o/r#1", Launches: 1}, {Ref: "o/r#2", Launches: 1}}},
+		{Day: "2026-10-02", ByRef: []LaunchCostRollupRef{{Ref: "o/r#3", Launches: 1}}},
+	}, nil)
+	first := lc.settledRollupListLocked()
+	second := lc.settledRollupListLocked()
+	if len(first) != 2 || &first[0].ByRef[0] != &second[0].ByRef[0] || &first[1].ByRef[0] != &second[1].ByRef[0] {
+		t.Fatal("unchanged days must be served from the cache")
+	}
+	lc.invalidateRollupDayLocked("2026-10-02")
+	third := lc.settledRollupListLocked()
+	if &third[0].ByRef[0] != &first[0].ByRef[0] {
+		t.Fatal("untouched day must stay cached")
+	}
+	if &third[1].ByRef[0] == &first[1].ByRef[0] {
+		t.Fatal("invalidated day must be rebuilt")
+	}
+}

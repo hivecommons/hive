@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -21,7 +22,16 @@ const (
 	// sandboxRunSummaryTailLines is how much of the transcript tail stands in
 	// for the summary when the agent left no report.
 	sandboxRunSummaryTailLines = 20
+	// sandboxRunHistoryMaxBytes is the size at which runs.jsonl is compacted
+	// to its newest sandboxRunHistoryKeep records, so the file the token
+	// collector re-reads on every scan stays bounded.
+	sandboxRunHistoryMaxBytes = 2 << 20
+	sandboxRunHistoryKeep     = 1000
 )
+
+// sandboxRunPersistMu serializes persistSandboxRun so compaction never races
+// an append from another agent's run, now that callers no longer hold m.mu.
+var sandboxRunPersistMu sync.Mutex
 
 func sandboxRunPath(workDir, agent string) string {
 	return filepath.Join(crux.SandboxRunsDir(workDir), sanitizeBranchPart(agent)+".json")
@@ -189,6 +199,8 @@ type SandboxRunHistoryEntry struct {
 // the history. Failures are returned for logging only; the in-memory record
 // is already set.
 func persistSandboxRun(workDir string, entry SandboxRunHistoryEntry) error {
+	sandboxRunPersistMu.Lock()
+	defer sandboxRunPersistMu.Unlock()
 	dir := crux.SandboxRunsDir(workDir)
 	if err := os.MkdirAll(dir, 0o770); err != nil {
 		return err
@@ -209,9 +221,39 @@ func persistSandboxRun(workDir string, entry SandboxRunHistoryEntry) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
 	_, err = f.Write(append(last, '\n'))
-	return err
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return compactSandboxRunHistory(crux.SandboxRunHistoryPath(workDir), sandboxRunHistoryMaxBytes, sandboxRunHistoryKeep)
+}
+
+// compactSandboxRunHistory rewrites the history to its last keep lines once
+// it exceeds maxBytes. The file format is unchanged.
+func compactSandboxRunHistory(path string, maxBytes int64, keep int) error {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() <= maxBytes {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.SplitAfter(string(data), "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	if len(lines) <= keep {
+		return nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(lines[len(lines)-keep:], "")), 0o660); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // loadSandboxRun reads the agent's persisted last run; (nil, nil) when none.

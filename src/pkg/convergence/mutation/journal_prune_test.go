@@ -126,3 +126,22 @@ func TestJournal_ZeroBoundsDisablePruning(t *testing.T) {
 		t.Fatalf("unbounded journal must keep every entry: %d", got)
 	}
 }
+
+// Retention is measured against the journal's own clock: a commit carrying a
+// forged future timestamp must not age out other terminal entries.
+func TestJournal_PruneIgnoresForgedFutureTimestamp(t *testing.T) {
+	j, err := OpenJournal(filepath.Join(t.TempDir(), "journal.json"))
+	if err != nil {
+		t.Fatalf("OpenJournal: %v", err)
+	}
+	j.retention = time.Hour
+	base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	j.now = func() time.Time { return base }
+
+	kept := applyN(t, j, 1, base.Add(-30*time.Minute))
+	applyN(t, j, 2, base.Add(100*time.Hour))
+
+	if _, ok := j.Get(kept.LogicalID); !ok {
+		t.Fatal("a forged future timestamp must not prune entries inside the retention window")
+	}
+}
