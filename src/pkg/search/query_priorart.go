@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,6 +80,9 @@ func priorArtSearch(ctx context.Context, backend func() Backend, q priorart.Quer
 	out := make([]priorart.Candidate, 0, len(res.Hits))
 	for _, h := range res.Hits {
 		d := h.Document
+		if beadOfIssue(d, q) {
+			continue
+		}
 		title := d.Title
 		if strings.TrimSpace(title) == "" {
 			title = d.Repo + ": " + d.Kind
@@ -102,6 +106,44 @@ func priorArtSearch(ctx context.Context, backend func() Backend, q priorart.Quer
 		})
 	}
 	return out, nil
+}
+
+// beadOfIssue reports whether d is a bead filed against the gated issue: an
+// epic or advisory whose external_ref names it (`owner/repo#N`, the
+// planning `gh-owner/repo#N` form, or the issue URL). Such a bead echoes the
+// issue's own title back and would rank ~100% against it. Beads with an
+// `owner/repo#N` ref already carry the issue URL, which the gate's own check
+// catches; the other forms fall back to a `bead://` URL and are caught here.
+func beadOfIssue(d Document, q priorart.Query) bool {
+	if q.Number <= 0 || d.Kind != KindBead {
+		return false
+	}
+	ref := strings.TrimSpace(d.Fields["external_ref"])
+	if ref == "" {
+		return false
+	}
+	ref = strings.TrimPrefix(ref, "gh-")
+	n := strconv.Itoa(q.Number)
+	if i := strings.Index(ref, "://"); i >= 0 {
+		// Issue URL: the path must name the gated repo when it is known.
+		path := strings.TrimSuffix(ref[i+3:], "/")
+		for _, seg := range []string{"/issues/", "/pull/"} {
+			if repo, ok := strings.CutSuffix(path, seg+n); ok {
+				_, repo, _ = strings.Cut(repo, "/")
+				return q.Repo == "" || strings.EqualFold(repo, q.Repo)
+			}
+		}
+		return false
+	}
+	repo, num, ok := strings.Cut(ref, "#")
+	if !ok {
+		// Bare "gh-7" style refs name an issue in the bead's own repo.
+		return ref == n && (q.Repo == "" || strings.EqualFold(d.Repo, q.Repo))
+	}
+	if num != n {
+		return false
+	}
+	return repo == "" || q.Repo == "" || strings.EqualFold(repo, q.Repo)
 }
 
 // priorArtRef is the candidate's short human handle: "#<pr>" for review

@@ -470,6 +470,7 @@ words 1) and asks, without a model call:
 | closed_issues | closed issues in the repo (declined `not_planned` ones skipped unless `duplicate`) | `closed issue` |
 | docs | `README*`, `CHANGELOG*`, `docs/` in every `project.repos` checkout under `checkouts_dir`, by identifier and top terms (local `pkg/codeindex` snapshot) | `doc` |
 | code | source files in every registered checkout, by identifier only (local `pkg/codeindex` snapshot) | `code` / `setting` |
+| search | past review verdicts, reviewer findings, sentinel hits and beads in the portfolio search index (`pkg/search`, [#14639](https://github.com/hivecommons/hive/issues/14639)), by identifier and top terms; only when `search.enabled` is set | `review` |
 
 Each candidate's confidence is the share of the issue's weighted terms it
 contains; a candidate needs two shared terms including a title term or an

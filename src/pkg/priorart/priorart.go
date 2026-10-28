@@ -50,6 +50,9 @@ const (
 // Query is what a Source is asked.
 type Query struct {
 	Repo string
+	// Number is the gated issue's number (zero when unknown) so a source
+	// can drop records of the issue itself before they are ranked.
+	Number int
 	// Terms are the issue's key terms, highest weight first.
 	Terms []Term
 	// Identifiers are the Terms that look like code identifiers, config
@@ -235,7 +238,7 @@ func (s *Searcher) Find(ctx context.Context, issue Issue) Report {
 		s.remember(key, now, report)
 		return report
 	}
-	q := Query{Repo: issue.Repo, Terms: terms, Identifiers: identifiers(terms)}
+	q := Query{Repo: issue.Repo, Number: issue.Number, Terms: terms, Identifiers: identifiers(terms)}
 	ctx, cancel := context.WithTimeout(ctx, s.opts.Budget)
 	defer cancel()
 
@@ -321,12 +324,15 @@ func (s *Searcher) remember(key string, now time.Time, r Report) {
 	s.cache[key] = cacheEntry{at: now, report: r}
 }
 
-// sameItem drops the issue itself when a forge source echoes it back.
+// sameItem drops the issue itself when a forge source echoes it back, or
+// when the search source returns a bead or review record filed against it.
 func sameItem(c Candidate, issue Issue) bool {
 	if issue.Number <= 0 {
 		return false
 	}
-	if c.Kind != KindOpenIssue && c.Kind != KindClosedIssue && c.Kind != KindMergedPR {
+	switch c.Kind {
+	case KindOpenIssue, KindClosedIssue, KindMergedPR, KindReview:
+	default:
 		return false
 	}
 	n := strconv.Itoa(issue.Number)

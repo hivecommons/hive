@@ -146,3 +146,73 @@ func TestPriorArtRefIsAShortHandle(t *testing.T) {
 		}
 	}
 }
+
+// A planning epic minted from the gated issue (external_ref "gh-org/a#7",
+// which the ingester cannot turn into an issue URL) and a review record of
+// the issue itself (#7) carry the issue's own title and would otherwise park
+// the issue against itself (#14871 review).
+func TestPriorArtSourceDropsRecordsOfTheGatedIssue(t *testing.T) {
+	e := priorArtFixture(t)
+	docs := []Document{
+		doc("org/a", "bead/planner/epic-7", KindBead, t0, "Retry webhook delivery on 502",
+			"webhook.retry_backoff should retry webhook delivery when the relay answers 502",
+			map[string]string{"external_ref": "gh-org/a#7"}),
+		doc("org/a", "pr/7/finding/0-0", KindFinding, t0, "Retry webhook delivery on 502",
+			"webhook.retry_backoff retries webhook delivery when the relay answers 502",
+			map[string]string{"number": "7"}),
+		doc("org/a", "bead/planner/epic-9", KindBead, t0, "Retry webhook delivery on 502",
+			"webhook.retry_backoff retries webhook delivery when the relay answers 502",
+			map[string]string{"external_ref": "gh-org/a#9"}),
+	}
+	if err := e.Index(context.Background(), docs); err != nil {
+		t.Fatal(err)
+	}
+	s := priorart.NewSearcher(priorart.Options{Sources: []priorart.Source{PriorArtSource(func() Backend { return e })}})
+	r := s.Find(context.Background(), priorart.Issue{Repo: "org/a", Number: 7,
+		Title: "Retry webhook delivery on 502", Body: "`webhook.retry_backoff` should retry webhook delivery when the relay answers 502."})
+	refs := make([]string, 0, len(r.Findings))
+	for _, f := range r.Findings {
+		refs = append(refs, f.Ref)
+	}
+	if len(r.Findings) != 2 || refs[0] == "#7" || refs[1] == "#7" {
+		t.Fatalf("findings refs = %v, want #41 and epic-9 only", refs)
+	}
+	for _, f := range r.Findings {
+		if f.Ref != "#41" && f.Ref != "epic-9" {
+			t.Fatalf("unexpected finding %+v", f)
+		}
+	}
+}
+
+func TestBeadOfIssue(t *testing.T) {
+	q := priorart.Query{Repo: "org/a", Number: 7}
+	bead := func(ref string) Document {
+		return Document{Kind: KindBead, Repo: "org/a", Fields: map[string]string{"external_ref": ref}}
+	}
+	for _, tc := range []struct {
+		d    Document
+		q    priorart.Query
+		want bool
+	}{
+		{bead("org/a#7"), q, true},
+		{bead("gh-org/a#7"), q, true},
+		{bead(" gh-org/a#7 "), q, true},
+		{bead("gh-7"), q, true},
+		{bead("gh-8"), q, false},
+		{bead("https://github.com/org/a/issues/7"), q, true},
+		{bead("https://github.com/org/a/pull/7/"), q, true},
+		{bead("https://github.com/org/a/issues/7"), priorart.Query{Number: 7}, true},
+		{bead("org/b#7"), q, false},
+		{bead("https://github.com/org/b/issues/7"), q, false},
+		{bead("org/a#70"), q, false},
+		{bead("gh-org/a#8"), q, false},
+		{bead("inception/q1"), q, false},
+		{bead(""), q, false},
+		{bead("org/a#7"), priorart.Query{Repo: "org/a"}, false},
+		{Document{Kind: KindFinding, Fields: map[string]string{"external_ref": "org/a#7", "number": "7"}}, q, false},
+	} {
+		if got := beadOfIssue(tc.d, tc.q); got != tc.want {
+			t.Errorf("beadOfIssue(%q, %+v) = %v, want %v", tc.d.Fields["external_ref"], tc.q, got, tc.want)
+		}
+	}
+}
