@@ -617,6 +617,19 @@ func (c *Engine) noteOwnStageComment(owner, repo string, number int) {
 	c.stageStoreOrShared().CountOwnComments(key, 1)
 }
 
+// stageReasonSkipsContributorReview reports admission failures that stop the
+// contributor lane before it requests a reviewer verdict. A person must clear
+// admission before a missing verdict can mean the hive owes a review.
+func stageReasonSkipsContributorReview(reason string) bool {
+	switch reason {
+	case contributorLaneReasonNoClaim, contributorLaneReasonNoLinkedIssue, contributorLaneReasonClaimUnverified,
+		contributorLaneReasonClaimAuthor, contributorLaneReasonClaimOtherHive, contributorLaneReasonClaimTier,
+		contributorLaneReasonAuthorAssociation:
+		return true
+	}
+	return false
+}
+
 // stageActivity derives this cycle's outside-activity view of a PR.
 func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Activity {
 	a := stagelabels.Activity{Head: obs.HeadSHA, Comments: -1, Reviews: -1}
@@ -642,12 +655,12 @@ func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Ac
 	a.Digest = verdict + "|ci:" + ci.String() + "|" + strings.Join(labels, ",")
 	// Checks still running, or a review-pending head with no reviewer
 	// verdict yet, is waiting on the hive, not on a person. A contributor PR
-	// the lane skipped for want of a linked issue gets no verdict until the
+	// the lane skipped for an admission failure gets no verdict until the
 	// contributor or a maintainer acts, so the missing verdict alone does
 	// not make it wait on the hive (ApplyStageLabels still honours the
 	// head's running checks from the human route's digest).
 	a.WaitingOnHive = ci == ciReasonPending || stageReasonWaitsOnHive(obs.Reason) ||
-		(stage == stagelabels.ReviewPending && obs.Reason != contributorLaneReasonNoLinkedIssue &&
+		(stage == stagelabels.ReviewPending && !stageReasonSkipsContributorReview(obs.Reason) &&
 			!(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
 	return a
 }
