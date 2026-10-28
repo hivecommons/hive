@@ -1216,7 +1216,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// hivecommons/hive#14471: the superseder is still on record while
 			// the lane derives 085 (needs-human) or 072 (a later contributor
 			// head). Its merge must still close this PR.
-			n, err := c.settleSuperseder(ctx, store, key, obs, rec, now)
+			n, err := c.settleSuperseder(ctx, store, key, obs, rec, policy, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		} else if ok && adoptionMarkerScanDue(obs, rec, ok, want.Stage, policy) {
+			// hivecommons/hive#15052: the record forgot its adoption but the
+			// PR may still wear the marker; settle it from the copy's state.
+			n, err := c.recoverOrphanedAdoptionFromMarker(ctx, store, key, obs, policy, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err

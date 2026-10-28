@@ -980,7 +980,7 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	if rec.AdoptedBy <= 0 {
 		return 0, nil
 	}
-	return c.settleSuperseder(ctx, store, key, obs, rec, now)
+	return c.settleSuperseder(ctx, store, key, obs, rec, policy, now)
 }
 
 // settleSuperseder polls the superseding App PR recorded on an adoption (at
@@ -990,8 +990,10 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 // derives while the superseder is on record: a `needs-human` label (085) or
 // a contributor push after the adoption (072) used to stop the poll, and the
 // original stayed open with "closed automatically once #N merges" on it.
-func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, now time.Time) (int, error) {
-	if obs.Merged || !rec.SupersederPollDue(now, adoptCheckInterval) {
+// A copy closed unmerged is an orphaned adoption (hivecommons/hive#15052):
+// recoverOrphanedAdoption re-adopts, reverts, or parks it.
+func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) (int, error) {
+	if obs.Merged || rec.AdoptionChildClosedTwice() || !rec.SupersederPollDue(now, adoptCheckInterval) {
 		return 0, nil
 	}
 	store.MarkAdoptChecked(key, now)
@@ -1004,8 +1006,7 @@ func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store,
 	case sup.GetMerged():
 		return c.closeSupersededOriginal(ctx, store, key, obs, rec, sup, now)
 	case strings.EqualFold(sup.GetState(), "closed"):
-		c.warn("stage labels: adoption superseder closed unmerged; returning PR to the contributor", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy)
-		store.ClearAdoption(key)
+		return c.recoverOrphanedAdoption(ctx, store, key, obs, rec, policy, now)
 	}
 	return 0, nil
 }
@@ -1572,7 +1573,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	if rec.AdoptionEscalated(obs.HeadSHA) {
 		// A workflow-path refusal is a verdict on the head itself: it holds
 		// until the head moves, whatever the re-home or stall reasons say.
-		if rec.AdoptEscalatedReason == adoptionWorkflowRefusedReason || (rehomeReason == "" && adoptionStalledReason(obs, rec, policy, now) != "") {
+		if rec.AdoptEscalatedReason == adoptionWorkflowRefusedReason || rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionChildClosedTwice || (rehomeReason == "" && adoptionStalledReason(obs, rec, policy, now) != "") {
 			return adoptionEscape{Escalated: true, Reason: rec.AdoptEscalatedReason}, 0, nil
 		}
 		store.ClearAdoptionEscalation(key)

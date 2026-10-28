@@ -473,12 +473,23 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 		return delegatedOutcome{Err: err}
 	}
 	d, deciderNotes := s.decideDelegated(ctx, in)
+	// An adoption whose copy was closed unmerged (hivecommons/hive#15052)
+	// overrides the policy: the recorded decision no longer stands, so the
+	// answer is to re-adopt, not "already decided".
+	var orphan orphanedAdoption
+	if o, ok := s.delegatedOrphanedAdoption(ctx, repoFull, number, in, time.Now()); ok {
+		orphan = o
+		d = o.decision("#" + strconv.Itoa(number))
+		deciderNotes = append(deciderNotes, fmt.Sprintf("adoption orphaned: hive's copy #%d is closed without merging", o.Dead))
+	}
 	// The same rule firing again on an item the hive already decided would
 	// only repeat the comment: report it as a no-op instead of writing —
 	// unless the recorded decision never took effect, in which case say so
 	// in plain words with the options (hivecommons/hive#14822), or the
-	// operator asked to re-run it.
-	if prior := s.delegatedPriorDecisionState(ctx, repoFull, number, d.Rule); prior.Found && !req.Force {
+	// operator asked to re-run it. A re-adoption request older than the
+	// latest adoption marker was carried out and then orphaned again
+	// (hivecommons/hive#15052): it is not a repeat.
+	if prior := s.delegatedPriorDecisionState(ctx, repoFull, number, d.Rule); prior.Found && !req.Force && (orphan.Dead == 0 || prior.At.After(orphan.MarkerAt)) {
 		kind := rowActionTargetIssue
 		if in.Kind == delegatedecision.KindPR {
 			kind = rowActionTargetPR
@@ -501,6 +512,9 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	notes, execErr := s.executeDelegatedDecision(ctx, in, d, user, mergerRole)
 	notes = append(deciderNotes, notes...)
 	result := delegatedRowActionResult(in, d, notes)
+	if orphan.Dead > 0 && !orphan.Looped && execErr == nil {
+		result.Outcome = delegatedOrphanOutcome(orphan.Dead)
+	}
 	kinds := make([]string, 0, len(d.Actions))
 	for _, a := range d.Actions {
 		kinds = append(kinds, string(a.Kind))

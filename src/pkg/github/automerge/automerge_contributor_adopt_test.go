@@ -73,6 +73,10 @@ type adoptAPI struct {
 	branchUpdates       []string
 	reruns              []int64
 	baseCheckReads      int
+	// issueComments are served by GET issues/n/comments (the adoption
+	// marker scan, hivecommons/hive#15052); commentReads counts the calls.
+	issueComments map[int][]map[string]any
+	commentReads  int
 }
 
 type adoptCommit struct {
@@ -166,6 +170,16 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		a.refs[ref] = body.SHA
 		a.refUpdates = append(a.refUpdates, ref+"="+body.SHA)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ref": ref, "object": map[string]string{"sha": body.SHA}})
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/issues/") && strings.HasSuffix(path, "/comments"):
+		var n int
+		_, _ = sscanInt(strings.TrimPrefix(path, "/repos/acme/widget/issues/"), &n)
+		a.commentReads++
+		out := a.issueComments[n]
+		if out == nil {
+			out = []map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(out)
 		return true
 	case r.Method == http.MethodPost && path == "/repos/acme/widget/pulls":
 		var body map[string]any
@@ -694,30 +708,6 @@ func TestAdoptionOfflineGraceThenSupersederMergedClosesOriginal(t *testing.T) {
 	}
 	if len(h.api.comments) != 1 || !strings.HasPrefix(h.api.comments[0], adoptionCloseMarker) || !strings.Contains(h.api.comments[0], "#90") || res.Comments != 1 {
 		t.Fatalf("close note: %v res=%+v", h.api.comments, res)
-	}
-}
-
-// Superseder closed unmerged: the adoption is forgotten and the PR falls
-// back to 072 (a maintainer declined the takeover).
-func TestAdoptionSupersederClosedUnmergedReturnsTo072(t *testing.T) {
-	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
-	defer done()
-	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
-	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
-	h.clock.advance(time.Hour)
-	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
-	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
-	h.adopt.setSuperseder(90, "closed", false)
-	h.api.reset()
-	h.clock.advance(adoptCheckInterval)
-	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
-	if len(h.adopt.prEdits) != 0 {
-		t.Fatalf("original closed although superseder was abandoned: %v", h.adopt.prEdits)
-	}
-	h.api.reset()
-	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
-	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/072-returned-to-contributor" {
-		t.Fatalf("fallback to 072: added=%v removed=%v", h.api.added, h.api.removed)
 	}
 }
 

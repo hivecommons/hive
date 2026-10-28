@@ -402,6 +402,11 @@ type StageTrackerItem struct {
 	NudgeCount  int                      `json:"nudge_count,omitempty"`
 	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
 	AdoptedBy   int                      `json:"adopted_by,omitempty"`
+	// AdoptedByState qualifies AdoptedBy when the hive's copy is not simply
+	// open (hivecommons/hive#15052): "closed" — the copy was closed without
+	// merging and the hive is re-adopting; "closed-twice" — two copies were
+	// closed within the hour, so the hive stopped and a person must decide.
+	AdoptedByState string `json:"adopted_by_state,omitempty"`
 	// Adoption is, on a nudged PR at stage/072, whether adoption is due,
 	// what holds it, and the author's live presence, with the plain-words
 	// line the row shows instead of a bare "Returned to contributor"
@@ -1136,6 +1141,8 @@ func humanizeStageReason(reason string) string {
 		return "the PR references it without closing it (partial)"
 	}
 	switch lower {
+	case stagelabels.LaneReasonAdoptionChildClosedTwice:
+		return "the hive's copies of this PR were closed without merging twice within an hour"
 	case "held":
 		return "held by a hold label"
 	case "label:needs-rebase":
@@ -1413,12 +1420,18 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.AdoptedByHive:
 		c := adoptedWorkCaption(reason)
 		if hasRec && rec.AdoptedBy > 0 {
+			if stageTrackerAdoptedByState(rec) == stageTrackerAdoptedClosed {
+				return joinClause("The hive's copy #"+strconv.Itoa(rec.AdoptedBy)+" was closed without merging; the hive is opening a fresh copy from the same head", clause), "hive"
+			}
 			c += " (superseded by #" + strconv.Itoa(rec.AdoptedBy) + ")"
 		}
 		return joinClause(c, clause), "hive"
 	case stagelabels.AwaitingMergeAdmission:
 		return joinClause("Green and approved; waiting for the automerge lane to admit it", clause), "automerge lane"
 	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
+		if hasRec && stageTrackerAdoptedByState(rec) == stageTrackerAdoptedClosedTwice {
+			return stageTrackerAdoptionLoopCaption(rec), "maintainer"
+		}
 		if step, _ := stageTrackerUnauthorized(reason); step != "" {
 			// hivecommons/hive#14589: not a decision but a step only a
 			// person may take; the gate cell says the same.
@@ -1502,6 +1515,32 @@ func timePtr(t time.Time) *time.Time {
 	}
 	u := t
 	return &u
+}
+
+// AdoptedByState values (StageTrackerItem.AdoptedByState).
+const (
+	stageTrackerAdoptedClosed      = "closed"
+	stageTrackerAdoptedClosedTwice = "closed-twice"
+)
+
+// stageTrackerAdoptedByState reads the copy's state from the record
+// (hivecommons/hive#15052): the loop-guard park, else a copy the hive noted
+// closed and has not yet replaced.
+func stageTrackerAdoptedByState(rec stagelabels.Record) string {
+	switch {
+	case rec.AdoptedBy <= 0:
+		return ""
+	case rec.AdoptionChildClosedTwice():
+		return stageTrackerAdoptedClosedTwice
+	case rec.AdoptOrphanedBy == rec.AdoptedBy:
+		return stageTrackerAdoptedClosed
+	}
+	return ""
+}
+
+// stageTrackerAdoptionLoopCaption is the 085 caption for the loop guard.
+func stageTrackerAdoptionLoopCaption(rec stagelabels.Record) string {
+	return "The hive's copies of this PR (last #" + strconv.Itoa(rec.AdoptedBy) + ") were closed without merging twice within an hour; the hive stopped opening copies and a person must decide"
 }
 
 // stageStoreOrShared returns the injected stage store (tests) or the
@@ -1618,6 +1657,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LastNudgeAt = &t2
 			}
 			it.AdoptedBy = rec.AdoptedBy
+			it.AdoptedByState = stageTrackerAdoptedByState(rec)
 			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
 		}
 		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)

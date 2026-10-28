@@ -1091,8 +1091,38 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    its attempt before touching GitHub, so a failed `hive/adopt-<n>` push is
    not retried on the next sweep. While in 074 the hive polls the superseder at most
    every 10 minutes: merged → one `<!-- hive:adopted-merged -->` note and the
-   original is closed; closed unmerged (a maintainer declined) → the adoption
-   is forgotten and the original returns to 072 (not a regression).
+   original is closed; closed unmerged → the adoption is **orphaned** and the
+   hive recovers it rather than leaving the original parked
+   (hivecommons/hive#15052, where the duplicate-fix sweep closed the hive's
+   copy and the original sat at 085 with "Let hive decide" answering "no
+   change"):
+   - **Re-adopt.** The hive logs `stage labels: adoption orphaned,
+     re-adopting` (old and new numbers), opens a fresh hive-authored copy
+     from the same contributor head and posts a new `hive:adopted … mode=supersede
+     superseded_by=<new>` marker; the original stays 074 and the tracker reads
+     "Adopted → #old (closed) · recovering" until the new copy is on record,
+     then "Adopted → #new".
+   - **Revert.** If the head moved (or the original merged meanwhile) or the
+     fresh copy could not be opened, the adoption is cleared and the original
+     returns to its pre-adoption stage with one
+     `<!-- hive:adoption-reverted head=<sha> superseded_by=<old> why=head-moved|readopt-failed -->`
+     comment that says in plain words why.
+   - **Loop guard.** If the re-adopted copy is itself closed unmerged within
+     an hour of the first orphan, the hive stops opening copies: it posts
+     `<!-- hive:adoption-child-closed-twice -->`, parks the original at
+     `stage/085-needs-decision` with reason `adoption-child-closed-twice`, and
+     the tracker shows "Adopted → #N (closed twice) · needs a person". Reopen
+     the last copy, give direction, or close the original; the park is not
+     escalated or re-adopted by the hive.
+   - **Marker scan.** A hive restarted (or rolled) after the orphan happened
+     has no adoption on record, so once per head a PR at 085 wearing
+     `author/clanker` has its comments scanned for the last unsettled
+     `hive:adopted … mode=supersede` marker; a merged copy closes the
+     original the standard way, a closed one takes the recovery above, an
+     open one is restored to the record. *Let hive decide* on such a PR does
+     the same recovery instead of answering "no change" — its outcome reads
+     "Re-adopting: hive's earlier copy #N was closed by mistake; opening a
+     fresh copy" (or, past the loop guard, a recommendation to a person).
    If an adopted head is DCO-red, an empty signed commit is never enough.
    "Hive-authored" is decided the same way as head attribution above: an
    unsigned commit is the hive's own only when GitHub links its author or

@@ -38,6 +38,10 @@ type repoItemDecisionMock struct {
 	// priorComments are the comment bodies GET /comments lists (a prior
 	// delegated decision makes a repeat click a no-op).
 	priorComments []string
+	// supersederState / supersederMerged shape GET pulls/90, the hive copy
+	// an adoption marker on #8 may name (hivecommons/hive#15052); "" is 404.
+	supersederState  string
+	supersederMerged bool
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -64,6 +68,12 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				n = 9
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": []any{}, "pull_request": map[string]any{"url": "x"}, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/90"):
+			if m.supersederState == "" {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 90, "state": m.supersederState, "merged": m.supersederMerged, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}, "head": map[string]any{"sha": "beefbeefbeefbeefbeefbeefbeefbeefbeefbeef"}})
 		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/pulls/8") || strings.HasSuffix(path, "/pulls/9")):
 			// PR #9 is a second hive PR nested under issue #7 (the per-PR
 			// delegated decision); it reads like #8.

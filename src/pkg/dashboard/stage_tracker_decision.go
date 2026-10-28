@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -341,6 +342,8 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 			reason = "security-relevant changes"
 		}
 		d.Question = "The security check flagged " + reason + at + ". Accept it as is, give direction, or close it?"
+	case lower == stagelabels.LaneReasonAdoptionChildClosedTwice:
+		d.Question = "The hive's copies of this PR were closed without merging twice within an hour, so the hive stopped opening copies. Reopen the last copy (#" + strconv.Itoa(it.AdoptedBy) + "), give direction, or close it?"
 	case adoptionStalled:
 		d.Question = "The hive took this PR over but could not move it (" + decisionPlainReason(adoptionLane) + "). Give direction, or close it?"
 	case forkGuarded:

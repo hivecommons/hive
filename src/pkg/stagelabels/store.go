@@ -201,6 +201,21 @@ type Record struct {
 	// update-branch commits forever; both reset with the adoption.
 	AdoptRecoveryAttempt string `json:"adopt_recovery_attempt,omitempty"`
 	AdoptRecoveryCount   int    `json:"adopt_recovery_count,omitempty"`
+	// AdoptOrphanedBy / AdoptOrphanedAt / AdoptOrphanCount record that a
+	// supersede-mode adoption's hive copy was closed without merging
+	// (hivecommons/hive#15052: the duplicate-fix sweep closed #14977 under
+	// #14947). The reconciler re-adopts from the same head; the count and
+	// time let it stop when the fresh copy is closed again within
+	// AdoptionOrphanLoopWindow (reason LaneReasonAdoptionChildClosedTwice).
+	// All three reset with the adoption.
+	AdoptOrphanedBy  int       `json:"adopt_orphaned_by,omitempty"`
+	AdoptOrphanedAt  time.Time `json:"adopt_orphaned_at,omitempty"`
+	AdoptOrphanCount int       `json:"adopt_orphan_count,omitempty"`
+	// AdoptMarkerScanHead is the head at which the reconciler last read the
+	// PR's comments for an adoption marker the store no longer carries (a
+	// record that forgot its adoption, or a store rebuilt from scratch);
+	// one read per head.
+	AdoptMarkerScanHead string `json:"adopt_marker_scan_head,omitempty"`
 	// MergeCommitNotedHead is the head the `merge-method/merge` note was
 	// posted for, so the lane explains the merge method once per head.
 	MergeCommitNotedHead string `json:"merge_commit_noted_head,omitempty"`
@@ -1104,6 +1119,57 @@ func (s *Store) NoteAdoptionBlocked(key, head, reason string, now time.Time) {
 	s.dirty = true
 }
 
+// AdoptionOrphanLoopWindow is how soon after one orphan recovery a second
+// closed copy counts as a loop: the PR then parks at 085 with
+// LaneReasonAdoptionChildClosedTwice instead of a third copy being opened.
+const AdoptionOrphanLoopWindow = time.Hour
+
+// LaneReasonAdoptionChildClosedTwice is the 085 reason for an adopted PR
+// whose hive copy was closed unmerged twice within AdoptionOrphanLoopWindow:
+// something keeps closing the copy and a person must say what.
+const LaneReasonAdoptionChildClosedTwice = "adoption-child-closed-twice"
+
+// NoteAdoptionOrphaned records that superseding PR `by` was closed without
+// merging while the adoption stood (hivecommons/hive#15052).
+func (s *Store) NoteAdoptionOrphaned(key string, by int, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || by <= 0 {
+		return
+	}
+	r.AdoptOrphanedBy, r.AdoptOrphanedAt = by, now
+	r.AdoptOrphanCount++
+	s.items[key] = r
+	s.dirty = true
+}
+
+// AdoptionOrphanedWithin reports whether an orphan was recorded less than
+// window before now: a second closed copy inside it is a loop.
+func (r Record) AdoptionOrphanedWithin(now time.Time, window time.Duration) bool {
+	return r.AdoptOrphanCount > 0 && !r.AdoptOrphanedAt.IsZero() && now.Sub(r.AdoptOrphanedAt) < window
+}
+
+// AdoptionChildClosedTwice reports the loop-guard park: the adoption stands
+// on record, escalated at its head for LaneReasonAdoptionChildClosedTwice.
+func (r Record) AdoptionChildClosedTwice() bool {
+	return r.AdoptEscalatedReason == LaneReasonAdoptionChildClosedTwice && r.AdoptEscalatedHead != "" && r.AdoptEscalatedHead == r.AdoptedHead
+}
+
+// MarkAdoptMarkerScanned records that the PR's comments were read for an
+// adoption marker at head.
+func (s *Store) MarkAdoptMarkerScanned(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.AdoptMarkerScanHead == head {
+		return
+	}
+	r.AdoptMarkerScanHead = head
+	s.items[key] = r
+	s.dirty = true
+}
+
 // ClearAdoptionBlocked forgets a held adoption (it went ahead, or the
 // policy no longer holds it).
 func (s *Store) ClearAdoptionBlocked(key string) {
@@ -1243,6 +1309,7 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
+	r.AdoptOrphanedBy, r.AdoptOrphanedAt, r.AdoptOrphanCount = 0, time.Time{}, 0
 	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
 	s.items[key] = r
 	s.dirty = true

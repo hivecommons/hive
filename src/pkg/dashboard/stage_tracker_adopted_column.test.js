@@ -96,6 +96,17 @@ test('adopted word names the superseding PR and is empty otherwise', () => {
   assert.strictEqual(lifted.adoptedWord(null), '');
 });
 
-test('the detour word for 074 uses the adopted pill in the shipped renderer', () => {
-  assert.match(html, /cur === STAGE_TRACKER_ADOPTED_BY_HIVE && stageTrackerAdoptedWord\(item\)/);
+// hivecommons/hive#15052: a copy closed unmerged says so and that the hive
+// is re-adopting; the loop guard names the park. The 085 row carrying
+// either state uses the adopted word, not "Needs human decision".
+test('adopted word qualifies a closed copy and the loop-guard park', () => {
+  assert.strictEqual(lifted.adoptedWord({ stage: 74, adopted_by: 14977, adopted_by_state: 'closed' }), 'Adopted → #14977 (closed) · recovering');
+  assert.strictEqual(lifted.adoptedWord({ stage: 85, adopted_by: 14977, adopted_by_state: 'closed' }), 'Adopted → #14977 (closed) · recovering');
+  assert.strictEqual(lifted.adoptedWord({ stage: 85, adopted_by: 15060, adopted_by_state: 'closed-twice' }), 'Adopted → #15060 (closed twice) · needs a person');
+  assert.strictEqual(lifted.adoptedWord({ stage: 74, adopted_by: 15060, adopted_by_state: '' }), 'Adopted → #15060');
+  assert.strictEqual(lifted.adoptedWord({ stage: 85, adopted_by_state: 'closed' }), '');
+});
+
+test('the detour word for 074 (and a qualified 085) uses the adopted pill in the shipped renderer', () => {
+  assert.match(html, /\(cur === STAGE_TRACKER_ADOPTED_BY_HIVE \|\| \(cur === STAGE_TRACKER_HUMAN_GATED && item\.adopted_by_state\)\) && stageTrackerAdoptedWord\(item\)/);
 });

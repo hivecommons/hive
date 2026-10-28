@@ -13942,9 +13942,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // PR), so it renders in the CI/Review column with the adoptee named —
     // never "Needs human decision" (hivecommons/hive#14975 → #14980).
     const STAGE_TRACKER_ADOPTED_BY_HIVE = 74;
+    // adopted_by_state (hivecommons/hive#15052): "closed" — the copy was
+    // closed unmerged and the hive is re-adopting; "closed-twice" — the
+    // loop guard parked the PR for a person.
     function stageTrackerAdoptedWord(item) {
       const by = Number(item && item.adopted_by) || 0;
-      return by > 0 ? 'Adopted → #' + by : '';
+      if (by <= 0) return '';
+      const state = String((item && item.adopted_by_state) || '');
+      if (state === 'closed') return 'Adopted → #' + by + ' (closed) · recovering';
+      if (state === 'closed-twice') return 'Adopted → #' + by + ' (closed twice) · needs a person';
+      return 'Adopted → #' + by;
     }
     const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Awaiting human';
     function stageTrackerUnauthorizedWord(item) {
@@ -14408,7 +14415,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (cur === STAGE_TRACKER_ADOPTED_BY_HIVE && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
