@@ -367,12 +367,16 @@ func TestSupersededDisabledGraceHidesCountdown(t *testing.T) {
 
 // Exercise the actual sweep with the zero-value auto-close setting, including a
 // second pass whose identical notice does not cause another GitHub write.
+// Parking is two label writes, not one: the sweep's own park labels, then
+// the stage label the Parked fact drives through the stage engine. The
+// fixture accumulates labels the way GitHub does so the second pass still
+// sees the park and does not repeat it.
 func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 	useRingSupersessionAudit(t)
 	s := reviewQueueTestServer(t, filepath.Join(t.TempDir(), "missing.json"))
 	var notice string
 	var labels []string
-	var labelWrites int
+	var parkWrites, stageWrites int
 	var writes int
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
@@ -397,10 +401,19 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 				json.NewEncoder(w).Encode([]map[string]any{{"id": 1, "body": notice}})
 			}
 		case "POST /repos/myorg/repo1/issues/2/labels":
-			if err := json.NewDecoder(r.Body).Decode(&labels); err != nil {
+			var added []string
+			if err := json.NewDecoder(r.Body).Decode(&added); err != nil {
 				t.Error(err)
 			}
-			labelWrites++
+			labels = append(labels, added...)
+			switch strings.Join(added, ",") {
+			case "needs-human," + prstage.SupersessionPendingLabel:
+				parkWrites++
+			case config.PRNeedsDecisionStageLabel:
+				stageWrites++
+			default:
+				t.Errorf("unexpected label write: %v", added)
+			}
 			fmt.Fprint(w, `[]`)
 		case "POST /repos/myorg/repo1/issues/2/comments":
 			var in struct {
@@ -457,7 +470,9 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 	if writes != 1 {
 		t.Fatalf("notice writes = %d, want 1", writes)
 	}
-	if labelWrites != 1 || strings.Join(labels, ",") != "needs-human,"+prstage.SupersessionPendingLabel {
-		t.Fatalf("park labels = %v, writes = %d; want one supersession park", labels, labelWrites)
+	// The shared stage store may already hold 085 for this ref from an
+	// earlier test, in which case the engine has nothing to write.
+	if parkWrites != 1 || stageWrites > 1 {
+		t.Fatalf("park labels = %v, park writes = %d, stage writes = %d; want one supersession park", labels, parkWrites, stageWrites)
 	}
 }

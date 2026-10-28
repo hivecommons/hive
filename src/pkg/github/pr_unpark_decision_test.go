@@ -74,6 +74,39 @@ func prDecisionFacts(t *testing.T, c *Client) []stageengine.PRDecisionFact {
 	return out
 }
 
+// A bare `/hive decision reject` on a hive-authored PR is a change request
+// for the author agent, not a supersession close: the PR stays open and the
+// decision takes the changes-requested path.
+func TestSweepIssueUnparkCommandsBareRejectOnHivePRIsChangeRequest(t *testing.T) {
+	issues := []unparkWireIssue{hiveParkedPR(humanComment(4242, "clubanderson", "/hive decision reject"))}
+	c, rec := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+	store := review.NewHumanChangeRequests("")
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{
+		HumanChangeRequests: store,
+		TrustedMerger:       trustedMergerSet("clubanderson"),
+	})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.PRDecisions) != 1 || result.PRDecisions[0].Decision != "reject" || result.Replies != 0 {
+		t.Fatalf("result = %+v, want one changes-requested decision", result)
+	}
+	if len(rec.patched[liveDecisionPR]) != 0 {
+		t.Fatalf("bare reject closed a hive-authored PR: %v", rec.patched[liveDecisionPR])
+	}
+	if _, ok := store.For("org/repo", liveDecisionPR, liveDecisionHead); !ok {
+		t.Fatal("change request not recorded")
+	}
+	if len(rec.posted[liveDecisionPR]) != 1 || strings.Contains(rec.posted[liveDecisionPR][0], "superseded") {
+		t.Fatalf("posted = %v, want one changes-requested reply", rec.posted[liveDecisionPR])
+	}
+	facts := prDecisionFacts(t, c)
+	if len(facts) != 1 || !facts[0].Instruction || !facts[0].SelfAuthored {
+		t.Fatalf("stage facts = %+v, want one self-authored instruction", facts)
+	}
+}
+
 func TestSweepIssueUnparkCommandsDecisionOnHivePRRoutesFixKick(t *testing.T) {
 	issues := []unparkWireIssue{hiveParkedPR(humanComment(4242, "clubanderson", "/hive decision "+liveDecisionText))}
 	c, rec := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})

@@ -63,7 +63,9 @@ For a PR whose closing claims were superseded by another merged PR, a trusted
 maintainer with repository write access can reply `/hive decision reject` or
 `/hive decision close superseded by #N`. Hive rechecks that the claimed issues
 are closed and a different merged PR closed them; an explicit `#N` must match
-that closer. It comments and closes the PR with `hive/superseded`, including
+that closer. On a hive-authored PR a bare `/hive decision reject` remains a
+change request routed to the author agent; use the explicit
+`close superseded by #N` form to close one. It comments and closes the PR with `hive/superseded`, including
 PRs opened by contributors, without pushing to their branches. Hold and
 `do-not-merge` gates still prevent the close. The sweep's
 `hive/supersession-pending` cause label keeps the unresolved decision at 085

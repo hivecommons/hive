@@ -186,7 +186,7 @@ func renderSupersessionGraceNotice(grace time.Duration) string {
 	}
 	return fmt.Sprintf("A different merged PR closed the claimed issue and its implementation files were also changed by it (additional tests, docs and changelog fragments are allowed). "+
 		"Unless someone comments here, the sweep will close this PR as superseded once %s have passed since this notice. "+
-		"Reply on this PR to keep it open.", formatSupersessionGrace(grace))
+		"Reply on this PR to stop the countdown: a maintainer then decides whether it stays open or closes as superseded.", formatSupersessionGrace(grace))
 }
 
 func formatSupersessionGrace(d time.Duration) string {

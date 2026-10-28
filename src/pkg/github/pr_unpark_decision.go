@@ -67,6 +67,8 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 	selfAuthored := c.isHiveAccount(pr.GetUser()) || labelPresent(issueLabelNames(pr.Labels), authorkind.Hive.Label())
 
 	reply := ""
+	// closer == 0 is a bare `reject`: on a hive-authored PR that stays a
+	// change request for the author agent, not a close.
 	if closer, closeRequested := supersessionCloseDecision(command); closeRequested && !(selfAuthored && closer == 0) {
 		reply, err := c.closeSupersededPRDecision(ctx, displayRepo, owner, repo, pr, actor, closer)
 		if err != nil {
@@ -425,7 +427,13 @@ func renderPRHelpReply(selfAuthored bool, head string) string {
 	} else {
 		b.WriteString("- Leave a **changes requested** review and the author is nudged with your text; the hive does not push to a PR it did not open.\n")
 	}
-	b.WriteString("- For a superseded PR, reply `/hive decision reject` or `/hive decision close superseded by #N` to close it.\n")
+	if selfAuthored {
+		// A bare `reject` on a hive-authored PR is a change request, so
+		// only the explicit form closes it.
+		b.WriteString("- For a superseded PR, reply `/hive decision close superseded by #N` to close it.\n")
+	} else {
+		b.WriteString("- For a superseded PR, reply `/hive decision reject` or `/hive decision close superseded by #N` to close it.\n")
+	}
 	fmt.Fprintf(&b, "\nSee <%s>.", maintainerCommandsDocURL)
 	return b.String()
 }
