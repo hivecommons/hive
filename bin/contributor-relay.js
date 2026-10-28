@@ -7386,7 +7386,8 @@ function failCurrentTask(reason, opts) {
   // hub and the operator read to understand the failure, and quitLiveCLI()
   // followed by a relaunch overwrites it with launch chrome.
   let tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
-  if (tmuxLines.length === 0 && opts && Array.isArray(opts.outputTail)) tmuxLines = opts.outputTail;
+  // An empty pane capture is [''] (''.split yields one element), not [].
+  if (!tmuxLines.some(l => l.trim()) && opts && Array.isArray(opts.outputTail)) tmuxLines = opts.outputTail;
   // Cause B (#5353): the hub is about to release this issue and offer it to
   // someone else. Stop the agent and drop its token FIRST, so the report and
   // the reality agree at the instant the hub acts on it.
