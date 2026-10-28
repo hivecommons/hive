@@ -1,0 +1,1 @@
+- Prevent comment-only PR cross-references from moving issues to Reviewing or Closed in the dashboard; timeline PR links now require a closing keyword in the PR title or body ([#14985](https://github.com/hivecommons/hive/issues/14985)).

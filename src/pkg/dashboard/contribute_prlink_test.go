@@ -382,12 +382,10 @@ func strPtr(s string) *string { return &s }
 
 // ── searchLinkedPR: commit / comment / timeline references (#14859) ────────
 
-// TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences pins
-// hivecommons/hive#14859: a PR that names the issue only in a commit message
-// or a PR comment must still count as linked. GitHub records those mentions
-// as cross-referenced events on the issue's timeline; before the fix only the
-// PR title/body was consulted, so such a PR read as "no linked PR".
-func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
+// TestSearchLinkedPR_TimelineRequiresClosingIntent pins #14985: a same-repo
+// cross-reference that anyone can create by commenting must not change the
+// issue's dashboard state. Only closing intent in the PR's title/body counts.
+func TestSearchLinkedPR_TimelineRequiresClosingIntent(t *testing.T) {
 	const issue = 13135
 	// A search hit whose title/body does not name the issue: GitHub search
 	// matched it on a comment or commit mention.
@@ -404,6 +402,7 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 	commentOnlyMergedPR := `{"number":14656,"state":"closed","title":"keep the header chips from overlapping the title","body":"Hive Agent","html_url":"https://github.com/o/r/pull/14656","repository":{"full_name":"o/r"},"pull_request":{"url":"x","merged_at":"2026-10-28T00:00:00Z"}}`
 	mentionPR := `{"number":14700,"state":"open","title":"unrelated work","body":"see also #13135 for context","html_url":"https://github.com/o/r/pull/14700","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
 	closingPR := `{"number":14701,"state":"open","title":"fix it","body":"Closes #13135","html_url":"https://github.com/o/r/pull/14701","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
+	mergedClosingPR := `{"number":14701,"state":"closed","title":"fix it","body":"Closes #13135","html_url":"https://github.com/o/r/pull/14701","repository":{"full_name":"o/r"},"pull_request":{"url":"x","merged_at":"2026-10-28T00:00:00Z"}}`
 	plainIssue := `{"number":14859,"state":"open","html_url":"https://github.com/o/r/issues/14859","repository":{"full_name":"o/r"}}`
 
 	cases := []struct {
@@ -414,46 +413,55 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 		wantState  string
 	}{
 		{
-			name:       "comment reference only (cross-referenced event, search miss)",
-			search:     `[]`,
-			timeline:   `[` + crossRef(openPR) + `]`,
-			wantNumber: 14656,
-			wantState:  prLinkStateOpen,
+			name:     "open timeline PR with missing text is not evidence",
+			search:   `[]`,
+			timeline: `[` + crossRef(openPR) + `]`,
 		},
 		{
-			name:       "PR comment reference only (search hit rejected by title/body)",
-			search:     `[` + searchHit + `]`,
-			timeline:   `[` + crossRef(openPR) + `]`,
-			wantNumber: 14656,
-			wantState:  prLinkStateOpen,
+			name:     "rejected comment-only search hit cannot bypass gate via timeline",
+			search:   `[` + searchHit + `]`,
+			timeline: `[` + crossRef(openPR) + `]`,
 		},
 		{
-			name:       "timeline cross-reference from a merged PR",
-			search:     `[]`,
-			timeline:   `[{"event":"labeled","created_at":"2026-10-26T00:00:00Z"},` + crossRef(mergedPR) + `]`,
-			wantNumber: 14656,
-			wantState:  prLinkStateMerged,
+			name:     "merged timeline PR with missing text is not evidence",
+			search:   `[]`,
+			timeline: `[{"event":"labeled","created_at":"2026-10-26T00:00:00Z"},` + crossRef(mergedPR) + `]`,
 		},
 		{
-			name:       "PR comment reference only (title/body populated, not naming the issue)",
-			search:     `[` + searchHit + `]`,
-			timeline:   `[` + crossRef(commentOnlyPR) + `]`,
-			wantNumber: 14656,
-			wantState:  prLinkStateOpen,
+			name:     "comment-only reference cannot promote to Reviewing",
+			search:   `[` + searchHit + `]`,
+			timeline: `[` + crossRef(commentOnlyPR) + `]`,
 		},
 		{
-			name:       "PR comment reference only from a merged PR",
-			search:     `[]`,
+			name:     "comment-only reference cannot promote to Closed",
+			search:   `[]`,
+			timeline: `[` + crossRef(commentOnlyMergedPR) + `]`,
+		},
+		{
+			name:     "comment-only and mention-only PRs are both ignored",
+			search:   `[]`,
+			timeline: `[` + crossRef(commentOnlyPR) + `,` + crossRef(mentionPR) + `]`,
+		},
+		{
+			name:       "comment-only merged PR cannot override a valid open search hit",
+			search:     `[` + closingPR + `]`,
 			timeline:   `[` + crossRef(commentOnlyMergedPR) + `]`,
-			wantNumber: 14656,
-			wantState:  prLinkStateMerged,
+			wantNumber: 14701,
+			wantState:  prLinkStateOpen,
 		},
 		{
-			name:       "comment-only PR beats a later mention-only PR",
+			name:       "comment-only PR is skipped in favor of closing timeline PR",
 			search:     `[]`,
-			timeline:   `[` + crossRef(commentOnlyPR) + `,` + crossRef(mentionPR) + `]`,
-			wantNumber: 14656,
+			timeline:   `[` + crossRef(commentOnlyPR) + `,` + crossRef(closingPR) + `]`,
+			wantNumber: 14701,
 			wantState:  prLinkStateOpen,
+		},
+		{
+			name:       "merged timeline PR with closing intent is retained",
+			search:     `[]`,
+			timeline:   `[` + crossRef(mergedClosingPR) + `]`,
+			wantNumber: 14701,
+			wantState:  prLinkStateMerged,
 		},
 		{
 			name:     "cross-reference from a PR that only mentions the issue",
@@ -530,17 +538,17 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 	}
 }
 
-// TestPrClosesIssue pins the timeline gate: a PR whose title/body names the
-// issue must do so with a closing keyword, while a PR whose title/body never
-// names the issue reached the timeline via a PR comment and is kept (#14859).
+// TestPrClosesIssue pins the timeline gate: closing intent must be present
+// in the PR's title/body, even when a comment created a cross-reference.
 func TestPrClosesIssue(t *testing.T) {
 	cases := []struct {
 		name        string
 		title, body string
 		want        bool
 	}{
-		{"empty title and body", "", "", true},
-		{"comment-only: title/body never name the issue", "keep the header chips from overlapping", "Hive Agent", true},
+		{"empty title and body", "", "", false},
+		{"comment-only: title/body never name the issue", "keep the header chips from overlapping", "Hive Agent", false},
+		{"closing keyword in title", "Fixes #13135", "", true},
 		{"closing keyword", "fix it", "Closes #13135", true},
 		{"closing keyword, repo-qualified", "fix it", "Fixes o/r#13135", true},
 		{"bare mention without keyword", "unrelated", "see also #13135 for context", false},
@@ -548,8 +556,8 @@ func TestPrClosesIssue(t *testing.T) {
 		{"repo-qualified mention without keyword", "unrelated", "see also o/r#13135", false},
 		{"URL mention without keyword", "unrelated", "see https://github.com/o/r/issues/13135", false},
 		{"mention in title without keyword", "follow-up to #13135", "", false},
-		{"different issue number", "unrelated", "Closes #131350 and see #1313", true},
-		{"URL for a different issue number", "unrelated", "see https://github.com/o/r/issues/131350", true},
+		{"different issue number", "unrelated", "Closes #131350 and see #1313", false},
+		{"URL for a different issue number", "unrelated", "see https://github.com/o/r/issues/131350", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
