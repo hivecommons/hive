@@ -1251,16 +1251,13 @@ func (s *HubServer) triggerAutoUpgrades() {
 					s.mu.Lock()
 					for i := range s.registry.Hives {
 						if s.registry.Hives[i].ID == h.ID {
-							// Route through beginUpgrade so the start time
-							// SURVIVES a same-target re-arm (the crash-loop retry
-							// case): re-arming delivery for the same target must
-							// not reset the elapsed clock, or a thrashing upgrade
-							// never crosses staleUpgradeTimeout and the stuck-
-							// upgrade alert never fires. A genuinely advanced
-							// target (recoverTarget != old UpgradeTarget) is a new
-							// upgrade and DOES get a fresh clock. A lost/zero start
-							// is re-stamped either way, which self-heals the
-							// ibm-alchemy zero-timestamp wedge.
+							// Recovery continues the existing attempt, even when a
+							// channel promotion advances its target. Adopt the target
+							// before beginUpgrade so it preserves the original clock:
+							// promotions must not restart the silent-drain hold or
+							// postpone stuck-upgrade alerting. A lost/zero clock is
+							// still stamped by beginUpgrade.
+							s.registry.Hives[i].UpgradeTarget = recoverTarget
 							s.beginUpgrade(i, recoverTarget)
 							break
 						}
