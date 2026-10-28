@@ -29,6 +29,9 @@ func (stubTransport) UpdateBranch(context.Context, string, int) error {
 	return nil
 }
 func (stubTransport) RecordPRMergedAudit(string, int, string, string, string) {}
+func (s stubTransport) IsHiveAuthorLogin(login string) bool {
+	return strings.EqualFold(strings.TrimSpace(login), s.AppBotLogin())
+}
 
 func TestSelfAuthorizationReleaseBudget(t *testing.T) {
 	var nilEngine *Engine

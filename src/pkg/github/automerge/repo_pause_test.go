@@ -47,6 +47,9 @@ func (p pauseBlindTransport) IsExemptLabels([]string) bool                      
 func (p pauseBlindTransport) IsHeldLabels(labels []string) bool                       { return hgithub.HasHoldLabel(labels) }
 func (p pauseBlindTransport) UpdateBranch(context.Context, string, int) error         { return nil }
 func (p pauseBlindTransport) RecordPRMergedAudit(string, int, string, string, string) {}
+func (p pauseBlindTransport) IsHiveAuthorLogin(login string) bool {
+	return stubTransport{}.IsHiveAuthorLogin(login)
+}
 
 func TestEngineActiveRepos_FallsBackWithoutCapability(t *testing.T) {
 	transport := pauseBlindTransport{repos: []string{"widget", "gadget"}}

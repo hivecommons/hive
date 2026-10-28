@@ -32,6 +32,9 @@ type Transport interface {
 	SplitRepo(repo string) (owner, repoName string)
 	AutoMergeLabel() string
 	AppBotLogin() string
+	// IsHiveAuthorLogin authenticates adoption markers against this hive's
+	// configured posting identities, not arbitrary bot accounts.
+	IsHiveAuthorLogin(login string) bool
 	IsExemptLabels(labels []string) bool
 	// IsHeldLabels reports whether labels carry a hold the transport's owner
 	// configured: the generic hold substrings plus the exact hive-scoped
