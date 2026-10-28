@@ -140,6 +140,9 @@ type Server struct {
 	// evidenceHB is the background-refreshed evidence aggregate the hub
 	// heartbeat reads (evidence_heartbeat.go); zero value is ready to use.
 	evidenceHB evidenceHeartbeatCache
+	// repoHealth serves GET /api/repos/{owner}/{repo}/health
+	// (api_repo_health.go); zero value reports search as disabled.
+	repoHealth repoHealthSource
 	// stageTrackerServed flips once /api/stage-tracker has been built; it
 	// gates the SSE nudge UpdateStatusIfFresh sends after a publish.
 	stageTrackerServed bool

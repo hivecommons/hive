@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
@@ -71,6 +72,15 @@ type Indexer struct {
 	// Now is the clock; nil means time.Now.
 	Now    func() time.Time
 	Logger *slog.Logger
+	// HealthOptions tunes the per-repo health score recomputed after every
+	// rebuild (see ComputeHealth); HealthSignals supplies its non-evidence
+	// inputs per repo. A nil HealthSignals leaves those components
+	// not_reported.
+	HealthOptions HealthOptions
+	HealthSignals func(repo string) HealthSignals
+
+	healthMu sync.RWMutex // guards health; never held with mu across a rebuild's I/O
+	health   map[string]Health
 
 	mu         sync.Mutex // serialises rebuilds and guards the state below
 	entries    map[string]*sourceEntry
@@ -86,6 +96,9 @@ type sourceEntry struct {
 	stamp string
 	first time.Time // when the source was first seen
 	docs  []docRef
+	// bundle is the trimmed evidence bundle (healthBundle) the health score
+	// is recomputed from; nil for other sources.
+	bundle *evidence.Bundle
 }
 
 type docRef struct {
@@ -233,6 +246,7 @@ func (i *Indexer) Rebuild(ctx context.Context) (RebuildStats, error) {
 		}
 		r.stats.Deleted += n
 	}
+	i.recomputeHealth(now)
 	return r.stats, errors.Join(errs...)
 }
 

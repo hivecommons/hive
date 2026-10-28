@@ -533,6 +533,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Evidence summary (#12063): read-only aggregate over the bundles; never
 	// consulted by any merge decision.
 	s.mux.HandleFunc("GET /api/evidence/summary", s.handleEvidenceSummary)
+	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/health", s.handleRepoHealth)
 	// write_surface is a top-level Config field; the lane write allowlist
 	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
 	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)

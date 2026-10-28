@@ -455,6 +455,16 @@ forgestate.freshness_bound_s # yaml-only until readers migrate (#13373)
 forgestate.reconcile_interval_s # yaml-only until readers migrate (#13373)
 forgestate.search_budget # yaml-only until readers migrate (#13373)
 search.enabled # portfolio search indexer (#14635); yaml-only
+search.health.security_doc_max_age # repo health score (#14638); yaml-only
+search.health.stale_after # repo health score (#14638); yaml-only
+search.health.weights.ci_pass_rate # repo health score (#14638); yaml-only
+search.health.weights.dependency_freshness # repo health score (#14638); yaml-only
+search.health.weights.review_verdict_mix # repo health score (#14638); yaml-only
+search.health.weights.revert_followup_rate # repo health score (#14638); yaml-only
+search.health.weights.security_doc_rot # repo health score (#14638); yaml-only
+search.health.weights.signoff_rate # repo health score (#14638); yaml-only
+search.health.weights.stale_issue_ratio # repo health score (#14638); yaml-only
+search.health.weights.time_to_merge # repo health score (#14638); yaml-only
 search.max_index_bytes_per_repo # portfolio search indexer (#14635); yaml-only
 search.max_memory_bytes # portfolio search indexer (#14635); yaml-only
 search.retention # portfolio search indexer (#14635); yaml-only

@@ -140,7 +140,7 @@ func (i *Indexer) ingestBundleFile(r *rebuild, path, repo string, info fs.FileIn
 		i.restat(r, key, info)
 		return
 	}
-	i.put(r, key, &sourceEntry{mod: info.ModTime(), size: info.Size(), stamp: timeStamp(at)}, bundleDocs(&b, at))
+	i.put(r, key, &sourceEntry{mod: info.ModTime(), size: info.Size(), stamp: timeStamp(at), bundle: healthBundle(&b)}, bundleDocs(&b, at))
 }
 
 // bundleDocs maps one evidence bundle to a bundle document plus one document

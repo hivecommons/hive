@@ -48,6 +48,16 @@ func searchKnowledgeFacts(api *knowledge.KnowledgeAPI) func(context.Context) []k
 	}
 }
 
+// searchHealthOptions maps search.health onto the indexer's health score
+// options (hivecommons/hive#14638).
+func searchHealthOptions(h config.SearchHealthConfig) search.HealthOptions {
+	return search.HealthOptions{
+		Weights:           h.Weights.Resolved(),
+		StaleAfter:        h.StaleAfterOrDefault(),
+		SecurityDocMaxAge: h.SecurityDocMaxAgeOrDefault(),
+	}
+}
+
 // newSearchIndexer builds the portfolio search indexer (#14635), or returns
 // nil without touching the filesystem when search.enabled is not true.
 func newSearchIndexer(cfg *config.Config, beadStores map[string]*beads.Store, api *knowledge.KnowledgeAPI, logger *slog.Logger) (*search.Indexer, error) {
@@ -72,6 +82,7 @@ func newSearchIndexer(cfg *config.Config, beadStores map[string]*beads.Store, ap
 		StartupBudget:   spoke.HostedStartupBudget,
 		Started:         time.Now(),
 		Logger:          logger,
+		HealthOptions:   searchHealthOptions(cfg.Search.Health),
 	}, nil
 }
 
@@ -85,6 +96,9 @@ func (b *boot) startSearchIndexer() {
 	}
 	if ix == nil {
 		return
+	}
+	if b.dashSrv != nil {
+		b.dashSrv.SetRepoHealthSource(ix.RepoHealth)
 	}
 	ctx, cancel := context.WithCancel(b.ctx)
 	done := ix.Start(ctx)

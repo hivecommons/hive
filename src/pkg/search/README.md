@@ -70,3 +70,18 @@ one incremental rebuild off the hot path:
 - No ingest runs during the hosted startup budget (#14389).
 - Documents are `private` (never federated) unless the `Visibility` hook
   reports the repo `public`.
+
+## Repo health score
+
+At the end of every completed rebuild the indexer recomputes a report-only
+health score per repo with review evidence (`health.go`, served by
+`GET /api/repos/{owner}/{repo}/health`). Components: CI pass rate, median
+time-to-merge (`evidence.MedianTimeToMerge`), revert/follow-up rate
+(`evidence.PR.ChangeFailure`), review verdict mix (all over 90 days of
+evidence), stale-issue ratio, sign-off rate, dependency freshness and
+security-doc rot. The last four come from `Indexer.HealthSignals`; a nil
+signal means no local data and the component is `not_reported`. A component
+with fewer than `HealthMinN` samples (the hub's `minEvidenceN`) is also
+`not_reported`, and the weighted 0–100 sum is renormalised over the reported
+components, so missing data never counts as zero. The score is never an ACMM
+input and nothing that decides a merge or Governor priority reads it.
