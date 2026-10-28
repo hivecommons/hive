@@ -41,6 +41,20 @@ func TestIsTrackingIssue(t *testing.T) {
 	if why, ok := isTrackingIssue(trackingTestIssue(1, nil, gfi.TrackingMarker)); !ok || why != "marker" {
 		t.Fatalf("marker = %q,%v", why, ok)
 	}
+	// hivecommons/hive#14646: a GitHub Agentic Workflows issue, no hive label.
+	ghaw := trackingTestIssue(14646, []string{"good first issue", "help wanted", "stage/010-actionable", gfi.GHAWLabel},
+		"> This issue is automatically managed by GitHub Agentic Workflows. Do not close this issue manually.\n>\n> **No action to take** - Do not assign to an agent.\n\n<!-- gh-aw-detection-runs -->\n\n> - [x] expires <!-- gh-aw-expires: 2026-11-26T17:57:22.389Z --> on Nov 26, 2026, 5:57 PM UTC\n")
+	ghaw.Title = gh.Ptr("[aw] Detection Runs")
+	if why, ok := isTrackingIssue(ghaw); !ok || why != "gh-aw-marker" {
+		t.Fatalf("gh-aw issue: %q,%v", why, ok)
+	}
+	ghaw.Body = gh.Ptr("This issue tracks detection runs.")
+	if why, ok := isTrackingIssue(ghaw); !ok || why != "gh-aw-label" {
+		t.Fatalf("gh-aw label + [aw] title: %q,%v", why, ok)
+	}
+	if !strings.Contains(trackingIssueLinkComment(14646, "gh-aw-marker"), "GitHub Agentic Workflows") {
+		t.Fatal("nudge does not name GitHub Agentic Workflows")
+	}
 	if _, ok := isTrackingIssue(trackingTestIssue(1, []string{"bug"}, "crash on load")); ok {
 		t.Fatal("ordinary bug classified as tracking")
 	}

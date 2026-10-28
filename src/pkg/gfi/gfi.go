@@ -298,7 +298,7 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 			return skip(d, "excluded-label:"+l)
 		}
 	}
-	if why, ok := TrackingReason(c.Labels, c.Body); ok {
+	if why, ok := TrackingReason(c.Title, c.Labels, c.Body); ok {
 		return skip(d, SkipTracking+":"+why)
 	}
 	if why, ok := OpsTrackingReason(c.Title, c.Body); ok {
@@ -743,6 +743,8 @@ func WithdrawnComment(c Candidate, reason string, l Links, at time.Time) string 
 	}
 	var why string
 	switch {
+	case strings.HasPrefix(reason, SkipTracking+":"):
+		why = "it is a persistent tracking/archive issue (" + TrackingReasonText(strings.TrimPrefix(reason, SkipTracking+":")) + "), not work"
 	case strings.HasPrefix(reason, SkipOpsTracking):
 		why = "it is a maintainer's operations checklist, not a code change"
 	case reason == SkipTimeGated:

@@ -15,7 +15,9 @@ import (
 // Tracking / archive issues (hivecommons/hive#14613): the `hive/tracking`
 // label, the `<!-- hive:tracking -->` body marker or the literal "Keep this
 // issue open" sentence mark an issue the hive must recognise and leave
-// alone. The vocabulary lives in pkg/gfi (stdlib-only, shared with the
+// alone; issues managed by GitHub Agentic Workflows (`<!-- gh-aw-… -->`
+// markers, "automatically managed by GitHub Agentic Workflows" boilerplate,
+// hivecommons/hive#14646) are recognised the same way without a label. The vocabulary lives in pkg/gfi (stdlib-only, shared with the
 // good-first-issue picker); this file is the pkg/github side: the
 // enumeration bucket, the close guard and the PR-link nudge.
 
@@ -25,7 +27,7 @@ const trackingFilterReason = gfi.SkipTracking
 
 // ErrTrackingIssue is returned by CloseIssue for a tracking/archive issue
 // unless the caller set IssueCloseOptions.AllowTrackingIssue.
-var ErrTrackingIssue = errors.New("issue is a tracking/archive issue (hive/tracking label, <!-- hive:tracking --> marker or \"Keep this issue open\" in the body); the hive does not close it")
+var ErrTrackingIssue = errors.New("issue is a tracking/archive issue (hive/tracking label, <!-- hive:tracking --> marker, \"Keep this issue open\" in the body, or managed by GitHub Agentic Workflows); the hive does not close it")
 
 // trackingIssueLinkMarkerPrefix opens the one-line PR nudge the hive posts
 // when a PR body says Closes/Fixes #N for a tracking issue.
@@ -36,7 +38,7 @@ func isTrackingIssue(issue *gh.Issue) (string, bool) {
 	if issue == nil {
 		return "", false
 	}
-	return gfi.TrackingReason(issueLabelNames(issue.Labels), issue.GetBody())
+	return gfi.TrackingReason(issue.GetTitle(), issueLabelNames(issue.Labels), issue.GetBody())
 }
 
 // trackingIssueLinkMarker is the per-issue idempotency marker for the nudge.
@@ -50,17 +52,7 @@ func trackingIssueLinkComment(issue int, why string) string {
 		trackingIssueLinkMarker(issue), issue, trackingIssueLinkWhy(why), issue)
 }
 
-func trackingIssueLinkWhy(why string) string {
-	switch why {
-	case "label":
-		return "`" + gfi.TrackingLabel + "` label"
-	case "marker":
-		return "`" + gfi.TrackingMarker + "` marker"
-	case "keep-open":
-		return "its body says \"" + gfi.TrackingKeepOpenSentence + "\""
-	}
-	return "tracking issue"
-}
+func trackingIssueLinkWhy(why string) string { return gfi.TrackingReasonText(why) }
 
 // NudgeTrackingIssueClosingRefs posts ONE idempotent comment on the PR for
 // each same-repo issue its body closes that is a tracking/archive issue, so
