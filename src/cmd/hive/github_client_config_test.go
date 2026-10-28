@@ -77,13 +77,14 @@ var clientSetterAllowlist = map[string]string{
 // a config reload or heartbeat claim. Each is also applied by
 // configureGitHubClient (or allowlisted above), so a rebuild still gets it.
 var clientResyncSetters = map[string]bool{
-	"SetRepos":              true,
-	"SetHoldLabels":         true,
-	"SetNeverClaimLabels":   true,
-	"SetSentinelAlertLabel": true,
-	"SetExemptLabels":       true,
-	"SetAutoMergeLabel":     true,
-	"SetIssueFilter":        true,
+	"SetRepos":                true,
+	"SetHoldLabels":           true,
+	"SetNeverClaimLabels":     true,
+	"SetSkipIssuesWithOpenPR": true,
+	"SetSentinelAlertLabel":   true,
+	"SetExemptLabels":         true,
+	"SetAutoMergeLabel":       true,
+	"SetIssueFilter":          true,
 }
 
 const (

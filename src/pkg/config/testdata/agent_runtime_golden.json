@@ -702,6 +702,7 @@
   "good_first_issue": {},
   "supersession_sweep": {},
   "shared_ci_rerun": {},
+  "scanner": {},
   "upstream_watch": {},
   "agent_sandbox": {
     "enabled": true,

@@ -200,6 +200,13 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 		if gh == nil {
 			return "", github.ErrNoGitHubClient
 		}
+		// A fresh claim with no PR behind it is a dispatch: it also asks
+		// whether an open PR already fixes the issue (#14799). A renewal,
+		// a PR-backed start signal and the release tick's recheck of live
+		// claims do not — the holder's own PR is the open PR.
+		if _, held := ledger.Lookup(req.Repo, req.Issue); !held && !req.PRStarted {
+			return gh.IssueDispatchBlockReason(ctx, req.Repo, req.Issue)
+		}
 		return gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
 	})
 }

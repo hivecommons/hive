@@ -896,6 +896,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 						"pr_url", decision.claim.PRURL, "pr_author", decision.claim.PRAuthor,
 						"merged", decision.claim.MergedPR,
 						"source", decision.claim.Source, "source_reporter", decision.claim.SourceReporter)
+				case contributorAdmissionReasonOpenPRLinked:
+					// #14799: the forge, not the ledger, says the fix is open.
+					h.logger.Info("[contribute-ws] claim skipped: open PR already linked",
+						"repo", repo.Full, "number", number,
+						"pr", decision.openPR.PRNumber, "pr_url", decision.openPR.PRURL, "pr_author", decision.openPR.PRAuthor)
 				case contributorAdmissionReasonIssueClaim:
 					// #8380: someone claimed the issue on the issue itself; the
 					// claim expires on its own, so the log names when.

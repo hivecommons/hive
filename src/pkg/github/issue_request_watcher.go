@@ -576,7 +576,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	switch kind {
 	case "claim":
 		var reason string
-		reason, err = c.IssueClaimBlockReason(ctx, req.Repo, req.Number)
+		reason, err = c.IssueDispatchBlockReason(ctx, req.Repo, req.Number)
 		if err != nil {
 			break // Retry a failed lookup; never claim on unknown labels.
 		}

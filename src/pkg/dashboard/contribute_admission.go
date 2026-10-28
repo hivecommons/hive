@@ -99,6 +99,9 @@ type contributorAdmissionDecision struct {
 	admitted bool
 	reason   string
 	claim    ghpkg.IssueClaim
+	// openPR carries the live open PR behind an open_pr_linked refusal
+	// (hivecommons/hive#14799). Zero for every other reason.
+	openPR ghpkg.OpenPRLink
 	// churn carries the pull-request history behind an issue_churn refusal
 	// (#7995): which PRs merged, which closed unmerged. Zero-valued for every
 	// other reason.
@@ -118,6 +121,12 @@ type contributorAdmissionDecision struct {
 
 const (
 	contributorAdmissionReasonOpenPRClaim = "open_pr_claim"
+	// contributorAdmissionReasonOpenPRLinked: the forge says an OPEN pull
+	// request already links this issue with a closing keyword, checked live
+	// rather than through the eval cycle's ledger (hivecommons/hive#14799).
+	// It is what open_pr_claim becomes once the ledger catches up; the
+	// distinct code tells an operator the guard, not the ledger, caught it.
+	contributorAdmissionReasonOpenPRLinked = "open_pr_linked"
 	// contributorAdmissionReasonIssueClaim: someone has claimed the issue on
 	// the issue itself — a `hive:claim` marker comment or an assignee — and
 	// the claim has not expired (hivecommons/hive#8380). It covers the window
@@ -190,6 +199,16 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 		return contributorAdmissionDecision{
 			reason: reason,
 			claim:  claim,
+		}
+	}
+
+	// Live open-PR link (#14799): the ledger above is one eval cycle old;
+	// a PR opened since is only visible on the forge. One listing per repo
+	// per sweep, cached by the client.
+	if link, ok := h.openPRLinkingIssue(candidate); ok {
+		return contributorAdmissionDecision{
+			reason: contributorAdmissionReasonOpenPRLinked,
+			openPR: link,
 		}
 	}
 
@@ -288,6 +307,26 @@ func (h *ContributeWSHub) issueClaimedByOpenPR(repoFull, repoName string, number
 		}
 	}
 	return ghpkg.IssueClaim{}, false
+}
+
+// openPRLinkingIssue asks the Dependencies.OpenPRLinkingIssue hook whether an
+// open PR already links the candidate (hivecommons/hive#14799). Repo
+// spellings are tried in the same order and for the same reason as
+// issueClaimedByOpenPR. No hook wired (tests, or a hive booted without
+// GitHub credentials) reports no link and selection proceeds as before.
+func (h *ContributeWSHub) openPRLinkingIssue(candidate contributorAdmissionCandidate) (ghpkg.OpenPRLink, bool) {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.OpenPRLinkingIssue == nil {
+		return ghpkg.OpenPRLink{}, false
+	}
+	if link, ok := h.server.deps.OpenPRLinkingIssue(candidate.repoFull, candidate.number, candidate.labels); ok {
+		return link, true
+	}
+	if candidate.repoName != "" && candidate.repoName != candidate.repoFull {
+		if link, ok := h.server.deps.OpenPRLinkingIssue(candidate.repoName, candidate.number, candidate.labels); ok {
+			return link, true
+		}
+	}
+	return ghpkg.OpenPRLink{}, false
 }
 
 // churnTriagedMarker is the label a maintainer applies to say "I have looked

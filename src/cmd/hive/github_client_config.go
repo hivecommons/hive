@@ -79,6 +79,11 @@ func (b *boot) githubHoldLabels() []string {
 	return append(labels, b.cfg.Project.IssueFilter.ReporterTrust.ExtraHoldLabels()...)
 }
 
+// openPRLinkGuardTimeout bounds the live open-PR listing behind the
+// contribute lane's pre-dispatch guard (hivecommons/hive#14799) so a slow
+// forge cannot stall candidate selection; on timeout the guard fails open.
+const openPRLinkGuardTimeout = 15 * time.Second
+
 // applyGitHubClientConfigHooks installs the settings that depend on config
 // alone. All of them are applied on every client regardless of auth mode.
 func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
@@ -89,6 +94,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// Umbrella issues no automated claim may take and no claim stages
 	// (governor.claims.never_claim_labels, default `epic`).
 	client.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+	// Pre-dispatch open-PR guard (hivecommons/hive#14799,
+	// scanner.skip_issues_with_open_pr, default on).
+	client.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 	client.SetAdditionalBotLogins(b.cfg.GitHub.AdditionalBotLogins)
 	client.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)

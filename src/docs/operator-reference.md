@@ -739,6 +739,54 @@ someone re-runs it. The shared-CI rerun sweep
 |---|---|---|
 | `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes. |
 
+## Open-PR dispatch guard and duplicate-fix sweep (`scanner`)
+
+An issue whose fix is already open must not be dispatched again
+([#14799](https://github.com/hivecommons/hive/issues/14799)). The claim
+ledger the admission gates read is refreshed by the eval cycle, so a PR a
+person opened by hand between scans was invisible to the `/contribute` relay
+lane and the scanner, and the issue was handed out a second time; the two
+same-issue PRs then landed at `stage/085-needs-decision` for the owner to pick
+between. Two mechanisms close that gap
+(`src/pkg/github/open_pr_links.go`, `src/pkg/github/pr_duplicate_fix_sweep.go`):
+
+- **Pre-dispatch guard.** Before any automated producer claims an issue —
+  the central `IssueClaimBlockReason` gate, the ledger admission check, the
+  issue-request watcher and the `/contribute` relay lane — the hive lists
+  the repo's open PRs (once per repo per sweep, cached for a minute) and
+  parses each title/body with the claim ledger's closing-keyword grammar
+  (`Fixes|Closes|Resolves #N`; a `Refs #N` is not a fix). When an open PR
+  links the issue, the claim is skipped, the issue is labelled
+  `has-open-pr` (created on first use; never re-added), the refusal is
+  logged as `claim skipped: open PR already linked` with the PR number, URL
+  and author, and the tracker's withheld list shows *An open pull request
+  already links this issue (claim skipped)* with the PR as evidence
+  (reason `open_pr_linked`). A failed listing fails **open**: the
+  ledger-backed guards still apply, and a flaky listing must not stall every
+  claim.
+- **Duplicate-fix sweep.** Every ~15 minutes (an unstick step, alongside the
+  supersession sweep) the hive looks for an open issue two or more open PRs
+  close and resolves the pair deterministically. The **earlier-created PR
+  wins** while its checks are green or pending: the later hive-authored PR
+  receives one comment — `Superseded by #<keeper> (earlier fix for #<issue>).
+  Closing as duplicate.` — is labelled `hive/superseded` and closed, with the
+  reason `duplicate-of:<keeper>` in the log and the `duplicate-fix-closed`
+  audit entry. A later PR a person authored (`author/human`) is never
+  closed: it gets the comment, with a request to close it or say why both
+  should land, and stays open at its current stage
+  (`duplicate-fix-commented`). Only when the earlier PR is **red or stale**
+  (no update for 24h) **and** the later PR is green does the hive ask the
+  owner: the later PR is parked `needs-human` → `stage/085-needs-decision`
+  with a comment naming both PRs and the check states
+  (`duplicate-fix-escalated`). A closed issue is left to the supersession
+  sweep, held / `do-not-merge` PRs are skipped, a PR already carrying the
+  sweep's `<!-- hive:duplicate-fix -->` marker is never written to again,
+  and at most 10 writes are made per pass.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `scanner.skip_issues_with_open_pr` | `true` (unset) | Set `false` to turn off both the pre-dispatch guard and the duplicate-fix sweep; the claim ledger alone then decides, as before. |
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel evaluates open PRs in the watched repos — human, bot, or agent —

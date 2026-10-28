@@ -208,6 +208,38 @@ func withheldCases() []withheldCase {
 			},
 		},
 		{
+			// hivecommons/hive#14799: the ledger is one eval cycle old; the
+			// live guard sees a PR opened by hand minutes ago and the lane
+			// skips the claim with the PR as evidence.
+			name:   "open PR linked (live guard)",
+			reason: contributorAdmissionReasonOpenPRLinked,
+			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
+				s.deps.IssueClaimed = func(string, int) (ghpkg.IssueClaim, bool) { return ghpkg.IssueClaim{}, false }
+				s.deps.OpenPRLinkingIssue = func(repo string, number int, labels []string) (ghpkg.OpenPRLink, bool) {
+					if number == 601 {
+						return ghpkg.OpenPRLink{
+							Issue:    601,
+							PRNumber: 14775,
+							PRURL:    "https://github.com/projectbluefin/dakota/pull/14775",
+							PRAuthor: "clubanderson",
+						}, true
+					}
+					return ghpkg.OpenPRLink{}, false
+				}
+			},
+			evidence: func(t *testing.T, item AdmissionWithheldItem) {
+				if item.ClaimURL != "https://github.com/projectbluefin/dakota/pull/14775" {
+					t.Errorf("claim_url = %q, want the linking PR's URL", item.ClaimURL)
+				}
+				if item.ClaimAuthor != "clubanderson" {
+					t.Errorf("claim_author = %q, want clubanderson", item.ClaimAuthor)
+				}
+				if !strings.Contains(item.Detail, "#14775") {
+					t.Errorf("detail = %q, want the linking PR number", item.Detail)
+				}
+			},
+		},
+		{
 			// #8003: chairlift#55 — fixed by merged #133 four days ago, still
 			// open, re-offered every 72h. Withheld under its own reason that
 			// asks the maintainer to close it, not as "an open PR claims it".
@@ -520,6 +552,7 @@ func TestWithheld_QueueEndpointOptIn(t *testing.T) {
 func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 	reasons := []string{
 		contributorAdmissionReasonOpenPRClaim,
+		contributorAdmissionReasonOpenPRLinked,
 		contributorAdmissionReasonWorkflowBlocked,
 		contributorAdmissionReasonLabelSkipped,
 		contributorAdmissionReasonDependencyBlocked,

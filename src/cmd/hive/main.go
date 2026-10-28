@@ -1525,6 +1525,18 @@ func (b *boot) wireBootClosures() {
 			IssueClaimed: func(repo string, number int) (github.IssueClaim, bool) {
 				return getClaimLedger(b.logger).Lookup(repo, number)
 			},
+			// hivecommons/hive#14799: the ledger above is one eval cycle old;
+			// ask the forge directly whether an open PR already links the
+			// issue before the contribute lane dispatches it again.
+			OpenPRLinkingIssue: func(repo string, number int, labels []string) (github.OpenPRLink, bool) {
+				client := b.currentGitHubClient()
+				if client == nil {
+					return github.OpenPRLink{}, false
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), openPRLinkGuardTimeout)
+				defer cancel()
+				return client.OpenPRLinkGuard(ctx, repo, number, labels)
+			},
 			// #7871: and write access for the one verified fact a no_work_needed
 			// verdict produces — the PR/commit that already settled the issue.
 			RecordIssueClaim: func(c github.IssueClaim) error {
@@ -2670,6 +2682,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
 			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+			b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
 				b.ghClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
@@ -5807,6 +5820,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
 				b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+				b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
 				syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
@@ -9152,6 +9166,12 @@ const taskListSweepInterval = 15 * time.Minute
 // the same conservative cadence as the task-list sweep.
 const supersessionSweepInterval = 15 * time.Minute
 
+// duplicateFixSweepInterval is the minimum spacing between sweeps that
+// resolve two open PRs fixing the same issue (hivecommons/hive#14799). It
+// reuses the open-PR listing the pre-dispatch guard caches and reads check
+// runs per pair, so it runs on the supersession cadence.
+const duplicateFixSweepInterval = 15 * time.Minute
+
 // sharedCIRerunInterval is the minimum spacing between shared-CI rerun
 // sweeps. Each pass lists recently closed issues per repo and only walks open
 // PRs when a [shared-ci] incident closed inside the lookback window, so it
@@ -9533,6 +9553,47 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 			"skipped":   strconv.Itoa(result.Skipped),
 		},
 	})
+}
+
+// runDuplicateFixSweepIfDue resolves same-issue duplicate open PRs
+// (hivecommons/hive#14799) at most once per duplicateFixSweepInterval: the
+// earlier green-or-pending PR stays, the later hive PR is closed as
+// duplicate-of:<keeper>, a person's later PR gets the comment only, and the
+// earlier-red-later-green case is parked for the owner. It follows the
+// pre-dispatch guard's switch: scanner.skip_issues_with_open_pr off turns
+// this off too, since both exist to keep one issue on one PR.
+func runDuplicateFixSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	if cfg != nil && !cfg.Scanner.IsSkipIssuesWithOpenPR() {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < duplicateFixSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepDuplicateFixPRs(ctx, github.DuplicateFixSweepOptions{
+		MaxActions: github.DefaultDuplicateFixSweepMaxActions,
+		Audit: func(event github.DuplicateFixEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, issue=%s#%d, keeper_pr=%d, action=%s, reason=%s",
+				event.Repo, event.Number, event.IssueRepo, event.Issue, event.KeeperPR, event.Action, event.Reason)
+			dashSrv.AuditLogRecord("system", github.DuplicateFixSweepAuditPrefix+event.Action, detail, "", event.Repo, event.Number)
+		},
+	})
+	if err != nil {
+		logger.Warn("duplicate-fix sweep failed", "error", err)
+		return
+	}
+	if result.Pairs > 0 {
+		logger.Info("duplicate-fix sweep complete", "pairs", result.Pairs, "closed", len(result.Closed), "commented", len(result.Commented), "escalated", len(result.Escalated), "skipped", result.Skipped)
+	}
 }
 
 // runSharedCIRerunSweepIfDue re-runs failed jobs on open PRs deferred to a

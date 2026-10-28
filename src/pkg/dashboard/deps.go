@@ -182,6 +182,17 @@ type Dependencies struct {
 	// repo is tried in the same spelling the ledger keys on (the config repo
 	// form); a nil func means "no claim data" and disables the check.
 	IssueClaimed func(repo string, number int) (ghpkg.IssueClaim, bool)
+	// OpenPRLinkingIssue is the live companion to IssueClaimed
+	// (hivecommons/hive#14799): it asks the forge — one cached open-PR
+	// listing per repo per sweep — whether an OPEN pull request already
+	// links the issue with a closing keyword, labels the issue
+	// `has-open-pr` and logs the refusal. The ledger IssueClaimed reads is
+	// refreshed by the eval cycle, so a PR a person opened by hand stayed
+	// invisible to the contribute lane until the next scan and the issue was
+	// dispatched again in that window. labels are the issue's current labels
+	// so the label write is idempotent. Nil disables the live check; the
+	// client honours the scanner open-PR switch itself.
+	OpenPRLinkingIssue func(repo string, number int, labels []string) (ghpkg.OpenPRLink, bool)
 
 	// Watsonx / OpenRouter are the LLM-provider gateway views (#5565 slice 3):
 	// narrow consumer-defined interfaces over pkg/watsonx and pkg/openrouter,

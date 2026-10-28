@@ -72,6 +72,7 @@ const (
 // rule applies to the WORDS as much as to the decisions).
 var withheldReasonLabels = map[string]string{
 	contributorAdmissionReasonOpenPRClaim:       "An open pull request already claims this issue",
+	contributorAdmissionReasonOpenPRLinked:      "An open pull request already links this issue (claim skipped)",
 	contributorAdmissionReasonIssueClaim:        "Someone has claimed this issue; the claim expires on its own",
 	contributorAdmissionReasonMergedClaimStale:  "Fixed by a merged pull request; the issue is still open — close it or say what remains",
 	contributorAdmissionReasonIssueChurn:        "Too many pull requests on one issue — needs maintainer triage",
@@ -110,6 +111,7 @@ func withheldReasonLabel(reason string) string {
 func isConvergenceWithheldReason(reason string) bool {
 	switch reason {
 	case contributorAdmissionReasonOpenPRClaim,
+		contributorAdmissionReasonOpenPRLinked,
 		contributorAdmissionReasonIssueClaim,
 		contributorAdmissionReasonMergedClaimStale,
 		contributorAdmissionReasonIssueChurn,
@@ -329,6 +331,14 @@ func withheldFromAdmissionDecision(c withheldCandidate, d contributorAdmissionDe
 		item.ClaimAuthor = d.claim.PRAuthor
 		if d.claim.PRNumber > 0 {
 			item.Detail = fmt.Sprintf("Existing pull request #%d", d.claim.PRNumber)
+		}
+		return item
+	case contributorAdmissionReasonOpenPRLinked:
+		item := newWithheldItem(c, d.reason)
+		item.ClaimURL = d.openPR.PRURL
+		item.ClaimAuthor = d.openPR.PRAuthor
+		if d.openPR.PRNumber > 0 {
+			item.Detail = fmt.Sprintf("Claim skipped: open pull request #%d already links this issue", d.openPR.PRNumber)
 		}
 		return item
 	case contributorAdmissionReasonMergedClaimStale:

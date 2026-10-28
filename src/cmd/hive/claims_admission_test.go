@@ -146,3 +146,59 @@ func TestKickClaimsRefuseEpicsAndParkedIssues(t *testing.T) {
 		})
 	}
 }
+
+// hivecommons/hive#14799: #14766 was dispatched to a relay contributor six
+// minutes after a person's PR fixing it opened, because admission read only
+// the eval cycle's claim ledger. A fresh automated claim now asks the forge
+// for an open PR linking the issue and is refused; a PR-backed start signal,
+// a renewal and the release tick's recheck do not consult the listing, so
+// the agent whose own PR links the issue keeps its claim.
+func TestKickClaimsRefuseIssueWithOpenLinkedPR(t *testing.T) {
+	var pullsCalls atomic.Int32
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/o/r/pulls":
+			pullsCalls.Add(1)
+			fmt.Fprint(w, `[{"number":14775,"state":"open","title":"fix","body":"Fixes #14766","html_url":"https://github.com/o/r/pull/14775","created_at":"2026-10-27T01:00:00Z","user":{"login":"clubanderson","type":"User"}}]`)
+		case r.URL.Path == "/repos/o/r/issues/14766":
+			fmt.Fprint(w, `{"number":14766,"labels":[{"name":"bug"}]}`)
+		case r.URL.Path == "/repos/o/r/issues/14766/labels", r.URL.Path == "/repos/o/r/labels":
+			fmt.Fprint(w, `[]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	client := github.NewClientForTest(api.URL, "o", []string{"r"}, logger)
+	ledger := testClaimsLedger(t)
+	installClaimAdmissionCheck(context.Background(), ledger, func() *github.Client { return client })
+
+	res, err := ledger.Claim(claims.Request{Repo: "o/r", Issue: 14766, Holder: "relay", HolderID: "c-relay", Kind: claims.KindContributor})
+	if err != nil || res.Outcome != claims.OutcomeRefused || res.Reason != github.ClaimBlockReasonOpenPRPrefix+"14775" {
+		t.Fatalf("fresh claim = %+v, %v; want refused by the open PR", res, err)
+	}
+	if pullsCalls.Load() != 1 {
+		t.Fatalf("open-PR listings = %d, want 1", pullsCalls.Load())
+	}
+
+	// The PR author's own agent start signal carries PR evidence: admitted.
+	res, err = ledger.Claim(claims.Request{Repo: "o/r", Issue: 14766, Holder: "scanner", HolderID: "scanner", Kind: claims.KindAgent, PRStarted: true})
+	if err != nil || res.Outcome != claims.OutcomeClaimed {
+		t.Fatalf("PR-backed claim = %+v, %v; want claimed", res, err)
+	}
+	// Renewal and the release tick recheck the held claim without listing.
+	res, err = ledger.Claim(claims.Request{Repo: "o/r", Issue: 14766, Holder: "scanner", HolderID: "scanner", Kind: claims.KindAgent})
+	if err != nil || res.Outcome != claims.OutcomeRenewed {
+		t.Fatalf("renewal = %+v, %v; want renewed", res, err)
+	}
+	if n := ledger.ReleaseBlocked(); n != 0 {
+		t.Fatalf("release tick dropped %d claims, want 0: the holder's own PR is the open PR", n)
+	}
+	if _, ok := ledger.Lookup("o/r", 14766); !ok {
+		t.Fatal("agent claim must survive")
+	}
+	if pullsCalls.Load() != 1 {
+		t.Fatalf("open-PR listings = %d, want still 1 (renewal/tick never list)", pullsCalls.Load())
+	}
+}

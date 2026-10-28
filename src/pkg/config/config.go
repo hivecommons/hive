@@ -165,6 +165,9 @@ type Config struct {
 	// `<!-- hive-shared-ci-<n> -->` once incident #n closes
 	// (hivecommons/hive#12253). Default on.
 	SharedCIRerun SharedCIRerunConfig `yaml:"shared_ci_rerun,omitempty" json:"shared_ci_rerun,omitempty"`
+	// Scanner tunes the pre-dispatch guards every automated claim producer
+	// runs before an issue is handed out (hivecommons/hive#14799).
+	Scanner ScannerConfig `yaml:"scanner,omitempty" json:"scanner,omitempty"`
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
@@ -7657,6 +7660,24 @@ type SharedCIRerunConfig struct {
 // IsEnabled reports whether the sweep runs; unset means on.
 func (c SharedCIRerunConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
+}
+
+// ScannerConfig tunes the pre-dispatch guards (hivecommons/hive#14799).
+type ScannerConfig struct {
+	// SkipIssuesWithOpenPR refuses every automated claim on an issue that an
+	// OPEN pull request already links with a closing keyword (`Fixes #N`,
+	// `Closes #N`, `Resolves #N`), checked live against the forge rather
+	// than against the eval cycle's claim ledger — the ledger lagged a
+	// just-opened human PR by one cycle, and the issue was dispatched again
+	// in that window. The issue is labelled `has-open-pr` and the refusal
+	// is logged as `claim skipped: open PR already linked`. *bool so unset
+	// means on; set `scanner.skip_issues_with_open_pr: false` to disable.
+	SkipIssuesWithOpenPR *bool `yaml:"skip_issues_with_open_pr,omitempty" json:"skip_issues_with_open_pr,omitempty"`
+}
+
+// IsSkipIssuesWithOpenPR reports whether the open-PR guard runs; unset means on.
+func (c ScannerConfig) IsSkipIssuesWithOpenPR() bool {
+	return c.SkipIssuesWithOpenPR == nil || *c.SkipIssuesWithOpenPR
 }
 
 // AutoMergeConfig gates the App-self-merge sweep (SweepSelfAuthoredAutoMerges).

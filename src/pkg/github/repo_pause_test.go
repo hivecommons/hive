@@ -225,6 +225,9 @@ func TestIssueRequestWatcher_RepoPause(t *testing.T) {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42/comments":
 					// The claim path reads comments for the re-verify guard (#12733).
 					_, _ = io.WriteString(w, `[]`)
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls":
+					// The claim gate lists open PRs for the open-PR guard (#14799).
+					_, _ = io.WriteString(w, `[]`)
 				case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 					_, _ = io.WriteString(w, `{"name":"agent/security"}`)
 				case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/origin/"):
