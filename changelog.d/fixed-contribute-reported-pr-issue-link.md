@@ -1,0 +1,1 @@
+- Contributor relay completions now backfill the dispatched issue reference on verified contributor PRs and ensure full fixes appear in GitHub's linked-PR sidebar, including release-branch PRs; partial references stay non-closing ([#14763](https://github.com/hivecommons/hive/issues/14763)).

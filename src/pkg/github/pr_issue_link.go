@@ -203,6 +203,70 @@ func (c *Client) linkClosingIssuesForPR(ctx context.Context, owner, repo string,
 	}
 }
 
+// ReconcileContributorPRIssue durably links a dispatched issue to the reporting
+// contributor's open PR. Unlike the general stage reconciler, this path has an
+// explicit assignment and a verified contributor identity authorizing the edit.
+// Partial declarations remain references: a GraphQL closing link would close
+// their issue on merge, even if the body only says Refs.
+func (c *Client) ReconcileContributorPRIssue(ctx context.Context, repo string, issueNumber int, prURL, username string) error {
+	if c == nil || c.client == nil {
+		return ErrNoGitHubClient
+	}
+	ref, err := ParsePRURL(prURL)
+	if err != nil {
+		return err
+	}
+	if issueNumber <= 0 || username == "" || !prBaseRepoMatches(ref.FullName(), repo) {
+		return fmt.Errorf("reconcile contributor issue: invalid assignment or contributor")
+	}
+	ctx = WithRESTCaller(ctx, "hive:contributor_pr_issue")
+	pr, _, err := c.client.PullRequests.Get(ctx, ref.Owner, ref.Repo, ref.Number)
+	if err != nil {
+		return fmt.Errorf("reconcile contributor issue: get PR: %w", err)
+	}
+	if !prBaseRepoMatches(pr.GetBase().GetRepo().GetFullName(), repo) || !strings.EqualFold(pr.GetUser().GetLogin(), username) {
+		return fmt.Errorf("reconcile contributor issue: PR repo or author does not match assignment")
+	}
+	if pr.GetState() != "open" || pr.GetMerged() {
+		return nil
+	}
+	body := pr.GetBody()
+	// Retain URL references while ignoring closing examples inside code.
+	closingText := inlineCodeSpanPattern.ReplaceAllString(fencedCodeBlockPattern.ReplaceAllString(body, " "), " ")
+	closing := closingIssueRefs(closingText, ref.Owner, ref.Repo)[issueNumber]
+	partial := bodySaysIssueStaysOpen(body, ref.FullName(), issueNumber)
+	if !closing {
+		keyword := "Fixes"
+		if partial {
+			keyword = "Refs"
+		}
+		referenced := false
+		for _, r := range ParseReferencedIssues(body, ref.FullName()) {
+			if r.Issue == issueNumber && strings.EqualFold(r.Repo, ref.FullName()) {
+				referenced = true
+			}
+		}
+		if !partial || !referenced {
+			updated := strings.TrimRight(body, " \t\r\n")
+			if updated != "" {
+				updated += "\n\n"
+			}
+			updated += fmt.Sprintf("%s #%d", keyword, issueNumber)
+			if _, _, err := c.client.PullRequests.Edit(ctx, ref.Owner, ref.Repo, ref.Number, &gh.PullRequest{Body: gh.Ptr(updated)}); err != nil {
+				return fmt.Errorf("reconcile contributor issue: edit PR: %w", err)
+			}
+		}
+	}
+	if !partial {
+		if _, err := c.EnsureClosingIssueLink(ctx, ref.FullName(), ref.Number, issueNumber); err != nil {
+			return err
+		}
+	}
+	c.logger.Info("[contribute-ws] linked reported PR to dispatched issue",
+		"repo", ref.FullName(), "pr_url", prURL, "issue", issueNumber, "partial", partial)
+	return nil
+}
+
 // IssueStagePRLinkResult reports how the issue-stage lane made an open
 // issue↔PR relationship visible to GitHub and operators.
 type IssueStagePRLinkResult struct {
