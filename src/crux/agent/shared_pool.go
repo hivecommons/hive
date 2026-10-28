@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,8 +14,20 @@ import (
 
 const sharedSessionPoolPath = "/api/shared-agent-pool"
 const sharedPoolIdleEvictionDelay = 5 * time.Minute
+const sharedPoolRenewInterval = 20 * time.Second
+
+// sharedPoolRenewGrace bounds how long transient renewal failures (Hub roll,
+// 503, client timeout) are tolerated before the CLI session is evicted. It
+// stays under the Hub's default 90 s lease TTL so a lease is never assumed
+// alive after the Hub has expired it, but spans several renew ticks so one
+// blip never destroys an in-flight turn.
+const sharedPoolRenewGrace = 60 * time.Second
 
 var errSharedSessionPoolBusy = fmt.Errorf("shared session pool is busy")
+
+// errSharedSessionPoolLeaseGone is returned by Renew/Release when the Hub no
+// longer knows the lease (expired or state reset); retrying cannot revive it.
+var errSharedSessionPoolLeaseGone = fmt.Errorf("shared session pool lease not found")
 
 // SharedSessionPool coordinates heavyweight CLI sessions across Hive tenants.
 // Each tenant keeps its own tmux session, UID, credentials, and workspace; only
@@ -78,6 +91,9 @@ func (c *sharedSessionPoolClient) request(ctx context.Context, method, path stri
 	if resp.StatusCode == http.StatusConflict {
 		return sharedPoolResponse{}, errSharedSessionPoolBusy
 	}
+	if resp.StatusCode == http.StatusNotFound && body.LeaseID != "" {
+		return sharedPoolResponse{}, errSharedSessionPoolLeaseGone
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return sharedPoolResponse{}, fmt.Errorf("shared session pool returned %s: %s", resp.Status, strings.TrimSpace(string(message)))
@@ -134,8 +150,9 @@ func (c *sharedSessionPoolClient) Release(ctx context.Context, leaseID string) e
 }
 
 func (m *Manager) watchSharedPoolLease(ctx context.Context, name, leaseID string) {
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(sharedPoolRenewInterval)
 	defer ticker.Stop()
+	lastRenewed := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -168,12 +185,34 @@ func (m *Manager) watchSharedPoolLease(ctx context.Context, name, leaseID string
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		err := m.sharedPool.Renew(ctx, leaseID)
 		cancel()
-		if err != nil {
-			m.logger.Warn("shared agent pool lease renewal failed; evicting CLI session", "agent", name, "error", err)
-			m.evictSharedPoolSession(name, leaseID)
-			return
+		if err == nil {
+			lastRenewed = time.Now()
+			continue
 		}
+		if !sharedPoolRenewalShouldEvict(err, lastRenewed, time.Now()) {
+			m.logger.Warn("shared agent pool lease renewal failed; retrying before eviction",
+				"agent", name, "error", err, "since_last_renewal", time.Since(lastRenewed).Round(time.Second))
+			continue
+		}
+		m.logger.Warn("shared agent pool lease renewal failed; evicting CLI session",
+			"agent", name, "error", err, "since_last_renewal", time.Since(lastRenewed).Round(time.Second))
+		m.evictSharedPoolSession(name, leaseID)
+		return
 	}
+}
+
+// sharedPoolRenewalShouldEvict decides whether a failed renewal ends the CLI
+// session. A lease the Hub no longer recognises is gone for good; any other
+// failure is tolerated until the lease has gone unrenewed for
+// sharedPoolRenewGrace, so a Hub blip mid-turn does not kill tenant work.
+func sharedPoolRenewalShouldEvict(err error, lastRenewed, now time.Time) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errSharedSessionPoolLeaseGone) {
+		return true
+	}
+	return now.Sub(lastRenewed) >= sharedPoolRenewGrace
 }
 
 func (m *Manager) evictSharedPoolSession(name, leaseID string) {

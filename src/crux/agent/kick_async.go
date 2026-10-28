@@ -257,16 +257,25 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 	if agent.State != StateRunning {
-		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+		if m.sharedPoolAutoStartEligibleLocked(agent) {
 			m.mu.Unlock()
-			if err := m.Start(context.Background(), name); err != nil {
+			err := m.autoStartForSharedPoolKick(name)
+			m.mu.Lock()
+			if err != nil {
+				m.mu.Unlock()
 				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
 			}
-			m.mu.Lock()
 			agent, ok = m.agents[name]
 			if !ok || agent.State != StateRunning {
 				m.mu.Unlock()
 				return fmt.Errorf("agent %s failed to enter running state", name)
+			}
+			// The fresh launch's startup kick path owns delivery until the
+			// CLI is ready; hand it the message rather than typing into a
+			// pane whose CLI has not booted yet.
+			if m.deferStartupKickLocked(agent, message) {
+				m.mu.Unlock()
+				return nil
 			}
 		} else {
 			reason := notRunningReason(agent)

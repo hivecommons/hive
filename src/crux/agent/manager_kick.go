@@ -122,12 +122,15 @@ func (m *Manager) SendKick(name string, message string) error {
 	}
 
 	if agent.State != StateRunning {
-		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+		if m.sharedPoolAutoStartEligibleLocked(agent) {
+			// The deferred Unlock above owns the lock on every return path,
+			// so the lock MUST be re-acquired before any return below.
 			m.mu.Unlock()
-			if err := m.Start(context.Background(), name); err != nil {
+			err := m.autoStartForSharedPoolKick(name)
+			m.mu.Lock()
+			if err != nil {
 				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
 			}
-			m.mu.Lock()
 			agent, ok = m.agents[name]
 			if !ok || agent.State != StateRunning {
 				return fmt.Errorf("agent %s failed to enter running state", name)
@@ -1242,6 +1245,28 @@ func (m *Manager) MarkStartupLaunchQueued(names []string) {
 			agent.startupLaunchQueued = true
 		}
 	}
+}
+
+// sharedPoolAutoStartEligibleLocked reports whether a kick may relaunch the
+// agent itself: the shared session pool is enabled and the agent is stopped
+// (typically evicted to return its pool slot) rather than paused or stopped by
+// an operator. Caller holds m.mu.
+func (m *Manager) sharedPoolAutoStartEligibleLocked(agent *AgentProcess) bool {
+	return m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped
+}
+
+// autoStartForSharedPoolKick relaunches a pool-evicted agent on behalf of a
+// kick. The agent is marked startup-queued first so launchInTmux arms the
+// readiness-gated startup kick path: launchInTmux returns right after typing
+// the launch command, and a kick that then falls through to the crashed-CLI
+// marker check would see a pane with no CLI yet and restart the session it
+// just started. With the startup path armed, the caller's
+// deferStartupKickLocked hands the message to deliverStartupKick instead.
+//
+// MUST NOT be called with m.mu held.
+func (m *Manager) autoStartForSharedPoolKick(name string) error {
+	m.MarkStartupLaunchQueued([]string{name})
+	return m.Start(context.Background(), name)
 }
 
 // GovernorMayStart reports whether the governor's kick path may start the named

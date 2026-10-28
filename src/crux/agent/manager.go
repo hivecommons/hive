@@ -1168,11 +1168,8 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	}
 	if agent.State == StateRunning {
 		if leaseID != "" {
-			agent.poolLeaseID = leaseID
 			launchSucceeded = true
-			if !hasLeaseWatcher {
-				m.startSharedPoolLeaseWatcherLocked(agent, name, leaseID)
-			}
+			m.attachSharedPoolLeaseLocked(agent, name, leaseID, hasLeaseWatcher)
 		}
 		return nil
 	}
@@ -1183,11 +1180,105 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	err := m.launchInTmux(ctx, agent)
 	if err == nil && leaseID != "" {
 		launchSucceeded = true
-		if !hasLeaseWatcher {
-			m.startSharedPoolLeaseWatcherLocked(agent, name, leaseID)
-		}
+		m.attachSharedPoolLeaseLocked(agent, name, leaseID, hasLeaseWatcher)
 	}
 	return err
+}
+
+// sharedPoolLease is the pool slot a launch path holds across its unlocked
+// window. leaseID is empty when the pool is disabled; hasWatcher records
+// whether the agent already ran a renewal watcher for a lease it kept.
+type sharedPoolLease struct {
+	leaseID    string
+	hasWatcher bool
+}
+
+// acquireSharedPoolLeaseUnlocked takes a pool slot for the agent when the
+// shared session pool is enabled and the agent holds none. Every path that
+// relaunches a CLI (Start, the restart family, missing-session recovery)
+// must call it in its unlocked mint window, otherwise an evicted agent is
+// relaunched outside the global cap with no lease and no watcher.
+//
+// MUST NOT be called with m.mu held.
+func (m *Manager) acquireSharedPoolLeaseUnlocked(ctx context.Context, agent *AgentProcess, name string) (sharedPoolLease, error) {
+	m.mu.RLock()
+	lease := sharedPoolLease{leaseID: agent.poolLeaseID, hasWatcher: agent.poolLeaseCancel != nil}
+	m.mu.RUnlock()
+	if m.sharedPool == nil || lease.leaseID != "" {
+		return lease, nil
+	}
+	leaseID, err := m.sharedPool.Acquire(ctx, name)
+	if err != nil {
+		return sharedPoolLease{}, fmt.Errorf("acquire shared CLI session slot: %w", err)
+	}
+	lease.leaseID = leaseID
+	return lease, nil
+}
+
+// attachSharedPoolLeaseLocked records a lease on a launched agent and starts
+// its renewal watcher unless one is already running. Caller holds m.mu.
+func (m *Manager) attachSharedPoolLeaseLocked(agent *AgentProcess, name, leaseID string, hasWatcher bool) {
+	agent.poolLeaseID = leaseID
+	if !hasWatcher {
+		m.startSharedPoolLeaseWatcherLocked(agent, name, leaseID)
+	}
+}
+
+// launchInTmuxWithSharedPoolLease runs launchInTmux and binds the lease to the
+// agent on success; on failure the lease is released so the slot returns to
+// the fleet. Caller holds m.mu.
+func (m *Manager) launchInTmuxWithSharedPoolLease(ctx context.Context, agent *AgentProcess, name string, lease sharedPoolLease) error {
+	agent.poolLeaseID = lease.leaseID
+	err := m.launchInTmux(ctx, agent)
+	if lease.leaseID == "" {
+		return err
+	}
+	if err != nil {
+		m.releaseSharedPoolLeaseLocked(agent, lease.leaseID)
+		return err
+	}
+	m.attachSharedPoolLeaseLocked(agent, name, lease.leaseID, lease.hasWatcher)
+	return nil
+}
+
+// releaseSharedPoolLeaseLocked drops the lease from the agent (if it holds
+// it) and returns the slot to the Hub off the lock. Caller holds m.mu; the
+// HTTP release runs on its own goroutine so the lock is never held across it.
+func (m *Manager) releaseSharedPoolLeaseLocked(agent *AgentProcess, leaseID string) {
+	if agent != nil && agent.poolLeaseID == leaseID {
+		agent.poolLeaseID = ""
+		if cancel := agent.poolLeaseCancel; cancel != nil {
+			agent.poolLeaseCancel = nil
+			cancel()
+		}
+	}
+	go m.releaseSharedPoolLeaseToHub(agent, leaseID)
+}
+
+func (m *Manager) releaseSharedPoolLeaseToHub(agent *AgentProcess, leaseID string) {
+	name := ""
+	if agent != nil {
+		name = agent.Name
+	}
+	ctx, done := context.WithTimeout(context.Background(), 8*time.Second)
+	defer done()
+	if err := m.sharedPool.Release(ctx, leaseID); err != nil {
+		m.logger.Warn("shared agent pool lease release failed", "agent", name, "error", err)
+	}
+}
+
+// releaseSharedPoolLeaseIfUnboundLocked returns a lease acquired for a
+// relaunch that never happened (the agent was removed or another path won the
+// launch race) unless the agent already holds it. Caller holds m.mu.
+func (m *Manager) releaseSharedPoolLeaseIfUnboundLocked(name string, lease sharedPoolLease) {
+	if lease.leaseID == "" {
+		return
+	}
+	a := m.agents[name]
+	if a != nil && a.poolLeaseID == lease.leaseID {
+		return
+	}
+	go m.releaseSharedPoolLeaseToHub(a, lease.leaseID)
 }
 
 func (m *Manager) startSharedPoolLeaseWatcherLocked(agent *AgentProcess, name, leaseID string) {
