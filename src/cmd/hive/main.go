@@ -5178,6 +5178,13 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					}
 					ignoredWedged := wedgedKickAgents(wedged)
 					drainTimeout := b.cfg.Hub.EffectiveUpgradeDrainTimeout()
+					if spoke.UpgradeInterruptRequested() && drainTimeout > 0 && len(inFlight) > 0 {
+						// The owner chose "Upgrade now (interrupt turns)" on the
+						// hub: cut the drain rather than wait for these turns.
+						b.logger.Warn("self-upgrade: interrupting in-flight agent turns on the owner's request",
+							"target", targetSHA, "in_flight", inFlight)
+						drainTimeout = 0
+					}
 					dec := selfUpgradeDrain.decide(targetSHA, inFlight, drainTimeout, selfUpgradeDrainNow())
 					selfUpgradeDrain.setKickTimes(agentKickTimes(statuses, inFlight))
 					switch {

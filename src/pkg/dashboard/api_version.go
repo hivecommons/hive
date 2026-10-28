@@ -84,6 +84,19 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			resp["channel"] = channel
 		}
 	}
+	// Scheduled-upgrade progress (#14950): the same derived state the hub
+	// card shows, so the version menu can say "draining — 2 agents in turn,
+	// 14m left" instead of just "upgrading", plus the hub-kept history so a
+	// missed window is visible from the spoke too.
+	s.statusMu.RLock()
+	curStatus := s.status
+	s.statusMu.RUnlock()
+	if progress := s.upgradeProgress(curStatus, time.Now()); progress != nil {
+		resp["upgradeProgress"] = progress
+	}
+	if policy != nil && len(policy.UpgradeHistory) > 0 {
+		resp["upgradeHistory"] = policy.UpgradeHistory
+	}
 
 	if cacheAge > dashboardVersionTipCacheTTL || cached == "" {
 		if latest, err := s.fetchLatestRemoteHash(); err == nil && latest != "" {

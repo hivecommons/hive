@@ -612,11 +612,29 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	// arm) so a LATER refusal for this same target is reported afresh rather than
 	// suppressed by a stale entry.
 	s.forgetUncollectibleUpgrade(id)
+	// "Upgrade now (interrupt turns)": the owner accepts cutting whatever the
+	// agents are mid-way through. Recorded separately from the arm so the
+	// audit trail says who chose to interrupt, and delivered on the next
+	// heartbeat alongside UpgradeTo (#14950).
+	interrupt := upgradeInterruptRequested(r)
+	if interrupt {
+		s.upgradeInterrupts.arm(id, latestSHA, username, time.Now())
+	} else {
+		s.upgradeInterrupts.clear(id)
+	}
 	s.logger.Info("audit: hosted hive upgrade requested",
-		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode)
-	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard ("+mode+")", username)
+		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode, "interrupt_turns", interrupt)
+	detail := "upgrade requested from the hub dashboard (" + mode + ")"
+	if interrupt {
+		detail = "upgrade requested from the hub dashboard (" + mode + ", interrupting in-flight agent turns)"
+	}
+	s.recordTimeline(id, TimelineUpgradeStarted, detail, username)
 	s.noteUpgradeStarted(id, currentSHA, latestSHA, spoke.UpgradeTriggerManual)
 	w.Header().Set("Content-Type", "application/json")
+	if interrupt {
+		_, _ = w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `","interrupt":true}`))
+		return
+	}
 	_, _ = w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `"}`))
 }
 

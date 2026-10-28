@@ -403,6 +403,15 @@
     .oc-version-channel { flex: 0 1 auto; min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent); font-weight: 700; }
     .oc-version-manual-pill { white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); }
     .oc-version-upgrade-note { color: var(--muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+    .oc-version-state-pill { white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+    .oc-version-state-pill.is-draining { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); }
+    .oc-version-state-pill.is-missed { color: var(--red, var(--danger)); border-color: color-mix(in srgb, var(--red, var(--danger)) 40%, transparent); }
+    .oc-version-state-pill.is-done { color: var(--green, var(--success)); }
+    .oc-version-history { list-style: none; margin: 0; padding: 0; font-size: var(--fs-xs); color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
+    .oc-version-history li { display: flex; gap: var(--sp-2); min-width: 0; }
+    .oc-version-history li.is-missed { color: var(--red, var(--danger)); }
+    .oc-version-history time { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+    .oc-version-history span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-chip-chevron { flex: 0 0 auto; width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; margin-left: auto; transition: transform 0.15s ease; }
     .oc-version-chip[aria-expanded="false"] .oc-version-chip-chevron { transform: rotate(-90deg); }
     .oc-version-update-dot { flex: 0 0 auto; color: var(--amber); font-weight: 900; }
@@ -39378,6 +39387,79 @@ function burnAreaChart() {
       return 'Version current';
     }
 
+    /* Scheduled-upgrade progress (#14950). /api/version carries the state
+       the hub and spoke derive together (upgradeProgress: scheduled →
+       draining → pulling → rolling → verifying → done | missed) and the
+       hub's history of recent attempts (upgradeHistory). The menu shows the
+       state as a pill — with the drain countdown and the agents holding the
+       upgrade — and lists the history so a missed window is never silent. */
+    function versionStateLabels() {
+      return { scheduled: 'Scheduled', draining: 'Draining', pulling: 'Pulling', rolling: 'Rolling', verifying: 'Verifying', done: 'Upgraded', missed: 'Missed window' };
+    }
+
+    function versionStateLabel(state) {
+      return versionStateLabels()[state] || (state ? String(state).charAt(0).toUpperCase() + String(state).slice(1) : '');
+    }
+
+    function versionFormatDuration(sec) {
+      sec = Math.floor(Number(sec) || 0);
+      if (sec < 0) return '';
+      if (sec < 60) return sec + 's';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return min + 'm';
+      return Math.floor(min / 60) + 'h' + (min % 60) + 'm';
+    }
+
+    function versionAgentsInTurnText(st) {
+      const turns = (st && st.agentsInTurn) || [];
+      if (!turns.length) return '';
+      const parts = turns.map(function(t) {
+        const el = versionFormatDuration(t.elapsedS || 0);
+        return (t.agent || '?') + (el ? ' ' + el : '');
+      });
+      return turns.length + (st.agentsTotal ? '/' + st.agentsTotal : '') + ' agent' + (turns.length === 1 && !st.agentsTotal ? '' : 's') + ' in turn: ' + parts.join(', ');
+    }
+
+    function versionUpgradeStateText(st) {
+      if (!st || !st.state) return '';
+      let text = versionStateLabel(st.state);
+      if (st.state === 'draining') {
+        const agents = versionAgentsInTurnText(st);
+        const left = typeof st.drainRemainingS === 'number' && st.drainRemainingS > 0 ? versionFormatDuration(st.drainRemainingS) + ' left' : 'deadline reached';
+        text += (agents ? ' · ' + agents : '') + ' · ' + left;
+      } else if (st.state === 'missed' && st.reason) {
+        text += ' · ' + st.reason;
+      } else if (st.state === 'scheduled' && st.nextWindowAt) {
+        const at = new Date(st.nextWindowAt);
+        if (!isNaN(at.getTime())) text += ' · next window ' + formatDashboardDateTime(at);
+      } else if (st.state === 'done' && st.target) {
+        text += ' → ' + versionShortSHA(st.target);
+      }
+      return text;
+    }
+
+    function versionUpgradeStatePillHTML(st) {
+      const text = versionUpgradeStateText(st);
+      if (!text) return '';
+      return '<span class="oc-version-state-pill is-' + escapeHtml(st.state) + '" title="' + escapeHtml(st.detail || text) + '">' + escapeHtml(text) + '</span>';
+    }
+
+    function versionUpgradeHistoryHTML(v) {
+      const rows = (v && v.upgradeHistory) || [];
+      if (!rows.length) return '';
+      const items = rows.slice(0, 14).map(function(a) {
+        const when = a.endedAt && a.endedAt !== '0001-01-01T00:00:00Z' ? a.endedAt : a.startedAt;
+        const d = when ? new Date(when) : null;
+        const ts = d && !isNaN(d.getTime()) ? formatDashboardDateTime(d) : '?';
+        const what = a.outcome ? versionStateLabel(a.outcome) : 'In flight';
+        const to = a.target ? ' → ' + versionShortSHA(a.target) : '';
+        const why = a.reason ? ' — ' + a.reason : '';
+        const text = what + to + (a.trigger ? ' (' + a.trigger + ')' : '') + why;
+        return '<li class="' + (a.outcome === 'missed' ? 'is-missed' : '') + '" title="' + escapeHtml(ts + ': ' + text) + '"><time datetime="' + escapeHtml(when || '') + '">' + escapeHtml(ts) + '</time><span>' + escapeHtml(text) + '</span></li>';
+      });
+      return '<ul class="oc-version-history" aria-label="Upgrade history">' + items.join('') + '</ul>';
+    }
+
     function versionLastUpgradeText(v) {
       const rs = v && v.releaseStatus;
       const at = rs && rs.attempt ? rs.attempt : null;
@@ -39687,7 +39769,11 @@ function burnAreaChart() {
         }
       }
       if (au.heldReason) html += row('Held', value(au.heldReason, 'The scheduled update window opened but the hub held the upgrade' + (au.heldAt ? ' at ' + au.heldAt : '') + ': ' + au.heldReason), au.heldReason);
+      const statePill = versionUpgradeStatePillHTML(v && v.upgradeProgress);
+      if (statePill) html += row('Progress', statePill, (v.upgradeProgress && v.upgradeProgress.detail) || '');
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
+      const historyHTML = versionUpgradeHistoryHTML(v);
+      if (historyHTML) html += '<div class="oc-version-row" title="Recent scheduled and manual upgrade attempts, as recorded by the hub"><span>Upgrade history</span></div>' + historyHTML;
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
         html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
       }
@@ -39722,7 +39808,11 @@ function burnAreaChart() {
       const progress = ctx.upgradeProgress || null;
       const updateDot = ctx.hasUpgrade ? '<span class="oc-version-update-dot" title="Upgrade available">↑</span>' : '';
       const upgrading = progress && !progress.completedAt;
-      const progressGlyph = progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '';
+      const serverState = v.upgradeProgress || null;
+      const stateChip = !upgrading && serverState && (serverState.state === 'draining' || serverState.state === 'missed')
+        ? '<span class="oc-version-state-pill is-' + escapeHtml(serverState.state) + '" title="' + escapeHtml(serverState.detail || versionUpgradeStateText(serverState)) + '">' + escapeHtml(versionStateLabel(serverState.state)) + (serverState.state === 'draining' && serverState.drainRemainingS > 0 ? ' ' + escapeHtml(versionFormatDuration(serverState.drainRemainingS)) : '') + '</span>'
+        : '';
+      const progressGlyph = (progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '') + stateChip;
       if (chip.classList && chip.classList.toggle) chip.classList.toggle('is-upgrading', !!upgrading);
       const html = upgrading ? versionNavbarUpgradeHTML(progress, v) + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>' :
         (v.release ? '<span class="oc-version-release">v' + escapeHtml(String(v.release).replace(/^v/i, '')) + '</span>' : '') +

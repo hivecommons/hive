@@ -1368,6 +1368,10 @@ type HubServer struct {
 	// windows with their outcomes (#14856). Leaf mutex; see upgrade_history.go.
 	upgradeHistory *upgradeHistoryStore
 
+	// upgradeInterrupts holds "Upgrade now (interrupt turns)" requests until
+	// the spoke collects them on its heartbeat (#14950). Leaf mutex.
+	upgradeInterrupts *upgradeInterrupts
+
 	// journey holds per-hive user-journey nudge state: which banner each owner
 	// was last sent and when, plus admin snoozes. Persisted to the PVC.
 	journey *journeyStore
@@ -1575,6 +1579,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		authRolloutSeen:              make(map[string]authRolloutEntry),
 		timeline:                     newTimelineStore(),
 		upgradeHistory:               newUpgradeHistoryStore(),
+		upgradeInterrupts:            newUpgradeInterrupts(),
 		journey:                      newJourneyStore(),
 		alerts:                       newAlertState(),
 		revokedSessions:              newRevokedSessions(),
@@ -3226,6 +3231,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if spokeManagedTarget != "" {
 		resp.UpgradeTo = spokeManagedTarget
+		if req, ok := s.upgradeInterrupts.pending(payload.HiveID, time.Now()); ok && req.appliesTo(spokeManagedTarget) {
+			resp.UpgradeInterrupt = true
+		}
 		s.logger.Info("heartbeat: instructing spoke-managed hive to upgrade",
 			"hive_id", payload.HiveID,
 			"from", payload.GitHash,
@@ -3234,6 +3242,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		)
 	} else if hbTarget != "" && !sameCommit(payload.GitHash, hbTarget) {
 		resp.UpgradeTo = hbTarget
+		if req, ok := s.upgradeInterrupts.pending(payload.HiveID, time.Now()); ok && req.appliesTo(hbTarget) {
+			resp.UpgradeInterrupt = true
+		}
 		s.logger.Info("heartbeat: instructing hub-managed hive to upgrade (kubectl fallback)",
 			"hive_id", payload.HiveID,
 			"from", payload.GitHash,

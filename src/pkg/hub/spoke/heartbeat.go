@@ -1413,6 +1413,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			// changes the image tag, which a same-tag re-pull can't do.
 			onSwitchBranch(resp.SwitchToTag)
 		} else if resp.UpgradeTo != "" && onUpgrade != nil {
+			setUpgradeInterrupt(resp.UpgradeInterrupt)
 			onUpgrade(resp.UpgradeTo)
 		}
 		if resp.GitHubAppConfig != nil && onGitHubAppConfig != nil {
@@ -2739,11 +2740,14 @@ type GatewayConfigCallback func(cfg *HeartbeatGatewayConfig)
 // It includes version info so the spoke can display hub version on its dashboard
 // and self-upgrade when behind.
 type HeartbeatResponse struct {
-	OK         bool   `json:"ok"`
-	UpgradeTo  string `json:"upgrade_to,omitempty"`
-	HubGitHash string `json:"hub_git_hash,omitempty"`
-	LatestSHA  string `json:"latest_sha,omitempty"`
-	LatestTag  string `json:"latest_tag,omitempty"`
+	OK        bool   `json:"ok"`
+	UpgradeTo string `json:"upgrade_to,omitempty"`
+	// UpgradeInterrupt rides with UpgradeTo when the owner asked the upgrade
+	// to proceed without draining in-flight agent turns (#14950).
+	UpgradeInterrupt bool   `json:"upgrade_interrupt,omitempty"`
+	HubGitHash       string `json:"hub_git_hash,omitempty"`
+	LatestSHA        string `json:"latest_sha,omitempty"`
+	LatestTag        string `json:"latest_tag,omitempty"`
 	// SwitchToTag instructs the spoke to change its own deployment image to
 	// ghcr.io/hivecommons/hive:<SwitchToTag> and restart. Used for branch
 	// switches on clusters the hub can't reach over kubectl — the spoke has
@@ -2992,3 +2996,16 @@ func hubHeartbeatStatusIsDefect(status int) bool {
 	}
 	return status >= http.StatusInternalServerError
 }
+
+// upgradeInterrupt is the latest heartbeat's UpgradeInterrupt flag, read by
+// the UpgradeCallback in cmd/hive to skip its drain (#14950). A package
+// atomic rather than a callback parameter so the long-standing
+// UpgradeCallback signature stays put.
+var upgradeInterrupt atomic.Bool
+
+func setUpgradeInterrupt(v bool) { upgradeInterrupt.Store(v) }
+
+// UpgradeInterruptRequested reports whether the hub's latest upgrade
+// instruction asked the spoke to interrupt in-flight agent turns rather
+// than drain them.
+func UpgradeInterruptRequested() bool { return upgradeInterrupt.Load() }

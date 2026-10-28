@@ -57,10 +57,13 @@ type MyHiveEntry struct {
 	// the persisted record of recent attempts and held windows. Both are
 	// computed on read by upgradeProgressFor so the card and the spoke
 	// dashboard speak the same words (#14856).
-	UpgradeState        *spoke.UpgradeProgress `json:"upgradeState,omitempty"`
-	UpgradeHistory      []spoke.UpgradeAttempt `json:"upgradeHistory,omitempty"`
-	PendingRequestCount int                    `json:"pendingRequestCount,omitempty"`
-	PendingRequests     []PendingAccessRequest `json:"pending_requests,omitempty"`
+	UpgradeState   *spoke.UpgradeProgress `json:"upgradeState,omitempty"`
+	UpgradeHistory []spoke.UpgradeAttempt `json:"upgradeHistory,omitempty"`
+	// UpgradeInterruptPending is true while an "Upgrade now (interrupt
+	// turns)" request is armed and not yet collected by the spoke.
+	UpgradeInterruptPending bool                   `json:"upgradeInterruptPending,omitempty"`
+	PendingRequestCount     int                    `json:"pendingRequestCount,omitempty"`
+	PendingRequests         []PendingAccessRequest `json:"pending_requests,omitempty"`
 
 	// Access lists who can sign in to this hive and with what role, so My Hives
 	// can show it on hover without a per-row API call. Same data as
@@ -1017,6 +1020,9 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		}
 
 		result[i].UpgradeState, result[i].UpgradeHistory = s.upgradeProgressForRow(&result[i].RegistryEntry, saasByID[result[i].ID], result[i].TrackedChannel, journeyNow)
+		if _, ok := s.upgradeInterrupts.pending(result[i].ID, journeyNow); ok && result[i].Upgrading {
+			result[i].UpgradeInterruptPending = true
+		}
 
 		st := s.journey.get(result[i].ID)
 		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
