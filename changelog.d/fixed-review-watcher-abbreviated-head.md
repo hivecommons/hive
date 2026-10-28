@@ -1,0 +1,1 @@
+- The self-report classifier no longer files `unclassified_error_repeated` issues for the review-request watcher warning that an abbreviated verdict head is not the PR's current head and was recorded as written (#14997).

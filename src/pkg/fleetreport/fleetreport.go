@@ -723,6 +723,11 @@ var benignSubstrings = []string{
 	// Request watchers log a policy denial (e.g. repo not allowlisted) as an
 	// expected outcome, not a runtime error.
 	"request watcher: denied (policy)",
+	// A reviewer's abbreviated verdict head that prefixes neither the dispatch
+	// head nor the PR's current head names an older revision; the relay keeps
+	// it as written on purpose (pkg/github/review_verdict_relay.go), so it is
+	// an expected outcome of a push landing mid-review, not a runtime defect.
+	"abbreviated verdict head is not the pr's current head; recorded as written",
 	// ReconcileSeededDefaults (pkg/policies/seed_reconcile.go) warns once per
 	// policy template whose on-disk copy diverges from the embedded default
 	// with no seed-manifest record, already deduped per path per process
