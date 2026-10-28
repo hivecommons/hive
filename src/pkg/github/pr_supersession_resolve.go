@@ -10,6 +10,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -142,7 +143,7 @@ func supersessionExtraFiles(open, closer map[string]bool) []string {
 // beside the label until the automerge sweep next looks (#13782 wore
 // stage/050-review-pending + needs-human for fifteen minutes).
 func (c *Client) parkSupersededPR(ctx context.Context, prRepo string, number int) error {
-	if err := c.AddLabels(ctx, prRepo, number, []string{issueNeedsHumanLabel}); err != nil {
+	if err := c.AddLabels(ctx, prRepo, number, []string{issueNeedsHumanLabel, prstage.SupersessionPendingLabel}); err != nil {
 		return fmt.Errorf("labeling superseded PR %s#%d: %w", prRepo, number, err)
 	}
 	sink := c.StageFacts()
@@ -170,6 +171,11 @@ func (c *Client) supersessionNeedsHumanByPerson(ctx context.Context, owner, repo
 // hive has taken the resolution over. The stage engine re-derives the lane
 // stage from the next automerge pass (leaving 085 is never a regression).
 func (c *Client) releaseSupersessionPark(ctx context.Context, prRepo string, pr *gh.PullRequest) error {
+	if supersessionHasLabel(pr, prstage.SupersessionPendingLabel) {
+		if err := c.RemoveLabel(ctx, prRepo, pr.GetNumber(), prstage.SupersessionPendingLabel); err != nil {
+			return err
+		}
+	}
 	if !supersessionHasLabel(pr, issueNeedsHumanLabel) {
 		return nil
 	}
@@ -199,24 +205,27 @@ const supersessionEscalationMark = "**Decision needed"
 // one the hive cannot attribute, or one next to no sweep notice is left
 // alone. The lane re-derives the stage from the labels on its next pass.
 func (c *Client) releaseStaleSupersessionPark(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest) (SupersessionSweepEvent, string, error) {
-	if !supersessionHasLabel(pr, issueNeedsHumanLabel) {
+	changed := false
+	if supersessionHasLabel(pr, prstage.SupersessionPendingLabel) {
+		if err := c.RemoveLabel(ctx, prRepo, pr.GetNumber(), prstage.SupersessionPendingLabel); err != nil {
+			return SupersessionSweepEvent{}, "", err
+		}
+		changed = true
+	}
+	if supersessionHasLabel(pr, issueNeedsHumanLabel) {
+		notice, err := c.findSupersessionComment(ctx, owner, repo, pr.GetNumber())
+		if err != nil {
+			return SupersessionSweepEvent{}, "", err
+		}
+		if notice != nil && strings.Contains(notice.GetBody(), supersessionEscalationMark) && !c.supersessionNeedsHumanByPerson(ctx, owner, repo, pr) {
+			if err := c.RemoveLabel(ctx, prRepo, pr.GetNumber(), issueNeedsHumanLabel); err != nil {
+				return SupersessionSweepEvent{}, "", err
+			}
+			changed = true
+		}
+	}
+	if !changed {
 		return SupersessionSweepEvent{}, "", nil
-	}
-	notice, err := c.findSupersessionComment(ctx, owner, repo, pr.GetNumber())
-	if err != nil {
-		return SupersessionSweepEvent{}, "", err
-	}
-	if notice == nil || !strings.Contains(notice.GetBody(), supersessionEscalationMark) {
-		return SupersessionSweepEvent{}, "", nil
-	}
-	if c.supersessionNeedsHumanByPerson(ctx, owner, repo, pr) {
-		return SupersessionSweepEvent{}, "", nil
-	}
-	if err := c.releaseSupersessionPark(ctx, prRepo, pr); err != nil {
-		return SupersessionSweepEvent{}, "", err
-	}
-	if c.logger != nil {
-		c.logger.Info("supersession sweep: released its needs-human, the cause is gone", "repo", prRepo, "pr", pr.GetNumber())
 	}
 	event := SupersessionSweepEvent{Repo: prRepo, Number: pr.GetNumber(), Author: safeGetLogin(pr.GetUser()), Action: SupersessionActionReleased}
 	return event, "resolved", nil
@@ -375,6 +384,12 @@ func (c *Client) escalateSupersededPR(ctx context.Context, prRepo, owner, repo s
 		return event, "", err
 	}
 	if !changed {
+		if supersessionHasLabel(pr, issueNeedsHumanLabel) && !supersessionHasLabel(pr, prstage.SupersessionPendingLabel) {
+			if err := c.parkSupersededPR(ctx, prRepo, pr.GetNumber()); err != nil {
+				return event, "", err
+			}
+			return event, "commented", nil
+		}
 		return event, "", nil
 	}
 	if err := c.parkSupersededPR(ctx, prRepo, pr.GetNumber()); err != nil {
@@ -390,4 +405,30 @@ func supersessionSortedFiles(files map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Ignore ancillary additions only when at least one implementation file also
+// overlaps. A docs-only PR or unrelated implementation is never a duplicate
+// merely because it mentions the same closed issue.
+func supersessionBlockingExtraFiles(open, closer map[string]bool) []string {
+	ancillary := func(f string) bool {
+		return strings.HasSuffix(f, "_test.go") || strings.HasSuffix(f, ".md") || strings.HasPrefix(f, "docs/") || strings.Contains(f, "/docs/") || strings.HasPrefix(f, "changelog.d/")
+	}
+	overlap := false
+	for f := range open {
+		if closer[f] && !ancillary(f) {
+			overlap = true
+		}
+	}
+	extra := supersessionExtraFiles(open, closer)
+	if !overlap {
+		return extra
+	}
+	var blocking []string
+	for _, f := range extra {
+		if !ancillary(f) {
+			blocking = append(blocking, f)
+		}
+	}
+	return blocking
 }

@@ -13927,6 +13927,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerLabelQuery = '';
 
     function stageTrackerHeadline(item) {
+      if (item.superseded && item.superseded.closer_pr) return 'Superseded by #' + item.superseded.closer_pr + ' — decide';
       const n = Number(item.stage) || 0;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const holdLabels = stageTrackerHoldLabels(item);
@@ -14190,6 +14191,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Compact strips retain their column alignment; the current step gets a
     // full-width caption so detours and the next actor never need a hover.
     function stageTrackerCurrentStageHtml(item, stages, range, nowMs) {
+      if (item.superseded && item.superseded.closer_pr) return `<p class="ham-current-stage">${esc(stageTrackerHeadline(item) + (item.superseded.keep_reason ? " · " + item.superseded.keep_reason : ""))}</p>`;
       const active = stageTrackerSegments(item, stages, nowMs).find(sg => sg.state === 'active'
         && (!range || range.from == null || sg.number >= range.from)
         && (!range || range.to == null || sg.number <= range.to));
@@ -15828,7 +15830,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerDecisionTarget(item) {
       if (!item) return null;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      const parked = it => (Array.isArray(it.modifiers) ? it.modifiers : []).indexOf('needs-decision') >= 0 || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(it.stage) || 0) >= 0;
+      const parked = it => !!it.superseded || (Array.isArray(it.modifiers) ? it.modifiers : []).indexOf('needs-decision') >= 0 || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(it.stage) || 0) >= 0;
       if (item.kind === 'pr') return parked(item) ? item : null;
       for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
         const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], author: lp.author || '',

@@ -473,7 +473,7 @@ func TestSweepSupersededOpenPRs_BelowL6LabelsOwnPR(t *testing.T) {
 	if len(res.Commented) != 1 || len(obs.closed) != 0 {
 		t.Fatalf("below L6 should comment without closing: result=%+v closed=%v", res, obs.closed)
 	}
-	if got := obs.labels[13]; len(got) != 1 || got[0] != issueNeedsHumanLabel {
+	if got := obs.labels[13]; len(got) != 2 || got[0] != issueNeedsHumanLabel {
 		t.Fatalf("labels on #13 = %v, want needs-human", got)
 	}
 	if got := parkedPRs(rec); len(got) != 1 || got[0] != 13 {
@@ -649,7 +649,7 @@ func TestSweepSupersededOpenPRs_AllClosingClaimsClosedEscalates(t *testing.T) {
 			if len(res.Commented) != 1 || res.Commented[0].Issue != 30 || res.Commented[0].CloserPR != 40 || res.Commented[0].Action != SupersessionActionEscalated {
 				t.Fatalf("expected needs-human escalation on #30 via #40: %+v", res)
 			}
-			if got := obs.labels[21]; len(got) != 1 || got[0] != issueNeedsHumanLabel {
+			if got := obs.labels[21]; len(got) != 2 || got[0] != issueNeedsHumanLabel {
 				t.Fatalf("labels on #21 = %v, want needs-human", got)
 			}
 			if got := parkedPRs(rec); len(got) != 1 || got[0] != 21 {
@@ -708,7 +708,7 @@ func TestSweepSupersededOpenPRs_DoesNotReapplyNeedsHumanAfterClear(t *testing.T)
 				t.Fatalf("edited = %v, want %v (edit body: %q)", edited, tc.wantEdited, obs.edits[501])
 			}
 			if tc.wantLabel {
-				if len(res.Commented) != 1 || len(obs.labels[22]) != 1 || obs.labels[22][0] != issueNeedsHumanLabel {
+				if len(res.Commented) != 1 || len(obs.labels[22]) != 2 || obs.labels[22][0] != issueNeedsHumanLabel {
 					t.Fatalf("new escalation must label: result=%+v labels=%v", res, obs.labels[22])
 				}
 				return
@@ -876,6 +876,7 @@ func TestSweepSupersededOpenPRs_ReleasesOwnParkWhenCauseIsGone(t *testing.T) {
 			name: "closing claim still closed: park stands",
 			body: "Fixes #3", issueState: "closed",
 			labels: []string{issueNeedsHumanLabel}, labelEvents: hiveApplied, comments: notice(escalation()),
+			wantPark: true,
 		},
 		{
 			name: "closing claim still closed, not yet parked: escalates",

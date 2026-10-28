@@ -807,7 +807,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			obs.Reason = replacement.Reason
 		}
 		var route stagelabels.Route
-		if verdict.Human && !verdict.Terminal {
+		if verdict.Human && !verdict.Terminal && verdict.Reason != prstage.ReasonSupersessionPending {
 			var evidence stagelabels.Evidence
 			route, evidence = c.routeHuman(ctx, tracker, key, obs, verdict.Stage, now)
 			pass.Route = &evidence
@@ -824,7 +824,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		// the label state, which is reset below for informational no-dco and
 		// is unknown for heads with nothing to sign.
 		dcoRead := false
-		if !verdict.Terminal && verdict.Stage != stagelabels.None {
+		if !verdict.Terminal && verdict.Stage != stagelabels.None && verdict.Reason != prstage.ReasonSupersessionPending {
 			// The commit check is the one author-side gate decided here,
 			// before CI or a verdict: an unsigned head goes straight back
 			// to its author (hivecommons/hive#12542).

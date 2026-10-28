@@ -79,7 +79,7 @@ func supersededGraceStates(entries []AuditEntry, org string, grace time.Duration
 		}
 		key := ghpkg.ReviewQueueKey(repo, e.Target)
 		switch e.Action {
-		case supersessionDetectedAuditAction, supersessionGraceAuditAction:
+		case supersessionDetectedAuditAction, supersessionGraceAuditAction, ghpkg.SupersessionSweepAuditPrefix + ghpkg.SupersessionActionEscalated:
 		case supersessionCommentedAuditAction:
 			if detected[key] {
 				info := out[key]
@@ -104,6 +104,7 @@ func supersededGraceStates(entries []AuditEntry, org string, grace time.Duration
 		}
 		info := ghpkg.ReviewQueueSuperseded{
 			Reason:     ghpkg.ReviewQueueSupersededReason,
+			KeepReason: fields["reason"],
 			Issue:      fields["issue"],
 			CloserRepo: repo,
 			CloserPR:   closerPR,
@@ -117,7 +118,10 @@ func supersededGraceStates(entries []AuditEntry, org string, grace time.Duration
 		if previous, ok := out[key]; ok && previous.CloserRepo == info.CloserRepo && previous.CloserPR == info.CloserPR && previous.Issue == info.Issue {
 			info.GraceStartedAt, info.GraceEndsAt = previous.GraceStartedAt, previous.GraceEndsAt
 		}
-		if e.Action == supersessionDetectedAuditAction {
+		if e.Action != supersessionGraceAuditAction {
+			if e.Action == ghpkg.SupersessionSweepAuditPrefix+ghpkg.SupersessionActionEscalated {
+				info.GraceStartedAt, info.GraceEndsAt = time.Time{}, time.Time{}
+			}
 			detected[key] = true
 		} else if info.GraceStartedAt.IsZero() {
 			info.GraceStartedAt, info.GraceEndsAt = at.UTC(), at.Add(grace).UTC()

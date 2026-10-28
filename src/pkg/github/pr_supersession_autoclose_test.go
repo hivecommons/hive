@@ -300,7 +300,7 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 				if len(res.Commented) != 1 || res.Commented[0].Action != SupersessionActionEscalated {
 					t.Fatalf("guard %q result = %+v, want escalation", tc.name, res)
 				}
-				if got := obs.labels[12]; len(got) != 1 || got[0] != issueNeedsHumanLabel {
+				if got := obs.labels[12]; len(got) != 2 || got[0] != issueNeedsHumanLabel {
 					t.Fatalf("guard %q labels = %v, want needs-human", tc.name, got)
 				}
 				if got := obs.edits[900]; !strings.Contains(got, "Files the merged PR did not touch: `pkg/c.go`") {

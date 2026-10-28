@@ -232,7 +232,7 @@ func TestSupersessionResolve_BelowL6EscalatesOwnPRThroughStageEngine(t *testing.
 	if len(parked) != 1 || parked[0] != 13782 {
 		t.Fatalf("parked = %v, want #13782 at 085", parked)
 	}
-	if got := obs.labels[13782]; len(got) != 1 || got[0] != issueNeedsHumanLabel {
+	if got := obs.labels[13782]; len(got) != 2 || got[0] != issueNeedsHumanLabel {
 		t.Fatalf("labels = %v", got)
 	}
 	if obs.updated[13782] != "" || len(obs.closed) != 0 {
@@ -248,7 +248,7 @@ func TestSupersessionResolve_ContributorExtraFilesEscalatesWithFiles(t *testing.
 	if len(parked) != 1 || parked[0] != 13782 {
 		t.Fatalf("parked = %v, want #13782 at 085", parked)
 	}
-	if got := obs.labels[13782]; len(got) != 1 || got[0] != issueNeedsHumanLabel {
+	if got := obs.labels[13782]; len(got) != 2 || got[0] != issueNeedsHumanLabel {
 		t.Fatalf("labels = %v", got)
 	}
 	comment := obs.comments[13782][0]

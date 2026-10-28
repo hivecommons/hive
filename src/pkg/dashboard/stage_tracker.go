@@ -213,12 +213,13 @@ type StageTrackerHop struct {
 
 // StageTrackerItem is one open issue or PR on the tracker.
 type StageTrackerItem struct {
-	Repo   string `json:"repo"`
-	Number int    `json:"number"`
-	Kind   string `json:"kind"`
-	Title  string `json:"title"`
-	URL    string `json:"url,omitempty"`
-	Author string `json:"author,omitempty"`
+	Superseded *github.ReviewQueueSuperseded `json:"superseded,omitempty"`
+	Repo       string                        `json:"repo"`
+	Number     int                           `json:"number"`
+	Kind       string                        `json:"kind"`
+	Title      string                        `json:"title"`
+	URL        string                        `json:"url,omitempty"`
+	Author     string                        `json:"author,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so
 	// a "waiting for a verdict" caption can name the revision it waits on.
 	Head           string                `json:"head,omitempty"`
@@ -1304,6 +1305,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		return resp
 	}
 	resp.HiveID = status.HiveID
+	qualifyRepo := stageTrackerRepoQualifier(status)
+	superseded := map[string]github.ReviewQueueSuperseded{}
+	entries := append([]AuditEntry(nil), s.supersessionAuditEntries(now)...)
+	for i := range entries {
+		entries[i].Repo = qualifyRepo(entries[i].Repo)
+	}
+	for key, info := range supersededGraceStates(entries, "", s.supersessionGracePeriod()) {
+		superseded[key] = info
+	}
 	var cfg *config.Config
 	if s.deps != nil {
 		cfg = s.deps.Config
@@ -1496,6 +1506,18 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.DeferredModifiers = append([]string{modSentinel}, it.DeferredModifiers...)
 		}
 		it.LinkedIssues = stageTrackerPRLinkedIssues(pr, repoName, status.GitHubBaseURL)
+		info, found := superseded[github.ReviewQueueKey(qualifyRepo(repoName), pr.Number)]
+		if !found {
+			info, found = superseded[github.ReviewQueueKey(repoName, pr.Number)]
+		}
+		if found && !labelSet(pr.Labels)[github.SupersessionKeepOpenLabel] {
+			it.Superseded = &info
+			it.Caption = fmt.Sprintf("Superseded by #%d — decide", info.CloserPR)
+			if info.KeepReason != "" {
+				it.Caption += ": " + info.KeepReason
+			}
+			it.Actor = "maintainer"
+		}
 		add(it)
 	}
 	for _, repo := range status.Repos {

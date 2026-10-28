@@ -325,6 +325,8 @@ func TestSupersededDetectionReplay(t *testing.T) {
 		start   time.Time
 	}{
 		{"detection only", []AuditEntry{detection}, true, time.Time{}},
+		{"escalation retains decision", []AuditEntry{detection, entry("supersession-sweep-commented-needs-human", now)}, true, time.Time{}},
+		{"escalation cancels grace", []AuditEntry{detection, grace, entry("supersession-sweep-commented-needs-human", now)}, true, time.Time{}},
 		{"plain notice", []AuditEntry{detection, notice, repeat}, true, time.Time{}},
 		{"grace starts at notice", []AuditEntry{detection, grace}, true, now.Add(time.Hour)},
 		{"repeated detection preserves grace", []AuditEntry{detection, grace, repeat, entry(supersessionGraceAuditAction, now.Add(4*time.Hour))}, true, now.Add(time.Hour)},

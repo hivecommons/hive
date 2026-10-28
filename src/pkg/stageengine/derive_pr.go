@@ -246,7 +246,7 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 		}
 	}
 	var human *stagelabels.Route
-	if verdict.Human && !verdict.Terminal {
+	if verdict.Human && !verdict.Terminal && verdict.Reason != prstage.ReasonSupersessionPending {
 		if pass.Route != nil {
 			route := stagelabels.RouteHuman(*pass.Route)
 			verdict.Stage = route.Stage
@@ -259,7 +259,7 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 		}
 	}
 	dco := f.PR.DCO
-	if !verdict.Terminal && verdict.Stage != stagelabels.None && pass.DCOKnown {
+	if !verdict.Terminal && verdict.Stage != stagelabels.None && pass.DCOKnown && verdict.Reason != prstage.ReasonSupersessionPending {
 		dco = pass.DCO
 		if pass.DCO == stagelabels.DCONo && pass.DCORequired {
 			verdict.Stage = FixingStage(obs)
