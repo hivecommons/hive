@@ -147,7 +147,11 @@ func TestSharedAgentPoolFIFOWaitersAndStaleExpiry(t *testing.T) {
 	if r1.Code != http.StatusConflict {
 		t.Fatalf("h1 status = %d, want 409", r1.Code)
 	}
-	time.Sleep(10 * time.Millisecond)
+	// Backdate h1's queue position instead of sleeping so h2's FIFO slot is
+	// strictly later (the sleep ratchet forbids time.Sleep in pkg/ tests).
+	pool.mu.Lock()
+	pool.waitingHives["h1"] = pool.waitingHives["h1"].Add(-time.Second)
+	pool.mu.Unlock()
 
 	// h2 tries and gets 409, becomes second waiter.
 	r2 := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h2", h2)
@@ -192,5 +196,70 @@ func TestSharedAgentPoolFIFOWaitersAndStaleExpiry(t *testing.T) {
 	r3 := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h3", h3)
 	if r3.Code != http.StatusOK {
 		t.Fatalf("h3 acquire status = %d, want 200 after stale waiter pruned", r3.Code)
+	}
+}
+
+func TestSharedAgentPoolPerHiveCapPreventsMonopoly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shared-agent-pool.json")
+	pool := &sharedAgentPool{
+		path:         path,
+		max:          2,
+		ttl:          time.Minute,
+		leases:       make(map[string]sharedAgentLease),
+		waitingHives: make(map[string]time.Time),
+		lastSeen:     make(map[string]time.Time),
+	}
+	s := &HubServer{logger: slog.Default()}
+	s.setHubSecret("test-per-hive-cap-master")
+
+	// Default ceiling is half of max (rounded up): 1 of 2 slots.
+	if got := pool.perHiveLimit(); got != 1 {
+		t.Fatalf("perHiveLimit() = %d, want 1", got)
+	}
+
+	first := serveSharedPoolRequest(t, pool, s, http.MethodPost, "greedy", map[string]string{"hive_id": "greedy", "agent_name": "a"})
+	if first.Code != http.StatusOK {
+		t.Fatalf("first acquire status = %d, body %q", first.Code, first.Body.String())
+	}
+	// Same hive, distinct agent name: refused even though the pool has room,
+	// and NOT enqueued as a waiter.
+	second := serveSharedPoolRequest(t, pool, s, http.MethodPost, "greedy", map[string]string{"hive_id": "greedy", "agent_name": "b"})
+	if second.Code != http.StatusConflict {
+		t.Fatalf("over-cap acquire status = %d, want 409 (%s)", second.Code, second.Body.String())
+	}
+	pool.mu.Lock()
+	_, waiting := pool.waitingHives["greedy"]
+	held := pool.leasesHeldByLocked("greedy")
+	pool.mu.Unlock()
+	if waiting {
+		t.Fatal("hive at its per-hive cap was enqueued as a waiter and would block other tenants")
+	}
+	if held != 1 {
+		t.Fatalf("greedy holds %d leases, want 1", held)
+	}
+	// Re-POSTing the agent that already holds a lease still renews it.
+	renew := serveSharedPoolRequest(t, pool, s, http.MethodPost, "greedy", map[string]string{"hive_id": "greedy", "agent_name": "a"})
+	if renew.Code != http.StatusOK {
+		t.Fatalf("renew-by-POST status = %d, want 200", renew.Code)
+	}
+	// Another tenant takes the remaining slot immediately.
+	other := serveSharedPoolRequest(t, pool, s, http.MethodPost, "fair", map[string]string{"hive_id": "fair", "agent_name": "c"})
+	if other.Code != http.StatusOK {
+		t.Fatalf("other tenant acquire status = %d, want 200 (%s)", other.Code, other.Body.String())
+	}
+
+	// An explicit ceiling is honoured but clamped to max.
+	pool.maxPerHive = 2
+	if got := pool.perHiveLimit(); got != 2 {
+		t.Fatalf("perHiveLimit() with maxPerHive=2 = %d, want 2", got)
+	}
+	pool.maxPerHive = 10
+	if got := pool.perHiveLimit(); got != 2 {
+		t.Fatalf("perHiveLimit() with maxPerHive=10 = %d, want clamp to max 2", got)
+	}
+	pool.max = 1
+	pool.maxPerHive = 0
+	if got := pool.perHiveLimit(); got != 1 {
+		t.Fatalf("perHiveLimit() with max=1 = %d, want 1", got)
 	}
 }

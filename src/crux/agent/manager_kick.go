@@ -123,11 +123,20 @@ func (m *Manager) SendKick(name string, message string) error {
 
 	if agent.State != StateRunning {
 		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+			// Mark the launch queued BEFORE starting so launchInTmux arms the
+			// startup-kick drain; the deferStartupKickLocked check below then
+			// parks this message until the CLI is ready instead of typing
+			// into a pane with no CLI yet (which would trip restartForKick
+			// and kill the session we just launched).
+			agent.startupLaunchQueued = true
 			m.mu.Unlock()
-			if err := m.Start(context.Background(), name); err != nil {
+			// Every return below must re-acquire m.mu: the deferred Unlock
+			// above is still armed.
+			err := m.Start(context.Background(), name)
+			m.mu.Lock()
+			if err != nil {
 				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
 			}
-			m.mu.Lock()
 			agent, ok = m.agents[name]
 			if !ok || agent.State != StateRunning {
 				return fmt.Errorf("agent %s failed to enter running state", name)
