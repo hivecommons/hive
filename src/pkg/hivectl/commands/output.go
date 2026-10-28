@@ -70,8 +70,9 @@ func (p printer) printTable(value any) error {
 	switch typed := value.(type) {
 	case map[string]any:
 		keys := sortedKeys(typed)
-		for _, key := range keys {
-			_, _ = fmt.Fprintf(writer, "%s\t%s\n", compactString(key), compactValue(typed[key])) // buffered by tabwriter; Flush error is captured above
+		labels := disambiguatedLabels(keys)
+		for i, key := range keys {
+			_, _ = fmt.Fprintf(writer, "%s\t%s\n", labels[i], compactValue(typed[key])) // buffered by tabwriter; Flush error is captured above
 		}
 	case []any:
 		rows := make([]map[string]any, 0, len(typed))
@@ -91,17 +92,7 @@ func (p printer) printTable(value any) error {
 			headers = append(headers, key)
 		}
 		sort.Strings(headers)
-		sanitisedHeaders := make([]string, len(headers))
-		seenLabels := map[string]int{}
-		for i, h := range headers {
-			label := compactString(h)
-			seenLabels[label]++
-			if n := seenLabels[label]; n > 1 {
-				label = fmt.Sprintf("%s (%d)", label, n)
-			}
-			sanitisedHeaders[i] = label
-		}
-		_, _ = fmt.Fprintln(writer, strings.Join(sanitisedHeaders, "\t")) // buffered by tabwriter; Flush error is captured above
+		_, _ = fmt.Fprintln(writer, strings.Join(disambiguatedLabels(headers), "\t")) // buffered by tabwriter; Flush error is captured above
 		for _, row := range rows {
 			values := make([]string, len(headers))
 			for index, header := range headers {
@@ -135,6 +126,23 @@ func compactValue(value any) string {
 		}
 		return string(data)
 	}
+}
+
+// disambiguatedLabels compacts each key for a table cell and suffixes " (n)"
+// onto any label that a previous key already compacted to, so distinct keys
+// that differ only by control characters stay distinguishable in output.
+func disambiguatedLabels(keys []string) []string {
+	labels := make([]string, len(keys))
+	seen := map[string]int{}
+	for i, key := range keys {
+		label := compactString(key)
+		seen[label]++
+		if n := seen[label]; n > 1 {
+			label = fmt.Sprintf("%s (%d)", label, n)
+		}
+		labels[i] = label
+	}
+	return labels
 }
 
 // compactString makes a server- or index-derived string safe for a single

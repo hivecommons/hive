@@ -296,3 +296,33 @@ func TestPrinterTableArrayOfMapsCollidingHeadersAreDistinct(t *testing.T) {
 		})
 	}
 }
+
+// TestPrinterTableMapCollidingKeysAreDistinct covers the key/value branch:
+// map keys that sanitise to the same label get the same " (n)" suffix the
+// list headers do, and each row still reads its own raw key's value.
+func TestPrinterTableMapCollidingKeysAreDistinct(t *testing.T) {
+	var buf bytes.Buffer
+	p := printer{format: "table", out: &buf}
+	err := p.print(map[string]any{"a\x1bb": "one", "ab": "two", "a\x07b": "three"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %q", lines)
+	}
+	// sorted raw keys: "a\x07b", "a\x1bb", "ab"
+	want := []struct{ label, value string }{
+		{"ab", "three"},
+		{"ab (2)", "one"},
+		{"ab (3)", "two"},
+	}
+	for i, w := range want {
+		if !strings.HasPrefix(lines[i], w.label+" ") || !strings.HasSuffix(lines[i], w.value) {
+			t.Fatalf("line %d = %q, want label %q value %q", i, lines[i], w.label, w.value)
+		}
+	}
+	if strings.Contains(buf.String(), "\x1b") || strings.Contains(buf.String(), "\x07") {
+		t.Fatalf("control characters leaked: %q", buf.String())
+	}
+}
