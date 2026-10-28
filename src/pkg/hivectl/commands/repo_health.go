@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -105,13 +104,9 @@ func healthNumber(v *float64) string {
 }
 
 func printRepoHealthTable(cmd *cobra.Command, result any) error {
-	data, err := json.Marshal(result)
-	if err != nil {
-		return err
-	}
 	var h repoHealthCLIResponse
-	if err := json.Unmarshal(data, &h); err != nil {
-		return fmt.Errorf("decoding health response: %w", err)
+	if err := decodeResult(result, &h, "health"); err != nil {
+		return err
 	}
 	out := cmd.OutOrStdout()
 	computed := ""
@@ -119,12 +114,12 @@ func printRepoHealthTable(cmd *cobra.Command, result any) error {
 		computed = h.ComputedAt.UTC().Format(time.RFC3339)
 	}
 	_, _ = fmt.Fprintf(out, "%s  score %s (%s)  window %dd  min n %d  computed %s\n",
-		h.Repo, healthNumber(h.Score), h.Status, h.WindowDays, h.MinN, computed)
+		compactString(h.Repo), healthNumber(h.Score), compactString(h.Status), h.WindowDays, h.MinN, computed)
 	writer := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(writer, "COMPONENT\tSTATUS\tSCORE\tWEIGHT\tCONTRIBUTION\tN\tREASON")
 	for _, c := range h.Components {
-		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", c.Name, c.Status, healthNumber(c.Score),
-			strconv.FormatFloat(c.Weight, 'f', -1, 64), healthNumber(c.Contribution), c.N, compactValue(c.Reason))
+		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", compactString(c.Name), compactString(c.Status), healthNumber(c.Score),
+			strconv.FormatFloat(c.Weight, 'f', -1, 64), healthNumber(c.Contribution), c.N, compactString(c.Reason))
 	}
 	return writer.Flush()
 }

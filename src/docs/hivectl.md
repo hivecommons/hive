@@ -276,7 +276,7 @@ hivectl search revert --from 2026-10-01 --to 2026-10-28 -o json   # full respons
 hivectl repo health hivecommons/hive                              # report-only health score and its components
 ```
 
-`search` reads `GET /api/search` and needs owner or maintainer role; `repo health` reads
+`search` reads `GET /api/search` and needs owner or merger role; `repo health` reads
 `GET /api/repos/{owner}/{repo}/health`. Both query only the hive named by `--server` (no hub fan-out). When that
 hive runs with `search.enabled` off, both say `search is disabled on this hive` and exit non-zero. See
 [Portfolio search](search.md).

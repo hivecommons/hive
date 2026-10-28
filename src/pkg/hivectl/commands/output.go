@@ -115,7 +115,7 @@ func compactValue(value any) string {
 	}
 	switch typed := value.(type) {
 	case string:
-		return strings.ReplaceAll(typed, "\n", "\\n")
+		return compactString(typed)
 	case float64, bool:
 		return fmt.Sprint(typed)
 	default:
@@ -125,6 +125,37 @@ func compactValue(value any) string {
 		}
 		return string(data)
 	}
+}
+
+// compactString makes a server- or index-derived string safe for a single
+// terminal table cell: newlines become a literal \n, tabs become spaces so
+// they cannot shift tabwriter columns, and every other C0/C1 control
+// character (ESC, BEL, CR, DEL, ...) is dropped so third-party text indexed
+// into search cannot carry ANSI/OSC sequences into an operator terminal.
+func compactString(s string) string {
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\t':
+			return ' '
+		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// decodeResult re-encodes a decoded `any` API result into the typed struct v
+// so table printers can work with fields instead of map lookups.
+func decodeResult(result any, v any, what string) error {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		return fmt.Errorf("decoding %s response: %w", what, err)
+	}
+	return nil
 }
 
 func sortedKeys(values map[string]any) []string {

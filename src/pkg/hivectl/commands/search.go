@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -58,7 +57,7 @@ func newSearchCommand(env *commandEnv) *cobra.Command {
 		Use:   "search [query...]",
 		Short: "Search this hive's portfolio index (evidence, findings, beads, facts)",
 		Long: "Search the spoke's local portfolio index through GET /api/search. Owner or\n" +
-			"maintainer role is required. Terms match whole words case-insensitively; an empty\n" +
+			"merger role is required. Terms match whole words case-insensitively; an empty\n" +
 			"query with --kind/--repo lists the newest matching documents. --from is inclusive,\n" +
 			"--to exclusive (a YYYY-MM-DD --to covers that day). Only this hive is searched.\n\n" +
 			"When the hive runs with search disabled (search.enabled unset or false) the command\n" +
@@ -123,13 +122,9 @@ func searchAPIError(err error) error {
 }
 
 func printSearchTable(cmd *cobra.Command, result any) error {
-	data, err := json.Marshal(result)
-	if err != nil {
-		return err
-	}
 	var resp searchCLIResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return fmt.Errorf("decoding search response: %w", err)
+	if err := decodeResult(result, &resp, "search"); err != nil {
+		return err
 	}
 	out := cmd.OutOrStdout()
 	writer := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
@@ -146,7 +141,7 @@ func printSearchTable(cmd *cobra.Command, result any) error {
 		if !hit.At.IsZero() {
 			at = hit.At.UTC().Format(time.DateOnly)
 		}
-		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", hit.Kind, hit.Repo, at, compactValue(title), hit.URL)
+		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", compactString(hit.Kind), compactString(hit.Repo), at, compactString(title), compactString(hit.URL))
 	}
 	if err := writer.Flush(); err != nil {
 		return err
@@ -158,7 +153,7 @@ func printSearchTable(cmd *cobra.Command, result any) error {
 	}
 	sort.Strings(repos)
 	for _, repo := range repos {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s index unreadable (%s); its hits may be missing\n", repo, resp.Coverage[repo])
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s index unreadable (%s); its hits may be missing\n", compactString(repo), compactString(resp.Coverage[repo]))
 	}
 	return nil
 }

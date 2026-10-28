@@ -13,7 +13,7 @@ import (
 )
 
 // Portfolio search (hivecommons/hive#14637, RFC #14491 Part A): the spoke's
-// GET /api/search over the local pkg/search index. Owner/maintainer only,
+// GET /api/search over the local pkg/search index. Merger/owner only,
 // spoke-local (no hub fan-out), and 404 while the search index is off. Query
 // strings are audited with actor and role; result bodies never are. Every
 // text field surfaced from the index passes through ioscan as untrusted

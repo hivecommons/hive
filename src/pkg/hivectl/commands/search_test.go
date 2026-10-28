@@ -102,7 +102,7 @@ func TestSearchCommandErrors(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("q") == "forbidden" {
 			w.WriteHeader(http.StatusForbidden)
-			io.WriteString(w, `{"ok":false,"error":"owner or maintainer role required"}`)
+			io.WriteString(w, `{"ok":false,"error":"merger or owner access required"}`)
 			return
 		}
 		w.WriteHeader(http.StatusBadRequest)

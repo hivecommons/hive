@@ -35,7 +35,7 @@ Default health weights (sum 100): `ci_pass_rate` 20, `time_to_merge` 15, `revert
 
 - `hivectl search <query>` with `--kind`, `--repo`, `--from`, `--to` and `--limit`, and
   `hivectl repo health <owner/repo>`; see [hivectl](hivectl.md#search--repo-health--portfolio-search).
-- `GET /api/search?q=&kind=&repo=&from=&to=&limit=` (owner or maintainer) returns highlighted hits and facets by
+- `GET /api/search?q=&kind=&repo=&from=&to=&limit=` (owner or merger) returns highlighted hits and facets by
   `kind`, `repo`, `verdict` and `sentinel.rule`. Queries are audited with actor and role; results never are. Text
   that ioscan flags as injected comes back as a visible redaction marker.
 - `GET /api/repos/{owner}/{repo}/health` returns the report-only health score with every component's inputs, `n`
