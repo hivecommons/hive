@@ -650,7 +650,12 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString(permissionsTighteningGuidance)
 	b.WriteString("A Hive-authored incomplete fix with concrete remediation is changes_requested, not requires_human. If there are two engineering remedies (for example, add producer code OR reword a changelog), choose the best route yourself and state it as the requested change; do not escalate the choice to a human unless it falls into one of the risk categories above. Intent-alignment cleanup such as trimming a PR summary or changelog fragment that duplicates already-landed work is also changes_requested when the remediation is concrete.\n")
 	b.WriteString("A perspective you could not meaningfully assess is requires_human, not approve. Approving a perspective you did not actually consider is the one failure mode that makes this whole review worthless, because it is indistinguishable from having considered it.\n")
-	if opts.PostComments {
+	if head := strings.TrimSpace(opts.HeadRecordOnly); head != "" {
+		// A combined review head (hivecommons/hive#15058): every perspective
+		// in one pass, recorded as one array, posted nowhere.
+		b.WriteString(buildHeadRecordOnlyInstruction(pr, head))
+		fmt.Fprintf(&b, "The verdict file carries all %d verdicts as ONE JSON array, including the clean ones, recorded with a single --record-verdict call. A perspective missing from the array is dispatched to you again.\n", len(perspectives))
+	} else if opts.PostComments {
 		b.WriteString(buildCombinedPublishInstruction(pr, perspectives, opts))
 	}
 	b.WriteString(buildProposeOnlyInstruction(pr, opts))

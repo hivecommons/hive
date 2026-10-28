@@ -626,7 +626,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		return plan
 	}
 	capable := reviewCapableAgents(opts)
-	heads, reviewers := dispatchReviewers(capable, opts.CombinedPerspectives)
+	heads, reviewers := dispatchReviewers(capable)
 	headsMode := len(heads) > 0
 	maxParallel := opts.MaxParallelReviews
 	if maxParallel <= 0 {

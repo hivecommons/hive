@@ -1,0 +1,1 @@
+- Review heads (`agents.<name>.review_heads`) now work with `review.combined_perspectives: true`: each head reviews every perspective in one record-only kick per PR head instead of one kick per perspective, and config load now rejects a reviewer set that mixes lanes with and without heads in combined mode too.
