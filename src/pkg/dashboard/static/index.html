@@ -1688,6 +1688,13 @@
     .ham-menu-item[aria-disabled="true"]:hover { background: transparent; }
     .ham-menu-item.ham-menu-danger { color: var(--red); }
     .ham-menu-item .ham-menu-more { color: var(--text-faint); }
+    /* A menu whose items carry a consequence hint ("merges #N into v5 now
+       via hive's identity…") grows wider and stacks label over hint; the
+       hint wraps, so no hint length can run past the menu border
+       (see the fixed-row-menu-hint-wrap changelog fragment). */
+    .ham-menu.ham-menu-hinted { max-width: min(45em, calc(100vw - 2 * var(--sp-3))); }
+    .ham-menu-item.ham-menu-item-hinted { flex-direction: column; align-items: flex-start; gap: var(--sp-1); white-space: normal; }
+    .ham-menu-item .ham-menu-hint { display: block; color: var(--text-faint); font-size: var(--fs-xs); white-space: normal; overflow-wrap: anywhere; }
     .ham-submenu { display: none; margin: 0 0 0 var(--sp-3); padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-menu-item[aria-expanded="true"] + .ham-submenu { display: block; }
     /* tracker-cues: the Activity Monitor's shared cue vocabulary (owner,
@@ -17327,12 +17334,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (a.submenu) {
         return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item" data-ham-act="${esc(a.id)}" aria-haspopup="menu" aria-expanded="false" tabindex="-1"${dis}>${esc(a.label)}<span class="ham-menu-more" aria-hidden="true">▸</span></button><div class="ham-submenu" role="menu" aria-label="${esc(a.label)}">${a.submenu.map(stageTrackerMenuItemHtml).join('')}</div>`;
       }
-      return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}" tabindex="-1"${dis}>${esc(a.label)}${a.hint ? `<span class="ham-menu-more">${esc(a.hint)}</span>` : ''}</button>`;
+      // A hint stacks under the label (ham-menu-item-hinted) and wraps, so
+      // the consequence line never overflows the menu (#15165).
+      return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item${a.danger ? ' ham-menu-danger' : ''}${a.hint ? ' ham-menu-item-hinted' : ''}" data-ham-act="${esc(a.id)}" tabindex="-1"${dis}>${esc(a.label)}${a.hint ? `<span class="ham-menu-hint">${esc(a.hint)}</span>` : ''}</button>`;
+    }
+    // Pure: true when any action (or submenu action) carries a hint.
+    function stageTrackerMenuHasHints(actions) {
+      return (actions || []).some(a => !!a.hint || (a.submenu && stageTrackerMenuHasHints(a.submenu)));
     }
     // Pure: the menu markup (roles menu / menuitem, the Decide group as a
-    // nested menu toggled by its item).
+    // nested menu toggled by its item). A menu with hints is ham-menu-hinted
+    // (wider, hints stacked and wrapping).
     function stageTrackerMenuHtml(actions, head) {
-      return `<div class="ham-menu" role="menu" aria-label="Row actions" tabindex="-1">${head ? `<div class="ham-menu-head">${esc(head)}</div>` : ''}${actions.map(stageTrackerMenuItemHtml).join('')}</div>`;
+      return `<div class="ham-menu${stageTrackerMenuHasHints(actions) ? ' ham-menu-hinted' : ''}" role="menu" aria-label="Row actions" tabindex="-1">${head ? `<div class="ham-menu-head">${esc(head)}</div>` : ''}${actions.map(stageTrackerMenuItemHtml).join('')}</div>`;
     }
     // Pure: place the menu at the pointer, flipped/clamped to stay on screen.
     function stageTrackerMenuPosition(x, y, w, h, vw, vh) {

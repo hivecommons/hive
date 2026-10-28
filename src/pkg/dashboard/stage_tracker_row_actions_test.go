@@ -68,6 +68,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerFlatActions"),
 		jsFunc(t, html, "stageTrackerSelectionActions"),
 		jsFunc(t, html, "stageTrackerMenuItemHtml"),
+		jsFunc(t, html, "stageTrackerMenuHasHints"),
 		jsFunc(t, html, "stageTrackerMenuHtml"),
 		jsFunc(t, html, "stageTrackerMenuPosition"),
 		jsFunc(t, html, "stageTrackerSelBarHtml"),
@@ -285,7 +286,7 @@ assert.strictEqual(by.open.enabled, true);
 
 // Menu markup.
 const menu = stageTrackerMenuHtml(as, 'o/r#1 · Parked');
-assert.ok(menu.startsWith('<div class="ham-menu" role="menu"'));
+assert.ok(menu.startsWith('<div class="ham-menu ham-menu-hinted" role="menu"'), 'the rescan hint makes it a hinted menu: ' + menu.slice(0, 60));
 assert.ok(menu.includes('<div class="ham-menu-head">o/r#1 · Parked</div>'));
 assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 11, 'six top-level items + five decide options');
 assert.ok(menu.includes('data-ham-act="hold" tabindex="-1" aria-disabled="true" title="' + STAGE_TRACKER_WHY_WRITE + '"'), 'disabled items carry the reason');
@@ -620,7 +621,7 @@ const one = { ...issue, linked_prs: [issue.linked_prs[1]] };
 assert.strictEqual(stageTrackerDecisionTarget(one).number, 15020, 'one parked PR: the issue row decides it, as before');
 assert.ok(!ids(stageTrackerRowActions(one, ctx)).includes('decide:delegate-all'));
 const menu = stageTrackerMenuHtml(stageTrackerRowActions(issue, ctx), 'x');
-assert.ok(menu.includes('data-ham-act="decide:delegate-all"') && menu.includes('Let hive decide — all 2 PRs<span class="ham-menu-more">per PR</span>'));
+assert.ok(menu.includes('data-ham-act="decide:delegate-all"') && menu.includes('Let hive decide — all 2 PRs<span class="ham-menu-hint">per PR</span>'));
 
 // The selection model runs over sub-rows: keys in document order, painted
 // on the sub nodes; a sub-row click selects the PR, not its parent.
@@ -1086,7 +1087,13 @@ const at = s => menu.indexOf(s);
 assert.ok(at('data-ham-act="decide:merge-now"') > 0 && at('data-ham-act="decide:merge-now"') < at('data-ham-act="decide:queue-merge"'));
 assert.ok(at('data-ham-act="decide:queue-merge"') < at('data-ham-act="decide"'), 'merge answers above Decide…');
 assert.ok(at('data-ham-act="decide"') < at('data-ham-act="hold"') && at('data-ham-act="hold"') < at('data-ham-act="open"'), 'generic items last');
-assert.ok(menu.includes('<span class="ham-menu-more">merges #317 into main now via hive&#39;s identity, attributed to you</span>') || menu.includes('<span class="ham-menu-more">merges #317 into main now via hive\'s identity, attributed to you</span>'), 'consequence line rendered: ' + menu);
+assert.ok(menu.includes('<span class="ham-menu-hint">merges #317 into main now via hive&#39;s identity, attributed to you</span>') || menu.includes('<span class="ham-menu-hint">merges #317 into main now via hive\'s identity, attributed to you</span>'), 'consequence line rendered: ' + menu);
+// Hints stack under their label and the menu grows for them (#15175).
+assert.ok(menu.startsWith('<div class="ham-menu ham-menu-hinted"'), 'a menu with hints is ham-menu-hinted: ' + menu.slice(0, 80));
+assert.ok(/class="ham-menu-item ham-menu-item-hinted" data-ham-act="decide:merge-now"/.test(menu), 'the hinted item stacks label over hint: ' + menu);
+assert.ok(!/class="ham-menu-item[^"]*ham-menu-item-hinted"[^>]*data-ham-act="open"/.test(menu), 'items without a hint keep the inline layout');
+assert.ok(!stageTrackerMenuHtml([{ id: 'open', label: 'Open', enabled: true }], 'x').includes('ham-menu-hinted'), 'no hints: plain menu width');
+assert.ok(stageTrackerMenuHasHints([{ id: 'decide', label: 'Decide…', enabled: true, submenu: [{ id: 'x', label: 'x', hint: 'per PR' }] }]), 'a submenu hint counts');
 
 // A writer without the merger role sees the merge answers, greyed with the
 // role reason — never silently missing.
