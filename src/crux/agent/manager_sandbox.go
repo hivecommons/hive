@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -207,8 +208,14 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 	// LIFO), so a slow volume never stalls every status reader.
 	var pending *SandboxRunHistoryEntry
 	var persist func(string, SandboxRunHistoryEntry) error
+	var logArchive *sandboxKickLogArchive
 	workDir := ""
 	defer func() {
+		// The log first: it is what an operator opens to understand the run
+		// record, and the record names it by id.
+		if perr := m.writeSandboxKickLog(name, logArchive); perr != nil {
+			m.logger.Warn("sandbox kick log not archived", "name", name, "error", perr)
+		}
 		if pending == nil {
 			return
 		}
@@ -229,6 +236,10 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 	// turn yesterday's successful run into "never ran".
 	if err == nil || !agent.sandboxResumeAfterCancel {
 		run := buildSandboxRun(runtime, started, ended, res, err)
+		logArchive = m.prepareSandboxKickLogLocked(agent, runtime, started, res, err)
+		if logArchive != nil {
+			run.LogID = logArchive.id
+		}
 		agent.SandboxLastRun = &run
 		agent.KickOutcome = KickOutcome{Kind: KickOutcomeEnded, At: ended, KickAt: started}
 		if agent.LastKick != nil {
@@ -261,6 +272,9 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		agent.LastError = err.Error()
 		if agent.OutputBuffer != nil {
 			agent.OutputBuffer.Write("sandbox kick failed: " + err.Error())
+		}
+		if errors.Is(err, ErrSandboxRunReportedFailure) {
+			m.auditSandbox(name, "sandbox_pr_withheld", fmt.Sprintf("workspace=%s commits=%d branch=%s reason=%s", res.Workspace, res.CommitCount, res.Branch, res.PRWithheld))
 		}
 		m.auditSandbox(name, "sandbox_failed", err.Error())
 		if res.Broker != nil && res.Broker.Error != "" {

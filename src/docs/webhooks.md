@@ -68,12 +68,7 @@ snapshot work. External PRs and non-closing references remain the stage
 sweep's responsibility. See `coverIssuesForWebhookPR` in
 `src/pkg/github/webhook_pr_claims.go`.
 
-### Merge trigger and ledger-to-stage backfill (pending #14971)
-
-The following additions are proposed in
-[PR #14971](https://github.com/hivecommons/hive/pull/14971), which is not yet
-merged into `v5`. They describe that PR's implementation at
-[commit `36ed2141d`](https://github.com/hivecommons/hive/commit/36ed2141d952a8c11a67e503678457a94236b89c):
+### Merge trigger and ledger-to-stage backfill
 
 - **Merged delivery:** after a merged delivery records at least one claim,
   `prClaimsHookFor` invokes `closeOnMergeForDelivery`. With
@@ -92,10 +87,6 @@ merged into `v5`. They describe that PR's implementation at
   between ledger and store costs no API calls; repairs can read PRs and write
   labels. This backfill repairs stage records, whereas the scheduled
   `CloseOnMergeBackfill` scans open issues for merged fixes.
-
-Until that PR lands, merged claims are recorded on delivery, but closing
-still depends on the scheduled close-on-merge path
-(`runCloseOnMergeSweep` in `src/cmd/hive/close_on_merge_sweep.go`).
 
 ## Accuracy guarantees
 

@@ -674,6 +674,17 @@
     .nps-admin-response-text { font-size: var(--fs-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--sp-2); }
       .upgrade-ctl[aria-disabled="true"] { cursor: not-allowed !important; opacity: 0.5; pointer-events: auto; }
       .version-missing { font-size: var(--fs-2xs); white-space: nowrap; color: var(--muted); }
+      /* Scheduled-upgrade progress pill, history badge and interrupt action
+         on the hive card's Version cell (#14950). */
+      .upgrade-progress-pill { display: inline-block; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); font-size: var(--fs-2xs); background: var(--surface); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .upgrade-progress-pill.is-draining { color: var(--amber); }
+      .upgrade-progress-pill.is-missed, .upgrade-progress-pill.has-missed { color: var(--red); }
+      .upgrade-progress-pill.is-done { color: var(--green); }
+      .upgrade-progress-history { margin-left: var(--sp-2); cursor: help; }
+      .upgrade-progress-interrupt { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; color: var(--red); margin-left: var(--sp-2); font-size: var(--fs-2xs); }
+      .upgrade-progress-mono { font-family: monospace; font-size: var(--fs-base); color: var(--muted); }
+      .upgrade-progress-mono.is-target { color: var(--green); }
+      .upgrade-progress-warn { color: var(--red); }
   </style>
 </head>
 <body>
@@ -9095,6 +9106,14 @@
             behindBadge = behindBadgeHTML(behindBadgeUnknownStyle, 'Could not compare this commit with ' + behindRef + ' ' + behindSHA + '; badge measures the running commit against the latest reachable image', '? behind');
           }
           var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(shaMsg) + '">' + esc(sha) + '</span>' + status + behindBadge + (driftDot ? ' ' + driftDot : '');
+          /* The interrupt action is offered on the same terms as Upgrade
+             now: the hub enforces owner/admin on the POST, the card only
+             hides it from readers who could not click it anyway. */
+          var upgradeProgressLine = renderUpgradeProgress(h, isHosted && h.role === 'owner' && !h.upgradeInterruptPending);
+          if (h.upgradeInterruptPending) upgradeProgressLine += '<span class="upgrade-progress-pill upgrade-progress-history" title="The owner asked this upgrade to interrupt in-flight agent turns; the spoke picks it up on its next heartbeat.">interrupt requested</span>';
+          /* The progress pill shares the upgrade line so the cell keeps its
+             one-element-per-line shape (TestVersionCellPutsEachElementOnItsOwnLine). */
+          if (upgradeProgressLine) upgradeIcon = upgradeIcon ? upgradeIcon + ' ' + upgradeProgressLine : upgradeProgressLine;
           versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
             '<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>' +
             '<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>' +
@@ -9885,6 +9904,82 @@
        Minutes are the operator's working unit here, so past an hour it keeps
        the minutes rather than collapsing to a bare "1h" that would hide a
        72-minute wedge behind the same string as a 61-minute one. */
+    /* Scheduled-upgrade progress (#14950). The hub derives one state per
+       hive (h.upgradeState) and keeps the last attempts (h.upgradeHistory);
+       the card renders the state as a pill with the drain countdown and the
+       agents holding the upgrade, and the history as a tooltip so a missed
+       window is never silent. Only the states that mean "something is
+       happening or went wrong" get a pill; a plain "scheduled" row looks as
+       it does today (the auto-upgrade line already says when). */
+    var UPGRADE_PROGRESS_PILL_STATES = {draining: 1, pulling: 1, rolling: 1, verifying: 1, missed: 1};
+    var UPGRADE_PROGRESS_LABELS = {scheduled: 'Scheduled', draining: 'Draining', pulling: 'Pulling', rolling: 'Rolling', verifying: 'Verifying', done: 'Upgraded', missed: 'Missed window'};
+    var UPGRADE_HISTORY_MAX_ROWS = 14;
+
+    function upgradeProgressLabel(state) {
+      return UPGRADE_PROGRESS_LABELS[state] || (state ? state.charAt(0).toUpperCase() + state.slice(1) : '');
+    }
+
+    /* upgradeAgentsInTurnText renders "2/5 agents in turn: reviewer 38m,
+       scanner 12m" from the state's agentsInTurn list. */
+    function upgradeAgentsInTurnText(st) {
+      var turns = (st && st.agentsInTurn) || [];
+      if (!turns.length) return '';
+      var parts = turns.map(function(t) {
+        var el = formatUpgradeElapsed((t.elapsedS || 0) * 1000);
+        return (t.agent || '?') + (el ? ' ' + el : '');
+      });
+      var head = turns.length + (st.agentsTotal ? '/' + st.agentsTotal : '') + (turns.length === 1 && !st.agentsTotal ? ' agent' : ' agents') + ' in turn: ';
+      return head + parts.join(', ');
+    }
+
+    function renderUpgradeHistory(h) {
+      var rows = (h && h.upgradeHistory) || [];
+      if (!rows.length) return '';
+      var missed = 0;
+      var lines = rows.slice(0, UPGRADE_HISTORY_MAX_ROWS).map(function(a) {
+        if (a.outcome === 'missed') missed++;
+        var when = a.endedAt && a.endedAt !== '0001-01-01T00:00:00Z' ? a.endedAt : a.startedAt;
+        var d = when ? new Date(when) : null;
+        var ts = d && !isNaN(d.getTime()) ? d.toLocaleString([], {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : '?';
+        var what = a.outcome ? upgradeProgressLabel(a.outcome) : 'In progress';
+        var to = a.target ? ' → ' + String(a.target).substring(0, 7) : '';
+        var why = a.reason ? ' — ' + a.reason : '';
+        return ts + ': ' + what + to + (a.trigger ? ' (' + a.trigger + ')' : '') + why;
+      });
+      var tip = 'Upgrade history (last ' + lines.length + ')\n' + lines.join('\n');
+      return '<span class="upgrade-progress-pill upgrade-progress-history' + (missed ? ' has-missed' : '') + '" title="' + escAttr(tip) + '">history' + (missed ? ' · ' + missed + ' missed' : '') + '</span>';
+    }
+
+    /* renderUpgradeProgress builds the state pill line for the Version cell.
+       Returns '' when there is nothing worth a line (no state, or a quiet
+       scheduled/done state), so healthy rows render exactly as today. */
+    function renderUpgradeProgress(h, canAct) {
+      var st = h && h.upgradeState;
+      var history = renderUpgradeHistory(h);
+      if (!st || !UPGRADE_PROGRESS_PILL_STATES[st.state]) return history;
+      var label = upgradeProgressLabel(st.state);
+      var extra = '';
+      if (st.state === 'draining') {
+        var agents = upgradeAgentsInTurnText(st);
+        var left = typeof st.drainRemainingS === 'number' && st.drainRemainingS > 0 ? formatUpgradeElapsed(st.drainRemainingS * 1000) + ' left' : 'deadline reached';
+        extra = (agents ? ' · ' + agents : '') + ' · ' + left;
+      } else if (st.state === 'missed' && st.reason) {
+        extra = ' · ' + st.reason;
+      }
+      var tip = st.detail || label;
+      var pill = '<span class="upgrade-progress-pill is-' + escAttr(st.state) + '" title="' + escAttr(tip) + '">' + esc(label + extra) + '</span>';
+      var action = '';
+      if (canAct && (st.state === 'draining' || st.state === 'missed')) {
+        var actTitle = st.state === 'draining'
+          ? 'Stop waiting for the agents and roll the upgrade now. The turns listed are interrupted and will be retried by their owners.'
+          : 'The scheduled window was missed; roll the upgrade now, interrupting any agent turn in progress.';
+        action = ' <span class="upgrade-progress-interrupt" role="button" tabindex="0" title="' + escAttr(actTitle) + '"' +
+          ' onclick="upgradeHiveInterrupt(' + jsArg(h.id) + ', ' + jsArg(h.gitHash || '') + ', ' + jsArg(st.target || '') + ')"' +
+          ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();this.click()}">Upgrade now (interrupt turns)</span>';
+      }
+      return pill + action + history;
+    }
+
     function formatUpgradeElapsed(ms) {
       if (typeof ms !== 'number' || isNaN(ms) || ms < 0) return '';
       var totalSec = Math.floor(ms / 1000);
@@ -10115,6 +10210,37 @@
         setTimeout(loadHives, 30000);
         setTimeout(loadHives, 60000);
         setTimeout(loadHives, 90000);
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); delete _upgradingHives[id]; loadHives(); }
+    }
+
+    /* upgradeHiveInterrupt is "Upgrade now (interrupt turns)": the same
+       POST as upgradeHive with ?interrupt=1, which the hub audit-logs and
+       hands to the spoke on its next heartbeat so the self-upgrade drain is
+       skipped. Separate confirm wording because the cost is different — it
+       cuts whatever the agents are mid-way through. */
+    async function upgradeHiveInterrupt(id, currentSHA, targetSHA) {
+      var fromSHA = currentSHA ? currentSHA.substring(0, 7) : '?';
+      var toSHA = targetSHA ? targetSHA.substring(0, 7) : 'latest';
+      var ok = await hiveConfirm('Upgrade ' + id + ' now and interrupt in-flight agent turns?<br><br>' +
+        '<span class="upgrade-progress-mono">' + esc(fromSHA) + '</span> → <span class="upgrade-progress-mono is-target">' + esc(toSHA) + '</span><br><br>' +
+        '<span class="upgrade-progress-warn">Agents still in a turn are stopped mid-work</span>; their owners will have to re-run those turns. Use this when a drain has stalled or a window was missed.', true);
+      if (!ok) return;
+      try {
+        hiveToast('Upgrading ' + id + ' (interrupting turns)...', 'info');
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/upgrade?interrupt=1', {method: 'POST'});
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Upgrade failed', 'error'); delete _upgradingHives[id]; loadHives(); return; }
+        if (data.status === 'current') {
+          hiveToast(data.message || ('Already up to date at ' + (data.current || toSHA)), 'info');
+          loadHives();
+          return;
+        }
+        _upgradingHives[id] = currentSHA;
+        hiveToast('Upgrade armed for ' + id + ' — the spoke interrupts its turns on the next heartbeat', 'success');
+        loadHives();
+        setTimeout(loadHives, 10000);
+        setTimeout(loadHives, 30000);
+        setTimeout(loadHives, 60000);
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); delete _upgradingHives[id]; loadHives(); }
     }
 

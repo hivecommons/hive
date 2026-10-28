@@ -18,6 +18,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 	var source strings.Builder
 	for _, name := range []string{
 		"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText",
+		"versionStateLabels", "versionStateLabel", "versionFormatDuration", "versionAgentsInTurnText", "versionUpgradeStateText", "versionUpgradeStatePillHTML", "versionUpgradeHistoryHTML",
 		"versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionHubUpgradeAttemptKey", "versionAdoptHubUpgradeProgress", "versionElapsedText", "versionScheduleUpgradePoll",
 		"versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary",
 		"versionUpgradeProgressStatus", "versionUpgradeKey", "versionBeeGlyphHTML", "versionUpgradeHiveHTML", "versionBeeProgressHTML", "versionSetHTMLPreservingUpgradeBee", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",

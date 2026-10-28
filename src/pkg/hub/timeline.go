@@ -547,6 +547,7 @@ func (s *HubServer) recordUpgradeHistoryTransition(old, new *RegistryEntry) {
 	case !old.Upgrading && new.Upgrading:
 		s.noteUpgradeStarted(new.ID, old.GitHash, new.UpgradeTarget, spoke.UpgradeTriggerObserved)
 	case old.Upgrading && !new.Upgrading:
+		s.upgradeInterrupts.clear(new.ID)
 		switch {
 		case new.UpgradeFailed && !old.UpgradeFailed:
 			reason := new.UpgradeError

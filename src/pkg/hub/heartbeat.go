@@ -434,6 +434,10 @@ type HeartbeatGatewayConfig struct {
 type HeartbeatResponse struct {
 	OK                  bool                      `json:"ok"`
 	UpgradeTo           string                    `json:"upgrade_to,omitempty"`
+	// UpgradeInterrupt rides with UpgradeTo when the owner asked the upgrade
+	// to proceed without draining in-flight agent turns (#14950). The spoke
+	// skips its drain for this instruction only.
+	UpgradeInterrupt bool `json:"upgrade_interrupt,omitempty"`
 	HubGitHash          string                    `json:"hub_git_hash,omitempty"`
 	LatestSHA           string                    `json:"latest_sha,omitempty"`
 	LatestTag           string                    `json:"latest_tag,omitempty"`

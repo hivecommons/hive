@@ -55,11 +55,17 @@ type FrontendSandboxRun struct {
 	CommitCount int    `json:"commitCount,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	PRURL       string `json:"prURL,omitempty"`
+	// PRWithheld is why commits from the last run were not published (agent
+	// reported failure / non-zero exit); empty when nothing was withheld.
+	PRWithheld string `json:"prWithheld,omitempty"`
+	// LogID is the kick-log archive id of the last run's captured output
+	// (/api/agents/{name}/kick-logs/{id}); empty when none was archived.
+	LogID string `json:"logId,omitempty"`
 	// Summary is the agent's report summary or the transcript tail.
 	Summary string `json:"summary,omitempty"`
 	// Tokens is the usage the run's transcript reported; 0 when it carried
 	// none (the collector then has no session for this run either).
-	Tokens int64 `json:"tokens,omitempty"`
+	Tokens int64  `json:"tokens,omitempty"`
 	Model  string `json:"model,omitempty"`
 	// DueAt is the scheduled occurrence that has been missed when Health is
 	// overdue; empty otherwise.
@@ -111,6 +117,8 @@ func sandboxRunHealth(proc *crux.Process, cadence config.Cadence, onDemand bool,
 		out.CommitCount = run.CommitCount
 		out.Branch = run.Branch
 		out.PRURL = run.PRURL
+		out.PRWithheld = redactTokens(run.PRWithheld)
+		out.LogID = run.LogID
 		out.Summary = redactTokens(run.Summary)
 		out.Tokens = run.Usage.Total()
 		out.Model = run.Usage.Model

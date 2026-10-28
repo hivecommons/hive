@@ -175,7 +175,8 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 // claim side of the story; without this step each re-derived 020 or 010
 // under the PR, the store booked a regression and the activity monitor
 // showed "regressed" until the next sweep put 040 back. The store's memory
-// of the covering PR (Record.CoveringPR) is only trusted after a fresh
+// of the covering PR (Record.CoveringPR), or failing that the duplicate-PR
+// claim ledger's (ledgerCoveringPR), is only trusted after a fresh
 // read says the PR is still open and unmerged; a read failure is the
 // fact's error (the labels stand until the sweep converges them) rather
 // than a spurious fall. An Uncovered fact names the PR that closed, and
@@ -189,11 +190,10 @@ func (c *Client) enrichCoveringPR(ctx context.Context, store *stagelabels.Store,
 	default:
 		return f, nil
 	}
-	rec, ok := store.Get(f.Ref.Key())
-	if !ok || rec.Stage != stagelabels.CoveredByPR || rec.CoveringPR == "" {
-		return f, nil
+	pr, ok := c.rememberedCoveringPR(store, f.Ref)
+	if !ok {
+		pr, ok = c.ledgerCoveringPR(f.Ref)
 	}
-	pr, ok := parseStoreKeyRef(rec.CoveringPR)
 	if !ok || (f.Issue.ClosedPR != nil && f.Issue.ClosedPR.Key() == pr.Key()) {
 		return f, nil
 	}
@@ -214,6 +214,52 @@ func (c *Client) enrichCoveringPR(ctx context.Context, store *stagelabels.Store,
 	}
 	f.Issue.Claim.PRRepo, f.Issue.Claim.PRNumber = pr.FullRepo(), pr.Number
 	return f, nil
+}
+
+// rememberedCoveringPR is the store's memory of the issue's covering PR: a
+// 040 record naming it.
+func (c *Client) rememberedCoveringPR(store *stagelabels.Store, issue stageengine.Ref) (stageengine.Ref, bool) {
+	rec, ok := store.Get(issue.Key())
+	if !ok || rec.Stage != stagelabels.CoveredByPR || rec.CoveringPR == "" {
+		return stageengine.Ref{}, false
+	}
+	return parseStoreKeyRef(rec.CoveringPR)
+}
+
+// ledgerCoveringPR is the duplicate-PR claim ledger's answer to "which open
+// PR covers this issue" (SetPRClaimLookup), consulted when the store has no
+// 040 record yet. That is the case for every issue whose covering PR opened
+// while the issue carried a live claim: the sweep had booked 020, the PR's
+// webhook delivery recorded the claim in the ledger, and the ClaimReleased
+// fact that followed (lease revoked once the PR covered the work) had no
+// memory to fall back on and re-derived 010 — nine issues sat at
+// stage/010-actionable with bucket=claimed_by_pr for hours while cached
+// cycles planned around them. Only a claim FilterClaimedIssues would
+// suppress the issue for counts (IssueClaim.CoversOpenIssue); the ledger is
+// keyed by the configured repo spelling, so both the bare and the
+// owner-qualified name are tried.
+func (c *Client) ledgerCoveringPR(issue stageengine.Ref) (stageengine.Ref, bool) {
+	if c == nil || c.prClaimLookup == nil || !issue.IsDefaultSource() {
+		return stageengine.Ref{}, false
+	}
+	claim, ok := c.prClaimLookup(issue.Repo, issue.Number)
+	if !ok && issue.Owner != "" {
+		claim, ok = c.prClaimLookup(issue.Owner+"/"+issue.Repo, issue.Number)
+	}
+	if !ok || !claim.CoversOpenIssue() {
+		return stageengine.Ref{}, false
+	}
+	return c.claimPRRef(claim, issue)
+}
+
+// SetPRClaimLookup installs the duplicate-PR claim ledger read the fact sink
+// uses to keep an open covering PR in the picture for out-of-cycle facts
+// (enrichCoveringPR). Resolved per call; nil disables the fallback.
+func (c *Client) SetPRClaimLookup(fn func(repo string, number int) (IssueClaim, bool)) {
+	if c == nil {
+		return
+	}
+	c.prClaimLookup = fn
 }
 
 // parseStoreKeyRef turns a default-source store key ("owner/repo#n") back

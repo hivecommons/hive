@@ -209,6 +209,11 @@ type Client struct {
 	// carries no live marker: the 🔒 comment is budgeted and can be
 	// suppressed, and a claim the ledger holds must still read as a claim.
 	issueClaimLedger func(repo string, number int) (issueclaim.Claim, bool)
+	// prClaimLookup resolves the duplicate-PR claim ledger's record for an
+	// issue (SetPRClaimLookup). An out-of-cycle fact on an issue the ledger
+	// knows an open PR covers re-derives under that PR (stage_facts_sink.go,
+	// enrichCoveringPR) instead of falling to 010/020 until the next sweep.
+	prClaimLookup func(repo string, number int) (IssueClaim, bool)
 	// issueClaimLedgerHive is the hive= this hub writes on its own markers;
 	// a live forge marker carrying it while the ledger holds nothing is a
 	// marker the hub already released (hivecommons/hive#13579).

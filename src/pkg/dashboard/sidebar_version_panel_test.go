@@ -117,6 +117,13 @@ const window = {};
 		jsFunc(t, html, "versionCompareURL") + "\n" +
 		jsFunc(t, html, "versionStatusText") + "\n" +
 		jsFunc(t, html, "versionLastUpgradeText") + "\n" +
+		jsFunc(t, html, "versionStateLabels") + "\n" +
+		jsFunc(t, html, "versionStateLabel") + "\n" +
+		jsFunc(t, html, "versionFormatDuration") + "\n" +
+		jsFunc(t, html, "versionAgentsInTurnText") + "\n" +
+		jsFunc(t, html, "versionUpgradeStateText") + "\n" +
+		jsFunc(t, html, "versionUpgradeStatePillHTML") + "\n" +
+		jsFunc(t, html, "versionUpgradeHistoryHTML") + "\n" +
 		jsFunc(t, html, "versionShortSHA") + "\n" +
 		jsFunc(t, html, "versionSameCommit") + "\n" +
 		jsFunc(t, html, "versionDashHTML") + "\n" +

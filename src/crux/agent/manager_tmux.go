@@ -544,12 +544,22 @@ func (m *Manager) CaptureFullLog(name string) (string, error) {
 	m.mu.RLock()
 	agent, ok := m.agents[name]
 	var target kickTranscriptTarget
+	var sandboxed bool
+	var logDir string
 	if ok {
 		target = m.kickTranscriptTargetLocked(agent)
+		sandboxed = m.agentSandboxEnabledLocked(agent)
+		logDir = m.agentKickLogDir(name)
 	}
 	m.mu.RUnlock()
 	if !ok {
 		return "", fmt.Errorf("agent %s not found", name)
+	}
+	// A sandboxed agent carries a session NAME like every agent but never a
+	// session: capturing it fails with "exit status 1", which the dashboard
+	// turned into a 404 on "full log" for every runtime: job agent.
+	if sandboxed {
+		return m.sandboxFullLog(name, logDir)
 	}
 	if agent.tmuxSession == "" {
 		return "", fmt.Errorf("agent %s has no active session", name)
@@ -558,6 +568,21 @@ func (m *Manager) CaptureFullLog(name string) (string, error) {
 		return m.captureScrollbackForAgent(agent)
 	})
 	return content, err
+}
+
+// sandboxFullLog is CaptureFullLog for a sandboxed agent: there is no pane,
+// so the "full log" is the newest archived sandbox kick log — the container
+// or Job output hive collected when the last run ended. A sandboxed agent
+// with no run yet gets a message that says so rather than a pane error.
+func (m *Manager) sandboxFullLog(name, logDir string) (string, error) {
+	id, content, err := latestKickLog(logDir)
+	if err != nil {
+		return "", fmt.Errorf("agent %s: reading archived sandbox run log: %w", name, err)
+	}
+	if id == "" {
+		return "", fmt.Errorf("agent %s runs sandboxed and has no archived run yet; the log appears here when its first kick ends", name)
+	}
+	return content, nil
 }
 
 // captureVisiblePaneForAgent captures only the visible pane (no scrollback).

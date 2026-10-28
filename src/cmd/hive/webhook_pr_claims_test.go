@@ -27,7 +27,7 @@ func TestPRClaimsHookRecordsAndFiltersSnapshot(t *testing.T) {
 	var patched []int
 	patch := &snapshotPatcher{target: &target, logger: logger, onPatch: func(n int) { patched = append(patched, n) }}
 
-	hook := prClaimsHookFor(func() *github.ClaimLedger { return ledger }, patch, logger)
+	hook := prClaimsHookFor(func() *github.ClaimLedger { return ledger }, patch, logger, nil)
 	hook(github.PRClaimDelivery{
 		Repo: "repo", Number: 14772, Action: "opened", State: github.PRStateOpen, At: now,
 		Claims: []github.IssueClaim{{Repo: "repo", Issue: 14765, PRNumber: 14772, PRRepo: "repo", PRAuthor: "owner", ExternalAuthor: true, ObservedAt: now}},
@@ -59,9 +59,38 @@ func TestPRClaimsHookRecordsAndFiltersSnapshot(t *testing.T) {
 	}
 
 	// Nil ledger resolver / nil patcher are safe.
-	prClaimsHookFor(nil, nil, logger)(github.PRClaimDelivery{Repo: "repo", Number: 1})
-	prClaimsHookFor(func() *github.ClaimLedger { return nil }, nil, logger)(github.PRClaimDelivery{Repo: "repo", Number: 1})
+	prClaimsHookFor(nil, nil, logger, nil)(github.PRClaimDelivery{Repo: "repo", Number: 1})
+	prClaimsHookFor(func() *github.ClaimLedger { return nil }, nil, logger, nil)(github.PRClaimDelivery{Repo: "repo", Number: 1})
 	if (*snapshotPatcher)(nil).suppressClaimed(ledger, logger) != 0 {
 		t.Fatal("nil patcher must be a no-op")
+	}
+}
+
+// A MERGED delivery whose claims the ledger recorded hands the PR to the
+// close-on-merge path at once; an open delivery and a merged one with
+// nothing to record do not (hivecommons/hive#14646 waited on the next
+// reconcile pass for its close).
+func TestPRClaimsHookRunsCloseOnMergeForMergedDelivery(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	now := time.Now().UTC()
+	ledger := github.NewClaimLedger(filepath.Join(t.TempDir(), "claims.json"), logger)
+	var merged []int
+	hook := prClaimsHookFor(func() *github.ClaimLedger { return ledger }, nil, logger, func(d github.PRClaimDelivery) { merged = append(merged, d.Number) })
+
+	claims := []github.IssueClaim{{Repo: "repo", Issue: 14646, PRNumber: 14920, PRRepo: "repo", PRAuthor: "dev", ExternalAuthor: true, ObservedAt: now}}
+	hook(github.PRClaimDelivery{Repo: "repo", Number: 14920, Action: "opened", State: github.PRStateOpen, At: now, Claims: claims})
+	if len(merged) != 0 {
+		t.Fatalf("open delivery triggered close-on-merge: %v", merged)
+	}
+	hook(github.PRClaimDelivery{Repo: "repo", Number: 14920, Action: "closed", State: github.PRStateMerged, MergedAt: now, At: now, Claims: claims})
+	if len(merged) != 1 || merged[0] != 14920 {
+		t.Fatalf("close-on-merge calls = %v, want [14920]", merged)
+	}
+	if c, ok := ledger.Lookup("repo", 14646); !ok || !c.MergedPR {
+		t.Fatalf("ledger claim after merge = %+v ok=%v, want merged", c, ok)
+	}
+	hook(github.PRClaimDelivery{Repo: "repo", Number: 99, Action: "closed", State: github.PRStateMerged, MergedAt: now, At: now})
+	if len(merged) != 1 {
+		t.Fatalf("merged delivery with no claims triggered close-on-merge: %v", merged)
 	}
 }

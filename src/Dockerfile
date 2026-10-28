@@ -300,8 +300,10 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # SDK nests as its own dependency is never executed (its native binary would
 # reject the proxy CA). Tolerant of failure like the copilot layer: discovery
 # falls back to the raw HTTP probe when the SDK is absent.
+# Bound this optional install so a stalled registry download cannot consume
+# the overlayfs exec guard's entire job timeout before it runs its assertion.
 ARG COPILOT_SDK_VERSION=1.0.8
-RUN npm install -g --ignore-scripts --no-fund --no-audit \
+RUN timeout 120s npm install -g --ignore-scripts --no-fund --no-audit \
     "@github/copilot-sdk@${COPILOT_SDK_VERSION}" && npm cache clean --force || \
     echo "WARN: GitHub Copilot SDK install failed — skipping"
 
