@@ -1,16 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1000" viewBox="0 0 880 500" role="img" aria-label="97% of planted text that tries to redirect an agent (prompt injection) was screened out before an agent read it, with 1 false alarm in 12 harmless texts" font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
-<title>97% of planted text that tries to redirect an agent (prompt injection) was screened out before an agent read it, with 1 false alarm in 12 harmless texts</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1000" viewBox="0 0 880 500" role="img" aria-label="Hive caught 61 of 63 planted texts that try to redirect an agent before an agent read a word. One harmless text in 12 got flagged by mistake." font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+<title>Hive caught 61 of 63 planted texts that try to redirect an agent before an agent read a word. One harmless text in 12 got flagged by mistake.</title>
 <rect x="0.5" y="0.5" width="879" height="499" rx="20" fill="#0f0d0a" stroke="#28231c"/>
 <text x="48" y="60" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">SECURITY · HIVE&#39;S OWN TEST SET · (oct &#39;26)</text>
-<text x="48" y="108" fill="#fffaf0" font-size="28" font-weight="700">We hid 63 texts that try to redirect an agent</text>
-<text x="48" y="146" fill="#fffaf0" font-size="28" font-weight="700">(prompt injection) in issues and files. Hive</text>
-<text x="48" y="184" fill="#fffaf0" font-size="28" font-weight="700">screened out 61 before an agent read them.</text>
+<text x="48" y="108" fill="#fffaf0" font-size="28" font-weight="700">We planted 63 texts that try to redirect an</text>
+<text x="48" y="146" fill="#fffaf0" font-size="28" font-weight="700">agent in issues and files. Hive caught 61</text>
+<text x="48" y="184" fill="#fffaf0" font-size="28" font-weight="700">before an agent read a word.</text>
 <text x="48" y="326" fill="#f0b429" font-size="112" font-weight="700">97%</text>
-<text x="48" y="362" fill="#d9d1c4" font-size="16">of 63 planted texts screened out</text>
+<text x="48" y="362" fill="#d9d1c4" font-size="16">of 63 planted texts caught</text>
 <text x="472" y="278" fill="#8a8174" font-size="16">61 of 63 were caught before an agent</text>
-<text x="472" y="302" fill="#8a8174" font-size="16">read them. 1 harmless text in 12 was</text>
-<text x="472" y="326" fill="#8a8174" font-size="16">wrongly flagged.</text>
+<text x="472" y="302" fill="#8a8174" font-size="16">read a word. One harmless text in 12</text>
+<text x="472" y="326" fill="#8a8174" font-size="16">got flagged by mistake.</text>
 <line x1="48" y1="404" x2="832" y2="404" stroke="#211c16"/>
-<text x="48" y="432" fill="#8a8174" font-size="13">Hive&#39;s own test set of 75 texts (oct &#39;26); not production traffic. Agents run as a GitHub App, not</text>
-<text x="48" y="452" fill="#8a8174" font-size="13">your token.</text>
+<text x="48" y="432" fill="#8a8174" font-size="13">Hive&#39;s own test set of 75 texts (oct &#39;26), not production traffic. Agents run as a GitHub App, not</text>
+<text x="48" y="452" fill="#8a8174" font-size="13">on your token.</text>
 </svg>

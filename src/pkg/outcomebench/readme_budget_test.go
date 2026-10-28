@@ -1,6 +1,7 @@
 package outcomebench
 
 import (
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -103,6 +104,11 @@ var readmeForbiddenWords = []string{
 
 // Dates in the README and cards are "(oct '26)" or "(aug–oct '26)"; never
 // ISO dates or bare four-digit years.
+// A prose line that is one or two words followed by a colon is a label, not
+// a sentence ("Numbers below:"). Headings and link rows are exempt because
+// they have no colon.
+var readmeLabelLine = regexp.MustCompile(`^\s*[a-z][a-z' -]{0,24}:\s`)
+
 var readmeForbiddenDates = []*regexp.Regexp{
 	regexp.MustCompile(`\d{4}-\d{2}-\d{2}`),
 	regexp.MustCompile(`\b20\d\d\b`),
@@ -118,7 +124,7 @@ func TestReadmeVocabulary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		texts[filepath.Base(p)] = strings.ToLower(reHTMLTag.ReplaceAllString(string(b), " "))
+		texts[filepath.Base(p)] = strings.ToLower(html.UnescapeString(reHTMLTag.ReplaceAllString(string(b), " ")))
 	}
 	for name, text := range texts {
 		for _, w := range readmeForbiddenWords {
@@ -130,6 +136,17 @@ func TestReadmeVocabulary(t *testing.T) {
 		for _, re := range readmeForbiddenDates {
 			if m := re.FindString(text); m != "" {
 				t.Errorf("%s contains date %q; write dates as (oct '26)", name, m)
+			}
+		}
+		// The copy reads like a person talking: short full sentences, one
+		// idea each. No semicolon-joined fragments and no "Numbers below:"
+		// style labels introducing a list.
+		for _, line := range strings.Split(text, "\n") {
+			if strings.Contains(line, ";") {
+				t.Errorf("%s has a semicolon; write two sentences: %q", name, strings.TrimSpace(line))
+			}
+			if readmeLabelLine.MatchString(line) {
+				t.Errorf("%s has a label introducing a list: %q", name, strings.TrimSpace(line))
 			}
 		}
 		if strings.Contains(text, "!") && name == "README prose" {

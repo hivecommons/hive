@@ -347,14 +347,14 @@ func share(rate float64) string {
 	return fmt.Sprintf("%d in 10", int(math.Round(rate*10)))
 }
 
-// shareWords is share() in words for a headline: "two in three".
+// shareWords is share() in words for a headline: "two out of three".
 func shareWords(rate float64) string {
 	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
 	var k, d int
 	if _, err := fmt.Sscanf(share(rate), "%d in %d", &k, &d); err != nil || k > 10 || d > 10 {
 		return share(rate)
 	}
-	return words[k] + " in " + words[d]
+	return words[k] + " out of " + words[d]
 }
 
 // minutes rounds hours to whole minutes.
@@ -547,22 +547,21 @@ func (r Report) accuracyCard(th cardTheme) (*card, bool) {
 		return nil, false
 	}
 	words := strings.ToUpper(shareWords(fa.Rate)[:1]) + shareWords(fa.Rate)[1:]
-	title := fmt.Sprintf("%s pull requests the review agent sent back came back fixed and were approved", share(fa.Rate))
-	head := fmt.Sprintf("The review agent sent %s pull requests back. %s came back fixed.", commas(fa.N), words)
-	side := fmt.Sprintf("%s of %s came back fixed and were approved.", commas(fa.K), commas(fa.N))
+	usually := ""
 	if ta.Reported && ta.N >= r.MinBase() {
-		title += fmt.Sprintf("; %d minutes typical from sent back to approved", minutes(ta.Value))
-		head = fmt.Sprintf("The review agent sent %s pull requests back. %s came back fixed, typically in %d minutes.", commas(fa.N), words, minutes(ta.Value))
-		side += fmt.Sprintf(" Typical time from sent back to approved: %d minutes.", minutes(ta.Value))
+		usually = fmt.Sprintf(", usually within %d minutes", minutes(ta.Value))
 	}
+	title := fmt.Sprintf("%s pull requests the review agent sent back came back fixed and approved%s.", words, usually)
+	head := fmt.Sprintf("The review agent sent %s pull requests back. %s came back fixed and approved%s.", commas(fa.N), words, usually)
+	side := fmt.Sprintf("%s of %s came back fixed and approved%s.", commas(fa.K), commas(fa.N), usually)
 	if f.MergedSameHead > 0 {
-		side += fmt.Sprintf(" %s merged as-is after a second review.", commas(f.MergedSameHead))
+		side += fmt.Sprintf(" Another %s were fine on a second look and merged as they were.", commas(f.MergedSameHead))
 	}
 	return statCard(th, title,
 		fmt.Sprintf("Accuracy · %s pull requests sent back · %s", commas(fa.N), r.windowLabel()),
 		head,
 		hero{share(fa.Rate), "came back fixed and approved", side},
-		fmt.Sprintf("%s pull requests sent back %s, counted from Hive's own review records; production data, not a lab run.", commas(fa.N), r.windowLabel()),
+		fmt.Sprintf("%s pull requests sent back %s, counted from Hive's own review records. Live repos, not a lab.", commas(fa.N), r.windowLabel()),
 	), true
 }
 
@@ -573,7 +572,7 @@ func (r Report) checksGreenCard(th cardTheme) (*card, bool) {
 	}
 	pass := int(math.Round(100 * (1 - c.CIFailureAtHead.Rate)))
 	return statCard(th,
-		fmt.Sprintf("%d in 100 reviewed pull requests merged with every check passing", pass),
+		fmt.Sprintf("%d in 100 reviewed pull requests merged with every check green.", pass),
 		fmt.Sprintf("Accuracy · %s reviewed merges · %s", commas(c.CIFailureAtHead.N), r.windowLabel()),
 		fmt.Sprintf("%d in 100 reviewed pull requests merged with every check green.", pass),
 		hero{fmt.Sprintf("%d in 100", pass), "merged with every check green", fmt.Sprintf("%s reviewed pull requests merged with a recorded check result.", commas(c.CIFailureAtHead.N))},
@@ -587,16 +586,16 @@ func (r Report) promptInjectionCard(th cardTheme) (*card, bool) {
 		return nil, false
 	}
 	pct := int(math.Round(100 * float64(rt.Caught) / float64(rt.Attacks)))
-	fa := fmt.Sprintf("%d harmless text in %d was wrongly flagged.", rt.FalseAlarms, rt.Benign)
+	fa := fmt.Sprintf("One harmless text in %d got flagged by mistake.", rt.Benign)
 	if rt.FalseAlarms != 1 {
-		fa = fmt.Sprintf("%d harmless texts in %d were wrongly flagged.", rt.FalseAlarms, rt.Benign)
+		fa = fmt.Sprintf("%d harmless texts in %d got flagged by mistake.", rt.FalseAlarms, rt.Benign)
 	}
 	return statCard(th,
-		fmt.Sprintf("%d%% of planted text that tries to redirect an agent (prompt injection) was screened out before an agent read it, with %d false alarm in %d harmless texts", pct, rt.FalseAlarms, rt.Benign),
+		fmt.Sprintf("Hive caught %d of %d planted texts that try to redirect an agent before an agent read a word. %s", rt.Caught, rt.Attacks, fa),
 		fmt.Sprintf("Security · Hive's own test set · %s", monthLabel(rt.RunAt)),
-		fmt.Sprintf("We hid %d texts that try to redirect an agent (prompt injection) in issues and files. Hive screened out %d before an agent read them.", rt.Attacks, rt.Caught),
-		hero{fmt.Sprintf("%d%%", pct), fmt.Sprintf("of %d planted texts screened out", rt.Attacks), fmt.Sprintf("%d of %d were caught before an agent read them. %s", rt.Caught, rt.Attacks, fa)},
-		fmt.Sprintf("Hive's own test set of %d texts %s; not production traffic. Agents run as a GitHub App, not your token.", rt.Attacks+rt.Benign, monthLabel(rt.RunAt)),
+		fmt.Sprintf("We planted %d texts that try to redirect an agent in issues and files. Hive caught %d before an agent read a word.", rt.Attacks, rt.Caught),
+		hero{fmt.Sprintf("%d%%", pct), fmt.Sprintf("of %d planted texts caught", rt.Attacks), fmt.Sprintf("%d of %d were caught before an agent read a word. %s", rt.Caught, rt.Attacks, fa)},
+		fmt.Sprintf("Hive's own test set of %d texts %s, not production traffic. Agents run as a GitHub App, not on your token.", rt.Attacks+rt.Benign, monthLabel(rt.RunAt)),
 	), true
 }
 
@@ -605,20 +604,18 @@ func (r Report) costCard(th cardTheme) (*card, bool) {
 	if !ok || r.Spend.MergedPRs < r.MinBase() {
 		return nil, false
 	}
-	big := fmt.Sprintf("about $%.0f", per)
 	fig := fmt.Sprintf("$%.0f", per)
 	if per < 1 {
-		big = fmt.Sprintf("about %d¢", int(math.Round(per*100)))
 		fig = fmt.Sprintf("%d¢", int(math.Round(per*100)))
 	}
 	window := rangeLabel(r.Spend.WindowStart, r.Spend.WindowEnd)
 	total := "$" + commas(int(math.Round(r.Spend.USD)))
 	return statCard(th,
-		big+" of agent spend per merged pull request",
+		fmt.Sprintf("Agents spent about %s to merge %s pull requests, call it %s a merge.", total, commas(r.Spend.MergedPRs), fig),
 		fmt.Sprintf("Cost · %s merged pull requests · %s", commas(r.Spend.MergedPRs), window),
-		fmt.Sprintf("Agents spent about %s to merge %s pull requests, %s each. It is tracked like CI minutes.", total, commas(r.Spend.MergedPRs), big),
-		hero{fig, "per merged pull request, estimate", fmt.Sprintf("%s of agent spend across %s merged pull requests %s. Each job's cost is on the dashboard.", total, commas(r.Spend.MergedPRs), window)},
-		fmt.Sprintf("Estimate from provider list prices %s; some models are unpriced and count as zero.", window),
+		fmt.Sprintf("Agents spent about %s to merge %s pull requests. Call it %s a merge.", total, commas(r.Spend.MergedPRs), fig),
+		hero{fig, "a merge, our estimate", fmt.Sprintf("%s of agent spend across %s merged pull requests %s. Each job's cost sits on the dashboard, like CI minutes.", total, commas(r.Spend.MergedPRs), window)},
+		fmt.Sprintf("Our estimate from provider list prices %s. Some models are unpriced and count as zero.", window),
 	), true
 }
 
@@ -631,7 +628,7 @@ func (r Report) storiesCard(th cardTheme) (*card, bool) {
 		return nil, false
 	}
 	s := r.Stories[0]
-	c := &card{th: th, title: fmt.Sprintf("Before and after: %s #%d was sent back once and merged %d minutes after opening", s.Repo, s.Number, s.MergeMinutes())}
+	c := &card{th: th, title: fmt.Sprintf("%s #%d was sent back once and merged %d minutes after opening.", s.Repo, s.Number, s.MergeMinutes())}
 	y := cardPad + eyebrowPx
 	c.eyebrow(y, fmt.Sprintf("Before / after · one real pull request · %s", r.windowLabel()))
 	y = c.headline(y+eyebrowGap, fmt.Sprintf("A coding agent opened a pull request. The review agent sent it back once. It merged, green, %d minutes after opening.", s.MergeMinutes()))
@@ -657,18 +654,18 @@ func (r Report) storiesCard(th cardTheme) (*card, bool) {
 	right := col(1, fmt.Sprintf("With Hive · %s #%d", s.Repo, s.Number), th.Brand, [][2]string{
 		{"Pull request", "A coding agent opened it."},
 		{fmt.Sprintf("Sent back at %d min", s.CaughtMinutes()), s.Caught},
-		{fmt.Sprintf("Fixed at %d min", s.CaughtMinutes()+s.FixMinutes()), "The coding agent pushed a fix; the review agent approved it."},
-		{fmt.Sprintf("Merged at %d min", s.MergeMinutes()), "CI green, a human merged it."},
+		{fmt.Sprintf("Fixed at %d min", s.CaughtMinutes()+s.FixMinutes()), "The coding agent pushed a fix and the review agent approved it."},
+		{fmt.Sprintf("Merged at %d min", s.MergeMinutes()), "CI was green and a human merged it."},
 	}, []string{th.Brand, th.Brand, th.OK, th.OK})
 	bottom := left
 	if right > bottom {
 		bottom = right
 	}
 	c.link(s.URL(), cardPad+colW+halfGap, top-20, colW, right-top+20)
-	foot := "Times from Hive's review records; the right column links to the pull request."
+	foot := "Times from Hive's review records. The right column links to the pull request."
 	if len(r.Stories) > 1 {
 		t := r.Stories[1]
-		foot = fmt.Sprintf("Same shape: %s #%d, sent back at %d min, fixed at %d, merged at %d. Times from Hive's review records.", t.Repo, t.Number, t.CaughtMinutes(), t.CaughtMinutes()+t.FixMinutes(), t.MergeMinutes())
+		foot = fmt.Sprintf("%s #%d went the same way, sent back at %d min, fixed at %d, merged at %d. Times from Hive's review records.", t.Repo, t.Number, t.CaughtMinutes(), t.CaughtMinutes()+t.FixMinutes(), t.MergeMinutes())
 	}
 	return c.close(c.foot(bottom+8, foot)), true
 }
@@ -681,27 +678,27 @@ type tile struct{ Head, Big, Text string }
 // the report; the others are plain statements of how Hive works.
 func (r Report) alsoTiles() []tile {
 	tiles := []tile{
-		{"Consistent", commas(r.Verdicts), "reviews, every pull request against the same checklist"},
-		{"Readable", "1 line", "per finding, written in your style guide's voice"},
+		{"Consistent", commas(r.Verdicts), "reviews, all against the same checklist"},
+		{"Readable", "1 line", "per finding, in your style guide's voice"},
 	}
 	if per, ok := r.Spend.PerMergedPR(); ok && r.Spend.MergedPRs >= r.MinBase() {
 		fig := fmt.Sprintf("$%.0f", per)
 		if per < 1 {
 			fig = fmt.Sprintf("%d¢", int(math.Round(per*100)))
 		}
-		tiles = append(tiles, tile{"Efficient", fig, "per merged pull request, estimate; jobs stop when done"})
+		tiles = append(tiles, tile{"Efficient", fig, "a merge, our estimate. Jobs stop when done"})
 	} else {
-		tiles = append(tiles, tile{"Efficient", "On demand", "jobs start on work and stop when done"})
+		tiles = append(tiles, tile{"Efficient", "On demand", "jobs start when there is work and stop when done"})
 	}
 	if with, without, ok := r.speedBars(); ok {
 		d := with - without
 		if d > 0 {
-			tiles = append(tiles, tile{"Fast", fmt.Sprintf("+%d min", d), fmt.Sprintf("typical open to merge: %d without review, %d with", without, with)})
+			tiles = append(tiles, tile{"Fast", fmt.Sprintf("+%d min", d), fmt.Sprintf("a typical merge takes %d minutes, %d without review", with, without)})
 		} else {
 			tiles = append(tiles, tile{"Fast", fmt.Sprintf("%d min", with), "typical open to merge with review"})
 		}
 	} else {
-		tiles = append(tiles, tile{"Fast", "—", "time to merge is reported once enough pull requests are on record"})
+		tiles = append(tiles, tile{"Fast", "—", "time to merge shows once enough pull requests are on record"})
 	}
 	return tiles
 }
@@ -721,16 +718,17 @@ func (r Report) alsoCard(th cardTheme) (*card, bool) {
 	if r.Verdicts < r.MinBase() {
 		return nil, false
 	}
-	c := &card{th: th, title: "Also: consistent, readable, efficient, fast"}
+	c := &card{th: th, title: "Also consistent, readable, efficient and fast."}
 	y := cardPad + eyebrowPx
-	c.eyebrow(y, "Also · "+r.windowLabel())
-	head := "Every pull request gets the same AI review, written for people."
+	c.eyebrow(y, "And the rest · "+r.windowLabel())
+	head := "Every pull request gets the same one-line review, in your style guide's voice."
 	if with, without, ok := r.speedBars(); ok && with > without {
-		head = fmt.Sprintf("Every pull request gets the same AI review. It adds about %d minutes.", with-without)
+		head = fmt.Sprintf("Every pull request gets the same one-line review, in your style guide's voice. It adds about %d minutes to a merge.", with-without)
 	}
-	// Two headline lines at most here; the tiles start right under them.
-	c.lines(cardPad, y+eyebrowGap, headPx, headLineH, th.Head, bold, wrap(head, headChars))
-	top := y + eyebrowGap + 2*headLineH + 16
+	// The tiles start right under the headline, however many lines it took.
+	headWrapped := wrap(head, headChars)
+	c.lines(cardPad, y+eyebrowGap, headPx, headLineH, th.Head, bold, headWrapped)
+	top := y + eyebrowGap + len(headWrapped)*headLineH + 16
 	tiles := r.alsoTiles()
 	tileW := colX / len(tiles)
 	bottom := top
@@ -755,12 +753,12 @@ var hiveLoop = []rung{
 	{"Claim", "One agent takes one task.", "one job per task"},
 	{"Work", "A short-lived agent does it, then stops.", "ephemeral runner"},
 	{"Verify", "AI review plus your CI must pass.", "both are required checks"},
-	{"Merge", "Held for a human, or merged on green.", "PRs only → merge on green"},
+	{"Merge", "Held for a human, or merged on green.", "PRs only, then on green"},
 	{"Credit", "The issue opener is named on the merge.", "co-author trailer"},
 }
 
 func howItWorksCard(th cardTheme) *card {
-	c := &card{th: th, title: "How Hive works: scan, claim, work, verify, merge, credit"}
+	c := &card{th: th, title: "How Hive works, from scan to credit."}
 	y := cardPad + eyebrowPx
 	c.eyebrow(y, "How it works · every task")
 	c.lines(cardPad, y+eyebrowGap, headPx, headLineH, th.Head, bold, wrap("A coding agent does the work. A review agent and your CI gate the merge.", headChars))

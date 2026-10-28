@@ -1,17 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1000" viewBox="0 0 880 500" role="img" aria-label="2 in 3 pull requests the review agent sent back came back fixed and were approved; 24 minutes typical from sent back to approved" font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
-<title>2 in 3 pull requests the review agent sent back came back fixed and were approved; 24 minutes typical from sent back to approved</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1000" viewBox="0 0 880 500" role="img" aria-label="Two out of three pull requests the review agent sent back came back fixed and approved, usually within 24 minutes." font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+<title>Two out of three pull requests the review agent sent back came back fixed and approved, usually within 24 minutes.</title>
 <rect x="0.5" y="0.5" width="879" height="499" rx="20" fill="#fbf8f2" stroke="#e2dbcd"/>
 <text x="48" y="60" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">ACCURACY · 563 PULL REQUESTS SENT BACK · (oct &#39;26)</text>
 <text x="48" y="108" fill="#1a1612" font-size="28" font-weight="700">The review agent sent 563 pull requests back.</text>
-<text x="48" y="146" fill="#1a1612" font-size="28" font-weight="700">Two in three came back fixed, typically in 24</text>
-<text x="48" y="184" fill="#1a1612" font-size="28" font-weight="700">minutes.</text>
+<text x="48" y="146" fill="#1a1612" font-size="28" font-weight="700">Two out of three came back fixed and approved,</text>
+<text x="48" y="184" fill="#1a1612" font-size="28" font-weight="700">usually within 24 minutes.</text>
 <text x="48" y="326" fill="#a3640c" font-size="111" font-weight="700">2 in 3</text>
 <text x="48" y="362" fill="#3b342c" font-size="16">came back fixed and approved</text>
-<text x="472" y="278" fill="#7a7165" font-size="16">369 of 563 came back fixed and were</text>
-<text x="472" y="302" fill="#7a7165" font-size="16">approved. Typical time from sent back</text>
-<text x="472" y="326" fill="#7a7165" font-size="16">to approved: 24 minutes. 140 merged</text>
-<text x="472" y="350" fill="#7a7165" font-size="16">as-is after a second review.</text>
+<text x="472" y="278" fill="#7a7165" font-size="16">369 of 563 came back fixed and</text>
+<text x="472" y="302" fill="#7a7165" font-size="16">approved, usually within 24 minutes.</text>
+<text x="472" y="326" fill="#7a7165" font-size="16">Another 140 were fine on a second</text>
+<text x="472" y="350" fill="#7a7165" font-size="16">look and merged as they were.</text>
 <line x1="48" y1="404" x2="832" y2="404" stroke="#ebe5d9"/>
-<text x="48" y="432" fill="#7a7165" font-size="13">563 pull requests sent back (oct &#39;26), counted from Hive&#39;s own review records; production data, not</text>
-<text x="48" y="452" fill="#7a7165" font-size="13">a lab run.</text>
+<text x="48" y="432" fill="#7a7165" font-size="13">563 pull requests sent back (oct &#39;26), counted from Hive&#39;s own review records. Live repos, not a</text>
+<text x="48" y="452" fill="#7a7165" font-size="13">lab.</text>
 </svg>

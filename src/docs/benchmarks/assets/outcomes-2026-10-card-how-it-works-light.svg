@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1280" viewBox="0 0 880 640" role="img" aria-label="How Hive works: scan, claim, work, verify, merge, credit" font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
-<title>How Hive works: scan, claim, work, verify, merge, credit</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1280" viewBox="0 0 880 640" role="img" aria-label="How Hive works, from scan to credit." font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+<title>How Hive works, from scan to credit.</title>
 <rect x="0.5" y="0.5" width="879" height="639" rx="20" fill="#fbf8f2" stroke="#e2dbcd"/>
 <text x="48" y="60" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">HOW IT WORKS · EVERY TASK</text>
 <text x="48" y="108" fill="#1a1612" font-size="28" font-weight="700">A coding agent does the work. A review agent</text>
@@ -28,7 +28,7 @@
 <text x="48" y="502" fill="#a3640c" font-size="22" font-weight="700">05</text>
 <text x="104" y="502" fill="#1a1612" font-size="16" font-weight="700">Merge</text>
 <text x="208" y="502" fill="#3b342c" font-size="16">Held for a human, or merged on green.</text>
-<text x="832" y="502" fill="#7a7165" font-size="13" text-anchor="end">PRs only → merge on green</text>
+<text x="832" y="502" fill="#7a7165" font-size="13" text-anchor="end">PRs only, then on green</text>
 <line x1="48" y1="536" x2="832" y2="536" stroke="#ebe5d9"/>
 <text x="48" y="566" fill="#a3640c" font-size="22" font-weight="700">06</text>
 <text x="104" y="566" fill="#1a1612" font-size="16" font-weight="700">Credit</text>

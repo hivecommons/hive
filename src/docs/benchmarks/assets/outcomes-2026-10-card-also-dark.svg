@@ -1,27 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="768" viewBox="0 0 880 384" role="img" aria-label="Also: consistent, readable, efficient, fast" font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
-<title>Also: consistent, readable, efficient, fast</title>
-<rect x="0.5" y="0.5" width="879" height="383" rx="20" fill="#0f0d0a" stroke="#28231c"/>
-<text x="48" y="60" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">ALSO · (oct &#39;26)</text>
-<text x="48" y="108" fill="#fffaf0" font-size="28" font-weight="700">Every pull request gets the same AI review. It</text>
-<text x="48" y="146" fill="#fffaf0" font-size="28" font-weight="700">adds about 15 minutes.</text>
-<text x="48" y="200" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">CONSISTENT</text>
-<text x="48" y="256" fill="#f0b429" font-size="40" font-weight="700">15,054</text>
-<text x="48" y="292" fill="#d9d1c4" font-size="15">reviews, every pull</text>
-<text x="48" y="314" fill="#d9d1c4" font-size="15">request against the</text>
-<text x="48" y="336" fill="#d9d1c4" font-size="15">same checklist</text>
-<text x="244" y="200" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">READABLE</text>
-<text x="244" y="256" fill="#f0b429" font-size="40" font-weight="700">1 line</text>
-<text x="244" y="292" fill="#d9d1c4" font-size="15">per finding,</text>
-<text x="244" y="314" fill="#d9d1c4" font-size="15">written in your</text>
-<text x="244" y="336" fill="#d9d1c4" font-size="15">style guide&#39;s voice</text>
-<text x="440" y="200" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">EFFICIENT</text>
-<text x="440" y="256" fill="#f0b429" font-size="40" font-weight="700">$2</text>
-<text x="440" y="292" fill="#d9d1c4" font-size="15">per merged pull</text>
-<text x="440" y="314" fill="#d9d1c4" font-size="15">request, estimate;</text>
-<text x="440" y="336" fill="#d9d1c4" font-size="15">jobs stop when done</text>
-<text x="636" y="200" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">FAST</text>
-<text x="636" y="256" fill="#f0b429" font-size="40" font-weight="700">+15 min</text>
-<text x="636" y="292" fill="#d9d1c4" font-size="15">typical open to</text>
-<text x="636" y="314" fill="#d9d1c4" font-size="15">merge: 12 without</text>
-<text x="636" y="336" fill="#d9d1c4" font-size="15">review, 27 with</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="844" viewBox="0 0 880 422" role="img" aria-label="Also consistent, readable, efficient and fast." font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+<title>Also consistent, readable, efficient and fast.</title>
+<rect x="0.5" y="0.5" width="879" height="421" rx="20" fill="#0f0d0a" stroke="#28231c"/>
+<text x="48" y="60" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">AND THE REST · (oct &#39;26)</text>
+<text x="48" y="108" fill="#fffaf0" font-size="28" font-weight="700">Every pull request gets the same one-line</text>
+<text x="48" y="146" fill="#fffaf0" font-size="28" font-weight="700">review, in your style guide&#39;s voice. It adds</text>
+<text x="48" y="184" fill="#fffaf0" font-size="28" font-weight="700">about 15 minutes to a merge.</text>
+<text x="48" y="238" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">CONSISTENT</text>
+<text x="48" y="294" fill="#f0b429" font-size="40" font-weight="700">15,054</text>
+<text x="48" y="330" fill="#d9d1c4" font-size="15">reviews, all</text>
+<text x="48" y="352" fill="#d9d1c4" font-size="15">against the same</text>
+<text x="48" y="374" fill="#d9d1c4" font-size="15">checklist</text>
+<text x="244" y="238" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">READABLE</text>
+<text x="244" y="294" fill="#f0b429" font-size="40" font-weight="700">1 line</text>
+<text x="244" y="330" fill="#d9d1c4" font-size="15">per finding, in</text>
+<text x="244" y="352" fill="#d9d1c4" font-size="15">your style guide&#39;s</text>
+<text x="244" y="374" fill="#d9d1c4" font-size="15">voice</text>
+<text x="440" y="238" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">EFFICIENT</text>
+<text x="440" y="294" fill="#f0b429" font-size="40" font-weight="700">$2</text>
+<text x="440" y="330" fill="#d9d1c4" font-size="15">a merge, our</text>
+<text x="440" y="352" fill="#d9d1c4" font-size="15">estimate. Jobs stop</text>
+<text x="440" y="374" fill="#d9d1c4" font-size="15">when done</text>
+<text x="636" y="238" fill="#8a8174" font-size="12" font-weight="500" letter-spacing="2.4">FAST</text>
+<text x="636" y="294" fill="#f0b429" font-size="40" font-weight="700">+15 min</text>
+<text x="636" y="330" fill="#d9d1c4" font-size="15">a typical merge</text>
+<text x="636" y="352" fill="#d9d1c4" font-size="15">takes 27 minutes,</text>
+<text x="636" y="374" fill="#d9d1c4" font-size="15">12 without review</text>
 </svg>
