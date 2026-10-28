@@ -2347,6 +2347,24 @@
     .repo-fork-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--blue) 45%, transparent); background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); cursor: help; }
     .repo-fork-pill.off { border-color: var(--border); background: transparent; color: var(--text-muted); }
     .repo-red-main { font-size: var(--fs-2xs); font-weight: 600; margin: var(--sp-1) 0; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); cursor: help; }
+    /* Repo health badge (#14888): score + status from GET /api/repos/{owner}/{repo}/health;
+       the components are in the title tooltip. */
+    .repo-health-badge { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: help; border: 1px solid var(--border); color: var(--muted); }
+    .repo-health-badge.good { border-color: color-mix(in srgb, var(--green) 45%, transparent); background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--green); }
+    .repo-health-badge.fair { border-color: color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 12%, transparent); color: var(--yellow); }
+    .repo-health-badge.poor { border-color: color-mix(in srgb, var(--red) 45%, transparent); background: color-mix(in srgb, var(--red) 12%, transparent); color: var(--red); }
+    .search-facet { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-3); font-size: var(--fs-2xs); }
+    .search-facet-label { color: var(--muted); font-weight: 600; min-width: 6em; }
+    .search-facet-chip { font-size: var(--fs-2xs); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }
+    .search-facet-chip.active { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 15%, transparent); }
+    .search-facet-count { color: var(--muted); }
+    .search-coverage, .search-pane-error { margin: var(--sp-3) 0; padding: var(--sp-3) var(--sp-4); border-radius: var(--r); font-size: var(--fs-sm); border: 1px solid color-mix(in srgb, var(--yellow) 40%, transparent); background: color-mix(in srgb, var(--yellow) 10%, transparent); }
+    .search-pane-count, .search-empty { margin: var(--sp-3) 0; font-size: var(--fs-sm); color: var(--muted); }
+    .search-hits { list-style: none; margin: 0; padding: 0; }
+    .search-hit { padding: var(--sp-3) 0; border-top: 1px solid var(--border); font-size: var(--fs-sm); }
+    .search-hit-meta { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-1); font-size: var(--fs-2xs); color: var(--muted); }
+    .search-hit-snippet { margin-top: var(--sp-1); color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .search-redacted { font-size: var(--fs-2xs); font-weight: 700; padding: 0 var(--sp-2); border-radius: var(--r-pill); border: 1px solid color-mix(in srgb, var(--red) 45%, transparent); color: var(--red); cursor: help; }
     .repo-paused-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
     .repo-pause-btn { flex: 0 0 auto; margin-left: 0; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-automerge-toggle { flex: 0 0 auto; white-space: nowrap; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
@@ -6855,6 +6873,7 @@
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
+      <a class="oc-nav-item" data-section="search-section" data-action="ocNavigate" data-arg0="search-section" hidden><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Search</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
     <div class="oc-nav-group">
@@ -7286,6 +7305,21 @@
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="knowledge-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Knowledge section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📚 Knowledge <span id="kb-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span><span id="public-knowledge-header-control" data-public-knowledge-control="header" data-stop="1"></span></h2>
     <div class="section-body">
       <div id="knowledge-panel"></div>
+    </div>
+  </div>
+
+  <!-- Portfolio search (#14888). Hidden until GET /api/search answers: a 404
+       ("search not enabled") or 403 (not an owner or maintainer) keeps it hidden. -->
+  <div class="mt-6 mb-8" id="search-section" data-dashboard-section="search-section" style="display:none">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="search-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Search section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔍 Search</h2>
+    <div class="section-body">
+      <div id="search-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">
+        <div style="display:flex;gap:var(--sp-4);align-items:center;margin-bottom:var(--sp-5)">
+          <input id="search-query" type="search" autocomplete="off" spellcheck="false" placeholder="Search pull requests, issues, beads, findings and review evidence…" aria-label="Search query" data-keydown-action="searchPaneRun" data-keys="Enter" style="flex:1;min-width:0;padding:var(--sp-3) var(--sp-5);background:var(--bg);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:var(--fs-sm)">
+          <button type="button" class="hv-btn btn-secondary btn" data-action="searchPaneRun">Search</button>
+        </div>
+        <div id="search-results" aria-live="polite"></div>
+      </div>
     </div>
   </div>
 
@@ -8473,7 +8507,7 @@
     const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
       'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section',
       'contributors-section', 'inception-section', 'acmm-eval-section', 'debug-section', 'audit-section',
-      'logs-section', 'nous-section', 'faq-section', 'runs-section'
+      'logs-section', 'nous-section', 'faq-section', 'runs-section', 'search-section'
     ]);
     const DASHBOARD_COLLAPSE_DEFAULTS_KEY = 'hive.dashboard.collapseDefaults';
     const DASHBOARD_COLLAPSE_DEFAULTS_VERSION = 'v1';
@@ -8561,6 +8595,7 @@
       'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
+      'search-section': { title: '🔍 Search', summary: 'search' },
       'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
@@ -8598,6 +8633,7 @@
       'nous-section': { heading: 'Experiment Lab', help: 'An experimental planner that tries out code changes in your repositories and records what it learned.' },
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
+      'search-section': { heading: 'Search', help: 'Find past pull requests, issues, review records and findings across your projects by keyword, with a link to each one.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
@@ -10046,7 +10082,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','search-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -24840,6 +24876,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // grid's contents on every governor cycle, so a width set once on the
         // node would be thrown away within the minute (#8000).
         const cardRepo = r.full || r.name || '';
+        repoHealthEnsure(cardRepo);
         const issueBreakdown = formatRepoWorkBreakdown(r.workBreakdown?.issues, r.issues, 'issues', repoStaleIssueCount(r.actionableIssues || []));
         const prBreakdown = formatRepoWorkBreakdown(r.workBreakdown?.prs, r.prs, 'prs');
         ensureRepoHoldPermission(cardRepo);
@@ -25129,7 +25166,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${cardForge.kind === 'github'
             ? `<div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>`
             : `<div class="repo-provider-label" data-forge="${esc(cardForge.kind)}" style="color:var(--indigo)" title="This repo lives on ${esc(cardForge.name)} at ${esc(cardForge.host)}">${cardForge.icon} ${esc(cardForge.name)} · ${esc(cardForge.host)}</div>`}
-          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${forkPill}${pausedPill}</span>${autoMergeBtn}${strategyBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${swarmBtn}${pauseBtn}</span></div>${redMainHtml}
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${forkPill}${pausedPill}${repoHealthSlotHTML(cardRepo)}</span>${autoMergeBtn}${strategyBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${swarmBtn}${pauseBtn}</span></div>${redMainHtml}
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.issuesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
@@ -30521,10 +30558,196 @@ function burnAreaChart() {
       fetchApprovals();
     }
 
+    // ---- Portfolio search pane and repo health badge (#14888) ------------
+    // The Search section reads GET /api/search (#14637) and stays hidden
+    // while search is off (404 "search not enabled") or the viewer is not an
+    // owner or maintainer (403). kind and repo facets narrow the query on the
+    // server; verdict and sentinel.rule narrow the returned hits here, since
+    // the endpoint facets on them but does not filter by them. Each project
+    // card's health badge reads GET /api/repos/{owner}/{repo}/health (#14638);
+    // a 503 there means search is off, so no card shows one.
+    var SEARCH_PANE_FACETS = [
+      { field: 'kind', label: 'Kind', server: true },
+      { field: 'repo', label: 'Repo', server: true },
+      { field: 'verdict', label: 'Verdict', server: false },
+      { field: 'sentinel.rule', label: 'Sentinel rule', server: false },
+    ];
+    var SEARCH_PANE_LIMIT = 50;
+    var _searchPane = { available: null, query: '', filters: {}, last: null, seq: 0 };
+
+    function searchPaneSetAvailable(available) {
+      _searchPane.available = available;
+      const section = document.getElementById('search-section');
+      if (section) section.style.display = available ? '' : 'none';
+      const nav = document.querySelector('.oc-nav-item[data-section="search-section"]');
+      if (nav) nav.hidden = !available;
+    }
+
+    function searchPaneURL(query, filters) {
+      const params = new URLSearchParams();
+      if (query) params.set('q', query);
+      SEARCH_PANE_FACETS.forEach(f => { if (f.server && filters[f.field]) params.set(f.field, filters[f.field]); });
+      params.set('limit', String(SEARCH_PANE_LIMIT));
+      return '/api/search?' + params.toString();
+    }
+
+    // Resolves to null when the answer hides the pane, else {dto} or {error}.
+    async function searchPaneFetch(url) {
+      let r;
+      try { r = await fetch(url); } catch (e) { return { error: 'Search request failed; try again.' }; }
+      if (r.status === 404 || r.status === 403) { searchPaneSetAvailable(false); return null; }
+      let body = null;
+      try { body = await r.json(); } catch (e) { body = null; }
+      searchPaneSetAvailable(true);
+      if (!r.ok) return { error: (body && body.error) || ('Search failed: HTTP ' + r.status) };
+      return { dto: body || {} };
+    }
+
+    async function searchPaneProbe() {
+      const res = await searchPaneFetch('/api/search?limit=1');
+      if (res && res.error) renderSearchPane(res);
+    }
+
+    async function searchPaneRun() {
+      const input = document.getElementById('search-query');
+      if (input) _searchPane.query = String(input.value || '').trim();
+      const seq = ++_searchPane.seq;
+      const res = await searchPaneFetch(searchPaneURL(_searchPane.query, _searchPane.filters));
+      if (seq !== _searchPane.seq || !res) return;
+      _searchPane.last = res;
+      renderSearchPane(res);
+    }
+
+    function searchPaneToggleFacet(field, value) {
+      const facet = SEARCH_PANE_FACETS.find(f => f.field === field);
+      if (!facet) return;
+      _searchPane.filters[field] = _searchPane.filters[field] === value ? '' : value;
+      if (facet.server) searchPaneRun();
+      else if (_searchPane.last) renderSearchPane(_searchPane.last);
+    }
+
+    function searchHitHref(url) {
+      const s = String(url || '');
+      return /^https?:\/\//i.test(s) ? s : '';
+    }
+
+    function searchHitHTML(h) {
+      const fields = h.fields || {};
+      const href = searchHitHref(h.url);
+      const title = String(h.title || h.id || h.url || '(untitled)');
+      const titleHtml = href ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(title)}</a>` : esc(title);
+      const redacted = h.redacted
+        ? ' <span class="search-redacted" title="Part of this result looked like injected instructions, so it was withheld and replaced with a redaction marker. Open the link to read the original.">🛡 redacted</span>'
+        : '';
+      const meta = [h.kind, h.repo, fields.verdict ? 'verdict: ' + fields.verdict : '', fields['sentinel.rule'] ? 'rule: ' + fields['sentinel.rule'] : '', h.at ? formatDashboardDateTime(h.at) : '']
+        .filter(Boolean).map(v => `<span>${esc(String(v))}</span>`).join('');
+      const snippet = h.highlight && h.highlight.snippet ? `<div class="search-hit-snippet">${esc(String(h.highlight.snippet))}</div>` : '';
+      return `<li class="search-hit" data-kind="${esc(String(h.kind || ''))}"${h.redacted ? ' data-redacted="1"' : ''}>${titleHtml}${redacted}<div class="search-hit-meta">${meta}</div>${snippet}</li>`;
+    }
+
+    function searchPaneHTML(res, filters) {
+      if (!res) return '';
+      if (res.error) return `<div class="search-pane-error" role="alert">${esc(String(res.error))}</div>`;
+      const dto = res.dto || {};
+      const facets = dto.facets || {};
+      filters = filters || {};
+      const facetHtml = SEARCH_PANE_FACETS.map(f => {
+        const counts = facets[f.field] || [];
+        if (!counts.length) return '';
+        const chips = counts.map(c => {
+          const value = String(c.value);
+          const on = filters[f.field] === value;
+          return `<button type="button" class="search-facet-chip${on ? ' active' : ''}" aria-pressed="${on ? 'true' : 'false'}" data-action="searchPaneToggleFacet" data-arg0="${esc(f.field)}" data-arg1="${esc(value)}">${esc(value)} <span class="search-facet-count">${Number(c.count) || 0}</span></button>`;
+        }).join('');
+        return `<div class="search-facet" data-facet="${esc(f.field)}"><span class="search-facet-label">${esc(f.label)}</span>${chips}</div>`;
+      }).join('');
+      const coverage = dto.coverage || {};
+      const gaps = Object.keys(coverage).sort();
+      const coverageHtml = gaps.length
+        ? `<div class="search-coverage" role="note">⚠️ Not searched: ${gaps.map(repo => `<span title="${esc(String(coverage[repo]))}">${esc(repo)}</span>`).join(', ')}. The search index for ${gaps.length === 1 ? 'this repository' : 'these repositories'} could not be read, so a missing result there does not mean nothing matches.</div>`
+        : '';
+      const hits = (dto.hits || []).filter(h => SEARCH_PANE_FACETS.every(f => f.server || !filters[f.field] || (h.fields || {})[f.field] === filters[f.field]));
+      const total = Number(dto.total) || 0;
+      const count = `<div class="search-pane-count">${hits.length} shown of ${total} match${total === 1 ? '' : 'es'}</div>`;
+      const list = hits.length ? `<ol class="search-hits">${hits.map(searchHitHTML).join('')}</ol>` : '<div class="search-empty">No matches.</div>';
+      return facetHtml + coverageHtml + count + list;
+    }
+
+    function renderSearchPane(res) {
+      refreshSectionCardShell('search-section');
+      const el = document.getElementById('search-results');
+      if (el) el.innerHTML = searchPaneHTML(res, _searchPane.filters);
+      setSectionSummary('search-section', res && res.dto ? `${Number(res.dto.total) || 0} matches` : 'search');
+    }
+
+    var REPO_HEALTH_TTL_MS = 10 * 60 * 1000;
+    // var, not let: renderRepos may run before this line executes.
+    var _repoHealth = { disabled: false, byRepo: {}, at: {}, inflight: {} };
+
+    function repoHealthBadgeHTML(h) {
+      if (!h || typeof h !== 'object') return '';
+      const reported = h.status === 'reported' && typeof h.score === 'number';
+      const status = String(h.status || 'not_reported').replace(/_/g, ' ');
+      const tier = !reported ? '' : (h.score >= 80 ? ' good' : (h.score >= 50 ? ' fair' : ' poor'));
+      const label = reported ? `♥ ${Math.round(h.score)} · ${status}` : `♥ — · ${status}`;
+      const lines = [`Repo health ${reported ? Math.round(h.score) + '/100' : '—'} (${status}). Report-only; over the last ${Number(h.window_days) || 0} days, components need n ≥ ${Number(h.min_n) || 0}.`];
+      (h.components || []).forEach(c => {
+        const n = ` (n=${Number(c.n) || 0})`;
+        if (c.status === 'reported' && typeof c.score === 'number') {
+          const pts = typeof c.contribution === 'number' ? `${c.contribution} pts` : 'not weighted';
+          lines.push(`• ${c.name}: ${Math.round(c.score * 100)}% × weight ${Number(c.weight) || 0} → ${pts}${n}`);
+        } else {
+          lines.push(`• ${c.name}: not reported${c.reason ? ' — ' + c.reason : ''}${n}`);
+        }
+      });
+      if (h.computed_at) lines.push('Computed ' + formatDashboardDateTime(h.computed_at));
+      return `<span class="repo-health-badge${tier}" title="${lines.map(l => esc(l)).join('&#10;')}" aria-label="${esc(lines[0])}">${esc(label)}</span>`;
+    }
+
+    function repoHealthFor(repo) {
+      return !_repoHealth || _repoHealth.disabled ? null : (_repoHealth.byRepo[repo] || null);
+    }
+
+    function repoHealthSlotHTML(repo) {
+      return `<span class="repo-health-slot" data-repo-health="${esc(String(repo || ''))}">${repoHealthBadgeHTML(repoHealthFor(repo))}</span>`;
+    }
+
+    function repoHealthPaint() {
+      document.querySelectorAll('[data-repo-health]').forEach(el => {
+        el.innerHTML = repoHealthBadgeHTML(repoHealthFor(el.getAttribute('data-repo-health')));
+      });
+    }
+
+    function repoHealthEnsure(repo) {
+      const parts = String(repo || '').split('/');
+      if (!_repoHealth || _repoHealth.disabled || parts.length !== 2 || !parts[0] || !parts[1] || _repoHealth.inflight[repo]) return null;
+      const at = _repoHealth.at[repo];
+      if (at && Date.now() - at < REPO_HEALTH_TTL_MS) return null;
+      _repoHealth.inflight[repo] = true;
+      return repoHealthFetch(repo, parts[0], parts[1]).finally(() => { delete _repoHealth.inflight[repo]; });
+    }
+
+    async function repoHealthFetch(repo, owner, name) {
+      _repoHealth.at[repo] = Date.now();
+      let r;
+      try { r = await fetch('/api/repos/' + encodeURIComponent(owner) + '/' + encodeURIComponent(name) + '/health'); } catch (e) { return; }
+      if (r.status === 503) {
+        _repoHealth.disabled = true;
+        _repoHealth.byRepo = {};
+      } else if (r.ok) {
+        try { _repoHealth.byRepo[repo] = await r.json(); } catch (e) { delete _repoHealth.byRepo[repo]; }
+      } else {
+        delete _repoHealth.byRepo[repo];
+      }
+      repoHealthPaint();
+    }
+    // ---- end portfolio search pane and repo health badge ----------------
+
     // Prime both panels and poll them on a modest independent interval. Do not
     // block initial paint: these run after the main poll is already wired.
     function v4RefreshPanels() { fetchHiveAdvice(); fetchACMMReco(); fetchLifecycle(); fetchPRThroughput(); fetchApprovals(); }
     v4RefreshPanels();
+    searchPaneProbe();
     dashboardSetInterval('v4-panels', v4RefreshPanels, V4_PANELS_POLL_MS);
 
     // Cost range pills: switch hourly/daily/weekly/monthly and re-render the
@@ -36594,7 +36817,7 @@ function burnAreaChart() {
         'advisory-section', 'advisory-digest-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
-        'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
+        'knowledge-section', 'search-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);

@@ -511,6 +511,30 @@ The facts Hive has learned about your projects, where they came from, and how mu
 
 **Settings that change it.** Knowledge sources, shared sources and imports are managed inside the section. See the [knowledge curator guide](knowledge-curator.md).
 
+## Search
+
+Find past pull requests, issues, review records and findings across your projects by keyword, with a link to each one.
+
+This section exists on the v6 line only.
+
+**What it tells you.** Type words and press Enter. Hive searches its own index of review records, findings, safety-check hits, beads and learned facts for the projects this hive looks after, and lists what matches, best match first. Each result links to the pull request, issue or bead it came from.
+
+**How the numbers are worked out.**
+
+- The results come from `GET /api/search`, which reads this hive's local search index only. It never asks other hives.
+- The chips above the results count matches by kind, project, review verdict and safety-check rule. Kind and project chips run the search again for just that value; verdict and rule chips narrow the results already shown. Click a chip again to clear it.
+- A result marked **🛡 redacted** had text that looked like instructions planted for an AI. Hive hid that text; open the link to read the original.
+- **Not searched** names projects whose index could not be read. A missing result for those projects does not mean nothing matches.
+- On the **Projects** cards, a small **♥** badge next to the project name shows that project's health score out of 100 and whether it was reported. Rest the pointer on it to see each part of the score. The score is for reading only; Hive never uses it to decide anything.
+
+**What it is good for.** Use it to find an old review, a repeated finding or every pull request a safety rule stopped.
+
+**Example.** You search `flaky` and click the **sentinel** kind chip. You see the two pull requests where a safety check fired on a flaky-test change.
+
+**When it appears.** On v6 only, when search is switched on and you are an owner or maintainer. With search off, the section and the health badges stay hidden.
+
+**Settings that change it.** `search.enabled` switches search on. See the `search` row in the [operator reference](operator-reference.md).
+
 ## Contributors
 
 The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.
