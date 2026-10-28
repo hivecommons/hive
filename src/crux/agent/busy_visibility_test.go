@@ -587,3 +587,21 @@ func TestScanTranscriptActivityWalksAgentsConcurrently(t *testing.T) {
 		}
 	}
 }
+
+func TestNewestCopilotTranscriptActivityIgnoresSymlinkedEvents(t *testing.T) {
+	home := t.TempDir()
+	target := filepath.Join(t.TempDir(), "events.jsonl")
+	if err := os.WriteFile(target, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, ".copilot", "session-state", "linked")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "events.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := newestCopilotTranscriptActivity(home); ok {
+		t.Fatalf("symlinked events.jsonl counted as activity: %v", got)
+	}
+}

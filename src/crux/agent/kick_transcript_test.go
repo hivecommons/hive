@@ -409,3 +409,27 @@ func TestListKickLogs_ReportsHeaderSource(t *testing.T) {
 		t.Errorf("missing file source = %q", got)
 	}
 }
+
+// A symlink planted at events.jsonl is refused: the archive falls back to the
+// scrollback rather than reading through the link.
+func TestArchiveKickLog_RefusesSymlinkedTranscript(t *testing.T) {
+	m, agent, dir, home := transcriptTestManager(t, "copilot", kickLogSourceAuto)
+	path := writeTestTranscript(t, home, "copilot", "")
+	target := filepath.Join(t.TempDir(), "secret.jsonl")
+	if err := os.WriteFile(target, []byte(readTranscriptFixture(t, "copilot_events.jsonl")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if !m.archiveKickLogLocked(agent, "kick") {
+		t.Fatal("archive not written")
+	}
+	body := newestArchiveBody(t, m, dir)
+	if !strings.Contains(body, "source: scrollback\n") || strings.Contains(body, "fix issue 42") {
+		t.Errorf("symlinked transcript was read:\n%s", body)
+	}
+}
