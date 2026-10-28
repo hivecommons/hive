@@ -10454,6 +10454,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		func() bool { return cfg.Review.CombinedPerspectives },
 		func() int { return cfg.Review.MaxReviewsPerHead },
 	)
+	// review.require_labels (PR approval allow-list): the relay's half of the
+	// gate, read live so a Features-tab edit applies to the next request.
+	client.SetReviewRequireLabels(func() []string { return cfg.Review.RequireLabels })
 }
 
 // reviewBacklogRouting resolves review.severity / review.backlog and the
@@ -10802,6 +10805,7 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 	prAgents := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
 	candidates := make([]github.PullRequest, 0, len(actionable.PRs.Items)+len(actionable.PRs.Held))
 	seenPRs := map[string]bool{}
+	labelGated := 0
 	addCandidates := func(items []github.PullRequest) {
 		for _, pr := range items {
 			fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
@@ -10810,11 +10814,22 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 				continue
 			}
 			seenPRs[key] = true
+			// review.require_labels: an unlabelled PR is never dispatched
+			// to the swarm. The relay refuses it independently.
+			if !cfg.Review.AdmitsPRLabels(pr.Labels) {
+				labelGated++
+				continue
+			}
 			candidates = append(candidates, pr)
 		}
 	}
 	addCandidates(actionable.PRs.Items)
 	addCandidates(actionable.PRs.Held)
+	if labelGated > 0 && logger != nil {
+		logger.Info("review label gate withheld PRs from review dispatch",
+			"withheld", labelGated, "candidates", len(candidates),
+			"require_labels", strings.Join(cfg.Review.NormalizedRequireLabels(), ","))
+	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		ri, rj := candidates[i].ReviewRank, candidates[j].ReviewRank
 		if ri > 0 && rj > 0 && ri != rj {

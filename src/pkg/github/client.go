@@ -255,6 +255,10 @@ type Client struct {
 	// a negative value disables the backstop.
 	combinedPerspectivesFn func() bool
 	maxReviewsPerHeadFn    func() int
+	// reviewRequireLabelsFn returns review.require_labels, read live so a
+	// Features-tab edit gates the next relay request without a rebuild. nil
+	// or empty means the gate is off.
+	reviewRequireLabelsFn func() []string
 	// prAuthz gates PR-open requests from the request-file watcher against the
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.

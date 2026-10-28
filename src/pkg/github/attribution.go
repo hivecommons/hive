@@ -111,6 +111,9 @@ const (
 	// AuditActionSentinelBlockedApproval records an approval/LGTM path refused
 	// because the configured sentinel alert label is present.
 	AuditActionSentinelBlockedApproval = "sentinel-blocked-approval"
+	// AuditActionReviewLabelGateRefused records a hive-review relay request
+	// refused because the PR carries none of review.require_labels.
+	AuditActionReviewLabelGateRefused = "review_label_gate_refused"
 	// AuditActionReviewModelFallback is recorded when an adversarial reviewer
 	// pool has no independent candidate and the configured fallback is used.
 	AuditActionReviewModelFallback = "review_model_fallback"

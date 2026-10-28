@@ -7587,6 +7587,18 @@ type ReviewConfig struct {
 	// a repo that does not already have them is skipped. Off by default: a
 	// label on every PR is churn a repo must ask for.
 	PriorityLabels bool `yaml:"priority_labels,omitempty" json:"priority_labels,omitempty"`
+	// RequireLabels is the PR-side approval allow-list, the review
+	// counterpart of project.issue_filter.require_labels. Non-empty: a PR is
+	// reviewed by the hive only if it carries AT LEAST ONE of these labels
+	// (case-insensitive exact match). It is enforced in two places so a
+	// prompt cannot route around it: the reviewer kick lists and the review
+	// dispatch planner never offer an unlabelled PR, and the hive-review
+	// relay refuses to post on one. Absent/empty keeps today's behaviour —
+	// every open PR is reviewable — so no existing hive goes quiet on
+	// upgrade. The label is never created: name one the governed repos
+	// already maintain. Operator-added hold/exempt labels still exclude a PR
+	// that also carries an approval label.
+	RequireLabels []string `yaml:"require_labels,omitempty" json:"require_labels,omitempty"`
 	// VerdictLabels mirrors the review swarm's state for each PR's current
 	// head onto exactly one label (hivecommons/hive#13833): reviewing while
 	// the head's review is pending, then the settled verdict. Independent of

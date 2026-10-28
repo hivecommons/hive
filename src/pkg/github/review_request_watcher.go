@@ -13,6 +13,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -354,6 +355,22 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// the other write relays. Pause applies to every review event.
 	if c.RepoIsPaused(req.Repo) {
 		c.denyReviewRequest(path, req, RepoPausedReason(req.Repo), nowFn)
+		return
+	}
+	// review.require_labels (PR approval allow-list): the server-side half of
+	// the gate. The kick lists never offer an unlabelled PR, but a reviewer
+	// that found one anyway — or was told to by a prompt — is refused here,
+	// whatever the event: a review, a thread reply, a resolution or a bare
+	// record_verdict are all "the hive reviewed this PR". Labels are read
+	// fresh with the App token; a fetch failure is retried, not waved through.
+	if admitted, err := c.reviewLabelGateAdmits(ctx, req.Repo, req.Number); err != nil {
+		c.retryOrQuarantineReview(path, req, fmt.Errorf("review.require_labels: could not read PR labels: %w", err), nowFn)
+		return
+	} else if !admitted {
+		c.recordWriteAudit(AuditActionReviewLabelGateRefused, c.attributionMeta(req.Agent),
+			WriteTarget{Repo: req.Repo, Number: req.Number},
+			"event", strings.TrimSpace(req.Event), "require_labels", strings.Join(c.reviewRequireLabels(), ","))
+		c.denyReviewRequest(path, req, config.ReviewRequireLabelsSkipReason+" ("+strings.Join(c.reviewRequireLabels(), ", ")+")", nowFn)
 		return
 	}
 	if resolveThread || threadReply {

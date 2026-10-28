@@ -431,6 +431,8 @@ Review Pipeline shows pull requests by stage first; Review Queue lists the same 
 
 Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.
 
+When **Settings → Features → Review Gate → Only review labelled PRs** (`review.require_labels`) is on, PRs without one of the approval labels stay in the *unreviewed* stage until a maintainer labels them: the planner never dispatches them and the relay refuses reviews on them.
+
 **What it tells you.** Each column is one stage of the review loop: unreviewed, reviewing, changes requested, fixing, waiting for a human, approved, merged and abandoned. Each card shows the pull request, who has reviewed it, how many findings were raised at each severity and what should happen next.
 
 **How the numbers are worked out.** Hive reads the last review results it recorded for each pull request and places the card in a stage from those results alone. The collapsible Pipeline tile header shows how many pull requests are on the board. Nothing is fetched from GitHub when you open it.
