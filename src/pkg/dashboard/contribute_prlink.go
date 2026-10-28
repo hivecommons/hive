@@ -260,16 +260,48 @@ func crossReferencingPRs(ctx context.Context, gc *gh.Client, repo string, number
 // cheap and within a single request.
 const prLinkSearchPerPage = 10
 
-// prClosesIssue reports whether a timeline cross-referencing PR names the
-// issue as a fix (Closes/Fixes/Resolves) in its title or body, so a PR that
-// merely mentions the issue is not promoted as its linked PR. A source with
-// no title or body (omitted by the API) is accepted, as in prReferencesIssue.
+// prClosesIssue reports whether a timeline cross-referencing PR should count
+// as the issue's linked PR. A PR whose title/body mentions the issue must name
+// it as a fix (Closes/Fixes/Resolves), so a passing "see also #N" is not
+// promoted. A PR whose title/body does not mention the issue at all reached
+// the timeline through a PR comment (hivecommons/hive#14859), which is the
+// case the timeline read exists for, so it is kept. A source with no title or
+// body (omitted by the API) is accepted, as in prReferencesIssue.
 func prClosesIssue(iss *gh.Issue, repo string, number int) bool {
-	if iss.GetBody() == "" && iss.GetTitle() == "" {
+	title, body := iss.GetTitle(), iss.GetBody()
+	if title == "" && body == "" {
 		return true
 	}
-	_, ok := github.FindClosingKeywordReference(iss.GetTitle()+"\n"+iss.GetBody(), repo, repo, number)
+	text := title + "\n" + body
+	if !prMentionsIssue(text, repo, number) {
+		return true
+	}
+	_, ok := github.FindClosingKeywordReference(text, repo, repo, number)
 	return ok
+}
+
+// prMentionsIssue reports whether text names repo#number in any of the forms
+// GitHub turns into a cross-reference: a bare "#N", "owner/repo#N", or the
+// issue's URL.
+func prMentionsIssue(text, repo string, number int) bool {
+	lower := strings.ToLower(text)
+	for _, form := range []string{
+		strings.ToLower(fmt.Sprintf("%s#%d", repo, number)),
+		strings.ToLower(fmt.Sprintf("github.com/%s/issues/%d", repo, number)),
+	} {
+		for i := strings.Index(lower, form); i >= 0; {
+			end := i + len(form)
+			if end == len(lower) || lower[end] < '0' || lower[end] > '9' {
+				return true
+			}
+			next := strings.Index(lower[end:], form)
+			if next < 0 {
+				break
+			}
+			i = end + next
+		}
+	}
+	return prReferencesIssue(&gh.Issue{Body: &text}, number)
 }
 
 // prReferencesIssue guards against a coincidental number collision: the Search

@@ -396,6 +396,10 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 	openPR := `{"number":14656,"state":"open","html_url":"https://github.com/o/r/pull/14656","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
 	mergedPR := `{"number":14656,"state":"closed","html_url":"https://github.com/o/r/pull/14656","repository":{"full_name":"o/r"},"pull_request":{"url":"x","merged_at":"2026-10-28T00:00:00Z"}}`
 	otherRepoPR := `{"number":77,"state":"open","html_url":"https://github.com/x/y/pull/77","repository":{"full_name":"x/y"},"pull_request":{"url":"x"}}`
+	// A PR whose title/body is populated but never names the issue: it is on
+	// the timeline only because a PR comment mentioned the issue (#14859).
+	commentOnlyPR := `{"number":14656,"state":"open","title":"keep the header chips from overlapping the title","body":"Hive Agent","html_url":"https://github.com/o/r/pull/14656","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
+	commentOnlyMergedPR := `{"number":14656,"state":"closed","title":"keep the header chips from overlapping the title","body":"Hive Agent","html_url":"https://github.com/o/r/pull/14656","repository":{"full_name":"o/r"},"pull_request":{"url":"x","merged_at":"2026-10-28T00:00:00Z"}}`
 	mentionPR := `{"number":14700,"state":"open","title":"unrelated work","body":"see also #13135 for context","html_url":"https://github.com/o/r/pull/14700","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
 	closingPR := `{"number":14701,"state":"open","title":"fix it","body":"Closes #13135","html_url":"https://github.com/o/r/pull/14701","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
 	plainIssue := `{"number":14859,"state":"open","html_url":"https://github.com/o/r/issues/14859","repository":{"full_name":"o/r"}}`
@@ -427,6 +431,27 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 			timeline:   `[{"event":"labeled","created_at":"2026-10-26T00:00:00Z"},` + crossRef(mergedPR) + `]`,
 			wantNumber: 14656,
 			wantState:  prLinkStateMerged,
+		},
+		{
+			name:       "PR comment reference only (title/body populated, not naming the issue)",
+			search:     `[` + searchHit + `]`,
+			timeline:   `[` + crossRef(commentOnlyPR) + `]`,
+			wantNumber: 14656,
+			wantState:  prLinkStateOpen,
+		},
+		{
+			name:       "PR comment reference only from a merged PR",
+			search:     `[]`,
+			timeline:   `[` + crossRef(commentOnlyMergedPR) + `]`,
+			wantNumber: 14656,
+			wantState:  prLinkStateMerged,
+		},
+		{
+			name:       "comment-only PR beats a later mention-only PR",
+			search:     `[]`,
+			timeline:   `[` + crossRef(commentOnlyPR) + `,` + crossRef(mentionPR) + `]`,
+			wantNumber: 14656,
+			wantState:  prLinkStateOpen,
 		},
 		{
 			name:     "cross-reference from a PR that only mentions the issue",
@@ -479,6 +504,42 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 			}
 			if got.Number != tc.wantNumber || got.State != tc.wantState {
 				t.Fatalf("got #%d (%s), want #%d (%s)", got.Number, got.State, tc.wantNumber, tc.wantState)
+			}
+		})
+	}
+}
+
+// TestPrClosesIssue pins the timeline gate: a PR whose title/body names the
+// issue must do so with a closing keyword, while a PR whose title/body never
+// names the issue reached the timeline via a PR comment and is kept (#14859).
+func TestPrClosesIssue(t *testing.T) {
+	cases := []struct {
+		name        string
+		title, body string
+		want        bool
+	}{
+		{"empty title and body", "", "", true},
+		{"comment-only: title/body never name the issue", "keep the header chips from overlapping", "Hive Agent", true},
+		{"closing keyword", "fix it", "Closes #13135", true},
+		{"closing keyword, repo-qualified", "fix it", "Fixes o/r#13135", true},
+		{"bare mention without keyword", "unrelated", "see also #13135 for context", false},
+		{"repo-qualified mention without keyword", "unrelated", "see also o/r#13135", false},
+		{"URL mention without keyword", "unrelated", "see https://github.com/o/r/issues/13135", false},
+		{"mention in title without keyword", "follow-up to #13135", "", false},
+		{"different issue number", "unrelated", "Closes #131350 and see #1313", true},
+		{"URL for a different issue number", "unrelated", "see https://github.com/o/r/issues/131350", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			iss := &gh.Issue{}
+			if tc.title != "" {
+				iss.Title = gh.Ptr(tc.title)
+			}
+			if tc.body != "" {
+				iss.Body = gh.Ptr(tc.body)
+			}
+			if got := prClosesIssue(iss, "o/r", 13135); got != tc.want {
+				t.Fatalf("prClosesIssue(%q, %q) = %v, want %v", tc.title, tc.body, got, tc.want)
 			}
 		})
 	}
