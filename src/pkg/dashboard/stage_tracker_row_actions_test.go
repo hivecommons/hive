@@ -28,12 +28,19 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_ACTIONABLE_STAGE"),
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_POLL_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_POLL_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_ALL_MIN"),
+		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
 		"var _stageTrackerSel = new Set(); var _stageTrackerSelAnchor = ''; var _stageTrackerMenu = null; var _stageTracker = null; var _statusSeqFloor = 0; var _stageTrackerEtag = 'e'; var _stageTrackerSig = 's';",
 		jsFunc(t, html, "esc"),
 		jsFunc(t, html, "repoParts"),
 		jsFunc(t, html, "stageTrackerItemKey"),
 		jsFunc(t, html, "stageTrackerRefOf"),
 		jsFunc(t, html, "stageTrackerRowToolsHtml"),
+		jsFunc(t, html, "stageTrackerLinkedPRItem"),
+		jsFunc(t, html, "stageTrackerLinkedPROpen"),
+		jsFunc(t, html, "stageTrackerNestedOpenPRs"),
+		jsFunc(t, html, "stageTrackerSubNodes"),
+		jsFunc(t, html, "stageTrackerSubKeyOf"),
 		jsFunc(t, html, "stageTrackerSelectableKey"),
 		jsFunc(t, html, "stageTrackerSelectionNext"),
 		jsFunc(t, html, "stageTrackerSelectionPrune"),
@@ -41,6 +48,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerRowKeys"),
 		jsFunc(t, html, "stageTrackerItemByKey"),
 		jsFunc(t, html, "stageTrackerItemsForKeys"),
+		jsFunc(t, html, "stageTrackerPRParked"),
+		jsFunc(t, html, "stageTrackerParkedNestedPRs"),
 		jsFunc(t, html, "stageTrackerDecisionTarget"),
 		jsFunc(t, html, "stageTrackerDecideOptions"),
 		jsFunc(t, html, "stageTrackerSupersederOptions"),
@@ -57,6 +66,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerActionLabel"),
 		jsFunc(t, html, "stageTrackerActionRequest"),
 		jsFunc(t, html, "stageTrackerActionSummary"),
+		jsFunc(t, html, "stageTrackerDelegateTally"),
+		jsFunc(t, html, "stageTrackerDelegatedSubResults"),
 		jsFunc(t, html, "stageTrackerDelegatedSummary"),
 		jsFunc(t, html, "stageTrackerDelegatedDone"),
 		jsFunc(t, html, "stageTrackerAwaitDelegated"),
@@ -227,9 +238,12 @@ const issueWithPR = { repo: 'o/r', kind: 'issue', number: 5, url: 'u', stage: 85
 const tgt = stageTrackerDecisionTarget(issueWithPR);
 assert.strictEqual(tgt.kind, 'pr'); assert.strictEqual(tgt.number, 458);
 as = stageTrackerRowActions(issueWithPR, ctx);
-assert.strictEqual(as[0].id, 'decide'); assert.strictEqual(as[0].label, 'Decide PR #458…');
-assert.strictEqual(as[0].target.number, 458);
-assert.deepStrictEqual(ids(as[0].submenu), ['decide:delegate', 'decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction']);
+// Two open nested PRs: the issue row first offers the explicit all-PRs
+// delegate (hivecommons/hive#15009), then the one parked PR's Decide.
+assert.strictEqual(as[0].id, 'decide:delegate-all'); assert.strictEqual(as[0].label, 'Let hive decide — all 2 PRs'); assert.deepStrictEqual(as[0].prs, [457, 458]);
+assert.strictEqual(as[1].id, 'decide'); assert.strictEqual(as[1].label, 'Decide PR #458…');
+assert.strictEqual(as[1].target.number, 458);
+assert.deepStrictEqual(ids(as[1].submenu), ['decide:delegate', 'decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction']);
 assert.strictEqual(stageTrackerDecisionTarget({ ...issueWithPR, linked_prs: [issueWithPR.linked_prs[0]] }), null, 'mirrored 85 with no parked PR is not decidable');
 assert.strictEqual(stageTrackerDecisionTarget(parked), parked, 'a 045 issue decides itself');
 
@@ -519,7 +533,138 @@ function stageTrackerAfterActions() {}
   assert.deepStrictEqual(calls.filter(c => c.method === 'POST').map(c => c.url), ['/api/repos/o/r/items/4/decide-delegated', '/api/repos/o/r/items/5/decide-delegated']);
   assert.strictEqual(calls.filter(c => c.method === 'GET' && c.url.endsWith('/4/decide-delegated')).length, 2, 'polls until the job ends');
   assert.ok(toasts.includes('info:Hive is deciding o/r#4…'));
-  assert.strictEqual(progress[0], 'error:Let hive decide: 1/2 done. Failed: o/r#5 — GitHub 502. Hive decided: o/r#4 approve (default-release)');
+  // The delegate summary is a tally (sent · decided · no-op · failed), not n/m done.
+  assert.strictEqual(progress[0], 'error:Let hive decide: 2 sent · 1 decided · 0 no-op · 1 failed. Failed: o/r#5 — GitHub 502. Hive decided: o/r#4 approve (default-release)');
+})().catch(e => { console.error(e); process.exit(1); });
+`)
+}
+
+// TestStageTrackerPRScopedRowActions: an issue row with two nested PRs
+// (hivecommons/hive#15009: #15017 "Ready for human merge · untrusted
+// author" and #15020 "Needs human decision") used to offer one Decide that
+// silently acted on one of them. Now each sub-row carries its own ⋯ menu and
+// checkbox and its actions target THAT PR; the issue row offers "Let hive
+// decide — all N PRs", whose request names the PRs and whose answer lists
+// each PR's outcome; a selection of sub-rows gets one "Let hive decide (N
+// selected)" chip and a tally toast.
+func TestStageTrackerPRScopedRowActions(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}`,
+		`.ham-sub > .ham-row-tools {`,
+		`.ham-sub.ham-selected {`,
+		`const sub = btn && btn.closest ? btn.closest('[data-ham-sub-key]') : null;`,
+		`'decide:delegate-all': 'Let hive decide — all PRs'`,
+		`'decide:delegate-all': 'Hive is deciding each PR…'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+stageTrackerConfirmOptOutJS(t, html)+`
+const ids = as => as.map(a => a.id);
+const ctx = { user: true, canHold: true, canHuman: true };
+const issue = { repo: 'hivecommons/hive', kind: 'issue', number: 15009, title: 'Two PRs', url: 'https://github.com/hivecommons/hive/issues/15009', stage: 85, mirrored: true, modifiers: [],
+  linked_prs: [
+    { number: 15017, title: 'first', url: 'https://github.com/hivecommons/hive/pull/15017', stage: 90, modifiers: [], manual_merge: true, human_merge_reason: 'untrusted-author', human_merge_reason_text: 'untrusted author', head: 'aaaa', author: 'ext', author_kind: 'external' },
+    { number: 15020, title: 'second', url: 'https://github.com/hivecommons/hive/pull/15020', stage: 85, modifiers: ['needs-decision', 'hold'], head: 'bbbb', decision_needed: { question: 'Which one?', options: [{ action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } },
+    { number: 15001, title: 'merged', url: 'pu', stage: 110, modifiers: ['merged'] },
+  ] };
+_stageTracker = { items: [issue] };
+
+// Each sub-row is a row item of its own, with its number, repo and head.
+const a = stageTrackerLinkedPRItem(issue, issue.linked_prs[0]), b = stageTrackerLinkedPRItem(issue, issue.linked_prs[1]);
+assert.strictEqual(a.kind, 'pr'); assert.strictEqual(a.number, 15017); assert.strictEqual(a.repo, 'hivecommons/hive'); assert.strictEqual(a.head, 'aaaa');
+assert.strictEqual(a.parent, 15009); assert.deepStrictEqual(a.siblings, [15020], 'the one open sibling (the merged PR is not one)');
+assert.deepStrictEqual(b.siblings, [15017]);
+assert.deepStrictEqual(stageTrackerNestedOpenPRs(issue).map(p => p.number), [15017, 15020], 'merged PRs are not open');
+assert.strictEqual(stageTrackerItemByKey(_stageTracker, 'hivecommons/hive/pr#15020').head, 'bbbb', 'the popover / menu look the PR up by its sub-row key');
+
+// The sub-row markup carries the PR's own gutter (checkbox + ⋯).
+const tools = stageTrackerRowToolsHtml(b);
+assert.ok(tools.includes('aria-label="Select hivecommons/hive#15020 (Shift+click for a range)"'));
+assert.ok(tools.includes('aria-label="Actions for hivecommons/hive#15020"') && tools.includes('data-action="hamRowMenu"'));
+
+// Each PR's menu targets THAT PR: "Ready for human merge" and "Needs human
+// decision" both park a PR; Hold/Release reads the PR's own modifiers.
+let as = stageTrackerRowActions(a, ctx);
+assert.strictEqual(as[0].id, 'decide'); assert.strictEqual(as[0].label, 'Decide…'); assert.strictEqual(as[0].target, a);
+assert.deepStrictEqual(ids(as[0].submenu), ['decide:delegate', 'decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction']);
+assert.ok(ids(as).includes('hold') && !ids(as).includes('decide:delegate-all'), 'a PR row never gets the all-PRs item');
+as = stageTrackerRowActions(b, ctx);
+assert.strictEqual(as[0].target.number, 15020); assert.ok(ids(as).includes('release'), 'the held PR offers Release');
+assert.strictEqual(stageTrackerActionRequest(b, 'decide:delegate').url, '/api/repos/hivecommons/hive/items/15020/decide-delegated');
+assert.deepStrictEqual(stageTrackerActionRequest(a, 'decide:approve', {}).body, { decision: 'approve', comment: '', type: 'pr' });
+assert.strictEqual(stageTrackerActionRequest(a, 'decide:approve', {}).url, '/api/repos/hivecommons/hive/items/15017/decision');
+
+// The issue row no longer picks one: no single Decide, an explicit all-PRs item.
+assert.strictEqual(stageTrackerDecisionTarget(issue), null, 'two parked PRs is ambiguous');
+as = stageTrackerRowActions(issue, ctx);
+assert.deepStrictEqual(ids(as), ['decide:delegate-all', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.strictEqual(as[0].label, 'Let hive decide — all 2 PRs'); assert.strictEqual(as[0].hint, 'per PR'); assert.deepStrictEqual(as[0].prs, [15017, 15020]);
+assert.strictEqual(stageTrackerRowActions(issue, { user: false, canHold: false })[0].enabled, false);
+const req = stageTrackerActionRequest(issue, 'decide:delegate-all');
+assert.strictEqual(req.url, '/api/repos/hivecommons/hive/items/15009/decide-delegated'); assert.strictEqual(req.poll, true);
+assert.deepStrictEqual(req.body.prs, [15017, 15020]); assert.strictEqual(req.body.type, 'issue');
+assert.strictEqual(stageTrackerActionRequest(a, 'decide:delegate-all'), null, 'never on a PR');
+const one = { ...issue, linked_prs: [issue.linked_prs[1]] };
+assert.strictEqual(stageTrackerDecisionTarget(one).number, 15020, 'one parked PR: the issue row decides it, as before');
+assert.ok(!ids(stageTrackerRowActions(one, ctx)).includes('decide:delegate-all'));
+const menu = stageTrackerMenuHtml(stageTrackerRowActions(issue, ctx), 'x');
+assert.ok(menu.includes('data-ham-act="decide:delegate-all"') && menu.includes('Let hive decide — all 2 PRs<span class="ham-menu-more">per PR</span>'));
+
+// The selection model runs over sub-rows: keys in document order, painted
+// on the sub nodes; a sub-row click selects the PR, not its parent.
+const el = hamStubEl('div'); const row = hamStubRow('hivecommons/hive/issue#15009'); row.dataset = { hamKey: 'hivecommons/hive/issue#15009' };
+const s1 = hamStubRow('hivecommons/hive/pr#15017', true), s2 = hamStubRow('hivecommons/hive/pr#15020', true); row.appendChild(s1); row.appendChild(s2); el.appendChild(row);
+assert.deepStrictEqual(stageTrackerRowKeys(el), ['hivecommons/hive/issue#15009', 'hivecommons/hive/pr#15017', 'hivecommons/hive/pr#15020']);
+const sel = stageTrackerSelectionNext(new Set(), '', stageTrackerRowKeys(el), 'hivecommons/hive/pr#15020', {}).sel;
+assert.deepStrictEqual([...sel], ['hivecommons/hive/pr#15020']);
+assert.strictEqual(stageTrackerApplySelection(el, sel), true);
+assert.ok(s2.classList.contains('ham-selected') && !s1.classList.contains('ham-selected') && !row.classList.contains('ham-selected'));
+const range = stageTrackerSelectionNext(sel, 'hivecommons/hive/pr#15020', stageTrackerRowKeys(el), 'hivecommons/hive/pr#15017', { shift: true }).sel;
+assert.deepStrictEqual([...range].sort(), ['hivecommons/hive/pr#15017', 'hivecommons/hive/pr#15020']);
+assert.deepStrictEqual(stageTrackerItemsForKeys([...range]).map(p => p.number), [15017, 15020]);
+
+// The bulk bar: one "Let hive decide (N selected)" chip, judged per item.
+const bulk = stageTrackerSelectionActions([a, b], () => ctx);
+assert.strictEqual(bulk[1].id, 'decide:delegate'); assert.strictEqual(bulk[1].label, 'Let hive decide (2 selected)'); assert.ok(bulk[1].enabled);
+assert.ok(stageTrackerSelBarHtml([a, b], bulk).includes('data-arg0="decide:delegate" data-arg-types="s,t">Let hive decide (2 selected)</button>'));
+const plain = { repo: 'o/r', kind: 'issue', number: 2, url: 'u', stage: 20, modifiers: [] };
+assert.strictEqual(stageTrackerSelectionActions([a, plain], () => ctx)[1].enabled, false, 'an item with nothing to decide disables the chip');
+
+// The tally: "3 sent · 2 decided · 1 no-op", counting each PR of a per-PR job.
+assert.strictEqual(stageTrackerDelegateTally([{ ok: true, result: { action: 'approved' } }, { ok: true, result: { action: 'approved' } }, { ok: true, result: { action: STAGE_TRACKER_ACTION_NOOP } }]), '3 sent · 2 decided · 1 no-op');
+assert.strictEqual(stageTrackerDelegateTally([{ ok: false }, { ok: true, result: { action: 'recommended' } }]), '2 sent · 1 decided · 0 no-op · 1 failed');
+const perPR = { status: 'done', result: { action: 'decided-each', target: { repo: 'hivecommons/hive', kind: 'issue', number: 15009 }, outcome: 'Decided each of the 2 nested pull requests: #15017 approved (small low risk); #15020 no change (already decided).', next: '2 sent · 1 decided · 1 no-op.' },
+  items: [{ number: 15017, type: 'pr', status: 'done', decision: { verdict: 'approve', rule: 'small-low-risk' }, result: { action: 'approved', rule: 'small-low-risk', target: { repo: 'hivecommons/hive', kind: 'pr', number: 15017 }, outcome: 'ok', next: 'merge gate' } },
+          { number: 15020, type: 'pr', status: 'done', result: { action: STAGE_TRACKER_ACTION_NOOP, target: { repo: 'hivecommons/hive', kind: 'pr', number: 15020 }, outcome: 'No change', next: '' } }] };
+assert.strictEqual(stageTrackerDelegateTally([{ ok: true, data: perPR, result: perPR.result }]), '2 sent · 1 decided · 1 no-op');
+const subs = stageTrackerDelegatedSubResults(issue, perPR);
+assert.deepStrictEqual(subs.map(x => x.item.number), [15017, 15020]); assert.strictEqual(subs[0].item.head, 'aaaa', 'the PR item comes from the tracker');
+assert.strictEqual(subs[0].result.action, 'approved'); assert.strictEqual(subs[1].result.action, STAGE_TRACKER_ACTION_NOOP);
+assert.ok(stageTrackerDelegatedSummary([{ item: issue, ok: true, data: perPR }]).includes('hivecommons/hive#15017 approve (small-low-risk)'));
+
+// The run of "Let hive decide — all N PRs": one POST on the issue naming the
+// PRs; one toast for the issue summary and one per PR, each on its PR.
+const calls = [];
+global.fetch = async (url, init) => { calls.push({ url, body: init && init.body ? JSON.parse(init.body) : null }); return { ok: true, status: 200, json: async () => perPR }; };
+global.showToast = () => null; global.dismissToast = () => {}; global.setTimeout = fn => fn();
+function stageTrackerProgressToast() { return { update() {}, done() {} }; }
+function stageTrackerAfterActions() {}
+(async () => {
+  const res = await runRowAction('decide:delegate-all', issue);
+  assert.strictEqual(calls.length, 1); assert.strictEqual(calls[0].url, '/api/repos/hivecommons/hive/items/15009/decide-delegated'); assert.deepStrictEqual(calls[0].body.prs, [15017, 15020]);
+  assert.strictEqual(res.toasts.length, 3, 'the issue summary + one per PR');
+  assert.deepStrictEqual(res.toasts.map(x => x.key), ['hivecommons/hive/issue#15009', 'hivecommons/hive/pr#15017', 'hivecommons/hive/pr#15020']);
+  assert.ok(res.toasts[0].text.head.includes('decided per PR'), res.toasts[0].text.head);
+  assert.ok(res.toasts[0].text.outcome.includes('#15017 approved') && res.toasts[0].text.outcome.includes('#15020 no change'));
+  assert.ok(res.toasts[1].text.head.includes('hivecommons/hive#15017') && res.toasts[1].text.head.includes('approved'));
+  assert.strictEqual(res.toasts[2].text.type, 'info', 'the no-op PR reads as no change');
+  assert.strictEqual(dialogs.length, 1, 'one confirm for the batch'); assert.ok(dialogs[0].cfg.message.includes('hivecommons/hive#15017, hivecommons/hive#15020'), dialogs[0].cfg.message);
+  // A PR row never runs the all-PRs action.
+  const none = await runRowAction('decide:delegate-all', a);
+  assert.strictEqual(none.toasts.length, 0); assert.strictEqual(calls.length, 1);
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }

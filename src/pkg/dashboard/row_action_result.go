@@ -49,6 +49,9 @@ const (
 	rowActionTriaged     = "triage-accepted"
 	rowActionNeedsHuman  = "needs-human"
 	rowActionNoop        = "noop-already-applied"
+	// rowActionDecidedEach is an issue job that decided each nested PR on
+	// its own; the per-PR results ride delegatedDecisionJob.Items.
+	rowActionDecidedEach = "decided-each"
 	rowActionTargetIssue = "issue"
 	rowActionTargetPR    = "pr"
 )

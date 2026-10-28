@@ -138,7 +138,17 @@ func TestStageTrackerDecisionPopoverTriggersInRow(t *testing.T) {
 			t.Errorf("index.html missing %q", want)
 		}
 	}
-	if strings.Count(html, "decision_needed: lp.decision_needed || null") < 4 {
-		t.Errorf("every lp→PR construction must carry decision_needed (found %d)", strings.Count(html, "decision_needed: lp.decision_needed || null"))
+	// Every lp→PR item goes through the one builder (stageTrackerLinkedPRItem),
+	// which carries decision_needed; the only other lp spread is the single
+	// covering PR's overlay on its issue row (`shown`). Callers must not
+	// rebuild a PR item by hand.
+	if n := strings.Count(html, "decision_needed: lp.decision_needed || null"); n != 2 {
+		t.Errorf("lp→PR constructions: stageTrackerLinkedPRItem + the one-PR row overlay only (found %d)", n)
+	}
+	for _, want := range []string{"stageTrackerItemByKey", "stageTrackerDecisionTarget", "stageTrackerDecisionOf", "stageTrackerSubRowHtml"} {
+		fn := jsFunc(t, html, want)
+		if !strings.Contains(fn, "stageTrackerLinkedPRItem(") && !strings.Contains(fn, "stageTrackerParkedNestedPRs(") {
+			t.Errorf("%s must build nested PR items with stageTrackerLinkedPRItem", want)
+		}
 	}
 }

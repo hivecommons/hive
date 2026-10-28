@@ -132,6 +132,8 @@ func TestStageTrackerGutterOnEveryRowAfterReconcile(t *testing.T) {
 		jsFunc(t, html, "stageTrackerReconcile"),
 		jsFunc(t, html, "stageTrackerSelectableKey"),
 		jsFunc(t, html, "stageTrackerSelectionPrune"),
+		jsFunc(t, html, "stageTrackerSubNodes"),
+		jsFunc(t, html, "stageTrackerSubKeyOf"),
 		jsFunc(t, html, "stageTrackerApplySelection"),
 		jsFunc(t, html, "stageTrackerRowKeys"),
 		jsFunc(t, html, "stageTrackerSetMenuOpen"),
@@ -212,8 +214,11 @@ const toolsRe = /<span class="ham-row-tools"><button type="button" class="ham-se
 function check(el, label) {
   const live = el.children.filter(c => !c.classList.contains('ham-leaving'));
   const selectable = live.filter(c => stageTrackerSelectableKey(c.dataset.hamKey));
-  const withTools = live.filter(c => (c.html.match(toolsRe) || []).length === 1);
-  assert.strictEqual(withTools.length, selectable.length, label + ': rows=' + selectable.length + ' rowsWithTools=' + withTools.length + ' missing=' + selectable.filter(c => !(c.html.match(toolsRe) || []).length).map(c => c.dataset.hamKey));
+  // One gutter per row plus one per nested PR sub-row (each PR under an
+  // issue is selected / acted on by itself).
+  const subs = c => (c.html.match(/data-ham-sub-key="/g) || []).length;
+  const withTools = live.filter(c => (c.html.match(toolsRe) || []).length === 1 + subs(c));
+  assert.strictEqual(withTools.length, selectable.length, label + ': rows=' + selectable.length + ' rowsWithTools=' + withTools.length + ' missing=' + selectable.filter(c => (c.html.match(toolsRe) || []).length !== 1 + subs(c)).map(c => c.dataset.hamKey));
   for (const c of selectable) {
     assert.ok(c.html.indexOf('class="ham-row-tools"') < c.html.indexOf('class="ham-row-head"'), label + ': the gutter leads the row ' + c.dataset.hamKey);
     assert.ok(c.html.includes('class="ham-kebab"'), label + ': ⋯ present on ' + c.dataset.hamKey);

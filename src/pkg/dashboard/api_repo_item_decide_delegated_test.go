@@ -354,3 +354,101 @@ func TestDelegatedDecisionRepeatIsNoop(t *testing.T) {
 		t.Fatalf("a repeat must write nothing: comments=%v added=%v", mock.comments, mock.added)
 	}
 }
+
+// An issue row with two open nested PRs (hivecommons/hive#15009: #15017 and
+// #15020 under one issue) must not have the delegate silently pick one:
+// the job decides each PR on its own, lists every outcome under `items`,
+// registers each PR's job so GET on the PR path reads it, and summarises
+// them in `result` for the issue row's toast.
+func TestDelegatedDecisionIssueWithTwoPRsDecidesEach(t *testing.T) {
+	mock := &repoItemDecisionMock{issueLabels: []string{"bug"}}
+	srv := newDelegatedServer(t, mock)
+
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human","prs":[9,8,8,7]}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Status != delegatedJobStatusDone || job.Decision != nil || job.Error != "" {
+		t.Fatalf("job = %+v", job)
+	}
+	if len(job.Items) != 2 || job.Items[0].Number != 8 || job.Items[1].Number != 9 {
+		t.Fatalf("items = %+v (sorted, deduped, never the issue itself)", job.Items)
+	}
+	for _, it := range job.Items {
+		if it.Type != "pr" || it.Status != delegatedJobStatusDone || it.Decision == nil || it.Decision.Verdict != delegatedecision.VerdictApprove ||
+			it.Result == nil || it.Result.Target.Kind != rowActionTargetPR || it.Result.Target.Number != it.Number || it.Result.Action != rowActionApproved {
+			t.Fatalf("item = %+v", it)
+		}
+	}
+	if job.Result == nil || job.Result.Action != rowActionDecidedEach || job.Result.Target.Kind != rowActionTargetIssue || job.Result.Target.Number != 7 {
+		t.Fatalf("result = %+v", job.Result)
+	}
+	if !strings.Contains(job.Result.Outcome, "#8 approved") || !strings.Contains(job.Result.Outcome, "#9 approved") || !strings.Contains(job.Result.Next, "2 sent · 2 decided · 0 no-op") {
+		t.Fatalf("outcome = %q next = %q", job.Result.Outcome, job.Result.Next)
+	}
+	all := strings.Join(mock.comments, "\n")
+	if !strings.Contains(all, "/hive decision approve #8") || !strings.Contains(all, "/hive decision approve #9") {
+		t.Fatalf("each PR gets its own decision comment: %v", mock.comments)
+	}
+	if strings.Contains(all, "approve #7") {
+		t.Fatalf("the issue itself must not be decided: %v", mock.comments)
+	}
+	// Each PR's job is readable on its own path.
+	for _, n := range []int{8, 9} {
+		rr := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/repos/testorg/testrepo/items/"+strconv.Itoa(n)+"/decide-delegated", nil))
+		sub := decodeDelegatedJob(t, rr)
+		if rr.Code != http.StatusOK || sub.Number != n || sub.Status != delegatedJobStatusDone || sub.Result == nil || sub.Result.Target.Number != n {
+			t.Fatalf("GET #%d code=%d job=%+v", n, rr.Code, sub)
+		}
+	}
+	if !strings.Contains(strings.Join(decisionAuditActions(srv), ","), auditRepoItemDecisionDelegated) {
+		t.Fatalf("audit missing: %v", decisionAuditActions(srv))
+	}
+}
+
+// A single nested PR, or none, keeps the issue decision as it was.
+func TestDelegatedDecisionIssueWithOnePRHintDecidesIssue(t *testing.T) {
+	mock := &repoItemDecisionMock{issueLabels: []string{"bug", "stage/045-needs-decision"}}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","prs":[8]}`, nil)
+	job := decodeDelegatedJob(t, w)
+	if w.Code != http.StatusOK || job.Status != delegatedJobStatusDone || len(job.Items) != 0 || job.Result == nil || job.Result.Target.Number != 7 || job.Result.Target.Kind != rowActionTargetIssue {
+		t.Fatalf("code=%d job=%+v", w.Code, job)
+	}
+}
+
+// Without a hint the server reads the issue's linked PRs from the tracker
+// pairing the row was drawn from.
+func TestDelegatedNestedPRNumbersFromTracker(t *testing.T) {
+	items := []StageTrackerItem{
+		{Repo: "o/r", Kind: "issue", Number: 1, LinkedPRs: []StageTrackerLinkedPR{{Number: 17}, {Number: 20}}},
+		{Repo: "o/r", Kind: "pr", Number: 17},
+		{Repo: "o/r", Kind: "issue", Number: 2},
+	}
+	if got := delegatedNestedPRNumbers(items, "O/R", 1); len(got) != 2 || got[0] != 17 || got[1] != 20 {
+		t.Fatalf("got %v", got)
+	}
+	if got := delegatedNestedPRNumbers(items, "o/r", 2); len(got) != 0 {
+		t.Fatalf("issue without PRs: %v", got)
+	}
+	if got := delegatedNestedPRNumbers(items, "o/r", 17); got != nil {
+		t.Fatalf("a PR is not an issue: %v", got)
+	}
+	srv := &Server{}
+	if got := srv.delegatedNestedOpenPRs("o/r", 1, []int{20, 17, 1, 0, 17}); len(got) != 2 || got[0] != 17 || got[1] != 20 {
+		t.Fatalf("hint: %v", got)
+	}
+	res := delegatedPerPRResult("o/r", 1, []delegatedDecisionItem{
+		{Number: 17, Result: &RowActionResult{Action: rowActionApproved, Rule: "small-low-risk"}},
+		{Number: 20, Result: &RowActionResult{Action: rowActionNoop}},
+		{Number: 21, Error: "GitHub 502"},
+	})
+	if res.Action != rowActionDecidedEach || res.Outcome != "Decided each of the 3 nested pull requests: #17 approved (small low risk); #20 no change (already decided); #21 failed — GitHub 502." {
+		t.Fatalf("outcome = %q", res.Outcome)
+	}
+	if !strings.HasPrefix(res.Next, "3 sent · 1 decided · 1 no-op · 1 failed") {
+		t.Fatalf("next = %q", res.Next)
+	}
+}
