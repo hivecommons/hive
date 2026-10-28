@@ -763,6 +763,35 @@ func TestIsBenignMessage(t *testing.T) {
 	}
 }
 
+func TestIsGitHubRateLimited(t *testing.T) {
+	for _, m := range []string{
+		"GET https://api.github.com/repos/o/r/pulls/798: 403 API secondary rate limit exceeded until 2026-10-28 17:42:28 -0400 EDT, not making remote request.",
+		"GET https://api.github.com/repos/o/r: 403 API rate limit of 5000 still exceeded until 2026-10-28 17:42:28 -0400 EDT, not making remote request.",
+		"GET https://api.github.com/repos/o/r: 403 API rate limit exceeded for installation ID 1.",
+		"POST https://api.github.com/repos/o/r/issues: 403 You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+		"GET https://api.github.com/repos/o/r: 429 Too Many Requests",
+		`Get "https://api.github.com/repos/o/r": github pacing: request shed while rate-limit caution window is engaged (class low, queue 8.209s ahead, limit 5s)`,
+		"github pacing: low-priority work shed while rate-limit caution window is engaged",
+	} {
+		if !IsGitHubRateLimited(m) {
+			t.Errorf("%q not recognised as rate limited", m)
+		}
+		if !IsBenignMessage(m) {
+			t.Errorf("%q not benign", m)
+		}
+	}
+	for _, m := range []string{
+		"GET https://api.github.com/repos/o/r: 403 Resource not accessible by integration",
+		"GET https://api.github.com/repos/o/r: 404 Not Found",
+		"failed to fetch check runs",
+		"github pacing: queue accounting failed",
+	} {
+		if IsGitHubRateLimited(m) {
+			t.Errorf("%q wrongly recognised as rate limited", m)
+		}
+	}
+}
+
 func TestIsBenignMessageReviewPendingExpiry(t *testing.T) {
 	for _, msg := range []string{"review pending expired", "  REVIEW PENDING EXPIRED  "} {
 		if !IsBenignMessage(msg) {

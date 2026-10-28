@@ -101,7 +101,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) {
+	if expectedKickHold(r) || rateLimitedError(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -139,6 +139,25 @@ func expectedKickHold(r slog.Record) bool {
 		return true
 	})
 	return held
+}
+
+// rateLimitedError reports whether the record's error attribute is a GitHub
+// rate-limit refusal or a pacing shed (fleetreport.IsGitHubRateLimited). The
+// message names the caller ("failed to fetch check runs", "stage labels:
+// check digest failed", ...) and differs per call site, so one rate-limit
+// episode would otherwise file one unclassified issue per caller
+// (hivecommons/hive#15106). The client backs off and callers retry on their
+// next tick; the WARN stays in local logs.
+func rateLimitedError(r slog.Record) bool {
+	limited := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" && fleetreport.IsGitHubRateLimited(a.Value.String()) {
+			limited = true
+			return false
+		}
+		return true
+	})
+	return limited
 }
 
 // Classifier errors stay in local logs only: transport errors can expose the

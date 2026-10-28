@@ -779,9 +779,42 @@ var benignSubstrings = []string{
 	"forward-merge guard: refusing to squash",
 }
 
+// rateLimitSubstrings are lower-case fragments that mark a GitHub rate-limit
+// refusal or the hive's own pacing shedding a request while the caution
+// window is engaged (see IsGitHubRateLimited). One rate-limit episode makes
+// every caller log its own WARN — check runs, statuses, permissions, repo
+// enumeration, advisories — and each distinct message used to cross the
+// repeat threshold as its own unclassified_error_repeated issue
+// (hivecommons/hive#15106). The condition is self-limiting: the client
+// backs off and the callers retry on their next tick.
+var rateLimitSubstrings = []string{
+	"api secondary rate limit exceeded",
+	"exceeded a secondary rate limit",
+	"api rate limit exceeded",
+	"api rate limit of",
+	"not making remote request",
+	"429 too many requests",
+	"github pacing: request shed",
+	"rate-limit caution window is engaged",
+}
+
+// IsGitHubRateLimited reports whether s (a log message or an error string)
+// is a GitHub rate-limit refusal or a pacing shed. The generic repeated-error
+// feed treats such lines as benign; the WARN itself stays in local logs.
+func IsGitHubRateLimited(s string) bool {
+	m := strings.ToLower(s)
+	for _, sub := range rateLimitSubstrings {
+		if strings.Contains(m, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsBenignMessage reports whether a raw log message is noise the generic
 // repeated-error feed must not report: the read/keepalive i/o timeout rule
-// above applied to the whole line, every benignSubstrings entry, and the
+// above applied to the whole line, GitHub rate-limit and pacing refusals
+// (IsGitHubRateLimited), every benignSubstrings entry, and the
 // exact-message exclusions matched in the function body below.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
@@ -814,7 +847,7 @@ func IsBenignMessage(msg string) bool {
 		"[contribute-ws] refusing task: daily rate limit reached":
 		return true
 	}
-	if benignIOTimeout(m, m) {
+	if benignIOTimeout(m, m) || IsGitHubRateLimited(m) {
 		return true
 	}
 	for _, s := range benignSubstrings {

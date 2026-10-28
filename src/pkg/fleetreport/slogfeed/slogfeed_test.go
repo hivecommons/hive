@@ -517,3 +517,50 @@ func TestClassifierErrorsStayInLocalLogs(t *testing.T) {
 		}
 	}
 }
+
+// One GitHub rate-limit episode made every caller log its own WARN, and each
+// distinct message was filed as its own unclassified_error_repeated issue
+// (hivecommons/hive#15106 and siblings). The WARNs stay in local logs; none
+// is observed by the generic feed.
+func TestGitHubRateLimitStormLogsWithoutFleetReport(t *testing.T) {
+	const secondary = ": 403 API secondary rate limit exceeded until 2026-10-28 17:42:28 -0400 EDT, not making remote request."
+	const shed = ": github pacing: request shed while rate-limit caution window is engaged (class low, queue 8.209s ahead, limit 5s)"
+	cases := []struct {
+		issue int
+		msg   string
+		args  []any
+	}{
+		{15110, "stage labels: check digest failed", []any{"repo", "utah-packages", "pr", 797, "error", "GET https://api.github.com/repos/o/r/commits/abc/status?per_page=100" + secondary}},
+		{15111, "GitHub refused repo enumeration transiently; serving last-good snapshot for this repo (marked stale)", []any{"repo", "website", "side", "issues", "error", "listing issues for o/website: GET https://api.github.com/repos/o/website/issues?page=1" + secondary}},
+		{15112, "failed to fetch check runs", []any{"repo", "testsuite", "pr", 1037, "error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs?per_page=100" + secondary}},
+		{15113, "could not check watched repo has_issues", []any{"repo", "o/website", "error", `Get "https://api.github.com/repos/o/website"` + shed}},
+		{15114, "advisory: issue state lookup failed", []any{"ref", "o/bluefin#961", "error", `reading o/bluefin#961: Get "https://api.github.com/repos/o/bluefin/issues/961"` + shed}},
+		{15115, "stage labels: could not read the author's repository permission; adoption deferred", []any{"repo", "utah-packages", "pr", 798, "error", "GET https://api.github.com/repos/o/r/collaborators/u/permission" + secondary}},
+		{15107, "github pacing: low-priority work shed while rate-limit caution window is engaged", []any{"caller", "review-request-watcher", "queue_eta", "6.882s", "budget", "5s"}},
+		{15106, "stage labels: could not read maintainer_can_modify; keeping in-place adoption this sweep", []any{"repo", "utah-packages", "pr", 798, "error", "GET https://api.github.com/repos/o/r/pulls/798" + secondary}},
+		{15109, "advisory: path existence check failed", []any{"path", "a/b.sh", "repo", "common", "error", `checking o/common/a/b.sh@abc: Get "https://api.github.com/repos/o/common/contents/a/b.sh?ref=abc"` + shed}},
+		{0, "failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 429 Too Many Requests"}},
+		{0, "failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 403 API rate limit of 5000 still exceeded until 2026-10-28 17:42:28 -0400 EDT, not making remote request."}},
+	}
+	for _, tc := range cases {
+		logger, seen, out := newFeed(t)
+		for i := 0; i < 8; i++ {
+			logger.Warn(tc.msg, tc.args...)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("#%d %q: rate-limited WARN produced observations: %+v", tc.issue, tc.msg, *seen)
+		}
+		if n := strings.Count(out.String(), "\n"); n != 8 {
+			t.Errorf("#%d %q: wrapped handler saw %d records, want 8", tc.issue, tc.msg, n)
+		}
+	}
+
+	// The same callers failing for any other reason must remain reportable,
+	// including a plain 403 permission refusal.
+	logger, seen, _ := newFeed(t)
+	logger.Warn("failed to fetch check runs", "error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 403 Resource not accessible by integration")
+	logger.Warn("stage labels: check digest failed", "error", "GET https://api.github.com/repos/o/r/commits/abc/status: 500 Internal Server Error")
+	if len(*seen) != 2 {
+		t.Fatalf("non-rate-limit failures must remain reportable: %+v", *seen)
+	}
+}

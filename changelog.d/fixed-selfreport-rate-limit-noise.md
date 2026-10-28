@@ -1,0 +1,1 @@
+- Fleet selfreports no longer file an unclassified-runtime-error issue per caller when GitHub rate limiting or the hive's own request pacing makes many callers log the same transient failure; the WARNs stay in local logs (#15106).
