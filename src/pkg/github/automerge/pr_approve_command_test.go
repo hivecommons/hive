@@ -104,3 +104,37 @@ func TestPRApproveReply(t *testing.T) {
 		})
 	}
 }
+
+func TestPRApproveReplyWorkflowHeadThatRemovesTestsIsManualMerge(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(&gh.PullRequest{Number: gh.Ptr(7), State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr("contributor")}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}})
+		case "/repos/acme/widget/pulls/7/files":
+			json.NewEncoder(w).Encode([]*gh.CommitFile{
+				{Filename: gh.Ptr(".github/workflows/ci.yml"), Status: gh.Ptr("modified")},
+				{Filename: gh.Ptr("src/main_test.go"), Status: gh.Ptr("removed")},
+			})
+		default:
+			t.Errorf("unexpected read: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer api.Close()
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	e := New(client, Options{
+		MergerAuthorizer: func(login string) bool { return login == "owner" },
+		ContributorLanePolicy: func() ContributorLanePolicy {
+			return ContributorLanePolicy{Enabled: true, OwnerApprovalReleasesWorkflowFence: true}
+		},
+		ContributorLaneVerdict: func(string, int, string) ContributorLaneVerdict {
+			return ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+		},
+		RepoAutoMergeEnabled: func(string) bool { return true },
+	})
+	reply, err := e.PRApproveReply(context.Background(), "acme/widget", 7, &gh.IssueComment{Body: gh.Ptr("/hive approve"), User: &gh.User{Login: gh.Ptr("owner"), Type: gh.Ptr("User")}})
+	if err != nil || !strings.Contains(reply, "requires a person to merge manually") || strings.Contains(reply, "the lane merges once CI") {
+		t.Fatalf("reply=%q err=%v, want the generic manual-merge reply", reply, err)
+	}
+}

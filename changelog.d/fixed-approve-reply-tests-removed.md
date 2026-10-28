@@ -1,0 +1,1 @@
+- The `/hive approve` reply no longer promises that a trusted merger's Approve review will merge a contributor PR whose head edits CI workflow files and also removes tests; the lane stops such a head at `contributor-lane:tests-removed` regardless of approval, so the reply now says a maintainer must merge it manually. Message-only change. (#15034)
