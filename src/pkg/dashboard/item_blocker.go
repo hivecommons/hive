@@ -118,16 +118,18 @@ func blockerDecisionOptions(b StageTrackerBlocker, held bool, ctx blockerOptions
 	if b.Capability {
 		settings := decisionOption(blocker.ActionAppSettings, blockerActionLabel(blocker.ActionAppSettings, b.Permission), ctx.AppSettingsURL != "", decisionWhyNoAppSettings)
 		settings.URL = ctx.AppSettingsURL
-		opts = append(opts,
-			settings,
-			decisionOption(blocker.ActionRecheck, blockerActionLabel(blocker.ActionRecheck, b.Permission), true, ""),
-			decisionOption(blocker.ActionPatch, blockerActionLabel(blocker.ActionPatch, b.Permission), ctx.PatchFeasible, nonEmpty(ctx.PatchWhy, decisionWhyPatchNoIdentity)),
-		)
+		settings.Consequence = "opens the App settings page in a new tab; the hive re-tries on its own once it sees `" + b.Permission + ": write`"
+		recheck := decisionOption(blocker.ActionRecheck, blockerActionLabel(blocker.ActionRecheck, b.Permission), true, "")
+		recheck.Consequence = "probes the installation now and releases every item blocked on `" + b.Permission + "` if it is granted"
+		patch := decisionOption(blocker.ActionPatch, blockerActionLabel(blocker.ActionPatch, b.Permission), ctx.PatchFeasible, nonEmpty(ctx.PatchWhy, decisionWhyPatchNoIdentity))
+		patch.Consequence = "the hive prepares the change for a person to push under their own identity"
+		opts = append(opts, settings, recheck, patch)
 	}
-	opts = append(opts,
-		decisionOption(blocker.ActionClosePartial, blockerActionLabel(blocker.ActionClosePartial, ""), !held, decisionWhyHeld),
-		decisionOption(blocker.ActionWait, blockerActionLabel(blocker.ActionWait, ""), true, ""),
-	)
+	closePartial := decisionOption(blocker.ActionClosePartial, blockerActionLabel(blocker.ActionClosePartial, ""), !held, decisionWhyHeld)
+	closePartial.Consequence = "labels the issue partially-addressed, posts your note on what remains and closes it"
+	wait := decisionOption(blocker.ActionWait, blockerActionLabel(blocker.ActionWait, ""), true, "")
+	wait.Consequence = "changes nothing; the row stays blocked until the blocker clears"
+	opts = append(opts, closePartial, wait)
 	why := decisionWhyBlockerHumanOnly
 	switch {
 	case kind == blocker.HumanOnlyReasked || b.Reapplied:
