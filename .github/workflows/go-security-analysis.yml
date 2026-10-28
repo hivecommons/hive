@@ -279,6 +279,8 @@ jobs:
       # caught when the workflow RUNS. tagged-release.yml shipped one (#4908), so every
       # tagged release failed at "Prepare all required actions" — discovered
       # only when someone tried to cut a release.
+      - name: Action-pins gate self-test
+        run: bash src/scripts/test-check-action-pins.sh
       - name: Check every pinned action SHA exists
         env:
           GH_TOKEN: ${{ github.token }}
