@@ -205,11 +205,22 @@ func sourceLabel(sourceType string) string {
 	return sourceType
 }
 
-var targetBranchDeclarationPattern = regexp.MustCompile(`(?im)^[ \t]*(?:\*\*)?target:[ \t]*(v[0-9]+)\.?(?:\*\*)?(?:[ \t]|$)`)
+// targetBranchDeclarationPattern matches every spelling the scanner's issue
+// templates have used for the release-line declaration:
+//
+//	**Target: v6.**
+//	**Target branch:** `v6`
+//	Target-branch: v6
+//	… Depends on #14558. Target: v6 (open the PR with `--base v6`).
+//
+// A declaration starts a line or follows a sentence boundary; the value may
+// be backticked. Prose that merely mentions "the target: v6" is not a
+// routing directive (hivecommons/hive#14764).
+var targetBranchDeclarationPattern = regexp.MustCompile("(?im)(?:^[ \t]*|[.;)][ \t]+)(?:\\*\\*)?target(?:[ \t-]branch)?(?:\\*\\*)?:(?:\\*\\*)?[ \t]*`?(v[0-9]+)`?\\.?(?:\\*\\*)?(?:[ \t]|$|\\()")
 
-// releaseLineFromBody extracts the scanner's explicit issue-body declaration,
-// including the observed "**Target: v6.**" spelling. Only release-line names
-// are accepted; prose containing "target" is not a routing directive.
+// releaseLineFromBody extracts the scanner's explicit issue-body declaration
+// (see targetBranchDeclarationPattern). Only release-line names are accepted;
+// prose containing "target" is not a routing directive.
 func releaseLineFromBody(body string) string {
 	match := targetBranchDeclarationPattern.FindStringSubmatch(body)
 	if len(match) != 2 {

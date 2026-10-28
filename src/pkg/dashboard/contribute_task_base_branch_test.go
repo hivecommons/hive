@@ -385,6 +385,35 @@ func TestTaskBaseBranch_DeclaredIssueTarget(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#14764: the scanner's newer templates write the declaration
+// as "**Target branch:** `v6`" or inline after a sentence ("… Depends on
+// #14558. Target: v6 (open the PR with `--base v6`)."). Neither matched, so
+// every relay dispatch of those issues defaulted to the hub branch and came
+// back wrong_base.
+func TestReleaseLineFromBody_TemplateSpellings(t *testing.T) {
+	cases := map[string]string{
+		"Context.\n\n**Target branch:** `v6`\n\nDetails.": "v6",
+		"**Target branch**: v7":                           "v7",
+		"Target-branch: v5":                               "v5",
+		"target branch: `v6`.":                            "v6",
+		"Part of #14550. Depends on #14558. Target: v6 (open the PR with `--base v6`).": "v6",
+		"Scope is narrow; target: v6 — nothing else.":                                   "v6",
+		"**Target: v6.** Running build `abc123`.":                                       "v6",
+		"the target: v6 is discussed":                                                   "",
+		"Target branch: main":                                                           "",
+		"Retarget: v6 later":                                                            "",
+	}
+	for body, want := range cases {
+		if got := releaseLineFromBody(body); got != want {
+			t.Errorf("releaseLineFromBody(%q) = %q, want %q", body, got, want)
+		}
+	}
+	body := "Part of #14550. Target: v6 (open the PR with `--base v6`)."
+	if got := taskBaseBranchForIssue("plain title", body, "", "hivecommons/hive", "v5"); got != "v6" {
+		t.Fatalf("inline body target = %q, want v6", got)
+	}
+}
+
 func TestBuildTaskPrompt_DeclaredBodyTargetAndWrongBaseContract(t *testing.T) {
 	base := taskBaseBranchForIssue("scanner finding", "**Target: v6.**", "", "hivecommons/hive", "v5")
 	prompt := buildTaskPromptBody("hivecommons/hive", "hivecommons/hive#13146", "scanner finding", "", base)
