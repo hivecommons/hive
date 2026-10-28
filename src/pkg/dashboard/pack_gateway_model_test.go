@@ -179,6 +179,36 @@ func TestApplyPackMovesPackOwnedAgentOntoHiveGateway(t *testing.T) {
 	}
 }
 
+// TestApplyPackFollowsGatewayChange: pack-owned agents an earlier apply moved
+// onto one gateway follow the hive again when the operator moves every agent
+// they picked onto another — "follow the hive's gateway" is not one hop
+// (#14678 review). An operator-owned gateway placement is not touched.
+func TestApplyPackFollowsGatewayChange(t *testing.T) {
+	srv := gatewayHive(t, "vllm")
+	for _, name := range []string{"supervisor", "brainstorm", "reviewer"} {
+		srv.deps.Config.Agents[name] = config.AgentConfig{
+			ID: name, Role: name, Enabled: true,
+			Backend: "litellm", BackendOwner: config.FieldOwnerPack,
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := srv.ApplyPack(2); err != nil {
+			t.Fatalf("ApplyPack(2) #%d: %v", i, err)
+		}
+		for _, name := range []string{"supervisor", "brainstorm", "reviewer"} {
+			got := srv.deps.Config.Agents[name]
+			if got.Backend != "vllm" || got.Model != "" || got.BackendIsOperatorOwned() {
+				t.Errorf("apply #%d: %s backend=%q model=%q operator-owned=%v, want pack-owned vllm with no model", i, name, got.Backend, got.Model, got.BackendIsOperatorOwned())
+			}
+		}
+		for _, name := range []string{"scanner", "quality", "guide"} {
+			if got := srv.deps.Config.Agents[name].Backend; got != "vllm" {
+				t.Errorf("apply #%d: %s backend = %q, want the operator's vllm", i, name, got)
+			}
+		}
+	}
+}
+
 // TestApplyPackKeepsPackBackendWhenGatewayNotShared: the pack backend stays
 // whenever "the hive's gateway" is not a single, unambiguous choice, and an
 // operator's own copilot pick is never moved.

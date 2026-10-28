@@ -147,8 +147,9 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// the manager's process table and were re-registered. A repair, not a
 	// creation — it never feeds `created` or isFirstApplyOrExpansion (#5632).
 	var readded []string
-	// Read once, before this apply creates or moves anything, so the
-	// gateway the operator chose is judged on their agents alone.
+	// Read once, before this apply creates or moves anything, so every pack
+	// agent judges the hive's gateway on the same pre-apply roster rather
+	// than on agents this apply already moved.
 	hiveBackends := s.hiveAgentBackends()
 	for _, pa := range pack.Agents {
 		// A deliberately deleted agent is NOT re-created, at any level. The
@@ -209,11 +210,14 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// stick. A pack-owned model is cleared there instead, so the
 			// gateway default applies.
 			packBackend, backendReplaced := s.packAgentBackend(pa)
-			// A pack agent still sitting on the CLI the pack gave it follows
-			// the hive's gateway (#14678). Only a backend the pack itself
-			// wrote moves — never an operator's pick, nor a legacy unowned one.
+			// A pack agent whose backend the pack still owns follows the
+			// hive's gateway (#14678): from the CLI the pack gave it, and
+			// again from a gateway an earlier apply moved it onto when the
+			// operator later moves the hive to another. Only a backend the
+			// pack itself wrote moves — never an operator's pick, nor a
+			// legacy unowned one.
 			gw := gatewayPlacement(packBackend, backendReplaced, hiveGateway)
-			if gw != "" && existing.BackendIsPackOwned() && strings.EqualFold(existing.Backend, packBackend) {
+			if gw != "" && existing.BackendIsPackOwned() && !strings.EqualFold(existing.Backend, gw) {
 				s.logger.Info("moving pack-owned agent onto the hive's inference gateway",
 					"agent", pa.Name, "backend", existing.Backend, "gateway", gw)
 				existing.Backend = gw
@@ -1176,14 +1180,15 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 }
 
 // hiveGatewayBackend is the inference gateway the operator moved the hive
-// onto: the one inference backend or configured gateway that every
-// operator-picked backend among the enabled agents other than except names,
-// when the agents already on that gateway are a majority of all those other
-// agents. It is "" when any operator-picked backend is a subscription CLI,
-// the hive default or a different gateway, when there are no operator picks,
-// or when the gateway hosts at most half of the other agents. except is the
-// pack agent being placed, so its own pack CLI placement is not counted
-// against the move.
+// onto, or "" when there is no such gateway. The candidates are the enabled
+// agents in backends other than except, the pack agent being placed, so its
+// own placement is not counted against the move. The gateway is chosen by
+// unanimity of the operator-owned backends among those candidates: every one
+// must name the same inference backend or configured gateway, and there must
+// be at least one. Any operator pick of a subscription CLI, of the hive
+// default or of a different gateway yields "". The chosen gateway must then
+// clear a majority bar: more than half of the candidates, whoever placed
+// them, already run on it; otherwise the result is "".
 //
 // A pack agent a level adds later is placed on this backend instead of its
 // pack CLI (#14678): an operator who moved scanner/quality/guide onto a LiteLLM
@@ -1232,8 +1237,9 @@ func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except
 
 // gatewayPlacement is the backend a pack-owned agent is moved to so it follows
 // the hive's gateway (hiveGatewayBackend), or "" to keep packBackend. Only a
-// pack CLI placement is redirected: a pack that itself names a gateway, or a
-// placement the spoke's backends list already replaced, is left alone.
+// pack whose own placement is a CLI is redirected: a pack that itself names a
+// gateway, or a placement the spoke's backends list already replaced, is left
+// alone.
 func gatewayPlacement(packBackend string, backendReplaced bool, hiveGateway string) string {
 	if hiveGateway == "" || backendReplaced || !config.IsCLIBackend(packBackend) {
 		return ""
