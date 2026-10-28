@@ -92,6 +92,11 @@ type StageTrackerResponse struct {
 	// the entries since the viewer's local midnight). Best effort: the
 	// in-memory audit ring is the only source, as for RecentlyMerged.
 	Merged24h []StageTrackerMerged `json:"merged_24h,omitempty"`
+	// Merged is the durable merge ledger's summary (merged_ledger.go):
+	// counts for today (in the spoke's zone), 7 and 30 days, all time, and
+	// the last few merges. Unlike RecentlyMerged it survives a roll, so it
+	// is what the "Merged" chip shows.
+	Merged StageTrackerMergedSummary `json:"merged"`
 }
 
 // StageTrackerMerged is one recently merged pull request.
@@ -1668,6 +1673,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	qualify := stageTrackerRepoQualifier(status)
 	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now, qualify)
 	resp.Merged24h = s.stageTrackerMergedSince(now, stageTrackerMergedDayWindow, qualify)
+	resp.Merged = s.mergedSummaryNow(now)
 	if status == nil {
 		return resp
 	}

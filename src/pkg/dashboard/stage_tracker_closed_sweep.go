@@ -125,7 +125,7 @@ func (s *Server) sweepClosedRows(ctx context.Context, now time.Time) (int, error
 	}
 	var firstErr error
 	allRead := true
-	var evict []github.WebhookItemSnapshot
+	var evict, merged []github.WebhookItemSnapshot
 	for _, repo := range status.Repos {
 		if ctx.Err() != nil {
 			return 0, ctx.Err()
@@ -146,11 +146,17 @@ func (s *Server) sweepClosedRows(ctx context.Context, now time.Time) (int, error
 			if !strings.EqualFold(snap.Repo, name) && !strings.EqualFold(snap.Repo, repo.Name) {
 				snap.Repo = name
 			}
+			if snap.IsPR && snap.Merged {
+				merged = append(merged, snap)
+			}
 			if frontendRepoLists(repo, snap.Number, snap.IsPR) {
 				evict = append(evict, snap)
 			}
 		}
 	}
+	// Every merged PR feeds the ledger, listed or not: a PR that left the
+	// tracker before the sweep saw it close still counts as merged.
+	s.recordMergedSnapshots(merged)
 	evicted := 0
 	if len(evict) > 0 {
 		evicted = s.applyWebhookItemSnapshots(evict)

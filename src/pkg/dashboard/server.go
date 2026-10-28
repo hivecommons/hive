@@ -162,8 +162,12 @@ type Server struct {
 	// closedSweep is the tracker's closed-item backstop
 	// (stage_tracker_closed_sweep.go).
 	closedSweep closedSweepState
-	sidebar     interface{}
-	sidebarMu   sync.RWMutex
+	// merged is the persistent record of merged PRs behind the tracker's
+	// "Merged" chip (merged_ledger.go); built lazily by mergedLedger.
+	merged     *MergedLedger
+	mergedOnce sync.Once
+	sidebar    interface{}
+	sidebarMu  sync.RWMutex
 
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.

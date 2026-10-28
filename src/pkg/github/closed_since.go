@@ -78,6 +78,11 @@ func (c *Client) ListClosedSince(ctx context.Context, repo string, since time.Ti
 			if snap.State == "" {
 				snap.State = "closed"
 			}
+			if snap.IsPR {
+				// The issues feed carries the merge instant, not the merger.
+				snap.MergedAt = issue.GetPullRequestLinks().GetMergedAt().Time
+				snap.Merged = !snap.MergedAt.IsZero()
+			}
 			if snap.Open() {
 				// state=closed should never list an open item; never evict on it.
 				continue
