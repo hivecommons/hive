@@ -343,6 +343,9 @@ func TestClosingKeywordMissingTargetExpires(t *testing.T) {
 	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	c.now = func() time.Time { return clock }
 	const target = "acme/widget#1036"
+	// Registered as missing so the front counts its reads; an unregistered
+	// number falls through to the backend uncounted.
+	front.set(target, linkedIssue{status: http.StatusNotFound})
 
 	if open, err := c.numberIsOpenPullRequest(context.Background(), "acme", "widget", 1036); err != nil || open {
 		t.Fatalf("missing target: open = %v, err = %v", open, err)
