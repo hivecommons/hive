@@ -89,6 +89,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// Umbrella issues no automated claim may take and no claim stages
 	// (governor.claims.never_claim_labels, default `epic`).
 	client.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+	// Live open-PR guard on every automated claim
+	// (scanner.skip_issues_with_open_pr, default on).
+	client.SetSkipIssuesWithOpenPR(b.cfg.Scanner.SkipIssuesWithOpenPREnabled())
 	client.SetAdditionalBotLogins(b.cfg.GitHub.AdditionalBotLogins)
 	client.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)

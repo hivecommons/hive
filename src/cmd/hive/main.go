@@ -1525,6 +1525,17 @@ func (b *boot) wireBootClosures() {
 			IssueClaimed: func(repo string, number int) (github.IssueClaim, bool) {
 				return getClaimLedger(b.logger).Lookup(repo, number)
 			},
+			// #14804: and a live open-PR check behind the ledger, so a PR
+			// opened since the last eval cycle withholds its issue now.
+			IssueOpenPRClaimed: func(repo string, number int) (github.IssueClaim, bool) {
+				ghc := b.ghClient
+				if ghc == nil {
+					return github.IssueClaim{}, false
+				}
+				ctx, cancel := context.WithTimeout(b.ctx, claimsGitHubTimeout)
+				defer cancel()
+				return ghc.IssueOpenPRClaim(ctx, repo, number)
+			},
 			// #7871: and write access for the one verified fact a no_work_needed
 			// verdict produces — the PR/commit that already settled the issue.
 			RecordIssueClaim: func(c github.IssueClaim) error {
@@ -2669,6 +2680,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
 			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+			b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.SkipIssuesWithOpenPREnabled())
 			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
 				b.ghClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
@@ -5806,6 +5818,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
 				b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+				b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.SkipIssuesWithOpenPREnabled())
 				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
 				syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)

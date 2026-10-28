@@ -200,7 +200,22 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 		if gh == nil {
 			return "", github.ErrNoGitHubClient
 		}
-		return gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
+		reason, err := gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
+		if err != nil || reason != "" {
+			return reason, err
+		}
+		// The open-PR guard (scanner.skip_issues_with_open_pr) refuses only a
+		// claim that would start new work. A start signal carrying PR evidence
+		// is the claimant's own PR, and a renewal or the ReleaseBlocked recheck
+		// of a claim the same holder already has must not release it because
+		// that holder's PR is now open.
+		if req.PRStarted {
+			return "", nil
+		}
+		if held, ok := ledger.Lookup(req.Repo, req.Issue); ok && held.Holder == req.Holder && held.Kind == req.Kind {
+			return "", nil
+		}
+		return gh.IssueOpenPRClaimBlockReason(ctx, req.Repo, req.Issue), nil
 	})
 }
 

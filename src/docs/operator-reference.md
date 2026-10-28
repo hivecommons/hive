@@ -739,6 +739,26 @@ someone re-runs it. The shared-CI rerun sweep
 |---|---|---|
 | `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes. |
 
+## Open-PR claim guard (`scanner`)
+
+The claim ledger learns of open pull requests only when the eval cycle's
+`FetchClaimScan` runs, so a PR opened between scans used to leave its issue
+claimable — and dispatched again — for several minutes. Before every
+automated claim (ledger admission, the `hive-open-issue claim` relay request,
+the contributor lane) the hive now lists the repo's open PRs live — one
+listing per repo per sweep, reused for a minute — and refuses the claim when
+an open PR's title or body closes the issue (`Fixes`/`Closes`/`Resolves #N`,
+any case). The refused issue is labelled `has-open-pr` (the label is created
+if missing), the hive logs `claim skipped: open PR already linked` with the PR
+number, the relay request fails with `open PR already linked: #<pr>`, and the
+contributor queue withholds the issue as `open_pr_claim`. A claimant's own PR
+start signal, a renewal of its claim and the cleanup recheck are not refused,
+and a failed listing admits the claim (the next ledger scan still covers it).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `scanner.skip_issues_with_open_pr` | `true` (unset) | Set `false` to claim issues regardless of open linked PRs (ledger-only behaviour). |
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel evaluates open PRs in the watched repos — human, bot, or agent —

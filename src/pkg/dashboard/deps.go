@@ -182,6 +182,13 @@ type Dependencies struct {
 	// repo is tried in the same spelling the ledger keys on (the config repo
 	// form); a nil func means "no claim data" and disables the check.
 	IssueClaimed func(repo string, number int) (ghpkg.IssueClaim, bool)
+	// IssueOpenPRClaimed is the live check behind IssueClaimed
+	// (hivecommons/hive#14804): it reads the repo's open PRs directly (one
+	// cached listing per sweep) for one that closes the issue, because the
+	// ledger only learns of a PR at the next eval cycle. A nil func, or the
+	// scanner open-PR guard turned off, means "no claim" and the ledger alone
+	// decides, as before.
+	IssueOpenPRClaimed func(repo string, number int) (ghpkg.IssueClaim, bool)
 
 	// Watsonx / OpenRouter are the LLM-provider gateway views (#5565 slice 3):
 	// narrow consumer-defined interfaces over pkg/watsonx and pkg/openrouter,

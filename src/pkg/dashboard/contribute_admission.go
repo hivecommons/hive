@@ -275,15 +275,27 @@ func observeExternalDependencies(candidate contributorAdmissionCandidate) conver
 // first since cross-repo `owner/repo#N` closing references key on it. A hub
 // with no hook wired (tests, or a hive booted without GitHub credentials)
 // reports no claims and selection proceeds exactly as before.
+//
+// The ledger learns of a PR only at the next eval cycle, so a ledger miss
+// falls through to the live Dependencies.IssueOpenPRClaimed check
+// (hivecommons/hive#14804): a PR opened between scans withholds its issue now
+// rather than minutes later, after a second contributor has been handed it.
 func (h *ContributeWSHub) issueClaimedByOpenPR(repoFull, repoName string, number int) (ghpkg.IssueClaim, bool) {
-	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.IssueClaimed == nil {
+	if h == nil || h.server == nil || h.server.deps == nil {
 		return ghpkg.IssueClaim{}, false
 	}
-	if claim, ok := h.server.deps.IssueClaimed(repoFull, number); ok {
-		return claim, true
+	if lookup := h.server.deps.IssueClaimed; lookup != nil {
+		if claim, ok := lookup(repoFull, number); ok {
+			return claim, true
+		}
+		if repoName != "" && repoName != repoFull {
+			if claim, ok := lookup(repoName, number); ok {
+				return claim, true
+			}
+		}
 	}
-	if repoName != "" && repoName != repoFull {
-		if claim, ok := h.server.deps.IssueClaimed(repoName, number); ok {
+	if live := h.server.deps.IssueOpenPRClaimed; live != nil && repoFull != "" {
+		if claim, ok := live(repoFull, number); ok {
 			return claim, true
 		}
 	}

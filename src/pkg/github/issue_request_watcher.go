@@ -580,6 +580,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if err != nil {
 			break // Retry a failed lookup; never claim on unknown labels.
 		}
+		if reason == "" {
+			reason = c.IssueOpenPRClaimBlockReason(ctx, req.Repo, req.Number)
+		}
 		if reason != "" {
 			c.denyIssueRequest(path, req, "issue claim refused: "+reason, nowFn)
 			return

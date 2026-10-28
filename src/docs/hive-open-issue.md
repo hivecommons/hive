@@ -255,7 +255,11 @@ issue labelled `needs-human` or held, on an issue parked on a person's
 decision (`stage/045-needs-decision`, `needs-spec`, the retired decision
 labels), and on an umbrella issue wearing a never-claim label
 (`governor.claims.never_claim_labels`, default `epic`, case-insensitive):
-an epic is the list of work, not the work. The same gate admits every
+an epic is the list of work, not the work. It is also refused, with
+`open PR already linked: #<pr>`, on an issue an open pull request already
+closes (`Fixes #N` in its title or body), checked live and labelled
+`has-open-pr` (`scanner.skip_issues_with_open_pr`, default on;
+[#14804](https://github.com/hivecommons/hive/issues/14804)). The same gate admits every
 automated claim producer, so a start signal on such an issue records nothing. The
 `stage/030-pr-in-progress` label is swapped for `stage/040-covered-by-pr` when
 the agent's `hive-open-pr --issues` request opens the PR, and cleared when the

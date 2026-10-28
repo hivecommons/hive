@@ -96,8 +96,12 @@ type Client struct {
 	// the config (nil = package default; see SetNeverClaimLabels).
 	neverClaimMu     sync.RWMutex
 	neverClaimLabels []string
-	sentinelMu       sync.RWMutex
-	sentinelLabel    string
+	// skipIssuesWithOpenPR is scanner.skip_issues_with_open_pr (see
+	// SetSkipIssuesWithOpenPR); openLinkedPRCache backs that guard.
+	skipIssuesWithOpenPR atomic.Bool
+	openLinkedPRCache    openLinkedPRCache
+	sentinelMu           sync.RWMutex
+	sentinelLabel        string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,
