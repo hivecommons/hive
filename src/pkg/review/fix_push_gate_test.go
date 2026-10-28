@@ -293,3 +293,22 @@ func TestFixPushAuthorOK(t *testing.T) {
 		})
 	}
 }
+
+func TestWithheldFixExclusionReportedOncePerHead(t *testing.T) {
+	pr := humanPR("sha1")
+	pr.HiveAttributed = true
+	arts := Artifact{Items: []Aggregate{changesRequestedFor(pr)}}
+
+	first := PlanDispatch([]PullRequest{pr}, arts, DispatchState{}, fixGateOpts(false))
+	if len(first.FixExclusions) != 1 || len(first.WithheldFixes) != 1 {
+		t.Fatalf("first cycle: exclusions=%+v withheld=%+v, want one of each", first.FixExclusions, first.WithheldFixes)
+	}
+
+	second := PlanDispatch([]PullRequest{pr}, arts, first.State, fixGateOpts(false))
+	if len(second.FixExclusions) != 0 || len(second.WithheldFixes) != 0 {
+		t.Fatalf("second cycle re-reported the same head: exclusions=%+v withheld=%+v", second.FixExclusions, second.WithheldFixes)
+	}
+	if len(second.State.Withheld) != 1 {
+		t.Fatalf("withheld state = %+v, want the single entry kept", second.State.Withheld)
+	}
+}

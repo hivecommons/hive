@@ -1417,11 +1417,6 @@ func fixPushAuthorOK(author string) bool {
 func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now time.Time) {
 	for _, w := range p.State.Withheld {
 		if samePRHead(w.Repo, w.Number, w.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
-			reason := FixDispatchExcludedNotHiveAuthored
-			if opts.FixHumanPRs {
-				reason = FixDispatchExcludedNotHiveAuthoredDCO
-			}
-			p.recordFixExclusion(pr, reason, 0)
 			return
 		}
 	}
