@@ -75,14 +75,17 @@ concurrency:
 jobs:
   changelog-fragment-guard:
     name: changelog-fragment-guard
-    # Label events only matter when the label is `no-changelog`; every other
-    # label (size/*, dco-signoff, agent/*, hive/*) cannot change the verdict.
-    # A skipped job still reports a check-run, and GitHub treats "skipped" as
-    # passing for a required context, so this keeps the rollup green instead
-    # of adding a redundant run per label (#11250).
-    if: >-
-      (github.event.action != 'labeled' && github.event.action != 'unlabeled')
-      || github.event.label.name == 'no-changelog'
+    # No job-level `if:` on label events — on purpose (#14755). This job used
+    # to skip itself for every label other than `no-changelog`, and a skipped
+    # job still reports a check-run that GitHub scores as *passing* for a
+    # required context. hive's labeler adds three or four labels seconds
+    # after every push, so a genuine failure on the push-triggered run was
+    # superseded by a "skipped" sibling on the same head SHA and tide merged
+    # a malformed fragment (#14629), which then broke the release `decide`
+    # job on v5 and held every open v5 PR behind a red base. The guard is
+    # cheap (git, grep, echo); re-running it on each label event keeps the
+    # reported verdict truthful. Label runs are not cancelled by concurrency
+    # (see above), so they cannot leave CANCELLED check-runs either.
     # Forward-merge sync PRs (v5-topup.yml / v6-topup.yml, and the hand-rolled
     # ones maintainers open when those conflict) live on sync/* branches —
     # or on <lane>/sync-vN-to-vM when an agent opens the top-up, since the
