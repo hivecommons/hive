@@ -14054,8 +14054,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         let state = 'todo';
         if (terminal || n < anchor) state = 'done';
         else if (n === anchor) state = 'active';
-        // The lit column's tooltip names the real stage (030 vs 040, 060 vs 080).
-        const tipStage = (state === 'active' && !detour && curStage.label) ? curStage : st;
+        // The lit column's tooltip names the real stage (030 vs 040, 060 vs
+        // 080) — for a detour too: a 085 row lights the 080 column, and its
+        // hover must say "Needs human decision", not borrow the column's
+        // "Awaiting merge admission" text (hivecommons/hive#14821, #14822
+        // read as 080 with "Next move: human").
+        const tipStage = (state === 'active' && curStage.label) ? curStage : st;
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
         const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;

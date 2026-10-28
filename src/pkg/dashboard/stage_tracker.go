@@ -669,7 +669,12 @@ const stageTrackerSentinelMoreFormat = " (+%d more)"
 // label is gone is reported as cleared — findings and reason still fill
 // the tooltip, alert does not. One file read per PR with a known head,
 // ENOENT when the sentinel never wrote one; the tracker payload is memoised
-// so this runs once per snapshot, not per request.
+// so this runs once per snapshot, not per request. A person's sentinel
+// acknowledgment on the bundle (evidence.ActionSentinelAcknowledged — the
+// owner's Approve decision on a flagged PR) is the human review a
+// notice-only alert asked for, so it clears the bundle-promoted alert (the
+// label, while still on, still stands); the reason then names who
+// acknowledged it.
 func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, repo string, number int, head string, labels []string) (alert bool, findings int, reason string) {
 	label := s.sentinelLabel()
 	for _, l := range labels {
@@ -693,6 +698,11 @@ func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, r
 	if findings > 1 {
 		reason += fmt.Sprintf(stageTrackerSentinelMoreFormat, findings-1)
 	}
+	if by := b.SentinelAcknowledgedBy(); by != "" {
+		// The label, while still on, is the sweep's live block; only the
+		// bundle-promoted alert is answered by the acknowledgment.
+		return alert, findings, reason + stageTrackerSentinelAckSuffix + by
+	}
 	for _, f := range b.Sentinel {
 		if f.Notice {
 			alert = true
@@ -701,6 +711,10 @@ func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, r
 	}
 	return alert, findings, reason
 }
+
+// stageTrackerSentinelAckSuffix precedes the login of the person whose
+// approval acknowledged the bundle's sentinel findings.
+const stageTrackerSentinelAckSuffix = " — acknowledged by @"
 
 // stageTrackerModifierOrder is the modifier precedence the payload carries.
 var stageTrackerModifierOrder = []string{modStalled, modRegressed, modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsTriage, modPossibleDupe, modNeedsRebase, modBlocked, modDraft}

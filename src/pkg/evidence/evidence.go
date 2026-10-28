@@ -297,6 +297,32 @@ type Outcome struct {
 	ClosedAt time.Time `json:"closed_at,omitzero"`
 }
 
+// ActionSentinelAcknowledged is the HumanActions kind recorded when a person
+// approved the head knowing the sentinel's findings on it: the bundle keeps
+// the findings, and readers that would alert on them read the acknowledgment
+// as the human review the alert was asking for. It is scoped to this bundle,
+// so a new head carries no acknowledgment until a person gives one.
+const ActionSentinelAcknowledged = "sentinel_acknowledged"
+
+// SentinelAcknowledgedBy returns the actor of the newest sentinel
+// acknowledgment recorded on the bundle, or "" when none stands.
+func (b *Bundle) SentinelAcknowledgedBy() string {
+	if b == nil {
+		return ""
+	}
+	actor := ""
+	var at time.Time
+	for _, a := range b.HumanActions {
+		if a.Kind != ActionSentinelAcknowledged || a.Actor == "" {
+			continue
+		}
+		if actor == "" || !a.At.Before(at) {
+			actor, at = a.Actor, a.At
+		}
+	}
+	return actor
+}
+
 // BundleID returns the canonical bundle identifier owner/repo#number@head.
 func BundleID(repo string, number int, head string) string {
 	return fmt.Sprintf("%s#%d@%s", repo, number, head)

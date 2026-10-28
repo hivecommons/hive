@@ -23,8 +23,15 @@ import (
 //     maintainer with write access (Client.RecordOperatorIssueDecision):
 //     park labels cleared, approved-direction applied, reply posted. On a
 //     PR, the `/lgtm` and `/approve` commands posted as two attributed
-//     comments (Client.RecordOperatorPullRequestApproval) — the merge gate
-//     decides from there; nothing is reviewed, labelled or merged here.
+//     comments, the approval recorded against the head as the answer to a
+//     requires_human verdict, the hive's `needs-human` park and the
+//     sentinel alert (label and evidence-bundle findings) released, and the
+//     stage re-derived (Client.RecordOperatorPullRequestApprovalWith) — the
+//     merge gate decides from there; nothing is reviewed or merged here.
+//     The person's approval is the human review a requires_human verdict,
+//     a supersession ask or a sentinel alert was waiting for; before this
+//     the comments were read by no lane and the row stayed at stage/085
+//     (hivecommons/hive#14821, #14822, crux#30).
 //   - direction   → `/hive decision <comment>`; the comment is required. On
 //     a hive-authored PR it is recorded as a human change request so the
 //     author agent is kicked with it (Client.RecordOperatorPullRequestDecision).
@@ -110,6 +117,12 @@ type repoItemDecisionResponse struct {
 	Decision string `json:"decision"`
 	Status   string `json:"status"`
 	Label    string `json:"label,omitempty"`
+	// Released lists what a PR approval cleared beyond posting the commands:
+	// "approval-recorded", "needs-human", "sentinel-label",
+	// "sentinel-acknowledged". Stage is the stage label the engine derived
+	// on the spot, when it did.
+	Released []string `json:"released,omitempty"`
+	Stage    string   `json:"stage,omitempty"`
 }
 
 func renderRepoItemDecisionCloseComment(verb, user, comment, supersededBy string) string {
@@ -258,10 +271,17 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		head string
 		err  error
 	)
+	var released []string
+	stage := ""
 	if decision == repoItemDecisionApprove {
 		var event ghpkg.PullRequestApprovalEvent
-		event, err = gh.RecordOperatorPullRequestApproval(ctx, repoFull, number, user)
+		event, err = gh.RecordOperatorPullRequestApprovalWith(ctx, repoFull, number, user, ghpkg.PullRequestApprovalOptions{
+			HumanChangeRequests: repoItemDecisionChangeRequests(),
+			LiftNeedsHuman:      true,
+			SentinelLabel:       s.sentinelLabel(),
+		})
 		head = event.HeadSHA
+		released, stage = repoItemApprovalReleased(event), event.Stage
 	} else {
 		var event ghpkg.PullRequestDecisionEvent
 		event, err = gh.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, comment, repoItemDecisionChangeRequests())
@@ -288,6 +308,28 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	if decision == repoItemDecisionDirection {
 		action, status = auditRepoItemDecisionDirection, "direction-recorded"
 	}
-	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment), "", repoFull, number)
-	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status})
+	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage), "", repoFull, number)
+	// The row's park was just answered: serve the re-derived stage on the
+	// next tracker read instead of the cached 085.
+	s.invalidateStageTrackerForWebhook()
+	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage})
+}
+
+// repoItemApprovalReleased names what a PR approval released, for the
+// response and the audit line.
+func repoItemApprovalReleased(event ghpkg.PullRequestApprovalEvent) []string {
+	var out []string
+	if event.Recorded {
+		out = append(out, "approval-recorded")
+	}
+	if event.NeedsHumanLifted {
+		out = append(out, "needs-human")
+	}
+	if event.SentinelLabelCleared {
+		out = append(out, "sentinel-label")
+	}
+	if event.SentinelAcknowledged {
+		out = append(out, "sentinel-acknowledged")
+	}
+	return out
 }

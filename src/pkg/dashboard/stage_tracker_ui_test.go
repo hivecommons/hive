@@ -490,6 +490,15 @@ assert.strictEqual(stageTrackerHeadline({ kind: 'pr', stage: 70, modifiers: ['re
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 356, kind: 'issue', stage: 40, linked_prs: [{ number: 109, author_kind: 'hive', stage: 85 }] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap'], row);
 assert.ok(tooltip(row).includes('Needs a human decision (its PR)'), row);
+// A PR parked at 085 lights the 080 column as a detour; its chevron hover
+// names the parking stage, not the column it rides on — the owner read
+// "Awaiting merge admission … Next move: human" on hivecommons/hive#14821
+// and #14822 while the engine still said 085.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 14821, kind: 'pr', stage: 85, caption: 'decision requested' }, stages, ctx);
+const chevronTip = (r) => (/<li class="ham-seg active[^"]*"[^>]*title="([^"]*)" aria-current="step"/.exec(r) || [])[1] || '';
+assert.ok(chevronTip(row).startsWith('Needs human decision') && !chevronTip(row).includes('Awaiting merge admission') && !chevronTip(row).includes('not yet admitted') && chevronTip(row).includes('Next move: human'), 'detour chevron names its own stage: ' + chevronTip(row));
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 14830, kind: 'pr', stage: 80, caption: 'CI green' }, stages, ctx);
+assert.ok(chevronTip(row).startsWith('Awaiting merge admission — not yet admitted') && chevronTip(row).includes('Next move: hive'), '080 keeps its own hover: ' + chevronTip(row));
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 50, modifiers: ['needs-decision'] }, stages, ctx);
 assert.ok(row.includes('ham-mod-needs-decision">needs human decision</span>') && tooltip(row).includes('Flags: needs human decision'), row);
 // Whose move it is, as an ink-coloured icon after the word: Review = hive,
