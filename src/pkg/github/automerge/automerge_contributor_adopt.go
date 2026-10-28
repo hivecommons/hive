@@ -993,8 +993,15 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 // note + close; closed unmerged → recover or explicitly revert ownership.
 // This runs before stage derivation on every pass, including at 085.
 func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) (int, error) {
-	if obs.Merged || rec.AdoptedBy <= 0 {
+	if obs.Merged || rec.AdoptedBy <= 0 || rec.Superseded() {
 		return 0, nil
+	}
+	// Preserve the maintainer hand-back policy before settling a child,
+	// just as the 074 path does. Unknown permissions defer all mutation.
+	if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
+		return 0, nil
+	} else if maintainer {
+		return c.releaseMaintainerAdoption(ctx, store, key, obs, rec.AdoptedBy)
 	}
 	store.MarkAdoptChecked(key, now)
 	sup, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, rec.AdoptedBy)

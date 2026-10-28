@@ -37,6 +37,9 @@ func TestTrackerOrphanAndLoopGuardArePlain(t *testing.T) {
 	store.MarkAdopted(key, "feed", 90, now)
 	store.Observe(key, stagelabels.NeedsDecision, "requires_human")
 	store.NoteAdoptionOrphan(key, 90, now, false)
+	pr := status.Repos[0].OpenPrs[0].(FrontendPR)
+	pr.Labels = []string{"stage/085-needs-decision", "needs-human", "author/clanker", "role/contributor"}
+	status.Repos[0].OpenPrs[0] = pr
 	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
 	if !it.AdoptChildClosed || it.Caption != "Adopted → #90 (closed) · recovering" {
 		t.Fatalf("orphan hidden: %+v", it)

@@ -18,7 +18,7 @@ func TestOrphanRecoversAt085AndParksSecondClosedCopy(t *testing.T) {
 	h.adopt.setSuperseder(90, "closed", false)
 	h.api.reset()
 	labels := []string{"stage/085-needs-decision", "needs-human", "role/contributor", "author/clanker"}
-	h.observe(adoptPR(7, "aaa", labels...), stageReasonDecisionRequested)
+	h.observe(adoptPR(7, "aaa", labels...), "label:needs-human")
 	rec, _ := h.e.stageStoreOrShared().Get(key)
 	if rec.AdoptedBy != 91 || len(h.adopt.pulls) != 2 {
 		t.Fatalf("085 orphan not recovered: %+v", rec)
@@ -27,13 +27,13 @@ func TestOrphanRecoversAt085AndParksSecondClosedCopy(t *testing.T) {
 	h.adopt.setSuperseder(91, "closed", false)
 	h.api.reset()
 	h.clock.advance(time.Minute)
-	h.observe(adoptPR(7, "aaa", labels...), stageReasonDecisionRequested)
+	h.observe(adoptPR(7, "aaa", labels...), "label:needs-human")
 	rec, _ = h.e.stageStoreOrShared().Get(key)
 	if rec.Stage != stagelabels.NeedsDecision || rec.Reason != adoptionChildClosedTwice || len(h.adopt.pulls) != 2 {
 		t.Fatalf("loop not parked: %+v", rec)
 	}
 	h.api.reset()
-	h.observe(adoptPR(7, "aaa", labels...), stageReasonDecisionRequested)
+	h.observe(adoptPR(7, "aaa", labels...), "label:needs-human")
 	if len(h.adopt.pulls) != 2 || len(h.api.comments) != 0 {
 		t.Fatalf("park churned: pulls=%v notes=%v", h.adopt.pulls, h.api.comments)
 	}
@@ -91,7 +91,7 @@ func TestOrphanMarkerRestoresLostStoreForClosedAndMergedCopy(t *testing.T) {
 			pr := adoptPR(7, "aaa", "stage/085-needs-decision", "needs-human", "author/clanker")
 			pr.Comments = gh.Ptr(1)
 			h.api.reset()
-			h.observe(pr, stageReasonDecisionRequested)
+			h.observe(pr, "label:needs-human")
 			rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
 			if merged {
 				if rec.SupersededBy != 90 || len(h.adopt.prEdits) != 1 {
