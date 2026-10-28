@@ -58,19 +58,6 @@ func writeSandboxManifest(t *testing.T, manifests, agent string, m crux.SandboxR
 	return path
 }
 
-func readReviewResult(t *testing.T, reqPath string) ReviewResponse {
-	t.Helper()
-	b, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
-	if err != nil {
-		t.Fatalf("no result file mirrored into the spool: %v", err)
-	}
-	var resp ReviewResponse
-	if err := json.Unmarshal(b, &resp); err != nil {
-		t.Fatal(err)
-	}
-	return resp
-}
-
 // A sandboxed reviewer's spooled comment is posted, attributed to the agent
 // the MANIFEST names — not the one the file claims — and its result lands
 // back in the spool where the sandbox can read it.
