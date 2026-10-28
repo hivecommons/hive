@@ -533,7 +533,9 @@ func TestRESTGitHubMergeRefusalClassification(t *testing.T) {
 				t.Fatalf("%d: err = %v, want not-applied with status and message", tc.code, err)
 			}
 		case tc.uncertain:
-			if err == nil || errors.Is(err, effects.ErrNotApplied) || !strings.Contains(err.Error(), "uncertain") {
+			// Uncertain means neither a definite refusal nor a moved head: the
+			// raw API error comes back so the caller holds the front.
+			if err == nil || errors.Is(err, effects.ErrNotApplied) || errors.Is(err, ErrHeadMoved) || !strings.Contains(err.Error(), fmt.Sprint(tc.code)) {
 				t.Fatalf("%d: err = %v, want an uncertain effect", tc.code, err)
 			}
 		}
