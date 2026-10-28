@@ -15231,6 +15231,30 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr') - stageTrackerAnchor(x.stage, stages, 'pr')) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
 
+    // Pure: a PR whose drawn_under issue is not a row of this page (filtered
+    // out or on another page) would otherwise be drawn nowhere. The first
+    // listed issue that covers it draws it instead; later ones chip to that
+    // row. Returns the rows (same length, nulls kept), copying only changed ones.
+    function stageTrackerAdoptOrphanPRs(rows) {
+      const listed = new Set();
+      for (const it of rows) if (it && it.kind === 'issue') listed.add(it.repo + '#' + it.number);
+      const claimedBy = {};
+      return rows.map(it => {
+        if (!it || it.kind !== 'issue' || !Array.isArray(it.linked_prs)) return it;
+        let changed = false;
+        const linked = it.linked_prs.map(lp => {
+          const under = Number(lp && lp.drawn_under) || 0;
+          if (!under || under === (Number(it.number) || 0) || listed.has(it.repo + '#' + under)) return lp;
+          const key = it.repo + '#' + lp.number;
+          if (!(key in claimedBy)) claimedBy[key] = Number(it.number) || 0;
+          if (claimedBy[key] === (Number(it.number) || 0)) { changed = true; return Object.assign({}, lp, { drawn_under: 0 }); }
+          changed = true;
+          return Object.assign({}, lp, { drawn_under: claimedBy[key] });
+        });
+        return changed ? Object.assign({}, it, { linked_prs: linked }) : it;
+      });
+    }
+
     // List order: furthest along the strip first — a covered issue counts as
     // far along as its furthest covering PR — then longest-waiting first.
     function stageTrackerSortKey(item, stages) {
@@ -16624,10 +16648,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // unchanged, collapsed out with their last row).
       // A row celebrating its merge is pinned past the payload that
       // dropped it (stageTrackerPinnedRows) until its moment is over.
+      const pageItems = stageTrackerAdoptOrphanPRs(page.rows.map(e => grouping ? e.item : e));
       const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }]
-        .concat(page.rows.map(e => grouping && !e.item
+        .concat(page.rows.map((e, i) => grouping && !e.item
           ? { key: e.group.key, html: stageTrackerGroupHeaderHtml(e.group, stages, ctx) }
-          : { key: stageTrackerItemKey(grouping ? e.item : e), html: stageTrackerRowHtml(grouping ? e.item : e, stages, ctx) })), nowMs);
+          : { key: stageTrackerItemKey(pageItems[i]), html: stageTrackerRowHtml(pageItems[i], stages, ctx) })), nowMs);
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       stageTrackerMergedCountMount(el);

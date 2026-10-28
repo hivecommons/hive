@@ -1,0 +1,1 @@
+- Dashboard stage tracker: a PR whose drawn_under issue is filtered out or on another page is now drawn under a listed issue instead of disappearing (#15116).

@@ -140,6 +140,38 @@ assert.deepStrictEqual(stageTrackerLinkedSorted(issue(14911, [lp(14921, 14910)])
 `)
 }
 
+// A PR drawn under an issue that is filtered out or on another page is drawn
+// under the first listed issue that covers it instead of vanishing.
+func TestStageTrackerLinkedDrawnUnderHiddenParentJS(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowsPreludeJS(t, html)+"\n"+stageTrackerActorIconJS(t, html)+jsFunc(t, html, "stageTrackerAdoptOrphanPRs")+stageTrackerRowsFixtureJS+`
+const since = new Date(now - 3600000).toISOString();
+const lp = (n, under) => ({ number: n, title: 'fix', url: 'https://x/' + n, author: 'hive-bot', author_kind: 'hive', stage: 70, stage_since: since, drawn_under: under });
+const issue = (n, prs) => ({ repo: 'hivecommons/hive', number: n, kind: 'issue', title: 'Issue ' + n, url: 'https://x/' + n, stage: 40, stage_since: since, caption: 'open PR covers it', linked_prs: prs });
+const hasPR = (row, n) => row.includes('#' + n) && !row.includes('under #');
+
+// The owner (#14910) is not on the page: #14911 draws the PR itself.
+let rows = stageTrackerAdoptOrphanPRs([issue(14911, [lp(14921, 14910)])]);
+let html1 = stageTrackerRowHtml(rows[0], stages, ctx);
+assert.ok(hasPR(html1, 14921), 'the PR is drawn when its owner is hidden: ' + html1);
+assert.deepStrictEqual(stageTrackerLinkedElsewhere(rows[0]), []);
+
+// Two listed issues cover it: only the first draws it, the other chips to it.
+rows = stageTrackerAdoptOrphanPRs([issue(14911, [lp(14921, 14910)]), issue(14912, [lp(14921, 14910)])]);
+assert.strictEqual(rows[0].linked_prs[0].drawn_under, 0);
+assert.strictEqual(rows[1].linked_prs[0].drawn_under, 14911);
+
+// The owner is listed: nothing changes, and inputs are never mutated.
+const owner = issue(14910, [lp(14921, 14910)]), other = issue(14911, [lp(14921, 14910)]);
+rows = stageTrackerAdoptOrphanPRs([owner, other]);
+assert.strictEqual(rows[0], owner);
+assert.strictEqual(rows[1], other);
+rows = stageTrackerAdoptOrphanPRs([other, null]);
+assert.strictEqual(other.linked_prs[0].drawn_under, 14910);
+assert.strictEqual(rows[1], null);
+`)
+}
+
 // The "Merged today" counter lives in the column header, over the Merge
 // gate and ✓ columns (not in the filter chip bar), so a merge token's flight
 // from a row's ✓ cell is short and ends above the gate. It is one node for
