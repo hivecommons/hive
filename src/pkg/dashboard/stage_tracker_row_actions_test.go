@@ -1398,6 +1398,7 @@ assert.strictEqual(stageTrackerDCOCaveat([]), '');
 func TestStageTrackerRebaseThenMergeRow(t *testing.T) {
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+"\n"+stageTrackerCuesJS(t, html)+stageTrackerActedJS(t, html)+"\n"+jsFunc(t, html, "agentNowClockTime")+`
+global.window = { _hiveUser: 'clubanderson' };
 const ids = as => as.map(a => a.id);
 const merger = { user: true, canHold: true, canHuman: true };
 const rebaseOpt = { action: 'decide:merge-now', label: STAGE_TRACKER_REBASE_MERGE_LABEL, enabled: true,
