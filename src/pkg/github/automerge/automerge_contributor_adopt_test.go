@@ -531,10 +531,16 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 	if !adoptionNeedsDCORehome(obs, false) {
 		t.Fatal("hive-authored unsigned commits without branch push permission must still re-home")
 	}
-	obs.HeadRepo = ""
 	inPlace := stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeInPlace}
 	if adoptedHeadNeedsDCORehome(obs, inPlace, true) {
 		t.Fatal("already adopted in place with App-owned unsigned commits and push access stays in place")
+	}
+	if !adoptedHeadNeedsDCORepair(obs, inPlace, true) {
+		t.Fatal("that head is the in-place repair's job")
+	}
+	obs.HeadRepo = ""
+	if !adoptedHeadNeedsDCORehome(obs, inPlace, true) {
+		t.Fatal("already adopted in place on a fork must re-home")
 	}
 	if !adoptedHeadNeedsDCORehome(obs, inPlace, false) {
 		t.Fatal("already adopted in place without push access must re-home")
