@@ -21234,6 +21234,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // hold gate; only a person clears a reporter-trust hold. Returned
     // without wrapping so the state chip can show it as-is and the pill can
     // append it in parentheses after the title.
+    // blocked (a required check or review still pending) and behind (the base
+    // moved) are states the merge sweep resolves itself, so queueing stays
+    // available; only a verdict queueing cannot fix disables the button.
+    function queueAutoMergeGate(p) {
+      const state = String((p && p.mergeable_state) || '');
+      if (state === 'blocked') return { disabled: false, tip: 'Queue auto-merge — checks still running or review pending: queues now, merges when they pass' };
+      if (state === 'behind') return { disabled: false, tip: 'Queue auto-merge — behind the base branch: Hive brings it up to date before merging' };
+      if (p && p.mergeable === 'no') return { disabled: true, tip: 'Not mergeable on GitHub' + (state ? ' (' + state + ')' : '') + ' — resolve that before queueing for auto-merge' };
+      return { disabled: false, tip: 'Queue auto-merge when checks pass' };
+    }
+
     function heldReason(item) {
       const labels = (item && item.labels ? item.labels : []).map(l => String(l));
       const held = holdLabels(labels);
@@ -25012,8 +25023,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const parts = (r.full || r.name || '').split('/');
           const owner = parts.length > 1 ? parts[0] : '';
           const repoName = parts.length > 1 ? parts.slice(1).join('/') : (r.name || '');
-          const notMergeable = p.mergeable === 'no';
-          const notMergeableTip = 'Not mergeable on GitHub' + (p.mergeable_state ? ' (' + String(p.mergeable_state) + ')' : '') + ' — resolve that before queueing for auto-merge';
+          const queueGate = queueAutoMergeGate(p);
+          const notMergeable = queueGate.disabled;
+          const notMergeableTip = queueGate.tip;
           const reviewTip = reviewPillTip(p);
           const needsHumanTip = 'Labelled needs-human: automated fix attempts exhausted. ' + YOUR_TURN_GLYPH + ' appears when it is your turn. Remove the label after addressing the root cause to return the PR to the automated fix lane.' + waitingElsewhereTip(p);
           const reviewPill = p.review_url
@@ -25028,7 +25040,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
                         ? '<span class="repo-pr-pill mergeable pill-icon" title="Queued for Hive auto-merge" aria-label="Queued for Hive auto-merge">🔀</span>'
                         : (notMergeable
                             ? `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`
-                            : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue auto-merge when checks pass" aria-label="Queue auto-merge when checks pass">🔀</button>`))
+                            : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="${esc(queueGate.tip)}" aria-label="${esc(queueGate.tip)}">🔀</button>`))
                     : ''));
           const heldTip = held ? heldReason(p) : '';
           const holdBtn = holdToggleChip(cardRepo, p, 'pr', held, canToggleHold, heldTip);

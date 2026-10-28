@@ -394,3 +394,36 @@ check('no parentheses of its own', !heldReason(gated).startsWith('('));
 if (fails) { console.log(fails + ' failure(s)'); process.exit(1); }
 console.log('ok');
 `
+
+// hivecommons/hive#14937: the 🔀 button was disabled while checks ran
+// (blocked) or the PR was behind — states the merge sweep resolves itself.
+// Only dirty and draft are states queueing cannot fix.
+func TestQueueAutoMergeGateByMergeableState(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the queue gate was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := jsFunc(t, html, "queueAutoMergeGate") + `
+const assert = require('node:assert/strict');
+const cases = [
+  [{ mergeable: 'no', mergeable_state: 'dirty' }, true, /Not mergeable on GitHub \(dirty\)/],
+  [{ mergeable: 'no', mergeable_state: 'draft' }, true, /Not mergeable on GitHub \(draft\)/],
+  [{ mergeable: 'no', mergeable_state: 'blocked' }, false, /checks still running/],
+  [{ mergeable: 'no', mergeable_state: 'behind' }, false, /behind/],
+  [{ mergeable: 'yes', mergeable_state: 'clean' }, false, /when checks pass/],
+];
+for (const [pr, disabled, tip] of cases) {
+  const g = queueAutoMergeGate(pr);
+  assert.equal(g.disabled, disabled, pr.mergeable_state);
+  assert.match(g.tip, tip, pr.mergeable_state);
+}
+`
+	path := filepath.Join(t.TempDir(), "queuegate.js")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, path).CombinedOutput(); err != nil {
+		t.Fatalf("queue gate check failed:\n%s", strings.TrimSpace(string(out)))
+	}
+}
