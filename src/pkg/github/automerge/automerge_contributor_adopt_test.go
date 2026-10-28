@@ -521,12 +521,17 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 		t.Fatal("unknown unsigned commit ownership must re-home")
 	}
 	obs.Detail.DCOUnsignedHive = 2
+	if !adoptionNeedsDCORehome(obs, true) {
+		t.Fatal("a fork head must re-home even when only hive-authored commits are unsigned: the engine cannot rewrite a fork branch")
+	}
+	obs.Owner, obs.Repo, obs.HeadRepo = "acme", "widget", "acme/widget"
 	if adoptionNeedsDCORehome(obs, true) {
-		t.Fatal("branch push permission with only hive-authored unsigned commits allows in-place repair")
+		t.Fatal("branch push permission with only hive-authored unsigned commits on a base-repo head allows in-place repair")
 	}
 	if !adoptionNeedsDCORehome(obs, false) {
 		t.Fatal("hive-authored unsigned commits without branch push permission must still re-home")
 	}
+	obs.HeadRepo = ""
 	inPlace := stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeInPlace}
 	if adoptedHeadNeedsDCORehome(obs, inPlace, true) {
 		t.Fatal("already adopted in place with App-owned unsigned commits and push access stays in place")

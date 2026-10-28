@@ -902,7 +902,8 @@ func (c *Engine) repairAdoptedDCOInPlace(ctx context.Context, store *stagelabels
 	}
 	store.MarkHivePushedHead(key, tip)
 	c.info("stage labels: adopted PR re-signed in place", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "new_head", tip, "branch", obs.HeadRef, "reason", adoptionDCORepaired)
-	return 1, nil
+	// A branch push, not a comment: nothing to add to the caller's count.
+	return 0, nil
 }
 
 // settleAdoption polls the superseding App PR for a PR in stage 074 (at
