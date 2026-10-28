@@ -110,3 +110,21 @@ func TestSearchHealthDefaultsMatchConfig(t *testing.T) {
 		t.Errorf("weights: config %v, search %v", config.DefaultSearchHealthWeights, search.DefaultHealthWeights())
 	}
 }
+
+// The started indexer's backend is what the dashboard's GET /api/search
+// reads (#14637).
+func TestStartSearchIndexerWiresDashboardBackend(t *testing.T) {
+	withSearchIndexDir(t)
+	on := true
+	cfg := &config.Config{}
+	cfg.Project.Repos = []string{"o/a"}
+	cfg.Search = config.SearchConfig{Enabled: &on}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b := &boot{cfg: cfg, ctx: ctx, logger: slog.Default(), dashSrv: dashboard.NewServer(0, slog.Default())}
+	b.startSearchIndexer()
+	defer b.preShutdownHooks.run()
+	if b.dashSrv.SearchBackend() == nil {
+		t.Fatal("startSearchIndexer did not wire the dashboard search backend")
+	}
+}

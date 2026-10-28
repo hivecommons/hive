@@ -377,6 +377,10 @@ type Server struct {
 	advisorRecords *advisor.Store
 	advisorStatus  func(agent string) (bool, string)
 
+	// portfolioSearch is the search backend GET /api/search reads (#14637);
+	// nil until the indexer starts. See api_search.go.
+	portfolioSearch searchBackendState
+
 	// presenceEngagedAt maps a username to the last time their browser
 	// reported ENGAGED presence (tab visible + recent input; see presence.go).
 	// Lazily initialized under presenceMu, freshness-pruned on read.

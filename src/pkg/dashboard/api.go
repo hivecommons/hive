@@ -528,6 +528,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// or zipped with the artifacts it references; owner/merger only.
 	s.mux.HandleFunc("GET /api/review/evidence", s.handleReviewEvidence)
 	s.mux.HandleFunc("GET /api/review/evidence/list", s.handleReviewEvidenceList)
+	// Portfolio search (#14637): the spoke-local search index; owner or
+	// maintainer only, 404 unless search.enabled.
+	s.mux.HandleFunc("GET /api/search", s.handleSearch)
 	// Durable attempted-vs-blocked agent write counters (#12069); owner/merger only.
 	s.mux.HandleFunc("GET /api/evidence/write-counters", s.handleWriteCounters)
 	// Evidence summary (#12063): read-only aggregate over the bundles; never

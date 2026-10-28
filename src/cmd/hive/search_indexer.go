@@ -102,6 +102,9 @@ func (b *boot) startSearchIndexer() {
 	}
 	ctx, cancel := context.WithCancel(b.ctx)
 	done := ix.Start(ctx)
+	if b.dashSrv != nil {
+		b.dashSrv.SetSearchBackend(ix.Backend)
+	}
 	b.preShutdownHooks.add(searchIndexerShutdownHook, func() {
 		cancel()
 		<-done

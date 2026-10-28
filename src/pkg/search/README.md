@@ -3,8 +3,9 @@
 `search` is the storage and query core of the portfolio search RFC (#14491,
 Part A, #14634). It defines the document model and the `Backend` contract, and
 ships the default embedded backend and the `Indexer` that feeds it (#14635).
-The `/api/search` endpoint, the dashboard pane, forge metadata and metrics
-ingest build on this package in follow-up issues.
+The dashboard's `GET /api/search` (#14637) queries the indexer's backend; the
+dashboard pane, forge metadata and metrics ingest build on this package in
+follow-up issues.
 
 ## Document model
 
