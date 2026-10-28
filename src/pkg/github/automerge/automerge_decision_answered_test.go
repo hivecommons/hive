@@ -45,7 +45,7 @@ func TestFoldRecordedDecisionAnswersVerdictRoute(t *testing.T) {
 				t.Fatalf("stage=%s reason=%q (lane %s), want %s %q", got.Stage, got.Reason, obs.Lane, tc.wantStage, tc.wantReason)
 			}
 			add, remove := stagelabels.Plan(tc.labels, stagelabels.Desired{Stage: got.Stage})
-			if len(tc.labels) > 0 && (containsLabel(remove, stagelabels.Fixing.Label()) || containsLabel(add, stagelabels.NeedsDecision.Label())) {
+			if len(tc.labels) > 0 && (hasStageLabel(remove, stagelabels.Fixing.Label()) || hasStageLabel(add, stagelabels.NeedsDecision.Label())) {
 				t.Fatalf("manual 070 would be rewritten: add=%v remove=%v", add, remove)
 			}
 		})
@@ -85,7 +85,7 @@ func TestContributorLaneVerdictForCarriesRecordedDecision(t *testing.T) {
 	}
 }
 
-func containsLabel(list []string, want string) bool {
+func hasStageLabel(list []string, want string) bool {
 	for _, l := range list {
 		if l == want {
 			return true
