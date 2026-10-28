@@ -99,7 +99,11 @@ type GitHub interface {
 	IssueCommentsContain(ctx context.Context, repo string, number int, needle string) (bool, error)
 	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 	// Merge is the REST merge with head pinned, no admin bypass; it returns
-	// the merge commit SHA.
+	// the merge commit SHA. On a 409 head mismatch it returns ErrHeadMoved.
+	// When GitHub definitively refuses the merge (403/405/422) it returns an
+	// error wrapping effects.ErrNotApplied so the lane can let the front
+	// leave at once; any other error (5xx, transport) is reported as-is and
+	// the front keeps waiting.
 	Merge(ctx context.Context, repo string, number int, head string) (string, error)
 	CommitParents(ctx context.Context, repo, sha string) ([]string, error)
 	PullRequestsForCommit(ctx context.Context, repo, sha string) ([]int, error)

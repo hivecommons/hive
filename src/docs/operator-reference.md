@@ -712,7 +712,12 @@ default, restarted on every branch update, and extended up to 4x while the
 required checks are only queued or in progress) is the fallback for a front
 whose checks never finish; its reason says what the lane last knew, for
 example that the head after the branch update was never evaluated, or the
-last recorded waiting reason.
+last recorded waiting reason. A front whose merge call GitHub definitively
+refuses (HTTP 403, 405 or 422, for example a merge method the repository
+does not allow) also leaves at once with the reason `merge refused by
+GitHub: ...`, since nothing was applied; a 5xx or transport error on the
+merge call is not definitive, so that front keeps waiting and re-validates
+until the front timeout.
 
 A front that GitHub still reports as `blocked` after its head contains the
 current target tip and all required checks pass also leaves immediately. The
