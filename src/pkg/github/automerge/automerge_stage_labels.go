@@ -591,9 +591,12 @@ func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Ac
 	sort.Strings(labels)
 	a.Digest = verdict + "|ci:" + ci.String() + "|" + strings.Join(labels, ",")
 	// Checks still running, or a review-pending head with no reviewer
-	// verdict yet, is waiting on the hive, not on a person.
+	// verdict yet, is waiting on the hive, not on a person. A contributor PR
+	// the lane skipped for want of a linked issue gets no verdict until the
+	// contributor or a maintainer acts, so it never waits on the hive.
 	a.WaitingOnHive = ci == ciReasonPending || stageReasonWaitsOnHive(obs.Reason) ||
-		(stage == stagelabels.ReviewPending && !(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
+		(stage == stagelabels.ReviewPending && obs.Reason != prstage.ContributorLaneReasonNoLinkedIssue &&
+			!(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
 	return a
 }
 

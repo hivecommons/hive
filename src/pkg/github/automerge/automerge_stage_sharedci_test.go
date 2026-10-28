@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -53,6 +54,18 @@ func TestStageActivitySharedCIAndBudgetWaitOnHive(t *testing.T) {
 	}
 	if a := stageActivity(stageObservation{HeadSHA: "sha", Reason: "conflicting"}, stagelabels.ReturnedToContributor); a.WaitingOnHive {
 		t.Fatal("conflicting waits on the hive")
+	}
+}
+
+// A contributor PR skipped for no-linked-issue is waiting on a person, so
+// the stage-dwell "waits on the hive" warning must not fire for it.
+func TestStageActivityNoLinkedIssueDoesNotWaitOnHive(t *testing.T) {
+	obs := stageObservation{HeadSHA: "sha", Reason: prstage.ContributorLaneReasonNoLinkedIssue}
+	if a := stageActivity(obs, stagelabels.ReviewPending); a.WaitingOnHive {
+		t.Fatal("no-linked-issue waits on the hive")
+	}
+	if a := stageActivity(stageObservation{HeadSHA: "sha"}, stagelabels.ReviewPending); !a.WaitingOnHive {
+		t.Fatal("verdict-less review-pending head no longer waits on the hive")
 	}
 }
 
