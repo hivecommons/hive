@@ -402,7 +402,7 @@ assert.deepStrictEqual(prCol(row).length, 1, 'the covering PR sits in the PR col
 assert.strictEqual(subs(row).length, 0, 'no sub-rows for a single covering PR');
 const prCell = (html) => (html.slice(0, html.indexOf('aria-label="Pipeline progress"')).match(/<li class="ham-seg ham-head-pr">([\s\S]*?)<\/li>/) || [])[1] || '';
 assert.ok(prCell(row).startsWith(STAGE_TRACKER_LINKED_GLYPH + '<a class="ham-pr-ref"'), 'an in-row PR is led by the linked glyph: ' + prCell(row));
-assert.ok(prCell(row).includes('title="Author: hive · ' + esc(STAGE_TRACKER_LINKED_TIP) + '"'), 'the PR link tooltip explains the shared row: ' + prCell(row));
+assert.ok(prCell(row).includes('title="Author: unknown · ' + esc(STAGE_TRACKER_LINKED_TIP) + '"'), 'the PR link tooltip explains the shared row: ' + prCell(row));
 // A PR listed by two open issues shows on both rows; every row but the
 // lowest-numbered issue says where else it is.
 const sharedCtx = Object.assign({}, ctx, { sharedPRs: stageTrackerSharedPRs([
@@ -790,6 +790,24 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
 // Merged: the lit cap is the only chevron with hover text.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
 assert.ok(/<li class="ham-seg active cap merged" title="Merged — [^"]*" aria-current="step">/.test(row) && titled(strip(row)).length === 1, row);
+
+// Server-derived actors override author identity, including misleading logins.
+assert.strictEqual(stageTrackerActorKind({ stage: 70, author: 'hive-bot', author_kind: 'hive' }), '', 'no payload actor means unknown');
+const botPR = { number: 500, title: 'Nightly resync', author: 'github-actions[bot]', author_kind: 'bot', stage: 70, stage_state: 'Conflicting · bot PR', stage_actor: { kind: 'none', login: 'github-actions[bot]', since: null, why: "bot PR; waiting for the bot's next run" } };
+for (const botItem of [Object.assign({ repo: 'hivecommons/docs', kind: 'pr' }, botPR), { repo: 'hivecommons/docs', number: 496, kind: 'issue', linked_prs: [botPR] }]) {
+ const botRow = stageTrackerRowHtml(botItem, stages, ctx);
+ assert.ok(botRow.includes('Conflicting · bot PR') && botRow.includes('PR author: bot'), botRow);
+ assert.ok(!botRow.includes('ham-actor-ico') && !botRow.includes('>Fixing<'), botRow);
+ assert.ok(botRow.includes('no one is working on this right now — bot PR;'), botRow);
+}
+const sharedPR = { number: 14921, title: 'Shared fix', stage: 70, drawn_under: 14910, stage_actor: { kind: 'hive' } };
+const owners = [14911, 14910].map(number => ({ repo: 'hivecommons/hive', number, kind: 'issue', stage: 40, linked_prs: [sharedPR] }));
+const ownerRows = owners.map(i => stageTrackerRowHtml(i, stages, ctx));
+assert.strictEqual(titles(ownerRows.join(''), 'Shared fix'), 1, 'one drawn PR across two issues');
+assert.ok(ownerRows[0].includes('shown under issue #14910') && !ownerRows[0].includes('aria-current="step"'), ownerRows[0]);
+assert.strictEqual(stageTrackerNestedOpenPRs(owners[0]).length, 0, 'secondary issue has no PR row actions');
+assert.strictEqual(stageTrackerNestedOpenPRs(owners[1]).length, 1);
+
 `
 	// Over stdin: the lifted fixture exceeds Linux's per-argument limit.
 	cmd := exec.Command(node, "-")
@@ -1036,22 +1054,6 @@ assert.strictEqual(stageTrackerFilterActive(F({ onHold: true })), true);
 assert.strictEqual(stageTrackerNormalizeFilter({ needsHuman: 'yes' }).needsHuman, true);
 assert.strictEqual(stageTrackerNormalizeFilter({ onHold: 1 }).onHold, true);
 assert.strictEqual(stageTrackerLabelDialogData(stageTrackerLabelFacets(parked, F({ needsHuman: true, onHold: true }))).selected, 2);
-// Server-derived actors override author identity, including misleading logins.
-assert.strictEqual(stageTrackerActorKind({ stage: 70, author: 'hive-bot', author_kind: 'hive' }), '', 'no payload actor means unknown');
-const botPR = { number: 500, title: 'Nightly resync', author: 'github-actions[bot]', author_kind: 'bot', stage: 70, stage_state: 'Conflicting · bot PR', stage_actor: { kind: 'none', login: 'github-actions[bot]', since: null, why: "bot PR; waiting for the bot's next run" } };
-for (const botItem of [Object.assign({ repo: 'hivecommons/docs', kind: 'pr' }, botPR), { repo: 'hivecommons/docs', number: 496, kind: 'issue', linked_prs: [botPR] }]) {
- const botRow = stageTrackerRowHtml(botItem, stages, ctx);
- assert.ok(botRow.includes('Conflicting · bot PR') && botRow.includes('PR author: bot'), botRow);
- assert.ok(!botRow.includes('ham-actor-ico') && !botRow.includes('>Fixing<'), botRow);
- assert.ok(botRow.includes('no one is working on this right now — bot PR;'), botRow);
-}
-const sharedPR = { number: 14921, title: 'Shared fix', stage: 70, drawn_under: 14910, stage_actor: { kind: 'hive' } };
-const owners = [14911, 14910].map(number => ({ repo: 'hivecommons/hive', number, kind: 'issue', stage: 40, linked_prs: [sharedPR] }));
-const ownerRows = owners.map(i => stageTrackerRowHtml(i, stages, ctx));
-assert.strictEqual(titles(ownerRows.join(''), 'Shared fix'), 1, 'one drawn PR across two issues');
-assert.ok(ownerRows[0].includes('shown under issue #14910') && !ownerRows[0].includes('aria-current="step"'), ownerRows[0]);
-assert.strictEqual(stageTrackerNestedOpenPRs(owners[0]).length, 0, 'secondary issue has no PR row actions');
-assert.strictEqual(stageTrackerNestedOpenPRs(owners[1]).length, 1);
 
 `
 	cmd := exec.Command(node, "-e", script)
