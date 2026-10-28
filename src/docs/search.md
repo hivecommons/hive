@@ -45,3 +45,15 @@ Default health weights (sum 100): `ci_pass_rate` 20, `time_to_merge` 15, `revert
 A repo listed under `coverage` in a search response has an unreadable or over-budget index: missing hits there are
 not proof that nothing matches. Index internals are described in
 [`pkg/search/README.md`](../pkg/search/README.md).
+
+## Dashboard
+
+The spoke dashboard includes a Search pane when `search.enabled` is true and you are an owner or merger.
+Type a query and press Enter to search. Results are grouped by kind, project, verdict and safety-check rule with
+clickable chips to filter and refine. Each result links to the pull request, issue or bead it came from. Text that
+looks like AI instructions gets a **🛡 redacted** marker; open the link to read the original. Projects with
+unreadable or over-budget indices show **Not searched** to indicate a coverage gap. On the **Projects** cards,
+a small **♥** badge shows that project's health score. When search is disabled or you lack the owner/merger role,
+the Search section and health badges stay hidden.
+
+See [Dashboard sections explained](dashboard-sections.md#search) for full details.
