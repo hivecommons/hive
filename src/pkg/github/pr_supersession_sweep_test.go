@@ -280,7 +280,8 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "body": payload.Body})
 			return
 		}
-		parts := strings.Split(rest, "/")
+		// A label name may contain slashes; keep the label suffix intact.
+		parts := strings.SplitN(rest, "/", 3)
 		n, _ := strconv.Atoi(parts[0])
 		switch {
 		case len(parts) == 1 && r.Method == "GET":

@@ -15,6 +15,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 // useRingSupersessionAudit points the queue's on-disk audit scan at an empty
@@ -370,11 +371,17 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 	useRingSupersessionAudit(t)
 	s := reviewQueueTestServer(t, filepath.Join(t.TempDir(), "missing.json"))
 	var notice string
+	var labels []string
+	var labelWrites int
 	var writes int
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /repos/myorg/repo1/pulls":
-			fmt.Fprint(w, `[{"number":2,"body":"Fixes #3","user":{"login":"alice"}}]`)
+			wireLabels := make([]map[string]string, 0, len(labels))
+			for _, label := range labels {
+				wireLabels = append(wireLabels, map[string]string{"name": label})
+			}
+			json.NewEncoder(w).Encode([]map[string]any{{"number": 2, "body": "Fixes #3", "user": map[string]string{"login": "alice"}, "labels": wireLabels}})
 		case "GET /repos/myorg/repo1/issues/3":
 			fmt.Fprint(w, `{"number":3,"state":"closed"}`)
 		case "POST /graphql":
@@ -387,6 +394,12 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 			} else {
 				json.NewEncoder(w).Encode([]map[string]any{{"id": 1, "body": notice}})
 			}
+		case "POST /repos/myorg/repo1/issues/2/labels":
+			if err := json.NewDecoder(r.Body).Decode(&labels); err != nil {
+				t.Error(err)
+			}
+			labelWrites++
+			fmt.Fprint(w, `[]`)
 		case "POST /repos/myorg/repo1/issues/2/comments":
 			var in struct {
 				Body string `json:"body"`
@@ -441,5 +454,8 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 	}
 	if writes != 1 {
 		t.Fatalf("notice writes = %d, want 1", writes)
+	}
+	if labelWrites != 1 || strings.Join(labels, ",") != "needs-human,"+prstage.SupersessionPendingLabel {
+		t.Fatalf("park labels = %v, writes = %d; want one supersession park", labels, labelWrites)
 	}
 }
