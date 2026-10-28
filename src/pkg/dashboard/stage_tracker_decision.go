@@ -250,10 +250,6 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 		word = "policy"
 	}
 	ref := "#" + strconv.Itoa(it.Number)
-	into := strings.TrimSpace(it.BaseRef)
-	if into == "" {
-		into = "its base branch"
-	}
 	why := stageTrackerUntrustedAuthorWhy(base, it.Author)
 	if why == "" {
 		why = decisionPlainReason(base)

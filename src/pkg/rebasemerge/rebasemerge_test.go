@@ -1,6 +1,7 @@
 package rebasemerge
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -206,5 +207,126 @@ func TestAttemptsLoopGuard(t *testing.T) {
 	}
 	if a = s.Observe("o/r", 1, "ddd", now.Add(time.Hour)); a.Count() != 1 {
 		t.Fatalf("a new episode starts at 1: %+v", a)
+	}
+}
+
+// Request opens the episode on an operator's behalf (approve / merge-now on
+// a dirty PR): the actor is recorded once, a blank actor records nothing,
+// and the request rides the same head count as the sweep's Observe.
+func TestAttemptsRequestRecordsOperator(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "attempts.json")
+	s := NewAttempts(path)
+	now := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
+	a := s.Request("o/r", 2, "aaa", "  ", now)
+	if a.RequestedBy != "" || a.Count() != 1 {
+		t.Fatalf("blank actor: %+v", a)
+	}
+	a = s.Request("o/r", 2, "aaa", "clubanderson", now.Add(time.Minute))
+	if a.RequestedBy != "clubanderson" || a.Count() != 1 || !a.UpdatedAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("request: %+v", a)
+	}
+	if a = s.Request("o/r", 2, "aaa", "clubanderson", now.Add(2*time.Minute)); !a.UpdatedAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("same actor again must not rewrite the episode: %+v", a)
+	}
+	if a = s.Request("o/r", 2, "bbb", "other", now.Add(3*time.Minute)); a.RequestedBy != "other" || a.Count() != 2 {
+		t.Fatalf("new actor on a new head: %+v", a)
+	}
+	if got, ok := NewAttempts(path).Get("o/r", 2); !ok || got.RequestedBy != "other" || got.Head() != "bbb" {
+		t.Fatalf("reload: %+v ok=%v", got, ok)
+	}
+	// An empty episode has no head and still reads as attempt 1.
+	if (Attempt{}).Head() != "" || AttemptText(Attempt{}) != "Rebasing · attempt 1/2" {
+		t.Fatalf("zero attempt: %q", AttemptText(Attempt{}))
+	}
+	// In-memory ledgers never touch disk; a Clear on nothing is a no-op.
+	mem := NewAttempts("")
+	mem.Clear("o/r", 99)
+	if _, ok := mem.Get("o/r", 99); ok {
+		t.Fatal("phantom episode")
+	}
+	if mem.Observe("o/r", 3, "x", now).Count() != 1 {
+		t.Fatal("in-memory observe")
+	}
+}
+
+// The process-wide singletons point at the configured /data paths and are
+// stable across calls.
+func TestSharedSingletons(t *testing.T) {
+	if Shared() != Shared() || Shared() == nil {
+		t.Fatal("Shared store is not a singleton")
+	}
+	if SharedAttempts() != SharedAttempts() || SharedAttempts() == nil {
+		t.Fatal("SharedAttempts is not a singleton")
+	}
+	var nilStore *Store
+	if nilStore.Armed("o/r", 1) || nilStore.Live() != nil || nilStore.Put(FollowThrough{}) != nil || nilStore.Update(FollowThrough{}) != nil {
+		t.Fatal("nil store must be inert")
+	}
+}
+
+// FailNow is the driver's own failure (a refused merge, an unreachable
+// head); FailureText reads each reason in plain words; Kicked is a no-op
+// once the follow-through has left the approved state.
+func TestFailNowAndFailureText(t *testing.T) {
+	now := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
+	f := Arm("o/r", 5, "op", "v5", "aaaa111", false, now)
+	f.FailNow(now.Add(time.Minute), FailNotReachable, nil)
+	if f.State != StateFailed || f.FailReason != FailNotReachable || f.Live() {
+		t.Fatalf("FailNow: %+v", f)
+	}
+	f.Kicked(now.Add(2*time.Minute), "fixer")
+	if f.State != StateFailed {
+		t.Fatalf("Kicked after failure moved state: %+v", f)
+	}
+	cases := map[string]string{
+		FailNotReachable: "The hive cannot push to #5's head (fork without maintainer edits).",
+		FailCIRed:        "CI went red on the rebased head of #5; nothing merged.",
+		FailTimeout:      "The rebase of #5 did not land in time; nothing merged.",
+		FailClosed:       "#5 was closed before the hive could merge it.",
+		FailConflict:     "Rebase of #5 onto v5 conflicts in a.go, b.go.",
+		"odd":            "Rebase-then-merge of #5 failed: odd.",
+	}
+	for reason, want := range cases {
+		g := f
+		g.FailReason = reason
+		g.ConflictFiles = []string{"a.go", "b.go"}
+		if got := g.FailureText(); got != want {
+			t.Errorf("%s: %q, want %q", reason, got, want)
+		}
+	}
+	g := f
+	g.FailReason, g.Base, g.ConflictFiles = FailConflict, "", nil
+	if got := g.FailureText(); got != "Rebase of #5 onto its base conflicts." {
+		t.Errorf("conflict without files/base: %q", got)
+	}
+}
+
+// Persistence failures are reported, not hidden: a store whose path cannot
+// be created returns the error from Put, and a corrupt file loads as empty.
+func TestStoreAndAttemptsPersistenceEdges(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
+	st := NewStore(filepath.Join(blocker, "sub", "f.json"))
+	if err := st.Put(Arm("o/r", 1, "op", "v5", "aaa", true, now)); err == nil {
+		t.Fatal("Put under a file-as-directory must fail")
+	}
+	// The attempts ledger swallows the same failure and stays usable.
+	at := NewAttempts(filepath.Join(blocker, "sub", "a.json"))
+	if at.Observe("o/r", 1, "aaa", now).Count() != 1 {
+		t.Fatal("attempts observe under a bad path")
+	}
+	corrupt := filepath.Join(dir, "corrupt.json")
+	if err := os.WriteFile(corrupt, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewStore(corrupt).Live(); len(got) != 0 {
+		t.Fatalf("corrupt store loaded %d items", len(got))
+	}
+	if _, ok := NewAttempts(corrupt).Get("o/r", 1); ok {
+		t.Fatal("corrupt attempts loaded an episode")
 	}
 }
