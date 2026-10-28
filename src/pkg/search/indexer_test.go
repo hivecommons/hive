@@ -3,6 +3,9 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -392,5 +395,304 @@ func TestIndexerStartStops(t *testing.T) {
 	}
 	if got := f.backend.take(); len(got) != 0 {
 		t.Fatalf("indexed before the startup budget elapsed: %v", got)
+	}
+}
+
+// failingBackend fails the next backend call(s) of the configured kinds.
+type failingBackend struct {
+	*recordingBackend
+	mu                            sync.Mutex
+	indexErr, deleteErr, queryErr error
+	indexed                       chan struct{} // signalled after each successful Index
+}
+
+func (b *failingBackend) fail(index, del, query error) {
+	b.mu.Lock()
+	b.indexErr, b.deleteErr, b.queryErr = index, del, query
+	b.mu.Unlock()
+}
+
+func (b *failingBackend) Index(ctx context.Context, docs []Document) error {
+	b.mu.Lock()
+	err := b.indexErr
+	b.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := b.recordingBackend.Index(ctx, docs); err != nil {
+		return err
+	}
+	if b.indexed != nil {
+		select {
+		case b.indexed <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+func (b *failingBackend) Delete(ctx context.Context, repo string, ids []string) error {
+	b.mu.Lock()
+	err := b.deleteErr
+	b.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return b.recordingBackend.Delete(ctx, repo, ids)
+}
+
+func (b *failingBackend) Query(ctx context.Context, q Query) (Result, error) {
+	b.mu.Lock()
+	err := b.queryErr
+	b.mu.Unlock()
+	if err != nil {
+		return Result{}, err
+	}
+	return b.recordingBackend.Query(ctx, q)
+}
+
+func newFailingFixture(t *testing.T) (*fixture14635, *failingBackend, *Indexer) {
+	t.Helper()
+	f, ix := newIndexerFixture(t)
+	fb := &failingBackend{recordingBackend: f.backend, indexed: make(chan struct{}, 1)}
+	ix.Backend = fb
+	return f, fb, ix
+}
+
+// A backend failure rolls the pass back so the next pass retries the same
+// sources; a reconcile failure is reported and retried on the next pass.
+func TestIndexerBackendFailureRollsBack(t *testing.T) {
+	f, fb, ix := newFailingFixture(t)
+	updated := f.clock.t.Add(-time.Hour)
+	writeBundle(t, f.root, testBundle("org/a", 1, "aaa", updated))
+	boom := errors.New("boom")
+
+	fb.fail(boom, nil, nil)
+	st, err := ix.Rebuild(context.Background())
+	if !errors.Is(err, boom) || st.Indexed != 0 {
+		t.Fatalf("Rebuild with failing Index = %+v, %v; want boom and nothing indexed", st, err)
+	}
+	if len(ix.entries) != 0 {
+		t.Fatalf("entries after rolled-back pass = %d, want 0", len(ix.entries))
+	}
+	fb.fail(nil, nil, nil)
+	if st := rebuildOK(t, ix); st.Indexed != 3 || st.Unchanged != 0 {
+		t.Fatalf("retry after rollback = %+v, want 3 indexed (bundle, finding, sentinel)", st)
+	}
+
+	// A new revision drops the sentinel; the Delete fails, so the old entry
+	// (and its stamp) is restored and the next pass redoes the whole change.
+	b := testBundle("org/a", 1, "aaa", updated.Add(time.Minute))
+	b.Sentinel = nil
+	writeBundle(t, f.root, b)
+	f.backend.take()
+	fb.fail(nil, boom, nil)
+	if st, err := ix.Rebuild(context.Background()); !errors.Is(err, boom) || st.Deleted != 0 {
+		t.Fatalf("Rebuild with failing Delete = %+v, %v", st, err)
+	}
+	if got := f.backend.take(); len(got) != 0 {
+		t.Fatalf("indexed despite failed delete: %v", got)
+	}
+	fb.fail(nil, nil, nil)
+	if st := rebuildOK(t, ix); st.Deleted != 1 || st.Indexed != 2 {
+		t.Fatalf("retry after failed delete = %+v, want 1 deleted and 2 indexed", st)
+	}
+
+	// Reconcile: a failing Query is reported and reconcile is retried; a
+	// failing Delete of a leftover likewise. The fresh indexer owns no
+	// source, so the leftover and ix's two documents are all swept.
+	if err := f.backend.Embedded.Index(context.Background(), []Document{
+		doc("org/a", "evidence/9/gone", KindEvidence, f.clock.t, "gone", "", nil)}); err != nil {
+		t.Fatal(err)
+	}
+	fresh := &Indexer{Backend: fb, EvidenceRoot: t.TempDir(), Now: f.clock.now}
+	fb.fail(nil, nil, boom)
+	if _, err := fresh.Rebuild(context.Background()); !errors.Is(err, boom) || fresh.reconciled {
+		t.Fatalf("reconcile with failing Query: err=%v reconciled=%v", err, fresh.reconciled)
+	}
+	fb.fail(nil, boom, nil)
+	if _, err := fresh.Rebuild(context.Background()); !errors.Is(err, boom) || fresh.reconciled {
+		t.Fatalf("reconcile with failing Delete: err=%v reconciled=%v", err, fresh.reconciled)
+	}
+	fb.fail(nil, nil, nil)
+	if st := rebuildOK(t, fresh); st.Deleted != 3 || !fresh.reconciled {
+		t.Fatalf("reconcile retry = %+v reconciled=%v, want 3 leftovers deleted", st, fresh.reconciled)
+	}
+}
+
+// A cancelled context aborts the walk without reading the aborted subtree as
+// "removed": nothing already indexed is deleted and the pass is rolled back.
+func TestIndexerCancelledContext(t *testing.T) {
+	f, ix := newIndexerFixture(t)
+	updated := f.clock.t.Add(-time.Hour)
+	writeBundle(t, f.root, testBundle("org/a", 1, "aaa", updated))
+	rebuildOK(t, ix)
+	writeBundle(t, f.root, testBundle("org/a", 2, "bbb", updated))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	st, err := ix.Rebuild(ctx)
+	if !errors.Is(err, context.Canceled) || st.Indexed != 0 || st.Deleted != 0 {
+		t.Fatalf("cancelled Rebuild = %+v, %v; want context.Canceled and no changes", st, err)
+	}
+	if got := f.backend.take(); len(got) != 0 {
+		t.Fatalf("cancelled pass indexed %v", got)
+	}
+	if st := rebuildOK(t, ix); st.Indexed != 3 || st.Deleted != 0 || st.Unchanged != 1 {
+		t.Fatalf("pass after cancel = %+v, want bundle 2's 3 docs indexed, nothing deleted", st)
+	}
+	if res := query(t, f.backend.Embedded, Query{Filters: map[string][]string{FieldKind: {KindEvidence}}}); res.Total != 2 {
+		t.Errorf("evidence docs = %v, want both bundles", ids(res))
+	}
+
+	if _, err := (&Indexer{}).Rebuild(context.Background()); err == nil {
+		t.Error("Rebuild without a backend succeeded")
+	}
+}
+
+// Start rebuilds immediately when no startup budget applies, again on every
+// Interval, and stops when ctx is cancelled.
+func TestIndexerStartRunsOnInterval(t *testing.T) {
+	f, fb, ix := newFailingFixture(t)
+	ix.Now = nil
+	ix.Interval = 20 * time.Millisecond
+	ix.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	writeBundle(t, f.root, testBundle("org/a", 1, "aaa", time.Now().Add(-time.Hour)))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := ix.Start(ctx)
+	wait := func(what string) {
+		t.Helper()
+		select {
+		case <-fb.indexed:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s did not index", what)
+		}
+	}
+	wait("first rebuild")
+	writeBundle(t, f.root, testBundle("org/a", 2, "bbb", time.Now().Add(-time.Hour)))
+	wait("interval rebuild")
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("indexer loop did not stop")
+	}
+	if res := query(t, f.backend.Embedded, Query{Filters: map[string][]string{FieldKind: {KindEvidence}}}); res.Total != 2 {
+		t.Errorf("evidence docs = %v, want both bundles", ids(res))
+	}
+}
+
+// The evidence walk tolerates a missing root, ignores files that are not
+// bundles or snapshots, keeps a source it cannot read or parse, defaults a
+// bundle's and snapshot's repo from the path, and documents are skipped when
+// HomeRepo is not a valid repo.
+func TestIndexerEvidenceWalkEdgeCases(t *testing.T) {
+	f, ix := newIndexerFixture(t)
+	ix.HomeRepo = "not-a-repo"
+	updated := f.clock.t.Add(-time.Hour)
+	repoDir := filepath.Join(f.root, "org", "a")
+
+	b := testBundle("", 1, "0123456789abcdef0123456789abcdef", updated)
+	b.Outcome = &evidence.Outcome{State: "merged"}
+	b.CI.Checks = []evidence.Check{{Name: "lint", Conclusion: "failure"}, {Name: "unit", Conclusion: "success"}}
+	mustWrite := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(f.root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite("org/a/1/"+b.HeadSHA+".json", string(data)) // no "repo" field: defaults from the path
+	mustWrite("org/a/2/garbage.json", "{not json")
+	mustWrite("org/a/2/notes.txt", "not a bundle")
+	mustWrite("org/a/2/deep/nested/x.json", "{}")
+	mustWrite("org/a/complexity/bad.json", "{not json")
+	mustWrite("org/a/complexity/2026-01.json", `{"schema_version":"`+complexity.SchemaVersion+`","max_cyclo":3}`)
+	// A dangling symlink is a file the walk cannot read: kept, not an error.
+	if err := os.MkdirAll(filepath.Join(repoDir, "3"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repoDir, "missing.json"), filepath.Join(repoDir, "3", "dangling.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Create("home bead", beads.TypeTask, beads.PriorityLow, "scanner", ""); err != nil {
+		t.Fatal(err)
+	}
+	f.facts = []knowledge.Fact{{Slug: "", Title: "no slug"}, {Slug: "f", Title: "fact", Layer: knowledge.LayerProject}}
+
+	st := rebuildOK(t, ix)
+	if st.Invalid != 3 {
+		t.Errorf("Invalid = %d, want 3 (garbage bundle, home bead, fact under invalid HomeRepo); stats %+v", st.Invalid, st)
+	}
+	res := query(t, f.backend.Embedded, Query{Limit: 100})
+	got := facetMap(res, FieldKind)
+	if !equalCounts(got, map[string]int{KindEvidence: 1, KindFinding: 1, KindSentinel: 1, KindComplexity: 1}) {
+		t.Errorf("kind facet = %v", got)
+	}
+	for _, h := range res.Hits {
+		if h.Document.Repo != "org/a" {
+			t.Errorf("%s repo = %q, want org/a from the path", h.Document.ID, h.Document.Repo)
+		}
+		switch h.Document.Kind {
+		case KindEvidence:
+			if !strings.Contains(h.Document.Title, "@ 0123456789ab") || !strings.Contains(h.Document.Text, "check lint: failure") ||
+				h.Document.Fields["outcome"] != "merged" {
+				t.Errorf("bundle doc = %+v", h.Document)
+			}
+		case KindComplexity:
+			if h.Document.ID != "complexity/2026-01" {
+				t.Errorf("complexity id = %q, want month from the file name", h.Document.ID)
+			}
+		}
+	}
+
+	// A touched snapshot with the same captured_at is re-stat'ed, not re-indexed.
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(filepath.Join(repoDir, "complexity", "2026-01.json"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	if st := rebuildOK(t, ix); st.Indexed != 0 {
+		t.Errorf("rebuild after touching snapshot = %+v, want nothing re-indexed", st)
+	}
+
+	// A missing root and an indexer with nothing configured are no-ops.
+	ix.EvidenceRoot = filepath.Join(t.TempDir(), "missing")
+	if st := rebuildOK(t, ix); st.Indexed != 0 || st.Deleted != 4 {
+		t.Errorf("rebuild with missing root = %+v, want the 4 evidence docs deleted", st)
+	}
+	bare := &Indexer{Backend: newBackend(t, Options{}), Now: f.clock.now}
+	if st := rebuildOK(t, bare); st != (RebuildStats{}) {
+		t.Errorf("bare rebuild = %+v", st)
+	}
+	if !firstNonZero().IsZero() {
+		t.Error("firstNonZero() != zero")
+	}
+}
+
+// An unreadable repo directory keeps what was indexed from it.
+func TestIndexerUnreadableSubtreeKept(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f, ix := newIndexerFixture(t)
+	writeBundle(t, f.root, testBundle("org/a", 1, "aaa", f.clock.t.Add(-time.Hour)))
+	rebuildOK(t, ix)
+	dir := filepath.Join(f.root, "org", "a", "1")
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if st := rebuildOK(t, ix); st.Deleted != 0 {
+		t.Errorf("rebuild with unreadable dir = %+v, want nothing deleted", st)
+	}
+	if res := query(t, f.backend.Embedded, Query{Filters: map[string][]string{FieldKind: {KindEvidence}}}); res.Total != 1 {
+		t.Errorf("evidence docs = %v, want the bundle kept", ids(res))
 	}
 }

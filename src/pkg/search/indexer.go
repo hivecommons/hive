@@ -275,6 +275,12 @@ func (i *Indexer) put(r *rebuild, key string, e *sourceEntry, docs []Document) {
 
 // markSeen keeps key's previous documents without re-reading the source
 // (for example a file that could not be read this pass).
+//
+// On the first pass of a process there is no previous entry to keep, so a
+// source that is unreadable or half-written at that moment contributes no
+// live documents and reconcile removes whatever an earlier process indexed
+// from it. That is transient: the source has no entry, so the next pass
+// re-reads it (no mtime/size short-circuit) and re-indexes its documents.
 func (i *Indexer) markSeen(r *rebuild, key string) { r.seen[key] = true }
 
 // expire deletes the documents of sources that disappeared and documents
