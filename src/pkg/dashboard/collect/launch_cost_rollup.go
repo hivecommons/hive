@@ -170,6 +170,7 @@ func (lc *LaunchCostCollector) mergeLaunchCostRollupLocked(resp LaunchCostRespon
 
 func (lc *LaunchCostCollector) invalidateRollupDayLocked(day string) {
 	delete(lc.rollupDayCache, day)
+	delete(lc.settledDayCache, day)
 }
 
 // rollupDayLocked returns the sorted per-ref list for one day: the settled
@@ -221,13 +222,20 @@ func (lc *LaunchCostCollector) rollupListLocked() []LaunchCostDailyRollup {
 // store; live launches are persisted separately so a restart neither drops nor
 // double-counts them.
 func (lc *LaunchCostCollector) settledRollupListLocked() []LaunchCostDailyRollup {
+	if lc.settledDayCache == nil {
+		lc.settledDayCache = map[string]LaunchCostDailyRollup{}
+	}
 	out := make([]LaunchCostDailyRollup, 0, len(lc.rollup))
 	for day, refs := range lc.rollup {
-		d := LaunchCostDailyRollup{Day: day, ByRef: make([]LaunchCostRollupRef, 0, len(refs))}
-		for _, e := range refs {
-			d.ByRef = append(d.ByRef, e)
+		d, ok := lc.settledDayCache[day]
+		if !ok {
+			d = LaunchCostDailyRollup{Day: day, ByRef: make([]LaunchCostRollupRef, 0, len(refs))}
+			for _, e := range refs {
+				d.ByRef = append(d.ByRef, e)
+			}
+			sort.Slice(d.ByRef, func(i, j int) bool { return d.ByRef[i].Ref < d.ByRef[j].Ref })
+			lc.settledDayCache[day] = d
 		}
-		sort.Slice(d.ByRef, func(i, j int) bool { return d.ByRef[i].Ref < d.ByRef[j].Ref })
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Day < out[j].Day })
@@ -250,6 +258,7 @@ func (lc *LaunchCostCollector) seedRollupLocked(days []LaunchCostDailyRollup, li
 	lc.rollup = map[string]map[string]LaunchCostRollupRef{}
 	lc.rollupLive = map[string]launchCostLiveLaunch{}
 	lc.rollupDayCache = nil
+	lc.settledDayCache = nil
 	for _, d := range days {
 		if _, err := time.Parse(launchCostRollupDayLayout, d.Day); err != nil {
 			continue
