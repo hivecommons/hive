@@ -583,6 +583,11 @@ type Manager struct {
 	appNotInstalledWarned    sync.Map        // agent name -> struct{}: not-installed mint failure already logged
 	agentMint                AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
+	// sharedPoolRenewInterval overrides the lease watcher tick (zero means
+	// defaultSharedPoolRenewInterval). Set before any watcher starts; it is
+	// per-manager so tests can tick fast without racing other tests' watchers.
+	sharedPoolRenewInterval time.Duration
+
 	// bobAPIKeyResolver resolves the IBM bobshell API key at LAUNCH time (not
 	// boot), so a key an operator adds via a Secret/PVC file or the config UI
 	// takes effect without restarting the hive. Returns "" when unconfigured.
