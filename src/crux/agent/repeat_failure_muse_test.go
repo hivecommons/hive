@@ -87,6 +87,19 @@ func (s *rfMuseScan) run(r *museRecordReader, root string) {
 	})
 }
 
+// rfMuseFixtureAt is the recorded_at of the fixture's lines, truncated to the
+// second.
+var rfMuseFixtureAt = time.UnixMicro(1793170680000000)
+
+// rfMuseReader is a reader that started just before the fixture's lines were
+// recorded, so a fixture log written after its first scan reads as new
+// activity whatever the wall clock says.
+func rfMuseReader() *museRecordReader {
+	r := newMuseRecordReader()
+	r.startedAt = rfMuseFixtureAt
+	return r
+}
+
 func rfMuseRoot(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), ".local", "share", "muse", "sessions")
@@ -110,7 +123,7 @@ func TestRepeatFailureMuseHarness(t *testing.T) {
 		t.Fatalf("coverage evidence %q does not carry the harness version %q; update repeat_failure_coverage.go and the docs table", row.Evidence, version)
 	}
 	root := rfMuseRoot(t)
-	r := newMuseRecordReader()
+	r := rfMuseReader()
 	var s rfMuseScan
 	s.run(r, root)
 	rfMuseAppend(t, root, "harness", rfMuseFixture(t)...)
@@ -148,7 +161,7 @@ func TestRepeatFailureMuseNeverFollowsLinks(t *testing.T) {
 	if err := os.Symlink(victim, filepath.Join(day, "linked-log", museSessionLog)); err != nil {
 		t.Fatal(err)
 	}
-	r := newMuseRecordReader()
+	r := rfMuseReader()
 	var s rfMuseScan
 	s.run(r, root)
 	rfMuseAppend(t, other, "victim", rfMuseFixture(t)...)
@@ -165,7 +178,7 @@ func TestRepeatFailureMuseNeverFollowsLinks(t *testing.T) {
 	if err := os.Symlink(other, linked); err != nil {
 		t.Fatal(err)
 	}
-	r2 := newMuseRecordReader()
+	r2 := rfMuseReader()
 	var s2 rfMuseScan
 	s2.run(r2, linked)
 	rfMuseAppend(t, other, "victim2", rfMuseFixture(t)...)
@@ -176,7 +189,7 @@ func TestRepeatFailureMuseNeverFollowsLinks(t *testing.T) {
 
 	// Owner check: the agent's own uid reads, any other uid is skipped.
 	own := rfMuseRoot(t)
-	r3 := newMuseRecordReader()
+	r3 := rfMuseReader()
 	wrong := rfMuseScan{uid: os.Getuid() + 1}
 	wrong.run(r3, own)
 	rfMuseAppend(t, own, "s", rfMuseCall(t, "own")...)
@@ -185,7 +198,7 @@ func TestRepeatFailureMuseNeverFollowsLinks(t *testing.T) {
 		t.Fatalf("a log owned by another uid was read: %+v", wrong.records)
 	}
 	right := rfMuseScan{uid: os.Getuid()}
-	r4 := newMuseRecordReader()
+	r4 := rfMuseReader()
 	right.run(r4, own)
 	rfMuseAppend(t, own, "s", rfMuseCall(t, "own-next")...)
 	right.run(r4, own)
@@ -201,7 +214,7 @@ func TestRepeatFailureMuseNeverFollowsLinks(t *testing.T) {
 func TestRepeatFailureMuseOneRecordPerToolCall(t *testing.T) {
 	root := rfMuseRoot(t)
 	path := rfMuseAppend(t, root, "old", rfMuseCall(t, "old")...)
-	r := newMuseRecordReader()
+	r := rfMuseReader()
 	var s rfMuseScan
 	s.run(r, root)
 	if len(s.records) != 0 {
@@ -284,7 +297,7 @@ func TestRepeatFailureMuseResult(t *testing.T) {
 		"not json",
 	}
 	root := rfMuseRoot(t)
-	r := newMuseRecordReader()
+	r := rfMuseReader()
 	var s rfMuseScan
 	s.run(r, root)
 	rfMuseAppend(t, root, "c", lines...)
@@ -434,7 +447,7 @@ func TestRepeatFailureMuseWalkIsBounded(t *testing.T) {
 // walked again nothing already recorded is emitted a second time.
 func TestRepeatFailureMuseDisplacedSessionIsNotReplayed(t *testing.T) {
 	root := rfMuseRoot(t)
-	r := newMuseRecordReader()
+	r := rfMuseReader()
 	var s rfMuseScan
 	s.run(r, root)
 	rfMuseAppend(t, root, "a-session", rfMuseCall(t, "call_1")...)
@@ -536,7 +549,7 @@ func TestRepeatFailureMuseLogHiddenByCapIsNotReplayed(t *testing.T) {
 // newer-named sessions every scan cannot grow the sessions map without bound.
 func TestRepeatFailureMuseDisplacedSessionsAreCapped(t *testing.T) {
 	root := rfMuseRoot(t)
-	r := newMuseRecordReader()
+	r := rfMuseReader()
 	var s rfMuseScan
 	const perDay = museDirEntriesMax
 	rfMuseDay := func(d int) string { return fmt.Sprintf("%02d", d) }
