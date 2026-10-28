@@ -1120,6 +1120,16 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		}
 
 		agentCfg := proc.Config
+		var sandboxRun *FrontendSandboxRun
+		if agentCfg.SandboxEnabled(cfg.AgentSandbox) {
+			sr := sandboxRunHealth(proc, cadenceValue, agentCfg.OnDemand || onDemandSet[name], time.Now())
+			sandboxRun = &sr
+			// A sandboxed agent has no pane; after a pod roll its output ring
+			// is empty too, so the persisted run summary is the activity.
+			if detailSummary == "" && sr.Summary != "" {
+				detailSummary = sr.Summary
+			}
+		}
 		continuousModes := cfg.ContinuousModes(name)
 		continuousNow := agentCfg.ContinuousInMode(currentMode, modeCadence)
 		continuousBlocked := continuousState.Blocked
@@ -1143,6 +1153,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			ReplicaCount:    agentCfg.ReplicaCount,
 			OnDemand:        agentCfg.OnDemand,
 			Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
+			SandboxRun:      sandboxRun,
 			Session:         name,
 			State:           string(proc.State),
 			Starting:        proc.Starting && proc.State != crux.StateRunning,

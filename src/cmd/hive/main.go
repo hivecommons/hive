@@ -3020,6 +3020,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetClaudeSessionsDir(b.cfg.Data.ClaudeSessionsDir)
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
+	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
 	deps.startTokenCollector(b.tokenCollector, tokenStop)
 	b.cleanup.push(func() { close(tokenStop) })

@@ -161,7 +161,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		prClient = m.sandboxPRClient
 		pushEnabled = true
 	}
-	go m.runSandboxKick(runCtx, agent.Name, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, mutationBoundary)
+	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, mutationBoundary)
 	return nil
 }
 
@@ -189,7 +189,8 @@ func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter 
 	}
 }
 
-func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, mutationBoundary effects.Boundary) {
+func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, mutationBoundary effects.Boundary) {
+	started := time.Now()
 	exec := &SandboxExecutor{
 		Launcher:    launcher,
 		Runner:      runner,
@@ -201,6 +202,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 		Logger:      m.logger,
 	}
 	res, err := exec.Run(ctx, spec)
+	ended := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	agent, ok := m.agents[name]
@@ -208,6 +210,22 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 		return
 	}
 	agent.cancel = nil
+	// The run record is what a sandboxed agent's health and activity derive
+	// from: there is no session to probe between kicks. Recorded on every
+	// outcome but an operator cancel, and persisted so a pod roll does not
+	// turn yesterday's successful run into "never ran".
+	if err == nil || !agent.sandboxResumeAfterCancel {
+		run := buildSandboxRun(runtime, started, ended, res, err)
+		agent.SandboxLastRun = &run
+		agent.KickOutcome = KickOutcome{Kind: KickOutcomeEnded, At: ended, KickAt: started}
+		if agent.LastKick != nil {
+			agent.KickOutcome.KickAt = *agent.LastKick
+		}
+		entry := SandboxRunHistoryEntry{Agent: name, Backend: effectiveBackend(agent), Model: agent.Config.Model, Run: run}
+		if perr := persistSandboxRun(m.workDir, entry); perr != nil {
+			m.logger.Warn("sandbox run record not persisted", "name", name, "error", perr)
+		}
+	}
 	if err != nil {
 		if agent.sandboxResumeAfterCancel {
 			agent.sandboxResumeAfterCancel = false

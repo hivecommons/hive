@@ -70,6 +70,7 @@ type Process struct {
 	TurnLoss                  TurnLoss
 	ActionNudges              int
 	KickOutcome               KickOutcome
+	SandboxLastRun            *SandboxRun
 	StartFailureClass         string
 	StartFailureReason        string
 	StartFailureCount         int

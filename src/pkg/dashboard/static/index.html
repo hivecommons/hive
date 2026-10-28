@@ -10661,7 +10661,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Post-restart boot stagger / launch in progress: the agent is not down,
       // it just hasn't reached its pane yet. Render as 'starting', not red.
       const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
-      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+      // Sandboxed agents: down = last run failed / cadence missed, never
+      // "no session" (agentSessionDown).
+      const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
       // Same formula as the Auth section's Login button below: a down agent
       // with an unauthenticated CLI gets the amber needs-login state instead
       // of plain down-red (#2465).
@@ -10688,7 +10690,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       /* 'disabled' outranks 'down': both reach here with state!=='running',
          but a switched-off agent is not a fault, and labelling it "down" sent
          operators looking for a crash that never happened. */
-      const stateLabel = agentSessionUnavailable(a) ? 'disabled' : needsLoginDown ? 'needs login' : isStopped ? (a.operatorStopped ? 'stopped by operator' : 'down') : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : isRunning ? (a.awaitingCI ? 'Waiting on CI' : 'working') : 'idle';
+      const stateLabel = agentSessionUnavailable(a) ? 'disabled' : needsLoginDown ? 'needs login' : isStopped ? (agentSandboxDownLabel(a) || (a.operatorStopped ? 'stopped by operator' : 'down')) : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : isRunning ? (a.awaitingCI ? 'Waiting on CI' : 'working') : 'idle';
 
       const kickId = `oc-kick-${a.name}`;
       const prevInput = document.getElementById(kickId);
@@ -11057,7 +11059,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // down (#2465). Match the deep check: non-running + non-paused = down,
       // with paused/off/on-demand keeping their own styling.
       const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
-      const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+      const isDown = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
       // A down agent whose CLI is unauthenticated is not merely down — it can
       // never do work until someone logs it in. Same formula as the agent
       // panel's Login button; rendered amber with a "needs login" note. Only
@@ -13476,7 +13478,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let showReservations = true;
       if (st.isPoweredOff || st.isOff) { lead = 'Off'; showReservations = false; }
       else if (st.isPaused) { lead = 'Paused'; showReservations = false; }
-      else if (st.isStopped) { lead = "Stopped — see the agent's log"; showReservations = false; }
+      else if (st.isStopped) {
+        const sbLabel = agentSandboxDownLabel(a);
+        lead = sbLabel ? sbLabel.charAt(0).toUpperCase() + sbLabel.slice(1) + " — see the agent's log" : "Stopped — see the agent's log";
+        showReservations = false;
+        const sandboxHtml = (sbLabel && !outdated) ? agentSandboxRunHtml(a, ctx.hiveNowMs) : '';
+        if (sandboxHtml) parts.push(sandboxHtml);
+      }
       else if (st.isStarting || (!a.lastKickAt && a.busy !== 'working')) { lead = 'Not started yet'; showReservations = false; }
       const la = a.lastAction || null;
       const item = (!lead && la) ? agentNowItem(la.repo, la.number, la.action, ctx) : null;
@@ -13504,6 +13512,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const age = ago(la.at);
           parts.push('last: ' + agentNowItemHtml(item, false) + (age ? ', ' + age : ''));
         }
+        const sandboxHtml = outdated ? '' : agentSandboxRunHtml(a, ctx.hiveNowMs);
+        if (sandboxHtml) parts.push(sandboxHtml);
       } else if (!lead) {
         lead = esc(st.stateLabel || a.busy || '');
         showReservations = false;
@@ -13530,7 +13540,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const isPaused = a.paused === true && !isOnDemand;
       const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
       const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
-      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+      const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
       return { isPoweredOff, isOff, isPaused, isStopped, isStarting, stateLabel: isOnDemand ? 'on demand' : a.busy };
     }
 
@@ -17812,13 +17822,58 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tip = `${who} is enabled but NO governor mode gives it a cadence, and it has never been kicked \u2014 it will sit idle forever. Click to set cadences.`;
       return `<button class="never-scheduled-chip" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" data-tab="Cadences" title="${esc(tip)}">\u23F1 never scheduled \u2014 set cadences</button>`;
     }
+    /* Sandboxed agents (podman or Kubernetes Job runtime) run each kick in a
+       throwaway container and sit in state 'idle' between kicks: there is no
+       tmux session or in-pod process to be "down". Their health comes from
+       the server-side sandboxRun verdict (last run + cadence), never from
+       state !== 'running'. */
+    function agentSandboxRun(a) {
+      return (a && a.sandboxed && a.sandboxRun && a.sandboxRun.health) ? a.sandboxRun : null;
+    }
+    function agentSessionDown(a) {
+      const sr = agentSandboxRun(a);
+      if (sr) return sr.health === 'failed' || sr.health === 'overdue';
+      return a.state !== 'running';
+    }
+    function agentSandboxDownLabel(a) {
+      const sr = agentSandboxRun(a);
+      if (!sr) return '';
+      if (sr.health === 'failed') return sr.timedOut ? 'last run timed out' : 'last run failed';
+      if (sr.health === 'overdue') return 'run overdue';
+      return '';
+    }
+    function agentSandboxRunText(a, hiveNowMs) {
+      const sr = agentSandboxRun(a);
+      if (!sr || !sr.lastRunAt) return '';
+      const ago = agentNowAgo((hiveNowMs || Date.now()) - Date.parse(sr.lastRunAt));
+      const dur = sr.durationS >= 60 ? Math.round(sr.durationS / 60) + ' min' : (sr.durationS || 0) + ' s';
+      let text = (sr.succeeded ? 'last run succeeded' : (sr.timedOut ? 'last run timed out' : 'last run failed')) + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
+      if (sr.commitCount) text += ' \u00b7 ' + sr.commitCount + (sr.commitCount === 1 ? ' commit' : ' commits');
+      return text;
+    }
+    function agentSandboxRunHtml(a, hiveNowMs) {
+      const sr = agentSandboxRun(a);
+      const text = agentSandboxRunText(a, hiveNowMs);
+      if (!text) return '';
+      let html = esc(text);
+      if (sr.prURL) html += ' \u00b7 <a href="' + esc(sr.prURL) + '" target="_blank" rel="noopener" data-stop="1">PR</a>';
+      if (sr.error && !sr.succeeded) html += ' \u2014 ' + esc(sr.error.length > 160 ? sr.error.slice(0, 160) + '\u2026' : sr.error);
+      return html;
+    }
     function agentBlockerLineHtml(a) {
       const onDemand = a.onDemand === true;
       let session = 'up', sessionCls = 'ab-ok';
       let sessionTip = 'The tmux session is alive.';
+      const sandboxRun = agentSandboxRun(a);
       if (agentIsDisabled(a)) {
         session = 'disabled'; sessionCls = 'ab-bad';
         sessionTip = 'Disabled in config \u2014 the governor never starts this agent. Enable it with \u2699\uFE0F.';
+      } else if (sandboxRun) {
+        const rt = sandboxRun.runtime === 'job' ? 'Job' : 'sandbox';
+        if (sandboxRun.health === 'running') { session = rt + ' running'; sessionCls = 'ab-ok'; sessionTip = 'A sandboxed kick is in flight.'; }
+        else if (sandboxRun.health === 'failed') { session = agentSandboxDownLabel(a); sessionCls = 'ab-bad'; sessionTip = 'The last sandboxed run failed: ' + (sandboxRun.error || 'see the full log.'); }
+        else if (sandboxRun.health === 'overdue') { session = 'run overdue'; sessionCls = 'ab-bad'; sessionTip = 'A scheduled kick was due' + (sandboxRun.dueAt ? ' at ' + sandboxRun.dueAt : '') + ' and no run has started.'; }
+        else { session = sandboxRun.lastRunAt ? rt + ' ok' : rt + ' ready'; sessionCls = 'ab-ok'; sessionTip = 'Sandboxed agent: each kick runs in its own container, so there is no session between kicks. ' + (agentSandboxRunText(a) || 'No run yet.'); }
       } else if (a.state !== 'running') {
         session = 'down'; sessionCls = 'ab-bad';
         sessionTip = 'No live tmux session \u2014 \u21bb restart asks the supervisor to respawn it.';
@@ -17889,7 +17944,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // Down = process not alive — anything but 'running'. 'stopped'-only
         // matching rendered crash-looping ('failed') agents green (#2465).
         const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
-        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+        const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
         const needsLogin = _agentNeedsLogin(a, isStopped);
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
