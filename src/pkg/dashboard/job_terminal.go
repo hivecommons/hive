@@ -80,8 +80,6 @@ type jobTerminalDeps struct {
 	reader        jobPodLogReader
 	workspaceRoot string
 	pollInterval  time.Duration
-	// now is used for the "written at" stamp on a persisted transcript.
-	now func() time.Time
 }
 
 func (s *Server) registerJobTerminal() {
