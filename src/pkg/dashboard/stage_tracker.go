@@ -427,7 +427,13 @@ type StageTrackerItem struct {
 	// chip. StateReason "not_planned" adds an "issue closed (not planned)"
 	// chip so the reader can tell the PR may be moot (hivecommons/hive#14655).
 	ClosedIssue *StageTrackerLinkedIssue `json:"closed_issue,omitempty"`
-	History     []StageTrackerHop        `json:"history"`
+	// LastOperatorAction is the newest owner row action recorded for the
+	// item (approve, give-direction, hold, let-hive-decide, …) with what
+	// became of it, and OperatorActionCount how many were recorded; the
+	// row's ✓ badge and its hover read these (operator_actions.go).
+	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
+	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
+	History             []StageTrackerHop           `json:"history"`
 }
 
 // StageTrackerLinkedIssue is one issue a PR closes, as its row's issue
@@ -482,6 +488,10 @@ type StageTrackerLinkedPR struct {
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
 	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
 	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
+	// LastOperatorAction / OperatorActionCount mirror the nested PR's own
+	// row fields so its sub-row wears the ✓ badge too.
+	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
+	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -1765,6 +1775,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
+	s.applyOperatorActions(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
@@ -2495,6 +2506,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
 				lp.DecisionNeeded = pr.DecisionNeeded
+				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
 				}

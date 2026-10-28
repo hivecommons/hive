@@ -144,6 +144,8 @@ type repoItemDecisionResponse struct {
 	Stage    string   `json:"stage,omitempty"`
 	// Result is the shared row-action outcome for the dashboard's toast.
 	Result *RowActionResult `json:"result,omitempty"`
+	// Head is the PR head an approve / direction was recorded against.
+	Head string `json:"head,omitempty"`
 }
 
 // repoItemDecisionResult reads a recorded human decision into the shared
@@ -415,7 +417,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	// The row's park was just answered: serve the re-derived stage on the
 	// next tracker read instead of the cached 085.
 	s.invalidateStageTrackerForWebhook()
-	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage,
+	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head,
 		Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", "", released)})
 }
 

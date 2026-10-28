@@ -194,6 +194,10 @@ type Server struct {
 	// delegatedJobs tracks "Let hive decide" jobs by repo#number
 	// (api_repo_item_decide_delegated.go).
 	delegatedJobs delegatedDecisionJobs
+	// operatorActionStore is the owner row-action ledger behind the
+	// activity monitor's ✓ badge (operator_actions.go), opened on first use.
+	operatorActionStore *operatorActionStore
+	operatorActionsOnce sync.Once
 	// acmmLinearBaseURL overrides the Linear GraphQL endpoint the ACMM
 	// "Open Issue" path posts issueCreate to. Empty = production; tests
 	// point it at an httptest server.

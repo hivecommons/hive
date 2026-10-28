@@ -30,7 +30,7 @@ const fnSrc = name => {
 };
 const src = [
   constLine('STAGE_TRACKER_PAGE_SIZES'), constLine('STAGE_TRACKER_DEFAULT_PAGE_SIZE'), constLine('STAGE_TRACKER_LABEL_CHIP_LIMIT'),
-  constLine('STAGE_TRACKER_AGE_MS'), constLine('STAGE_TRACKER_LABEL_FAMILIES'), constLine('STAGE_TRACKER_SORTS'),
+  constLine('STAGE_TRACKER_AGE_MS'), constLine('STAGE_TRACKER_LABEL_FAMILIES'), constLine('STAGE_TRACKER_SORTS'), constLine('STAGE_TRACKER_ACTED_FILTERS'),
   constLine('STAGE_TRACKER_NEEDS_HUMAN_STAGES'), constLine('STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES'), constLine('STAGE_TRACKER_NEEDS_HUMAN_MODS'),
   fnSrc('stageTrackerDefaultFilter'), fnSrc('stageTrackerNormalizeFilter'), fnSrc('stageTrackerLabelFamily'),
   pick('label facet helpers begin', 'label facet helpers end'),

@@ -251,6 +251,9 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 			j.Status = delegatedJobStatusFailed
 			j.Error = err.Error()
 		})
+		if done, ok := s.delegatedJobs.get(key); ok {
+			s.settleOperatorAction(repoFull, number, &done)
+		}
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated+"_failed", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "error", err.Error()), "", repoFull, number)
 		return
 	}
@@ -291,6 +294,9 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 		}
 		j.Status = delegatedJobStatusDone
 	})
+	if done, ok := s.delegatedJobs.get(key); ok {
+		s.settleOperatorAction(repoFull, number, &done)
+	}
 	kinds := make([]string, 0, len(d.Actions))
 	for _, a := range d.Actions {
 		kinds = append(kinds, string(a.Kind))
