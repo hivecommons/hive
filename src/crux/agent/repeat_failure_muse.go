@@ -63,6 +63,11 @@ const (
 	// museDirListingsMax bounds the directories one scan lists, so a tree of
 	// empty year/month/day directories costs at most this many listings.
 	museDirListingsMax = 2 * museSessionLogsMax
+	// museDisplacedSessionsMax bounds the followed sessions a truncated walk
+	// left out that the reader keeps (newest names first) while their logs
+	// exist, so the sessions map and the stats a scan spends on them stay
+	// bounded however many newer-named sessions displace them.
+	museDisplacedSessionsMax = museSessionLogsMax
 )
 
 // museRecordReader follows one agent's Muse Code session logs. Sessions are
@@ -95,8 +100,11 @@ func museSessionsRoot(name string, uid int, home string) string {
 // museRealSubdirs lists the subdirectories of dir that are not links, newest
 // name first, keeping at most the museDirEntriesMax newest. truncated reports
 // that some were left out. Names are taken from the directory listing alone
-// (no per-entry stat) and at most 2*museDirEntriesMax are held at a time.
+// (no per-entry stat); a batch is trimmed once 2*museDirEntriesMax names are
+// held, so that is the most held at a time.
 func museRealSubdirs(dir string) (out []string, truncated bool) {
+	// Also checked by museWalk.subdirs, which charges the listing budget
+	// only for directories that exist; this keeps direct callers safe.
 	if !copilotRecordRealDir(dir) {
 		return nil, false
 	}
@@ -120,7 +128,7 @@ func museRealSubdirs(dir string) (out []string, truncated bool) {
 				out = append(out, entry.Name())
 			}
 		}
-		if len(out) > 2*museDirEntriesMax {
+		if len(out) >= 2*museDirEntriesMax {
 			keepNewest()
 		}
 		if err != nil || len(entries) == 0 {
@@ -138,7 +146,8 @@ type museWalk struct {
 	truncated bool
 }
 
-// subdirs is museRealSubdirs charged to the walk's listing budget.
+// subdirs is museRealSubdirs charged to the walk's listing budget. A missing
+// or linked dir is checked here first so it costs no listing.
 func (w *museWalk) subdirs(dir string) []string {
 	if !copilotRecordRealDir(dir) {
 		return nil
@@ -161,7 +170,6 @@ func (w *museWalk) subdirs(dir string) []string {
 // log missing from the result is not necessarily gone.
 func museSessionLogs(root string) (logs []string, truncated bool) {
 	w := &museWalk{}
-	defer func() { truncated = w.truncated }()
 	add := func(rel string) bool {
 		if len(logs) >= museSessionLogsMax {
 			w.truncated = true
@@ -177,12 +185,12 @@ func museSessionLogs(root string) (logs []string, truncated bool) {
 				for _, id := range w.subdirs(filepath.Join(root, day)) {
 					sess := filepath.Join(day, id)
 					if !add(filepath.Join(sess, museSessionLog)) {
-						return logs, true
+						return logs, w.truncated
 					}
 					sub := filepath.Join(sess, "subagent")
 					for _, child := range w.subdirs(filepath.Join(root, sub)) {
 						if !add(filepath.Join(sub, child, museSessionLog)) {
-							return logs, true
+							return logs, w.truncated
 						}
 					}
 				}
@@ -226,14 +234,24 @@ func (r *museRecordReader) scan(root string, uid int, emit func(RepeatFailureRec
 			r.readSession(path, sess, info.Size(), emit, observe)
 		}
 	}
+	// Followed sessions the walk did not reach. A scan that saw the whole
+	// tree forgets them: they are gone. A truncated walk may have left a log
+	// out by a cap, not deletion, so its offset is kept while the log exists
+	// and its return replays nothing; newest names first, at most
+	// museDisplacedSessionsMax of them, so neither the map nor the stats
+	// spent here grow with the sessions an agent keeps minting.
+	var displaced []string
 	for rel := range r.sessions {
-		if present[rel] {
-			continue
+		if !present[rel] {
+			displaced = append(displaced, rel)
 		}
-		if truncated {
-			// A cap, not deletion, may have left this log out of the walk:
-			// keep its offset while it exists so its return replays nothing.
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(displaced)))
+	kept := 0
+	for _, rel := range displaced {
+		if truncated && kept < museDisplacedSessionsMax {
 			if info, err := os.Lstat(filepath.Join(root, rel)); err == nil && info.Mode().IsRegular() {
+				kept++
 				continue
 			}
 		}

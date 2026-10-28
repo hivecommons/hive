@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -479,5 +480,71 @@ func TestRepeatFailureMuseDisplacedSessionIsNotReplayed(t *testing.T) {
 	s.run(r, root)
 	if len(r.sessions) != 0 {
 		t.Fatalf("sessions after deletion = %v, want none", r.sessions)
+	}
+}
+
+// TestRepeatFailureMuseDisplacedSessionsAreCapped: sessions a truncated walk
+// leaves out are kept while their logs exist, but at most
+// museDisplacedSessionsMax of them, newest names first, so an agent minting
+// newer-named sessions every scan cannot grow the sessions map without bound.
+func TestRepeatFailureMuseDisplacedSessionsAreCapped(t *testing.T) {
+	root := rfMuseRoot(t)
+	r := newMuseRecordReader()
+	var s rfMuseScan
+	const perDay = museDirEntriesMax
+	rfMuseDay := func(d int) string { return fmt.Sprintf("%02d", d) }
+	daysPerBatch := museSessionLogsMax / perDay
+	// addDays creates perDay empty session logs for each day in [from, to].
+	addDays := func(from, to int) {
+		for d := from; d <= to; d++ {
+			for i := 0; i < perDay; i++ {
+				dir := filepath.Join(root, "2026", "10", rfMuseDay(d), "s"+strconv.Itoa(i))
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, museSessionLog), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	rel := func(d int) string {
+		return filepath.Join("2026", "10", rfMuseDay(d), "s0", museSessionLog)
+	}
+
+	addDays(1, daysPerBatch)
+	s.run(r, root)
+	if len(r.sessions) != museSessionLogsMax {
+		t.Fatalf("sessions after the first scan = %d, want %d", len(r.sessions), museSessionLogsMax)
+	}
+
+	// Newer days push the first batch out of the walk: it is displaced, not
+	// gone, and all of it fits under the cap.
+	addDays(daysPerBatch+1, 2*daysPerBatch)
+	s.run(r, root)
+	if len(r.sessions) != 2*museSessionLogsMax {
+		t.Fatalf("sessions after the second scan = %d, want %d", len(r.sessions), 2*museSessionLogsMax)
+	}
+	if r.sessions[rel(1)] == nil {
+		t.Fatalf("displaced session %q was dropped while its log still exists", rel(1))
+	}
+
+	// A third batch displaces the second: now twice the cap is displaced, so
+	// the oldest-named half is forgotten and the map stays bounded.
+	addDays(2*daysPerBatch+1, 3*daysPerBatch)
+	s.run(r, root)
+	if len(r.sessions) != museSessionLogsMax+museDisplacedSessionsMax {
+		t.Fatalf("sessions after the third scan = %d, want %d", len(r.sessions), museSessionLogsMax+museDisplacedSessionsMax)
+	}
+	if r.sessions[rel(daysPerBatch+1)] == nil {
+		t.Fatalf("newest displaced session %q was evicted before older ones", rel(daysPerBatch+1))
+	}
+	for d := 1; d <= daysPerBatch; d++ {
+		if r.sessions[rel(d)] != nil {
+			t.Fatalf("oldest displaced session %q survived past the cap", rel(d))
+		}
+	}
+	if r.sessions[rel(3*daysPerBatch)] == nil {
+		t.Fatalf("walked session %q is not followed", rel(3*daysPerBatch))
 	}
 }
