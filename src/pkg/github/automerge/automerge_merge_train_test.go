@@ -86,6 +86,22 @@ func TestGroupMergeTrains(t *testing.T) {
 			want:    [][]int{{5, 6, 4}},
 			overlap: []string{"a.go"},
 		},
+		{
+			name: "a mergeable head fronts over an older blocked one",
+			members: []mergeTrainMember{
+				blocked(mtMember(1, "clean", t0, "x.go")),
+				mtMember(2, "clean", t0.Add(time.Minute), "x.go"),
+			},
+			want:    [][]int{{2, 1}},
+			overlap: []string{"x.go"},
+		},
+		{
+			name: "every member blocked holds nobody back (fail-open)",
+			members: []mergeTrainMember{
+				blocked(mtMember(1, "clean", t0, "x.go")),
+				blocked(mtMember(2, "clean", t0.Add(time.Minute), "x.go")),
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -409,5 +425,49 @@ func TestMergeTrainPolicyDefaults(t *testing.T) {
 	var plan *mergeTrainPlan
 	if plan.isFront(1) || plan.isSibling(1) {
 		t.Fatal("nil plan has no members")
+	}
+}
+
+func blocked(m mergeTrainMember) mergeTrainMember {
+	m.Blocked = true
+	return m
+}
+
+// TestMergeTrainBlockedHeadMemory: the lane's verdict per head decides
+// whether it may front; a red/terminal verdict marks the exact head, any
+// other verdict clears it, and a new head starts clean. A conflict is not
+// blocking: the train's own rebase step repairs it.
+func TestMergeTrainBlockedHeadMemory(t *testing.T) {
+	for reason, want := range map[string]bool{
+		"":                                   false,
+		"conflicting":                        false,
+		"check-pending":                      false,
+		"not-mergeable":                      true,
+		autoMergeReasonForkNotEditable:       true,
+		autoMergeReasonClosedSuperseded:      true,
+		"required-check-failing:ci/build":    true,
+		workflowApprovalRequiredPrefix + "x": true,
+	} {
+		if got := mergeTrainBlockingReason(reason); got != want {
+			t.Fatalf("mergeTrainBlockingReason(%q) = %v, want %v", reason, got, want)
+		}
+	}
+	c := &Engine{}
+	c.noteMergeTrainOutcome("acme", "widget", 7, "sha1", "not-mergeable")
+	if !c.mergeTrainHeadBlocked("acme", "widget", 7, "sha1") || c.mergeTrainHeadBlocked("acme", "widget", 7, "sha2") {
+		t.Fatal("the exact head is blocked, a new head is not")
+	}
+	c.noteMergeTrainOutcome("acme", "widget", 7, "sha1", "")
+	if c.mergeTrainHeadBlocked("acme", "widget", 7, "sha1") {
+		t.Fatal("a clean verdict clears the mark")
+	}
+	c.noteMergeTrainOutcome("acme", "widget", 7, "", "not-mergeable")
+	if c.mergeTrainHeadBlocked("acme", "widget", 7, "") {
+		t.Fatal("no sha, no mark")
+	}
+	var nilEngine *Engine
+	nilEngine.noteMergeTrainOutcome("acme", "widget", 7, "sha1", "not-mergeable")
+	if nilEngine.mergeTrainHeadBlocked("acme", "widget", 7, "sha1") {
+		t.Fatal("nil engine blocks nothing")
 	}
 }
