@@ -218,13 +218,16 @@ func IsDelegatedComment(body string) bool {
 }
 
 var (
-	secretsRE     = regexp.MustCompile(`(?i)\b(secrets?|PATs?|personal access tokens?|org(?:anization)? (?:membership|permissions?|admin|owner)|token scopes?|GITHUB_TOKEN|credentials?|app installation|billing)\b`)
-	flakyRE       = regexp.MustCompile(`(?i)\b(flak(?:y|e|iness)|intermittent(?:ly)? fail\w*|non-?deterministic test)\b`)
-	ratchetRE     = regexp.MustCompile(`(?i)\b(actionlint|ratchet|duplication (?:gate|threshold|check)|link[- ]?checker|allow-?list|lint gate|hygiene gate|shellcheck|yamllint|markdownlint)\b`)
-	proposalRE    = regexp.MustCompile(`(?i)\bacceptance criteria\b`)
-	hivePolicyRE  = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
-	duplicateOfRE = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
-	blockedOnPRRE = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
+	secretsRE    = regexp.MustCompile(`(?i)\b(secrets?|PATs?|personal access tokens?|org(?:anization)? (?:membership|permissions?|admin|owner)|token scopes?|GITHUB_TOKEN|credentials?|app installation|billing)\b`)
+	flakyRE      = regexp.MustCompile(`(?i)\b(flak(?:y|e|iness)|intermittent(?:ly)? fail\w*|non-?deterministic test)\b`)
+	ratchetRE    = regexp.MustCompile(`(?i)\b(actionlint|ratchet|duplication (?:gate|threshold|check)|link[- ]?checker|allow-?list|lint gate|hygiene gate|shellcheck|yamllint|markdownlint)\b`)
+	proposalRE   = regexp.MustCompile(`(?i)\bacceptance criteria\b`)
+	hivePolicyRE = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
+	// capabilityGapRE matches a blocker no direction decision can clear: the
+	// GitHub App lacks a permission (for example `workflows`).
+	capabilityGapRE = regexp.MustCompile(`(?i)\b(?:app(?: token)?|installation|github app)\b[^\n]{0,80}\b(?:cannot|can't|lacks?|no|without|missing)\b[^\n]{0,60}\b(?:workflows?|permissions?)\b|\bno [\x60]?workflows[\x60]? permission\b`)
+	duplicateOfRE   = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
+	blockedOnPRRE   = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
 )
 
 // Classifier labels.
@@ -294,6 +297,13 @@ func HivePolicyChange(in Input) bool {
 	return hivePolicyRE.MatchString(in.headline())
 }
 
+// CapabilityGap reports a needs-human whose blocker is a missing GitHub App
+// capability rather than an open question.
+func CapabilityGap(in Input) bool {
+	return capabilityGapRE.MatchString(in.headline()) ||
+		in.Kind == KindIssue && capabilityGapRE.MatchString(firstLines(in.Body, 12))
+}
+
 // OwnerOnly reports a secrets / PAT / org-permission item.
 func OwnerOnly(in Input) bool {
 	if secretsRE.MatchString(in.headline()) {
@@ -336,6 +346,10 @@ func decideIssue(in Input) Decision {
 	ref := "#" + strconv.Itoa(in.Number)
 	if HivePolicyChange(in) {
 		return recommendOnly("hive-policy", "this changes the hive's own policy or scope (settings, governance, security posture); the owner confirms those", "accept the proposal as written with its stated defaults, or close it as won't-fix if it widens the hive's write scope")
+	}
+	if CapabilityGap(in) {
+		return recommendOnly("capability-gap", "the blocker is a missing GitHub App permission; approving a direction would un-park the item only for the same needs-human to be re-applied, so the park stays until the permission changes",
+			"grant the App the missing permission (for example `workflows`) or have a human apply the change, then re-check; hive cannot clear this by deciding")
 	}
 	if OwnerOnly(in) {
 		return ownerOnlyDecision(in, "secrets, PATs and org permissions are the owner's alone; the hive stops opening further failure issues for this root cause")
