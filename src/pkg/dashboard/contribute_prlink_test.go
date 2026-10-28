@@ -396,6 +396,8 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 	openPR := `{"number":14656,"state":"open","html_url":"https://github.com/o/r/pull/14656","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
 	mergedPR := `{"number":14656,"state":"closed","html_url":"https://github.com/o/r/pull/14656","repository":{"full_name":"o/r"},"pull_request":{"url":"x","merged_at":"2026-10-28T00:00:00Z"}}`
 	otherRepoPR := `{"number":77,"state":"open","html_url":"https://github.com/x/y/pull/77","repository":{"full_name":"x/y"},"pull_request":{"url":"x"}}`
+	mentionPR := `{"number":14700,"state":"open","title":"unrelated work","body":"see also #13135 for context","html_url":"https://github.com/o/r/pull/14700","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
+	closingPR := `{"number":14701,"state":"open","title":"fix it","body":"Closes #13135","html_url":"https://github.com/o/r/pull/14701","repository":{"full_name":"o/r"},"pull_request":{"url":"x"}}`
 	plainIssue := `{"number":14859,"state":"open","html_url":"https://github.com/o/r/issues/14859","repository":{"full_name":"o/r"}}`
 
 	cases := []struct {
@@ -425,6 +427,18 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 			timeline:   `[{"event":"labeled","created_at":"2026-10-26T00:00:00Z"},` + crossRef(mergedPR) + `]`,
 			wantNumber: 14656,
 			wantState:  prLinkStateMerged,
+		},
+		{
+			name:     "cross-reference from a PR that only mentions the issue",
+			search:   `[]`,
+			timeline: `[` + crossRef(mentionPR) + `]`,
+		},
+		{
+			name:       "mention-only PR is skipped, closing PR is chosen",
+			search:     `[]`,
+			timeline:   `[` + crossRef(mentionPR) + `,` + crossRef(closingPR) + `]`,
+			wantNumber: 14701,
+			wantState:  prLinkStateOpen,
 		},
 		{
 			name:     "no reference anywhere",

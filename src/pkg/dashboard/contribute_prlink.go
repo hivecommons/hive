@@ -8,6 +8,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 const (
@@ -179,6 +180,9 @@ func searchLinkedPR(ctx context.Context, gc *gh.Client, repo string, number int)
 	// arrive as referenced events and are not matched here. A
 	// timeline error keeps whatever the search already found.
 	for _, iss := range crossReferencingPRs(ctx, gc, repo, number) {
+		if !prClosesIssue(iss, repo, number) {
+			continue
+		}
 		st, merged := prLinkCandidate(iss)
 		if merged {
 			return st, nil
@@ -255,6 +259,18 @@ func crossReferencingPRs(ctx context.Context, gc *gh.Client, repo string, number
 // know whether an open or merged one exists. Small page keeps the Search call
 // cheap and within a single request.
 const prLinkSearchPerPage = 10
+
+// prClosesIssue reports whether a timeline cross-referencing PR names the
+// issue as a fix (Closes/Fixes/Resolves) in its title or body, so a PR that
+// merely mentions the issue is not promoted as its linked PR. A source with
+// no title or body (omitted by the API) is accepted, as in prReferencesIssue.
+func prClosesIssue(iss *gh.Issue, repo string, number int) bool {
+	if iss.GetBody() == "" && iss.GetTitle() == "" {
+		return true
+	}
+	_, ok := github.FindClosingKeywordReference(iss.GetTitle()+"\n"+iss.GetBody(), repo, repo, number)
+	return ok
+}
 
 // prReferencesIssue guards against a coincidental number collision: the Search
 // "#N" match is broad, so confirm the PR actually names the issue as a reference
