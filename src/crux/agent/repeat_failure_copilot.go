@@ -145,6 +145,15 @@ func copilotRecordOwnedBy(info os.FileInfo, uid int) bool {
 }
 
 func (r *copilotRecordReader) readSession(path string, sess *copilotRecordSession, size int64, emit func(RepeatFailureRecord), observe func(bool, time.Time)) {
+	readAppendedLines(path, sess, size, func(line []byte) {
+		sess.handleLine(line, emit, observe)
+	})
+}
+
+// readAppendedLines reads the complete lines appended to the log at path
+// since sess.offset (at most copilotRecordReadMax bytes, up to size) and
+// passes each to handle. The offset moves past the lines handled.
+func readAppendedLines(path string, sess *copilotRecordSession, size int64, handle func(line []byte)) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return
@@ -172,7 +181,7 @@ func (r *copilotRecordReader) readSession(path string, sess *copilotRecordSessio
 	}
 	sess.offset += int64(end + 1)
 	for _, line := range bytes.Split(buf[:end], []byte{'\n'}) {
-		sess.handleLine(line, emit, observe)
+		handle(line)
 	}
 }
 

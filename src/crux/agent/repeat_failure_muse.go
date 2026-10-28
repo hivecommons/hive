@@ -3,11 +3,10 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -55,6 +54,12 @@ const (
 	// museTerminalTimedOut is the terminal_status of a command killed at its
 	// deadline.
 	museTerminalTimedOut = "timed_out"
+	// museDirEntriesMax bounds the entries read from one directory of the
+	// agent-writable sessions tree.
+	museDirEntriesMax = 1024
+	// museSessionLogsMax bounds the session logs one scan follows; the oldest
+	// days are the ones left out.
+	museSessionLogsMax = 4096
 )
 
 // museRecordReader follows one agent's Muse Code session logs. Sessions are
@@ -84,15 +89,18 @@ func museSessionsRoot(name string, uid int, home string) string {
 	return filepath.Join(data, "muse", "sessions")
 }
 
-// museRealSubdirs lists the subdirectories of dir that are not links.
+// museRealSubdirs lists up to museDirEntriesMax subdirectories of dir that are
+// not links, newest name first.
 func museRealSubdirs(dir string) []string {
 	if !copilotRecordRealDir(dir) {
 		return nil
 	}
-	entries, err := os.ReadDir(dir)
+	f, err := os.Open(dir)
 	if err != nil {
 		return nil
 	}
+	defer f.Close()
+	entries, _ := f.ReadDir(museDirEntriesMax)
 	var out []string
 	for _, entry := range entries {
 		// A symlinked directory is not a directory to ReadDir.
@@ -100,23 +108,35 @@ func museRealSubdirs(dir string) []string {
 			out = append(out, entry.Name())
 		}
 	}
+	sort.Sort(sort.Reverse(sort.StringSlice(out)))
 	return out
 }
 
 // museSessionLogs returns the session and subagent logs under root, relative
-// to root.
+// to root, at most museSessionLogsMax of them, newest days first.
 func museSessionLogs(root string) []string {
 	var logs []string
+	add := func(rel string) bool {
+		if len(logs) >= museSessionLogsMax {
+			return false
+		}
+		logs = append(logs, rel)
+		return true
+	}
 	for _, y := range museRealSubdirs(root) {
 		for _, mo := range museRealSubdirs(filepath.Join(root, y)) {
 			for _, d := range museRealSubdirs(filepath.Join(root, y, mo)) {
 				day := filepath.Join(y, mo, d)
 				for _, id := range museRealSubdirs(filepath.Join(root, day)) {
 					sess := filepath.Join(day, id)
-					logs = append(logs, filepath.Join(sess, museSessionLog))
+					if !add(filepath.Join(sess, museSessionLog)) {
+						return logs
+					}
 					sub := filepath.Join(sess, "subagent")
 					for _, child := range museRealSubdirs(filepath.Join(root, sub)) {
-						logs = append(logs, filepath.Join(sub, child, museSessionLog))
+						if !add(filepath.Join(sub, child, museSessionLog)) {
+							return logs
+						}
 					}
 				}
 			}
@@ -166,33 +186,9 @@ func (r *museRecordReader) scan(root string, uid int, emit func(RepeatFailureRec
 }
 
 func (r *museRecordReader) readSession(path string, sess *copilotRecordSession, size int64, emit func(RepeatFailureRecord), observe func(bool, time.Time)) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
-		return
-	}
-	n := min(size-sess.offset, copilotRecordReadMax)
-	buf := make([]byte, n)
-	read, err := f.ReadAt(buf, sess.offset)
-	if err != nil && err != io.EOF {
-		return
-	}
-	buf = buf[:read]
-	end := bytes.LastIndexByte(buf, '\n')
-	if end < 0 {
-		if int64(read) == copilotRecordReadMax {
-			// One line larger than a whole read: skip it.
-			sess.offset += int64(read)
-		}
-		return
-	}
-	sess.offset += int64(end + 1)
-	for _, line := range bytes.Split(buf[:end], []byte{'\n'}) {
+	readAppendedLines(path, sess, size, func(line []byte) {
 		museHandleLine(sess, line, emit, observe)
-	}
+	})
 }
 
 // museSessionEnvelope is the part of a session-log line the reader uses.

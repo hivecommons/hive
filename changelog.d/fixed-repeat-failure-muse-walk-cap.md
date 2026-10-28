@@ -1,0 +1,1 @@
+- Fix the repeat-failure Muse Code session reader walking its agent-writable session tree without a bound: each directory and the total number of logs followed per scan are now capped, and the tail reader is shared with the Copilot reader (#14877, #14878).

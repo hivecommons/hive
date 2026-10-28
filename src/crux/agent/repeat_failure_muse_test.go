@@ -365,3 +365,39 @@ func TestRepeatFailureMuseRoute(t *testing.T) {
 		t.Fatalf("note = %q, want %q", st.Note, want)
 	}
 }
+
+// TestRepeatFailureMuseWalkIsBounded: an agent-writable sessions tree with
+// more directories or logs than the caps is walked only up to them, newest
+// days first.
+func TestRepeatFailureMuseWalkIsBounded(t *testing.T) {
+	root := rfMuseRoot(t)
+	day := filepath.Join(root, "2026", "10", "28")
+	for i := 0; i < museDirEntriesMax+50; i++ {
+		if err := os.MkdirAll(filepath.Join(day, "s"+strconv.Itoa(1000000+i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(museRealSubdirs(day)); got != museDirEntriesMax {
+		t.Fatalf("subdirs read from one directory = %d, want %d", got, museDirEntriesMax)
+	}
+
+	// More logs than museSessionLogsMax across days: the oldest are left out.
+	total := rfMuseRoot(t)
+	perDay := museDirEntriesMax
+	days := museSessionLogsMax/perDay + 2
+	for d := 1; d <= days; d++ {
+		for i := 0; i < perDay; i++ {
+			dir := filepath.Join(total, "2026", "10", "0"+strconv.Itoa(d), "s"+strconv.Itoa(i))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	logs := museSessionLogs(total)
+	if len(logs) != museSessionLogsMax {
+		t.Fatalf("logs collected = %d, want %d", len(logs), museSessionLogsMax)
+	}
+	if !strings.Contains(logs[0], filepath.Join("10", "0"+strconv.Itoa(days))) {
+		t.Fatalf("first log %q is not from the newest day", logs[0])
+	}
+}
