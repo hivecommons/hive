@@ -1765,6 +1765,16 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", "Exempt label"))
 			continue
 		}
+		// A tracking/archive issue (hive/tracking label, hive:tracking
+		// marker or "Keep this issue open" in the body) is not work: it
+		// never becomes actionable, is never offered or advertised, and
+		// CloseIssue refuses it (hivecommons/hive#14613).
+		if _, tracking := isTrackingIssue(issue); tracking {
+			breakdown.Filtered++
+			breakdown.Tracking++
+			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", trackingFilterReason))
+			continue
+		}
 		// Blocked on an unmerged PR (hivecommons/hive#13093): out of the
 		// actionable set until ReconcileBlockedIssues lifts the label. The
 		// reason names the PR when the body carries the blocked-on marker,
@@ -4611,6 +4621,10 @@ type RepoIssueBreakdown struct {
 	// blocker (`blocked` label, hivecommons/hive#13093). Counted inside
 	// Filtered; named so the repo card can say why.
 	Blocked int `json:"blocked,omitempty"`
+	// Tracking counts open tracking/archive issues (`hive/tracking` label,
+	// `<!-- hive:tracking -->` marker or "Keep this issue open" in the
+	// body, hivecommons/hive#14613). Counted inside Filtered.
+	Tracking int `json:"tracking,omitempty"`
 	// ReporterTriage counts open issues from reporters the hive does not
 	// trust that are waiting for a maintainer's triage label (#9665). Kept
 	// apart from Filtered so the repo card can say "N awaiting reporter

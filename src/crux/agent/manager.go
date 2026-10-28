@@ -371,6 +371,12 @@ type AgentProcess struct {
 	lastInferKickVisible    string    // stall watchdog: visible pane text just after kick delivery
 	stallNudgeSent          bool      // stall watchdog: at most one nudge per kick
 	lastSessionStallRestart time.Time // session-liveness: last restart for a hung Copilot session
+	// SessionRSSMB is the last sampled RSS of the CLI process tree (MiB);
+	// SessionRecycles counts #14842 policy recycles; lastSessionRecycle
+	// enforces the per-agent backoff after one.
+	SessionRSSMB       int
+	SessionRecycles    int
+	lastSessionRecycle time.Time
 	// busyNoActivityRestartAt is when busyNoActivityStall last restarted this
 	// agent, and busyNoActivityRestarts how many times it has in the current
 	// episode. Both survive the restart's busy-visibility reset and clear on
@@ -441,6 +447,12 @@ type AgentProcess struct {
 	// report, or plain "ended". Settled(LastKick) is false while the current
 	// turn is still running. Guarded by m.mu; see kick_outcome.go.
 	KickOutcome KickOutcome
+	// SandboxLastRun is the outcome of this agent's most recent sandboxed
+	// kick (podman or Job runtime). Sandboxed agents sit in StateIdle between
+	// kicks with no session to probe, so health and the activity summary are
+	// read from here. Restored from the sandbox run file on Start. Guarded by
+	// m.mu; see manager_sandbox.go.
+	SandboxLastRun *crux.SandboxRun
 	// sandboxResumeAfterCancel is set when an operator resumes a paused
 	// sandbox agent while the canceled sandbox goroutine is still draining.
 	// The completion handler then turns the expected cancellation into Idle
@@ -809,10 +821,7 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 }
 
 func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext, options ...ManagerOption) *Manager {
-	workDir := os.Getenv("HIVE_WORK_DIR")
-	if workDir == "" {
-		workDir = "/data/agents"
-	}
+	workDir := crux.WorkDir()
 	var opts managerOptions
 	for _, option := range options {
 		if option != nil {
@@ -997,6 +1006,13 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		agent.HasLaunched = true
 		agent.LaunchedMode = m.agentMode(agent)
 		agent.startupLaunchQueued = false
+		if agent.SandboxLastRun == nil {
+			if run, err := loadSandboxRun(m.workDir, name); err != nil {
+				m.logger.Warn("sandbox last run not restored", "name", name, "error", err)
+			} else if run != nil {
+				agent.SandboxLastRun = run
+			}
+		}
 		m.logger.Info("audit: sandbox agent ready", "name", name)
 		m.mu.Unlock()
 		return nil

@@ -68,6 +68,10 @@ func TestRunMarkdown(t *testing.T) {
 		"| key | type | default | exposed-in-UI | where | notes |",
 		"| --- | --- | --- | --- | --- | --- |",
 		"| `agents.github_api_hourly_cap` | `int` |  | none |  | may require restart or reconnect |",
+		"| `agents.session_recycle.enabled` | `*bool` |  | none |  |  |",
+		"| `agents.session_recycle.max_age` | `time.Duration` |  | none |  |  |",
+		"| `agents.session_recycle.max_rss_mb` | `int` |  | none |  |  |",
+		"| `agents.session_recycle.min_idle` | `time.Duration` |  | none |  |  |",
 		"| `hub.token` | `string` |  | none |  | secret/credential — expose as masked or write-only |",
 		"| `hub.url` | `string` | https://hub.example | read/write | Settings dialog reference | may require restart or reconnect |",
 		"| `name` | `string` | hive | read/write | Settings dialog reference |  |",
@@ -89,12 +93,12 @@ func TestRunJSON(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &rows); err != nil {
 		t.Fatalf("decode JSON output: %v\n%s", err, stdout.String())
 	}
-	if len(rows) != 5 {
-		t.Fatalf("got %d rows, want 5: %+v", len(rows), rows)
+	if len(rows) != 9 {
+		t.Fatalf("got %d rows, want 9: %+v", len(rows), rows)
 	}
 	want := row{Key: "hub.url", Type: "string", Default: "https://hub.example", UI: "read/write", Where: "Settings dialog reference", Notes: "may require restart or reconnect"}
-	if rows[2] != want {
-		t.Fatalf("rows[2] = %+v, want %+v", rows[2], want)
+	if rows[6] != want {
+		t.Fatalf("rows[6] = %+v, want %+v", rows[6], want)
 	}
 }
 

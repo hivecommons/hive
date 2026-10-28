@@ -172,6 +172,25 @@ agents:
 
 Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-runtime agent resolves no `workspace_claim` or names a runtime hive does not have, and refuses the kick with the same message rather than failing it after the agent is marked running.
 
+## Health and metrics for sandboxed agents
+
+A sandboxed agent (Podman or Job runtime) has no tmux session, no in-pod process and no `pluk` log between kicks: the manager parks it in the `idle` state and each kick runs to completion in a container or Job. The dashboard therefore must not read "not running" as "session down" for these agents, and the token collector cannot find their CLI session files because the CLI's home directory lives in the sandbox, not in the hive pod.
+
+**Last-run record.** When a sandboxed kick ends, `crux/agent` builds a `SandboxRun` (runtime, start/end, succeeded, timed out, error, commit count, branch, PR URL, summary, usage) and keeps it on the agent process as `sandboxLastRun`. It is also written to `<work_dir>/sandbox-runs/<agent>.json` (restored on restart, so a pod roll does not blank the card) and appended to `<work_dir>/sandbox-runs/runs.jsonl` (`work_dir` is `HIVE_WORK_DIR`, default `/data/agents`). The summary is the agent's `.hive/agent-report.json` `summary` when it left one, otherwise the scrubbed tail of the transcript.
+
+**Health.** `/api/status` carries a `sandboxRun` object on every sandboxed agent with a `health` verdict the SPA uses instead of the session check:
+
+| `health`  | Meaning | Dot |
+|-----------|---------|-----|
+| `ok`      | last run succeeded (or no run yet) and the next cadence occurrence is still in the future | green |
+| `running` | a kick is in flight (container or Job running/pending) | amber |
+| `failed`  | the last run failed or timed out — see the agent's log | red |
+| `overdue` | the cadence had a due occurrence that never started, older than the grace (half the period, clamped to 15 min – 2 h); `dueAt` names it | red |
+
+On-demand agents, paused agents and `pause`/`continuous` cadences are never overdue. A never-kicked interval agent counts its first period from the time the agent came up. The card's blocker line reads `Job ok` / `Job running` / `Job ready` (or `sandbox …` for Podman) / `last run failed` / `last run timed out` / `run overdue` for sandboxed agents instead of `session down`, and the "Now:" line shows the last run's outcome, duration, PR link and summary.
+
+**Tokens and sessions.** The collector reads `sandbox-runs/runs.jsonl` and turns every run that reported usage into one session (`sandbox-<agent>-<startMs>`, backend `sandbox`), so TOKENS/SESSIONS, by-agent and by-model totals and cost include sandboxed work. Usage is parsed from the transcript: Claude's `--output-format json`/`stream-json` `result` line and Copilot's "Breakdown by AI model" footer are recognised. A backend that prints plain text only (Claude without `--output-format`) reports no usage; such runs stay healthy but contribute no tokens rather than an estimate.
+
 ## Network trade-off
 
 `network_mode: none` remains available and maps to Podman's `--network=none`, but it only works for non-inference jobs or runtimes that already expose a local/socket model proxy inside the container. The default sandbox network mode is `restricted`: operators must provide a Podman network/proxy policy that allows only the inference endpoint and MITM proxy required by the selected backend. This is a compromise until every supported backend can run through a credential-free local socket without general egress.

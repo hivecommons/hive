@@ -38,10 +38,10 @@ type SandboxJobConfig struct {
 	// gate device-requesting pods behind a custom scheduler via an admission
 	// webhook (e.g. `A pod must use "schedulerName: spyre-scheduler"`);
 	// without this the Job create is denied before any pod exists.
-	SchedulerName       string                 `yaml:"scheduler_name,omitempty" json:"scheduler_name,omitempty"`
-	EnvFromSecrets      []string               `yaml:"env_from_secrets,omitempty" json:"env_from_secrets,omitempty"`
-	Volumes             []SandboxJobVolume     `yaml:"volumes,omitempty" json:"volumes,omitempty"`
-	TTLSeconds          int                    `yaml:"ttl_seconds,omitempty" json:"ttl_seconds,omitempty"`
+	SchedulerName  string             `yaml:"scheduler_name,omitempty" json:"scheduler_name,omitempty"`
+	EnvFromSecrets []string           `yaml:"env_from_secrets,omitempty" json:"env_from_secrets,omitempty"`
+	Volumes        []SandboxJobVolume `yaml:"volumes,omitempty" json:"volumes,omitempty"`
+	TTLSeconds     int                `yaml:"ttl_seconds,omitempty" json:"ttl_seconds,omitempty"`
 }
 
 // SandboxJobToleration mirrors the subset of a Kubernetes toleration an
@@ -131,6 +131,10 @@ type AgentRuntimeConfig struct {
 	// (the default cap). Exported because the Config YAML hooks in
 	// pkg/config set and read it; `yaml:"-"` keeps it off the wire.
 	AgentsGitHubAPIHourlyCapSet bool `yaml:"-" json:"-"`
+	// AgentsSessionRecycle is the fleet default for the CLI session RSS/age
+	// recycle policy (#14842). It is encoded under agents.session_recycle by
+	// Config's YAML hooks, like AgentsGitHubAPIHourlyCap.
+	AgentsSessionRecycle SessionRecycleConfig `yaml:"-" json:"-"`
 	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
 	// at pack apply and by PUT /api/config/agent/{name}/models.
 	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
@@ -313,8 +317,13 @@ type AgentConfig struct {
 	// turn. 0 disables it; exceeding it raises busy-over-ceiling but never
 	// interrupts the agent.
 	MaxTurnDuration time.Duration `yaml:"max_turn_duration,omitempty" json:"max_turn_duration,omitempty"`
-	DisplayName     string        `yaml:"display_name" json:"display_name,omitempty"`
-	Description     string        `yaml:"description" json:"description,omitempty"`
+	// SessionRecycle overrides the fleet agents.session_recycle policy for
+	// this agent (#14842). Nil inherits the fleet value; EnabledAgents()
+	// stamps the fleet block into nil pointers so the agent manager sees one
+	// resolved policy per agent.
+	SessionRecycle *SessionRecycleConfig `yaml:"session_recycle,omitempty" json:"session_recycle,omitempty"`
+	DisplayName    string                `yaml:"display_name" json:"display_name,omitempty"`
+	Description    string                `yaml:"description" json:"description,omitempty"`
 	// Bob holds bob-backend-only per-agent options. Empty is default-off.
 	Bob AgentBobConfig `yaml:"bob,omitempty" json:"bob,omitempty"`
 	// BobDisplayName is the legacy flat spelling for Bob.SessionLabel. It is

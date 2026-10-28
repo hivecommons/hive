@@ -206,7 +206,7 @@ The keys the agent runtime owns — the part of Hive being carved out as **Crux*
 
 | Struct | Embedded in | YAML keys (unchanged position) |
 |---|---|---|
-| `AgentRuntimeConfig` (`pkg/config/agent_config.go`) | `Config` | `agents` (including the `agents.github_api_hourly_cap` scalar), `backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn` |
+| `AgentRuntimeConfig` (`pkg/config/agent_config.go`) | `Config` | `agents` (including the `agents.github_api_hourly_cap` scalar and the `agents.session_recycle` block), `backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn` |
 | `AgentRuntimeGovernorConfig` (`pkg/config/agent_config.go`) | `GovernorConfig` | `governor.watchdog`, `governor.litellm`, `governor.vllm`, `governor.llm-d`, `governor.bob`, `governor.trajectory`, `governor.kick_limits`, `governor.gateways`, `governor.rotation`, `governor.provider_budget` |
 
 Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through field promotion; only composite literals name the embedded struct (`config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: …}}`). `pkg/config/testdata/agent_runtime_golden.{yaml,json}` pins the parse of a representative file so the boundary cannot drift the schema.
@@ -447,7 +447,7 @@ advanced into the merge path.
 | `auto_merge.contributor_lane.auto_promotion_scope` | `hive` | Where the clean-merged-PR ratchet (`auto_merge.contributor_tier.auto_promote_after_merged`) counts an author's merges: `hive` counts across every repository the hive manages (one `search/issues` query finds the repos holding the author's merges; the PR's own repo is always walked first), `repo` counts only the PR's repository. Revert and sentinel-alert evidence blocks promotion in either scope. |
 | `auto_merge.contributor_tier.auto_promote_after_merged` | `5` | Clean merged PRs (no revert, no sentinel label, not undone by a later merged revert) after which the contributor lane treats an author as `trusted` without an operator grant, unless the registry marks them `revoked`. Negative disables the ratchet. |
 | `auto_merge.contributor_lane.approve_held_runs_for_registry_trusted` | `true` | When the registry path admitted the PR author and the lane stops at `required-check-missing:<ctx>`, approve the head's `action_required` workflow runs once (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`, fork heads included), post one `hive:contributor-held-runs-approved` audit comment and log `contributor-lane approved held runs`. Never acts for claim-marker, auto-promoted or association admissions, sentinel/exclude-labelled PRs, or diffs touching `.github/workflows/**`. Needs the App's **Actions: Read and write** permission. See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
-| `auto_merge.contributor_lane.owner_approval_releases_workflow_fence` | `true` | A hive owner / trusted merger's explicit approval on the **current** head — a GitHub `APPROVED` review on that commit, or a dashboard `/hive decision approve` bound to it — releases the contributor lane's `contributor-lane:workflow-path` fence, so the lane merges a PR editing `.github/workflows/**` / `.github/actions/**` itself once CI, soak and the other gates are clear. Logs `workflow-path fence released by owner approval`, leaves one `hive:workflow-approval` audit comment per head; approval on an older head does not count. Needs the App's **Workflows: Read and write**; without it the merge is refused, the PR is marked `hive:unauthorized` (`merge-workflow-path`) and parks at 090 for a person's click. `false` keeps every workflow-path PR a person's merge ([#14664](https://github.com/hivecommons/hive/issues/14664)). See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
+| `auto_merge.contributor_lane.owner_approval_releases_workflow_fence` | `true` | A hive owner / trusted merger's explicit approval on the **current** head — a GitHub `APPROVED` review on that commit, or a dashboard `/hive decision approve` bound to it — releases the contributor lane's `contributor-lane:workflow-path` fence, so the lane merges a PR editing `.github/workflows/**` / `.github/actions/**` itself once CI, soak and the other gates are clear. Logs `workflow-path fence released by owner approval`, leaves one `hive:workflow-approval` audit comment per head; approval on an older head does not count. An unmarked approval binds to the PR `updated_at` pinned on the hive's first sweep of the head, not to the push, so one typed between the push and that sweep is judged stale and must be typed again ([#14754](https://github.com/hivecommons/hive/issues/14754)). Needs the App's **Workflows: Read and write**; without it the merge is refused, the PR is marked `hive:unauthorized` (`merge-workflow-path`) and parks at 090 for a person's click. `false` keeps every workflow-path PR a person's merge ([#14664](https://github.com/hivecommons/hive/issues/14664)). See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
 | `auto_merge.contributor_lane.repos` | empty = all watched repos | Optional repo allow-list for the contributor-lane tier (bare name or `owner/repo`). |
 | `auto_merge.contributor_lane.exclude_labels` | `hold`, `do-not-merge`, `needs-human`, `blocked`, `needs-rebase` | Labels that keep a PR out of contributor-lane auto-merge (`do-not-merge/*` always excluded). |
 
@@ -763,7 +763,29 @@ between. Two mechanisms close that gap
   already links this issue (claim skipped)* with the PR as evidence
   (reason `open_pr_linked`). A failed listing fails **open**: the
   ledger-backed guards still apply, and a flaky listing must not stall every
-  claim.
+  claim. The gate also refuses an issue the confirming read says is already
+  **closed** (`issue closed`), so an issue closed between enumerations is
+  never dispatched from the cached snapshot.
+- **Webhook claim linking.** A `pull_request` delivery (opened, reopened,
+  edited, synchronize, ready-for-review, draft, closed) is parsed with the
+  same closing-keyword and branch-name grammar and written into the claim
+  ledger the moment it lands
+  ([#14814](https://github.com/hivecommons/hive/issues/14814);
+  `src/pkg/github/webhook_pr_claims.go`): an open PR's claims are recorded
+  (and the cached actionable snapshot re-filtered, so the hub's own agents
+  stop seeing the issue too), a PR edited to stop naming an issue or closed
+  without merging releases it, and a merged PR's claims become merged
+  claims. Before this the link was only made on the full reconcile pass —
+  about an hour apart on a busy spoke — and an owner PR opened with
+  `Fixes #N` in between left #N offerable for that long; the `/contribute`
+  lane handed [#14765](https://github.com/hivecommons/hive/issues/14765) out
+  nine minutes after #14772 (Fixes #14765) opened. The receiver's response
+  lists the issues as `claimed_issues`, the governor logs `webhook PR claims
+  applied to claim ledger` with the PR, state and counts, and the open-PR
+  listing cache for the repo is invalidated so the pre-dispatch guard
+  re-lists on its next call. An `issues` closed delivery (or a PR merged
+  with a closing keyword, which GitHub delivers as the issue's own close)
+  already evicts the issue from the status snapshot the lane offers from.
 - **Duplicate-fix sweep.** Every ~15 minutes (an unstick step, alongside the
   supersession sweep) the hive looks for an open issue two or more open PRs
   close and resolves the pair deterministically. The **earlier-created PR
@@ -1115,6 +1137,33 @@ through the hub (`POST /api/selfreport/ingest`, heartbeat bearer). The
 dashboard shows "Self-reports: N open (last: <class> → #NNN)" in the Fleet
 Report panel and the toggle/repo/cap under Settings → Governor →
 "Self-Reported Issues". Full details: [fleet-report.md](fleet-report.md).
+
+## Agent CLI session recycling
+
+Each agent's CLI (Copilot, Claude, …) is a long-lived Node/V8 process whose
+heap grows with every turn and never shrinks while idle. The health tick
+samples the resident memory of the whole process tree under each agent's
+tmux pane and recycles a session that is over budget — but only while the
+agent is idle at its input prompt with no kick pending, so a turn is never
+interrupted. A recycle is an ordinary restart (`last_restart_reason: session
+recycle`): claims, queues and the kick log are preserved exactly as on any
+other restart, and the governor re-kicks on the next cadence. After a recycle
+the same agent is left alone for ten minutes even if it is over budget again.
+
+```yaml
+agents:
+  session_recycle:        # fleet default; on unless enabled: false
+    max_rss_mb: 1536      # recycle an idle session whose process tree exceeds this (MiB)
+    max_age: 6h           # …or whose CLI session is older than this
+    min_idle: 2m          # pane + transcript must be silent this long first
+  scanner:
+    session_recycle:      # optional per-agent override; absent fields inherit the fleet value
+      max_rss_mb: 2048
+```
+
+The sampled value is shown as **Session RSS** (with the session age and a
+`↻N` recycle count) in the agent detail panel. The log line is
+`agent session recycled` with `rss_mb`, `age` and `reason`.
 
 ## GitHub API quota
 

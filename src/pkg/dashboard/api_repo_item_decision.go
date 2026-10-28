@@ -234,6 +234,9 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 				OverrideReason:          "closed as " + verb + " by @" + user + " from the Hive dashboard",
 				SuppressOverrideComment: true,
 				StateReason:             issueStateReasonNotPlanned,
+				// A recorded human decision may close a tracking issue;
+				// only the automated paths are refused.
+				AllowTrackingIssue: true,
 			})
 			if err != nil {
 				jsonError(w, err.Error(), http.StatusBadGateway)

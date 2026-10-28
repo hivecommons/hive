@@ -16,11 +16,17 @@ import (
 // recording every pause, and restores the production policy afterwards.
 func swapClaimsEffectRetry(t *testing.T, attempts int, wait func(context.Context, time.Duration) bool) *[]time.Duration {
 	t.Helper()
+	claimsEffectMu.Lock()
 	prevAttempts, prevBackoff, prevWait := claimsEffectAttempts, claimsEffectBackoff, claimsEffectWait
+	claimsEffectMu.Unlock()
 	t.Cleanup(func() {
+		claimsEffectMu.Lock()
+		defer claimsEffectMu.Unlock()
 		claimsEffectAttempts, claimsEffectBackoff, claimsEffectWait = prevAttempts, prevBackoff, prevWait
 	})
 	var pauses []time.Duration
+	claimsEffectMu.Lock()
+	defer claimsEffectMu.Unlock()
 	claimsEffectAttempts = attempts
 	claimsEffectBackoff = time.Second
 	claimsEffectWait = func(ctx context.Context, d time.Duration) bool {

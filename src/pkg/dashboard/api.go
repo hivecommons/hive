@@ -159,6 +159,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/repo-cost", s.handleRepoCost)
 	// #12128: per-issue/PR/head-SHA launch attribution over the same collector.
 	s.mux.HandleFunc("GET /api/launch-cost", s.handleLaunchCost)
+	s.mux.HandleFunc("GET /api/launch-cost/history", s.handleLaunchCostHistory)
 	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
 	// #4298: "for every recent reset, how much of the budget had been used".
 	s.mux.HandleFunc("GET /api/budget/history", s.handleBudgetHistory)

@@ -165,6 +165,12 @@ func gfiCandidates(org string, result *github.ActionableResult, allowed func(str
 				continue
 			}
 			c := gfi.Candidate{Repo: full, Number: row.Number, Title: row.Title, URL: row.URL, Labels: row.Labels, Assignees: row.Assignees, CreatedAt: row.CreatedAt}
+			if row.Reason == gfi.SkipTracking {
+				// The row has no body; carry the enumeration's verdict as the
+				// marker so Score skips it as tracking and the sweep withdraws
+				// the label (hivecommons/hive#14613).
+				c.Body = gfi.TrackingMarker
+			}
 			if labelled[c.Key()] {
 				continue
 			}

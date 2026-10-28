@@ -130,3 +130,214 @@ func TestLaunchCostEmptyRefsAndNilSlices(t *testing.T) {
 		t.Fatal("zero ms must render empty")
 	}
 }
+
+func TestLaunchCostDailyRollupSurvivesWindow(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	base := now.Add(-time.Hour)
+	reader := &fakeLaunchReader{
+		summary: &tokens.AggregateSummary{Sessions: []tokens.SessionSummary{
+			rcSession("s1", "scanner", rcUsage(rcTime(base, 15), 200, 20)),
+		}},
+		launches: []tokens.LaunchRecord{lcLaunch("scanner", "review", rcTime(base, 10), lcIssue("o/r", 7))},
+	}
+	persist := filepath.Join(t.TempDir(), "launch-cost.json")
+	lc := NewLaunchCostCollector(reader, nil)
+	lc.nowFn = func() time.Time { return now }
+	lc.EnablePersistence(persist)
+	lc.collect()
+
+	days := lc.DailyRollup()
+	if len(days) != 1 || days[0].Day != "2026-10-27" || len(days[0].ByRef) != 1 {
+		t.Fatalf("rollup = %+v", days)
+	}
+	ref := days[0].ByRef[0]
+	if ref.Ref != "o/r#7" || ref.Launches != 1 || ref.ShareUSD <= 0 {
+		t.Fatalf("ref = %+v", ref)
+	}
+
+	// The launch ages out of the window; the stored day must remain.
+	reader.launches = nil
+	reader.summary = &tokens.AggregateSummary{}
+	lc.nowFn = func() time.Time { return now.Add(3 * 24 * time.Hour) }
+	lc.collect()
+	if got := lc.DailyRollup(); len(got) != 1 || got[0].ByRef[0].Launches != 1 {
+		t.Fatalf("rollup lost after window: %+v", got)
+	}
+
+	// And it survives a restart.
+	lc2 := NewLaunchCostCollector(reader, nil)
+	lc2.EnablePersistence(persist)
+	if got := lc2.DailyRollup(); len(got) != 1 || got[0].ByRef[0].Ref != "o/r#7" {
+		t.Fatalf("rollup not restored: %+v", got)
+	}
+}
+
+// A day's total must add up every launch that ever named a ref on it, even
+// when the launch ring turns over between ticks so no single snapshot holds
+// them all; and a launch still in view must follow its growing spend without
+// being counted twice.
+func TestLaunchCostDailyRollupSumsAcrossRingTurnover(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	base := now.Add(-2 * time.Hour)
+	first := lcLaunch("scanner", "review", rcTime(base, 0), lcIssue("o/r", 7))
+	second := lcLaunch("quality", "review", rcTime(base, 30), lcIssue("o/r", 7))
+	reader := &fakeLaunchReader{
+		summary: &tokens.AggregateSummary{Sessions: []tokens.SessionSummary{
+			rcSession("s1", "scanner", rcUsage(rcTime(base, 5), 200, 20)),
+		}},
+		launches: []tokens.LaunchRecord{first, second},
+	}
+	lc := NewLaunchCostCollector(reader, nil)
+	lc.nowFn = func() time.Time { return now }
+	lc.collect()
+	days := lc.DailyRollup()
+	if len(days) != 1 || len(days[0].ByRef) != 1 {
+		t.Fatalf("rollup = %+v", days)
+	}
+	ref := days[0].ByRef[0]
+	// The no-usage launch counts, as /api/launch-cost by_ref[].launches does.
+	if ref.Launches != 2 || ref.ShareUSD <= 0 {
+		t.Fatalf("ref = %+v", ref)
+	}
+	firstShare := ref.ShareUSD
+
+	// More usage lands on the first launch: the live share follows it, the
+	// launch is still counted once.
+	reader.summary = &tokens.AggregateSummary{Sessions: []tokens.SessionSummary{
+		rcSession("s1", "scanner", rcUsage(rcTime(base, 5), 200, 20), rcUsage(rcTime(base, 10), 400, 40)),
+	}}
+	lc.nowFn = func() time.Time { return now.Add(5 * time.Minute) }
+	lc.collect()
+	ref = lc.DailyRollup()[0].ByRef[0]
+	if ref.Launches != 2 || ref.ShareUSD <= firstShare {
+		t.Fatalf("live share must grow in place: before=%v after=%+v", firstShare, ref)
+	}
+	grown := ref.ShareUSD
+
+	// The ring turns over: the first launch disappears and a third one for the
+	// same ref/day arrives in the same tick. The day must hold all three.
+	third := lcLaunch("scanner", "review", rcTime(base, 60), lcIssue("o/r", 7))
+	reader.launches = []tokens.LaunchRecord{second, third}
+	reader.summary = &tokens.AggregateSummary{Sessions: []tokens.SessionSummary{
+		rcSession("s2", "scanner", rcUsage(rcTime(base, 65), 100, 10)),
+	}}
+	lc.nowFn = func() time.Time { return now.Add(10 * time.Minute) }
+	lc.collect()
+	ref = lc.DailyRollup()[0].ByRef[0]
+	if ref.Launches != 3 || ref.ShareUSD <= grown {
+		t.Fatalf("ring turnover must accumulate: %+v (grown=%v)", ref, grown)
+	}
+	total := ref.ShareUSD
+
+	// Everything ages out; the settled day keeps the full total and persists
+	// it the same way a restart would see it.
+	reader.launches = nil
+	reader.summary = &tokens.AggregateSummary{}
+	lc.nowFn = func() time.Time { return now.Add(3 * 24 * time.Hour) }
+	lc.collect()
+	ref = lc.DailyRollup()[0].ByRef[0]
+	if ref.Launches != 3 || ref.ShareUSD != total {
+		t.Fatalf("settled day = %+v want launches=3 share=%v", ref, total)
+	}
+	if len(lc.rollupLive) != 0 {
+		t.Fatalf("live launches must drain once out of view: %+v", lc.rollupLive)
+	}
+}
+
+// Live launches round-trip through the store so a restart neither drops a
+// launch the join can no longer see nor counts a still-visible one twice.
+func TestLaunchCostDailyRollupLiveLaunchesSurviveRestart(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	base := now.Add(-time.Hour)
+	launch := lcLaunch("scanner", "review", rcTime(base, 10), lcIssue("o/r", 7))
+	reader := &fakeLaunchReader{
+		summary:  &tokens.AggregateSummary{Sessions: []tokens.SessionSummary{rcSession("s1", "scanner", rcUsage(rcTime(base, 15), 200, 20))}},
+		launches: []tokens.LaunchRecord{launch},
+	}
+	persist := filepath.Join(t.TempDir(), "launch-cost.json")
+	lc := NewLaunchCostCollector(reader, nil)
+	lc.nowFn = func() time.Time { return now }
+	lc.EnablePersistence(persist)
+	lc.collect()
+	share := lc.DailyRollup()[0].ByRef[0].ShareUSD
+
+	var stored persistedLaunchCost
+	data, err := os.ReadFile(persist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.DailyRollup) != 0 || len(stored.LiveLaunches) != 1 {
+		t.Fatalf("store must hold the visible launch as live, not settled: %+v", stored)
+	}
+
+	// Restart while the launch is still in the ring: counted once.
+	lc2 := NewLaunchCostCollector(reader, nil)
+	lc2.nowFn = func() time.Time { return now.Add(5 * time.Minute) }
+	lc2.EnablePersistence(persist)
+	lc2.collect()
+	if got := lc2.DailyRollup(); len(got) != 1 || got[0].ByRef[0].Launches != 1 || got[0].ByRef[0].ShareUSD != share {
+		t.Fatalf("restart must not double count: %+v", got)
+	}
+
+	// Restart after the ring was lost: the live launch settles with its last
+	// known share instead of vanishing.
+	lc3 := NewLaunchCostCollector(&fakeLaunchReader{summary: &tokens.AggregateSummary{}}, nil)
+	lc3.nowFn = func() time.Time { return now.Add(10 * time.Minute) }
+	lc3.EnablePersistence(persist)
+	lc3.collect()
+	if got := lc3.DailyRollup(); len(got) != 1 || got[0].ByRef[0].Launches != 1 || got[0].ByRef[0].ShareUSD != share {
+		t.Fatalf("lost ring must settle live launch: %+v", got)
+	}
+	if len(lc3.rollup["2026-10-27"]) != 1 || len(lc3.rollupLive) != 0 {
+		t.Fatalf("expected settled day, got rollup=%+v live=%+v", lc3.rollup, lc3.rollupLive)
+	}
+}
+
+// Untouched days are served from the per-day cache; a tick that changes one
+// day re-sorts only that day.
+func TestLaunchCostDailyRollupDayCache(t *testing.T) {
+	lc := NewLaunchCostCollector(&fakeLaunchReader{}, nil)
+	lc.seedRollupLocked([]LaunchCostDailyRollup{
+		{Day: "2026-10-01", ByRef: []LaunchCostRollupRef{{Ref: "o/r#1", Kind: "issue", Launches: 2}}},
+		{Day: "not-a-day", ByRef: []LaunchCostRollupRef{{Ref: "o/r#9"}}},
+	}, map[string]launchCostLiveLaunch{
+		"a@2026-10-02T00:00:00Z": {Day: "2026-10-02", Refs: []tokens.LaunchRef{lcIssue("o/r", 2)}, ShareUSD: 1},
+		"bad":                    {Day: "nope", Refs: []tokens.LaunchRef{lcIssue("o/r", 3)}},
+		"norefs":                 {Day: "2026-10-03"},
+	})
+	days := lc.DailyRollup()
+	if len(days) != 2 || days[0].Day != "2026-10-01" || days[1].Day != "2026-10-02" || days[1].ByRef[0].ShareUSD != 1 {
+		t.Fatalf("days = %+v", days)
+	}
+	if _, ok := lc.rollupDayCache["2026-10-01"]; !ok {
+		t.Fatal("day must be cached after listing")
+	}
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	resp := ComputeLaunchCost(&tokens.AggregateSummary{}, nil, now)
+	lc.mergeLaunchCostRollupLocked(resp, nil, now) // live launch for 10-02 ages out
+	if _, ok := lc.rollupDayCache["2026-10-01"]; !ok {
+		t.Fatal("untouched day must stay cached")
+	}
+	if _, ok := lc.rollupDayCache["2026-10-02"]; ok {
+		t.Fatal("changed day must be invalidated")
+	}
+	if got := lc.DailyRollup(); got[1].ByRef[0].Launches != 1 || got[1].ByRef[0].ShareUSD != 1 {
+		t.Fatalf("settled from live: %+v", got)
+	}
+	// Retention horizon drops old settled days and stale live launches.
+	far := now.AddDate(3, 0, 0)
+	lc.rollupLive["old"] = launchCostLiveLaunch{Day: "2026-10-02", Refs: []tokens.LaunchRef{lcIssue("o/r", 4)}}
+	lc.mergeLaunchCostRollupLocked(ComputeLaunchCost(&tokens.AggregateSummary{}, nil, far), nil, far)
+	if len(lc.DailyRollup()) != 0 || len(lc.rollupLive) != 0 {
+		t.Fatalf("retention must drop everything: %+v %+v", lc.rollup, lc.rollupLive)
+	}
+	// Not-ready snapshots leave the store alone.
+	lc.rollupLive["x"] = launchCostLiveLaunch{Day: "2026-10-02", Refs: []tokens.LaunchRef{lcIssue("o/r", 4)}}
+	lc.mergeLaunchCostRollupLocked(LaunchCostResponse{}, nil, far)
+	if len(lc.rollupLive) != 1 {
+		t.Fatal("not-ready snapshot must not merge")
+	}
+}

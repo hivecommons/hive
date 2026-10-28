@@ -32,6 +32,18 @@ existing ordering. `by_launch_total`, `by_ref_total` and `truncated` disclose
 omissions after filtering. Aggregate totals and unattributed/unsupported buckets
 always describe the entire accounting window, even when details are filtered.
 
+`GET /api/launch-cost/history` returns `{"daily_rollup": [...]}`, ascending by
+UTC `day`. Each day lists `by_ref[]` with `ref`, `kind`, `launches` and `share_usd`
+(each launch's spend split evenly across the refs it named). `launches` counts
+every delivered kick that named the ref that day, including kicks that received
+no usage, matching `/api/launch-cost` `by_ref[].launches`. It is folded from
+the launch-cost snapshot on every collection and persisted with it, so it
+outlives the `/api/launch-cost` accounting window. Each launch is tracked
+individually while the join can still see it (its share follows usage that
+keeps landing on it) and is added to its day's settled totals exactly once when
+it leaves the window or the launch ring, so a day sums every launch even when
+the ring turns over in under 24h. It has no sampling parameters.
+
 All four endpoints, `/api/status` and `/api/status/summary` emit weak ETags with
 `Cache-Control: private, no-cache`. Send `If-None-Match` to receive an empty 304
 when the selected representation is unchanged. Status field projections retain

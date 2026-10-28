@@ -115,6 +115,10 @@ agents.<key>.sandbox.job.workspace_claim_mount # TODO #11854
 agents.<key>.sandbox.network_mode # TODO #11854
 agents.<key>.sandbox.runtime # TODO #11854
 agents.<key>.sandbox.timeout_s # TODO #11854
+agents.<key>.session_recycle.enabled # TODO #11854
+agents.<key>.session_recycle.max_age # TODO #11854
+agents.<key>.session_recycle.max_rss_mb # TODO #11854
+agents.<key>.session_recycle.min_idle # TODO #11854
 agents.<key>.skills[] # TODO #11854
 agents.<key>.sort_order # TODO #11854
 agents.<key>.stale_timeout # TODO #11854
@@ -140,6 +144,10 @@ agents.<key>.variables.<key>.type # TODO #11854
 agents.<key>.variables.<key>.url # TODO #11854
 agents.<key>.variables.<key>.value # TODO #11854
 agents.github_api_hourly_cap # TODO #11854
+agents.session_recycle.enabled # TODO #11854
+agents.session_recycle.max_age # TODO #11854
+agents.session_recycle.max_rss_mb # TODO #11854
+agents.session_recycle.min_idle # TODO #11854
 auto_merge.credit_issue_authors # merge-time Co-authored-by credit (#14581); yaml-only
 auto_merge.allow_unprotected_base[] # TODO #11854
 auto_merge.human_merge_paths.<key> # TODO #11854

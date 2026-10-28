@@ -72,3 +72,14 @@ func filterLaunchCostByRef(resp collect.LaunchCostResponse, ref string) collect.
 	resp.ByLaunch = byLaunch
 	return resp
 }
+
+// handleLaunchCostHistory serves GET /api/launch-cost/history: the daily
+// per-ref rollup of launch attribution, retained far longer than the
+// /api/launch-cost window so cost per PR can be measured over many days.
+func (s *Server) handleLaunchCostHistory(w http.ResponseWriter, r *http.Request) {
+	days := []collect.LaunchCostDailyRollup{}
+	if s.deps != nil && s.deps.LaunchCost != nil {
+		days = s.deps.LaunchCost.DailyRollup()
+	}
+	jsonResponse(w, map[string]any{"daily_rollup": days})
+}

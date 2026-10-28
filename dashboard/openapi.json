@@ -27912,6 +27912,61 @@
         }
       }
     },
+    "/api/launch-cost/history": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get the daily per-ref launch-cost rollup",
+        "description": "Returns the per-UTC-day rollup of launch attribution kept by the launch-cost collector beyond the /api/launch-cost accounting window, so cost per issue / PR can be measured over many days (#14762). Each day lists the work items launched for, how many kicks named them and the even-split share of spend. Empty before the collector's first tick. Attribution only — never a budget gate.",
+        "responses": {
+          "200": {
+            "description": "Daily launch-cost rollup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "daily_rollup": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "day": {
+                            "type": "string",
+                            "description": "UTC calendar day, YYYY-MM-DD"
+                          },
+                          "by_ref": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "launches": {
+                                  "type": "integer"
+                                },
+                                "share_usd": {
+                                  "type": "number"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/repos/pause": {
       "post": {
         "tags": [

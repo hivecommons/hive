@@ -493,7 +493,12 @@ A PR merges through this tier only when all of the following hold:
   same bar that releases a `requires_human` verdict), or a dashboard
   approval (`/hive decision approve`, which posts `/lgtm` + `/approve`
   attributed to the maintainer and bound to the head) or a trusted merger's
-  own `/hive decision approve` comment posted after the head. Approval on an
+  own `/hive decision approve` comment posted after the hive first observed
+  the head. An unmarked approval is bound to the PR `updated_at` pinned on
+  the hive's first sweep of the head, not to the push: an approval typed
+  between the push and that sweep is judged stale and must be typed again
+  (fail-closed by design,
+  [#14754](https://github.com/hivecommons/hive/issues/14754)). Approval on an
   earlier head never counts: a new push re-arms the fence and the 085 note
   reads "awaiting owner approval … re-approve after a push". When released
   the lane logs `workflow-path fence released by owner approval login=…

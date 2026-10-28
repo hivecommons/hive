@@ -1120,6 +1120,16 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		}
 
 		agentCfg := proc.Config
+		var sandboxRun *FrontendSandboxRun
+		if agentCfg.SandboxEnabled(cfg.AgentSandbox) {
+			sr := sandboxRunHealth(proc, cadenceValue, agentCfg.OnDemand || onDemandSet[name], time.Now())
+			sandboxRun = &sr
+			// A sandboxed agent has no pane; after a pod roll its output ring
+			// is empty too, so the persisted run summary is the activity.
+			if detailSummary == "" && sr.Summary != "" {
+				detailSummary = sr.Summary
+			}
+		}
 		continuousModes := cfg.ContinuousModes(name)
 		continuousNow := agentCfg.ContinuousInMode(currentMode, modeCadence)
 		continuousBlocked := continuousState.Blocked
@@ -1143,6 +1153,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			ReplicaCount:    agentCfg.ReplicaCount,
 			OnDemand:        agentCfg.OnDemand,
 			Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
+			SandboxRun:      sandboxRun,
 			Session:         name,
 			State:           string(proc.State),
 			Starting:        proc.Starting && proc.State != crux.StateRunning,
@@ -1197,6 +1208,9 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			LoginURL:               proc.LoginURL,
 			StallNudges:            proc.StallNudges,
 			StallRecoveries:        proc.StallRecoveries,
+			SessionRssMb:           proc.SessionRSSMB,
+			SessionAge:             formatSessionAge(proc.StartedAt, time.Now()),
+			SessionRecycles:        proc.SessionRecycles,
 			ActionNudges:           proc.ActionNudges,
 			// #4697: transient-API-error retry nudges, surfaced beside the
 			// other two nudge counters.
@@ -3409,4 +3423,20 @@ func apiBudgetFromRateLimits(rateLimits map[string]any) map[string]any {
 		return budget
 	}
 	return map[string]any{"mode": "normal", "skipped_steps": []string{}}
+}
+
+// formatSessionAge renders how long the agent's current CLI session has
+// been up (#14842); "" when the launch time is unknown.
+func formatSessionAge(startedAt *time.Time, now time.Time) string {
+	if startedAt == nil || startedAt.IsZero() {
+		return ""
+	}
+	age := now.Sub(*startedAt)
+	if age < 0 {
+		age = 0
+	}
+	if age < time.Minute {
+		return age.Round(time.Second).String()
+	}
+	return age.Round(time.Minute).String()
 }

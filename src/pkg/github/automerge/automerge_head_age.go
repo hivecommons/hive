@@ -97,6 +97,41 @@ func (t *HeadFirstSeenTracker) touchLocked(key string, now time.Time) {
 	}
 }
 
+// headObservedAt is the time an approval must post-date to count for pr at
+// sha: the PR updated_at pinned when the sweep first saw this head. It is
+// server-side and never earlier than the push that produced the head.
+//
+// It deliberately differs from headPushedAt, which lets the head commit's
+// committer date win while the min_head_age window is open. That date is
+// whatever the pusher's git wrote (GIT_COMMITTER_DATE), so a later push can
+// carry a date older than an approval typed on an earlier head and inherit
+// it. Shortening a soak with a backdated commit is tolerable; re-attributing
+// a person's approval to a head they never saw is not. Zero when the head
+// has no pinned time yet, which binds nothing.
+//
+// The pin is taken on the sweep's first observation, not at the push, and any
+// comment or label landing in between moves it later. An approval typed in
+// that gap is therefore judged stale and must be re-typed: fail-closed by
+// design, the accepted price of not trusting a pusher-written clock.
+func (c *Engine) headObservedAt(owner, repo string, number int, sha string, pr *gh.PullRequest) time.Time {
+	if strings.TrimSpace(sha) == "" {
+		return time.Time{}
+	}
+	var updated time.Time
+	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
+		updated = updatedAt.Time
+	}
+	tracker := sharedHeadFirstSeen
+	if c != nil && c.headFirstSeen != nil {
+		tracker = c.headFirstSeen
+	}
+	now := time.Now
+	if c != nil && c.now != nil {
+		now = c.now
+	}
+	return tracker.observe(contributorSoakKey(owner, repo, number, sha), updated, now())
+}
+
 // headPushedAt is the HeadPushedAt fed to the min_head_age gate for pr at
 // sha. It is never the PR's live updated_at (#12557): the hive's own label
 // flips and stage-regressed comments bump updated_at, and measuring from it

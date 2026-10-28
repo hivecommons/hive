@@ -81,6 +81,9 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, labels []str
 	if c.isExempt(labels) {
 		return sidelined("filtered", "Exempt label")
 	}
+	if _, tracking := isTrackingIssue(issue); tracking {
+		return sidelined("filtered", trackingFilterReason)
+	}
 	if hasBlockedLabel(labels) {
 		row := repoWorkIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
 		row.RecheckAfter, row.OpsTracking = blockedRecheck(issue.GetBody())
