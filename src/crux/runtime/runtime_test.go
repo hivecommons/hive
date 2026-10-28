@@ -243,8 +243,8 @@ func TestRunAgyTurnHelp(t *testing.T) {
 type stubSharedSessionPool struct{}
 
 func (stubSharedSessionPool) Acquire(context.Context, string) (string, error) { return "lease", nil }
-func (stubSharedSessionPool) Renew(context.Context, string) error            { return nil }
-func (stubSharedSessionPool) Release(context.Context, string) error          { return nil }
+func (stubSharedSessionPool) Renew(context.Context, string) error             { return nil }
+func (stubSharedSessionPool) Release(context.Context, string) error           { return nil }
 
 func TestWithSharedSessionPool(t *testing.T) {
 	t.Setenv("HIVE_WORK_DIR", t.TempDir())

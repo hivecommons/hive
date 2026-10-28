@@ -27,7 +27,6 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux"
-	cruxagent "github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/inference"
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/crux/proxy"
@@ -2203,7 +2202,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		if hubURL == "" {
 			hubURL = b.cfg.Hub.URL
 		}
-		pool, poolErr := cruxagent.NewSharedSessionPoolClient(hubURL, b.cfg.HiveID, hub.SpokeHeartbeatKey())
+		pool, poolErr := cruxruntime.NewSharedSessionPoolClient(hubURL, b.cfg.HiveID, hub.SpokeHeartbeatKey())
 		if poolErr != nil {
 			b.logger.Error("shared agent pool is enabled but cannot be configured", "error", poolErr)
 			deps.exit(1)

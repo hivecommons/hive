@@ -82,10 +82,22 @@ func WithUIDMapPath(path string) Option {
 	return func(o *options) { o.uidMapPath = &path }
 }
 
+// SharedSessionPool is the lease contract a Hub-coordinated CLI session pool
+// satisfies. It is re-exported here so consumers configure the pool through
+// the runtime seam without naming crux/agent.
+type SharedSessionPool = agent.SharedSessionPool
+
+// NewSharedSessionPoolClient creates an authenticated client for the Hub's
+// tenant-scoped session-slot API. The token must be the per-Hive heartbeat
+// key, never the fleet master secret.
+func NewSharedSessionPoolClient(baseURL, hiveID, token string) (SharedSessionPool, error) {
+	return agent.NewSharedSessionPoolClient(baseURL, hiveID, token)
+}
+
 // WithSharedSessionPool coordinates heavyweight CLI sessions through the Hub.
 // It affects only the in-process Manager; sidecar mode must implement the same
 // lease contract before it can opt in.
-func WithSharedSessionPool(pool agent.SharedSessionPool) Option {
+func WithSharedSessionPool(pool SharedSessionPool) Option {
 	return func(o *options) { o.sharedPool = pool }
 }
 

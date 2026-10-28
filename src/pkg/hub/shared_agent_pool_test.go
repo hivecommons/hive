@@ -147,7 +147,11 @@ func TestSharedAgentPoolFIFOWaitersAndStaleExpiry(t *testing.T) {
 	if r1.Code != http.StatusConflict {
 		t.Fatalf("h1 status = %d, want 409", r1.Code)
 	}
-	time.Sleep(10 * time.Millisecond)
+	// Back-date h1's FIFO position so h2's 409 below is strictly later even
+	// when both requests land in the same clock tick.
+	pool.mu.Lock()
+	pool.waitingHives["h1"] = pool.waitingHives["h1"].Add(-time.Second)
+	pool.mu.Unlock()
 
 	// h2 tries and gets 409, becomes second waiter.
 	r2 := serveSharedPoolRequest(t, pool, s, http.MethodPost, "h2", h2)
