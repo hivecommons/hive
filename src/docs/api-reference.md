@@ -596,6 +596,8 @@ always resolved server-side from the validated token.
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:276` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:277` |
 | `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1592` |
+| `GET` | `/terminal/job/{name}` | Terminal handoff (owner / `terminal` role) | Read-only Job pod log viewer for an agent whose effective `sandbox.runtime` is `job` ([#14798](https://github.com/hivecommons/hive/issues/14798)); the SPA's ▶ terminal link lands here instead of the ttyd tmux pane. `404` unknown agent, `409` when the agent is not a job-runtime sandbox, `503` when no config is loaded | `pkg/dashboard/job_terminal.go:91` |
+| `GET` | `/terminal/job/{name}/stream` | Terminal handoff (owner / `terminal` role) | `text/plain` line stream behind the viewer: follows the newest Job pod for the agent while it runs (polls while `Pending`), ends with the container exit code, and when no pod exists shows the newest persisted sandbox transcript plus its recorded exit code, or a "no sandbox run yet" line. Secrets are scrubbed like the agent log. Same error codes as the page | `pkg/dashboard/job_terminal.go:92` |
 
 ## Hub SaaS
 

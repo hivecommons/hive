@@ -242,6 +242,10 @@ type Server struct {
 	// a live tmux pane.
 	captureFullLogFn func(name string) (string, error)
 
+	// jobTerminal holds the test seams for the sandbox.runtime: job
+	// terminal (job_terminal.go); zero values take in-cluster defaults.
+	jobTerminal jobTerminalDeps
+
 	kickBrainstormSendKickFn func(name, msg string) error
 	kickBrainstormRestartFn  func(ctx context.Context, name, prompt string) error
 	kickBrainstormDoneFn     func()
@@ -867,6 +871,10 @@ type FrontendAgent struct {
 	// SPA reads health from here instead of State, which is "idle" between
 	// kicks for an agent that has no session to be down.
 	SandboxRun      *FrontendSandboxRun `json:"sandboxRun,omitempty"`
+	// SandboxRuntime is the effective sandbox.runtime for a sandboxed agent
+	// ("podman" or "job"); the SPA routes "▶ terminal" to the Job pod log
+	// viewer for "job" (hivecommons/hive#14798). Empty when not sandboxed.
+	SandboxRuntime string `json:"sandboxRuntime,omitempty"`
 	LastError       string              `json:"lastError,omitempty"`
 	StallNudges     int                 `json:"stallNudges,omitempty"`
 	StallRecoveries int                 `json:"stallRecoveries,omitempty"`

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ const (
 	DefaultSandboxKickTimeout = 45 * time.Minute
 	defaultSandboxNetworkMode = sandbox.NetworkModeRestricted
 	sandboxPromptRelPath      = ".hive/kick-prompt.txt"
-	sandboxTranscriptRelPath  = ".hive/sandbox-transcript.log"
+	sandboxTranscriptRelPath  = sandbox.TranscriptRelPath
 	// The sandboxed agent may leave the PR title and body it wants in the
 	// workspace; the executor (which alone can open the PR) picks them up.
 	sandboxPRTitleRelPath = ".hive/pr-title.txt"
@@ -197,7 +198,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	defer cancel()
 	sres, runErr := e.launcher().Run(runCtx, sandbox.LaunchSpec{
 		Image:          spec.Image,
-		Name:           "hive-" + sanitizeBranchPart(spec.Agent) + "-sandbox",
+		Name:           sandbox.LaunchName(spec.Agent),
 		Workspace:      workspace,
 		WorkspaceMount: sandbox.DefaultWorkspaceMount,
 		WorkDir:        sandbox.DefaultWorkspaceMount,
@@ -426,6 +427,11 @@ func writeTranscript(path string, res sandbox.Result) error {
 	b.WriteString(res.Stdout)
 	b.WriteString("\n\nstderr:\n")
 	b.WriteString(res.Stderr)
+	// Trailing status line, read back by the dashboard's job-runtime
+	// terminal pane once the Job pod is gone (hivecommons/hive#14798).
+	b.WriteString("\n\n" + sandbox.TranscriptExitPrefix)
+	b.WriteString(strconv.Itoa(res.ExitCode))
+	b.WriteString("\n")
 	return os.WriteFile(path, []byte(b.String()), 0o660)
 }
 
@@ -636,28 +642,7 @@ func (e *SandboxExecutor) branchName(agentName string) string {
 	return "hive/" + sanitizeBranchPart(agentName) + "/" + e.now().Format("20060102150405")
 }
 
-func sanitizeBranchPart(s string) string {
-	s = strings.TrimSpace(strings.ToLower(s))
-	var b strings.Builder
-	lastDash := false
-	for _, r := range s {
-		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
-		if ok {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "agent"
-	}
-	return out
-}
+func sanitizeBranchPart(s string) string { return sandbox.AgentSlug(s) }
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"

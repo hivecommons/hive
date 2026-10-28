@@ -32,7 +32,7 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec *SandboxKic
 	if strings.TrimSpace(spec.Stage) != "" {
 		return e.prepareRunStageWorkspace(ctx, spec)
 	}
-	workspace := filepath.Join(spec.WorkspaceDir, sanitizeBranchPart(spec.Agent)+"-"+fmt.Sprint(e.now().UnixNano()))
+	workspace := sandbox.WorkspaceDir(spec.WorkspaceDir, spec.Agent, e.now().UnixNano())
 	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", spec.Org, spec.Repo)
 	authArgs, cleanupAuth, err := e.cloneAuthArgs(ctx, spec.Org+"/"+spec.Repo, spec.WorkspaceDir)
 	if err != nil {

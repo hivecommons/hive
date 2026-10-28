@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -178,10 +177,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 }
 
 func (m *Manager) sandboxWorkspaceDirLocked() string {
-	if strings.TrimSpace(m.sandboxConfig.WorkspaceDir) != "" {
-		return m.sandboxConfig.WorkspaceDir
-	}
-	return filepath.Join(m.workDir, "sandbox")
+	return sandbox.WorkspaceRoot(m.sandboxConfig.WorkspaceDir, m.workDir)
 }
 
 func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter {

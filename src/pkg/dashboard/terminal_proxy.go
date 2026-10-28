@@ -122,4 +122,8 @@ func (s *Server) registerTerminalProxy() {
 	}
 	s.mux.Handle("GET "+terminalPathPrefix, proxy)
 	s.mux.Handle("GET "+terminalPathPrefix+"/", proxy)
+	// sandbox.runtime: job agents have no tmux session to proxy to; their
+	// terminal is the Job pod log viewer, served under the same prefix so the
+	// terminal handoff and assertion cookie apply unchanged (#14798).
+	s.registerJobTerminal()
 }
