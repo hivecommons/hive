@@ -14267,13 +14267,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return text;
     }
 
+    // The name of one trail hop. The payload's history entries carry
+    // {number, slug, at, ...} (StageTrackerHop); the strip word for the
+    // number wins, the slug stands in before the stage table is loaded, and
+    // '' means the hop cannot be named and is left out of the trail.
+    function stageTrackerHopName(h) {
+      if (!h || typeof h !== 'object') return '';
+      const raw = h.number !== undefined ? h.number : h.stage;
+      const num = Number(raw);
+      if (raw !== undefined && raw !== null && raw !== '' && !isNaN(num)) {
+        if (num === 0) return 'Open';
+        const st = ((_stageTracker && _stageTracker.stages) || []).find(s => Number(s.number) === num);
+        if (st && (st.short || st.label)) return st.short || st.label;
+      }
+      return h.slug ? String(h.slug) : '';
+    }
+
+    // "Trail: CI / Review → Needs human decision" — the last few hops of the
+    // item's history by stage name; '' when fewer than two hops can be named.
+    function stageTrackerTrailText(item) {
+      const hist = Array.isArray(item && item.history) ? item.history : [];
+      const names = hist.slice(-STAGE_TRACKER_TRAIL_HOPS).map(stageTrackerHopName).filter(Boolean);
+      return names.length > 1 ? names.join(' → ') : '';
+    }
+
     // Row tooltip: headline, reason, repo, author, flags, since, recent hops.
     function stageTrackerTooltip(item, nowMs) {
       const ak = item.author_kind || '';
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const sinceMs = Date.parse(item.stage_since || '');
-      const trail = Array.isArray(item.history) && item.history.length > 1
-        ? item.history.slice(-STAGE_TRACKER_TRAIL_HOPS).map(h => String(h.stage).padStart(3, '0')).join(' → ') : '';
+      const trail = stageTrackerTrailText(item);
       const openHeld = (Number(item.stage) || 0) === 0 && mods.indexOf('hold') >= 0;
       const lines = openHeld
         ? [stageTrackerHeadline(item) + (item.caption || item.reason ? ' · ' + (item.caption || item.reason) : '') + (item.repo ? ' · ' + item.repo : '')]

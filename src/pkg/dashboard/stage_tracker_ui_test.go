@@ -156,6 +156,8 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerRegressionHandled"),
 		jsFunc(t, html, "stageTrackerRegressionText"),
 		jsFunc(t, html, "stageTrackerStaleLabelsText"),
+		jsFunc(t, html, "stageTrackerHopName"),
+		jsFunc(t, html, "stageTrackerTrailText"),
 		jsFunc(t, html, "stageTrackerTooltip"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
@@ -204,6 +206,8 @@ const stages = [
   { number: 95, label: 'Pre-merge soak', short: 'Soaking', description: 'Lane admitted; the pre-merge soak window is running before the merge is attempted' },
   { number: 100, label: 'Merge queue', short: 'Merge queue' }, { number: 110, label: 'Merged', short: 'Merged' },
 ];
+// The stage table the tooltip's trail names its hops from (fetchStageTracker fills it live).
+var _stageTracker = { stages };
 // needs-rebase always lands a PR in 070/071/072 (automerge_stage_labels.go), so a
 // fixture pairing it with 050/060 would draw a contradictory row.
 const rebaseCoherent = (it) => { if ((it.modifiers || []).includes('needs-rebase')) assert.ok(![50, 60].includes(Number(it.stage)), 'fixture #' + it.number + ' pairs needs-rebase with stage ' + it.stage); (it.linked_prs || []).forEach(rebaseCoherent); };
@@ -415,7 +419,7 @@ assert.strictEqual(stageTrackerHeadline({ stage: 95, kind: 'issue', soak_remaini
 assert.strictEqual(stageTrackerAnchor(95, stages, 'pr'), STAGE_TRACKER_MERGE_COLUMN, '095 anchors on the merge gate column');
 
 // PR returned to contributor: detour badge rides Review; chip cap = author kind + first modifier (+N).
-row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{stage:50},{stage:60},{stage:72}] }, stages, ctx);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{number:50,slug:'review-pending'},{number:60,slug:'reviewed'},{number:72,slug:'returned-to-contributor',from:60}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
 assert.ok(row.includes('<span class="ham-detour">Returned to contributor</span>'));
 // Invariant: a PR never occupies the issue slot. A PR with no linked issue
@@ -432,7 +436,7 @@ assert.ok(prCol(row)[0].includes('ham-author-ico ham-author-clanker') && prCol(r
 assert.strictEqual(titles(row, 'Fix flaky'), 1, 'title appears once');
 assert.strictEqual(chips(row), 1, 'author kind is an icon, not a chip');
 assert.ok(row.includes('ham-mod-needs-human">needs human +1</span>'), row);
-assert.ok(tooltip(row).includes('Flags: needs-rebase, needs-human') && tooltip(row).includes('Trail: 050 → 060 → 072'), tooltip(row));
+assert.ok(tooltip(row).includes('Flags: needs-rebase, needs-human') && tooltip(row).includes('Trail: CI / Review → Reviewed → Returned to contributor'), tooltip(row));
 
 // PR reviewed (060): Review done, Merge gate lit, no detour.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 60 }, stages, ctx);
@@ -441,7 +445,7 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage
 assert.ok(row.includes('<span class="ham-seg-t">Ready for auto merge</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left · Next move: hive"'), 'chevron tooltip carries 080: ' + row);
 
 // PR regressed from the queue back to review-pending: Review lit, "Sent back" in the tooltip.
-row = stageTrackerRowHtml({ repo: 'acme/console', number: 103, kind: 'pr', stage: 70, modifiers: ['regressed', 'needs-rebase'], history: [{stage:80},{stage:100},{stage:70}] }, stages, ctx);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 103, kind: 'pr', stage: 70, modifiers: ['regressed', 'needs-rebase'], history: [{number:80,slug:'awaiting-merge-admission'},{number:100,slug:'merge-queue'},{number:70,slug:'fixing',from:100,regressed:true}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
 assert.ok(tooltip(row).startsWith('Sent back'));
 assert.ok(row.includes('ham-mod-regressed'), 'regressed outranks needs-rebase for the single chip');
@@ -500,10 +504,34 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage
 assert.ok(row.includes('aria-label="Next move: clanker"') && row.includes('<span class="ham-detour">Returned to contributor</span><svg class="ham-ico ham-actor-ico"'), row);
 // 071 needs-author: a human's red PR rides the Review column as its own
 // detour, the person as the mover.
-row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 71, author: 'sam', author_kind: 'human', history: [{stage:50},{stage:71}] }, stages, ctx);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 71, author: 'sam', author_kind: 'human', history: [{number:50,slug:'review-pending'},{number:71,slug:'needs-author',from:50}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
 assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-detour">Needs author</span><svg class="ham-ico ham-actor-ico"'), row);
-assert.ok(tooltip(row).includes('Trail: 050 → 071'), tooltip(row));
+assert.ok(tooltip(row).includes('Trail: CI / Review → Needs author'), tooltip(row));
+// The trail names hops from the payload's {number, slug} entries (#14787
+// showed "undefined → undefined → …" when it read a field the server never
+// sent); the last STAGE_TRACKER_TRAIL_HOPS hops only; an unnamed hop is left
+// out rather than printed as "undefined"; the clause is omitted when fewer
+// than two hops can be named.
+const live14787 = { kind: 'pr', number: 14787, stage: 85, modifiers: ['needs-human'], history: [
+  { number: 50, slug: 'review-pending', at: '2026-10-27T21:27:53Z' }, { number: 85, slug: 'needs-decision', from: 50 },
+  { number: 50, slug: 'review-pending', from: 85 }, { number: 71, slug: 'needs-author', from: 50 },
+  { number: 50, slug: 'review-pending', from: 71 }, { number: 71, slug: 'needs-author', from: 50 },
+  { number: 50, slug: 'review-pending', from: 71 }, { number: 85, slug: 'needs-decision', from: 50 }] };
+assert.strictEqual(stageTrackerTrailText(live14787), 'CI / Review → Needs author → CI / Review → Needs human decision');
+assert.ok(!stageTrackerTooltip(live14787, now).includes('undefined'), stageTrackerTooltip(live14787, now));
+assert.strictEqual(stageTrackerTrailText({ history: [{ number: 50 }, { number: 999 }, { number: 85 }] }), 'CI / Review → Needs human decision', 'an unnamed hop is skipped');
+assert.strictEqual(stageTrackerTrailText({ history: [{ number: 50 }, {}, { foo: 1 }] }), '', 'one nameable hop is no trail');
+assert.strictEqual(stageTrackerTrailText({ history: [{ number: 50 }] }), '', 'a single hop is no trail');
+assert.strictEqual(stageTrackerTrailText({ history: [] }), '');
+assert.strictEqual(stageTrackerTrailText({}), '');
+assert.strictEqual(stageTrackerTrailText({ history: [{ number: 0 }, { number: 10 }] }), 'Open → Actionable', '000 reads as Open');
+assert.ok(!stageTrackerTooltip({ kind: 'pr', number: 1, stage: 50, history: [{ number: 999 }, { number: 998 }] }, now).includes('Trail:'), 'no Trail clause when nothing can be named');
+const savedStages = _stageTracker;
+_stageTracker = null;
+assert.strictEqual(stageTrackerTrailText(live14787), 'review-pending → needs-author → review-pending → needs-decision', 'the slug stands in before the stage table loads');
+assert.strictEqual(stageTrackerTrailText({ history: [{ number: 50 }, { number: 85 }] }), '', 'numbers alone, no table, no slug: nothing to name');
+_stageTracker = savedStages;
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 40, linked_prs: [{ number: 108, author_kind: 'clanker', stage: 30 }] }, stages, ctx);
 assert.ok(subs(row).length === 0 && strip(row).includes('aria-label="Next move: clanker"') && strip(row).includes('<span class="ham-seg-t">PR in progress</span><svg class="ham-ico ham-actor-ico"'), 'single covering PR: the issue strip lights PR in progress with the PR author as the mover: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 40, linked_prs: [{ number: 108, author_kind: 'clanker', stage: 30 }, { number: 109, author_kind: 'hive', stage: 50 }] }, stages, ctx);
