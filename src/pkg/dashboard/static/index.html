@@ -24051,18 +24051,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // using Codex with a ChatGPT account"), so codex must NOT fall through to
     // the copilot list. The server discovers the live catalog via
     // `codex app-server` model/list (per-CLI-version, baked into the binary);
-    // this is only the pre-discovery fallback. Snapshot of codex 0.159.0
-    // (live model/list capture, 2026-09-30, #9804): visible ids in picker
-    // order (astra is the default; GPT-6 Sol and Luna arrived in 0.156.1,
-    // #8417), then hidden ids — hidden entries are still valid --model
-    // values. gpt-5.2 and gpt-5.4-mini were retired in 0.155.0; gpt-5.4 was
-    // retired between 0.156.1 and 0.159.0.
+    // this is only the pre-discovery fallback. Snapshot of codex 0.165.0
+    // (live model/list capture, 2026-10-27; the 0.159.0 capture was #9804):
+    // visible ids in picker order (GPT-6.1 Sol is the default; GPT-6.1 Terra
+    // arrived in 0.165.0; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then
+    // hidden ids — hidden entries are still valid --model values. gpt-5.2 and
+    // gpt-5.4-mini were retired in 0.155.0; gpt-5.4 was retired between
+    // 0.156.1 and 0.159.0.
     // Keep in sync with codexStaticModels in cli_models.go.
     const CODEX_CLI_MODELS = [
+      { value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' },
       { value: 'gpt-6-astra', label: 'GPT-6 Astra' },
       { value: 'gpt-6-sol', label: 'GPT-6 Sol' },
       { value: 'gpt-6-luna', label: 'GPT-6 Luna' },
       { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+      { value: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' },
       { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
       { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
       { value: 'gpt-5.5', label: 'GPT-5.5' },

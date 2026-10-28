@@ -1,0 +1,1 @@
+- Codex model fallback refreshed to the 0.165.0 catalog: `gpt-6.1-sol` (the CLI's current default) and the new `gpt-6.1-terra` appear in the dashboard's codex model picker when the live `codex app-server` probe cannot run, instead of the stale 0.159.0 snapshot that lacked both

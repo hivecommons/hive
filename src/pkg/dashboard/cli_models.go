@@ -406,23 +406,27 @@ var bobStaticModels = []string{bobAutoModel}
 // models — Claude ids are rejected with a ChatGPT account ("model is not
 // supported when using Codex with a ChatGPT account"), so codex must never
 // fall through to the copilot list. The catalog is baked into the CLI binary
-// (per-CLI-version, not per-account); this snapshot matches codex 0.159.0
-// (captured 2026-09-30 from a live `codex app-server` model/list exchange
-// against the pinned 0.159.0 binary, #9804): visible ids in picker order
-// (astra is the default; GPT-6 Sol and Luna arrived in 0.156.1, #8417), then
-// the hidden ids — hidden entries are still valid --model values (see
-// orderCodexServedModels). gpt-5.2 and gpt-5.4-mini were retired from the
-// catalog in 0.155.0; gpt-5.4 was retired between 0.156.1 and 0.159.0.
+// (per-CLI-version, not per-account); this snapshot matches codex 0.165.0
+// (captured 2026-10-27 from a live `codex app-server` model/list exchange
+// against the 0.165.0 binary; the 0.159.0 capture was #9804): visible ids in
+// picker order (GPT-6.1 Sol is the default and has been since at least
+// 0.160.0; GPT-6.1 Terra arrived in 0.165.0; GPT-6 Sol and Luna arrived in
+// 0.156.1, #8417), then the hidden ids — hidden entries are still valid
+// --model values (see orderCodexServedModels). gpt-5.2 and gpt-5.4-mini were
+// retired from the catalog in 0.155.0; gpt-5.4 was retired between 0.156.1
+// and 0.159.0.
 // Keep in sync with CODEX_CLI_MODELS in static/index.html.
 var codexStaticModels = []string{
+	"gpt-6.1-sol",
 	"gpt-6-astra",
 	"gpt-6-sol",
 	"gpt-6-luna",
 	"gpt-5.6-sol",
+	"gpt-6.1-terra",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-5.5",
-	// Hidden in the 0.159.0 picker but still valid --model values.
+	// Hidden in the 0.165.0 picker but still valid --model values.
 	"gpt-daybreak-blue-latest",
 	"gpt-daybreak-red-latest",
 	"codex-auto-review",
