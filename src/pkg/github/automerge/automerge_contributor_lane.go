@@ -398,6 +398,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 	}
 	ctx = contextWithExpectedCheckCache(ctx, newExpectedCheckCache())
 	ctx = contextWithLaneMergedBranches(ctx)
+	ctx = context.WithValue(ctx, contributorRepoSearchCacheKey{}, make(map[string][]contributorRepoRef))
 	for _, displayRepo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
@@ -626,7 +627,7 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 	if match.ObservedTier == "" {
 		match.ObservedTier = c.observedRegistryTier(author)
 	}
-	if err == nil && match.Reason != "" && policy.AutoPromoteAfterMergedPR > 0 && !contributorRegistryTierRevoked(c.observedRegistryTier(author)) {
+	if err == nil && match.Reason != "" && policy.AutoPromoteAfterMergedPR > 0 && !contributorRegistryTierRevoked(c.observedRegistryTier(author)) && !strings.HasSuffix(strings.ToLower(author), "[bot]") && (c.transport == nil || !strings.EqualFold(author, c.transport.AppBotLogin())) {
 		history, promoteErr := c.contributorCleanMergedHistory(ctx, owner, repo, author, policy.AutoPromoteAfterMergedPR, policy.hiveWideAutoPromotion())
 		if promoteErr != nil {
 			return contributorClaimMatch{Reason: "contributor-lane:auto-promote-history"}, promoteErr
@@ -797,6 +798,8 @@ type contributorRepoRef struct {
 // contributorSearchQueryMaxLen is GitHub's limit on a search `q` parameter.
 const contributorSearchQueryMaxLen = 256
 
+type contributorRepoSearchCacheKey struct{}
+
 // contributorMergedRepos returns the hive's other active repositories that
 // hold at least one merged PR by author, in the order the transport lists
 // them, excluding the PR's own (owner, repo). It asks search/issues
@@ -810,6 +813,17 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 		return nil
 	}
 	own := strings.ToLower(owner + "/" + repo)
+	cache, _ := ctx.Value(contributorRepoSearchCacheKey{}).(map[string][]contributorRepoRef)
+	key := strings.ToLower(strings.TrimSpace(author))
+	if refs, ok := cache[key]; ok {
+		var others []contributorRepoRef
+		for _, ref := range refs {
+			if !strings.EqualFold(ref.Owner+"/"+ref.Repo, own) {
+				others = append(others, ref)
+			}
+		}
+		return others
+	}
 	var candidates []contributorRepoRef
 	seen := map[string]bool{}
 	for _, display := range c.activeRepos() {
@@ -818,7 +832,7 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 			continue
 		}
 		full := strings.ToLower(o + "/" + r)
-		if full == own || seen[full] {
+		if (cache == nil && full == own) || seen[full] {
 			continue
 		}
 		seen[full] = true
@@ -854,6 +868,9 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 		if len(query)+len(qualifier) > contributorSearchQueryMaxLen {
 			if err := flush(); err != nil {
 				c.warn("contributor-lane auto-promotion repo search failed; counting the PR's repository only", "repo", owner+"/"+repo, "author", author, "error", err)
+				if cache != nil {
+					cache[key] = nil
+				}
 				return nil
 			}
 		}
@@ -861,6 +878,9 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 	}
 	if err := flush(); err != nil {
 		c.warn("contributor-lane auto-promotion repo search failed; counting the PR's repository only", "repo", owner+"/"+repo, "author", author, "error", err)
+		if cache != nil {
+			cache[key] = nil
+		}
 		return nil
 	}
 	out := make([]contributorRepoRef, 0, len(found))
@@ -868,6 +888,16 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 		if found[strings.ToLower(ref.Owner+"/"+ref.Repo)] {
 			out = append(out, ref)
 		}
+	}
+	if cache != nil {
+		cache[key] = out
+		var others []contributorRepoRef
+		for _, ref := range out {
+			if !strings.EqualFold(ref.Owner+"/"+ref.Repo, own) {
+				others = append(others, ref)
+			}
+		}
+		return others
 	}
 	return out
 }
@@ -1211,6 +1241,9 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 			// re-marks if its runs are held too (hivecommons/hive#14668).
 			c.clearUnauthorized(ctx, displayRepo, owner, repo, pr, number, unauthorizedStepApproveWorkflowRuns)
 		}
+		return contributorLaneEval{pr: pr}, reason, nil
+	}
+	if reason := c.closingContradictionGate(owner, repo, pr); reason != "" {
 		return contributorLaneEval{pr: pr}, reason, nil
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())

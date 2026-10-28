@@ -420,3 +420,41 @@ func TestContributorNudgeCommentRelayFailed(t *testing.T) {
 		t.Fatalf("plain queued comment = %q", body)
 	}
 }
+
+// The closing-link reasons (hivecommons/hive#15025) name the number and the
+// fix, and only the contradiction — a body-only problem — says a body edit
+// releases the PR.
+func TestContributorNudgeClosingLinkReasons(t *testing.T) {
+	for _, tc := range []struct {
+		reason   string
+		ask      []string
+		sentence string
+	}{
+		{
+			reason:   "closing-contradiction:#1023",
+			ask:      []string{"The body says #1023 stays open", "also `Closes #1023`", "No new commit is needed."},
+			sentence: "The hive will not merge it until the PR body is fixed.",
+		},
+		{
+			reason:   "closing-keyword-targets-pr:#1036",
+			ask:      []string{"`fix #1036`", "closes pull request #1036 on merge", "`same change as #1036`"},
+			sentence: "The hive will not merge it until the head changes.",
+		},
+	} {
+		t.Run(tc.reason, func(t *testing.T) {
+			checks, asks, human := nudgeDiagnosis(tc.reason, stageDetail{})
+			if len(checks) != 0 || human || len(asks) != 1 {
+				t.Fatalf("nudgeDiagnosis(%q) = checks %v asks %v human %v, want one ask", tc.reason, checks, asks, human)
+			}
+			for _, w := range tc.ask {
+				if !strings.Contains(asks[0], w) {
+					t.Fatalf("ask %q does not contain %q", asks[0], w)
+				}
+			}
+			body := ContributorNudgeComment(ContributorNudge{Author: "alice", HeadSHA: "abc1234", Nudge: 1, Reason: tc.reason, ReviewAsks: asks}, ContributorNudgeOutcome{})
+			if !strings.Contains(body, tc.sentence) || !strings.Contains(body, asks[0]) {
+				t.Fatalf("nudge comment = %q, want %q and the ask", body, tc.sentence)
+			}
+		})
+	}
+}

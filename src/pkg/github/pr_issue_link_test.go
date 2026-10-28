@@ -490,3 +490,95 @@ func TestEnsureIssueStagePRLinkNeverEditsHumanPR(t *testing.T) {
 		t.Fatalf("result=%+v patches=%d, want human no-op", got, f.patches.Load())
 	}
 }
+
+// testsuitePR1057Body is projectbluefin/testsuite#1057 as it was merged: a
+// partial `Refs #1023` note and the `Closes #1023` the contributor wrapper
+// appended (hivecommons/hive#15025).
+var testsuitePR1057Body = "**Summary:** Operating system update checks should not report success when they skip a required test. This change makes targeted update runs fail if any required update or rollback check did not finish successfully. Runs without an update target keep their existing exploratory skip behavior.\n\n---\n\n## Changes\n\n- Add a lifecycle `after_all` verdict guard when the existing `TARGET_IMAGE` environment variable is non-empty; no workflow changes or new inputs.\n- Identify required scenarios by the existing mandatory staging assertion. Require each scenario and all its steps to pass, and reject an empty required set.\n- Inspect the complete parsed runner model, including scenarios and whole features excluded by tag filters. A hook failure propagates through the existing Behave exit-code verdict.\n- Preserve optional capability skips and untargeted manual/exploratory behavior. Targeted manual runs receive the strict guard too.\n- Add unit and real Behave subprocess tests next to the digest-evidence tests. Update the bootc skill with the guard, its activation, and its limits.\n\n## Scope and remaining qualification work\n\nRefs #1023 — partial: implements the latest maintainer comment's testsuite-only skipped-required-scenario guard. Independently pinned source/candidate fixtures, intended-candidate verification, removal of switch pre-staging, external caller updates, and hosted positive/negative qualification evidence remain open pending the second-image prerequisite in #706 and the deferred workflow work.\n\nThis guard validates required scenarios in the loaded feature model; it does not certify fixture provenance or replace caller responsibility to load full required coverage. Existing customization assertions and migration scenarios are unchanged. Untargeted runs do not establish targeted qualification.\n\n## Validation\n\n- Lifecycle module: 80 passed, including actual Behave exit-code checks for runtime skips, a tag-filtered required feature, successful required completion, and untargeted skips.\n- Full unit suite: 2,338 passed, 1 expected failure, 4 subtests passed.\n- Ruff E/F/W selection: passed.\n- Lifecycle dry-run: 33 scenarios, 365 steps, no undefined steps; scenario totals unchanged.\n- Documentation validation and skill catalog check: passed, with three existing KDE reference-name warnings.\n- Stub listing and `git diff --check`: passed. Open PR file sets checked for overlap; none overlap these three files.\n- System Python initially lacked test dependencies; validation used an isolated temporary virtual environment with the needed dependencies.\n- Context7 is unavailable on this host; consulted the official Behave API documentation for lifecycle hooks and verified behavior with real subprocess tests.\n- No hosted VM qualification was run. These are regression checks, not pinned-image upgrade/rollback evidence.\n\n— hive: backend=pi model=openai-codex/gpt-6.1-sol\n\nCloses #1023\n\n---\n🐝 **Hive Agent**: `contributor` | **SHA:** `887f0ddd`"
+
+// testsuitePR1051Body is the tail of projectbluefin/testsuite#1051 before its
+// author removed the wrapper-appended `Closes #1025`.
+var testsuitePR1051Body = "## Acceptance status for #1025\n\n- [x] Per-profile inventory (merged in #1040). Each startup unit now also says how the lane judges it.\n- [x] Required services run in hosted QEMU with bounded deadlines, and their completion, failures and resulting state are observed (this PR).\n- [x] Flatpak initialization, remotes, apps and permissions come from the shipped path and are asserted (this PR). The pending scenarios are **not** re-enabled yet. That needs runtime evidence from this lane first.\n- [~] Homebrew system setup is exercised. Greenboot is **deferred**: automatic rollback needs a boot-counting bootloader, which direct-kernel boot doesn't have (#706). The lane reports it as not qualified and never passes it.\n- [x] Negative control: the `broken` job must go red for a deliberately broken required unit. Unit tests cover a skipped oneshot, a missing app, a wrong branch, an unknown origin, a missing remote and a permission override that isn't in effect.\n- [x] Actual hosted runs ([run 40702252373](https://github.com/projectbluefin/testsuite/actions/runs/40702252373)) on `bluefin:stable`:\n  - `broken` passed: the lane went red for the broken `NetworkManager-wait-online.service`.\n  - `candidate` failed: every unit passed, but `io.github.kolunmi.Bazaar` was not installed. The image ships `/usr/share/flatpak/preinstall.d/bazaar.preinstall` and no `remotes.d` file, so `flatpak preinstall` had no remote, logged \"Nothing to do\" and exited 0.\n  - 67226b4 makes the lane wait as the inventory promises. A missing remote or app is `pending` until `flatpak-preinstall.service`'s 1800 s deadline (or `--final`), and a unit failure is `pending` while `is-system-running` still says `starting`. Run 40702252373 was judged final at t=114s while the guest was still starting. Wrong branches, unknown origins and override gaps still fail at once. The `plan` step now sets `pipefail`.\n  - c354724 records the remote as installer-provided (`flatpak_remote: installer` on `flatpak-preinstall.service`). The evidence: the `install-flatpaks.sh` that the projectbluefin/iso Justfile writes, and the `install-system-flatpaks` ujust recipe, both run `flatpak remote-add --system flathub`. If the image ships no remote and none is configured, the lane reports the remote and each missing ref as `not qualified`. If a remote is shipped or configured, the full checks still run. Replaying that run's real `evidence.txt` through the new code, `candidate` moves from fail to pending on `brew-setup`, and `broken` still fails as expected.\n\nStill open after this PR: re-enabling the pending scenarios using this lane's evidence, user-session first-login paths (`ublue-user-setup`, `brew-preinstall`, Brewfile Flatpaks; these belong with #1026), greenboot (#706), and any consumer or promotion wiring (#1021, #1022).\n\n## Evidence\n\n- `pytest tests/unit/test_startup_lane.py tests/unit/test_startup_service_inventory.py`: 62 passed.\n- Full gate in a venv with CI deps:\n  - `ruff check tests/ --select E,F,W --ignore E501`: clean.\n  - `pytest -n auto tests/unit/`: 2341 passed, 1 xfailed.\n  - `validate_docs.py`: passed.\n  - `generate_skill_index.py --check`: in sync.\n- `actionlint` on the new workflow: only shellcheck `info` notes about intentional word-splitting of `SSH_COMMON` and unit lists. I fixed its one warning (an unused variable).\n- No `.feature` files or scenario totals changed, so there was no dry-run and no coverage snapshot to regenerate.\n- Note: `scripts/vm_validation_plan.py` routes the new files fail-closed (`scripts/*` → smoke and common, and the new workflow → the full set). I left it alone because #1050 edits that file.\n\nNote on trailers: the commit carries `Assisted-by: Claude Opus 5.5 via Claude Code` and a Claude co-author line instead of the Copilot co-author line in AGENTS.md, because Copilot did not author this.\n\nRefs #1025. Partial: scenario re-enables, greenboot (#706) and release wiring remain open.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n— hive: backend=claude model=claude-opus-5-5\n\nCloses #1025\n\n\n---\n🐝 **Hive Agent**: `contributor` | **SHA:** `73d9ff57`"
+
+func TestClosingContradictions(t *testing.T) {
+	const repo = "projectbluefin/testsuite"
+	for _, tc := range []struct {
+		name string
+		body string
+		want []int
+	}{
+		{name: "testsuite#1057 partial refs and closes", body: testsuitePR1057Body, want: []int{1023}},
+		{name: "testsuite#1051 partial refs and closes", body: testsuitePR1051Body, want: []int{1025}},
+		{name: "refs only", body: "Refs #1023 — partial: two items remain open."},
+		{name: "closes only", body: "Fixes the guard.\n\nCloses #1023"},
+		{name: "bare refs next to closes (#10826)", body: "Refs #1023 (reporter confirmation required)\n\nCloses #1023"},
+		{name: "partial note about another issue", body: "Refs #706 — partial, the rest is deferred.\n\nCloses #1023"},
+		{name: "stays-open phrase", body: "This leaves #1023 open for the follow-up.\n\nFixes: #1023", want: []int{1023}},
+		{name: "does not close phrase", body: "This PR does not close #1023.\n\nResolves #1023", want: []int{1023}},
+		{name: "stays-open phrase names a longer number", body: "#10234 stays open.\n\nCloses #1023"},
+		{name: "part of with follow-up", body: "Part of #1023; the docs are a follow-up.\nCloses #1023", want: []int{1023}},
+		{name: "partial refs inside a code span", body: "Write `Refs #1023 — partial` when work remains.\n\nCloses #1023"},
+		{name: "closing keyword inside a fence", body: "Refs #1023 — partial.\n\n```\nCloses #1023\n```"},
+		{name: "cross-repo close", body: "Refs other/repo#1023 — partial.\n\nCloses other/repo#1023"},
+		{name: "same-repo spelled out", body: "Refs #1023 — partial.\n\nCloses projectbluefin/testsuite#1023", want: []int{1023}},
+		{name: "prose closing gap is not a GitHub close", body: "Refs #1023 — partial.\n\nThis fixes the flake in #1023"},
+		{name: "empty", body: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClosingContradictions(tc.body, repo)
+			if len(got) != len(tc.want) {
+				t.Fatalf("ClosingContradictions = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("ClosingContradictions = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestGitHubClosingRefs(t *testing.T) {
+	const repo = "projectbluefin/testsuite"
+	for _, tc := range []struct {
+		name string
+		text string
+		want []int
+	}{
+		// projectbluefin/testsuite#1054's commit closed the open PR #1036.
+		{name: "prose keyword before a number", text: "Apply the same fix #1036 makes for Files/apps.\n\nCloses #1044", want: []int{1036, 1044}},
+		{name: "colon form", text: "Fixes: #12", want: []int{12}},
+		{name: "conventional commit type is not a keyword", text: "fix(smoke): stop over-waiting (#1054)"},
+		{name: "conventional commit type then keyword", text: "fix: the thing (closes #60)", want: []int{60}},
+		{name: "bounded prose gap is not a GitHub close", text: "Fixes the bug in #12"},
+		{name: "other repository", text: "Closes other/repo#12"},
+		{name: "same repository spelled out, any case", text: "closes ProjectBluefin/Testsuite#12", want: []int{12}},
+		{name: "code span and URL", text: "`fix #12` and https://example.com/fix #13x"},
+		{name: "de-duplicated", text: "Fixes #12\nCloses #12", want: []int{12}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := GitHubClosingRefs(tc.text, repo)
+			if len(got) != len(tc.want) {
+				t.Fatalf("GitHubClosingRefs = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("GitHubClosingRefs = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestBodySaysIssueStaysOpenNumberBoundary(t *testing.T) {
+	const repo = "acme/widget"
+	if !bodySaysIssueStaysOpen("This does not close #12.", repo, 12) {
+		t.Fatal("does not close #12 should keep #12 open")
+	}
+	if bodySaysIssueStaysOpen("This does not close #123.", repo, 12) {
+		t.Fatal("does not close #123 says nothing about #12")
+	}
+	if !bodySaysIssueStaysOpen("Leaving #12 open until the docs land.", repo, 12) {
+		t.Fatal("leaving #12 open should keep #12 open")
+	}
+}

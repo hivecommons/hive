@@ -26,6 +26,42 @@ func TestParseLinkedIssueReason(t *testing.T) {
 	}
 }
 
+// TestClosingLinkReasons pins the closing-link reason shapes
+// (hivecommons/hive#15025): the formatters round-trip through
+// ParseClosingLinkReason, and anything without a `prefix#N` body with a
+// positive N is not ok.
+func TestClosingLinkReasons(t *testing.T) {
+	if got := ClosingContradictionReason(1023); got != "closing-contradiction:#1023" {
+		t.Fatalf("ClosingContradictionReason(1023) = %q", got)
+	}
+	if got := ClosingKeywordTargetsPRReason(1036); got != "closing-keyword-targets-pr:#1036" {
+		t.Fatalf("ClosingKeywordTargetsPRReason(1036) = %q", got)
+	}
+	for _, tc := range []struct {
+		reason     string
+		wantPrefix string
+		wantNumber int
+		wantOK     bool
+	}{
+		{reason: ClosingContradictionReason(1023), wantPrefix: ClosingContradictionReasonPrefix, wantNumber: 1023, wantOK: true},
+		{reason: ClosingKeywordTargetsPRReason(1036), wantPrefix: ClosingKeywordTargetsPRReasonPrefix, wantNumber: 1036, wantOK: true},
+		{reason: "closing-contradiction:#1", wantPrefix: ClosingContradictionReasonPrefix, wantNumber: 1, wantOK: true},
+		{reason: "closing-contradiction:1023"},
+		{reason: "closing-contradiction:#"},
+		{reason: "closing-contradiction:#x"},
+		{reason: "closing-contradiction:#0"},
+		{reason: "closing-keyword-targets-pr:#-4"},
+		{reason: "closing-keyword-targets-pr:#12:extra"},
+		{reason: LinkedIssueReason(LinkedIssueReasonHoldPrefix, 551, "hold")},
+		{reason: ""},
+	} {
+		prefix, number, ok := ParseClosingLinkReason(tc.reason)
+		if prefix != tc.wantPrefix || number != tc.wantNumber || ok != tc.wantOK {
+			t.Fatalf("ParseClosingLinkReason(%q) = %q, %d, %v; want %q, %d, %v", tc.reason, prefix, number, ok, tc.wantPrefix, tc.wantNumber, tc.wantOK)
+		}
+	}
+}
+
 // TestHumanMergeReason pins the 090 reason code for every lane reason that
 // can land a PR at ready-for-human-merge (hivecommons/hive#14658): the
 // workflow-path fence with and without the approver suffix, the trust

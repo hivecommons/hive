@@ -408,7 +408,11 @@ func ClassifyStage(o stageObservation) stageVerdict {
 			return v
 		}
 	}
-	if stageFixingReasons[reason] || strings.HasPrefix(reason, "label:") && strings.Contains(reason, "rebase") {
+	// A closing keyword that would close the wrong thing on merge
+	// (closing-contradiction:#N, closing-keyword-targets-pr:#N) is the
+	// author's to reword, like any other fixing reason (hivecommons/hive#15025).
+	_, _, closingLink := prstage.ParseClosingLinkReason(reason)
+	if stageFixingReasons[reason] || closingLink || strings.HasPrefix(reason, "label:") && strings.Contains(reason, "rebase") {
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 	}
 	if VerdictBlocks(o.Detail) {

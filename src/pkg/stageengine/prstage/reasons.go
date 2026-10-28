@@ -73,6 +73,20 @@ const (
 	WorkflowApprovalRequiredPrefix    = "workflow-approval-required:"
 )
 
+// Closing-link reasons (hivecommons/hive#15025): a closing keyword the
+// merge would act on names the wrong thing. The rest of each is `#N`.
+const (
+	// ClosingContradictionReasonPrefix: the PR body closes #N and also says
+	// #N stays open or is partial, so GitHub would close #N on merge
+	// (hivecommons/hive#15025). The rest is `#N`; a body edit clears it.
+	ClosingContradictionReasonPrefix = "closing-contradiction:"
+	// ClosingKeywordTargetsPRReasonPrefix: a closing keyword in the PR body
+	// or a commit message on the head names another pull request in the
+	// repository, which GitHub would close on merge (hivecommons/hive#15025).
+	// The rest is `#N`.
+	ClosingKeywordTargetsPRReasonPrefix = "closing-keyword-targets-pr:"
+)
+
 // HumanMergeReason codes: why a PR parked at 090 ready-for-human-merge
 // needs a person's merge click rather than the hive's. Derived from the
 // lane reason the stage record already carries, so the dashboard, the
@@ -141,6 +155,36 @@ func ParseLinkedIssueReason(reason string) (kindPrefix string, issue int, label 
 		return "", 0, "", false
 	}
 	return kindPrefix, n, label, true
+}
+
+// ClosingContradictionReason formats the refusal for a PR body that closes
+// issue and says it stays open: `closing-contradiction:#1023`.
+func ClosingContradictionReason(issue int) string {
+	return ClosingContradictionReasonPrefix + "#" + strconv.Itoa(issue)
+}
+
+// ClosingKeywordTargetsPRReason formats the refusal for a closing keyword
+// that names pull request number: `closing-keyword-targets-pr:#1036`.
+func ClosingKeywordTargetsPRReason(number int) string {
+	return ClosingKeywordTargetsPRReasonPrefix + "#" + strconv.Itoa(number)
+}
+
+// ParseClosingLinkReason splits a ClosingContradictionReason or a
+// ClosingKeywordTargetsPRReason into its prefix and number. ok is false for
+// any other reason.
+func ParseClosingLinkReason(reason string) (prefix string, number int, ok bool) {
+	for _, p := range []string{ClosingContradictionReasonPrefix, ClosingKeywordTargetsPRReasonPrefix} {
+		rest, found := strings.CutPrefix(reason, p+"#")
+		if !found {
+			continue
+		}
+		n, err := strconv.Atoi(rest)
+		if err != nil || n <= 0 {
+			return "", 0, false
+		}
+		return p, n, true
+	}
+	return "", 0, false
 }
 
 // humanMergeReasonTrust are the admission reasons that mean no lane can

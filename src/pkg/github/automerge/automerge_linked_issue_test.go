@@ -39,6 +39,27 @@ type linkedIssueFront struct {
 	body   string
 	issues map[string]linkedIssue // "owner/repo#N"
 	reads  map[string]int
+	// commits are the messages served for PR 7's commit list (nil leaves
+	// the request to the fixture); commitsStatus non-zero fails the read.
+	commits       []string
+	commitsStatus int
+	commitReads   int
+	// baseRef and defaultBranch, when set, are written into PR 7's base
+	// (base.ref and base.repo.default_branch) alongside body.
+	baseRef       string
+	defaultBranch string
+}
+
+func (f *linkedIssueFront) setBody(body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.body = body
+}
+
+func (f *linkedIssueFront) currentBody() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.body
 }
 
 func (f *linkedIssueFront) set(key string, issue linkedIssue) {
@@ -65,7 +86,53 @@ func newLinkedIssueFront(t *testing.T, backend string, f *linkedIssueFront) *htt
 	f.reads = map[string]int{}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7" && f.body != "" {
+		// A named base ref makes the sweep read the base branch (protection
+		// for the required-check set, tip status for the release hold); the
+		// backend fixture only knows PR 7's head, so answer those here.
+		f.mu.Lock()
+		baseRef := f.baseRef
+		f.mu.Unlock()
+		if baseRef != "" && r.Method == http.MethodGet {
+			switch r.URL.Path {
+			case "/repos/acme/widget/branches":
+				// A "vN" base makes the forward-merge guard list protected
+				// release lines (HeadMergesReleaseLine); none here.
+				json.NewEncoder(w).Encode([]any{})
+				return
+			case "/repos/acme/widget/branches/" + baseRef:
+				json.NewEncoder(w).Encode(map[string]any{"name": baseRef, "commit": map[string]string{"sha": "base1"}})
+				return
+			case "/repos/acme/widget/branches/" + baseRef + "/protection/required_status_checks":
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{"message": "Branch not protected"})
+				return
+			case "/repos/acme/widget/commits/base1/status":
+				json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []any{}})
+				return
+			}
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/commits" {
+			f.mu.Lock()
+			messages, status := f.commits, f.commitsStatus
+			if messages != nil || status != 0 {
+				f.commitReads++
+			}
+			f.mu.Unlock()
+			if status != 0 {
+				w.WriteHeader(status)
+				json.NewEncoder(w).Encode(map[string]string{"message": "commit list error"})
+				return
+			}
+			if messages != nil {
+				out := make([]map[string]any, 0, len(messages))
+				for i, m := range messages {
+					out = append(out, map[string]any{"sha": "c" + strconv.Itoa(i), "commit": map[string]any{"message": m}})
+				}
+				json.NewEncoder(w).Encode(out)
+				return
+			}
+		}
+		if body := f.currentBody(); r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7" && body != "" {
 			resp, err := http.Get(backend + r.URL.Path)
 			if err != nil {
 				t.Errorf("backend PR fetch: %v", err)
@@ -83,7 +150,28 @@ func newLinkedIssueFront(t *testing.T, backend string, f *linkedIssueFront) *htt
 			if err := json.Unmarshal(raw, &pull); err != nil {
 				t.Errorf("decode backend PR: %v", err)
 			}
-			pull["body"] = f.body
+			pull["body"] = body
+			f.mu.Lock()
+			baseRef, defaultBranch := f.baseRef, f.defaultBranch
+			f.mu.Unlock()
+			if baseRef != "" || defaultBranch != "" {
+				base, _ := pull["base"].(map[string]any)
+				if base == nil {
+					base = map[string]any{}
+				}
+				if baseRef != "" {
+					base["ref"] = baseRef
+				}
+				if defaultBranch != "" {
+					repo, _ := base["repo"].(map[string]any)
+					if repo == nil {
+						repo = map[string]any{}
+					}
+					repo["default_branch"] = defaultBranch
+					base["repo"] = repo
+				}
+				pull["base"] = base
+			}
 			json.NewEncoder(w).Encode(pull)
 			return
 		}
@@ -141,7 +229,11 @@ var linkedIssueCases = []linkedIssueCase{
 	{name: "read error fails closed", issue: linkedIssue{status: http.StatusInternalServerError}, wantReason: linkedIssueReasonCheck, wantErr: true},
 	{name: "closed issue does not block", issue: linkedIssue{state: "closed", labels: []string{"hold"}}},
 	{name: "missing issue does not block", issue: linkedIssue{status: http.StatusNotFound}},
-	{name: "pull request does not block", issue: linkedIssue{state: "open", labels: []string{"hold"}, pr: true}},
+	// "Fixes #42" where #42 is an open pull request would close that PR on
+	// merge (hivecommons/hive#15025), whatever its labels; the issue read
+	// above it is not repeated. Closing a closed PR is a no-op.
+	{name: "open pull request target holds the merge", issue: linkedIssue{state: "open", labels: []string{"hold"}, pr: true}, wantReason: "closing-keyword-targets-pr:#42"},
+	{name: "closed pull request target does not block", issue: linkedIssue{state: "closed", labels: []string{"hold"}, pr: true}},
 	{name: "unlabelled issue does not block", issue: linkedIssue{state: "open", labels: []string{"bug"}}},
 }
 

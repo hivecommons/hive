@@ -1666,3 +1666,52 @@ func TestContributorLaneAssociationTrusted(t *testing.T) {
 		t.Fatal("nil PR must not be trusted")
 	}
 }
+
+func TestContributorPromotionSearchCachePerSweep(t *testing.T) {
+	fx := validContributorFixture()
+	fx.issueComments[0]["body"] = contributorClaimMarkerTier(contributorLaneTestAuthor, "contributor", contributorLaneTestHive, " tier=contributor verified=true")
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	policy.AutoPromoteAfterMergedPR = 5
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngineRepos(api.URL, []string{"widget", "hive"}, policy, clock, Options{})
+	ctx := context.WithValue(context.Background(), contributorRepoSearchCacheKey{}, make(map[string][]contributorRepoRef))
+	for _, author := range []string{"alice", "alice", "alice", "bob"} {
+		_, err := engine.contributorCleanMergedHistory(ctx, "acme", "widget", author, 5, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fx.searches != 2 {
+		t.Fatalf("searches = %d, want 2", fx.searches)
+	}
+	ctx = context.WithValue(context.Background(), contributorRepoSearchCacheKey{}, make(map[string][]contributorRepoRef))
+	_, err := engine.contributorCleanMergedHistory(ctx, "acme", "widget", "alice", 5, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fx.searches != 3 {
+		t.Fatalf("new sweep searches = %d, want 3", fx.searches)
+	}
+}
+
+func TestContributorPromotionSkipsBots(t *testing.T) {
+	for _, author := range []string{"github-actions[bot]", "mergeraptor[bot]", "other[bot]"} {
+		t.Run(author, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.author = author
+			fx.issueComments[0]["body"] = contributorClaimMarkerTier(author, "contributor", contributorLaneTestHive, " tier=contributor verified=true")
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			policy.AutoPromoteAfterMergedPR = 5
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+			engine := newContributorLaneEngineRepos(api.URL, []string{"widget", "hive"}, policy, clock, Options{})
+			_, _, _ = engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if fx.searches != 0 {
+				t.Fatalf("bot triggered %d searches", fx.searches)
+			}
+		})
+	}
+}

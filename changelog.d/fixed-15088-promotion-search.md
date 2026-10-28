@@ -1,0 +1,1 @@
+- Avoid repeated contributor auto-promotion searches within a sweep and skip bot authors ([#15088](https://github.com/hivecommons/hive/issues/15088)).

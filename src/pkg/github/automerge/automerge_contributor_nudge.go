@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -123,6 +124,8 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		asks = append(asks, dcoAsk(d))
 	case r == stagelabels.LaneReasonHiveSignoffAttribution:
 		asks = append(asks, signoffAttributionAsk(d))
+	case closingLinkAsk(r) != "":
+		asks = append(asks, closingLinkAsk(r))
 	case r != "":
 		asks = append(asks, r)
 	}
@@ -192,7 +195,8 @@ func ContributorNudgeComment(n ContributorNudge, out ContributorNudgeOutcome) st
 	} else {
 		fmt.Fprintf(&b, "@%s this PR is back in your court (`%s`). ", n.Author, stagelabels.ReturnedToContributor.Label())
 	}
-	b.WriteString("The hive will not merge it until the head changes.\n\n")
+	b.WriteString(nudgeHoldSentence(n.Reason))
+	b.WriteString("\n\n")
 	if len(n.FailingChecks) > 0 {
 		b.WriteString("**Failing checks:**\n")
 		for _, c := range n.FailingChecks {
@@ -226,6 +230,28 @@ func ContributorNudgeComment(n ContributorNudge, out ContributorNudgeOutcome) st
 		b.WriteString("\n_This is the last automatic reminder for this head. If you are unavailable the hive may adopt the PR to finish it (your commits are preserved)._\n")
 	}
 	return b.String()
+}
+
+// closingLinkAsk is the review ask for a closing-link refusal
+// (hivecommons/hive#15025), or "" for any other reason.
+func closingLinkAsk(reason string) string {
+	prefix, n, ok := prstage.ParseClosingLinkReason(reason)
+	if !ok {
+		return ""
+	}
+	if prefix == prstage.ClosingContradictionReasonPrefix {
+		return fmt.Sprintf("The body says #%d stays open (`Refs … partial`) and also `Closes #%d`, so GitHub would close #%d on merge. Keep one: drop the closing keyword, or the partial note. No new commit is needed.", n, n, n)
+	}
+	return fmt.Sprintf("`fix #%d` (or another closing keyword) in the PR body or a commit message closes pull request #%d on merge; write `same change as #%d` instead.", n, n, n)
+}
+
+// nudgeHoldSentence says what releases the PR. A contradiction lives only in
+// the PR body, so editing the body is enough; anything else needs a new head.
+func nudgeHoldSentence(reason string) string {
+	if prefix, _, ok := prstage.ParseClosingLinkReason(reason); ok && prefix == prstage.ClosingContradictionReasonPrefix {
+		return "The hive will not merge it until the PR body is fixed."
+	}
+	return "The hive will not merge it until the head changes."
 }
 
 func nonEmpty(s, def string) string {

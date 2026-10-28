@@ -1,0 +1,1 @@
+- A contributor blocked verdict that names its blocker (`owner/repo#N`, `#N`, or an issue/PR URL) now records it on the task issue — a native GitHub "blocked by" link for an open issue, a `hive:blocked-on` marker for an open PR — so the hive lifts `blocked` itself once the blocker closes.

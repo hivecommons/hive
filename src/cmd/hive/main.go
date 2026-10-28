@@ -2708,6 +2708,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
+	// Commit messages on a merge-ready head are read for closing keywords
+	// that name another pull request (hivecommons/hive#15025).
+	autoMergeOpts.ScanCommitClosingKeywords = true
 	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
 	}
@@ -9863,6 +9866,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		StageEngine:             stageEngineOptions(cfg, logger),
 		MergeQueueBases:         hiveMergeQueueBases,
 	}
+	opts.ScanCommitClosingKeywords = true
 	syncStageEngineMode(cfg, ghClient, logger)
 	// hivecommons/hive#12436: the contribute hub is the stage-072 nudge sink
 	// (relay fix-pr tasks). Guarded so a nil hub never becomes a typed-nil

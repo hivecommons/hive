@@ -8,16 +8,32 @@ unchanged.
 
 ## Flow
 
-1. `startProviderLogin` redirects to GitHub with `scope=` empty, the exact
-   `redirect_uri` and a `state` nonce (`src/pkg/hub/oauth.go:604`).
-2. The callback exchanges the code at `defaultGHTokenURL`
-   (`src/pkg/hub/oauth.go:47`) in `exchangeGitHubLogin`
-   (`src/pkg/hub/oauth.go:934`). `client_id`, `client_secret`, `code` and
-   `redirect_uri` travel in a form-encoded POST body, never in the URL
-   (`src/pkg/hub/oauth.go:944`). `redirect_uri` is `oauthRedirectURI()`
-   (`src/pkg/hub/saas_auth.go:371`), the same value as the authorize request.
-3. The token is encrypted with `encryptToken` (`src/pkg/hub/saas_crypto.go:34`)
-   and stored on the user record (`src/pkg/hub/oauth.go:850`).
+1. `startProviderLogin` (`src/pkg/hub/oauth.go:564`) redirects to GitHub with
+   an empty `scope=`, the exact `redirect_uri`, a `state` nonce and an S256
+   PKCE `code_challenge` (`src/pkg/hub/oauth.go:627`). The state nonce and the
+   PKCE `code_verifier` each go in their own short-lived HttpOnly, Secure,
+   SameSite=Lax cookie (`hive_oauth_state` and `hive_oauth_pkce`).
+2. `handleOAuthCallback` reads and clears both cookies on every outcome, so
+   each login transaction is single-use. A missing or mismatched state, or a
+   missing, malformed or expired verifier, fails closed with `400`. This
+   happens before the code is redeemed or any session or user record is
+   written (`src/pkg/hub/oauth.go:744`, `src/pkg/hub/oauth.go:825`). A verifier
+   that does not match the challenge is rejected by GitHub at exchange time
+   and surfaces as `502` with no session.
+3. The callback exchanges the code at `defaultGHTokenURL`
+   (`src/pkg/hub/oauth.go:49`) in `exchangeGitHubLogin`
+   (`src/pkg/hub/oauth.go:975`). `client_id`, `client_secret`, `code`,
+   `redirect_uri` and `code_verifier` travel in a form-encoded POST body,
+   never in the URL (`src/pkg/hub/oauth.go:981`). `redirect_uri` is
+   `oauthRedirectURI()` (`src/pkg/hub/saas_auth.go:371`), the same value as
+   the authorize request.
+4. The token is encrypted with `encryptToken` (`src/pkg/hub/saas_crypto.go:34`)
+   and stored on the user record (`src/pkg/hub/oauth.go:887`).
+
+`src/pkg/hub/oauth_browser_contract_test.go` and
+`src/pkg/hub/oauth_pkce_test.go` pin this contract. They check the request
+method, URL and body, the fail-closed matrix, and that no secret, code, token
+or verifier appears in a request URL or the logs.
 
 ## Consumers of the stored token
 
@@ -35,7 +51,7 @@ there.
 
 GitHub OAuth-app user tokens do not expire by default and no refresh token is
 issued. The Hub overwrites the stored token on each successful login
-(`src/pkg/hub/oauth.go:850`); there is no refresh job and no revocation on
+(`src/pkg/hub/oauth.go:887`); there is no refresh job and no revocation on
 logout. A token stops working only if the user revokes the app authorization or
 GitHub invalidates it.
 

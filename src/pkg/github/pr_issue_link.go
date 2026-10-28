@@ -369,22 +369,96 @@ func bodySaysIssueStaysOpen(body, repo string, issue int) bool {
 			return true
 		}
 	}
-	text := strings.ToLower(stripClosingFalsePositiveText(body))
-	issueRef := fmt.Sprintf("#%d", issue)
-	patterns := []string{
-		"leave " + issueRef + " open",
-		"leaves " + issueRef + " open",
-		"leaving " + issueRef + " open",
-		issueRef + " stays open",
-		issueRef + " remains open",
-		"does not close " + issueRef,
-		"doesn't close " + issueRef,
-		"do not close " + issueRef,
-		"not close " + issueRef,
+	return issueStaysOpenPhrase(stripClosingFalsePositiveText(body), issue)
+}
+
+// issueStaysOpenPhrase reports whether text (already stripped of code spans
+// and URLs) says in so many words that #issue stays open: "leave #N open",
+// "#N stays open", "#N remains open", "does not close #N". The number must
+// end where the reference ends, so "#12 stays open" says nothing about #1.
+func issueStaysOpenPhrase(text string, issue int) bool {
+	if text == "" || issue <= 0 {
+		return false
 	}
-	for _, p := range patterns {
-		if strings.Contains(text, p) {
-			return true
+	want := strconv.Itoa(issue)
+	for _, m := range issueStaysOpenPattern.FindAllStringSubmatch(text, -1) {
+		for _, n := range m[1:] {
+			if n == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// issueStaysOpenPattern is compiled once: each alternative captures the
+// issue number so issueStaysOpenPhrase compares it instead of compiling a
+// pattern per issue per call.
+var issueStaysOpenPattern = regexp.MustCompile(`(?i)\bleav(?:e|es|ing) #(\d+)\b open\b|#(\d+)\b (?:stays|remains) open\b|(?:\bnot|n't) close #(\d+)\b`)
+
+// gitHubClosingRefPattern matches only the closing-keyword form GitHub itself
+// acts on when a PR merges: a keyword, an optional colon, whitespace, then
+// the reference ("Closes #12", "fix: #12", "Apply the same fix #1036 makes").
+// It is claimRefPattern without the bounded prose gap: "Fixes the bug in #12"
+// is a claim for the hive's bookkeeping, but GitHub closes nothing on it, so
+// the merge gates must not refuse on it.
+var gitHubClosingRefPattern = regexp.MustCompile(
+	`(?i)\b(` + strings.Join(closingKeywords, "|") + `)\b\s*:?\s+(?:([\w.-]+/[\w.-]+))?#(\d+)`)
+
+// GitHubClosingRefs returns every repo issue or pull request number that text
+// closes the way GitHub does on merge, de-duplicated in first-seen order.
+// Code spans, fences and URLs are ignored, and references to other
+// repositories are dropped.
+func GitHubClosingRefs(text, repo string) []int {
+	var out []int
+	for _, ref := range parseRefs(gitHubClosingRefPattern, stripClosingFalsePositiveText(text), repo) {
+		if strings.EqualFold(ref.Repo, repo) {
+			out = append(out, ref.Issue)
+		}
+	}
+	return out
+}
+
+// partialReferenceNotePattern is the wording that turns a reference line
+// ("Refs #N — partial; two items remain") into a statement that #N stays
+// open. A bare "Refs #N (reporter confirmation required)" carries none of it.
+var partialReferenceNotePattern = regexp.MustCompile(`(?i)\b(?:partial(?:ly)?|remain(?:s|ing)?|deferred|follow[- ]?ups?|not (?:yet )?addressed)\b`)
+
+// ClosingContradictions returns each repo issue that body both closes with a
+// GitHub closing keyword and says stays open or is only partly done
+// (hivecommons/hive#15025): GitHub closes the issue when the PR merges, which
+// is exactly what the rest of the body says must not happen. "Stays open or
+// partial" is a phrase issueStaysOpenPhrase recognises, or a reference line
+// (`Refs`, `References`, `Part of`, …) naming the issue that also says
+// partial, remaining, deferred, follow-up or not (yet) addressed. A bare
+// `Refs #N` next to `Closes #N` is not a contradiction (#10826). Code spans
+// and fences are ignored. The result is in first-seen order; nil means none.
+func ClosingContradictions(body, repo string) []int {
+	closed := GitHubClosingRefs(body, repo)
+	if len(closed) == 0 {
+		return nil
+	}
+	text := stripClosingFalsePositiveText(body)
+	var out []int
+	for _, n := range closed {
+		if issueStaysOpenPhrase(text, n) || referenceLineSaysPartial(text, repo, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// referenceLineSaysPartial reports whether one line of text references
+// repo#issue without closing it and also says the work is partial.
+func referenceLineSaysPartial(text, repo string, issue int) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if !partialReferenceNotePattern.MatchString(line) {
+			continue
+		}
+		for _, ref := range parseRefs(referenceRefPattern, line, repo) {
+			if ref.Issue == issue && strings.EqualFold(ref.Repo, repo) {
+				return true
+			}
 		}
 	}
 	return false

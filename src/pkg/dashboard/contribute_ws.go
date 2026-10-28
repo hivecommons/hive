@@ -1213,6 +1213,11 @@ type ContributeWSHub struct {
 	// GHClient. gateParkRekicks records the one re-kick each issue gets.
 	gateParkReleaser func(ctx context.Context, repo string, number int, reporter, reason string) error
 	gateParkRekicks  gateParkRekicks
+	// verdictBlockerRecorder is the seam for recording the blocker a blocked
+	// verdict names (contribute_verdict_blocker.go); nil means use GHClient.
+	// verdictBlockersRecorded dedupes re-delivered verdicts per task.
+	verdictBlockerRecorder  func(ctx context.Context, repo string, number int, blocker ghpkg.VerdictBlocker) (ghpkg.VerdictBlockerOutcome, error)
+	verdictBlockersRecorded sync.Map
 	// wrongBaseBranchChecker validates a wrong_base target against the target
 	// repository; nil means use GHClient.BranchExists. wrongBaseParker is the
 	// mutation seam for the invalid/unverifiable fallback.
@@ -4485,6 +4490,14 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				if completedTask != nil {
 					go h.releaseToolingBlockedIssue(completedTask, s.contributor.profile.GitHubUsername, verdictReason)
 				}
+			}
+			// A blocked verdict that names its blocker (owner/repo#N, #N, an
+			// issue or PR URL) is recorded as a native "blocked by" link or a
+			// blocked-on PR marker, so the hive lifts `blocked` itself when
+			// the blocker closes (hivecommons/hive#15023).
+			if verdict == completionVerdictBlocked && completedTask != nil {
+				taskCopy := *completedTask
+				go h.recordVerdictBlocker(&taskCopy, verdictReason)
 			}
 			// A needs-decision verdict whose reason is the target repository's
 			// OWN confirmation gate — "AGENTS.md says offer a spec and wait",

@@ -83,6 +83,12 @@ type Options struct {
 	// RequireCurrentBase returns the live auto_merge.require_current_base
 	// switch for an owner/repo (hivecommons/hive#13634). nil means off.
 	RequireCurrentBase func(repo string) bool
+	// ScanCommitClosingKeywords makes the merge-ready gate also read the
+	// commit messages on the head for closing keywords that name another
+	// pull request (hivecommons/hive#15025); the PR body is always read.
+	// It costs one commit-list read per merge-ready head. The hive turns it
+	// on; false leaves the commits unread.
+	ScanCommitClosingKeywords bool
 	// MergeForwardTrustedHuman returns the live
 	// auto_merge.merge_forward_trusted_human membership for owner/repo
 	// (hivecommons/hive#13636); nil means off.
@@ -296,6 +302,14 @@ type Engine struct {
 	// adoption PR's original (automerge_adoption_original.go).
 	adoptionOriginalChecksMu sync.Mutex
 	adoptionOriginalChecks   map[string]time.Time
+	// scanCommitClosingKeywords, closingNonPRTargets (repo#N known not to
+	// be a pull request) and closingCommitRefs (repo#PR@head → numbers its commit
+	// messages close) serve the closing-link gate
+	// (automerge_closing_link.go).
+	scanCommitClosingKeywords bool
+	closingLinkMu             sync.Mutex
+	closingNonPRTargets       map[string]bool
+	closingCommitRefs         map[string][]int
 
 	stageLabelPolicy  func() StageLabelPolicy
 	stageTracker      *StageTracker
@@ -333,6 +347,7 @@ func New(transport Transport, opts Options) *Engine {
 		reviewVerdictHold:                 opts.ReviewVerdictHold,
 		recordReviewHoldRelease:           opts.RecordReviewHoldRelease,
 		requireCurrentBase:                opts.RequireCurrentBase,
+		scanCommitClosingKeywords:         opts.ScanCommitClosingKeywords,
 		mergeForwardTrustedHuman:          opts.MergeForwardTrustedHuman,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
@@ -1722,6 +1737,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			return AutoMergeSweepEvent{}, "closed", nil
 		}
 	}
+	if reason := c.closingContradictionGate(owner, repo, pr); reason != "" {
+		return reject(reason)
+	}
 
 	evaluatedHeadSHA := ""
 	if pr.GetHead() != nil {
@@ -2333,6 +2351,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
+	if reason := c.closingContradictionGate(owner, repo, pr); reason != "" {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
 	decision := c.trustedAuthorDecision(author, policy.RequireRole)
 	if !decision.Allowed {
 		return AutoMergeSweepEvent{}, "untrusted-author-role", nil
@@ -2676,6 +2697,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	}
 	if c.transport.IsExemptLabels(labels) {
 		return reject("exempt-label")
+	}
+	if reason := c.closingContradictionGate(owner, repo, pr); reason != "" {
+		return reject(reason)
 	}
 
 	author := hgithub.SafeGetLogin(pr.GetUser())
