@@ -7918,6 +7918,24 @@ type AutoMergeConfig struct {
 	// open-time attribution. nil/unset means ON; `credit_issue_authors:
 	// false` sends the merge with GitHub's default message as before.
 	CreditIssueAuthors *bool `yaml:"credit_issue_authors,omitempty" json:"credit_issue_authors,omitempty"`
+	// MergeTrain orders approved PRs whose changed files overlap so they
+	// merge one at a time instead of dirtying each other
+	// (hivecommons/hive#15117).
+	MergeTrain MergeTrainAutoMergeConfig `yaml:"merge_train,omitempty" json:"merge_train,omitempty"`
+}
+
+// MergeTrainAutoMergeConfig is auto_merge.merge_train.*.
+type MergeTrainAutoMergeConfig struct {
+	// Enabled groups each sweep's candidate PRs per repo and base branch by
+	// overlapping changed files and lets only one front per group merge per
+	// pass: the mergeable one first, then the oldest. nil/unset means ON;
+	// an explicit `enabled: false` merges every green PR as before.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports the auto_merge.merge_train.enabled switch; unset is on.
+func (m MergeTrainAutoMergeConfig) IsEnabled() bool {
+	return m.Enabled == nil || *m.Enabled
 }
 
 // CreditIssueAuthorsEnabled reports the auto_merge.credit_issue_authors

@@ -153,6 +153,7 @@ agents.session_recycle.max_age # TODO #11854
 agents.session_recycle.max_rss_mb # TODO #11854
 agents.session_recycle.min_idle # TODO #11854
 auto_merge.credit_issue_authors # merge-time Co-authored-by credit (#14581); yaml-only
+auto_merge.merge_train.enabled # merge-train front selection (#15141); yaml-only
 auto_merge.allow_unprotected_base[] # TODO #11854
 auto_merge.human_merge_paths.<key> # TODO #11854
 auto_merge.merge_forward_trusted_human[] # TODO #11854

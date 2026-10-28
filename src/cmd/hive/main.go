@@ -2547,6 +2547,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// auto_merge.trusted_bot_authors takes effect without a restart.
 	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
 	autoMergeOpts.BotTakeoverEnabled = func() bool { return b.cfg.AutoMerge.BotTakeover.IsEnabled() }
+	autoMergeOpts.MergeTrainEnabled = func() bool { return b.cfg.AutoMerge.MergeTrain.IsEnabled() }
 	// Intent tier gate (#6258): the human lane only queues PRs that
 	// survive writeMergeEligible's intent check, but this sweep lists
 	// the App's PRs on its own, so it carries the same policy (same
@@ -9372,6 +9373,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
+		opts.MergeTrainEnabled = func() bool { return cfg.AutoMerge.MergeTrain.IsEnabled() }
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	}
 	audit := func(event automerge.AutoMergeSweepEvent) {

@@ -1,0 +1,1 @@
+- Automerge merge train: approved PRs whose changed files overlap are grouped per repo and base branch, and only one front per group (mergeable first, then oldest) merges per sweep pass, so parallel approvals no longer dirty each other; `auto_merge.merge_train.enabled` (default `true`) turns it off (#15141).
