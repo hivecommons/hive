@@ -309,3 +309,29 @@ func TestApplyPackKeepsPackBackendWhenOperatorPicksAreMinority(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyPackGatewayHoldsAcrossLevels: the pack agents L2 moved onto the
+// gateway are pack-owned, so they must count toward the majority when L3
+// places `ci-maintainer` — otherwise three operator picks among six other
+// agents is no longer a majority and #14678 reproduces one level up.
+func TestApplyPackGatewayHoldsAcrossLevels(t *testing.T) {
+	srv := gatewayHive(t, "litellm")
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	for _, name := range []string{"supervisor", "brainstorm", "reviewer"} {
+		if got := srv.deps.Config.Agents[name]; got.Backend != "litellm" || got.BackendIsOperatorOwned() {
+			t.Fatalf("after L2: %s backend=%q operator-owned=%v, want pack-owned litellm", name, got.Backend, got.BackendIsOperatorOwned())
+		}
+	}
+	if _, err := srv.ApplyPack(3); err != nil {
+		t.Fatalf("ApplyPack(3): %v", err)
+	}
+	got, ok := srv.deps.Config.Agents["ci-maintainer"]
+	if !ok {
+		t.Fatal("L3 pack did not create `ci-maintainer`")
+	}
+	if got.Backend != "litellm" || got.Model != "" {
+		t.Errorf("ci-maintainer backend=%q model=%q, want litellm with no model: the agents L2 moved onto the gateway count toward the hive's gateway", got.Backend, got.Model)
+	}
+}

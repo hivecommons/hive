@@ -1178,28 +1178,29 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 // hiveGatewayBackend is the inference gateway the operator moved the hive
 // onto: the one inference backend or configured gateway that every
 // operator-picked backend among the enabled agents other than except names,
-// when those operator picks are a majority of all those other agents. It is
-// "" when any operator-picked backend is a subscription CLI, the hive
-// default or a different gateway, when the operator's picks are not a
-// majority, or when there are none. except is the pack agent being placed,
-// so its own pack CLI placement is not counted against the move.
+// when the agents already on that gateway are a majority of all those other
+// agents. It is "" when any operator-picked backend is a subscription CLI,
+// the hive default or a different gateway, when there are no operator picks,
+// or when the gateway hosts at most half of the other agents. except is the
+// pack agent being placed, so its own pack CLI placement is not counted
+// against the move.
 //
 // A pack agent a level adds later is placed on this backend instead of its
 // pack CLI (#14678): an operator who moved scanner/quality/guide onto a LiteLLM
 // gateway found the L2 `reviewer`, added afterwards, on copilot — the only
 // agent in the hive still calling an inference provider they had moved off.
-// Only operator-owned backends vote so the pack's own CLI placements (the L2
-// `supervisor`/`brainstorm`, or a reviewer the pack created before this fix)
-// cannot veto the move they are the subject of, and the majority bar keeps
-// one agent moved onto a gateway from migrating the pack's CLI agents with it.
+// Only operator-owned backends choose the gateway, so the pack's own CLI
+// placements (the L2 `supervisor`/`brainstorm`, or a reviewer the pack
+// created before this fix) cannot veto the move they are the subject of, and
+// the majority bar keeps one agent moved onto a gateway from migrating the
+// pack's CLI agents with it. Every agent already on the chosen gateway counts
+// toward that majority, whoever placed it there: the pack agents an earlier
+// level moved onto it must not dilute the bar for the agent the next level
+// adds, or the L3 `ci-maintainer` would land on copilot one level up.
 func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except string) string {
-	shared, others, votes := "", 0, 0
+	shared := ""
 	for name, vote := range backends {
-		if strings.EqualFold(name, except) {
-			continue
-		}
-		others++
-		if !vote.operatorOwned {
+		if strings.EqualFold(name, except) || !vote.operatorOwned {
 			continue
 		}
 		if !s.agentOnForeignGatewayBackend(vote.backend, "") {
@@ -1209,9 +1210,21 @@ func (s *Server) hiveGatewayBackend(backends map[string]agentBackendVote, except
 			return ""
 		}
 		shared = vote.backend
-		votes++
 	}
-	if shared == "" || votes*2 <= others || !s.deps.Config.BackendAllowed(shared) {
+	if shared == "" || !s.deps.Config.BackendAllowed(shared) {
+		return ""
+	}
+	onGateway, others := 0, 0
+	for name, vote := range backends {
+		if strings.EqualFold(name, except) {
+			continue
+		}
+		others++
+		if strings.EqualFold(vote.backend, shared) {
+			onGateway++
+		}
+	}
+	if onGateway*2 <= others {
 		return ""
 	}
 	return shared
