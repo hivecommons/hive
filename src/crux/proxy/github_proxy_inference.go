@@ -243,6 +243,14 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 // and concurrent requests race on nothing. Unknown entitlements, verbatim
 // matches, and ambiguous candidates all pass the route through unchanged.
 func (p *GitHubProxy) routeWithEntitledModel(route *InferenceRoute, agentName string) *InferenceRoute {
+	// A blank per-agent selection inherits the configured backend default,
+	// even before an entitlement probe has completed. Keep the stored snapshot
+	// untouched, as with entitlement rewrites below.
+	if route != nil && strings.TrimSpace(route.Model) == "" && strings.TrimSpace(route.DefaultModel) != "" {
+		rewritten := *route
+		rewritten.Model = route.DefaultModel
+		route = &rewritten
+	}
 	if route == nil || route.Backend != "litellm" || p.entitlements == nil {
 		return route
 	}
@@ -429,7 +437,8 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
 		if err != nil {
 			p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
+			p.recordAgentInferenceError(agentName, "translation error: "+err.Error(), 0)
+			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, jsonEscape(err.Error())), http.StatusBadGateway)
 			return
 		}
 
@@ -645,6 +654,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
 	if err != nil {
 		p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
+		p.recordAgentInferenceError(agentName, "translation error: "+err.Error(), 0)
 		p.writeHTTPError(conn, http.StatusBadGateway, "translation error: "+err.Error())
 		return
 	}
