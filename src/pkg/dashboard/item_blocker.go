@@ -386,7 +386,7 @@ func (s *Server) handleRepoItemBlockerClosePartial(w http.ResponseWriter, r *htt
 	s.invalidateStageTrackerCache()
 	target := rowActionTarget(repoFull, rowActionTargetIssue, number)
 	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: blocker.ActionClosePartial, Status: "closed", Label: ghpkg.PartiallyAddressedLabel,
-		Result: RowActionResult{Action: rowActionClosed, Target: target,
+		Result: &RowActionResult{Action: rowActionClosed, Target: target,
 			Outcome: "Closed as completed and marked `" + ghpkg.PartiallyAddressedLabel + "`; the rest (" + b.Short + ") is left to a person.",
 			Next:    "Nothing more happens here. Reopen the issue if the remainder should be tracked again."}})
 }
