@@ -20,6 +20,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const (
@@ -1679,5 +1680,31 @@ func TestContributorLaneAssociationTrusted(t *testing.T) {
 	}
 	if contributorLaneAssociationTrusted(nil) {
 		t.Fatal("nil PR must not be trusted")
+	}
+}
+
+func TestContributorTrustedChangeRequestAnswersRequiresHuman(t *testing.T) {
+	fx := validContributorFixture()
+	fx.reviews = []map[string]any{humanReview(1, "clubanderson", "CHANGES_REQUESTED", "sha7", "please fix the metadata")}
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 3, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{
+		ContributorLaneVerdict: func(string, int, string) ContributorLaneVerdict {
+			return ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true}
+		},
+	})
+	engine.SetMergerAuthorizer(func(login string) bool { return login == "clubanderson" })
+	engine.stageTracker = NewStageTracker()
+	engine.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} }
+	_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+	if err != nil || reason != contributorLaneReasonChangesRequested || fx.merges != 0 {
+		t.Fatalf("reason=%s err=%v merges=%d", reason, err, fx.merges)
+	}
+	detail := engine.stageTracker.details[stageKey("acme", "widget", 7)]
+	o := stageObservation{Lane: stageLaneContributor, HeadSHA: "sha7", Reason: reason, Detail: detail}
+	if v := classifyStage(o); v.Stage != stagelabels.ReturnedToContributor {
+		t.Fatalf("stage=%+v, want returned to contributor", v)
 	}
 }

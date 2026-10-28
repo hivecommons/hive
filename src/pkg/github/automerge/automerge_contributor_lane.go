@@ -1269,6 +1269,12 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	eval.verdict = verdict
 	approver, humanApproved := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, headSHA, verdict)
 	c.noteStageVerdict(owner, repo, number, verdict)
+	// A trusted head-scoped change request answers the swarm's question
+	// even when admission or a requires_human verdict would return early.
+	if rv, ok := c.latestTrustedHumanChangesRequested(ctx, owner, repo, number, headSHA); ok {
+		c.noteStageHumanChangeRequest(owner, repo, number, headSHA, hgithub.SafeGetLogin(rv.GetUser()))
+		return eval, contributorLaneReasonChangesRequested, nil
+	}
 	if claim.Reason != "" {
 		// Neither this hive's registry nor an App-authored marker vouches
 		// for the author, so GitHub's association is the only evidence left;

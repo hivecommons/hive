@@ -16,13 +16,14 @@ import (
 )
 
 // tryUnparkPullRequest answers the newest eligible `/hive …` command on a PR
-// parked at stage/085-needs-decision (hivecommons/hive#13041). A PR is not
+// at stage/085-needs-decision or stage/070-fixing. A PR is not
 // an issue: there is no park label to clear and no "What to reply" notice,
 // because GitHub already gives a maintainer the two levers — an Approve
 // review merges the head, a changes-requested review sends it back. What
 // the sweep adds is the text path:
 //
-//   - `/hive decision <text>` on a hive-authored PR is a changes_requested
+//   - `/hive decision approve <rationale>` records approval for the head;
+//   - other `/hive decision <text>` on a hive-authored PR is a changes_requested
 //     review in comment form: the decision is recorded against the head and
 //     the review planner kicks the author agent with <text> verbatim;
 //   - `/hive decision` on a PR the hive did not open gets one reply naming
@@ -147,7 +148,7 @@ const (
 	// prDecisionChangesRequested: the decision carries an instruction; the
 	// PR goes to fixing and the author agent follows it verbatim.
 	prDecisionChangesRequested prDecisionMode = "changes_requested"
-	// prDecisionApprove: a bare `/hive decision approve`; the owner answered
+	// prDecisionApprove: `/hive decision approve` with optional rationale; the owner answered
 	// the swarm's question with "yes" and the merge path takes over.
 	prDecisionApprove prDecisionMode = "approve"
 )
@@ -160,7 +161,7 @@ func (m prDecisionMode) kind() string {
 }
 
 func prDecisionModeFor(cmd unparkCommand) prDecisionMode {
-	if cmd.BareApproval() {
+	if cmd.Approval() {
 		return prDecisionApprove
 	}
 	return prDecisionChangesRequested
