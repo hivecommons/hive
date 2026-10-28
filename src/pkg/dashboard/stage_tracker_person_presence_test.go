@@ -97,7 +97,7 @@ func TestStageTrackerPresenceSharesSnapshot(t *testing.T) {
 func TestStageTrackerPersonPresencePayload(t *testing.T) {
 	now := time.Now()
 	s, store, status := adoptionFixture(t, now, "adopt", offlinePresence(now))
-	status.Repos[0].ActionableIssues = []github.Issue{{Number: 15051, Title: "Covered", Author: "zoe", AuthorIsHuman: true, LinkedPRs: []github.IssueLinkedPR{{Number: 14524, State: "open"}}}}
+	status.Repos[0].ActionableIssues = []any{github.Issue{Number: 15051, Title: "Covered", Author: "zoe", AuthorIsHuman: true, LinkedPRs: []github.IssueLinkedPR{{Number: 14524, State: "open"}}}}
 	response := s.buildStageTracker(status, store, now)
 	it := trackerItem(t, response, "pr", 14524)
 	if it.Presence == nil || it.Presence.State != "offline" || it.Presence.AdoptAt == nil {
