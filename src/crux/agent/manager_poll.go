@@ -57,6 +57,16 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			bobKeyRejected := effectiveBackend(agent) == bobBackend && paneShowsBobAPIKeyRejected(tail)
 			quotaExhausted := paneShowsQuotaExhausted(tail)
 			rateLimited := paneShowsStartupRateLimit(tail)
+			if feedback, denied := paneShowsApprovalDenied(tail); denied {
+				msg := "blocked/approval_denied: Copilot assisted-approval denied a tool request"
+				if feedback != "" {
+					msg += ": " + feedback
+				}
+				if agent.LastError != msg {
+					agent.LastError = msg
+					m.logger.Warn("copilot assisted-approval denial detected", "agent", agent.Name, "feedback", feedback)
+				}
+			}
 			if authState.BackendAuthError {
 				m.mu.Lock()
 				m.markProviderErrorLocked(agent, providerErrorMatch{Class: "backend_auth_error", Line: authState.BackendAuthErrorMsg}, time.Now())
