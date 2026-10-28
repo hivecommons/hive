@@ -1,6 +1,9 @@
 package prstage
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestDetailRedCheck(t *testing.T) {
 	t.Parallel()
@@ -58,6 +61,72 @@ func TestNormalizeReviewVerdict(t *testing.T) {
 				got.FixCycleCapReached != tc.in.FixCycleCapReached || got.HiveAuthoredKnown != tc.in.HiveAuthoredKnown || got.HiveAuthored != tc.in.HiveAuthored ||
 				got.DecisionQuestion != tc.in.DecisionQuestion || len(got.HumanSummaries) != len(tc.in.HumanSummaries) {
 				t.Fatalf("NormalizeReviewVerdict changed fields other than Verdict: %+v", got)
+			}
+		})
+	}
+}
+
+func TestReviewVerdictWithDecisionAnswer(t *testing.T) {
+	t.Parallel()
+	base := ReviewVerdict{Verdict: "requires_human"}
+	cases := []struct {
+		name      string
+		by, head  string
+		directive string
+		want      ReviewVerdict
+	}{
+		{
+			name: "blank actor leaves verdict untouched",
+			by:   "  ", head: "abc", directive: DecisionDirectiveApprove,
+			want: base,
+		},
+		{
+			name: "blank head leaves verdict untouched",
+			by:   "alice", head: "", directive: DecisionDirectiveApprove,
+			want: base,
+		},
+		{
+			name: "approve directive is preserved and trimmed",
+			by:   " alice ", head: " abc ", directive: " approve ",
+			want: ReviewVerdict{
+				Verdict: "requires_human", DecisionAnswered: true,
+				DecisionAnsweredBy: "alice", DecisionAnsweredHead: "abc",
+				DecisionDirective: DecisionDirectiveApprove,
+			},
+		},
+		{
+			name: "changes_requested directive",
+			by:   "alice", head: "abc", directive: DecisionDirectiveChanges,
+			want: ReviewVerdict{
+				Verdict: "requires_human", DecisionAnswered: true,
+				DecisionAnsweredBy: "alice", DecisionAnsweredHead: "abc",
+				DecisionDirective: DecisionDirectiveChanges,
+			},
+		},
+		{
+			name: "unknown directive defaults to changes_requested",
+			by:   "alice", head: "abc", directive: "shrug",
+			want: ReviewVerdict{
+				Verdict: "requires_human", DecisionAnswered: true,
+				DecisionAnsweredBy: "alice", DecisionAnsweredHead: "abc",
+				DecisionDirective: DecisionDirectiveChanges,
+			},
+		},
+		{
+			name: "empty directive defaults to changes_requested",
+			by:   "alice", head: "abc", directive: "",
+			want: ReviewVerdict{
+				Verdict: "requires_human", DecisionAnswered: true,
+				DecisionAnsweredBy: "alice", DecisionAnsweredHead: "abc",
+				DecisionDirective: DecisionDirectiveChanges,
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := base.WithDecisionAnswer(tc.by, tc.head, tc.directive); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("WithDecisionAnswer(%q,%q,%q) = %+v, want %+v", tc.by, tc.head, tc.directive, got, tc.want)
 			}
 		})
 	}
