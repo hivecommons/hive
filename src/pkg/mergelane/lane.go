@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/effects"
 	ghub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -175,7 +176,8 @@ type Decision struct {
 	Reason   string
 	Position int
 	MergeSHA string
-	// MergeError is the underlying failure when a merge call holds the front.
+	// MergeError is the underlying failure when a merge call holds the front
+	// or GitHub definitively refuses it.
 	MergeError error
 }
 
@@ -801,6 +803,14 @@ func (r *round) merge(head, tip string) (Decision, error) {
 		r.front.EvaluatedHead = ""
 		r.front.Stage = StageValidating
 		return r.hold(head, tip, "merge refused: head moved past the pinned SHA; validation restarts")
+	}
+	if errors.Is(err, effects.ErrNotApplied) {
+		// GitHub definitively refused the merge, so nothing happened and
+		// the front need not wait out its timeout. The typed refusal still
+		// travels with the decision so callers can explain it.
+		dec, leaveErr := r.leave(head, tip, "merge refused by GitHub: "+err.Error())
+		dec.MergeError = err
+		return dec, leaveErr
 	}
 	if err != nil {
 		r.front.Stage = StageValidating

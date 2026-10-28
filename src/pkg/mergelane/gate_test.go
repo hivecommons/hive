@@ -12,6 +12,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/effects"
 	ghub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -484,5 +485,57 @@ func TestGatePreservesMergeError(t *testing.T) {
 	}
 	if h.frontPR() != 1 || h.f.prs[1].Merged {
 		t.Fatal("failed merge must retain the unmerged front")
+	}
+}
+
+// A definite GitHub refusal of the merge call is recorded as not applied; a
+// 5xx stays uncertain, and a 409 is still a moved head.
+func TestRESTGitHubMergeRefusalClassification(t *testing.T) {
+	status := map[string]int{}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPut || !strings.HasSuffix(r.URL.Path, "/merge") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		w.WriteHeader(status[r.URL.Path])
+		_, _ = w.Write([]byte(`{"message":"refused by policy"}`))
+	}))
+	defer api.Close()
+	client := ghub.NewClient("token", "acme", []string{"widgets"}, nil, api.URL)
+	g := &RESTGitHub{Client: func() *ghub.Client { return client }}
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		code       int
+		notApplied bool
+		headMoved  bool
+		uncertain  bool
+	}{
+		{code: http.StatusForbidden, notApplied: true},
+		{code: http.StatusUnprocessableEntity, notApplied: true},
+		{code: http.StatusMethodNotAllowed, notApplied: true},
+		{code: http.StatusConflict, headMoved: true},
+		{code: http.StatusInternalServerError, uncertain: true},
+	} {
+		// A distinct PR per case keeps each effect a new logical operation.
+		n := 100 + tc.code
+		status[fmt.Sprintf("/repos/acme/widgets/pulls/%d/merge", n)] = tc.code
+		_, err := g.Merge(ctx, testRepo, n, "h1")
+		switch {
+		case tc.headMoved:
+			if !errors.Is(err, ErrHeadMoved) {
+				t.Fatalf("%d: err = %v, want ErrHeadMoved", tc.code, err)
+			}
+		case tc.notApplied:
+			if !errors.Is(err, effects.ErrNotApplied) || !strings.Contains(err.Error(), fmt.Sprint(tc.code)) || !strings.Contains(err.Error(), "refused by policy") {
+				t.Fatalf("%d: err = %v, want not-applied with status and message", tc.code, err)
+			}
+		case tc.uncertain:
+			if err == nil || errors.Is(err, effects.ErrNotApplied) || !strings.Contains(err.Error(), "uncertain") {
+				t.Fatalf("%d: err = %v, want an uncertain effect", tc.code, err)
+			}
+		}
 	}
 }

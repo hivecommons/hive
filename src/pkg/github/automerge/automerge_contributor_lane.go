@@ -1423,7 +1423,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
-			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
+			return effects.Result{}, hgithub.MergeAPIErrorNotApplied(apiErr)
 		}
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})

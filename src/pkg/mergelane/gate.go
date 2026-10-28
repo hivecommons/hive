@@ -345,7 +345,7 @@ func (g *RESTGitHub) Merge(ctx context.Context, repo string, number int, head st
 	}, func(ctx context.Context) (effects.Result, error) {
 		res, _, apiErr = api.PullRequests.Merge(ctx, owner, name, number, "", &gh.PullRequestOptions{SHA: head, MergeMethod: used})
 		if apiErr != nil {
-			return effects.Result{}, apiErr
+			return effects.Result{}, ghub.MergeAPIErrorNotApplied(apiErr)
 		}
 		return effects.Result{Provenance: res.GetSHA()}, nil
 	})

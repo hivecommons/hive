@@ -1,0 +1,1 @@
+- Serialized merge lane: a definite GitHub refusal (403, 405, 422) of the front's merge call is now recorded as not applied, so the pull request leaves the front and the next waiter is promoted within one round instead of waiting out the front timeout; 5xx and transport errors stay uncertain ([#14936](https://github.com/hivecommons/hive/issues/14936)).
