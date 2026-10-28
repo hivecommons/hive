@@ -15348,7 +15348,10 @@ test('tls-mismatch: hub registry lookup is only for hosted hives, and resolves b
 
     const registry = { hives: [
       { id: 'hosted-available-oke-11-placeholder-r05x', dashboardUrl: 'https://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev' },
+      { id: 'hosted-other', dashboardUrl: 'https://hosted-plain.relay.example' },
       { id: 'hosted-plain', dashboardUrl: 'https://hosted-plain.hive.hivecommons.dev' },
+      { id: 'hosted-clear', dashboardUrl: 'http://hosted-clear.hive.hivecommons.dev' },
+      { id: 'hosted-lookalike', dashboardUrl: 'https://hosted-lookalike.hive.hivecommons.dev.relay.example' },
       { id: 'bad', dashboardUrl: 'not a url' },
       null, 'junk',
     ] };
@@ -15357,6 +15360,9 @@ test('tls-mismatch: hub registry lookup is only for hosted hives, and resolves b
       { name: 'by vanity label', url: 'wss://hosted-kubestellar-hive-ojv6.old.example/contribute', want: 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute' },
       { name: 'same host already — no identical retry', url: 'wss://hosted-plain.hive.hivecommons.dev/contribute', want: null },
       { name: 'unknown hive', url: 'wss://hosted-nope.hive.example/contribute', want: null },
+      { name: 'entry outside the hub spoke domain is not followed', url: 'wss://hosted-other.hive.example/contribute', want: null },
+      { name: 'plain-http entry is not followed', url: 'wss://hosted-clear.hive.example/contribute', want: null },
+      { name: 'spoke-domain lookalike is not followed', url: 'wss://hosted-lookalike.hive.example/contribute', want: null },
       { name: 'no registry', url: 'wss://hosted-plain.hive.example/contribute', registry: null, want: null },
       { name: 'registry without hives array', url: 'wss://hosted-plain.hive.example/contribute', registry: { hives: 'x' }, want: null },
     ];

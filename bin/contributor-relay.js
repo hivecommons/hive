@@ -1455,6 +1455,12 @@ function hubRegistryURLFor(hiveURL) {
 // (vanity hosts). Returns the registry's dashboardUrl as a wss:// contribute
 // URL, or null when the registry does not know the hive or lists the same
 // host we just failed on (so the retry would be identical).
+//
+// Only an https dashboardUrl under the hub's own spoke domain is followed.
+// dashboardUrl is reported by each spoke in its heartbeat, so the registry can
+// list any host; the relay dials the result with the contributor's token and
+// runs whatever that host hands it, which must stay with hosts the hub fronts.
+// Entries elsewhere are skipped, never redialed.
 function currentHiveURLFromRegistry(hiveURL, registry) {
   let u;
   try { u = new URL(String(hiveURL || '').trim()); } catch (_) { return null; }
@@ -1465,10 +1471,12 @@ function currentHiveURLFromRegistry(hiveURL, registry) {
     if (!h || typeof h !== 'object' || typeof h.dashboardUrl !== 'string') continue;
     let d;
     try { d = new URL(h.dashboardUrl); } catch (_) { continue; }
-    const dHost = d.hostname.toLowerCase();
+    const dHost = d.hostname.toLowerCase().replace(/\.$/, '');
     if (h.id !== label && dHost.split('.')[0] !== label) continue;
+    if (d.protocol !== 'https:' || !dHost.endsWith('.' + DEFAULT_HUB_SPOKE_DOMAIN)) continue;
     if (dHost === host) return null;
-    d.protocol = d.protocol === 'http:' ? 'ws:' : 'wss:';
+    d.hostname = dHost;
+    d.protocol = 'wss:';
     d.pathname = '/contribute';
     d.search = '';
     d.hash = '';
