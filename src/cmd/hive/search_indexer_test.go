@@ -3,15 +3,16 @@ package main
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/search"
 )
 
 func withSearchIndexDir(t *testing.T) string {
@@ -60,7 +61,7 @@ func TestNewSearchIndexerEnabled(t *testing.T) {
 	if ix.HomeRepo != "o/a" || ix.RetentionMonths != 6 || ix.StartupBudget <= 0 {
 		t.Errorf("indexer = home %q retention %d budget %v", ix.HomeRepo, ix.RetentionMonths, ix.StartupBudget)
 	}
-	if h := ix.HealthOptions; h.StaleAfter != 60*24*time.Hour || h.SecurityDocMaxAge != 365*24*time.Hour || h.Weights["ci_pass_rate"] != 20 {
+	if h := ix.HealthOptions; h.StaleAfter != search.DefaultHealthStaleAfter || h.SecurityDocMaxAge != search.DefaultHealthSecurityDocMaxAge || !maps.Equal(h.Weights, search.DefaultHealthWeights()) {
 		t.Errorf("health options = %+v, want search.health defaults", h)
 	}
 	cfg.Project.PrimaryRepo = "x/b"
@@ -92,5 +93,20 @@ func TestStartSearchIndexerWiresRepoHealth(t *testing.T) {
 	b.startSearchIndexer()
 	if code := get(); code != http.StatusNotFound {
 		t.Fatalf("after wiring: code %d, want 404", code)
+	}
+}
+
+// The config package duplicates the search package's health defaults so
+// that search.health documents them without importing pkg/search; keep the
+// two copies from drifting (#14638).
+func TestSearchHealthDefaultsMatchConfig(t *testing.T) {
+	if config.DefaultSearchHealthStaleAfter != search.DefaultHealthStaleAfter {
+		t.Errorf("stale_after: config %v, search %v", config.DefaultSearchHealthStaleAfter, search.DefaultHealthStaleAfter)
+	}
+	if config.DefaultSearchHealthSecurityDocMaxAge != search.DefaultHealthSecurityDocMaxAge {
+		t.Errorf("security_doc_max_age: config %v, search %v", config.DefaultSearchHealthSecurityDocMaxAge, search.DefaultHealthSecurityDocMaxAge)
+	}
+	if !maps.Equal(config.DefaultSearchHealthWeights, search.DefaultHealthWeights()) {
+		t.Errorf("weights: config %v, search %v", config.DefaultSearchHealthWeights, search.DefaultHealthWeights())
 	}
 }
