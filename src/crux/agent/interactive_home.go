@@ -192,6 +192,10 @@ func (m *Manager) setupInteractiveHome(agent *AgentProcess, backend string) {
 		return
 	}
 
+	// Before the bridges: the aider repeat-failure route (#14752) replaces
+	// the .bashrc bridge while the check is on, and removing its file when
+	// the check is off lets the bridge below restore the link.
+	m.provisionRepeatFailureAiderBashrc(agent, home, backend)
 	m.bridgeInteractiveHome(agent.Name, home)
 	m.retireSharedGitConfigBridge(agent.Name, home)
 	m.setupAgentXDGDirs(agent.Name, home, agent.UID)

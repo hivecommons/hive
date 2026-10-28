@@ -371,3 +371,51 @@ func TestKnowledgeStateSendsLifecycleChange(t *testing.T) {
 		}
 	}
 }
+
+// TestKnowledgeListStateAndTag: --state and --tag reach the list endpoint,
+// and a server refusal (non-owner asking for drafts) fails the command.
+func TestKnowledgeListStateAndTag(t *testing.T) {
+	refuse := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path != "/api/knowledge" || q.Get("state") != "draft" || q.Get("tag") != "retro,review-feedback" {
+			t.Errorf("unexpected request: %s", r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if refuse {
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, `{"error":"owner access required"}`)
+			return
+		}
+		io.WriteString(w, `{"facts":[{"slug":"review-draft","state":"draft"}],"total":1}`)
+	}))
+	defer server.Close()
+
+	out, _, err := execute(t, server, "", "knowledge", "list", "--state", "draft", "--tag", "retro", "--tag", "review-feedback", "--output", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "review-draft") {
+		t.Fatalf("output = %s", out)
+	}
+	refuse = true
+	if _, _, err := execute(t, server, "", "knowledge", "list", "--state", "draft", "--tag", "retro,review-feedback"); err == nil {
+		t.Fatal("refused listing must fail")
+	}
+}
+
+func TestKnowledgeListStateTagRejectLayer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("invalid flags must not send a request: %s", r.URL)
+	}))
+	defer server.Close()
+	for _, flags := range [][]string{
+		{"--layer", "project", "--state", "draft"},
+		{"--layer", "project", "--tag", "review-feedback"},
+	} {
+		_, _, err := execute(t, server, "", append([]string{"knowledge", "list"}, flags...)...)
+		if err == nil || ExitCode(err) != ExitUsage {
+			t.Fatalf("%v: err = %v", flags, err)
+		}
+	}
+}

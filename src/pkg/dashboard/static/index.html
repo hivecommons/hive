@@ -32458,13 +32458,34 @@ function burnAreaChart() {
       else el.removeAttribute('title');
     }
 
+    // Retro lessons derived from human review feedback are stored as drafts
+    // that only the owner can see and approve. The count comes from the
+    // owner-gated list endpoint; non-owners never request it.
+    async function fetchKnowledgeReviewDrafts() {
+      if (!viewerIsOwner()) return 0;
+      try {
+        const r = await fetch('/api/knowledge?state=draft&tag=retro,review-feedback&limit=1');
+        if (!r.ok) return 0;
+        const data = await r.json();
+        return Number(data && data.total) || 0;
+      } catch (e) { return 0; }
+    }
+
+    function kbReviewDraftsHTML(count, owner) {
+      const n = Number(count) || 0;
+      if (!owner || n <= 0) return '';
+      const label = n === 1 ? '1 lesson awaiting approval' : `${n} lessons awaiting approval`;
+      return `<div id="kb-review-drafts" style="font-size:var(--fs-sm);color:var(--yellow);margin-bottom:var(--sp-4)" title="Retro lessons learned from human review feedback are drafts until you approve them. List them with: hivectl knowledge list --state draft --tag review-feedback. Approve one with: hivectl knowledge state ID approved">📝 ${label}</div>`;
+    }
+
     async function fetchKnowledgeStats() {
       try {
-        const [r, , , docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
+        const [r, , , docsR, reviewDrafts] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents'), fetchKnowledgeReviewDrafts()]);
         if (!r.ok) return;
         const prev = _kbCache;
         _kbCache = await r.json();
         _kbCache._documents = (docsR && docsR.ok) ? await docsR.json() : [];
+        _kbCache._reviewDrafts = reviewDrafts;
         setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(_kbCache)));
         var kbBadge = document.getElementById('knowledge-sidebar-badge');
         if (kbBadge) {
@@ -32478,7 +32499,8 @@ function burnAreaChart() {
         const enabledChanged = !prev || prev.enabled !== _kbCache.enabled || JSON.stringify(prev.primer || null) !== JSON.stringify(_kbCache.primer || null);
         const layersChanged = !prev || JSON.stringify((prev.layers||[]).map(l=>l.type)) !== JSON.stringify((_kbCache.layers||[]).map(l=>l.type));
         const docsChanged = !prev || JSON.stringify((prev._documents||[]).map(d=>d.slug)) !== JSON.stringify((_kbCache._documents||[]).map(d=>d.slug));
-        if (!_kbRendered || enabledChanged || layersChanged || docsChanged) {
+        const reviewDraftsChanged = !prev || prev._reviewDrafts !== _kbCache._reviewDrafts;
+        if (!_kbRendered || enabledChanged || layersChanged || docsChanged || reviewDraftsChanged) {
           _kbRendered = true;
           renderKnowledge();
         }
@@ -33270,6 +33292,7 @@ function burnAreaChart() {
         html += '<button class="hv-btn btn-primary btn-sm" data-action="toggleKnowledge" data-arg0="true" data-arg-types="j" title="Enable the knowledge base. Agent kicks will be primed with relevant facts from the configured layers, vaults, git sources and the bead synthesizer.">Enable Knowledge</button>';
       }
       html += '</div>';
+      html += kbReviewDraftsHTML(_kbCache._reviewDrafts, viewerIsOwner());
       if (!kbPrimed) {
         html += '<div class="kb-notice">Knowledge is disabled: no agent kick receives these facts. They are stored and browsable (the bead synthesizer keeps writing here), but they are only injected into kicks once knowledge is enabled.</div>';
       } else if (kbPrimer.restart_required) {

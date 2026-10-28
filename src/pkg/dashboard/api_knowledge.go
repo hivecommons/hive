@@ -160,6 +160,10 @@ func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
+	states, ok := knowledgeListStates(w, r)
+	if !ok {
+		return
+	}
 	if !s.ensureKnowledge() {
 		jsonResponse(w, map[string]interface{}{"enabled": false, "facts": []interface{}{}})
 		return
@@ -172,7 +176,14 @@ func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, offset := knowledgeListPagination(r)
 	typeFilter := r.URL.Query().Get("type")
-	facts := knowledge.FilterByLifecycle(s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", typeFilter, 0), includeStates)
+	all := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", typeFilter, 0)
+	var facts []knowledge.Fact
+	if len(states) > 0 {
+		facts = filterFactsByExactState(all, states)
+	} else {
+		facts = knowledge.FilterByLifecycle(all, includeStates)
+	}
+	facts = filterFactsByAllTags(facts, splitCSV(r.URL.Query().Get("tag")))
 	// Search merges multiple stores; impose a stable order before slicing pages.
 	sort.SliceStable(facts, func(i, j int) bool {
 		if facts[i].Layer != facts[j].Layer {
@@ -195,6 +206,74 @@ func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 		"has_more": end < total,
 		"facts":    page,
 	})
+}
+
+// knowledgeListStates parses the list's ?state= filter, a comma-separated
+// list of lifecycle states (or "all") that the listed facts must be in.
+// Listing any state other than approved exposes unapproved knowledge, so it
+// requires a verified owner and is refused, not silently clamped, otherwise.
+func knowledgeListStates(w http.ResponseWriter, r *http.Request) ([]knowledge.LifecycleState, bool) {
+	states, err := knowledge.ParseLifecycleStates(r.URL.Query().Get("state"))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+	for _, st := range states {
+		if st != knowledge.StateApproved {
+			if !requireOwnerRole(w, r) {
+				return nil, false
+			}
+			break
+		}
+	}
+	return states, true
+}
+
+// filterFactsByExactState keeps only facts whose effective lifecycle state is
+// listed in states, with State populated.
+func filterFactsByExactState(facts []knowledge.Fact, states []knowledge.LifecycleState) []knowledge.Fact {
+	out := make([]knowledge.Fact, 0, len(facts))
+	for _, f := range facts {
+		st := f.EffectiveState()
+		for _, want := range states {
+			if st == want {
+				f.State = st
+				out = append(out, f)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// filterFactsByAllTags keeps facts carrying every tag (case-insensitive).
+func filterFactsByAllTags(facts []knowledge.Fact, tags []string) []knowledge.Fact {
+	if len(tags) == 0 {
+		return facts
+	}
+	out := make([]knowledge.Fact, 0, len(facts))
+	for _, f := range facts {
+		if factHasAllTags(f, tags) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func factHasAllTags(f knowledge.Fact, tags []string) bool {
+	for _, want := range tags {
+		found := false
+		for _, t := range f.Tags {
+			if strings.EqualFold(strings.TrimSpace(t), want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // knowledgeListPagination bounds list responses, including omitted or invalid limits.

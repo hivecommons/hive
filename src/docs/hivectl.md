@@ -138,6 +138,7 @@ hivectl knowledge search "user journey" --limit 20
 hivectl knowledge list --limit 200 --offset 0 -o json  # first page across all layers
 hivectl knowledge list --limit 200 --offset 200 -o json # next page
 hivectl knowledge list --layer project        # layer: personal|project|org|community
+hivectl knowledge list --state draft --tag review-feedback  # owner only: lessons awaiting approval
 hivectl knowledge get project create-project
 hivectl knowledge stats
 hivectl knowledge health                      # knowledge engine health check
@@ -156,6 +157,12 @@ Without `--layer`, `knowledge list` returns one page: `--limit` defaults to 50
 increasing `--offset` by `--limit`. `--type` applies before pagination.
 With `--layer`, the command still lists the entire layer; combining `--layer`
 with `--limit` or `--offset` is an error.
+`--tag` (repeatable or comma-separated) lists only facts carrying every given
+tag. `--state` (comma-separated `draft`, `approved`, `deprecated`,
+`superseded` or `all`) lists only facts in those lifecycle states; any state
+other than `approved` needs the owner role, and the server refuses the request
+otherwise. Neither flag combines with `--layer`. Approve a listed draft with
+`hivectl knowledge state <id> approved`.
 
 `graph` reads the knowledge graph (`--root` optional; `--depth` defaults to 2
 and must be greater than zero). `import` posts Markdown or structured content

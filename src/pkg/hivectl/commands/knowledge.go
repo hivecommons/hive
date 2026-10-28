@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -49,17 +50,21 @@ func newKnowledgeCommand(env *commandEnv) *cobra.Command {
 }
 
 func knowledgeListCommand(env *commandEnv) *cobra.Command {
-	var layer, factType string
+	var layer, factType, state string
+	var tags []string
 	var limit, offset int
 	command := &cobra.Command{
 		Use:   "list",
 		Short: "List a page of knowledge facts (50 by default without --layer)",
 		Long: "List knowledge facts. Without --layer, returns 50 facts by default (maximum 200). " +
 			"Use --limit and --offset to page through results; has_more indicates another page. " +
-			"With --layer, lists all facts in that layer and pagination flags are not supported.",
+			"With --layer, lists all facts in that layer and pagination flags are not supported.\n" +
+			"--tag lists only facts carrying every given tag. --state lists only facts in the given " +
+			"lifecycle states; any state other than approved needs the owner role.",
 		Args: argsNone(),
 		Example: "  hivectl knowledge list --limit 200 --offset 200 --output json\n" +
-			"  hivectl knowledge list --layer project --type regression --output json",
+			"  hivectl knowledge list --layer project --type regression --output json\n" +
+			"  hivectl knowledge list --state draft --tag review-feedback",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if layer != "" && !validKnowledgeLayer(layer) {
 				return &usageError{message: "--layer must be one of personal, project, org, or community"}
@@ -72,6 +77,9 @@ func knowledgeListCommand(env *commandEnv) *cobra.Command {
 			}
 			if layer != "" && (cmd.Flags().Changed("limit") || cmd.Flags().Changed("offset")) {
 				return &usageError{message: "--limit and --offset cannot be combined with --layer"}
+			}
+			if layer != "" && (state != "" || len(tags) > 0) {
+				return &usageError{message: "--state and --tag cannot be combined with --layer"}
 			}
 			client, err := env.client()
 			if err != nil {
@@ -89,6 +97,12 @@ func knowledgeListCommand(env *commandEnv) *cobra.Command {
 			if factType != "" {
 				query.Set("type", factType)
 			}
+			if state != "" {
+				query.Set("state", state)
+			}
+			if len(tags) > 0 {
+				query.Set("tag", strings.Join(tags, ","))
+			}
 			result, err := client.Do(cmd.Context(), http.MethodGet, path, query, nil)
 			if err != nil {
 				return err
@@ -98,6 +112,8 @@ func knowledgeListCommand(env *commandEnv) *cobra.Command {
 	}
 	command.Flags().StringVar(&layer, "layer", "", "knowledge layer such as project, org, personal, or community")
 	command.Flags().StringVar(&factType, "type", "", "fact type filter")
+	command.Flags().StringVar(&state, "state", "", "lifecycle states to list: draft, approved, deprecated, superseded or all (non-approved needs owner; without --layer)")
+	command.Flags().StringSliceVar(&tags, "tag", nil, "list only facts carrying every given tag (without --layer)")
 	command.Flags().IntVar(&limit, "limit", 50, "page size, 1–200 (without --layer)")
 	command.Flags().IntVar(&offset, "offset", 0, "number of facts to skip (without --layer)")
 	return command

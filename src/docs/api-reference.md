@@ -323,7 +323,7 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/knowledge` | Dashboard auth/session | Paginated knowledge facts: `type` filter, `limit` (default 50, max 200; invalid/non-positive values use the default), `offset` (default 0). Returns `enabled`, `facts`, `count` (this page), `total`, `limit`, `offset`, `has_more`; ordered by layer then slug. Offsets are not snapshot cursors: concurrent edits may shift pages. | `pkg/dashboard/api.go:379` |
+| `GET` | `/api/knowledge` | Dashboard auth/session | Paginated knowledge facts: `type` filter, `tag` (comma-separated; a fact must carry every tag), `state` (comma-separated lifecycle states or `all`; only facts in those states are listed, and any state other than `approved` requires a verified owner and returns 403 otherwise), `limit` (default 50, max 200; invalid/non-positive values use the default), `offset` (default 0). Returns `enabled`, `facts`, `count` (this page), `total`, `limit`, `offset`, `has_more`; ordered by layer then slug. Offsets are not snapshot cursors: concurrent edits may shift pages. | `pkg/dashboard/api.go:379` |
 | `GET` | `/api/knowledge/export` | Dashboard auth/session | Knowledge Export | `pkg/dashboard/api.go:380` |
 | `POST` | `/mcp/knowledge` | Public (read-only) when the dashboard setting or `HIVE_PUBLIC_KNOWLEDGE` is on; 404 otherwise | Public Knowledge MCP endpoint — `initialize`, `tools/list`, `tools/call` for `knowledge_search`/`knowledge_toc`/`knowledge_get`/`knowledge_export` ([docs](public-knowledge-mcp.md)) | `pkg/dashboard/api.go:388` |
 | `GET` | `/api/knowledge/search` | Dashboard auth/session | Knowledge Search | `pkg/dashboard/api.go:381` |
