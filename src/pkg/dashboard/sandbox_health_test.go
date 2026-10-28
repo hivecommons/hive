@@ -56,6 +56,16 @@ func TestSandboxRunHealth(t *testing.T) {
 	if got.Runtime != "job" || !got.Succeeded || got.DurationS != 29*60 || got.PRURL != ok.PRURL || got.Tokens != 15 || got.Model != "m" {
 		t.Errorf("run fields not carried over: %+v", got)
 	}
+
+	withheld := &crux.SandboxRun{Runtime: "job", StartedAt: now.Add(-40 * time.Minute), EndedAt: now.Add(-11 * time.Minute),
+		Error: "sandbox run reported failure", PRWithheld: "agent report status=failed: rpm install 401 token ghp_abcdefghijklmnopqrstuvwxyz0123456789", LogID: "20261027-195251.000-sandbox.log"}
+	got = sandboxRunHealth(&crux.Process{State: crux.StateIdle, LastKick: kick(40 * time.Minute), SandboxLastRun: withheld}, "1h", false, now)
+	if got.Health != SandboxHealthFailed || got.LogID != withheld.LogID {
+		t.Errorf("withheld run must be failed and name its archive: %+v", got)
+	}
+	if !strings.HasPrefix(got.PRWithheld, "agent report status=failed: rpm install 401") || strings.Contains(got.PRWithheld, "ghp_abcdefghijklmnopqrstuvwxyz0123456789") {
+		t.Errorf("prWithheld must be carried over with tokens redacted, got %q", got.PRWithheld)
+	}
 }
 
 func TestSandboxOverdueGraceClamped(t *testing.T) {

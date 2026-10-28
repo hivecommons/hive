@@ -344,7 +344,7 @@ func TestCollectAgentReport_FindsPrefixedReportFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte(valid), 0o660); err != nil {
 		t.Fatal(err)
 	}
-	gotPath, report := collectAgentReport(ws)
+	gotPath, report, _ := collectAgentReport(ws)
 	if gotPath != path {
 		t.Errorf("report path = %q, want %q", gotPath, path)
 	}
@@ -364,7 +364,7 @@ func TestCollectAgentReport_InvalidSchemaStillReturnsPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "agent-report.json"), []byte(`{"unexpected":"shape"}`), 0o660); err != nil {
 		t.Fatal(err)
 	}
-	gotPath, report := collectAgentReport(ws)
+	gotPath, report, _ := collectAgentReport(ws)
 	if gotPath == "" {
 		t.Error("path must be surfaced for a JSON report that fails schema validation")
 	}
@@ -374,7 +374,7 @@ func TestCollectAgentReport_InvalidSchemaStillReturnsPath(t *testing.T) {
 }
 
 func TestCollectAgentReport_NothingFound(t *testing.T) {
-	gotPath, report := collectAgentReport(t.TempDir())
+	gotPath, report, _ := collectAgentReport(t.TempDir())
 	if gotPath != "" || report != nil {
 		t.Errorf("empty workspace: got (%q, %+v), want (\"\", nil)", gotPath, report)
 	}

@@ -149,6 +149,14 @@ type SandboxRun struct {
 	CommitCount int       `json:"commitCount,omitempty"`
 	Branch      string    `json:"branch,omitempty"`
 	PRURL       string    `json:"prURL,omitempty"`
+	// PRWithheld is why the run's commits were NOT pushed or opened as a PR:
+	// the agent's report said failed/blocked, or the sandbox exited non-zero.
+	// Empty when nothing was withheld.
+	PRWithheld string `json:"prWithheld,omitempty"`
+	// LogID is the per-kick log archive (kick-log id under the agent's
+	// archive directory) holding the run's captured stdout/stderr — for a
+	// Job runtime, the pod log hive collected before the Job was deleted.
+	LogID string `json:"logId,omitempty"`
 	// Summary is the agent's own report summary when it left one, else the
 	// scrubbed tail of the transcript. Bounded; see sandboxRunSummaryMax.
 	Summary string          `json:"summary,omitempty"`

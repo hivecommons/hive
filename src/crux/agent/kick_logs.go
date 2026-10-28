@@ -274,7 +274,11 @@ func (m *Manager) FullLogHeader(name string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	agent, ok := m.agents[name]
-	if !ok || agent.tmuxSession == "" || !m.tmuxSessionExistsForAgent(agent) {
+	if !ok || agent.tmuxSession == "" {
+		return ""
+	}
+	// A sandboxed agent's full log is an archive that carries its own header.
+	if m.agentSandboxEnabledLocked(agent) || !m.tmuxSessionExistsForAgent(agent) {
 		return ""
 	}
 	return m.kickLogHeaderLocked(agent, "captured", time.Now(), "live", m.kickLogSourceLocked(agent))

@@ -10892,8 +10892,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             : `<button class="hv-btn btn-secondary btn-sm btn-toggle running" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="false" title="${esc(agentToggleTitle(a, false, false))}">⏸ pause</button>`}
           ${agentPowerSwitchHtml(a)}
           ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open the live tmux terminal session for this agent in a new tab">▶ terminal</a>`)}
-          ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Open the full retained log of this agent's latest run as selectable, searchable text in a new tab">📄 full log</a>`)}
-          ${sessionChip(a, '📋 log text', `<a href="${fullLogUrl(a.name, false)}" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Open the full retained log in the in-app viewer for copying">📋 log text</a>`)}
+          ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="${esc(fullLogTitle(a, 'Open the full retained log of this agent\'s latest run as selectable, searchable text in a new tab'))}">📄 full log</a>`)}
+          ${sessionChip(a, '📋 log text', `<a href="${fullLogUrl(a.name, false)}" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="${esc(fullLogTitle(a, 'Open the full retained log in the in-app viewer for copying'))}">📋 log text</a>`)}
           <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Browse archived logs of this agent's previous kicks — history survives restarts and hive upgrades">🕘 past kicks</a>
           <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill this agent's tmux session — supervisor will respawn it with fresh context">↻ restart</button>
           <button class="hv-btn config-gear btn-primary" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Open configuration dialog for this agent (cadences, model, pipeline, hooks, etc.)">⚙️</button>
@@ -17842,6 +17842,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // explicit API opt-in for external clients. Dashboard navigations never
     // carry the shared token in the URL; token-secured spokes use
     // authenticated fetches for API calls instead.
+    /* A sandboxed agent (Podman or runtime: job) has no tmux pane: its full
+       log is the container/Job stdout+stderr hive archived when the last run
+       ended, so the tooltip says what the reader will get. */
+    function fullLogTitle(a, paneTitle) {
+      if (!a || !a.sandboxed) return paneTitle;
+      const rt = (a.sandboxRun && a.sandboxRun.runtime === 'job') ? 'Job' : 'sandbox container';
+      const when = (a.sandboxRun && a.sandboxRun.lastRunAt) ? ' (last run ' + a.sandboxRun.lastRunAt + ')' : '';
+      return 'Captured stdout/stderr of the last sandboxed run — the ' + rt + ' output hive archived when the run ended' + when + '. Earlier runs: 🕘 kick history.';
+    }
+
     function fullLogUrl(agentName, download) {
       const proto = window.location.protocol;
       const host = window.location.host;
@@ -18016,7 +18026,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!text) return '';
       let html = esc(text);
       if (sr.prURL) html += ' \u00b7 <a href="' + esc(sr.prURL) + '" target="_blank" rel="noopener" data-stop="1">PR</a>';
-      if (sr.error && !sr.succeeded) html += ' \u2014 ' + esc(sr.error.length > 160 ? sr.error.slice(0, 160) + '\u2026' : sr.error);
+      if (sr.prWithheld) {
+        html += ' \u00b7 <span title="' + esc(sr.prWithheld) + '">no PR opened: ' + esc(sr.prWithheld.length > 120 ? sr.prWithheld.slice(0, 120) + '\u2026' : sr.prWithheld) + '</span>';
+      } else if (sr.error && !sr.succeeded) {
+        html += ' \u2014 ' + esc(sr.error.length > 160 ? sr.error.slice(0, 160) + '\u2026' : sr.error);
+      }
       return html;
     }
     function agentBlockerLineHtml(a) {
@@ -18181,7 +18195,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const agentSpanHandle = `<button type="button" class="agent-card-resize-col" data-agent-resize-col data-agent="${esc(a.name)}" data-stop="1" aria-label="${esc(agentSpanTip)}" title="${esc(agentSpanTip)}" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${layoutSize.span || 1}"></button>`;
         const disabledEnableBtn = isDisabled ? `<button class="hv-btn btn-primary btn-sm oc-enable-agent" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" data-tab="General" title="Configure ${esc(a.displayName || a.name)} — review its settings and enable it from the General tab">⚙ Enable…</button>` : '';
         const historyLink = `<a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a>`;
-        const liveSessionActions = `${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} ${historyLink}`;
+        const liveSessionActions = `${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="${esc(fullLogTitle(a, 'Full log of the latest run as selectable, searchable text'))}">📄 full log</a>`)} ${historyLink}`;
         const sessionActions = isPoweredOff
           ? `${historyLink}`
           : isDisabled

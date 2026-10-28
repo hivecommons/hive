@@ -3,6 +3,7 @@ package outputschema
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -362,4 +363,39 @@ func countViolations(err *ValidationError, field string) int {
 		}
 	}
 	return count
+}
+
+// status is the agent's own verdict on a sandboxed run; hive's publish gate
+// reads it, so the accepted set must be exact and the empty value must stay
+// "unspecified" for reports written before the field existed.
+func TestValidateRunStatus(t *testing.T) {
+	base := `{"lane":"deps","kind":"fix","findings":[],"prs_opened":[],"beads_filed":[],"summary":"s"%s}`
+	for _, tt := range []struct {
+		name     string
+		status   string
+		wantErr  bool
+		wantGate bool
+	}{
+		{name: "absent is unspecified", status: ""},
+		{name: "success", status: `,"status":"success"`},
+		{name: "failed blocks publish", status: `,"status":"failed"`, wantGate: true},
+		{name: "blocked blocks publish", status: `,"status":"blocked"`, wantGate: true},
+		{name: "unknown value rejected", status: `,"status":"meh"`, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			report, err := Validate([]byte(fmt.Sprintf(base, tt.status)))
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "status: must be one of success, failed, blocked") {
+					t.Fatalf("Validate() error = %v, want status violation", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+			if got := report.Status.PublishBlocked(); got != tt.wantGate {
+				t.Errorf("PublishBlocked() = %v, want %v for %q", got, tt.wantGate, report.Status)
+			}
+		})
+	}
 }

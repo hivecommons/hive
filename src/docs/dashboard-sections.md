@@ -626,6 +626,10 @@ More about the line:
 
 **What it is good for.** Use it to pause a worker, restart a stuck one, or change its settings. Fix any card that says it needs a login. Read the **Now:** lines to see what each worker is on without opening its log.
 
+**The log buttons.** `📄 full log` opens the worker's whole log and `📋 log text` copies it; `🕘 past kicks` lists the logs of earlier rounds. For a normal worker this is the terminal it is typing in. For a worker that runs each round in a sandbox or a Kubernetes Job (its card says so), there is no terminal: the buttons show the output Hive captured from the sandbox when the last round ended, and `past kicks` holds the earlier rounds. Before such a worker's first round has ended the button says there is no archived run yet.
+
+**Sandboxed worker's last run.** A sandboxed worker's card also carries a **last run** line: when it ran, how long it took, whether it succeeded, and the pull request it opened. If the worker's own report said the run failed, or the sandbox exited with an error, Hive keeps any commits the run made off GitHub and the line reads `no PR opened: <reason>` — for example `no PR opened: agent report status=failed: RPM install returned 401`. The full reason is in the line's tooltip and in the full log's outcome block.
+
 **Example.** A card says "needs login". You click **Login** and sign in again. Another card says `Now: working — no issue or pull request yet · started 50 min ago`. That worker has changed nothing through the hive for 50 minutes, so you open its log to see what it is doing.
 
 **When it appears.** Always.

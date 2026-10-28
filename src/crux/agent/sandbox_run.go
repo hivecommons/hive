@@ -64,6 +64,7 @@ func buildSandboxRun(runtime string, started, ended time.Time, res SandboxKickRe
 	if res.PR != nil {
 		run.PRURL = res.PR.URL
 	}
+	run.PRWithheld = truncateRunes(res.PRWithheld, sandboxRunSummaryMax)
 	if res.Report != nil && strings.TrimSpace(res.Report.Summary) != "" {
 		run.Summary = truncateRunes(strings.TrimSpace(res.Report.Summary), sandboxRunSummaryMax)
 	} else {
