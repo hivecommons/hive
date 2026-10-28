@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -788,10 +790,7 @@ assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
 assert.ok(/<li class="ham-seg active cap merged" title="Merged — [^"]*" aria-current="step">/.test(row) && titled(strip(row)).length === 1, row);
 `
-	// Over stdin: the lifted fixture exceeds Linux's per-argument limit.
-	cmd := exec.Command(node, "-")
-	cmd.Stdin = strings.NewReader(script)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runNodeScript(t, node, script); err != nil {
 		t.Fatalf("node Hive activity monitor fixture failed: %v\n%s", err, out)
 	}
 }
@@ -1046,8 +1045,18 @@ assert.strictEqual(stageTrackerNormalizeFilter({ needsHuman: 'yes' }).needsHuman
 assert.strictEqual(stageTrackerNormalizeFilter({ onHold: 1 }).onHold, true);
 assert.strictEqual(stageTrackerLabelDialogData(stageTrackerLabelFacets(parked, F({ needsHuman: true, onHold: true }))).selected, 2);
 `
-	cmd := exec.Command(node, "-e", script)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runNodeScript(t, node, script); err != nil {
 		t.Fatalf("node Hive activity monitor fixture failed: %v\n%s", err, out)
 	}
+}
+
+// runNodeScript runs script from a temp file: a large fixture passed via
+// `node -e` can exceed the Linux single-argument limit (128KiB).
+func runNodeScript(t *testing.T, node, script string) ([]byte, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fixture.js")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return exec.Command(node, path).CombinedOutput()
 }
