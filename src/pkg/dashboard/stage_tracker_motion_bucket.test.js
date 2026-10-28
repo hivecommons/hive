@@ -25,6 +25,8 @@ const src = [
   pick(/const STAGE_TRACKER_MOTION_BY_STAGE = \{[\s\S]*?\n    \};\n/, 'STAGE_TRACKER_MOTION_BY_STAGE'),
   pick(/const STAGE_TRACKER_MOTION_AUTHOR_STAGES = [^\n]*\n/, 'STAGE_TRACKER_MOTION_AUTHOR_STAGES'),
   pick(/const STAGE_TRACKER_MOTION_HUMAN_MODS = [^\n]*\n/, 'STAGE_TRACKER_MOTION_HUMAN_MODS'),
+  pick(/const STAGE_TRACKER_ACTOR_NONE = [^\n]*\n/, 'STAGE_TRACKER_ACTOR_NONE'),
+  pick(/function stageTrackerStageActor\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerStageActor'),
   pick(/function stageTrackerActorKind\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerActorKind'),
   pick(/function stageTrackerMotion\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerMotion'),
 ].join('\n');
