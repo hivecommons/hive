@@ -12,10 +12,21 @@ example issue titles.
 Usage: src/scripts/check-docs-citations.py [--fix] [docs-dir]
        (default docs-dir: src/docs)
 
---fix delegates to the older api-reference citation fixer, which has enough
-route/path context to rewrite moved route registrations. Generic docs citations
-verify existence/range, plus a lightweight content anchor when the citing line
-names a backticked symbol near the citation.
+Generic docs citations verify existence/range, plus a lightweight content
+anchor when the citing line names a backticked symbol near the citation.
+
+--fix first delegates api-reference.md to check-api-reference-citations.sh
+--fix (route-registration aware), then re-anchors drifted generic citations by
+Go declaration (#14713). A drifted citation is rewritten only when all of these
+hold, otherwise it is left untouched and still reported as DRIFT:
+  - the cited file is a .go file;
+  - the citing line carries at least one backticked symbol anchor;
+  - the FIRST anchor names exactly one top-level declaration in that file
+    (`func X(`, `func (recv) X(`, `type X`, `const X`, `var X`);
+  - every anchor appears inside that declaration's span.
+The new range starts at the declaration and ends at the first line by which
+every anchor has appeared, so it always verifies clean under the checker and a
+second --fix run is a no-op. --fix exits non-zero while any drift remains.
 """
 from __future__ import annotations
 
@@ -55,6 +66,7 @@ class Citation:
     line_spec: str
     line: str
     match_end: int
+    spec_start: int = -1
 
 
 def parse_line_spec(spec: str) -> list[tuple[int, int]]:
@@ -166,8 +178,102 @@ def iter_citations(docs_dir: Path) -> list[Citation]:
                 for match in CITATION_RE.finditer(line):
                     cited_path = match.group(1)
                     if is_probably_repo_local(cited_path):
-                        citations.append(Citation(doc, line_no, cited_path, match.group(2), line, match.end()))
+                        citations.append(
+                            Citation(doc, line_no, cited_path, match.group(2), line, match.end(), match.start(2))
+                        )
     return citations
+
+
+DECL_OPEN_RE = re.compile(r"[{(\[,]\s*$")
+DECL_CLOSE_RE = re.compile(r"^(\}|\)\s*$)")
+LEADING_IDENT_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*\.)*([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def anchor_identifier(anchor: str) -> str | None:
+    # `Foo`, `Foo()`, `Foo(ctx)`, `pkg.Foo` and `Recv.Method` all name Foo/Method.
+    match = LEADING_IDENT_RE.match(anchor.strip())
+    return match.group(1) if match else None
+
+
+def strip_go_line_comment(line: str) -> str:
+    idx = line.find("//")
+    return line if idx < 0 else line[:idx]
+
+
+def go_declaration_spans(lines: list[str], name: str) -> list[tuple[int, int]]:
+    """Return 1-based (start, end) spans of top-level Go declarations of name.
+
+    Relies on gofmt layout: top-level declarations start at column 0 and a
+    multi-line declaration closes with `}` or a lone `)` at column 0.
+    """
+    ident = re.escape(name)
+    decl_re = re.compile(
+        r"^(?:func\s+" + ident + r"\s*[\[(]"
+        r"|func\s*\([^)]*\)\s*" + ident + r"\s*[\[(]"
+        r"|(?:type|const|var)\s+" + ident + r"\b)"
+    )
+    spans: list[tuple[int, int]] = []
+    for idx, line in enumerate(lines):
+        if not decl_re.match(line):
+            continue
+        start = idx + 1
+        end: int | None = start
+        if DECL_OPEN_RE.search(strip_go_line_comment(line).rstrip()):
+            end = None
+            for j in range(idx + 1, len(lines)):
+                if DECL_CLOSE_RE.match(lines[j]):
+                    end = j + 1
+                    break
+        if end is None:
+            # Unterminated declaration: record an unusable span so the caller
+            # fails closed instead of guessing an end line.
+            spans.append((start, 0))
+        else:
+            spans.append((start, end))
+    return spans
+
+
+def reanchor_go_citation(target: Path, anchors: list[str]) -> tuple[str | None, str]:
+    """Compute a replacement line spec for a drifted citation, or explain why not."""
+    if target.suffix != ".go":
+        return None, "not a .go file"
+    if not anchors:
+        return None, "no backticked symbol anchor on the citing line"
+    name = anchor_identifier(anchors[0])
+    if not name:
+        return None, f"first anchor {anchors[0]!r} is not an identifier"
+    with target.open("r", encoding="utf-8", errors="ignore") as fh:
+        lines = fh.readlines()
+    spans = go_declaration_spans(lines, name)
+    if len(spans) != 1:
+        return None, f"found {len(spans)} top-level declarations of {name}, need exactly 1"
+    start, end = spans[0]
+    if end < start:
+        return None, f"cannot find the end of the {name} declaration"
+    new_end = start
+    for anchor in anchors:
+        hit = next((n for n in range(start, end + 1) if anchor in lines[n - 1]), None)
+        if hit is None:
+            return None, f"anchor {anchor} is not inside the {name} declaration ({start}-{end})"
+        new_end = max(new_end, hit)
+    return (f"{start}" if new_end == start else f"{start}-{new_end}"), ""
+
+
+def apply_spec_rewrites(rewrites: list[tuple[Citation, str]]) -> None:
+    by_doc: dict[Path, list[tuple[Citation, str]]] = {}
+    for citation, new_spec in rewrites:
+        by_doc.setdefault(citation.doc, []).append((citation, new_spec))
+    for doc, items in by_doc.items():
+        lines = doc.read_text(encoding="utf-8").splitlines(keepends=True)
+        # Rewrite right-to-left so earlier offsets on the same line stay valid.
+        for citation, new_spec in sorted(items, key=lambda it: (it[0].line_no, it[0].spec_start), reverse=True):
+            line = lines[citation.line_no - 1]
+            s0 = citation.spec_start
+            s1 = s0 + len(citation.line_spec)
+            if line[s0:s1] != citation.line_spec:
+                continue
+            lines[citation.line_no - 1] = line[:s0] + new_spec + line[s1:]
+        doc.write_text("".join(lines), encoding="utf-8")
 
 
 def run_api_reference_fix(script_dir: Path, docs_dir: Path) -> int:
@@ -178,10 +284,67 @@ def run_api_reference_fix(script_dir: Path, docs_dir: Path) -> int:
     return subprocess.call(["bash", str(checker), "--fix", str(api_doc)])
 
 
+def verify_citations(
+    docs_dir: Path, resolver: Resolver, repo_root: Path, report: bool
+) -> tuple[int, int, int, list[tuple[Citation, Path]]]:
+    checked = skipped = failed = 0
+    drifted: list[tuple[Citation, Path]] = []
+    for citation in iter_citations(docs_dir):
+        target, error = resolver.resolve(citation.cited_path, citation.doc)
+        display_doc = citation.doc.relative_to(repo_root) if citation.doc.is_relative_to(repo_root) else citation.doc
+        if target is None:
+            if error and error.startswith("unresolved basename-only"):
+                skipped += 1
+                continue
+            if report:
+                print(f"DRIFT {display_doc}:{citation.line_no} {citation.cited_path}:{citation.line_spec} ({error})", file=sys.stderr)
+            failed += 1
+            continue
+
+        ranges = parse_line_spec(citation.line_spec)
+        total_lines = source_lines(target)
+        bad_ranges = []
+        for start, end in ranges:
+            if start < 1 or end < start or end > total_lines:
+                bad_ranges.append((start, end))
+        if bad_ranges:
+            rel_target = target.relative_to(repo_root) if target.is_relative_to(repo_root) else target
+            ranges = ", ".join(f"{s}" if s == e else f"{s}-{e}" for s, e in bad_ranges)
+            if report:
+                print(
+                    f"DRIFT {display_doc}:{citation.line_no} {citation.cited_path}:{citation.line_spec} "
+                    f"-> {rel_target} has {total_lines} lines; out of range: {ranges}",
+                    file=sys.stderr,
+                )
+            failed += 1
+            drifted.append((citation, target))
+            continue
+
+        anchors = citation_anchors(citation.line, citation.match_end)
+        if anchors:
+            window = source_line_window(target, ranges)
+            if not any(anchor in window for anchor in anchors):
+                rel_target = target.relative_to(repo_root) if target.is_relative_to(repo_root) else target
+                if report:
+                    print(
+                        f"DRIFT {display_doc}:{citation.line_no} {citation.cited_path}:{citation.line_spec} "
+                        f"-> {rel_target} lacks anchor(s) near cited range: {', '.join(anchors)}",
+                        file=sys.stderr,
+                    )
+                failed += 1
+                drifted.append((citation, target))
+                continue
+            checked += 1
+        else:
+            checked += 1
+
+    return checked, skipped, failed, drifted
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Verify repo-local file:line citations in src/docs Markdown.")
     parser.add_argument("docs_dir", nargs="?", default=None)
-    parser.add_argument("--fix", action="store_true", help="run safe fixers where available (currently api-reference.md)")
+    parser.add_argument("--fix", action="store_true", help="rewrite drifted citations that can be re-anchored safely (api-reference.md routes, Go declarations)")
     args = parser.parse_args(argv)
 
     script_dir = Path(__file__).resolve().parent
@@ -198,50 +361,28 @@ def main(argv: list[str]) -> int:
     fix_rc = run_api_reference_fix(script_dir, docs_dir) if args.fix else 0
 
     resolver = Resolver(repo_root, src_root)
-    checked = skipped = failed = 0
-    for citation in iter_citations(docs_dir):
-        target, error = resolver.resolve(citation.cited_path, citation.doc)
-        display_doc = citation.doc.relative_to(repo_root) if citation.doc.is_relative_to(repo_root) else citation.doc
-        if target is None:
-            if error and error.startswith("unresolved basename-only"):
-                skipped += 1
-                continue
-            print(f"DRIFT {display_doc}:{citation.line_no} {citation.cited_path}:{citation.line_spec} ({error})", file=sys.stderr)
-            failed += 1
-            continue
-
-        ranges = parse_line_spec(citation.line_spec)
-        total_lines = source_lines(target)
-        bad_ranges = []
-        for start, end in ranges:
-            if start < 1 or end < start or end > total_lines:
-                bad_ranges.append((start, end))
-        if bad_ranges:
-            rel_target = target.relative_to(repo_root) if target.is_relative_to(repo_root) else target
-            ranges = ", ".join(f"{s}" if s == e else f"{s}-{e}" for s, e in bad_ranges)
-            print(
-                f"DRIFT {display_doc}:{citation.line_no} {citation.cited_path}:{citation.line_spec} "
-                f"-> {rel_target} has {total_lines} lines; out of range: {ranges}",
-                file=sys.stderr,
-            )
-            failed += 1
-            continue
-
-        anchors = citation_anchors(citation.line, citation.match_end)
-        if anchors:
-            window = source_line_window(target, ranges)
-            if not any(anchor in window for anchor in anchors):
-                rel_target = target.relative_to(repo_root) if target.is_relative_to(repo_root) else target
+    if args.fix:
+        _, _, _, drifted = verify_citations(docs_dir, resolver, repo_root, report=False)
+        rewrites: list[tuple[Citation, str]] = []
+        for citation, target in drifted:
+            display_doc = citation.doc.relative_to(repo_root) if citation.doc.is_relative_to(repo_root) else citation.doc
+            new_spec, reason = reanchor_go_citation(target, citation_anchors(citation.line, citation.match_end))
+            if new_spec is None or new_spec == citation.line_spec:
                 print(
-                    f"DRIFT {display_doc}:{citation.line_no} {citation.cited_path}:{citation.line_spec} "
-                    f"-> {rel_target} lacks anchor(s) near cited range: {', '.join(anchors)}",
+                    f"UNRESOLVED {display_doc}:{citation.line_no} {citation.cited_path}:{citation.line_spec} "
+                    f"({reason or 'no better range'})",
                     file=sys.stderr,
                 )
-                failed += 1
                 continue
-            checked += 1
-        else:
-            checked += 1
+            rewrites.append((citation, new_spec))
+            print(
+                f"FIXED {display_doc}:{citation.line_no} "
+                f"{citation.cited_path}:{citation.line_spec} => {citation.cited_path}:{new_spec}"
+            )
+        if rewrites:
+            apply_spec_rewrites(rewrites)
+
+    checked, skipped, failed, _ = verify_citations(docs_dir, resolver, repo_root, report=True)
 
     if failed == 0 and fix_rc == 0:
         msg = f"docs citations: {checked} repo-local file:line reference(s) verified"
@@ -251,6 +392,8 @@ def main(argv: list[str]) -> int:
         return 0
 
     print(f"docs citations: {failed} drifted citation(s); {checked} verified; {skipped} skipped.", file=sys.stderr)
+    if not args.fix:
+        print("Run: python3 src/scripts/check-docs-citations.py --fix", file=sys.stderr)
     return 1
 
 
