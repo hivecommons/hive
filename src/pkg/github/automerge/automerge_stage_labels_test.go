@@ -155,6 +155,8 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 		case r.Method == http.MethodDelete && strings.Contains(path, "/labels/"):
 			api.removed = append(api.removed, path[strings.LastIndex(path, "/labels/")+len("/labels/"):])
 			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/comments"):
+			_ = json.NewEncoder(w).Encode([]any{})
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/comments"):
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)

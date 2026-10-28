@@ -1,0 +1,1 @@
+- Recover supersede adoptions whose hive copy closed unmerged, restore ownership from PR markers, and show recovery (or a repeated-close pause) plainly in the tracker and delegated decisions.

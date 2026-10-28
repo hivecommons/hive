@@ -66,6 +66,15 @@ func TestDerivePR_NeedsDecisionKeepsParkUnderHoldOrSentinel(t *testing.T) {
 	}
 }
 
+func TestDerivePR_ClosedChildLoopKeepsReasonUnderHumanRouting(t *testing.T) {
+	f := supersededAdoptionFacts(stagelabels.VerdictRequiresHuman, "requires_human")
+	f.PR.Pass = &PRPassFacts{Route: &stagelabels.Evidence{HeadFresh: true, Holds: []string{"needs-human"}}, EscalationReason: "adoption-child-closed-twice"}
+	d := DerivePR(f)
+	if d.Stage != stagelabels.NeedsDecision || d.Reason != "adoption-child-closed-twice" {
+		t.Fatalf("loop guard reason lost: %+v", d)
+	}
+}
+
 func TestDerivePR_EscalatedAdoptionStaysAtNeedsDecision(t *testing.T) {
 	f := supersededAdoptionFacts(stagelabels.VerdictRequiresHuman, "requires_human")
 	f.PR.Pass = &PRPassFacts{Route: &stagelabels.Evidence{HeadFresh: true, Verdict: stagelabels.VerdictRequiresHuman}, AdoptionLive: true, EscalationReason: "adoption-escalated:dco"}

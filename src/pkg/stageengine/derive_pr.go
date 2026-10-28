@@ -285,6 +285,12 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 			obs.Reason = pass.EscalationReason
 		}
 	}
+	// Repeatedly closed adoption children are an ownership loop, not a
+	// reviewer verdict; explicit human routing must retain that reason.
+	if !verdict.Terminal && pass.EscalationReason == "adoption-child-closed-twice" {
+		verdict.Stage, verdict.Rank = stagelabels.NeedsDecision, stageRankOwned
+		obs.Reason = pass.EscalationReason
+	}
 	d := Decision{
 		Stage:      verdict.Stage,
 		Role:       role,

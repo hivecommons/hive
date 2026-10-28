@@ -398,10 +398,11 @@ type StageTrackerItem struct {
 	// reads "blocked on #N" and links to it; the caption says what lifts
 	// the block. State comes from the hive's caches only, never a fresh
 	// GitHub call (hivecommons/hive#14952; #14863 wore a bare grey `blocked`).
-	BlockedOnPR *StageTrackerBlockedOnPR `json:"blocked_on_pr,omitempty"`
-	NudgeCount  int                      `json:"nudge_count,omitempty"`
-	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
-	AdoptedBy   int                      `json:"adopted_by,omitempty"`
+	BlockedOnPR      *StageTrackerBlockedOnPR `json:"blocked_on_pr,omitempty"`
+	NudgeCount       int                      `json:"nudge_count,omitempty"`
+	LastNudgeAt      *time.Time               `json:"last_nudge_at,omitempty"`
+	AdoptedBy        int                      `json:"adopted_by,omitempty"`
+	AdoptChildClosed bool                     `json:"adopt_child_closed,omitempty"`
 	// Adoption is, on a nudged PR at stage/072, whether adoption is due,
 	// what holds it, and the author's live presence, with the plain-words
 	// line the row shows instead of a bare "Returned to contributor"
@@ -1618,6 +1619,18 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LastNudgeAt = &t2
 			}
 			it.AdoptedBy = rec.AdoptedBy
+			it.AdoptChildClosed = rec.AdoptChildClosed
+			if rec.AdoptedBy > 0 && s.deps != nil && s.deps.GHClient != nil && s.deps.GHClient.GoGitHub() != nil {
+				owner, repo, ok := strings.Cut(it.Repo, "/")
+				if ok {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					child, _, err := s.deps.GHClient.GoGitHub().PullRequests.Get(ctx, owner, repo, rec.AdoptedBy)
+					cancel()
+					if err == nil {
+						it.AdoptChildClosed = child.GetState() == "closed" && !child.GetMerged()
+					}
+				}
+			}
 			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
 		}
 		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)
@@ -1652,6 +1665,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		if rec.AdoptEscalatedReason == "adoption-child-closed-twice" {
+			it.Caption = "Adoption paused: adoption-child-closed-twice — the replacement was closed again within an hour"
+		} else if it.AdoptChildClosed {
+			it.Caption = fmt.Sprintf("Adopted → #%d (closed) · recovering", it.AdoptedBy)
+		}
 		// Adoption is clanker-only (a human's PR is never adopted), so a
 		// human-authored 072 row keeps its plain caption.
 		if stage == stagelabels.ReturnedToContributor && it.Kind == "pr" && it.AuthorKind != authorKindHuman {

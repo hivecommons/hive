@@ -473,12 +473,33 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 		return delegatedOutcome{Err: err}
 	}
 	d, deciderNotes := s.decideDelegated(ctx, in)
+	orphan := 0
+	if in.Kind == delegatedecision.KindPR && !in.HiveAuthored && !d.KeepsPark {
+		owner, repo, _ := strings.Cut(repoFull, "/")
+		client := s.deps.GHClient
+		marker, readErr := ghpkg.ReadSupersedeAdoption(ctx, client.GoGitHub(), owner, repo, number, client.IsHiveAuthorLogin)
+		if readErr == nil && marker.By > 0 {
+			child, _, childErr := client.GoGitHub().PullRequests.Get(ctx, owner, repo, marker.By)
+			if childErr == nil && child.GetState() == "closed" && !child.GetMerged() {
+				orphan = marker.By
+				text := fmt.Sprintf("Re-adopting: hive's earlier copy #%d was closed by mistake; opening a fresh copy", orphan)
+				d = delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede, Rule: "adoption-orphaned", Text: text,
+					Actions: []delegatedecision.Action{{Kind: delegatedecision.ActionCommentDecision}, {Kind: delegatedecision.ActionAdoptSupersede}}}
+				if rec, ok := s.stageStoreOrShared().Get(stagelabels.Key(repoFull, number)); ok && rec.AdoptEscalatedReason == "adoption-child-closed-twice" {
+					d.KeepsPark = true
+					d.Text = "Adoption paused: adoption-child-closed-twice — the replacement was closed again within an hour; a person must decide whether to resume."
+					d.Actions = []delegatedecision.Action{{Kind: delegatedecision.ActionRecommendOnly}}
+				}
+			}
+		}
+	}
 	// The same rule firing again on an item the hive already decided would
 	// only repeat the comment: report it as a no-op instead of writing —
 	// unless the recorded decision never took effect, in which case say so
 	// in plain words with the options (hivecommons/hive#14822), or the
-	// operator asked to re-run it.
-	if prior := s.delegatedPriorDecisionState(ctx, repoFull, number, d.Rule); prior.Found && !req.Force {
+	// operator asked to re-run it. An orphaned adoption (the hive's earlier
+	// copy was closed unmerged) is re-run regardless of the prior record.
+	if prior := s.delegatedPriorDecisionState(ctx, repoFull, number, d.Rule); prior.Found && !req.Force && orphan == 0 {
 		kind := rowActionTargetIssue
 		if in.Kind == delegatedecision.KindPR {
 			kind = rowActionTargetPR
@@ -501,6 +522,9 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	notes, execErr := s.executeDelegatedDecision(ctx, in, d, user, mergerRole)
 	notes = append(deciderNotes, notes...)
 	result := delegatedRowActionResult(in, d, notes)
+	if orphan > 0 && execErr == nil {
+		result.Outcome = d.Text
+	}
 	kinds := make([]string, 0, len(d.Actions))
 	for _, a := range d.Actions {
 		kinds = append(kinds, string(a.Kind))

@@ -163,6 +163,14 @@ type Record struct {
 	// than reading the dwell from AdoptedAt, which may be a head or more
 	// behind. AdoptedHeadSince resolves it.
 	AdoptedHeadAt time.Time `json:"adopted_head_at,omitempty"`
+	// Orphan recovery survives ClearAdoption and process restarts. A unique
+	// predecessor also gives the replacement its own mutation identity.
+	AdoptOrphanRetriedAt    time.Time `json:"adopt_orphan_retried_at,omitempty"`
+	AdoptOrphanPrevious     int       `json:"adopt_orphan_previous,omitempty"`
+	AdoptOrphanRevertedHead string    `json:"adopt_orphan_reverted_head,omitempty"`
+	AdoptChildClosed        bool      `json:"adopt_child_closed,omitempty"`
+	AdoptMarkerComments     int       `json:"adopt_marker_comments,omitempty"`
+	AdoptMarkerChecked      bool      `json:"adopt_marker_checked,omitempty"`
 	// AdoptEscalatedHead / AdoptEscalatedReason record that the adoption
 	// sits at this head past the 074 dwell with nothing the hive can push
 	// and is a person's (stage 085) for that lane reason. The escalation
@@ -1076,6 +1084,7 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 	if !ok {
 		return
 	}
+	r.AdoptChildClosed = false
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, by, now, now
 	r.AdoptMode = AdoptModeSupersede
 	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
@@ -1231,7 +1240,49 @@ func (s *Store) ClearAdoptionEscalation(key string) {
 	s.dirty = true
 }
 
-// ClearAdoption forgets the adoption (the superseding PR closed unmerged).
+// NoteAdoptionOrphan records the dead child and, for a retry, its time.
+func (s *Store) NoteAdoptionOrphan(key string, previous int, now time.Time, retry bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptChildClosed = true
+	if retry {
+		r.AdoptOrphanPrevious, r.AdoptOrphanRetriedAt = previous, now
+	}
+	s.items[key], s.dirty = r, true
+}
+
+// RevertOrphanAdoption releases ownership without automatically re-trying
+// the same failed takeover on the next stage pass. An explicit request or
+// a new contributor head can still start a new adoption.
+func (s *Store) RevertOrphanAdoption(key, head string) {
+	s.ClearAdoption(key)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptOrphanRevertedHead = head
+	s.items[key], s.dirty = r, true
+}
+
+// NoteAdoptionMarkerRead avoids re-listing unchanged comment history.
+func (s *Store) NoteAdoptionMarkerRead(key string, comments int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptMarkerChecked, r.AdoptMarkerComments = true, comments
+	s.items[key], s.dirty = r, true
+}
+
+// ClearAdoption forgets the adoption, preserving the orphan retry guard.
 func (s *Store) ClearAdoption(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1243,6 +1294,7 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
+	r.AdoptChildClosed = false
 	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
 	s.items[key] = r
 	s.dirty = true

@@ -27,8 +27,9 @@ type repoItemDecisionMock struct {
 	edits       []map[string]any
 	// prForeign makes PR #8 look like a human opened it; prLabels are the
 	// labels pulls/8 reports.
-	prForeign bool
-	prLabels  []string
+	prForeign           bool
+	prLabels            []string
+	adoptionChildClosed bool
 	// prMergeState is PR #8's mergeable_state ("" = clean); prRedCI and
 	// prNoCI shape the head's combined status when the state alone does not
 	// settle CI (e.g. "blocked").
@@ -58,6 +59,8 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				labels = append(labels, map[string]string{"name": label})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": labels, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/90") && m.adoptionChildClosed:
+			_, _ = io.WriteString(w, `{"number":90,"state":"closed","merged":false}`)
 		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/issues/8") || strings.HasSuffix(path, "/issues/9")):
 			n := 8
 			if strings.HasSuffix(path, "/issues/9") {
@@ -103,7 +106,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/comments"):
 			prior := make([]map[string]any, 0, len(m.priorComments))
 			for i, body := range m.priorComments {
-				prior = append(prior, map[string]any{"id": i + 1, "body": body, "created_at": "2026-10-28T12:01:00Z"})
+				prior = append(prior, map[string]any{"id": i + 1, "body": body, "created_at": "2026-10-28T12:01:00Z", "user": map[string]string{"login": "hive[bot]"}})
 			}
 			_ = json.NewEncoder(w).Encode(prior)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/comments"):

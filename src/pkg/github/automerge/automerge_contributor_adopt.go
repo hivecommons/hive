@@ -38,7 +38,7 @@ import (
 // existing red-PR repair route for hive-authored PRs) rebases it on the base
 // and fixes CI on that branch — no second kick mechanism. Once the App PR
 // merges the original is closed with a note; if the App PR is closed
-// unmerged the adoption is forgotten and the original falls back to 072.
+// unmerged orphan recovery opens a fresh copy or explicitly reverts adoption.
 //
 // One attempt per contributor head, whatever the outcome; a new head from
 // the author before adoption re-arms the nudge instead.
@@ -150,6 +150,9 @@ func (c *Engine) contributorPresence(ctx context.Context, login string) (Contrib
 // no profile here (another hive posted the PR) is adopted after
 // AdoptAfterUnregistered. Without presence the nudge-time graces apply.
 func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, now time.Time, presence ContributorPresence, hasPresence bool) (bool, string) {
+	if head != "" && rec.AdoptOrphanRevertedHead == head {
+		return false, ""
+	}
 	start := rec.NudgeStart()
 	if head == "" || rec.NudgeHead != head || rec.NudgeCount == 0 || start.IsZero() {
 		return false, ""
@@ -705,6 +708,9 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		return 0, err
 	}
 	branch := adoptBranchPrefix + strconv.Itoa(number)
+	if rec.AdoptOrphanPrevious > 0 {
+		branch += "-retry-" + strconv.Itoa(rec.AdoptOrphanPrevious)
+	}
 	fullRepo := owner + "/" + repo
 	// resignedTip stays "" when the branch falls back to the unsigned
 	// contributor head; the body then keeps the manual DCO repair steps.
@@ -977,21 +983,17 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 			return c.supersedeAdoptedPR(ctx, store, key, obs, rec, policy, AdoptReasonDCORehome, 0, false, true, now)
 		}
 	}
-	if rec.AdoptedBy <= 0 {
-		return 0, nil
-	}
-	return c.settleSuperseder(ctx, store, key, obs, rec, now)
+	// Superseding children are settled before stage derivation, even when
+	// the lane does not put the original at 074.
+	return 0, nil
 }
 
 // settleSuperseder polls the superseding App PR recorded on an adoption (at
-// most every adoptCheckInterval) and settles the original: merged → close
-// note + close; closed unmerged → forget the adoption. It runs for a PR at
-// 074 and, since hivecommons/hive#14471, for any other stage the lane
-// derives while the superseder is on record: a `needs-human` label (085) or
-// a contributor push after the adoption (072) used to stop the poll, and the
-// original stayed open with "closed automatically once #N merges" on it.
-func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, now time.Time) (int, error) {
-	if obs.Merged || !rec.SupersederPollDue(now, adoptCheckInterval) {
+// every stage pass) and settles the original: merged → close
+// note + close; closed unmerged → recover or explicitly revert ownership.
+// This runs before stage derivation on every pass, including at 085.
+func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) (int, error) {
+	if obs.Merged || rec.AdoptedBy <= 0 {
 		return 0, nil
 	}
 	store.MarkAdoptChecked(key, now)
@@ -1004,8 +1006,10 @@ func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store,
 	case sup.GetMerged():
 		return c.closeSupersededOriginal(ctx, store, key, obs, rec, sup, now)
 	case strings.EqualFold(sup.GetState(), "closed"):
-		c.warn("stage labels: adoption superseder closed unmerged; returning PR to the contributor", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy)
-		store.ClearAdoption(key)
+		if rec.AdoptEscalatedReason == adoptionChildClosedTwice {
+			return 0, nil
+		}
+		return c.recoverOrphanedAdoption(ctx, store, key, obs, rec, policy, now)
 	}
 	return 0, nil
 }
@@ -1546,6 +1550,9 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	rec, ok := store.Get(key)
 	if !ok {
 		return adoptionEscape{}, 0, nil
+	}
+	if rec.AdoptEscalatedReason == adoptionChildClosedTwice {
+		return adoptionEscape{Escalated: true, Reason: adoptionChildClosedTwice}, 0, nil
 	}
 	if store.StampAdoptedHeadAt(key, obs.HeadSHA) {
 		// Pre-#13040 record: the head clock starts now, not at AdoptedAt.

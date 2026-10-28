@@ -840,6 +840,24 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
 		}
+		// Settle supersession before deriving ANY stage. A stale reviewer
+		// verdict must not hide a dead child (or a merged one).
+		if !verdict.Terminal && obs.Lane != stageLaneSelf && !obs.Merged {
+			if err := c.restoreAdoptionMarker(ctx, store, key, obs, now); err != nil && firstErr == nil {
+				firstErr = err
+			}
+			if rec, ok := store.Get(key); ok && rec.AdoptedBy > 0 {
+				n, err := c.settleSuperseder(ctx, store, key, obs, rec, policy, now)
+				result.Comments += n
+				store.CountOwnComments(key, n)
+				if err != nil && firstErr == nil {
+					firstErr = err
+				}
+				if after, _ := store.Get(key); after.SupersededBy > 0 {
+					continue
+				}
+			}
+		}
 		prevRec, hadPrev := store.Get(key)
 		// pass is what this pass learns past resolveStage; it rides on the
 		// Facts so the engine's DerivePR reproduces the stage written here.
@@ -1009,6 +1027,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					obs.Reason = esc.Reason
 					pass.EscalationReason = esc.Reason
 				}
+			}
+			if rec, ok := store.Get(key); ok && rec.AdoptEscalatedReason == adoptionChildClosedTwice {
+				verdict.Stage, verdict.Rank = stagelabels.NeedsDecision, stageRankOwned
+				obs.Reason, pass.EscalationReason = adoptionChildClosedTwice, adoptionChildClosedTwice
 			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			// hivecommons/hive#12502: remember the author so the dashboard can
@@ -1208,15 +1230,6 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		if want.Stage == stagelabels.AdoptedByHive {
 			n, err := c.settleAdoption(ctx, store, key, obs, policy, now)
-			result.Comments += n
-			if err != nil && firstErr == nil {
-				firstErr = err
-			}
-		} else if rec, ok := store.Get(key); ok && rec.AdoptedBy > 0 && !obs.Merged {
-			// hivecommons/hive#14471: the superseder is still on record while
-			// the lane derives 085 (needs-human) or 072 (a later contributor
-			// head). Its merge must still close this PR.
-			n, err := c.settleSuperseder(ctx, store, key, obs, rec, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err

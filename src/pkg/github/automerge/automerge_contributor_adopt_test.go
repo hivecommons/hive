@@ -697,9 +697,8 @@ func TestAdoptionOfflineGraceThenSupersederMergedClosesOriginal(t *testing.T) {
 	}
 }
 
-// Superseder closed unmerged: the adoption is forgotten and the PR falls
-// back to 072 (a maintainer declined the takeover).
-func TestAdoptionSupersederClosedUnmergedReturnsTo072(t *testing.T) {
+// A closed copy must not orphan the original, even without a new head.
+func TestAdoptionSupersederClosedUnmergedReadopts(t *testing.T) {
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
 	defer done()
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
@@ -714,10 +713,12 @@ func TestAdoptionSupersederClosedUnmergedReturnsTo072(t *testing.T) {
 	if len(h.adopt.prEdits) != 0 {
 		t.Fatalf("original closed although superseder was abandoned: %v", h.adopt.prEdits)
 	}
-	h.api.reset()
-	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
-	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/072-returned-to-contributor" {
-		t.Fatalf("fallback to 072: added=%v removed=%v", h.api.added, h.api.removed)
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if rec.AdoptedBy != 91 || len(h.adopt.pulls) != 2 || h.adopt.pulls[1]["head"] != "hive/adopt-7-retry-90" {
+		t.Fatalf("orphan not re-adopted: rec=%+v pulls=%v", rec, h.adopt.pulls)
+	}
+	if notes := adoptionComments(h.api); len(notes) != 1 || !strings.Contains(notes[0], "superseded_by=91") {
+		t.Fatalf("fresh adoption marker missing: %v", notes)
 	}
 }
 
