@@ -772,6 +772,7 @@ func TestIsGitHubRateLimited(t *testing.T) {
 		"GET https://api.github.com/repos/o/r: 429 Too Many Requests",
 		`Get "https://api.github.com/repos/o/r": github pacing: request shed while rate-limit caution window is engaged (class low, queue 8.209s ahead, limit 5s)`,
 		"github pacing: low-priority work shed while rate-limit caution window is engaged",
+		`Get "https://api.github.com/repos/o/r/contents/a.sh?ref=abc": github pacing: slot would miss request deadline: context deadline exceeded`,
 	} {
 		if !IsGitHubRateLimited(m) {
 			t.Errorf("%q not recognised as rate limited", m)
