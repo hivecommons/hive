@@ -2879,6 +2879,7 @@ func newAutoMergeSweepClient(apiURL string) *Engine {
 func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, merged *[]int, extras ...func(http.ResponseWriter, *http.Request)) *httptest.Server {
 	t.Helper()
 	byNumber := make(map[int]sweepPR, len(prs))
+	comments := make(map[int][]map[string]any)
 	for _, pr := range prs {
 		byNumber[pr.number] = pr
 	}
@@ -3006,6 +3007,24 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 			for _, extra := range extras {
 				extra(w, r)
 				return
+			}
+			if strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/comments") {
+				number := pathNumber(t, r.URL.Path, "/repos/acme/widget/issues/", "/comments")
+				switch r.Method {
+				case http.MethodGet:
+					json.NewEncoder(w).Encode(comments[number])
+					return
+				case http.MethodPost:
+					var payload map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+						t.Errorf("decode comment: %v", err)
+					}
+					payload["user"] = map[string]string{"login": testHiveAppBotLogin}
+					comments[number] = append(comments[number], payload)
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(payload)
+					return
+				}
 			}
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}

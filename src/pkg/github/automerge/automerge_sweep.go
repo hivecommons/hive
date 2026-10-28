@@ -2042,6 +2042,7 @@ func (c *Engine) queueApprovalStillHolds(ctx context.Context, owner, repo string
 		return fmt.Errorf("the queue approval covers head %s, not %s", approval.HeadSHA, head)
 	}
 	if trusted, configured := c.isTrustedMerger(approval.QueuedBy); !configured || !trusted {
+		c.noteUntrustedMerger(ctx, owner, repo, number, head, approval.QueuedBy)
 		return fmt.Errorf("queuer %s is not a trusted merger", approval.QueuedBy)
 	}
 	return nil
@@ -2675,6 +2676,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, autoMergeReasonNoMergerAuthz, nil
 	}
 	if !trusted {
+		c.noteUntrustedMerger(ctx, owner, repo, number, headSHA, queuedBy)
 		c.warn(autoMergeWarnUntrustedMerger, "owner", owner, "repo", repo, "pr", number,
 			"queued_by", queuedBy, "author", author)
 		return AutoMergeSweepEvent{}, autoMergeReasonUntrustedMerger, nil

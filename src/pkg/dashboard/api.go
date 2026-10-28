@@ -1382,6 +1382,18 @@ func (s *Server) handleQueuePRAutoMerge(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "GitHub client not configured", http.StatusServiceUnavailable)
 		return
 	}
+	// Match the merge sweep's trustedMergerFunc against the identity that
+	// QueuePRAutoMerge will record, rather than trusting the request role.
+	if s.deps.Config == nil || len(s.deps.Config.Dashboard.AuthorizedUsers) == 0 {
+		jsonError(w, "dashboard.authorized_users is empty: no queued PR can merge until an owner or merger is listed", http.StatusForbidden)
+		return
+	}
+	role, authorized := s.deps.Config.Dashboard.AuthorizedRole(user)
+	if !authorized || !config.RoleAtLeast(role, config.RoleMerger) {
+		jsonError(w, "@"+user+" cannot merge: queue from a signed-in owner/merger account listed in dashboard.authorized_users", http.StatusForbidden)
+		return
+	}
+
 	number, err := strconv.Atoi(r.PathValue("number"))
 	if err != nil || number <= 0 {
 		jsonError(w, "invalid pull request number", http.StatusBadRequest)
