@@ -293,13 +293,15 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			json.NewEncoder(w).Encode(files)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
 			json.NewEncoder(w).Encode(fx.reviews)
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
+		case r.Method == http.MethodGet && (r.URL.Path == "/repos/acme/widget/commits/sha7/status" ||
+			(fx.recheckHeadSHA != "" && r.URL.Path == "/repos/acme/widget/commits/"+fx.recheckHeadSHA+"/status")):
 			json.NewEncoder(w).Encode(map[string]any{
 				"state":       headStatus,
 				"total_count": 1,
 				"statuses":    []map[string]string{{"context": "ci/build", "state": headStatus}},
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
+		case r.Method == http.MethodGet && (r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs" ||
+			(fx.recheckHeadSHA != "" && r.URL.Path == "/repos/acme/widget/commits/"+fx.recheckHeadSHA+"/check-runs")):
 			run := map[string]string{"name": "build", "status": "completed", "conclusion": headStatus}
 			if fx.checkCompletedAt != "" {
 				run["completed_at"] = fx.checkCompletedAt

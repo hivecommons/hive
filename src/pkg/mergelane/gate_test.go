@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
 	ghub "github.com/hivecommons/hive/pkg/github"
 )
@@ -465,5 +466,23 @@ func TestRESTGitHubMergeUpgradesMergeCommitPRs(t *testing.T) {
 		if got := methods[fmt.Sprint(n)]; got != want || method.used != want {
 			t.Fatalf("#%d merge_method = %q (used %q), want %q", n, got, method.used, want)
 		}
+	}
+}
+
+// Permission errors must remain typed across the gate so merge paths can
+// explain the human action needed while the lane keeps the front.
+func TestGatePreservesMergeError(t *testing.T) {
+	h := newGateHarness(t)
+	h.f.addPR(1, "h1")
+	mergeErr := &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusForbidden}, Message: "Resource not accessible by integration"}
+	h.f.errs["Merge"] = mergeErr
+	res := h.gate(1)
+	expectGate(t, res, ghub.LaneOutcomeWaiting, "merge call failed")
+	var apiErr *gh.ErrorResponse
+	if !errors.As(res.MergeError, &apiErr) || apiErr != mergeErr {
+		t.Fatalf("merge error = %v, want original GitHub permission error", res.MergeError)
+	}
+	if h.frontPR() != 1 || h.f.prs[1].Merged {
+		t.Fatal("failed merge must retain the unmerged front")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -256,11 +257,15 @@ func TestContributorLaneWorkflowFenceMergeUnauthorizedFallback(t *testing.T) {
 		message string
 		// restart pre-seeds the unauthorized marker as a restarted hive sees it.
 		restart    bool
+		serialized bool
 		wantMerges int
 	}{
 		{name: "403 resource not accessible", status: http.StatusForbidden, message: "Resource not accessible by integration", wantMerges: 1},
 		{name: "422 refusing to update workflow without permission", status: http.StatusUnprocessableEntity, message: "refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission", wantMerges: 1},
 		{name: "restart sees marker and does not retry", status: http.StatusForbidden, message: "Resource not accessible by integration", restart: true, wantMerges: 0},
+		{name: "serialized 403 resource not accessible", status: http.StatusForbidden, message: "Resource not accessible by integration", serialized: true, wantMerges: 1},
+		{name: "serialized 422 workflow permission", status: http.StatusUnprocessableEntity, message: "refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission", serialized: true, wantMerges: 1},
+		{name: "serialized restart sees marker", status: http.StatusForbidden, message: "Resource not accessible by integration", serialized: true, restart: true, wantMerges: 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fx := validContributorFixture()
@@ -282,6 +287,22 @@ func TestContributorLaneWorkflowFenceMergeUnauthorizedFallback(t *testing.T) {
 			policy.OwnerApprovalReleasesWorkflowFence = true
 			clock := &contributorLaneClock{at: mustParseTime(t, "2026-10-27T13:00:00Z")}
 			engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+			if tc.serialized {
+				gate := func(ctx context.Context, req hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+					if req.FrontOnly {
+						return hgithub.LaneMergeResult{Outcome: hgithub.LaneOutcomeLeft}, nil
+					}
+					if err := req.Authorize(ctx, "sha7"); err != nil {
+						t.Fatalf("lane authorization: %v", err)
+					}
+					_, _, mergeErr := engine.gh.PullRequests.Merge(ctx, "acme", "widget", 7, "", &gh.PullRequestOptions{SHA: "sha7", MergeMethod: req.Method})
+					if mergeErr == nil {
+						t.Fatal("expected a workflow permission merge failure")
+					}
+					return hgithub.LaneMergeResult{Outcome: hgithub.LaneOutcomeWaiting, Reason: "merge call failed", MergeError: mergeErr}, nil
+				}
+				engine = newContributorLaneSweepEngine(api.URL, config.MergeStrategyHiveSerialized, gate, clock, Options{})
+			}
 			engine.SetMergerAuthorizer(func(login string) bool { return strings.EqualFold(login, "clubanderson") })
 
 			for tick := 1; tick <= 2; tick++ {

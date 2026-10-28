@@ -61,7 +61,7 @@ func (l *Lane) Merge(ctx context.Context, req ghub.LaneMergeRequest) (ghub.LaneM
 	method := &mergeMethod{requested: req.Method}
 	ctx = context.WithValue(ctx, mergeMethodKey{}, method)
 	dec, err = l.Advance(ctx, req.Repo, branch, req.Number, Authorizer(req.Authorize))
-	res := ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason, SHA: dec.MergeSHA}
+	res := ghub.LaneMergeResult{Outcome: string(dec.Outcome), Reason: dec.Reason, SHA: dec.MergeSHA, MergeError: dec.MergeError}
 	if dec.Outcome == OutcomeMerged {
 		res.Method = method.used
 	}

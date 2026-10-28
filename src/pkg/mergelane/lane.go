@@ -175,6 +175,8 @@ type Decision struct {
 	Reason   string
 	Position int
 	MergeSHA string
+	// MergeError is the underlying failure when a merge call holds the front.
+	MergeError error
 }
 
 // Lane is the gate. One Lane per process; it resets every in-progress front on
@@ -802,7 +804,9 @@ func (r *round) merge(head, tip string) (Decision, error) {
 	}
 	if err != nil {
 		r.front.Stage = StageValidating
-		return r.hold(head, tip, "merge call failed; no merge assumed this round: "+err.Error())
+		dec, holdErr := r.hold(head, tip, "merge call failed; no merge assumed this round: "+err.Error())
+		dec.MergeError = err
+		return dec, holdErr
 	}
 	reason := fmt.Sprintf("merged as %s after the final re-check", short(sha))
 	r.l.emit([]Event{r.event(head, tip, ActionMerge, reason)})

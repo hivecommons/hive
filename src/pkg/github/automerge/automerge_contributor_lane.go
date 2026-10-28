@@ -1376,7 +1376,17 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	if serialized {
 		event := AutoMergeSweepEvent{Repo: displayRepo, Number: number, Author: eval.author, HeadSHA: eval.headSHA, Tier: contributorLaneTier}
-		event, reason, err = c.mergeThroughLane(ctx, laneGate, owner, repo, eval.pr.GetBase().GetRef(), hgithub.PRAuditPathSweep, eval.method, event,
+		// The lane retains the front on merge API failures. Preserve the
+		// workflow fence's human-action parking when that failure is a
+		// missing App permission, just as on the direct merge path.
+		contributorGate := func(ctx context.Context, req hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+			res, err := hgithub.RunSerializedLane(ctx, laneGate, req)
+			if reason := c.workflowFenceMergeUnauthorized(ctx, displayRepo, owner, repo, eval, res.MergeError); reason != "" {
+				res.Reason = reason
+			}
+			return res, err
+		}
+		event, reason, err = c.mergeThroughLane(ctx, contributorGate, owner, repo, eval.pr.GetBase().GetRef(), hgithub.PRAuditPathSweep, eval.method, event,
 			func(ctx context.Context, head string) error {
 				if head == "" || head != eval.headSHA {
 					return fmt.Errorf("head %s is not the contributor head %s evaluated green", head, eval.headSHA)

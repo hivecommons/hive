@@ -52,6 +52,9 @@ type LaneMergeResult struct {
 	SHA     string
 	// Method is the merge method the lane used (set when merged).
 	Method string
+	// MergeError preserves the merge API failure while the lane holds the front.
+	// Callers may use it to surface permission failures requiring human action.
+	MergeError error
 }
 
 // Merged reports whether the lane merged the pull request.
