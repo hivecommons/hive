@@ -1,0 +1,1 @@
+The merge-eligible list no longer includes contributor PRs the merge relay's contributor-lane policy refuses (for example newcomer-tier authors), so agents stop wasting a hive-merge attempt on them every kick.

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -390,6 +392,46 @@ func relayLanePolicyGate(opts automerge.Options) func(*github.Client) github.Mer
 		}
 		return automerge.New(c, opts).RelayMergeRefusal
 	}
+}
+
+var (
+	mergeEligibleLaneGateMu sync.RWMutex
+	mergeEligibleLaneGate   github.MergeRequestPolicyGate
+)
+
+// setMergeEligibleLaneGate installs the lane-policy gate the merge relay
+// uses so the merge-eligible classifier asks the same question.
+func setMergeEligibleLaneGate(g github.MergeRequestPolicyGate) {
+	mergeEligibleLaneGateMu.Lock()
+	mergeEligibleLaneGate = g
+	mergeEligibleLaneGateMu.Unlock()
+}
+
+// relayLaneRefusal returns the contributor-lane refusal the merge relay would
+// give for pr, or "" when the relay would let it through. A PR the relay
+// refuses must not be listed merge-eligible: hive-merge on it is a wasted
+// attempt every kick, and the contributor lane merges it itself when ready.
+// It reuses the relay's gate (automerge.Engine.RelayMergeRefusal) rather than
+// restating the rule. Hive-authored PRs bypass the lane, and an unreadable
+// gate leaves the PR listed — the relay still re-checks it at merge time.
+func relayLaneRefusal(pr github.PullRequest, fullRepo string, logger *slog.Logger) string {
+	mergeEligibleLaneGateMu.RLock()
+	gate := mergeEligibleLaneGate
+	mergeEligibleLaneGateMu.RUnlock()
+	if gate == nil || hiveAuthoredPR(pr) {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	refusal, err := gate(ctx, fullRepo, pr.Number, pr.HeadSHA)
+	if err != nil {
+		logger.Warn("merge-eligible lane gate could not evaluate PR; leaving it listed", "repo", fullRepo, "number", pr.Number, "error", err)
+		return ""
+	}
+	if refusal != "" {
+		logger.Info("excluding PR from merge-eligible: contributor lane refuses the merge relay", "repo", fullRepo, "number", pr.Number, "refusal", refusal)
+	}
+	return refusal
 }
 
 // mergeableJSON renders a tri-state mergeability verdict for the
@@ -1037,6 +1079,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		adopted := adoptedInPlace(fullRepo, pr.Number)
 		prGates.adopted = adopted
 		bucket, verdict, intentReason := classifyMergeEligibility(pr, held, fullRepo, prGates)
+		if bucket == mergeBucketEligible {
+			if refusal := relayLaneRefusal(pr, fullRepo, logger); refusal != "" {
+				bucket = mergeBucketSkip
+				verdict = github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: refusal}
+			}
+		}
 		verdicts[github.MergeVerdictKey(pr)] = verdict
 		if intentReason != "" {
 			iv := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]

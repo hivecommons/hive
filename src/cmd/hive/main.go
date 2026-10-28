@@ -2571,6 +2571,8 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
 	}
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
+		laneGate := relayLanePolicyGate(autoMergeOpts)(client)
+		setMergeEligibleLaneGate(laneGate)
 		relaysDone := deps.startRequestRelays(ctx, client, requestRelays{
 			prOpen:    b.agentMgr.AuthorizePROpen,
 			holdLabel: holdLabel,
