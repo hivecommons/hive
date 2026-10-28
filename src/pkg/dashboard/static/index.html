@@ -1574,6 +1574,40 @@
     .ham-menu-item .ham-menu-more { color: var(--text-faint); }
     .ham-submenu { display: none; margin: 0 0 0 var(--sp-3); padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-menu-item[aria-expanded="true"] + .ham-submenu { display: block; }
+    /* tracker-cues: the Activity Monitor's shared cue vocabulary (owner,
+       2026-10-28: a row must always read as working / waiting on X / set
+       back by Y / merged, professionally — no game theming). Three cue
+       kinds and no more, so the PRs building on it compose: --cue-state
+       (what the row waits on: the state pill, this decision popover),
+       --cue-work (the hive is working right now: the chevron spin),
+       --cue-decision (what people and the hive decided: the ✓ badge).
+       Nothing else blinks; motion stays in the 150–300ms range. */
+    .ham-row, .ham-decision-pop {
+      --cue-state: var(--status-attention);
+      --cue-work: var(--status-info);
+      --cue-decision: var(--status-ok);
+    }
+    /* "Needs human" decision popover (cue-state): the chevron word / pill
+       is a button inheriting the chevron's text; the popover is a raised
+       panel in the context menu's tokens, ordered WHAT it waits on → WHAT
+       you can do → WHO asked, when. */
+    button.ham-decision-trigger { cursor: pointer; display: inline; margin: 0; padding: 0; border: 0; background: transparent; font: inherit; color: inherit; line-height: inherit; text-align: inherit; }
+    button.ham-decision-trigger.ham-badge { display: inline-block; padding: 0 var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-pill); font-size: var(--fs-xs); line-height: 1.4; color: var(--text-faint); }
+    .ham-decision-trigger:focus-visible, .ham-decision-trigger[aria-expanded="true"] { outline: var(--line-width) solid var(--accent); outline-offset: var(--sp-1); border-radius: var(--r-sm); }
+    .ham-decision-pop { position: fixed; z-index: 9000; min-width: 18em; max-width: min(28em, calc(100vw - 2 * var(--sp-3))); padding: var(--sp-2) var(--sp-3) var(--sp-3); margin: 0; background: var(--panel); border: var(--line-width) solid var(--line-strong); border-left: var(--sp-1) solid var(--cue-state); border-radius: var(--r); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); color: var(--text); }
+    .ham-decision-pop:focus { outline: none; }
+    .ham-decision-pop p { margin: var(--sp-1) 0 0; overflow-wrap: anywhere; }
+    .ham-decision-head { font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ham-decision-q { font-weight: var(--fw-semibold); color: var(--text); }
+    .ham-decision-blocker { font-size: var(--fs-xs); color: var(--text-muted); }
+    .ham-decision-meta, .ham-decision-stage { font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-decision-acts { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-2); }
+    .ham-decision-act { padding: var(--sp-1) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-pill); background: transparent; color: var(--text); font: inherit; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; }
+    .ham-decision-act:hover, .ham-decision-act:focus-visible { background: var(--panel-strong); outline: none; border-color: var(--line-strong); }
+    .ham-decision-act.ham-decision-lead { border-color: var(--cue-state); color: var(--cue-state); font-weight: var(--fw-semibold); }
+    .ham-decision-act.ham-menu-danger { color: var(--red); }
+    .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
+    .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
     .ham-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-2); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid color-mix(in srgb, var(--accent) 45%, var(--line-subtle)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: var(--fs-xs); }
     .ham-selbar[hidden] { display: none; }
     .ham-selbar .ham-sel-count { font-weight: var(--fw-semibold); color: var(--text); margin-right: var(--sp-2); }
@@ -14245,10 +14279,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (sentinel) tip = stageTrackerSentinelTip(item) + ' — ' + tip;
         }
         let inner;
+        // A lit chevron on a row parked on a person ("Needs human decision",
+        // "Triage needed") is the trigger of the decision popover: the word
+        // becomes a button and the chevron drops its native title so the
+        // popover (which repeats the stage line) is its one hover text.
+        const decision = active && !sg.cap && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
+        const word = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`;
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
-        else if (active) inner = stageTrackerIcon(sg.number, 'ham-ico ham-active-ico') + (sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`) + actorIco;
+        else if (active) inner = stageTrackerIcon(sg.number, 'ham-ico ham-active-ico') + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr} title="${esc(tip)}" aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : ''}>${inner}</li>`;
+        return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : ''}>${inner}</li>`;
       }).join('');
     }
 
@@ -14408,6 +14448,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const inner = `${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}`;
       // The lead pill of a row blocked on a PR is the link to that PR.
       if (blockedPR && blockedPR.url) return sentinel + `<a class="ham-badge ham-badge-mod ${esc(cls)}" href="${esc(blockedPR.url)}" target="_blank" rel="noopener"${tip ? ` title="${esc(tip)}"` : ''} aria-label="${esc(blockedPR.tip)}">${inner}</a>`;
+      // A lead needs-human / needs human decision pill opens the decision
+      // popover (what to decide, who asked, the applicable actions) instead
+      // of a native tooltip.
+      const decision = (mods[0] === 'needs-human' || mods[0] === 'needs-decision') && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
+      if (decision) return sentinel + stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-badge ham-badge-mod ' + cls);
       return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${inner}</span>`;
     }
 
@@ -14467,7 +14512,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null };
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
@@ -14647,7 +14692,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -15903,7 +15948,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of d.items) if (stageTrackerItemKey(it) === key) return it;
       for (const it of d.items) {
         for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
-          const pr = { repo: it.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [] };
+          const pr = { repo: it.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], decision_needed: lp.decision_needed || null };
           if (stageTrackerItemKey(pr) === key) return pr;
         }
       }
@@ -15935,7 +15980,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.kind === 'pr') return parked(item) ? item : null;
       for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
         const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], author: lp.author || '',
-          human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
+          human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null };
         if (parked(pr)) return pr;
       }
       if (item.mirrored) return null;
@@ -16205,6 +16250,189 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (!row) return;
         e.preventDefault();
         stageTrackerSelect(row.dataset.hamKey, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey });
+      });
+      if (typeof stageTrackerWireDecisionPop === 'function') stageTrackerWireDecisionPop(el);
+    }
+
+    // ---- "Needs human" decision popover (owner request, 2026-10-28) ----
+    // Hovering or focusing the "Needs human decision" chevron word or the
+    // needs-human pill says WHAT the person must decide — the reviewer's own
+    // question, who asked and when, the blocker in plain words — and offers
+    // the actions that advance the row, "Let hive decide" first. The buttons
+    // run the row context menu's code path (runRowAction when the shared
+    // helper is present, else stageTrackerDoAction), so the same result
+    // toast and in-flight chevron apply. The payload's `decision_needed`
+    // (stage_tracker_decision.go) carries the text and the option ids.
+    const STAGE_TRACKER_DECISION_LEAVE_MS = 250;
+    var _stageTrackerDecisionPop = null;
+    // Pure: the row's decision — the item's own, else (an issue listing a
+    // parked PR) the first nested PR's, as the item the actions act on.
+    function stageTrackerDecisionOf(item) {
+      if (!item) return null;
+      if (item.decision_needed && item.decision_needed.question) return { key: stageTrackerItemKey(item), item };
+      if (item.kind !== 'issue') return null;
+      for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
+        if (!lp || !lp.decision_needed || !lp.decision_needed.question) continue;
+        const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], decision_needed: lp.decision_needed };
+        return { key: stageTrackerItemKey(pr), item: pr };
+      }
+      return null;
+    }
+    // Pure: the trigger — the chevron word or the pill, as a button that
+    // owns the popover. No native title: the popover is the hover text.
+    function stageTrackerDecisionTriggerHtml(decision, innerHtml, tip, cls) {
+      return `<button type="button" class="${esc(cls || '')} ham-decision-trigger" data-ham-decision="${esc(decision.key)}"${tip ? ` data-ham-tip="${esc(tip)}"` : ''} aria-haspopup="dialog" aria-expanded="false">${innerHtml}</button>`;
+    }
+    // Pure: the popover's options — the server's (what the row's state
+    // allows) narrowed by the client's (what this viewer may do): enabled
+    // only when both agree, the first reason wins. "Let hive decide" leads.
+    function stageTrackerDecisionOptions(item, ctx) {
+      const d = item && item.decision_needed;
+      const server = d && Array.isArray(d.options) ? d.options : [];
+      const flat = stageTrackerFlatActions(stageTrackerRowActions(item, ctx || { user: false, canHold: false, canHuman: false }));
+      const out = server.map(o => {
+        const c = flat[o.action];
+        const enabled = !!o.enabled && !!(c && c.enabled);
+        const why = enabled ? '' : (o.reason_if_disabled || (c ? c.why : 'Not available on this row') || '');
+        return { id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, enabled, why, danger: !!(c && c.danger) || /^decide:close-/.test(o.action) };
+      });
+      const lead = out.findIndex(o => o.id === 'decide:delegate');
+      if (lead > 0) out.unshift(out.splice(lead, 1)[0]);
+      return out;
+    }
+    // Pure: the popover markup.
+    function stageTrackerDecisionPopHtml(item, options, nowMs, tip) {
+      const d = item.decision_needed || {};
+      const ref = stageTrackerRefOf(item);
+      const sinceMs = Date.parse(d.since || item.stage_since || '');
+      const meta = ['Asked by ' + (d.asked_by || 'the hive'), sinceMs ? agentNowAgo(nowMs - sinceMs) : ''].filter(Boolean).join(' · ');
+      const buttons = options.map(o => `<button type="button" class="ham-decision-act${o.danger ? ' ham-menu-danger' : ''}${o.id === 'decide:delegate' ? ' ham-decision-lead' : ''}" data-ham-act="${esc(o.id)}"${o.enabled ? '' : ` aria-disabled="true" title="${esc(o.why)}"`}>${esc(o.label)}</button>`).join('');
+      // Order (owner): WHAT it is waiting on → WHAT you can do → WHO asked, when.
+      return `<div class="ham-decision-pop" role="dialog" aria-label="${esc('Decision needed on ' + ref)}" tabindex="-1">
+        <div class="ham-decision-head">${esc(ref)}${item.title ? ' · ' + esc(item.title) : ''}</div>
+        <p class="ham-decision-q">${esc(d.question || '')}</p>
+        ${d.blocker ? `<p class="ham-decision-blocker">${esc(d.blocker)}</p>` : ''}
+        ${buttons ? `<div class="ham-decision-acts">${buttons}</div>` : ''}
+        <p class="ham-decision-meta">${esc(meta)}</p>
+        ${tip ? `<p class="ham-decision-stage">${esc(tip)}</p>` : ''}
+      </div>`;
+    }
+    // Run a popover action down the row context menu's path.
+    function stageTrackerDecisionRun(item, act) {
+      if (typeof runRowAction === 'function') return runRowAction(act, item);
+      return stageTrackerDoAction([item], act);
+    }
+    function stageTrackerCloseDecisionPop(refocus) {
+      const p = _stageTrackerDecisionPop;
+      if (!p) return;
+      _stageTrackerDecisionPop = null;
+      clearTimeout(p.timer);
+      document.removeEventListener('pointerdown', p.onAway, true);
+      document.removeEventListener('keydown', p.onKey, true);
+      window.removeEventListener('resize', p.onAway);
+      window.removeEventListener('scroll', p.onAway, true);
+      if (p.el.parentNode) p.el.parentNode.removeChild(p.el);
+      const trig = stageTrackerDecisionTrigger(p.key);
+      if (trig) trig.setAttribute('aria-expanded', 'false');
+      if (refocus && trig && typeof trig.focus === 'function') trig.focus();
+    }
+    function stageTrackerDecisionTrigger(key) {
+      const el = document.getElementById('activity-monitor-panel');
+      if (!el || !key) return null;
+      for (const b of el.querySelectorAll('.ham-decision-trigger')) if (b.dataset.hamDecision === key) return b;
+      return null;
+    }
+    // Open (or pin) the popover for a trigger. Hover opens it unpinned: it
+    // closes once neither the trigger nor the popover is hovered. Click or
+    // focus pins it: it then closes on Esc, click-away, scroll or resize.
+    function stageTrackerOpenDecisionPop(trigger, pin) {
+      const key = trigger && trigger.dataset ? trigger.dataset.hamDecision : '';
+      if (!key) return;
+      if (_stageTrackerDecisionPop && _stageTrackerDecisionPop.key === key) {
+        if (pin) _stageTrackerDecisionPop.pinned = true;
+        clearTimeout(_stageTrackerDecisionPop.timer);
+        return;
+      }
+      stageTrackerCloseDecisionPop(false);
+      stageTrackerCloseMenu(false);
+      const item = stageTrackerItemByKey(_stageTracker, key);
+      if (!item || !item.decision_needed) return;
+      const options = stageTrackerDecisionOptions(item, stageTrackerActionCtx(item.repo));
+      const tpl = document.createElement('template');
+      tpl.innerHTML = stageTrackerDecisionPopHtml(item, options, Date.now(), trigger.dataset.hamTip || '');
+      const el = tpl.content.firstElementChild;
+      document.body.appendChild(el);
+      const r = trigger.getBoundingClientRect();
+      const pos = stageTrackerMenuPosition(r.left, r.bottom, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight);
+      el.style.setProperty('left', pos.left + 'px');
+      el.style.setProperty('top', pos.top + 'px');
+      trigger.setAttribute('aria-expanded', 'true');
+      const p = { el, key, item, pinned: !!pin, timer: 0 };
+      p.onAway = e => { if (e.type !== 'pointerdown' || !(el.contains(e.target) || (e.target.closest && e.target.closest('.ham-decision-trigger') === stageTrackerDecisionTrigger(key)))) stageTrackerCloseDecisionPop(false); };
+      p.onKey = e => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stageTrackerCloseDecisionPop(true); return; }
+        if (e.key === 'Tab' && el.contains(e.target)) {
+          const acts = Array.from(el.querySelectorAll('.ham-decision-act'));
+          const last = acts[acts.length - 1], first = acts[0];
+          if ((!e.shiftKey && e.target === last) || (e.shiftKey && (e.target === first || e.target === el))) stageTrackerCloseDecisionPop(true);
+        }
+      };
+      el.addEventListener('pointerenter', () => clearTimeout(p.timer));
+      el.addEventListener('pointerleave', () => stageTrackerDecisionPopLeave());
+      el.addEventListener('focusin', () => { p.pinned = true; clearTimeout(p.timer); });
+      el.addEventListener('click', e => {
+        const b = e.target.closest('[data-ham-act]');
+        if (!b || b.getAttribute('aria-disabled') === 'true') return;
+        e.preventDefault(); e.stopPropagation();
+        const act = b.dataset.hamAct;
+        stageTrackerCloseDecisionPop(true);
+        stageTrackerDecisionRun(p.item, act);
+      });
+      document.addEventListener('pointerdown', p.onAway, true);
+      document.addEventListener('keydown', p.onKey, true);
+      window.addEventListener('resize', p.onAway);
+      window.addEventListener('scroll', p.onAway, true);
+      _stageTrackerDecisionPop = p;
+      if (pin && pin.focus) { const first = el.querySelector('.ham-decision-act:not([aria-disabled="true"])'); (first || el).focus(); }
+    }
+    // The pointer left the trigger or the popover: close after a beat unless
+    // it is pinned or the pointer is back over either (rows re-render, so
+    // the trigger is looked up afresh by key).
+    function stageTrackerDecisionPopLeave() {
+      const p = _stageTrackerDecisionPop;
+      if (!p || p.pinned) return;
+      clearTimeout(p.timer);
+      p.timer = setTimeout(() => {
+        const q = _stageTrackerDecisionPop;
+        if (!q || q.pinned) return;
+        const trig = stageTrackerDecisionTrigger(q.key);
+        if (q.el.matches(':hover') || (trig && trig.matches(':hover'))) { stageTrackerDecisionPopLeave(); return; }
+        stageTrackerCloseDecisionPop(false);
+      }, STAGE_TRACKER_DECISION_LEAVE_MS);
+    }
+    function stageTrackerWireDecisionPop(el) {
+      el.addEventListener('pointerover', e => {
+        const b = e.target.closest ? e.target.closest('.ham-decision-trigger') : null;
+        if (b && el.contains(b) && e.pointerType !== 'touch') stageTrackerOpenDecisionPop(b, false);
+      });
+      el.addEventListener('pointerout', e => {
+        const b = e.target.closest ? e.target.closest('.ham-decision-trigger') : null;
+        if (b) stageTrackerDecisionPopLeave();
+      });
+      el.addEventListener('focusin', e => {
+        const b = e.target.closest ? e.target.closest('.ham-decision-trigger') : null;
+        if (b) stageTrackerOpenDecisionPop(b, true);
+      });
+      el.addEventListener('click', e => {
+        const b = e.target.closest ? e.target.closest('.ham-decision-trigger') : null;
+        if (!b || e.metaKey || e.ctrlKey || e.shiftKey) return;
+        e.preventDefault(); e.stopPropagation();
+        if (_stageTrackerDecisionPop && _stageTrackerDecisionPop.key === b.dataset.hamDecision && _stageTrackerDecisionPop.pinned) { stageTrackerCloseDecisionPop(false); return; }
+        stageTrackerOpenDecisionPop(b, { focus: true });
+      });
+      el.addEventListener('keydown', e => {
+        const b = e.target.closest ? e.target.closest('.ham-decision-trigger') : null;
+        if (b && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); stageTrackerOpenDecisionPop(b, { focus: true }); }
       });
     }
     function stageTrackerSelect(key, mods) {

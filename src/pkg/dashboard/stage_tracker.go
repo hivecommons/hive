@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -330,6 +331,12 @@ type StageTrackerItem struct {
 	// (hivecommons/hive#14589).
 	UnauthorizedStep string `json:"unauthorized_step,omitempty"`
 	Unauthorized     string `json:"unauthorized,omitempty"`
+	// DecisionNeeded is set on a row parked on a person (085 / 045 / 015,
+	// the needs-human or needs-decision pill): what the person must
+	// decide, who asked, the plain-words blocker and the actions that
+	// advance it, under the row context menu's action ids. See
+	// stage_tracker_decision.go.
+	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
 	// StaleLabels are control labels the row still wears that its stage
 	// has outrun, so they are not read as modifiers: `needs-triage` on an
 	// issue at 020 or later (015 is not a gate; the reconciler removes the
@@ -432,6 +439,9 @@ type StageTrackerLinkedPR struct {
 	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
 	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
 	Head                 string `json:"head,omitempty"`
+	// DecisionNeeded mirrors the nested PR's own row field so the issue's
+	// sub-row can open the same "Needs human" popover.
+	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -1458,6 +1468,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	if verifierErr == nil {
 		evidenceVerifier = &verifier
 	}
+	// The reviewer's decision question for a parked PR comes from the
+	// local verdict artifact; a missing or unreadable artifact just means
+	// the popover falls back to the reason-derived question.
+	var verdictArtifact *review.Artifact
+	if art, err := review.LoadArtifact(""); err == nil {
+		verdictArtifact = &art
+	}
+	verdictFor := stageTrackerVerdictLookup(verdictArtifact)
+	sentinelLabel := s.sentinelLabel()
 	lookup := func(repo string, number int) (stagelabels.Record, bool) {
 		if store == nil {
 			return stagelabels.Record{}, false
@@ -1604,6 +1623,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
 			}
 		}
+		it.DecisionNeeded = stageTrackerDecisionNeeded(it, nil, sentinelLabel)
 		add(it)
 	}
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
@@ -1654,6 +1674,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.Actor = "maintainer"
 		}
+		var agg *review.Aggregate
+		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA); ok {
+			agg = &a
+		}
+		it.DecisionNeeded = stageTrackerDecisionNeeded(it, agg, sentinelLabel)
 		add(it)
 	}
 	for _, repo := range status.Repos {
@@ -2352,6 +2377,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
+				lp.DecisionNeeded = pr.DecisionNeeded
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
 				}
