@@ -8,7 +8,7 @@
 # `go install github.com/hivecommons/crux/cmd/crux@latest` and
 # `brew install hivecommons/hive/crux` work without pulling hive. Nothing is
 # edited in hivecommons/crux by hand except its own build scaffolding
-# (.github/, .goreleaser.yaml, Dockerfile, README.md, LICENSE).
+# (.github/, .goreleaser.yaml, Dockerfile, README.md, LICENSE, runbooks/).
 #
 # This script is the whole mechanism (.github/workflows/crux-sync.yml calls
 # it; it also runs by hand for a first/emergency sync):
@@ -43,7 +43,7 @@ OLD_MODULE="github.com/hivecommons/hive/crux"
 NEW_MODULE="github.com/hivecommons/crux"
 
 # Hand-maintained in hivecommons/crux; never touched by a sync.
-KEEP=(.git .github .goreleaser.yaml Dockerfile Dockerfile.goreleaser LICENSE README.md .gitignore .golangci.yml .dockerignore)
+KEEP=(.git .github .goreleaser.yaml Dockerfile Dockerfile.goreleaser LICENSE README.md .gitignore .golangci.yml .dockerignore runbooks)
 
 [ -f "$SRC/go.mod" ] || { echo "::error::$SRC/go.mod not found" >&2; exit 1; }
 [ -d "$DEST" ] || { echo "::error::$DEST is not a directory" >&2; exit 1; }

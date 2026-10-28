@@ -797,6 +797,15 @@ func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessageForwardMergeGuard(t *testing.T) {
+	if !IsBenignMessage("forward-merge guard: refusing to squash, forcing merge commit") {
+		t.Error("forward-merge squash refusal not benign")
+	}
+	if IsBenignMessage("forward-merge guard: head-history check failed") {
+		t.Error("head-history check failure wrongly benign")
+	}
+}
+
 func TestIsBenignMessageCopilotModelFallback(t *testing.T) {
 	const msg = "copilot CLI substituted the configured model"
 	if !IsBenignMessage(msg) {

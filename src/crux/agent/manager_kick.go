@@ -1487,8 +1487,20 @@ func ciPollNudgeExemptAgent(agent *AgentProcess) bool {
 		return true
 	}
 	for _, f := range []string{agent.Name, agent.Config.Role} {
-		lane := strings.TrimSpace(f)
-		if strings.EqualFold(lane, "ci-maintainer") || strings.EqualFold(lane, "quality") {
+		if exemptCIPollLane(f) {
+			return true
+		}
+	}
+	return false
+}
+
+// exemptCIPollLane matches a lane name or role exactly, or as a dash/underscore-
+// suffixed variant ("ci-maintainer-2", "quality_full"), so replicas and policy
+// variants of an exempt lane are exempt too.
+func exemptCIPollLane(f string) bool {
+	lane := strings.ToLower(strings.TrimSpace(f))
+	for _, base := range []string{"ci-maintainer", "quality"} {
+		if lane == base || strings.HasPrefix(lane, base+"-") || strings.HasPrefix(lane, base+"_") {
 			return true
 		}
 	}

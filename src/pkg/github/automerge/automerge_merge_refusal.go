@@ -38,8 +38,9 @@ const mergeRefusalRecheck = 30 * time.Minute
 const mergeRefusalPruneAt = 1024
 
 // "At least 1 approving review is required by reviewers with write access.",
-// and "At least 2 approving reviews are required ...".
-var mergeRefusedReviewRE = regexp.MustCompile(`(?i)\d+ approving reviews? (?:is|are) required`)
+// "At least 2 approving reviews are required ...", and the ruleset form
+// "1 review requesting changes by reviewers with write access.".
+var mergeRefusedReviewRE = regexp.MustCompile(`(?i)\d+ approving reviews? (?:is|are) required|\d+ reviews? requesting changes`)
 
 // "Merge commits are not allowed on this repository." and the squash and
 // rebase forms.

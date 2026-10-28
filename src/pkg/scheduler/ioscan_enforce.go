@@ -260,6 +260,7 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		return s.classifierErrored(sanitized, v, err)
 	}
 	s.classifierUnavailable(nil)
+	s.lastClassifierErr.Store("")
 	action := ioscan.ActionForScore(score, thresholds, s.classifierFailClosed())
 	s.recordClassifierResult(score, action)
 	switch action {
@@ -279,6 +280,18 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 	return sanitized, v
 }
 
+const classifierFixHint = "check the ioscan classifier model/endpoint is served by the inference gateway (governor.trajectory/litellm, ioscan.classifier.model), or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open"
+
+// warnBlockedKick logs that fail-closed withheld a kick, naming the latest
+// classifier error and the config knobs so operators can act on it.
+func (s *Scheduler) warnBlockedKick(agentName string) {
+	args := []any{"agent", agentName}
+	if e, _ := s.lastClassifierErr.Load().(string); e != "" {
+		args = append(args, "classifier_error", e, "fix", classifierFixHint)
+	}
+	s.warnOnce("blocked-kick:"+agentName, "ioscan fail-closed blocked kick", args...)
+}
+
 // classifierErrored applies the fail mode when the classifier could not score
 // sanitized: fail-closed withholds the text, fail-open passes it on. Both
 // branches log at most once per distinct error so a dead backend does not
@@ -287,13 +300,16 @@ func (s *Scheduler) classifierErrored(sanitized string, v ioscan.Verdict, err er
 	if s.classifierFailClosed() {
 		s.recordClassifierSkip("error_fail_closed")
 		s.classifierUnavailable(err)
+		s.lastClassifierErr.Store(err.Error())
 		if s.logger != nil {
 			if strings.Contains(err.Error(), "no model endpoint resolved") {
 				s.warnOnce("classifier-no-endpoint", "ioscan classifier failed closed; text withheld",
 					"error", err,
-					"fix", "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open")
+					"fix", classifierFixHint)
 			} else {
-				s.warnOnce("classifier-error:"+err.Error(), "ioscan classifier failed closed; text withheld", "error", err)
+				s.warnOnce("classifier-error:"+err.Error(), "ioscan classifier failed closed; text withheld",
+					"error", err,
+					"fix", classifierFixHint)
 			}
 		}
 		cv := ioscan.UnavailableVerdict(err.Error())

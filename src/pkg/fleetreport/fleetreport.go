@@ -767,6 +767,11 @@ var benignSubstrings = []string{
 	// output, not a repeated runtime defect (hivecommons/hive#14377). The
 	// enforce-mode denial (effects.ErrDenied) stays reportable.
 	"shadow fence would have denied external mutation",
+	// The forward-merge guard (src/pkg/github/pullrequest.go) warns each time
+	// it overrides a squash request on a forward-merge PR with a merge commit.
+	// That is the merge-safety policy working as designed, re-logged per
+	// merge attempt, not a repeated runtime defect (hivecommons/hive#14727).
+	"forward-merge guard: refusing to squash",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic
