@@ -122,6 +122,7 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
 		jsFunc(t, html, "stageTrackerWaitSince"),
 		jsFunc(t, html, "stageTrackerLabelFamily"),
+		stageTrackerActedJS(t, html),
 		jsFunc(t, html, "stageTrackerNormalizeFilter"),
 		jsFunc(t, html, "stageTrackerFilterActive"),
 		jsFunc(t, html, "stageTrackerMatches"),

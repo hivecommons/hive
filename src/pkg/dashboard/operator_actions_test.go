@@ -249,3 +249,27 @@ func TestOperatorActionRecordedByDecisionEndpoint(t *testing.T) {
 		}
 	}
 }
+
+// stageTrackerActedJS lifts the "did I act on this?" badge helpers the row
+// renderer and the filter call (operator_actions.go payload fields).
+func stageTrackerActedJS(t *testing.T, html string) string {
+	t.Helper()
+	return strings.Join([]string{
+		jsConstBlock(t, html, "STAGE_TRACKER_ACTED_LABELS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTED_STATES"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTED_FILTERS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTED_STUCK_DEFAULT_S"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTED_GLYPH"),
+		jsConstBlock(t, html, "STAGE_TRACKER_ACTED_PLAIN"),
+		jsFunc(t, html, "stageTrackerActedLabel"),
+		jsFunc(t, html, "stageTrackerActedSource"),
+		jsFunc(t, html, "stageTrackerActedState"),
+		jsFunc(t, html, "stageTrackerActedAgo"),
+		jsFunc(t, html, "stageTrackerActedOutcomeWords"),
+		jsFunc(t, html, "stageTrackerActedStageName"),
+		jsFunc(t, html, "stageTrackerActedPlain"),
+		jsFunc(t, html, "stageTrackerActedTip"),
+		jsFunc(t, html, "stageTrackerActedBadgeHtml"),
+		jsFunc(t, html, "stageTrackerActedMatches"),
+	}, "\n")
+}
