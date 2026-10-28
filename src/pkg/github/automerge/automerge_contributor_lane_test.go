@@ -458,6 +458,11 @@ func newContributorLaneEngineRepos(apiURL string, repos []string, policy Contrib
 	if opts.ContributorSoak == nil {
 		opts.ContributorSoak = NewContributorSoakTracker()
 	}
+	// Every engine otherwise shares the process-wide head tracker, which pins
+	// the first updated_at seen for acme/widget#7@sha7 across tests.
+	if opts.HeadFirstSeen == nil {
+		opts.HeadFirstSeen = NewHeadFirstSeenTracker()
+	}
 	if clock != nil {
 		opts.Now = clock.now
 	}
