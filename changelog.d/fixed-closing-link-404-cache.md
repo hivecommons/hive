@@ -1,0 +1,1 @@
+- Automerge no longer caches a 404'd closing-keyword target as not-a-PR for the process lifetime; it is re-read after 10 minutes (#15120).

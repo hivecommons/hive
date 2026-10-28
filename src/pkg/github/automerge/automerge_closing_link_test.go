@@ -330,3 +330,36 @@ func TestClosingLinkGatesSkipNonDefaultBase(t *testing.T) {
 		t.Fatalf("default-branch tick: reason = %q, err = %v, merges = %d; want closing-contradiction:#42", reason, err, merges)
 	}
 }
+
+// A 404 is trusted only for closingMissingTTL: after it, the number is read
+// again and a pull request allocated in the meantime is caught.
+func TestClosingKeywordMissingTargetExpires(t *testing.T) {
+	api := newSelfSweepGuardAPI(t, selfSweepFixture{mergeApplied: true})
+	defer api.Close()
+	front := newClosingLinkFront("Closes #42\n")
+	srv := newLinkedIssueFront(t, api.URL, front)
+	defer srv.Close()
+	c := newAutoMergeSweepClient(srv.URL)
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return clock }
+	const target = "acme/widget#1036"
+
+	if open, err := c.numberIsOpenPullRequest(context.Background(), "acme", "widget", 1036); err != nil || open {
+		t.Fatalf("missing target: open = %v, err = %v", open, err)
+	}
+	clock = clock.Add(closingMissingTTL - time.Second)
+	if open, err := c.numberIsOpenPullRequest(context.Background(), "acme", "widget", 1036); err != nil || open {
+		t.Fatalf("within TTL: open = %v, err = %v", open, err)
+	}
+	if got := front.readsOf(target); got != 1 {
+		t.Fatalf("reads within TTL = %d, want 1", got)
+	}
+	front.set(target, linkedIssue{state: "open", pr: true})
+	clock = clock.Add(2 * time.Second)
+	if open, err := c.numberIsOpenPullRequest(context.Background(), "acme", "widget", 1036); err != nil || !open {
+		t.Fatalf("after TTL: open = %v, err = %v, want an open pull request", open, err)
+	}
+	if got := front.readsOf(target); got != 2 {
+		t.Fatalf("reads after TTL = %d, want 2", got)
+	}
+}

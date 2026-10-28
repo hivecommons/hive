@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
@@ -34,6 +35,10 @@ const (
 	// closingLinkCacheMax bounds each closing-link cache; past it the cache
 	// starts over rather than growing with every head the hive ever saw.
 	closingLinkCacheMax = 4096
+	// closingMissingTTL bounds how long a 404/410 answer is trusted: a
+	// number that does not resolve now can be allocated to a pull request
+	// later, and a 404 can be a transient or masked read.
+	closingMissingTTL = 10 * time.Minute
 )
 
 // closingKeywordsApply reports whether GitHub would act on the PR's closing
@@ -72,8 +77,9 @@ func (c *Engine) closingContradictionGate(owner, repo string, pr *gh.PullRequest
 // (`closing-keyword-targets-pr:#N`). A pull request is never the intended
 // target of a closing keyword, but GitHub's close of an already-closed PR
 // is a no-op, so a body that mentions "closed #N" about a merged PR passes.
-// A number that is not a pull request never becomes one, so that answer is
-// kept for the process; a pull request's state changes, so it is read
+// An issue that is not a pull request never becomes one, so that answer is
+// kept for the process; a number GitHub reports missing is trusted only for
+// closingMissingTTL, since it may be allocated to a pull request later. A pull request's state changes, so it is read
 // again on every tick. The commit messages are read once per head.
 // readThisTick carries the issues the caller read for this tick (number →
 // open pull request), so none is read twice. A read error other than
@@ -122,9 +128,10 @@ func isOpenPullRequest(issue *gh.Issue) bool {
 }
 
 // noteClosingTarget records, from an issue read the caller already made,
-// that repo#n is not a pull request (nil for a number GitHub reported
-// missing). That never changes, so later ticks skip the read. A pull
-// request is not recorded: whether it is still open has to be read again.
+// that repo#n is not a pull request. An existing issue never changes, so
+// later ticks skip the read. A number GitHub reported missing (nil) is
+// remembered only until closingMissingTTL passes. A pull request is not
+// recorded: whether it is still open has to be read again.
 func (c *Engine) noteClosingTarget(owner, repo string, n int, issue *gh.Issue) {
 	if issue != nil && issue.IsPullRequest() {
 		return
@@ -133,19 +140,23 @@ func (c *Engine) noteClosingTarget(owner, repo string, n int, issue *gh.Issue) {
 	c.closingLinkMu.Lock()
 	defer c.closingLinkMu.Unlock()
 	if c.closingNonPRTargets == nil || len(c.closingNonPRTargets) >= closingLinkCacheMax {
-		c.closingNonPRTargets = map[string]bool{}
+		c.closingNonPRTargets = map[string]time.Time{}
 	}
-	c.closingNonPRTargets[key] = true
+	var expires time.Time
+	if issue == nil {
+		expires = c.clock().Add(closingMissingTTL)
+	}
+	c.closingNonPRTargets[key] = expires
 }
 
 // numberIsOpenPullRequest reports whether repo#n is an open pull request. A
-// number GitHub reports missing (404/410) is not one.
+// number GitHub reports missing (404/410) is not one for now.
 func (c *Engine) numberIsOpenPullRequest(ctx context.Context, owner, repo string, n int) (bool, error) {
 	key := strings.ToLower(owner+"/"+repo) + "#" + strconv.Itoa(n)
 	c.closingLinkMu.Lock()
-	notPR := c.closingNonPRTargets[key]
+	expires, notPR := c.closingNonPRTargets[key]
 	c.closingLinkMu.Unlock()
-	if notPR {
+	if notPR && (expires.IsZero() || c.clock().Before(expires)) {
 		return false, nil
 	}
 	issue, _, err := c.gh.Issues.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_closing_link"), owner, repo, n)

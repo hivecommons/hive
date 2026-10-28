@@ -303,12 +303,12 @@ type Engine struct {
 	adoptionOriginalChecksMu sync.Mutex
 	adoptionOriginalChecks   map[string]time.Time
 	// scanCommitClosingKeywords, closingNonPRTargets (repo#N known not to
-	// be a pull request) and closingCommitRefs (repo#PR@head → numbers its commit
+	// be a pull request → expiry, zero for none) and closingCommitRefs (repo#PR@head → numbers its commit
 	// messages close) serve the closing-link gate
 	// (automerge_closing_link.go).
 	scanCommitClosingKeywords bool
 	closingLinkMu             sync.Mutex
-	closingNonPRTargets       map[string]bool
+	closingNonPRTargets       map[string]time.Time
 	closingCommitRefs         map[string][]int
 
 	stageLabelPolicy  func() StageLabelPolicy
