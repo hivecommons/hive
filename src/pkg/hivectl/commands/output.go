@@ -71,7 +71,7 @@ func (p printer) printTable(value any) error {
 	case map[string]any:
 		keys := sortedKeys(typed)
 		for _, key := range keys {
-			_, _ = fmt.Fprintf(writer, "%s\t%s\n", key, compactValue(typed[key])) // buffered by tabwriter; Flush error is captured above
+			_, _ = fmt.Fprintf(writer, "%s\t%s\n", compactString(key), compactValue(typed[key])) // buffered by tabwriter; Flush error is captured above
 		}
 	case []any:
 		rows := make([]map[string]any, 0, len(typed))
@@ -91,7 +91,11 @@ func (p printer) printTable(value any) error {
 			headers = append(headers, key)
 		}
 		sort.Strings(headers)
-		_, _ = fmt.Fprintln(writer, strings.Join(headers, "\t")) // buffered by tabwriter; Flush error is captured above
+		sanitisedHeaders := make([]string, len(headers))
+		for i, h := range headers {
+			sanitisedHeaders[i] = compactString(h)
+		}
+		_, _ = fmt.Fprintln(writer, strings.Join(sanitisedHeaders, "\t")) // buffered by tabwriter; Flush error is captured above
 		for _, row := range rows {
 			values := make([]string, len(headers))
 			for index, header := range headers {

@@ -168,3 +168,51 @@ func TestCompactValueUnmarshalableFallsBackToSprint(t *testing.T) {
 		t.Fatalf("got = %q, want non-empty fmt.Sprint fallback", got)
 	}
 }
+
+// TestPrinterTableMapKeyWithControlCharsAndTab covers sanitisation of
+// map keys containing control sequences and tabs. Keys are server-derived
+// and must be escaped so they cannot break table layout or carry ANSI
+// sequences into the terminal.
+func TestPrinterTableMapKeyWithControlCharsAndTab(t *testing.T) {
+	var buf bytes.Buffer
+	p := printer{format: "table", out: &buf}
+	if err := p.print(map[string]any{
+		"key\x1b[31mred\x1b[0m\ttab": "value1",
+		"normalkey":                   "value2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	// The control chars should be stripped and tab should become space
+	if strings.Contains(out, "\x1b[31m") || strings.Contains(out, "\x1b[0m") {
+		t.Fatalf("control chars not stripped from output: %q", out)
+	}
+	if strings.Contains(out, "key\ttab") {
+		t.Fatalf("tab in key not replaced: %q", out)
+	}
+}
+
+// TestPrinterTableArrayOfMapsHeaderWithControlChars covers sanitisation of
+// headers (map keys) in the []any-of-maps case. Headers are built from the
+// union of all row keys, which come from the server, and must be escaped
+// before printing.
+func TestPrinterTableArrayOfMapsHeaderWithControlChars(t *testing.T) {
+	var buf bytes.Buffer
+	p := printer{format: "table", out: &buf}
+	rows := []any{
+		map[string]any{"col\u009bX": "value1", "normal": "value2"},
+		map[string]any{"col\u009bX": "value3"},
+	}
+	if err := p.print(rows); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	// The C1 control character \u009b should be stripped
+	if strings.Contains(out, "\u009b") {
+		t.Fatalf("C1 control char not stripped from header: %q", out)
+	}
+	// The original key must still be used for row lookups (values are correct)
+	if !strings.Contains(out, "value1") || !strings.Contains(out, "value3") {
+		t.Fatalf("values not found in output: %q", out)
+	}
+}
