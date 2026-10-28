@@ -105,6 +105,12 @@ type mergeTrainMember struct {
 	CreatedAt      time.Time
 	MergeableState string
 	Fork           bool
+	// Blocked marks a head the lane last saw unable to merge on its own
+	// (red required check, terminal hold, permanent merge refusal): it
+	// does not front a train, and a group whose best member is blocked
+	// imposes no ordering at all (fail-open), so nobody waits behind a PR
+	// that is not moving.
+	Blocked bool
 }
 
 // mergeTrainGroup is one train: the ordered members (front first) and the
@@ -235,6 +241,9 @@ func groupMergeTrains(members []mergeTrainMember) []mergeTrainGroup {
 				continue
 			}
 			sort.SliceStable(ms, func(a, b int) bool {
+				if ms[a].Blocked != ms[b].Blocked {
+					return !ms[a].Blocked
+				}
 				ra, rb := mergeTrainStateRank(ms[a].MergeableState), mergeTrainStateRank(ms[b].MergeableState)
 				if ra != rb {
 					return ra < rb
@@ -247,6 +256,9 @@ func groupMergeTrains(members []mergeTrainMember) []mergeTrainGroup {
 				}
 				return ms[a].Number < ms[b].Number
 			})
+			if ms[0].Blocked {
+				continue
+			}
 			g := mergeTrainGroup{Base: base, members: map[int]mergeTrainMember{}}
 			count := map[string]int{}
 			for _, m := range ms {
@@ -360,6 +372,7 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 				CreatedAt:      pr.GetCreatedAt().Time,
 				MergeableState: pr.GetMergeableState(),
 				Fork:           c.isForkPR(pr),
+				Blocked:        c.mergeTrainHeadBlocked(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
 			})
 		}
 	}
@@ -665,6 +678,47 @@ type mergeTrainState struct {
 	mergeTrainAttemptCount map[string]int
 	mergeTrainMerged       map[string]int
 	mergeTrainLogged       map[string]string
+	mergeTrainBlocked      map[string]string
+}
+
+// mergeTrainBlockingReason reports whether a lane's verdict means the head
+// cannot merge without someone changing it. A conflict is NOT blocking: the
+// train's own rebase step repairs it.
+func mergeTrainBlockingReason(reason string) bool {
+	switch reason {
+	case "not-mergeable", autoMergeReasonForkNotEditable, autoMergeReasonClosedSuperseded:
+		return true
+	}
+	return isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) || classifyCIReason(reason) == ciReasonRed
+}
+
+// noteMergeTrainOutcome remembers, per head, whether the lane's verdict
+// blocks it from fronting a train; a non-blocking verdict clears the mark.
+func (c *Engine) noteMergeTrainOutcome(owner, repo string, number int, sha, reason string) {
+	if c == nil || number <= 0 {
+		return
+	}
+	key := owner + "/" + repo + "#" + strconv.Itoa(number)
+	c.mergeTrainMu.Lock()
+	defer c.mergeTrainMu.Unlock()
+	if !mergeTrainBlockingReason(reason) || strings.TrimSpace(sha) == "" {
+		delete(c.mergeTrainBlocked, key)
+		return
+	}
+	if c.mergeTrainBlocked == nil {
+		c.mergeTrainBlocked = map[string]string{}
+	}
+	c.mergeTrainBlocked[key] = sha
+}
+
+// mergeTrainHeadBlocked reports whether this exact head was last seen blocked.
+func (c *Engine) mergeTrainHeadBlocked(owner, repo string, number int, sha string) bool {
+	if c == nil || sha == "" {
+		return false
+	}
+	c.mergeTrainMu.Lock()
+	defer c.mergeTrainMu.Unlock()
+	return c.mergeTrainBlocked[owner+"/"+repo+"#"+strconv.Itoa(number)] == sha
 }
 
 // String renders a request for logs.

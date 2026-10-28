@@ -259,7 +259,7 @@ assert.strictEqual(stageTrackerTrainWord(second), 'In merge train · 2nd of 4');
 assert.strictEqual(stageTrackerTrainWord(third), 'Rebasing · attempt 1/2');
 assert.strictEqual(stageTrackerTrainWord(fourth), 'Needs human decision · rebase failed twice');
 assert.strictEqual(stageTrackerTrainWord(other), '');
-assert.strictEqual(stageTrackerOrdinal(3), '3rd'); assert.strictEqual(stageTrackerOrdinal(11), '11th'); assert.strictEqual(stageTrackerOrdinal(22), '22nd');
+for (const [n, w] of [[1, '1st'], [2, '2nd'], [3, '3rd'], [4, '4th'], [11, '11th'], [12, '12th'], [13, '13th'], [21, '21st'], [22, '22nd'], [111, '111th']]) assert.strictEqual(stageTrackerOrdinal(n), w, 'ordinal ' + n);
 // The lit chevron carries the word: 080 for the members, the 085 detour for the exhausted one.
 const lit = it => stageTrackerSegments(it, stages, now).find(s => s.state === 'active');
 assert.strictEqual(lit(front).short, 'Merging · front of train');
