@@ -192,6 +192,10 @@ func TestClaimHooks_SubmitClaimFacts(t *testing.T) {
 		{"contributor", claims.KindContributor, false, stagelabels.Claimed},
 		{"external", claims.KindExternal, false, stagelabels.Claimed},
 	}
+	// The claimed-by label write goes to an unreachable host: a transient
+	// failure the hooks now retry (hivecommons/hive#14766). Pauses are
+	// instant here so the queued release is not held behind the backoff.
+	swapClaimsEffectRetry(t, claimsEffectAttempts, nil)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sink, writer := stageenginetest.NewSink(stageenginetest.Options{Issue: github.IssueDeriver()})
