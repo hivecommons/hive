@@ -73,20 +73,17 @@ func TestSandboxedKickArchivesLogAndServesFullLog(t *testing.T) {
 	}
 	waitIdle(t, m, "deps")
 
+	// The archive is written after m.mu is released, so poll (ticker, not a
+	// fixed sleep: the sleep ratchet forbids new time.Sleep calls in tests).
 	var run *crux.SandboxRun
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+	waitFor(t, "sandbox kick log archive", func() bool {
 		run = m.AllStatuses()["deps"].SandboxLastRun
-		if run != nil && run.LogID != "" {
-			if _, err := os.Stat(filepath.Join(logDir, "deps", run.LogID)); err == nil {
-				break
-			}
+		if run == nil || run.LogID == "" {
+			return false
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if run == nil || run.LogID == "" {
-		t.Fatalf("SandboxLastRun must name its archive, got %+v", run)
-	}
+		_, err := os.Stat(filepath.Join(logDir, "deps", run.LogID))
+		return err == nil
+	})
 	if !strings.HasSuffix(run.LogID, "-sandbox.log") {
 		t.Errorf("LogID = %q, want the -sandbox.log suffix", run.LogID)
 	}
