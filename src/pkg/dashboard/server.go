@@ -40,6 +40,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 //go:embed static
@@ -494,6 +495,11 @@ type Server struct {
 	// is JSON-encoded as-is (cmd/hive passes gfi.Stats); typed as any so the
 	// dashboard does not import pkg/gfi (import ratchets).
 	goodFirstIssueStats atomic.Pointer[func() any]
+	// writebackGate is the unsolicited write-back gate (api_writeback.go);
+	// sentinelFindings is the ring behind /api/sentinel.
+	writebackMu      sync.RWMutex
+	writebackGate    *writeback.Gate
+	sentinelFindings sentinelFindings
 
 	// forgeAppInventoryFn supplies the Forge App tab's key inventory from
 	// cmd/hive (resolved active key path + per-app-id PVC keys, fingerprints
@@ -3643,6 +3649,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		payload.EvalLoopStatus = &loop
 	}
 	payload.UpgradeProgress = s.upgradeProgress(status, now)
+	payload.Writeback = s.WritebackStatus()
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
@@ -3658,6 +3665,10 @@ type statusWithWebhooks struct {
 	// countdown, derived at serve time (#14856). Absent on a hive the hub
 	// does not manage and that has no upgrade in flight.
 	UpgradeProgress *spoke.UpgradeProgress `json:"upgradeProgress,omitempty"`
+	// Writeback is the unsolicited write-back gate's live state: suppressed
+	// writes in the last 24h, per-repo first_seen / writable / mode, and the
+	// banners for repos the hive can now write to but left untouched.
+	Writeback *writeback.Status `json:"writeback,omitempty"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {

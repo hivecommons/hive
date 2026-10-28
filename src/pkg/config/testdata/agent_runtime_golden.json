@@ -720,6 +720,9 @@
   "decisions": {
     "delegate": {}
   },
+  "writeback": {
+    "unsolicited": {}
+  },
   "chat": {
     "grounded_answers": {}
   },

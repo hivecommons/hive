@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/holdguard"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 var (
@@ -207,8 +208,17 @@ func enforceHoldGuard(
 			// exclusion above still holds every tick; side effects wait.
 			continue
 		}
+		// Hold-gate upkeep is own-only (writeback.KindHoldGateNotice): the
+		// reReview exclusion above already blocks the merge internally; a
+		// drift comment and re-hold label on a human's PR the hive never
+		// opened is the torch-spyre spam. The gate records the suppression
+		// for the dashboard.
+		if d := ghClient.WritebackAllowed(repo, ghClient.WritebackItemForPR(pr), writeback.KindHoldGateNotice, holdguard.CommentBody(drift)); !d.Allowed {
+			logger.Info("hold guard: drift notice kept off GitHub by write-back gate", "repo", repo, "pr", pr.Number, "reason", d.Reason)
+			continue
+		}
 		if !rec.Commented {
-			if err := writer.CreateIssueComment(ctx, pr.Repo, pr.Number, holdguard.CommentBody(drift)); err != nil {
+			if err := writer.CreateIssueComment(ctx, pr.Repo, pr.Number, holdguard.CommentBody(drift)); err != nil { // writeback:gated
 				// Retry the whole episode next tick rather than re-holding
 				// with no explanation — the evidence reaching a human is the
 				// point, and the exclusion above already blocks the merge.
@@ -218,7 +228,7 @@ func enforceHoldGuard(
 			}
 			store.MarkCommented(repo, pr.Number)
 		}
-		if err := writer.AddLabels(ctx, pr.Repo, pr.Number, []string{holdguard.ReHoldLabel}); err != nil {
+		if err := writer.AddLabels(ctx, pr.Repo, pr.Number, []string{holdguard.ReHoldLabel}); err != nil { // writeback:gated
 			// Commented but not re-held: the snapshot stays on the OLD head,
 			// so next tick re-detects the drift (comment deduped) and retries
 			// the label. Never re-arm before the label sticks.
@@ -284,12 +294,21 @@ func maintainHeldPRMergeability(
 		if state != "behind" && state != "dirty" {
 			continue
 		}
+		// Own-only (writeback.KindHoldGateNotice): the merge-from-base push
+		// and the conflict notice are upkeep on the hive's OWN held PRs. A
+		// human's prow-held PR is not the hive's branch to push to or
+		// comment on (torch-spyre, 2026-10-28: 13 "Hold-gate mergeability"
+		// comments on maintainers' PRs).
+		if d := ghClient.WritebackAllowed(repo, ghClient.WritebackItemForPR(pr), writeback.KindHoldGateNotice, holdguard.ConflictCommentBody()); !d.Allowed {
+			logger.Debug("hold guard: held-PR mergeability upkeep kept off GitHub by write-back gate", "repo", repo, "pr", pr.Number, "reason", d.Reason)
+			continue
+		}
 		// Pin the update to the enumerated head: GitHub then refuses it if a
 		// contributor push landed after enumeration, so the hive never stacks
 		// its merge on commits the guard has not evaluated. The post-hoc
 		// IsHygieneMerge check below still covers a push landing after the 202
 		// (hivecommons/hive#14537).
-		if err := ghClient.UpdateBranchExpectedHead(ctx, pr.Repo, pr.Number, pr.HeadSHA, pr.BaseSHA); err != nil {
+		if err := ghClient.UpdateBranchExpectedHead(ctx, pr.Repo, pr.Number, pr.HeadSHA, pr.BaseSHA); err != nil { // writeback:gated
 			if github.IsUpdateBranchStaleHead(err) {
 				// The head moved since enumeration: not a conflict, and not
 				// ours to merge onto. The next tick re-reads the head and the
@@ -309,7 +328,7 @@ func maintainHeldPRMergeability(
 			if rec.ConflictNoted || writer == nil {
 				continue
 			}
-			if cerr := writer.CreateIssueComment(ctx, pr.Repo, pr.Number, holdguard.ConflictCommentBody()); cerr != nil {
+			if cerr := writer.CreateIssueComment(ctx, pr.Repo, pr.Number, holdguard.ConflictCommentBody()); cerr != nil { // writeback:gated
 				logger.Warn("hold guard: posting held-PR conflict notice failed; will retry next pass",
 					"repo", repo, "pr", pr.Number, "error", cerr)
 				continue

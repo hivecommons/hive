@@ -254,6 +254,16 @@ secret exposure, CI gate weakening, test removal, security policy edits, and
 remote code execution patterns. A match applies `sentinel-alert`, posts one
 comment and writes an audit entry. The label blocks Hive approval and every
 automerge lane until a maintainer removes it.
+Whether that label and comment reach GitHub is decided by the **write-back
+containment gate** (`pkg/writeback`): on a PR Hive did not open, sentinel
+writes need ACMM L5 plus the review opt-in label (L6 without it), the repo
+must not be in `issues-only`/`off` mode, and the PR must not predate Hive's
+write access to the repo (backfill guard). Below the gate the finding is
+recorded, audited as `sentinel-finding-suppressed`, and shown in the
+Security tab and `/api/sentinel` — the scan never stops, only the
+unsolicited write does. The same gate fronts hold-gate notices, stage
+labels, supersession and duplicate-fix notices and reporter-trust holds; a
+ratchet test fails on any new direct GitHub write outside the package.
 
 **Trajectory review** runs every 600 seconds by default. A second model
 compares each agent's assigned intent with the last 120 lines of its rendered

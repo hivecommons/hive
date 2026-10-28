@@ -137,8 +137,12 @@ type Deps struct {
 	// RepoListed reports whether repo is in project.repos. nil means every
 	// repo is listed.
 	RepoListed func(repo string) bool
-	Logger     *slog.Logger
-	Now        func() time.Time
+	// Config, when set, is read on every decision instead of the Config
+	// passed to New, so a dashboard edit of the writeback block is live
+	// without re-wiring (cmd/hive passes a closure over the shared config).
+	Config func() Config
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 // Gate is the write-back policy. One per process, built by cmd/hive and
@@ -191,10 +195,18 @@ func (g *Gate) Config() Config {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.cfg
+	return g.cfgLocked()
 }
 
 func repoKey(repo string) string { return strings.ToLower(strings.TrimSpace(repo)) }
+
+// cfgLocked is the policy in force: the live provider when one is set.
+func (g *Gate) cfgLocked() Config {
+	if g.deps.Config != nil {
+		return g.deps.Config()
+	}
+	return g.cfg
+}
 
 func (g *Gate) load() {
 	if g.path == "" {
@@ -323,7 +335,8 @@ func (g *Gate) AllowedPreview(repo string, item Item, kind Kind, preview string)
 }
 
 func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
-	mode := g.cfg.RepoModeFor(repo)
+	cfg := g.cfgLocked()
+	mode := cfg.RepoModeFor(repo)
 	if mode == RepoModeOff {
 		return Decision{Reason: ReasonRepoOff, Detail: fmt.Sprintf("writeback.per_repo[%s].mode is off", repo)}
 	}
@@ -357,7 +370,7 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 	if g.deps.RepoListed != nil && !g.deps.RepoListed(repo) {
 		return Decision{Reason: ReasonRepoNotListed, Detail: repo + " is not in project.repos"}
 	}
-	p := g.cfg.Policy(kind)
+	p := cfg.Policy(kind)
 	if p.OwnOnly {
 		return Decision{Reason: ReasonOwnOnly, Detail: fmt.Sprintf("%s only ever writes on hive-authored items; #%d is by %s", kind, item.Number, item.Author)}
 	}
@@ -392,7 +405,7 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 
 // levelCheckLocked applies the kind's min level to an issue-file decision.
 func (g *Gate) levelCheckLocked(repo string, _ Item, kind Kind, ok Decision) Decision {
-	p := g.cfg.Policy(kind)
+	p := g.cfgLocked().Policy(kind)
 	level := 0
 	if g.deps.LevelFor != nil {
 		level = g.deps.LevelFor(repo)
@@ -406,7 +419,7 @@ func (g *Gate) levelCheckLocked(repo string, _ Item, kind Kind, ok Decision) Dec
 }
 
 func (g *Gate) backfillBlockedLocked(repo string, item Item) (bool, time.Time) {
-	if g.cfg.BackfillEnabled() || item.CreatedAt.IsZero() {
+	if g.cfgLocked().BackfillEnabled() || item.CreatedAt.IsZero() {
 		return false, time.Time{}
 	}
 	rec := g.recordLocked(repo)
@@ -521,15 +534,16 @@ func (g *Gate) Snapshot() Status {
 	defer g.mu.Unlock()
 	now := g.deps.Now().UTC()
 	g.pruneLocked(now)
+	cfg := g.cfgLocked()
 	st := Status{
 		Enabled:       true,
-		MinLevel:      g.cfg.MinLevelOrDefault(),
-		RequireLabels: g.cfg.RequireLabelsEnabled(),
-		Backfill:      g.cfg.BackfillEnabled(),
+		MinLevel:      cfg.MinLevelOrDefault(),
+		RequireLabels: cfg.RequireLabelsEnabled(),
+		Backfill:      cfg.BackfillEnabled(),
 		OptInLabels:   g.optInLabelsLocked(""),
 		Suppressed24h: len(g.recent),
 		Repos:         map[string]RepoStatus{},
-		Kinds:         g.cfg.EffectiveKinds(),
+		Kinds:         cfg.EffectiveKinds(),
 	}
 	per := map[string]int{}
 	for _, s := range g.recent {
@@ -546,9 +560,9 @@ func (g *Gate) Snapshot() Status {
 		if g.deps.LevelFor != nil {
 			level = g.deps.LevelFor(k)
 		}
-		rs := RepoStatus{FirstSeen: rec.FirstSeen, Writable: !rec.WritableAt.IsZero(), WritableAt: rec.WritableAt, Mode: g.cfg.RepoModeFor(k), Level: level, Suppressed24: per[k], PreExisting: len(rec.PreExisting)}
+		rs := RepoStatus{FirstSeen: rec.FirstSeen, Writable: !rec.WritableAt.IsZero(), WritableAt: rec.WritableAt, Mode: cfg.RepoModeFor(k), Level: level, Suppressed24: per[k], PreExisting: len(rec.PreExisting)}
 		st.Repos[k] = rs
-		if rs.PreExisting > 0 && !g.cfg.BackfillEnabled() {
+		if rs.PreExisting > 0 && !cfg.BackfillEnabled() {
 			st.Banners = append(st.Banners, Banner{Repo: k, WritableAt: rec.WritableAt, Untouched: rs.PreExisting,
 				Message: fmt.Sprintf("hive can now write to %s; %d existing PRs were left untouched — enable backfill to process them", k, rs.PreExisting)})
 		}

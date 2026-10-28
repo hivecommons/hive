@@ -33525,6 +33525,203 @@
           }
         }
       }
+    },
+    "/api/writeback/suppressed": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "List write-backs the containment gate suppressed (last 24h)",
+        "description": "Drill-down for the Features → Write-back containment counter: every unsolicited GitHub comment/label/review the central gate (pkg/writeback) refused in the last 24 hours, with what it would have written and where. Filter with ?repo=owner/name, ?kind=<write-back kind>, ?limit=N (default 200).",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one owner/name"
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one write-back kind (e.g. sentinel_comment, stage_label)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000
+            },
+            "description": "Maximum entries returned, newest first"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Suppressed write-backs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "False when the hive booted without the gate"
+                    },
+                    "total_24h": {
+                      "type": "integer",
+                      "description": "Suppressed writes in the 24h window before filtering"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "is_pr": {
+                            "type": "boolean"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "detail": {
+                            "type": "string"
+                          },
+                          "preview": {
+                            "type": "string",
+                            "description": "What hive would have written, when the caller supplied it"
+                          }
+                        }
+                      }
+                    },
+                    "status": {
+                      "type": "object",
+                      "description": "The same block /api/status serves under writeback (knobs, per-repo state, kind matrix, banners)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sentinel": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Sentinel findings, including ones never written to GitHub",
+        "description": "Every PR the sentinel sweep flagged this process lifetime (max 1000, newest first, one per repo#number@head). Findings the write-back gate suppressed (ACMM level below the sentinel floor, no opt-in label, or pre-existing before the repo became writable) carry suppressed=true and appear only here and in the Security tab. Filter with ?repo=owner/name and ?suppressed=true|false.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one owner/name"
+          },
+          {
+            "name": "suppressed",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "Only findings the gate suppressed (true) or wrote to GitHub (false)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sentinel findings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "integer"
+                    },
+                    "suppressed": {
+                      "type": "integer"
+                    },
+                    "writeback": {
+                      "type": "object",
+                      "description": "The same block /api/status serves under writeback"
+                    },
+                    "findings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "rules": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "blocked": {
+                            "type": "boolean"
+                          },
+                          "trusted_reason": {
+                            "type": "string"
+                          },
+                          "suppressed": {
+                            "type": "boolean"
+                          },
+                          "suppressed_reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

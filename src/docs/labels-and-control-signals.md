@@ -1546,6 +1546,7 @@ A `/hive decision …` comment the hive itself wrote as the owner's delegate (it
 - `runs.triage.enabled`, `runs.triage.spec_labels`, and `runs.triage.fix_labels` control run triage labels.
 - `governor.question_autoclose.*` (`HIVE_QUESTION_AUTOCLOSE`, `HIVE_QUESTION_AUTOCLOSE_HOURS`) closes answered `question` issues; see [Question auto-close](#question-auto-close).
 - `governor.claims.*`, `review.human_decision_label`, `hub.contribute_*`, `dashboard.issue_bands.*`, and `HIVE_ACTIONABLE_PRIORITY_LABELS` control the display/contributor/ranking labels above, including contributor label allow/deny filters and per-repo narrowing.
+- `writeback.unsolicited.*`, `writeback.per_repo`, and `writeback.kinds.<kind>` decide whether hive may put an unsolicited label or comment on a PR it did not open at all: each kind has an ACMM floor and, by default, requires the review opt-in label (`review.require_labels`, fallback `hive-review`) on the PR. Below the gate `stage/*`, `sentinel-alert`, `needs-human`, `has-open-pr` and similar labels are tracked internally and shown in the dashboard only. See [What hive writes to GitHub, and when](operator-reference.md#what-hive-writes-to-github-and-when).
 - `work_source.linear.hold_labels` and `work_source.jira.hold_labels` are non-GitHub label-equivalent gates with the different matching rules described above.
 - Not labels: `project.paused_repos` pauses an entire repo; contributor queue holds can park `owner/repo#N` without changing GitHub labels.
 

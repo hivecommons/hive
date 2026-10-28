@@ -519,6 +519,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Settings → Compliance framework picker (#11080, api_compliance_settings.go).
 	// Registered last so the api-reference citations above do not shift.
 	s.mux.HandleFunc("PUT /api/config/governor/compliance", s.handleComplianceFrameworksPut)
+	// Write-back containment (api_writeback.go): suppressed-write drill-down
+	// and the sentinel findings held internally, written or not.
+	s.mux.HandleFunc("GET /api/writeback/suppressed", s.handleWritebackSuppressed)
+	s.mux.HandleFunc("GET /api/sentinel", s.handleSentinel)
 	// Knowledge connector status + manual sync (#11069, api_knowledge_connectors.go).
 	s.registerKnowledgeConnectorRoutes()
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)

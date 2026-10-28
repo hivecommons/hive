@@ -26,6 +26,7 @@ import (
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // ErrNoGitHubClient is returned by *Client methods invoked on a nil receiver.
@@ -74,6 +75,9 @@ type Client struct {
 	// and what every test constructs) means nothing is paused, so the client
 	// behaves exactly as it did before.
 	repoPaused func(repo string) bool
+	// writeback is the unsolicited write-back gate (writeback_gate.go);
+	// nil allows everything.
+	writeback *writeback.Gate
 	// agentServesRepo reports whether an agent is scoped to a repo (#6204).
 	// Guarded by reposMu because the dashboard can re-scope an agent while a
 	// relay goroutine is deciding whether to fulfil a request. Nil (the zero

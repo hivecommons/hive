@@ -1072,6 +1072,31 @@ The `hive/tracking` label also satisfies the tracker-issue check used by `/contr
 
 **Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter.require_labels` is the agent-side gate; configure both if you want the same label to govern both lanes.
 
+## Write-back containment (`writeback`)
+
+ACMM levels and label policy decide what *agents* may do. The `writeback`
+block decides what the *platform* may say on GitHub without being asked:
+sentinel alerts, hold-gate notices, stage labels, supersession and
+duplicate notices, reporter-trust holds, and so on. Each kind has a minimum
+level and, on PRs hive did not open, needs the review opt-in label
+(`review.require_labels`, fallback `hive-review`):
+
+```yaml
+writeback:
+  unsolicited:
+    min_level: 5
+    require_labels: true
+    backfill: false
+  per_repo:
+    torch-spyre/torch-spyre: { mode: issues-only }
+  kinds:
+    sentinel: { min_level: 5, require_label: true, unlabeled_min_level: 6 }
+```
+
+Agent kicks on items already labelled for hive, hive's own PRs and issues,
+and `/hive` command replies are never gated. The default matrix per level
+is in [acmm-policy-matrix.md](acmm-policy-matrix.md#what-hive-will-say-on-github-at-each-level).
+
 ## When to add what
 
 | Add… | …when |

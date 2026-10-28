@@ -44273,6 +44273,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Integrations & observability', label: 'GitLab and Gitea forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Token mint key and TTL', key: 'mint.max_ttl_seconds', text: 'token mint signing key path max ttl lifetime jwt mint.key_path mint.max_ttl_seconds' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Design-first planning', key: 'planning.design_approved_label', text: 'planning design approved label architect revisions concurrent designs plan from label planning.design_approved_label planning.max_concurrent_designs planning.max_design_revisions planning.plan_from_label' },
+      { tab: 'Features', section: 'Autonomy & ACMM', label: 'Write-back containment', key: 'writeback.unsolicited.min_level', text: 'write-back writeback containment unsolicited comments labels sentinel hold-gate stage labels opt-in label backfill per repo mode suppressed acmm level writeback.unsolicited.min_level writeback.unsolicited.require_labels writeback.unsolicited.backfill writeback.per_repo writeback.kinds' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Superseded PR grace period', key: 'supersession_sweep.grace_period', text: 'supersession superseded grace period close contributor pr supersession_sweep.grace_period' },
       { tab: 'Features', section: 'Quality loops & release health', label: 'Compliance posture windows', key: 'compliance.posture_checks.window_days', text: 'compliance posture look-back window history retention compliance.posture_checks.window_days compliance.posture_checks.history_days' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Swarm banner wording', key: 'swarm.event_name', text: 'swarm event name call to arms leaderboard title banner swarm.event_name swarm.call_to_arms swarm.leaderboard_title' },
@@ -53043,6 +53044,12 @@ function burnAreaChart() {
           <div class="config-field"><label>Exempt logins ${yamlHint('sentinel.exempt_logins[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Exempt logins', `Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.`)}</label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
           <div class="config-field"><label>Repos (optional allow-list) ${yamlHint('sentinel.repos[]')}</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
         </div>`;
+      setTimeout(loadSentinelFindings, 0);
+      const suspiciousFindings = `
+        <div class="qa-schedule" id="sentinel-findings">
+          <div class="qa-schedule-label">Sentinel findings ${settingHelpMark('settings', 'features', 'Write-back containment', `Every PR the sentinel flagged this process lifetime, including findings the write-back containment gate kept off GitHub (ACMM level below the sentinel floor, no opt-in label, or a PR that predates hive's write access). Suppressed findings exist only here and in /api/sentinel.`)}</div>
+          <div id="sentinel-findings-host"><div class="qa-note">Loading…</div></div>
+        </div>`;
 
       return `
         ${securityModelDatalistHtml()}${agentList}
@@ -53052,7 +53059,7 @@ function burnAreaChart() {
         ${renderSecuritySection('Access', renderGovAccess())}
         ${renderSecuritySection('Input Defense', inputDefense)}
         ${renderSecuritySection('Merge Gates', mergeGates)}
-        ${renderSecuritySection('Suspicious Activity', suspicious)}
+        ${renderSecuritySection('Suspicious Activity', suspicious + suspiciousFindings)}
         ${renderSecuritySection('Isolation', isolation)}
         ${renderSecuritySection('Write Surface', writeSurface)}
         ${renderSecuritySection('Backup', backupKey)}`;
@@ -53998,6 +54005,7 @@ function burnAreaChart() {
           </div>
           <div class="config-help">Applies on the next planning pass. Plan and design label lists stay yaml-only.</div>
         </div>
+        ${renderWritebackContainmentSection(f, platformDefaults)}
         `)}
 
         ${featuresSectionHtml('work-intake', `
@@ -54645,6 +54653,131 @@ function burnAreaChart() {
     // schedule table is loaded separately (read-only, its own endpoint) via
     // loadQuestionAutocloseSchedule, scheduled with setTimeout the same way
     // renderGovFeatures kicks off loadRotationHeadroom.
+    // Write-back containment (Settings → Features → Autonomy & ACMM). The
+    // three unsolicited knobs, the per-repo mode map and the per-kind
+    // level/label matrix are writeback.* in hive.yaml; the counter and
+    // drill-down read the live gate through /api/writeback/suppressed.
+    // Everything rendered here comes from GitHub (repo names, numbers,
+    // previews) and goes through esc().
+    function renderWritebackContainmentSection(f, platformDefaults) {
+      f = f || {}; platformDefaults = platformDefaults || {};
+      const defMin = platformDefaults.writebackMinLevel || 5;
+      const optIn = (f.writebackOptInLabels || []).join(', ') || 'hive-review';
+      const modes = f.writebackRepoModes || ['off', 'issues-only', 'labels-only', 'full'];
+      const perRepo = f.writebackPerRepo || {};
+      const perRepoText = Object.keys(perRepo).sort().map(r => r + '=' + perRepo[r]).join('\n');
+      const matrix = f.writebackKindMatrix || [];
+      const overrides = f.writebackKinds || {};
+      setTimeout(loadWritebackSuppressed, 0);
+      const rows = matrix.map(row => {
+        const k = String(row.kind || ''); const p = row.policy || {}; const ov = overrides[k] || {};
+        const scope = p.own_only ? 'hive-authored only' : (p.require_label ? 'opt-in label' : 'any item');
+        const unl = p.unlabeled_min_level ? ` · without label L${esc(String(p.unlabeled_min_level))}` : '';
+        return `<tr data-wb-kind="${esc(k)}">
+          <td><code>${esc(k)}</code></td>
+          <td>${esc(scope)}${unl}</td>
+          <td><input type="number" min="0" max="6" step="1" class="wb-kind-level" value="${esc(ov.min_level != null ? String(ov.min_level) : '')}" placeholder="${esc(String(p.min_level || 0))}" ${p.own_only ? 'disabled title="hive-authored items only; the ACMM floor is the hold-gate level"' : ''} data-change-action="markDirtyWritebackKinds" aria-label="${esc(k)} minimum level"></td>
+          <td>${p.own_only ? '—' : `<select class="wb-kind-label" data-change-action="markDirtyWritebackKinds" aria-label="${esc(k)} requires opt-in label"><option value="" ${ov.require_label == null ? 'selected' : ''}>default (${p.require_label ? 'yes' : 'no'})</option><option value="true" ${ov.require_label === true ? 'selected' : ''}>yes</option><option value="false" ${ov.require_label === false ? 'selected' : ''}>no</option></select>`}</td>
+        </tr>`;
+      }).join('');
+      return `
+        <div class="settings-subsection" id="writeback-containment">
+          <div class="settings-subsection-title">Write-back containment ${settingHelpMark('settings', 'features', 'Write-back containment', `One gate every unsolicited GitHub comment, label and review passes through (<code>writeback.*</code>). It applies to items hive did not open and nobody opted in on: platform sweeps (sentinel, hold-gate notices, stage labels, supersession and duplicate notices, reporter-trust holds, …) stay silent on GitHub below the floor and surface in the dashboard instead. It never blocks hive's own PRs and issues, replies to <code>/hive</code> commands, or work started from this dashboard.`)}</div>
+          <div id="writeback-banners"></div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Minimum ACMM level ${yamlHint('writeback.unsolicited.min_level')} ${settingHelpMark('settings', 'features', 'Write-back minimum level', `Below this ACMM level hive writes nothing unsolicited on PRs or issues it did not open. Raises every per-kind floor in the matrix below; it never lowers one. 0 or empty uses the default (${esc(String(defMin))}).`)}</label><input type="number" min="0" max="6" step="1" value="${esc(f.writebackMinLevel != null ? String(f.writebackMinLevel) : '')}" placeholder="${esc(String(defMin))}" data-change-action="markDirty" data-arg0="features" data-arg1="writebackMinLevel" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="config-toggle" data-setting-key="writeback.unsolicited.require_labels"><div class="config-toggle-switch ${f.writebackRequireLabels !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackRequireLabels"></div><span class="config-toggle-label">Only PRs carrying the review opt-in label ${settingHelpMark('settings', 'features', 'Write-back requires opt-in label', `When on (default), unsolicited write-backs on a foreign PR also need the review opt-in label (${esc(optIn)}, from review.require_labels). Turning it off lets each kind's level floor alone decide.`)}</span></div>
+          <div class="config-toggle" data-setting-key="writeback.unsolicited.backfill"><div class="config-toggle-switch ${f.writebackBackfill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackBackfill"></div><span class="config-toggle-label">Backfill pre-existing items ${settingHelpMark('settings', 'features', 'Write-back backfill', `Off (default): when hive first sees a repo, or first gains write access to one, PRs and issues created before that moment are never written to unsolicited. On: process them like new items.`)}</span></div>
+          <div class="config-field"><label>Per-repo mode ${yamlHint('writeback.per_repo')} ${settingHelpMark('settings', 'features', 'Write-back per-repo mode', `One <code>owner/name=mode</code> per line. Modes: ${esc(modes.join(', '))}. <code>off</code> writes nothing unsolicited there; <code>issues-only</code> allows only hive-filed issues (e.g. a repo listed so the deps agent can file regressions); <code>labels-only</code> allows labels but no comments; <code>full</code> skips the level and label gates for that repo. Empty lines clear.`)}</label><textarea rows="3" spellcheck="false" placeholder="torch-spyre/torch-spyre=issues-only" data-change-action="markDirtyWritebackPerRepo" data-arg-types="v">${esc(perRepoText)}</textarea></div>
+          <details class="config-field"><summary>Per-kind matrix ${yamlHint('writeback.kinds.<kind>.{min_level,require_label}')} ${settingHelpMark('settings', 'features', 'Write-back per-kind matrix', `What hive will say on GitHub at each ACMM level. Each kind has a minimum level and whether the opt-in label is required; leave a cell empty to keep the default shown as placeholder.`)}</summary>
+            <table class="qa-table" id="wb-kind-table"><thead><tr><th>Kind</th><th>Scope</th><th>Min level</th><th>Opt-in label</th></tr></thead><tbody>${rows}</tbody></table>
+          </details>
+          <div class="qa-schedule">
+            <div class="qa-schedule-label">Suppressed write-backs (last 24h): <span id="wb-suppressed-count">…</span></div>
+            <div id="wb-suppressed-host"><div class="qa-note">Loading…</div></div>
+          </div>
+          <div class="config-help">Applies on the next sweep. Findings the gate suppressed stay visible in Security → Sentinel and <code>/api/sentinel</code>.</div>
+        </div>`;
+    }
+
+    function markDirtyWritebackPerRepo(text) {
+      const out = {};
+      String(text || '').split('\n').forEach(line => {
+        const t = line.trim(); if (!t) return;
+        const i = t.indexOf('='); if (i <= 0) return;
+        out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+      });
+      markDirty('features', 'writebackPerRepo', out);
+    }
+
+    function markDirtyWritebackKinds() {
+      const out = {};
+      document.querySelectorAll('#wb-kind-table tr[data-wb-kind]').forEach(tr => {
+        const kind = tr.dataset.wbKind; const lvl = tr.querySelector('.wb-kind-level'); const lab = tr.querySelector('.wb-kind-label');
+        const ov = {};
+        if (lvl && !lvl.disabled && lvl.value !== '') ov.min_level = +lvl.value;
+        if (lab && lab.value !== '') ov.require_label = lab.value === 'true';
+        out[kind] = Object.keys(ov).length ? ov : null;
+      });
+      markDirty('features', 'writebackKinds', out);
+    }
+
+    function renderWritebackBanners(status) {
+      const host = document.getElementById('writeback-banners');
+      if (!host) return;
+      const banners = (status && status.banners) || [];
+      host.innerHTML = banners.map(b => `<div class="qa-note warn">${esc(b.message || '')}</div>`).join('');
+    }
+
+    async function loadWritebackSuppressed() {
+      const host = document.getElementById('wb-suppressed-host');
+      const count = document.getElementById('wb-suppressed-count');
+      if (!host) return;
+      try {
+        const resp = await fetch('/api/writeback/suppressed?limit=100');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error((data && data.error) || ('HTTP ' + resp.status));
+        if (count) count.textContent = String(data.total_24h || 0);
+        renderWritebackBanners(data.status);
+        const items = data.items || [];
+        if (!data.enabled) { host.innerHTML = '<div class="qa-note">Gate not active in this process.</div>'; return; }
+        if (items.length === 0) { host.innerHTML = '<div class="qa-note">Nothing suppressed in the last 24 hours.</div>'; return; }
+        const rows = items.map(it => `<tr>
+            <td>${esc(it.at ? new Date(it.at).toLocaleString() : '')}</td>
+            <td>${esc(it.repo || '')}${it.is_pr ? '#' : ' issue #'}${esc(String(it.number || ''))}</td>
+            <td><code>${esc(it.kind || '')}</code></td>
+            <td>${esc(it.reason || '')}</td>
+            <td>${esc(it.preview || it.detail || '')}</td>
+          </tr>`).join('');
+        host.innerHTML = `<table class="qa-table"><thead><tr><th>When</th><th>Where</th><th>Kind</th><th>Why suppressed</th><th>Would have written</th></tr></thead><tbody>${rows}</tbody></table>`;
+      } catch (e) {
+        host.innerHTML = '<div class="qa-note warn">Suppressed list unavailable: ' + esc(e.message) + '</div>';
+      }
+    }
+
+    async function loadSentinelFindings() {
+      const host = document.getElementById('sentinel-findings-host');
+      if (!host) return;
+      try {
+        const resp = await fetch('/api/sentinel');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error((data && data.error) || ('HTTP ' + resp.status));
+        const items = (data.findings || []).slice(0, 100);
+        if (items.length === 0) { host.innerHTML = '<div class="qa-note">No sentinel findings since this process started.</div>'; return; }
+        const rows = items.map(it => `<tr>
+            <td>${esc(it.at ? new Date(it.at).toLocaleString() : '')}</td>
+            <td>${esc(it.repo || '')}#${esc(String(it.number || ''))}</td>
+            <td>${esc(it.author || '')}</td>
+            <td>${esc((it.rules || []).join(', '))}</td>
+            <td>${it.suppressed ? '<span class="ham-badge-sentinel">dashboard only</span> ' + esc(it.suppressed_reason || '') : (it.blocked ? 'commented + labelled' : esc(it.trusted_reason || 'trusted'))}</td>
+          </tr>`).join('');
+        host.innerHTML = `<div class="qa-note">${esc(String(data.total || 0))} finding(s), ${esc(String(data.suppressed || 0))} kept off GitHub by write-back containment.</div><table class="qa-table"><thead><tr><th>When</th><th>PR</th><th>Author</th><th>Rules</th><th>Outcome</th></tr></thead><tbody>${rows}</tbody></table>`;
+      } catch (e) {
+        host.innerHTML = '<div class="qa-note warn">Sentinel findings unavailable: ' + esc(e.message) + '</div>';
+      }
+    }
+
     function renderGovQuestionAutocloseSection(qa) {
       qa = qa || {};
       const qaOn = qa.enabled === true;

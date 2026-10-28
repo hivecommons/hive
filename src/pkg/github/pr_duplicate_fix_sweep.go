@@ -11,6 +11,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Same-issue duplicate-PR resolver (hivecommons/hive#14799). When two open
@@ -36,6 +38,9 @@ const (
 	// DuplicateFixActionEscalated: the earlier PR is red or stale while the
 	// later is green; the later PR was parked for the owner.
 	DuplicateFixActionEscalated = "escalated"
+	// DuplicateFixActionSuppressed records a pair the write-back gate kept
+	// off GitHub (dashboard only).
+	DuplicateFixActionSuppressed = "suppressed"
 
 	// DefaultDuplicateFixSweepMaxActions bounds writes per sweep.
 	DefaultDuplicateFixSweepMaxActions = 10
@@ -298,6 +303,17 @@ func (c *Client) resolveDuplicateFixGroup(ctx context.Context, repo string, link
 			Issue:     link.Issue,
 			KeeperPR:  keeper.GetNumber(),
 		}
+		// Write-back gate: the later PR may be a contributor's. Below the
+		// level duplicate_fix_notice needs, or without the opt-in label,
+		// the pair is logged and nothing is written on it.
+		item := c.sentinelWritebackItem(later)
+		item.HiveAuthored = item.HiveAuthored || !facts.LaterHuman
+		if d := c.WritebackAllowed(repo, item, writeback.KindDuplicateFixNotice, RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, true)); !d.Allowed {
+			event.Action = DuplicateFixActionSuppressed
+			event.Reason = "write-back gate: " + d.Reason
+			events = append(events, event)
+			continue
+		}
 		switch verdict {
 		case DuplicateFixVerdictEscalate:
 			event.Action = DuplicateFixActionEscalated
@@ -308,7 +324,7 @@ func (c *Client) resolveDuplicateFixGroup(ctx context.Context, repo string, link
 			body := fmt.Sprintf("%s\nBoth this PR and #%d fix #%d. #%d opened first but its checks are %s%s while this PR is green, "+
 				"so the hive is asking the owner to pick rather than closing either.",
 				duplicateFixMarker, keeper.GetNumber(), link.Issue, keeper.GetNumber(), earlierChecks, duplicateFixStaleNote(earlierStale))
-			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), body); err != nil {
+			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), body); err != nil { // writeback:gated
 				return events, fmt.Errorf("commenting on duplicate PR %s#%d: %w", repo, later.GetNumber(), err)
 			}
 			if err := c.parkSupersededPR(ctx, repo, later.GetNumber()); err != nil {
@@ -317,13 +333,13 @@ func (c *Client) resolveDuplicateFixGroup(ctx context.Context, repo string, link
 		case DuplicateFixVerdictCommentOnly:
 			event.Action = DuplicateFixActionCommented
 			event.Reason = fmt.Sprintf("duplicate-of:%d", keeper.GetNumber())
-			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, true)); err != nil {
+			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, true)); err != nil { // writeback:gated
 				return events, fmt.Errorf("commenting on duplicate PR %s#%d: %w", repo, later.GetNumber(), err)
 			}
 		default:
 			event.Action = DuplicateFixActionClosed
 			event.Reason = fmt.Sprintf("duplicate-of:%d", keeper.GetNumber())
-			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, false)); err != nil {
+			if err := c.CreateIssueComment(ctx, repo, later.GetNumber(), RenderDuplicateFixComment(keeper.GetNumber(), link.Issue, false)); err != nil { // writeback:gated
 				return events, fmt.Errorf("commenting on duplicate PR %s#%d: %w", repo, later.GetNumber(), err)
 			}
 			if err := c.labelAndCloseSupersededPR(ctx, owner, repoName, later.GetNumber()); err != nil {

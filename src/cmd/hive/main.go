@@ -2710,6 +2710,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 		if b.saved.ConfigOverrides != nil {
 			applyConfigOverrides(b.cfg, b.saved.ConfigOverrides)
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
+			b.observeWritebackRepos()
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
 			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
 			b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
@@ -2771,6 +2772,7 @@ func (b *boot) bootDashboard() { b.bootDashboardWith(defaultBootDashboardDeps())
 func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
+	b.dashSrv.SetWritebackGate(b.writebackGate())
 	b.dashSrv.SetMutationStats(func() interface{} {
 		if b.mutationStats == nil {
 			return nil
@@ -4058,6 +4060,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 
 		// Re-sync subsystems that cache config values
 		b.ghClient.SetRepos(b.cfg.Project.Repos)
+		b.observeWritebackRepos()
 		if b.metricsCollector != nil {
 			b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 		}
@@ -5884,6 +5887,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// way, so re-install it too — a hub-delivered filter must take
 				// effect on the next enumeration, not the next restart.
 				b.ghClient.SetRepos(b.cfg.Project.Repos)
+				b.observeWritebackRepos()
 				if b.metricsCollector != nil {
 					b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 				}
@@ -9864,9 +9868,18 @@ func sentinelSweepOptions(cfg *config.Config, ghClient *github.Client, dashSrv *
 			if dashSrv == nil {
 				return
 			}
+			// Findings the write-back gate refused still reach the Security
+			// tab and /api/sentinel: the scan happened, only the GitHub
+			// write did not (#writeback containment).
+			dashSrv.RecordSentinelFinding(event)
 			detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, head=%s, rules=%s",
 				event.Repo, event.Number, event.Author, event.HeadSHA, strings.Join(event.Rules(), ","))
-			dashSrv.AuditLogRecord("system", "sentinel-alert", detail, "", event.Repo, event.Number)
+			action := "sentinel-alert"
+			if event.Suppressed {
+				action = "sentinel-finding-suppressed"
+				detail += ", suppressed=" + event.SuppressedReason
+			}
+			dashSrv.AuditLogRecord("system", action, detail, "", event.Repo, event.Number)
 		},
 	}
 }
@@ -9908,7 +9921,7 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 	}
 	logSentinelResult(result, logger)
 	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
-		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
+		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "suppressed", len(result.Suppressed), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,

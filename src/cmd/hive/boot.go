@@ -40,6 +40,7 @@ import (
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // boot is the state main() used to keep in ~40 local variables, made explicit
@@ -117,6 +118,8 @@ type boot struct {
 	approvalInbox                 *toolapprove.Inbox
 	issueClaims                   *claims.Ledger
 	dashSrv                       *dashboard.Server
+	writeback                     *writeback.Gate
+	writebackOnce                 sync.Once
 	beadStores                    map[string]*beads.Store
 	beadStoreLoadFailures         int
 	tokenCollector                *tokens.Collector

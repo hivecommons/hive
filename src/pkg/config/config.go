@@ -28,6 +28,7 @@ import (
 	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/writeback"
 	"gopkg.in/yaml.v3"
 )
 
@@ -148,6 +149,10 @@ type Config struct {
 	// `delegate` block gates the activity monitor's "Let hive decide"
 	// action (default on).
 	Decisions DecisionsConfig `yaml:"decisions,omitempty" json:"decisions,omitempty"`
+	// Writeback is the unsolicited GitHub write-back containment gate
+	// (per-kind ACMM floor + review opt-in label, per-repo mode, backfill
+	// guard). Zero value = all three knobs on with the default matrix.
+	Writeback writeback.Config `yaml:"writeback,omitempty" json:"writeback,omitempty"`
 	// Chat tunes the dashboard Hive Chat panel; its `grounded_answers`
 	// block gates the model-backed answer path (default on).
 	Chat ChatConfig `yaml:"chat,omitempty" json:"chat,omitempty"`

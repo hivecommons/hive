@@ -123,6 +123,39 @@ Existing autonomous lanes can open issues, create PRs, and auto-merge on green C
 | operations (paused) | full | `operations-full.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
+## What hive will say on GitHub at each level
+
+ACMM constrains *agents*; the platform sweeps (sentinel, hold guard, stage
+labels, supersession, …) are not agents and used to run unconditionally
+over `project.repos`. Since the write-back containment gate
+(`pkg/writeback`, see
+[operator-reference.md](operator-reference.md#what-hive-writes-to-github-and-when))
+each *unsolicited* write-back kind has its own floor, and on a PR hive did
+not open it additionally needs the review opt-in label
+(`review.require_labels`, default `hive-review`). Hive-authored PRs and
+issues, `/hive` command replies and dashboard-triggered actions are never
+gated. Defaults (override under `writeback.kinds.<kind>`):
+
+| Write-back kind | L1–L3 | L4 | L5 | L6 |
+| --- | --- | --- | --- | --- |
+| `sentinel` comment + `sentinel-alert` label | dashboard only | dashboard only | opt-in label only | all PRs |
+| `hold_gate_notice` (mergeability / drift) | — | hive PRs only | hive PRs only | hive PRs only |
+| `stage_label`, `needs_decision_comment` on foreign PRs | internal tracking | internal tracking | opt-in label | opt-in label |
+| `supersession_notice`, `duplicate_fix_notice`, `reporter_trust_hold`, `covered_by_pr_label`, `issue_close`, `parent_issue_edit`, `gate_comment` | — | — | opt-in label | opt-in label |
+| `supersession_close`, `contributor_adopt`, `ci_rerun` | — | — | — | opt-in label |
+| `verdict_label` | L3: opt-in label | opt-in label | opt-in label | opt-in label |
+| `claim_comment` | — | opt-in label | opt-in label | opt-in label |
+| `welcome_comment` | — | — | opt-in label | all items |
+| `issue_file` (new hive-authored issues) | L3+ | yes | yes | yes |
+
+In practice: **L4 means hive files issues and talks only on its own PRs**;
+**L5 adds comments and labels on PRs a maintainer labelled `hive-review`**;
+**L6 lets sentinel and welcome comments reach unlabelled PRs**. A repo
+listed only so an agent can file regression issues should carry
+`writeback.per_repo.<repo>.mode: issues-only`, which holds at every level.
+`backfill: false` (default) additionally keeps every kind off items that
+predate hive's first sight of, or write access to, the repo.
+
 ## Example config alignment
 
 `src/hive.yaml.example` uses the built-in `quality` lane for automated test suites, coverage gates, and regression checks. There is no built-in `tester` lane in the ACMM packs, known-agent defaults, or shipped policy templates; operators who want a separate tester must define it as a custom agent with explicit metadata and a policy template.

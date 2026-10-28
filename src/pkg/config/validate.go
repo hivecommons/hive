@@ -128,6 +128,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}
+	if err := c.Writeback.Validate(); err != nil {
+		return err
+	}
 	if err := c.Governor.Labels.Author.Validate(); err != nil {
 		return err
 	}

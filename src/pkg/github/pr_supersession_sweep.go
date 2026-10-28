@@ -7,6 +7,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 const (
@@ -22,7 +24,10 @@ const (
 	SupersessionActionDetectedContributor  = "detected-contributor"
 	SupersessionActionKeptOpen             = "kept-open"
 	SupersessionActionCommentedContributor = "commented-contributor"
-	SupersessionActionCommentedGrace       = "commented-grace"
+	// SupersessionActionSuppressedContributor records a detection the
+	// write-back gate kept off GitHub (dashboard only).
+	SupersessionActionSuppressedContributor = "suppressed-contributor"
+	SupersessionActionCommentedGrace        = "commented-grace"
 )
 
 type SupersessionSweepOptions struct {
@@ -201,6 +206,22 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		return event, "", nil
 	}
 	reason := ""
+	ownPR := identity.Matches(event.Author)
+	if !ownPR {
+		// Write-back gate: every contributor path below (notice, park,
+		// auto-close, park release) writes on a PR the hive did not open.
+		// Below the level supersession_notice needs, or without the opt-in
+		// label, the detection is audited and nothing else happens.
+		item := c.sentinelWritebackItem(pr)
+		if d := c.WritebackAllowed(prRepo, item, writeback.KindSupersessionNotice, supersessionDecisionNotice(prOwner, closer, "")); !d.Allowed {
+			if opts.Audit != nil {
+				event.Action = SupersessionActionSuppressedContributor
+				event.Reason = "write-back gate: " + d.Reason
+				opts.Audit(event)
+			}
+			return event, "", nil
+		}
+	}
 	openFiles, closerFiles, err := c.prFileSets(ctx, prOwner, prRepoName, pr.GetNumber(), closer)
 	if err != nil {
 		return SupersessionSweepEvent{}, "", err
@@ -215,7 +236,6 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	if opts.ACMMLevelForRepo != nil {
 		level = opts.ACMMLevelForRepo(prRepo)
 	}
-	ownPR := identity.Matches(event.Author)
 	if ownPR {
 		return c.resolveOwnSupersededPR(ctx, prRepo, prOwner, prRepoName, pr, event, closer, closerFiles, subset, level, opts.autoCloseSupersededOn())
 	}
@@ -245,7 +265,8 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		}
 		reason = supersessionReasonKeptOpen
 	}
-	if reason == "" && opts.CloseContributorPRs && level >= acmmLevelAutonomous {
+	if reason == "" && opts.CloseContributorPRs && level >= acmmLevelAutonomous &&
+		c.WritebackAllowed(prRepo, c.sentinelWritebackItem(pr), writeback.KindSupersessionClose, "close superseded PR").Allowed {
 		return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod, candidate.Closing)
 	}
 	notice := supersessionDecisionNotice(prOwner, closer, reason)

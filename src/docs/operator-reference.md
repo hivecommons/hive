@@ -915,6 +915,84 @@ between. Two mechanisms close that gap
 | `scanner.skip_issues_with_open_pr` | `true` (unset) | Set `false` to turn off both the pre-dispatch guard and the duplicate-fix sweep; the claim ledger alone then decides, as before. |
 | `governor.auto_close_superseded` | `true` (unset) | At ACMM L6, a **hive-authored** PR whose closing targets are all closed, one of them by a different merged PR, and whose head conflicts with the base (or whose files are a subset of that PR's) is closed by the hive itself as superseded — `hive/superseded`, one notice naming the superseding PR — in the self-authored auto-merge lane (before any review cycle), the supersession sweep, and close-on-merge of the superseding PR. Human-authored PRs are never auto-closed. Set `false` to report the refusal once and leave the PR for a person, as before ([#14965](https://github.com/hivecommons/hive/pull/14965)). See [labels-and-control-signals.md § Supersession](labels-and-control-signals.md#supersession-closed-issue-another-merged-pr). |
 
+## What hive writes to GitHub, and when
+
+Besides the writes an agent asks for through the relay (see
+[github-write-surface.md](github-write-surface.md)), the hive writes to GitHub
+on its own schedule. Every such *unsolicited* write — a comment, label,
+review, issue edit or close on an item hive did not open and nobody opted in
+on — passes through one gate, `writeback.Allowed(repo, item, kind)` in
+`pkg/writeback`, before it reaches the GitHub client. The gate never blocks
+hive's own PRs and issues, replies to explicit `/hive …` commands, work the
+operator started from the dashboard, or agent kicks on items already
+labelled for hive. Below the gate the sweeps still *scan*: sentinel findings
+appear in **Security → Suspicious Activity → Sentinel findings** and
+`/api/sentinel`, hold-gate mergeability notices become dashboard-only, and
+PR stage tracking continues from internal state with no `stage/*` label on
+the foreign PR.
+
+The gate is per write-back *kind*. Each kind has a minimum ACMM level and
+whether the review opt-in label (`review.require_labels`, default
+`hive-review`) is required on the PR; both are overridable per kind under
+`writeback.kinds.<kind>.{min_level, require_label, unlabeled_min_level}`.
+The rationale for each default is the same question: does the hive have, at
+that level, the power the write-back exists to govern?
+
+| Path (code) | Trigger | What it writes | Target set | Gate kind → default |
+| --- | --- | --- | --- | --- |
+| Sentinel sweep + webhook (`pkg/github/sentinel_sweep.go`, `pkg/sentinel`) | 15-min reconcile; `pull_request` webhook | `<!-- hive-sentinel -->` "maintainer review required" comment + `sentinel-alert` label | every open PR in `project.repos`, human or bot | `sentinel` → L5 with opt-in label, L6 without; below: dashboard/API finding only |
+| Hold guard (`cmd/hive/main_helpers.go` hold-drift, `maintainHeldPRMergeability`) | each governor eval | "⚠️ Hold-gate mergeability" / drift comment, re-applied `hold` label, **branch push** merging base | every `hold`-labelled PR, incl. human prow-held ones | `hold_gate_notice` → hive-authored PRs only, L≥4; never foreign PRs |
+| Stage labeler (`pkg/github/stage_labeler.go`, `stage_writer.go`, `pkg/stagelabels`) | stage engine reconcile | `stage/NNN-*` add/remove, `hive:stage-needs-decision` comment, role/author labels | every tracked PR and issue | `stage_label`, `needs_decision_comment` → L5 + opt-in label on foreign PRs; issue stage labels follow the issue filter, not this gate |
+| Supersession sweep (`pr_supersession_sweep.go`, `_autoclose.go`, `_resolve.go`) | hourly sweep | supersession notice comment, `hive/superseded` close, `needs-human` label | contributor PRs overlapping a hive PR | `supersession_notice` → L5 + label; `supersession_close` → L6 + label |
+| Duplicate-fix sweep (`pr_duplicate_fix_sweep.go`, `open_pr_links.go`) | hourly sweep | `hive:duplicate-fix` comment, `has-open-pr` label, `hive/superseded` close | PR pairs fixing one issue | `duplicate_fix_notice` → L5 + label |
+| Reporter-trust reconcile (`pr_reporter_trust.go`, `reporter_trust_wait.go`) | PR watcher | hold comment + `needs-human` | PRs tracing to issues from untrusted reporters | `reporter_trust_hold` → L5 + label |
+| PR↔issue linker (`pr_issue_link.go`, `pr_contributor_link.go`, `linked_prs.go`) | PR watcher | "covered by PR" label on the issue, link comments | issues referenced by any PR | `covered_by_pr_label` → L5 + label |
+| Verdict / decision labels (`pr_decision_operator.go`, `human_decision_label.go`, `legacy_decision_labels.go`, `contribute_verdict_settle.go`) | review verdicts, dashboard decisions | `hive:verdict-*`, decision labels | reviewed PRs | `verdict_label` → L3 + label; dashboard-triggered decisions are solicited |
+| Contributor adopt / nudge / bot takeover (`automerge/automerge_contributor_*.go`, `automerge_bot_takeover.go`) | auto-merge sweep | adopt comment, update-branch push, workflow approval, nudge comments | contributor PRs in the contributor lane | `contributor_adopt` → L6 + label |
+| Claims (`prclaims.go`, `claimed_by_label.go`, `cmd/hive/claimswire.go`, `claimescalation.go`) | claim ledger changes | `claimed-by:*` labels, claim/escalation comments | claimed issues | `claim_comment` → L4 + label (hive-claimed issues are own items) |
+| Issue close / task-list / decomposed parents (`issue_close.go`, `task_list_sweep.go`, `decomposed_parents.go`, `close_on_merge.go`, `tracking_issue.go`) | merges, sweeps | close, body edits (checkbox ticks), `Refs` rewrites | issues linked from hive PRs | `issue_close`, `parent_issue_edit` → L5 + label; hive-filed issues are own items |
+| Gate comments (`pkg/scheduler/clarity_gate.go`, `prior_art_gate.go`, `triage.go`, `issue_blocked.go`, `issue_recheck_soak.go`) | scheduler intake | clarity/prior-art/triage questions, `blocked` labels | issues admitted by the issue filter | `gate_comment` → L5 + label; items carrying the intake label are opted in |
+| Welcome / outreach (`pkg/gfi`, `gfi_forge.go`, `pr_clanker_requested.go`) | good-first-issue selection | welcome comment, `good first issue` label | issues hive advertises | `welcome_comment` → L5 with label, L6 without |
+| Issue filing (`pkg/upstreamwatch/github_filer.go`, `advisory.go`, scanner/deps/regression agents, `dedupe_advisory_close.go`) | agents, advisory digest, upstream watch | **new** issues hive authors, pinned advisory issue + comments | `project.repos` | `issue_file` → L3, no label (this is what listing a repo opts in to; `per_repo.mode: issues-only` keeps only this) |
+| Shared-CI rerun (`shared_ci_rerun.go`) | CI failure watcher | `rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment | PRs with failed shared workflows | `ci_rerun` → L6 + label |
+| Level hold, self-authorization & reporter-trust releases (`pr_level_hold.go`, `automerge/self_authorization_release.go`, `reporter_trust_release.go`) | PR watcher | `hold` label add/remove | agent PRs | own items (hive-authored) — not gated |
+| Migrations & retirements (`hive_hold_migration.go`, `hive_id_label_retire.go`, `claimed_by_human_migration.go`, `origin_labels.go`) | boot, one-shot | label renames | items carrying hive labels | opted in by carrying hive labels |
+
+Paths not yet routed through the gate are counted by the ratchet
+(`pkg/writeback/testdata/direct-writes-baseline.txt`): a test fails on any
+new direct `CreateComment` / `AddLabels` / `CreateReview` / `Edit` call
+outside `pkg/writeback`, and every migration lowers the baseline.
+
+### Configuration
+
+```yaml
+writeback:
+  unsolicited:
+    min_level: 5          # raises every per-kind floor; never lowers one
+    require_labels: true  # foreign PRs also need review.require_labels (fallback hive-review)
+    backfill: false       # never touch items that predate first_seen / first write access
+  per_repo:
+    torch-spyre/torch-spyre: { mode: issues-only }   # off | issues-only | labels-only | full
+  kinds:
+    sentinel: { min_level: 5, require_label: true, unlabeled_min_level: 6 }
+```
+
+Everything is editable under **⚙ → Features → Autonomy & ACMM → Write-back
+containment**, which also shows the per-kind matrix, a counter of suppressed
+writes in the last 24 h with a drill-down (`GET /api/writeback/suppressed`),
+and the backfill banner. `/api/status` carries the same state under
+`writeback`. The per-repo mode is also set from each repo's Projects card.
+
+### Backfill guard
+
+The gate persists `first_seen` per repo in `/data/metrics/writeback.json`
+(`HIVE_WRITEBACK_STATE_PATH`), and records the moment a repo first answers
+2xx after 403/404s as `writable_at`. Items created before the later of the
+two are never written to unsolicited while `backfill: false`. The sweep logs
+one line — `writeback: skipped N pre-existing items on <repo> (backfill
+off)` — and the dashboard shows "hive can now write to `<repo>`; N existing
+PRs were left untouched — enable backfill to process them".
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel evaluates open PRs in the watched repos — human, bot, or agent —
