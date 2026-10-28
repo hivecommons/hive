@@ -747,8 +747,11 @@ func (c *Client) failPRRequest(path string, req PRRequest, err error, nowFn func
 	// work an agent already completed and cannot publish, and it is invisible
 	// in the fleet view because the agent's session ended healthy.
 	reason, missingHead := missingHeadReason(err)
-	if missingHead {
-		c.logger.Error("pr-request watcher: head branch is not on the remote — the agent's push did not authenticate",
+	// Only the first failure of a request is reported at ERROR: the retries of
+	// one request are not new incidents. The watcher cannot tell an
+	// authentication failure from a branch that was never pushed.
+	if missingHead && c.prRetries.failures(path) == 0 {
+		c.logger.Error("pr-request watcher: head branch is not on the remote — the agent's push did not land (never pushed, or push authentication failed)",
 			slog.String("repo", req.Repo), slog.String("head", req.Head),
 			slog.String("agent", req.Agent), slog.String("diagnosis", reason))
 	}
