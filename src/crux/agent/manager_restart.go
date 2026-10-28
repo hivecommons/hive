@@ -488,6 +488,7 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	// never got) a token — see mintAgentTokenUnlocked.
 	m.mintAgentTokenUnlocked(ctx, agent)
 	m.bobPreflightUnlocked(agent)
+	leaseID, leaseErr := m.acquireSharedPoolLeaseForRelaunch(ctx, agent, name)
 
 	// Wait for the new shell to initialize before sending the launch command.
 	// Without this, $(cat /tmp/.hive-bootstrap-*.txt) can fail because the
@@ -501,9 +502,14 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 	// the unlocked window could have deleted this agent from the map (same
 	// guard Start applies after its unlocked phase).
 	if cur, ok := m.agents[name]; !ok || cur != agent {
+		m.discardSharedPoolLease(name, leaseID)
 		return fmt.Errorf("agent %s removed during restart", name)
 	}
-	return m.launchInTmux(ctx, agent)
+	if leaseErr != nil {
+		m.parkRelaunchWithoutLeaseLocked(agent, leaseErr)
+		return leaseErr
+	}
+	return m.launchInTmuxLeasedLocked(ctx, agent, name, leaseID)
 }
 
 // RestartThenSendKick restarts the agent with a clean slate (no bootstrap
@@ -776,15 +782,22 @@ func (m *Manager) RestartMissingSessionWithReason(ctx context.Context, name, rea
 	m.mu.Unlock()
 	m.mintAgentTokenUnlocked(ctx, agent)
 	m.bobPreflightUnlocked(agent)
+	leaseID, leaseErr := m.acquireSharedPoolLeaseForRelaunch(ctx, agent, name)
 	m.mu.Lock()
 	if cur, ok := m.agents[name]; !ok || cur != agent {
+		m.discardSharedPoolLease(name, leaseID)
 		return false, fmt.Errorf("agent %s removed during missing-session recovery", name)
 	}
+	if leaseErr != nil {
+		m.parkRelaunchWithoutLeaseLocked(agent, leaseErr)
+		return false, leaseErr
+	}
 	if agent.launchGen != genBeforeMint {
+		m.discardSharedPoolLease(name, leaseID)
 		return false, nil
 	}
 
-	return true, m.launchInTmux(ctx, agent)
+	return true, m.launchInTmuxLeasedLocked(ctx, agent, name, leaseID)
 }
 
 // restartForKick is the restart a kick delivery performs on its OWN behalf
@@ -926,16 +939,25 @@ func (m *Manager) restartWithReason(ctx context.Context, name, reason string, ki
 	m.mu.Unlock()
 	m.mintAgentTokenUnlocked(ctx, agent)
 	m.bobPreflightUnlocked(agent)
+	// Shared pool: an evicted agent (StateStopped, no lease) restarted here
+	// must take a slot like Start does, or the global cap is bypassed.
+	leaseID, leaseErr := m.acquireSharedPoolLeaseForRelaunch(ctx, agent, name)
 	m.mu.Lock()
 	if cur, ok := m.agents[name]; !ok || cur != agent {
+		m.discardSharedPoolLease(name, leaseID)
 		return fmt.Errorf("agent %s removed during restart", name)
+	}
+	if leaseErr != nil {
+		m.parkRelaunchWithoutLeaseLocked(agent, leaseErr)
+		return leaseErr
 	}
 	if agent.launchGen != genBeforeMint {
 		// Another path won the launch race while we were unlocked.
+		m.discardSharedPoolLease(name, leaseID)
 		return nil
 	}
 
-	return m.launchInTmux(ctx, agent)
+	return m.launchInTmuxLeasedLocked(ctx, agent, name, leaseID)
 }
 
 func isTmuxDuplicateSessionError(err error) bool {

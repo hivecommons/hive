@@ -36,9 +36,12 @@ type sharedAgentPoolState struct {
 }
 
 type sharedAgentPool struct {
-	mu           sync.Mutex
-	path         string
-	max          int
+	mu   sync.Mutex
+	path string
+	max  int
+	// maxPerHive caps the leases a single tenant may hold so one spoke
+	// cannot monopolize the fleet-wide pool with distinct agent names.
+	maxPerHive   int
 	ttl          time.Duration
 	leases       map[string]sharedAgentLease
 	waitingHives map[string]time.Time // hive_id -> first 409 (FIFO position)
@@ -52,9 +55,11 @@ func newSharedAgentPool() *sharedAgentPool {
 	if seconds, err := strconv.Atoi(strings.TrimSpace(os.Getenv("HIVE_SHARED_AGENT_POOL_LEASE_SECONDS"))); err == nil && seconds >= 30 {
 		ttl = time.Duration(seconds) * time.Second
 	}
+	perHive, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("HIVE_SHARED_AGENT_POOL_MAX_PER_HIVE")))
 	p := &sharedAgentPool{
 		path:         sharedAgentPoolPath,
 		max:          max,
+		maxPerHive:   sharedPoolPerHiveCap(max, perHive),
 		ttl:          ttl,
 		leases:       make(map[string]sharedAgentLease),
 		waitingHives: make(map[string]time.Time),
@@ -65,6 +70,40 @@ func newSharedAgentPool() *sharedAgentPool {
 }
 
 func sharedPoolOwnerKey(hiveID, agentName string) string { return hiveID + "\x00" + agentName }
+
+// sharedPoolPerHiveCap resolves the per-tenant lease ceiling: the configured
+// value clamped to [1, max], or half of max (rounded up) when unset/invalid.
+func sharedPoolPerHiveCap(max, configured int) int {
+	if max < 1 {
+		return 0
+	}
+	if configured < 1 {
+		configured = (max + 1) / 2
+	}
+	if configured > max {
+		configured = max
+	}
+	return configured
+}
+
+// perHiveCapLocked returns the effective per-tenant ceiling for pools built
+// without newSharedAgentPool (tests), where maxPerHive may be zero.
+func (p *sharedAgentPool) perHiveCapLocked() int {
+	if p.maxPerHive > 0 {
+		return p.maxPerHive
+	}
+	return sharedPoolPerHiveCap(p.max, 0)
+}
+
+func (p *sharedAgentPool) leasesHeldByLocked(hiveID string) int {
+	n := 0
+	for _, lease := range p.leases {
+		if lease.HiveID == hiveID {
+			n++
+		}
+	}
+	return n
+}
 
 func (p *sharedAgentPool) load() {
 	data, err := os.ReadFile(p.path)
@@ -193,6 +232,15 @@ func (p *sharedAgentPool) handle(w http.ResponseWriter, r *http.Request, s *HubS
 				return
 			}
 			writeSharedPoolLease(w, lease.ID)
+			return
+		}
+		if p.leasesHeldByLocked(req.HiveID) >= p.perHiveCapLocked() {
+			// Per-tenant ceiling: refuse without enqueueing as a waiter so a
+			// capped tenant never blocks the FIFO for others.
+			delete(p.waitingHives, req.HiveID)
+			delete(p.lastSeen, req.HiveID)
+			w.Header().Set("Retry-After", "3")
+			http.Error(w, "shared agent pool is busy: per-hive session limit reached", http.StatusConflict)
 			return
 		}
 		if len(p.leases) >= p.max || p.hasEarlierWaitingHive(req.HiveID, now) {

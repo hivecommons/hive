@@ -258,15 +258,24 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 	}
 	if agent.State != StateRunning {
 		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+			// See SendKick: queue the launch so the kick is held for the
+			// startup drain rather than typed into a CLI-less pane.
+			agent.startupLaunchQueued = true
 			m.mu.Unlock()
-			if err := m.Start(context.Background(), name); err != nil {
+			err := m.Start(context.Background(), name)
+			m.mu.Lock()
+			if err != nil {
+				m.mu.Unlock()
 				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
 			}
-			m.mu.Lock()
 			agent, ok = m.agents[name]
 			if !ok || agent.State != StateRunning {
 				m.mu.Unlock()
 				return fmt.Errorf("agent %s failed to enter running state", name)
+			}
+			if m.deferStartupKickLocked(agent, message) {
+				m.mu.Unlock()
+				return nil
 			}
 		} else {
 			reason := notRunningReason(agent)

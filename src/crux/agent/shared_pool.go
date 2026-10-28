@@ -14,6 +14,16 @@ import (
 const sharedSessionPoolPath = "/api/shared-agent-pool"
 const sharedPoolIdleEvictionDelay = 5 * time.Minute
 
+// Lease renewal cadence and the grace a live session is given across failed
+// renewals. The Hub's default lease TTL is 90s, so a single transient Hub
+// error (timeout, 503 during a hub roll) must not destroy an in-flight turn;
+// the session is evicted only once the lease is close to expiring on the
+// Hub's side. Variables so tests can shrink them.
+var (
+	sharedPoolRenewInterval = 20 * time.Second
+	sharedPoolRenewGrace    = 60 * time.Second
+)
+
 var errSharedSessionPoolBusy = fmt.Errorf("shared session pool is busy")
 
 // SharedSessionPool coordinates heavyweight CLI sessions across Hive tenants.
@@ -134,8 +144,9 @@ func (c *sharedSessionPoolClient) Release(ctx context.Context, leaseID string) e
 }
 
 func (m *Manager) watchSharedPoolLease(ctx context.Context, name, leaseID string) {
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(sharedPoolRenewInterval)
 	defer ticker.Stop()
+	lastRenewed := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -168,12 +179,91 @@ func (m *Manager) watchSharedPoolLease(ctx context.Context, name, leaseID string
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		err := m.sharedPool.Renew(ctx, leaseID)
 		cancel()
-		if err != nil {
-			m.logger.Warn("shared agent pool lease renewal failed; evicting CLI session", "agent", name, "error", err)
-			m.evictSharedPoolSession(name, leaseID)
-			return
+		if err == nil {
+			lastRenewed = time.Now()
+			continue
 		}
+		if sinceOK := time.Since(lastRenewed); sinceOK < sharedPoolRenewGrace {
+			m.logger.Warn("shared agent pool lease renewal failed; retrying before eviction",
+				"agent", name, "error", err, "since_last_renewal", sinceOK.Round(time.Second))
+			continue
+		}
+		m.logger.Warn("shared agent pool lease renewal failed past grace window; evicting CLI session",
+			"agent", name, "error", err, "since_last_renewal", time.Since(lastRenewed).Round(time.Second))
+		m.evictSharedPoolSession(name, leaseID)
+		return
 	}
+}
+
+// acquireSharedPoolLeaseForRelaunch is the shared-pool half of a restart's
+// unlocked mint window. Restart paths relaunch via launchInTmux directly, so
+// without this an evicted agent (StateStopped, no lease) restarted from the
+// dashboard or by recovery would run with no lease and no watcher, bypassing
+// the global cap. Returns "" with no error when the pool is disabled or the
+// agent already holds a lease. m.mu must NOT be held.
+func (m *Manager) acquireSharedPoolLeaseForRelaunch(ctx context.Context, agent *AgentProcess, name string) (string, error) {
+	if m.sharedPool == nil {
+		return "", nil
+	}
+	m.mu.RLock()
+	held := agent.poolLeaseID != ""
+	m.mu.RUnlock()
+	if held {
+		return "", nil
+	}
+	leaseID, err := m.sharedPool.Acquire(ctx, name)
+	if err != nil {
+		return "", fmt.Errorf("acquire shared CLI session slot: %w", err)
+	}
+	return leaseID, nil
+}
+
+// parkRelaunchWithoutLeaseLocked records a relaunch abandoned because no pool
+// slot could be acquired. The CLI was already torn down, so leave the agent
+// StateStopped: the governor's start path (which treats a busy pool as
+// benign) and SendKick's auto-start retry it. Caller holds m.mu.
+func (m *Manager) parkRelaunchWithoutLeaseLocked(agent *AgentProcess, err error) {
+	agent.State = StateStopped
+	agent.LastError = err.Error()
+	m.logger.Warn("relaunch deferred: shared agent pool slot unavailable", "name", agent.Name, "error", err)
+}
+
+// discardSharedPoolLease returns a lease acquired for a relaunch that never
+// happened (agent removed or another path won the launch race). Safe under
+// m.mu: the Hub call runs on its own goroutine and the lease was never
+// attached to the agent, so no agent state needs touching.
+func (m *Manager) discardSharedPoolLease(name, leaseID string) {
+	if leaseID == "" {
+		return
+	}
+	go func() {
+		ctx, done := context.WithTimeout(context.Background(), 8*time.Second)
+		defer done()
+		if err := m.sharedPool.Release(ctx, leaseID); err != nil {
+			m.logger.Warn("shared agent pool lease release failed", "agent", name, "error", err)
+		}
+	}()
+}
+
+// launchInTmuxLeasedLocked attaches a freshly acquired lease (if any) and
+// relaunches, mirroring Start's phase 3: on launch failure the lease is
+// returned, on success the renewal watcher is armed if the agent has none.
+// Caller holds m.mu.
+func (m *Manager) launchInTmuxLeasedLocked(ctx context.Context, agent *AgentProcess, name, leaseID string) error {
+	if leaseID != "" {
+		agent.poolLeaseID = leaseID
+	}
+	if err := m.launchInTmux(ctx, agent); err != nil {
+		if leaseID != "" {
+			agent.poolLeaseID = ""
+			m.discardSharedPoolLease(name, leaseID)
+		}
+		return err
+	}
+	if agent.poolLeaseID != "" {
+		m.startSharedPoolLeaseWatcherLocked(agent, name, agent.poolLeaseID)
+	}
+	return nil
 }
 
 func (m *Manager) evictSharedPoolSession(name, leaseID string) {

@@ -123,11 +123,19 @@ func (m *Manager) SendKick(name string, message string) error {
 
 	if agent.State != StateRunning {
 		if m.sharedPool != nil && agent.State == StateStopped && !agent.Paused && !agent.OperatorStopped {
+			// Mark the launch queued so the relaunch arms deliverStartupKick
+			// and this kick is held until the CLI is ready instead of being
+			// typed into a pane that has no CLI yet (which would trip the
+			// crashed-CLI check below and restart the just-started session).
+			agent.startupLaunchQueued = true
 			m.mu.Unlock()
-			if err := m.Start(context.Background(), name); err != nil {
+			err := m.Start(context.Background(), name)
+			// Re-lock on EVERY path: the deferred Unlock above must find the
+			// lock held, or it faults with "Unlock of unlocked RWMutex".
+			m.mu.Lock()
+			if err != nil {
 				return fmt.Errorf("auto-start stopped agent for kick: %w", err)
 			}
-			m.mu.Lock()
 			agent, ok = m.agents[name]
 			if !ok || agent.State != StateRunning {
 				return fmt.Errorf("agent %s failed to enter running state", name)
