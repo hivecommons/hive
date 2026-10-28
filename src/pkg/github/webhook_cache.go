@@ -506,6 +506,7 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		if hook := prClaimsHook(); hook != nil {
 			hook(d)
 		}
+		c.coverIssuesForWebhookPR(configured, d)
 	}
 	if merged, ok := webhookMergedPR(event, p); ok {
 		// A merged revert names the PR it undid; the payload already carries

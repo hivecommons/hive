@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"sync"
@@ -218,4 +219,71 @@ func (l *ClaimLedger) ApplyPRDelivery(d PRClaimDelivery) (recorded, released int
 		}
 	}
 	return recorded, len(dropped)
+}
+
+// webhookPRCoverActions are the `pull_request` actions after which an open
+// PR may newly cover an issue: it appeared, or its text changed. synchronize
+// carries the same text and is skipped so a push does not re-read every
+// covered issue.
+var webhookPRCoverActions = map[string]bool{
+	"opened":           true,
+	"reopened":         true,
+	"edited":           true,
+	"ready_for_review": true,
+}
+
+// webhookPRCoverTimeout bounds the background CoveredBy submissions one
+// delivery spawns (one issue read and label write each).
+const webhookPRCoverTimeout = 2 * time.Minute
+
+// webhookPRCoverIssues lists the same-repo issues an open PR delivery covers
+// for the stage engine: the strong, hive-authored closing claims. External
+// PRs and non-closing references stay the sweep's call (the issue is kept
+// visible with the PR as context, hivecommons/hive#8876); a closed or merged
+// PR covers nothing (close-on-merge and Uncovered own those). Ascending,
+// deduplicated.
+func webhookPRCoverIssues(d PRClaimDelivery) []int {
+	if d.State != PRStateOpen || !webhookPRCoverActions[d.Action] {
+		return nil
+	}
+	seen := map[int]bool{}
+	var out []int
+	for _, c := range d.Claims {
+		if c.Repo != d.Repo || c.Issue <= 0 || c.ExternalAuthor || c.Reference || seen[c.Issue] {
+			continue
+		}
+		seen[c.Issue] = true
+		out = append(out, c.Issue)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// coverIssuesForWebhookPR stages every issue an open hive PR delivery
+// closes as 040-covered-by-pr, off the webhook response path. The ledger
+// hook above already keeps the issues out of the offerable set; this is the
+// stage side of the same fact, which until now only the hive-open-pr relay
+// emitted — and only for the issue the request declared, so the siblings a
+// PR also closed stayed 010-actionable with the scanner as their actor
+// until the next sweep (hivecommons/hive#14910, #14911 under #14921). Gated
+// on the issue-stage lane: with it off nothing writes stage labels.
+func (c *Client) coverIssuesForWebhookPR(repo string, d PRClaimDelivery) {
+	if c == nil || !c.issueStagePolicy().Enabled {
+		return
+	}
+	issues := webhookPRCoverIssues(d)
+	if len(issues) == 0 {
+		return
+	}
+	c.stageFacts.background.Add(1)
+	go func() {
+		defer c.stageFacts.background.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), webhookPRCoverTimeout)
+		defer cancel()
+		c.coverIssuesByPR(ctx, repo, d.Number, issues)
+		if c.logger != nil {
+			c.logger.Info("webhook PR cover: issues staged as covered by the PR",
+				"repo", repo, "pr", d.Number, "action", d.Action, "issues", issues, "source", "webhook")
+		}
+	}()
 }

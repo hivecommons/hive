@@ -673,10 +673,11 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Title: title, Body: body, Handoff: req.Handoff, Author: res.Author, Head: req.Head, Issues: append([]int(nil), req.IssueN...)})
 	}
 	// The PR supersedes the pr-in-progress start mark on the issues it
-	// names: they move to stage/040-covered-by-pr, where the stage
+	// names — the request's declared issues and every same-repo issue the
+	// body closes: they move to stage/040-covered-by-pr, where the stage
 	// reconciler keeps them while the PR is open (the PR's own stage is
 	// narrated in the issue's stage reason, never written as its label).
-	c.clearInProgressForPR(ctx, req.Repo, res.Number, req.IssueN)
+	c.clearInProgressForPR(ctx, req.Repo, res.Number, c.prCoveredIssues(req.Repo, body, req.IssueN))
 	c.recordWriteAudit(AuditActionAgentPRCreated, meta,
 		WriteTarget{Repo: req.Repo, Number: res.Number},
 		"author", res.Author,

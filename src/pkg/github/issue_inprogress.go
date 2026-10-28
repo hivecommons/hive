@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -177,6 +178,46 @@ func (c *Client) markInProgressStarted(ctx context.Context, repo string, number 
 // the stage reconciler converges the labels on the next cycle anyway.
 func (c *Client) clearInProgressForPR(ctx context.Context, repo string, prNumber int, issues []int) {
 	if !c.inProgressSetting().Enabled || len(issues) == 0 {
+		return
+	}
+	c.coverIssuesByPR(ctx, repo, prNumber, issues)
+}
+
+// prCoveredIssues is every same-repo issue a freshly opened PR covers: the
+// issues the request declared (hive-open-pr --issue) plus the ones its body
+// closes with a GitHub closing keyword. The request names the issue the
+// agent was kicked for, but one PR routinely closes a parent and the
+// scanner-filed sub-issues under it ("Closes #A / Closes #B / Closes #C");
+// covering only the declared issue left the siblings at 010-actionable
+// with the scanner as their actor while the PR was in CI
+// (hivecommons/hive#14910, #14911 under #14921). Ascending, deduplicated,
+// non-positive numbers dropped.
+func (c *Client) prCoveredIssues(repo, body string, declared []int) []int {
+	owner, name := c.splitRepo(repo)
+	seen := map[int]bool{}
+	var out []int
+	add := func(n int) {
+		if n <= 0 || seen[n] {
+			return
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	for _, n := range declared {
+		add(n)
+	}
+	for n := range closingIssueRefs(body, owner, name) {
+		add(n)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// coverIssuesByPR submits one CoveredBy fact per issue naming the open PR,
+// after making sure the repo defines the covered-by-pr label. Best-effort:
+// a failure is logged and the stage sweep converges the labels later.
+func (c *Client) coverIssuesByPR(ctx context.Context, repo string, prNumber int, issues []int) {
+	if len(issues) == 0 {
 		return
 	}
 	pr := c.PRStageRef(repo, prNumber)

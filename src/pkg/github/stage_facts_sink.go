@@ -21,6 +21,18 @@ import (
 type stageFactsState struct {
 	mu   sync.Mutex
 	sink stageengine.FactSink
+	// background counts the fact submissions spawned off a request path
+	// (the webhook PR cover); tests wait on it instead of sleeping.
+	background sync.WaitGroup
+}
+
+// WaitStageFacts blocks until every background fact submission the client
+// spawned has returned. Test support; the hub never needs it.
+func (c *Client) WaitStageFacts() {
+	if c == nil {
+		return
+	}
+	c.stageFacts.background.Wait()
 }
 
 // SetStageFactSink installs the FactSink the client's out-of-cycle writers
