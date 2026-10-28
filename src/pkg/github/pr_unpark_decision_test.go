@@ -391,8 +391,8 @@ func TestSweepIssueUnparkCommandsPRIgnoresUntrustedAndUnparked(t *testing.T) {
 			wantSeen:    1,
 		},
 		{
-			name:        "PR not at 085 is not read",
-			issue:       parkedPR(5, "hive[bot]", []string{"stage/070-fixing"}, humanComment(1, "clubanderson", "/hive decision do it")),
+			name:        "PR outside 070 and 085 is not read",
+			issue:       parkedPR(5, "hive[bot]", []string{"stage/060-reviewed"}, humanComment(1, "clubanderson", "/hive decision do it")),
 			permissions: map[string]string{"clubanderson": "admin"},
 			trusted:     trustedMergerSet("clubanderson"),
 		},

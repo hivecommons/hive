@@ -18,6 +18,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -1703,7 +1704,9 @@ func TestContributorTrustedChangeRequestAnswersRequiresHuman(t *testing.T) {
 		t.Fatalf("reason=%s err=%v merges=%d", reason, err, fx.merges)
 	}
 	detail := engine.stageTracker.details[stageKey("acme", "widget", 7)]
-	o := stageObservation{Lane: stageLaneContributor, HeadSHA: "sha7", Reason: reason, Detail: detail}
+	// Production observations include the author kind; the lane alone does
+	// not distinguish an automated contributor (072) from a human (071).
+	o := stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, HeadSHA: "sha7", Reason: reason, Detail: detail}
 	if v := classifyStage(o); v.Stage != stagelabels.ReturnedToContributor {
 		t.Fatalf("stage=%+v, want returned to contributor", v)
 	}
