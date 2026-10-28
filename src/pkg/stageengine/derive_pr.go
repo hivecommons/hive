@@ -1,6 +1,7 @@
 package stageengine
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
@@ -209,6 +210,9 @@ func derivePR(f Facts) Decision {
 	}
 	list := ObservationsFromPRFacts(f)
 	if len(list) == 0 {
+		if d, ok := adoptedPRDecision(f); ok {
+			return d
+		}
 		if d, ok := parkedPRDecision(f); ok {
 			return d
 		}
@@ -271,8 +275,10 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 			obs.Reason = stagelabels.LaneReasonHiveSignoffAttribution
 		}
 	}
-	if !verdict.Terminal && pass.AdoptionLive && verdict.Stage.YieldsToAdoption() {
+	if !verdict.Terminal && pass.AdoptionLive && verdict.Stage.YieldsToAdoptionFor(pass.Route) {
 		verdict.Stage = stagelabels.AdoptedByHive
+		// 085 yielded to the adoption: no decision is owed on this PR.
+		human = nil
 		if pass.EscalationReason != "" {
 			verdict.Stage = stagelabels.NeedsDecision
 			verdict.Rank = stageRankOwned
@@ -334,6 +340,36 @@ func decisionFrom(v stageVerdict, role stagelabels.Role, obs stageObservation, f
 // at 085 on the human route with whatever role it already wears until the
 // next sweep's lanes speak. An open PR with no park and no lanes stays an
 // Abstain.
+// adoptedPRDecision is the stage of an open PR a fact reports as adopted by
+// the hive (Facts.Adoption live at the PR's head) when no lane observed
+// it: 074 adopted-by-hive, ahead of the 085 park the labels may still
+// carry — adoption is who owns the PR, and the owner answers the question
+// on the superseding PR. A hold label or sentinel alert keeps the park.
+func adoptedPRDecision(f Facts) (Decision, bool) {
+	a := f.Adoption
+	if !f.Open || !a.Adopted || !a.Live || a.Yielded {
+		return Decision{}, false
+	}
+	if f.PR != nil && a.Head != "" && f.PR.HeadSHA != "" && a.Head != f.PR.HeadSHA {
+		return Decision{}, false
+	}
+	if len(f.Park.Holds) > 0 || f.Park.Sentinel || f.Park.NeedsHuman {
+		// A hold, sentinel or `needs-human` label is an explicit park
+		// (hivecommons/hive#14471); only the lane's own 085 yields.
+		return Decision{}, false
+	}
+	reason := "adopted by the hive"
+	if a.SupersededBy > 0 {
+		reason += ": superseded by #" + strconv.Itoa(a.SupersededBy)
+	}
+	return Decision{
+		Stage:  stagelabels.AdoptedByHive,
+		Role:   stagelabels.RoleOf(f.Labels),
+		Kind:   f.Author.Kind,
+		Reason: reason,
+	}, true
+}
+
 func parkedPRDecision(f Facts) (Decision, bool) {
 	if !f.Open || f.Park.ApprovedDirection {
 		return Decision{}, false

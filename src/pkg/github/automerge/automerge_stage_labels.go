@@ -361,6 +361,45 @@ func (c *Engine) stageReconciler(store *stagelabels.Store) (stageengine.Reconcil
 	return r, nil
 }
 
+// restageAfterAdoption re-derives and writes the stage of a PR this pass
+// just adopted, in the same pass: the batch write above ran before the
+// adoption, so the label it placed (085 needs-decision on a reviewer
+// `requires_human`, 072 returned-to-contributor) is the stage of a PR
+// nobody owned. With the adoption on record the stage is 074
+// adopted-by-hive now — the hive owns the PR and answers the question on
+// the superseding PR — not on the next sweep, when the Activity Monitor
+// would have shown "Needs human decision" on it in the meantime
+// (hivecommons/hive#14975 → #14980, #14947 → #14977). A hold label or
+// sentinel alert keeps the park (YieldsToAdoptionFor).
+func (c *Engine) restageAfterAdoption(ctx context.Context, reconciler stageengine.Reconciler, store *stagelabels.Store, p prStagePending) error {
+	rec, ok := store.Get(p.key)
+	if !ok || reconciler == nil || p.facts.PR == nil || p.facts.PR.Pass == nil || !rec.AdoptionLive(p.obs.HeadSHA) {
+		return nil
+	}
+	if p.want.Stage == stagelabels.AdoptedByHive || !p.want.Stage.YieldsToAdoptionFor(p.facts.PR.Pass.Route) {
+		return nil
+	}
+	facts := p.facts
+	pass := *facts.PR.Pass
+	pass.AdoptionLive = true
+	pr := *facts.PR
+	pr.Pass = &pass
+	facts.PR = &pr
+	facts.Adoption = stageengine.AdoptionFacts{Adopted: true, Live: true, Head: rec.AdoptedHead, InPlace: rec.AdoptedInPlace(), SupersededBy: rec.AdoptedBy}
+	tr, err := reconciler.Reconcile(ctx, facts)
+	if err != nil {
+		c.warn("stage labels: re-stage after adoption failed", "repo", p.obs.Display, "pr", p.obs.Number, "superseded_by", rec.AdoptedBy, "error", err)
+		return err
+	}
+	if tr.Outcome.Changed() {
+		c.info("stage labels: adopted PR re-staged", "repo", p.obs.Display, "pr", p.obs.Number, "from", p.want.Stage.String(), "stage", tr.Outcome.Stage.String(), "superseded_by", rec.AdoptedBy)
+		// Leaving 072 in this pass: the nudge queue entry resolves now, as
+		// it would have on the next pass's 072 → 074 observation.
+		c.resolveNudge(ctx, stagelabels.Record{Stage: p.want.Stage}, true, p.obs)
+	}
+	return nil
+}
+
 // prStagePending is one PR the pass derived a stage for, waiting on the
 // reconciler's write before its post-write work (stall note, hand-off
 // entry, 07x nudge/adoption, regression note) runs.
@@ -918,7 +957,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 				prevRec, _ = store.Get(key)
 			}
-			if hadPrev && prevRec.AdoptionLive(obs.HeadSHA) && verdict.Stage.YieldsToAdoption() {
+			if hadPrev && prevRec.AdoptionLive(obs.HeadSHA) && verdict.Stage.YieldsToAdoptionFor(pass.Route) {
 				// The hive owns this PR: whether the lane sees it red,
 				// pending or awaiting a verdict, the stage is 074 until the
 				// adoption is released or the merge gate takes it
@@ -1070,6 +1109,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
+			if err := c.restageAfterAdoption(ctx, reconciler, store, p); err != nil && firstErr == nil {
+				firstErr = err
+			}
 			// The request is one attempt, not a standing order: clear the
 			// label once an attempt was recorded for this head (success or
 			// failure) so a persistent write failure re-parks the PR at 085
@@ -1105,6 +1147,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					n, err := c.adoptContributorPR(ctx, store, key, obs, policy, presence, hasPresence, now)
 					result.Comments += n
 					if err != nil && firstErr == nil {
+						firstErr = err
+					}
+					if err := c.restageAfterAdoption(ctx, reconciler, store, p); err != nil && firstErr == nil {
 						firstErr = err
 					}
 				}

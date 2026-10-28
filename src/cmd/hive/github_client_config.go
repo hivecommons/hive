@@ -133,6 +133,12 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	client.SetReporterConfirmationEnabledFunc(func() bool {
 		return b.cfg.Issues.ReporterConfirmationEnabled()
 	})
+	// Hive-authored superseded PR auto-close (hivecommons/hive#14965):
+	// governor.auto_close_superseded gates it, the repo's ACMM level must
+	// allow own-PR closes.
+	client.SetSupersededAutoClosePolicy(func(repo string) (bool, int) {
+		return b.cfg.Governor.AutoCloseSupersededEnabled(), b.cfg.EffectiveACMMLevelForRepo(repo)
+	})
 	// Relay provenance for the clanker-requested PR parking (#10781). The
 	// ledger is read per call because the client can be configured before
 	// it is built.

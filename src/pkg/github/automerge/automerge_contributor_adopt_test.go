@@ -2343,3 +2343,61 @@ func TestAdoptionClosesCarriesRefs(t *testing.T) {
 		t.Fatalf("adoptionCloses: %v", got)
 	}
 }
+
+// hivecommons/hive#14975 (adopted as #14980) and #14947 (as #14977): the
+// reviewer swarm's `requires_human` on an adopted original must not park it
+// at 085 — the hive owns the PR and answers the question on the superseding
+// PR, so it stays at 074 in the CI/Review column. A person's `needs-human`
+// label still parks it (TestAdoptionSupersederMergedClosesOriginalParkedAt085).
+func TestAdoptionRequiresHumanVerdictKeepsOriginalAt074(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	requiresHuman := ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "close in favour of the superseding PR?"}
+	h.e.contributorLaneVerdict = func(string, int, string) ContributorLaneVerdict { return requiresHuman }
+	adopted := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.e.noteStageVerdict("acme", "widget", 7, requiresHuman)
+	h.observe(adoptPR(7, "aaa", adopted...), stageReasonDecisionRequested)
+	if added := h.addedLabels(); len(added) != 0 || len(h.api.removed) != 0 {
+		t.Fatalf("requires_human on an adopted original must not leave 074: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if rec.Stage != stagelabels.AdoptedByHive || rec.AdoptedBy != 90 {
+		t.Fatalf("record = %+v, want 074 superseded by #90", rec)
+	}
+	for _, c := range h.api.comments {
+		if strings.Contains(c, "Needs human decision") || strings.Contains(c, "needs-decision") {
+			t.Fatalf("no decision may be asked of a person on the adopted original: %q", c)
+		}
+	}
+}
+
+// The same verdict on a PR the pass already wrote 085 for (the swarm
+// answered in the pass that adopted it) is re-derived to 074 in that pass,
+// not on the next sweep: the Activity Monitor never shows "Needs human
+// decision" on an adopted original.
+func TestAdoptionRestagesNeedsDecisionInSamePass(t *testing.T) {
+	fake := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "comment"}}
+	h, done := newAdoptHarnessWith(t, fake, nudgeOnlySink{fake}, adoptPolicy())
+	defer done()
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.clock.advance(time.Hour)
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("not adopted: pulls=%d", len(h.adopt.pulls))
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if rec.Stage != stagelabels.AdoptedByHive {
+		t.Fatalf("adopting pass must leave the record at 074, got %+v", rec)
+	}
+	added := h.addedLabels()
+	if len(added) == 0 || added[len(added)-1] != "stage/074-adopted-by-hive" {
+		t.Fatalf("adopting pass must write 074 itself: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if len(fake.resolved) != 1 || fake.resolved[0] != 7 {
+		t.Fatalf("nudge queue not resolved in the adopting pass: %v", fake.resolved)
+	}
+}

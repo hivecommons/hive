@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,11 +46,16 @@ func resolveFixtures(open supersessionPRFixture) []supersessionPRFixture {
 
 func runResolveSweep(t *testing.T, open supersessionPRFixture, level int) (*SupersessionSweepResult, *supersessionObservations, []int) {
 	t.Helper()
+	return runResolveSweepOpts(t, open, SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return level }})
+}
+
+func runResolveSweepOpts(t *testing.T, open supersessionPRFixture, opts SupersessionSweepOptions) (*SupersessionSweepResult, *supersessionObservations, []int) {
+	t.Helper()
 	server, obs := supersessionSweepServer(t, resolveOrg, resolveRepo, resolveFixtures(open),
 		[]supersessionIssueFixture{{Number: 13780, State: "closed", GraphQLCloserPR: 13760}})
 	defer server.Close()
 	c, rec := newSupersessionTestClient(t, server, resolveOrg, resolveRepo)
-	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return level }})
+	res, err := c.SweepSupersededOpenPRs(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("SweepSupersededOpenPRs: %v", err)
 	}
@@ -127,8 +133,18 @@ func TestSupersessionResolve_SameHeadIsIdempotent(t *testing.T) {
 	}
 }
 
+// autoCloseOff runs the sweep with governor.auto_close_superseded: false,
+// the pre-#14965 behaviour where a conflicting hive PR is reported and left
+// open for a person.
+func autoCloseOff(level int) SupersessionSweepOptions {
+	return SupersessionSweepOptions{
+		ACMMLevelForRepo:    func(string) int { return level },
+		AutoCloseSuperseded: func() bool { return false },
+	}
+}
+
 func TestSupersessionResolve_UpdateRefusedIsReportedOnce(t *testing.T) {
-	res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 2, UpdateBranchStatus: http.StatusUnprocessableEntity}, acmmLevelAutonomous)
+	res, obs, parked := runResolveSweepOpts(t, supersessionPRFixture{BehindBy: 2, UpdateBranchStatus: http.StatusUnprocessableEntity}, autoCloseOff(acmmLevelAutonomous))
 	assertNoEscalation(t, obs, parked)
 	if len(res.Resolved) != 1 || res.Resolved[0].Action != SupersessionActionRebaseFailed {
 		t.Fatalf("result = %+v, want %q", res, SupersessionActionRebaseFailed)
@@ -143,12 +159,38 @@ func TestSupersessionResolve_UpdateRefusedIsReportedOnce(t *testing.T) {
 	if len(obs.removedLabels[13782]) != 0 {
 		t.Fatalf("a refused update must not release a park: %v", obs.removedLabels[13782])
 	}
-	res2, obs2, _ := runResolveSweep(t, supersessionPRFixture{
+	res2, obs2, _ := runResolveSweepOpts(t, supersessionPRFixture{
 		BehindBy: 2, UpdateBranchStatus: http.StatusUnprocessableEntity,
 		Comments: []supersessionCommentFixture{{ID: 701, Body: refused, Author: resolveBot, Bot: true, CreatedAt: time.Now().Add(-time.Minute)}},
-	}, acmmLevelAutonomous)
+	}, autoCloseOff(acmmLevelAutonomous))
 	if res2.Actions() != 0 || obs2.updated[13782] != "" {
 		t.Fatalf("refused update must not be retried on the same head: res=%+v", res2)
+	}
+}
+
+// TestSupersessionResolve_UpdateRefusedForConflictClosesHivePR is the
+// hivecommons/hive#14965 case: the hive's own PR fixes an issue that merged
+// #13760 already closed, and GitHub refuses the rebase because the head
+// conflicts with the base. With governor.auto_close_superseded on (the
+// default) the hive closes its own PR as superseded instead of parking it
+// at needs-decision for a person.
+func TestSupersessionResolve_UpdateRefusedForConflictClosesHivePR(t *testing.T) {
+	res, obs, parked := runResolveSweep(t, supersessionPRFixture{BehindBy: 2, UpdateBranchStatus: http.StatusUnprocessableEntity}, acmmLevelAutonomous)
+	assertNoEscalation(t, obs, parked)
+	if len(res.Closed) != 1 || res.Closed[0].Action != SupersessionActionClosedConflicting || res.Closed[0].CloserPR != 13760 {
+		t.Fatalf("result = %+v, want %q by #13760", res, SupersessionActionClosedConflicting)
+	}
+	if len(obs.closed) != 1 || obs.closed[0] != 13782 {
+		t.Fatalf("closed = %v, want the hive's own #13782", obs.closed)
+	}
+	if !slices.Contains(obs.labels[13782], SupersededLabel) {
+		t.Fatalf("labels on #13782 = %v, want %s", obs.labels[13782], SupersededLabel)
+	}
+	if len(obs.comments[13782]) != 1 || !strings.Contains(obs.comments[13782][0], "#13760") {
+		t.Fatalf("close comment must name the superseding PR: %v", obs.comments[13782])
+	}
+	if slices.Contains(obs.labels[13782], issueNeedsHumanLabel) {
+		t.Fatalf("hive-authored superseded PR must not ask a person: %v", obs.labels[13782])
 	}
 }
 

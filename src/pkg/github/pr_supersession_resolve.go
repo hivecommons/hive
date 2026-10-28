@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -241,7 +242,7 @@ func (c *Client) prHeadBehindBase(ctx context.Context, owner, repo string, pr *g
 // resolveOwnSupersededPR decides a hive-authored PR whose claimed issue a
 // different merged PR closed. closerFiles are the merged PR's files; subset
 // says every file this PR touches is among them.
-func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, closerFiles map[string]bool, subset bool, level int) (SupersessionSweepEvent, string, error) {
+func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, closerFiles map[string]bool, subset bool, level int, autoClose bool) (SupersessionSweepEvent, string, error) {
 	number := pr.GetNumber()
 	if c.supersessionNeedsHumanByPerson(ctx, owner, repo, pr) {
 		// A person parked it; the hive does not resolve over them.
@@ -269,8 +270,17 @@ func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo
 	if err != nil {
 		return event, "", err
 	}
+	if autoClose && prMergeableStateDirty(pr) {
+		// The payload already says the head conflicts: nothing it still
+		// adds can be measured, and the issues it closes are closed.
+		event.Action = SupersessionActionClosedConflicting
+		if err := c.closeHiveSupersededPR(ctx, owner, repo, pr, event, closer, true); err != nil {
+			return event, "", err
+		}
+		return event, "closed", nil
+	}
 	if behind > 0 {
-		return c.rebaseOwnSupersededPR(ctx, prRepo, owner, repo, pr, event, closer, head, baseRef)
+		return c.rebaseOwnSupersededPR(ctx, prRepo, owner, repo, pr, event, closer, head, baseRef, autoClose)
 	}
 
 	remaining, err := c.prFileSet(ctx, owner, repo, number)
@@ -316,7 +326,7 @@ func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo
 // the next pass can measure the remaining diff. The notice names the head,
 // so an unchanged head (the update is still queued, or GitHub refused it)
 // is recognised and not re-requested every tick.
-func (c *Client) rebaseOwnSupersededPR(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, head, baseRef string) (SupersessionSweepEvent, string, error) {
+func (c *Client) rebaseOwnSupersededPR(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, head, baseRef string, autoClose bool) (SupersessionSweepEvent, string, error) {
 	number := pr.GetNumber()
 	short := stagelabels.ShortSHA(head)
 	updating := renderSupersessionComment(event, closer, fmt.Sprintf("This PR touches files the merged PR did not, so the hive is resolving it itself: updating head %s onto `%s` to measure what #%d left for it to add. If nothing meaningful remains it will close; otherwise its claim becomes `Refs` and it continues in the lane.", short, baseRef, closer.Number))
@@ -347,6 +357,18 @@ func (c *Client) rebaseOwnSupersededPR(ctx context.Context, prRepo, owner, repo 
 		if reason == "" {
 			reason = fmt.Sprintf("HTTP %d", ghErr.Response.StatusCode)
 		}
+		if autoClose && supersessionUpdateRefusedForConflict(ghErr) {
+			// GitHub refused the update because the head conflicts with
+			// the base. The fix lane's rebase would serve an issue another
+			// PR already delivered; the hive closes its own PR instead of
+			// parking it on a person (hivecommons/hive#14965 sat at 085
+			// for over an hour this way).
+			event.Action = SupersessionActionClosedConflicting
+			if err := c.closeHiveSupersededPR(ctx, owner, repo, pr, event, closer, true); err != nil {
+				return event, "", err
+			}
+			return event, "closed", nil
+		}
 		notice = failed(reason)
 	}
 	// One comment write per outcome: the notice is posted after the update
@@ -361,6 +383,21 @@ func (c *Client) rebaseOwnSupersededPR(ctx context.Context, prRepo, owner, repo 
 		return event, "", err
 	}
 	return event, "resolved", nil
+}
+
+// supersessionUpdateRefusedForConflict reports whether GitHub's refusal of
+// an update-branch call is the merge-conflict one (HTTP 422 "merge
+// conflict between base and head") rather than a transient or permission
+// failure.
+func supersessionUpdateRefusedForConflict(err *gh.ErrorResponse) bool {
+	if err == nil || err.Response == nil {
+		return false
+	}
+	if err.Response.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	msg := strings.ToLower(err.Message)
+	return strings.Contains(msg, "conflict")
 }
 
 // escalateSupersededPR posts (or edits) the notice and parks the PR at

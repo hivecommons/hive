@@ -1143,6 +1143,43 @@ func TestYieldsToAdoption(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#14975: a PR parked at 085 by the review swarm's
+// requires_human yields to a supersede-mode adoption (the hive now owns the
+// change through the superseding PR), unless a person's hold or sentinel
+// keeps it parked. Every stage YieldsToAdoption yields here too.
+func TestYieldsToAdoptionFor(t *testing.T) {
+	hold := &Evidence{Holds: []string{"hive/hold"}}
+	sentinel := &Evidence{Sentinel: true}
+	clean := &Evidence{HeadFresh: true}
+	for _, tc := range []struct {
+		stage Stage
+		ev    *Evidence
+		want  bool
+	}{
+		{ReviewPending, nil, true},
+		{ReviewPending, hold, true},
+		{NeedsDecision, nil, true},
+		{NeedsDecision, clean, true},
+		{NeedsDecision, hold, false},
+		{NeedsDecision, sentinel, false},
+		{NeedsDecision, &Evidence{LaneReason: "label:needs-human"}, false},
+		{NeedsDecision, &Evidence{LaneReason: "excluded-label:wip"}, false},
+		{NeedsDecision, &Evidence{LaneReason: "held"}, false},
+		{NeedsDecision, &Evidence{LaneReason: "contributor-lane:tests-removed", CauseReason: "the PR removes tests", Cause: CauseDecision}, false},
+		{NeedsDecision, &Evidence{LaneReason: "contributor-lane:workflow-path", ManualMergeRule: true}, false},
+		{NeedsDecision, &Evidence{ForkGuard: []string{"lint"}}, false},
+		{NeedsDecision, &Evidence{LaneReason: "reviewer-verdict:requires_human", Verdict: VerdictRequiresHuman}, true},
+		{NeedsDecision, &Evidence{LaneReason: "contributor-lane:decision-requested", Verdict: VerdictRequiresHuman}, true},
+		{AwaitingMergeAdmission, nil, false},
+		{ReadyForHumanMerge, nil, false},
+		{MergeQueue, clean, false},
+	} {
+		if got := tc.stage.YieldsToAdoptionFor(tc.ev); got != tc.want {
+			t.Errorf("%s.YieldsToAdoptionFor(%+v) = %v, want %v", tc.stage, tc.ev, got, tc.want)
+		}
+	}
+}
+
 func TestRecordAdoptionLive(t *testing.T) {
 	clock := func() time.Time { return time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC) }
 	st := NewStore(filepath.Join(t.TempDir(), "s.json"), clock)

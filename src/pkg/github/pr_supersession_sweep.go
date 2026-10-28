@@ -38,6 +38,16 @@ type SupersessionSweepOptions struct {
 	// GracePeriod is how long a contributor PR stays open after the
 	// supersession notice. Non-positive means DefaultSupersessionGracePeriod.
 	GracePeriod time.Duration
+	// AutoCloseSuperseded is governor.auto_close_superseded: a hive-authored
+	// superseded PR whose head GitHub refuses to update (merge conflict) is
+	// closed as superseded instead of waiting on the fix lane for a rebase
+	// that no longer serves anything (hivecommons/hive#14965). nil means on.
+	AutoCloseSuperseded func() bool
+}
+
+// autoCloseSupersededOn resolves AutoCloseSuperseded (nil → on).
+func (o SupersessionSweepOptions) autoCloseSupersededOn() bool {
+	return o.AutoCloseSuperseded == nil || o.AutoCloseSuperseded()
 }
 
 type SupersessionSweepEvent struct {
@@ -197,7 +207,7 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	ownPR := identity.Matches(event.Author)
 	if ownPR {
-		return c.resolveOwnSupersededPR(ctx, prRepo, prOwner, prRepoName, pr, event, closer, closerFiles, subset, level)
+		return c.resolveOwnSupersededPR(ctx, prRepo, prOwner, prRepoName, pr, event, closer, closerFiles, subset, level, opts.autoCloseSupersededOn())
 	}
 
 	// Record every detection, even when the notice is already present or

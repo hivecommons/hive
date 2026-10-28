@@ -433,6 +433,54 @@ func (s Stage) YieldsToAdoption() bool {
 	return s != None && s.Before(AwaitingMergeAdmission)
 }
 
+// YieldsToAdoptionFor is YieldsToAdoption with the human-route evidence in
+// hand: a 085 needs-decision that is only the reviewer swarm's
+// `requires_human` (or the lane's own hand-off) also yields to a live
+// adoption — the hive owns the PR now and answers the question on the
+// superseding PR, so the original leaves the merge gate for 074 instead of
+// parking on a person nobody needs (hivecommons/hive#14975: adopted as
+// #14980 yet still "Needs human decision" 38 minutes later). A hold label
+// (hold, do-not-merge/*, needs-decision), an open sentinel alert, or a
+// label-driven park (`needs-human`, an exempt / excluded label, "held" —
+// hivecommons/hive#14471), a fork-guard check, or a lane rule whose merge
+// is always a person's (CauseReason / ManualMergeRule) keeps 085. nil
+// evidence means no explicit park is known.
+func (s Stage) YieldsToAdoptionFor(e *Evidence) bool {
+	if s.YieldsToAdoption() {
+		return true
+	}
+	if s != NeedsDecision {
+		return false
+	}
+	if e == nil {
+		return true
+	}
+	if len(e.Holds) > 0 || e.Sentinel || len(e.ForkGuard) > 0 {
+		return false
+	}
+	if strings.TrimSpace(e.CauseReason) != "" || e.ManualMergeRule {
+		// A lane rule the hive never merges unattended (tests removed, CI
+		// workflow edits, human-merge path): adopting the PR does not make
+		// the merge the hive's, so the person's 085 stands.
+		return false
+	}
+	return !laneReasonIsExplicitPark(e.LaneReason)
+}
+
+// laneReasonIsExplicitPark reports whether a lane reason names a label or
+// hold a person (or another sweep) placed, as opposed to the lane's own
+// reading of the head (reviewer verdict, trust, workflow-path fence).
+func laneReasonIsExplicitPark(reason string) bool {
+	reason = strings.ToLower(strings.TrimSpace(reason))
+	switch {
+	case reason == "", reason == "held", reason == "exempt-label", reason == "sentinel":
+		return reason != ""
+	case strings.HasPrefix(reason, "label:"), strings.HasPrefix(reason, "excluded-label:"):
+		return true
+	}
+	return false
+}
+
 // StageBySlug resolves a slug (as used in config dwell overrides) to a stage.
 // The two parking stages share the slug "needs-decision" (045 on issues,
 // 085 on PRs); the first table row — 045 — wins. Both are open-ended, so a

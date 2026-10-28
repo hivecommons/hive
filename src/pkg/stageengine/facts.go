@@ -92,6 +92,9 @@ type AdoptionFacts struct {
 	InPlace bool
 	Live    bool // superseder still open / hive still pushing
 	Yielded bool
+	// SupersededBy is the superseding App PR of a supersede-mode adoption
+	// (0 in place).
+	SupersededBy int
 }
 
 // IssueBucket is the enumeration cycle's work bucket for an issue. The

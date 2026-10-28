@@ -9553,6 +9553,7 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 		MaxActions:          github.DefaultSupersessionSweepMaxActions,
 		CloseContributorPRs: supersessionCfg.CloseContributorPRs,
 		GracePeriod:         supersessionCfg.GracePeriod,
+		AutoCloseSuperseded: func() bool { return cfg == nil || cfg.Governor.AutoCloseSupersededEnabled() },
 		ACMMLevelForRepo: func(repo string) int {
 			if cfg == nil {
 				return 0

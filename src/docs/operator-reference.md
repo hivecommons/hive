@@ -803,11 +803,17 @@ between. Two mechanisms close that gap
   (`duplicate-fix-escalated`). A closed issue is left to the supersession
   sweep, held / `do-not-merge` PRs are skipped, a PR already carrying the
   sweep's `<!-- hive:duplicate-fix -->` marker is never written to again,
-  and at most 10 writes are made per pass.
+  and at most 10 writes are made per pass. A stage-074 **adoption pair** is
+  not a duplicate: the App PR whose body says `Supersedes #<original>`
+  carries the original's commits and closes it when it merges, so neither
+  side of the pair is closed as a duplicate of the other
+  ([#14977](https://github.com/hivecommons/hive/pull/14977), the adoptee of
+  #14947, was closed this way before the exemption).
 
 | Key | Default | Meaning |
 |---|---|---|
 | `scanner.skip_issues_with_open_pr` | `true` (unset) | Set `false` to turn off both the pre-dispatch guard and the duplicate-fix sweep; the claim ledger alone then decides, as before. |
+| `governor.auto_close_superseded` | `true` (unset) | At ACMM L6, a **hive-authored** PR whose closing targets are all closed, one of them by a different merged PR, and whose head conflicts with the base (or whose files are a subset of that PR's) is closed by the hive itself as superseded — `hive/superseded`, one notice naming the superseding PR — in the self-authored auto-merge lane (before any review cycle), the supersession sweep, and close-on-merge of the superseding PR. Human-authored PRs are never auto-closed. Set `false` to report the refusal once and leave the PR for a person, as before ([#14965](https://github.com/hivecommons/hive/pull/14965)). See [labels-and-control-signals.md § Supersession](labels-and-control-signals.md#supersession-closed-issue-another-merged-pr). |
 
 ## Suspicious-activity alerts (`sentinel`)
 

@@ -279,6 +279,32 @@ decision marker parks the PR for a person. The reviewer template
 issue/spec and PR body before asking, and to cite the answer
 (`per #<issue>: …`) instead of raising a question the issue already settled.
 
+Two decision questions never reach the swarm or a person at all, because
+the hive already owns the answer:
+
+- **"Should this hive PR be closed in favour of #M?"** A hive-authored PR
+  whose closing targets are all closed, one of them by a *different* merged
+  PR #M, and whose head conflicts with the base (or whose files #M already
+  covers) is superseded. With `governor.auto_close_superseded` (default
+  on) the self-authored lane closes it as `hive/superseded` with a notice
+  naming #M *before* dispatching any review, the supersession sweep does
+  the same on a conflicting rebase, and the close-on-merge of #M closes it
+  immediately — no reviewer cycle, no `stage/085-needs-decision`
+  ([#14965](https://github.com/hivecommons/hive/pull/14965) asked the owner
+  this after #14957 merged and sat parked for over an hour). Human-authored
+  PRs keep the notice and the decision.
+- **A `requires_human` on a PR the hive adopted.** When a contributor PR is
+  adopted in supersede mode (stage 074, superseding App PR #N carries the
+  head), the swarm's question is answered on #N. The original's 085 yields
+  to the adoption in the adopting pass: it leaves the merge gate for the
+  CI/Review column with an "Adopted → #N" pill, and is closed as
+  superseded when #N merges
+  ([#14975](https://github.com/hivecommons/hive/pull/14975) → #14980,
+  [#14947](https://github.com/hivecommons/hive/pull/14947) → #14977). A
+  hold, sentinel alert, `needs-human` a person applied, fork guard or
+  manual-merge lane rule still keeps 085. See
+  [labels-and-control-signals.md](labels-and-control-signals.md#supersession-closed-issue-another-merged-pr).
+
 `review.shadow` (default false) evaluates the same approval gate (including the unavailable-artifact case) without enforcing it. A PR that is otherwise merge-eligible stays eligible; the result is recorded as `shadow.review_gate.would_have_held` (with reason and confidence) on the PR head's evidence bundle and logged. Shadow never blocks a merge and never weakens `require_approval: true`, which keeps blocking as above. Recording needs `evidence` enabled and an existing bundle for the head; if `evidence.signing_key_path` points at a key that exists but fails to load, the shadow write is skipped with a warning rather than rewriting a signed bundle unsigned (an absent key path or missing key file still records unsigned).
 
 `review.fan_out` is separately defaulted to false. When both `require_approval` and `fan_out` are true, the governor eval cycle plans review kicks for agent-authored PRs that do not yet have a fresh aggregate verdict for their current head SHA.

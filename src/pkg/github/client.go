@@ -123,6 +123,10 @@ type Client struct {
 	// per-issue opt-in markers activate the gate.
 	reporterConfirmationMu      sync.RWMutex
 	reporterConfirmationEnabled func() bool
+	// supersededAutoClosePolicy gates the hive-authored superseded PR
+	// auto-close (pr_superseded_hive_autoclose.go); nil means on.
+	supersededAutoCloseMu     sync.Mutex
+	supersededAutoClosePolicy SupersededAutoClosePolicy
 	// autoMergeLabel is the configured merger-queue label. Guarded because
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
