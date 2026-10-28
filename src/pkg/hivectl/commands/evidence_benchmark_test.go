@@ -1,9 +1,11 @@
 package commands
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -84,5 +86,74 @@ func TestEvidenceBenchmarkRejectsBadInput(t *testing.T) {
 	}
 	if _, err := writeBenchmark(outcomebench.Report{}, filepath.Join(noMarkers, "x")); err == nil {
 		t.Fatal("unwritable out-dir must fail")
+	}
+}
+
+func TestEvidenceBenchmarkFromJSON(t *testing.T) {
+	server := httptest.NewServer(nil)
+	defer server.Close()
+	root := t.TempDir()
+	source := filepath.Join(root, "saved.json")
+	rep := outcomebench.Report{GeneratedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), Source: "saved sample", PRs: 123}
+	data, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	readme := filepath.Join(root, "README.md")
+	old := rep.HowItWorksPicture(benchmarkReadmeDocDir)
+	old = strings.ReplaceAll(old, ".png", ".svg")
+	if err := os.WriteFile(readme, []byte(old+"\n"+outcomebench.ReadmeStart+"\nold\n"+outcomebench.ReadmeEnd), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(root, "out")
+	stdout, _, err := execute(t, server, "", "evidence", "benchmark", "--from-json", source, "--out-dir", out, "--readme", readme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, "123 PRs") {
+		t.Fatalf("lost saved counts: %s", stdout)
+	}
+	saved, err := os.ReadFile(filepath.Join(out, "outcomes-2026-10.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got outcomebench.Report
+	if err := json.Unmarshal(saved, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, rep) {
+		t.Fatalf("rerender changed report: %+v", got)
+	}
+	svg := rep.Cards()[rep.CardFile(outcomebench.CardHowItWorks, "dark")]
+	png, err := os.ReadFile(filepath.Join(out, "assets", "outcomes-2026-10-card-how-it-works-dark.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outcomebench.ValidateCardPNG(png, svg); err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := os.ReadFile(readme)
+	if !strings.Contains(string(updated), rep.HowItWorksPicture(benchmarkReadmeDocDir)) || strings.Contains(string(updated), ".svg") {
+		t.Fatal("ladder embed not updated")
+	}
+	for _, extra := range [][]string{{"--root", root}, {"--month", "2026-10"}, {"--readme-min-base", "1"}} {
+		args := append([]string{"evidence", "benchmark", "--from-json", source, "--out-dir", out}, extra...)
+		if _, _, err := execute(t, server, "", args...); err == nil {
+			t.Errorf("accepted conflicting flags %v", extra)
+		}
+	}
+	for _, body := range []string{"{", "null"} {
+		if err := os.WriteFile(source, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := execute(t, server, "", "evidence", "benchmark", "--from-json", source, "--out-dir", out); err == nil {
+			t.Errorf("accepted invalid report %s", body)
+		}
+	}
+	if _, _, err := execute(t, server, "", "evidence", "benchmark", "--from-json", filepath.Join(root, "missing"), "--out-dir", out); err == nil {
+		t.Error("accepted missing report")
 	}
 }

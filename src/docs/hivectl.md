@@ -292,8 +292,11 @@ Reporting only: nothing here reads into or alters merge eligibility. See
 
 ```bash
 hivectl evidence benchmark --month 2026-10 --out-dir src/docs/benchmarks --readme README.md
+hivectl evidence benchmark --from-json src/docs/benchmarks/outcomes-2026-10.json --out-dir src/docs/benchmarks --readme README.md
 hivectl evidence benchmark --root ./evidence --month 2026-10 --spend cost.json --hub hub.json --source "hive-oke snapshot"
 ```
+
+`--from-json` redraws a saved Report JSON without reading evidence or recomputing counts. It is mutually exclusive with evidence/computation flags (`--root`, `--month`, `--now`, `--spend`, `--hub`, `--stories`, `--red-team`, `--readme-min-base`, `--source`). Cards ship as SVG sources and 2× PNGs with embedded IBM Plex Mono; the README embeds the PNGs.
 
 `evidence benchmark` folds the schema v1 bundles under `--root` per PR and compares the pull requests Hive's review
 swarm touched (**mediated**: at least one verdict or posted review on any head) with those merged without it
@@ -304,7 +307,7 @@ interval; n < 10 is `not reported`. `--month YYYY-MM` bounds the merge time (def
 observation time for maturation, `--hub` adds a saved `GET /api/hub/evidence` response as fleet context, `--source`
 names the data in the methodology section. It writes `outcomes-YYYY-MM.{md,json}`,
 `assets/outcomes-YYYY-MM-{bars,trend}.svg` and the plain-language README cards
-`assets/outcomes-YYYY-MM-card-<name>-{dark,light}.svg` under `--out-dir`, and `--readme FILE` rewrites that file's
+`assets/outcomes-YYYY-MM-card-<name>-{dark,light}.{svg,png}` under `--out-dir`, and `--readme FILE` rewrites that file's
 `<!-- outcomes:start -->…<!-- outcomes:end -->` block from the same report. The README block carries only the cards
 and flat sentences, no intervals: `--readme-min-base N` (default 200) is the smallest base a production-count card
 may rest on, separate from the n ≥ 10 report threshold; `--stories FILE` supplies curated caught → fixed → merged

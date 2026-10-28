@@ -22,6 +22,7 @@ var evidenceBenchmarkNow = func() time.Time { return time.Now().UTC() }
 const benchmarkReadmeDocDir = "src/docs/benchmarks"
 
 func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
+	var fromJSON string
 	var root, month, now, spendPath, hubPath, storiesPath, redTeamPath, outDir, readme, source string
 	var readmeMinBase int
 	cmd := &cobra.Command{
@@ -33,60 +34,74 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 			"saved /api/cost response is given with --spend. Every rate carries its n and a 95% Wilson interval; n < 10 is\n" +
 			"printed as \"not reported\". No telemetry is added and nothing contacts a hive.\n\n" +
 			"Writes <out-dir>/outcomes-YYYY-MM.md, outcomes-YYYY-MM.json, assets/outcomes-YYYY-MM-{bars,trend}.svg and the\n" +
-			"plain-language README cards assets/outcomes-YYYY-MM-card-<name>-{dark,light}.svg (one number per card, no\n" +
+			"plain-language README cards assets/outcomes-YYYY-MM-card-<name>-{dark,light}.{svg,png} (one number per card, no\n" +
 			"statistics; cards whose base is under --readme-min-base are not written). --stories supplies curated real PRs\n" +
 			"for the story card; --red-team the prompt-injection eval summary. --readme rewrites the <!-- outcomes:start --> … <!-- outcomes:end --> block of that README\n" +
-			"from the same report, so the README never drifts from the committed report (a test asserts they match).",
+			"from the same report. --from-json redraws a saved Report without the evidence tree, so the README never drifts from the committed report (a test asserts they match).",
 		Example: "  hivectl evidence benchmark --root ./evidence --month 2026-10 --spend cost.json --out-dir src/docs/benchmarks --readme README.md\n" +
 			"  hivectl evidence benchmark --root /data/evidence --month 2026-10 --out-dir /tmp/bench",
 		Args: argsNone(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			var opts outcomebench.Options
-			var err error
-			if strings.TrimSpace(month) != "" {
-				if opts.Since, opts.Until, err = outcomebench.ParseWindow(month); err != nil {
-					return &usageError{message: err.Error()}
-				}
-			}
-			opts.Now = evidenceBenchmarkNow()
-			if strings.TrimSpace(now) != "" {
-				if opts.Now, err = time.Parse(time.RFC3339, strings.TrimSpace(now)); err != nil {
-					return &usageError{message: fmt.Sprintf("invalid --now %q; expected RFC3339", now)}
-				}
-			}
-			if spendPath != "" {
-				if opts.Spend, err = outcomebench.LoadSpend(spendPath); err != nil {
+			var rep outcomebench.Report
+			if fromJSON != "" {
+				data, err := os.ReadFile(fromJSON)
+				if err != nil {
 					return err
 				}
-			}
-			if hubPath != "" {
-				if opts.Hub, err = outcomebench.LoadHub(hubPath); err != nil {
+				if err := json.Unmarshal(data, &rep); err != nil {
+					return fmt.Errorf("parsing %s: %w", fromJSON, err)
+				}
+				if rep.GeneratedAt.IsZero() {
+					return fmt.Errorf("%s: saved Report needs GeneratedAt", fromJSON)
+				}
+			} else {
+				var opts outcomebench.Options
+				var err error
+				if strings.TrimSpace(month) != "" {
+					if opts.Since, opts.Until, err = outcomebench.ParseWindow(month); err != nil {
+						return &usageError{message: err.Error()}
+					}
+				}
+				opts.Now = evidenceBenchmarkNow()
+				if strings.TrimSpace(now) != "" {
+					if opts.Now, err = time.Parse(time.RFC3339, strings.TrimSpace(now)); err != nil {
+						return &usageError{message: fmt.Sprintf("invalid --now %q; expected RFC3339", now)}
+					}
+				}
+				if spendPath != "" {
+					if opts.Spend, err = outcomebench.LoadSpend(spendPath); err != nil {
+						return err
+					}
+				}
+				if hubPath != "" {
+					if opts.Hub, err = outcomebench.LoadHub(hubPath); err != nil {
+						return err
+					}
+				}
+				if storiesPath != "" {
+					if opts.Stories, err = outcomebench.LoadStories(storiesPath); err != nil {
+						return err
+					}
+				}
+				if redTeamPath != "" {
+					if opts.RedTeam, err = outcomebench.LoadRedTeam(redTeamPath); err != nil {
+						return err
+					}
+				}
+				opts.ReadmeMinBase = readmeMinBase
+				opts.Source = source
+				if opts.Source == "" {
+					opts.Source = "evidence bundles under " + root
+				}
+				bundles, unreadable, err := outcomebench.Load(root)
+				if err != nil {
 					return err
 				}
-			}
-			if storiesPath != "" {
-				if opts.Stories, err = outcomebench.LoadStories(storiesPath); err != nil {
-					return err
+				if unreadable > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "skipped %d unreadable or non-v1 bundle(s) under %s\n", unreadable, root)
 				}
+				rep = outcomebench.Compute(bundles, unreadable, opts)
 			}
-			if redTeamPath != "" {
-				if opts.RedTeam, err = outcomebench.LoadRedTeam(redTeamPath); err != nil {
-					return err
-				}
-			}
-			opts.ReadmeMinBase = readmeMinBase
-			opts.Source = source
-			if opts.Source == "" {
-				opts.Source = "evidence bundles under " + root
-			}
-			bundles, unreadable, err := outcomebench.Load(root)
-			if err != nil {
-				return err
-			}
-			if unreadable > 0 {
-				fmt.Fprintf(cmd.ErrOrStderr(), "skipped %d unreadable or non-v1 bundle(s) under %s\n", unreadable, root)
-			}
-			rep := outcomebench.Compute(bundles, unreadable, opts)
 			paths, err := writeBenchmark(rep, outDir)
 			if err != nil {
 				return err
@@ -103,6 +118,12 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("%s: %w", readme, err)
 				}
+				// The ladder is outside the outcomes block and uses the same report.
+				for _, line := range strings.Split(updated, "\n") {
+					if strings.HasPrefix(line, "<picture>") && strings.Contains(line, "-card-how-it-works-") {
+						updated = strings.Replace(updated, line, rep.HowItWorksPicture(benchmarkReadmeDocDir), 1)
+					}
+				}
 				if err := os.WriteFile(readme, []byte(updated), 0o644); err != nil {
 					return fmt.Errorf("writing %s: %w", readme, err)
 				}
@@ -112,6 +133,7 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&fromJSON, "from-json", "", "redraw a saved Report JSON without reading evidence")
 	cmd.Flags().StringVar(&root, "root", ghpkg.ReviewEvidenceRoot, "evidence root holding <org>/<repo>/<pr>/<sha>.json bundles")
 	cmd.Flags().StringVar(&month, "month", "", "only PRs merged in this YYYY-MM month (default: all)")
 	cmd.Flags().StringVar(&now, "now", "", "observation time (RFC3339) for the maturation window; default now")
@@ -123,10 +145,13 @@ func newEvidenceBenchmarkCommand(_ *commandEnv) *cobra.Command {
 	cmd.Flags().StringVar(&outDir, "out-dir", "docs/benchmarks", "directory for the report, JSON and assets/")
 	cmd.Flags().StringVar(&readme, "readme", "", "README whose outcomes block to rewrite from this report")
 	cmd.Flags().StringVar(&source, "source", "", "how the report names its source (default: the --root path)")
+	for _, flag := range []string{"root", "month", "now", "spend", "hub", "stories", "red-team", "readme-min-base", "source"} {
+		cmd.MarkFlagsMutuallyExclusive("from-json", flag)
+	}
 	return cmd
 }
 
-// writeBenchmark writes the markdown, JSON and SVG outputs and returns their
+// writeBenchmark writes the markdown, JSON, SVG and PNG outputs and returns their
 // paths.
 func writeBenchmark(rep outcomebench.Report, outDir string) ([]string, error) {
 	if err := os.MkdirAll(filepath.Join(outDir, "assets"), 0o755); err != nil {
@@ -151,6 +176,20 @@ func writeBenchmark(rep outcomebench.Report, outDir string) ([]string, error) {
 			if svg, ok := cards[file]; ok {
 				p := filepath.Join(outDir, "assets", file)
 				files[p] = []byte(svg)
+				order = append(order, p)
+			}
+		}
+	}
+	pngs, err := rep.CardPNGs()
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range outcomebench.CardNames() {
+		for _, theme := range []string{"dark", "light"} {
+			file := strings.TrimSuffix(rep.CardFile(name, theme), ".svg") + ".png"
+			if data, ok := pngs[file]; ok {
+				p := filepath.Join(outDir, "assets", file)
+				files[p] = data
 				order = append(order, p)
 			}
 		}

@@ -1,0 +1,1 @@
+- Render README outcome cards as PNGs with embedded IBM Plex Mono, flat amber figures and consistent spacing; redraw saved reports without the evidence tree using `hivectl evidence benchmark --from-json` or `src/scripts/outcome-benchmark.sh --rerender`.

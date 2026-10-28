@@ -6,9 +6,9 @@ Reproducible comparison of pull requests that went through Hive's review swarm (
 
 | Month | Report | Charts |
 |---|---|---|
-| 2026-10 | [outcomes-2026-10.md](outcomes-2026-10.md) | [bars](assets/outcomes-2026-10-bars.svg) · [trend](assets/outcomes-2026-10-trend.svg) · README cards `assets/outcomes-2026-10-card-*.svg` |
+| 2026-10 | [outcomes-2026-10.md](outcomes-2026-10.md) | [bars](assets/outcomes-2026-10-bars.svg) · [trend](assets/outcomes-2026-10-trend.svg) · README cards `assets/outcomes-2026-10-card-*.png` (SVG sources alongside) |
 
-Each report ships with `outcomes-YYYY-MM.json`, the computed `Report` the markdown, charts, README cards and README block are rendered from, plus the inputs that are not derivable from the evidence tree: `cost-YYYY-MM.json` (saved `GET /api/cost`), `stories-YYYY-MM.json` (curated caught → fixed → merged examples, timestamps taken from the evidence bundles) and `red-team-YYYY-MM.json` (prompt-injection evaluation counts from [ioscan-red-team.md](../ioscan-red-team.md)). `pkg/outcomebench` `TestCommittedReportMatchesReadme` re-renders the newest JSON and fails when the committed markdown, SVGs, cards or the repository README's `<!-- outcomes:start -->…<!-- outcomes:end -->` block differ, so none of them can drift.
+Each report ships with `outcomes-YYYY-MM.json`, the computed `Report` the markdown, charts, README cards and README block are rendered from, plus the inputs that are not derivable from the evidence tree: `cost-YYYY-MM.json` (saved `GET /api/cost`), `stories-YYYY-MM.json` (curated caught → fixed → merged examples, timestamps taken from the evidence bundles) and `red-team-YYYY-MM.json` (prompt-injection evaluation counts from [ioscan-red-team.md](../ioscan-red-team.md)). `pkg/outcomebench` `TestCommittedReportMatchesReadme` re-renders the newest JSON and fails when the committed markdown, SVGs, PNG source hashes and dimensions or the repository README's `<!-- outcomes:start -->…<!-- outcomes:end -->` block differ, so none of them can drift.
 
 ## README cards
 
@@ -16,8 +16,8 @@ The repository README shows this data as plain-language cards (one number, one s
 
 - A production-count card is drawn only when its base is at least `--readme-min-base` (default 200), separate from the n ≥ 10 report threshold. The 43-merge revert bucket, for example, stays in the report.
 - The checks-passing card is drawn only when a check result is recorded on at least 80 % of reviewed merges; below that the pass rate would describe a biased subset.
-- No statistical vocabulary (intervals, medians, cohorts, n=) appears in the README or on a card; `TestReadmeVocabulary` enforces the list and `TestReadmeProseBudget` keeps README prose under 600 words and 10 sections.
-- Every card is a real-text SVG in dark and light (`<picture>` + `prefers-color-scheme`) using the dashboard's own palette.
+- No statistical vocabulary (intervals, medians, cohorts, n=) appears in the README or on a card; `TestReadmeVocabulary` enforces the list and `TestReadmeProseBudget` keeps README prose under 300 words and 10 sections.
+- Every card has a real-text SVG source and a 2× PNG in dark and light (`<picture>` + `prefers-color-scheme`) using the dashboard's own palette. Both formats consume one drawing operation list. The README embeds the PNG, rasterized in Go with embedded regular and bold IBM Plex Mono faces (SIL OFL, bundled under `pkg/outcomebench/fonts/`), so system fonts and browser effects cannot change its layout. Primary stat cards have one large figure, fixed height, and flat amber; secondary figures stay in the copy. PNG drift checks read the embedded source SHA-256 and dimensions instead of comparing pixels.
 - The prompt-injection card comes from Hive's own evaluation set, says so on the card, and is not subject to the minimum base because it is not a production count.
 
 Each report's "What the README shows and leaves out" section records, per card, whether it was drawn and on what base.
@@ -34,6 +34,16 @@ src/scripts/outcome-benchmark.sh --root /data/evidence --month 2026-10 \
   --source "hive-oke spoke snapshot 2026-10-27" \
   --readme                   # also rewrite README.md's outcomes block
 ```
+
+To redraw the committed report without its evidence tree or changing its counts/timestamps:
+
+```sh
+src/scripts/outcome-benchmark.sh --rerender --month 2026-10 --readme
+# equivalent from src/:
+go run ./cmd/hivectl evidence benchmark --from-json docs/benchmarks/outcomes-2026-10.json --readme ../README.md
+```
+
+`--from-json` cannot be combined with evidence/computation flags such as `--root`, `--month` or `--readme-min-base`. `--out-dir` and `--readme` still select destinations; `--readme` updates the ladder outside the outcomes block too.
 
 The script wraps `hivectl evidence benchmark`; see [hivectl.md](../hivectl.md#evidence--benchmark) for every flag. To take a read-only copy of a spoke's evidence: `kubectl exec deploy/hive -c hive -- tar czf - -C /data evidence | tar xzf -`.
 

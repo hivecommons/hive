@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // The README cards are the plain-language face of the benchmark: one idea
@@ -126,43 +127,40 @@ const minCICardCoverage = 0.8
 // rules, warm off-white text, the dashboard's amber for every numeral and
 // for "with Hive" bars, a flat warm gray for "without", and green only for
 // pass/merged dots. One SVG is written per theme and the README picks one
-// with <picture>. The numeral glow is the only decoration and only the dark
-// theme has it.
+// with <picture>. Numerals use flat amber in both themes.
 type cardTheme struct {
-	Name, BG, Border, Rule, Head, Text, Muted, Brand, Brand2, Neutral, OK string
-	Glow                                                                  bool
+	Name, BG, Border, Rule, Head, Text, Muted, Brand, Neutral, OK string
 }
 
 var cardThemes = []cardTheme{
-	{Name: "dark", BG: "#0f0d0a", Border: "#2a251f", Rule: "#1c1814", Head: "#fffaf0", Text: "#ece5d8", Muted: "#8b949e", Brand: "#f0b429", Brand2: "#ffd166", Neutral: "#3a342c", OK: "#2da44e", Glow: true},
-	{Name: "light", BG: "#fbf8f2", Border: "#ddd6c8", Rule: "#e8e2d6", Head: "#1a1612", Text: "#2b2620", Muted: "#6b6459", Brand: "#9a5f0b", Brand2: "#b8741a", Neutral: "#d9d2c5", OK: "#1a7f37"},
+	{Name: "dark", BG: "#0f0d0a", Border: "#2a251f", Rule: "#1c1814", Head: "#fffaf0", Text: "#ece5d8", Muted: "#8b949e", Brand: "#f0b429", Neutral: "#3a342c", OK: "#2da44e"},
+	{Name: "light", BG: "#fbf8f2", Border: "#ddd6c8", Rule: "#e8e2d6", Head: "#1a1612", Text: "#2b2620", Muted: "#6b6459", Brand: "#9a5f0b", Neutral: "#d9d2c5", OK: "#1a7f37"},
 }
 
 // Layout constants. Every card spans the README content column and is
-// declared at twice its display size so GitHub downsamples it crisp; the
+// rasterized at twice its display size so GitHub downsamples it crisp; the
 // coordinates below are display pixels (the viewBox). Character budgets
 // assume a monospace glyph about 0.6 em wide.
 const (
-	cardFont   = "'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+	cardFont   = "IBM Plex Mono"
 	cardW      = 880
 	cardScale  = 2
-	cardPad    = 40
+	cardPad    = 48
 	cardRadius = 16
 	colX       = cardW - 2*cardPad // usable width
 	eyebrowPx  = 11
 	eyebrowGap = 40 // eyebrow baseline to headline baseline
 	headPx     = 32
 	headLineH  = 42
-	headChars  = 41
+	headChars  = 40
 	bigPx      = 88
-	bigPxTight = 64 // three or more stats on one row
 	bodyPx     = 15
 	bodyLineH  = 22
 	footPx     = 12
 	footLineH  = 18
-	wideChars  = 88
-	halfChars  = 40 // two columns
-	tileChars  = 20 // four columns
+	wideChars  = 86
+	halfChars  = 36 // two columns
+	tileChars  = 38 // two columns
 )
 
 // Card names; the asset file is <AssetBase>-card-<name>-<theme>.svg.
@@ -200,8 +198,16 @@ func (r Report) Cards() map[string]string {
 	return out
 }
 
-// Card renders one named card; ok is false when its data is not shown.
+// Card renders the vector source of one named card.
 func (r Report) Card(name string, th cardTheme) (string, bool) {
+	d, ok := r.cardDrawing(name, th)
+	if !ok {
+		return "", false
+	}
+	return d.SVG(), true
+}
+
+func (r Report) cardDrawing(name string, th cardTheme) (*drawing, bool) {
 	switch name {
 	case CardAccuracy:
 		return r.accuracyCard(th)
@@ -218,7 +224,7 @@ func (r Report) Card(name string, th cardTheme) (string, bool) {
 	case CardHowItWorks:
 		return howItWorksCard(th), true
 	}
-	return "", false
+	return nil, false
 }
 
 // HasCard reports whether a card has data to show.
@@ -310,7 +316,7 @@ func wrap(s string, width int) []string {
 		switch {
 		case line == "":
 			line = w
-		case len(line)+1+len(w) > width:
+		case utf8.RuneCountInString(line)+1+utf8.RuneCountInString(w) > width:
 			lines = append(lines, line)
 			line = w
 		default:
@@ -330,11 +336,11 @@ func esc(s string) string { return html.EscapeString(s) }
 type card struct {
 	th    cardTheme
 	title string
-	b     strings.Builder
+	ops   []drawOp
 }
 
 func (c *card) text(x, y, px int, fill, extra, s string) {
-	fmt.Fprintf(&c.b, `<text x="%d" y="%d" fill="%s" font-size="%d"%s>%s</text>`+"\n", x, y, fill, px, extra, esc(s))
+	c.ops = append(c.ops, drawOp{Kind: "text", X: x, Y: y, Size: px, Fill: fill, Bold: strings.Contains(extra, `font-weight="700"`), End: strings.Contains(extra, `text-anchor="end"`), Text: s})
 }
 
 // lines writes wrapped lines and returns the baseline after the last one.
@@ -345,9 +351,9 @@ func (c *card) lines(x, y, px, lineH int, fill string, lines []string) int {
 	return y + len(lines)*lineH
 }
 
-// eyebrow is the tracked uppercase line at the top: section, base, window.
+// eyebrow is the uppercase line at the top: section, base, window.
 func (c *card) eyebrow(y int, s string) {
-	c.text(cardPad, y, eyebrowPx, c.th.Muted, ` font-weight="500" letter-spacing="2.2"`, upperKeepDates(s))
+	c.text(cardPad, y, eyebrowPx, c.th.Muted, "", upperKeepDates(s))
 }
 
 var reDateLabel = regexp.MustCompile(`\([A-Z]{3}(?: '\d\d)?(?:–[A-Z]{3})? '\d\d\)`)
@@ -361,20 +367,19 @@ func upperKeepDates(s string) string {
 // headline is the finding in one plain sentence; the biggest text after
 // the numerals. Returns the baseline after it.
 func (c *card) headline(y int, s string) int {
-	return c.lines(cardPad, y, headPx, headLineH, c.th.Head, wrap(s, headChars))
+	for i, line := range wrap(s, headChars) {
+		c.text(cardPad, y+i*headLineH, headPx, c.th.Head, ` font-weight="700"`, line)
+	}
+	return y + len(wrap(s, headChars))*headLineH
 }
 
-// numeral draws one big amber figure; in the dark theme a blurred copy
-// underneath gives it a soft glow.
+// numeral draws one flat amber figure.
 func (c *card) numeral(x, y, px int, s string) {
-	if c.th.Glow {
-		fmt.Fprintf(&c.b, `<text x="%d" y="%d" fill="%s" font-size="%d" font-weight="700" filter="url(#glow)" opacity="0.35">%s</text>`+"\n", x, y, c.th.Brand, px, esc(s))
-	}
-	c.text(x, y, px, "url(#amber)", ` font-weight="700"`, s)
+	c.text(x, y, px, c.th.Brand, ` font-weight="700"`, s)
 }
 
 func (c *card) rule(x1, x2, y int) {
-	fmt.Fprintf(&c.b, `<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="%s"/>`+"\n", x1, y, x2, y, c.th.Rule)
+	c.ops = append(c.ops, drawOp{Kind: "rect", X: x1, Y: y, W: x2 - x1, H: 1, Fill: c.th.Rule})
 }
 
 // foot writes the muted footnote above a hairline; y is the hairline.
@@ -383,68 +388,39 @@ func (c *card) foot(y int, s string) int {
 	return c.lines(cardPad, y+footLineH+4, footPx, footLineH, c.th.Muted, wrap(s, wideChars))
 }
 
-// String closes the card at height h.
-func (c *card) String(h int) string {
-	var out strings.Builder
-	fmt.Fprintf(&out, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d" role="img" aria-label="%s" font-family="%s">
-<title>%s</title>
-<defs>
-<linearGradient id="amber" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="%s"/><stop offset="1" stop-color="%s"/></linearGradient>
-<filter id="glow" x="-20%%" y="-40%%" width="140%%" height="180%%"><feGaussianBlur stdDeviation="5"/></filter>
-</defs>
-<rect x="0.5" y="0.5" width="%d" height="%d" rx="%d" fill="%s" stroke="%s"/>
-`, cardW*cardScale, h*cardScale, cardW, h, esc(c.title), cardFont, esc(c.title), c.th.Brand, c.th.Brand2, cardW-1, h-1, cardRadius, c.th.BG, c.th.Border)
-	out.WriteString(c.b.String())
-	out.WriteString("</svg>\n")
-	return out.String()
+// finish adds the surface behind the shared drawing operations.
+func (c *card) finish(h int) *drawing {
+	ops := []drawOp{{Kind: "rect", W: cardW, H: h, Radius: cardRadius, Fill: c.th.Border}, {Kind: "rect", X: 1, Y: 1, W: cardW - 2, H: h - 2, Radius: cardRadius - 1, Fill: c.th.BG}}
+	return &drawing{Title: c.title, Height: h, Ops: append(ops, c.ops...)}
 }
 
 // stat is one numeral with the words under it.
 type stat struct{ Big, Under string }
 
-// statCard is the shared anatomy: eyebrow, headline, a row of numerals
-// each with its base under it, footnote.
-func statCard(th cardTheme, title, eye, head string, stats []stat, foot string) string {
+// statCard gives every primary stat the same height and one hero figure.
+func statCard(th cardTheme, title, eye, head string, st stat, foot string) *drawing {
 	c := &card{th: th, title: title}
-	y := cardPad + eyebrowPx
-	c.eyebrow(y, eye)
-	y = c.headline(y+eyebrowGap, head)
-	px := bigPx
-	if len(stats) > 2 {
-		px = bigPxTight
-	}
-	colW := colX / len(stats)
-	underChars := (colW - 28) / 9 // 15px mono ≈ 9px per glyph, with a gutter
-	base := y - headLineH + 36 + px
-	maxUnder := 0
-	for i, st := range stats {
-		x := cardPad + i*colW
-		c.numeral(x, base, px, st.Big)
-		under := wrap(st.Under, underChars)
-		c.lines(x, base+30, bodyPx, bodyLineH, th.Text, under)
-		if len(under) > maxUnder {
-			maxUnder = len(under)
-		}
-	}
-	y = base + 30 + maxUnder*bodyLineH + 12
+	c.eyebrow(cardPad+eyebrowPx, eye)
+	c.headline(cardPad+eyebrowPx+eyebrowGap, head)
+	c.numeral(cardPad, 412, bigPx, st.Big)
+	c.lines(cardPad, 448, bodyPx, bodyLineH, th.Text, wrap(st.Under, wideChars))
 	if foot != "" {
-		y = c.foot(y, foot) - footLineH
+		c.foot(504, foot)
 	}
-	return c.String(y + cardPad - 4)
+	return c.finish(600)
 }
 
-func (r Report) accuracyCard(th cardTheme) (string, bool) {
+func (r Report) accuracyCard(th cardTheme) (*drawing, bool) {
 	f := r.Followup
 	fa, ta := f.FixedAndApproved, f.TimeToApproval
 	if !fa.Reported || fa.K <= 0 || fa.N < r.MinBase() {
-		return "", false
+		return nil, false
 	}
 	words := strings.ToUpper(shareWords(fa.Rate)[:1]) + shareWords(fa.Rate)[1:]
-	stats := []stat{{share(fa.Rate), "came back fixed"}}
+	st := stat{share(fa.Rate), "came back fixed"}
 	title := fmt.Sprintf("%s pull requests the review agent sent back came back fixed and were approved", share(fa.Rate))
 	head := fmt.Sprintf("The review agent sent %s pull requests back. %s came back fixed.", commas(fa.N), words)
 	if ta.Reported && ta.N >= r.MinBase() {
-		stats = append(stats, stat{fmt.Sprintf("%d min", minutes(ta.Value)), "typical time to fix"})
 		title += fmt.Sprintf("; %d minutes typical from sent back to approved", minutes(ta.Value))
 		head = fmt.Sprintf("The review agent sent %s pull requests back. %s came back fixed, typically in %d minutes.", commas(fa.N), words, minutes(ta.Value))
 	}
@@ -454,51 +430,45 @@ func (r Report) accuracyCard(th cardTheme) (string, bool) {
 	}
 	return statCard(th, title,
 		fmt.Sprintf("Accuracy · %s pull requests sent back · %s", commas(fa.N), r.windowLabel()),
-		head, stats, foot+".",
+		head, st, foot+".",
 	), true
 }
 
-func (r Report) checksGreenCard(th cardTheme) (string, bool) {
+func (r Report) checksGreenCard(th cardTheme) (*drawing, bool) {
 	c := r.Mediated
 	if !r.SplitSupported() || !c.CIFailureAtHead.Reported || c.CIFailureAtHead.N < r.MinBase() || !c.CICoverage.Reported || c.CICoverage.Rate < minCICardCoverage {
-		return "", false
+		return nil, false
 	}
 	pass := int(math.Round(100 * (1 - c.CIFailureAtHead.Rate)))
 	return statCard(th,
 		fmt.Sprintf("%d in 100 reviewed pull requests merged with every check passing", pass),
 		fmt.Sprintf("Accuracy · %s reviewed merges · %s", commas(c.CIFailureAtHead.N), r.windowLabel()),
 		fmt.Sprintf("%d in 100 reviewed pull requests merged with every check green.", pass),
-		[]stat{{fmt.Sprintf("%d in 100", pass), "merged with every check green"}},
+		stat{fmt.Sprintf("%d in 100", pass), "merged with every check green"},
 		fmt.Sprintf("%s reviewed merges with a recorded check result %s.", commas(c.CIFailureAtHead.N), r.windowLabel()),
 	), true
 }
 
-func (r Report) promptInjectionCard(th cardTheme) (string, bool) {
+func (r Report) promptInjectionCard(th cardTheme) (*drawing, bool) {
 	rt := r.RedTeam
 	if rt == nil || rt.Attacks <= 0 {
-		return "", false
+		return nil, false
 	}
 	pct := int(math.Round(100 * float64(rt.Caught) / float64(rt.Attacks)))
-	fa := fmt.Sprintf("%d in %d", rt.FalseAlarms, rt.Benign)
-	if rt.FalseAlarms == 0 {
-		fa = "0"
-	}
+
 	return statCard(th,
 		fmt.Sprintf("%d%% of planted text that tries to redirect an agent (prompt injection) was screened out before an agent read it, with %d false alarm in %d harmless texts", pct, rt.FalseAlarms, rt.Benign),
 		fmt.Sprintf("Security · Hive's own test set · %s", monthLabel(rt.RunAt)),
 		fmt.Sprintf("We hid %d texts that try to redirect an agent (prompt injection) in issues and files. Hive screened out %d before an agent read them.", rt.Attacks, rt.Caught),
-		[]stat{
-			{fmt.Sprintf("%d%%", pct), "screened out before an agent read it"},
-			{fa, "harmless texts wrongly flagged"},
-		},
-		fmt.Sprintf("Hive's own test set of %d texts %s; not production traffic.", rt.Attacks+rt.Benign, monthLabel(rt.RunAt)),
+		stat{fmt.Sprintf("%d%%", pct), "screened out before an agent read it"},
+		fmt.Sprintf("Hive's own test set of %d texts %s; not production traffic.", rt.Attacks+rt.Benign, monthLabel(rt.RunAt))+fmt.Sprintf(" %d in %d harmless texts wrongly flagged.", rt.FalseAlarms, rt.Benign),
 	), true
 }
 
-func (r Report) costCard(th cardTheme) (string, bool) {
+func (r Report) costCard(th cardTheme) (*drawing, bool) {
 	per, ok := r.Spend.PerMergedPR()
 	if !ok || r.Spend.MergedPRs < r.MinBase() {
-		return "", false
+		return nil, false
 	}
 	big := fmt.Sprintf("about $%.0f", per)
 	if per < 1 {
@@ -509,10 +479,7 @@ func (r Report) costCard(th cardTheme) (string, bool) {
 		big+" of agent spend per merged pull request",
 		fmt.Sprintf("Cost · %s merged pull requests · %s", commas(r.Spend.MergedPRs), window),
 		fmt.Sprintf("Agents spent about $%s to merge %s pull requests, %s each. It is tracked like CI minutes.", commas(int(math.Round(r.Spend.USD))), commas(r.Spend.MergedPRs), big),
-		[]stat{
-			{strings.TrimPrefix(big, "about "), "per merged pull request"},
-			{"$" + commas(int(math.Round(r.Spend.USD))), "total agent spend"},
-		},
+		stat{strings.TrimPrefix(big, "about "), "per merged pull request"},
 		fmt.Sprintf("Estimate from provider list prices %s; some models unpriced.", window),
 	), true
 }
@@ -521,9 +488,9 @@ func (r Report) costCard(th cardTheme) (string, bool) {
 // path without Hive, in plain words and without invented numbers; the right
 // column is one real pull request with its recorded timings. A second real
 // pull request, if present, is summarised in the footnote.
-func (r Report) storiesCard(th cardTheme) (string, bool) {
+func (r Report) storiesCard(th cardTheme) (*drawing, bool) {
 	if len(r.Stories) == 0 {
-		return "", false
+		return nil, false
 	}
 	s := r.Stories[0]
 	c := &card{th: th, title: fmt.Sprintf("Before and after: %s #%d was sent back once and merged %d minutes after opening", s.Repo, s.Number, s.MergeMinutes())}
@@ -534,11 +501,11 @@ func (r Report) storiesCard(th cardTheme) (string, bool) {
 	top := y + 8
 	col := func(i int, label, labelFill string, steps [][2]string, dot []string) int {
 		x := cardPad + i*(colW+cardPad)
-		c.text(x, top, bodyPx+2, labelFill, ` font-weight="700"`, label)
-		yy := top + 36
+		c.lines(x, top, bodyPx+2, bodyLineH, labelFill, wrap(label, 34))
+		yy := top + 58
 		for j, st := range steps {
-			fmt.Fprintf(&c.b, `<circle cx="%d" cy="%d" r="4" fill="%s"/>`+"\n", x+4, yy-4, dot[j])
-			c.text(x+18, yy, eyebrowPx, th.Muted, ` font-weight="500" letter-spacing="2.2"`, strings.ToUpper(st[0]))
+			c.ops = append(c.ops, drawOp{Kind: "rect", X: x, Y: yy - 8, W: 8, H: 8, Radius: 4, Fill: dot[j]})
+			c.text(x+18, yy, eyebrowPx, th.Muted, "", strings.ToUpper(st[0]))
 			yy = c.lines(x+18, yy+bodyLineH, bodyPx, bodyLineH, th.Text, wrap(st[1], halfChars)) + 12
 		}
 		return yy
@@ -559,21 +526,20 @@ func (r Report) storiesCard(th cardTheme) (string, bool) {
 	if right > bottom {
 		bottom = right
 	}
-	x := cardPad + colW + cardPad
-	fmt.Fprintf(&c.b, `<a href="%s"><rect x="%d" y="%d" width="%d" height="%d" fill="transparent"/></a>`+"\n", esc(s.URL()), x, top-20, colW, right-top+20)
-	foot := "Times from Hive's review records; the right column links to the pull request."
+
+	foot := "Times from Hive's review records; see the pull request in the report."
 	if len(r.Stories) > 1 {
 		t := r.Stories[1]
 		foot = fmt.Sprintf("Same shape: %s #%d, sent back at %d min, fixed at %d, merged at %d. Times from Hive's review records.", t.Repo, t.Number, t.CaughtMinutes(), t.CaughtMinutes()+t.FixMinutes(), t.MergeMinutes())
 	}
 	y = c.foot(bottom, foot) - footLineH
-	return c.String(y + cardPad - 4), true
+	return c.finish(y + cardPad), true
 }
 
-// tile is one column of the "also" strip.
+// tile is one cell of the "also" grid.
 type tile struct{ Head, Big, Text string }
 
-// alsoTiles are the four secondary properties. Tiles with a number take it
+// alsoTiles are the first three secondary properties. Tiles with a number take it
 // from the report; the others are plain statements of how Hive works.
 func (r Report) alsoTiles() []tile {
 	return []tile{
@@ -594,9 +560,9 @@ func (r Report) speedBars() (with, without int, ok bool) {
 	return minutes(m.Value), minutes(u.Value), true
 }
 
-func (r Report) alsoCard(th cardTheme) (string, bool) {
+func (r Report) alsoCard(th cardTheme) (*drawing, bool) {
 	if r.Verdicts < r.MinBase() {
-		return "", false
+		return nil, false
 	}
 	c := &card{th: th, title: "Also: consistent, readable, efficient, fast"}
 	y := cardPad + eyebrowPx
@@ -607,36 +573,37 @@ func (r Report) alsoCard(th cardTheme) (string, bool) {
 	}
 	y = c.headline(y+eyebrowGap, head) + 8
 	tiles := r.alsoTiles()
-	cols := len(tiles) + 1
-	tileW := colX / cols
+	tileW := colX / 2
 	top := y
 	bottom := top
 	for i, t := range tiles {
-		x := cardPad + i*tileW
-		c.text(x, top, bodyPx, th.Muted, ` font-weight="500" letter-spacing="2.2"`, strings.ToUpper(t.Head))
-		c.numeral(x, top+52, 30, t.Big)
-		yy := c.lines(x, top+80, bodyPx-1, bodyLineH-2, th.Text, wrap(t.Text, tileChars))
+		x := cardPad + (i%2)*tileW
+		rowTop := top + (i/2)*190
+		c.text(x, rowTop, bodyPx, th.Muted, "", strings.ToUpper(t.Head))
+		c.numeral(x, rowTop+52, 30, t.Big)
+		yy := c.lines(x, rowTop+80, bodyPx-1, bodyLineH-2, th.Text, wrap(t.Text, tileChars))
 		if yy > bottom {
 			bottom = yy
 		}
 	}
-	// Fourth column: the speed comparison as two thin bars.
-	x := cardPad + 3*tileW
-	c.text(x, top, bodyPx, th.Muted, ` font-weight="500" letter-spacing="2.2"`, "FAST")
+	// Fourth tile: the speed comparison as two thin bars.
+	x := cardPad + tileW
+	top += 190
+	c.text(x, top, bodyPx, th.Muted, "", "FAST")
 	if with, without, ok := r.speedBars(); ok {
 		barW := tileW - 76 // room for the value at the bar end
-		longest := with
+		longest := max(1, with)
 		if without > longest {
 			longest = without
 		}
 		bar := func(yy int, label string, val int, fill string) {
 			w := barW * val / longest
 			c.text(x, yy, footPx, th.Muted, "", label)
-			fmt.Fprintf(&c.b, `<rect x="%d" y="%d" width="%d" height="8" rx="4" fill="%s"/>`+"\n", x, yy+9, w, fill)
+			c.ops = append(c.ops, drawOp{Kind: "rect", X: x, Y: yy + 9, W: w, H: 8, Radius: 4, Fill: fill})
 			c.text(x+w+8, yy+17, footPx+1, th.Head, ` font-weight="700"`, fmt.Sprintf("%d min", val))
 		}
 		bar(top+28, "merged without review", without, th.Neutral)
-		bar(top+68, "reviewed by Hive", with, "url(#amber)")
+		bar(top+68, "reviewed by Hive", with, th.Brand)
 		d := with - without
 		note := "typical minutes, open to merge"
 		if d > 0 {
@@ -652,7 +619,7 @@ func (r Report) alsoCard(th cardTheme) (string, bool) {
 			bottom = yy
 		}
 	}
-	return c.String(bottom + cardPad - 8), true
+	return c.finish(bottom + cardPad - 8), true
 }
 
 // rung is one step of the Hive loop for the how-it-works card.
@@ -668,25 +635,25 @@ var hiveLoop = []rung{
 	{"Credit", "The issue opener is named on the merge.", "co-author trailer"},
 }
 
-func howItWorksCard(th cardTheme) string {
+func howItWorksCard(th cardTheme) *drawing {
 	c := &card{th: th, title: "How Hive works: scan, claim, work, verify, merge, credit"}
 	y := cardPad + eyebrowPx
 	c.eyebrow(y, "How it works · every task")
 	y = c.headline(y+eyebrowGap, "A coding agent does the work. A review agent and your CI gate the merge.")
-	const stepX, textX = cardPad + 48, cardPad + 48 + 96
+	const stepX, textX = cardPad + 48, cardPad + 230
 	y += 6
 	for i, r := range hiveLoop {
-		what := wrap(r.What, 42)
+		what := wrap(r.What, 54)
 		rowH := 20 + len(what)*bodyLineH + 14
 		base := y + 26
 		c.numeral(cardPad, base, 24, fmt.Sprintf("%02d", i+1))
 		c.text(stepX, base, bodyPx, th.Head, ` font-weight="700"`, r.Step)
 		c.lines(textX, base, bodyPx, bodyLineH, th.Text, what)
-		c.text(cardW-cardPad, base, footPx+1, th.Muted, ` text-anchor="end"`, r.Outcome)
+		c.text(textX, base+len(what)*bodyLineH, footPx, th.Muted, "", r.Outcome)
 		y += rowH
 		if i < len(hiveLoop)-1 {
 			c.rule(cardPad, cardW-cardPad, y)
 		}
 	}
-	return c.String(y + cardPad - 10)
+	return c.finish(y + cardPad)
 }

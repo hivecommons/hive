@@ -12,7 +12,7 @@ import (
 // TestCommittedReportMatchesReadme regenerates the newest committed report
 // from its JSON and asserts the README outcomes block, the markdown and the
 // SVG assets are exactly what the generator emits, so none of them can
-// drift from the data. Fix with: src/scripts/outcome-benchmark.sh --readme
+// drift from the data. Fix with: src/scripts/outcome-benchmark.sh --rerender --month 2026-10 --readme
 // (or hivectl evidence benchmark … --readme README.md).
 func TestCommittedReportMatchesReadme(t *testing.T) {
 	docDir := filepath.Join("..", "..", "docs", "benchmarks")
@@ -41,7 +41,7 @@ func TestCommittedReportMatchesReadme(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got != want {
-		t.Errorf("README outcomes block drifted from %s; regenerate with src/scripts/outcome-benchmark.sh --readme\n--- README\n%s\n--- regenerated\n%s", latest, got, want)
+		t.Errorf("README outcomes block drifted from %s; regenerate with src/scripts/outcome-benchmark.sh --rerender --month 2026-10 --readme\n--- README\n%s\n--- regenerated\n%s", latest, got, want)
 	}
 	// The ladder card sits outside the generated block but is still generated.
 	if !strings.Contains(string(readme), rep.HowItWorksPicture("src/docs/benchmarks")) {
@@ -63,11 +63,23 @@ func TestCommittedReportMatchesReadme(t *testing.T) {
 	check(filepath.Join(docDir, "assets", rep.AssetBase()+"-trend.svg"), rep.TrendSVG())
 	for file, svg := range rep.Cards() {
 		check(filepath.Join(docDir, "assets", file), svg)
+		pngPath := filepath.Join(docDir, "assets", strings.TrimSuffix(file, ".svg")+".png")
+		data, err := os.ReadFile(pngPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateCardPNG(data, svg); err != nil {
+			t.Errorf("%s: %v", pngPath, err)
+		}
 	}
 	// A card the generator no longer emits must not linger as a stale asset.
-	stale, _ := filepath.Glob(filepath.Join(docDir, "assets", rep.AssetBase()+"-card-*.svg"))
+	stale, _ := filepath.Glob(filepath.Join(docDir, "assets", rep.AssetBase()+"-card-*.*"))
 	for _, p := range stale {
-		if _, ok := rep.Cards()[filepath.Base(p)]; !ok {
+		file := filepath.Base(p)
+		if strings.HasSuffix(file, ".png") {
+			file = strings.TrimSuffix(file, ".png") + ".svg"
+		}
+		if _, ok := rep.Cards()[file]; !ok {
 			t.Errorf("%s is not emitted by the generator any more; delete it", p)
 		}
 	}

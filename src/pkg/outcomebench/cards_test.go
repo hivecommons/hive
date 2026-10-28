@@ -44,13 +44,18 @@ func TestCardsRespectMinimumBase(t *testing.T) {
 		t.Error("checks-green drawn with CI coverage below the floor")
 	}
 	svg, _ := rep.Card(CardAccuracy, cardThemes[0])
-	for _, want := range []string{"<title>", `<text`, "ACCURACY · 15 PULL REQUESTS SENT BACK · (oct &#39;26)", "The review agent sent 15 pull requests", "Three in four", ">3 in 4<", ">20 min<", "15 sent back (oct &#39;26); 4 merged as-is", `filter="url(#glow)"`, `width="1760"`, `viewBox="0 0 880 `} {
+	for _, want := range []string{"<title>", `<text`, "ACCURACY · 15 PULL REQUESTS SENT BACK · (oct &#39;26)", "The review agent sent 15 pull requests", "Three in four", ">3 in 4<", "typically in 20 minutes.", "15 sent back (oct &#39;26); 4 merged as-is", `font-weight="700"`, `width="1760"`, `viewBox="0 0 880 `} {
 		if !strings.Contains(svg, want) {
 			t.Errorf("accuracy card missing %q:\n%s", want, svg)
 		}
 	}
-	if light, _ := rep.Card(CardAccuracy, cardThemes[1]); strings.Contains(light, `filter="url(#glow)"`) {
-		t.Error("light theme must not glow")
+	for _, th := range cardThemes {
+		svg, _ := rep.Card(CardAccuracy, th)
+		for _, bad := range []string{"filter=", "linearGradient", "url(#"} {
+			if strings.Contains(svg, bad) {
+				t.Errorf("card contains %s", bad)
+			}
+		}
 	}
 	if len(rep.Cards()) != 2*5 { // accuracy, checks-green, cost, also, how-it-works × dark/light
 		t.Errorf("Cards() = %d files: %v", len(rep.Cards()), rep.Cards())
@@ -111,7 +116,7 @@ func TestLoadStoriesAndRedTeam(t *testing.T) {
 	}
 	rep := Report{RedTeam: rt, GeneratedAt: now}
 	svg, ok := rep.Card(CardPromptInjection, cardThemes[1])
-	if !ok || !strings.Contains(svg, ">97%<") || !strings.Contains(svg, ">1 in 12<") || !strings.Contains(svg, "We hid 63 texts that try to redirect an") || !strings.Contains(svg, "TEST SET · (oct &#39;26)") || !strings.Contains(svg, "75 texts (oct &#39;26)") || !strings.Contains(svg, "not production traffic") {
+	if !ok || !strings.Contains(svg, ">97%<") || !strings.Contains(strings.Join(strings.Fields(reHTMLTag.ReplaceAllString(svg, " ")), " "), "1 in 12 harmless texts wrongly flagged.") || !strings.Contains(svg, "We hid 63 texts that try to redirect an") || !strings.Contains(svg, "TEST SET · (oct &#39;26)") || !strings.Contains(svg, "75 texts (oct &#39;26)") || !strings.Contains(svg, "not production traffic") {
 		t.Fatalf("prompt-injection card:\n%s", svg)
 	}
 }
