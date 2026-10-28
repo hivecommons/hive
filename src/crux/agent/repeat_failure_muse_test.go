@@ -369,15 +369,18 @@ func TestRepeatFailureMuseRoute(t *testing.T) {
 	m.SetRepeatFailureConfigResolver(func() *config.RepeatFailureConfig { return &config.RepeatFailureConfig{Enabled: true} })
 	now := time.Now()
 
-	// The Manager's reader starts at the wall clock, so the fixture's lines
-	// are stamped now: left at their recorded instant they would read as
-	// history once the clock passed it.
-	var lines []string
-	for i := range 5 {
-		lines = append(lines, rfMuseCallAt(t, "call_"+strconv.Itoa(i), now)...)
+	// The Manager's reader starts at the wall clock, so fixture lines must be
+	// stamped after it has started: a log it first reaches later drops
+	// records dated before that instant as history.
+	stamped := func() []string {
+		var lines []string
+		for i := range 5 {
+			lines = append(lines, rfMuseCallAt(t, "call_"+strconv.Itoa(i), time.Now())...)
+		}
+		return lines
 	}
 	m.CollectRepeatFailures(now)
-	rfMuseAppend(t, root, "off", lines...)
+	rfMuseAppend(t, root, "off", stamped()...)
 	m.CollectRepeatFailures(now.Add(time.Second))
 	if _, err := os.Stat(filepath.Dir(RepeatFailureRecordPath(home))); !os.IsNotExist(err) {
 		t.Fatalf("check off: the muse route created the record dir (err %v)", err)
@@ -385,7 +388,7 @@ func TestRepeatFailureMuseRoute(t *testing.T) {
 
 	on = true
 	m.CollectRepeatFailures(now.Add(2 * time.Second))
-	rfMuseAppend(t, root, "on", lines...)
+	rfMuseAppend(t, root, "on", stamped()...)
 	m.CollectRepeatFailures(now.Add(3 * time.Second))
 	st := rfStatus(m)
 	if st.Check != RepeatFailureCheckOn {
