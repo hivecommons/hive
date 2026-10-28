@@ -1,0 +1,1 @@
+- The dashboard no longer runs an empty search query and writes a `search_query` audit entry on every page load; the Search pane now checks availability with `GET /api/search?probe=1`.

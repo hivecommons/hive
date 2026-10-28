@@ -343,3 +343,34 @@ func TestSearchBackendErrorAndCoverage(t *testing.T) {
 		t.Fatalf("empty result shape = %+v", resp)
 	}
 }
+
+func TestSearchProbeRunsNoQueryAndIsNotAudited(t *testing.T) {
+	s := searchTestServer(t, true, searchFixtureBackend(t, searchFixtureDocs()))
+	for _, role := range []string{config.RoleMerger, config.RoleOwner} {
+		w := searchRequest(s, role, "/api/search?probe=1")
+		if w.Code != http.StatusNoContent {
+			t.Errorf("role %q: status %d, want 204", role, w.Code)
+		}
+		if w.Body.Len() != 0 {
+			t.Errorf("role %q: probe returned a body: %s", role, w.Body.String())
+		}
+	}
+	if entries := s.audit.RecentWithPrefixSince(time.Now().Add(-time.Minute), "search_query"); len(entries) != 0 {
+		t.Errorf("probe must not be audited: %+v", entries)
+	}
+
+	if w := searchRequest(s, config.RoleReadWrite, "/api/search?probe=1"); w.Code != http.StatusForbidden {
+		t.Errorf("viewer probe: status %d, want 403", w.Code)
+	}
+	off := searchTestServer(t, false, searchFixtureBackend(t, searchFixtureDocs()))
+	if w := searchRequest(off, config.RoleOwner, "/api/search?probe=1"); w.Code != http.StatusNotFound {
+		t.Errorf("disabled probe: status %d, want 404", w.Code)
+	}
+	none := searchTestServer(t, true, nil)
+	if w := searchRequest(none, config.RoleOwner, "/api/search?probe=1"); w.Code != http.StatusServiceUnavailable {
+		t.Errorf("no backend probe: status %d, want 503", w.Code)
+	}
+	if entries := none.audit.RecentWithPrefixSince(time.Now().Add(-time.Minute), "search_query"); len(entries) != 0 {
+		t.Errorf("unavailable probe must not be audited: %+v", entries)
+	}
+}

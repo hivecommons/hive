@@ -30607,7 +30607,7 @@ function burnAreaChart() {
     }
 
     async function searchPaneProbe() {
-      const res = await searchPaneFetch('/api/search?limit=1');
+      const res = await searchPaneFetch('/api/search?probe=1');
       if (res && res.error) renderSearchPane(res);
     }
 

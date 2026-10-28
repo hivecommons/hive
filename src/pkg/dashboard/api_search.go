@@ -232,13 +232,25 @@ func (s *Server) auditSearchQuery(r *http.Request, q search.Query, outcome strin
 // highlighted hits and facets by kind, repo, verdict and sentinel.rule from
 // this spoke's portfolio search index. kind and repo accept repeated or
 // comma-separated values; from is inclusive and to exclusive (a YYYY-MM-DD
-// to covers that day). semantic=true is reserved and rejected.
+// to covers that day). semantic=true is reserved and rejected. probe=1 is an
+// availability check: 204 when the index is ready, 503 when not, with no query.
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if !requireMergerOrOwnerRole(w, r) {
 		return
 	}
 	if !s.searchEnabled() {
 		jsonError(w, "search not enabled", http.StatusNotFound)
+		return
+	}
+	if r.URL.Query().Get("probe") == "1" {
+		// An availability check, not a search: it runs on every page load, so it
+		// neither queries the index nor writes a search_query audit entry.
+		if s.SearchBackend() == nil {
+			jsonError(w, "search index unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	q, err := parseSearchQuery(r)

@@ -122,6 +122,7 @@ const fixture = {
 
   reply = () => ({ status: 503, body: { ok: false, error: 'search index unavailable' } });
   await searchPaneProbe();
+  assert.equal(calls.pop(), '/api/search?probe=1', 'the availability probe runs no query');
   assert.equal(els['search-section'].style.display, '', 'an enabled but unready index keeps the pane');
   assert.ok(els['search-results'].innerHTML.includes('search index unavailable'));
 })().catch(e => { console.error(e); process.exit(1); });
