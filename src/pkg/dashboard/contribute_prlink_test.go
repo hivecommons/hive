@@ -45,6 +45,8 @@ func TestPrReferencesIssue_TrailingPunctuation(t *testing.T) {
 		{"Fixes #20,", 20},
 		{"See #30)", 30},
 		{"refs #50:", 50},
+		{"follow-up (#60)", 60},
+		{"see [#70]", 70},
 	}
 	for _, tt := range tests {
 		iss := &gh.Issue{Title: strPtr(""), Body: strPtr(tt.body)}
@@ -459,6 +461,25 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 			timeline: `[` + crossRef(mentionPR) + `]`,
 		},
 		{
+			name:     "search hit from a PR that only mentions the issue",
+			search:   `[` + mentionPR + `]`,
+			timeline: `[]`,
+		},
+		{
+			name:       "search hit with a closing keyword",
+			search:     `[` + closingPR + `]`,
+			timeline:   `[]`,
+			wantNumber: 14701,
+			wantState:  prLinkStateOpen,
+		},
+		{
+			name:       "mention-only search hit is skipped, closing search hit is chosen",
+			search:     `[` + mentionPR + `,` + closingPR + `]`,
+			timeline:   `[]`,
+			wantNumber: 14701,
+			wantState:  prLinkStateOpen,
+		},
+		{
 			name:       "mention-only PR is skipped, closing PR is chosen",
 			search:     `[]`,
 			timeline:   `[` + crossRef(mentionPR) + `,` + crossRef(closingPR) + `]`,
@@ -523,6 +544,7 @@ func TestPrClosesIssue(t *testing.T) {
 		{"closing keyword", "fix it", "Closes #13135", true},
 		{"closing keyword, repo-qualified", "fix it", "Fixes o/r#13135", true},
 		{"bare mention without keyword", "unrelated", "see also #13135 for context", false},
+		{"parenthesised mention without keyword", "unrelated", "follow-up (#13135)", false},
 		{"repo-qualified mention without keyword", "unrelated", "see also o/r#13135", false},
 		{"URL mention without keyword", "unrelated", "see https://github.com/o/r/issues/13135", false},
 		{"mention in title without keyword", "follow-up to #13135", "", false},
