@@ -1,0 +1,34 @@
+{
+  "id": "8570b9b5-0259-4258-9053-61ebbe92e452",
+  "timestamp": "2026-10-28T01:31:32.110450",
+  "source": "environment",
+  "tool_name": "terminal",
+  "tool_call_id": "call_rf_1",
+  "observation": {
+    "content": [
+      {
+        "cache_prompt": false,
+        "type": "text",
+        "text": "ls: cannot access '/nonexistent': No such file or directory"
+      }
+    ],
+    "is_error": false,
+    "command": "ls /nonexistent",
+    "exit_code": 2,
+    "timeout": false,
+    "metadata": {
+      "exit_code": 2,
+      "pid": -1,
+      "username": "hive-scanner",
+      "hostname": "hive-648c77d88f-qrjl8",
+      "working_dir": "/data/agents/scanner/scanner-fix-14748-wt/src/crux/agent/testdata/repeat_failure/openhands/.run/cwd",
+      "py_interpreter_path": "/data/agents/scanner/oh-harness/venv/bin/python",
+      "prefix": "",
+      "suffix": "\n[The command completed with exit code 2.]"
+    },
+    "full_output_save_dir": "/data/agents/scanner/scanner-fix-14748-wt/src/crux/agent/testdata/repeat_failure/openhands/.run/home/.openhands/conversations/09d34668a6f648ac9fae57d9712f0dd5/observations",
+    "kind": "TerminalObservation"
+  },
+  "action_id": "0579c933-3271-4950-9f18-8f49fa59c2fd",
+  "kind": "ObservationEvent"
+}

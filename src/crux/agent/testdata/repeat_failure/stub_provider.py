@@ -6,6 +6,8 @@ carries a tool result answers with plain text, so the CLI ends its turn.
 
 Usage: stub_provider.py <port-file>   (binds 127.0.0.1 on a free port and
 writes the port to <port-file>). Tool name: RF_TOOL (default `bash`).
+RF_EXTRA_ARGS, a JSON object, adds arguments to the tool call next to
+`command` (a CLI whose shell tool requires more fields).
 """
 import json
 import os
@@ -14,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 COMMAND = os.environ.get("RF_COMMAND", "ls /nonexistent")
 TOOL = os.environ.get("RF_TOOL", "bash")
+EXTRA_ARGS = json.loads(os.environ.get("RF_EXTRA_ARGS") or "{}")
 MODEL = "rf-stub"
 
 
@@ -45,7 +48,7 @@ class Handler(BaseHTTPRequestHandler):
         if answered:
             events = [chunk({"role": "assistant", "content": "DONE"}), chunk({}, "stop")]
         else:
-            args = json.dumps({"command": COMMAND})
+            args = json.dumps(dict(EXTRA_ARGS, command=COMMAND))
             call = {"index": 0, "id": "call_rf_1", "type": "function", "function": {"name": TOOL, "arguments": args}}
             events = [chunk({"role": "assistant", "tool_calls": [call]}), chunk({}, "tool_calls")]
         if not req.get("stream"):

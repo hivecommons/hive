@@ -594,6 +594,7 @@ Backends whose shell commands never reach a fresh `bash -c` get their own route 
 
 - **copilot** keeps one long-lived shell per session, so Hive reads Copilot's own session log (`~/.copilot/session-state/<id>/events.jsonl`) on each collection and records every completed shell tool call with its exit code. Nothing is written into Copilot's files. A log that already exists when Hive starts, or when the check is turned on, is read from its end: calls logged before that point are not replayed.
 - **omp** strips `BASH_ENV`, so at each launch Hive writes its own extension to `~/.hive/repeat-failure/omp_extension.ts` and loads it with `--extension`; the extension records each bash tool result. omp's `config.yml` is never touched. With the check off, the next launch passes no flag and removes the file Hive wrote.
+- **openhands** keeps one interactive bash open, so Hive reads the conversation events the OpenHands CLI saves (`~/.openhands/conversations/<id>/events/event-*.json`) on each collection and records every finished `terminal` command with its `exit_code`. Nothing is written into OpenHands' files or launch. A conversation that already exists when Hive starts, or when the check is turned on, is read from its end; a command that timed out or is still running is not recorded.
 - **agy** (headless launch only) records each `run_command` step from the `agy-turn` output; the TUI launch has no route.
 
 ## Methods: subscription CLIs vs self-hosted inference
