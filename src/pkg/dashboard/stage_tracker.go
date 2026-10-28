@@ -325,7 +325,13 @@ type StageTrackerItem struct {
 	// issue at 020 or later (015 is not a gate; the reconciler removes the
 	// label on its next pass, hivecommons/hive#14586). Rendered as a muted
 	// operator tooltip, never as the stage word.
-	StaleLabels []string   `json:"stale_labels,omitempty"`
+	StaleLabels []string `json:"stale_labels,omitempty"`
+	// BlockedOn lists the open GitHub "blocked by" dependencies ("repo#N")
+	// of an issue the scheduler withholds from every kick until they close
+	// (scheduler.partitionBlockedIssues). Without it a sequenced sub-issue
+	// read as plain Actionable nobody was picking up (hivecommons/hive#14765);
+	// the row wears the `blocked` modifier and the caption names the wait.
+	BlockedOn   []string   `json:"blocked_on,omitempty"`
 	NudgeCount  int        `json:"nudge_count,omitempty"`
 	LastNudgeAt *time.Time `json:"last_nudge_at,omitempty"`
 	AdoptedBy   int        `json:"adopted_by,omitempty"`
@@ -674,6 +680,10 @@ func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, r
 	}
 	return alert, findings, reason
 }
+
+// stageTrackerModifierOrder is the modifier precedence the payload carries.
+var stageTrackerModifierOrder = []string{modStalled, modRegressed, modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsTriage, modPossibleDupe, modNeedsRebase, modBlocked, modDraft}
+
 func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Record, hasRec bool, overrides map[string]time.Duration, now time.Time, draft bool) []string {
 	set := map[string]bool{}
 	for _, l := range labels {
@@ -718,12 +728,50 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 		set[modDraft] = true
 	}
 	out := make([]string, 0, len(set))
-	for _, m := range []string{modStalled, modRegressed, modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsTriage, modPossibleDupe, modNeedsRebase, modBlocked, modDraft} {
+	for _, m := range stageTrackerModifierOrder {
 		if set[m] {
 			out = append(out, m)
 		}
 	}
 	return out
+}
+
+// stageTrackerBlockedBy marks an open issue the scheduler is deliberately
+// holding back for unresolved GitHub "blocked by" dependencies
+// (hivecommons/hive#14765). The kick list already withholds such issues
+// ("Blocked by open dependencies … do NOT start these"), but the tracker
+// showed them as plain Actionable with reason `actionable`, so sequenced
+// sub-issues of an RFC read as intake starvation. The row gets the same
+// `blocked` modifier the `blocked` label yields, the blocker keys, and a
+// caption clause naming what it waits on. Only the pre-claim stages
+// qualify: once a claim or PR exists the sequencing no longer gates it.
+func stageTrackerBlockedBy(it *StageTrackerItem, blockers []string) {
+	if it == nil || len(blockers) == 0 || it.Stage > trackerNumberPossiblyExists {
+		return
+	}
+	it.BlockedOn = append([]string(nil), blockers...)
+	if !slices.Contains(it.Modifiers, modBlocked) {
+		it.Modifiers = append(it.Modifiers, modBlocked)
+		slices.SortFunc(it.Modifiers, func(a, b string) int {
+			return slices.Index(stageTrackerModifierOrder, a) - slices.Index(stageTrackerModifierOrder, b)
+		})
+	}
+	it.Caption = joinClause(it.Caption, "waiting on "+stageTrackerBlockerList(it.Repo, blockers))
+	it.Actor = "its blockers"
+}
+
+// stageTrackerBlockerList renders blocker keys ("repo#N") for a caption,
+// shortening a same-repo blocker to "#N".
+func stageTrackerBlockerList(repo string, blockers []string) string {
+	parts := make([]string, 0, len(blockers))
+	for _, b := range blockers {
+		b = strings.TrimSpace(b)
+		if r, n, ok := strings.Cut(b, "#"); ok && (r == "" || strings.EqualFold(r, repo) || strings.HasSuffix(strings.ToLower(repo), "/"+strings.ToLower(r))) {
+			b = "#" + n
+		}
+		parts = append(parts, b)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // noVerdictClause is the bare no-verdict clause; stageTrackerCaption swaps
@@ -1317,6 +1365,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			stage, rec, ok = stagelabels.None, stagelabels.Record{}, false
 		}
 		finish(&it, issue.Labels, stage, rec, ok, false)
+		stageTrackerBlockedBy(&it, issue.OpenBlockers())
 		if it.Stage == trackerNumberClaimed {
 			it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
 		}
