@@ -149,6 +149,8 @@ func stageTrackerDecisionNeeded(it StageTrackerItem, verdict *review.Aggregate, 
 func stageTrackerDecisionNeededAt(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel string, now time.Time) *StageTrackerDecision {
 	held := slices.Contains(it.Modifiers, modHold)
 	switch {
+	case it.Kind == "pr" && it.MergeTrain != nil && it.MergeTrain.State == MergeGateStateRebaseExhausted:
+		return decisionForMergeTrain(it, held)
 	case it.Kind == "pr" && (it.Stage == stagelabels.NeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
 		return decisionForPR(it, verdict, sentinelLabel, held)
 	case it.Kind == "pr" && it.Stage == stagelabels.ReadyForHumanMerge.Number():

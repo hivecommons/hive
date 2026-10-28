@@ -417,6 +417,9 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			c.info("contributor-lane automerge sweep skipped repo", "repo", displayRepo, "reason", skipReason)
 			continue
 		}
+		train := c.planMergeTrains(ctx, stageLaneContributor, displayRepo, owner, repoName, prs, func(pr *gh.PullRequest) string {
+			return c.prefilterContributorLanePR(pr, policy)
+		})
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
 				break
@@ -428,6 +431,17 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			result.Seen++
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneContributor, displayRepo, owner, repoName, pr, reason, merged, err)
+			}
+			if train.isSibling(number) {
+				result.Skipped++
+				stage(c.mergeTrainSkip(train, number), false, nil)
+				continue
+			}
+			if reason, handled := c.mergeTrainFront(ctx, train, pr); handled {
+				c.recordContributorLaneSkip(displayRepo, number, reason)
+				result.Skipped++
+				stage(reason, false, nil)
+				continue
 			}
 			if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 				c.recordContributorLaneSkip(displayRepo, number, reason)
@@ -453,6 +467,9 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			result.Merged = append(result.Merged, event)
 			if opts.Audit != nil {
 				opts.Audit(event)
+			}
+			if train.isFront(number) {
+				c.mergeTrainAfterFrontMerge(ctx, train, number)
 			}
 		}
 	}

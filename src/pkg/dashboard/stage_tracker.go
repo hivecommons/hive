@@ -403,6 +403,10 @@ type StageTrackerItem struct {
 	// label on its next pass, hivecommons/hive#14586). Rendered as a muted
 	// operator tooltip, never as the stage word.
 	StaleLabels []string `json:"stale_labels,omitempty"`
+	// MergeTrain is set on a PR riding a conflict-aware merge train
+	// (hivecommons/hive#15117): its position, the front, the PRs ahead and
+	// the overlapping files. See stage_tracker_merge_train.go.
+	MergeTrain *StageTrackerMergeTrain `json:"merge_train,omitempty"`
 	// BlockedOn lists the open GitHub "blocked by" dependencies ("repo#N")
 	// of an issue the scheduler withholds from every kick until they close
 	// (scheduler.partitionBlockedIssues). Without it a sequenced sub-issue
@@ -542,8 +546,9 @@ type StageTrackerLinkedPR struct {
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
 	// SoakRemainingSeconds / MergeGate mirror the PR item's (#15073): a
 	// nested Soaking sub-row shows its time left too.
-	SoakRemainingSeconds int64                  `json:"soak_remaining_seconds,omitempty"`
-	MergeGate            *StageTrackerMergeGate `json:"merge_gate,omitempty"`
+	SoakRemainingSeconds int64                   `json:"soak_remaining_seconds,omitempty"`
+	MergeGate            *StageTrackerMergeGate  `json:"merge_gate,omitempty"`
+	MergeTrain           *StageTrackerMergeTrain `json:"merge_train,omitempty"`
 	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
 	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
 	// LastOperatorAction / OperatorActionCount mirror the nested PR's own
@@ -1523,6 +1528,9 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		}
 		return joinClause(c, clause), "hive"
 	case stagelabels.AwaitingMergeAdmission:
+		if c := stageTrackerMergeTrainCaption(reason); c != "" {
+			return c, "automerge lane"
+		}
 		return joinClause("Green and approved; waiting for the automerge lane to admit it", clause), "automerge lane"
 	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
 		switch stageTrackerAdoptedByState(rec) {
@@ -1535,6 +1543,9 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 			// hivecommons/hive#14589: not a decision but a step only a
 			// person may take; the gate cell says the same.
 			return joinClause("Awaiting human: "+step, clause), "maintainer"
+		}
+		if c := stageTrackerMergeTrainCaption(reason); c != "" {
+			return c, "maintainer"
 		}
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
@@ -1802,6 +1813,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
+		stageTrackerApplyMergeTrain(it)
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
 		// Adoption is clanker-only (a human's PR is never adopted), so a
 		// human-authored 072 row keeps its plain caption.
@@ -2005,6 +2017,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
+	stageTrackerMergeTrainPostPass(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
@@ -2740,6 +2753,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.BaseRef = pr.BaseRef
 				lp.DecisionNeeded = pr.DecisionNeeded
 				lp.SoakRemainingSeconds, lp.MergeGate = pr.SoakRemainingSeconds, pr.MergeGate
+				lp.MergeTrain = pr.MergeTrain
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
 				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {
