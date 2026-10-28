@@ -46,8 +46,9 @@ compiles without model credentials, and tests admission and the actual classifie
   (compiled to `weekly-competitor-report.lock.yml`): every Monday at 13:00 UTC,
   and on manual dispatch, the Copilot engine researches projects adjacent to
   Hive (OpenHands, SWE-agent, Devin, Copilot coding agent, Codex, Claude Code,
-  Sweep, Factory, Jules, Gastown, Dagger, Kilo, Cline/Roo, Mentat, Aider,
-  GPT-Engineer, Potpie, Agentless, public fleet-orchestrator write-ups) with
+  Goose, OpenCode, Sweep, Factory, Jules, Gastown, Dagger, Kilo, Cline/Roo,
+  Mentat, Aider, GPT-Engineer, Potpie, Agentless, public fleet-orchestrator
+  write-ups) with
   read-only GitHub tools and `curl` inside a network allowlist (HN Algolia,
   Google News RSS, Bing News RSS, the GitHub changelog feed, vendor blogs; the
   bash allowlist uses `cmd:*` entries so pipelines like `curl | jq` are
@@ -83,6 +84,24 @@ compiles without model credentials, and tests admission and the actual classifie
   the webhook secret the Discord job fails with a clear message and the GitHub
   comment still lands. Recompile after edits with the pinned compiler:
   `gh aw compile weekly-competitor-report`, and commit both files (#14612).
+  The prompt names the current GitHub repository for each project (several
+  moved: `OpenHands/OpenHands`, `SWE-agent/SWE-agent`, `aaif-goose/goose`,
+  `anomalyco/opencode`) and tells the model to follow API redirects with
+  `curl -sL`, because a renamed repository answers `301` with no `license`
+  field, which showed up as "n/a (API error)" in the 2026-10-27 report. Any
+  engine in the Crux `CLIBackends` list is reported as "Hive runs it as a
+  worker engine today" even when its vendor also sells orchestration.
+  Known cosmetic issue: the "Firewall blocked N domains" warning that gh-aw
+  appends to the comment is a false positive on gh-aw v0.89.21. Squid writes
+  two lines per successful HTTPS `CONNECT` (`200 NONE_NONE:HIER_NONE`, then
+  `200 TCP_TUNNEL:HIER_DIRECT`) and the footer parser counted the first as
+  a block, so every allowed domain showed equal allowed and denied counts
+  (run 40579499092: `api.github.com` 36/36, `news.google.com` 6/6). This is
+  upstream, not in the lock file: github/gh-aw#63221, fixed by
+  github/gh-aw#63246 (2026-09-24), first shipped in gh-aw v0.89.22. The
+  warning goes away when the compiler pin is bumped to v0.89.22 or later;
+  until then ignore it when the firewall log's Allowed column matches the
+  Denied column.
 
 ## Graduate to Hive without rewriting workflows
 

@@ -273,7 +273,11 @@ Hive has today:
   (Antigravity), pi, opencode, kilo, muse, omp, openhands, omnigent. Source:
   `CLIBackends` in `config/agent_runtime.go` in hivecommons/crux. So Claude
   Code, Copilot CLI, Codex CLI, Gemini CLI, Goose, Aider, Kilo, OpenCode and
-  OpenHands are engines Hive runs as workers, not competitors.
+  OpenHands are engines Hive runs as workers, not competitors. This holds
+  even when the same company also sells a hosted or orchestration product
+  (OpenHands Cloud, Kilo cloud, Codex cloud tasks): the engine row says
+  "Hive runs it as a worker engine today". If the hosted product matters,
+  give it its own row (for example "OpenHands Cloud").
 - **A governor with six trust levels (ACMM L1-L6)** that decides what agents
   may do, from advisory only to auto-merge. Source: `README.md` "ACMM Levels",
   `src/docs/acmm-policy-matrix.md`.
@@ -302,14 +306,25 @@ Hive has today:
 
 Check at least these, plus anything new you find that clearly belongs:
 
-OpenHands and OpenHands Cloud (All-Hands AI), SWE-agent, Devin (Cognition),
-GitHub Copilot coding agent, OpenAI Codex (cloud tasks and CLI), Claude Code
-(autonomy and background-agent features), Sweep, Factory, Jules (Google),
-Gastown, Dagger agents, Kilo Code and Kilo cloud, Cline (and Cline SDK), Roo
-Code (orchestrator mode), Mentat, Aider, GPT-Engineer, Potpie, Agentless,
-CrewAI and LangGraph (only where they do repository work), and any internal
-agent-fleet orchestrator with a public write-up (engineering blog posts from
-large companies about running many coding agents at once).
+OpenHands (engine, repo `OpenHands/OpenHands`, moved from `All-Hands-AI`) and
+OpenHands Cloud (All-Hands AI), SWE-agent (`SWE-agent/SWE-agent`, moved from
+`princeton-nlp`), Devin (Cognition), GitHub Copilot coding agent, OpenAI Codex
+(cloud tasks and CLI, `openai/codex`), Claude Code (`anthropics/claude-code`,
+autonomy and background-agent features), Goose (`aaif-goose/goose`, moved from
+`block`), OpenCode (`anomalyco/opencode`, moved from `sst`), Sweep, Factory,
+Jules (Google), Gastown, Dagger agents, Kilo Code and Kilo cloud (`Kilo-Org/kilocode`),
+Cline (and Cline SDK), Roo Code (orchestrator mode), Mentat (CLI repo is
+archived as `AbanteAI/archive-old-cli-mentat`; say so, do not report
+"API error"), Aider, GPT-Engineer (`AntonOsika/gpt-engineer`, archived),
+Potpie, Agentless (`OpenAutoCoder/Agentless`), CrewAI and LangGraph (only
+where they do repository work), and any internal agent-fleet orchestrator
+with a public write-up (engineering blog posts from large companies about
+running many coding agents at once).
+
+Repositories move. The GitHub API answers a renamed repository with a 301
+redirect, so always follow redirects (`curl -sL`) and read `full_name` from
+the response to learn the current name. Never write "API error" for a
+licence when the redirect target answers.
 
 Sort each project into one category:
 
@@ -329,7 +344,10 @@ Then say the relationship to Hive, one of: "Hive runs it as a worker engine
 today" (it is in the Crux list above), "Hive could run it as an engine",
 "direct competitor for fleet orchestration", or "complementary". Terminal and
 editor agents are mostly engines Hive drives. Direct competitors are the
-fleet and orchestration layers.
+fleet and orchestration layers. Rule: a project in the Crux list is always
+"Hive runs it as a worker engine today", even if its company also sells
+orchestration. Do not mark OpenHands, Kilo, Codex, or any other listed engine
+"direct competitor"; put the hosted product in its own row if you need to.
 
 ## How to research
 
@@ -341,11 +359,15 @@ last 7 days before that date. Also compute the unix time for 7 days ago with
    look at releases, tags, and the most recent commits and merged pull
    requests in the last 7 days. `search_repositories`, `list_releases`,
    `list_commits`, and `search_issues` are enough. Read the licence from the
-   repository's `license.spdx_id` field (for example with
-   `curl -s https://api.github.com/repos/<owner>/<repo> | jq -r .license.spdx_id`)
-   and write that value in the table. Write "proprietary" only for hosted
-   products with no public repository. Do not write "unknown" for anything
-   that has a GitHub repository.
+   repository's `license.spdx_id` field with a redirect-following request,
+   for example
+   `curl -sL https://api.github.com/repos/<owner>/<repo> | jq -r '"\(.full_name) \(.license.spdx_id)"'`,
+   and write the SPDX value in the table. Without `-L` a renamed repository
+   returns a 301 with no licence field. If `full_name` differs from what you
+   asked for, use the new name in the table. If the API returns `null` for
+   `license` the repository has no licence file: write "none". Write
+   "proprietary" only for hosted products with no public repository. Do not
+   write "unknown" or "API error" for anything that has a GitHub repository.
 2. Use `curl` through bash for news. Stay inside the configured network
    allowlist. Keep TLS checks on. If a request fails, note it and move on; do
    not try to work around the firewall. Pipelines like `curl ... | jq` and
