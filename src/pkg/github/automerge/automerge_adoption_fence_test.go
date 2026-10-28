@@ -90,5 +90,5 @@ func TestSelfAuthoredSweepCarriedFenceHoldsMerge(t *testing.T) {
 // supersedeAdoptedPR would for the adopted contributor PR #7.
 func adoptionPRBodyWithFence(fence string) string {
 	obs := stageObservation{Owner: "acme", Repo: "widget", Display: "acme/widget", Number: 7, HeadSHA: "aaa", Author: "mallory", BaseRef: "v5", Title: "Fix the widget"}
-	return AdoptionPRBody(obs, stagelabels.Record{AdoptReason: AdoptReasonOffline, AdoptDiffFence: fence}, false)
+	return AdoptionPRBody(obs, stagelabels.Record{AdoptReason: AdoptReasonOffline, AdoptDiffFence: fence}, false, "")
 }

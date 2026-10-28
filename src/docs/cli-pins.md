@@ -13,7 +13,7 @@ Every agent CLI hive drives is baked into the images at a fixed version:
 | Oh My Pi (omp) | `OMP_VERSION`, `OMP_SHA256_*` | GitHub releases `can1357/oh-my-pi` | SHA-256 per arch, cross-checked with `SHA256SUMS.txt` |
 | Muse Code | `MUSE_VERSION`, `MUSE_SHA256_*` | `api.meta.ai/muse-code/channels/muse-stable` and its release manifest | SHA-256 per arch, cross-checked with the manifest |
 | bobshell (bob) | `BOBSHELL_VERSION`, `BOBSHELL_SHA256_*` | `bobshell2-version.txt` on IBM COS | SHA-256, cross-checked with the vendor `.tgz.sha256` |
-| gh | `GH_VERSION`, `GH_SHA256_*` (hub only) | GitHub releases `cli/cli` | SHA-256 per arch, cross-checked with `gh_<v>_checksums.txt` |
+| gh | `GH_VERSION`, `GH_SHA256_*` (hub only); also `GITHUB_CLI_VERSION` in `src/deploy/ci-runners/Dockerfile` | GitHub releases `cli/cli` | SHA-256 per arch, cross-checked with `gh_<v>_checksums.txt` |
 
 The pins live in `src/Dockerfile` (hub and spoke image) and
 `src/Dockerfile.contributor` (containerized contributors), and the two must
@@ -88,7 +88,7 @@ Most CLIs ship features on major/minor releases, so patch-only bumps are
 skipped. **Claude Code is patch-eligible**: it ships new models as 2.1.x
 patches (for example Sonnet 5.5 needs 2.1.284), so skipping patches left the
 image unable to launch models Hive lists. `cli-pin-bump.sh` bumps patch
-releases of the CLIs in `HIVE_PIN_PATCH_ELIGIBLE` (default `claude`; set it to
+releases of the CLIs in `HIVE_PIN_PATCH_ELIGIBLE` (default `claude gh`; set it to
 empty to restore the strict rule). Add a CLI there when it starts shipping
 models in patches.
 

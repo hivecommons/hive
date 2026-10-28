@@ -197,6 +197,15 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Review.ValidatePendingReviewTTL(); err != nil {
 		return err
 	}
+	if err := c.Review.Reviewers.Autoscale.Validate(); err != nil {
+		return err
+	}
+	if err := c.Review.ValidateDeltaMaxAge(); err != nil {
+		return err
+	}
+	if err := c.Review.ValidatePendingFixTTL(); err != nil {
+		return err
+	}
 	if err := c.validateReviewPerspectiveModels(); err != nil {
 		return err
 	}

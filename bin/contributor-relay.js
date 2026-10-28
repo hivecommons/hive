@@ -1387,12 +1387,187 @@ if (rawTokenList.length === 0) {
 // state. currentTask, cliReady and everything CLI-facing stay single global
 // values below — there is exactly one CLI/tmux session, shared across
 // whichever hub currently holds the active task or is being polled for work.
+// ── Retired hosted-hive domains ──────────────────────────────────────────────
+// The hosted fleet moved apex from *.hive.kubestellar.io to
+// *.hive.hivecommons.dev on 2026-09-04. The old wildcard is no longer in the
+// serving certificate, so a contributor whose contributor.env still carries the
+// URL `just contribute-setup` wrote before the move fails the TLS handshake on
+// every attempt ("Hostname/IP does not match certificate's altnames") and the
+// close handler used to retry it forever at MAX_RECONNECT_DELAY_MS. The old
+// apex still answers HTTP with a 301, but a WebSocket handshake does not
+// follow redirects, so nothing downstream ever told the contributor to move.
+//
+// Keyed by host SUFFIX so the per-hive label (hosted-<slug>, or a vanity host)
+// is preserved verbatim — only the apex changes. Order: most specific first.
+const RETIRED_HIVE_HOST_SUFFIXES = [
+  ['.hive.kubestellar.io', '.hive.hivecommons.dev'],
+];
+const RETIRED_HIVE_APEX_HOSTS = new Map([
+  ['hive.kubestellar.io', 'hive.hivecommons.dev'],
+]);
+const DEFAULT_HUB_PUBLIC_URL = 'https://hive.hivecommons.dev';
+const DEFAULT_HUB_SPOKE_DOMAIN = 'hive.hivecommons.dev';
+
+// relocateRetiredHiveURL returns `url` with a retired apex replaced by its
+// successor, or null when the URL does not name a retired host (including
+// unparseable input — the caller falls back to the string it had).
+function relocateRetiredHiveURL(url) {
+  let u;
+  try { u = new URL(String(url || '').trim()); } catch (_) { return null; }
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  const apex = RETIRED_HIVE_APEX_HOSTS.get(host);
+  if (apex) { u.hostname = apex; return u.toString(); }
+  for (const [from, to] of RETIRED_HIVE_HOST_SUFFIXES) {
+    if (host.endsWith(from)) {
+      u.hostname = host.slice(0, -from.length) + to;
+      return u.toString();
+    }
+  }
+  return null;
+}
+
+// Logged once per distinct saved URL, not once per reconnect: the relocation
+// happens in hubWsURL()/hubPublicURL(), which run on every connect and every
+// SIGUSR1 reload of contributor.env.
+const retiredHiveURLWarned = new Set();
+function normalizeRetiredHiveURL(url) {
+  const raw = String(url || '').trim();
+  const moved = relocateRetiredHiveURL(raw);
+  if (!moved) return raw;
+  if (!retiredHiveURLWarned.has(raw)) {
+    retiredHiveURLWarned.add(raw);
+    console.warn(`Hive URL ${raw} uses the retired *.hive.kubestellar.io domain; connecting to ${moved} instead. ` +
+      `Update the HIVE_HUB line in ${CONTRIBUTOR_ENV_FILE} (or re-run \`just contribute-setup\`) to silence this.`);
+  }
+  return moved;
+}
+
 function hubWsURL(url) {
-  return String(url || '').trim().replace(/\/contribute\/?$/, '/api/contribute/ws');
+  return normalizeRetiredHiveURL(url).replace(/\/contribute\/?$/, '/api/contribute/ws');
 }
 
 function hubPublicURL(url) {
-  return String(url || '').trim().replace(/\/api\/contribute\/ws\/?$/, '/contribute');
+  return normalizeRetiredHiveURL(url).replace(/\/api\/contribute\/ws\/?$/, '/contribute');
+}
+
+// ── TLS hostname mismatch: stop, explain, re-resolve once ───────────────────
+// Node surfaces a certificate that does not cover the dialed host as an
+// ERR_TLS_CERT_ALTNAME_INVALID error whose message names the altnames. It is
+// never transient — the same URL will fail identically until the contributor
+// changes it — so backing off and redialing is pure noise.
+const TLS_ALTNAME_MISMATCH_RE = /does not match certificate'?s altnames/i;
+function isTLSHostMismatchError(err) {
+  if (!err) return false;
+  if (err.code === 'ERR_TLS_CERT_ALTNAME_INVALID') return true;
+  return TLS_ALTNAME_MISMATCH_RE.test(String(err.message || err));
+}
+
+// tlsHostMismatchRemediation is the one line a contributor needs to act on
+// a hostname mismatch: what moved, where the stale value lives, and how to
+// get a fresh one. `resolved` is the URL the relay is about to retry with (or
+// null when it has nothing better to try).
+function tlsHostMismatchRemediation(hub, resolved) {
+  const saved = hub.sourceURL || hub.url;
+  const parts = [`The hive at ${saved} presented a certificate for another host — the hive has moved and your saved URL is stale (${CONTRIBUTOR_ENV_FILE}, HIVE_HUB line).`];
+  if (resolved) {
+    parts.push(`The hub lists it at ${resolved}; retrying there once.`);
+  } else {
+    parts.push('Not retrying this URL.');
+  }
+  parts.push(`Fix: export HIVE_HUB=wss://<new-hive-host>/contribute, or re-run \`just contribute-setup\` to pick the hive again from ${DEFAULT_HUB_PUBLIC_URL}.`);
+  return parts.join(' ');
+}
+
+// hubRegistryURL is the public hive listing of the hub a hosted hive belongs
+// to — the same lookup `just contribute-setup` performs. Hosted hives live one
+// label under the hub's spoke domain, so the hub is the apex of the hive host;
+// anything else (a standalone hive) has no hub we can ask and resolves to null.
+function hubRegistryURLFor(hiveURL) {
+  let u;
+  try { u = new URL(String(hiveURL || '').trim()); } catch (_) { return null; }
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  const idx = host.indexOf('.');
+  if (idx <= 0) return null;
+  const apex = host.slice(idx + 1);
+  if (apex !== DEFAULT_HUB_SPOKE_DOMAIN) return null;
+  return `https://${apex}/api/registry`;
+}
+
+// currentHiveURLFromRegistry picks the hive matching `hiveURL` out of a
+// /api/registry body: by id (hosted-<slug>) or by the host of its dashboardUrl
+// (vanity hosts). Returns the registry's dashboardUrl as a wss:// contribute
+// URL, or null when the registry does not know the hive or lists the same
+// host we just failed on (so the retry would be identical).
+function currentHiveURLFromRegistry(hiveURL, registry) {
+  let u;
+  try { u = new URL(String(hiveURL || '').trim()); } catch (_) { return null; }
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');
+  const label = host.split('.')[0];
+  const hives = registry && Array.isArray(registry.hives) ? registry.hives : [];
+  for (const h of hives) {
+    if (!h || typeof h !== 'object' || typeof h.dashboardUrl !== 'string') continue;
+    let d;
+    try { d = new URL(h.dashboardUrl); } catch (_) { continue; }
+    const dHost = d.hostname.toLowerCase();
+    if (h.id !== label && dHost.split('.')[0] !== label) continue;
+    if (dHost === host) return null;
+    d.protocol = d.protocol === 'http:' ? 'ws:' : 'wss:';
+    d.pathname = '/contribute';
+    d.search = '';
+    d.hash = '';
+    return d.toString();
+  }
+  return null;
+}
+
+// fetchHubRegistry GETs the hub's /api/registry and calls back with the parsed
+// body (or null on any failure). Replaceable from tests via __setRegistryFetch
+// so the resolution path runs without a network or a timer.
+const HUB_REGISTRY_TIMEOUT_MS = 5000;
+let fetchHubRegistry = (registryURL, cb) => {
+  let done = false;
+  const finish = v => { if (!done) { done = true; cb(v); } };
+  try {
+    const req = https.get(registryURL, { timeout: HUB_REGISTRY_TIMEOUT_MS }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { if (body.length < 4 * 1024 * 1024) body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return finish(null);
+        try { finish(JSON.parse(body)); } catch (_) { finish(null); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
+    req.on('error', () => finish(null));
+  } catch (_) { finish(null); }
+};
+
+// handleTLSHostMismatch is the `error` handler's branch for a certificate
+// that does not cover the dialed host. It marks the hub so the close handler
+// does not schedule a reconnect, prints the remediation once, and — when the
+// hive belongs to a hub we can ask and we have not already retried — looks the
+// hive up in that hub's registry and redials its current URL exactly once.
+function handleTLSHostMismatch(hub, err) {
+  hub.tlsHostMismatch = true;
+  hub.authenticated = false;
+  const registryURL = hub.relocationAttempted ? null : hubRegistryURLFor(hub.sourceURL || hub.url);
+  if (!registryURL) {
+    console.error(tlsHostMismatchRemediation(hub, null));
+    writeRelayStatus();
+    return;
+  }
+  hub.relocationAttempted = true;
+  fetchHubRegistry(registryURL, registry => {
+    const resolved = currentHiveURLFromRegistry(hub.sourceURL || hub.url, registry);
+    console.error(tlsHostMismatchRemediation(hub, resolved));
+    if (!resolved) { writeRelayStatus(); return; }
+    hub.relocatedFrom = hub.sourceURL || hub.url;
+    hub.sourceURL = hubPublicURL(resolved);
+    hub.url = hubWsURL(resolved);
+    hub.tlsHostMismatch = false;
+    hub.reconnectDelay = BASE_RECONNECT_DELAY_MS;
+    connectHub(hub);
+  });
 }
 
 // One audit level per hub (#13456). Unlike the credential lists, a bad value
@@ -1524,6 +1699,13 @@ function makeHub(url, token, disabled = false, contributorId = '', repoScope = n
     readyRequestSeq: 0,
     authenticated: false,
     authFailed: false,
+    // Set by handleTLSHostMismatch when the dialed host is not in the served
+    // certificate; parks the hub (no reconnect loop) until contributor.env
+    // changes. relocationAttempted bounds the hub-registry re-resolution to
+    // one try per hub lifetime; relocatedFrom records the stale URL it left.
+    tlsHostMismatch: false,
+    relocationAttempted: false,
+    relocatedFrom: null,
     // #2547: set once we have reported a contributor-protocol difference with
     // this hub, so a reconnect loop does not repeat the same advisory line.
     protocolDriftReported: false,
@@ -1602,6 +1784,7 @@ function relayIdleReason() {
 
 function relayReadiness(hub) {
   if (hub.disabled) return 'disabled';
+  if (hub.tlsHostMismatch) return 'hive-moved';
   if (contributorQuotaPaused || quotaHoldActive()) return 'quota-held';
   if (!hub.authenticated || hub.authFailed) return 'discovery-unavailable';
   if (hub.scopeUnsupported) return 'scope-unsupported';
@@ -2562,6 +2745,7 @@ function reloadHubsFromProjection() {
         stopHub(existing, 'registration token changed');
         existing.regToken = entry.token;
         existing.authFailed = false;
+        existing.tlsHostMismatch = false;
         existing.reconnectDelay = BASE_RECONNECT_DELAY_MS;
         connectHub(existing);
       }
@@ -9803,9 +9987,22 @@ function connectHub(hub) {
 
   hub.ws.on('close', (code, reason) => {
     if (gen !== hub.connectGeneration) return;
+    if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
+    if (hub.tlsHostMismatch) {
+      // The error handler already printed the remediation and either redialed
+      // the hub-resolved URL (bumping connectGeneration, so we never get here)
+      // or had nothing better to try. Redialing the same host would fail the
+      // same handshake; leave the hub parked until contributor.env changes.
+      console.log(`Connection to ${hub.url} closed (${describeWsClose(code, reason)}). ` +
+        'Not reconnecting: the certificate does not cover this host (see the line above).');
+      hub.readyOutstanding = false;
+      hub.authenticated = false;
+      writeRelayStatus();
+      invalidateReadyRetry(hub, 'tls hostname mismatch');
+      return;
+    }
     console.log(`Connection to ${hub.url} closed (${describeWsClose(code, reason)}). ` +
       `${wsCloseCorrelation(hub)}. Reconnecting in ${hub.reconnectDelay}ms...`);
-    if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
     // #7732: a `ready` in flight on this socket died with it; the auth_ok of
     // the reconnect asks afresh.
     hub.readyOutstanding = false;
@@ -9821,6 +10018,7 @@ function connectHub(hub) {
   hub.ws.on('error', (err) => {
     if (gen !== hub.connectGeneration) return;
     console.error(`WebSocket error on ${hub.url}:`, err.message);
+    if (isTLSHostMismatchError(err)) handleTLSHostMismatch(hub, err);
   });
 }
 
@@ -10296,6 +10494,17 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     canonicalRepositoryID,
     assignmentInScope,
     reloadHubsFromProjection,
+    relocateRetiredHiveURL,
+    normalizeRetiredHiveURL,
+    hubWsURL,
+    hubPublicURL,
+    isTLSHostMismatchError,
+    tlsHostMismatchRemediation,
+    hubRegistryURLFor,
+    currentHiveURLFromRegistry,
+    handleTLSHostMismatch,
+    connectHub,
+    __setRegistryFetch: fn => { fetchHubRegistry = fn; },
     recordHubSeen,
     writeHubsSeenNow,
     appendTaskActivity,

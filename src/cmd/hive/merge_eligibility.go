@@ -97,17 +97,18 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 		p := cfg.AutoMerge.ContributorLane
 		tier := cfg.AutoMerge.ContributorTier
 		return automerge.ContributorLanePolicy{
-			Enabled:                           p.IsEnabled(),
-			HiveID:                            cfg.HiveID,
-			Soak:                              time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
-			RequireReviewerVerdict:            p.EffectiveRequireReviewerVerdict(),
-			Repos:                             p.RepoSet(),
-			ExcludeLabels:                     p.ExcludeLabelSet(),
-			RequireTiers:                      p.RequireTierSet(),
-			RegistryTiersSufficient:           p.EffectiveRegistryTiersSufficient(),
-			AutoPromoteAfterMergedPR:          tier.EffectiveAutoPromoteAfterMerged(),
-			AutoPromotionScope:                p.EffectiveAutoPromotionScope(),
-			ApproveHeldRunsForRegistryTrusted: p.EffectiveApproveHeldRunsForRegistryTrusted(),
+			Enabled:                            p.IsEnabled(),
+			HiveID:                             cfg.HiveID,
+			Soak:                               time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
+			RequireReviewerVerdict:             p.EffectiveRequireReviewerVerdict(),
+			Repos:                              p.RepoSet(),
+			ExcludeLabels:                      p.ExcludeLabelSet(),
+			RequireTiers:                       p.RequireTierSet(),
+			RegistryTiersSufficient:            p.EffectiveRegistryTiersSufficient(),
+			AutoPromoteAfterMergedPR:           tier.EffectiveAutoPromoteAfterMerged(),
+			AutoPromotionScope:                 p.EffectiveAutoPromotionScope(),
+			ApproveHeldRunsForRegistryTrusted:  p.EffectiveApproveHeldRunsForRegistryTrusted(),
+			OwnerApprovalReleasesWorkflowFence: p.EffectiveOwnerApprovalReleasesWorkflowFence(),
 		}
 	}
 }

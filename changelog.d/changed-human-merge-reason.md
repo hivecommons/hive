@@ -1,0 +1,1 @@
+- Hive activity monitor: every `090 Ready for human merge` row and its tooltip now say why a person must merge (`· workflow files`, `· untrusted author`, `· branch protection`, `· auto-merge off`, `· unauthorized`, … falling back to `· policy`), derived from the stage record's lane reason; nested PR sub-rows and the needs-attention headline carry the same (#14658)

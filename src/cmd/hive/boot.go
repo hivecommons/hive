@@ -269,6 +269,9 @@ type boot struct {
 	// rfcCoverage is the triage existing-coverage check state
 	// (issues.rfc_existing_check.*).
 	rfcCoverage *rfcCoverageState
+	// rfcNotify is the RFC lifecycle Discord notice state
+	// (notifications.discord.rfc_channel_id).
+	rfcNotify *rfcNotifyState
 
 	// reviewEvents queues webhook-triggered review dispatch and reviewWake
 	// carries its wakes to the governor loop (hivecommons/hive#11091).

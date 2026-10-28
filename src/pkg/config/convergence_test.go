@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
 
 // ── kubestellar/hive#3845 convergence feature toggle ───────────────────────────
 //
@@ -101,5 +105,28 @@ func TestConvergenceMode_EnvOverridesConfig(t *testing.T) {
 	t.Setenv(ConvergenceModeEnvVar, "enforce")
 	if got := cfg.ConvergenceMode(); got != ConvergenceModeEnforce {
 		t.Fatalf("env=enforce over config=shadow resolved %q, want enforce", got)
+	}
+}
+
+// TestMutationMaxWritersPerTarget pins the #14645 knob: unset/non-positive
+// selects the ledger default (0), a positive value is passed through.
+func TestMutationMaxWritersPerTarget(t *testing.T) {
+	var nilCfg *Config
+	if got := nilCfg.MutationMaxWritersPerTarget(); got != 0 {
+		t.Fatalf("nil config = %d, want 0", got)
+	}
+	if got := (&Config{}).MutationMaxWritersPerTarget(); got != 0 {
+		t.Fatalf("unset = %d, want 0", got)
+	}
+	neg := &Config{Convergence: ConvergenceConfig{Mutation: &ConvergenceMutationConfig{MaxWritersPerTarget: -3}}}
+	if got := neg.MutationMaxWritersPerTarget(); got != 0 {
+		t.Fatalf("negative = %d, want 0", got)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("convergence:\n  mutation:\n    max_writers_per_target: 3\n"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.MutationMaxWritersPerTarget(); got != 3 {
+		t.Fatalf("configured = %d, want 3", got)
 	}
 }

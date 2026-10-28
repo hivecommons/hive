@@ -21,6 +21,25 @@ type FactSink interface {
 	Parked(ctx context.Context, ref Ref, label string) error // agent escalation (045/085/needs-human)
 	Unparked(ctx context.Context, ref Ref, by string) error  // /hive approve|decision
 	Closed(ctx context.Context, ref Ref) error               // the issue closed; its stage lifts
+	// PRDecided is a trusted merger's `/hive decision` answered on a PR
+	// parked at 085: the decision is recorded for Head, so the park lifts
+	// now — in the same breath as the reply — instead of waiting for the
+	// next sweep's lanes to notice (hivecommons/hive#14679). It returns
+	// the transition the reconcile wrote, for the caller's audit line.
+	PRDecided(ctx context.Context, ref Ref, d PRDecisionFact) (Transition, error)
+}
+
+// PRDecisionFact is what a `/hive decision` on a PR establishes for the
+// stage: who decided, on which head, and whether the decision carries an
+// instruction the author agent must act on (→ fixing) or is a bare approval
+// (→ the merge path, decided by the lanes on their next pass).
+type PRDecisionFact struct {
+	Head        string
+	By          string
+	Instruction bool
+	// SelfAuthored says the hive opened the PR (the self lane owns it and
+	// fixing is 070); a PR it did not open is handed back to its author.
+	SelfAuthored bool
 }
 
 // NeedsHumanLabel is the non-stage park label an agent may request; a
@@ -183,6 +202,35 @@ func (s *factSink) Unparked(ctx context.Context, ref Ref, by string) error {
 		f.Issue = &IssueFacts{Bucket: BucketActionable}
 	}
 	return s.submit(ctx, f)
+}
+
+// PRDecided implements FactSink. A decision with an instruction is the
+// self lane's human-changes-requested opinion on Head with the decider as
+// the standing change requester, so ClassifyStage derives fixing over the
+// reviewer's decision-requested verdict on the same head. A bare approval
+// only lifts the park direction: the lanes release requires_human from the
+// recorded approval on their next pass, and the deriver abstains here.
+func (s *factSink) PRDecided(ctx context.Context, ref Ref, d PRDecisionFact) (Transition, error) {
+	ref.Kind = stagelabels.PRItem
+	f := Facts{Ref: ref, ObservedAt: s.opts.Now(), Open: true, Park: ParkFacts{ApprovedDirection: true}}
+	head := strings.TrimSpace(d.Head)
+	pr := &PRFacts{HeadSHA: head}
+	if d.Instruction && head != "" && strings.TrimSpace(d.By) != "" {
+		lane := stageLaneSelf
+		if !d.SelfAuthored {
+			lane = stageLaneTrusted
+		}
+		pr.Review.HumanChangeRequester = strings.TrimSpace(d.By)
+		pr.Lanes = []LaneFact{{Lane: lane, Reason: autoMergeReasonHumanChangesRequested}}
+	}
+	f.PR = pr
+	if s.opts.Enrich != nil {
+		var err error
+		if f, err = s.opts.Enrich(ctx, f); err != nil {
+			return Transition{Ref: ref}, err
+		}
+	}
+	return s.r.Reconcile(ctx, f)
 }
 
 // Closed implements FactSink: the issue closed (for any reason — a merged

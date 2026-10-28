@@ -89,7 +89,8 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 	if decisionRequested || reviewReportsHoldForHuman(reports) {
 		tightening = c.workflowPermissionsTighteningOnly(ctx, req)
 	}
-	prHead := c.reviewedPRHeadFunc(ctx, req)
+	prSnapshot := c.reviewedPRSnapshotFunc(ctx, req)
+	prHead := func() string { return prSnapshot().Head }
 	var recorded []review.PerspectiveReport
 	for _, report := range reports {
 		if decisionRequested {
@@ -99,7 +100,7 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 			report.Verdict = review.VerdictRequiresHuman
 		}
 		report.PermissionsTighteningOnly = tightening
-		if written, ok := c.writeOneVerdict(ctx, req, report, dir, prHead); ok {
+		if written, ok := c.writeOneVerdict(ctx, req, report, dir, prHead, prSnapshot); ok {
 			recorded = append(recorded, written)
 		}
 	}
@@ -145,34 +146,44 @@ func (c *Client) canonicalVerdictHead(req ReviewRequest, reported, dispatchHead 
 	return head
 }
 
-// reviewedPRHeadFunc returns a memoized lookup of req's PR head SHA: one
-// GitHub GET per relay pass at most, only when a verdict actually needs it,
-// and "" when the client is unavailable or the fetch fails.
-func (c *Client) reviewedPRHeadFunc(ctx context.Context, req ReviewRequest) func() string {
+// reviewedPRSnapshot is what the relay reads from the PR itself: its head
+// SHA, and the digest of its current title and body.
+type reviewedPRSnapshot struct {
+	Head       string
+	BodyDigest string
+}
+
+// reviewedPRSnapshotFunc returns a memoized lookup of req's PR head SHA and
+// body digest: one REST call per relayed request at most, and none when
+// nothing asks. A fetch failure is logged once and yields an empty snapshot.
+func (c *Client) reviewedPRSnapshotFunc(ctx context.Context, req ReviewRequest) func() reviewedPRSnapshot {
 	var (
-		head    string
+		snap    reviewedPRSnapshot
 		fetched bool
 	)
-	return func() string {
+	return func() reviewedPRSnapshot {
 		if fetched {
-			return head
+			return snap
 		}
 		fetched = true
 		if c == nil || c.client == nil {
-			return ""
+			return snap
 		}
 		owner, name := c.splitRepo(strings.TrimSpace(req.Repo))
 		if owner == "" || name == "" || req.Number <= 0 {
-			return ""
+			return snap
 		}
 		pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:review_verdict_relay"), owner, name, req.Number)
 		if err != nil || pr == nil {
-			c.logger.Warn("review-request watcher: could not fetch PR head to widen abbreviated verdict head",
+			c.logger.Warn("review-request watcher: could not fetch PR to bind verdict head and body digest",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number))
-			return ""
+			return snap
 		}
-		head = strings.TrimSpace(pr.GetHead().GetSHA())
-		return head
+		snap = reviewedPRSnapshot{
+			Head:       strings.TrimSpace(pr.GetHead().GetSHA()),
+			BodyDigest: review.PullRequestBodyDigest(pr.GetTitle(), pr.GetBody()),
+		}
+		return snap
 	}
 }
 
@@ -329,7 +340,7 @@ func maintainerCallQuestion(body string) string {
 // always read — a combined review changes how verdicts arrive, not how they
 // are stored, so nothing downstream needs to know the difference. It returns
 // the report as stored and whether it was.
-func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report review.PerspectiveReport, dir string, prHead func() string) (review.PerspectiveReport, bool) {
+func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report review.PerspectiveReport, dir string, prHead func() string, prSnapshot func() reviewedPRSnapshot) (review.PerspectiveReport, bool) {
 	// The verdict must be about the PR that was actually reviewed. Without this
 	// an agent authorized to comment on one PR could record a binding
 	// requires_human/reject verdict against any other PR in the fleet.
@@ -389,9 +400,15 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 	// a 64-character hash back proved unreliable (prose summaries, a
 	// "sha256:" prefix, a hash of something else), and every miscopy left the
 	// report orphaned in its own aggregate, so its pending entry never cleared
-	// and the swarm deadlocked (hivecommons/hive#14361). An advisory verdict
-	// has no dispatch record and keeps the digest it reported.
-	if dispatchBodyDigest := strings.TrimSpace(auth.BodyDigest); auth.Dispatched && dispatchBodyDigest != "" {
+	// and the swarm deadlocked (hivecommons/hive#14361). A dispatch record
+	// with no digest stamps an empty one, so every head's verdict for that
+	// PR and head SHA shares one aggregate instead of each landing under
+	// whatever the model wrote (hivecommons/hive#14594). An advisory verdict
+	// has no dispatch record and keeps the digest it reported; when it
+	// reported none, the digest of the PR's current title and body is
+	// stamped, so the planner can tell a later body edit from an unknown
+	// one (hivecommons/hive#14665).
+	if dispatchBodyDigest := strings.TrimSpace(auth.BodyDigest); auth.Dispatched {
 		if strings.TrimSpace(report.BodyDigest) != dispatchBodyDigest {
 			c.logger.Debug("review-request watcher: verdict body digest replaced by the dispatch digest",
 				slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
@@ -399,6 +416,8 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 				slog.String("agent", req.Agent))
 		}
 		report.BodyDigest = dispatchBodyDigest
+	} else if strings.TrimSpace(report.BodyDigest) == "" && prSnapshot != nil {
+		report.BodyDigest = prSnapshot().BodyDigest
 	}
 
 	// Re-marshalled from the validated struct rather than written through from

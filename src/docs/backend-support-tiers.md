@@ -547,6 +547,54 @@ agent spend, and the `advisor_records` admin MCP tool.
 A backend moves into a "Yes" row only with an adapter that answers the hook in
 the backend's own format and a test that the launch carries it.
 
+## Repeated-failure check
+
+The repeated-failure check ([#14550](https://github.com/hivecommons/hive/issues/14550))
+records each shell command an agent runs and notes on the agent's dashboard row
+when the same command keeps failing the same way. It never pauses the agent and
+is off by default (`repeat_failure.enabled`, see
+[Agent-runtime blocks](operator-reference.md#agent-runtime-blocks-configagentruntimeconfig)).
+Hive needs a way to see each backend's commands, so support is per backend.
+
+A backend is **covered** only when a committed, re-runnable harness made its
+real CLI produce a correct command record, and the evidence includes the CLI's
+own `--version` output. Hand-written test data does not count. Every other
+backend is **not covered**: with the check on, its agent rows say
+"repeat-failure check not available for this backend". The shell-activity
+signal is what the "not receiving data" safeguard watches for a covered
+backend, or "safeguard unavailable" where the backend has none.
+
+This table is generated from the code table in
+`src/pkg/agent/repeat_failure_coverage.go`;
+`TestRepeatFailureCoverageDocsMatchCode` fails when a backend is missing or a
+row here differs from the code.
+
+| Backend | Route | Status | Evidence | Shell-activity signal | Follow-up issue |
+| --- | --- | --- | --- | --- | --- |
+| `claude` | BASH_ENV (neutral), unwraps `eval '…'` | Not covered: BASH_ENV route installed while the check is on, but no committed real-run harness evidence yet (C4) | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `copilot` | none yet; planned: `events.jsonl` `tool.execution_complete` | Not covered: one long-lived Bash session per shell id; commands never reach the BASH_ENV route and the backend-specific route is not built yet | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `goose` | BASH_ENV (neutral) | Not covered: BASH_ENV route installed while the check is on, but no committed real-run harness evidence yet (C4) | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `codex` | BASH_ENV (neutral), one record across `exec /bin/bash -c` | Not covered: BASH_ENV route installed while the check is on, but no committed real-run harness evidence yet (C4) | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `pi` | BASH_ENV (neutral) | Not covered: BASH_ENV route installed while the check is on, but no committed real-run harness evidence yet (C4) | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `bob` | BASH_ENV (neutral) with `SHELL=/bin/bash` (documented shell change: dash → bash) | Not covered: BASH_ENV route installed while the check is on, but no committed real-run harness evidence yet (C4) | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `aider` | none yet; planned: guarded `~/.bashrc` line in Hive-managed homes | Not covered: interactive `$SHELL -i -c` ignores BASH_ENV; commands never reach the BASH_ENV route and the backend-specific route is not built yet | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `gemini` | BASH_ENV (neutral), unwraps the `{ …; }; __code=$?` wrapper | Not covered: BASH_ENV route installed while the check is on, but no committed real-run harness evidence yet (C4) | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `agy` | none yet; planned: `agy-turn` `run_command` steps | Not covered: closed binary, likely a long-lived terminal; commands never reach the BASH_ENV route and the backend-specific route is not built yet | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `opencode` | BASH_ENV (neutral) with `SHELL=/bin/bash` | Not covered: BASH_ENV route installed while the check is on, but no committed real-run harness evidence yet (C4) | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `kilo` | BASH_ENV (neutral) with `SHELL=/bin/bash` | Not covered: BASH_ENV route installed while the check is on, but no committed real-run harness evidence yet (C4) | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `muse` | none yet; planned: `PostToolUse` / `PostToolUseFailure` hooks | Not covered: sandboxed shell tools in a closed binary; commands never reach the BASH_ENV route and the backend-specific route is not built yet | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `omp` | none yet; planned: `tool_result` extension event | Not covered: embedded shell that strips BASH_ENV; commands never reach the BASH_ENV route and the backend-specific route is not built yet | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `openhands` | none yet; planned: `PostToolUse` hook or saved events | Not covered: one interactive bash kept open in tmux; commands never reach the BASH_ENV route and the backend-specific route is not built yet | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `omnigent` | none yet; planned: tool-call policy checkpoint (`ALLOW`/`DENY` verdicts) or saved session events | Not covered: meta-harness driving Claude Code, Codex or Pi through its own policy engine; commands never reach the BASH_ENV route and the backend-specific route is not built yet | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `vllm` | follows `claude` (drives Claude Code) | Not covered: follows `claude`, which is not covered | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `llm-d` | follows `claude` (drives Claude Code) | Not covered: follows `claude`, which is not covered | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `litellm` | follows `claude` (drives Claude Code) | Not covered: follows `claude`, which is not covered | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+| `watsonx` | follows `claude` (drives Claude Code) | Not covered: follows `claude`, which is not covered | None | n/a | [#14559](https://github.com/hivecommons/hive/issues/14559) |
+
+The BASH_ENV route is described in
+[the shell route](agent-configuration.md#repeat-failure-check-the-shell-route-repeat_failure).
+A backend moves to "Covered" only together with its committed harness evidence.
+
 ## Deprecation path
 
 A backend can be demoted or removed when its upstream CLI breaks Hive's contract

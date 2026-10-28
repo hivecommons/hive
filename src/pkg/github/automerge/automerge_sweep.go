@@ -274,6 +274,13 @@ type Engine struct {
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool
+	// unauthorized remembers, per PR, the head and step this process marked
+	// `hive:unauthorized` for, so the same head logs once and the mark
+	// clears when the step is done; unauthorizedLabelReady remembers the
+	// repositories whose label is provisioned (automerge_unauthorized.go).
+	unauthorizedMu         sync.Mutex
+	unauthorized           map[string]unauthorizedState
+	unauthorizedLabelReady map[string]bool
 	// mergeQueueBases remembers base branches whose ruleset refused a direct
 	// merge as merge-queue-only, so the self-authored sweep stops re-issuing
 	// a REST merge that cannot succeed (hivecommons/hive#14068).
@@ -3154,7 +3161,7 @@ func mergeAPIErrorNotApplied(err error) error {
 		return err
 	}
 	switch ghErr.Response.StatusCode {
-	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
+	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusForbidden:
 		return effects.NotApplied(err)
 	}
 	return err

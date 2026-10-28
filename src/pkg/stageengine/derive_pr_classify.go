@@ -66,6 +66,7 @@ const (
 	stageReasonSharedCIIncident            = prstage.StageReasonSharedCIIncident
 	trustedBotLaneSkipReason               = prstage.TrustedBotLaneSkipReason
 	workflowApprovalRequiredPrefix         = prstage.WorkflowApprovalRequiredPrefix
+	stageReasonUnauthorizedPrefix          = prstage.StageReasonUnauthorizedPrefix
 )
 
 func normalizeContributorLaneVerdict(v ContributorLaneVerdict) ContributorLaneVerdict {
@@ -173,6 +174,26 @@ func VerdictNeedsHuman(d stageDetail) bool {
 func TrustedHumanApprovedRequiresHuman(d stageDetail, head string) bool {
 	d = NormalizeStageDetail(d)
 	return VerdictNeedsHuman(d) && strings.TrimSpace(d.HumanApprover) != "" && strings.TrimSpace(d.HumanApprovalHead) != "" && strings.TrimSpace(d.HumanApprovalHead) == strings.TrimSpace(head)
+}
+
+// TrustedHumanChangeRequested reports whether a trusted human's change
+// request — a CHANGES_REQUESTED review or a `/hive decision <text>` given
+// at 085 — stands against head. It answers the swarm's requires_human /
+// decision-requested verdict on that head: the person has spoken, so the
+// PR belongs in fixing with the instruction, not parked on the question
+// it already answered (hivecommons/hive#14679, seen on #14628).
+func TrustedHumanChangeRequested(d stageDetail, head string) bool {
+	return strings.TrimSpace(d.HumanChangeRequester) != "" && strings.TrimSpace(d.HumanChangeRequestHead) != "" && strings.TrimSpace(d.HumanChangeRequestHead) == strings.TrimSpace(head)
+}
+
+// HumanChangeRequestStage is the fixing opinion a standing human change
+// request on the head carries: owned rank, reason human-changes-requested,
+// whatever the reviewer verdict on that head says.
+func HumanChangeRequestStage(o stageObservation) (stageVerdict, bool) {
+	if !TrustedHumanChangeRequested(o.Detail, o.HeadSHA) {
+		return stageVerdict{}, false
+	}
+	return stageVerdict{Stage: FixingStage(o), Rank: stageRankOwned, Reason: autoMergeReasonHumanChangesRequested}, true
 }
 
 func WithHumanApprovalReason(v stageVerdict, reason string) stageVerdict {
@@ -304,6 +325,9 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		if HasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
+		if v, ok := HumanChangeRequestStage(o); ok {
+			return v
+		}
 		if v, ok := RequiresHumanStage(o, rank); ok {
 			// The reviewer already asked for a person: a 090 candidate would
 			// be dropped for the non-approve verdict and fall to 050, where
@@ -319,6 +343,11 @@ func ClassifyStage(o stageObservation) stageVerdict {
 	if strings.HasPrefix(reason, workflowApprovalRequiredPrefix) {
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}
+	if strings.HasPrefix(reason, stageReasonUnauthorizedPrefix) {
+		// The App lacks the permission the next step needs; only a person
+		// can take it (hivecommons/hive#14589). The reason keeps the step.
+		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+	}
 	// An open issue the PR closes is held or parked on a person
 	// (linked-issue:hold:#N:<label> / linked-issue:needs-decision:#N:<label>):
 	// the decision is owed on the issue, and removing its label releases
@@ -329,6 +358,19 @@ func ClassifyStage(o stageObservation) stageVerdict {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+	}
+	if v, ok := HumanChangeRequestStage(o); ok {
+		// The person answered the question on this head: fixing with the
+		// instruction, ahead of the decision-requested verdict below.
+		return v
+	}
+	if o.Detail.VerdictKnown && o.Detail.Verdict.DecisionRequested {
+		// A posted decision question outranks mergeability: no fixer is kicked
+		// for a decision-requested head, and a conflict is moot if the answer
+		// is to close it (hivecommons/hive#14607).
+		if v, ok := RequiresHumanStage(o, stageRankOwned); ok {
+			return v
+		}
 	}
 	if stageFixingReasons[reason] || strings.HasPrefix(reason, "label:") && strings.Contains(reason, "rebase") {
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
@@ -422,7 +464,7 @@ func ReviewGateStage(reason string, fixing stagelabels.Stage) (stageVerdict, boo
 // is requires_human / needs-decision and that no trusted human has approved
 // since; rank is the strength the caller's reason carries.
 func RequiresHumanStage(o stageObservation, rank int) (stageVerdict, bool) {
-	if !VerdictNeedsHuman(o.Detail) || TrustedHumanApprovedRequiresHuman(o.Detail, o.HeadSHA) {
+	if !VerdictNeedsHuman(o.Detail) || TrustedHumanApprovedRequiresHuman(o.Detail, o.HeadSHA) || TrustedHumanChangeRequested(o.Detail, o.HeadSHA) {
 		return stageVerdict{}, false
 	}
 	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: rank, Human: true, Reason: StageVerdictReason(o.Detail)}, true

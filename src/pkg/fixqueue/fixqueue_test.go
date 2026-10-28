@@ -276,6 +276,46 @@ func TestEnqueueIdempotentAndRemove(t *testing.T) {
 	}
 }
 
+// A dispatch the relay failed goes back in the queue with its attempt
+// counted, frees the preemption, and is not interrupted back in until the
+// backoff elapses; a task boundary may serve it at once (hivecommons/hive#14668).
+func TestRequeueFailedDispatchBacksOff(t *testing.T) {
+	c := newClock()
+	s := newSched(c)
+	s.Enqueue("ida", red(1, time.Hour, c))
+	d := s.Dispatch("ida", Capacity{Max: 1})
+	if d == nil || d.Mode != ModePreempt {
+		t.Fatalf("dispatch = %+v", d)
+	}
+	if s.Requeue("ida", "nope", time.Minute) != nil || s.Requeue("zed", d.ID, time.Minute) != nil {
+		t.Fatal("unknown dispatch requeued")
+	}
+	got := s.Requeue("ida", d.ID, time.Minute)
+	if len(got) != 1 || got[0].Attempts != 1 || !got[0].NotBefore.Equal(c.at.Add(time.Minute)) {
+		t.Fatalf("requeued = %+v", got)
+	}
+	if st := s.Status("ida", Capacity{Max: 1}); st.Queued != 1 || st.InFlight != 0 || st.FocusUntil != nil {
+		t.Fatalf("status after requeue = %+v", st)
+	}
+	if s.Dispatch("ida", Capacity{Max: 1}) != nil {
+		t.Fatal("interrupt re-dispatched inside the backoff")
+	}
+	// A refreshed nudge keeps the attempt count and the backoff.
+	s.Enqueue("ida", red(1, time.Hour, c))
+	if q := s.Queued("ida"); len(q) != 1 || q[0].Attempts != 1 || q[0].NotBefore.IsZero() {
+		t.Fatalf("refresh lost the retry state: %+v", q)
+	}
+	c.advance(time.Minute)
+	d2 := s.Dispatch("ida", Capacity{Max: 1})
+	if d2 == nil || d2.ID == d.ID || d2.Items[0].Attempts != 1 {
+		t.Fatalf("retry after backoff = %+v", d2)
+	}
+	s.Requeue("ida", d2.ID, time.Hour)
+	if b := s.DispatchAtBoundary("ida", Capacity{Max: 1}); b == nil || b.Items[0].Attempts != 2 {
+		t.Fatalf("boundary should serve a backing-off fix: %+v", b)
+	}
+}
+
 func TestCompleteDispatchAndPartialRemove(t *testing.T) {
 	c := newClock()
 	s := newSched(c)

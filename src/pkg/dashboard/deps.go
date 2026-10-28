@@ -29,6 +29,7 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/nous"
+	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -80,12 +81,16 @@ type Dependencies struct {
 	// counters for /api/status.stageEngine and the activity tracker's
 	// status strip. nil leaves the block out of /api/status.
 	StageEngineStatus func() stageengine.Status
-	Tokens            *tokens.Collector
-	Knowledge         *knowledge.KnowledgeAPI
-	Inception         *knowledge.InceptionEngine
-	Nous              *NousState
-	Scheduler         SchedulerControl
-	MetricsCollector  *MetricsCollector
+	// ReviewerAutoscaleStatus reports the reviewer-lane autoscaler
+	// (hivecommons/hive#14685) for /api/status.reviewerAutoscale. nil, or a
+	// Status with Enabled=false, leaves the block out.
+	ReviewerAutoscaleStatus func() autoscale.Status
+	Tokens                  *tokens.Collector
+	Knowledge               *knowledge.KnowledgeAPI
+	Inception               *knowledge.InceptionEngine
+	Nous                    *NousState
+	Scheduler               SchedulerControl
+	MetricsCollector        *MetricsCollector
 	// KnowledgePrimer builds, publishes and reports the scheduler's kick
 	// primer — the one thing knowledge.enabled actually gates (#9231). Nil
 	// (bare test deps) means the toggle can only persist the flag, so it

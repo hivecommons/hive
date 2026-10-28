@@ -89,6 +89,53 @@ func TestBootHeartbeatProjectConfig_RefusesMisconfiguredRepoTarget(t *testing.T)
 	}
 }
 
+func TestBootHeartbeatProjectConfig_RepeatedRefusalLogsErrorOncePerDistinctPush(t *testing.T) {
+	f := newBootHeartbeatFake()
+	cfg := bootHeartbeatConfig()
+	b := newBootHeartbeatBoot(t, f, cfg)
+	b.bootHeartbeatWith(f.deps)
+
+	refusedErrors := func() int {
+		n := 0
+		for _, line := range strings.Split(f.log.String(), "\n") {
+			if strings.Contains(line, "level=ERROR") && strings.Contains(line, "REFUSING hub project config") {
+				n++
+			}
+		}
+		return n
+	}
+	push := func(org string) {
+		projectConfigCallback(t, f)(&spoke.HeartbeatProjectConfig{
+			Org:         org,
+			Repos:       []string{"widgets"},
+			PrimaryRepo: "widgets",
+			ACMMLevel:   3,
+		})
+	}
+
+	// The hub re-sends the same bad config every beat.
+	push("acme/widgets")
+	push("acme/widgets")
+	push("acme/widgets")
+	if got := refusedErrors(); got != 1 {
+		t.Fatalf("identical refused pushes logged %d ERROR lines, want 1:\n%s", got, f.log.String())
+	}
+
+	// A different misconfiguration is new information and logs again.
+	push("other/widgets")
+	if got := refusedErrors(); got != 2 {
+		t.Fatalf("changed misconfiguration logged %d ERROR lines total, want 2:\n%s", got, f.log.String())
+	}
+
+	// The same misconfiguration recurring after a valid push is accepted
+	// is new information again.
+	push("acme")
+	push("other/widgets")
+	if got := refusedErrors(); got != 3 {
+		t.Fatalf("misconfiguration recurring after a valid push logged %d ERROR lines total, want 3:\n%s", got, f.log.String())
+	}
+}
+
 func TestBootHeartbeatProjectConfig_AlreadyReconciledIsANoOp(t *testing.T) {
 	f := newBootHeartbeatFake()
 	cfg := bootHeartbeatConfig()

@@ -12,13 +12,18 @@ import (
 )
 
 type PullRequest struct {
-	Repo      string
-	Number    int
-	Title     string
-	Author    string
-	Labels    []string
-	HeadSHA   string
-	UpdatedAt time.Time
+	Repo   string
+	Number int
+	Title  string
+	Author string
+	Labels []string
+	// ChangedFiles are the PR's changed paths when the caller fetched them
+	// (ChangedFilesKnown), for the bot-author model route's path exceptions.
+	// Unknown means no downgrade.
+	ChangedFiles      []string
+	ChangedFilesKnown bool
+	HeadSHA           string
+	UpdatedAt         time.Time
 	// BodyDigest fingerprints the PR title/body that the reviewer judged.
 	// The body itself deliberately stays out of review.PullRequest (see
 	// grounding tests); this opaque digest lets a body-only remediation make
@@ -77,6 +82,11 @@ type PullRequest struct {
 	// reviews nothing on that head. It is the maintainer's text, not the
 	// author's rationale, so it is allowed into the fix prompt verbatim.
 	HumanChangeRequest *HumanChangeRequest
+	// DeltaDiff is the compare between the head the hive last judged and
+	// HeadSHA, fetched by the caller when review.delta_rereview is on and the
+	// PR has a prior verdict at another head. nil means not fetched: the
+	// reviewer still gets the delta instruction, but no trivial skip.
+	DeltaDiff *DeltaDiff
 }
 
 func PullRequestBodyDigest(title, body string) string {
@@ -261,6 +271,11 @@ type PromptOptions struct {
 	// posting anything on the PR and must not read other reviews of this
 	// head; PostComments and AcknowledgeNoFindings are ignored.
 	HeadRecordOnly string
+	// Delta is set when this kick is a delta re-review (review.delta_rereview):
+	// the PR already has a verdict at an earlier head, and the reviewer is
+	// to read the diff between that head and this one, re-check the earlier
+	// findings, and leave the rest of the PR as judged. nil is a full review.
+	Delta *DeltaContext
 }
 
 // BuildPerspectivePromptWith is BuildPerspectivePromptOpts with the full set
@@ -291,6 +306,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	writeIndependentReviewSection(&b, opts)
 	b.WriteString(scopeContractSection(pr))
 	b.WriteString(buildReadInstruction(pr))
+	b.WriteString(deltaSection(pr, opts.Delta))
 	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins, opts.ReviewBotMinPriority))
 	b.WriteString(groundingSection(pr))
 	if p == PerspectivePlanMatch {
@@ -618,6 +634,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString(combinedSharedHeader)
 	b.WriteString(scopeContractSection(pr))
 	b.WriteString(buildReadInstruction(pr))
+	b.WriteString(deltaSection(pr, opts.Delta))
 	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins, opts.ReviewBotMinPriority))
 	b.WriteString(groundingSectionWithBudget(pr, combinedGroundingBudget(len(perspectives)), fmt.Sprintf("this whole review, across all %d perspectives", len(perspectives))))
 	writeReviewWritingGuide(&b, opts)

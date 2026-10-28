@@ -330,6 +330,7 @@ type Background interface {
 	StartCredentialWatchdog(ctx context.Context)
 	StartCopilotSessionRefresh(ctx context.Context)
 	StartTranscriptActivityRefresh(ctx context.Context)
+	StartRepeatFailureMonitor(ctx context.Context)
 }
 
 // Authorizer is the per-request gate the host's relay watchers consult

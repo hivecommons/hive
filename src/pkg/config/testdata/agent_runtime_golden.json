@@ -15,6 +15,9 @@
     },
     "CheckoutsDir": "",
     "AgentsMdMaxBytes": 0,
+    "Style": "",
+    "StyleFile": "",
+    "StyleMaxBytes": 0,
     "PausedRepos": null,
     "WritingGuide": ""
   },

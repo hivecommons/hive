@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,6 +84,7 @@ import (
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/rfccoverage"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -91,6 +93,7 @@ import (
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/telegram"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -1479,28 +1482,29 @@ func (b *boot) wireBootClosures() {
 				}
 				return dashboardChatPoll(b.dashChat, since)
 			},
-			Governor:            b.gov,
-			GHClient:            b.ghClient,
-			StageEngineStatus:   func() stageengine.Status { return stageEngineStatus(b.cfg, b.ghClient, b.logger) },
-			ReviewEvents:        b.reviewEvents,
-			WebhookWake:         b.webhookWakeFunc(),
-			ApplyWebhookItems:   b.applyWebhookItemsFunc(),
-			WebhookDelivery:     b.webhookDeliveryFunc(),
-			EvalLoop:            b.evalLoopStatusFunc(),
-			SentinelPREvent:     b.sentinelPREventFunc(),
-			ProjectsV2ItemEvent: b.projectsV2ItemEventFunc(),
-			GHAppAuth:           b.appAuth,
-			GHTokenScopes:       b.ghAuth.TokenScopes,
-			Tokens:              b.tokenCollector,
-			Knowledge:           b.knowledgeAPI,
-			Inception:           b.inceptionEngine,
-			Nous:                b.nousState,
-			Scheduler:           b.sched,
-			KnowledgePrimer:     knowledgePrimerControl{b: b},
-			MetricsCollector:    b.metricsCollector,
-			RotationMgr:         b.rotationMgr,
-			HeadroomPublisher:   b.quotaReadingPublisher,
-			QuestionAutoclose:   questionAutocloseView{b: b},
+			Governor:                b.gov,
+			GHClient:                b.ghClient,
+			StageEngineStatus:       func() stageengine.Status { return stageEngineStatus(b.cfg, b.ghClient, b.logger) },
+			ReviewerAutoscaleStatus: func() autoscale.Status { return reviewerAutoscaler.Status() },
+			ReviewEvents:            b.reviewEvents,
+			WebhookWake:             b.webhookWakeFunc(),
+			ApplyWebhookItems:       b.applyWebhookItemsFunc(),
+			WebhookDelivery:         b.webhookDeliveryFunc(),
+			EvalLoop:                b.evalLoopStatusFunc(),
+			SentinelPREvent:         b.sentinelPREventFunc(),
+			ProjectsV2ItemEvent:     b.projectsV2ItemEventFunc(),
+			GHAppAuth:               b.appAuth,
+			GHTokenScopes:           b.ghAuth.TokenScopes,
+			Tokens:                  b.tokenCollector,
+			Knowledge:               b.knowledgeAPI,
+			Inception:               b.inceptionEngine,
+			Nous:                    b.nousState,
+			Scheduler:               b.sched,
+			KnowledgePrimer:         knowledgePrimerControl{b: b},
+			MetricsCollector:        b.metricsCollector,
+			RotationMgr:             b.rotationMgr,
+			HeadroomPublisher:       b.quotaReadingPublisher,
+			QuestionAutoclose:       questionAutocloseView{b: b},
 			// #3972: hand the ACMM advisor the SAME cached fleet-stats collector
 			// the heartbeat reads, so its merge-success signal reuses the existing
 			// 30-minute collect loop instead of issuing a second GitHub fetch.
@@ -2058,7 +2062,8 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 	stats.SetMode(mode)
 	b.mutationStats = stats
 	stateDir := mutationStateDir()
-	ledger, err := mutation.OpenLedger(filepath.Join(stateDir, "claims.json"), mutation.DefaultMaxWritersPerRepo)
+	ledger, err := mutation.OpenLedgerScoped(filepath.Join(stateDir, "claims.json"),
+		b.cfg.MutationMaxWritersPerTarget(), mutation.TargetWriterScope)
 	if err != nil {
 		b.logger.Error("mutation convergence ledger unavailable; external mutation fencing disabled", "mode", mode, "error", err)
 		return false
@@ -2429,6 +2434,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// turning it on or off reaches each agent at its next launch.
 	b.agentMgr.SetRepeatFailureEnabledResolver(func() bool {
 		return b.cfg.RepeatFailure.IsEnabled()
+	})
+	b.agentMgr.SetRepeatFailureConfigResolver(func() *config.RepeatFailureConfig {
+		return b.cfg.RepeatFailure
 	})
 	b.agentMgr.SetAdvisorRolesResolver(func() map[string]config.ModelRole {
 		return b.cfg.ModelRoles
@@ -3706,6 +3714,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 func (b *boot) bootSupervision() {
 	if b.cfg.Governor.Rotation.Enabled {
 		b.rotationMgr = rotation.NewManager(b.cfg.Governor.Rotation)
+		reviewerAutoscaler.SetHeadroomReporter(b.rotationMgr)
 		// Publish normalized readings to where the contributor quota guard reads
 		// them (kubestellar/hive#6967), off the rotation manager's own probe
 		// loop and the operator's configured provider→backends map.
@@ -4177,6 +4186,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 
 		// Preserve runtime-only fields that are not in the YAML
 		newCfg.HiveID = b.cfg.HiveID
+		// The reviewer autoscaler's current lane size survives a reload so
+		// an edit elsewhere in hive.yaml does not snap reviewers back to the
+		// declared count (hivecommons/hive#14685).
+		newCfg.ReviewerAutoscaleActive = b.cfg.ReviewerAutoscaleActive
 
 		// Preserve ACMM level from the agent manager — it is the
 		// authoritative source. The file may have a stale value if
@@ -5094,6 +5107,9 @@ func (b *boot) bootHeartbeat() { b.bootHeartbeatWith(defaultBootHeartbeatDeps())
 // bootHeartbeatWith is bootHeartbeat with its long-lived effects injected;
 // see bootHeartbeatDeps.
 func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
+	// The hub re-pushes its project config every beat, so a refused
+	// misconfiguration is logged at ERROR once and at DEBUG while unchanged.
+	var refusedProjectConfig atomic.Value // string key of the last refused push
 	// Hive-self scheduler (#12397): default off; restores durable reverts
 	// before the first heartbeat can apply a self-experiment flag.
 	startNousSelfScheduler(b.ctx, b.cfg, nousstore.Resolve(b.cfg.Data.NousDir, os.Getenv), b.logger)
@@ -6138,7 +6154,12 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					return
 				}
 				if issue := config.ValidateProjectRepoTargets(pc.Org, pc.Repos, pc.PrimaryRepo, b.cfg.GitHub.HostLabel()); issue != nil {
-					b.logger.Error("REFUSING hub project config: repo target is misconfigured — project left unchanged",
+					key := fmt.Sprintf("%q|%q|%q|%s", pc.Org, pc.Repos, pc.PrimaryRepo, issue.Message)
+					logRefusal := b.logger.Error
+					if prev, _ := refusedProjectConfig.Swap(key).(string); prev == key {
+						logRefusal = b.logger.Debug
+					}
+					logRefusal("REFUSING hub project config: repo target is misconfigured — project left unchanged",
 						"error", issue.Message,
 						"pushed_org", pc.Org,
 						"pushed_repos", pc.Repos,
@@ -6146,6 +6167,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					)
 					return
 				}
+				refusedProjectConfig.Store("")
 				curACMM := 0
 				if b.cfg.ACMMLevel != nil {
 					curACMM = *b.cfg.ACMMLevel
@@ -7880,6 +7902,7 @@ func runEvalCycle(
 		}
 		return ""
 	})
+	agentsDue, agentsSkipped = reviewerAutoscaler.withholdDrainingReviewers(agentsDue, agentsSkipped)
 
 	// PROVIDER SPEND REBUFF (#4294). When the inference gateway is refusing on a
 	// money limit, every kick launched this cycle is a run that cannot buy a
@@ -7977,8 +8000,12 @@ func runEvalCycle(
 	dueBeforeDeferral := append([]string(nil), agentsDue...)
 	agentsDue = sched.FilterFirstScanDeferredAgents(agentsDue)
 	agentsSkipped = append(agentsSkipped, firstScanDeferredSkips(dueBeforeDeferral, agentsDue)...)
-	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, beadStores, logger)
+	reviewPlan := planReviewDispatchWith(ctx, cfg, actionable, agentMgr, beadStores, reviewPlannerGitHubFor(ghClient), logger)
 	emitReviewHumanEscalations(reviewPlan)
+	// Size the reviewer lane to what the planner just left waiting
+	// (hivecommons/hive#14685). A replica added here takes kicks from the
+	// next cycle on; a retire only lands once the reviewer is idle.
+	reviewerAutoscaler.Run(ctx, cfg, reviewPlan, agentMgr, gov, logger, time.Now())
 	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
 	if ghClient != nil {
 		postReviewAcknowledgements(ctx, ghClient, reviewPlan, logger)
@@ -9264,6 +9291,10 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 		fmt.Fprintf(&b, "Its owning agent (%s) is not reachable right now, so this repair is routed to you.\n\n", redPRFixOwner(o.Agent))
 	}
 	b.WriteString("Repair it BEFORE claiming new issues or opening any new PR:\n")
+	if slices.Contains(o.Labels, stagelabels.NoDCOLabel) {
+		fmt.Fprintf(&b, "  FIRST (required): the PR is %s — it inherited unsigned commits. Re-sign them: gh pr checkout %d --repo %s → git rebase --signoff <base> (original authors preserved) → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo)
+		b.WriteString("  THEN fix any failing CI the same way.\n")
+	}
 	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
 	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")
@@ -11136,10 +11167,72 @@ func parseReviseCutoff(raw string, logger *slog.Logger) time.Time {
 	return cutoff
 }
 
+// reviewPlannerGitHub is the slice of the GitHub client the review planner
+// reads: a PR's changed paths for the bot-author model route
+// (review.bot_author_full_review_paths) and the compare between the head
+// the hive last judged and the current one for the delta re-review
+// (review.delta_rereview).
+type reviewPlannerGitHub interface {
+	ReviewPRChangedFiles(ctx context.Context, repo string, number int) ([]string, bool)
+	ReviewDeltaDiff(ctx context.Context, repo, previousHead, head string) review.DeltaDiff
+}
+
 func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult, agentMgr crux.Runtime, beadStores map[string]*beads.Store, logger *slog.Logger) review.DispatchPlan {
+	return planReviewDispatchWith(context.Background(), cfg, actionable, agentMgr, beadStores, nil, logger)
+}
+
+// reviewBotAuthorRoute is review.bot_authors / bot_author_model /
+// bot_author_full_review_paths resolved for the planner.
+func reviewBotAuthorRoute(cfg *config.Config) review.BotAuthorRoute {
+	backend, model := cfg.Review.BotAuthorModelRef()
+	return review.BotAuthorRoute{Authors: cfg.Review.EffectiveBotAuthors(), Backend: backend, Model: model, FullReviewPaths: cfg.Review.EffectiveBotAuthorFullReviewPaths()}
+}
+
+// reviewBotRouteFilesFor fetches a PR's changed paths when the bot-author
+// route may apply to it: route on, author a listed bot, no verdict at this
+// head and no review in flight (one listing per head, not per cycle). nil,
+// false otherwise, which the planner reads as unknown: no downgrade.
+func reviewBotRouteFilesFor(ctx context.Context, cfg *config.Config, lister reviewPlannerGitHub, route review.BotAuthorRoute, artifact review.Artifact, state review.DispatchState, repo string, number int, author, headSHA, bodyDigest string) ([]string, bool) {
+	if lister == nil || !route.Enabled() || !review.IsBotAuthor(author, route.Authors, cfg.EffectiveAIAuthor()) {
+		return nil, false
+	}
+	if _, judged := artifact.AggregateForBody(repo, number, headSHA, bodyDigest); judged {
+		return nil, false
+	}
+	if !state.PendingSince(repo, number, headSHA).IsZero() {
+		return nil, false
+	}
+	return lister.ReviewPRChangedFiles(ctx, repo, number)
+}
+
+// reviewDeltaDiffFor fetches the delta compare for one PR when it is a
+// delta re-review candidate: delta mode on, no verdict yet at this head, no
+// dispatch entry for it (a compare per cycle for a review in flight would be
+// API spend for nothing), and a prior verdict at another head to diff from.
+// nil otherwise, which the planner reads as "not fetched".
+func reviewDeltaDiffFor(ctx context.Context, cfg *config.Config, differ reviewPlannerGitHub, artifact review.Artifact, state review.DispatchState, repo string, number int, headSHA, bodyDigest string) *review.DeltaDiff {
+	if differ == nil || !cfg.Review.DeltaRereviewEnabled() || strings.TrimSpace(headSHA) == "" {
+		return nil
+	}
+	if _, judged := artifact.AggregateForBody(repo, number, headSHA, bodyDigest); judged {
+		return nil
+	}
+	if !state.PendingSince(repo, number, headSHA).IsZero() {
+		return nil
+	}
+	prior, ok := artifact.PriorAggregateFor(repo, number, headSHA)
+	if !ok {
+		return nil
+	}
+	diff := differ.ReviewDeltaDiff(ctx, repo, prior.HeadSHA, headSHA)
+	return &diff
+}
+
+func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable *github.ActionableResult, agentMgr crux.Runtime, beadStores map[string]*beads.Store, ghr reviewPlannerGitHub, logger *slog.Logger) review.DispatchPlan {
 	if cfg == nil || actionable == nil || !cfg.Review.RequireApproval || !cfg.Review.FanOut {
 		return review.DispatchPlan{}
 	}
+	botRoute := reviewBotAuthorRoute(cfg)
 	state, err := review.LoadDispatchState("")
 	if err != nil && !os.IsNotExist(err) {
 		logger.Warn("review dispatch state unavailable; starting fresh", "error", err)
@@ -11184,7 +11277,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	for _, pr := range candidates {
 		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
 		fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
-		prs = append(prs, review.PullRequest{
+		item := review.PullRequest{
 			Repo:       pr.Repo,
 			Number:     pr.Number,
 			Title:      pr.Title,
@@ -11224,7 +11317,15 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			// on this head (hivecommons/hive#13041): the planner kicks the
 			// fix lane with it instead of reviewing the head again.
 			HumanChangeRequest: review.HumanChangeRequestFor(review.DefaultHumanChangeRequests(), fullRepo, pr.Number, pr.HeadSHA),
-		})
+			// The compare from the last judged head, for the delta
+			// re-review and its trivial skip (review.delta_rereview).
+			DeltaDiff: reviewDeltaDiffFor(ctx, cfg, ghr, artifact, state, fullRepo, pr.Number, pr.HeadSHA, pr.BodyDigest),
+		}
+		// Changed paths for the bot-author model route's path exceptions
+		// (review.bot_author_full_review_paths); fetched only for a listed
+		// bot's PR that is about to be reviewed.
+		item.ChangedFiles, item.ChangedFilesKnown = reviewBotRouteFilesFor(ctx, cfg, ghr, botRoute, artifact, state, fullRepo, pr.Number, pr.Author, pr.HeadSHA, pr.BodyDigest)
+		prs = append(prs, item)
 	}
 	// PRs a review webhook just fired for go first, so the early eval cycle
 	// it triggered spends its review budget on them (hivecommons/hive#11091).
@@ -11233,6 +11334,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	for name, ac := range cfg.EnabledAgents() {
 		cap := review.CapabilityFromConfig(name, ac)
 		cap.Paused = cap.Paused || (agentMgr != nil && agentMgr.IsPaused(name))
+		cap.Draining = reviewerAutoscaler.Draining(name)
 		agents = append(agents, cap)
 	}
 	reviewBotLogins := []string{}
@@ -11255,6 +11357,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		ReviseRepos:           cfg.Review.ReviseRepos,
 		ReviseVerdictsBefore:  parseReviseCutoff(cfg.Review.ReviseVerdictsBefore, logger),
 		PendingTTL:            cfg.Review.PendingReviewTTL(),
+		PendingFixTTL:         cfg.Review.PendingReviewFixTTL(),
 		MaxRedispatch:         cfg.Review.EffectiveMaxRedispatch(),
 		HeadMaxRetries:        cfg.Review.HeadMaxRetries,
 		ProjectOrg:            cfg.Project.Org,
@@ -11263,7 +11366,17 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		ReviewBotLogins:       reviewBotLogins,
 		ReviewBotMinPriority:  reviewBots.MinPriority,
 		PerspectiveModels:     cfg.Review.PerspectiveModels,
+		BotAuthorRoute:        botRoute,
+		DeltaRereview:         cfg.Review.DeltaRereviewEnabled(),
+		DeltaTrivialLines:     cfg.Review.EffectiveDeltaTrivialLines(),
+		DeltaMaxAge:           cfg.Review.EffectiveDeltaMaxAge(),
 	})
+	recordReviewDeltaRestamps(plan, logger)
+	for _, k := range plan.ReviewKicks {
+		if k.BotAuthorRouted {
+			logger.Info("review routed bot-authored PR to bot_author_model", "repo", k.Repo, "pr", k.Number, "head", k.HeadSHA, "agent", k.Agent, "review_model", k.ReviewModel, "review_backend", k.ReviewBackend)
+		}
+	}
 	for _, sk := range plan.SkippedReviewModels {
 		logger.Info("review model fallback skipped perspective", "repo", sk.Repo, "pr", sk.Number, "head", sk.HeadSHA, "perspective", sk.Perspective, "agent", sk.Agent, "author_model", sk.AuthorModel)
 	}
@@ -11278,10 +11391,65 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	for _, h := range plan.Exhausted {
 		logger.Warn("review dispatch exhausted; holding PR for a human", "repo", h.Repo, "pr", h.Number, "head", h.HeadSHA, "reason", h.Reason)
 	}
-	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
-		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))
+	for _, f := range plan.ForcedFixes {
+		logger.Warn("review fix forced: changes_requested head starved by the revisit path", "repo", f.Repo, "pr", f.Number, "head", f.HeadSHA, "reason", f.Reason, "cycles", f.Cycles, "limit", review.RevisitStarvationCycles)
+	}
+	if len(plan.ReviewKicks)+len(plan.FixKicks)+len(plan.FixExclusions) > 0 {
+		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks), "fix_excluded", len(plan.FixExclusions), "fix_excluded_reasons", fixExclusionReasonSummary(plan.FixExclusions))
 	}
 	return plan
+}
+
+// fixExclusionReasonSummary renders the cycle's fix exclusions as
+// "reason=count,..." (sorted) for the dispatch summary line, so fix_kicks: 0
+// is never printed without saying why (hivecommons/hive#14665).
+func fixExclusionReasonSummary(exclusions []review.FixDispatchExclusion) string {
+	if len(exclusions) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	for _, x := range exclusions {
+		counts[x.Reason]++
+	}
+	reasons := make([]string, 0, len(counts))
+	for r := range counts {
+		reasons = append(reasons, r)
+	}
+	sort.Strings(reasons)
+	parts := make([]string, 0, len(reasons))
+	for _, r := range reasons {
+		parts = append(parts, fmt.Sprintf("%s=%d", r, counts[r]))
+	}
+	return strings.Join(parts, ",")
+}
+
+// recordReviewDeltaRestamps writes the verdicts the planner carried forward
+// onto a new head without a session (trivial delta, review.delta_rereview)
+// into the verdict artifact, and logs each one. A write failure is logged,
+// not fatal: the next cycle plans the same restamp again.
+func recordReviewDeltaRestamps(plan review.DispatchPlan, logger *slog.Logger) {
+	if len(plan.DeltaRestamps) == 0 {
+		return
+	}
+	for _, r := range plan.DeltaRestamps {
+		note := ""
+		if r.Aggregate.Delta != nil {
+			note = r.Aggregate.Delta.Note
+		}
+		logger.Info("review delta re-stamped verdict without a session", "repo", r.Repo, "pr", r.Number, "head", r.HeadSHA, "previous_head", r.PreviousHead, "verdict", r.Aggregate.Verdict, "note", note)
+	}
+	if _, err := review.RecordDeltaRestamps("", plan.DeltaRestamps, time.Now().UTC()); err != nil {
+		logger.Warn("failed to record review delta re-stamps", "error", err, "count", len(plan.DeltaRestamps))
+	}
+}
+
+// reviewPlannerGitHubFor returns the GitHub client as a reviewPlannerGitHub,
+// or nil for a nil client: a typed nil in the interface would not read as nil.
+func reviewPlannerGitHubFor(c *github.Client) reviewPlannerGitHub {
+	if c == nil {
+		return nil
+	}
+	return c
 }
 
 func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
@@ -11467,8 +11635,11 @@ type reviewFixAuditor interface {
 // hivecommons/hive#12897). The planner reports each head once, so
 // this does not repeat on every eval cycle.
 func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
+	// One WARN per changes_requested head that ends the cycle without a fix
+	// kick: a PR shown as "Fixing" that nobody is fixing must be loud
+	// (hivecommons/hive#14665).
 	for _, x := range plan.FixExclusions {
-		logger.Info("review fix dispatch excluded",
+		logger.Warn("review fix dispatch excluded",
 			"repo", x.Repo, "pr", x.Number, "head_sha", x.HeadSHA, "author", x.Author, "reason", x.Reason, "attempts", x.Attempts)
 	}
 	for _, w := range plan.WithheldFixes {

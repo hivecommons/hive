@@ -553,7 +553,7 @@ the six dashboard families and gained nothing new to call.
 | `Resumer` (new) | `ResumeHandle`, `SendResumeKick`, `SessionID`, `SessionMissing`; sentinels `ErrResumeBusy`, `ErrResumeSessionGone`, `ErrResumeUnsupported`; value `ResumeHandle` | cmd/hive (PR follow-up) |
 | `Supervisor` (new) | `GovernorMayStart`, `MarkStartupLaunchQueued`, `CheckAndRestartCrashedAgents`, `ConsentWedgedAgents`, `RefreshAgentTokens`, `RefreshAgentTokenFor`, `AgentCredentialRefreshable`, `AgentHasValidCredential`, `AgentCapabilities`, `EffectiveBackend`, `InvocationMetadata`, `RestartTelemetry`, `StartFailureState`, `ProviderErrorBackoffRemaining`, `PauseByCause`, `ArchiveAllKickLogs`, `CountAgentsWithModel`, `CrashOOMSuspected`, `BackendAuthAvailable`, `AgentAuthAvailable`, `SendGitHubAPIBudgetNudge`, `RecordAudit`, `TrajectoryAgents` | cmd/hive (governor, heartbeat, rotation, login scan, trajectory) |
 | `Restorer` (new) | `SeedPauseState`, `SeedRestartTelemetry`, `SeedTurnLoss`, `SeedLastKick`, `SeedKickHistory`, `RestoreBreaker` | cmd/hive (snapshot restore) |
-| `Background` (new) | `StartAgentTokenRefresh`, `StartCredentialWatchdog`, `StartCopilotSessionRefresh`, `StartTranscriptActivityRefresh` | cmd/hive (boot) |
+| `Background` (new) | `StartAgentTokenRefresh`, `StartCredentialWatchdog`, `StartCopilotSessionRefresh`, `StartTranscriptActivityRefresh`, `StartRepeatFailureMonitor` | cmd/hive (boot) |
 | `Authorizer` (new) | `AuthorizePROpen`, `AuthorizePushBranch`, `AuthorizeIssueOpen`, `AuthorizeMerge`, `AuthorizeReviewRequest` | cmd/hive (request relays; method values handed to the watchers at boot) |
 
 Two things `cmd/hive` calls are **not** runtime-instance methods and are

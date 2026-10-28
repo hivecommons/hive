@@ -295,6 +295,7 @@ func JobOptionsFromConfig(job config.SandboxJobConfig) kubejob.Options {
 		WorkspaceClaimMount: job.WorkspaceClaimMount,
 		NodeSelector:        job.NodeSelector,
 		ServiceAccount:      job.ServiceAccount,
+		SchedulerName:       job.SchedulerName,
 		EnvFromSecrets:      append([]string(nil), job.EnvFromSecrets...),
 		TTLSeconds:          job.TTLSeconds,
 		Resources: kubejob.Resources{

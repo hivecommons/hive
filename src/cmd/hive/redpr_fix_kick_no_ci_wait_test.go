@@ -23,3 +23,20 @@ func TestRedPRFixKickForbidsCIPolling(t *testing.T) {
 		}
 	}
 }
+
+// An adopted PR that inherited unsigned commits is labelled no-dco; its fix
+// kick must name the DCO re-sign first, not only the CI failures (#14666).
+func TestRedPRFixKickNamesDCORehomeFirstForNoDCO(t *testing.T) {
+	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 14618, Labels: []string{"no-dco"}, FailingChecks: []string{"DCO"}}, false)
+	first := strings.Index(got, "FIRST (required)")
+	if first < 0 || !strings.Contains(got, "git rebase --signoff") {
+		t.Fatalf("no-dco kick lacks the DCO re-sign action:\n%s", got)
+	}
+	if first > strings.Index(got, "→ fix → git commit -s") {
+		t.Errorf("DCO re-sign must come before the generic fix step:\n%s", got)
+	}
+	plain := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 1}, false)
+	if strings.Contains(plain, "git rebase --signoff") {
+		t.Errorf("DCO action leaked into a signed PR's kick:\n%s", plain)
+	}
+}

@@ -46,6 +46,12 @@ type Options struct {
 	Hub *HubContext
 	// Source names where the bundles came from, for the methodology section.
 	Source string
+	// Stories are curated real PRs for the README story card; nil omits it.
+	Stories []Story
+	// RedTeam is the saved prompt-injection eval summary; nil omits the card.
+	RedTeam *RedTeam
+	// ReadmeMinBase overrides DefaultReadmeMinBase (0 keeps the default).
+	ReadmeMinBase int
 }
 
 // Spend is what /api/cost already publishes.
@@ -138,6 +144,12 @@ type Report struct {
 	Trend  map[string][]MonthPoint
 	Spend  *Spend
 	Hub    *HubContext
+	// Followup is what happened after the reviewer sent PRs back in the window.
+	Followup Followup
+	// Stories and ReadmeMinBase feed the README cards; see cards.go.
+	Stories       []Story  `json:",omitempty"`
+	RedTeam       *RedTeam `json:",omitempty"`
+	ReadmeMinBase int      `json:",omitempty"`
 }
 
 // RepoCount is merged PRs per repository in the window.
@@ -291,6 +303,7 @@ func Compute(bundles []*evidence.Bundle, unreadable int, opts Options) Report {
 		GeneratedAt: now, Since: opts.Since, Until: opts.Until, Now: now, Source: opts.Source,
 		Bundles: len(bundles), Unreadable: unreadable, PRs: len(prs),
 		Spend: opts.Spend, Hub: opts.Hub, Trend: map[string][]MonthPoint{},
+		Stories: opts.Stories, RedTeam: opts.RedTeam, ReadmeMinBase: opts.ReadmeMinBase,
 	}
 	var med, unmed cohortAcc
 	repos := map[string]int{}
@@ -326,6 +339,7 @@ func Compute(bundles []*evidence.Bundle, unreadable int, opts Options) Report {
 	}
 	rep.Mediated = med.cohort(CohortMediated)
 	rep.Unmediated = unmed.cohort(CohortUnmediated)
+	rep.Followup = followups(bundles, prs, opts)
 	for r, n := range repos {
 		rep.Repos = append(rep.Repos, RepoCount{Repo: r, Merged: n})
 	}
@@ -413,4 +427,115 @@ func ParseWindow(month string) (since, until time.Time, err error) {
 		return time.Time{}, time.Time{}, fmt.Errorf("invalid month %q; expected YYYY-MM", month)
 	}
 	return since, since.AddDate(0, 1, 0), nil
+}
+
+// Followup is what happened after the reviewer sent a pull request back:
+// whether the author pushed a fixed version, whether that version was
+// approved, how long that took, and how often the same version merged
+// anyway. It is the closest thing to "was the reviewer right" the evidence
+// records; whether the shipped code then failed is the matured
+// revert/follow-up rate, which needs older merges.
+type Followup struct {
+	// SentBack is the number of pull requests whose first
+	// changes_requested verdict was recorded in the window.
+	SentBack int
+	// NewHead is how many of them pushed a new head after that verdict.
+	NewHead int
+	// FixedAndApproved is K = pull requests whose later head received an
+	// approve verdict, N = SentBack.
+	FixedAndApproved Rate
+	// MergedSameHead merged without a new head; MergedSameHeadApproved is
+	// the subset where another perspective approved that same head, which
+	// is how the gate let it through.
+	MergedSameHead         int
+	MergedSameHeadApproved int
+	// Unresolved pushed no new head and had not merged when observed.
+	Unresolved int
+	// TimeToApproval is the median hours from the first changes_requested
+	// verdict to the first approve verdict on a later head.
+	TimeToApproval Median
+	// CIPairs counts pull requests with a captured success/failure on both
+	// the sent-back head and the next head; CIFixed is how many went from
+	// failure to success; CICoverage is CIPairs over NewHead.
+	CIPairs, CIFixed int
+	CICoverage       Rate
+}
+
+// followups folds every head of every PR, oldest first, and classifies the
+// PRs the reviewer sent back in the window.
+func followups(bundles []*evidence.Bundle, prs map[string]*evidence.PR, opts Options) Followup {
+	byPR := map[string][]*evidence.Bundle{}
+	for _, b := range bundles {
+		if b != nil {
+			k := evidence.PRKey(b.Repo, b.Number)
+			byPR[k] = append(byPR[k], b)
+		}
+	}
+	var f Followup
+	var fixed, ciKnown int
+	var hours []float64
+	for key, heads := range byPR {
+		sort.SliceStable(heads, func(i, j int) bool { return heads[i].CreatedAt.Before(heads[j].CreatedAt) })
+		var sentBack *evidence.Bundle
+		var at time.Time
+		for _, b := range heads {
+			for _, v := range b.Verdicts {
+				if v.Verdict == "changes_requested" && (at.IsZero() || v.RecordedAt.Before(at)) {
+					sentBack, at = b, v.RecordedAt
+				}
+			}
+			if sentBack != nil {
+				break
+			}
+		}
+		if sentBack == nil || (!opts.Since.IsZero() && at.Before(opts.Since)) || (!opts.Until.IsZero() && !at.Before(opts.Until)) {
+			continue
+		}
+		f.SentBack++
+		var later []*evidence.Bundle
+		for _, b := range heads {
+			if b.CreatedAt.After(sentBack.CreatedAt) && b.HeadSHA != sentBack.HeadSHA {
+				later = append(later, b)
+			}
+		}
+		merged := prs[key] != nil && prs[key].Merge != nil
+		if len(later) == 0 {
+			if merged {
+				f.MergedSameHead++
+				for _, v := range sentBack.Verdicts {
+					if v.Verdict == "approve" {
+						f.MergedSameHeadApproved++
+						break
+					}
+				}
+			} else {
+				f.Unresolved++
+			}
+			continue
+		}
+		f.NewHead++
+		var approved time.Time
+		for _, b := range later {
+			for _, v := range b.Verdicts {
+				if v.Verdict == "approve" && v.RecordedAt.After(at) && (approved.IsZero() || v.RecordedAt.Before(approved)) {
+					approved = v.RecordedAt
+				}
+			}
+		}
+		if !approved.IsZero() {
+			fixed++
+			hours = append(hours, approved.Sub(at).Hours())
+		}
+		if a, b := sentBack.CI.Status, later[0].CI.Status; (a == "success" || a == "failure") && (b == "success" || b == "failure") {
+			ciKnown++
+			if a == "failure" && b == "success" {
+				f.CIFixed++
+			}
+		}
+	}
+	f.FixedAndApproved = NewRate(fixed, f.SentBack)
+	f.TimeToApproval = NewMedian(hours)
+	f.CIPairs = ciKnown
+	f.CICoverage = NewRate(ciKnown, f.NewHead)
+	return f
 }

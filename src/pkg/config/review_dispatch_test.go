@@ -101,6 +101,46 @@ func TestPendingReviewTTL(t *testing.T) {
 	}
 }
 
+// review.pending_fix_ttl reaches the planner's PendingFixTTL; before
+// hivecommons/hive#14643 the 2h default could only be changed in code.
+func TestPendingReviewFixTTL(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want time.Duration
+	}{
+		{"", DefaultPendingFixTTL},
+		{"0", DefaultPendingFixTTL},
+		{"garbage", DefaultPendingFixTTL},
+		{"30m", 30 * time.Minute},
+		{" 6h ", 6 * time.Hour},
+		{"-1s", -time.Second},
+	}
+	for _, tc := range cases {
+		if got := (ReviewConfig{PendingFixTTL: tc.raw}).PendingReviewFixTTL(); got != tc.want {
+			t.Fatalf("PendingReviewFixTTL(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+	if DefaultPendingFixTTL != 2*time.Hour {
+		t.Fatalf("DefaultPendingFixTTL = %v, want 2h (review.DefaultPendingFixTTL)", DefaultPendingFixTTL)
+	}
+	err := (ReviewConfig{PendingFixTTL: "soon"}).ValidatePendingFixTTL()
+	if err == nil || !strings.Contains(err.Error(), "pending_fix_ttl") {
+		t.Fatalf("ValidatePendingFixTTL(soon) = %v, want an error naming pending_fix_ttl", err)
+	}
+	for _, ok := range []string{"", "2h", "-1s"} {
+		if err := (ReviewConfig{PendingFixTTL: ok}).ValidatePendingFixTTL(); err != nil {
+			t.Fatalf("ValidatePendingFixTTL(%q) rejected: %v", ok, err)
+		}
+	}
+	// Config.Validate rejects it too, so a typo fails at load instead of
+	// silently running on the default.
+	cfg := validatableConfig(nil)
+	cfg.Review.PendingFixTTL = "soon"
+	if err := cfg.ValidateWithOptions(ValidateOptions{}); err == nil || !strings.Contains(err.Error(), "pending_fix_ttl") {
+		t.Fatalf("Config.Validate() = %v, want a pending_fix_ttl error", err)
+	}
+}
+
 func TestEffectiveSelfAuthoredDecisionPolicy(t *testing.T) {
 	if got := (ReviewConfig{}).EffectiveSelfAuthoredDecisionPolicy(); got != ReviewSelfAuthoredDecisionResolve {
 		t.Fatalf("unset policy = %q, want resolve", got)
@@ -110,5 +150,58 @@ func TestEffectiveSelfAuthoredDecisionPolicy(t *testing.T) {
 	}
 	if got := (ReviewConfig{SelfAuthoredDecisionPolicy: "unknown"}).EffectiveSelfAuthoredDecisionPolicy(); got != ReviewSelfAuthoredDecisionResolve {
 		t.Fatalf("unknown policy = %q, want resolve", got)
+	}
+}
+
+func TestReviewBotAuthorRouteConfig(t *testing.T) {
+	var r ReviewConfig
+	if got := r.EffectiveBotAuthors(); len(got) != len(DefaultReviewBotAuthors) || got[0] != "dependabot[bot]" || got[len(got)-1] != "*[bot]" {
+		t.Fatalf("default bot_authors = %v", got)
+	}
+	if got := r.EffectiveBotAuthorFullReviewPaths(); len(got) != len(DefaultReviewBotAuthorFullReviewPaths) || got[0] != ".github/workflows/**" {
+		t.Fatalf("default full-review paths = %v", got)
+	}
+	r.BotAuthors = []string{" dependabot[bot] ", ""}
+	r.BotAuthorFullReviewPaths = []string{}
+	if got := r.EffectiveBotAuthors(); len(got) != 1 || got[0] != "dependabot[bot]" {
+		t.Fatalf("explicit bot_authors = %v", got)
+	}
+	if got := r.EffectiveBotAuthorFullReviewPaths(); len(got) != 0 {
+		t.Fatalf("explicit empty full-review paths = %v, want none (no exceptions)", got)
+	}
+	for in, want := range map[string][2]string{"": {"", ""}, "gpt-6-luna": {"", "gpt-6-luna"}, " copilot/gemini-flash-3-5 ": {"copilot", "gemini-flash-3-5"}} {
+		b, m := (ReviewConfig{BotAuthorModel: in}).BotAuthorModelRef()
+		if b != want[0] || m != want[1] {
+			t.Fatalf("bot_author_model %q -> %q/%q, want %q/%q", in, b, m, want[0], want[1])
+		}
+	}
+}
+
+func TestReviewDeltaRereviewConfig(t *testing.T) {
+	off := false
+	if !(ReviewConfig{}).DeltaRereviewEnabled() {
+		t.Fatal("delta_rereview unset should be on")
+	}
+	if (ReviewConfig{DeltaRereview: &off}).DeltaRereviewEnabled() {
+		t.Fatal("delta_rereview: false still on")
+	}
+	for in, want := range map[int]int{0: DefaultReviewDeltaTrivialLines, 5: 5, -1: 0} {
+		if got := (ReviewConfig{DeltaTrivialLines: in}).EffectiveDeltaTrivialLines(); got != want {
+			t.Fatalf("delta_trivial_lines %d -> %d, want %d", in, got, want)
+		}
+	}
+	for in, want := range map[string]time.Duration{"": DefaultReviewDeltaMaxAge, "24h": 24 * time.Hour, "garbage": DefaultReviewDeltaMaxAge, "-1h": DefaultReviewDeltaMaxAge} {
+		if got := (ReviewConfig{DeltaMaxAge: in}).EffectiveDeltaMaxAge(); got != want {
+			t.Fatalf("delta_max_age %q -> %s, want %s", in, got, want)
+		}
+	}
+	if err := (ReviewConfig{DeltaMaxAge: "garbage"}).ValidateDeltaMaxAge(); err == nil {
+		t.Fatal("ValidateDeltaMaxAge accepted a non-duration")
+	}
+	if err := (ReviewConfig{DeltaMaxAge: "36h"}).ValidateDeltaMaxAge(); err != nil {
+		t.Fatalf("ValidateDeltaMaxAge rejected 36h: %v", err)
+	}
+	if err := (ReviewConfig{}).ValidateDeltaMaxAge(); err != nil {
+		t.Fatalf("ValidateDeltaMaxAge rejected unset: %v", err)
 	}
 }

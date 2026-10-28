@@ -209,6 +209,12 @@ type Config struct {
 	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+	// ReviewerAutoscaleActive is the reviewer autoscaler's current target
+	// replica count for the autoscaled lane (hivecommons/hive#14685).
+	// Runtime-only: it is never persisted, is carried across config reloads
+	// by the caller, and zero means "use the declared replicas". Written
+	// via SetReviewerAutoscaleActive.
+	ReviewerAutoscaleActive int `yaml:"-" json:"-"`
 }
 
 type DataConfig struct {
@@ -279,12 +285,23 @@ func (c *Config) ExpandAgentReplicas() error {
 			delete(c.Agents, name)
 		}
 	}
+	autoscaled := ""
+	if c.Review.Reviewers.Autoscale.Enabled {
+		autoscaled = c.ReviewerAutoscaleAgent()
+	}
+	effectiveReplicas := func(name string, agent AgentConfig) int {
+		if autoscaled != "" && name == autoscaled {
+			return c.reviewerAutoscaleReplicaCount(agent.Replicas)
+		}
+		return normalizeReplicaCount(agent.Replicas)
+	}
 	derivedNames := map[string]string{}
 	for name, agent := range baseAgents {
 		replicas := normalizeReplicaCount(agent.Replicas)
 		if replicas < 1 || replicas > MaxAgentReplicas {
 			return fmt.Errorf("agent %s: replicas must be between 1 and %d", name, MaxAgentReplicas)
 		}
+		replicas = effectiveReplicas(name, agent)
 		for i := 2; i <= replicas; i++ {
 			derived := replicaAgentName(name, i)
 			if existing, ok := baseAgents[derived]; ok && existing.ReplicaOf == "" {
@@ -306,8 +323,8 @@ func (c *Config) ExpandAgentReplicas() error {
 		}
 	}
 	for name, agent := range baseAgents {
-		replicas := normalizeReplicaCount(agent.Replicas)
-		agent.Replicas = replicas
+		replicas := effectiveReplicas(name, agent)
+		agent.Replicas = normalizeReplicaCount(agent.Replicas)
 		agent.ReplicaOf = ""
 		agent.ReplicaIndex = 1
 		agent.ReplicaCount = replicas

@@ -16,7 +16,7 @@ func TestAdoptionPRBodyNamesTheAdoptedAuthorForSentinel(t *testing.T) {
 	for _, reason := range []string{AdoptReasonGrace, AdoptReasonOffline, AdoptReasonUnregistered, AdoptReasonDCORehome, AdoptReasonSignoffRehome, AdoptReasonInPlaceStalled} {
 		for _, fence := range []string{"", contributorLaneReasonWorkflowPath} {
 			for _, dco := range []bool{false, true} {
-				body := AdoptionPRBody(obs, stagelabels.Record{AdoptReason: reason, AdoptDiffFence: fence}, dco)
+				body := AdoptionPRBody(obs, stagelabels.Record{AdoptReason: reason, AdoptDiffFence: fence}, dco, "")
 				n, author, ok := hgithub.AdoptedFrom(body)
 				if !ok || n != 930 || author != "kylerankin" {
 					t.Fatalf("reason=%s fence=%q dco=%v: AdoptedFrom = (%d, %q, %v), want (930, kylerankin):\n%s", reason, fence, dco, n, author, ok, body)

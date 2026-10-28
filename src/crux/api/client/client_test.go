@@ -39,6 +39,7 @@ var localOnly = map[string]bool{
 	"StartCredentialWatchdog":        true,
 	"StartCopilotSessionRefresh":     true,
 	"StartTranscriptActivityRefresh": true,
+	"StartRepeatFailureMonitor":      true,
 	"SetKickObserver":                true,
 }
 
@@ -371,6 +372,7 @@ func TestEveryMethodReachesTheRuntime(t *testing.T) {
 	rt.StartCredentialWatchdog(ctx)
 	rt.StartCopilotSessionRefresh(ctx)
 	rt.StartTranscriptActivityRefresh(ctx)
+	rt.StartRepeatFailureMonitor(ctx)
 
 	// Authorizer
 	must("AuthorizePROpen", rt.AuthorizePROpen("alpha", 1000))
@@ -399,7 +401,7 @@ func TestEveryMethodReachesTheRuntime(t *testing.T) {
 	if len(missing) > 0 {
 		t.Errorf("methods never reached the runtime: %s", strings.Join(missing, ", "))
 	}
-	for _, m := range []string{"StartAgentTokenRefresh", "StartCredentialWatchdog", "StartCopilotSessionRefresh", "StartTranscriptActivityRefresh"} {
+	for _, m := range []string{"StartAgentTokenRefresh", "StartCredentialWatchdog", "StartCopilotSessionRefresh", "StartTranscriptActivityRefresh", "StartRepeatFailureMonitor"} {
 		if seen[m] {
 			t.Errorf("%s crossed the wire; Background loops are server-side", m)
 		}

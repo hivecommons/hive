@@ -104,6 +104,30 @@ var fixedCommandTokens = []string{"/fixed", "/close"}
 type unparkCommand struct {
 	Kind     unparkCommandKind
 	Decision string
+	// Text is the whole decision as the person wrote it: the rest of the
+	// command line plus every line after it, trimmed. Decision stays the
+	// first line so the reply's `Decision:` round-trip is unchanged; the PR
+	// path hands Text to the author agent verbatim (hivecommons/hive#14679).
+	Text string
+}
+
+// BareApproval reports whether a `/hive decision` carries nothing beyond an
+// approval word — the owner answered "yes" without an instruction to act on.
+func (c unparkCommand) BareApproval() bool {
+	switch strings.ToLower(strings.TrimSpace(c.Text)) {
+	case "approve", "approved", "approve.", "approved.", "lgtm", "yes":
+		return true
+	}
+	return false
+}
+
+// DecisionText is what the author agent should follow: the full comment
+// body after the command when it has one, else the first-line decision.
+func (c unparkCommand) DecisionText() string {
+	if t := strings.TrimSpace(c.Text); t != "" {
+		return t
+	}
+	return strings.TrimSpace(c.Decision)
 }
 
 // IssueUnparkEvent records one issue this sweep un-parked, for the audit log.
@@ -169,11 +193,14 @@ type IssueUnparkSweepOptions struct {
 // PullRequestDecisionEvent records one `/hive decision` on a hive-authored
 // PR the sweep routed to the fix lane (hivecommons/hive#13041).
 type PullRequestDecisionEvent struct {
-	Repo       string
-	Number     int
-	HeadSHA    string
-	Actor      string
-	Decision   string
+	Repo     string
+	Number   int
+	HeadSHA  string
+	Actor    string
+	Decision string
+	// Mode is "changes_requested" (the decision carries an instruction)
+	// or "approve" (a bare `/hive decision approve`).
+	Mode       string
 	CommentURL string
 }
 
@@ -1171,9 +1198,34 @@ func parseUnparkCommand(body string) (unparkCommand, bool) {
 		if decision == "" {
 			return unparkCommand{}, false
 		}
-		return unparkCommand{Kind: unparkCommandDecision, Decision: decision}, true
+		return unparkCommand{Kind: unparkCommandDecision, Decision: decision, Text: decisionText(body, decision)}, true
 	}
 	return unparkCommand{}, false
+}
+
+// decisionText joins the first-line decision with every line that follows
+// the command line, so numbered instructions under `/hive decision approve`
+// reach the author agent instead of being dropped (hivecommons/hive#14679).
+func decisionText(body, firstLine string) string {
+	lines := strings.Split(body, "\n")
+	rest := make([]string, 0, len(lines))
+	seen := false
+	for _, line := range lines {
+		line = strings.TrimRight(strings.TrimSuffix(line, "\r"), " \t")
+		if !seen {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			seen = true
+			continue
+		}
+		rest = append(rest, line)
+	}
+	tail := strings.TrimSpace(strings.Join(rest, "\n"))
+	if tail == "" {
+		return firstLine
+	}
+	return strings.TrimSpace(firstLine + "\n\n" + tail)
 }
 
 // firstNonEmptyLine returns the comment's first line that has content,

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -120,6 +121,12 @@ type contributorLaneFixture struct {
 	commitLists    int
 	// mergeBody is the JSON body of the last PUT pulls/7/merge.
 	mergeBody map[string]any
+	// labelsCreated counts POST labels (repo label definitions);
+	// labelsAdded / labelsRemoved record issue label writes on PR 7. An
+	// added label joins fx.labels so later ticks see it on the PR.
+	labelsCreated int
+	labelsAdded   []string
+	labelsRemoved []string
 }
 
 func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.Server {
@@ -354,6 +361,25 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/update-branch":
 			fx.updates++
 			json.NewEncoder(w).Encode(map[string]any{"message": "Updating pull request branch."})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/labels":
+			fx.labelsCreated++
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"name": "created"})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/labels":
+			var names []string
+			_ = json.NewDecoder(r.Body).Decode(&names)
+			for _, n := range names {
+				fx.labelsAdded = append(fx.labelsAdded, n)
+				if !slices.Contains(fx.labels, n) {
+					fx.labels = append(fx.labels, n)
+				}
+			}
+			json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/7/labels/"):
+			name := strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/issues/7/labels/")
+			fx.labelsRemoved = append(fx.labelsRemoved, name)
+			fx.labels = slices.DeleteFunc(slices.Clone(fx.labels), func(l string) bool { return l == name })
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/comments":
 			fx.comments++
 			if fx.commentStatus != 0 {

@@ -43,6 +43,11 @@ func ClassifyBranchUpdateError(err error, fork bool) BranchUpdateFailure {
 		if fork {
 			return BranchUpdateForkNotEditable
 		}
+		// TODO(hivecommons/hive#14589): a same-repo 403 "Resource not
+		// accessible by integration" means the App lacks contents: write
+		// and should mark the lane unauthorized (step: update-branch);
+		// a rate-limit 403 must not. Wire through markUnauthorized once
+		// the two are told apart here (isResourceNotAccessible).
 	case http.StatusUnprocessableEntity:
 		switch {
 		case strings.Contains(msg, "maintainer") || strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):

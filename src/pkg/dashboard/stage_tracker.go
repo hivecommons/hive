@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
@@ -312,11 +314,34 @@ type StageTrackerItem struct {
 	// a human-merge path): at 090 the merge gate then reads "Awaiting
 	// human merge" and names the approver, since the only step left is
 	// the maintainer's merge click.
-	HumanApprover string     `json:"human_approver,omitempty"`
-	ManualMerge   bool       `json:"manual_merge,omitempty"`
-	NudgeCount    int        `json:"nudge_count,omitempty"`
-	LastNudgeAt   *time.Time `json:"last_nudge_at,omitempty"`
-	AdoptedBy     int        `json:"adopted_by,omitempty"`
+	HumanApprover string `json:"human_approver,omitempty"`
+	ManualMerge   bool   `json:"manual_merge,omitempty"`
+	// HumanMergeReason is, at 090, the compact code naming why a person
+	// and not the hive merges this PR (prstage.HumanMergeReason*:
+	// "workflow-files", "untrusted-author", "branch-protection", …;
+	// "policy" when the lane reason has no more specific code), and
+	// HumanMergeReasonText the one-sentence tooltip for it, so the gate
+	// cell reads "Ready for human merge · workflow files" rather than
+	// leaving the owner to ask why (hivecommons/hive#14658).
+	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
+	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
+	// UnauthorizedStep is set when the item wears hive:unauthorized: the
+	// step the hive's GitHub App is not permitted to take, in words
+	// ("approve workflow runs"), from the `unauthorized:<step>` stage
+	// reason; the gate cell reads "Awaiting human: <step>". Unauthorized
+	// is the pill's tooltip naming the permission and the human action
+	// (hivecommons/hive#14589).
+	UnauthorizedStep string `json:"unauthorized_step,omitempty"`
+	Unauthorized     string `json:"unauthorized,omitempty"`
+	// StaleLabels are control labels the row still wears that its stage
+	// has outrun, so they are not read as modifiers: `needs-triage` on an
+	// issue at 020 or later (015 is not a gate; the reconciler removes the
+	// label on its next pass, hivecommons/hive#14586). Rendered as a muted
+	// operator tooltip, never as the stage word.
+	StaleLabels []string   `json:"stale_labels,omitempty"`
+	NudgeCount  int        `json:"nudge_count,omitempty"`
+	LastNudgeAt *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy   int        `json:"adopted_by,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -339,7 +364,14 @@ type StageTrackerItem struct {
 	// works towards an issue joins its row instead of standing as an
 	// orphan (hivecommons/hive#13544).
 	LinkedIssues []StageTrackerLinkedIssue `json:"linked_issues,omitempty"`
-	History      []StageTrackerHop         `json:"history"`
+	// ClosedIssue is set on a PR that stands as its own row because every
+	// issue it closes is already closed: the row is anchored on the PR (its
+	// number and title lead, its stage drives the strip, its timestamps
+	// sort it) and the closed issue is a secondary `closes #N · closed`
+	// chip. StateReason "not_planned" adds an "issue closed (not planned)"
+	// chip so the reader can tell the PR may be moot (hivecommons/hive#14655).
+	ClosedIssue *StageTrackerLinkedIssue `json:"closed_issue,omitempty"`
+	History     []StageTrackerHop        `json:"history"`
 }
 
 // StageTrackerLinkedIssue is one issue a PR closes, as its row's issue
@@ -349,6 +381,9 @@ type StageTrackerLinkedIssue struct {
 	Title  string `json:"title,omitempty"`
 	URL    string `json:"url,omitempty"`
 	State  string `json:"state,omitempty"`
+	// StateReason is GitHub's stateReason for a closed issue, lower-cased
+	// ("completed", "not_planned", "duplicate"); "" when unknown.
+	StateReason string `json:"state_reason,omitempty"`
 	// Listed is true when the issue has its own row in this response; the
 	// PR is then nested under it and never drawn as a top-level row.
 	Listed bool `json:"listed,omitempty"`
@@ -375,7 +410,14 @@ type StageTrackerLinkedPR struct {
 	// so a sub-row under an issue names the alert too.
 	SentinelAlert  bool   `json:"sentinel_alert,omitempty"`
 	SentinelReason string `json:"sentinel_reason,omitempty"`
-	Head           string `json:"head,omitempty"`
+	// HumanApprover / ManualMerge / HumanMergeReason(Text) mirror the
+	// nested PR's 090 fields so a sub-row's gate cell says why a person
+	// merges it, as the top-level row would (hivecommons/hive#14658).
+	HumanApprover        string `json:"human_approver,omitempty"`
+	ManualMerge          bool   `json:"manual_merge,omitempty"`
+	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
+	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
+	Head                 string `json:"head,omitempty"`
 	// Finisher, FinisherVerb and FinisherReason mirror the nested PR's own
 	// row fields, so an issue riding its PR says who finishes the PR.
 	Finisher       string `json:"finisher,omitempty"`
@@ -466,6 +508,10 @@ const (
 	modNeedsRebase  = "needs-rebase"
 	modBlocked      = "blocked"
 	modDraft        = "draft"
+	// modUnauthorized: the item wears stagelabels.UnauthorizedLabel — the
+	// hive's GitHub App lacks the permission for its next step and a
+	// person must take it (hivecommons/hive#14589).
+	modUnauthorized = "unauthorized"
 )
 
 // Lane names.
@@ -711,6 +757,8 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			set[modNeedsRebase] = true
 		case "blocked":
 			set[modBlocked] = true
+		case stagelabels.UnauthorizedLabel:
+			set[modUnauthorized] = true
 		}
 	}
 	if len(holdLabels(labels, hiveID)) > 0 {
@@ -728,7 +776,7 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 		set[modDraft] = true
 	}
 	out := make([]string, 0, len(set))
-	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsTriage, modPossibleDupe, modNeedsRebase, modBlocked, modDraft} {
+	for _, m := range []string{modStalled, modRegressed, modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsTriage, modPossibleDupe, modNeedsRebase, modBlocked, modDraft} {
 		if set[m] {
 			out = append(out, m)
 		}
@@ -800,6 +848,9 @@ func humanizeStageReason(reason string) string {
 	if rest, ok := strings.CutPrefix(r, "base-branch-red:"); ok {
 		return "waiting for the base branch's CI to recover (" + strings.ReplaceAll(rest, ",", ", ") + ") — not this PR's fault"
 	}
+	if rest, ok := strings.CutPrefix(r, stageengineprstage.StageReasonUnauthorizedPrefix); ok {
+		return "the hive's GitHub App is not permitted to " + unauthorizedStepWords(rest) + "; a maintainer must"
+	}
 	if rest, ok := strings.CutPrefix(r, "fork-guard:"); ok {
 		return "check " + strings.ReplaceAll(rest, ",", ", ") + " refuses fork PRs — a maintainer must push this branch to the repository"
 	}
@@ -853,6 +904,37 @@ func humanizeStageReason(reason string) string {
 	return strings.NewReplacer("-", " ", "_", " ", ":", ": ").Replace(r)
 }
 
+// unauthorizedStepWords renders an `unauthorized:<step>` step as words.
+func unauthorizedStepWords(step string) string {
+	return strings.ReplaceAll(strings.TrimSpace(step), "-", " ")
+}
+
+// Tooltip for the unauthorized pill, per step; the generic form serves a
+// label whose stage reason does not (or no longer) names the step.
+const (
+	stageTrackerUnauthorizedApproveRuns = "The hive's GitHub App lacks `actions: write`, so it cannot approve the workflow runs GitHub is holding for this head. A maintainer must click Approve and run on the PR's checks banner (or the Actions tab); see the hive:unauthorized comment for the run ids. Hive resumes, and clears the label, once the required checks report."
+	stageTrackerUnauthorizedGeneric     = "The hive's GitHub App lacks a permission for the next step, so only a person can take it; the hive:unauthorized comment on the PR names the permission and the step. Hive resumes, and clears the label, once the step is done."
+	stageTrackerUnauthorizedMergeWF     = "The hive's GitHub App lacks `workflows: write`, so it cannot merge this owner-approved PR that edits .github/workflows files. A maintainer must click Merge on GitHub (the approval already stands), or grant the App Workflows: Read and write so the hive can merge such PRs itself."
+)
+
+// stageTrackerUnauthorized derives the gate word and the tooltip for an
+// item wearing hive:unauthorized from its stage reason.
+func stageTrackerUnauthorized(reason string) (step, tip string) {
+	base, _ := stagelabels.HumanApprovedReason(strings.TrimSpace(reason))
+	rest, ok := strings.CutPrefix(base, stageengineprstage.StageReasonUnauthorizedPrefix)
+	if !ok || strings.TrimSpace(rest) == "" {
+		return "", stageTrackerUnauthorizedGeneric
+	}
+	step = unauthorizedStepWords(rest)
+	if rest == stageengineprstage.UnauthorizedStepApproveWorkflowRuns {
+		return step, stageTrackerUnauthorizedApproveRuns
+	}
+	if rest == stageengineprstage.UnauthorizedStepMergeWorkflowPath {
+		return step, stageTrackerUnauthorizedMergeWF
+	}
+	return step, "The hive's GitHub App lacks the permission to " + step + ", so only a person can take that step; the hive:unauthorized comment on the PR names the permission and the action. Hive resumes, and clears the label, once the step is done."
+}
+
 // stageTrackerManualMergeReason reports whether a bare stage reason is a
 // lane rule the hive never merges unattended, so a 090 under it is waiting
 // on a maintainer's merge click rather than on /lgtm /approve.
@@ -862,6 +944,36 @@ func stageTrackerManualMergeReason(reason string) bool {
 		return true
 	}
 	return false
+}
+
+// Gate-cell words and tooltips per prstage.HumanMergeReason* code: why a
+// person, not the hive, merges a PR parked at 090 (hivecommons/hive#14658).
+var stageTrackerHumanMergeReasonWords = map[string][2]string{
+	stageengineprstage.HumanMergeReasonWorkflowFiles:     {"workflow files", "Changes .github/workflows/** (or action files) — the hive never merges workflow changes and its GitHub App lacks the workflows permission; click Merge on GitHub"},
+	stageengineprstage.HumanMergeReasonTestsRemoved:      {"tests removed", "Deletes tests — the hive never merges a PR that removes tests unattended; a maintainer reviews the deletion and clicks Merge"},
+	stageengineprstage.HumanMergeReasonManualMergePolicy: {"manual-merge policy", "Touches a path listed in auto_merge.human_merge_paths — the hive never merges it unattended; click Merge on GitHub"},
+	stageengineprstage.HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection or a ruleset requires an approving review the hive's GitHub App cannot give; approve on GitHub (or let the App bypass) and the hive merges, or click Merge"},
+	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repository disallows the merge method this PR needs (a forward merge or merge-commit PR is never squashed); merge by hand with an allowed method or allow it in the repository settings"},
+	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is switched off for this repository or lane, so every merge is a person's; click Merge on GitHub"},
+	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "No lane can vouch for the author (trust tier below require_tiers, no verified claim, or no trusted role), so the hive does not merge; a maintainer's /lgtm + /approve (or Merge) lands it"},
+	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "The hive's GitHub App is not permitted to take the merge step (GitHub answered 403); a maintainer merges by hand — see the hive:unauthorized note on the PR"},
+	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "The reviewer swarm returned requires_human on this head and a trusted merger approved it; the hive leaves the merge itself to a person"},
+}
+
+// stageTrackerHumanMergeReason derives, from a 090 stage reason, the
+// compact code, the gate-cell word and the tooltip saying why a person
+// must merge. An unrecognised lane reason falls back to the "policy" code
+// with the raw reason in the tooltip; an empty reason yields "".
+func stageTrackerHumanMergeReason(reason string) (code, word, tip string) {
+	code = stageengineprstage.HumanMergeReason(reason)
+	if code == "" {
+		return "", "", ""
+	}
+	if w, ok := stageTrackerHumanMergeReasonWords[code]; ok {
+		return code, w[0], w[1]
+	}
+	base, _ := stagelabels.HumanApprovedReason(reason)
+	return stageengineprstage.HumanMergeReasonPolicy, "policy", "The merge lane will not merge this unattended (lane reason `" + strings.TrimSpace(base) + "`); a maintainer merges by hand"
 }
 
 // trackerSoakRemainingRE pulls the time left out of the lane's
@@ -986,6 +1098,11 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.AwaitingMergeAdmission:
 		return joinClause("Green and approved; waiting for the automerge lane to admit it", clause), "automerge lane"
 	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
+		if step, _ := stageTrackerUnauthorized(reason); step != "" {
+			// hivecommons/hive#14589: not a decision but a step only a
+			// person may take; the gate cell says the same.
+			return joinClause("Awaiting human: "+step, clause), "maintainer"
+		}
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
 		if base, approver := stagelabels.HumanApprovedReason(reason); stageTrackerManualMergeReason(base) {
@@ -1176,16 +1293,27 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if stage == stagelabels.NeedsDecision || stage == stagelabels.IssueNeedsDecision {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
 		}
-		// Likewise 015 says "Triage needed" itself; the needs-triage chip
-		// only adds information on another stage (a claimed or covered
-		// issue the gate is still holding).
-		if stage == stagelabels.TriageNeeded {
+		// Likewise 015 says "Triage needed" itself, and a needs-triage left
+		// on a claimed / covered issue is stale, not a signal: 015 is not a
+		// gate, the stage word is the truth, and the reconciler removes the
+		// label on its next pass (hivecommons/hive#14586). The chip stays
+		// only before the claim (010 / 017 / 045).
+		if stage == stagelabels.TriageNeeded || stage.SettlesTriage() {
+			if stage != stagelabels.TriageNeeded && slices.Contains(it.Modifiers, modNeedsTriage) {
+				it.StaleLabels = append(it.StaleLabels, modNeedsTriage)
+			}
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
+		if stage == stagelabels.ReadyForHumanMerge {
+			it.HumanMergeReason, _, it.HumanMergeReasonText = stageTrackerHumanMergeReason(it.Reason)
+		}
+		if slices.Contains(it.Modifiers, modUnauthorized) {
+			it.UnauthorizedStep, it.Unauthorized = stageTrackerUnauthorized(it.Reason)
+		}
 		it.History = stageTrackerHistory(rec)
 	}
 	seen := map[string]bool{}
@@ -1317,12 +1445,85 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
-	sort.SliceStable(resp.Items, func(i, j int) bool {
-		a, b := resp.Items[i], resp.Items[j]
+	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
+	return resp
+}
+
+// Ordering tiers within a stage (stageTrackerAttentionTier; the dashboard's
+// STAGE_TRACKER_TIER_* carry the same values).
+const (
+	stageTrackerTierAttention = 0
+	stageTrackerTierNormal    = 1
+	stageTrackerTierSunk      = 2
+)
+
+// stageTrackerAttentionStages are the stages that park an item on a person
+// (dashboard STAGE_TRACKER_ATTENTION_STAGES): issue needs-decision, PR
+// needs-author / returned-to-contributor, PR needs-decision and
+// ready-for-human-merge.
+var stageTrackerAttentionStages = []int{stagelabels.IssueNeedsDecision.Number(), stagelabels.NeedsAuthor.Number(), stagelabels.ReturnedToContributor.Number(), stagelabels.NeedsDecision.Number(), stagelabels.ReadyForHumanMerge.Number()}
+
+// stageTrackerHumanMods are the modifiers that park an item on a person
+// (dashboard STAGE_TRACKER_HUMAN_MODS).
+var stageTrackerHumanMods = []string{modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsRebase, modBlocked, modStalled}
+
+// stageTrackerSunkMods are the modifiers that sink a row to the bottom of
+// its stage (dashboard STAGE_TRACKER_SUNK_MODS): a person parked it, or it
+// is a draft nobody should act on yet.
+var stageTrackerSunkMods = []string{modHold, modDraft}
+
+// stageTrackerRegressionHandled mirrors the dashboard's
+// stageTrackerRegressionHandled: a regressed item with no human-gate
+// modifier on a hive-driven stage is the hive's to work through.
+func stageTrackerRegressionHandled(it StageTrackerItem) bool {
+	if !slices.Contains(it.Modifiers, modRegressed) {
+		return false
+	}
+	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerHumanMods, m) }) {
+		return false
+	}
+	return !slices.Contains(stageTrackerAttentionStages, it.Stage)
+}
+
+// stageTrackerNeedsAttention mirrors the dashboard's
+// stageTrackerNeedsAttention: the item shows a pill or sits on a stage
+// parked on a person. Only the shown Modifiers count, so a merge-gate pill
+// held back until the gate never promotes a row.
+func stageTrackerNeedsAttention(it StageTrackerItem) bool {
+	if stageTrackerRegressionHandled(it) {
+		return false
+	}
+	return len(it.Modifiers) > 0 || slices.Contains(stageTrackerAttentionStages, it.Stage)
+}
+
+// stageTrackerAttentionTier is the item's ordering tier within its stage
+// (the dashboard's stageTrackerAttentionTier agrees): rows parked on a
+// person first, then the rest, then rows nobody should act on — hold
+// (incl. do-not-merge/*) and draft. The direction toggle never flips it.
+func stageTrackerAttentionTier(it StageTrackerItem) int {
+	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerSunkMods, m) }) {
+		return stageTrackerTierSunk
+	}
+	if stageTrackerNeedsAttention(it) {
+		return stageTrackerTierAttention
+	}
+	return stageTrackerTierNormal
+}
+
+// stageTrackerLess orders the payload: stage descending, then
+// attention-first within the stage (stageTrackerAttentionTier), then the
+// item that has waited longest, then repo and number — the dashboard's
+// default view, so chat and hub consumers read the same order.
+func stageTrackerLess(items []StageTrackerItem) func(i, j int) bool {
+	return func(i, j int) bool {
+		a, b := items[i], items[j]
 		if a.Stage != b.Stage {
 			return a.Stage > b.Stage
 		}
-		// Within a stage the item that has waited longest comes first: it is
+		if ta, tb := stageTrackerAttentionTier(a), stageTrackerAttentionTier(b); ta != tb {
+			return ta < tb
+		}
+		// Within a tier the item that has waited longest comes first: it is
 		// the one most likely to need a human.
 		at, bt := trackerSince(a), trackerSince(b)
 		if at.IsZero() != bt.IsZero() {
@@ -1335,8 +1536,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			return a.Repo < b.Repo
 		}
 		return a.Number < b.Number
-	})
-	return resp
+	}
 }
 
 func trackerSince(it StageTrackerItem) time.Time {
@@ -1407,8 +1607,9 @@ func repoWorkPR(raw any) (github.RepoWorkPR, bool) {
 }
 
 // stageTrackerRESTCaller tags the endpoint's requests in the REST
-// accounting (/api/gh-rate-limits) so an operator can see them listed with
-// Charged 0: the handler never reaches GitHub.
+// accounting (/api/gh-rate-limits). Serving the tracker is Charged 0; the
+// only GitHub reads are the memoised issues GETs that title untitled links
+// (stageTrackerEnrichSoftLinks).
 const stageTrackerRESTCaller = "dashboard:stage-tracker"
 
 // stageTrackerCache is the memoised payload: the encoded body, its ETag and
@@ -1417,7 +1618,28 @@ type stageTrackerCache struct {
 	body        []byte
 	etag        string
 	generatedAt time.Time
+	// stale is set by invalidateStageTrackerCache: the body is still served
+	// while the next request rebuilds, so an invalidation never blocks and a
+	// reader never waits behind a build it did not start.
+	stale bool
 }
+
+// stageTrackerBuild is the single in-flight /api/stage-tracker rebuild. done
+// is closed when the cache has been updated (or the build failed).
+type stageTrackerBuild struct {
+	done chan struct{}
+}
+
+// stageTrackerSource values for the X-Hive-Stage-Tracker-Source header and
+// the payload's source field.
+const (
+	stageTrackerSourceFreshName = "fresh"
+	stageTrackerSourceCacheName = "cache"
+	// stageTrackerSourceStaleName marks a body served from the cache while a
+	// rebuild is in flight or after an invalidation: still the last complete
+	// tracker, just older than the status it will be rebuilt from.
+	stageTrackerSourceStaleName = "stale"
+)
 
 func (s *Server) stageTrackerCacheTTL() time.Duration {
 	if s != nil && s.deps != nil && s.deps.Config != nil {
@@ -1427,22 +1649,95 @@ func (s *Server) stageTrackerCacheTTL() time.Duration {
 }
 
 // stageTrackerPayload returns the cached body when it is younger than the
-// TTL, else builds, encodes and caches a new one. fresh reports a rebuild.
+// TTL and not invalidated, else builds, encodes and caches a new one. fresh
+// reports a rebuild by this call.
+//
+// The build runs OUTSIDE stageTrackerCacheMu and at most one runs at a time:
+// the mutex only guards the cached fields, so invalidateStageTrackerCache
+// (every webhook, every status publish) returns at once instead of queueing
+// behind a build that walks the evidence tree on NFS. Requests that arrive
+// while a build is in flight are served the previous body as "stale"; only a
+// request with no body to fall back on waits, and only until the in-flight
+// build finishes or its own context ends. Before this, the mutex was held
+// across the build, so every webhook handler, the governor's publish and
+// every tracker poll queued behind it in FIFO order — and because each
+// publish and webhook re-invalidated the cache, the queue never drained
+// (hivecommons/hive#14681: unbounded blocked handlers, connections and
+// threads).
 func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body []byte, etag string, generatedAt time.Time, fresh bool) {
+	var source string
+	body, etag, generatedAt, source = s.stageTrackerPayloadSource(context.Background(), status, now)
+	return body, etag, generatedAt, source == stageTrackerSourceFreshName
+}
+
+// stageTrackerPayloadSource is stageTrackerPayload reporting where the body
+// came from (stageTrackerSource*Name; "" with a nil body when the build
+// failed or ctx ended while waiting on an in-flight build).
+func (s *Server) stageTrackerPayloadSource(ctx context.Context, status *StatusPayload, now time.Time) (body []byte, etag string, generatedAt time.Time, source string) {
 	ttl := s.stageTrackerCacheTTL()
 	s.stageTrackerCacheMu.Lock()
-	defer s.stageTrackerCacheMu.Unlock()
 	s.stageTrackerServed = true
-	c := &s.stageTrackerCache
-	if len(c.body) > 0 && now.Sub(c.generatedAt) < ttl {
-		return c.body, c.etag, c.generatedAt, false
+	c := s.stageTrackerCache
+	if len(c.body) > 0 && !c.stale && now.Sub(c.generatedAt) < ttl {
+		s.stageTrackerCacheMu.Unlock()
+		return c.body, c.etag, c.generatedAt, stageTrackerSourceCacheName
 	}
-	resp := s.buildStageTracker(status, s.stageStoreOrShared(), now)
+	if inflight := s.stageTrackerBuild; inflight != nil {
+		s.stageTrackerCacheMu.Unlock()
+		if len(c.body) > 0 {
+			return c.body, c.etag, c.generatedAt, stageTrackerSourceStaleName
+		}
+		select {
+		case <-inflight.done:
+		case <-ctx.Done():
+			return nil, "", now, ""
+		}
+		s.stageTrackerCacheMu.Lock()
+		c = s.stageTrackerCache
+		s.stageTrackerCacheMu.Unlock()
+		if len(c.body) == 0 {
+			return nil, "", now, ""
+		}
+		return c.body, c.etag, c.generatedAt, stageTrackerSourceCacheName
+	}
+	inflight := &stageTrackerBuild{done: make(chan struct{})}
+	s.stageTrackerBuild = inflight
+	gen := s.stageTrackerGen
+	s.stageTrackerCacheMu.Unlock()
+
+	built, ok := s.encodeStageTracker(status, now, ttl)
+
+	s.stageTrackerCacheMu.Lock()
+	if ok {
+		// An invalidation that landed during the build means newer status
+		// exists; keep serving this body but let the next request rebuild.
+		built.stale = s.stageTrackerGen != gen
+		s.stageTrackerCache = built
+	}
+	s.stageTrackerBuild = nil
+	close(inflight.done)
+	s.stageTrackerCacheMu.Unlock()
+	if !ok {
+		return nil, "", now, ""
+	}
+	return built.body, built.etag, built.generatedAt, stageTrackerSourceFreshName
+}
+
+// encodeStageTracker builds and encodes the tracker for status. It holds no
+// server lock: this is the slow part (one evidence read per PR, on NFS in
+// hosted hives).
+func (s *Server) encodeStageTracker(status *StatusPayload, now time.Time, ttl time.Duration) (stageTrackerCache, bool) {
+	build := s.buildStageTracker
+	if s.stageTrackerBuildFn != nil {
+		build = s.stageTrackerBuildFn
+	}
+	resp := build(status, s.stageStoreOrShared(), now)
+	s.stageTrackerEnrichSoftLinks(resp.Items, stageTrackerRepoQualifier(status), now)
 	resp.CacheTTLSeconds = int64(ttl / time.Second)
 	// The encoded body carries source=cache: that is what every later hit
 	// serves verbatim, and what the ETag validates. The building request
 	// alone rewrites the marker to fresh on its way out (handleStageTracker).
-	resp.Source = "cache"
+	resp.Source = stageTrackerSourceCacheName
 	// The ETag hashes the body with generated_at zeroed: the timestamp moves
 	// on every rebuild, so including it would turn an unchanged tracker into
 	// a 200 each time (the client revalidates with this ETag and gets a 304).
@@ -1451,26 +1746,29 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 	hashResp.GeneratedAt = time.Time{}
 	if err := json.NewEncoder(&hashBuf).Encode(hashResp); err != nil {
 		slogWarnOverviewEncode(err)
-		return nil, "", now, true
+		return stageTrackerCache{}, false
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
 		slogWarnOverviewEncode(err)
-		return nil, "", now, true
+		return stageTrackerCache{}, false
 	}
-	c.body, c.etag, c.generatedAt = buf.Bytes(), webstatic.ETagFor(hashBuf.Bytes()), now
-	return c.body, c.etag, c.generatedAt, true
+	return stageTrackerCache{body: buf.Bytes(), etag: webstatic.ETagFor(hashBuf.Bytes()), generatedAt: now}, true
 }
 
-// invalidateStageTrackerCache forgets the memoised payload. UpdateStatusIfFresh
-// calls it on every status publish so tracker freshness follows the eval
-// cycle rather than the cache TTL alone. It reports whether the tracker has
-// ever been served: only then is an SSE nudge worth sending, which also keeps
-// the /api/events stream free of extra frames for clients that never asked
-// for the tracker.
+// invalidateStageTrackerCache marks the memoised payload stale.
+// UpdateStatusIfFresh calls it on every status publish, and every webhook
+// re-read that changed a row calls it too, so tracker freshness follows the
+// eval cycle and the webhook stream rather than the cache TTL alone. It only
+// flips a flag under the cache mutex — it never waits for a build in
+// progress — so callers on the webhook and publish paths return at once. It
+// reports whether the tracker has ever been served: only then is an SSE
+// nudge worth sending, which also keeps the /api/events stream free of extra
+// frames for clients that never asked for the tracker.
 func (s *Server) invalidateStageTrackerCache() (served bool) {
 	s.stageTrackerCacheMu.Lock()
-	s.stageTrackerCache = stageTrackerCache{}
+	s.stageTrackerCache.stale = true
+	s.stageTrackerGen++
 	served = s.stageTrackerServed
 	s.stageTrackerCacheMu.Unlock()
 	return served
@@ -1485,6 +1783,7 @@ func stageTrackerSSEFrame(seq uint64) string {
 
 var stageTrackerSourceCache = []byte(`"source":"cache"`)
 var stageTrackerSourceFresh = []byte(`"source":"fresh"`)
+var stageTrackerSourceStale = []byte(`"source":"stale"`)
 
 // handleStageTracker serves GET /api/stage-tracker from the memoised payload.
 func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
@@ -1497,18 +1796,22 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	body, etag, generatedAt, fresh := s.stageTrackerPayload(status, now)
+	body, etag, generatedAt, source := s.stageTrackerPayloadSource(r.Context(), status, now)
 	if body == nil {
+		if r.Context().Err() != nil {
+			jsonError(w, "stage tracker build still in progress", http.StatusServiceUnavailable)
+			return
+		}
 		jsonError(w, "stage tracker unavailable", http.StatusInternalServerError)
 		return
 	}
 	remaining := s.stageTrackerCacheTTL() - now.Sub(generatedAt)
-	if remaining < 0 {
+	if remaining < 0 || source == stageTrackerSourceStaleName {
 		remaining = 0
 	}
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "private, max-age="+strconv.FormatInt(int64(remaining/time.Second), 10))
-	w.Header().Set("X-Hive-Stage-Tracker-Source", map[bool]string{true: "fresh", false: "cache"}[fresh])
+	w.Header().Set("X-Hive-Stage-Tracker-Source", source)
 	w.Header().Set("X-Hive-Stage-Tracker-Generated-At", generatedAt.UTC().Format(time.RFC3339Nano))
 	w.Header().Set("Last-Modified", generatedAt.UTC().Format(http.TimeFormat))
 	if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, etag) {
@@ -1517,8 +1820,11 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	github.RecordLocalServe(stageTrackerRESTCaller, r.URL.Path, http.StatusOK)
-	if fresh {
+	switch source {
+	case stageTrackerSourceFreshName:
 		body = bytes.Replace(body, stageTrackerSourceCache, stageTrackerSourceFresh, 1)
+	case stageTrackerSourceStaleName:
+		body = bytes.Replace(body, stageTrackerSourceCache, stageTrackerSourceStale, 1)
 	}
 	if _, err := w.Write(body); err != nil {
 		slogWarnOverviewEncode(err)
@@ -1557,7 +1863,8 @@ func stageTrackerPRLinkedIssues(pr github.PullRequest, repoName, baseURL string)
 		seen[li.Number] = true
 		out = append(out, StageTrackerLinkedIssue{
 			Number: li.Number, Title: li.Title, State: strings.ToLower(strings.TrimSpace(li.State)),
-			URL: overviewItemURL(li.URL, full, li.Number, "issue", baseURL), Via: via,
+			StateReason: strings.ToLower(strings.TrimSpace(li.StateReason)),
+			URL:         overviewItemURL(li.URL, full, li.Number, "issue", baseURL), Via: via,
 		})
 	}
 	for _, li := range pr.LinkedIssues {
@@ -1604,11 +1911,128 @@ func stageTrackerLinkSoft(li StageTrackerLinkedIssue) bool {
 	return li.Via != "" && li.Via != github.PRLinkViaFixes
 }
 
+// Bounds on the issues GETs stageTrackerEnrichSoftLinks makes. A lookup is
+// memoised per Server for stageTrackerLinkTTL (a failed one for
+// stageTrackerLinkRetry), because the tracker payload itself is rebuilt on
+// every status publish. A rebuild makes at most stageTrackerLinkLookups GETs,
+// all within stageTrackerLinkTimeout, as it holds stageTrackerCacheMu.
+const (
+	stageTrackerLinkTTL     = 15 * time.Minute
+	stageTrackerLinkRetry   = 2 * time.Minute
+	stageTrackerLinkLookups = 10
+	stageTrackerLinkTimeout = 3 * time.Second
+	stageTrackerLinkMemoMax = 1024
+)
+
+// stageTrackerLinkInfo is one memoised lookup: the issue's title and state,
+// or pr when the number names a pull request; ok is false for a failed GET.
+type stageTrackerLinkInfo struct {
+	title, state string
+	pr, ok       bool
+	at           time.Time
+}
+
+// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#number.
+type stageTrackerLinkMemo struct {
+	mu sync.Mutex
+	m  map[string]stageTrackerLinkInfo
+}
+
+func (m *stageTrackerLinkMemo) get(key string, now time.Time) (stageTrackerLinkInfo, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	in, ok := m.m[key]
+	if ok && now.Sub(in.at) < in.ttl() {
+		return in, true
+	}
+	return stageTrackerLinkInfo{}, false
+}
+
+func (m *stageTrackerLinkMemo) put(key string, in stageTrackerLinkInfo, now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.m == nil {
+		m.m = map[string]stageTrackerLinkInfo{}
+	}
+	if len(m.m) >= stageTrackerLinkMemoMax {
+		for k, v := range m.m {
+			if now.Sub(v.at) >= v.ttl() {
+				delete(m.m, k)
+			}
+		}
+	}
+	in.at = now
+	m.m[key] = in
+}
+
+func (in stageTrackerLinkInfo) ttl() time.Duration {
+	if in.ok {
+		return stageTrackerLinkTTL
+	}
+	return stageTrackerLinkRetry
+}
+
+// stageTrackerEnrichSoftLinks gives the links no listed issue or closing
+// reference titled (soft refs / title / mention links, and closing keywords
+// hive read from the PR text) a title and state, from one issues GET per
+// distinct same-repo number, memoised across rebuilds (stageTrackerLinkMemo).
+// A number that turns out to be a pull request, open or closed (`Supersedes
+// #N`, an adoption's "close #N"), is dropped: it is not an issue the PR
+// covers (hivecommons/hive#14667). A failed or skipped lookup leaves the link
+// as it was.
+func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify func(string) string, now time.Time) {
+	if s == nil || s.deps == nil || s.deps.GHClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(github.WithRESTCaller(context.Background(), stageTrackerRESTCaller), stageTrackerLinkTimeout)
+	defer cancel()
+	lookups := 0
+	for i := range items {
+		pr := &items[i]
+		if pr.Kind != "pr" || len(pr.LinkedIssues) == 0 {
+			continue
+		}
+		owner, name, ok := strings.Cut(qualify(pr.Repo), "/")
+		if !ok {
+			continue
+		}
+		kept := pr.LinkedIssues[:0]
+		for _, li := range pr.LinkedIssues {
+			if !li.Listed && li.Title == "" && li.State == "" {
+				key := owner + "/" + name + "#" + strconv.Itoa(li.Number)
+				in, hit := s.stageTrackerLinks.get(key, now)
+				if !hit && lookups < stageTrackerLinkLookups && ctx.Err() == nil {
+					lookups++
+					title, state, isPR, err := s.deps.GHClient.IssueTitleState(ctx, owner, name, li.Number)
+					in = stageTrackerLinkInfo{title: title, state: state, pr: isPR, ok: err == nil}
+					// Running out of this rebuild's budget says nothing
+					// about the issue: leave it for the next rebuild.
+					if err == nil || ctx.Err() == nil {
+						s.stageTrackerLinks.put(key, in, now)
+					}
+				}
+				if in.pr {
+					continue
+				}
+				if in.ok {
+					li.Title, li.State = in.title, in.state
+				}
+			}
+			kept = append(kept, li)
+		}
+		if len(kept) == 0 {
+			kept = nil
+		}
+		pr.LinkedIssues = kept
+	}
+}
+
 // stageTrackerPruneSoftLinks drops, from a PR's links, every soft link whose
 // number is an open PR in the same repo (a squash title's `(#N)` or a
 // `Refs #N` naming the PR this one follows) and every bare mention that is
 // not an issue listed in the response — a keyword-less `#N` has no other
-// way to prove it names an issue.
+// way to prove it names an issue. A closed PR is not in the response;
+// stageTrackerEnrichSoftLinks drops links to those.
 func stageTrackerPruneSoftLinks(pr *StageTrackerItem, prs, issues map[string]*StageTrackerItem) {
 	if len(pr.LinkedIssues) == 0 {
 		return
@@ -1687,6 +2111,8 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
+				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
+				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
 				lp.Finisher, lp.FinisherVerb, lp.FinisherReason = pr.Finisher, pr.FinisherVerb, pr.FinisherReason
 				if len(pr.Modifiers) > 0 {
@@ -1718,4 +2144,45 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 		}
 		it.LinkedPRs = out
 	}
+	for i := range items {
+		if items[i].Kind == "pr" {
+			items[i].ClosedIssue = stageTrackerClosedIssueAnchor(items[i])
+		}
+	}
+}
+
+// stageTrackerClosedIssueAnchor returns the closed issue a standalone PR
+// row re-anchors around, or nil. A PR nested under a listed issue, a PR
+// with an open closing link, and a PR whose links are all soft (`Refs #N`)
+// or of unknown state keep the issue slot as is; only a PR whose every
+// closing link names a closed issue is drawn as the row's own headline,
+// with the first closed issue as its secondary chip
+// (hivecommons/hive#14655). The PR's stage, modifiers and timestamps are
+// untouched: the issue closing is not a regression of the PR.
+func stageTrackerClosedIssueAnchor(pr StageTrackerItem) *StageTrackerLinkedIssue {
+	if pr.Kind != "pr" || pr.NestedUnder != 0 {
+		return nil
+	}
+	var closed *StageTrackerLinkedIssue
+	for i := range pr.LinkedIssues {
+		li := &pr.LinkedIssues[i]
+		if li.Listed || stageTrackerLinkSoft(*li) {
+			continue
+		}
+		switch li.State {
+		case "closed":
+			if closed == nil {
+				closed = li
+			}
+		default:
+			// An open (or unknown-state) closing link still anchors the row
+			// on the issue.
+			return nil
+		}
+	}
+	if closed == nil {
+		return nil
+	}
+	out := *closed
+	return &out
 }

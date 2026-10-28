@@ -252,6 +252,10 @@ still wins.
 
 ## What to read next
 
+- [house-style.md](house-style.md) — the short, hive-wide *how to change things*
+  section that precedes this block in every kick; a repo overrides it with a
+  root `HIVE_STYLE.md`, read from the same checkout root.
+
 - **[Skill registry](skills.md)** — the sibling injection path: file format,
   where it's loaded from, and how an agent declares which skills it wants.
 - **[Agent configuration](agent-configuration.md)** — the `definition_source`

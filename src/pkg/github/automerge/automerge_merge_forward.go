@@ -141,6 +141,11 @@ func (c *Engine) mergeForwardOrConflict(ctx context.Context, displayRepo, owner,
 		c.info("automerge merge-forward refused: the base changed workflow files and the app lacks the workflows permission", "repo", displayRepo, "pr", number, "head", headSHA)
 		return AutoMergeSweepEvent{}, autoMergeReasonWorkflowPermission, nil
 	case status == http.StatusForbidden || status == http.StatusNotFound:
+		// TODO(hivecommons/hive#14589): a 403 on a same-repo branch is the
+		// App lacking contents: write (markUnauthorized, step
+		// merge-forward); on a fork head it is the fork's "allow edits by
+		// maintainers" setting, which no App permission cures. Left as a
+		// skip until the two are separated.
 		c.info("automerge merge-forward skipped: branch not writable by the app", "repo", displayRepo, "pr", number, "status", status)
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}

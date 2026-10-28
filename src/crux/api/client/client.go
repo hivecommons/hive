@@ -873,6 +873,7 @@ func (r *Runtime) StartAgentTokenRefresh(context.Context)         {}
 func (r *Runtime) StartCredentialWatchdog(context.Context)        {}
 func (r *Runtime) StartCopilotSessionRefresh(context.Context)     {}
 func (r *Runtime) StartTranscriptActivityRefresh(context.Context) {}
+func (r *Runtime) StartRepeatFailureMonitor(context.Context)      {}
 
 // ---- Authorizer (fail closed) ----
 

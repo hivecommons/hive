@@ -948,6 +948,21 @@ contribute-hive backend="" mode="docker": check-version
     source "{{config_dir}}/gh-auth.env"
     source "{{config_dir}}/contributor.env"
     set +a
+    # Retired hosted-hive apex: a contributor.env written before the
+    # *.hive.kubestellar.io -> *.hive.hivecommons.dev move names a host the
+    # certificate no longer covers. Relocate in-memory (label intact) so the
+    # Hub: line below and a local-mode relay name the live host; the container
+    # path does the same inside bin/contributor-agent.sh.
+    _RETIRED_HUB_HOST="{{legacy_hive_hub}}"; _RETIRED_HUB_HOST="${_RETIRED_HUB_HOST#wss://}"; _RETIRED_HUB_HOST="${_RETIRED_HUB_HOST%%/*}"
+    if [[ "${HIVE_HUB:-}" == *"${_RETIRED_HUB_HOST}"* ]]; then
+      _MOVED_HUB="${HIVE_HUB//.${_RETIRED_HUB_HOST}/.hive.hivecommons.dev}"
+      _MOVED_HUB="${_MOVED_HUB//\/\/${_RETIRED_HUB_HOST}\//\/\/hive.hivecommons.dev\/}"
+      echo "WARNING: HIVE_HUB=${HIVE_HUB} uses the retired ${_RETIRED_HUB_HOST} domain; using ${_MOVED_HUB} instead."
+      echo "         Update the HIVE_HUB line in {{config_dir}}/contributor.env (or re-run 'just contribute-setup') to silence this."
+      export HIVE_HUB="$_MOVED_HUB"
+      unset _MOVED_HUB
+    fi
+    unset _RETIRED_HUB_HOST
     # Handle "just contribute-hive local" (backward compat)
     _BACKEND="{{backend}}"
     _MODE="{{mode}}"

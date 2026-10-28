@@ -1,0 +1,1 @@
+- Held PRs now carry a body digest from the poll path, so review-swarm kicks for them name the digest and every head's verdict lands in one aggregate; a dispatched verdict whose dispatch record has no digest is stored with an empty digest instead of whatever the reviewer wrote ([#14594](https://github.com/hivecommons/hive/issues/14594)).

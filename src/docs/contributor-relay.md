@@ -1471,6 +1471,8 @@ The one place a declaration DOES shape dispatch is the stage-072 contributor nud
 
 The hub records the mode it used in the nudge comment's marker (`mode=spawn|preempt|queued|comment`) and exposes queue depth / in-flight as `fix_queue` on the contributor profile API.
 
+**When the relay fails the task.** `task_failed` for a fix's `task_id` does not settle it as done: its PRs go back in the hub's queue (same place by age) and are not interrupted back in for 5 minutes, though the relay's next `ready` serves them at once. After three failed dispatches a PR leaves the fix queue and the stage engine's re-nudge / adoption path takes over. A dispatch the relay fails within one second of the nudge is not reported as delivered: the nudge comment reads `mode=queued`, says the relay could not take the task (quoting the relay's `message`/`reason`), and the stage log carries `relay_failed=true` (hivecommons/hive#14668).
+
 #### What the operator sees (Operations → Connected contributor agents)
 
 Each row of the "Connected contributor agents (ClankeR)" list on `/contribute/operations` reads the same declaration back (hivecommons/hive#12502), so an operator can check whether the rework the stage labels promise is actually reaching the agent. The row is fed by `/api/contribute/fleet`; each `clankers[]` entry carries:
@@ -2240,6 +2242,25 @@ Recreated tmux session 'contributor' and relaunched claude; waiting for it to be
 If the session cannot be recreated (tmux binary gone, server socket unwritable), a task currently held by the relay is failed **on that poll** with `failure_kind: environment`, so the hub can hand it to another contributor instead of waiting out the lease. The relay keeps polling, so a session an operator creates by hand is picked up on the next tick.
 
 Note that this is different from the poisoned-server case above: a recreated session inherits the server's working directory, so if `pane_current_path` shows `(deleted)` you still need `tmux kill-server`.
+
+## Troubleshooting: `Hostname/IP does not match certificate's altnames`
+
+Symptom: every connect attempt logs
+
+```
+Connecting to wss://hosted-<slug>.hive.kubestellar.io/api/contribute/ws...
+WebSocket error: Hostname/IP does not match certificate's altnames: Host: hosted-<slug>.hive.kubestellar.io. is not in the cert's altnames: DNS:*.hive.hivecommons.dev, …
+Connection closed (code=1006 …) Reconnecting in 16000ms...
+```
+
+Cause: the hosted fleet moved apex from `*.hive.kubestellar.io` to `*.hive.hivecommons.dev` on 2026-09-04. A `~/.config/hive/contributor.env` written by `just contribute-setup` before that date still carries the old host on its `HIVE_HUB` line. The old apex answers HTTP with a 301, but a WebSocket handshake does not follow redirects, and the hosted subdomains are outside the current certificate, so the TLS handshake fails before any redirect could be seen.
+
+What the relay does now:
+
+- **Known retired apex** — `contribute-hive` (and the relay itself, including on a `SIGUSR1` reload) rewrites `*.hive.kubestellar.io` to `*.hive.hivecommons.dev` in memory, keeping the per-hive label, and warns once naming the file to edit. Nothing is written back to `contributor.env`; update the `HIVE_HUB` line there (or re-run `just contribute-setup`) to silence the warning.
+- **Any other hostname mismatch** — the relay stops redialing that URL (no more `Reconnecting in …` loop), prints one remediation line naming `contributor.env`, and, for a hosted hive, asks the hub's `/api/registry` for the hive's current `dashboardUrl` and retries there **once**. `relay-status.json` reports the parked hub as `readiness: hive-moved`. A standalone hive (no hub to ask) is parked immediately.
+
+Fix: `export HIVE_HUB=wss://<current hive host>/contribute` for this run, and change the `HIVE_HUB` line in `~/.config/hive/contributor.env` to match; or `just contribute-setup <cli>` to pick the hive again from the hub's listing. Your registration token is unchanged by the move.
 
 ## Protocol compatibility
 

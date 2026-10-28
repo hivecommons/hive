@@ -89,6 +89,41 @@ func TestScanBobSessions_EstimationFallback(t *testing.T) {
 	}
 }
 
+func TestScanBobSessions_NoUsageForFailedCalls(t *testing.T) {
+	tests := []struct {
+		name     string
+		messages []bobChatMessage
+	}{
+		{"unanswered user turn", []bobChatMessage{
+			{Type: "user", Content: "do the work please"},
+		}},
+		{"reply recorded zero usage", []bobChatMessage{
+			{Type: "user", Content: "do the work please"},
+			{Type: "bob-shell", Content: "model not found", Tokens: &bobTokens{}},
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			chatDir := filepath.Join(dir, "tmp", "def-456", "chats")
+			if err := os.MkdirAll(chatDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			data, _ := json.Marshal(bobChatSession{SessionID: "failed", Messages: tc.messages})
+			if err := os.WriteFile(filepath.Join(chatDir, "chat.json"), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			agg, err := ScanBobSessionsWithLogger(dir, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if agg.TotalTokens != 0 || len(agg.Sessions) != 0 || len(agg.ByAgentDetail) != 0 {
+				t.Errorf("failed call reported usage: total=%d sessions=%d", agg.TotalTokens, len(agg.Sessions))
+			}
+		})
+	}
+}
+
 func TestScanBobSessions_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	agg, err := ScanBobSessionsWithLogger(dir, nil)

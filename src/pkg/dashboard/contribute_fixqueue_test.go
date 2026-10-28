@@ -275,3 +275,64 @@ func TestFixPRInstructionCoalesced(t *testing.T) {
 		}
 	}
 }
+
+// hivecommons/hive#14668: a relay that fails the fix-pr task right after
+// dispatch must not be reported as reached. The nudge reads "queued" with the
+// relay's reason, the PR waits in the queue (no immediate re-interrupt), the
+// next task boundary retries it, and after fixTaskMaxAttempts failures it
+// leaves the queue for the stage engine's re-nudge / adoption path.
+func TestFixQueueInstantRelayFailureIsNotDelivered(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	hub.fixAckGrace = time.Minute
+	c := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), time.Now())
+	s := &wsSession{h: hub, contributor: c}
+	var got []WSMessage
+	hub.fixDispatched = func(_ *ContributorConnection, m WSMessage) {
+		got = append(got, m)
+		if len(got) == 1 {
+			go s.handleTaskFailed(WSMessage{Type: "task_failed", TaskID: m.TaskID, Message: "codex: session busy"})
+		}
+	}
+
+	out := hub.Nudge(context.Background(), fixNudge("r", 1, "build"))
+	if !out.Online || out.Mode != "queued" || !out.RelayFailed || out.RelayError != "codex: session busy" || out.QueueDepth != 1 {
+		t.Fatalf("instantly failed dispatch reported as %+v, want queued + relay failure", out)
+	}
+	if len(got) != 1 {
+		t.Fatalf("dispatches = %d, want the failed fix not interrupted straight back", len(got))
+	}
+	if st := hub.FixQueueStatus("alice"); st.Queued != 1 || st.InFlight != 0 {
+		t.Fatalf("status after failure = %+v, want requeued", st)
+	}
+	if q := hub.FixQueueItems("alice"); len(q) != 1 || q[0].Attempts != 1 {
+		t.Fatalf("queued = %+v, want one item with 1 failed attempt", q)
+	}
+	c.mu.Lock()
+	tracked := len(c.fixTasks)
+	c.mu.Unlock()
+	if tracked != 0 {
+		t.Fatalf("failed fix task still tracked on the connection (%d)", tracked)
+	}
+
+	// The relay's next task boundary retries it; two more failures exhaust it.
+	for attempt := 2; attempt <= fixTaskMaxAttempts; attempt++ {
+		msg := hub.selectFixTask(c)
+		if msg == nil || msg.Kind != taskKindFixPR || msg.Priority != taskPriorityQueued {
+			t.Fatalf("attempt %d: boundary should serve the queued fix, got %+v", attempt, msg)
+		}
+		s.handleTaskFailed(WSMessage{Type: "task_failed", TaskID: msg.TaskID})
+	}
+	if st := hub.FixQueueStatus("alice"); st.Queued != 0 || st.InFlight != 0 {
+		t.Fatalf("status after %d failures = %+v, want the PR out of the queue", fixTaskMaxAttempts, st)
+	}
+	if msg := hub.selectFixTask(c); msg != nil {
+		t.Fatalf("exhausted fix served again: %+v", msg)
+	}
+	hub.fixQueueMu.Lock()
+	owned := len(hub.fixOwners["alice"])
+	waiters, failures := hub.fixWaiters, len(hub.fixFailures)
+	hub.fixQueueMu.Unlock()
+	if owned != 0 || waiters != 0 || failures != 0 {
+		t.Fatalf("leftover state: owners=%d waiters=%d failures=%d", owned, waiters, failures)
+	}
+}

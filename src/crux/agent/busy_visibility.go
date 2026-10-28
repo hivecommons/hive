@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -328,22 +329,47 @@ func (m *Manager) pendingTranscriptActivityScansLocked(now time.Time) []transcri
 	return scans
 }
 
-// scanTranscriptActivity stats each agent's sessions. caches is keyed by
-// agent name and may be nil (every session is stat'd).
+// transcriptScanConcurrency bounds how many agents' session trees are walked
+// at once. Each walk is dominated by network-filesystem round trips, so a few
+// in parallel bring a many-agent pass back inside the scan interval without
+// flooding the mount.
+const transcriptScanConcurrency = 4
+
+// scanAgentTranscript walks one agent's session tree; a variable so tests can
+// observe how the passes are scheduled.
+var scanAgentTranscript = func(scan transcriptActivityScan, cache *transcriptSessionCache, now time.Time) (time.Time, bool) {
+	return newestCopilotTranscriptActivityCached(AgentHome(scan.name, scan.uid, "copilot"), cache, now)
+}
+
+// scanTranscriptActivity stats each agent's sessions, up to
+// transcriptScanConcurrency agents at a time. caches is keyed by agent name
+// and may be nil (every session is stat'd). Results keep the order of scans.
 func scanTranscriptActivity(scans []transcriptActivityScan, caches map[string]*transcriptSessionCache, now time.Time) []transcriptActivityResult {
-	results := make([]transcriptActivityResult, 0, len(scans))
-	for _, scan := range scans {
-		var cache *transcriptSessionCache
+	results := make([]transcriptActivityResult, len(scans))
+	perAgent := make([]*transcriptSessionCache, len(scans))
+	for i, scan := range scans {
 		if caches != nil {
-			cache = caches[scan.name]
+			cache := caches[scan.name]
 			if cache == nil {
 				cache = &transcriptSessionCache{}
 				caches[scan.name] = cache
 			}
+			perAgent[i] = cache
 		}
-		at, ok := newestCopilotTranscriptActivityCached(AgentHome(scan.name, scan.uid, "copilot"), cache, now)
-		results = append(results, transcriptActivityResult{name: scan.name, at: at, ok: ok})
 	}
+	sem := make(chan struct{}, transcriptScanConcurrency)
+	var wg sync.WaitGroup
+	for i, scan := range scans {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			at, ok := scanAgentTranscript(scan, perAgent[i], now)
+			results[i] = transcriptActivityResult{name: scan.name, at: at, ok: ok}
+		}()
+	}
+	wg.Wait()
 	return results
 }
 

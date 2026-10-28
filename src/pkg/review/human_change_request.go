@@ -30,6 +30,19 @@ const (
 	HumanChangeRequestSourceDecision = "decision"
 )
 
+// Kinds of a HumanChangeRequest.
+const (
+	// HumanChangeRequestKindChanges (the zero value, "" in older files) is
+	// an instruction the author agent must act on.
+	HumanChangeRequestKindChanges = ""
+	// HumanChangeRequestKindApprove is a bare `/hive decision approve`: the
+	// owner answered the swarm's question with "yes" and gave nothing to
+	// change. It supersedes the requires_human verdict on Head so the lane
+	// stops reporting decision-requested, but it never kicks a fix
+	// (hivecommons/hive#14679).
+	HumanChangeRequestKindApprove = "approve"
+)
+
 // HumanChangeRequest is one maintainer instruction that sends a hive-authored
 // PR head back to its author agent: a CHANGES_REQUESTED review on the head,
 // or a `/hive decision <text>` comment while the PR waits at
@@ -49,9 +62,17 @@ type HumanChangeRequest struct {
 	Actor string `json:"actor"`
 	// Body is the review body or decision text, verbatim.
 	Body string `json:"body"`
+	// Kind is HumanChangeRequestKindChanges or ...Approve.
+	Kind string `json:"kind,omitempty"`
 	// URL is the review's or comment's HTML URL, when known.
 	URL        string    `json:"url,omitempty"`
 	RecordedAt time.Time `json:"recorded_at"`
+}
+
+// IsApproval reports whether the request is a bare approval rather than an
+// instruction to change the head.
+func (r HumanChangeRequest) IsApproval() bool {
+	return r.Kind == HumanChangeRequestKindApprove
 }
 
 // HumanChangeRequestStore records maintainer change requests and answers
@@ -186,6 +207,25 @@ func (s *HumanChangeRequests) For(repo string, number int, head string) (HumanCh
 	return newest, found
 }
 
+// Lookup returns the request recorded from source/sourceID against
+// repo#number at any head: the cheap "already seen" test the un-park
+// sweep's restart reconciliation runs before it spends a PR read.
+func (s *HumanChangeRequests) Lookup(repo string, number int, source string, sourceID int64) (HumanChangeRequest, bool) {
+	if s == nil {
+		return HumanChangeRequest{}, false
+	}
+	repo = strings.TrimSpace(repo)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	for _, item := range s.items {
+		if item.Number == number && strings.EqualFold(item.Repo, repo) && item.Source == source && item.SourceID == sourceID {
+			return item, true
+		}
+	}
+	return HumanChangeRequest{}, false
+}
+
 // Len is the number of recorded requests across all PRs and heads.
 func (s *HumanChangeRequests) Len() int {
 	if s == nil {
@@ -199,12 +239,27 @@ func (s *HumanChangeRequests) Len() int {
 
 // HumanChangeRequestFor resolves the request standing against pr's head
 // from store (nil-safe), for callers that build review.PullRequest values.
+// A bare approval is not a change request: the planner must not kick a fix
+// whose only instruction is "approve".
 func HumanChangeRequestFor(store HumanChangeRequestStore, repo string, number int, head string) *HumanChangeRequest {
 	if store == nil {
 		return nil
 	}
 	req, ok := store.For(repo, number, head)
-	if !ok {
+	if !ok || req.IsApproval() {
+		return nil
+	}
+	return &req
+}
+
+// HumanApprovalFor returns the bare `/hive decision approve` standing
+// against pr's head, if the newest recorded decision on that head is one.
+func HumanApprovalFor(store HumanChangeRequestStore, repo string, number int, head string) *HumanChangeRequest {
+	if store == nil {
+		return nil
+	}
+	req, ok := store.For(repo, number, head)
+	if !ok || !req.IsApproval() {
 		return nil
 	}
 	return &req

@@ -205,6 +205,13 @@ type ContributorLanePolicy struct {
 	// (auto_merge.contributor_lane.approve_held_runs_for_registry_trusted).
 	// See automerge_contributor_held_runs.go.
 	ApproveHeldRunsForRegistryTrusted bool
+	// OwnerApprovalReleasesWorkflowFence lets a trusted merger's explicit
+	// approval on the current head (a GitHub APPROVED review, or a
+	// dashboard / `/hive decision approve` comment) release the
+	// workflow-path fence so the lane merges the PR itself
+	// (auto_merge.contributor_lane.owner_approval_releases_workflow_fence,
+	// default on). See automerge_contributor_workflow_approval.go.
+	OwnerApprovalReleasesWorkflowFence bool
 }
 
 // Contributor-lane auto-promotion scopes; mirrors
@@ -1139,6 +1146,9 @@ type contributorLaneEval struct {
 	verdict    ContributorLaneVerdict
 	method     string
 	mergeClaim effects.Claim
+	// workflowApprover is the trusted merger whose approval released the
+	// workflow-path fence for headSHA ("" when the fence did not trip).
+	workflowApprover string
 }
 
 // evaluateContributorLanePR runs every contributor-lane gate except the
@@ -1167,6 +1177,13 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return contributorLaneEval{pr: pr}, reason, nil
 	}
 	if reason := contributorLaneConflictReason(pr); reason != "" {
+		if reason == "conflicting" {
+			// A conflicted head is the contributor's to fix, and the rebase push
+			// brings new held runs: approving this head's runs is wasted, so the
+			// unauthorized mark must not stay the row's blocker. The next head
+			// re-marks if its runs are held too (hivecommons/hive#14668).
+			c.clearUnauthorized(ctx, displayRepo, owner, repo, pr, number, unauthorizedStepApproveWorkflowRuns)
+		}
 		return contributorLaneEval{pr: pr}, reason, nil
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
@@ -1210,7 +1227,11 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return eval, contributorLaneReasonFilesEvidence, err
 	}
 	if reason := contributorLaneDiffReason(files); reason != "" {
-		return eval, reason, nil
+		approver, released := c.workflowFenceReleased(ctx, displayRepo, owner, repo, pr, number, headSHA, reason, policy)
+		if !released {
+			return eval, reason, nil
+		}
+		eval.workflowApprover = approver
 	}
 	if held, err := c.hasReporterTrustHold(ctx, owner, repo, number); err != nil {
 		return eval, "reporter-trust-check", err
@@ -1258,10 +1279,17 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	if !green {
 		if strings.HasPrefix(reason, requiredCheckMissingPrefix) {
-			c.approveHeldRunsForRegistryTrusted(ctx, displayRepo, owner, repo, pr, number, headSHA, claim, policy, files, reason)
+			_, reason = c.approveHeldRunsForRegistryTrusted(ctx, displayRepo, owner, repo, pr, number, headSHA, claim, policy, files, reason)
+		}
+		if !strings.HasPrefix(reason, unauthorizedReasonPrefix) {
+			// The required check exists now (pending or red), or the head
+			// moved on: whoever approved the runs did the step, so the
+			// unauthorized mark comes off in this same tick (#14589).
+			c.clearUnauthorized(ctx, displayRepo, owner, repo, pr, number, unauthorizedStepApproveWorkflowRuns)
 		}
 		return eval, reason, nil
 	}
+	c.clearUnauthorized(ctx, displayRepo, owner, repo, pr, number, unauthorizedStepApproveWorkflowRuns)
 	if !verdict.Configured {
 		return eval, contributorLaneReasonNoReviewer, nil
 	}
@@ -1337,6 +1365,9 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if err != nil {
 		if requiredChecksExpectedMergeError(err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(eval.pr))
+		}
+		if reason := c.workflowFenceMergeUnauthorized(ctx, displayRepo, owner, repo, eval, err); reason != "" {
+			return AutoMergeSweepEvent{}, reason, nil
 		}
 		if refused := c.refusedMerge(attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil

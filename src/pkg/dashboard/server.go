@@ -35,6 +35,7 @@ import (
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -123,6 +124,18 @@ type Server struct {
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache
 	stageTrackerCacheMu sync.Mutex
+	// stageTrackerBuild is the one rebuild in flight, nil when none; it is
+	// guarded by stageTrackerCacheMu, which is never held across the build.
+	stageTrackerBuild *stageTrackerBuild
+	// stageTrackerGen counts invalidations so a build can tell whether the
+	// status it rendered was superseded while it ran.
+	stageTrackerGen uint64
+	// stageTrackerBuildFn replaces buildStageTracker in tests that need a
+	// build they can hold open; nil in production.
+	stageTrackerBuildFn func(status *StatusPayload, store *stagelabels.Store, now time.Time) StageTrackerResponse
+	// stageTrackerLinks memoises the issue lookups that title the tracker's
+	// untitled links across rebuilds (stage_tracker.go).
+	stageTrackerLinks stageTrackerLinkMemo
 	// evidenceHB is the background-refreshed evidence aggregate the hub
 	// heartbeat reads (evidence_heartbeat.go); zero value is ready to use.
 	evidenceHB evidenceHeartbeatCache
@@ -540,6 +553,9 @@ type StatusPayload struct {
 	// (governor.labels.stage.engine.mode). Filled at serve time from
 	// Dependencies.StageEngineStatus; absent when the hive has no engine.
 	StageEngine *stageengine.Status `json:"stageEngine,omitempty"`
+	// ReviewerAutoscale is the reviewer-lane autoscaler's snapshot
+	// (hivecommons/hive#14685); absent when autoscale is off.
+	ReviewerAutoscale *autoscale.Status `json:"reviewerAutoscale,omitempty"`
 	// SLA is the fleet-wide Delivery SLA roll-up (spans, 30-day history,
 	// stale in-progress issues, targets); per-repo blocks sit on each repo.
 	SLA *FrontendSLA `json:"sla,omitempty"`
@@ -852,24 +868,29 @@ type FrontendAgent struct {
 	PausedBy      string `json:"pausedBy,omitempty"`
 	// OperatorStopped is true when the agent was stopped explicitly (not by a
 	// crash), so the governor will not revive it.
-	OperatorStopped   bool   `json:"operatorStopped,omitempty"`
-	OffByCadence      bool   `json:"offByCadence"`
-	NoCadence         bool   `json:"noCadence"`
-	NeedsLogin        bool   `json:"needsLogin"`
-	LoginURL          string `json:"loginURL,omitempty"`
-	AuthAvailable     bool   `json:"authAvailable"`
-	AuthKnown         bool   `json:"authKnown"`
-	CLI               string `json:"cli"`
-	Model             string `json:"model"`
-	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
-	Cadence           string `json:"cadence"`
-	Doing             string `json:"doing"`
-	PinnedCli         bool   `json:"pinnedCli"`
-	PinnedModel       bool   `json:"pinnedModel"`
-	PinnedBoth        bool   `json:"pinnedBoth"`
-	Pinned            bool   `json:"pinned"`
-	LastKick          string `json:"lastKick,omitempty"`
-	LastKickAt        string `json:"lastKickAt,omitempty"`
+	OperatorStopped bool   `json:"operatorStopped,omitempty"`
+	OffByCadence    bool   `json:"offByCadence"`
+	NoCadence       bool   `json:"noCadence"`
+	NeedsLogin      bool   `json:"needsLogin"`
+	LoginURL        string `json:"loginURL,omitempty"`
+	AuthAvailable   bool   `json:"authAvailable"`
+	AuthKnown       bool   `json:"authKnown"`
+	CLI             string `json:"cli"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	Cadence         string `json:"cadence"`
+	Doing           string `json:"doing"`
+	PinnedCli       bool   `json:"pinnedCli"`
+	PinnedModel     bool   `json:"pinnedModel"`
+	PinnedBoth      bool   `json:"pinnedBoth"`
+	Pinned          bool   `json:"pinned"`
+	LastKick        string `json:"lastKick,omitempty"`
+	LastKickAt      string `json:"lastKickAt,omitempty"`
+	// StyleSource is which house style the last kick carried: repo
+	// (HIVE_STYLE.md in the managed repo), hive (project.style /
+	// style_file) or built-in; empty when the agent has not been kicked
+	// since the feature landed.
+	StyleSource       string `json:"styleSource,omitempty"`
 	NextKick          string `json:"nextKick,omitempty"`
 	NextKickAt        string `json:"nextKickAt,omitempty"`
 	NextKickIn        string `json:"nextKickIn,omitempty"`
@@ -917,6 +938,14 @@ type FrontendAgent struct {
 	// the turn is still running. KickOutcomeReason is the deciding pane line.
 	KickOutcome       string `json:"kickOutcome,omitempty"`
 	KickOutcomeReason string `json:"kickOutcomeReason,omitempty"`
+	// RepeatFailureCheck is the repeat-failure check state (#14550): "on",
+	// "not_covered" or "no_data", with RepeatFailureCheckMessage as the row
+	// text. RepeatFailureNote is "Repeating failure: `<command>` failed N
+	// times in M min (exit S)" while a command repeats. All empty while the
+	// check is off, so the row shows nothing. Monitor only: never pauses.
+	RepeatFailureCheck        string `json:"repeatFailureCheck,omitempty"`
+	RepeatFailureCheckMessage string `json:"repeatFailureCheckMessage,omitempty"`
+	RepeatFailureNote         string `json:"repeatFailureNote,omitempty"`
 	// Run is the live per-run figure (#14576): this kick's estimated cost,
 	// tokens, elapsed time, last visible test result and files changed.
 	// Present only while Busy is "working".

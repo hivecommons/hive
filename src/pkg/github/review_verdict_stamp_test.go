@@ -129,3 +129,43 @@ func TestRecordReviewVerdictAdvisoryKeepsReportedDigest(t *testing.T) {
 		t.Fatalf("recorded = %+v, want the advisory verdict kept as written", recorded)
 	}
 }
+
+// A dispatch record with no digest (a held PR dispatched before its poll
+// record carried one) stamps an empty digest over whatever each head wrote,
+// so all heads for the PR and head SHA land in one aggregate
+// (hivecommons/hive#14594).
+func TestRecordReviewVerdictStampsEmptyDispatchBodyDigest(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	security := stampPending(review.PerspectiveSecurity)
+	security.BodyDigest = ""
+	style := stampPending(review.PerspectiveStyle)
+	style.BodyDigest = ""
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{security, style}})
+
+	first := validVerdictJSONWithHeadAndBodyDigest(t, "o/r", 2341, "security", "approve", stampHead, "f0e2907ae8e2b1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c")
+	second := validVerdictJSONWithHeadAndBodyDigest(t, "o/r", 2341, "style", "approve", stampHead, "sha256:"+stampDigest)
+	for _, raw := range []string{first, second} {
+		recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 2341, Agent: "reviewer", Report: raw}, dir)
+		if len(recorded) != 1 || recorded[0].BodyDigest != "" {
+			t.Fatalf("recorded = %+v, want the verdict stamped with the empty dispatch digest", recorded)
+		}
+	}
+
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(artifact.Items) != 1 {
+		t.Fatalf("want one aggregate for the PR and head, got %+v", artifact.Items)
+	}
+	agg, ok := artifact.AggregateForBody("o/r", 2341, stampHead, "")
+	if !ok {
+		t.Fatal("AggregateForBody found no aggregate for the dispatched head")
+	}
+	for _, p := range []review.Perspective{review.PerspectiveSecurity, review.PerspectiveStyle} {
+		if agg.Perspectives[p] == "" {
+			t.Fatalf("perspective %s missing from the shared aggregate: %+v", p, agg.Perspectives)
+		}
+	}
+}

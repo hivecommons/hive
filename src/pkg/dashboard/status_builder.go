@@ -24,6 +24,7 @@ import (
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/housestyle"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
@@ -1211,6 +1212,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			Pinned:          pinnedCli || pinnedModel,
 			LastKick:        lastKick,
 			LastKickAt:      lastKickAt,
+			StyleSource:     string(housestyle.SourceFromKick(proc.LastKickMessage)),
 			NextKick:        nextKick,
 			NextKickAt:      nextKickAt,
 			NextKickIn:      nextKickIn,
@@ -1256,6 +1258,11 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			CadenceModes:      cadenceModes,
 		}
 		applyAgentLastAction(&a, proc, busy)
+		// #14550: the repeat-failure note and check state; nothing while
+		// the check is off.
+		a.RepeatFailureCheck = string(proc.RepeatFailure.Check)
+		a.RepeatFailureCheckMessage = proc.RepeatFailure.Check.Message()
+		a.RepeatFailureNote = redactTokens(proc.RepeatFailure.Note)
 		// #7421: how the last kicked turn ended, so the card can say "asked
 		// the operator what to do" or "stood down" instead of implying work.
 		if proc.KickOutcome.Settled(proc.LastKick) {

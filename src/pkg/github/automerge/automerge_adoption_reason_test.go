@@ -48,7 +48,7 @@ func TestAdoptionNotesNameReviewAsks(t *testing.T) {
 			if !strings.Contains(super, tc.cause) {
 				t.Fatalf("supersede note missing %q:\n%s", tc.cause, super)
 			}
-			if body := AdoptionPRBody(tc.obs, stagelabels.Record{AdoptReason: AdoptReasonGrace}, false); !strings.Contains(body, "Supersedes #7 ("+tc.body) {
+			if body := AdoptionPRBody(tc.obs, stagelabels.Record{AdoptReason: AdoptReasonGrace}, false, ""); !strings.Contains(body, "Supersedes #7 ("+tc.body) {
 				t.Fatalf("superseding body missing %q:\n%s", tc.body, body)
 			}
 		})
@@ -58,7 +58,7 @@ func TestAdoptionNotesNameReviewAsks(t *testing.T) {
 	for _, note := range []string{
 		AdoptionInPlaceComment(review, "acme-hive", AdoptReasonGrace, 2*time.Hour, false),
 		AdoptionComment(review, "acme-hive", 90, AdoptReasonGrace, 2*time.Hour, false),
-		AdoptionPRBody(review, stagelabels.Record{AdoptReason: AdoptReasonGrace}, false),
+		AdoptionPRBody(review, stagelabels.Record{AdoptReason: AdoptReasonGrace}, false, ""),
 	} {
 		for _, unwanted := range []string{"CI stayed red", "fix CI", "CI went red"} {
 			if strings.Contains(note, unwanted) {

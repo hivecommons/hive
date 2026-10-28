@@ -26,7 +26,8 @@ import (
 // the rest of the test binary's life are recorded instead of started.
 type bootAgentsDeps struct {
 	// startAgentLoops starts the per-agent token refresh, the credential
-	// watchdog and the Copilot session refresh. All three are unconditional
+	// watchdog, the Copilot session refresh and the repeat-failure monitor
+	// (which only clears row state while the check is off). All are unconditional
 	// (see the comments at the call site for why each must not gate on App
 	// state at boot).
 	startAgentLoops func(ctx context.Context, mgr crux.Runtime)
@@ -92,6 +93,7 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 			go mgr.StartCredentialWatchdog(ctx)
 			go mgr.StartCopilotSessionRefresh(ctx)
 			go mgr.StartTranscriptActivityRefresh(ctx)
+			go mgr.StartRepeatFailureMonitor(ctx)
 		},
 		prepareRequestDirs: github.PrepareRequestDirs,
 		startTokenAccessAudit: func(ctx context.Context, logger *slog.Logger) {

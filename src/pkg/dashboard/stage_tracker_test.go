@@ -2,12 +2,14 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -189,11 +191,84 @@ func TestStageTrackerManualMergeApproved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true`) {
-		t.Fatalf("payload lacks the manual-merge fields: %s", raw)
+	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true,"human_merge_reason":"workflow-files","human_merge_reason_text":"Changes .github/workflows/**`) {
+		t.Fatalf("payload lacks the manual-merge / human-merge-reason fields: %s", raw)
 	}
-	if clean := trackerItem(t, resp, "pr", 101); clean.HumanApprover != "" || clean.ManualMerge {
+	if clean := trackerItem(t, resp, "pr", 101); clean.HumanApprover != "" || clean.ManualMerge || clean.HumanMergeReason != "" || clean.HumanMergeReasonText != "" {
 		t.Fatalf("PR 101 must not carry manual-merge fields: %+v", clean)
+	}
+}
+
+// TestStageTrackerHumanMergeReason: every 090 row names WHY a person and
+// not the hive merges it (hivecommons/hive#14658) — a compact code from the
+// lane reason already on the stage record plus a one-sentence tooltip; an
+// unrecognised lane reason falls back to "policy" quoting it; a PR nested
+// under its issue mirrors the fields onto the linked_prs entry; rows off
+// 090 carry nothing.
+func TestStageTrackerHumanMergeReason(t *testing.T) {
+	tests := []struct {
+		reason, wantCode, wantWord, wantTipPrefix string
+	}{
+		{"contributor-lane:workflow-path:human-approved@clubanderson", "workflow-files", "workflow files", "Changes .github/workflows/**"},
+		{"contributor-lane:tests-removed", "tests-removed", "tests removed", "Deletes tests"},
+		{"human-merge-path:human-approved@octocat", "manual-merge-policy", "manual-merge policy", "Touches a path listed in auto_merge.human_merge_paths"},
+		{"untrusted-author-role", "untrusted-author", "untrusted author", "No lane can vouch for the author"},
+		{"contributor-lane:claim-tier-untrusted", "untrusted-author", "untrusted author", "No lane can vouch"},
+		{"repo-auto-merge-disabled", "auto-merge-off", "auto-merge off", "Auto-merge is switched off"},
+		{"reviewer-verdict:requires_human:human-approved@octocat", "reviewer-deferred", "reviewer deferred", "The reviewer swarm returned requires_human"},
+		{"something-brand-new", "policy", "policy", "The merge lane will not merge this unattended (lane reason `something-brand-new`)"},
+		{"", "", "", ""},
+	}
+	for _, tt := range tests {
+		code, word, tip := stageTrackerHumanMergeReason(tt.reason)
+		if code != tt.wantCode || word != tt.wantWord || !strings.HasPrefix(tip, tt.wantTipPrefix) || (tt.wantTipPrefix == "" && tip != "") {
+			t.Fatalf("%q → code %q word %q tip %q; want %q %q prefix %q", tt.reason, code, word, tip, tt.wantCode, tt.wantWord, tt.wantTipPrefix)
+		}
+	}
+
+	// Through the payload: a 090 PR whose body says `Fixes #400` nests under
+	// the open issue and the sub-row carries the same reason, approver and
+	// manual_merge; the issue line mirrors the PR's stage.
+	now := time.Date(2026, 10, 27, 18, 0, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	store.Observe(stagelabels.Key("acme/console", 401), stagelabels.ReadyForHumanMerge, "contributor-lane:workflow-path:human-approved@clubanderson")
+	store.Observe(stagelabels.Key("acme/console", 402), stagelabels.ReadyForHumanMerge, "no-such-lane-reason")
+	s.statusMu.Lock()
+	s.status.Repos[0].ActionableIssues = append(s.status.Repos[0].ActionableIssues,
+		github.Issue{Number: 400, Title: "Shard the nightly mutation run", Author: "pat", AuthorIsHuman: true, Labels: []string{"stage/090-ready-for-human-merge"}})
+	s.status.Repos[0].OpenPrs = append(s.status.Repos[0].OpenPrs,
+		FrontendPR{PullRequest: github.PullRequest{Number: 401, Title: "ci(mutation): shard nightly Stryker", Author: "pat", Labels: []string{"stage/090-ready-for-human-merge", "lgtm"},
+			LinkedIssues: []github.PRLinkedIssue{{Number: 400}}}},
+		FrontendPR{PullRequest: github.PullRequest{Number: 402, Title: "Odd lane", Author: "pat", Labels: []string{"stage/090-ready-for-human-merge"}}})
+	s.statusMu.Unlock()
+	resp := s.buildStageTracker(s.status, store, now)
+
+	pr401 := trackerItem(t, resp, "pr", 401)
+	if pr401.HumanMergeReason != "workflow-files" || !strings.HasPrefix(pr401.HumanMergeReasonText, "Changes .github/workflows/**") || pr401.NestedUnder != 400 {
+		t.Fatalf("PR 401 = reason %q text %q nested %d", pr401.HumanMergeReason, pr401.HumanMergeReasonText, pr401.NestedUnder)
+	}
+	issue400 := trackerItem(t, resp, "issue", 400)
+	if len(issue400.LinkedPRs) != 1 {
+		t.Fatalf("issue 400 linked_prs = %+v", issue400.LinkedPRs)
+	}
+	lp := issue400.LinkedPRs[0]
+	if lp.Number != 401 || lp.Stage != 90 || !lp.ManualMerge || lp.HumanApprover != "clubanderson" || lp.HumanMergeReason != "workflow-files" || lp.HumanMergeReasonText != pr401.HumanMergeReasonText {
+		t.Fatalf("issue 400 nested PR lacks the human-merge fields: %+v", lp)
+	}
+	raw, err := json.Marshal(lp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true,"human_merge_reason":"workflow-files"`) {
+		t.Fatalf("linked_prs payload lacks the fields: %s", raw)
+	}
+
+	pr402 := trackerItem(t, resp, "pr", 402)
+	if pr402.HumanMergeReason != "policy" || !strings.Contains(pr402.HumanMergeReasonText, "`no-such-lane-reason`") {
+		t.Fatalf("PR 402 fallback = reason %q text %q", pr402.HumanMergeReason, pr402.HumanMergeReasonText)
+	}
+	if soak := trackerItem(t, resp, "pr", 102); soak.HumanMergeReason != "" || soak.HumanMergeReasonText != "" {
+		t.Fatalf("PR 102 (095) must not carry a human-merge reason: %+v", soak)
 	}
 }
 
@@ -865,5 +940,198 @@ func TestStageTrackerStaleDecisionRecord(t *testing.T) {
 		if got := stageTrackerStaleDecisionRecord(tc.rec, tc.labels); got != tc.want {
 			t.Errorf("%s: stale = %t, want %t", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestStageTrackerRowAnchorsOnOpenPRWhenIssueClosed pins
+// hivecommons/hive#14655: an issue auto-closed while its `Fixes #N` PR is
+// still open at 090 stays in the tracker as a row keyed on the PR — the
+// PR's stage, no regression modifier, the closed issue demoted to the
+// closed_issue chip (with its not-planned state_reason when GitHub says
+// so). With the PR gone too, nothing remains.
+func TestStageTrackerRowAnchorsOnOpenPRWhenIssueClosed(t *testing.T) {
+	now := time.Date(2026, 10, 27, 18, 15, 0, 0, time.UTC)
+	const issueNum, prNum = 14567, 14568
+	tests := []struct {
+		name        string
+		stateReason string
+		prOpen      bool
+		wantRow     bool
+	}{
+		{name: "issue completed, PR open", stateReason: "completed", prOpen: true, wantRow: true},
+		{name: "issue not planned, PR open", stateReason: "not_planned", prOpen: true, wantRow: true},
+		{name: "issue closed, PR merged", stateReason: "completed", prOpen: false, wantRow: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestServer()
+			clock := now
+			store := stagelabels.NewStore("", func() time.Time { return clock })
+			s.stageStore = store
+			key := stagelabels.Key("hivecommons/hive", prNum)
+			clock = now.Add(-3 * time.Hour)
+			store.Observe(key, stagelabels.ReviewPending, "contributor-lane:no-verdict")
+			clock = now.Add(-2 * time.Hour)
+			store.Observe(key, stagelabels.ReadyForHumanMerge, "contributor-lane:workflow-path:human-approved@clubanderson")
+			clock = now
+
+			status := minimalPayload()
+			status.HiveID = "hv-test"
+			repo := FrontendRepo{Name: "hive", Full: "hivecommons/hive",
+				ActionableIssues: []any{github.Issue{Number: issueNum, Title: "[CI runner canary] self-hosted runner pool unhealthy", Author: "github-actions[bot]", State: "closed", Labels: []string{"stage/040-covered-by-pr"}}}}
+			if tt.prOpen {
+				repo.OpenPrs = []any{FrontendPR{PullRequest: github.PullRequest{Number: prNum, Title: "fix(ci): measure runner stalls by queued job age", Author: "hive-app[bot]", AppAuthored: true,
+					Labels: []string{"stage/090-ready-for-human-merge", "lgtm"}, CreatedAt: now.Add(-4 * time.Hour), UpdatedAt: now.Add(-time.Hour),
+					LinkedIssues: []github.PRLinkedIssue{{Number: issueNum, Repo: "hivecommons/hive", Title: "[CI runner canary] self-hosted runner pool unhealthy", State: "CLOSED", StateReason: strings.ToUpper(tt.stateReason)}}}}}
+			}
+			status.Repos = []FrontendRepo{repo}
+			s.UpdateStatus(status)
+			resp := s.buildStageTracker(status, store, now)
+
+			for _, it := range resp.Items {
+				if it.Kind == "issue" && it.Number == issueNum {
+					t.Fatalf("closed issue #%d is still a row: %+v", issueNum, it)
+				}
+			}
+			if !tt.wantRow {
+				if len(resp.Items) != 0 {
+					t.Fatalf("items = %+v, want none", resp.Items)
+				}
+				return
+			}
+			if len(resp.Items) != 1 {
+				t.Fatalf("items = %d, want the PR row only", len(resp.Items))
+			}
+			pr := trackerItem(t, resp, "pr", prNum)
+			if pr.Stage != trackerNumberReadyForHuman || pr.NestedUnder != 0 || pr.StageSince == nil || !pr.StageSince.Equal(now.Add(-2*time.Hour)) {
+				t.Fatalf("PR row stage = %d since %v nested %d, want 090 from the PR's own record", pr.Stage, pr.StageSince, pr.NestedUnder)
+			}
+			if slices.Contains(pr.Modifiers, modRegressed) || pr.RegressedFrom != 0 {
+				t.Fatalf("issue closure read as a regression: modifiers %v regressed_from %d", pr.Modifiers, pr.RegressedFrom)
+			}
+			if !pr.ManualMerge || pr.HumanApprover != "clubanderson" {
+				t.Fatalf("merge gate = manual %v approver %q, want the human-merge gate intact", pr.ManualMerge, pr.HumanApprover)
+			}
+			if pr.ClosedIssue == nil || pr.ClosedIssue.Number != issueNum || pr.ClosedIssue.State != "closed" || pr.ClosedIssue.StateReason != tt.stateReason || pr.ClosedIssue.Title == "" {
+				t.Fatalf("closed_issue = %+v, want #%d closed (%s) with its title", pr.ClosedIssue, issueNum, tt.stateReason)
+			}
+		})
+	}
+}
+
+func TestStageTrackerClosedIssueAnchor(t *testing.T) {
+	closed := StageTrackerLinkedIssue{Number: 7, State: "closed"}
+	tests := []struct {
+		name string
+		pr   StageTrackerItem
+		want *StageTrackerLinkedIssue
+	}{
+		{name: "not a pr", pr: StageTrackerItem{Kind: "issue", LinkedIssues: []StageTrackerLinkedIssue{closed}}},
+		{name: "no links", pr: StageTrackerItem{Kind: "pr"}},
+		{name: "nested under a listed issue", pr: StageTrackerItem{Kind: "pr", NestedUnder: 8, LinkedIssues: []StageTrackerLinkedIssue{{Number: 8, State: "open", Listed: true}, closed}}},
+		{name: "one closing link still open", pr: StageTrackerItem{Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{closed, {Number: 9, State: "open"}}}},
+		{name: "unknown state keeps the issue slot", pr: StageTrackerItem{Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{{Number: 9}}}},
+		{name: "soft links only", pr: StageTrackerItem{Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{{Number: 9, State: "closed", Via: github.PRLinkViaRefs}}}},
+		{name: "closed closing link", pr: StageTrackerItem{Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{closed}}, want: &closed},
+		{name: "closed closing link beside a soft one", pr: StageTrackerItem{Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{{Number: 9, Via: github.PRLinkViaMention}, closed}}, want: &closed},
+		{name: "first closed wins", pr: StageTrackerItem{Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{closed, {Number: 11, State: "closed", StateReason: "not_planned"}}}, want: &closed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stageTrackerClosedIssueAnchor(tt.pr)
+			if (got == nil) != (tt.want == nil) || (got != nil && *got != *tt.want) {
+				t.Fatalf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// hivecommons/hive#14606: a soft link (refs / title / mention) carries only a
+// number, so the tracker fetches its title and state once per distinct issue
+// and memoises it across rebuilds, since every status publish rebuilds the
+// payload. hivecommons/hive#14667: a number that is a PR, open or closed
+// (`Supersedes #14592`, an adoption's "close #14592"), is dropped rather than
+// drawn as an issue "(title unavailable)".
+func TestStageTrackerEnrichSoftLinks(t *testing.T) {
+	var gets atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gets.Add(1)
+		switch r.URL.Path {
+		case "/repos/hivecommons/hive/issues/14576":
+			fmt.Fprint(w, `{"number":14576,"title":"Runner stalls","state":"closed"}`)
+		case "/repos/hivecommons/hive/issues/14577":
+			fmt.Fprint(w, `{"number":14577,"title":"A PR","state":"open","pull_request":{}}`)
+		case "/repos/hivecommons/hive/issues/14592":
+			fmt.Fprint(w, `{"number":14592,"title":"Superseded PR","state":"closed","pull_request":{}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+	s := newTestServer()
+	s.deps = &Dependencies{GHClient: github.NewClientForTest(ts.URL, "hivecommons", []string{"hive"}, s.logger)}
+	url := func(n int) string { return "https://github.com/hivecommons/hive/issues/" + strconv.Itoa(n) }
+	build := func() []StageTrackerItem {
+		return []StageTrackerItem{
+			{Repo: "hive", Number: 14597, Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{
+				{Number: 14576, URL: url(14576), Via: github.PRLinkViaRefs},
+				{Number: 14577, URL: url(14577), Via: github.PRLinkViaTitle},
+				{Number: 14578, URL: url(14578), Via: github.PRLinkViaRefs},
+				{Number: 14567, Title: "Titled", State: "closed", URL: url(14567)},
+				{Number: 14592, URL: url(14592)},
+			}},
+			{Repo: "hive", Number: 14590, Kind: "pr", LinkedIssues: []StageTrackerLinkedIssue{{Number: 14576, URL: url(14576), Via: github.PRLinkViaRefs}}},
+		}
+	}
+	qualify := func(string) string { return "hivecommons/hive" }
+	now := time.Date(2026, 10, 27, 18, 0, 0, 0, time.UTC)
+	items := build()
+	s.stageTrackerEnrichSoftLinks(items, qualify, now)
+
+	links := items[0].LinkedIssues
+	if len(links) != 3 {
+		t.Fatalf("links = %+v, want the PR numbers 14577 and 14592 dropped", links)
+	}
+	if got := links[0]; got.Number != 14576 || got.Title != "Runner stalls" || got.State != "closed" {
+		t.Fatalf("refs link = %+v, want titled and closed", got)
+	}
+	if got := items[1].LinkedIssues[0]; got.Title != "Runner stalls" || got.State != "closed" {
+		t.Fatalf("second PR's refs link = %+v", got)
+	}
+	if got := links[1]; got.Number != 14578 || got.Title != "" || got.State != "" {
+		t.Fatalf("failed lookup = %+v, want untouched", got)
+	}
+	if got := links[2]; got.Number != 14567 || got.Title != "Titled" || got.State != "closed" {
+		t.Fatalf("closing link = %+v, want unchanged", got)
+	}
+	if n := gets.Load(); n != 4 {
+		t.Fatalf("issues GETs = %d, want 4 (one per distinct number)", n)
+	}
+
+	// A rebuild after a status publish reuses the memo, the failed lookup
+	// included, until its retry window lapses.
+	items = build()
+	s.stageTrackerEnrichSoftLinks(items, qualify, now.Add(time.Minute))
+	if n := gets.Load(); n != 4 || len(items[0].LinkedIssues) != 3 || items[0].LinkedIssues[0].Title != "Runner stalls" {
+		t.Fatalf("rebuild: GETs = %d, links = %+v, want memoised", n, items[0].LinkedIssues)
+	}
+	s.stageTrackerEnrichSoftLinks(build(), qualify, now.Add(stageTrackerLinkRetry))
+	if n := gets.Load(); n != 5 {
+		t.Fatalf("issues GETs = %d, want only the failed lookup retried", n)
+	}
+	s.stageTrackerEnrichSoftLinks(build(), qualify, now.Add(stageTrackerLinkTTL))
+	if n := gets.Load(); n != 9 {
+		t.Fatalf("issues GETs = %d, want every lookup refreshed after the TTL", n)
+	}
+
+	// One rebuild makes at most stageTrackerLinkLookups GETs.
+	var many []StageTrackerLinkedIssue
+	for n := 20000; n < 20000+stageTrackerLinkLookups+5; n++ {
+		many = append(many, StageTrackerLinkedIssue{Number: n, URL: url(n), Via: github.PRLinkViaRefs})
+	}
+	before := gets.Load()
+	s.stageTrackerEnrichSoftLinks([]StageTrackerItem{{Repo: "hive", Number: 14598, Kind: "pr", LinkedIssues: many}}, qualify, now)
+	if n := gets.Load() - before; n != stageTrackerLinkLookups {
+		t.Fatalf("issues GETs in one rebuild = %d, want the cap %d", n, stageTrackerLinkLookups)
 	}
 }

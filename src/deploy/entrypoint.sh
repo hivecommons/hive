@@ -431,22 +431,54 @@ hive_ensure_agent_user() {
 # <base>-<alias>-<n> per head and replica the same way, with alias the head's
 # `alias` or a slug of <backend>-<model>. head_names mirrors
 # config.ReviewHeadAgentName / reviewHeadSlug / ReviewHead.EffectiveAlias.
+#
+# Reviewer autoscale (#14685): review.reviewers.autoscale grows the lane's
+# base agent up to `max` replicas at runtime, so those names are pre-created
+# here too. autoscale_lane mirrors config.ReviewerAutoscaleAgent (the
+# configured agent, else the first name-sorted enabled role:reviewer agent,
+# else review.reviewer_agents[0]) and the default/ceiling mirror
+# DefaultReviewerAutoscaleMax / MaxAgentReplicas.
 hive_collect_agent_names() {
   HIVE_COLLECT_CONFIG="$1" python3 - <<'PY'
 import glob, os, yaml
 
 MAX_REPLICAS = 5  # config.MaxAgentReplicas
+AUTOSCALE_DEFAULT_MAX = 4  # config.DefaultReviewerAutoscaleMax
 
-def replica_names(name, spec):
+def replica_names(name, spec, floor=0):
     if not isinstance(spec, dict):
         return []
     try:
         n = int(spec.get('replicas') or 0)
     except (TypeError, ValueError):
         return []
+    n = max(n, floor)
     if n < 2 or n > MAX_REPLICAS:
         return []
     return ['%s-%d' % (name, i) for i in range(2, n + 1)]
+
+def autoscale_lane(cfg, agent_specs):
+    review = cfg.get('review') if isinstance(cfg.get('review'), dict) else {}
+    reviewers = review.get('reviewers') if isinstance(review.get('reviewers'), dict) else {}
+    auto = reviewers.get('autoscale') if isinstance(reviewers.get('autoscale'), dict) else {}
+    if not auto.get('enabled'):
+        return None, 0
+    try:
+        mx = int(auto.get('max') or 0) or AUTOSCALE_DEFAULT_MAX
+    except (TypeError, ValueError):
+        mx = AUTOSCALE_DEFAULT_MAX
+    mx = min(mx, MAX_REPLICAS)
+    lane = str(auto.get('agent') or '').strip()
+    if lane:
+        return (lane if lane in agent_specs else None), mx
+    for name in sorted(agent_specs):
+        spec = agent_specs[name]
+        if isinstance(spec, dict) and spec.get('enabled', True) is not False and str(spec.get('role') or '').strip().lower() == 'reviewer':
+            return name, mx
+    for name in review.get('reviewer_agents') or []:
+        if name in agent_specs:
+            return name, mx
+    return None, 0
 
 def head_slug(s):
     out, dash = [], False
@@ -493,17 +525,16 @@ names = set()
 with open(os.environ['HIVE_COLLECT_CONFIG']) as f:
     cfg = yaml.safe_load(f) or {}
 agents = cfg.get('agents', {})
+agent_specs = {}
 if isinstance(agents, dict):
-    for name, spec in agents.items():
-        names.add(name)
-        names.update(replica_names(name, spec))
-        names.update(head_names(name, spec))
+    agent_specs = dict(agents)
 elif isinstance(agents, list):
-    for a in agents:
-        if isinstance(a, dict) and 'name' in a:
-            names.add(a['name'])
-            names.update(replica_names(a['name'], a))
-            names.update(head_names(a['name'], a))
+    agent_specs = {a['name']: a for a in agents if isinstance(a, dict) and 'name' in a}
+lane, lane_max = autoscale_lane(cfg, agent_specs)
+for name, spec in agent_specs.items():
+    names.add(name)
+    names.update(replica_names(name, spec, lane_max if name == lane else 0))
+    names.update(head_names(name, spec))
 # Also check pack YAML if HIVE_LEVEL is set
 if os.environ.get('HIVE_LEVEL', ''):
     for p in glob.glob('/opt/hive/packs/level-*.yaml') + glob.glob('/data/packs/level-*.yaml'):

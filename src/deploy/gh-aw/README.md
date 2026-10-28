@@ -40,6 +40,50 @@ The sample is not installed as an active workflow in Hive. The
 [compile CI](../../../.github/workflows/gh-aw-compile.yml) stages it temporarily,
 compiles without model credentials, and tests admission and the actual classifier.
 
+## Active gh-aw workflows in this repository
+
+- [`weekly-competitor-report.md`](../../../.github/workflows/weekly-competitor-report.md)
+  (compiled to `weekly-competitor-report.lock.yml`): every Monday at 13:00 UTC,
+  and on manual dispatch, the Copilot engine researches projects adjacent to
+  Hive (OpenHands, SWE-agent, Devin, Copilot coding agent, Codex, Claude Code,
+  Sweep, Factory, Jules, Gastown, Dagger, Kilo, Cline/Roo, Mentat, Aider,
+  GPT-Engineer, Potpie, Agentless, public fleet-orchestrator write-ups) with
+  read-only GitHub tools and `curl` inside a network allowlist (HN Algolia,
+  Google News RSS, Bing News RSS, the GitHub changelog feed, vendor blogs; the
+  bash allowlist uses `cmd:*` entries so pipelines like `curl | jq` are
+  permitted, and `engine.args` passes `--allow-url` for the same hosts because
+  Copilot CLI has its own URL approval step that otherwise refuses every curl
+  with "no one to approve", see #14673). The prompt starts with a grounded "What Hive is and
+  has" block (Crux runtime and its engine launchers, ACMM governor, MITM proxy,
+  reviewer swarm, evidence cards, dashboard, hub, `hivectl`) so the model
+  compares against reality. It writes a plain-language report of up to 1,200
+  words: what changed this week, a "Who does what" table (project, who runs
+  it, category, relationship to Hive, SPDX licence from the GitHub API), a
+  SWOT with filler banned, one thing to watch, and a "Top 5 this week - stay
+  ahead and stay integrated" action list with a concrete first step per item.
+  URLs are wrapped in `<...>` in the Discord step so they do not expand into
+  link cards; each chunk is posted with `?wait=true` and the returned Discord
+  message ids are logged, written to the step summary, and appended to the
+  tracking-issue comment so a report can be deleted or replaced later. The
+  `open_issues` dispatch input (default off) lets the agent
+  also file the Top 5 as `help wanted` + `competitor-watch` issues. It appends
+  the report as a comment to tracking issue
+  [#14613](https://github.com/hivecommons/hive/issues/14613), and posts it to the
+  Hive Commons Discord channel `#related-research` through a custom safe-output
+  job. Inference authenticates with the `COPILOT_GITHUB_TOKEN` repository
+  secret: a fine-grained PAT owned by a user with a Copilot seat, resource owner
+  set to that user (not the org), with the account permission "Copilot Requests:
+  Read" and nothing else. The org-billed `copilot-requests: write` path does not
+  work for hivecommons (Copilot Business with no seats assigned), and fails as
+  `awf-reflect: models fetch returned 403` before the agent starts (#14652). The
+  Discord post needs a second repository secret,
+  `DISCORD_RELATED_RESEARCH_WEBHOOK`: in Discord, open the channel settings ->
+  Integrations -> Webhooks -> New Webhook, copy the webhook URL, then
+  `gh secret set DISCORD_RELATED_RESEARCH_WEBHOOK -R hivecommons/hive`. Without
+  the webhook secret the Discord job fails with a clear message and the GitHub
+  comment still lands. Recompile after edits with the pinned compiler:
+  `gh aw compile weekly-competitor-report`, and commit both files (#14612).
+
 ## Graduate to Hive without rewriting workflows
 
 Keep existing gh-aw workflows for per-repo reports and CI tasks. Add the

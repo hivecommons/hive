@@ -895,6 +895,10 @@ func (r *Recorder) StartTranscriptActivityRefresh(ctx context.Context) {
 	r.background(ctx, "StartTranscriptActivityRefresh")
 }
 
+func (r *Recorder) StartRepeatFailureMonitor(ctx context.Context) {
+	r.background(ctx, "StartRepeatFailureMonitor")
+}
+
 // Background lists the Background loops that have been started, in order;
 // safe to call while they run.
 func (r *Recorder) Background() []string {
@@ -977,6 +981,9 @@ func (r *Recorder) SetAdvisorRolesResolver(fn func() map[string]config.ModelRole
 
 func (r *Recorder) SetRepeatFailureEnabledResolver(fn func() bool) {
 	r.record("SetRepeatFailureEnabledResolver", fn != nil)
+}
+func (r *Recorder) SetRepeatFailureConfigResolver(fn func() *config.RepeatFailureConfig) {
+	r.record("SetRepeatFailureConfigResolver", fn != nil)
 }
 func (r *Recorder) SetRepoAutoMergeEnabledResolver(fn func(repo string) bool) {
 	r.record("SetRepoAutoMergeEnabledResolver", fn != nil)

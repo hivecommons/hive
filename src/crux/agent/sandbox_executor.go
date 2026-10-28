@@ -25,6 +25,12 @@ const (
 	defaultSandboxNetworkMode = sandbox.NetworkModeRestricted
 	sandboxPromptRelPath      = ".hive/kick-prompt.txt"
 	sandboxTranscriptRelPath  = ".hive/sandbox-transcript.log"
+	// The sandboxed agent may leave the PR title and body it wants in the
+	// workspace; the executor (which alone can open the PR) picks them up.
+	sandboxPRTitleRelPath = ".hive/pr-title.txt"
+	sandboxPRBodyRelPath  = ".hive/pr-body.md"
+	sandboxPRTitleMaxLen  = 200
+	sandboxPRBodyMaxLen   = 60000
 )
 
 type sandboxCommandRunner interface {
@@ -210,8 +216,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		return res, brokerErr
 	}
 	if e.PRClient != nil && bres.Pushed {
-		title := fmt.Sprintf("[%s] sandbox changes", spec.Agent)
-		body := fmt.Sprintf("Sandboxed credential-free execution result for agent `%s`.\n\nPart of #2804.", spec.Agent)
+		title, body := e.sandboxPRText(ctx, workspace, spec.Agent)
 		pr, prErr := e.PRClient.CreatePR(ctx, spec.Org+"/"+spec.Repo, spec.Branch, spec.BaseRef, title, body)
 		res.PR = &pr
 		if prErr != nil {
@@ -220,6 +225,62 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		}
 	}
 	return res, nil
+}
+
+// sandboxPRText resolves the title and body for the PR the executor opens on
+// the agent's behalf. Precedence: files the agent wrote into .hive/ in the
+// workspace, then the HEAD commit's subject and body, then a generic
+// placeholder naming the agent. The Job never holds a GitHub credential, so
+// this is the only channel through which the agent's own PR description can
+// reach the PR (hivecommons/hive#14691 follow-up).
+func (e *SandboxExecutor) sandboxPRText(ctx context.Context, workspace, agent string) (string, string) {
+	title := readWorkspaceText(filepath.Join(workspace, sandboxPRTitleRelPath), sandboxPRTitleMaxLen)
+	body := readWorkspaceText(filepath.Join(workspace, sandboxPRBodyRelPath), sandboxPRBodyMaxLen)
+	if title == "" || body == "" {
+		if out, err := e.runner().Run(ctx, workspace, pushbroker.PushEnv(os.Environ()), "git", "log", "-1", "--format=%s%n%n%b", "HEAD"); err == nil {
+			subject, rest, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+			if title == "" {
+				title = truncateRunes(strings.TrimSpace(subject), sandboxPRTitleMaxLen)
+			}
+			if body == "" {
+				body = truncateRunes(strings.TrimSpace(rest), sandboxPRBodyMaxLen)
+			}
+		}
+	}
+	if title == "" {
+		title = fmt.Sprintf("[%s] sandbox changes", agent)
+	}
+	if body == "" {
+		body = fmt.Sprintf("Changes produced by hive agent `%s` in a credential-free sandbox run.", agent)
+	}
+	return title, body
+}
+
+// readWorkspaceText returns the trimmed contents of path, bounded to max
+// runes, or "" when the file is absent or unreadable. The title file is
+// reduced to its first line so a stray paragraph cannot become a PR title.
+func readWorkspaceText(path string, max int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	text := strings.TrimSpace(string(data))
+	if filepath.Base(path) == filepath.Base(sandboxPRTitleRelPath) {
+		text, _, _ = strings.Cut(text, "\n")
+		text = strings.TrimSpace(text)
+	}
+	return truncateRunes(text, max)
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
 }
 
 // prepareWorkspace clones the target repo and checks out the work branch off

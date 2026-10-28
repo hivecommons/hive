@@ -1,0 +1,1 @@
+- CI runner image: bumped the pinned `gh` to 2.103.3 (the apt repo only serves the latest), and the daily CLI pin bump now keeps that pin current, including `gh` patch releases.

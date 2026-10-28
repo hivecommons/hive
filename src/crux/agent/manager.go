@@ -449,6 +449,10 @@ type AgentProcess struct {
 	// report, or plain "ended". Settled(LastKick) is false while the current
 	// turn is still running. Guarded by m.mu; see kick_outcome.go.
 	KickOutcome KickOutcome
+	// RepeatFailure is the repeat-failure check's row note and check state
+	// (#14550), refreshed at each record collection. Zero while the check is
+	// off. Guarded by m.mu; see repeat_failure_status.go.
+	RepeatFailure RepeatFailureStatus
 	// sandboxResumeAfterCancel is set when an operator resumes a paused
 	// sandbox agent while the canceled sandbox goroutine is still draining.
 	// The completion handler then turns the expected cancellation into Idle
@@ -616,6 +620,12 @@ type Manager struct {
 	// switch (#14550), read at launch so a toggle applies on the next launch.
 	// Same atomic.Pointer discipline as advisorEnabledResolver.
 	repeatFailureEnabledResolver atomic.Pointer[func() bool]
+	// repeatFailureConfigResolver returns the live repeat_failure block for
+	// the detector and the not-receiving-data safeguard. Same discipline.
+	repeatFailureConfigResolver atomic.Pointer[func() *config.RepeatFailureConfig]
+	// repeatFailure is the repeat-failure detector and safeguard state behind
+	// AgentProcess.RepeatFailure; see repeat_failure_status.go.
+	repeatFailure repeatFailureMonitor
 	// advisorRolesResolver returns the live model_roles map the OMP adapter
 	// projects as a --config overlay at launch (#9723). Same discipline as
 	// advisorEnabledResolver.

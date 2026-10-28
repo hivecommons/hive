@@ -99,6 +99,7 @@ agents.<key>.sandbox.job.env_from_secrets[] # TODO #11854
 agents.<key>.sandbox.job.node_selector.<key> # TODO #11854
 agents.<key>.sandbox.job.resources.limits.<key> # TODO #11854
 agents.<key>.sandbox.job.resources.requests.<key> # TODO #11854
+agents.<key>.sandbox.job.scheduler_name # TODO #11854
 agents.<key>.sandbox.job.service_account # TODO #11854
 agents.<key>.sandbox.job.tolerations[].effect # TODO #11854
 agents.<key>.sandbox.job.tolerations[].key # TODO #11854
@@ -157,6 +158,7 @@ compliance.frameworks[] # TODO #11854
 data.nous_dir # TODO #11854
 contribute.token_idle_max # TODO #11854
 contribute.token_max_age # TODO #11854
+convergence.mutation.max_writers_per_target # boundary capacity tuning; yaml-only (#14645)
 deployment.runtime # set via HIVE_DEPLOYMENT_RUNTIME env var or auto-detected, not a Settings control (#14072)
 duplicate_sweep.bot_authors[] # TODO #11854
 evidence.complexity.enabled # TODO #11854
@@ -343,6 +345,7 @@ project.agent_issue_decision_policy # TODO #12851
 project.agents_md_max_bytes # TODO #11854
 project.checkouts_dir # TODO #11854
 project.forge # TODO #11854
+project.style_max_bytes # TODO #14575
 project.issue_filter.hard_suppress_labels.needs_decision[] # TODO #11854
 project.issue_filter.hard_suppress_labels.needs_direction[] # TODO #11854
 project.issue_filter.hard_suppress_labels.needs_human[] # TODO #11854
@@ -393,12 +396,18 @@ providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
 repeat_failure.enabled # yaml-only until the check reaches the dashboard (#14550)
 repeat_failure.exclude[] # yaml-only until the check reaches the dashboard (#14550)
-repeat_failure.no_data_after_s # yaml-only until the check reaches the dashboard (#14550)
 repeat_failure.threshold # yaml-only until the check reaches the dashboard (#14550)
 repeat_failure.window_s # yaml-only until the check reaches the dashboard (#14550)
 retro.lesson_confidence_cap # TODO #11854
 retro.lesson_confidence_step # TODO #11854
 review.backlog.labels[] # TODO #11854
+review.bot_author_full_review_paths[] # TODO #14625
+review.bot_author_model # TODO #14625
+review.bot_authors[] # TODO #14625
+review.delta_max_age # TODO #14621
+review.delta_rereview # TODO #14621
+review.delta_trivial_lines # TODO #14621
+review.pending_fix_ttl # TODO #14643
 review.perspective_models.<key>.backend # TODO #13243
 review.perspective_models.<key>.model # TODO #13243
 review.perspective_prompts.<key> # TODO #11854

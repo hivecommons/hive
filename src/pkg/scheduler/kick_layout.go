@@ -84,6 +84,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	// after the header line, so the LAST one applied ends up FIRST; the slice
 	// is written in reading order and applied in reverse to keep it readable.
 	staticSeams := []func(string) string{
+		func(m string) string { return s.addHouseStyle(a.agent, m) },
 		addGovernorWorkSourceRule,
 		func(m string) string { return s.addIndependentReviewSection(a.agent, m) },
 		func(m string) string { return s.addWorkflowPushCeiling(a.agent, m) },

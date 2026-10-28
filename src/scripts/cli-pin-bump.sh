@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cli-pin-bump.sh — keep the agent CLI pins in src/Dockerfile and
-# src/Dockerfile.contributor current without giving up the pin (#8419).
+# src/Dockerfile.contributor (and gh in the runner image) current without giving up the pin (#8419).
 #
 # Every CLI hive drives is installed at a fixed version: npm packages through
 # `ARG X_VERSION`, release downloads through `ARG X_VERSION` plus a per-arch
@@ -38,6 +38,7 @@
 #   HIVE_PIN_ROOT                repo root (default: two levels above this script)
 #   HIVE_PIN_DOCKERFILE          override src/Dockerfile
 #   HIVE_PIN_CONTRIB_DOCKERFILE  override src/Dockerfile.contributor
+#   HIVE_PIN_RUNNER_DOCKERFILE   override src/deploy/ci-runners/Dockerfile (gh's GITHUB_CLI_VERSION)
 #   HIVE_PIN_PI_TEST             override src/pkg/config/dockerfile_contributor_test.go
 #   HIVE_PIN_WORKDIR             where downloads land (default: mktemp -d, removed on exit)
 #   GH_TOKEN / GITHUB_TOKEN      optional; raises the GitHub API rate limit
@@ -45,13 +46,14 @@
 #   HIVE_PIN_INCLUDE_PATCH=1     include patch-only bumps (default: skip, except
 #                                for the patch-eligible CLIs below)
 #   HIVE_PIN_PATCH_ELIGIBLE      CLIs whose patch releases are bumped anyway
-#                                (default: "claude"; set empty to disable)
+#                                (default: "claude gh"; set empty to disable)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${HIVE_PIN_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 DOCKERFILE="${HIVE_PIN_DOCKERFILE:-$ROOT/src/Dockerfile}"
 CONTRIB="${HIVE_PIN_CONTRIB_DOCKERFILE:-$ROOT/src/Dockerfile.contributor}"
+RUNNER="${HIVE_PIN_RUNNER_DOCKERFILE:-$ROOT/src/deploy/ci-runners/Dockerfile}"
 PI_TEST="${HIVE_PIN_PI_TEST:-$ROOT/src/pkg/config/dockerfile_contributor_test.go}"
 
 # Every CLI this script knows. Order is the order the workflow's matrix uses.
@@ -60,7 +62,7 @@ CLIS="claude codex copilot pi goose agy omp muse bob gh"
 # CLIs that ship features (new models) in patch releases: Claude Code's 2.1.x
 # line adds models as patches, so skipping patches leaves the image unable to
 # launch models Hive lists (#9805). See src/docs/cli-pins.md.
-PATCH_ELIGIBLE="${HIVE_PIN_PATCH_ELIGIBLE-claude}"
+PATCH_ELIGIBLE="${HIVE_PIN_PATCH_ELIGIBLE-claude gh}"
 
 # Digest lengths in hex characters — a value of any other length is never
 # written into a Dockerfile (the "never guess a hash" guard).
@@ -454,7 +456,10 @@ apply_cli() {
     bob)
       for f in "$DOCKERFILE" "$CONTRIB"; do set_arg "$f" BOBSHELL_VERSION "$v"; apply_sha_pair "$f" BOBSHELL "$kv" 256; done ;;
     gh)
-      set_arg "$DOCKERFILE" GH_VERSION "$v"; apply_sha_pair "$DOCKERFILE" GH "$kv" 256 ;;
+      set_arg "$DOCKERFILE" GH_VERSION "$v"; apply_sha_pair "$DOCKERFILE" GH "$kv" 256
+      # The runner image installs gh from the apt repo, which only serves the
+      # latest release, so its exact pin goes stale unless it moves with this one.
+      set_arg "$RUNNER" GITHUB_CLI_VERSION "$v" ;;
     agy)
       # The two images spell the same release differently: the hub image
       # keeps version and build id in separate ARGs and verifies SHA-512, the

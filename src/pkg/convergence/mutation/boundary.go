@@ -101,7 +101,8 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 		return res.Provenance, err
 	}
 	// Hold the claim through observation and any replay, releasing on every
-	// exit so a failed lookup cannot monopolize the repository writer slot.
+	// exit so a failed lookup cannot monopolize its writer slot (per target
+	// under TargetWriterScope, so only that item would wait).
 	defer b.release(executor, claim, mclaim, entry)
 	op, execErr := executor.Execute(mutEffect, entry.Epoch, holder, run)
 	if errors.Is(execErr, ErrAlreadyApplied) && claim.Kind == effects.KindLabelMutation && claim.ObserveApplied != nil {

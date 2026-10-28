@@ -1091,13 +1091,16 @@ type PullRequest struct {
 
 // PRLinkedIssue is an issue GitHub reports a PR will close on merge
 // (closingIssuesReferences) — the PR-side mirror of IssueLinkedPR. State is
-// GitHub's issue state lower-cased ("open" / "closed"), as on Issue.State.
+// GitHub's issue state lower-cased ("open" / "closed"), as on Issue.State;
+// StateReason is its stateReason lower-cased ("completed" / "not_planned" /
+// "duplicate" / "reopened"), "" when unknown.
 type PRLinkedIssue struct {
-	Number int    `json:"number"`
-	Title  string `json:"title,omitempty"`
-	Repo   string `json:"repo,omitempty"`
-	State  string `json:"state,omitempty"`
-	URL    string `json:"url,omitempty"`
+	Number      int    `json:"number"`
+	Title       string `json:"title,omitempty"`
+	Repo        string `json:"repo,omitempty"`
+	State       string `json:"state,omitempty"`
+	StateReason string `json:"state_reason,omitempty"`
+	URL         string `json:"url,omitempty"`
 	// Via is how the link was found: "" for GitHub's closing reference,
 	// else one of the PRLinkVia* values (pr_reference_links.go).
 	Via string `json:"via,omitempty"`
@@ -2138,6 +2141,10 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 					HoldSources:         prHoldSources,
 					ReferencedIssues:    PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 					DependsOn:           ParseDependsOn(pr.GetBody(), repo),
+					// The review swarm reviews held PRs too; without the digest
+					// their kicks carry no "Review body digest:" line and their
+					// verdicts split across aggregates (hivecommons/hive#14594).
+					BodyDigest: review.PullRequestBodyDigest(pr.GetTitle(), pr.GetBody()),
 				})
 			} else {
 				sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRDraft, "Held draft"))

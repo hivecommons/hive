@@ -182,7 +182,14 @@ review:
     base_sync: false                        # optional; let GitHub update-branch unstick hive-authored fork PRs (default off)
   priority_labels: false                    # optional; mirror the PR review queue rank onto review-priority/* labels (default off)
   pending_ttl: 45m                          # optional; re-dispatch a review that has posted no verdict after this long (default 45m)
+  pending_fix_ttl: 2h                       # optional; dispatch the next bounded fix attempt when a fixer has pushed no new head after this long (default 2h; negative disables expiry)
   max_redispatch: 3                         # optional; expiries per head before the PR is held for a human (default 3)
+  bot_author_model: ""                      # optional; model (or backend/model) that reviews PRs opened by bot_authors, e.g. gpt-6-luna (default empty = off)
+  bot_authors: [dependabot[bot], renovate[bot], github-actions[bot], "*[bot]"]  # optional; logins routed to bot_author_model; the hive's own App never matches
+  bot_author_full_review_paths: [".github/workflows/**", "Dockerfile*", "**/Dockerfile*"]  # optional; a bot PR touching these keeps the full-strength model
+  delta_rereview: true                      # optional; re-review a PR already judged at an earlier head by its diff since that head (default on)
+  delta_trivial_lines: 20                   # optional; a delta under this many lines in files the prior verdict passed re-stamps it without a model call (default 20; negative disables)
+  delta_max_age: 72h                        # optional; a changes_requested verdict with findings older than this anchors no delta, the PR is reviewed in full (default 72h)
   severity:
     block_at: P2                            # optional; P1 | P2 | P3, see "Blocking line" below
     comment_below: true                     # default true
@@ -379,6 +386,36 @@ Phase 2 adds dispatch state in `/data/review-dispatch-state.json`. Pending revie
 
 **One kick in flight per agent.** An agent's CLI works one prompt at a time, so the planner never sends a review kick (per-perspective, head, combined or decision) to an agent that still has one pending, i.e. dispatched and not yet answered or expired. It picks the first reviewer in name order that is free; when every eligible reviewer (or every replica of a head) is busy, that work waits for a later cycle. Waiting records nothing, so it costs no `max_redispatch` or `head_max_retries`, and `pending_ttl` starts when the kick actually goes to an idle agent. Load is counted in kicks, not PR heads: counting PR heads let replicas holding the same PR tie, and one PR's remaining perspectives all went to the first replica, four kicks typed into one Claude session within three minutes, three of whose verdicts never arrived.
 
+### Reviewer autoscale (`review.reviewers.autoscale`)
+
+By default the reviewer lane is a fixed pool: `agents.reviewer.replicas: 2` runs `reviewer` and `reviewer-2`, and when both have a kick in flight every other PR waits. `review.reviewers.autoscale` ([#14685](https://github.com/hivecommons/hive/issues/14685)) instead lets the lane grow and shrink with that wait. It is off by default.
+
+```yaml
+review:
+  reviewers:
+    autoscale:
+      enabled: true
+      agent: reviewer              # optional; default: first role:reviewer agent, else reviewer_agents[0]
+      min: 1
+      max: 4                       # capped at the replicas limit (5)
+      target_backlog_per_reviewer: 2
+      scale_up_cycles: 2
+      scale_down_cycles: 5
+      cooldown: 5m
+      cpu_per_reviewer: 1.0
+      mem_per_reviewer_mb: 2048
+```
+
+**Demand.** Each governor cycle the planner records the PRs it left *waiting*: PRs with perspectives still to review on their current head for which every eligible reviewer was busy (`no-free-reviewer`) or the `max_parallel_reviews` budget was spent (`no-parallel-slot`). Drafts, held PRs and PRs whose review is already dispatched are not waiting. The controller ages each wait across cycles, keyed on repo, number and head, so a push restarts the clock.
+
+**Scale-up.** The lane is *behind* when the backlog exceeds `target_backlog_per_reviewer` × active reviewers, or when the oldest wait is older than the `stage/050-review-pending` dwell (`governor.labels.stage.dwell` overrides apply). Behind for `scale_up_cycles` consecutive cycles adds one replica. Guards refuse a wanted scale-up, in this order, and the refusal is logged with the guard's name: `at-max`; `cooldown` (less than `cooldown` since the last action); `saturated` (half or more of the active reviewers' last kicks were undeliverable — `CLI did not reach input prompt` — which is a saturated pod, not demand); `provider-budget` (the inference budget latch is on); `provider-headroom` (any provider under 10% remaining, when rotation publishes readings); `max-parallel-reviews` (more reviewers than slots is pointless); `cpu` / `memory` (the pod cgroup — `cpu.max`, `cpu.stat`, `memory.max`, `memory.current` — has less free than one reviewer's reservation; a host without cgroup limits never blocks). A refused scale-up keeps its streak, so it fires as soon as the guard clears.
+
+**Scale-down.** The lane is *idle* when nothing is waiting and at least one reviewer has no kick in flight. Idle for `scale_down_cycles` consecutive cycles, with more than `min` replicas active and the cooldown elapsed, marks the highest-numbered replica *draining*: the planner and the cadence kick both skip it (the eval log shows `reviewer-3 (reviewer-autoscale draining)`), and it is retired — its tmux session ended and its config entry dropped — only once its turn has ended and it has no review pending. A reviewer is never interrupted mid-turn. If demand returns while a replica is draining it is simply un-drained rather than a fresh replica being added.
+
+**What a dynamic replica is.** Nothing new: the controller raises or lowers the lane's materialised replica count and the ordinary `ExpandAgentReplicas` path creates `reviewer-3`, `reviewer-4` … with the same role, prompt, beads directory, scoped token, tmux pane and cadence key as a configured `reviewer-2`. The planner, kick governor, dashboard agent list and token cache cannot tell them apart. The entrypoint pre-creates the per-agent user and token cache for every name up to `max`, so a replica added at 03:00 can read its token. The declared `replicas:` only seeds the initial count (clamped into `[min, max]`) and is what is persisted; the live count survives a config reload and is never written to `hive.yaml`.
+
+**Observability.** One log line per decision — `reviewer autoscale: 2→3 reason=backlog=7 oldest=41m0s`, `reviewer autoscale: 3→2 drain reviewer-3 reason=idle for 5 cycles`, `reviewer autoscale: 3→2 retire reviewer-3 reason=idle`, `reviewer autoscale: 2→3 blocked by cpu`. `/api/status.reviewerAutoscale` carries `enabled`, `agent`, `min`, `max`, `current`, `target`, `draining`, `backlog`, `oldestWait`, the streaks and `lastDecision`; the Agents section shows the lane's reviewer count with an *auto* badge (replicas show *auto* / *draining*) whose tooltip carries the last decision. The knobs live in Settings → Review Gate → Reviewers → *Scale reviewers with the backlog* (owner only; `PUT /api/config/review` sub-object `reviewer_autoscale`).
+
 ### Pending-review expiry (`review.pending_ttl`, `review.max_redispatch`)
 
 A pending entry is the planner's only record that a perspective was asked, so a reviewer whose kick turn dies — model timeout, proxy read timeout, pod restart — leaves entries that post no verdict and, with no expiry, made every perspective look covered until someone pushed a new commit (hivecommons/hive#12045 and #12025 sat at queue position 1 for hours with CI green and the contributor lane stuck at `no-verdict`). Each cycle the planner therefore expires pending entries older than `pending_ttl` (Go duration string, default `45m`; a negative value disables expiry) whose head still has no verdict in the artifact: the expired perspectives are dropped from state and re-dispatched in the same cycle, the governor logs `review pending expired repo=… pr=… head=… perspective=… age=… expiries=N`, and the state file's `redispatches[]` counts expiries per head. Entries younger than the TTL are left alone, so a review genuinely in flight is never re-kicked, and a verdict for the head settles it however old the entries are. The same expiry releases a `revise_verdicts_before` revisit whose reviewer died.
@@ -406,6 +443,25 @@ Before every fix kick the planner checks authorship. A PR may be pushed to only 
 When the check refuses, the `changes_requested` verdict still stands and the review is still published (`post_comments`). The reviewer's kick for such a PR carries an extra instruction: no agent will push to this branch, so every fix it wants goes into the review comment as a ```` ```suggestion ```` block or a ```` ```diff ```` patch the author can apply, and the reviewer must not check out or push to the branch itself. The refusal is recorded once per PR head in dispatch state (`withheld_fixes`) and on the audit log as `review_fix_withheld`, with the PR, its author, and the setting's value at the time (`setting=review.fix_human_prs=<value>`; a reason naming the squash sign-off gate when it was on), so a fix that did not happen can be traced rather than guessed at. A new push to the PR is a new decision.
 
 **Upgrading.** Older configs may still show `fix_human_prs: true` because a prior compatibility rule promoted `all_authors: true`. Both values are left in config for audit/UI continuity — `all_authors` no longer does anything, and branch-push fix kicks still require hive authorship.
+
+### Cheaper model for bot-authored PRs (`review.bot_author_model`)
+
+PRs opened by other bots (Dependabot, Renovate, github-actions) are mostly lockfile and version bumps, and over Oct 13-27 2026 they cost $38.61/day across three hosted hives ($30.60/day on the busiest), every one reviewed on the frontier model. Setting `review.bot_author_model` routes those reviews to a cheaper model:
+
+- `review.bot_authors` is the login list. Entries match case-insensitively; a leading `*` matches a suffix, so the default `*[bot]` catches any GitHub App. The hive's own App login (`project.ai_author`, or the App's `[bot]` login when it authors PRs) never matches, whatever the list says: the hive's own PRs are reviewed as before.
+- `review.bot_author_model` is `model` or `backend/model` (`gpt-6-luna`, `copilot/gemini-flash-3-5`). It replaces whatever the reviewer's `review_models` pool or `perspective_models` chose for that kick, the same way: the kick's independent-review instruction names it and the reviewer runs the review in a sub-agent with that `model`, so **the reviewer agent's engine must be able to launch it**. A pool decision to skip or hold for a human is kept. Recommended values from `pkg/tokens/pricing.go`: `gemini-flash-3-5` ($0.075/$0.30 per MTok) or `gpt-6-luna` ($0.10/$0.50), against `claude-fable-5.1` at $10/$50. Empty (the default) leaves the route off.
+- `review.bot_author_full_review_paths` are globs (`**` spans directories; a pattern without `/` also matches the base name) that keep a bot PR on the full-strength model when any changed file matches. The default is CI workflows and Dockerfiles only; lockfiles are deliberately not excepted, since they are the bulk of bot PRs. Set it to `[]` for no exceptions. The planner lists the PR's files once per head (only for a listed bot's PR about to be reviewed) and a PR whose files could not be listed is **not** downgraded.
+
+Routed kicks carry `bot_author_routed` on the dispatch kick and the model lands in the verdict's `review_model` as usual; the governor logs `review routed bot-authored PR to bot_author_model`. The route applies to the swarm's per-perspective and combined kicks; the cadence (queue-mode) kick's `review_with=` annotation still comes from the agent's `review_models` pool alone.
+### Delta re-review (`review.delta_rereview`, `review.delta_trivial_lines`, `review.delta_max_age`)
+
+A re-review is a review of a PR the hive already judged at an earlier head SHA. Over Oct 13-27 2026 re-reviews were 28% of hive's attributed reviewer spend and 53% of Bluefin's, because every one re-read the whole PR. With `review.delta_rereview` on (the default) the planner looks for the most recent verdict for the same PR at another head within the artifact's retention and, when it finds one, builds the kick differently:
+
+- The prompt opens with a **`DELTA RE-REVIEW`** block naming the previous head, when it was judged, the aggregate and per-perspective verdicts, and the exact `gh api repos/O/R/compare/<prev>...<new>` commands for the file list and the unified diff. It tells the reviewer to read only the hunks in that compare (and enough of their surroundings to judge them), to re-check each previous finding by file and line and say whether it is fixed, still present or no longer applies, and that its verdict is still for the whole PR at the new head. When the governor fetched the compare itself, the block also lists the changed files and line count.
+- When the compare is known and the delta is **empty** (a force-push or rebase with the same tree), or under `review.delta_trivial_lines` changed lines (default 20) touching no file the previous verdict recorded a finding in, no reviewer is kicked: the previous aggregate is **re-stamped** onto the new head with the new `head_sha`, `body_digest` and `recorded_at`, a `delta` block (`previous_head`, `trivial: true`, `changed_lines`, `note`) and a `delta re-review: …` reason, and the governor logs `review delta re-stamped verdict without a session`. A negative `delta_trivial_lines` keeps the re-stamp for identical trees only. A head that already has a review in flight is never re-stamped.
+- The **full** review stays for a first review (no prior verdict at another head), when the prior verdict was `reject` or `incomplete`, and when it was `changes_requested` with findings recorded more than `review.delta_max_age` ago (default `72h`): the flagged code has had time to move on and the record of it is stale. A verdict at the current head is never treated as a prior.
+
+Every delta aggregate records `delta.previous_head` (and `delta_previous_head` on each perspective report, stamped from the dispatch state like `review_model`), so the cost dashboard can split delta reviews, re-stamps and full reviews. The compare is fetched once per candidate head (no verdict, no pending entry, a prior at another head) with one 300-file page; a bigger or failed compare still gets the delta instruction, just without the file list and never the re-stamp.
 
 ## Revising a recorded verdict
 

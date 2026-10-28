@@ -1,6 +1,7 @@
 package stageengine
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -30,7 +31,7 @@ func TestBuiltInDerivers(t *testing.T) {
 func TestDecisionDesiredAndRef(t *testing.T) {
 	d := Decision{Stage: stagelabels.Fixing, Role: stagelabels.RoleTrusted, Kind: "hive", Stalled: true, DCO: stagelabels.DCOYes}
 	want := stagelabels.Desired{Stage: stagelabels.Fixing, Role: stagelabels.RoleTrusted, Kind: "hive", Stalled: true, DCO: stagelabels.DCOYes}
-	if d.Desired() != want {
+	if !reflect.DeepEqual(d.Desired(), want) {
 		t.Fatalf("Desired() = %+v", d.Desired())
 	}
 	r := Ref{Owner: "Acme", Repo: "Widgets", Number: 12, Kind: stagelabels.PRItem}

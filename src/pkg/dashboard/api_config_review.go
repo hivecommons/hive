@@ -177,6 +177,21 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 			Labels          *[]string `json:"labels"`
 			MaxPerPRPerDay  *int      `json:"max_per_pr_per_day"`
 		} `json:"backlog"`
+		// ReviewerAutoscale is review.reviewers.autoscale
+		// (hivecommons/hive#14685). Pointer fields keep "absent means
+		// unchanged"; the band is validated before anything is mutated.
+		ReviewerAutoscale *struct {
+			Enabled                  *bool    `json:"enabled"`
+			Agent                    *string  `json:"agent"`
+			Min                      *int     `json:"min"`
+			Max                      *int     `json:"max"`
+			TargetBacklogPerReviewer *int     `json:"target_backlog_per_reviewer"`
+			ScaleUpCycles            *int     `json:"scale_up_cycles"`
+			ScaleDownCycles          *int     `json:"scale_down_cycles"`
+			Cooldown                 *string  `json:"cooldown"`
+			CPUPerReviewer           *float64 `json:"cpu_per_reviewer"`
+			MemPerReviewerMB         *int     `json:"mem_per_reviewer_mb"`
+		} `json:"reviewer_autoscale"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -248,6 +263,43 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	// Validate the loader runs, so the error names the field and a bad value
 	// rejects the whole request before anything is mutated.
 	severity, backlog := cfg.Review.Severity, cfg.Review.Backlog
+	autoscaleCfg := cfg.Review.Reviewers.Autoscale
+	if a := body.ReviewerAutoscale; a != nil {
+		if a.Enabled != nil {
+			autoscaleCfg.Enabled = *a.Enabled
+		}
+		if a.Agent != nil {
+			autoscaleCfg.Agent = sanitizeString(*a.Agent)
+		}
+		if a.Min != nil {
+			autoscaleCfg.Min = *a.Min
+		}
+		if a.Max != nil {
+			autoscaleCfg.Max = *a.Max
+		}
+		if a.TargetBacklogPerReviewer != nil {
+			autoscaleCfg.TargetBacklogPerReviewer = *a.TargetBacklogPerReviewer
+		}
+		if a.ScaleUpCycles != nil {
+			autoscaleCfg.ScaleUpCycles = *a.ScaleUpCycles
+		}
+		if a.ScaleDownCycles != nil {
+			autoscaleCfg.ScaleDownCycles = *a.ScaleDownCycles
+		}
+		if a.Cooldown != nil {
+			autoscaleCfg.Cooldown = sanitizeString(*a.Cooldown)
+		}
+		if a.CPUPerReviewer != nil {
+			autoscaleCfg.CPUPerReviewer = *a.CPUPerReviewer
+		}
+		if a.MemPerReviewerMB != nil {
+			autoscaleCfg.MemPerReviewerMB = *a.MemPerReviewerMB
+		}
+		if err := autoscaleCfg.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	if body.Severity != nil {
 		if body.Severity.BlockAt != nil {
 			b, ok := config.NormalizeReviewSeverityBlockAt(*body.Severity.BlockAt)
@@ -518,6 +570,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 
 	cfg.Review.Severity = severity
 	cfg.Review.Backlog = backlog
+	cfg.Review.Reviewers.Autoscale = autoscaleCfg
 
 	// Written into hive.yaml's review_bots block only; EffectiveReviewBots
 	// lets it override the project file's threshold without copying the

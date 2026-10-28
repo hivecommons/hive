@@ -56,6 +56,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		SandboxWorkspaceDir         *string   `json:"agentSandboxWorkspaceDir"`
 		SandboxRuntime              *string   `json:"agentSandboxRuntime"`
 		SandboxJobServiceAccount    *string   `json:"agentSandboxJobServiceAccount"`
+		SandboxJobSchedulerName     *string   `json:"agentSandboxJobSchedulerName"`
 		SandboxJobTTLSeconds        *int      `json:"agentSandboxJobTtlSeconds"`
 		SandboxJobWorkspaceClaim    *string   `json:"agentSandboxJobWorkspaceClaim"`
 		SandboxJobClaimMount        *string   `json:"agentSandboxJobWorkspaceClaimMount"`
@@ -270,7 +271,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	if body.SandboxTimeoutS != nil {
 		cfg.AgentSandbox.TimeoutS = *body.SandboxTimeoutS
 	}
-	if body.SandboxJobServiceAccount != nil || body.SandboxJobTTLSeconds != nil ||
+	if body.SandboxJobServiceAccount != nil || body.SandboxJobSchedulerName != nil || body.SandboxJobTTLSeconds != nil ||
 		body.SandboxJobWorkspaceClaim != nil || body.SandboxJobClaimMount != nil {
 		if cfg.AgentSandbox.Job == nil {
 			cfg.AgentSandbox.Job = &config.SandboxJobConfig{}
@@ -278,6 +279,9 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		job := cfg.AgentSandbox.Job
 		if body.SandboxJobServiceAccount != nil {
 			job.ServiceAccount = sanitizeString(strings.TrimSpace(*body.SandboxJobServiceAccount))
+		}
+		if body.SandboxJobSchedulerName != nil {
+			job.SchedulerName = sanitizeString(strings.TrimSpace(*body.SandboxJobSchedulerName))
 		}
 		if body.SandboxJobWorkspaceClaim != nil {
 			job.WorkspaceClaim = sanitizeString(strings.TrimSpace(*body.SandboxJobWorkspaceClaim))
@@ -404,6 +408,7 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"agentSandboxWorkspaceDir":           cfg.AgentSandbox.WorkspaceDir,
 		"agentSandboxRuntime":                cfg.AgentSandbox.Runtime,
 		"agentSandboxJobServiceAccount":      sandboxJobOrEmpty(cfg).ServiceAccount,
+		"agentSandboxJobSchedulerName":       sandboxJobOrEmpty(cfg).SchedulerName,
 		"agentSandboxJobTtlSeconds":          sandboxJobOrEmpty(cfg).TTLSeconds,
 		"agentSandboxJobWorkspaceClaim":      sandboxJobOrEmpty(cfg).WorkspaceClaim,
 		"agentSandboxJobWorkspaceClaimMount": sandboxJobOrEmpty(cfg).WorkspaceClaimMount,

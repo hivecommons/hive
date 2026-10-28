@@ -41,6 +41,8 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   // creates it, the retry lands) or a gh that is down for good.
   let issueEditFailuresLeft = ghIssueEditFailures;
   const sent = [];
+  // Every WebSocket the relay constructed, in order (see FakeWebSocket).
+  const wsInstances = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
   const execFileCalls = [];
   const deferredExecFileCallbacks = [];
@@ -259,10 +261,25 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     },
     ws: class FakeWebSocket {
       static get OPEN() { return 1; }
-      constructor() { this.readyState = 1; }
-      on() {}
+      constructor(url) {
+        this.readyState = 1;
+        this.url = url;
+        this.listeners = new Map();
+        wsInstances.push(this);
+      }
+      // Listeners are recorded so a test can fire 'error'/'close' on the
+      // socket connectHub() opened; every existing test ignores them.
+      on(event, fn) {
+        if (!this.listeners.has(event)) this.listeners.set(event, []);
+        this.listeners.get(event).push(fn);
+      }
+      emit(event, ...args) {
+        for (const fn of this.listeners.get(event) || []) fn(...args);
+      }
+      removeAllListeners() { this.listeners.clear(); }
       send(payload) { sent.push(JSON.parse(payload)); }
       close() {}
+      terminate() {}
       ping() {}
     },
   };
@@ -343,6 +360,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   relay.__commands = commands;
   relay.__failNextNudge = () => { failNextLiteralSend = true; };
   relay.__sent = sent;
+  relay.__wsInstances = wsInstances;
   relay.__tmpDir = tmpDir;
   relay.__execFileCalls = execFileCalls;
   relay.__completeDeferredExecFile = (err, stdout = '', stderr = '') => {
@@ -16186,5 +16204,261 @@ test('claude trust prompt: Down moves off "No, exit" onto the trust option', () 
   ];
   for (const [name, backend, pane, want] of cases) {
     assert.strictEqual(paneClassifier.blockingPromptKey(pane, backend), want, name);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Retired hosted-hive domain — a stale contributor.env must not loop forever.
+//
+// The hosted fleet moved apex from *.hive.kubestellar.io to
+// *.hive.hivecommons.dev. The old wildcard is no longer in the served
+// certificate, so a relay still dialing the URL contribute-setup wrote before
+// the move fails every TLS handshake with "Hostname/IP does not match
+// certificate's altnames" and, before this fix, reconnected to the same dead
+// host every MAX_RECONNECT_DELAY_MS with no hint that anything had moved.
+// ---------------------------------------------------------------------------
+
+test('retired-domain: a saved *.hive.kubestellar.io URL is relocated to *.hive.hivecommons.dev, label intact', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const cases = [
+      { name: 'hosted spoke wss', in: 'wss://hosted-kubestellar-hive-ojv6.hive.kubestellar.io/contribute', want: 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute' },
+      { name: 'already on ws path', in: 'wss://hosted-x.hive.kubestellar.io/api/contribute/ws', want: 'wss://hosted-x.hive.hivecommons.dev/api/contribute/ws' },
+      { name: 'uppercase host', in: 'wss://Hosted-X.Hive.KubeStellar.IO/contribute', want: 'wss://hosted-x.hive.hivecommons.dev/contribute' },
+      { name: 'trailing FQDN dot', in: 'wss://hosted-x.hive.kubestellar.io./contribute', want: 'wss://hosted-x.hive.hivecommons.dev/contribute' },
+      { name: 'hub apex', in: 'wss://hive.kubestellar.io/contribute', want: 'wss://hive.hivecommons.dev/contribute' },
+      { name: 'https dashboard URL', in: 'https://hosted-x.hive.kubestellar.io', want: 'https://hosted-x.hive.hivecommons.dev/' },
+      { name: 'current domain untouched', in: 'wss://hosted-x.hive.hivecommons.dev/contribute', want: null },
+      { name: 'unrelated host untouched', in: 'wss://hive.example.org/contribute', want: null },
+      { name: 'lookalike suffix untouched', in: 'wss://nothive.kubestellar.io/contribute', want: null },
+      { name: 'garbage untouched', in: 'not a url', want: null },
+      { name: 'empty untouched', in: '', want: null },
+    ];
+    for (const c of cases) {
+      assert.strictEqual(relay.relocateRetiredHiveURL(c.in), c.want, c.name);
+    }
+  } finally { teardown(relay); }
+});
+
+test('retired-domain: hubWsURL/hubPublicURL dial the successor host and warn exactly once per saved URL', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const warn = console.warn; const warned = []; console.warn = (...a) => warned.push(a.join(' '));
+  try {
+    const saved = 'wss://hosted-kubestellar-hive-ojv6.hive.kubestellar.io/contribute';
+    assert.strictEqual(relay.hubWsURL(saved), 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/api/contribute/ws');
+    assert.strictEqual(relay.hubPublicURL(saved), 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute');
+    relay.hubWsURL(saved);
+    assert.strictEqual(warned.length, 1, `one warning per distinct saved URL, got ${warned.length}: ${warned.join(' | ')}`);
+    assert.ok(/retired/.test(warned[0]) && /contributor\.env/.test(warned[0]) && /contribute-setup/.test(warned[0]),
+      `the warning must say what moved, where the stale value lives and how to refresh it: ${warned[0]}`);
+    warned.length = 0;
+    relay.hubWsURL('wss://hosted-x.hive.hivecommons.dev/contribute');
+    assert.strictEqual(warned.length, 0, 'a current-domain URL must not warn');
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('retired-domain: a stale HIVE_HUB in the environment connects to the successor host from the first dial', () => {
+  const warn = console.warn; console.warn = () => {};
+  const relay = loadRelay({ backend: 'claude', env: {
+    HIVE_HUB: 'wss://hosted-kubestellar-hive-ojv6.hive.kubestellar.io/contribute',
+    HIVE_REGISTRATION_TOKEN: 'tok',
+  } });
+  try {
+    const hub = relay.getHubs()[0];
+    assert.strictEqual(hub.url, 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/api/contribute/ws');
+    assert.strictEqual(hub.sourceURL, 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute');
+  } finally { console.warn = warn; teardown(relay); }
+});
+
+test('tls-mismatch: the altname error is recognised by code or by message, nothing else is', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const cases = [
+      { name: 'node error code', err: Object.assign(new Error('x'), { code: 'ERR_TLS_CERT_ALTNAME_INVALID' }), want: true },
+      { name: 'message only', err: new Error("Hostname/IP does not match certificate's altnames: Host: a.hive.kubestellar.io. is not in the cert's altnames: DNS:*.hive.hivecommons.dev"), want: true },
+      { name: 'message without apostrophe', err: new Error('does not match certificates altnames'), want: true },
+      { name: 'ECONNREFUSED', err: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }), want: false },
+      { name: 'expired cert', err: Object.assign(new Error('certificate has expired'), { code: 'CERT_HAS_EXPIRED' }), want: false },
+      { name: 'unexpected response', err: new Error('Unexpected server response: 502'), want: false },
+      { name: 'null', err: null, want: false },
+    ];
+    for (const c of cases) assert.strictEqual(relay.isTLSHostMismatchError(c.err), c.want, c.name);
+  } finally { teardown(relay); }
+});
+
+test('tls-mismatch: hub registry lookup is only for hosted hives, and resolves by id or vanity label to a different host', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    assert.strictEqual(relay.hubRegistryURLFor('wss://hosted-x.hive.hivecommons.dev/contribute'), 'https://hive.hivecommons.dev/api/registry');
+    assert.strictEqual(relay.hubRegistryURLFor('wss://hive.example.org/contribute'), null, 'a standalone hive has no hub to ask');
+    assert.strictEqual(relay.hubRegistryURLFor('wss://hosted-x.hive.kubestellar.io/contribute'), null, 'the retired apex is not a hub we dial');
+    assert.strictEqual(relay.hubRegistryURLFor('garbage'), null);
+
+    const registry = { hives: [
+      { id: 'hosted-available-oke-11-placeholder-r05x', dashboardUrl: 'https://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev' },
+      { id: 'hosted-plain', dashboardUrl: 'https://hosted-plain.hive.hivecommons.dev' },
+      { id: 'bad', dashboardUrl: 'not a url' },
+      null, 'junk',
+    ] };
+    const cases = [
+      { name: 'by id', url: 'wss://hosted-plain.hive.example/contribute', want: 'wss://hosted-plain.hive.hivecommons.dev/contribute' },
+      { name: 'by vanity label', url: 'wss://hosted-kubestellar-hive-ojv6.old.example/contribute', want: 'wss://hosted-kubestellar-hive-ojv6.hive.hivecommons.dev/contribute' },
+      { name: 'same host already — no identical retry', url: 'wss://hosted-plain.hive.hivecommons.dev/contribute', want: null },
+      { name: 'unknown hive', url: 'wss://hosted-nope.hive.example/contribute', want: null },
+      { name: 'no registry', url: 'wss://hosted-plain.hive.example/contribute', registry: null, want: null },
+      { name: 'registry without hives array', url: 'wss://hosted-plain.hive.example/contribute', registry: { hives: 'x' }, want: null },
+    ];
+    for (const c of cases) {
+      assert.strictEqual(relay.currentHiveURLFromRegistry(c.url, 'registry' in c ? c.registry : registry), c.want, c.name);
+    }
+  } finally { teardown(relay); }
+});
+
+// hubOnMismatch sets up a single hub whose saved URL survives relocation (a
+// hivecommons.dev host that the certificate nevertheless does not cover — the
+// shape the NEXT domain move would have) and returns the pieces the mismatch
+// tests drive.
+function hubOnMismatch(relay, url) {
+  const hub = relay.getHubs()[0];
+  hub.url = relay.hubWsURL(url);
+  hub.sourceURL = relay.hubPublicURL(url);
+  hub.reconnectDelay = 16000;
+  relay.__wsInstances.length = 0;
+  relay.connectHub(hub);
+  const ws = relay.__wsInstances[0];
+  assert.ok(ws, 'setup: connectHub must open a socket');
+  return { hub, ws };
+}
+
+const ALTNAME_ERR = Object.assign(
+  new Error("Hostname/IP does not match certificate's altnames: Host: hosted-x.hive.hivecommons.dev. is not in the cert's altnames: DNS:*.hive.example"),
+  { code: 'ERR_TLS_CERT_ALTNAME_INVALID' });
+
+test('tls-mismatch: a certificate that does not cover the host parks the hub — no reconnect timer, one remediation line', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const log = console.log; const error = console.error; const warn = console.warn;
+  const logged = []; const errored = [];
+  console.log = (...a) => logged.push(a.join(' ')); console.error = (...a) => errored.push(a.join(' ')); console.warn = () => {};
+  const origSetTimeout = global.setTimeout; const scheduled = [];
+  global.setTimeout = (cb, ms) => { scheduled.push(ms); return 0; };
+  try {
+    // Standalone hive: no hub to ask, so the relay has nothing better to try.
+    const { hub, ws } = hubOnMismatch(relay, 'wss://hive.example.org/contribute');
+    relay.__setRegistryFetch(() => { throw new Error('must not be consulted for a standalone hive'); });
+    const genBefore = hub.connectGeneration;
+
+    ws.emit('error', ALTNAME_ERR);
+    ws.emit('close', 1006, '');
+
+    assert.strictEqual(hub.tlsHostMismatch, true);
+    assert.strictEqual(hub.connectGeneration, genBefore, 'no redial of the same host');
+    assert.deepStrictEqual(scheduled, [], `no reconnect timer may be armed, got ${JSON.stringify(scheduled)}`);
+    const remediation = errored.filter(l => /saved URL is stale/.test(l));
+    assert.strictEqual(remediation.length, 1, `exactly one remediation line, got: ${errored.join(' | ')}`);
+    assert.ok(/contributor\.env/.test(remediation[0]) && /Not retrying/.test(remediation[0]) && /contribute-setup/.test(remediation[0]),
+      `the line must name the stale file, say it stopped, and say how to re-join: ${remediation[0]}`);
+    assert.ok(logged.some(l => /Not reconnecting/.test(l)), 'the close line must say why it is not reconnecting');
+    assert.ok(!logged.some(l => /Reconnecting in/.test(l)), 'the "Reconnecting in" line is exactly what looped before');
+
+    const status = JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+    assert.strictEqual(status.subscriptions[0].readiness, 'hive-moved', 'relay-status.json must surface the parked state');
+  } finally {
+    global.setTimeout = origSetTimeout;
+    console.log = log; console.error = error; console.warn = warn;
+    teardown(relay);
+  }
+});
+
+test('tls-mismatch: a hosted hive is re-resolved through the hub registry and redialed at its current URL exactly once', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const log = console.log; const error = console.error; const warn = console.warn;
+  const errored = [];
+  console.log = () => {}; console.error = (...a) => errored.push(a.join(' ')); console.warn = () => {};
+  const origSetTimeout = global.setTimeout; const scheduled = [];
+  global.setTimeout = (cb, ms) => { scheduled.push(ms); return 0; };
+  try {
+    const { hub, ws } = hubOnMismatch(relay, 'wss://hosted-x.hive.hivecommons.dev/contribute');
+    const asked = [];
+    relay.__setRegistryFetch((url, cb) => {
+      asked.push(url);
+      // Synchronous callback: the test needs no timer and no network.
+      cb({ hives: [{ id: 'hosted-x', dashboardUrl: 'https://hosted-x-moved.hive.hivecommons.dev' }] });
+    });
+    const genBefore = hub.connectGeneration;
+
+    ws.emit('error', ALTNAME_ERR);
+    ws.emit('close', 1006, '');
+
+    assert.deepStrictEqual(asked, ['https://hive.hivecommons.dev/api/registry']);
+    assert.strictEqual(hub.url, 'wss://hosted-x-moved.hive.hivecommons.dev/api/contribute/ws', 'the hub now dials the registry URL');
+    assert.strictEqual(hub.sourceURL, 'wss://hosted-x-moved.hive.hivecommons.dev/contribute');
+    assert.strictEqual(hub.relocatedFrom, 'wss://hosted-x.hive.hivecommons.dev/contribute');
+    assert.strictEqual(hub.connectGeneration, genBefore + 1, 'exactly one redial');
+    assert.strictEqual(hub.tlsHostMismatch, false, 'the redial clears the parked flag so a success can authenticate');
+    assert.strictEqual(hub.reconnectDelay, 1000, 'backoff resets for the new host');
+    assert.deepStrictEqual(scheduled, [], 'the redial is immediate, not a backoff timer');
+    assert.ok(errored.some(l => /retrying there once/.test(l) && /hosted-x-moved/.test(l)), `the remediation names the resolved URL: ${errored.join(' | ')}`);
+    assert.strictEqual(relay.__wsInstances.length, 2, 'one socket for the stale host, one for the resolved one');
+
+    // The resolved host ALSO mismatching must not loop: one lookup per hub.
+    asked.length = 0; errored.length = 0;
+    const ws2 = relay.__wsInstances[1];
+    const genAfter = hub.connectGeneration;
+    ws2.emit('error', ALTNAME_ERR);
+    ws2.emit('close', 1006, '');
+    assert.deepStrictEqual(asked, [], 'the registry is asked at most once per hub');
+    assert.strictEqual(hub.connectGeneration, genAfter, 'no further redial');
+    assert.strictEqual(hub.tlsHostMismatch, true);
+    assert.deepStrictEqual(scheduled, []);
+    assert.ok(errored.some(l => /Not retrying/.test(l)));
+  } finally {
+    global.setTimeout = origSetTimeout;
+    console.log = log; console.error = error; console.warn = warn;
+    teardown(relay);
+  }
+});
+
+test('tls-mismatch: a registry that does not know the hive (or is unreachable) parks the hub instead of guessing', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const log = console.log; const error = console.error; const warn = console.warn;
+  console.log = () => {}; console.error = () => {}; console.warn = () => {};
+  const origSetTimeout = global.setTimeout; const scheduled = [];
+  global.setTimeout = (cb, ms) => { scheduled.push(ms); return 0; };
+  try {
+    for (const body of [null, { hives: [] }, { hives: [{ id: 'other', dashboardUrl: 'https://other.hive.hivecommons.dev' }] }]) {
+      const { hub, ws } = hubOnMismatch(relay, 'wss://hosted-x.hive.hivecommons.dev/contribute');
+      hub.relocationAttempted = false;
+      relay.__setRegistryFetch((url, cb) => cb(body));
+      const genBefore = hub.connectGeneration;
+      ws.emit('error', ALTNAME_ERR);
+      ws.emit('close', 1006, '');
+      assert.strictEqual(hub.connectGeneration, genBefore, `no redial for registry body ${JSON.stringify(body)}`);
+      assert.strictEqual(hub.tlsHostMismatch, true);
+      assert.deepStrictEqual(scheduled, []);
+    }
+  } finally {
+    global.setTimeout = origSetTimeout;
+    console.log = log; console.error = error; console.warn = warn;
+    teardown(relay);
+  }
+});
+
+test('tls-mismatch: an ordinary error still reconnects with backoff — only the altname mismatch parks', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const log = console.log; const error = console.error; const warn = console.warn;
+  console.log = () => {}; console.error = () => {}; console.warn = () => {};
+  const origSetTimeout = global.setTimeout; const scheduled = [];
+  global.setTimeout = (cb, ms) => { scheduled.push(ms); return 0; };
+  try {
+    const { hub, ws } = hubOnMismatch(relay, 'wss://hosted-x.hive.hivecommons.dev/contribute');
+    ws.emit('error', Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }));
+    ws.emit('close', 1006, '');
+    assert.strictEqual(hub.tlsHostMismatch, false);
+    assert.deepStrictEqual(scheduled, [16000], 'the usual reconnect timer is armed');
+    assert.strictEqual(hub.reconnectDelay, 32000, 'and backoff doubles as before');
+  } finally {
+    global.setTimeout = origSetTimeout;
+    console.log = log; console.error = error; console.warn = warn;
+    teardown(relay);
   }
 });

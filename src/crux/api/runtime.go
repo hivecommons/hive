@@ -733,6 +733,7 @@ var RuntimeRoutes = map[string]Route{
 	"StartCredentialWatchdog":        {"GET", PathHealth},
 	"StartCopilotSessionRefresh":     {"GET", PathHealth},
 	"StartTranscriptActivityRefresh": {"GET", PathHealth},
+	"StartRepeatFailureMonitor":      {"GET", PathHealth},
 	// Authorizer
 	"AuthorizePROpen":        {"POST", PathAuthorize},
 	"AuthorizePushBranch":    {"POST", PathAuthorize},
@@ -845,4 +846,5 @@ var HostSetters = map[string]HostSetter{
 	// Repeat-failure BASH_ENV route (v6, #14574): the enabled switch is read
 	// in-process until it rides the hive callback policy.
 	"SetRepeatFailureEnabledResolver": {HostSetterInProcessOnly, "repeat-failure capture switch is in-process only; sidecar follow-up"},
+	"SetRepeatFailureConfigResolver":  {HostSetterInProcessOnly, "repeat-failure monitor config is in-process only; sidecar follow-up"},
 }

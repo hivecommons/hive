@@ -19,6 +19,17 @@ const GO_API_URL = process.env.HIVE_API_URL || `http://127.0.0.1:${GO_API_PORT}`
 const TTYD_PORT = parseInt(process.env.HIVE_TTYD_PORT || '7681', 10);
 const TTYD_URL = `http://127.0.0.1:${TTYD_PORT}`;
 const DASHBOARD_TOKEN = process.env.HIVE_DASHBOARD_TOKEN || '';
+// The basic-auth credential ttyd itself was started with — the same precedence
+// as deploy/entrypoint.sh: explicit HIVE_TTYD_CREDENTIAL, else
+// hive:<HIVE_DASHBOARD_TOKEN>, else none. The /terminal route presents it to
+// ttyd on every forwarded request (see ttydProxy) so an already-authenticated
+// browser is never re-challenged with ttyd's own user/password dialog. Never
+// logged: the password half is the dashboard token on default deployments.
+const TTYD_CREDENTIAL = process.env.HIVE_TTYD_CREDENTIAL
+  || (DASHBOARD_TOKEN ? `hive:${DASHBOARD_TOKEN}` : '');
+const TTYD_AUTHORIZATION = TTYD_CREDENTIAL
+  ? 'Basic ' + Buffer.from(TTYD_CREDENTIAL).toString('base64')
+  : '';
 const STATIC_DIR = process.env.HIVE_STATIC_DIR || path.join(__dirname, 'public');
 const GO_PUBLIC_ASSET_PATHS = JSON.parse(fs.readFileSync(path.join(__dirname, 'dashboard_public_assets.json'), 'utf8'));
 const ASSET_PATH_RE = /\.(?:css|js|mjs|map|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|otf|eot|json|txt|xml|webmanifest)$/i;
@@ -1148,16 +1159,25 @@ const ttydProxy = createProxyMiddleware({
   changeOrigin: true,
   // ttyd (libwebsockets) serves ONE request per TCP connection and hangs up
   // on any reuse. Without an explicit agent, httpxy (the proxy engine) pools
-  // upstream sockets in its own keepAlive:true default agents, so the
-  // browser's basic-auth flow — an unauthenticated request answered 401,
-  // then an authenticated retry — deterministically rode a dead pooled
-  // socket and surfaced as 502 "Terminal unavailable" with the CORRECT
-  // password. A non-pooling agent gives every request a fresh connection;
+  // upstream sockets in its own keepAlive:true default agents, so
+  // back-to-back requests (document, /token, websocket handshake)
+  // deterministically rode a dead pooled socket and surfaced as 502
+  // "Terminal unavailable" with the CORRECT password. A non-pooling agent gives every request a fresh connection;
   // pooling buys nothing here anyway, because the endpoint's real traffic
   // is a single long-lived websocket.
   agent: new httpBase.Agent({ keepAlive: false }),
   pathRewrite: (p) => stripSensitiveTerminalQuery(p.replace(/^\/terminal/, '') || '/'),
   on: {
+    // Whatever Authorization the browser sent authenticated it to the
+    // dashboard, not to ttyd; drop it and present ttyd's own credential.
+    proxyReq(proxyReq) {
+      proxyReq.removeHeader('authorization');
+      if (TTYD_AUTHORIZATION) proxyReq.setHeader('Authorization', TTYD_AUTHORIZATION);
+    },
+    proxyReqWs(proxyReq) {
+      proxyReq.removeHeader('authorization');
+      if (TTYD_AUTHORIZATION) proxyReq.setHeader('Authorization', TTYD_AUTHORIZATION);
+    },
     error(err, req, res) {
       console.error(`[ttyd-proxy] ${req.method} ${redactURL(req.url)} → ${err.message}`);
       if (res.writeHead) {

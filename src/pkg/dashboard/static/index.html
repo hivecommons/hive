@@ -1287,6 +1287,8 @@
     .agent-error { font-size: 0.72rem; color: var(--red); margin-top: var(--sp-2); text-align: right; word-break: break-word; }
     /* "Now:" line (#10934): what the agent is on, under its state line. Not
        aria-live — it changes every update and would flood screen readers. */
+    .oc-style-source { font-size: var(--fs-xs); color: var(--muted); border: var(--line-width) solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--sp-1); }
+    .oc-style-source[data-source="repo"] { color: var(--fg); border-color: var(--accent); }
     .agent-now { text-align: right; font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-2); word-break: break-word; }
     .agent-now .an-lead { font-weight: 600; color: var(--text); }
     .agent-now.outdated { color: var(--yellow); }
@@ -1373,14 +1375,20 @@
     .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
     .ham-cols .ham-since { color: var(--text-faint); font-family: inherit; }
     .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-5) var(--sp-2); }
+    /* Each entry is fenced by a hairline above it and lights up as a whole
+       on hover, so a tall row (wrapped title, ↳ PR line) still reads as one
+       block: its chip and age can only belong to the strip they sit beside. */
+    .ham-row + .ham-row { border-top: var(--line-width) solid var(--line-subtle); }
+    .ham-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); border-radius: var(--r-sm); }
     /* Title line = a ghost strip with the same column widths as the chevrons
        below: a lead cell spanning Open..Claimed carries the number + title, a
        PR cell spanning PR in progress..Merge gate carries "[icon] #N title",
-       the cap column is kept for the modifier chip and the since column for
-       the time on step. Both cells truncate with an ellipsis rather than
-       wrap or collide; the lead keeps a clear gap before the PR column. The
-       spanning cells' flex-basis absorbs the gaps they cover so the PR cell
-       starts exactly at the PR in progress chevron. */
+       the cap column is kept for the modifier chip and the since column is
+       an empty spacer (the time on step rides the strip row's since cell, in
+       line with the chevrons). Both cells wrap rather than collide; the lead
+       keeps a clear gap before the PR column. The spanning cells' flex-basis
+       absorbs the gaps they cover so the PR cell starts exactly at the PR in
+       progress chevron. */
     .ham-row-head { position: relative; display: flex; align-items: flex-start; gap: var(--sp-3); font-size: var(--fs-sm); min-width: 0; line-height: 1.3; }
     .ham-head-cols { flex: 1 1 auto; min-width: 0; min-height: 1.3em; align-items: flex-start; }
     .ham-head-cols .ham-strip { height: auto; }
@@ -1392,7 +1400,11 @@
     .ham-head-cols .ham-seg.ham-head-lead { flex: 0 0 calc((100% - 4em - 6 * var(--sp-1)) / 2 + 2 * var(--sp-1)); padding: 0 var(--sp-6) 0 0; }
     .ham-head-cols .ham-seg.ham-head-lead.ham-head-wide { flex: 1 1 0; }
     .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; flex-direction: column; }
-    .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; justify-content: flex-end; padding: 0; }
+    /* The chip hugs the bottom of the title block (align-items: flex-end
+       inside the stretched cap cell): on a two-line title it sits on the
+       second line, directly over the strip it describes, never up at the
+       previous entry's edge. */
+    .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; align-items: flex-end; justify-content: flex-end; padding: 0; }
     .ham-head-cols .ham-seg.cap .ham-badges { position: static; }
     .ham-head-main { display: flex; flex: 1; align-items: flex-start; gap: var(--sp-3); min-width: 0; }
     .ham-pr-ref { display: inline-flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; max-width: 100%; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); }
@@ -1423,6 +1435,11 @@
     .ham-issue-closed .ham-ref, .ham-issue-closed .ham-title { color: var(--text-faint); text-decoration: line-through; }
     .ham-issue-closed .ham-no-issue-t { text-decoration: none; }
     .ham-issue-closed-chip { flex: 0 0 auto; margin-left: var(--sp-1); }
+    /* PR-anchored row (every issue it closes is closed, PR still open): the PR leads at full width; the closed issue is a muted chip. */
+    .ham-head-pr-anchor .ham-ref { display: inline-flex; align-items: center; gap: var(--sp-1); }
+    .ham-head-pr-anchor .ham-closed-issue-ref { color: var(--text-faint); text-decoration: none; }
+    .ham-head-pr-anchor .ham-closed-issue-ref:hover { color: var(--text); }
+    .ham-head-pr-anchor .ham-closed-not-planned { color: var(--text-faint); font-style: italic; }
     /* Issue slot naming an issue the PR only refers to (`Refs #N`, a `(#N, part 1)` title): a muted "refs" chip tells it from a closing link. */
     .ham-issue-refs-chip { flex: 0 0 auto; margin-left: var(--sp-1); font-style: italic; }
     /* Repo chip before the number: monospace, tinted per repo from the
@@ -1465,6 +1482,8 @@
     .ham-badge-mod.ham-mod-regressed.ham-mod-handled { color: var(--text-muted); border-color: var(--line-subtle); border-style: dashed; }
     .ham-badge-mod.ham-mod-needs-triage { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
     .ham-badge.ham-finisher-person { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+    /* hive:unauthorized — the App lacks a permission for the next step; muted, never red: a person must take the step. */
+    .ham-badge-mod.ham-mod-unauthorized { color: var(--text-muted); border-color: var(--line-subtle); border-style: dashed; }
     .ham-badge-mod.ham-mod-possible-dupe { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 45%, transparent); }
     /* Sentinel-flagged PR, #13535 follow-up: the chip beside needs rebase /
        regressed, and the human-decision chevron itself when its word
@@ -1559,12 +1578,11 @@
       .ham-head-cols > .ham-strip { display: contents; }
       .ham-head-cols .ham-seg.ham-head-lead, .ham-head-cols .ham-seg.ham-head-pr { grid-column: 1 / -1; padding: 0; }
       .ham-head-cols .ham-head-lead:empty { display: none; }
-      .ham-head-cols .ham-seg.cap { grid-column: 1; min-width: 0; justify-content: flex-start; }
-      .ham-head-cols > .ham-since { grid-column: 2; }
-      .ham-row .ham-strip-row:not(.ham-head-cols) > .ham-since { display: none; }
+      .ham-head-cols .ham-seg.cap { grid-column: 1 / -1; min-width: 0; justify-content: flex-start; }
+      .ham-head-cols > .ham-since { display: none; }
       .ham-row .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-row .ham-seg.cap { flex-basis: 2em; }
-      .ham-cols .ham-since { display: none; }
+      .ham-since { width: 3em; }
       .ham-cols .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-cols .ham-seg.cap { flex-basis: 2em; }
     }
@@ -1675,6 +1693,10 @@
     .agent-blockers .ab-sep { opacity: 0.35; }
     .agent-blockers .ab-ok { color: var(--green); }
     .agent-blockers .ab-bad { color: var(--red); font-weight: 600; }
+    .agent-repeat-failure { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); margin-top: var(--sp-1); color: var(--muted); }
+    .agent-repeat-failure .rf-key { opacity: 0.65; margin-right: 3px; }
+    .agent-repeat-failure .rf-warn { color: var(--yellow); font-weight: 600; }
+    .agent-repeat-failure .rf-note { color: var(--yellow); overflow-wrap: anywhere; }
     .oc-detail-blockers { margin-top: var(--sp-3); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
     .never-scheduled-chip { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px; color: var(--yellow); background: none; border: 1px solid var(--yellow); border-radius: 3px; padding: 1px 5px; margin-left: var(--sp-3); cursor: pointer; vertical-align: middle; white-space: nowrap; }
     .never-scheduled-chip:hover { background: color-mix(in srgb, var(--yellow) 18%, transparent); }
@@ -7342,7 +7364,7 @@
         <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
         <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person">Needs attention</button>
-        <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option><option value="finisher" title="Rows Hive can finish on its own first, then rows waiting on someone else, then rows that need a person. Reverse the direction for rows that need a person first.">Hive end to end first</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
+        <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option><option value="finisher" title="Rows Hive can finish on its own first, then rows waiting on someone else, then rows that need a person. Reverse the direction for rows that need a person first.">Hive end to end first</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
         <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
@@ -10920,6 +10942,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
           <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentCadenceDisplay(a))}</div></div>
           <div class="oc-detail-field"><div class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">Last Kick</div><div class="value">${esc(agentKickDisplay(a.lastKick, a.lastKickAt))}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Which house style the last kick carried: repo (HIVE_STYLE.md in the managed repo), hive (project.style / style_file) or built-in.">Style</div><div class="value">${styleSourceHtml(a)}</div></div>
           <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input dialog.">Next Kick</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentKickDisplay(a.nextKick, a.nextKickAt))}</div></div>
           <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability.">Restarts</div><div class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts ?? 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? ` <button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></div></div>
@@ -11061,7 +11084,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const nowEl = detail.querySelector('[data-agent-now]');
         if (nowEl) nowEl.outerHTML = agentNowHtml(a);
         const blockersEl = detail.querySelector('.oc-detail-blockers');
-        if (blockersEl) blockersEl.innerHTML = agentBlockerLineHtml(a) + neverScheduledChipHtml(a, a.name);
+        if (blockersEl) {
+          blockersEl.innerHTML = agentBlockerLineHtml(a) + neverScheduledChipHtml(a, a.name);
+          blockersEl.insertAdjacentHTML('beforeend', repeatFailureLineHtml(a));
+        }
         const fieldsEl = detail.querySelector('.oc-detail-fields');
         if (fieldsEl) fieldsEl.outerHTML = ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand);
         const indEl = detail.querySelector('.oc-detail-indicators');
@@ -11201,7 +11227,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${effortSelectHtml(a)}
         </div>
         ${agentNowHtml(a)}
-        <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}</div>
+        <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}${repeatFailureLineHtml(a)}</div>
         ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
         ${subAgentModelsHtml(a)}
@@ -13903,6 +13929,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       };
     }
 
+    // House style (docs/house-style.md): which source the last kick's
+    // "HOUSE STYLE" section came from. Empty until the agent is kicked.
+    const STYLE_SOURCE_HELP = {
+      'repo': 'HIVE_STYLE.md from the managed repository (overrides the hive default)',
+      'hive': 'Hive-wide default from project.style / project.style_file in hive.yaml',
+      'built-in': 'Built-in default: no repo HIVE_STYLE.md and no hive default configured',
+    };
+    function styleSourceHtml(a) {
+      const src = a && a.styleSource;
+      if (!src || !STYLE_SOURCE_HELP[src]) return '—';
+      return `<span class="oc-style-source" data-source="${esc(src)}" title="${esc(STYLE_SOURCE_HELP[src])}">${esc(src)}</span>`;
+    }
+
     function agentNowHtml(a) {
       return agentNowLineHtml(a, agentNowStateOf(a), agentNowContext(Date.now()));
     }
@@ -13932,6 +13971,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const files = (typeof r.filesChanged === 'number' && r.filesChanged >= 0)
         ? `${r.filesChanged} file${r.filesChanged === 1 ? '' : 's'}` : '– files';
       return `<div class="oc-run-line" data-agent-run="${esc(a.name)}" title="${esc(RUN_LINE_HELP)}"><span class="rl-cost">${cost}</span>${sep}<span class="rl-tokens">${toks}</span>${sep}<span class="rl-elapsed">${fmtRunElapsed(r.elapsedS)}</span>${sep}${tests}${sep}<span class="rl-files">${files}</span></div>`;
+    }
+    // fleetRunStatHtml is the Governor-section twin of fleetRunStripHtml: the
+    // compact strip it first landed in is display:none while the full
+    // Governor section stays visible in focus mode, so without this stat the
+    // fleet figure was never on screen.
+    function fleetRunStatHtml() {
+      const f = window._lastStatus?.fleetRun;
+      if (!f) return '';
+      const hour = f.hourPriced ? fmtUSD(f.hourUSD || 0) : '$–';
+      return `<div class="gov-stat" title="RUNNING — agents mid-kick right now · estimated spend accrued by the whole fleet in the current clock hour (token × list price; $– when a running agent's model is unpriced).&#10;&#10;Updates with every status poll; the per-agent breakdown is on each card's run line in Agents."><div class="label">running</div><div class="val" id="gov-fleet-run">${f.running || 0} · ${hour} this hour</div></div>`;
     }
     function fleetRunStripHtml() {
       const f = window._lastStatus?.fleetRun;
@@ -14073,9 +14122,37 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // (payload human_approver) instead of the generic stage word.
     const STAGE_TRACKER_READY_FOR_HUMAN_MERGE = 90;
     const STAGE_TRACKER_MANUAL_MERGE_WORD = 'Awaiting human merge';
+    // Every 090 word also says WHY a person merges (payload
+    // human_merge_reason, a prstage.HumanMergeReason* code such as
+    // "workflow-files" / "untrusted-author" / "branch-protection", falling
+    // back to "policy"); the tooltip carries the payload's one-sentence
+    // human_merge_reason_text (hivecommons/hive#14658).
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'policy': 'policy' };
+    function stageTrackerHumanMergeReasonWord(item) {
+      const code = String((item && item.human_merge_reason) || '').trim();
+      if (!code) return '';
+      return STAGE_TRACKER_HUMAN_MERGE_REASON_WORD[code] || code.replace(/-/g, ' ');
+    }
     function stageTrackerManualMergeWord(item) {
       const approver = String((item && item.human_approver) || '').trim();
-      return STAGE_TRACKER_MANUAL_MERGE_WORD + (approver ? ' · approved by @' + approver : '');
+      const why = stageTrackerHumanMergeReasonWord(item);
+      return STAGE_TRACKER_MANUAL_MERGE_WORD + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
+    }
+    // The plain 090 word (no manual-merge rule): the stage's short word
+    // plus the reason, "Ready for human merge · untrusted author".
+    function stageTrackerReadyForHumanWord(item, fallback) {
+      const why = stageTrackerHumanMergeReasonWord(item);
+      return why ? fallback + ' · ' + why : '';
+    }
+    // 085 under hive:unauthorized (payload unauthorized_step, e.g. "approve
+    // workflow runs"): the hive's GitHub App lacks the permission for that
+    // step, so the lit chevron names the human step owed instead of the
+    // generic "Needs human decision" (hivecommons/hive#14589).
+    const STAGE_TRACKER_HUMAN_GATED = 85;
+    const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Awaiting human';
+    function stageTrackerUnauthorizedWord(item) {
+      const step = String((item && item.unauthorized_step) || '').trim();
+      return step ? STAGE_TRACKER_UNAUTHORIZED_WORD + ': ' + step : '';
     }
     // Issue-slot placeholders for a closing reference whose title the server
     // could not resolve (the issue is closed and unreadable, or of unknown state).
@@ -14132,7 +14209,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       50: STAGE_TRACKER_MOTION_ACTIVE, 60: STAGE_TRACKER_MOTION_ACTIVE, 70: STAGE_TRACKER_MOTION_ACTIVE, 74: STAGE_TRACKER_MOTION_ACTIVE, 80: STAGE_TRACKER_MOTION_ACTIVE, 95: STAGE_TRACKER_MOTION_ACTIVE, 100: STAGE_TRACKER_MOTION_ACTIVE,
     };
     const STAGE_TRACKER_MOTION_AUTHOR_STAGES = [30, 40];
-    const STAGE_TRACKER_MOTION_HUMAN_MODS = ['stalled', 'blocked', 'needs-human', 'needs-decision', 'needs-triage'];
+    const STAGE_TRACKER_MOTION_HUMAN_MODS = ['stalled', 'blocked', 'needs-human', 'needs-decision', 'needs-triage', 'unauthorized'];
     function stageTrackerMotion(item) {
       const mods = Array.isArray(item && item.modifiers) ? item.modifiers : [];
       if (mods.indexOf('hold') >= 0) return STAGE_TRACKER_MOTION_STATIC;
@@ -14180,6 +14257,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // labels follow when at least two items carry them.
     const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/', 'hold', 'on-hold', 'do-not-merge', 'hive-pause/'];
     const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number', 'finisher'];
+    // Attention tiers within a column (stageTrackerAttentionTier; same
+    // values as Go): the pills that sink a row, and the direction button's
+    // note that the arrow never flips the tier.
+    const STAGE_TRACKER_TIER_ATTENTION = 0;
+    const STAGE_TRACKER_TIER_NORMAL = 1;
+    const STAGE_TRACKER_TIER_SUNK = 2;
+    const STAGE_TRACKER_SUNK_MODS = ['hold', 'draft'];
+    const STAGE_TRACKER_DIR_TIER_NOTE = ' · Attention-first within each column; arrow flips age order';
     // Repo chip + group-by-repo. The chip before an item's number names its
     // repo (short name; owner/repo in the tooltip; click = the Repo filter)
     // and is shown always / only when the payload spans several repos
@@ -14238,7 +14323,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 74: return 'Hive took it over' + viaPR;
         case 80: return 'Not yet admitted to auto merge' + viaPR;
         case 85: return 'Needs a human decision' + viaPR;
-        case 90: return 'Ready for a human merge' + viaPR;
+        case 90: return 'Ready for a human merge' + (stageTrackerHumanMergeReasonWord(item) ? ' · ' + stageTrackerHumanMergeReasonWord(item) : '') + viaPR;
         case 95: return 'Pre-merge soak' + stageTrackerSoakLeft(item) + viaPR;
         case 100: return 'Admitted — merging' + viaPR;
         case 110: return 'Merged';
@@ -14318,7 +14403,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
@@ -14347,7 +14432,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs;
     }
 
-    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
+    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
     const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
     const STAGE_TRACKER_ICONS = {
@@ -14461,6 +14546,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
+          // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
+          else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim() + (sg.description ? ' — ' + sg.description : '');
           if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.
@@ -14499,7 +14586,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Modifiers that park an item on a person. A regression on a row that
     // carries none of these and sits on a hive-driven stage is the hive's
     // to work through, so the dashboard must not dress it as a human call.
-    const STAGE_TRACKER_HUMAN_MODS = ['hold', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'stalled'];
+    const STAGE_TRACKER_HUMAN_MODS = ['hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'stalled'];
     const STAGE_TRACKER_HANDLED_TEXT = 'stage ↓';
     const STAGE_TRACKER_HANDLED_NOTE = 'the hive is handling it — no action needed; clears on the next forward step';
 
@@ -14550,9 +14637,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actorKind = stageTrackerActorKind(item);
       if (actorKind) lines.push('Next move: ' + actorKind);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
+      const stale = stageTrackerStaleLabelsText(item);
+      if (stale) lines.push(stale);
       if (item.sentinel_alert) lines.push(stageTrackerSentinelTip(item));
       const regressed = stageTrackerRegressionText(item, nowMs);
       if (regressed) lines.push(regressed.charAt(0).toUpperCase() + regressed.slice(1));
+      if (mods.indexOf('unauthorized') >= 0 && item.unauthorized) lines.push('Unauthorized: ' + item.unauthorized);
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
       return lines.filter(Boolean).join('\n');
@@ -14588,17 +14678,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!isNaN(recheckMs)) text += ' · re-check at ' + agentNowClockTime(recheckMs, Date.now());
       // The regressed pill (lead or folded into "+1") explains itself on hover.
       const regressed = stageTrackerRegressionText(item, Date.now());
+      // An unauthorized pill names the missing App permission and the human step.
+      const tip = (mods.indexOf('unauthorized') >= 0 && String(item.unauthorized || '').trim()) || regressed;
       const cls = 'ham-mod-' + mods[0] + (handled && mods[0] === 'regressed' ? ' ham-mod-handled' : '');
-      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${regressed ? ` title="${esc(regressed)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
+      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
     }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
     // the item's own number + title, the PR cell (PR in progress..Merge gate)
-    // the given refs, and the since column the time on the current step
-    // (the chip sits in the cap cell, to its left).
-    function stageTrackerHeadColsHtml(prRefs, sinceHtml, leadHtml, chipsHtml) {
+    // the given refs, and the cap cell the modifier chip, bottom-aligned so
+    // it sits on the last title line, directly over the strip's right end.
+    // The since column is an empty spacer here (same width as the strip
+    // row's, which carries the time on step): a wrapped title must not float
+    // the age away from the chevrons it describes.
+    function stageTrackerHeadColsHtml(prRefs, leadHtml, chipsHtml) {
       const wide = !(prRefs && prRefs.length);
-      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr">${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol>${sinceHtml || '<span class="ham-since"></span>'}</div>`;
+      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr">${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol><span class="ham-since"></span></div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
@@ -14645,7 +14740,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
-        sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '',
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '',
         finisher: lp.finisher || '', finisher_verb: lp.finisher_verb || '', finisher_reason: lp.finisher_reason || '' };
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       ref += stageTrackerBaseRefBadge(lp);
@@ -14654,21 +14749,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerChipsHtml(pr))}
           </div>
           <div class="ham-strip-row">
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}</ol>
-            <span class="ham-since"></span>
+            ${stageTrackerSinceHtml(pr, nowMs)}
           </div>
           ${stageTrackerCurrentStageHtml(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}
         </div>`;
     }
 
-    // Covering PRs of an issue, furthest along first.
+    // Covering PRs of an issue, furthest along first, attention-first
+    // within a stage (stageTrackerAttentionTier), then longest on step.
     function stageTrackerLinkedSorted(item, stages) {
       const linked = Array.isArray(item.linked_prs) ? item.linked_prs.slice() : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
-      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr') - stageTrackerAnchor(x.stage, stages, 'pr')) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
+      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr') - stageTrackerAnchor(x.stage, stages, 'pr')) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
 
     // List order: furthest along the strip first — a covered issue counts as
@@ -14827,7 +14923,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // Who finishes the row is the PR's answer once the PR has one.
           const fin = lp.finisher ? lp : item;
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '',
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '',
             finisher: fin.finisher || '', finisher_verb: fin.finisher_verb || '', finisher_reason: fin.finisher_reason || '' });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
@@ -14839,10 +14935,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       // Invariant (owner): the issue slot on the left never holds a PR. A
       // PR whose issue is listed is nested under it; a PR seen on its own
-      // (no issue, a closed issue, or the Pull requests view) puts the issue
-      // it closes — or a muted "no linked issue" placeholder — on the left
-      // and names itself in the PR column, exactly where a covering PR sits
-      // on an issue row.
+      // (no issue, or the Pull requests view) puts the issue it closes — or
+      // a muted "no linked issue" placeholder — on the left and names
+      // itself in the PR column, exactly where a covering PR sits on an
+      // issue row. The one exception is a PR whose every closing link is a
+      // closed issue (closed_issue set): that row is the PR's, so the PR
+      // leads at full width and the closed issue is a chip.
       // The repo chip (when on) leads the row, before the issue slot's #N.
       const chip = ctx.repoChips ? stageTrackerRepoChipHtml(item.repo, ctx) : '';
       let leadHtml;
@@ -14853,6 +14951,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
             ${item.claim_reference ? `<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}
             ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
+          </div>`;
+      } else if (item.closed_issue && Number(item.closed_issue.number) > 0) {
+        // Every issue the PR closes is already closed, yet the PR is open:
+        // the row is live work anchored on the PR. The PR leads (its own
+        // icon, number and title, full width) and the closed issue is a
+        // secondary muted chip, so the row never reads as stale
+        // (hivecommons/hive#14655). A not-planned close adds a chip saying
+        // the PR may be moot.
+        const ci = item.closed_issue;
+        const notPlanned = String(ci.state_reason || '').toLowerCase() === 'not_planned';
+        const ciTip = (ci.title || STAGE_TRACKER_CLOSED_ISSUE_TITLE) + ' · closed' + (notPlanned ? ' (not planned)' : '') + ' · PR still open';
+        const ak = item.author_kind || 'hive';
+        leadHtml = `<div class="ham-head-main ham-head-pr-anchor">
+            ${stageTrackerIcon('pr', 'ham-kind-ico')}${chip}
+            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc((title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), ak + (item.author ? ' · @' + item.author : ''))}#${Number(item.number) || 0}</a>
+            <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
+            <a class="ham-badge ham-issue-closed-chip ham-closed-issue-ref" href="${esc(ci.url || '#')}" target="_blank" rel="noopener" title="${esc(ciTip)}">closes <s>#${Number(ci.number)}</s> · closed</a>${notPlanned ? ' <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned" title="The issue this PR closes was closed as not planned; the PR may be moot.">issue closed (not planned)</span>' : ''}
           </div>`;
       } else {
         const li = stageTrackerPRIssueSlot(item);
@@ -14871,11 +14986,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-row" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerChipsHtml(shown))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs)}</ol>
-          <span class="ham-since"></span>
+          ${stageTrackerSinceHtml(shown, nowMs)}
         </div>${stageTrackerCurrentStageHtml(shown, stages, range, nowMs)}${subs}
       </div>`;
     }
@@ -15305,6 +15420,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return mods.length > 0 || STAGE_TRACKER_ATTENTION_STAGES.indexOf(n) >= 0;
     }
 
+    // Ordering tier of a row within its column (mirrors Go
+    // stageTrackerAttentionTier): rows parked on a person first, then the
+    // rest, then rows nobody should act on — hold (incl. do-not-merge/*),
+    // draft, and a PR standing in for a closed issue. Only the pills a row
+    // shows count (deferred_modifiers never promote it); the direction
+    // toggle leaves the tier order alone.
+    function stageTrackerAttentionTier(row) {
+      const mods = Array.isArray(row.modifiers) ? row.modifiers : [];
+      if (STAGE_TRACKER_SUNK_MODS.some(m => mods.indexOf(m) >= 0) || (row.closed_issue && Number(row.closed_issue.number) > 0)) return STAGE_TRACKER_TIER_SUNK;
+      return stageTrackerNeedsAttention(row) ? STAGE_TRACKER_TIER_ATTENTION : STAGE_TRACKER_TIER_NORMAL;
+    }
+
     // The instant an item's current wait began: when it entered its step,
     // else when it was opened (an item with no step yet is waiting since then).
     function stageTrackerWaitSince(item) {
@@ -15445,27 +15572,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // longest on step); 'waiting' is longest wait first; 'newest' is most
     // recently opened first; 'number' is repo then number; 'finisher' is
     // Hive end to end first, then waiting on someone else, then needs a
-    // person, each in strip order. dir 'asc' reverses.
+    // person, each in strip order. Under 'furthest' and 'waiting' rows tier
+    // attention-first within a column (stageTrackerAttentionTier); dir 'asc'
+    // reverses the strip / age / repo / number keys but never the tier, and
+    // reverses 'finisher' whole (rows that need a person first).
     function stageTrackerSort(rows, stages, f) {
       f = stageTrackerNormalizeFilter(f);
       const byRepoNumber = (x, y) => ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0));
+      const sign = f.dir === 'asc' ? -1 : 1;
+      const byTier = (x, y) => stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y);
       let cmp;
       switch (f.sort) {
-        case 'waiting': cmp = (x, y) => ((stageTrackerWaitSince(x) || Infinity) - (stageTrackerWaitSince(y) || Infinity)) || byRepoNumber(x, y); break;
-        case 'newest': cmp = (x, y) => ((Date.parse(y.created_at || '') || 0) - (Date.parse(x.created_at || '') || 0)) || byRepoNumber(y, x); break;
-        case 'number': cmp = (x, y) => byRepoNumber(y, x); break;
+        case 'waiting': cmp = (x, y) => byTier(x, y) || sign * (((stageTrackerWaitSince(x) || Infinity) - (stageTrackerWaitSince(y) || Infinity)) || byRepoNumber(x, y)); break;
+        case 'newest': cmp = (x, y) => sign * (((Date.parse(y.created_at || '') || 0) - (Date.parse(x.created_at || '') || 0)) || byRepoNumber(y, x)); break;
+        case 'number': cmp = (x, y) => sign * byRepoNumber(y, x); break;
         case 'finisher': {
           const keyOf = it => stageTrackerSortKey(it, stages);
-          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return (stageTrackerFinisherRank(x, stages) - stageTrackerFinisherRank(y, stages)) || (b.anchor - a.anchor) || (a.since - b.since) || byRepoNumber(x, y); };
+          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return sign * ((stageTrackerFinisherRank(x, stages) - stageTrackerFinisherRank(y, stages)) || (b.anchor - a.anchor) || (a.since - b.since) || byRepoNumber(x, y)); };
           break;
         }
         default: {
           const keyOf = it => stageTrackerSortKey(it, stages);
-          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return (b.anchor - a.anchor) || (a.since - b.since) || byRepoNumber(x, y); };
+          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return sign * (b.anchor - a.anchor) || byTier(x, y) || sign * ((a.since - b.since) || byRepoNumber(x, y)); };
         }
       }
-      const out = (rows || []).slice().sort(cmp);
-      return f.dir === 'asc' ? out.reverse() : out;
+      return (rows || []).slice().sort(cmp);
     }
 
     // One page of rows plus the numbers the "showing X–Y of N" line needs.
@@ -15659,7 +15790,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const att = document.getElementById('activity-monitor-attention');
       if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
       const dir = document.getElementById('activity-monitor-dir');
-      if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'); }
+      if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', (f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending') + STAGE_TRACKER_DIR_TIER_NOTE); }
       const reset = document.getElementById('activity-monitor-reset');
       if (reset) reset.hidden = !stageTrackerFilterActive(f);
     }
@@ -15989,8 +16120,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       open: 'Open on GitHub', copy: 'Copy link',
     };
     // Accept triage shows on an issue the chevron calls "Triage needed":
-    // stage 015, or the needs-triage pill on another stage (a claimed or
-    // covered issue the reporter-trust gate still holds). Never on a PR.
+    // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
+    // 045). A needs-triage left on a claimed or covered issue is reported
+    // as stale_labels, not a modifier, so no action is offered for it
+    // (hivecommons/hive#14586). Never on a PR.
     const STAGE_TRACKER_TRIAGE_STAGE = 15;
     const STAGE_TRACKER_ACTIONABLE_STAGE = 10;
     const STAGE_TRACKER_WHY_WRITE = 'Sign in with write access to this repo';
@@ -16099,7 +16232,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.kind === 'pr') return parked(item) ? item : null;
       for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
         const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], author: lp.author || '',
-          sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
+          human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
         if (parked(pr)) return pr;
       }
       if (item.mirrored) return null;
@@ -16130,6 +16263,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
       out.push({ id: 'decide:close-wontfix', label: "Close as won't-fix…", enabled, why, danger: true });
       return out;
+    }
+    // Pure: the operator note for labels the row's stage has outrun
+    // (stale_labels: a needs-triage still on a claimed issue, which the
+    // reconciler removes on its next pass — hivecommons/hive#14586). '' when none.
+    function stageTrackerStaleLabelsText(item) {
+      const stale = item && Array.isArray(item.stale_labels) ? item.stale_labels.filter(Boolean) : [];
+      if (!stale.length) return '';
+      return 'Stale label' + (stale.length > 1 ? 's' : '') + ': ' + stale.join(', ') + ' (stage has moved on; the hive removes it on its next pass)';
     }
     // Pure: whether a row is an issue waiting on a maintainer's triage.
     function stageTrackerTriageNeeded(item) {
@@ -17565,6 +17706,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return '';
     }
+    /* repeatFailureLineHtml renders the repeat-failure check (#14550): the
+       check state ("on", "not available for this backend", "not receiving
+       data") and, while a command keeps failing the same way, the note.
+       Monitor only: the agent is never paused for it. Renders nothing while
+       the check is off — the hive sends no state then. */
+    function repeatFailureLineHtml(a) {
+      if (!a || (!a.repeatFailureCheck && !a.repeatFailureNote)) return '';
+      const warn = a.repeatFailureCheck === 'not_covered' || a.repeatFailureCheck === 'no_data';
+      const checkTip = a.repeatFailureCheck === 'no_data'
+        ? 'A turn in progress ran shell commands, but no command record has arrived for repeat_failure.no_data_after_s. The backend may have changed how it runs commands.'
+        : a.repeatFailureCheck === 'not_covered'
+        ? 'Hive cannot record this backend\'s shell commands yet, so repeated failures are not noticed. See the repeated-failure table in the backend support docs.'
+        : 'Hive records this agent\'s shell commands and notes a command that keeps failing the same way.';
+      const check = a.repeatFailureCheckMessage
+        ? `<span class="${warn ? 'rf-warn' : ''}" data-repeat-failure-check="${esc(a.repeatFailureCheck)}" title="${esc(checkTip)}"><span class="rf-key">repeat-failure</span>${esc(a.repeatFailureCheckMessage)}</span>`
+        : '';
+      const note = a.repeatFailureNote
+        ? `<span class="rf-note" data-repeat-failure-note title="Monitor only: the agent is not paused.">${esc(a.repeatFailureNote)}</span>`
+        : '';
+      return `<div class="agent-repeat-failure">${note}${check}</div>`;
+    }
     /* agentPowerSwitchHtml renders the master-power 0/1 rocker for an agent's
        `enabled` flag.
 
@@ -18255,7 +18417,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         const indEl = agentIndicators(a.name);
         const compactCls = isAgentCompact(a.name) ? ' compact' : '';
-        const replicaBadge = (a.replicaBase && a.replicaIndex > 1) ? ` <span class="status-badge" title="Replica ${a.replicaIndex} of ${a.replicaCount} for ${esc(a.replicaBase)}">${esc(a.replicaBase)} · replica ${a.replicaIndex} of ${a.replicaCount}</span>` : '';
+        const autoscale = (window._lastStatus || {}).reviewerAutoscale;
+        const autoLane = autoscale && autoscale.enabled && autoscale.agent === (a.replicaBase || a.name);
+        const autoTitle = autoLane ? ` — reviewer autoscale: ${autoscale.current} active, target ${autoscale.target}, band ${autoscale.min}–${autoscale.max}${autoscale.lastDecision ? '; last ' + reviewerAutoscaleDecisionText(autoscale.lastDecision) : ''}` : '';
+        const autoDraining = autoLane && Array.isArray(autoscale.draining) && autoscale.draining.includes(a.name);
+        const replicaBadge = (a.replicaBase && a.replicaIndex > 1)
+          ? ` <span class="status-badge" title="Replica ${a.replicaIndex} of ${a.replicaCount} for ${esc(a.replicaBase)}${esc(autoTitle)}">${esc(a.replicaBase)} · replica ${a.replicaIndex} of ${a.replicaCount}${autoLane ? ' · auto' : ''}${autoDraining ? ' · draining' : ''}</span>`
+          : (autoLane ? ` <span class="status-badge" title="Reviewer lane sized by backlog${esc(autoTitle)}">${autoscale.current} reviewer${autoscale.current === 1 ? '' : 's'} · auto</span>` : '');
         const configTarget = a.replicaBase || a.name;
         /* Says why the card is grey. Without it the only visible difference
            between "switched off" and "crashed" is the absence of a session,
@@ -18291,6 +18459,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${agentNowHtml(a)}
           ${agentRunLineHtml(a)}
           ${agentBlockerLineHtml(a)}
+          ${repeatFailureLineHtml(a)}
           ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
           ${(() => {
             // Last upstream/launch error stays on its own line below the state
@@ -18314,6 +18483,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="agent-field"><span class="label" title="Number of HTTP requests blocked by the ACMM proxy for this agent. Non-zero means the agent attempted actions above its mode.">proxy</span><span class="value">${a.proxyViolations > 0 ? '<span style="color:var(--danger)">⛔ ' + a.proxyViolations + ' blocked</span>' : '✓ clean'}</span></div>
           <div class="agent-field"><span class="label" title="Time between governor kicks for this agent in the current mode. Configured per governor mode (idle/quiet/busy/surge).">interval</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentCadenceDisplay(a))}</span></div>
           <div class="agent-field"><span class="label" title="When the governor last kicked (sent a work prompt to) this agent. A kicked work pass often keeps running long after this time — terminal activity between kicks is normally the previous pass still working, not an off-schedule run.">last kick</span><span class="value">${esc(agentKickDisplay(a.lastKick, a.lastKickAt))}</span></div>
+          <div class="agent-field"><span class="label" title="Which house style the last kick carried: repo (HIVE_STYLE.md), hive (project.style) or built-in.">style</span><span class="value">${styleSourceHtml(a)}</span></div>
           <div class="agent-field"><span class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input dialog.">next kick</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentKickDisplay(a.nextKick, a.nextKickAt))}</span></div>
           ${agentTokenRow(a.name, a.cadence)}
           ${agentSpendRow(a.name)}
@@ -20019,6 +20189,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="gov-stat" aria-label="${escapeHtml(issueEquationTitle)}"><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div>${issueEquationHTML ? `<div class="overview-kpi-subline">${issueEquationHTML}</div>` : ''}</div>
           <div class="gov-stat" aria-label="${escapeHtml(prEquationTitle)}"><div class="label">actionable PRs</div><div class="spark-row"><span class="val">${prCount}</span>${prsSpark}</div>${prEquationHTML ? `<div class="overview-kpi-subline">${prEquationHTML}</div>` : ''}</div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
+          ${fleetRunStatHtml()}
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           <div class="gov-stat" title="RUNS BLOCKED ON HUMAN — active long-running runs whose projection says waiting_on=human."><div class="label">blocked on human</div><div class="val">${(Array.isArray(data.runs) ? data.runs : []).filter(r => r && r.waiting_on === 'human').length}</div></div>
           ${(() => {
@@ -50781,6 +50952,12 @@ function burnAreaChart() {
           <label>Hosted-hive requests webhook ${yamlHint('notifications.discord.requests_webhook_url')} ${settingHelpMark('notifications', 'configuration', 'Discord requests webhook', `Discord webhook the hub posts new hosted-hive provision requests to (the community request channel). A hub-level requests webhook takes precedence when set.`)}</label>
           <input type="password" autocomplete="new-password" placeholder="${esc(requestsText)}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordRequestsWebhookUrl" data-arg-types="s,s,v">
           <div class="config-help">Write-only; the current URL is never echoed. Used by the hub process; may require restart.</div>
+        </div>
+        <div class="config-subgroup">Discord RFC notices ${settingHelpMark('notifications', 'configuration', 'Discord RFC notices', `One-way RFC lifecycle notices posted with the Discord bot token (set on the Channels tab) to their own channel.`)}</div>
+        <div class="config-field">
+          <label>RFC channel id ${yamlHint('notifications.discord.rfc_channel_id')} ${settingHelpMark('notifications', 'configuration', 'Discord RFC channel id', `Discord channel that receives RFC lifecycle notices: an RFC issue (rfc label or RFC-prefixed title) opened, closed, or taken off hold so it can be implemented. Posts with the bot token only; the command bot and its channel id are not required. Empty turns the notices off.`)}</label>
+          <input type="text" value="${esc(n.discordRfcChannelId || '')}" placeholder="1234567890" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordRfcChannelId" data-arg-types="s,s,w">
+          <div class="config-help">Empty disables RFC notices. Env HIVE_DISCORD_RFC_CHANNEL_ID overrides.</div>
         </div>`;
     }
 
@@ -52291,6 +52468,7 @@ function burnAreaChart() {
         <div class="config-field"><label>Workspace dir ${yamlHint('agent_sandbox.workspace_dir')} ${settingHelpMark('settings', 'security-and-access', 'Workspace dir', `Directory mounted as the sandbox workspace.`)}</label><input type="text" value="${esc(sec.agentSandboxWorkspaceDir || '')}" placeholder="default workspace dir" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxWorkspaceDir" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Env allowlist ${yamlHint('agent_sandbox.env_allowlist[]')} ${settingHelpMark('settings', 'security-and-access', 'Sandbox env allowlist', `Environment variable names passed into the sandbox. One per line.`)}</label><textarea rows="3" class="mono" data-change-action="markSecurityLines" data-arg0="agentSandboxEnvAllowlist" data-arg-types="s,v">${esc((sec.agentSandboxEnvAllowlist || []).join('\n'))}</textarea></div>
         <div class="config-field"><label>Job service account ${yamlHint('agent_sandbox.job.service_account')} ${settingHelpMark('settings', 'security-and-access', 'Job service account', `Kubernetes service account for sandbox Jobs.`)}</label><input type="text" value="${esc(sec.agentSandboxJobServiceAccount || '')}" placeholder="service account name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobServiceAccount" data-arg-types="s,s,v"></div>
+        <div class="config-field"><label>Job scheduler name ${yamlHint('agent_sandbox.job.scheduler_name')} ${settingHelpMark('settings', 'security-and-access', 'Job scheduler name', `Kubernetes schedulerName for sandbox Job pods. Leave empty for the cluster default; set when an admission webhook requires a custom scheduler for device-requesting pods (e.g. spyre-scheduler).`)}</label><input type="text" value="${esc(sec.agentSandboxJobSchedulerName || '')}" placeholder="cluster default" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobSchedulerName" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job TTL (seconds) ${yamlHint('agent_sandbox.job.ttl_seconds')} ${settingHelpMark('settings', 'security-and-access', 'Job TTL (seconds)', `Seconds a finished sandbox Job is kept. 0 uses the default.`)}</label><input type="number" min="0" value="${Number(sec.agentSandboxJobTtlSeconds || 0)}" data-change-action="markSecurityNumber" data-arg0="agentSandboxJobTtlSeconds" data-arg-types="s,v"></div>
         <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
@@ -53056,6 +53234,7 @@ function burnAreaChart() {
       const amContributorLaneVerdict = amContributorLane.require_reviewer_verdict !== false;
       const amContributorLaneRegistry = amContributorLane.registry_tiers_sufficient !== false;
       const amContributorLaneHeldRuns = amContributorLane.approve_held_runs_for_registry_trusted !== false;
+      const amContributorLaneWorkflowApproval = amContributorLane.owner_approval_releases_workflow_fence !== false;
       const amContributorLaneSoak = Number.isFinite(Number(amContributorLane.soak_minutes)) ? Number(amContributorLane.soak_minutes) : 30;
       const amContributorLaneLabels = Array.isArray(amContributorLane.exclude_labels) ? amContributorLane.exclude_labels : ['hold','do-not-merge','needs-human','blocked','needs-rebase'];
       const amContributorLaneTiers = Array.isArray(amContributorLane.require_tiers) && amContributorLane.require_tiers.length ? amContributorLane.require_tiers : ['merger','trusted'];
@@ -53293,6 +53472,13 @@ function burnAreaChart() {
                   <span class="config-toggle-label">Start CI held by GitHub's fork-approval policy ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Start CI held by fork-approval policy', `GitHub holds a first-time contributor's pull_request runs until someone clicks Approve and run. If the operator already trusts the author to merge via the registry, holding their CI is pure drag; the hive approves the head's held runs once and logs contributor-lane approved held runs.`)}</span>
                 </div>
               </div>
+              <div class="config-field">
+                <label>Owner approval releases the workflow-path fence ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Owner approval releases the workflow-path fence', `When on (the default), a trusted merger's GitHub Approve review on the current head — or a dashboard /hive decision approve bound to it — lets the contributor lane merge a PR that edits .github/workflows/** or .github/actions/** itself once CI, soak and the other gates are clear. Approval on an earlier head does not count. Needs the App's Workflows: Read and write; without it the merge is refused, the PR is marked hive:unauthorized and parks at 090 for a person's Merge click. Off keeps every workflow-path PR a person's merge.`)}</label>
+                <div class="config-toggle">
+                  <div id="am-contributor-lane-owner-approval-workflow-fence" class="config-toggle-switch ${amContributorLaneWorkflowApproval ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneWorkflowApproval ? 'true' : 'false'}"></div>
+                  <span class="config-toggle-label">Merge owner-approved workflow-file PRs ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Merge owner-approved workflow-file PRs', `YAML: auto_merge.contributor_lane.owner_approval_releases_workflow_fence. If you approved it, the hive merges it; a stale approval re-arms the fence on the next push.`)}</span>
+                </div>
+              </div>
             </div>
             <div class="config-field mt-4">
               <label for="am-contributor-lane-auto-promotion-scope">Auto-promotion scope ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Auto-promotion scope', `Where the clean-merged-PR ratchet (auto_merge.contributor_tier.auto_promote_after_merged) counts an author's merges. hive (the default) counts clean merged PRs across every repository this hive manages, so a contributor trusted in the main repo is trusted in the small satellite repos too; repo counts only the PR's own repository. Revert and sentinel-alert evidence blocks promotion in either scope.`)}</label>
@@ -53308,7 +53494,7 @@ function burnAreaChart() {
               <label for="am-contributor-lane-repos">Repositories</label>
               <select id="am-contributor-lane-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh104" class="am-trusted-authors-repos">${amContributorLaneRepoOptions}</select>
               <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, no-linked-issue, claim-author-mismatch, claim-other-hive, claim-tier-untrusted, claim-unverified, author-association, workflow-path, tests-removed, no-reviewer, no-verdict, soaking, sentinel-blocked); a registry-admitted PR logs <code>contributor-lane:registry-trusted</code>.</p>
-              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.approve_held_runs_for_registry_trusted</code>, <code>auto_merge.contributor_lane.auto_promotion_scope</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
+              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.approve_held_runs_for_registry_trusted</code>, <code>auto_merge.contributor_lane.owner_approval_releases_workflow_fence</code>, <code>auto_merge.contributor_lane.auto_promotion_scope</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
             </div>
           </div>
         </div>
@@ -53413,6 +53599,7 @@ function burnAreaChart() {
             <div class="config-field"><label>Max reviews per head ${yamlHint('review.max_reviews_per_head')} ${settingHelpMark('review-swarm', 'configuration', 'Max reviews per head', `Caps how many top-level hive reviews one PR head may receive before the relay refuses more (revisions and thread replies excepted). 0 or empty derives the cap: 1 with combined perspectives, one per perspective otherwise. A negative value disables the backstop.`)}</label><input type="number" step="1" value="${esc(String(rv.max_reviews_per_head || ''))}" placeholder="0 — derived" data-change-action="markDirty" data-arg0="review" data-arg1="max_reviews_per_head" data-arg-types="s,s,N"></div>
             <div class="config-field"><label>Re-review verdicts before ${yamlHint('review.revise_verdicts_before')} ${settingHelpMark('review-swarm', 'configuration', 'Re-review verdicts before', `RFC 3339 instant, e.g. 2026-09-19T14:00:00Z. PRs in the revise repos whose verdict was recorded before it are reviewed once more even though the head has not moved, for when the reviewer itself was wrong. Each PR is revisited at most once per bump. The revise repo list (review.revise_repos) is yaml-only. Empty clears it.`)}</label><input type="text" value="${esc(rv.revise_verdicts_before || '')}" placeholder="not set" spellcheck="false" data-change-action="markDirty" data-arg0="review" data-arg1="revise_verdicts_before" data-arg-types="s,s,w"></div>
           </div>
+          ${renderReviewerAutoscale(rv)}
           <div class="config-subgroup">Dispatch</div>
           <div class="config-field-row">
             <div class="config-field"><label>Webhook-triggered dispatch ${yamlHint('review.event_driven')} ${settingHelpMark('review-swarm', 'configuration', 'Webhook-triggered dispatch', `Lets pull_request webhooks start a review early instead of waiting for the next governor cycle. auto (the default) is on exactly when this hive receives signed GitHub webhooks. Always off while the review swarm itself is off (require approval and fan-out).`)}</label><select data-change-action="markDirty" data-arg0="review" data-arg1="event_driven_mode" data-arg-types="s,s,v">${['auto', 'on', 'off'].map(v => `<option value="${v}"${(rv.event_driven === true ? 'on' : rv.event_driven === false ? 'off' : 'auto') === v ? ' selected' : ''}>${v}</option>`).join('')}</select></div>
@@ -55005,6 +55192,7 @@ function burnAreaChart() {
       'auto_merge.contributor_lane.require_reviewer_verdict': { tab: 'Features', stage: v => complianceStageContributorLane('require_reviewer_verdict', v) },
       'auto_merge.contributor_lane.registry_tiers_sufficient': { tab: 'Features', stage: v => complianceStageContributorLane('registry_tiers_sufficient', v) },
       'auto_merge.contributor_lane.approve_held_runs_for_registry_trusted': { tab: 'Features', stage: v => complianceStageContributorLane('approve_held_runs_for_registry_trusted', v) },
+      'auto_merge.contributor_lane.owner_approval_releases_workflow_fence': { tab: 'Features', stage: v => complianceStageContributorLane('owner_approval_releases_workflow_fence', v) },
       'auto_merge.required_checks': { tab: 'Features' },
       'sentinel.enabled': { tab: 'Security', stage: v => markSentinelDirty('enabled', v) },
       'sentinel.disabled_behaviors': { tab: 'Security' },
@@ -55768,6 +55956,78 @@ function burnAreaChart() {
       rerenderReviewSeverityBacklog();
     }
 
+    // review.reviewers.autoscale (hivecommons/hive#14685) is a sub-object on
+    // PUT /api/config/review, sent as reviewer_autoscale with only the edited
+    // keys so an absent key leaves the file's value alone.
+    const REVIEWER_AUTOSCALE_DEFAULTS = { min: 1, max: 4, target_backlog_per_reviewer: 2, scale_up_cycles: 2, scale_down_cycles: 5, cooldown: '5m', cpu_per_reviewer: 1, mem_per_reviewer_mb: 2048 };
+    function reviewerAutoscaleState() {
+      const d = _configState.data || (_configState.data = {});
+      d.review = d.review || {};
+      d.review.reviewers = d.review.reviewers || {};
+      d.review.reviewers.autoscale = d.review.reviewers.autoscale || {};
+      return d.review.reviewers.autoscale;
+    }
+    function markDirtyReviewerAutoscale(key, value) {
+      const a = reviewerAutoscaleState();
+      if (['min', 'max', 'target_backlog_per_reviewer', 'scale_up_cycles', 'scale_down_cycles', 'mem_per_reviewer_mb'].includes(key)) {
+        value = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+      } else if (key === 'cpu_per_reviewer') {
+        value = Number.isFinite(value) && value > 0 ? value : 0;
+      }
+      a[key] = value;
+      markDirty('review', 'reviewer_autoscale', Object.assign({}, (_configState.dirty.review || {}).reviewer_autoscale, { [key]: value }));
+    }
+    function toggleReviewerAutoscaleEnabled() {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) return;
+      const a = reviewerAutoscaleState();
+      markDirtyReviewerAutoscale('enabled', !a.enabled);
+      const host = document.getElementById('review-reviewer-autoscale');
+      if (host) host.outerHTML = renderReviewerAutoscale((_configState.data || {}).review);
+    }
+    function renderReviewerAutoscale(rv) {
+      const a = (rv && rv.reviewers && rv.reviewers.autoscale) || {};
+      const canEdit = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const dis = canEdit ? '' : ' disabled';
+      const live = (window._lastStatus || {}).reviewerAutoscale;
+      const liveLine = live && live.enabled
+        ? `<p class="am-trusted-authors-note">Now: <strong>${live.current}</strong> reviewer${live.current === 1 ? '' : 's'} (target ${live.target}, band ${live.min}–${live.max})${live.draining && live.draining.length ? ', draining ' + live.draining.map(esc).join(', ') : ''}; backlog ${live.backlog}${live.oldestWait ? ', oldest ' + esc(live.oldestWait) : ''}${live.lastDecision ? ' — last: ' + esc(reviewerAutoscaleDecisionText(live.lastDecision)) : ''}</p>`
+        : '';
+      const num = (key, yamlPath, label, help, step) => `<div class="config-field"><label>${label} ${yamlHint(yamlPath)} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', label, help)}</label>
+              <input type="number" min="0"${step ? ' step="' + step + '"' : ''} value="${esc(String(a[key] || ''))}" placeholder="${esc(String(REVIEWER_AUTOSCALE_DEFAULTS[key]))}" data-change-action="markDirtyReviewerAutoscale" data-arg0="${key}" data-arg-types="s,N"${dis}></div>`;
+      const fields = a.enabled ? `
+            <div class="config-field-row mt-3">
+              ${num('min', 'review.reviewers.autoscale.min', 'Min reviewers', 'The floor of active reviewer replicas. The base reviewer agent is never retired.')}
+              ${num('max', 'review.reviewers.autoscale.max', 'Max reviewers', 'The ceiling of active reviewer replicas; capped at the fleet replica limit (5). Each replica is an ordinary reviewer-N agent with its own pane, token and cadence.')}
+              ${num('target_backlog_per_reviewer', 'review.reviewers.autoscale.target_backlog_per_reviewer', 'Target backlog per reviewer', 'How many PRs may wait for a reviewer, per active reviewer, before the lane is behind. A PR counts as waiting when it has perspectives to review and every eligible reviewer is busy.')}
+            </div>
+            <div class="config-field-row mt-3">
+              ${num('scale_up_cycles', 'review.reviewers.autoscale.scale_up_cycles', 'Scale-up cycles', 'Consecutive governor cycles the lane must be behind (backlog over target, or the oldest wait past the review-pending stage dwell) before a reviewer is added.')}
+              ${num('scale_down_cycles', 'review.reviewers.autoscale.scale_down_cycles', 'Scale-down cycles', 'Consecutive idle cycles (nothing waiting and at least one reviewer free) before the highest replica is drained. A draining reviewer gets no new work and is retired only once its turn ends.')}
+              <div class="config-field"><label>Cooldown ${yamlHint('review.reviewers.autoscale.cooldown')} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Cooldown', 'Minimum gap between two scaling actions in either direction, e.g. 5m.')}</label>
+                <input type="text" value="${esc(a.cooldown || '')}" placeholder="5m" data-change-action="markDirtyReviewerAutoscale" data-arg0="cooldown" data-arg-types="s,w"${dis}></div>
+            </div>
+            <div class="config-field-row mt-3">
+              ${num('cpu_per_reviewer', 'review.reviewers.autoscale.cpu_per_reviewer', 'CPU per reviewer (cores)', 'The CPU one reviewer is assumed to need. A scale-up is refused when the pod cgroup has less than this free; unknown limits (no cgroup) never block.', '0.1')}
+              ${num('mem_per_reviewer_mb', 'review.reviewers.autoscale.mem_per_reviewer_mb', 'Memory per reviewer (MiB)', 'The memory one reviewer is assumed to need. A scale-up is refused when the pod cgroup has less than this free.')}
+              <div class="config-field"><label>Lane agent ${yamlHint('review.reviewers.autoscale.agent')} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Lane agent', 'The base reviewer agent whose replicas scale. Empty picks the first agent with role reviewer, then review.reviewer_agents[0].')}</label>
+                <input type="text" value="${esc(a.agent || '')}" placeholder="reviewer" data-change-action="markDirtyReviewerAutoscale" data-arg0="agent" data-arg-types="s,w"${dis}></div>
+            </div>` : '';
+      return `<div id="review-reviewer-autoscale" class="mt-4">
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${a.enabled ? 'on' : ''}${canEdit ? '' : ' disabled'}" data-action="toggleReviewerAutoscaleEnabled" role="switch" aria-checked="${a.enabled ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Scale reviewers with the backlog ${yamlHint('review.reviewers.autoscale.enabled')} ${settingHelpMark('review-swarm', 'reviewer-autoscale-reviewreviewersautoscale', 'Scale reviewers with the backlog', `Off by default. On, the reviewer lane grows from Min to Max replicas while PRs wait for a free reviewer, and drains back when idle. Replicas added this way are ordinary reviewer-N agents (same role, prompt, scoped token, pane and cadence as a configured replica). Scale-ups are refused when the pod cgroup lacks CPU or memory for another reviewer, when the provider budget latch is on or provider headroom is under 10%, or when reviewer kicks are failing to reach the CLI input prompt — a saturated pod, not demand. Each decision is logged as &quot;reviewer autoscale: 2→3 reason=…&quot;. Owner only.`)}</span>
+            </div>
+            ${liveLine}${fields}
+          </div>`;
+    }
+    function reviewerAutoscaleDecisionText(d) {
+      if (!d) return '';
+      const when = d.at ? ' at ' + formatDashboardTime(d.at, { hour:'2-digit', minute:'2-digit', timeZoneName:'short' }) : '';
+      if (d.action === 'blocked') return `${d.from}→${d.to} blocked by ${d.reason}${when}`;
+      if (d.agent) return `${d.from}→${d.to} ${d.action} ${d.agent} (${d.reason})${when}`;
+      return `${d.from}→${d.to} ${d.action} (${d.reason})${when}`;
+    }
+
     // review_bots is a sub-object on PUT /api/config/review; only
     // min_priority is editable from the dashboard (logins stay config-only).
     function markDirtyReviewBotsMinPriority(value) {
@@ -55823,6 +56083,7 @@ function burnAreaChart() {
       const verdict = document.getElementById('am-contributor-lane-require-reviewer-verdict');
       const registry = document.getElementById('am-contributor-lane-registry-tiers-sufficient');
       const heldRuns = document.getElementById('am-contributor-lane-approve-held-runs');
+      const workflowApproval = document.getElementById('am-contributor-lane-owner-approval-workflow-fence');
       const soak = document.getElementById('am-contributor-lane-soak-minutes');
       const labels = document.getElementById('am-contributor-lane-exclude-labels');
       const repos = document.getElementById('am-contributor-lane-repos');
@@ -55835,6 +56096,7 @@ function burnAreaChart() {
         require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
         registry_tiers_sufficient: !!(registry && registry.classList.contains('on')),
         approve_held_runs_for_registry_trusted: !!(heldRuns && heldRuns.classList.contains('on')),
+        owner_approval_releases_workflow_fence: !!(workflowApproval && workflowApproval.classList.contains('on')),
         auto_promotion_scope: scope && scope.value ? scope.value : 'hive',
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : [],

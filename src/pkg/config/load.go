@@ -418,6 +418,12 @@ func (c *Config) applyBootstrapEnv() {
 			c.Dashboard.AuthorizedUsers = parseAuthorizedUsers(v)
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv(DiscordRFCChannelIDEnvVar)); v != "" {
+		if c.Notifications.Discord == nil {
+			c.Notifications.Discord = &DiscordConfig{}
+		}
+		c.Notifications.Discord.RFCChannelID = v
+	}
 	if v := os.Getenv("HIVE_SELF_AUTHORIZATION_HOLD"); strings.TrimSpace(v) != "" {
 		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err == nil {
 			c.GitHub.SelfAuthorizationHold = &b

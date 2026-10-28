@@ -155,6 +155,13 @@ type IssueFacts struct {
 	// the reporter-trust awaiting label it carries or the gate's
 	// reporter_triage bucket.
 	TriageAwaiting string
+	// TriageAwaitingLabel is the reporter-trust awaiting label the issue
+	// actually wears (`needs-triage` / `reporter_trust.awaiting_label`),
+	// "" when it carries none. Separate from TriageAwaiting because a
+	// claimed issue still wearing it derives 020, not 015, and the deriver
+	// then asks the writer to clear the stale label in the same write
+	// (hivecommons/hive#14586).
+	TriageAwaitingLabel string
 }
 
 // ClaimFact is the live claim on an issue.
@@ -262,12 +269,16 @@ type PriorStage struct {
 
 // ReviewFacts is THE "what counts as reviewed" fact (ADR-0025 Decision §6).
 type ReviewFacts struct {
-	State             stagelabels.VerdictState // folded for HeadSHA
-	Verdict           string                   // raw swarm verdict, "" when none
-	VerdictKnown      bool
-	HumanApprover     string // trusted human whose APPROVED review matches HeadSHA
-	HumanReviews      int    // review submissions by people on this head
-	HumanReviewsKnown bool
+	State         stagelabels.VerdictState // folded for HeadSHA
+	Verdict       string                   // raw swarm verdict, "" when none
+	VerdictKnown  bool
+	HumanApprover string // trusted human whose APPROVED review matches HeadSHA
+	// HumanChangeRequester is the trusted human whose change request
+	// (review or `/hive decision <text>`) stands against HeadSHA; it
+	// outranks a requires_human verdict on the same head (#14679).
+	HumanChangeRequester string
+	HumanReviews         int // review submissions by people on this head
+	HumanReviewsKnown    bool
 	// DecisionRequested is set when the swarm's requires_human verdict was a
 	// maintainer decision request (recorded reason
 	// contributor-lane:decision-requested rather than

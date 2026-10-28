@@ -46,3 +46,21 @@ func (c *Client) AdvisoryWorkState(ctx context.Context, owner, repo string, numb
 	work.CheckedAt = time.Now()
 	return work, nil
 }
+
+// IssueTitleState reads an issue's title and lower-cased state with one issues
+// GET. A number that names a pull request, open or closed, yields empty
+// strings and isPR: the caller only wants an issue's title, and a PR must not
+// be drawn in an issue's place.
+func (c *Client) IssueTitleState(ctx context.Context, owner, repo string, number int) (title, state string, isPR bool, err error) {
+	if c == nil || c.client == nil {
+		return "", "", false, ErrNoGitHubClient
+	}
+	issue, _, err := c.client.Issues.Get(ctx, owner, repo, number)
+	if err != nil {
+		return "", "", false, err
+	}
+	if issue.IsPullRequest() {
+		return "", "", true, nil
+	}
+	return issue.GetTitle(), strings.ToLower(issue.GetState()), false, nil
+}

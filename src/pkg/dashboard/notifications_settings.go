@@ -15,6 +15,7 @@ import (
 type notificationsExtraBody struct {
 	DiscordBotToken           *string                     `json:"discordBotToken"`
 	DiscordChannelID          *string                     `json:"discordChannelId"`
+	DiscordRFCChannelID       *string                     `json:"discordRfcChannelId"`
 	DiscordAllowedUsers       []string                    `json:"discordAllowedUsers"`
 	DiscordFactoryWebhook     *string                     `json:"discordFactoryWebhook"`
 	DiscordRequestsWebhookURL *string                     `json:"discordRequestsWebhookUrl"`
@@ -35,7 +36,7 @@ type githubActivitySettingsBody struct {
 }
 
 func (b notificationsExtraBody) empty() bool {
-	return b.DiscordBotToken == nil && b.DiscordChannelID == nil && b.DiscordAllowedUsers == nil &&
+	return b.DiscordBotToken == nil && b.DiscordChannelID == nil && b.DiscordRFCChannelID == nil && b.DiscordAllowedUsers == nil &&
 		b.DiscordFactoryWebhook == nil && b.DiscordRequestsWebhookURL == nil && b.GitHubActivity == nil
 }
 
@@ -94,6 +95,9 @@ func applyNotificationsExtra(cfg *config.Config, body notificationsExtraBody) er
 	applyWriteOnly(&discord.RequestsWebhookURL, body.DiscordRequestsWebhookURL)
 	if body.DiscordChannelID != nil {
 		discord.ChannelID = strings.TrimSpace(*body.DiscordChannelID)
+	}
+	if body.DiscordRFCChannelID != nil {
+		discord.RFCChannelID = strings.TrimSpace(*body.DiscordRFCChannelID)
 	}
 	if body.DiscordAllowedUsers != nil {
 		discord.AllowedUsers = cleanSettingsList(body.DiscordAllowedUsers)
@@ -157,7 +161,7 @@ func applyNotificationsExtra(cfg *config.Config, body notificationsExtraBody) er
 		}
 	}
 
-	discordTouched := body.DiscordBotToken != nil || body.DiscordChannelID != nil || body.DiscordAllowedUsers != nil ||
+	discordTouched := body.DiscordBotToken != nil || body.DiscordChannelID != nil || body.DiscordRFCChannelID != nil || body.DiscordAllowedUsers != nil ||
 		body.DiscordFactoryWebhook != nil || body.DiscordRequestsWebhookURL != nil
 	if cfg.Notifications.Discord != nil || discordTouched {
 		cfg.Notifications.Discord = &discord
@@ -171,6 +175,7 @@ func applyNotificationsExtra(cfg *config.Config, body notificationsExtraBody) er
 // (factory webhook as a masked tail); their values are never echoed.
 func notificationsExtraPayload(cfg *config.Config, out map[string]any) {
 	out["discordChannelId"] = ""
+	out["discordRfcChannelId"] = ""
 	out["discordAllowedUsers"] = []string{}
 	out["discordFactoryWebhook"] = ""
 	out["hasDiscordBotToken"] = false
@@ -178,6 +183,7 @@ func notificationsExtraPayload(cfg *config.Config, out map[string]any) {
 	out["hasDiscordRequestsWebhook"] = false
 	if d := cfg.Notifications.Discord; d != nil {
 		out["discordChannelId"] = d.ChannelID
+		out["discordRfcChannelId"] = d.RFCChannelID
 		out["discordAllowedUsers"] = append([]string{}, d.AllowedUsers...)
 		out["discordFactoryWebhook"] = maskSecret(d.FactoryWebhook)
 		out["hasDiscordBotToken"] = d.BotToken != ""

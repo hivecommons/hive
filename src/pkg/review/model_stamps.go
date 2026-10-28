@@ -9,6 +9,16 @@ import "strings"
 type ModelStamp struct {
 	AuthorModel  string
 	ReviewModels map[perspectiveStampKey]string
+	// DeltaPreviousHead is the head a delta re-review of this PR head was
+	// judged against (review.delta_rereview); empty for a full review.
+	DeltaPreviousHead string
+	// BodyDigest is the PR title/body digest the dispatch recorded for this
+	// head; it fills a report that omitted body_digest so the aggregate can
+	// be compared against the PR's current digest (hivecommons/hive#14665).
+	// Empty, and never applied, when the head was dispatched under more
+	// than one digest: a digestless report cannot be attributed to either.
+	BodyDigest          string
+	bodyDigestAmbiguous bool
 }
 
 // perspectiveStampKey is one review_model stamp's slot: the perspective, and
@@ -22,8 +32,9 @@ type perspectiveStampKey struct {
 }
 
 // ModelStamps is keyed by reviewKey(repo, number, head, "") — the body digest
-// is deliberately left out, since a report may omit it (foldDigestlessReports)
-// while the models it should carry do not depend on it.
+// is deliberately left out of the key, since a report may omit it
+// (foldDigestlessReports) while the models it should carry do not depend on
+// it; the digest itself is stamped from the dispatch record instead.
 type ModelStamps map[string]ModelStamp
 
 // ModelStampsFromState collects stamps from the dispatch state's pending and
@@ -32,10 +43,10 @@ type ModelStamps map[string]ModelStamp
 func ModelStampsFromState(state DispatchState) ModelStamps {
 	out := ModelStamps{}
 	for _, r := range state.Recent {
-		out.record(r.Repo, r.Number, r.HeadSHA, r.Perspective, r.Head, r.AuthorModel, r.ReviewModel)
+		out.record(r.Repo, r.Number, r.HeadSHA, r.Perspective, r.Head, r.AuthorModel, r.ReviewModel, r.DeltaPreviousHead, r.BodyDigest)
 	}
 	for _, p := range state.Pending {
-		out.record(p.Repo, p.Number, p.HeadSHA, p.Perspective, p.Head, p.AuthorModel, p.ReviewModel)
+		out.record(p.Repo, p.Number, p.HeadSHA, p.Perspective, p.Head, p.AuthorModel, p.ReviewModel, p.DeltaPreviousHead, p.BodyDigest)
 	}
 	if len(out) == 0 {
 		return nil
@@ -43,15 +54,24 @@ func ModelStampsFromState(state DispatchState) ModelStamps {
 	return out
 }
 
-func (m ModelStamps) record(repo string, number int, head string, perspective Perspective, reviewHead, authorModel, reviewModel string) {
-	authorModel, reviewModel = strings.TrimSpace(authorModel), strings.TrimSpace(reviewModel)
-	if authorModel == "" && reviewModel == "" {
+func (m ModelStamps) record(repo string, number int, head string, perspective Perspective, reviewHead, authorModel, reviewModel, deltaPreviousHead, bodyDigest string) {
+	authorModel, reviewModel, deltaPreviousHead, bodyDigest = strings.TrimSpace(authorModel), strings.TrimSpace(reviewModel), strings.TrimSpace(deltaPreviousHead), strings.TrimSpace(bodyDigest)
+	if authorModel == "" && reviewModel == "" && deltaPreviousHead == "" && bodyDigest == "" {
 		return
 	}
 	key := reviewKey(repo, number, head, "")
 	stamp := m[key]
 	if authorModel != "" {
 		stamp.AuthorModel = authorModel
+	}
+	if bodyDigest != "" {
+		if stamp.BodyDigest != "" && stamp.BodyDigest != bodyDigest {
+			stamp.bodyDigestAmbiguous = true
+		}
+		stamp.BodyDigest = bodyDigest
+	}
+	if deltaPreviousHead != "" {
+		stamp.DeltaPreviousHead = deltaPreviousHead
 	}
 	if reviewModel != "" {
 		if stamp.ReviewModels == nil {
@@ -79,5 +99,11 @@ func (m ModelStamps) apply(report *PerspectiveReport) {
 	}
 	if strings.TrimSpace(report.ReviewModel) == "" {
 		report.ReviewModel = stamp.ReviewModels[perspectiveStampKey{report.Perspective, strings.TrimSpace(report.Head)}]
+	}
+	if strings.TrimSpace(report.DeltaPreviousHead) == "" {
+		report.DeltaPreviousHead = stamp.DeltaPreviousHead
+	}
+	if strings.TrimSpace(report.BodyDigest) == "" && !stamp.bodyDigestAmbiguous {
+		report.BodyDigest = stamp.BodyDigest
 	}
 }
