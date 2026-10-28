@@ -92,6 +92,7 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		Verdict:          humanVerdict(contributorVerdict),
 		Conflict:         humanConflictReasons[obs.Reason] || hasLabelFold(obs.Labels, "needs-rebase"),
 		Holds:            stagelabels.Holds(obs.Labels),
+		Hold:             obs.Hold,
 		Cause:            cause,
 		CauseReason:      decisionCauseFor(obs.Reason, workflowManual),
 		DecisionQuestion: strings.TrimSpace(contributorVerdict.DecisionQuestion),
@@ -222,6 +223,16 @@ func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bo
 		actions = append(actions, "Resolve the sentinel alert and have a maintainer clear its label.")
 	}
 	for _, label := range e.Holds {
+		if label == "hold" && e.Hold.SelfImposed() {
+			// The hive's own hold: name the gate and the two choices, so
+			// the operator is not left reading "hold +1" (hivecommons/hive#15020).
+			reason := strings.TrimSpace(e.Hold.Reason)
+			if reason == "" {
+				reason = "its own gate"
+			}
+			actions = append(actions, "The hive set `hold` itself for "+reason+". **Release** it (dashboard row menu → Release hold, or remove the `hold` label) and the lane merges on its next pass once the other gates are clear, or **keep** it until a maintainer has reviewed the issue's reporter; `/hive approve` does not remove it.")
+			continue
+		}
 		actions = append(actions, "Resolve the reason for `"+label+"`, then have a maintainer remove that label; `/hive approve` does not remove it.")
 	}
 	if obs.Reason == "label:needs-human" || hasLabelFold(obs.Labels, "needs-human") {

@@ -170,6 +170,11 @@ type Record struct {
 	// when the blocker clears or the head moves.
 	AdoptEscalatedHead   string `json:"adopt_escalated_head,omitempty"`
 	AdoptEscalatedReason string `json:"adopt_escalated_reason,omitempty"`
+	// Hold is who set the `hold` label the item wears and why, read by the
+	// stage-label pass from the label event and the hive's notice comment
+	// (hivecommons/hive#15020); nil when the item is not held or nothing
+	// about the hold could be read.
+	Hold *HoldProvenance `json:"hold,omitempty"`
 	// AdoptEscalationNotedHead is the head the escalation note was posted
 	// for; it survives ClearAdoptionEscalation so a blocker that flaps on
 	// one head is noted once.
@@ -1382,6 +1387,29 @@ func (s *Store) NoteAuthor(key, login string) {
 	s.items[key] = r
 	s.dirty = true
 }
+
+// NoteHold records the hold provenance on an existing record; a nil
+// provenance clears it (the item is no longer held, or the hold is now
+// somebody else's).
+func (s *Store) NoteHold(key string, hold *HoldProvenance) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.Hold.Equal(hold) {
+		return
+	}
+	if hold == nil {
+		r.Hold = nil
+	} else {
+		cp := *hold
+		r.Hold = &cp
+	}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearHold drops the hold provenance from an existing record.
+func (s *Store) ClearHold(key string) { s.NoteHold(key, nil) }
 
 // NoteDCO caches the commit check for head on an existing record:
 // unsignedHive is the App-linked share of the unsigned commits, the rest

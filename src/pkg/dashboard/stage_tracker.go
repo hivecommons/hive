@@ -311,6 +311,11 @@ type StageTrackerItem struct {
 	// OnHold is true when the item wears a hold pill: paused on purpose,
 	// waiting on nobody.
 	OnHold bool `json:"on_hold,omitempty"`
+	// Hold says who set the `hold` label and why, when the stage-label
+	// pass could read it (hivecommons/hive#15020): the pill then reads
+	// "Held by hive · reporter trust (issue #N by @X, contributor)" or
+	// "Held by @login" instead of a bare "hold".
+	Hold *StageTrackerHold `json:"hold,omitempty"`
 	// RegressedFrom / RegressedTo / RegressedAt / RegressedReason narrate
 	// the unresolved regression behind the `regressed` modifier: the
 	// high-water stage the item fell from, the stage that fall landed on
@@ -492,6 +497,37 @@ type StageTrackerLinkedPR struct {
 	// row fields so its sub-row wears the ✓ badge too.
 	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
 	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
+	// Hold mirrors the nested PR's own row field (hivecommons/hive#15020).
+	Hold *StageTrackerHold `json:"hold,omitempty"`
+}
+
+// StageTrackerHold is the row's hold provenance (stagelabels.HoldProvenance
+// in payload shape). By is "hive" for the hive's own holds, else the login.
+type StageTrackerHold struct {
+	By          string     `json:"by"`
+	Source      string     `json:"source,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
+	Since       *time.Time `json:"since,omitempty"`
+	Issue       int        `json:"issue,omitempty"`
+	Reporter    string     `json:"reporter,omitempty"`
+	Association string     `json:"association,omitempty"`
+	// Pill is the ready-made pill text ("Held by hive · reporter trust
+	// (issue #15017 by @Karibhou, contributor)").
+	Pill string `json:"pill"`
+}
+
+// stageTrackerHoldFrom maps the store's provenance to the payload; nil when
+// the record has none or the row no longer wears `hold`.
+func stageTrackerHoldFrom(rec stagelabels.Record, hasRec bool, labels []string) *StageTrackerHold {
+	if !hasRec || rec.Hold == nil || strings.TrimSpace(rec.Hold.By) == "" || !slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(strings.TrimSpace(l), modHold) }) {
+		return nil
+	}
+	h := &StageTrackerHold{By: rec.Hold.By, Source: rec.Hold.Source, Reason: rec.Hold.Reason, Issue: rec.Hold.Issue, Reporter: rec.Hold.Reporter, Association: strings.ToLower(rec.Hold.Association), Pill: rec.Hold.Pill()}
+	if !rec.Hold.Since.IsZero() {
+		t := rec.Hold.Since
+		h.Since = &t
+	}
+	return h
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -1575,6 +1611,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.AdoptedBy = rec.AdoptedBy
 			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
 		}
+		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)
 		it.Stage = stage.Number()
 		it.StageSlug = stage.Slug()
 		it.StageLabel = stage.Label()
@@ -2507,6 +2544,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.BaseRef = pr.BaseRef
 				lp.DecisionNeeded = pr.DecisionNeeded
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
+				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
 				}

@@ -7,8 +7,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The reporter-trust hold (hivecommons/hive#9665) is the merge-side half of
@@ -17,8 +19,17 @@ import (
 // an unaccepted stranger's request never merges without a human, at any ACMM
 // level. A PR whose rationale traces to an unaccepted issue filed by a reporter
 // the operator does not trust receives literal `hold` plus `needs-human` and a
-// notice, and only a person removes it — the App never auto-releases a reporter-trust hold.
-// An issue's configured acceptance label already supplies that sign-off.
+// notice, and only a person removes it — the App never auto-releases a
+// reporter-trust hold it placed on somebody else's PR. An issue's configured
+// acceptance label already supplies that sign-off.
+//
+// The gate judges the PR's linked issues only (closing keywords and the
+// request's declared issues), never a pull request a number happens to
+// resolve to, and never a PR the hive itself authored (hivecommons/hive#15020:
+// the hive held its own approved fix because "closed by #15017" named a
+// sibling PR and that PR's author was read as an untrusted reporter). A
+// hive-set reporter-trust hold left on a hive-authored PR by an older build
+// is released by the stage-label pass (automerge.releaseSelfImposedReporterTrustHold).
 //
 // It composes with, and never replaces, the #5117 self-authorization gate:
 // that one asks "did a person ask for this at all"; this one asks "was that
@@ -99,8 +110,64 @@ func (c *Client) reporterIsTrusted(login, association string) bool {
 	return fn(login, association)
 }
 
-// EvaluateReporterTrust decides whether a PR request's rationale traces to an
-// issue filed by a reporter the operator does not trust.
+// hiveSelfReportMarkerPrefix opens the marker fleetreport writes into every
+// issue a hive files about itself (fleetreport.SelfReportMarkerPrefix; not
+// imported to keep this package free of that dependency). A self-report's
+// reporter is the hive, whatever account posted it.
+const hiveSelfReportMarkerPrefix = "<!-- hive:selfreport "
+
+// IsHiveSelfReport reports whether an issue body carries the hive's
+// self-report marker.
+func IsHiveSelfReport(body string) bool {
+	return strings.Contains(body, hiveSelfReportMarkerPrefix)
+}
+
+// reporterTrustRationale collects the issues whose REPORTER this gate judges:
+// what the PR declares it closes (Fixes/Closes/Resolves keywords) and the
+// request's own declared issue list. Bare mentions are deliberately left
+// out: "Refs #15009 (closed by #15017)" cites a sibling PR, and a reporter
+// found that way is somebody else's PR author, not the person who asked for
+// this change (hivecommons/hive#15020 held for the author of a sibling PR).
+func reporterTrustRationale(repo, title, body string, declared []int) []ClaimedRef {
+	refs := ParseClaimedIssues(title+"\n"+body, repo)
+	seen := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		seen[fmt.Sprintf("%s#%d", ref.Repo, ref.Issue)] = true
+	}
+	for _, n := range declared {
+		if n <= 0 {
+			continue
+		}
+		key := fmt.Sprintf("%s#%d", repo, n)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		refs = append(refs, ClaimedRef{Repo: repo, Issue: n})
+	}
+	return refs
+}
+
+// hiveAuthoredLogin reports whether login is one of this hive's own accounts
+// (the App bot, the configured hive identity, or any "[bot]" account).
+func (c *Client) hiveAuthoredLogin(login string) bool {
+	login = strings.TrimSpace(login)
+	if login == "" {
+		return false
+	}
+	return !c.isHumanAuthor(&gh.User{Login: gh.Ptr(login)})
+}
+
+// EvaluateReporterTrust decides whether a PR's rationale traces to an issue
+// filed by a reporter the operator does not trust. author is the PR's own
+// author login.
+//
+// A PR the hive authored is never held here: the hive is the author, and
+// whether the hive works an issue at all is the admission half's call
+// (project.issue_filter.reporter_trust). Holding the hive's own green fix
+// for the trust level of whoever reported the bug parks it on a person for
+// nothing (hivecommons/hive#15020). The gate stays for PRs other accounts
+// opened, where "whose request is this" is a live question.
 //
 // Any one unaccepted untrusted-reporter citation holds: unlike #5117, where one human
 // rationale is enough to show a person asked, here the question is whether a
@@ -108,14 +175,22 @@ func (c *Client) reporterIsTrusted(login, association string) bool {
 // maintainer's issue is still delivering the stranger's. Holding is the safe
 // direction; a maintainer who disagrees removes the label.
 //
-// Issues the hive or a bot filed are skipped — #5117 owns those. An issue that
-// cannot be read decides nothing, for the reason pr_self_authorization.go gives:
-// a hold nobody can explain is a hold people learn to strip.
-func (c *Client) EvaluateReporterTrust(ctx context.Context, repo, title, body string, declared []int) ReporterTrust {
+// Only linked ISSUES are judged: a cited number that resolves to a pull
+// request decides nothing (its author is not a reporter). Issues the hive or
+// a bot filed, and hive self-reports, are skipped — #5117 owns those. An
+// issue that cannot be read decides nothing, for the reason
+// pr_self_authorization.go gives: a hold nobody can explain is a hold people
+// learn to strip.
+func (c *Client) EvaluateReporterTrust(ctx context.Context, repo, title, body string, declared []int, author string) ReporterTrust {
 	if c == nil || c.client == nil {
 		return ReporterTrust{}
 	}
-	refs := rationaleIssues(repo, title, body, declared)
+	if c.hiveAuthoredLogin(author) {
+		c.logger.Debug("reporter-trust gate: PR is hive-authored, the issue reporter's trust does not gate the hive's own fix",
+			"repo", repo, "author", author)
+		return ReporterTrust{}
+	}
+	refs := reporterTrustRationale(repo, title, body, declared)
 	if len(refs) == 0 {
 		return ReporterTrust{}
 	}
@@ -130,8 +205,14 @@ func (c *Client) EvaluateReporterTrust(ctx context.Context, repo, title, body st
 				"repo", ref.Repo, "issue", ref.Issue, "error", err.Error())
 			continue
 		}
-		if !c.isHumanAuthor(issue.GetUser()) {
-			// Hive- or bot-filed: #5117's business, or no author to judge.
+		if issue.IsPullRequest() {
+			c.logger.Debug("reporter-trust gate: cited number is a pull request, not an issue; it decides nothing",
+				"repo", ref.Repo, "number", ref.Issue)
+			continue
+		}
+		if !c.isHumanAuthor(issue.GetUser()) || IsHiveSelfReport(issue.GetBody()) {
+			// Hive- or bot-filed, a hive self-report, or no author to judge:
+			// #5117's business.
 			continue
 		}
 		login := strings.TrimSpace(issue.GetUser().GetLogin())
@@ -199,11 +280,15 @@ func reporterTrustNotice(finding ReporterTrust) string {
 > [!IMPORTANT]
 > **Held for maintainer sign-off: the source issue reporter is not trusted.** (%s)
 >
-> This PR was authored by the hive; the untrusted **reporter**, not the PR author, is @%s. Its rationale traces to %s#%d, filed by @%s (GitHub association: %s). The hold concerns that issue reporter, not the PR author. This hive holds unaccepted work requested by untrusted issue reporters so that it never merges without a maintainer looking at it, whatever the hive's autonomy level (hivecommons/hive#9665).
+> The untrusted **reporter**, not this PR's author, is @%s. The PR's rationale traces to %s#%d, filed by @%s (GitHub association: %s). The hold concerns that issue reporter, not the PR author. This hive holds unaccepted work requested by untrusted issue reporters so that it never merges without a maintainer looking at it, whatever the hive's autonomy level (hivecommons/hive#9665).
 >
 > Nothing here is a review of the change. To release the hold, a maintainer removes the `+"`hold`"+` label; Hive will not remove it on its own. The `+"`%s`"+` label marks it as waiting on a person. To trust this reporter in future, add them under **Settings → Labels → Reporter trust**.`,
 		reporterTrustMarker(finding), finding.NeedsHumanReason(), finding.Reporter, finding.Repo, finding.Issue, finding.Reporter, associationOrUnknown(finding.Association), issueNeedsHumanLabel)
 }
+
+// ReporterTrustNoticeBody renders the notice for a finding (exported for the
+// stage-label pass's tests, which seed a PR thread with one).
+func ReporterTrustNoticeBody(finding ReporterTrust) string { return reporterTrustNotice(finding) }
 
 const reporterTrustMetadataPrefix = "<!-- hive:reporter-trust-metadata "
 
@@ -306,6 +391,68 @@ func (c *Client) reconcileReporterTrustSignal(ctx context.Context, repo string, 
 // IsReporterTrustHoldNotice reports whether a PR comment is the #9665 notice.
 func IsReporterTrustHoldNotice(body string) bool {
 	return strings.Contains(body, ReporterTrustNoticeMarker)
+}
+
+// ReporterTrustHoldNotice is the finding behind the newest App-authored
+// #9665 notice on a PR, with when it was posted: the provenance the stage
+// tracker and the self-imposed-hold release read.
+type ReporterTrustHoldNotice struct {
+	Finding  ReporterTrust
+	PostedAt time.Time
+}
+
+// ReporterTrustNoticeFromComments returns the newest reporter-trust notice
+// the App posted on a PR. An empty appBotLogin accepts any author, as the
+// display helpers do; ok is false when no notice carries a readable finding.
+func ReporterTrustNoticeFromComments(comments []*gh.IssueComment, appBotLogin string) (notice ReporterTrustHoldNotice, ok bool) {
+	for _, comment := range comments {
+		if comment == nil || !IsReporterTrustHoldNotice(comment.GetBody()) {
+			continue
+		}
+		if strings.TrimSpace(appBotLogin) != "" && !strings.EqualFold(safeGetLogin(comment.GetUser()), appBotLogin) {
+			continue
+		}
+		finding, found := reporterTrustFinding(comment.GetBody())
+		if !found {
+			continue
+		}
+		at := comment.GetCreatedAt().Time
+		if !ok || at.After(notice.PostedAt) {
+			notice, ok = ReporterTrustHoldNotice{Finding: finding, PostedAt: at}, true
+		}
+	}
+	return notice, ok
+}
+
+// HoldSummary is the plain-words reason for the stage tracker's hold pill:
+// "reporter trust (issue #15017 by @Karibhou, contributor)".
+func (r ReporterTrust) HoldSummary() string {
+	if !r.Held {
+		return ""
+	}
+	association := strings.TrimSpace(r.Association)
+	if association == "" {
+		association = "association unknown"
+	}
+	return stagelabels.ReporterTrustReason(r.Issue, r.Reporter, association)
+}
+
+// HoldProvenance is the stage-tracker record of this hive-set hold: who set
+// it ("hive"), the gate, the plain-words reason and the issue it judged.
+// since is the label event time (or the notice time when no event is known).
+func (r ReporterTrust) HoldProvenance(since time.Time) *stagelabels.HoldProvenance {
+	if !r.Held {
+		return nil
+	}
+	return &stagelabels.HoldProvenance{
+		By:          stagelabels.HoldByHive,
+		Source:      stagelabels.HoldSourceReporterTrust,
+		Reason:      r.HoldSummary(),
+		Since:       since,
+		Issue:       r.Issue,
+		Reporter:    r.Reporter,
+		Association: strings.ToUpper(strings.TrimSpace(r.Association)),
+	}
 }
 
 // Both notice generations carry the original finding. Read that evidence rather

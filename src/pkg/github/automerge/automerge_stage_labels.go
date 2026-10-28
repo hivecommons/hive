@@ -851,6 +851,32 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
+		if hasLabelFold(obs.Labels, "hold") && !verdict.Terminal {
+			// Who held it and why rides the row (hivecommons/hive#15020);
+			// a reporter-trust hold the hive put on its own PR is lifted
+			// here — the hive is the author, the reporter's trust is moot.
+			prov, notice, err := c.holdProvenance(ctx, obs.Owner, obs.Repo, obs.Number)
+			if err != nil {
+				c.debug("stage labels: hold provenance unreadable", "repo", obs.Display, "pr", obs.Number, "error", err)
+			}
+			hiveAuthored := pass.AuthorIsApp || obs.AuthorKind == authorkind.Hive
+			if hiveAuthored && prov.SelfImposed() && prov.ReporterTrust() {
+				released, err := c.releaseSelfImposedReporterTrustHold(ctx, obs, prov, notice)
+				if err != nil {
+					c.warn("stage labels: could not release self-imposed reporter-trust hold", "repo", obs.Display, "pr", obs.Number, "error", err)
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
+				if released {
+					result.Comments++
+					result.Skipped++
+					store.ClearHold(key)
+					continue
+				}
+			}
+			obs.Hold = prov
+		}
 		var route stagelabels.Route
 		if verdict.Human && !verdict.Terminal && verdict.Reason != prstage.ReasonSupersessionPending {
 			var evidence stagelabels.Evidence
@@ -988,6 +1014,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// hivecommons/hive#12502: remember the author so the dashboard can
 			// list "PRs returned to this contributor" from the store alone.
 			store.NoteAuthor(key, obs.Author)
+			store.NoteHold(key, obs.Hold)
 			if dcoRead {
 				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned, obs.Detail.DCOUnsignedHive, obs.Detail.DCOSquashUnsafeHive)
 			}
