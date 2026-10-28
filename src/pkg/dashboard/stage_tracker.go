@@ -415,7 +415,12 @@ type StageTrackerItem struct {
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
-	LinkedPR     int    `json:"linked_pr,omitempty"`
+	// StageActor is who holds the next move on this row — hive, clanker,
+	// human, a foreign bot, or nobody — with the plain-words why. The SPA
+	// draws the stage pill's actor icon from StageActor.Kind only
+	// (stage_tracker_actor.go).
+	StageActor *StageTrackerActor `json:"stage_actor,omitempty"`
+	LinkedPR   int                `json:"linked_pr,omitempty"`
 	// LinkedPRs lists the open pull requests covering an issue (the one
 	// named in the stage reason first) with everything the tracker needs
 	// to draw each as a sub-row nested under the issue.
@@ -516,6 +521,16 @@ type StageTrackerLinkedPR struct {
 	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
 	// Hold mirrors the nested PR's own row field (hivecommons/hive#15020).
 	Hold *StageTrackerHold `json:"hold,omitempty"`
+	// StageActor mirrors the nested PR's own row field so the sub-row's
+	// pill wears the same actor icon.
+	StageActor *StageTrackerActor `json:"stage_actor,omitempty"`
+	// DrawnUnder is the issue whose row draws this PR's full sub-row (the
+	// PR's NestedUnder). A PR that closes several open issues (`Closes
+	// #14910` and `Closes #14911` in one body) is listed by each of them,
+	// but its live strip is drawn once, under this issue; every other
+	// parent shows a compact "↳ #N · under #M" reference instead of a
+	// second identical row (hivecommons/hive#14921 drew twice).
+	DrawnUnder int `json:"drawn_under,omitempty"`
 }
 
 // StageTrackerHold is the row's hold provenance (stagelabels.HoldProvenance
@@ -1632,6 +1647,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
 	sweep := s.stageTrackerSweepState()
+	workers := stageTrackerWorkersFromStatus(status)
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
 		// "Needs human decision" is read from the item's current labels, not
 		// a store record that outlived them: once the park label is gone
@@ -1712,6 +1728,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if slices.Contains(it.Modifiers, modUnauthorized) || slices.Contains(it.DeferredModifiers, modUnauthorized) {
 			it.UnauthorizedStep, it.Unauthorized = stageTrackerUnauthorized(it.Reason)
 		}
+		// A foreign bot's PR the lane filed under 070: nobody in the hive
+		// is fixing it, and the caption must not claim so.
+		if stage == stagelabels.Fixing && it.Kind == "pr" && stageTrackerBotAuthor(it.Author, it.AuthorKind) {
+			it.Caption, it.Actor = stageTrackerBotFixingCaption(*it), StageActorBot
+		}
 		it.History = stageTrackerHistory(rec)
 	}
 	seen := map[string]bool{}
@@ -1787,6 +1808,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 		}
 		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, nil, sentinelLabel, now)
+		it.StageActor = stageTrackerStageActor(it, workers, now)
 		add(it)
 	}
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
@@ -1837,12 +1859,19 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.Caption += ": " + info.KeepReason
 			}
 			it.Actor = "maintainer"
+			if it.Stage == trackerNumberFixing && stageTrackerBotAuthor(it.Author, it.AuthorKind) {
+				// docs#500: a conflicting bot PR already replaced by a
+				// merged one is not a maintainer's decision to make; the
+				// bot's next run supersedes it (hivecommons/docs#500).
+				it.Caption, it.Actor = stageTrackerBotFixingCaption(it), StageActorBot
+			}
 		}
 		var agg *review.Aggregate
 		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA); ok {
 			agg = &a
 		}
 		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, agg, sentinelLabel, now)
+		it.StageActor = stageTrackerStageActor(it, workers, now)
 		add(it)
 	}
 	for _, repo := range status.Repos {
@@ -1874,6 +1903,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	s.applyOperatorActions(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
+	stageTrackerResolveActors(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
 }
@@ -2636,6 +2666,19 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 			out = nil
 		}
 		it.LinkedPRs = out
+	}
+	// NestedUnder is final only once every issue has been read; name it on
+	// each listing so the SPA draws the PR's strip under one parent only.
+	for i := range items {
+		it := &items[i]
+		if it.Kind != "issue" {
+			continue
+		}
+		for j := range it.LinkedPRs {
+			if pr := prs[it.Repo+"#"+strconv.Itoa(it.LinkedPRs[j].Number)]; pr != nil {
+				it.LinkedPRs[j].DrawnUnder = pr.NestedUnder
+			}
+		}
 	}
 	for i := range items {
 		if items[i].Kind == "pr" {

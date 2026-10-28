@@ -1388,6 +1388,15 @@
     .ham-cols .ham-strip { height: auto; }
     .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
     .ham-cols .ham-since { color: var(--text-faint); font-family: inherit; }
+    /* The counter's row above the column names: blank spacers keep the
+       grid, the slot takes the Merge gate column plus the ✓ cap and
+       right-aligns the chip over the gate. It never wraps with the
+       filter bar, so the chip stays put whatever the toolbar does. */
+    .ham-cols-top { margin-bottom: var(--sp-1); }
+    .ham-cols-top .ham-seg.ham-merged-slot-seg { flex: 1 1 calc(4em + var(--sp-1)); justify-content: flex-end; padding: 0; overflow: visible; min-width: 0; }
+    .ham-merged-slot { display: inline-flex; justify-content: flex-end; min-width: 0; }
+    .ham-merged-slot:empty, .ham-merged-home:empty { display: none; }
+    .ham-merged-home { display: inline-flex; }
     .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-5) var(--sp-2); }
     /* Each entry is fenced by a hairline above it and lights up as a whole
        on hover, so a tall row (wrapped title, ↳ PR line) still reads as one
@@ -1725,6 +1734,7 @@
       .ham-since { width: 3em; }
       .ham-cols .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-cols .ham-seg.cap { flex-basis: 2em; }
+      .ham-cols-top .ham-seg.ham-merged-slot-seg { flex-basis: calc(2em + var(--sp-1)); }
     }
     /* Movement animation: when an item's lit chevron changes column between
        two refreshes, the chosen effect (settings gear → Movement animation)
@@ -7227,7 +7237,7 @@
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
         <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Sound off — turn on (merge zap + new-item buzz; plays a test of each)" title="Sound off — turn on (merge zap + new-item buzz; plays a test of each)">🔇</button>
-        <span class="ham-chip ham-merged-count" id="activity-monitor-merged" role="status" aria-live="polite" title="Merged today: 0"><svg class="ham-merged-ico" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/></svg>Merged today: <span class="ham-merged-n">0</span></span>
+        <span class="ham-merged-home" id="activity-monitor-merged-home"><span class="ham-chip ham-merged-count" id="activity-monitor-merged" role="status" aria-live="polite" title="Merged today: 0"><svg class="ham-merged-ico" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/></svg>Merged today: <span class="ham-merged-n">0</span></span></span>
       </div>
       <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
@@ -14422,6 +14432,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
+      if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
@@ -14482,6 +14493,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       human: '<circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/>',
       clanker: '<rect x="3" y="5" width="10" height="8" rx="1.5"/><path d="M8 5V2M5 2h6"/><circle cx="6" cy="9" r="0.9"/><circle cx="10" cy="9" r="0.9"/>',
       hive: '<path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/>',
+      // A non-hive automation account (github-actions[bot], renovate): a cog,
+      // distinct from the clanker's robot head.
+      bot: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>',
       pr: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="13" r="1.5"/><path d="M4 4.5v7M12 11.5V7a2 2 0 0 0-2-2H8"/>',
       // Merge-gate cues (#15073): sweep = two arrows chasing (spins while
       // hive's sweep is on the PR); wait = a clock (waiting for the next pass).
@@ -14505,10 +14519,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // Author kind of whoever must move on the item's current stage ('' = none).
+    // The server's stage_actor {kind, login, since, why} is the source of
+    // truth when present (kind 'none' → no icon); the stage-table heuristic
+    // below only serves payloads from an older server.
+    const STAGE_TRACKER_ACTOR_NONE = 'none';
+    const STAGE_TRACKER_NOBODY_LEAD = 'no one is working on this right now';
+    function stageTrackerStageActor(item) {
+      const sa = item && item.stage_actor;
+      return sa && typeof sa === 'object' && sa.kind ? sa : null;
+    }
     function stageTrackerActorKind(item) {
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
       const fresh = typeof stageTrackerNewState === 'function' ? stageTrackerNewState(item) : null;
       if (fresh) return fresh.next_mover === 'maintainer' ? 'human' : 'hive';
+      const sa = stageTrackerStageActor(item);
+      if (sa) return sa.kind === STAGE_TRACKER_ACTOR_NONE ? '' : String(sa.kind);
       const role = STAGE_TRACKER_ACTOR[Number(item.stage) || 0] || '';
       if (role === 'claimant') return item.claimant_kind || '';
       if (role === 'author') {
@@ -14517,6 +14542,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return (lp && lp.author_kind) || '';
       }
       return role;
+    }
+    // " · Next move: hive @fixer — fixer commented · 3m ago", or, with
+    // nobody on it, " · no one is working on this right now — <why>".
+    function stageTrackerActorTip(item) {
+      const sa = stageTrackerStageActor(item);
+      if (!sa) { const k = stageTrackerActorKind(item); return k ? ' · Next move: ' + k : ''; }
+      if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
+      return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (sa.why ? ' — ' + sa.why : '');
+    }
+    // The Fixing column word when nobody is fixing: a bot-authored PR the
+    // hive does not touch, or an unowned red PR, reads as its state in
+    // plain words instead of an active "Fixing" (hivecommons/docs#500).
+    function stageTrackerFixingWord(item, fallback) {
+      const sa = stageTrackerStageActor(item);
+      if (!sa || (sa.kind !== STAGE_TRACKER_ACTOR_NONE && sa.kind !== 'bot')) return fallback;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const state = mods.indexOf('needs-rebase') >= 0 ? 'Conflicting' : 'Red';
+      return state + (sa.kind === 'bot' ? ' · bot PR' : ' · nobody on it');
     }
 
     // 000-new (hivecommons/hive#15094): a payload `new` block on a stage-0
@@ -14570,6 +14613,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // Column header: the stage names once, aligned with the chevrons below.
+    // Above them, over the Merge gate and ✓ columns, sits the slot the
+    // "Merged today" counter is mounted into (stageTrackerMergedCountMount)
+    // so a merge token's flight from a row's ✓ cell ends just above the
+    // gate it came through. The slot spans the last column plus the cap.
     function stageTrackerHeaderHtml(stages) {
       const byNum = {};
       (stages || []).forEach(st => { byNum[st.number] = st; });
@@ -14577,7 +14624,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const name = n === 0 ? 'Open' : ((byNum[n] || {}).short || (byNum[n] || {}).label || String(n));
         return `<li class="ham-seg"><span class="ham-seg-t">${esc(name)}</span></li>`;
       }).join('');
-      return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap">${stageTrackerIcon(STAGE_TRACKER_TERMINAL, 'ham-ico')}</li></ol><span class="ham-since">since</span></div></div>`;
+      const blanks = STAGE_TRACKER_PATH.slice(1).map(() => '<li class="ham-seg blank" aria-hidden="true"></li>').join('');
+      return `<div class="ham-cols"><div class="ham-strip-row ham-cols-top"><ol class="ham-strip">${blanks}<li class="ham-seg ham-merged-slot-seg"><span class="ham-merged-slot"></span></li></ol><span class="ham-since"></span></div><div class="ham-strip-row" aria-hidden="true"><ol class="ham-strip">${cols}<li class="ham-seg cap">${stageTrackerIcon(STAGE_TRACKER_TERMINAL, 'ham-ico')}</li></ol><span class="ham-since">since</span></div></div>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -14592,6 +14640,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const to = range && range.to != null ? range.to : Infinity;
       const actorKind = stageTrackerActorKind(item);
       const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
+      const actorTip = stageTrackerActorTip(item);
       // Static chevrons carry no data-motion: the CSS only animates the two
       // moving buckets. The hive-acting pulse needs an agent actually on
       // the item (tracker-cues: working); a hive stage with nobody on it is
@@ -14624,7 +14673,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
           else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim() + (sg.description ? ' — ' + sg.description : '');
-          if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
+          if (actorTip && !sg.cap) tip += actorTip;
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.
           if (sentinel) tip = stageTrackerSentinelTip(item) + ' — ' + tip;
@@ -14661,9 +14710,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         && (!range || range.from == null || sg.number >= range.from)
         && (!range || range.to == null || sg.number <= range.to));
       if (!active) return '';
-      const actor = active.cap ? '' : stageTrackerActorKind(item);
+      const actor = active.cap ? '' : stageTrackerActorTip(item);
       const regressed = stageTrackerRegressionText(item, Date.now());
-      const text = active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + (actor ? ' · Next move: ' + actor : '') + (regressed ? ' · ' + regressed : '');
+      const text = active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + actor + (regressed ? ' · ' + regressed : '');
       return `<p class="ham-current-stage">${esc(text)}</p>`;
     }
 
@@ -14750,8 +14799,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr);
-      const actorKind = stageTrackerActorKind(item);
-      if (actorKind) lines.push('Next move: ' + actorKind);
+      const actorLine = stageTrackerActorTip(item);
+      if (actorLine) lines.push(actorLine.replace(/^ · /, ''));
       if (typeof stageTrackerNewLines === 'function') lines.push(...stageTrackerNewLines(item, nowMs));
       const blockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
       if (blockedPR) lines.push(blockedPR.tip);
@@ -15088,7 +15137,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, superseded: !!lp.superseded, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null };
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null };
     }
     // Pure: whether a linked PR is still open (not merged / closed / superseded).
     function stageTrackerLinkedPROpen(lp) {
@@ -15121,8 +15170,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Covering PRs of an issue, furthest along first, attention-first
     // within a stage (stageTrackerAttentionTier), then longest on step.
+    // A PR that closes several open issues is drawn once: the server names
+    // the issue whose row carries it (drawn_under); the other issues list it
+    // as a compact "under #M" chip instead of a second identical strip
+    // (hivecommons/hive#14921 under #14910 and #14911).
+    function stageTrackerLinkedDrawnHere(lp, item) {
+      const under = Number(lp && lp.drawn_under) || 0;
+      return !under || under === (Number(item && item.number) || 0);
+    }
+    function stageTrackerLinkedElsewhere(item) {
+      const linked = Array.isArray(item.linked_prs) ? item.linked_prs : [];
+      return linked.filter(lp => !stageTrackerLinkedDrawnHere(lp, item)).sort((x, y) => (x.number || 0) - (y.number || 0));
+    }
+    function stageTrackerLinkedElsewhereHtml(item) {
+      return stageTrackerLinkedElsewhere(item).map(lp => `<a class="ham-badge ham-linked-elsewhere" href="${esc(lp.url || '#')}" target="_blank" rel="noopener" title="${esc('PR #' + (Number(lp.number) || 0) + ' covers this issue too; its row is drawn under #' + Number(lp.drawn_under))}">↳ #${Number(lp.number) || 0} · under #${Number(lp.drawn_under)}</a>`).join(' ');
+    }
     function stageTrackerLinkedSorted(item, stages) {
-      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.slice() : (item.linked_pr ? [{ number: item.linked_pr }] : []);
+      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.filter(lp => stageTrackerLinkedDrawnHere(lp, item)) : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
       return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr') - stageTrackerAnchor(x.stage, stages, 'pr')) || (stageTrackerAttentionTier(x) - stageTrackerAttentionTier(y)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
@@ -15281,7 +15345,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -15307,6 +15371,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
             ${item.claim_reference ? `<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}
+            ${typeof stageTrackerLinkedElsewhereHtml === 'function' ? stageTrackerLinkedElsewhereHtml(item) : ''}
             ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
           </div>`;
       } else if (item.closed_issue && Number(item.closed_issue.number) > 0) {
@@ -16503,6 +16568,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         _stageTrackerMoves = {};
         stageTrackerSelectionSync(el, []);
         const emptyHtml = `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`;
+        // The counter goes back to its toolbar home before the header
+        // (and its slot) leaves with the rows.
+        stageTrackerMergedCountMount(null);
         if (el.querySelector('[data-ham-key]')) {
           stageTrackerReconcile(el, [], { effect, hidden: document.hidden });
           // Departing rows collapse first; the empty line follows them out.
@@ -16522,6 +16590,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           : { key: stageTrackerItemKey(grouping ? e.item : e), html: stageTrackerRowHtml(grouping ? e.item : e, stages, ctx) })), nowMs);
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
+      stageTrackerMergedCountMount(el);
       // Selection is keyed on the row, never baked into its HTML, so a kept
       // node stays selected across the refresh and a departed row leaves it.
       stageTrackerSelectionSync(el, rows.map(r => r.key));
@@ -18229,8 +18298,30 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _stageTrackerMergedToday = stageTrackerMergedTodayNext(_stageTrackerMergedToday, d, fresh, nowMs, _stageTrackerCelebratePending);
       stageTrackerMergedCountDraw(false);
     }
+    // The counter is one node for the life of the page. It lives in the
+    // header slot above the Merge gate while rows are drawn (so the token
+    // lands "in the hive" above the gate) and parks in its toolbar home
+    // when the board is empty; the reconcile keys rows on their source
+    // HTML, so the mounted chip never forces a header re-render.
+    // The node is cached on the function itself (not a module var) so a
+    // lifted copy of it (tests) is self-contained; a detached chip stays
+    // cached until a re-mount reattaches it.
+    function stageTrackerMergedChip() {
+      const have = stageTrackerMergedChip.node;
+      if (have && have.isConnected !== false) return have;
+      stageTrackerMergedChip.node = document.getElementById('activity-monitor-merged') || have || null;
+      return stageTrackerMergedChip.node;
+    }
+    function stageTrackerMergedCountMount(el) {
+      const chip = stageTrackerMergedChip();
+      if (!chip) return null;
+      const slot = el && typeof el.querySelector === 'function' ? el.querySelector('.ham-cols .ham-merged-slot') : null;
+      const target = slot || document.getElementById('activity-monitor-merged-home');
+      if (target && chip.parentNode !== target) target.appendChild(chip);
+      return target;
+    }
     function stageTrackerMergedCountDraw(tick) {
-      const chip = document.getElementById('activity-monitor-merged');
+      const chip = stageTrackerMergedChip();
       const txt = stageTrackerMergedTodayText(_stageTrackerMergedToday, Date.now());
       _stageTrackerMergedTodayCount = txt.count;
       if (!chip) return;
@@ -18351,7 +18442,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (kind !== 'merged') return { flew: false };
       const reduced = stageTrackerReducedMotion();
-      const chip = document.getElementById('activity-monitor-merged');
+      const chip = stageTrackerMergedChip();
       const cap = rowEl.querySelector('.ham-seg.cap');
       if (reduced || !chip || !cap || _stageTrackerFlights >= STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS || typeof cap.getBoundingClientRect !== 'function') {
         stageTrackerCelebrateTick(key, preview);

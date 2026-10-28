@@ -73,17 +73,12 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 	}
 }
 
-// TestStageTrackerRows executes the pure row renderer under node and checks
-// the unified strip geometry (Open → 010 → 020 → 030 → 040 → 050 → 080 → 100 →
-// merged cap): which segments are done / active / detoured, the tooltip and
-// the chip cap, for issues and PRs alike.
-func TestStageTrackerRows(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node not on PATH — Hive activity monitor rows were NOT executed by this run")
-	}
-	html := indexHTML(t)
-	script := strings.Join([]string{
+// stageTrackerRowsPreludeJS lifts everything the pure row renderer needs
+// out of index.html; stageTrackerRowsFixtureJS is the stage table and the
+// row-inspection helpers the row tests share.
+func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
+	t.Helper()
+	return strings.Join([]string{
 		"const window = {};",
 		"function formatDashboardTime(d){return new Date(d).toISOString().slice(11,16)+' UTC';}",
 		"function formatDashboardDate(d){return new Date(d).toISOString().slice(0,10);}",
@@ -139,7 +134,11 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerCountsText"),
 		jsFunc(t, html, "stageTrackerIcon"),
 		jsFunc(t, html, "stageTrackerPRRef"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTOR_NONE"),
+		jsConstLine(t, html, "STAGE_TRACKER_NOBODY_LEAD"),
+		jsFunc(t, html, "stageTrackerStageActor"),
 		jsFunc(t, html, "stageTrackerActorKind"),
+		jsFunc(t, html, "stageTrackerActorTip"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_STATIC"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_ACTIVE"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_HUMAN"),
@@ -173,6 +172,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerSharedPRs"),
 		jsFunc(t, html, "stageTrackerLinkedTip"),
 		jsConstLine(t, html, "STAGE_TRACKER_LINKED_GLYPH"),
+		jsFunc(t, html, "stageTrackerLinkedDrawnHere"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
 		stageTrackerTierJS(t, html),
 		jsFunc(t, html, "stageTrackerSortKey"),
@@ -199,7 +199,10 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 		jsFunc(t, html, "stageTrackerVisible"),
 		stageTrackerCuesJS(t, html),
-	}, "\n") + `
+	}, "\n")
+}
+
+const stageTrackerRowsFixtureJS = `
 const assert = require('assert');
 const now = Date.parse('2026-01-01T12:00:00Z');
 const stages = [
@@ -242,6 +245,19 @@ const lead = (row) => text(/<li class="ham-seg ham-head-lead[^"]*">([\s\S]*?)<\/
 const chips = (row) => (row.match(/class="ham-badge /g) || []).length;
 const ctx = { nowMs: now };
 const D = 'done', T = 'todo';
+`
+
+// TestStageTrackerRows executes the pure row renderer under node and checks
+// the unified strip geometry (Open → 010 → 020 → 030 → 040 → 050 → 080 → 100 →
+// merged cap): which segments are done / active / detoured, the tooltip and
+// the chip cap, for issues and PRs alike.
+func TestStageTrackerRows(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — Hive activity monitor rows were NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := stageTrackerRowsPreludeJS(t, html) + stageTrackerRowsFixtureJS + `
 
 // Issue claimed 30 min ago: Open + Actionable done, Claimed active, five ahead, cap todo.
 let row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', title: 'Fix <login>', url: 'https://x/7', stage: 20, stage_since: new Date(now - 30*60000).toISOString(), caption: 'Claimed by scanner', author: 'alice', author_kind: 'human', author_kind_source: 'label' }, stages, ctx);
@@ -836,6 +852,7 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsFunc(t, html, "stageTrackerDefaultFilter"),
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
 		jsFunc(t, html, "stageTrackerAnchor"),
+		jsFunc(t, html, "stageTrackerLinkedDrawnHere"),
 		jsFunc(t, html, "stageTrackerLinkedSorted"),
 		stageTrackerTierJS(t, html),
 		jsFunc(t, html, "stageTrackerSortKey"),

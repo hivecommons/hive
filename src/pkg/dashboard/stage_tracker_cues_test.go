@@ -92,7 +92,11 @@ func TestStageTrackerCuesNode(t *testing.T) {
 	runStageTrackerRowActionsScript(t, "function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL")+"\n"+
 		jsFunc(t, html, "stageTrackerItemKey")+"\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_ACTOR_NONE")+"\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_NOBODY_LEAD")+"\n"+
+		jsFunc(t, html, "stageTrackerStageActor")+"\n"+
 		jsFunc(t, html, "stageTrackerActorKind")+"\n"+
+		jsFunc(t, html, "stageTrackerActorTip")+"\n"+
 		stageTrackerCuesJS(t, html)+`
 const assert = require('assert');
 const now = Date.parse('2026-10-28T16:30:00Z');
@@ -194,6 +198,7 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMergedTodayNext"),
 		jsFunc(t, html, "stageTrackerMergedTodayText"),
 		jsFunc(t, html, "stageTrackerMergedTodaySync"),
+		jsFunc(t, html, "stageTrackerMergedChip"),
 		jsFunc(t, html, "stageTrackerMergedCountDraw"),
 		jsFunc(t, html, "stageTrackerCelebrateTick"),
 		jsFunc(t, html, "stageTrackerCelebrateRowKey"),

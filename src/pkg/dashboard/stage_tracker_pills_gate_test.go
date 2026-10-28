@@ -176,6 +176,7 @@ func TestStageTrackerDeferredPillsJS(t *testing.T) {
 		"function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }",
 		"function stageTrackerHoldLabels() { return []; }",
 		"function stageTrackerActorKind() { return ''; }",
+		"function stageTrackerActorTip() { return ''; }",
 		"function stageTrackerSoakLeft() { return ''; }",
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_PRIORITY"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
