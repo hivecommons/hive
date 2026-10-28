@@ -130,7 +130,11 @@ func startFakeRelay(t *testing.T) (*exec.Cmd, <-chan struct{}) {
 	})
 	// Wait for exec -a to take effect before anything inspects the argv.
 	testutil.Eventually(t, 5*time.Second, func() bool {
-		out, _ := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(cmd.Process.Pid)).Output()
+		pid := strconv.Itoa(cmd.Process.Pid)
+		out, err := os.ReadFile("/proc/" + pid + "/cmdline")
+		if err != nil {
+			out, _ = exec.Command("ps", "-o", "args=", "-p", pid).Output()
+		}
 		return strings.Contains(string(out), "contributor-relay")
 	}, "fake relay never showed contributor-relay in its argv")
 	return cmd, done
@@ -225,6 +229,62 @@ func TestContributeStopStopsTheRecordedLocalRelayAndItsTmuxSession(t *testing.T)
 	out, code = runLocalRelayLib(t, bin, `hive_stop_local_relay`, "HIVE_RELAY_PID_FILE="+file)
 	if code != 1 || strings.TrimSpace(out) != "" {
 		t.Fatalf("stop with no relay: exit = %d, output %q; want 1 and silence", code, out)
+	}
+}
+
+// Without procps, the procfs fallback must still identify a relay, refuse a
+// duplicate start, and stop it, while leaving unrelated live processes alone.
+func TestLocalRelayWithoutWorkingPS(t *testing.T) {
+	if _, err := os.Stat("/proc/self/cmdline"); err != nil {
+		t.Skip("requires Linux procfs")
+	}
+	for name, ps := range map[string]string{
+		"missing": "ps() { return 127; }\n",
+		"failed":  "ps() { echo truncated; return 1; }\n",
+		"empty":   "ps() { return 0; }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			relay, done := startFakeRelay(t)
+			pid := relay.Process.Pid
+			file := writeRelayPidRecord(t, pid, "  \"agent_session\": \"hive-test\",\n")
+			out, code := runLocalRelayLib(t, "", ps+`hive_live_local_relay`, "HIVE_RELAY_PID_FILE="+file)
+			if want := fmt.Sprintf("%d hive-test", pid); code != 0 || strings.TrimSpace(out) != want {
+				t.Fatalf("liveness exit = %d, output %q; want %q", code, out, want)
+			}
+			out, code = runLocalRelayLib(t, "", ps+`hive_refuse_if_local_relay_running`, "HIVE_RELAY_PID_FILE="+file)
+			if code != 1 || !strings.Contains(out, "A local relay is already running") {
+				t.Fatalf("refusal exit = %d, output %q", code, out)
+			}
+
+			otherProcess := exec.Command("sleep", "60")
+			if err := otherProcess.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = otherProcess.Process.Kill(); _ = otherProcess.Wait() })
+			other := writeRelayPidRecord(t, otherProcess.Process.Pid, "")
+			out, code = runLocalRelayLib(t, "", ps+`hive_stop_local_relay`, "HIVE_RELAY_PID_FILE="+other)
+			if code != 1 || strings.TrimSpace(out) != "" {
+				t.Fatalf("unrelated process stop: exit = %d, output %q", code, out)
+			}
+			if _, err := os.Stat(other); err != nil {
+				t.Fatalf("unrelated process record removed: %v", err)
+			}
+
+			bin := t.TempDir()
+			writeFakeBin(t, bin, "tmux", "exit 0")
+			out, code = runLocalRelayLib(t, bin, ps+`hive_stop_local_relay`, "HIVE_RELAY_PID_FILE="+file)
+			if code != 0 || !strings.Contains(out, "Stopped local relay") {
+				t.Fatalf("stop exit = %d, output %q", code, out)
+			}
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("relay still running after stop without working ps")
+			}
+			if _, err := os.Stat(file); !os.IsNotExist(err) {
+				t.Fatalf("pid record still present after stop: %v", err)
+			}
+		})
 	}
 }
 

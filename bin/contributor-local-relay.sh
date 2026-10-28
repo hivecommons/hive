@@ -42,7 +42,15 @@ hive_live_local_relay() {
   pid="$(_hive_relay_pid_field "$file" pid)"
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-  args="$(ps -o args= -p "$pid" 2>/dev/null || true)"
+  # Minimal Linux hosts may lack ps (or a ps with these options). Keep the
+  # process-identity check before signalling, using procfs when ps cannot
+  # supply a command line. Translate NUL separators before shell substitution.
+  if ! args="$(ps -o args= -p "$pid" 2>/dev/null)" || [[ -z "$args" ]]; then
+    args=""
+    if [[ -r "/proc/${pid}/cmdline" ]]; then
+      args="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
+    fi
+  fi
   [[ "$args" == *contributor-relay* ]] || return 1
   session="$(_hive_relay_pid_field "$file" agent_session)"
   if [[ -z "$session" && -r "/proc/${pid}/environ" ]]; then
