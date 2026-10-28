@@ -84,6 +84,8 @@ var clientResyncSetters = map[string]bool{
 	"SetExemptLabels":       true,
 	"SetAutoMergeLabel":     true,
 	"SetIssueFilter":        true,
+	// applyGitHubClientConfigHooks also installs it on every rebuilt client.
+	"SetSkipIssuesWithOpenPR": true,
 }
 
 const (

@@ -28,7 +28,7 @@ const ClaimBlockReasonOpenPRPrefix = "open PR already linked: #"
 const openLinkedPRCacheTTL = time.Minute
 
 // openLinkedPRCache is the per-sweep open-PR listing behind the guard, plus
-// the issues it has already labelled HasOpenPRLabel this process.
+// the issues it has labelled HasOpenPRLabel this process and not yet cleared.
 type openLinkedPRCache struct {
 	mu       sync.Mutex
 	now      func() time.Time
@@ -130,10 +130,12 @@ func (c *Client) openLinkedPRs(ctx context.Context, owner, repo string) (map[int
 // reports the open PR that closes repo#number.
 //
 // On a hit it labels the issue HasOpenPRLabel (once, creating the label if
-// missing) and logs "claim skipped: open PR already linked". It reports
-// nothing while the setting is off, and fails open on a listing error: the
-// ledger's next scan still covers the issue, and an API hiccup must not stop
-// every claim.
+// missing) and logs "claim skipped: open PR already linked". When it later
+// readmits an issue it labelled — the linked PR merged or closed — it removes
+// the label again, so HasOpenPRLabel tracks the live refusal rather than
+// lingering. It reports nothing while the setting is off, and fails open on a
+// listing error: the ledger's next scan still covers the issue, and an API
+// hiccup must not stop every claim.
 func (c *Client) IssueOpenPRClaim(ctx context.Context, repo string, number int) (IssueClaim, bool) {
 	if c == nil || c.client == nil || number <= 0 || !c.skipIssuesWithOpenPR.Load() {
 		return IssueClaim{}, false
@@ -149,6 +151,7 @@ func (c *Client) IssueOpenPRClaim(ctx context.Context, repo string, number int) 
 	}
 	claim, ok := links[number]
 	if !ok {
+		c.unlabelHasOpenPR(ctx, owner+"/"+name, number)
 		return IssueClaim{}, false
 	}
 	if c.logger != nil {
@@ -169,8 +172,9 @@ func (c *Client) IssueOpenPRClaimBlockReason(ctx context.Context, repo string, n
 	return ClaimBlockReasonOpenPRPrefix + strconv.Itoa(claim.PRNumber)
 }
 
-// labelHasOpenPR applies HasOpenPRLabel at most once per issue per process; a
-// failed write is logged and retried on the next refusal.
+// labelHasOpenPR applies HasOpenPRLabel at most once per issue per process
+// (until unlabelHasOpenPR clears it); a failed write is logged and retried on
+// the next refusal.
 func (c *Client) labelHasOpenPR(ctx context.Context, repo string, number int) {
 	key := strings.ToLower(repo) + "#" + strconv.Itoa(number)
 	cache := &c.openLinkedPRCache
@@ -195,5 +199,32 @@ func (c *Client) labelHasOpenPR(ctx context.Context, repo string, number int) {
 		cache.labelled = map[string]bool{}
 	}
 	cache.labelled[key] = true
+	cache.mu.Unlock()
+}
+
+// unlabelHasOpenPR removes HasOpenPRLabel from an issue this process labelled
+// once the guard admits it again: the linked PR has merged or closed, so the
+// label would otherwise go stale. A failed removal is logged and retried on
+// the next admission.
+func (c *Client) unlabelHasOpenPR(ctx context.Context, repo string, number int) {
+	key := strings.ToLower(repo) + "#" + strconv.Itoa(number)
+	cache := &c.openLinkedPRCache
+	cache.mu.Lock()
+	labelled := cache.labelled[key]
+	cache.mu.Unlock()
+	if !labelled {
+		return
+	}
+	if err := c.RemoveLabel(ctx, repo, number, HasOpenPRLabel); err != nil {
+		if c.logger != nil {
+			c.logger.Warn("open-PR claim guard: could not clear issue label", "repo", repo, "issue", number, "label", HasOpenPRLabel, "error", err)
+		}
+		return
+	}
+	if c.logger != nil {
+		c.logger.Info("open-PR claim guard: linked PR no longer open, label cleared", "repo", repo, "issue", number, "label", HasOpenPRLabel)
+	}
+	cache.mu.Lock()
+	delete(cache.labelled, key)
 	cache.mu.Unlock()
 }

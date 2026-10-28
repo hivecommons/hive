@@ -22,6 +22,7 @@ type openPRGuardServer struct {
 	labelExists bool
 	labelsMade  int
 	issueLabels map[string][]string
+	removed     []string
 }
 
 func (f *openPRGuardServer) handler(t *testing.T) http.HandlerFunc {
@@ -52,6 +53,9 @@ func (f *openPRGuardServer) handler(t *testing.T) http.HandlerFunc {
 			}
 			f.issueLabels[r.URL.Path] = append(f.issueLabels[r.URL.Path], labels...)
 			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/") && strings.Contains(r.URL.Path, "/labels/"):
+			f.removed = append(f.removed, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
 			_, _ = io.WriteString(w, `{"number":42,"labels":[{"name":"bug"}]}`)
 		default:
@@ -155,6 +159,56 @@ func TestIssueOpenPRClaimListsOncePerSweep(t *testing.T) {
 	claim, ok := c.IssueOpenPRClaim(context.Background(), "o/r", 42)
 	if !ok || claim.PRNumber != 14775 || claim.PRState != PRStateOpen || claim.PRAuthor != "alice" {
 		t.Fatalf("after the sweep window: claim %+v, %v; want open PR #14775", claim, ok)
+	}
+}
+
+// Once the linked PR merges or closes, the next admission of an issue the
+// guard labelled clears HasOpenPRLabel instead of leaving it stale; issues
+// the guard never labelled are not touched, and a later refusal relabels.
+func TestIssueOpenPRClaimClearsLabelOnReadmit(t *testing.T) {
+	fake := &openPRGuardServer{pulls: openPRGuardPulls(openPRGuardPull(14775, "fix", "Fixes #42")), labelExists: true}
+	srv := httptest.NewServer(fake.handler(t))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	c.SetSkipIssuesWithOpenPR(true)
+	now := time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC)
+	c.openLinkedPRCache.now = func() time.Time { return now }
+
+	if _, ok := c.IssueOpenPRClaim(context.Background(), "o/r", 42); !ok {
+		t.Fatal("open PR #14775 did not refuse #42")
+	}
+	if _, ok := c.IssueOpenPRClaim(context.Background(), "o/r", 41); ok {
+		t.Fatal("#41 refused with no linked PR")
+	}
+
+	fake.mu.Lock()
+	fake.pulls = openPRGuardPulls()
+	fake.mu.Unlock()
+	now = now.Add(openLinkedPRCacheTTL)
+	for i := 0; i < 2; i++ {
+		if _, ok := c.IssueOpenPRClaim(context.Background(), "o/r", 42); ok {
+			t.Fatalf("pass %d: #42 still refused after PR closed", i)
+		}
+	}
+	fake.mu.Lock()
+	removed := append([]string(nil), fake.removed...)
+	fake.mu.Unlock()
+	want := []string{"/repos/o/r/issues/42/labels/" + HasOpenPRLabel}
+	if len(removed) != 1 || removed[0] != want[0] {
+		t.Fatalf("label removals = %v, want %v once (never for #41, not twice for #42)", removed, want)
+	}
+
+	fake.mu.Lock()
+	fake.pulls = openPRGuardPulls(openPRGuardPull(14790, "fix", "Fixes #42"))
+	fake.mu.Unlock()
+	now = now.Add(openLinkedPRCacheTTL)
+	if _, ok := c.IssueOpenPRClaim(context.Background(), "o/r", 42); !ok {
+		t.Fatal("new open PR #14790 did not refuse #42")
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if labels := fake.issueLabels["/repos/o/r/issues/42/labels"]; len(labels) != 2 {
+		t.Fatalf("issue labels %v, want %s applied twice (once per refusal episode)", labels, HasOpenPRLabel)
 	}
 }
 

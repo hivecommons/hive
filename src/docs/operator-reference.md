@@ -749,8 +749,9 @@ the contributor lane) the hive now lists the repo's open PRs live — one
 listing per repo per sweep, reused for a minute — and refuses the claim when
 an open PR's title or body closes the issue (`Fixes`/`Closes`/`Resolves #N`,
 any case). The refused issue is labelled `has-open-pr` (the label is created
-if missing), the hive logs `claim skipped: open PR already linked` with the PR
-number, the relay request fails with `open PR already linked: #<pr>`, and the
+if missing; the hive removes it again when it next admits the issue after the
+linked PR merges or closes), the hive logs `claim skipped: open PR already
+linked` with the PR number, the relay request fails with `open PR already linked: #<pr>`, and the
 contributor queue withholds the issue as `open_pr_claim`. A claimant's own PR
 start signal, a renewal of its claim and the cleanup recheck are not refused,
 and a failed listing admits the claim (the next ledger scan still covers it).
