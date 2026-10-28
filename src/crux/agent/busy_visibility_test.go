@@ -587,3 +587,32 @@ func TestScanTranscriptActivityWalksAgentsConcurrently(t *testing.T) {
 		}
 	}
 }
+
+func TestKickNotReadyLiveTurnIsBenignDeferral(t *testing.T) {
+	m := busyVisibilityTestManager()
+	a := m.agents["scanner"]
+	now := time.Now()
+	original := kickPromptNotReadyErr(a.Name, "")
+	for _, tc := range []struct {
+		name string
+		last time.Time
+		busy bool
+	}{
+		{"live", now.Add(-time.Second), true},
+		{"stalled", now.Add(-config.DefaultBusyNoActivityThreshold - time.Minute), false},
+		{"unknown", time.Time{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a.LastTranscriptActivity = tc.last
+			m.mu.Lock()
+			err := m.kickNotReadyErrorLocked(a, now, original)
+			m.mu.Unlock()
+			if errors.Is(err, crux.ErrAgentBusy) != tc.busy {
+				t.Fatalf("error=%v, want busy=%v", err, tc.busy)
+			}
+			if !tc.busy && err != original {
+				t.Fatalf("lost genuine failure: %v", err)
+			}
+		})
+	}
+}

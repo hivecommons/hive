@@ -565,3 +565,12 @@ func formatTimeForLog(t time.Time) string {
 	}
 	return t.UTC().Format(time.RFC3339)
 }
+
+// kickNotReadyErrorLocked distinguishes a live turn from a stalled CLI.
+// Caller holds m.mu. Keep the original diagnostic for genuine failures.
+func (m *Manager) kickNotReadyErrorLocked(agent *AgentProcess, now time.Time, err error) error {
+	if _, live := kickUndeliverableTranscriptLiveness(agent, now); live {
+		return fmt.Errorf("%w: %v", crux.ErrAgentBusy, err)
+	}
+	return err
+}

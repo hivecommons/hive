@@ -193,7 +193,7 @@ func (m *Manager) SendKick(name string, message string) (err error) {
 			return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
 		}
 		m.markKickUndeliverableLocked(agent, time.Now(), reason)
-		return kickPromptNotReadyErr(name, reason)
+		return m.kickNotReadyErrorLocked(agent, time.Now(), kickPromptNotReadyErr(name, reason))
 	}
 	m.mu.Lock()
 	agent, ok = m.agents[name]
@@ -268,7 +268,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	if !agent.kickDelivering.CompareAndSwap(false, true) {
 		m.logger.Warn("kick delivery skipped: another kick is already being typed into this pane",
 			"agent", agent.Name, "trigger", trigger)
-		return fmt.Errorf("agent %s kick delivery already in progress", agent.Name)
+		return fmt.Errorf("%w: agent %s kick delivery already in progress", crux.ErrAgentBusy, agent.Name)
 	}
 	defer agent.kickDelivering.Store(false)
 
@@ -287,7 +287,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 		if menuFooter != "" {
 			return fmt.Errorf("agent %s pane not at a ready input prompt: %s", agent.Name, reason)
 		}
-		return fmt.Errorf("agent %s pane not at a ready input prompt", agent.Name)
+		return m.kickNotReadyErrorLocked(agent, time.Now(), fmt.Errorf("agent %s pane not at a ready input prompt", agent.Name))
 	}
 
 	// Archive the PREVIOUS kick's scrollback and clear the history before any

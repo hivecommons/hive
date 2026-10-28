@@ -1,0 +1,1 @@
+- Continuous agents receive due re-kicks between busy run-loop cycles without waiting for sweeps; busy kick deferrals no longer escalate continuous backoff or send more messages into the same agent lane ([#14820](https://github.com/hivecommons/hive/issues/14820)).

@@ -2,11 +2,13 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
@@ -362,11 +364,8 @@ func TestDispatchAgentKicks_AgentsDeliverConcurrently(t *testing.T) {
 	}
 }
 
-// TestDispatchAgentKicks_SameAgentStaysOrdered pins the other half of the
-// contract: two kicks to ONE agent (a fix kick ordered ahead of the governor
-// kick by orderReviewFixKicksFirst) must still go out in order, because they
-// type into the same pane.
-func TestDispatchAgentKicks_SameAgentStaysOrdered(t *testing.T) {
+// A successful fix kick starts a turn, so the governor kick must be deferred.
+func TestDispatchAgentKicks_SameAgentDefersAfterDelivery(t *testing.T) {
 	r := newKickDispatchRecorder()
 	var msgsSeen []string
 	deps := r.deps()
@@ -381,10 +380,10 @@ func TestDispatchAgentKicks_SameAgentStaysOrdered(t *testing.T) {
 		{Agent: "alpha", Message: "governor second"},
 	}
 	delivered := dispatchAgentKicks(msgs, false, deps, discardLogger())
-	if want := []string{"alpha", "alpha"}; !equalStrings(delivered, want) {
+	if want := []string{"alpha"}; !equalStrings(delivered, want) {
 		t.Fatalf("delivered = %v, want %v", delivered, want)
 	}
-	if want := []string{"fix first", "governor second"}; !equalStrings(msgsSeen, want) {
+	if want := []string{"fix first"}; !equalStrings(msgsSeen, want) {
 		t.Fatalf("same-agent kicks reordered: %v, want %v", msgsSeen, want)
 	}
 }
@@ -460,4 +459,40 @@ func indexOf(hay []string, needle string) int {
 		}
 	}
 	return -1
+}
+
+func TestDispatchAgentKicks_BusyDefersLaneWithoutFailure(t *testing.T) {
+	for _, busy := range []bool{true, false} {
+		t.Run(fmt.Sprint(busy), func(t *testing.T) {
+			r := newKickDispatchRecorder()
+			if busy {
+				r.sendErr["alpha"] = fmt.Errorf("prompt wait: %w", crux.ErrAgentBusy)
+			} else {
+				r.sendErr["alpha"] = errors.New("CLI stalled")
+			}
+			deps := r.deps()
+			var failures []string
+			deps.onFailed = func(msg scheduler.KickMessage, err error) { failures = append(failures, msg.Agent) }
+			delivered := dispatchAgentKicks(kickMsgs("alpha", "alpha", "beta"), true, deps, discardLogger())
+			if !equalStrings(delivered, []string{"beta"}) || len(r.probeStamp) != 1 {
+				t.Fatalf("delivered=%v probe stamps=%v", delivered, r.probeStamp)
+			}
+			sends := 0
+			for _, call := range r.calls {
+				if call == "send:alpha" {
+					sends++
+				}
+			}
+			if busy {
+				if len(failures) != 0 || sends != 1 {
+					t.Fatalf("busy: failures=%v sends=%d", failures, sends)
+				}
+			} else if len(failures) != 2 || sends != 2 {
+				t.Fatalf("genuine failure: failures=%v sends=%d", failures, sends)
+			}
+			if len(r.spansEnded) != 3 {
+				t.Fatalf("unclosed spans: %v", r.spansEnded)
+			}
+		})
+	}
 }

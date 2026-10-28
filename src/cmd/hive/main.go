@@ -6376,7 +6376,38 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		}
 	}()
 
+	serveContinuousWake := func() {
+		if deps.newWakeTimer == nil || b.gov == nil || b.ctx.Err() != nil {
+			return
+		}
+		now := wakeNow()
+		next, who := b.gov.NextContinuousKickAt()
+		if _, due := continuousWakeDecision(next, now, lastWake, wakeHold.untilFor(next, who)); due {
+			idleFor := time.Duration(0)
+			if st, ok := b.gov.GetState().Continuous[who]; ok && !st.LastKickEnd.IsZero() {
+				idleFor = now.Sub(st.LastKickEnd).Round(time.Second)
+			}
+			b.logger.Info("continuous re-kick wake: running an early eval cycle",
+				"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
+				"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
+			lastWake = now
+			// Keep this cycle lean: planning and delivery without sweeps.
+			b.cfgReloadMu.Lock()
+			b.evalCycles++
+			deps.runEval(b, nil, evalSourceCached)
+			deps.persist(b)
+			b.cfgReloadMu.Unlock()
+			after, afterWho := b.gov.NextContinuousKickAt()
+			if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
+				b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
+					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "backoff", backoff.String())
+			}
+		}
+	}
+
 	for {
+		// Serve due kicks between cycles even when other channels stay ready.
+		serveContinuousWake()
 		select {
 		case <-b.ctx.Done():
 			b.logger.Info("shutting down, persisting state")
@@ -6434,24 +6465,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			b.cfgReloadMu.Unlock()
 			armWebhookHealthRecheck()
 		case <-wakeCh:
-			now := wakeNow()
-			next, who := b.gov.NextContinuousKickAt()
-			if _, due := continuousWakeDecision(next, now, lastWake, wakeHold.untilFor(next, who)); due {
-				idleFor := time.Duration(0)
-				if st, ok := b.gov.GetState().Continuous[who]; ok && !st.LastKickEnd.IsZero() {
-					idleFor = now.Sub(st.LastKickEnd).Round(time.Second)
-				}
-				b.logger.Info("continuous re-kick wake: running an early eval cycle",
-					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
-					"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
-				lastWake = now
-				tick(evalSourceCached)
-				after, afterWho := b.gov.NextContinuousKickAt()
-				if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
-					b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
-						"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "backoff", backoff.String())
-				}
-			}
+			// The loop-top due check services this timer.
 			armContinuousWake()
 		case <-agentTickCh:
 			b.cfgReloadMu.Lock()
