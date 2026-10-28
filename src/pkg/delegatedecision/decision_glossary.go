@@ -91,6 +91,8 @@ var glossary = []GlossaryEntry{
 		Detail: "Security-sensitive files changed in a PR from an author without write access; a maintainer must review and approve it."},
 	{Slug: "hive-policy", Kind: GlossaryRule, Plain: "this changes the hive's own rules",
 		Detail: "This changes the hive's own settings, governance or security posture; the hive only recommends and the owner confirms."},
+	{Slug: "capability-gap", Kind: GlossaryRule, Plain: "the GitHub App lacks a permission; deciding cannot clear it",
+		Detail: "The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change."},
 	{Slug: "review-backlog", Kind: GlossaryRule, Plain: "the PR closed without merging, so the issue stays open",
 		Detail: "The fixing PR closed unmerged; the issue stays open and is re-triaged rather than auto-closed."},
 	{Slug: "flaky-test", Kind: GlossaryRule, Plain: "a flaky test, quarantined with a retry",
