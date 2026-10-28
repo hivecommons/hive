@@ -145,7 +145,7 @@ func TestCompactValueNilAndTypes(t *testing.T) {
 	if got := compactValue("line1\nline2"); got != "line1\\nline2" {
 		t.Fatalf("string = %q", got)
 	}
-	if got := compactValue("a\x1b[31mred\x1b[0m\tb\x07\x9bc\r"); got != "a[31mred[0m bc" {
+	if got := compactValue("a\x1b[31mred\x1b[0m\tb\x07\u009bc\r"); got != "a[31mred[0m bc" {
 		t.Fatalf("control chars = %q", got)
 	}
 	if got := compactValue(float64(3.5)); got != "3.5" {
