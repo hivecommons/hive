@@ -1375,7 +1375,10 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # This builds the full runtime image, like the docker matrix above. Allow
+    # the same budget for cold builds and slow backend package downloads so
+    # the job can reach the overlayfs assertions (exec itself is capped at 90s).
+    timeout-minutes: 45
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
