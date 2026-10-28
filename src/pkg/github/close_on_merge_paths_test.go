@@ -262,6 +262,7 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 				head = "scanner/other"
 			}
 			pr := mergedTestPR(42, tc.author, head, tc.body)
+			pr.MergedBy = &gh.User{Login: gh.Ptr("maintainer")}
 			res := c.closeIssueForMergedPRClaim(context.Background(), "o/r", 7, pr, tc.claimMetadata, CloseOnMergeOptions{
 				Identity:      HiveIdentity{AppLogin: "hive[bot]"},
 				TrustedAuthor: tc.trusted,
