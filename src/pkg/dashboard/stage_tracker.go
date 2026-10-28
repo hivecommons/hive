@@ -365,6 +365,19 @@ type StageTrackerItem struct {
 	// leaving the owner to ask why (hivecommons/hive#14658).
 	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
 	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
+	// AdmittedBy is the person's trust override standing on the current
+	// head ("operator-approval:<login>", hivecommons/hive#15136): their
+	// Approve admitted the head to the contributor lane, which merges it
+	// as-is after checks and soak, and the adoption engine leaves the PR
+	// alone while it stands. Empty when nobody admitted this head.
+	AdmittedBy string `json:"admitted_by,omitempty"`
+	// DCOUnsigned / DCOTotal are the stage record's commit check for the
+	// current head (0/0 when not cached): how many of the PR's commits lack
+	// a Signed-off-by. The 090 decision reads them to say, before anyone
+	// presses Approve, that merging as-is would fail DCO and to offer
+	// re-authoring as a separate choice (hivecommons/hive#15136).
+	DCOUnsigned int `json:"dco_unsigned,omitempty"`
+	DCOTotal    int `json:"dco_total,omitempty"`
 	// UnauthorizedStep is set when the item wears hive:unauthorized: the
 	// step the hive's GitHub App is not permitted to take, in words
 	// ("approve workflow runs"), from the `unauthorized:<step>` stage
@@ -512,7 +525,13 @@ type StageTrackerLinkedPR struct {
 	ManualMerge          bool   `json:"manual_merge,omitempty"`
 	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
 	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
-	Head                 string `json:"head,omitempty"`
+	// AdmittedBy / DCOUnsigned / DCOTotal mirror the nested PR's trust
+	// override and commit check (#15136) so the sub-row's confirmations
+	// carry the same caveats.
+	AdmittedBy  string `json:"admitted_by,omitempty"`
+	DCOUnsigned int    `json:"dco_unsigned,omitempty"`
+	DCOTotal    int    `json:"dco_total,omitempty"`
+	Head        string `json:"head,omitempty"`
 	// DecisionNeeded mirrors the nested PR's own row field so the issue's
 	// sub-row can open the same "Needs human" popover.
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
@@ -1741,6 +1760,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.AdoptedBy = rec.AdoptedBy
 			it.AdoptedByState = stageTrackerAdoptedByState(rec)
 			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
+			it.AdmittedBy = rec.Admission(it.Head)
+			if total, unsigned, ok := rec.DCOFor(it.Head); ok {
+				it.DCOTotal, it.DCOUnsigned = total, unsigned
+			}
 		}
 		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)
 		it.Stage = stage.Number()
@@ -1795,6 +1818,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				if why := stageTrackerUntrustedAuthorWhy(base, it.Author); why != "" {
 					it.HumanMergeReasonText = "Untrusted author: " + why + ". Until then a maintainer merges — Approve & merge as maintainer, or Approve — let hive merge, from the row's ⋯ menu."
 				}
+			}
+			// A person already took the trust call for this head (#15136).
+			if login := stagelabels.AdmissionLogin(it.AdmittedBy); login != "" {
+				it.HumanMergeReasonText = "Approved by @" + login + " as the owner decision (" + it.AdmittedBy + "): the hive merges this head as-is on its next pass once CI is green and the head has soaked, and does not adopt or re-author it. " + it.HumanMergeReasonText
 			}
 		}
 		if slices.Contains(it.Modifiers, modUnauthorized) || slices.Contains(it.DeferredModifiers, modUnauthorized) {
@@ -2703,6 +2730,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.Presence = pr.Presence
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
+				lp.AdmittedBy, lp.DCOUnsigned, lp.DCOTotal = pr.AdmittedBy, pr.DCOUnsigned, pr.DCOTotal
 				lp.BaseRef = pr.BaseRef
 				lp.DecisionNeeded = pr.DecisionNeeded
 				lp.SoakRemainingSeconds, lp.MergeGate = pr.SoakRemainingSeconds, pr.MergeGate

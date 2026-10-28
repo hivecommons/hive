@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Activity-monitor row decisions (hivecommons/hive#13479 follow-up). The
@@ -67,6 +69,12 @@ const (
 	// tick once CI is green (soak and the self-merge ban still apply).
 	repoItemDecisionMergeNow   = "merge-now"
 	repoItemDecisionQueueMerge = "queue-merge"
+	// re-author is the operator's explicit choice, offered on a 090 PR
+	// whose head cannot merge as-is (unsigned commits → DCO), to have the
+	// hive re-home the commits on a hive-owned branch and open a
+	// superseding PR (hivecommons/hive#15136). It queues the same adoption
+	// the Adopt decision does; it is never implied by an Approve.
+	repoItemDecisionReauthor = "re-author"
 
 	repoItemDecisionMaxBody    = 16 << 10
 	repoItemDecisionMaxComment = 4000
@@ -156,6 +164,29 @@ type repoItemDecisionResponse struct {
 	Result *RowActionResult `json:"result,omitempty"`
 	// Head is the PR head an approve / direction was recorded against.
 	Head string `json:"head,omitempty"`
+	// AdmittedBy is the trust override an Approve (either variant) wrote
+	// on the stage record for Head — "operator-approval:<login>" — so the
+	// contributor lane merges the head as-is and the adoption engine
+	// leaves the PR alone (hivecommons/hive#15136).
+	AdmittedBy string `json:"admitted_by,omitempty"`
+}
+
+// admitPullRequestHead records user's Approve as the trust override for
+// head on the stage record (hivecommons/hive#15136) and returns the
+// admitted_by value written ("" when there is no record to write to —
+// the lane then derives the same admission from the recorded approval).
+func (s *Server) admitPullRequestHead(repoFull string, number int, head, user string) string {
+	by := stagelabels.OperatorApprovalAdmission(user)
+	if strings.TrimSpace(head) == "" || by == "" {
+		return ""
+	}
+	store := s.stageStoreOrShared()
+	key := stagelabels.Key(repoFull, number)
+	store.NoteAdmission(key, head, by, time.Now())
+	if rec, ok := store.Get(key); ok && rec.Admission(head) == by {
+		return by
+	}
+	return ""
 }
 
 // repoItemDecisionResult reads a recorded human decision into the shared
@@ -200,6 +231,10 @@ func repoItemDecisionResult(repoFull string, number int, itemType, decision, com
 		out.Action = rowActionAdopted
 		out.Outcome = "Adoption queued: `" + label + "` applied."
 		out.Next = "The hive opens its own PR carrying the author's commits and sign-off on its next cycle; the original is closed as superseded."
+	case repoItemDecisionReauthor:
+		out.Action = rowActionAdopted
+		out.Outcome = "Re-authoring queued: `" + label + "` applied."
+		out.Next = "The hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR on its next cycle; this PR is closed when that one merges. Nothing is merged as-is."
 	case repoItemDecisionMergeNow:
 		out.Action = rowActionMerged
 		out.Outcome = "Merged into `" + label + "` now via hive's identity, attributed to you."
@@ -347,16 +382,20 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		s.audit.LogRecord(user, auditRepoItemDecisionClose, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "reason", verb, "superseded_by", supersededBy), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "closed", Label: label,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, supersededBy, label, nil)})
-	case repoItemDecisionAdopt:
+	case repoItemDecisionAdopt, repoItemDecisionReauthor:
 		if itemType != "pr" {
-			jsonError(w, "adopt applies to pull requests", http.StatusBadRequest)
+			jsonError(w, decision+" applies to pull requests", http.StatusBadRequest)
 			return
 		}
 		if !s.stageAdoptionEnabled() {
 			jsonError(w, "adoption requires governor.labels.stage.adoption to be enabled on this hive", http.StatusConflict)
 			return
 		}
-		if err := gh.CreateIssueComment(ctx, repoFull, number, renderRepoItemDecisionAdoptComment(user, comment)); err != nil {
+		note := renderRepoItemDecisionAdoptComment(user, comment)
+		if decision == repoItemDecisionReauthor {
+			note = renderRepoItemDecisionReauthorComment(user, comment)
+		}
+		if err := gh.CreateIssueComment(ctx, repoFull, number, note); err != nil {
 			jsonError(w, "posting adoption note: "+err.Error(), http.StatusBadGateway)
 			return
 		}
@@ -368,7 +407,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 			jsonError(w, "queuing adoption: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		s.audit.LogRecord(user, auditRepoItemDecisionAdopt, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "label", delegatedecision.LabelAdoptSupersede), "", repoFull, number)
+		s.audit.LogRecord(user, auditRepoItemDecisionAdopt, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "label", delegatedecision.LabelAdoptSupersede, "decision", decision), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "adoption-queued", Label: delegatedecision.LabelAdoptSupersede,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, "", delegatedecision.LabelAdoptSupersede, nil)})
 	case repoItemDecisionMergeNow, repoItemDecisionQueueMerge:
@@ -382,7 +421,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		}
 		s.handlePullRequestMergeDecision(ctx, w, repoFull, number, user, decision, comment)
 	default:
-		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, adopt, merge-now or queue-merge", http.StatusBadRequest)
+		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, adopt, re-author, merge-now or queue-merge", http.StatusBadRequest)
 	}
 }
 
@@ -428,15 +467,19 @@ func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.Resp
 	if base == "" {
 		base = "the base branch"
 	}
+	// Either variant is the person's trust override for this head: written
+	// before the GitHub call so the adoption engine cannot take the PR over
+	// between the approval landing and the merge (hivecommons/hive#15136).
+	admitted := s.admitPullRequestHead(repoFull, number, state.HeadSHA, user)
 	if decision == repoItemDecisionQueueMerge {
 		if err := gh.QueuePRAutoMergeWithNote(ctx, repoFull, number, user, renderRepoItemDecisionQueueNote(user, comment)); err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}
 		label := gh.AutoMergeLabel()
-		s.audit.LogRecord(user, auditRepoItemDecisionQueue, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "label", label), "", repoFull, number)
+		s.audit.LogRecord(user, auditRepoItemDecisionQueue, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "label", label, "admitted_by", admitted), "", repoFull, number)
 		s.invalidateStageTrackerForWebhook()
-		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "queued-for-merge", Label: label, Head: state.HeadSHA,
+		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "queued-for-merge", Label: label, Head: state.HeadSHA, AdmittedBy: admitted,
 			Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", label, nil)})
 		return
 	}
@@ -455,9 +498,9 @@ func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.Resp
 		jsonError(w, "GitHub did not merge the pull request: "+strings.TrimSpace(res.Message), http.StatusConflict)
 		return
 	}
-	s.audit.LogRecord(user, auditRepoItemDecisionMerge, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "base", state.BaseRef, "sha", res.SHA), "", repoFull, number)
+	s.audit.LogRecord(user, auditRepoItemDecisionMerge, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "base", state.BaseRef, "sha", res.SHA, "admitted_by", admitted), "", repoFull, number)
 	s.invalidateStageTrackerForWebhook()
-	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "merged", Head: state.HeadSHA,
+	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "merged", Head: state.HeadSHA, AdmittedBy: admitted,
 		Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", base, nil)})
 }
 
@@ -487,6 +530,17 @@ func renderRepoItemDecisionAdoptComment(user, comment string) string {
 	body := fmt.Sprintf("%s by=%s -->\n@%s asked the hive to adopt this pull request: its author maintains the repository and their hive has been offline since the nudge, so adoption waited for an owner's decision (`governor.labels.stage.adoption.maintainer_policy: ask`). The adoption engine takes it from here on its next pass; the author's commits and sign-off are kept.", repoItemDecisionAdoptMarker, user, user)
 	if comment != "" {
 		body += "\n\n> " + strings.ReplaceAll(comment, "\n", "\n> ")
+	}
+	return body
+}
+
+// renderRepoItemDecisionReauthorComment is the attributed note a
+// Re-author decision leaves on the PR before the adoption request label is
+// applied (hivecommons/hive#15136).
+func renderRepoItemDecisionReauthorComment(user, comment string) string {
+	body := fmt.Sprintf("%s by=%s -->\n@%s asked the hive to re-author this pull request as a hive PR: its head cannot merge as-is (commits without a Signed-off-by), so the hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR; this one is closed when that merges. The author's commits are preserved and attributed.", repoItemDecisionAdoptMarker, user, user)
+	if c := strings.TrimSpace(comment); c != "" {
+		body += "\n\n> " + strings.ReplaceAll(c, "\n", "\n> ")
 	}
 	return body
 }
@@ -533,14 +587,22 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		return
 	}
 	action, status := auditRepoItemDecisionApprove, "approval-commented"
+	admitted := ""
 	if decision == repoItemDecisionDirection {
 		action, status = auditRepoItemDecisionDirection, "direction-recorded"
+	} else {
+		// The person's Approve is the trust override for this head: the
+		// contributor lane merges it as-is and the adoption engine leaves
+		// it alone while the admission stands (hivecommons/hive#15136).
+		if admitted = s.admitPullRequestHead(repoFull, number, head, user); admitted != "" {
+			released = append(released, "admitted")
+		}
 	}
-	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage), "", repoFull, number)
+	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage, "admitted_by", admitted), "", repoFull, number)
 	// The row's park was just answered: serve the re-derived stage on the
 	// next tracker read instead of the cached 085.
 	s.invalidateStageTrackerForWebhook()
-	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head,
+	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head, AdmittedBy: admitted,
 		Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", "", released)})
 }
 

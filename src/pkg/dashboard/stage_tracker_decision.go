@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -75,6 +76,7 @@ const (
 	decisionActionCloseWontfix    = "decide:close-wontfix"
 	decisionActionMergeNow        = "decide:merge-now"
 	decisionActionQueueMerge      = "decide:queue-merge"
+	decisionActionReauthor        = "decide:re-author"
 	decisionActionAcceptTriage    = "accept-triage"
 	decisionActionHold            = "hold"
 	decisionActionRelease         = "release"
@@ -257,13 +259,31 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 	if approver != "" {
 		d.Blocker = "Approved by @" + approver + "; the hive still never merges this unattended. A maintainer merges: here, or on GitHub."
 	}
+	admitter := stagelabels.AdmissionLogin(it.AdmittedBy)
+	if admitter != "" {
+		// A person already took the trust call for this head (#15136):
+		// the lane merges it as-is; nothing is adopted or re-authored.
+		d.Question = "@" + admitter + " approved this head as the owner decision; the hive's merge sweep merges " + ref + " as-is once CI is green and the head has soaked, and will not adopt or re-author it. Merge it now instead, or send it back?"
+		d.Blocker = "Admitted by @" + admitter + " (" + it.AdmittedBy + "). The hive merges this head on its next pass; a new push drops the admission and asks again."
+	}
+	dco := decisionDCOBlocker(it)
+	if dco != "" {
+		d.Blocker += " " + dco
+	}
 	if held {
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
 	mergeNow := decisionOption(decisionActionMergeNow, "Approve & merge as maintainer", !held, "Release the hold first")
 	mergeNow.Consequence = "merges " + ref + " into " + into + " now via hive's identity, attributed to you"
 	queue := decisionOption(decisionActionQueueMerge, "Approve — let hive merge", !held, "Release the hold first")
-	queue.Consequence = "records your approval; the hive's merge sweep merges " + ref + " on its next pass once CI is green and the head has soaked"
+	queue.Consequence = "records your approval as the trust override for this head; the hive's merge sweep merges " + ref + " as-is on its next pass once CI is green and the head has soaked, and does not adopt it"
+	if admitter != "" && !held {
+		queue.Enabled, queue.ReasonIfDisabled = false, "@"+admitter+" already approved this head; the hive merges it on its next pass"
+	}
+	if dco != "" {
+		mergeNow.Consequence += "; " + decisionDCOConsequence(it)
+		queue.Consequence += "; " + decisionDCOConsequence(it)
+	}
 	direction := decisionOption(decisionActionDirection, "Give direction", it.AuthorKind != authorKindHuman, "The hive did not open this PR, so it cannot carry a direction to its author; leave a changes-requested review on GitHub")
 	direction.Consequence = "asks the author agent for a new head instead of merging"
 	closeSup := decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, "")
@@ -271,8 +291,59 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 	closeWontfix := decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, "")
 	closeWontfix.Consequence = "closes " + ref + " unmerged"
 	delegate := decisionDelegateOption(held, "the hive answers at once why it will not merge this itself and lists these options; it never merges it")
-	d.Options = []StageTrackerDecisionOption{mergeNow, queue, delegate, direction, closeSup, closeWontfix, decisionHoldOption(held)}
+	d.Options = []StageTrackerDecisionOption{mergeNow, queue}
+	if dco != "" {
+		d.Options = append(d.Options, decisionReauthorOption(it, ref, held))
+	}
+	d.Options = append(d.Options, delegate, direction, closeSup, closeWontfix, decisionHoldOption(held))
 	return d
+}
+
+// decisionDCOBlocker says, before anyone presses Approve, that the head
+// cannot merge as-is where DCO is required: the stage record's commit check
+// found commits without a Signed-off-by (hivecommons/hive#15136). "" when
+// the check is not cached for this head or every commit is signed.
+func decisionDCOBlocker(it StageTrackerItem) string {
+	if it.DCOUnsigned <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("Merging as-is may not be possible: %d of %s no Signed-off-by, so a required DCO check refuses the merge. Re-author as hive PR is the separate choice for that; an Approve never re-authors by itself.",
+		it.DCOUnsigned, pluralCommitsHave(it.DCOTotal))
+}
+
+// decisionDCOConsequence is the short DCO caveat under the merge options.
+func decisionDCOConsequence(it StageTrackerItem) string {
+	return fmt.Sprintf("%d of %s no Signed-off-by, so GitHub refuses the merge where DCO is required", it.DCOUnsigned, pluralCommitsHave(it.DCOTotal))
+}
+
+// pluralCommitsHave renders "3 commits have" / "1 commit has" for the DCO
+// sentences; a total the record does not know reads "its commits have".
+func pluralCommitsHave(total int) string {
+	switch {
+	case total == 1:
+		return "1 commit has"
+	case total > 1:
+		return strconv.Itoa(total) + " commits have"
+	}
+	return "its commits have"
+}
+
+// decisionReauthorOption is the operator's explicit "re-author as hive PR"
+// choice (hivecommons/hive#15136): the hive re-homes the commits on a
+// hive-owned, signed-off branch and opens a superseding PR. A person's PR
+// is never re-authored by the hive, so for a human author the option is
+// shown disabled with the step that does unblock it.
+func decisionReauthorOption(it StageTrackerItem, ref string, held bool) StageTrackerDecisionOption {
+	o := decisionOption(decisionActionReauthor, "Re-author as hive PR", !held && it.AuthorKind != authorKindHuman, "Release the hold first")
+	if it.AuthorKind == authorKindHuman {
+		who := "the author"
+		if it.Author != "" {
+			who = "@" + it.Author
+		}
+		o.ReasonIfDisabled = "The hive does not re-author a person's PR; ask " + who + " to sign off (git commit -s --amend, then push), or merge on GitHub if DCO is not required there"
+	}
+	o.Consequence = "the hive re-homes " + ref + "'s commits on a hive-owned, signed-off branch and opens a superseding PR; " + ref + " is closed when that one merges; nothing is merged as-is"
+	return o
 }
 
 // decisionForUnauthorized: a row wearing hive:unauthorized outside 085 —

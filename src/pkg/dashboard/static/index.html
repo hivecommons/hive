@@ -15159,7 +15159,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Row-menu action id each ledger action was submitted under, so the
     // option the owner just took is not offered back to them.
-    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'accept-triage': 'accept-triage', hold: 'hold', 'merge-now': 'decide:merge-now', 'queue-merge': 'decide:queue-merge' };
+    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'accept-triage': 'accept-triage', hold: 'hold', 'merge-now': 'decide:merge-now', 'queue-merge': 'decide:queue-merge', 're-author': 'decide:re-author' };
     // Pure: what the owner can still do when their action changed nothing
     // (no-op) or the item has not moved (stuck): the enabled options from
     // the row's decision_needed payload, minus the one just taken.
@@ -16980,11 +16980,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (e) return detail ? e.detail : e.plain;
       return s.replace(/^[a-z-]+:/, '').replace(/[-_]+/g, ' ').trim();
     }
+    // Pure: the DCO caveat the merge confirmations print BEFORE acting
+    // when the stage record counted unsigned commits on the head (#15136):
+    // merging as-is then fails where DCO is required; re-authoring is the
+    // separate choice.
+    function stageTrackerDCOCaveat(items) {
+      const rows = (Array.isArray(items) ? items : [items]).filter(it => it && Number(it.dco_unsigned) > 0);
+      if (!rows.length) return '';
+      const it = rows[0];
+      const total = Number(it.dco_total) || 0;
+      const of = total > 0 ? ' of ' + total + ' commit' + (total === 1 ? '' : 's') : ' commit' + (Number(it.dco_unsigned) === 1 ? '' : 's');
+      return ' Before you do: ' + Number(it.dco_unsigned) + of + ' on ' + (rows.length > 1 ? 'the first of these' : 'this head') + ' lack a Signed-off-by, so GitHub refuses the merge where DCO is required. "Re-author as hive PR" is the separate choice for that; approving never re-authors by itself.';
+    }
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:merge-now': 'Approve & merge as maintainer', 'decide:queue-merge': 'Approve — let hive merge',
+      'decide:re-author': 'Re-author as hive PR',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
     };
@@ -18054,10 +18067,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         case 'decide:merge-now': {
           const base = items.map(it => it.base_ref || '').filter(Boolean)[0] || 'its base branch';
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now via hive\'s identity, attributed to ' + who + '? The merge gate parked it for a human because its author is not a trusted merger on this repo; this is you taking that call. The head you see is the head that merges — a push in between makes GitHub refuse.', confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now via hive\'s identity, attributed to ' + who + '? The merge gate parked it for a human because its author is not a trusted merger on this repo; this is you taking that call. The head you see is the head that merges — a push in between makes GitHub refuse.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
         }
         case 'decide:queue-merge':
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Record your approval on ' + refs + ' as the owner decision, as ' + who + '? Hive\'s merge sweep merges it on the next tick once CI is green, respecting soak; the dashboard merges nothing itself.', confirmLabel: 'Approve' })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Record your approval on ' + refs + ' as the owner decision, as ' + who + '? This is the trust override for this head: hive\'s merge sweep merges it as-is on the next tick once CI is green, respecting soak, and will not adopt or re-author it. The dashboard merges nothing itself.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
+        case 'decide:re-author': {
+          const caveat = stageTrackerDCOCaveat(items);
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Re-author as hive PR', message: preface + 'Have the hive re-author ' + refs + ' as ' + who + '?' + (caveat || ' Its head cannot merge as-is.') + ' The hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR; this one is closed when that merges. Nothing is merged as-is, and the author\'s commits stay attributed.', confirmLabel: 'Re-author', danger: true })) ? {} : null;
+        }
         case 'decide:adopt': {
           const why = items.map(it => stageTrackerAdoptionTip(it)).filter(Boolean).join('\n');
           return (await hiveConfirm({ title: 'Adopt pull request' + (items.length > 1 ? 's' : ''), message: (why ? why + '\n\n' : '') + 'Have the hive adopt ' + refs + ' as ' + who + '? The author\'s commits and sign-off are kept; the hive rebases and fixes CI (in place when GitHub allows, else on a superseding hive PR that closes this one when it merges). Recorded as your decision on the PR.', confirmLabel: 'Adopt' })) ? {} : null;
@@ -18086,7 +18103,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'decide:delegate': 'Hive is deciding…', 'decide:delegate-all': 'Hive is deciding each PR…', 'decide:delegate:rerun': 'Hive is deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…',
-      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…',
+      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…', 'decide:re-author': 'Queuing re-authoring…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',

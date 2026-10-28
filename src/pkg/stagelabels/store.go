@@ -203,6 +203,16 @@ type Record struct {
 	AdoptBlockedHead string    `json:"adopt_blocked_head,omitempty"`
 	AdoptBlockedBy   string    `json:"adopt_blocked_by,omitempty"`
 	AdoptBlockedAt   time.Time `json:"adopt_blocked_at,omitempty"`
+	// AdmittedHead / AdmittedBy / AdmittedAt record a person's trust
+	// override for one head (hivecommons/hive#15136): an owner or trusted
+	// merger approved the PR from the dashboard (or `/hive decision
+	// approve`), so for THAT head the contributor lane treats the author
+	// as trusted and the adoption engine does not take the PR over.
+	// AdmittedBy is "operator-approval:<login>". A new head drops it:
+	// the person approved what they read, not what came after.
+	AdmittedHead string    `json:"admitted_head,omitempty"`
+	AdmittedBy   string    `json:"admitted_by,omitempty"`
+	AdmittedAt   time.Time `json:"admitted_at,omitempty"`
 	// DCORepairHead is the in-place-adopted head whose unsigned hive
 	// commits the hive last rewrote with its sign-off on the contributor
 	// branch (hivecommons/hive#14666); one attempt per head.
@@ -1204,6 +1214,63 @@ func (r Record) AdoptionBlocked(head string) string {
 		return ""
 	}
 	return r.AdoptBlockedBy
+}
+
+// AdoptBlockedOperatorAdmission is the AdoptBlockedBy reason for a due
+// adoption the engine refused because a person admitted the head
+// (Record.Admission): their approval said "merge this as-is", so the hive
+// does not take the PR over (hivecommons/hive#15136).
+const AdoptBlockedOperatorAdmission = "operator-admission"
+
+// AdmittedByOperatorApprovalPrefix prefixes AdmittedBy when the admission
+// came from a person's Approve: "operator-approval:octocat".
+const AdmittedByOperatorApprovalPrefix = "operator-approval:"
+
+// OperatorApprovalAdmission is the AdmittedBy value for login's Approve.
+func OperatorApprovalAdmission(login string) string {
+	login = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(login), "@"))
+	if login == "" {
+		return ""
+	}
+	return AdmittedByOperatorApprovalPrefix + login
+}
+
+// AdmissionLogin returns the person behind an AdmittedBy value ("" when it
+// is not an operator approval).
+func AdmissionLogin(admittedBy string) string {
+	if !strings.HasPrefix(admittedBy, AdmittedByOperatorApprovalPrefix) {
+		return ""
+	}
+	return strings.TrimPrefix(admittedBy, AdmittedByOperatorApprovalPrefix)
+}
+
+// NoteAdmission records that `by` admitted head on an existing record
+// (hivecommons/hive#15136). It returns true when the record changed.
+func (s *Store) NoteAdmission(key, head, by string, now time.Time) bool {
+	head, by = strings.TrimSpace(head), strings.TrimSpace(by)
+	if head == "" || by == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.AdmittedHead == head && r.AdmittedBy == by) {
+		return false
+	}
+	r.AdmittedHead, r.AdmittedBy, r.AdmittedAt = head, by, now
+	s.items[key] = r
+	s.dirty = true
+	return true
+}
+
+// Admission reports who admitted head ("" when nobody did, or the admission
+// is for another head).
+func (r Record) Admission(head string) string {
+	head = strings.TrimSpace(head)
+	if head == "" || r.AdmittedHead != head {
+		return ""
+	}
+	return r.AdmittedBy
 }
 
 // NoteAdoptReason records why the current adoption happened (the marker's

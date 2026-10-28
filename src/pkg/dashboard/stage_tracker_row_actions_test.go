@@ -763,6 +763,7 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerAskConfig"),
 		jsFunc(t, html, "stageTrackerAsk"),
 		jsFunc(t, html, "stageTrackerDelegateConfirm"),
+		jsFunc(t, html, "stageTrackerDCOCaveat"),
 		jsFunc(t, html, "stageTrackerActionPayload"),
 		`const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
 global.window = { _hiveUser: 'clubanderson' };
@@ -1183,5 +1184,77 @@ for (const id of ['decide:merge-now', 'decide:queue-merge', 'decide:delegate']) 
 const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'],
   decision_needed: { question: 'q', options: [{ action: 'decide:approve', label: 'Approve', enabled: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
 assert.strictEqual(stageTrackerDecisionOptions(pr85, merger)[0].id, 'decide:delegate');
+`)
+}
+
+// hivecommons/hive#15136: an owner's Approve is the trust override for the
+// head, and the row must say so BEFORE acting. A 090 PR whose stage record
+// counted unsigned commits gets the DCO caveat in both Approve confirms
+// and a separate "Re-author as hive PR" lead action with its own confirm;
+// the request, caption and ledger id are wired; a signed head says nothing
+// about DCO.
+func TestStageTrackerReauthorAndApprovalCaveats(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+stageTrackerConfirmOptOutJS(t, html)+jsConstLine(t, html, "STAGE_TRACKER_ACTED_OPTION_ID")+`
+const ids = as => as.map(a => a.id);
+const merger = { user: true, canHold: true, canHuman: true };
+const options = [
+  { action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you; 2 of 3 commits have no Signed-off-by, so GitHub refuses the merge where DCO is required' },
+  { action: 'decide:queue-merge', label: 'Approve — let hive merge', enabled: true, consequence: 'records your approval as the trust override for this head; the hive\'s merge sweep merges #317 as-is on its next pass once CI is green and the head has soaked, and does not adopt it' },
+  { action: 'decide:re-author', label: 'Re-author as hive PR', enabled: true, consequence: 'the hive re-homes #317\'s commits on a hive-owned, signed-off branch and opens a superseding PR; #317 is closed when that one merges; nothing is merged as-is' },
+  { action: 'decide:delegate', label: 'Let hive decide', enabled: true, consequence: 'the hive answers at once why it will not merge this itself and lists these options; it never merges it' },
+  { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true, consequence: 'closes #317 unmerged' },
+  { action: 'hold', label: 'Hold', enabled: true },
+];
+const pr317 = { repo: 'hivecommons/hotshot', kind: 'pr', number: 317, url: 'https://github.com/hivecommons/hotshot/pull/317', author: 'hive[bot]', author_kind: 'hive', base_ref: 'main',
+  stage: 90, modifiers: [], human_merge_reason: 'untrusted-author', dco_unsigned: 2, dco_total: 3, decision_needed: { question: 'q', options } };
+const issue316 = { repo: 'hivecommons/hotshot', kind: 'issue', number: 316, url: 'u', stage: 90, mirrored: true, modifiers: [],
+  linked_prs: [{ number: 317, url: pr317.url, author: 'hive[bot]', author_kind: 'hive', base_ref: 'main', stage: 90, modifiers: [], human_merge_reason: 'untrusted-author', dco_unsigned: 2, dco_total: 3, decision_needed: { question: 'q', options } }] };
+
+// The re-author choice leads right after the two Approve answers, on the
+// PR sub-row and on the issue row over it.
+let as = stageTrackerRowActions(pr317, merger);
+assert.deepStrictEqual(ids(as).slice(0, 4), ['decide:merge-now', 'decide:queue-merge', 'decide:re-author', 'decide'], ids(as));
+assert.strictEqual(as[2].label, 'Re-author as hive PR');
+assert.ok(as[2].enabled && as[2].lead);
+assert.ok(as[2].hint.includes('nothing is merged as-is'));
+as = stageTrackerRowActions(issue316, merger);
+assert.deepStrictEqual(ids(as).slice(0, 3), ['decide:merge-now', 'decide:queue-merge', 'decide:re-author'], ids(as));
+assert.strictEqual(as[2].target.number, 317);
+const menu = stageTrackerMenuHtml(as, 'hivecommons/hotshot#316');
+assert.ok(menu.indexOf('data-ham-act="decide:re-author"') > 0 && menu.indexOf('data-ham-act="decide:re-author"') < menu.indexOf('data-ham-act="hold"'));
+// Wiring: request body, acting caption, ledger id, label.
+assert.deepStrictEqual(stageTrackerActionRequest(pr317, 'decide:re-author', {}).body, { decision: 're-author', comment: '', type: 'pr' });
+assert.strictEqual(STAGE_TRACKER_ACTION_LABELS['decide:re-author'], 'Re-author as hive PR');
+assert.strictEqual(STAGE_TRACKER_ACTING_CAPTIONS['decide:re-author'], 'Queuing re-authoring…');
+assert.strictEqual(STAGE_TRACKER_ACTED_OPTION_ID['re-author'], 'decide:re-author');
+// The DCO caveat, in plain words, only when the record counted unsigned commits.
+assert.ok(stageTrackerDCOCaveat([pr317]).includes('2 of 3 commits on this head lack a Signed-off-by'), stageTrackerDCOCaveat([pr317]));
+assert.ok(stageTrackerDCOCaveat([pr317]).includes('"Re-author as hive PR" is the separate choice'));
+assert.strictEqual(stageTrackerDCOCaveat([{ ...pr317, dco_unsigned: 0 }]), '');
+assert.strictEqual(stageTrackerDCOCaveat([]), '');
+(async () => {
+  // Both Approve confirms warn BEFORE acting and say what approval means.
+  await stageTrackerActionPayload([pr317], 'decide:merge-now');
+  assert.strictEqual(dialogs[0].cfg.title, 'Approve & merge as maintainer');
+  assert.ok(dialogs[0].cfg.message.includes('lack a Signed-off-by'), dialogs[0].cfg.message);
+  await stageTrackerActionPayload([pr317], 'decide:queue-merge');
+  assert.strictEqual(dialogs[1].cfg.title, 'Approve — let hive merge');
+  assert.ok(dialogs[1].cfg.message.includes('trust override for this head'), dialogs[1].cfg.message);
+  assert.ok(dialogs[1].cfg.message.includes('will not adopt or re-author it'), dialogs[1].cfg.message);
+  assert.ok(dialogs[1].cfg.message.includes('lack a Signed-off-by'), dialogs[1].cfg.message);
+  // Re-author has its own confirm, danger-styled, with the don't-ask box.
+  assert.deepStrictEqual(await stageTrackerActionPayload([pr317], 'decide:re-author'), {});
+  assert.strictEqual(dialogs[2].cfg.title, 'Re-author as hive PR');
+  assert.ok(dialogs[2].cfg.danger);
+  assert.ok(dialogs[2].cfg.message.includes('superseding PR') && dialogs[2].cfg.message.includes('Nothing is merged as-is'), dialogs[2].cfg.message);
+  assert.deepStrictEqual(dialogs[2].cfg.check, { label: "Don't ask again for this action" });
+  dialogAnswer = false;
+  assert.strictEqual(await stageTrackerActionPayload([pr317], 'decide:re-author'), null, 'cancel acts on nothing');
+  // A signed head: no DCO sentence in the Approve confirm.
+  dialogAnswer = true; dialogs.length = 0;
+  await stageTrackerActionPayload([{ ...pr317, dco_unsigned: 0 }], 'decide:merge-now');
+  assert.ok(!dialogs[0].cfg.message.includes('Signed-off-by'), dialogs[0].cfg.message);
+})().catch(e => { console.error(e); process.exit(1); });
 `)
 }

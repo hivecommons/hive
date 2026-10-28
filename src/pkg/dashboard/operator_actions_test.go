@@ -61,6 +61,7 @@ func TestOperatorActionFromBody(t *testing.T) {
 		{"decision", `{"decision":"close-wontfix"}`, operatorActionRequest{Action: operatorActionWontFix}, true},
 		{"decision", `{"decision":"merge-now","head":"abc"}`, operatorActionRequest{Action: operatorActionMergeNow, Head: "abc"}, true},
 		{"decision", `{"decision":"queue-merge"}`, operatorActionRequest{Action: operatorActionQueueMerge}, true},
+		{"decision", `{"decision":"re-author"}`, operatorActionRequest{Action: operatorActionReauthor}, true},
 		{"decision", `{"decision":"bogus"}`, operatorActionRequest{}, false},
 		{"decide-delegated", ``, operatorActionRequest{Action: operatorActionLetHiveDecide}, true},
 		{"hold", `{"held":true}`, operatorActionRequest{Action: operatorActionHold}, true},

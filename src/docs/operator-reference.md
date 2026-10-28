@@ -472,7 +472,32 @@ verified owner or an authorized user with the `merger` role:
 | `merge-now` — *Approve & merge as maintainer* | Comments on the PR that @you merged it from the dashboard, then merges it at once through the hive's GitHub App (`MergePRVia`, audit path `dashboard`). Refused when the PR is merged or closed, or when you are its author. | `repo_item_decision_merge`; `last_operator_action.action: merge-now`; toast *merged*. |
 | `queue-merge` — *Approve — let hive merge* | Leaves an `APPROVED` review in your name with a note, adds the automerge label, and leaves the merge to the App self-merge sweep, which merges on its next pass once CI is green and the head has soaked. Refused on your own PR. | `repo_item_decision_queue_merge`; `last_operator_action.action: queue-merge`; toast *queued for merge*. |
 
-Neither widens who the lanes trust: to stop a contributor's PRs parking at 090
+**Approve is the trust override for that head
+([#15136](https://github.com/hivecommons/hive/issues/15136)).** Before, an
+owner's Approve on an untrusted-author PR was reduced to the `/lgtm` +
+`/approve` comments and the contributor lane's claim-tier rule then
+adopt-superseded the PR the owner had just approved. Now every Approve
+variant — `approve`, `queue-merge`, `merge-now` — writes
+`admitted_by: operator-approval:<login>` (with `admitted_head`,
+`admitted_at`) on the PR's stage record before touching GitHub, and the
+response and audit detail carry `admitted_by`. While that admission stands
+for the head: the contributor lane admits the author for that head
+(`contributor-lane:operator-approval`; the merge comment names who
+admitted it), **no adoption or supersede is permitted** — a due adoption
+records `adopt_blocked_by: operator-admission` and the row reads *not
+adopted: a maintainer approved this head; the hive merges it as-is* — and
+the hive merges as-is after checks and soak (or at once for `merge-now`).
+A new push drops the admission and the row asks again. A
+`/hive decision approve` comment by a trusted merger is the same admission;
+the engine derives it from the recorded approval and writes it back. An
+explicit **Adopt** / **Re-author** from the dashboard is the person choosing
+re-authoring and is not refused.
+
+| Decision | What it does | Audit / ledger |
+|---|---|---|
+| `re-author` — *Re-author as hive PR* | Offered as its own lead action on a 090 PR whose head cannot merge as-is — the stage record's commit check counted commits without a `Signed-off-by` (`dco_unsigned` / `dco_total` on the row). The popover and both Approve confirms say so **before** acting (*2 of 3 commits have no Signed-off-by, so a required DCO check refuses the merge*); approving never re-authors by itself. Re-author posts its own note and the `adoption/supersede` request label; the hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR. Disabled with the reason on a person's PR (the hive does not re-author a human's PR — ask them to `git commit -s --amend`). | `repo_item_decision_adopt` with `decision=re-author`; `last_operator_action.action: re-author`; toast *adopted*. |
+
+Neither merge action widens who the lanes trust: to stop a contributor's PRs parking at 090
 give them the `trusted` / `merger` tier under 👥 Contributors
 (`auto_merge.contributor_lane.require_tiers`), add them as a repository
 collaborator, or list them under `dashboard.authorized_users` with the

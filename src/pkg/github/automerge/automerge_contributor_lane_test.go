@@ -1281,6 +1281,15 @@ func TestContributorLaneAdmitPathAndRegistryTierHelpers(t *testing.T) {
 	if got := contributorLaneAdmitPath(contributorClaimMatch{Issue: 42}); got != "claim" {
 		t.Fatalf("admit path = %q, want claim", got)
 	}
+	// A person's Approve outranks the registry tier for that head (#15136)
+	// and the merge comment names who admitted it.
+	operator := contributorClaimMatch{OperatorLogin: "octo", RegistryTier: "trusted"}
+	if got := contributorLaneAdmitPath(operator); got != contributorLaneReasonOperatorApproval || contributorLaneReasonOperatorApproval != "contributor-lane:operator-approval" {
+		t.Fatalf("operator admit path = %q", got)
+	}
+	if c := contributorLaneMergeComment("mallory", operator, 30*time.Minute, ContributorLaneVerdict{}); !strings.Contains(c, "@octo") || !strings.Contains(c, "operator-approval:octo") {
+		t.Fatalf("operator merge comment = %q", c)
+	}
 	if contributorLaneReasonRegistryTrusted != "contributor-lane:registry-trusted" {
 		t.Fatalf("admit reason = %q", contributorLaneReasonRegistryTrusted)
 	}

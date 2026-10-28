@@ -44,6 +44,9 @@ const (
 	// App, or queued for the hive's merge sweep.
 	operatorActionMergeNow   = "merge-now"
 	operatorActionQueueMerge = "queue-merge"
+	// The operator's explicit re-authoring of a head that cannot merge
+	// as-is (hivecommons/hive#15136).
+	operatorActionReauthor = "re-author"
 
 	// Stored outcomes: what the endpoint answered when the action was
 	// submitted. `pending` is a delegated decision still running; the job's
@@ -278,6 +281,8 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			out.Action = operatorActionMergeNow
 		case repoItemDecisionQueueMerge:
 			out.Action = operatorActionQueueMerge
+		case repoItemDecisionReauthor:
+			out.Action = operatorActionReauthor
 		default:
 			return out, false
 		}

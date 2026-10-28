@@ -599,6 +599,9 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
 	}
+	if c.adoptionRefusedByAdmission(store, key, obs, requested, now) {
+		return 0, nil
+	}
 	if held, deferred := c.maintainerHoldsAdoption(ctx, obs, policy, requested, now); held || deferred {
 		if held && !deferred {
 			// Recorded so the activity monitor says why (hivecommons/hive#14524):

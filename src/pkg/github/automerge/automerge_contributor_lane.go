@@ -529,6 +529,9 @@ type contributorClaimMatch struct {
 	// PR: the head SHA the stage store records as adopted/pushed by the
 	// hive, which the lane verified equals the PR head it is evaluating.
 	AdoptedHead string
+	// OperatorLogin is set when a person's Approve admitted the head
+	// (hivecommons/hive#15136, operatorAdmission).
+	OperatorLogin string
 	// ObservedTier is the raw tier the lane saw for the author (registry
 	// profile or this hive's claim marker), admitted or not. It feeds the
 	// author/* stage label; admission itself still goes through Reason.
@@ -615,6 +618,9 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	if headSHA := pr.GetHead().GetSHA(); c.adoptedHeadOwnedByHive(owner, repo, pr.GetNumber(), headSHA) {
 		return contributorClaimMatch{AdoptedHead: headSHA, ObservedTier: c.observedRegistryTier(author)}, nil
+	}
+	if login := c.operatorAdmission(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()); login != "" {
+		return contributorClaimMatch{OperatorLogin: login, ObservedTier: c.observedRegistryTier(author)}, nil
 	}
 	if tier := c.admittedRegistryTier(author, policy); tier != "" {
 		return contributorClaimMatch{RegistryTier: tier, ObservedTier: tier}, nil
@@ -1229,6 +1235,9 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	if claim.admittedByAdoption() {
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonAdoptedByHive, "adopted_head", claim.AdoptedHead)
 	}
+	if claim.admittedByOperator() {
+		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonOperatorApproval, "admitted_by", claim.OperatorLogin, "head", headSHA)
+	}
 	if claim.admittedByRegistry() {
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonRegistryTrusted, "registry_tier", claim.RegistryTier)
 	}
@@ -1430,6 +1439,9 @@ func contributorLaneAdmitPath(claim contributorClaimMatch) string {
 	if claim.admittedByAdoption() {
 		return contributorLaneReasonAdoptedByHive
 	}
+	if claim.admittedByOperator() {
+		return contributorLaneReasonOperatorApproval
+	}
 	if claim.admittedByRegistry() {
 		return contributorLaneReasonRegistryTrusted
 	}
@@ -1454,6 +1466,10 @@ func contributorLaneMergeComment(author string, claim contributorClaimMatch, soa
 	if claim.admittedByAdoption() {
 		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, head `%s` adopted by the hive (`%s`) with @%s's commits — merged under the hive's own authority.",
 			int(soak.Minutes()), verdictText, shortSHA(claim.AdoptedHead), stagelabels.AdoptedByHive.Label(), login)
+	}
+	if claim.admittedByOperator() {
+		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, @%s approved this head as the owner decision (`admitted_by: %s`) — merged as-is on that approval.",
+			int(soak.Minutes()), verdictText, claim.OperatorLogin, stagelabels.OperatorApprovalAdmission(claim.OperatorLogin))
 	}
 	if claim.admittedByRegistry() {
 		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, @%s holds the %s tier in this hive's contributor registry.",
