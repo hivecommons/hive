@@ -3721,6 +3721,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	})
 
 	b.dashSrv.SetGitHubAppRequired(b.githubAppRequired)
+	b.dashSrv.SetUpgradeDrainSource(selfUpgradeDrain.Report)
 	// Order matters: SetGitHubAppRequired(false) clears both fields, so the
 	// classified state is applied only after it, and only when a failure was
 	// actually detected.
@@ -5156,7 +5157,8 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// heartbeat) and withhold new kicks; proceed once the turns end or
 				// hub.upgrade_drain_timeout_s elapses.
 				if b.agentMgr != nil {
-					inFlight, wedged := agentKicksInFlight(b.agentMgr.AllStatuses(), b.startTime, selfUpgradeDrainNow(), func(name string) time.Duration {
+					statuses := b.agentMgr.AllStatuses()
+					inFlight, wedged := agentKicksInFlight(statuses, b.startTime, selfUpgradeDrainNow(), func(name string) time.Duration {
 						if ac, ok := b.cfg.Agents[name]; ok {
 							return ac.EffectiveContinuousTurnCeiling()
 						}
@@ -5173,6 +5175,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					ignoredWedged := wedgedKickAgents(wedged)
 					drainTimeout := b.cfg.Hub.EffectiveUpgradeDrainTimeout()
 					dec := selfUpgradeDrain.decide(targetSHA, inFlight, drainTimeout, selfUpgradeDrainNow())
+					selfUpgradeDrain.setKickTimes(agentKickTimes(statuses, inFlight))
 					switch {
 					case !dec.Proceed:
 						b.logger.Info("self-upgrade deferred: draining in-flight agent kicks",

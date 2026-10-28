@@ -379,6 +379,10 @@ type Server struct {
 	// one, or forever on a spoke the hub does not manage. Guarded by versionMu.
 	hubUpgradePolicy   *spoke.HeartbeatUpgradePolicy
 	hubUpgradePolicyAt time.Time
+	// upgradeDrain reports the live self-upgrade drain latch (cmd/hive's
+	// selfUpgradeDrain) so /api/status can show the countdown and the agents
+	// holding it (#14856). Guarded by versionMu; nil when not installed.
+	upgradeDrain upgradeDrainSource
 	// hubPushedDashboardURL is the vanity dashboard URL the hub last delivered
 	// on a heartbeat (#7451). Non-empty means the hub owns hub.dashboard_url:
 	// an operator edit would be reverted by the next push, and until then a
@@ -3575,11 +3579,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		statusJSONResponse(w, r, map[string]string{"status": "initializing"})
 		return
 	}
-	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, time.Now().UTC()), Webhooks: github.WebhookHealthSnapshot()}
+	now := time.Now().UTC()
+	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot()}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
 	}
+	payload.UpgradeProgress = s.upgradeProgress(status, now)
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
@@ -3590,6 +3596,11 @@ type statusWithWebhooks struct {
 	*StatusPayload
 	Webhooks github.WebhookHealth `json:"webhooks"`
 	*EvalLoopStatus
+	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
+	// machine (scheduled / draining / pulling / … / missed) with the drain
+	// countdown, derived at serve time (#14856). Absent on a hive the hub
+	// does not manage and that has no upgrade in flight.
+	UpgradeProgress *spoke.UpgradeProgress `json:"upgradeProgress,omitempty"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 type MyHiveEntry struct {
@@ -46,10 +47,18 @@ type MyHiveEntry struct {
 	AutoUpgradeMode string `json:"autoUpgradeMode,omitempty"`
 	// AutoUpgradeSchedule is the EFFECTIVE schedule: the configured mode, or
 	// "candidate-bypass" when a candidate-channel hive ignores the window.
-	AutoUpgradeSchedule string                 `json:"autoUpgradeSchedule,omitempty"`
-	NextUpdateAt        string                 `json:"nextUpdateAt,omitempty"`
-	NextUpdateStatus    string                 `json:"nextUpdateStatus,omitempty"`
-	UpgradeWhyNotNow    string                 `json:"upgradeWhyNotNow,omitempty"`
+	AutoUpgradeSchedule string `json:"autoUpgradeSchedule,omitempty"`
+	NextUpdateAt        string `json:"nextUpdateAt,omitempty"`
+	NextUpdateStatus    string `json:"nextUpdateStatus,omitempty"`
+	UpgradeWhyNotNow    string `json:"upgradeWhyNotNow,omitempty"`
+	// UpgradeState is the derived upgrade state machine for this hive
+	// (scheduled / draining / pulling / rolling / verifying / done / missed)
+	// with the drain countdown and the agents holding it; UpgradeHistory is
+	// the persisted record of recent attempts and held windows. Both are
+	// computed on read by upgradeProgressFor so the card and the spoke
+	// dashboard speak the same words (#14856).
+	UpgradeState        *spoke.UpgradeProgress `json:"upgradeState,omitempty"`
+	UpgradeHistory      []spoke.UpgradeAttempt `json:"upgradeHistory,omitempty"`
 	PendingRequestCount int                    `json:"pendingRequestCount,omitempty"`
 	PendingRequests     []PendingAccessRequest `json:"pending_requests,omitempty"`
 
@@ -1007,6 +1016,8 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			}
 		}
 
+		result[i].UpgradeState, result[i].UpgradeHistory = s.upgradeProgressForRow(&result[i].RegistryEntry, saasByID[result[i].ID], result[i].TrackedChannel, journeyNow)
+
 		st := s.journey.get(result[i].ID)
 		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
 		result[i].Journey = &status
@@ -1771,6 +1782,7 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 	// handler. So purging the record here cannot break placeholder recycling.
 	removeHiveRecord(id, s.logger)
 	s.removeRegistryEntry(id, username)
+	s.upgradeHistory.forget(id)
 
 	s.logger.Info("audit: hosted hive deleted", "hive_id", id, "by", username,
 		"deprovisioned", cluster != nil)

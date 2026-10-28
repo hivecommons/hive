@@ -546,6 +546,7 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 				"upgrade to "+orDash(c.to)+" had already completed (hive is on "+
 					orDash(c.from)+") — cleared a stale in-flight latch",
 				"stale-upgrade-sweep")
+			s.noteUpgradeDone(c.id, "completed; stale latch cleared by the sweep", "", c.from)
 			continue
 		}
 		if c.exhausted {
@@ -562,6 +563,8 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 				"upgrade to "+orDash(c.to)+" abandoned after "+itoa(c.sweeps)+
 					" attempts — hive is still on "+orDash(c.from)+
 					" and is no longer being retried", "stale-upgrade-sweep")
+			s.noteUpgradeMissed(c.id,
+				"abandoned after "+itoa(c.sweeps)+" attempts: "+c.reason, c.from, c.to)
 			continue
 		}
 		s.logger.Warn("cleared orphaned upgrade flag — no attempt in flight",
@@ -576,6 +579,8 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 			"upgrade never completed after "+roundedDuration(c.elapsed)+
 				" — cleared stale in-flight state (still on "+orDash(c.from)+
 				", target was "+orDash(c.to)+")", "stale-upgrade-sweep")
+		s.noteUpgradeMissed(c.id,
+			"never completed after "+roundedDuration(c.elapsed)+": "+c.reason, c.from, c.to)
 	}
 	if len(swept) > 0 {
 		s.requestSave()

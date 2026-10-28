@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // timelineMaxEvents caps the number of events retained per hive. Oldest are
@@ -524,10 +526,40 @@ func (s *HubServer) recordHeartbeatTransitions(old, new *RegistryEntry) {
 		return
 	}
 	evs := detectTransitions(old, new, time.Now())
+	s.recordUpgradeHistoryTransition(old, new)
 	if len(evs) == 0 {
 		return
 	}
 	s.timeline.appendAll(new.ID, evs)
+}
+
+// recordUpgradeHistoryTransition mirrors the upgrade lifecycle branch of
+// detectTransitions into the upgrade history store (#14856). The hub-armed
+// paths open their row themselves; a rollout the hub merely observed opens
+// one here. Closing is decided from the same evidence the completion chain
+// used: a new hash is a landed upgrade, a spoke-reported failure is a miss,
+// and a latch cleared with no movement is the hive already being at target.
+func (s *HubServer) recordUpgradeHistoryTransition(old, new *RegistryEntry) {
+	if s == nil || old == nil || new == nil {
+		return
+	}
+	switch {
+	case !old.Upgrading && new.Upgrading:
+		s.noteUpgradeStarted(new.ID, old.GitHash, new.UpgradeTarget, spoke.UpgradeTriggerObserved)
+	case old.Upgrading && !new.Upgrading:
+		switch {
+		case new.UpgradeFailed && !old.UpgradeFailed:
+			reason := new.UpgradeError
+			if reason == "" {
+				reason = "spoke reported the upgrade failed"
+			}
+			s.noteUpgradeEnded(new.ID, spoke.UpgradeOutcomeMissed, reason, old.GitHash, old.UpgradeTarget)
+		case new.GitHash != "" && !sameCommit(old.GitHash, new.GitHash):
+			s.noteUpgradeEnded(new.ID, spoke.UpgradeOutcomeDone, "", old.GitHash, new.GitHash)
+		default:
+			s.noteUpgradeEnded(new.ID, spoke.UpgradeOutcomeDone, "latch cleared — hive already at target", old.GitHash, new.GitHash)
+		}
+	}
 }
 
 // recordOfflineTransitions is the sweep hook. markStaleHives flips Online to

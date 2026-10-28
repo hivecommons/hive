@@ -1364,6 +1364,10 @@ type HubServer struct {
 	// leaf mutex and is never guarded by s.mu. See timeline.go.
 	timeline *timelineStore
 
+	// upgradeHistory is the per-hive record of upgrade attempts and held
+	// windows with their outcomes (#14856). Leaf mutex; see upgrade_history.go.
+	upgradeHistory *upgradeHistoryStore
+
 	// journey holds per-hive user-journey nudge state: which banner each owner
 	// was last sent and when, plus admin snoozes. Persisted to the PVC.
 	journey *journeyStore
@@ -1570,6 +1574,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		topRepoRefreshEnabled:        true,
 		authRolloutSeen:              make(map[string]authRolloutEntry),
 		timeline:                     newTimelineStore(),
+		upgradeHistory:               newUpgradeHistoryStore(),
 		journey:                      newJourneyStore(),
 		alerts:                       newAlertState(),
 		revokedSessions:              newRevokedSessions(),
@@ -1676,6 +1681,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.recoverArmedUpgrades()
 	s.loadHubBanners()
 	s.timeline.load()
+	s.upgradeHistory.load()
 	if err := s.journey.load(time.Now()); err != nil {
 		// Losing journey state is a soft failure: the worst case is that a few
 		// owners get one duplicate nudge. Never block hub startup on it.

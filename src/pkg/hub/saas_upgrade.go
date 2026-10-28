@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // hubUpgradeDebounce is the minimum gap between hub self-upgrade rollout
@@ -613,6 +615,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("audit: hosted hive upgrade requested",
 		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode)
 	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard ("+mode+")", username)
+	s.noteUpgradeStarted(id, currentSHA, latestSHA, spoke.UpgradeTriggerManual)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `"}`))
 }
@@ -1086,6 +1089,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		holdScheduled := func(reason string) {
 			if h.AutoUpgrade && scheduledUpgradeWindowOpen(h.AutoUpgradeMode, h.AutoUpgradeLastFired, holdNow) {
 				s.noteScheduledUpgradeHold(&h, reason, holdNow)
+				s.noteUpgradeWindowMissed(h.ID, currentSHA, reason, holdNow)
 			}
 		}
 		if alreadyUpgrading {
@@ -1530,6 +1534,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 			"schedule", effectiveAutoUpgradeSchedule(h.AutoUpgradeMode, reach.Channel), "reason", decision.Reason)
 		s.recordTimeline(h.ID, TimelineUpgradeStarted,
 			fmt.Sprintf("auto-upgrade triggered on %s: %s → %s", branch, orDash(currentSHA), latestSHA), "auto-upgrade")
+		s.noteUpgradeStarted(h.ID, currentSHA, latestSHA, upgradeTriggerForSchedule(h.AutoUpgradeMode, reach.Channel))
 		s.mu.Lock()
 		for i := range s.registry.Hives {
 			if s.registry.Hives[i].ID == h.ID {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/nous"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -179,6 +180,9 @@ type UpgradeDrainReport struct {
 	InFlight   []string `json:"in_flight,omitempty"`
 	WaitedS    int      `json:"waited_s"`
 	RemainingS int      `json:"remaining_s"`
+	// Turns mirrors spoke.UpgradeDrainReport.Turns: per-agent turn elapsed
+	// for the InFlight agents. Absent from older spokes.
+	Turns []spoke.UpgradeTurn `json:"turns,omitempty"`
 }
 
 // HeartbeatClusterHealthReport contains cluster node and GPU metrics
@@ -525,6 +529,13 @@ type HeartbeatUpgradePolicy struct {
 	// instead of only showing the previous upgrade.
 	ScheduledHoldReason string `json:"scheduled_hold_reason,omitempty"`
 	ScheduledHoldAt     string `json:"scheduled_hold_at,omitempty"`
+	// NextWindowAt is this hive's OWN next daily/weekly window (RFC3339
+	// UTC), sent regardless of channel so a :stable hive can show when it
+	// will next be considered rather than only the channel's promotion ETA.
+	NextWindowAt string `json:"next_window_at,omitempty"`
+	// UpgradeHistory is the hub's persisted record of this hive's recent
+	// upgrade attempts and missed windows, newest last (#14856).
+	UpgradeHistory []spoke.UpgradeAttempt `json:"upgrade_history,omitempty"`
 }
 
 type TaskStatusPayload struct {

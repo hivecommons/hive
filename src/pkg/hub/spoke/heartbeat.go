@@ -575,6 +575,10 @@ type UpgradeDrainReport struct {
 	InFlight   []string `json:"in_flight,omitempty"`
 	WaitedS    int      `json:"waited_s"`
 	RemainingS int      `json:"remaining_s"`
+	// Turns carries, for each InFlight agent, how long its current turn has
+	// been running, so the hub can say "reviewer 38m" rather than just
+	// "reviewer". Spokes that predate the field send only InFlight.
+	Turns []UpgradeTurn `json:"turns,omitempty"`
 }
 
 // HeartbeatClusterHealthReport contains cluster node and GPU metrics
@@ -2901,6 +2905,14 @@ type HeartbeatUpgradePolicy struct {
 	// it was recorded. Empty when nothing is held or the hub is too old to say.
 	ScheduledHoldReason string `json:"scheduled_hold_reason,omitempty"`
 	ScheduledHoldAt     string `json:"scheduled_hold_at,omitempty"`
+	// NextWindowAt is this hive's OWN next daily/weekly window (RFC3339
+	// UTC), independent of the channel promotion estimate in NextUpdateAt.
+	// Empty for instant/manual policies and for hubs too old to send it.
+	NextWindowAt string `json:"next_window_at,omitempty"`
+	// UpgradeHistory is the hub's record of this hive's recent upgrade
+	// attempts and missed windows, newest last, so the spoke dashboard can
+	// show why a window did not land without asking the hub.
+	UpgradeHistory []UpgradeAttempt `json:"upgrade_history,omitempty"`
 }
 
 // Schedule values carried by HeartbeatUpgradePolicy.Schedule. These mirror

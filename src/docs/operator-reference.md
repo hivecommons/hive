@@ -939,6 +939,24 @@ services:
 
 To relate an image to source, compare the `<git-short-sha>` tag published by the same workflow with commits on `v4`, or inspect the Docker workflow run for the commit SHA that produced the digest.
 
+## Scheduled-upgrade progress and history
+
+A hub-instructed upgrade is a short state machine, and both dashboards expose it as data so a window that does not roll is never silent ([#14856](https://github.com/hivecommons/hive/issues/14856)). The hub derives it per hive on `/api/saas/my-hives` (`upgradeState`, `upgradeHistory`), and the spoke derives the same vocabulary locally on `/api/status.upgradeProgress` from its drain latch, self-upgrade marker, last landed outcome and the hub's heartbeat policy (`upgrade_policy.next_window_at`, `upgrade_policy.upgrade_history`).
+
+| State | Meaning | Extra fields |
+| --- | --- | --- |
+| `scheduled` | Nothing in flight. | `nextWindowAt` — the hive's own daily/weekly slot (always, even on `stable`, where `nextUpdateAt` is the channel's promotion ETA instead). |
+| `draining` | The spoke received the instruction and is waiting for kicked agent turns to end. | `drainDeadline`, `drainRemainingS`, `agentsInTurn[]` (`agent`, `elapsedS`), `agentsTotal`; `detail` reads `2/5 agents in turn: reviewer 38m, scanner 12m — proceeds in 40m`. |
+| `pulling` | Instruction delivered; the spoke acknowledged it, or (older build) may be draining without reporting it. | `reason` qualifies a silent spoke or a Deployment-patch fallback. |
+| `rolling` | No heartbeat since the instruction — the pod is restarting onto the target. | |
+| `verifying` | The spoke is back and reports the target commit; the hub has not yet closed the attempt. | |
+| `done` | The most recent attempt landed (shown for 24 h, then `scheduled`). | `endedAt` |
+| `missed` | The attempt or window did not land. | `reason`: drain lapsed, hub restarted, spoke unreachable, image pull failed, abandoned after N attempts, or the schedule gate's hold reason while the window is still open. |
+
+**Drain window.** When the instruction arrives mid-turn the spoke holds the restart for up to `hub.upgrade_drain_timeout_s` (default 45 min) and reports what it is waiting on every heartbeat (`upgrade_drain.turns`). The hub's orphan sweep leaves a draining spoke alone for that window plus a 20-minute grace; the countdown both dashboards show is anchored on the last heartbeat that carried the report.
+
+**History.** The hub persists the last `HIVE_HUB_UPGRADE_HISTORY_MAX` (default 14) attempts and held windows per hive under `/data/saas/upgrade-history/<hive>.json`, so they survive a hub restart. Each row carries `target`, `from`, `trigger` (`scheduled` / `instant` / `manual` / `observed` / `window`), `startedAt`, `endedAt`, `outcome` (`done` / `missed`) and `reason`. A daily window the gate held records exactly one `window` row per calendar day (ET), updated in place if the hold reason changes; a window that fired records the attempt instead. Deleting a hive drops its history.
+
 ## Governor cadence and budget
 
 - Agent cadences are evaluated from persisted state: the last-kick map lives in `/data/hive-state.json` and is honored across pod restarts — a Deployment roll does **not** re-kick every cadenced agent at boot ([#3817](https://github.com/hivecommons/hive/pull/3817)). A fresh install (no persisted state) still kicks every cadenced agent on the first eval. There is no global default interval; a zero/absent interval means the agent is never cadence-kicked.

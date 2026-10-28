@@ -168,7 +168,13 @@ normal path is:
    and are held for exactly the window they report; older spokes drain
    silently and are held for the default window
    ([#14856](https://github.com/hivecommons/hive/issues/14856)). Only after
-   that does the hub record a `stale-upgrade-sweep` and retry.
+   that does the hub record a `stale-upgrade-sweep` and retry. The whole
+   lifecycle is also exposed as one state (`scheduled` → `draining` → `pulling` → `rolling` →
+   `verifying` → `done` | `missed`) on `/api/status.upgradeProgress` and, per
+   hive, on the hub's `/api/saas/my-hives` (`upgradeState`), with the drain
+   countdown, the agents whose turns are holding it, and a persisted
+   `upgradeHistory` of the last 14 attempts and held windows — see
+   [operator-reference.md](operator-reference.md#scheduled-upgrade-progress-and-history).
 5. **Need it now?** Once `stable` itself points at the desired build,
    **Upgrade now** skips the automatic-upgrade wait for that hive and arms the
    rollout immediately. It does not promote `stable`; it only follows the channel
