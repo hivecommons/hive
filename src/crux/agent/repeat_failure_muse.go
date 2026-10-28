@@ -315,6 +315,10 @@ func museHandleLine(sess *copilotRecordSession, line []byte, emit func(RepeatFai
 	if env.RecordedAt > 0 {
 		ts = time.UnixMicro(env.RecordedAt)
 	}
+	// history is a line from before the reader started in a log it first
+	// reached later: tracked so its call pairs with its result, but neither
+	// recorded nor reported as shell activity.
+	history := !sess.since.IsZero() && !ts.IsZero() && ts.Before(sess.since)
 	ev := env.Payload.Event
 	switch ev.Kind {
 	case "assistant_tool_calls_committed":
@@ -323,7 +327,7 @@ func museHandleLine(sess *copilotRecordSession, line []byte, emit func(RepeatFai
 				continue
 			}
 			// museShellTool is also a Copilot shell tool name, so start keeps it.
-			if sess.start(call.CallID, museShellTool, json.RawMessage(call.Args)) {
+			if sess.start(call.CallID, museShellTool, json.RawMessage(call.Args)) && !history {
 				observe(false, ts)
 			}
 		}
@@ -338,10 +342,10 @@ func museHandleLine(sess *copilotRecordSession, line []byte, emit func(RepeatFai
 				sess.seen = map[string]bool{}
 			}
 			sess.seen[res.ToolCallID] = true
-			observe(true, ts)
-			if !sess.since.IsZero() && !ts.IsZero() && ts.Before(sess.since) {
+			if history {
 				continue
 			}
+			observe(true, ts)
 			if rec, ok := museShellRecord(res.Text, cmd, ts); ok {
 				emit(rec)
 			}

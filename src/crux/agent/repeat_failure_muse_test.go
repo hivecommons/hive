@@ -48,6 +48,19 @@ func rfMuseCall(t *testing.T, id string) []string {
 	return out
 }
 
+// rfMuseCallAt is rfMuseCall with both lines' recorded_at moved to at, for
+// readers whose start cannot be pinned before the fixture's instant.
+func rfMuseCallAt(t *testing.T, id string, at time.Time) []string {
+	t.Helper()
+	stamp := strconv.FormatInt(at.UnixMicro(), 10)
+	var out []string
+	for _, line := range rfMuseCall(t, id) {
+		line = strings.ReplaceAll(line, "1793170680910529", stamp)
+		out = append(out, strings.ReplaceAll(line, "1793170680992012", stamp))
+	}
+	return out
+}
+
 // rfMuseAppend appends lines to session id's log under root and returns the
 // log path.
 func rfMuseAppend(t *testing.T, root, id string, lines ...string) string {
@@ -356,9 +369,12 @@ func TestRepeatFailureMuseRoute(t *testing.T) {
 	m.SetRepeatFailureConfigResolver(func() *config.RepeatFailureConfig { return &config.RepeatFailureConfig{Enabled: true} })
 	now := time.Now()
 
+	// The Manager's reader starts at the wall clock, so the fixture's lines
+	// are stamped now: left at their recorded instant they would read as
+	// history once the clock passed it.
 	var lines []string
 	for i := range 5 {
-		lines = append(lines, rfMuseCall(t, "call_"+strconv.Itoa(i))...)
+		lines = append(lines, rfMuseCallAt(t, "call_"+strconv.Itoa(i), now)...)
 	}
 	m.CollectRepeatFailures(now)
 	rfMuseAppend(t, root, "off", lines...)
@@ -502,11 +518,7 @@ func TestRepeatFailureMuseDisplacedSessionIsNotReplayed(t *testing.T) {
 // emitted.
 func TestRepeatFailureMuseLogHiddenByCapIsNotReplayed(t *testing.T) {
 	root := rfMuseRoot(t)
-	oldLines := rfMuseCall(t, "call_old")
-	for i, line := range oldLines {
-		line = strings.ReplaceAll(line, "1793170680910529", "1000000000000000")
-		oldLines[i] = strings.ReplaceAll(line, "1793170680992012", "1000000000001000")
-	}
+	oldLines := rfMuseCallAt(t, "call_old", time.UnixMicro(1000000000000000))
 	rfMuseAppend(t, root, "a-session", oldLines...)
 
 	day := filepath.Join(root, "2026", "10", "28")
@@ -530,16 +542,13 @@ func TestRepeatFailureMuseLogHiddenByCapIsNotReplayed(t *testing.T) {
 		}
 	}
 
-	now := strconv.FormatInt(time.Now().UnixMicro(), 10)
-	var fresh []string
-	for _, line := range rfMuseCall(t, "call_new") {
-		line = strings.ReplaceAll(line, "1793170680910529", now)
-		fresh = append(fresh, strings.ReplaceAll(line, "1793170680992012", now))
-	}
-	rfMuseAppend(t, root, "a-session", fresh...)
+	rfMuseAppend(t, root, "a-session", rfMuseCallAt(t, "call_new", time.Now())...)
 	s.run(r, root)
 	if len(s.records) != 1 {
 		t.Fatalf("records = %+v, want exactly the call made after the reader started", s.records)
+	}
+	if s.starts != 1 || s.finishes != 1 {
+		t.Fatalf("shell activity: %d starts, %d finishes; want 1 and 1 (history is not activity)", s.starts, s.finishes)
 	}
 }
 
