@@ -1,9 +1,9 @@
 package automerge
 
 import (
-	hgithub "time"
+	"time"
 
-	"github.com/hivecommons/hive/pkg/github"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 // Optional transport capability keeps test transports and other forges usable.
