@@ -1375,7 +1375,9 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Match the docker job: this builds the same full image, whose optional
+    # CLI downloads can spend 10 minutes retrying before the OCI exec check.
+    timeout-minutes: 45
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
