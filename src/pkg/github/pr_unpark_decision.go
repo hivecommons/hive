@@ -68,15 +68,17 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 
 	reply := ""
 	if closer, closeRequested := supersessionCloseDecision(command); closeRequested {
-		reply, err := c.closeSupersededPRDecision(ctx, displayRepo, owner, repo, pr, actor, closer)
+		reply, handled, err := c.closeSupersededPRDecision(ctx, displayRepo, owner, repo, pr, actor, closer)
 		if err != nil {
 			return false, err
 		}
-		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), reply); err != nil {
-			return false, err
+		if handled {
+			if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), reply); err != nil {
+				return false, err
+			}
+			result.Replies++
+			return true, nil
 		}
-		result.Replies++
-		return true, nil
 	}
 	switch {
 	case command.Kind == unparkCommandDecision && selfAuthored && head != "":

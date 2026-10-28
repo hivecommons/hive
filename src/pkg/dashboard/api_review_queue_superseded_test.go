@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
 )
 
 // useRingSupersessionAudit points the queue's on-disk audit scan at an empty
@@ -418,6 +419,10 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 	defer api.Close()
 	client := ghpkg.NewClient("token", "myorg", []string{"repo1"}, slog.Default(), api.URL)
 	client.SetAppBotLogin("hive-app[bot]")
+	// The park goes through the stage engine; record it instead of letting the
+	// default sink re-read the PR and reconcile against the shared label store.
+	facts := &stageenginetest.Recorder{}
+	client.SetStageFactSink(facts)
 	for pass := 0; pass < 2; pass++ {
 		res, err := client.SweepSupersededOpenPRs(context.Background(), ghpkg.SupersessionSweepOptions{
 			ACMMLevelForRepo: func(string) int { return 6 },
@@ -457,5 +462,14 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 	}
 	if labelWrites != 1 || strings.Join(labels, ",") != "needs-human,"+prstage.SupersessionPendingLabel {
 		t.Fatalf("park labels = %v, writes = %d; want one supersession park", labels, labelWrites)
+	}
+	var parked int
+	for _, f := range facts.All() {
+		if f.Method == "Parked" && f.Ref.Number == 2 && f.Label == "needs-human" {
+			parked++
+		}
+	}
+	if parked != 1 {
+		t.Fatalf("Parked facts for PR 2 = %d, want 1: %+v", parked, facts.All())
 	}
 }

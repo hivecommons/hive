@@ -65,7 +65,10 @@ maintainer with repository write access can reply `/hive decision reject` or
 are closed and a different merged PR closed them; an explicit `#N` must match
 that closer. It comments and closes the PR with `hive/superseded`, including
 PRs opened by contributors, without pushing to their branches. Hold and
-`do-not-merge` gates still prevent the close. The sweep's
+`do-not-merge` gates still prevent the close. When nothing supersedes the PR,
+a bare `reject` keeps its ordinary meaning (changes requested, nudging the
+author), while an explicit `close superseded by #N` is answered with why the
+PR stays open. The sweep's
 `hive/supersession-pending` cause label keeps the unresolved decision at 085
 through CI or rebase failures; reopening the issue, rewriting the claim, or
 choosing `hive/keep-open` clears the sweep's park on its next pass.

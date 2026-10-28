@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
@@ -34,12 +35,18 @@ func TestContributorSupersessionDecisionClosesWithoutPush(t *testing.T) {
 		requested   int
 		labels      []string
 		closes      bool
+		// handled is false only for a bare reject that found no live
+		// supersession: the decision then continues to the
+		// changes-requested path instead of being answered here.
+		handled bool
 	}{
-		{name: "reject", state: "closed", closes: true},
-		{name: "explicit closer", state: "closed", requested: 22, closes: true},
-		{name: "wrong closer", state: "closed", requested: 23},
+		{name: "reject", state: "closed", closes: true, handled: true},
+		{name: "explicit closer", state: "closed", requested: 22, closes: true, handled: true},
+		{name: "wrong closer", state: "closed", requested: 23, handled: true},
 		{name: "reopened issue", state: "open"},
+		{name: "reopened issue explicit", state: "open", requested: 22, handled: true},
 		{name: "held", state: "closed", labels: []string{"hold"}},
+		{name: "held explicit", state: "closed", requested: 22, labels: []string{"hold"}, handled: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prs := autoClosePRs(supersessionPRFixture{Body: "Fixes #3", Labels: tc.labels})
@@ -51,9 +58,12 @@ func TestContributorSupersessionDecisionClosesWithoutPush(t *testing.T) {
 			for _, l := range tc.labels {
 				pr.Labels = append(pr.Labels, &gh.Label{Name: gh.Ptr(l)})
 			}
-			reply, err := c.closeSupersededPRDecision(context.Background(), autoCloseOrg+"/"+autoCloseRepo, autoCloseOrg, autoCloseRepo, pr, "maintainer", tc.requested)
+			reply, handled, err := c.closeSupersededPRDecision(context.Background(), autoCloseOrg+"/"+autoCloseRepo, autoCloseOrg, autoCloseRepo, pr, "maintainer", tc.requested)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if handled != tc.handled || (!handled && reply != "") {
+				t.Fatalf("handled=%t reply=%q, want handled=%t", handled, reply, tc.handled)
 			}
 			if (len(obs.closed) == 1) != tc.closes {
 				t.Fatalf("closed=%v reply=%s", obs.closed, reply)
@@ -147,5 +157,35 @@ func TestReopenedIssueClearsSupersessionCauseWithoutClearingHumanPark(t *testing
 	removed := obs.removedLabels[12]
 	if len(removed) != 1 || removed[0] != prstage.SupersessionPendingLabel || len(result.Resolved) != 1 {
 		t.Fatalf("removed=%v result=%+v", removed, result)
+	}
+}
+
+// A bare `reject` on a hive PR nothing supersedes is an instruction, not a
+// close: it still reaches the changes-requested path (the author is kicked)
+// instead of being answered with "the PR stays open".
+func TestBareRejectWithoutSupersessionStillRequestsChanges(t *testing.T) {
+	claimed := unparkWireIssue{Number: 1, Title: "tunnel drain", State: "open", User: wireUser{Login: "reporter"}}
+	issues := []unparkWireIssue{claimed, hiveParkedPR(humanComment(4242, "clubanderson", "/hive decision reject"))}
+	c, rec := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+	store := review.NewHumanChangeRequests("")
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("clubanderson")})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.PRDecisions) != 1 || result.Replies != 0 || result.Skipped != 0 {
+		t.Fatalf("result = %+v, want one PR decision routed as changes requested", result)
+	}
+	if req, ok := store.For("org/repo", liveDecisionPR, liveDecisionHead); !ok || req.Body != "reject" {
+		t.Fatalf("recorded request = %+v, %v", req, ok)
+	}
+	if len(rec.patched[liveDecisionPR]) != 0 {
+		t.Fatalf("PR closed: %v", rec.patched[liveDecisionPR])
+	}
+	if len(rec.posted[liveDecisionPR]) != 1 || strings.Contains(rec.posted[liveDecisionPR][0], "stays open") {
+		t.Fatalf("reply = %v, want the changes-requested reply", rec.posted[liveDecisionPR])
+	}
+	facts := prDecisionFacts(t, c)
+	if len(facts) != 1 || !facts[0].Instruction {
+		t.Fatalf("stage facts = %+v, want one PRDecided instruction", facts)
 	}
 }
