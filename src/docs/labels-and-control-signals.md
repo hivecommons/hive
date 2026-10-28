@@ -925,6 +925,21 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    never adopt, and release an existing adoption of a maintainer's head.
    Under every setting a human-authored PR (no `author/clanker`) is never
    adopted.
+   The activity monitor shows the same presence the adoption rules read, so
+   the operator can anticipate the next move ([hivecommons/hive#15051](https://github.com/hivecommons/hive/issues/15051)):
+   every PR row waiting on a named person (071, 072, 017) carries
+   `presence{login, state, kind, since, last_seen, next, adopt_at}` and
+   its waiting-on pill an indicator before the `@login` — a filled **dot**
+   when the author's clanker is online (`next: wait`: the hive waits for
+   them through the online grace), a filled **square** when it is offline
+   (`next: adopt`; `adopt_at` is the projection of the rule below, and the
+   tooltip reads "@hanthor's clanker: offline 26h — hive will adopt at
+   15:10 (in 38m)"), a **hollow ring** when no clanker is registered here
+   (a human's PR: "no clanker registered — waiting for a human reply", pill
+   `waiting on @zoe (human · no clanker)`; another hive's PR: the
+   unregistered clock). A held adoption (`ask` / `never`, or
+   `adoption.enabled: false`) keeps `next: wait` with no `adopt_at`, so the
+   indicator never promises an adoption the pill text denies.
    - `reason=contributor-offline` — the author has a contributor profile
      here and no relay heartbeat within `governor.labels.stage.presence_window`:
      adopted `governor.labels.stage.adoption.after_offline` (default 15m)

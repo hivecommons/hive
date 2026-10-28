@@ -284,6 +284,7 @@ func TestStageTrackerAdoptionJS(t *testing.T) {
 		jsFunc(t, html, "stageTrackerAdoptOffered"),
 		jsFunc(t, html, "stageTrackerAdoptionChipText"),
 		jsFunc(t, html, "stageTrackerAdoptionChipHtml"),
+		stageTrackerPresenceJS(t, html),
 		`
 const ask = { kind: 'pr', repo: 'hivecommons/hive', number: 14524, stage: 72, stage_label: 'stage/072-returned-to-contributor', author: 'hanthor', labels: [],
   adoption: { author: 'hanthor', due: true, blocked_by: 'author-is-maintainer', nudges: 2, author_online: false, author_maintainer: true, policy: 'ask', action: 'decide:adopt', text: 'waiting on @hanthor (maintainer, offline 26h) — adopt?' } };

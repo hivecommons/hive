@@ -1529,6 +1529,21 @@
     .ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }
     /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
     .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
+    /* Waiting-on pill without an adoption clock (071, 072 before the nudge, a human's PR): muted, hive PR 15051. */
+    .ham-badge-waiting { color: var(--text-faint); border-color: var(--line-subtle); }
+    /* Presence indicator on a waiting-on pill (hive PR 15051): the person's
+       clanker is online (filled dot, --cue-decision: the hive waits), offline
+       (filled square, --status-error: adoption is the likely next move) or not
+       registered (hollow ring, faint). Shape carries the state, not colour
+       alone; the aria-label says it in words. Online breathes softly; nothing
+       moves under prefers-reduced-motion. */
+    .ham-presence { display: inline-block; width: 8px; height: 8px; margin-right: var(--sp-1); vertical-align: middle; box-sizing: border-box; flex: none; }
+    .ham-presence-online { border-radius: var(--r-pill); background: var(--cue-decision); animation: ham-presence-breathe 2.4s ease-in-out infinite; }
+    .ham-presence-offline { background: var(--status-error); }
+    .ham-presence-unknown { border-radius: var(--r-pill); border: var(--line-width) solid var(--text-faint); background: transparent; }
+    @keyframes ham-presence-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+    @media (prefers-reduced-motion: reduce) { .ham-presence-online { animation: none; } }
+    .ham-decision-presence { font-size: var(--fs-xs); color: var(--muted); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
@@ -14416,11 +14431,112 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!tip) return '';
       const offered = stageTrackerAdoptOffered(item);
       const cls = 'ham-badge ham-badge-adoption' + (offered ? ' ham-badge-adoption-ask' : '');
+      // The presence indicator rides inside the pill, before the @login
+      // (hivecommons/hive#15051); its line joins the tooltip.
+      const ptip = stageTrackerPresenceTip(item, Date.now());
+      const inner = stageTrackerPresenceInPillHtml(item, stageTrackerAdoptionChipText(item));
+      const full = ptip ? tip + ' · ' + ptip : tip;
       // "adopt?" opens the Needs-human popover (its decision_needed carries
       // the Adopt option) when the popover helpers are present.
       const decision = offered && typeof stageTrackerDecisionOf === 'function' && item.decision_needed ? stageTrackerDecisionOf(item) : null;
-      if (decision) return stageTrackerDecisionTriggerHtml(decision, esc(stageTrackerAdoptionChipText(item)), tip, cls);
-      return `<span class="${cls}" title="${esc(tip)}" aria-label="${esc('Adoption — ' + tip)}">${esc(stageTrackerAdoptionChipText(item))}</span>`;
+      if (decision) return stageTrackerDecisionTriggerHtml(decision, inner, full, cls);
+      return `<span class="${cls}" title="${esc(full)}" aria-label="${esc('Adoption — ' + full)}">${inner}</span>`;
+    }
+
+    // Presence on a waiting-on row (`presence`: {login, state, kind, since,
+    // last_seen, next, adopt_at} — hivecommons/hive#15051): whether the
+    // person's clanker (their connected contributor agent) is online,
+    // offline or not registered here, and the hive's likely next move.
+    const STAGE_TRACKER_PRESENCE_STATES = ['online', 'offline', 'unknown'];
+    const STAGE_TRACKER_PRESENCE_WORDS = { online: 'clanker online', offline: 'clanker offline', unknown: 'no clanker registered' };
+    function stageTrackerPresenceOf(item) {
+      const p = item && item.presence;
+      if (!p || typeof p !== 'object' || !p.login) return null;
+      const state = STAGE_TRACKER_PRESENCE_STATES.indexOf(p.state) >= 0 ? p.state : 'unknown';
+      return { login: String(p.login), state, kind: p.kind === 'clanker' ? 'clanker' : 'human', since: p.since || '', last_seen: p.last_seen || '', next: p.next === 'adopt' ? 'adopt' : 'wait', adopt_at: p.adopt_at || '' };
+    }
+    // "26h" / "40m" / "3d": how long the clanker has been gone, counted from
+    // its last heartbeat or the start of the wait, whichever is later.
+    function stageTrackerPresenceGone(p, nowMs) {
+      const from = Math.max(Date.parse(p.last_seen || '') || 0, Date.parse(p.since || '') || 0);
+      if (!from || nowMs <= from) return '';
+      const min = Math.floor((nowMs - from) / 60000);
+      if (min < 60) return Math.max(1, min) + 'm';
+      const h = Math.floor(min / 60);
+      return h < 48 ? h + 'h' : Math.floor(h / 24) + 'd';
+    }
+    // "at 15:10 (in 38m)" / "due now".
+    function stageTrackerPresenceAdoptAt(p, nowMs) {
+      const at = Date.parse(p.adopt_at || '');
+      if (!at) return '';
+      if (at <= nowMs) return 'due now';
+      const min = Math.ceil((at - nowMs) / 60000);
+      const inWords = min < 60 ? 'in ' + min + 'm' : min < 48 * 60 ? 'in ' + Math.floor(min / 60) + 'h' : 'in ' + Math.floor(min / 1440) + 'd';
+      return 'at ' + agentNowClockTime(at, nowMs) + ' (' + inWords + ')';
+    }
+    // The plain-words tooltip:
+    //   @Danathar's clanker: online, last seen 2 min ago — hive is waiting for them
+    //   @hanthor's clanker: offline 26h — hive will adopt at 15:10 (in 38m)
+    //   @zoe: no clanker registered — waiting for a human reply
+    function stageTrackerPresenceTip(item, nowMs) {
+      const p = stageTrackerPresenceOf(item);
+      if (!p) return '';
+      const now = Number(nowMs) || Date.now();
+      const who = '@' + p.login;
+      const adopt = stageTrackerPresenceAdoptAt(p, now);
+      let head, next;
+      if (p.state === 'online') {
+        const seenMs = Date.parse(p.last_seen || '');
+        head = who + "'s clanker: online" + (seenMs ? ', last seen ' + agentNowAgo(now - seenMs) : '');
+        next = 'hive is waiting for them' + (adopt ? '; adopts ' + adopt + ' if nothing moves' : '');
+      } else if (p.state === 'offline') {
+        const gone = stageTrackerPresenceGone(p, now);
+        head = who + "'s clanker: offline" + (gone ? ' ' + gone : '');
+        next = p.next === 'adopt' && adopt ? 'hive will adopt ' + adopt : 'hive is waiting for them';
+      } else if (p.kind === 'human') {
+        head = who + ': no clanker registered';
+        next = 'waiting for a human reply' + (adopt ? '; adoption ' + adopt : '');
+      } else {
+        head = who + ': no clanker registered here';
+        next = p.next === 'adopt' && adopt ? 'hive will adopt ' + adopt : 'hive is waiting for them';
+      }
+      return head + ' — ' + next;
+    }
+    // The indicator's own aria-label: the state in words, then the next move.
+    function stageTrackerPresenceAria(item, nowMs) {
+      const p = stageTrackerPresenceOf(item);
+      if (!p) return '';
+      const word = p.kind === 'human' && p.state === 'unknown' ? 'human, no clanker' : STAGE_TRACKER_PRESENCE_WORDS[p.state];
+      return '@' + p.login + ': ' + word + ' — ' + stageTrackerPresenceTip(item, nowMs).split(' — ').slice(1).join(' — ');
+    }
+    function stageTrackerPresenceDotHtml(item, nowMs) {
+      const p = stageTrackerPresenceOf(item);
+      if (!p) return '';
+      return `<span class="ham-presence ham-presence-${p.state}" role="img" aria-label="${esc(stageTrackerPresenceAria(item, nowMs))}" data-ham-presence="${p.state}"></span>`;
+    }
+    // Pill text with the indicator placed just before the @login (or
+    // leading, when the text names nobody): "waiting on ● @hanthor".
+    function stageTrackerPresenceInPillHtml(item, text) {
+      const dot = stageTrackerPresenceDotHtml(item, Date.now());
+      const t = String(text || '');
+      if (!dot) return esc(t);
+      const i = t.indexOf('@');
+      if (i < 0) return dot + esc(t);
+      return esc(t.slice(0, i)) + dot + esc(t.slice(i));
+    }
+    // The waiting-on pill for a row with presence but no adoption line (071
+    // Needs author, 072 before the first nudge, a human's PR): "waiting on
+    // ◯ @zoe (human · no clanker)".
+    function stageTrackerPresenceChipText(item) {
+      const p = stageTrackerPresenceOf(item);
+      if (!p) return '';
+      return 'waiting on @' + p.login + (p.kind === 'human' && p.state === 'unknown' ? ' (human · no clanker)' : '');
+    }
+    function stageTrackerPresenceChipHtml(item) {
+      const p = stageTrackerPresenceOf(item);
+      if (!p || stageTrackerAdoptionTip(item)) return '';
+      const tip = stageTrackerPresenceTip(item, Date.now());
+      return `<span class="ham-badge ham-badge-waiting" title="${esc(tip)}" aria-label="${esc('Waiting on — ' + tip)}">${stageTrackerPresenceInPillHtml(item, stageTrackerPresenceChipText(item))}</span>`;
     }
 
     // "Sentinel flagged security-relevant changes at <head short sha>:
@@ -14846,6 +14962,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Guarded: the test harnesses load helpers by name, and this one is additive.
       const adoption = typeof stageTrackerAdoptionTip === 'function' ? stageTrackerAdoptionTip(item) : '';
       if (adoption) lines.push('Adoption: ' + adoption + (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item) ? ' (row menu → Adopt)' : ''));
+      const presence = typeof stageTrackerPresenceTip === 'function' ? stageTrackerPresenceTip(item, nowMs) : '';
+      if (presence) lines.push('Presence: ' + presence);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       const stale = stageTrackerStaleLabelsText(item);
       if (stale) lines.push(stale);
@@ -14889,7 +15007,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerChipsHtml(item) {
-      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '');
+      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
@@ -15177,7 +15295,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, superseded: !!lp.superseded, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null };
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, presence: lp.presence || null };
     }
     // Pure: whether a linked PR is still open (not merged / closed / superseded).
     function stageTrackerLinkedPROpen(lp) {
@@ -15409,7 +15527,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, presence: lp.presence || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -17422,6 +17540,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-decision-pop" role="dialog" aria-label="${esc('Decision needed on ' + ref)}" tabindex="-1">
         <div class="ham-decision-head">${esc(ref)}${item.title ? ' · ' + esc(item.title) : ''}</div>
         <p class="ham-decision-q">${esc(d.question || '')}</p>
+        ${typeof stageTrackerPresenceTip === 'function' && stageTrackerPresenceTip(item, nowMs) ? `<p class="ham-decision-presence">${stageTrackerPresenceDotHtml(item, nowMs)}${esc(stageTrackerPresenceTip(item, nowMs))}</p>` : ''}
         ${d.blocker ? `<p class="ham-decision-blocker">${esc(d.blocker)}</p>` : ''}
         ${buttons ? `<div class="ham-decision-acts">${buttons}</div>` : ''}
         ${consequences ? `<ul class="ham-decision-consequences">${consequences}</ul>` : ''}

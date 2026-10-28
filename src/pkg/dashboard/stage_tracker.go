@@ -412,6 +412,11 @@ type StageTrackerItem struct {
 	// line the row shows instead of a bare "Returned to contributor"
 	// (hivecommons/hive#14524).
 	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
+	// Presence is, on a PR row waiting on a named person, whether that
+	// person's clanker is online / offline / not registered here and the
+	// hive's likely next move (wait or adopt, with the adopt-at time), so
+	// the waiting-on pill can carry an indicator (hivecommons/hive#15051).
+	Presence *StageTrackerPresence `json:"presence,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -531,6 +536,8 @@ type StageTrackerLinkedPR struct {
 	// parent shows a compact "↳ #N · under #M" reference instead of a
 	// second identical row (hivecommons/hive#14921 drew twice).
 	DrawnUnder int `json:"drawn_under,omitempty"`
+	// Presence mirrors the nested PR's own row field (hivecommons/hive#15051).
+	Presence *StageTrackerPresence `json:"presence,omitempty"`
 }
 
 // StageTrackerHold is the row's hold provenance (stagelabels.HoldProvenance
@@ -1690,6 +1697,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
 	sweep := s.stageTrackerSweepState()
 	workers := stageTrackerWorkersFromStatus(status)
+	adoptionClock := s.stageTrackerAdoptionClock()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
 		// "Needs human decision" is read from the item's current labels, not
 		// a store record that outlived them: once the park label is gone
@@ -1760,6 +1768,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			if it.Adoption = stageTrackerAdoption(*it, rec, hasRec, presence, maintainerPolicy, now); it.Adoption != nil {
 				it.Caption = stageTrackerAdoptionCaption(it.Caption, it.Adoption)
 			}
+		}
+		if login := stageTrackerWaitingOn(*it, stage); login != "" {
+			it.Presence = stageTrackerPresenceFor(*it, login, stage, rec, hasRec, presence, adoptionClock, now)
 		}
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
 		it.HumanApprover = approver
@@ -2677,6 +2688,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
 				lp.Adoption = pr.Adoption
+				lp.Presence = pr.Presence
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
