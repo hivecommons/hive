@@ -20,6 +20,12 @@ import (
 // already pushed past it, and the new head goes through the normal swarm
 // re-review rather than another kick.
 func (c *Engine) latestTrustedHumanChangesRequested(ctx context.Context, owner, repo string, number int, head string) (*gh.PullRequestReview, bool) {
+	return c.latestTrustedHumanReview(ctx, owner, repo, number, head, "CHANGES_REQUESTED")
+}
+
+// latestTrustedHumanReview reads all pages before selecting an opinion. An
+// older approval must never shadow a later change request or dismissal.
+func (c *Engine) latestTrustedHumanReview(ctx context.Context, owner, repo string, number int, head, state string) (*gh.PullRequestReview, bool) {
 	if c == nil || c.gh == nil || strings.TrimSpace(head) == "" {
 		return nil, false
 	}
@@ -54,7 +60,7 @@ func (c *Engine) latestTrustedHumanChangesRequested(ctx context.Context, owner, 
 	c.noteStageReviews(owner, repo, number, seen)
 	var found *gh.PullRequestReview
 	for login, rv := range latest {
-		if !strings.EqualFold(rv.GetState(), "CHANGES_REQUESTED") || strings.TrimSpace(rv.GetCommitID()) != strings.TrimSpace(head) {
+		if !strings.EqualFold(rv.GetState(), state) || strings.TrimSpace(rv.GetCommitID()) != strings.TrimSpace(head) {
 			continue
 		}
 		if c.isHiveAppReviewAuthor(rv) || strings.HasSuffix(login, "[bot]") {
@@ -92,6 +98,22 @@ func (c *Engine) humanChangesRequestedForHead(ctx context.Context, owner, repo s
 		if !found || standing.IsApproval() {
 			return false
 		}
+		// A later trusted approval on this same head can acknowledge a body-
+		// only fix. Persist it so the planner also stops scheduling a fix.
+		if approval, approved := c.latestTrustedHumanReview(ctx, owner, repo, number, head, "APPROVED"); approved && approval.GetSubmittedAt().After(standing.RecordedAt) {
+			req := review.HumanChangeRequest{
+				Repo: owner + "/" + repo, Number: number, HeadSHA: head,
+				Source: review.HumanChangeRequestSourceReview, SourceID: approval.GetID(),
+				Actor: hgithub.SafeGetLogin(approval.GetUser()), Body: approval.GetBody(), URL: approval.GetHTMLURL(),
+				Kind: review.HumanChangeRequestKindApprove, RecordedAt: approval.GetSubmittedAt().Time,
+			}
+			if err := c.humanChangeRequests.Record(req); err == nil {
+				c.noteStageTrustedHumanApproval(owner, repo, number, head, req.Actor)
+				return false
+			} else {
+				c.warn("could not record approval clearing human change request", "pr", number, "error", err)
+			}
+		}
 		c.noteStageHumanChangeRequest(owner, repo, number, head, standing.Actor)
 		return true
 	}
@@ -100,14 +122,15 @@ func (c *Engine) humanChangesRequestedForHead(ctx context.Context, owner, repo s
 		return true
 	}
 	req := review.HumanChangeRequest{
-		Repo:     owner + "/" + repo,
-		Number:   number,
-		HeadSHA:  strings.TrimSpace(head),
-		Source:   review.HumanChangeRequestSourceReview,
-		SourceID: rv.GetID(),
-		Actor:    strings.TrimSpace(hgithub.SafeGetLogin(rv.GetUser())),
-		Body:     rv.GetBody(),
-		URL:      rv.GetHTMLURL(),
+		Repo:       owner + "/" + repo,
+		Number:     number,
+		HeadSHA:    strings.TrimSpace(head),
+		Source:     review.HumanChangeRequestSourceReview,
+		SourceID:   rv.GetID(),
+		Actor:      strings.TrimSpace(hgithub.SafeGetLogin(rv.GetUser())),
+		Body:       rv.GetBody(),
+		URL:        rv.GetHTMLURL(),
+		RecordedAt: rv.GetSubmittedAt().Time,
 	}
 	if existing, found := c.humanChangeRequests.For(req.Repo, number, req.HeadSHA); found && existing.Source == req.Source && existing.SourceID == req.SourceID {
 		return true

@@ -254,11 +254,20 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 				Name string `json:"name"`
 			} `json:"defaultBranchRef"`
 			PullRequest struct {
-				State       string `json:"state"`
-				BaseRefName string `json:"baseRefName"`
-				Body        string `json:"body"`
-				URL         string `json:"url"`
-				Author      struct {
+				State        string `json:"state"`
+				BaseRefName  string `json:"baseRefName"`
+				Body         string `json:"body"`
+				URL          string `json:"url"`
+				LastEditedAt string `json:"lastEditedAt"`
+				Comments     struct {
+					Nodes []struct {
+						Body   string `json:"body"`
+						Author struct {
+							Login string `json:"login"`
+						} `json:"author"`
+					} `json:"nodes"`
+				} `json:"comments"`
+				Author struct {
 					Login string `json:"login"`
 				} `json:"author"`
 			} `json:"pullRequest"`
@@ -272,6 +281,8 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
       baseRefName
       body
       url
+      lastEditedAt
+      comments(last:100) { nodes { body author { login } } }
       author { login }
     }
   }
@@ -303,8 +314,23 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 		res.StageComment = issueStagePRLinkComment(prURL, claim.PRNumber, "GitHub only shows its linked-PR icon for closing-keyword PRs that target the repository default branch; this PR targets `"+res.Base+"`, so Hive cannot make GitHub display that icon for this issue.")
 		return res, nil
 	}
+	// A human decision is stronger than a missing-closing-keyword repair.
+	// Preserve the author's applied metadata even across subsequent heads.
+	decided := strings.Contains(pr.Body, prDecisionHeadMarker)
+	for _, comment := range pr.Comments.Nodes {
+		if c.isOwnBotLogin(comment.Author.Login) && strings.Contains(comment.Body, prDecisionHeadMarker) {
+			decided = true
+		}
+	}
+	if decided {
+		res.Skipped = "human-decision"
+		res.StageComment = issueStagePRLinkComment(prURL, claim.PRNumber, "A recorded human decision governs this PR; Hive will not add a closing keyword over that decision.")
+		return res, nil
+	}
 	if claim.Reference {
-		if body, ok := rewriteRefsIssueLinkToClosing(pr.Body, owner+"/"+name, issueNumber); !claim.KeepReference && ok && c.isOwnBotLogin(pr.Author.Login) {
+		// An edited Refs body may be an intentional downgrade from Closes.
+		// Without edit-history proof, preserve it rather than re-arm auto-close.
+		if body, ok := rewriteRefsIssueLinkToClosing(pr.Body, owner+"/"+name, issueNumber); !claim.KeepReference && pr.LastEditedAt == "" && ok && c.isOwnBotLogin(pr.Author.Login) {
 			if _, _, err := c.client.PullRequests.Edit(WithRESTCaller(ctx, "hive:issue_stage_pr_link"), owner, name, claim.PRNumber, &gh.PullRequest{Body: gh.Ptr(body)}); err != nil {
 				return res, fmt.Errorf("EnsureIssueStagePRLink %s#%d->#%d edit body: %w", repo, issueNumber, claim.PRNumber, err)
 			}
@@ -339,7 +365,7 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 func rewriteRefsIssueLinkToClosing(body, repo string, issue int) (string, bool) {
 	// A watcher downgrade is intentional, even when the caller has no issue
 	// body or child ledger available. Never re-arm auto-close through repair.
-	if body == "" || issue <= 0 || strings.Contains(body, issueLinkFixedMarker) || strings.Contains(body, closingKeywordWithheldNote) {
+	if body == "" || issue <= 0 || strings.Contains(body, issueLinkFixedMarker) || strings.Contains(body, prDecisionHeadMarker) || strings.Contains(body, closingKeywordWithheldNote) {
 		return "", false
 	}
 	if _, ok := FindClosingKeywordReference(body, repo, repo, issue); ok {

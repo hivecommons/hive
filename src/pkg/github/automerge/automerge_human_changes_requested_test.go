@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -226,5 +227,55 @@ func TestTrySweepSelfAuthoredPRRecordedDecisionNotesStageAndApprovalReleases(t *
 				}
 			}
 		})
+	}
+}
+
+func TestHumanChangeRequestClearedByLaterApprovalWithoutNewHead(t *testing.T) {
+	for _, tc := range []struct {
+		name, login, head, state, submitted string
+		wantHeld                            bool
+	}{
+		{"later trusted approval", "bob", "sha7", "APPROVED", "2026-10-28T02:00:00Z", false},
+		{"old approval", "bob", "sha7", "APPROVED", "2026-10-28T00:00:00Z", true},
+		{"approval on another head", "bob", "sha6", "APPROVED", "2026-10-28T02:00:00Z", true},
+		{"untrusted approval", "mallory", "sha7", "APPROVED", "2026-10-28T02:00:00Z", true},
+		{"still requesting changes", "bob", "sha7", "CHANGES_REQUESTED", "2026-10-28T02:00:00Z", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rv := humanReview(2, tc.login, tc.state, tc.head, "metadata fix checked")
+			rv["submitted_at"] = tc.submitted
+			api := newSelfSweepGuardAPI(t, selfSweepFixture{reviews: []map[string]any{rv}})
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			store := review.NewHumanChangeRequests("")
+			c.humanChangeRequests = store
+			at, err := time.Parse(time.RFC3339, "2026-10-28T01:00:00Z")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Record(review.HumanChangeRequest{Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Source: review.HumanChangeRequestSourceDecision, SourceID: 99, Actor: "bob", Body: "edit body", RecordedAt: at}); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if held := c.humanChangesRequestedForHead(context.Background(), "acme", "widget", 7, "sha7"); held != tc.wantHeld {
+					t.Fatalf("held=%v, want %v", held, tc.wantHeld)
+				}
+				if scheduled := review.HumanChangeRequestFor(store, "acme/widget", 7, "sha7") != nil; scheduled != tc.wantHeld {
+					t.Fatalf("planner still schedules=%v, want %v", scheduled, tc.wantHeld)
+				}
+			}
+		})
+	}
+}
+
+func TestTrustedHumanApprovalUsesLatestOpinion(t *testing.T) {
+	api := newSelfSweepGuardAPI(t, selfSweepFixture{reviews: []map[string]any{
+		humanReview(1, "bob", "APPROVED", "sha7", ""),
+		humanReview(2, "bob", "CHANGES_REQUESTED", "sha7", "please fix"),
+	}})
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	if login, ok := c.latestTrustedHumanApproval(context.Background(), "acme", "widget", 7, "sha7"); ok {
+		t.Fatalf("obsolete approval from %s accepted", login)
 	}
 }
