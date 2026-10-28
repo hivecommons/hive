@@ -1,0 +1,1 @@
+- The mutation journal now clamps the timestamp used for retention pruning to its own clock, so a skewed or forged future timestamp on a commit can no longer age out other journal entries early (#14830).

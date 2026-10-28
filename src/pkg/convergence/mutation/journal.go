@@ -231,6 +231,7 @@ type Journal struct {
 	lockTimeout time.Duration
 	retention   time.Duration
 	maxEntries  int
+	now         func() time.Time
 	mu          sync.Mutex
 	ops         map[string]*Operation
 }
@@ -247,6 +248,7 @@ func OpenJournal(path string) (*Journal, error) {
 		lockTimeout: DefaultJournalLockTimeout,
 		retention:   DefaultJournalRetention,
 		maxEntries:  DefaultJournalMaxEntries,
+		now:         time.Now,
 		ops:         make(map[string]*Operation),
 	}
 	if err := j.reloadLocked(); err != nil {
@@ -526,7 +528,7 @@ func (j *Journal) commit(id string, work Operation) (Operation, error) {
 	prior, hadPrior := j.ops[id]
 	cp := work.clone()
 	j.ops[id] = &cp
-	j.pruneLocked(work.UpdatedAt)
+	j.pruneLocked(j.pruneClock(work.UpdatedAt))
 	if err := j.persistLocked(); err != nil {
 		if hadPrior {
 			j.ops[id] = prior
@@ -536,6 +538,16 @@ func (j *Journal) commit(id string, work Operation) (Operation, error) {
 		return Operation{}, err
 	}
 	return work.clone(), nil
+}
+
+// pruneClock picks the instant retention is measured from. The caller-supplied
+// instant is clamped to the journal's own clock so a skewed or forged future
+// timestamp cannot age out other entries early.
+func (j *Journal) pruneClock(supplied time.Time) time.Time {
+	if own := j.now(); supplied.After(own) {
+		return own
+	}
+	return supplied
 }
 
 // isTerminal reports whether an operation can never transition again on its
