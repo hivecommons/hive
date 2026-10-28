@@ -241,6 +241,7 @@ func rebuildIssueBreakdown(prev github.RepoIssueBreakdown, items []openItemRef) 
 	}
 	b.NeedsHuman, b.NeedsDecision, b.NeedsSpec, b.PossiblyExists, b.ReporterConfirmation, b.Exempt = prev.NeedsHuman, prev.NeedsDecision, prev.NeedsSpec, prev.PossiblyExists, prev.ReporterConfirmation, prev.Exempt
 	b.Blocked = min(prev.Blocked, b.Filtered)
+	b.Tracking = min(prev.Tracking, b.Filtered)
 	return b
 }
 

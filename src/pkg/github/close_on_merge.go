@@ -329,6 +329,9 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 }
 
 func closeOnMergeBackfillCandidate(issue *gh.Issue) bool {
+	if _, tracking := isTrackingIssue(issue); tracking {
+		return false
+	}
 	labels := issueLabelNames(issue.Labels)
 	return HasCoveredByPRLabel(labels) ||
 		labelPresent(labels, LikelyDoneLabel) ||
@@ -549,6 +552,17 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	}
 	if !strings.EqualFold(issue.GetState(), "open") {
 		res.Action, res.Reason = CloseOnMergeAlreadyDone, "issue_not_open"
+		return res
+	}
+	if why, ok := isTrackingIssue(issue); ok {
+		// A tracking/archive issue (hivecommons/hive#14613) is never
+		// "fixed" by a merge: the keyword that claimed it is ignored. A
+		// verdict, not a failed step, so INFO; Skipped settles the claim so
+		// the sweep stops re-reading it.
+		res.Action, res.Reason = CloseOnMergeSkipped, "tracking_issue"
+		if opts.Logger != nil {
+			opts.Logger.Info("close-on-merge: claimed issue is a tracking/archive issue; leaving it open", "repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber(), "why", why)
+		}
 		return res
 	}
 	closedMarker, reopenedMarker := c.closeOnMergeMarkers(ctx, owner, repoName, issueNumber, pr.GetNumber())

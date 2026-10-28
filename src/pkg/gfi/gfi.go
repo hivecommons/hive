@@ -298,6 +298,9 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 			return skip(d, "excluded-label:"+l)
 		}
 	}
+	if why, ok := TrackingReason(c.Labels, c.Body); ok {
+		return skip(d, SkipTracking+":"+why)
+	}
 	if why, ok := OpsTrackingReason(c.Title, c.Body); ok {
 		return skip(d, SkipOpsTracking+":"+why)
 	}

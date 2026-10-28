@@ -194,7 +194,7 @@ func addOverviewBreakdown(dst map[string]int, key string, count int) {
 }
 
 func overviewGenericIssueFiltered(b github.RepoIssueBreakdown) int {
-	named := b.NeedsHuman + b.NeedsDecision + b.NeedsSpec + b.PossiblyExists + b.ReporterConfirmation + b.Exempt
+	named := b.NeedsHuman + b.NeedsDecision + b.NeedsSpec + b.PossiblyExists + b.ReporterConfirmation + b.Exempt + b.Tracking
 	return max(0, b.Filtered-named)
 }
 
