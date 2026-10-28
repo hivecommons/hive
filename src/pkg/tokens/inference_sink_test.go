@@ -1,7 +1,12 @@
 package tokens
 
 import (
+	"bytes"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -39,6 +44,126 @@ func TestInferenceSinkRecordsIntoCollectableFile(t *testing.T) {
 	// Explicit agent attribution must not fall through to "unknown".
 	if _, ok := agg.ByAgent["unknown"]; ok {
 		t.Fatalf("unexpected 'unknown' agent bucket: %+v", agg.ByAgent)
+	}
+}
+
+func TestInferenceSinkSerializesPublication(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		backend string
+		record  func(*InferenceSink)
+		tokens  int64
+	}{
+		{"inference", BackendInference, func(s *InferenceSink) { s.Record("scanner", "m", 10, 2) }, 12},
+		{"copilot", BackendCopilot, func(s *InferenceSink) { s.RecordCopilot("scanner", "m", 10, 2) }, 12},
+		{"copilot-cache", BackendCopilot, func(s *InferenceSink) { s.RecordCopilotWithCache("scanner", "m", 10, 2, 100, 5) }, 117},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			var logs bytes.Buffer
+			sink := NewInferenceSink(dir, slog.New(slog.NewTextHandler(&logs, nil)))
+			publishing := make(chan struct{})
+			resume := make(chan struct{})
+			published := make(chan int64, 2)
+			var calls atomic.Int32
+			sink.rename = func(oldpath, newpath string) error {
+				if calls.Add(1) == 1 {
+					close(publishing)
+					<-resume
+				}
+				if err := os.Rename(oldpath, newpath); err != nil {
+					return err
+				}
+				totals := sink.parseAgentFile(newpath)
+				if totals == nil {
+					t.Error("published file could not be restored")
+					return nil
+				}
+				var tokens int64
+				for _, u := range totals.Usage {
+					tokens += u.Total()
+				}
+				published <- tokens
+				return nil
+			}
+
+			var workers sync.WaitGroup
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				tc.record(sink)
+			}()
+			<-publishing
+			// Pause after the temporary file has been written and closed, but
+			// before it becomes visible to the collector. Updating totals here
+			// would let another Record steal the .tmp file or publish out of order.
+			if sink.mu.TryLock() {
+				sink.mu.Unlock()
+				t.Error("totals mutex released before file publication")
+			}
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				tc.record(sink)
+			}()
+			close(resume)
+			workers.Wait()
+			close(published)
+
+			var snapshots []int64
+			for tokens := range published {
+				snapshots = append(snapshots, tokens)
+			}
+			if len(snapshots) != 2 || snapshots[0] != tc.tokens || snapshots[1] != 2*tc.tokens {
+				t.Fatalf("published totals = %v, want [%d %d]", snapshots, tc.tokens, 2*tc.tokens)
+			}
+			if logs.Len() != 0 {
+				t.Fatalf("unexpected sink warning: %s", logs.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, sinkFilePrefix(tc.backend)+"scanner.jsonl.tmp")); !os.IsNotExist(err) {
+				t.Fatalf("temporary usage file remains: %v", err)
+			}
+			restored := NewInferenceSink(dir, nil)
+			totals := restored.totals[sinkTotalsKey(tc.backend, "scanner")]
+			if totals == nil || totals.InputTokens != 20 || totals.OutputTokens != 4 {
+				t.Fatalf("restored totals = %+v, want input 20 and output 4", totals)
+			}
+			agg, err := CollectFromDir(dir, DefaultAgentDetector)
+			if err != nil {
+				t.Fatalf("CollectFromDir: %v", err)
+			}
+			if got := agg.ByAgent["scanner"]; got != 2*tc.tokens {
+				t.Fatalf("collected tokens = %d, want %d", got, 2*tc.tokens)
+			}
+		})
+	}
+}
+
+func TestInferenceSinkWriteFailureReleasesMutex(t *testing.T) {
+	dir := t.TempDir()
+	var logs bytes.Buffer
+	sink := NewInferenceSink(dir, slog.New(slog.NewTextHandler(&logs, nil)))
+	path := filepath.Join(dir, inferenceSessionFilePrefix+"scanner.jsonl")
+	// Renaming the completed usage file onto a directory must still report
+	// the real failure and leave the sink usable for subsequent responses.
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sink.Record("scanner", "m", 10, 2)
+	if !sink.mu.TryLock() {
+		t.Fatal("totals mutex retained after failed publication")
+	}
+	sink.mu.Unlock()
+	if !bytes.Contains(logs.Bytes(), []byte("inference token sink write failed")) {
+		t.Fatalf("write failure not logged: %s", logs.String())
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	sink.Record("scanner", "m", 10, 2)
+	totals := sink.parseAgentFile(path)
+	if totals == nil || totals.InputTokens != 20 || totals.OutputTokens != 4 {
+		t.Fatalf("persisted totals after failure = %+v, want input 20 and output 4", totals)
 	}
 }
 

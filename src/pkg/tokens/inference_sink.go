@@ -41,7 +41,11 @@ type InferenceSink struct {
 	logger *slog.Logger
 	// now is a clock seam for tests; production uses time.Now.
 	now func() time.Time
+	// rename is a publication seam for tests; production uses os.Rename.
+	rename func(oldpath, newpath string) error
 
+	// mu serializes totals updates through file publication, so an older
+	// snapshot cannot overwrite newer usage or share its temporary file.
 	mu     sync.Mutex
 	totals map[string]*inferenceAgentTotals
 }
@@ -101,6 +105,7 @@ func NewInferenceSink(dir string, logger *slog.Logger) *InferenceSink {
 		dir:    dir,
 		logger: logger,
 		now:    time.Now,
+		rename: os.Rename,
 		totals: make(map[string]*inferenceAgentTotals),
 	}
 	s.restoreFromDisk()
@@ -261,12 +266,10 @@ func (s *InferenceSink) record(agent, model, backend string, inputTokens, output
 		CacheCreate: cacheCreation,
 	})
 	t.Usage, _ = timeline.finish()
-	snapshot := *t
-	snapshot.Usage = append([]UsageEvent(nil), t.Usage...)
-	snapshot.ModelTokens = nil
+	err := s.writeAgentFile(agent, t)
 	s.mu.Unlock()
 
-	if err := s.writeAgentFile(agent, &snapshot); err != nil && s.logger != nil {
+	if err != nil && s.logger != nil {
 		// Never log token values as sensitive; count magnitudes are fine.
 		s.logger.Warn("inference token sink write failed", "agent", agent, "error", err)
 	}
@@ -277,6 +280,7 @@ func (s *InferenceSink) record(agent, model, backend string, inputTokens, output
 // name), so the Collector's dedup-by-session-ID replaces rather than sums
 // across scans. The first line pins the agent explicitly via SessionEntry.Agent
 // so attribution does not depend on keyword detection.
+// The caller must hold s.mu until publication completes.
 func (s *InferenceSink) writeAgentFile(agent string, t *inferenceAgentTotals) error {
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return fmt.Errorf("creating metrics dir: %w", err)
@@ -339,7 +343,7 @@ func (s *InferenceSink) writeAgentFile(agent string, t *inferenceAgentTotals) er
 	if err := os.WriteFile(tmp, buf, inferenceFilePerm); err != nil {
 		return fmt.Errorf("writing usage file: %w", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := s.rename(tmp, path); err != nil {
 		return fmt.Errorf("renaming usage file: %w", err)
 	}
 	return nil
