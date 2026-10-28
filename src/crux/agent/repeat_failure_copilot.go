@@ -64,6 +64,9 @@ type copilotRecordSession struct {
 	commands map[string]string
 	// seen holds the toolCallIds already recorded.
 	seen map[string]bool
+	// since, when set, marks records recorded before it as history from before
+	// the reader started: they are not emitted. Zero emits everything.
+	since time.Time
 }
 
 // copilotRecordReader follows one agent's Copilot session logs.

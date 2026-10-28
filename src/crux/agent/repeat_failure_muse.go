@@ -33,7 +33,8 @@ import (
 // check off Hive adds nothing and has nothing to remove (C14). Each log is
 // read from where the previous collection stopped; a log that already existed
 // when the reader started is read from its end, so a Hive restart does not
-// replay history, and a tool_call_id is recorded at most once. Subagent logs
+// replay history (a log a cap hid from that first scan is instead read from
+// the start but drops records dated before the reader started), and a tool_call_id is recorded at most once. Subagent logs
 // (<session id>/subagent/<child id>/session.jsonl) are read the same way.
 //
 // The logs live under the agent's XDG data home and Hive reads them as itself,
@@ -73,8 +74,10 @@ const (
 // museRecordReader follows one agent's Muse Code session logs. Sessions are
 // keyed by the log's path relative to the sessions root.
 type museRecordReader struct {
-	started  bool
-	sessions map[string]*copilotRecordSession
+	started bool
+	// startedAt is when the first scan began.
+	startedAt time.Time
+	sessions  map[string]*copilotRecordSession
 }
 
 func newMuseRecordReader() *museRecordReader {
@@ -205,6 +208,9 @@ func museSessionLogs(root string) (logs []string, truncated bool) {
 // shell activity (finished false at the call, true at its result). When
 // uid > 0 only logs owned by uid are read.
 func (r *museRecordReader) scan(root string, uid int, emit func(RepeatFailureRecord), observe func(finished bool, at time.Time)) {
+	if !r.started && r.startedAt.IsZero() {
+		r.startedAt = time.Now()
+	}
 	defer func() { r.started = true }()
 	if !copilotRecordRealDir(filepath.Dir(root)) {
 		return
@@ -223,6 +229,11 @@ func (r *museRecordReader) scan(root string, uid int, emit func(RepeatFailureRec
 			sess = &copilotRecordSession{commands: map[string]string{}, seen: map[string]bool{}}
 			if !r.started {
 				sess.offset = info.Size()
+			} else {
+				// A log first reached after the first scan is new, or a
+				// pre-existing one a cap hid; either way its records from
+				// before the reader started are history.
+				sess.since = r.startedAt
 			}
 			r.sessions[rel] = sess
 		}
@@ -328,6 +339,9 @@ func museHandleLine(sess *copilotRecordSession, line []byte, emit func(RepeatFai
 			}
 			sess.seen[res.ToolCallID] = true
 			observe(true, ts)
+			if !sess.since.IsZero() && !ts.IsZero() && ts.Before(sess.since) {
+				continue
+			}
 			if rec, ok := museShellRecord(res.Text, cmd, ts); ok {
 				emit(rec)
 			}
