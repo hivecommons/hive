@@ -266,6 +266,38 @@ func TestEvidenceHeartbeat(t *testing.T) {
 	}
 }
 
+// A refresh can run after its caller has restored the package default. It
+// must still read the root captured for that beat (#15169).
+func TestRefreshEvidenceHeartbeatUsesCapturedRoot(t *testing.T) {
+	root := t.TempDir()
+	b := evSummaryBundle("a/b", 7, evidence.AuthorAgent, time.Now().UTC().Add(-time.Hour), true, nil, 0, true)
+	if err := evidence.Seal(b, nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bundle.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := ghpkg.ReviewEvidenceRoot
+	ghpkg.ReviewEvidenceRoot = t.TempDir()
+	t.Cleanup(func() { ghpkg.ReviewEvidenceRoot = prev })
+	s := newTestServer()
+	done := make(chan struct{})
+	go func() {
+		s.refreshEvidenceHeartbeat(root)
+		close(done)
+	}()
+	<-done
+	got := s.EvidenceHeartbeat()
+	if got == nil || got.Merged90d != 1 {
+		t.Fatalf("got %+v, want one merged PR from the captured root", got)
+	}
+}
+
 func TestNousStateHiveState(t *testing.T) {
 	var nilNous *NousState
 	if nilNous.HiveState() != nil {

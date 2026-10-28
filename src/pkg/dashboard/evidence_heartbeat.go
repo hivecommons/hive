@@ -104,7 +104,10 @@ func (s *Server) EvidenceHeartbeat() *spoke.HeartbeatEvidence {
 	if s == nil {
 		return nil
 	}
-	cached := s.evidenceHB.snapshot(time.Now(), s.refreshEvidenceHeartbeat)
+	// Capture the root on the caller's goroutine: tests may restore or replace
+	// the package default as soon as this beat returns.
+	root := ghpkg.ReviewEvidenceRoot
+	cached := s.evidenceHB.snapshot(time.Now(), func() { s.refreshEvidenceHeartbeat(root) })
 	if cached == nil {
 		return nil
 	}
@@ -121,7 +124,7 @@ func (s *Server) EvidenceHeartbeat() *spoke.HeartbeatEvidence {
 
 // refreshEvidenceHeartbeat is the background walk behind EvidenceHeartbeat:
 // load every bundle, fold, aggregate, store. Runs on its own goroutine.
-func (s *Server) refreshEvidenceHeartbeat() {
+func (s *Server) refreshEvidenceHeartbeat(root string) {
 	started := time.Now()
 	var (
 		block   *spoke.HeartbeatEvidence
@@ -129,7 +132,7 @@ func (s *Server) refreshEvidenceHeartbeat() {
 	)
 	verifier, err := s.reviewEvidenceVerifier()
 	if err == nil {
-		bundles, _, err = loadEvidenceBundles(ghpkg.ReviewEvidenceRoot, verifier)
+		bundles, _, err = loadEvidenceBundles(root, verifier)
 		if err == nil {
 			block = buildHeartbeatEvidence(bundles, time.Now().UTC(), nil)
 		}
