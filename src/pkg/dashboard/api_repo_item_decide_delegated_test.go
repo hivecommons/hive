@@ -333,6 +333,7 @@ func TestDelegatedSupersedeRefusedWhenAdoptionDisabled(t *testing.T) {
 // nothing new and says so plainly, with when the decision was first
 // recorded and what still blocks the item.
 func TestDelegatedDecisionRepeatIsNoop(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T12:10:00Z")
 	mock := &repoItemDecisionMock{issueLabels: []string{"bug", "stage/045-needs-decision"}}
 	mock.priorComments = []string{delegatedecision.CommentBody(delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: "default-approve", Rationale: "r"}, "h1", "writer")}
 	srv := newDelegatedServer(t, mock)
@@ -347,8 +348,10 @@ func TestDelegatedDecisionRepeatIsNoop(t *testing.T) {
 	if !strings.HasPrefix(job.Result.Outcome, "No change — hive already recorded this decision") || !strings.Contains(job.Result.Outcome, "2026-10-28T12:01:00Z") {
 		t.Fatalf("outcome = %q", job.Result.Outcome)
 	}
-	if job.Result.AppliedAt == nil || !strings.Contains(job.Result.Next, "blocked") {
-		t.Fatalf("next = %q applied_at = %v", job.Result.Next, job.Result.AppliedAt)
+	// Inside the effect window the answer says what was decided, in plain
+	// words, and by when it should show — no bare rule slug.
+	if job.Result.AppliedAt == nil || !strings.Contains(job.Result.Next, "Expected by 2026-10-28T12:31:00Z") || strings.Contains(job.Result.Outcome, "`default-approve`") {
+		t.Fatalf("next = %q outcome = %q applied_at = %v", job.Result.Next, job.Result.Outcome, job.Result.AppliedAt)
 	}
 	if len(mock.comments) != 0 || len(mock.added) != 0 {
 		t.Fatalf("a repeat must write nothing: comments=%v added=%v", mock.comments, mock.added)
@@ -450,5 +453,144 @@ func TestDelegatedNestedPRNumbersFromTracker(t *testing.T) {
 	}
 	if !strings.HasPrefix(res.Next, "3 sent · 1 decided · 1 no-op · 1 failed") {
 		t.Fatalf("next = %q", res.Next)
+	}
+}
+
+func pinDelegatedClock(t *testing.T, at string) {
+	t.Helper()
+	now, err := time.Parse(time.RFC3339, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := delegatedDecisionNow
+	delegatedDecisionNow = func() time.Time { return now }
+	t.Cleanup(func() { delegatedDecisionNow = prev })
+}
+
+// TestDelegatedDecisionStuckReportsNoEffect reproduces hivecommons/hive#14822:
+// the hive decided `supersede` on a contributor PR at 12:01Z; the PR is still
+// parked with `contributor-lane:changes-requested` (the merge gate read the
+// hive's own decision as a reviewer's change request) and the author is
+// online, so the supersede never ran. Past decisions.delegate.effect_timeout
+// the repeat click answers `no-effect` with the plain why and the options,
+// and the hive posts one plain-words follow-up on the PR — not a second
+// decision.
+func TestDelegatedDecisionStuckReportsNoEffect(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	prior := delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede, Rule: "contributor-offline", Text: "supersede now: adopt #8 in supersede mode", Rationale: "offline"}
+	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	mock.priorComments = []string{delegatedecision.CommentBody(prior, "h1", "writer")}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	body := `{"type":"pr","reason":"contributor-lane:changes-requested","caption":"changes requested"}`
+	w := postDelegated(t, srv, 8, "writer", body, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action != rowActionNoEffect {
+		t.Fatalf("result = %+v notes=%v", job.Result, job.Notes)
+	}
+	res := job.Result
+	t.Logf("outcome: %s\nnext: %s\nwhy: %s", res.Outcome, res.Next, res.Why)
+	for _, want := range []string{"Hive decided close this PR and open a fresh hive-authored PR with the same commits at 2026-10-28T12:01:00Z", "but it hasn't taken effect:"} {
+		if !strings.Contains(res.Outcome, want) {
+			t.Fatalf("outcome %q missing %q", res.Outcome, want)
+		}
+	}
+	if strings.Contains(res.Outcome, "contributor-offline") || strings.Contains(res.Outcome, "supersede") {
+		t.Fatalf("bare slug or jargon in outcome: %q", res.Outcome)
+	}
+	if res.Why == "" || res.Why == delegatedecision.GlossaryEffectUnknown {
+		t.Fatalf("why = %q", res.Why)
+	}
+	labels := optionLabels(res.Options)
+	for _, want := range []string{"Merge as maintainer (on GitHub)", "Re-run decision", "Close as superseded", "Send back for a new commit"} {
+		if !strings.Contains(strings.Join(labels, "|"), want) || !strings.Contains(res.Next, want) {
+			t.Fatalf("options %v / next %q missing %q", labels, res.Next, want)
+		}
+	}
+	var rerun *StageTrackerDecisionOption
+	for i := range res.Options {
+		if res.Options[i].Action == decisionActionDelegateRerun {
+			rerun = &res.Options[i]
+		}
+	}
+	if rerun == nil || !rerun.Enabled {
+		t.Fatalf("re-run option = %+v", rerun)
+	}
+	// One follow-up comment, plain words, stalled marker, never a decision.
+	if len(mock.comments) != 1 || len(mock.added) != 0 {
+		t.Fatalf("comments=%v added=%v", mock.comments, mock.added)
+	}
+	c := mock.comments[0]
+	t.Logf("follow-up:\n%s", c)
+	if !delegatedecision.IsStalledComment(c, "contributor-offline") || delegatedecision.IsDelegatedComment(c) || strings.HasPrefix(c, "/hive decision") {
+		t.Fatalf("follow-up = %q", c)
+	}
+	for _, want := range []string{"hasn't taken effect", "What should have happened", "Why it hasn't", "What you can do", "Re-run decision"} {
+		if !strings.Contains(c, want) {
+			t.Fatalf("follow-up missing %q:\n%s", want, c)
+		}
+	}
+
+	// Second click: the follow-up is already there, nothing is posted again.
+	mock.priorComments = append(mock.priorComments, c)
+	mock.comments = nil
+	w = postDelegated(t, srv, 8, "writer", body, nil)
+	job = decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action != rowActionNoEffect || len(mock.comments) != 0 {
+		t.Fatalf("second click: result=%+v comments=%v", job.Result, mock.comments)
+	}
+
+	// force=true re-runs the decider past the dedup and writes a fresh
+	// decision comment carrying the plain-words block.
+	mock.comments = nil
+	w = postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"contributor-lane:changes-requested","force":true}`, nil)
+	job = decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action == rowActionNoEffect || job.Result.Action == rowActionNoop {
+		t.Fatalf("forced re-run did not decide: %+v notes=%v err=%s", job.Result, job.Notes, job.Error)
+	}
+}
+
+// TestDelegatedStuckWhyReadsTheLane covers the why derivation per lane
+// reason and verdict so every stuck decision gets a specific plain reason.
+func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {
+	srv := newDelegatedServer(t, &repoItemDecisionMock{})
+	pr := delegatedecision.Input{Kind: delegatedecision.KindPR, CIGreen: true}
+	issue := delegatedecision.Input{Kind: delegatedecision.KindIssue}
+	approve := delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove}
+	supersede := delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede}
+	selfDecision := delegatedPriorState{Found: true, Text: "/hive decision supersede now: adopt"}
+	selfApprove := delegatedPriorState{Found: true, Text: "/hive decision approve"}
+	cases := []struct {
+		name  string
+		in    delegatedecision.Input
+		d     delegatedecision.Decision
+		req   delegatedDecisionRequest
+		prior delegatedPriorState
+		want  string
+	}{
+		{"self decision read as changes", pr, approve, delegatedDecisionRequest{Reason: "contributor-lane:changes-requested"}, selfDecision, delegatedecision.GlossarySelfDecision},
+		{"real changes requested", pr, approve, delegatedDecisionRequest{Reason: "changes_requested"}, selfApprove, delegatedecision.GlossaryChangesRequest},
+		{"author online blocks adopt", func() delegatedecision.Input { i := pr; i.ContributorOnline = true; return i }(), supersede, delegatedDecisionRequest{}, selfDecision, delegatedecision.GlossaryAuthorOnline},
+		{"sentinel", func() delegatedecision.Input { i := pr; i.SentinelAlert = true; return i }(), approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossarySentinel},
+		{"conflicting", func() delegatedecision.Input { i := pr; i.Conflicting = true; return i }(), approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryConflicting},
+		{"ci red", func() delegatedecision.Input { i := pr; i.CIGreen = false; return i }(), approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryCIRed},
+		{"dco", pr, approve, delegatedDecisionRequest{Caption: "DCO missing"}, selfApprove, delegatedecision.GlossaryDCO},
+		{"hold", pr, approve, delegatedDecisionRequest{Reason: "hold"}, selfApprove, delegatedecision.GlossaryHold},
+		{"pr fallback", pr, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNotMergedYet},
+		{"issue fallback", issue, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryStillParked},
+		{"close fallback", pr, delegatedecision.Decision{Verdict: delegatedecision.VerdictCloseSuperseded}, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNotClosedYet},
+		{"direction fallback", pr, delegatedecision.Decision{Verdict: delegatedecision.VerdictDirection}, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNoNewCommit},
+	}
+	for _, tc := range cases {
+		got := srv.delegatedStuckWhy(tc.in, tc.d, tc.req, tc.prior)
+		if got != tc.want {
+			t.Errorf("%s: why = %q, want %q", tc.name, got, tc.want)
+		}
+		if _, ok := delegatedecision.Explain(got); !ok {
+			t.Errorf("%s: why %q has no glossary entry", tc.name, got)
+		}
 	}
 }

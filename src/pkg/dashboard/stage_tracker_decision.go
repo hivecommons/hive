@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -255,6 +256,13 @@ func decisionPlainReason(base string) string {
 		return "GitHub requires a review the hive cannot give"
 	case stageengineprstage.AutoMergeReasonMergeRefusedMethod:
 		return "GitHub refused the hive's merge method"
+	}
+	// The shared decision glossary (pkg/delegatedecision) covers the
+	// reasons the lane shares with the delegate — changes requested,
+	// sentinel, conflicts, red CI, DCO — in the same words the toast and
+	// the PR comment use (hivecommons/hive#14822).
+	if e, ok := delegatedecision.Explain(base); ok && e.Kind == delegatedecision.GlossaryReason {
+		return e.Plain
 	}
 	if text := humanizeStageReason(base); text != "" {
 		return text

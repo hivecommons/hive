@@ -21,6 +21,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_SEL_ACTIONS"),
 		jsConstLine(t, html, "STAGE_TRACKER_MENU_MARGIN"),
 		jsConstLine(t, html, "STAGE_TRACKER_MENU_FAIL_LINES"),
+		jsConstBlock(t, html, "STAGE_TRACKER_DECISION_GLOSSARY"),
+		jsFunc(t, html, "stageTrackerPlainWords"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTION_LABELS"),
 		jsConstLine(t, html, "STAGE_TRACKER_WHY_WRITE"),
 		jsConstLine(t, html, "STAGE_TRACKER_WHY_ROLE"),
@@ -75,6 +77,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerRunActions"),
 		// runRowAction: result toasts + acting rows (owner request).
 		jsConstLine(t, html, "STAGE_TRACKER_ACTION_NOOP"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTION_NO_EFFECT"),
 		jsConstLine(t, html, "STAGE_TRACKER_RESULT_TOAST_MAX"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTING_MAX_MS"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTING_CAPTIONS"),
@@ -832,7 +835,7 @@ assert.strictEqual(stageTrackerTargetKey(null), '');
 const target = { repo: 'o/r', kind: 'pr', number: 14947, url: 'u947' };
 const decided = { action: 'adopted', rule: 'contributor-offline', target, outcome: 'Adopted o/r#14947 in supersede mode as o/r#14977.', next: 'The hive rebases and merges it unattended.' };
 let text = stageTrackerResultText(decided, issue, { id: 'decide:delegate', rowRef: 'o/r#14938' });
-assert.strictEqual(text.head, 'Hive decided on o/r#14938 → PR #14947: adopted (contributor offline)');
+assert.strictEqual(text.head, "Hive decided on o/r#14938 → PR #14947: adopted (the author's hive hasn't been connected since the nudge)", 'the rule in plain words, never the bare slug');
 assert.strictEqual(text.outcome, decided.outcome); assert.strictEqual(text.next, decided.next); assert.strictEqual(text.type, 'success');
 assert.strictEqual(text.url, 'u947'); assert.strictEqual(text.linkText, 'Open PR #14947');
 text = stageTrackerResultText({ action: 'held', target: { repo: 'o/r', kind: 'issue', number: 7, url: 'u7' }, outcome: 'hold applied.', next: '' }, held, { id: 'hold' });
@@ -840,6 +843,23 @@ assert.strictEqual(text.head, 'Hold on o/r#7: held', 'the target is not repeated
 text = stageTrackerResultText({ action: 'noop-already-applied', target, outcome: 'No change — hive already recorded this decision at 12:01Z; still blocked by needs-human.', next: '' }, issue, { id: 'decide:delegate' });
 assert.strictEqual(text.head, 'Let hive decide on o/r#14938 → PR #14947: no change'); assert.strictEqual(text.type, 'info');
 assert.ok(text.outcome.startsWith('No change — hive already recorded this decision at'));
+// hivecommons/hive#14822: a recorded decision that never took effect is a
+// warning that says why in plain words and carries the next actions.
+const stuck = { action: 'no-effect', rule: 'contributor-offline', why: 'self-decision-read-as-changes', target, applied_at: '2026-10-28T13:01:29Z',
+  outcome: "Hive decided close this PR and open a fresh hive-authored PR with the same commits at 2026-10-28T13:01:29Z, but it hasn't taken effect: hive's own decision comment was read as a reviewer asking for changes.",
+  next: 'Options: Merge as maintainer (on GitHub) · Re-run decision · Close as superseded · Send back for a new commit.',
+  options: [{ action: 'open:github', label: 'Merge as maintainer (on GitHub)', enabled: true }, { action: 'decide:delegate:rerun', label: 'Re-run decision', enabled: true }, { action: 'decide:close-superseded', label: 'Close as superseded', enabled: false, reason_if_disabled: 'write required' }, { action: 'decide:direction', label: 'Send back for a new commit', enabled: true }, { label: 'no action' }] };
+text = stageTrackerResultText(stuck, issue, { id: 'decide:delegate' });
+assert.strictEqual(text.head, "Hive decided on o/r#14938 → PR #14947: decided, but it hasn't taken effect (the author's hive hasn't been connected since the nudge)");
+assert.strictEqual(text.type, 'warning'); assert.strictEqual(text.options.length, 4, 'options without an action are dropped');
+assert.ok(text.why.startsWith('The merge gate read the hive'), text.why);
+assert.ok(!/contributor-offline|self-decision/.test(text.head + text.outcome + text.why), 'no bare slug reaches the operator');
+assert.strictEqual(stageTrackerPlainWords('supersede'), 'close this PR and open a fresh hive-authored PR with the same commits');
+assert.strictEqual(stageTrackerPlainWords('adoption-stalled:contributor-offline'), "the author's hive hasn't been connected since the nudge");
+assert.strictEqual(stageTrackerPlainWords('contributor-lane:changes-requested'), stageTrackerPlainWords('changes_requested'));
+assert.strictEqual(stageTrackerPlainWords('some-new-rule'), 'some new rule', 'unknown slugs are humanised, never raw');
+assert.strictEqual(stageTrackerPlainWords(''), '');
+assert.strictEqual(stageTrackerResultOf('decide:delegate', issue, { decision: { verdict: 'supersede', rule: 'contributor-offline' } }).outcome, "close this PR and open a fresh hive-authored PR with the same commits (the author's hive hasn't been connected since the nudge)");
 text = stageTrackerResultText(stageTrackerErrorResult('hold', held, 'write permission required'), held, { id: 'hold' });
 assert.strictEqual(text.head, 'Hold failed on o/r#7'); assert.strictEqual(text.outcome, 'write permission required'); assert.strictEqual(text.type, 'error');
 // Legacy answers (no result) still describe what happened.
@@ -867,6 +887,32 @@ assert.deepStrictEqual(_stageTrackerResultToasts, []);
 const gone = stageTrackerResultToast(decided, issue, { id: 'decide:delegate' });
 stageTrackerResultToastsSync({ items: [held] });
 assert.strictEqual(gone.el.parentNode, null, 'target gone from the tracker → dismissed');
+// The stuck toast renders its options as buttons; disabled ones say why;
+// "Re-run decision" runs the row action on the toast's target with force.
+{
+  const ran = [];
+  const origRun = runRowAction;
+  runRowAction = async (action, rows) => { ran.push({ action, rows }); return { toasts: [], pending: [] }; };
+  const st = stageTrackerResultToast(stuck, issue, { id: 'decide:delegate' });
+  assert.ok(st.el.className.includes('toast warning ham-result-toast'), st.el.className);
+  const opts = st.el.children.find(c => c.className === 'ham-result-options');
+  assert.ok(opts, 'options row rendered'); assert.strictEqual(opts.children.length, 4);
+  assert.deepStrictEqual(opts.children.map(b => b.textContent), ['Merge as maintainer (on GitHub)', 'Re-run decision', 'Close as superseded', 'Send back for a new commit']);
+  assert.strictEqual(opts.children[2].getAttribute('aria-disabled'), 'true'); assert.strictEqual(opts.children[2].title, 'write required');
+  opts.children[2]._listeners.click({ stopPropagation() {} });
+  assert.strictEqual(ran.length, 0, 'a disabled option does nothing');
+  opts.children[1]._listeners.click({ stopPropagation() {} });
+  assert.strictEqual(ran.length, 1); assert.strictEqual(ran[0].action, 'decide:delegate:rerun');
+  assert.strictEqual(ran[0].rows[0].number, 14947, 'acts on the toast target (the PR), not the clicked issue row');
+  assert.strictEqual(st.el.parentNode, null, 'the toast leaves once an option is taken');
+  runRowAction = origRun;
+  _stageTrackerResultToasts = [];
+}
+const prRow = { repo: 'o/r', kind: 'pr', number: 14947, url: 'u947', reason: 'contributor-lane:changes-requested' };
+const rerunReq = stageTrackerActionRequest(prRow, 'decide:delegate:rerun', {});
+assert.strictEqual(rerunReq.body.force, true); assert.strictEqual(rerunReq.body.reason, 'contributor-lane:changes-requested'); assert.ok(rerunReq.poll); assert.ok(rerunReq.url.endsWith('/items/14947/decide-delegated'));
+assert.strictEqual(stageTrackerActionRequest(prRow, 'decide:delegate', {}).body.force, undefined, 'a first click never forces');
+assert.strictEqual(stageTrackerActionLabel('decide:delegate:rerun'), 'Re-run decision');
 // Error toasts are sticky but not tied to a row state.
 const bad = stageTrackerResultToast(stageTrackerErrorResult('hold', held, 'boom'), held, { id: 'hold' });
 assert.ok(bad.el.className.includes('error')); assert.deepStrictEqual(_stageTrackerResultToasts, []);
@@ -918,7 +964,7 @@ assert.ok(!acting('o/r/issue#7'), 'a no-op or an error clears at once');
   global.fetch = async (url, init) => ({ ok: true, status: 200, json: async () => ({ status: 'done', result: decided }) });
   stageTrackerSetConfirmSkip('decide:delegate', true);
   const del = await runRowAction('decide:delegate', issue);
-  assert.strictEqual(del.toast.text.head, 'Hive decided on o/r#14947 → PR #14947: adopted (contributor offline)'.replace('o/r#14947 → PR #14947', 'o/r#14947'), del.toast.text.head);
+  assert.strictEqual(del.toast.text.head, "Hive decided on o/r#14947: adopted (the author's hive hasn't been connected since the nudge)", del.toast.text.head);
   assert.deepStrictEqual(del.pending[0].keys, ['o/r/pr#14947', 'o/r/issue#14938']);
   assert.ok(acting('o/r/issue#14938') && acting('o/r/pr#14947'));
 })().catch(e => { console.error(e); process.exit(1); });

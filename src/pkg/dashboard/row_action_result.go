@@ -25,6 +25,11 @@ type RowActionResult struct {
 	Next      string          `json:"next"`
 	Rule      string          `json:"rule,omitempty"`
 	AppliedAt *time.Time      `json:"applied_at,omitempty"`
+	// Why is the glossary slug for why a recorded decision has not taken
+	// effect (Action no-effect); Options are the concrete next actions in
+	// the popover's shape (hivecommons/hive#14822). Both additive.
+	Why     string                       `json:"why,omitempty"`
+	Options []StageTrackerDecisionOption `json:"options,omitempty"`
 }
 
 // RowActionTarget names the issue or PR a row action acted on.
@@ -52,6 +57,7 @@ const (
 	// rowActionDecidedEach is an issue job that decided each nested PR on
 	// its own; the per-PR results ride delegatedDecisionJob.Items.
 	rowActionDecidedEach = "decided-each"
+	rowActionNoEffect    = "no-effect"
 	rowActionTargetIssue = "issue"
 	rowActionTargetPR    = "pr"
 )
@@ -90,7 +96,7 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 	out := RowActionResult{Target: rowActionTarget(in.Repo, kind, in.Number), Rule: d.Rule}
 	ruleTag := ""
 	if d.Rule != "" {
-		ruleTag = " (" + strings.ReplaceAll(d.Rule, "-", " ") + ")"
+		ruleTag = " (" + delegatedecision.RulePlain(d.Rule) + ")"
 	}
 	actionTarget := 0
 	for _, a := range d.Actions {

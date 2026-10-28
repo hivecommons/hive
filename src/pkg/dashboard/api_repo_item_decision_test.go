@@ -97,6 +97,9 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			_, _ = io.WriteString(w, `{"total_count":0,"check_runs":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(path, "/timeline"):
 			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/pulls/8/commits") || strings.HasSuffix(path, "/pulls/8/reviews")):
+			// No author activity: the contributor reads as offline.
+			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/comments"):
 			prior := make([]map[string]any, 0, len(m.priorComments))
 			for i, body := range m.priorComments {

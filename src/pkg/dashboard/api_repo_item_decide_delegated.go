@@ -79,6 +79,9 @@ type delegatedDecisionRequest struct {
 	// picks one (hivecommons/hive#15009). Empty: the dashboard's own
 	// snapshot is consulted the same way.
 	PRs []int `json:"prs,omitempty"`
+	// Force re-runs the decision past the "already recorded" dedup (the
+	// `decide:delegate:rerun` option on a stuck decision).
+	Force bool `json:"force,omitempty"`
 }
 
 // delegatedDecisionJob is the wire shape of one job.
@@ -471,20 +474,29 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	}
 	d, deciderNotes := s.decideDelegated(ctx, in)
 	// The same rule firing again on an item the hive already decided would
-	// only repeat the comment: report it as a no-op instead of writing.
-	if prior, ok := s.delegatedPriorDecision(ctx, repoFull, number, d.Rule); ok {
+	// only repeat the comment: report it as a no-op instead of writing —
+	// unless the recorded decision never took effect, in which case say so
+	// in plain words with the options (hivecommons/hive#14822), or the
+	// operator asked to re-run it.
+	if prior := s.delegatedPriorDecisionState(ctx, repoFull, number, d.Rule); prior.Found && !req.Force {
 		kind := rowActionTargetIssue
 		if in.Kind == delegatedecision.KindPR {
 			kind = rowActionTargetPR
 		}
-		blocked := strings.TrimSpace(req.Caption)
-		if blocked == "" {
-			blocked = strings.TrimSpace(req.Reason)
+		now := delegatedDecisionNow()
+		timeout := s.delegatedEffectTimeout()
+		why := s.delegatedStuckWhy(in, d, req, prior)
+		options := delegatedStuckOptions(in, d, mergerRole)
+		res := delegatedDecisionEffectResult(rowActionTarget(repoFull, kind, number), in, d, prior.At, now, timeout, why, options)
+		notes := append(deciderNotes, "already applied; nothing written")
+		noop := "already-applied"
+		if res.Action == rowActionNoEffect {
+			notes = append(notes, "decision has not taken effect ("+why+")", s.postDelegatedStalledComment(ctx, in, d, prior, why, options))
+			noop = "no-effect:" + why
 		}
-		res := rowActionNoopResult(rowActionTarget(repoFull, kind, number), "hive already recorded this decision (rule `"+d.Rule+"`)", prior, blocked)
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", itemType,
-			"verdict", string(d.Verdict), "rule", d.Rule, "actions", "", "noop", "already-applied", "policy", delegatedecision.PolicyName, "decision", d.Text), "", repoFull, number)
-		return delegatedOutcome{Decision: &d, Notes: append(deciderNotes, "already applied; nothing written"), Result: &res}
+			"verdict", string(d.Verdict), "rule", d.Rule, "actions", "", "noop", noop, "policy", delegatedecision.PolicyName, "decision", d.Text), "", repoFull, number)
+		return delegatedOutcome{Decision: &d, Notes: notes, Result: &res}
 	}
 	notes, execErr := s.executeDelegatedDecision(ctx, in, d, user, mergerRole)
 	notes = append(deciderNotes, notes...)
@@ -513,27 +525,8 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 // listing failure reads as "no prior decision": deciding twice is the
 // cheaper mistake.
 func (s *Server) delegatedPriorDecision(ctx context.Context, repoFull string, number int, rule string) (time.Time, bool) {
-	if rule == "" || s.deps == nil || s.deps.GHClient == nil || s.deps.GHClient.GoGitHub() == nil {
-		return time.Time{}, false
-	}
-	owner, repoName, _ := strings.Cut(repoFull, "/")
-	comments, _, err := s.deps.GHClient.GoGitHub().Issues.ListComments(ctx, owner, repoName, number, &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: delegatedDecisionGatherLimit}})
-	if err != nil {
-		return time.Time{}, false
-	}
-	tag := "(rule `" + rule + "`)"
-	var at time.Time
-	found := false
-	for _, c := range comments {
-		body := c.GetBody()
-		if !delegatedecision.IsDelegatedComment(body) || !strings.Contains(body, tag) {
-			continue
-		}
-		if t := c.GetCreatedAt().Time; !found || t.After(at) {
-			at, found = t, true
-		}
-	}
-	return at, found
+	st := s.delegatedPriorDecisionState(ctx, repoFull, number, rule)
+	return st.At, st.Found
 }
 
 // gatherDelegatedInput reads what the decider needs from GitHub.
@@ -662,7 +655,7 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 	repoFull, number := in.Repo, in.Number
 	hiveID := s.delegateHiveID()
 	marker := delegatedecision.Marker(hiveID)
-	comment := delegatedecision.CommentBody(d, hiveID, user)
+	comment := delegatedecision.CommentBodyWith(d, hiveID, user, delegatedecision.CommentOptions{Kind: in.Kind, EffectTimeout: s.delegatedEffectTimeout()})
 	var notes []string
 	if d.Verdict == delegatedecision.VerdictRefused {
 		return append(notes, "refused: "+d.Rationale), nil

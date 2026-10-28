@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // DecisionsConfig (top-level `decisions:`) tunes how decisions on items parked
 // at stage/085-needs-decision / 045 are recorded.
@@ -26,6 +29,31 @@ type DelegateDecisionConfig struct {
 	// LLM is the model step for the non-mechanical cases. A pointer so an
 	// unset block leaves the serialised config unchanged.
 	LLM *DelegateDecisionLLMConfig `yaml:"llm,omitempty" json:"llm,omitempty"`
+	// EffectTimeout (`decisions.delegate.effect_timeout`) is how long a
+	// recorded delegated decision may go without its expected effect (the
+	// stage or label change, merge, close, or fresh PR) before the hive
+	// calls it stuck: the row action reports `no-effect` with the plain
+	// reason and the concrete options, and a follow-up comment says so on
+	// the PR (hivecommons/hive#14822). A Go duration string; default 30m.
+	EffectTimeout string `yaml:"effect_timeout,omitempty" json:"effect_timeout,omitempty"`
+}
+
+// DefaultDelegateDecisionEffectTimeout is the effect_timeout default.
+const DefaultDelegateDecisionEffectTimeout = 30 * time.Minute
+
+// EffectTimeoutDuration parses EffectTimeout, falling back to the default
+// when unset or unparsable (a bad value must not make decisions look
+// stuck instantly or never).
+func (c DelegateDecisionConfig) EffectTimeoutDuration() time.Duration {
+	raw := strings.TrimSpace(c.EffectTimeout)
+	if raw == "" {
+		return DefaultDelegateDecisionEffectTimeout
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return DefaultDelegateDecisionEffectTimeout
+	}
+	return d
 }
 
 // DelegateDecisionLLMConfig (`decisions.delegate.llm:`) gates the LLM-backed
