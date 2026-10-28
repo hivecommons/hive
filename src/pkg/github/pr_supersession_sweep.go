@@ -183,7 +183,7 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 
 	if held {
-		if opts.Audit != nil && !identity.Matches(event.Author) && candidate.Closing {
+		if opts.Audit != nil && !identity.Matches(event.Author) {
 			event.Action = SupersessionActionDetectedContributor
 			event.Reason = "held; awaiting an operator decision"
 			opts.Audit(event)
@@ -220,10 +220,7 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	// Record every detection, even when the notice is already present or
 	// automatic closure is disabled. This does not consume a write action.
-	// A non-closing claim (`Refs #N`, `Part of #N`, a branch name) is not
-	// a detection: the PR never claimed to deliver the issue, so nothing
-	// supersedes it and the tracker must not offer a close decision for it.
-	if opts.Audit != nil && candidate.Closing {
+	if opts.Audit != nil {
 		detected := event
 		detected.Action = SupersessionActionDetectedContributor
 		opts.Audit(detected)

@@ -455,40 +455,6 @@ func TestSweepSupersededOpenPRs_ContributorCommentOnly(t *testing.T) {
 	}
 }
 
-// A contributor PR that only references the closed issue is commented on
-// but never audited as detected: the tracker captions detections as
-// "Superseded by #N — decide", and nothing supersedes a Refs-only PR.
-func TestSweepSupersededOpenPRs_RefsOnlyContributorPRIsNotAuditedAsDetected(t *testing.T) {
-	org, repo := "hivecommons", "hive"
-	server, obs := supersessionSweepServer(t, org, repo,
-		[]supersessionPRFixture{
-			{Number: 12, Title: "fix thing", Body: "Refs #3", Author: "contributor", Files: []string{"pkg/a.go"}},
-			{Number: 22, Title: "landed", Body: "Fixes #3", Author: "hive-app[bot]", Merged: true, Files: []string{"pkg/a.go"}},
-		},
-		[]supersessionIssueFixture{{Number: 3, State: "closed", GraphQLCloserPR: 22}},
-	)
-	defer server.Close()
-
-	c := newTestClient(t, server, org, []string{repo})
-	c.SetAppBotLogin("hive-app[bot]")
-	var events []SupersessionSweepEvent
-	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{
-		ACMMLevelForRepo: func(string) int { return acmmLevelAutonomous },
-		Audit:            func(e SupersessionSweepEvent) { events = append(events, e) },
-	})
-	if err != nil {
-		t.Fatalf("SweepSupersededOpenPRs: %v", err)
-	}
-	if len(res.Commented) != 1 || len(obs.comments[12]) != 1 || len(obs.labels[12]) != 0 {
-		t.Fatalf("Refs-only contributor PR should only be commented on: result=%+v comments=%v labels=%v", res, obs.comments, obs.labels)
-	}
-	for _, e := range events {
-		if e.Action == SupersessionActionDetectedContributor {
-			t.Fatalf("Refs-only PR audited as detected: %+v", events)
-		}
-	}
-}
-
 func TestSweepSupersededOpenPRs_BelowL6LabelsOwnPR(t *testing.T) {
 	org, repo := "hivecommons", "hive"
 	server, obs := supersessionSweepServer(t, org, repo,
