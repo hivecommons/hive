@@ -512,3 +512,35 @@ func TestCloseOnMergeReopenDecision(t *testing.T) {
 		})
 	}
 }
+
+func TestCloseOnMergeSkipsClaimedPullRequestTarget(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	var writes []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writes = append(writes, r.Method+" "+r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if r.URL.Path == "/repos/o/r/issues/14730" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number":       14730,
+				"state":        "open",
+				"pull_request": map[string]any{"url": "https://api.github.com/repos/o/r/pulls/14730"},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"r"})
+	pr := mergedTestPR(25, "hive[bot]", "fix", "the fix is made in o/r#14730")
+	opts := CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}}
+	res := c.closeIssueForMergedPRClaim(context.Background(), "o/r", 14730, pr, true, opts)
+	if res.Action != CloseOnMergeSkipped || res.Reason != "target_is_pull_request" {
+		t.Fatalf("result = %+v, want target_is_pull_request skip", res)
+	}
+	if len(writes) != 0 {
+		t.Fatalf("unexpected write requests: %v", writes)
+	}
+}

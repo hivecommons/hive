@@ -538,6 +538,15 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			return res
 		}
 	}
+	if issue.IsPullRequest() {
+		// The Issues API also returns pull requests; a cross-repo mention can
+		// claim one. A verdict, not a failed step, so INFO rather than WARN.
+		res.Action, res.Reason = CloseOnMergeSkipped, "target_is_pull_request"
+		if opts.Logger != nil {
+			opts.Logger.Info("close-on-merge: claimed target is a pull request, not an issue; skipping", "repo", issueRepo, "number", issueNumber, "pr", pr.GetNumber())
+		}
+		return res
+	}
 	if !strings.EqualFold(issue.GetState(), "open") {
 		res.Action, res.Reason = CloseOnMergeAlreadyDone, "issue_not_open"
 		return res
