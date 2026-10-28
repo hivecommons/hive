@@ -16,7 +16,7 @@ import (
 
 // The merged ledger is the Activity Monitor's server-side record of every
 // pull request the hive tracked that reached merged — whoever merged it
-// (hivecommons/hive#15096). Before it, the toolbar's "Merged today" chip was
+// (hivecommons/hive#15147, #15096). Before it, the toolbar's "Merged today" chip was
 // accumulated in the tab from rows vanishing as merged and seeded from the
 // in-memory audit ring on reload, so a refresh, a new tab or a roll of the
 // pod reset it (the operator watched 4 become 0, and 33 become 4).

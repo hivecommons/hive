@@ -1328,6 +1328,9 @@
        Review, 085/090 on Merge gate) light the chevron they branch from in
        their own words, so every strip is the same width. An issue parked on
        a person (045) lights Actionable with the decision word. */
+    /* The sticky chip bar's height (the header strip sticks beneath it) and
+       the layers for the merge flight and banners (above the modal chrome). */
+    #activity-monitor-section { --ham-sticky-bar-h: 34px; --z-cue-flight: 10000; --z-merge-banner: 10001; }
     .ham-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
     .ham-toolbar label { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .ham-repo-filter { position: static; flex: 0 1 auto; gap: 0; min-width: 0; white-space: nowrap; }
@@ -1384,7 +1387,7 @@
     .ham-engine .ham-engine-warn { color: var(--status-error); border-color: var(--status-error); }
     .ham-pager { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .ham-pager .ham-chip:disabled { opacity: 0.4; cursor: default; }
-    .ham-cols { padding: 0 var(--sp-2) var(--sp-2); border-bottom: var(--line-width) solid var(--line-subtle); margin-bottom: var(--sp-2); }
+    .ham-cols { position: sticky; top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h)); z-index: var(--z-sticky); background: var(--panel); padding: 0 var(--sp-2) var(--sp-2); border-bottom: var(--line-width) solid var(--line-subtle); margin-bottom: var(--sp-2); }
     .ham-cols .ham-strip { height: auto; }
     .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
     .ham-cols .ham-since { color: var(--text-faint); font-family: inherit; }
@@ -1392,11 +1395,6 @@
        grid, the slot takes the Merge gate column plus the ✓ cap and
        right-aligns the chip over the gate. It never wraps with the
        filter bar, so the chip stays put whatever the toolbar does. */
-    .ham-cols-top { margin-bottom: var(--sp-1); }
-    .ham-cols-top .ham-seg.ham-merged-slot-seg { flex: 1 1 calc(4em + var(--sp-1)); justify-content: flex-end; padding: 0; overflow: visible; min-width: 0; }
-    .ham-merged-slot { display: inline-flex; justify-content: flex-end; min-width: 0; }
-    .ham-merged-slot:empty, .ham-merged-home:empty { display: none; }
-    .ham-merged-home { display: inline-flex; }
     .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-5) var(--sp-2); }
     /* Each entry is fenced by a hairline above it and lights up as a whole
        on hover, so a tall row (wrapped title, ↳ PR line) still reads as one
@@ -1629,23 +1627,56 @@
     @keyframes cue-acting-stripes { to { background-position: 34px 0; } }
     @keyframes cue-event-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
     /* Merged: the row is pinned for a moment, its ✓ cell glows, a small
-       brand-amber hex token lifts out of the cell and arcs to the toolbar's
-       "Merged today" count, which ticks up with a soft pop; then the row
-       leaves by the usual exit. The token is positioned by two custom
-       properties the JS measures (--cue-dx/--cue-dy: its travel). */
+       glyph (a bee, or "+1") rises out of the cell towards the top of the
+       viewport — when the sticky "Merged" chip is in view it lands there
+       and the count bumps with a soft pop; when it is not, the glyph
+       leaves through the top edge and the count bumps as it goes. The
+       flight is positioned by custom properties the JS measures
+       (--cue-dx/--cue-dy: its travel). A banner at the bottom right says
+       what merged and stays until dismissed (or 30 s). Reduced motion:
+       the glyph fades in place, the count still pops. */
     .cue-merged .ham-seg.cap { color: var(--amber); animation: cue-cap-glow 1.6s ease-out both; }
     .cue-merged { background: color-mix(in srgb, var(--amber) 8%, transparent); transition: background 300ms ease; }
-    .cue-token { position: fixed; z-index: 10000; width: 14px; height: 14px; color: var(--amber); pointer-events: none; animation: cue-token-fly var(--cue-fly-ms, 520ms) cubic-bezier(0.2, 0.7, 0.3, 1) both; }
-    .cue-token svg { display: block; width: 100%; height: 100%; }
-    .ham-merged-count { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--text); cursor: default; }
+    .cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--fs-lg); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); pointer-events: none; user-select: none; animation: cue-flight var(--cue-fly-ms, 900ms) cubic-bezier(0.25, 0.6, 0.3, 1) both; }
+    .cue-flight.cue-flight-fade { animation: cue-flight-fade var(--cue-fly-ms, 900ms) ease-out both; }
+    .ham-sticky { position: sticky; top: var(--navbar-sticky-height); z-index: calc(var(--z-sticky) + 1); display: flex; justify-content: flex-end; align-items: center; min-height: var(--ham-sticky-bar-h); box-sizing: border-box; padding: var(--sp-1) var(--sp-2); background: var(--panel); }
+    .ham-sticky-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    .ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text); cursor: pointer; }
+    .ham-merged-count:hover { border-color: var(--line-strong); }
     .ham-merged-count .ham-merged-ico { width: 12px; height: 12px; color: var(--amber); }
-    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-medium); }
+    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
+    .ham-merged-count .ham-merged-sub { color: var(--text-faint); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-merged-count.cue-tick { animation: cue-count-pop 320ms ease-out; }
+    .ham-merged-pop { position: absolute; right: var(--sp-2); top: calc(var(--full-size) - var(--sp-1)); min-width: 22rem; max-width: 34rem; max-height: 60vh; overflow: auto; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-radius: var(--r-lg); background: var(--panel-strong); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); color: var(--text); z-index: var(--z-cue-flight); }
+    .ham-merged-pop-head { display: flex; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-3); font-weight: var(--fw-semibold); }
+    .ham-merged-pop-head .ham-merged-pop-sum { color: var(--text-faint); font-weight: var(--fw-medium); }
+    .ham-merged-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+    .ham-merged-list li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); align-items: baseline; }
+    .ham-merged-list .ham-merged-num { color: var(--amber); font-variant-numeric: tabular-nums; font-weight: var(--fw-medium); white-space: nowrap; }
+    .ham-merged-list .ham-merged-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ham-merged-list .ham-merged-meta { color: var(--text-faint); white-space: nowrap; font-size: var(--fs-xs); }
+    .ham-merged-pop .ham-empty { padding: var(--sp-2) 0; }
+    .ham-merged-pop-foot { margin-top: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); }
+    .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
+    .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
+    .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
+    .merge-banner-ico { color: var(--green); font-weight: var(--fw-bold); }
+    .merge-banner-head { font-weight: var(--fw-semibold); }
+    .merge-banner-head .merge-banner-num { color: var(--amber); font-variant-numeric: tabular-nums; }
+    .merge-banner-text { margin-top: var(--sp-1); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .merge-banner-links { margin-top: var(--sp-2); display: flex; gap: var(--sp-4); font-size: var(--fs-xs); }
+    .merge-banner-links button, .merge-banner-links a { border: 0; padding: 0; background: transparent; color: var(--accent); cursor: pointer; font: inherit; text-decoration: none; }
+    .merge-banner-links button:hover, .merge-banner-links a:hover { text-decoration: underline; }
+    .merge-banner-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: var(--fs-md); line-height: 1; padding: 0 var(--sp-1); }
+    .merge-banner-close:hover { color: var(--text); }
+    @keyframes merge-banner-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @keyframes merge-banner-out { from { opacity: 1; } to { opacity: 0; transform: translateY(6px); } }
     @keyframes cue-cap-glow { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber) 55%, transparent); } 35% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 35%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
-    @keyframes cue-token-fly { 0% { opacity: 0.95; transform: translate(0, 0) scale(1); } 30% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.3), calc(var(--cue-dy, 0px) * 0.55 - 14px)) scale(1.05); } 100% { opacity: 0.2; transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.6); } }
+    @keyframes cue-flight { 0% { opacity: 0; transform: translate(0, 0) scale(0.9); } 12% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.08), calc(var(--cue-dy, 0px) * 0.1)) scale(1.1); } 55% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.45 + 10px), calc(var(--cue-dy, 0px) * 0.62)) scale(1.05); } 100% { opacity: var(--cue-end-opacity, 0.25); transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.7); } }
+    @keyframes cue-flight-fade { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
     @keyframes cue-count-pop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
-    @media (prefers-reduced-motion: reduce) { .cue-token { display: none; } .ham-merged-count.cue-tick { animation: none; } .cue-merged .ham-seg.cap { animation-duration: 0.01ms; } }
-    .ham-rm-preview .cue-token { display: none; }
+    @media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; } .ham-merged-count.cue-tick { animation: none; } .cue-merged .ham-seg.cap { animation-duration: 0.01ms; } .merge-banner, .merge-banner.merge-banner-out { animation: none; } }
+    .ham-rm-preview .cue-flight { animation-name: cue-flight-fade; }
     @media (prefers-reduced-motion: reduce) { .cue-working .ham-seg.active .ham-active-ico, .cue-spin, .cue-acting .ham-seg.active, .cue-event { animation: none; } }
     @keyframes ham-breathe-human { 0%, 100% { opacity: 0; } 50% { opacity: 0.55; } }
     .ham-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-4) 0; }
@@ -1752,7 +1783,6 @@
       .ham-since { width: 3em; }
       .ham-cols .ham-seg { padding: 0 var(--sp-2) 0 var(--sp-3); }
       .ham-cols .ham-seg.cap { flex-basis: 2em; }
-      .ham-cols-top .ham-seg.ham-merged-slot-seg { flex-basis: calc(2em + var(--sp-1)); }
     }
     /* Movement animation: when an item's lit chevron changes column between
        two refreshes, the chosen effect (settings gear → Movement animation)
@@ -7255,11 +7285,15 @@
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
         <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Sound off — turn on (merge zap + new-item buzz; plays a test of each)" title="Sound off — turn on (merge zap + new-item buzz; plays a test of each)">🔇</button>
-        <span class="ham-merged-home" id="activity-monitor-merged-home"><span class="ham-chip ham-merged-count" id="activity-monitor-merged" role="status" aria-live="polite" title="Merged today: 0"><svg class="ham-merged-ico" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/></svg>Merged today: <span class="ham-merged-n">0</span></span></span>
       </div>
       <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
       <div class="ham-selbar" id="activity-monitor-selbar" role="toolbar" aria-label="Selected rows" hidden></div>
+      <div class="ham-sticky" id="activity-monitor-sticky">
+        <span class="ham-sticky-live" id="activity-monitor-merged-live" role="status" aria-live="polite"></span>
+        <button type="button" class="ham-chip ham-merged-count" id="activity-monitor-merged" data-action="hamMergedToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-merged-pop" title="Merged: 0 all time"><svg class="ham-merged-ico" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/></svg>Merged <span class="ham-merged-n">0</span><span class="ham-merged-sub">0 today · 0 this week</span></button>
+        <div class="ham-merged-pop" id="activity-monitor-merged-pop" role="dialog" aria-label="Recent merges" hidden></div>
+      </div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
       <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
     </div>
@@ -14769,10 +14803,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // Column header: the stage names once, aligned with the chevrons below.
-    // Above them, over the Merge gate and ✓ columns, sits the slot the
-    // "Merged today" counter is mounted into (stageTrackerMergedCountMount)
-    // so a merge token's flight from a row's ✓ cell ends just above the
-    // gate it came through. The slot spans the last column plus the cap.
+    // It is sticky under the Merged bar (tracker-cues CSS), so the names
+    // and the chip stay in view while the list scrolls.
     function stageTrackerHeaderHtml(stages) {
       const byNum = {};
       (stages || []).forEach(st => { byNum[st.number] = st; });
@@ -14780,8 +14812,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const name = n === 0 ? 'Open' : ((byNum[n] || {}).short || (byNum[n] || {}).label || String(n));
         return `<li class="ham-seg"><span class="ham-seg-t">${esc(name)}</span></li>`;
       }).join('');
-      const blanks = STAGE_TRACKER_PATH.slice(1).map(() => '<li class="ham-seg blank" aria-hidden="true"></li>').join('');
-      return `<div class="ham-cols"><div class="ham-strip-row ham-cols-top"><ol class="ham-strip">${blanks}<li class="ham-seg ham-merged-slot-seg"><span class="ham-merged-slot"></span></li></ol><span class="ham-since"></span></div><div class="ham-strip-row" aria-hidden="true"><ol class="ham-strip">${cols}<li class="ham-seg cap">${stageTrackerIcon(STAGE_TRACKER_TERMINAL, 'ham-ico')}</li></ol><span class="ham-since">since</span></div></div>`;
+      return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap">${stageTrackerIcon(STAGE_TRACKER_TERMINAL, 'ham-ico')}</li></ol><span class="ham-since">since</span></div></div>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -16753,7 +16784,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const emptyHtml = `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`;
         // The counter goes back to its toolbar home before the header
         // (and its slot) leaves with the rows.
-        stageTrackerMergedCountMount(null);
         if (el.querySelector('[data-ham-key]')) {
           stageTrackerReconcile(el, [], { effect, hidden: document.hidden });
           // Departing rows collapse first; the empty line follows them out.
@@ -16774,7 +16804,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           : { key: stageTrackerItemKey(pageItems[i]), html: stageTrackerRowHtml(pageItems[i], stages, ctx) })), nowMs);
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
-      stageTrackerMergedCountMount(el);
       // Selection is keyed on the row, never baked into its HTML, so a kept
       // node stays selected across the refresh and a departed row leaves it.
       stageTrackerSelectionSync(el, rows.map(r => r.key));
@@ -18480,34 +18509,52 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // plays) when its token lands on the counter; off, both happen now.
       const celebrate = fresh.length && typeof stageTrackerCelebrateSetting === 'function' && stageTrackerCelebrateSetting();
       if (celebrate) fresh.forEach(k => { _stageTrackerCelebratePending[k] = true; });
-      if (typeof stageTrackerMergedTodaySync === 'function') stageTrackerMergedTodaySync(d, fresh, Date.now());
+      if (typeof stageTrackerMergedSync === 'function') stageTrackerMergedSync(d, fresh, Date.now());
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerZapped[k] = true; });
       if (celebrate) { stageTrackerCelebrateMerges(fresh); return; }
       if (stageTrackerSoundGate()) stageTrackerPlayZap(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
     }
 
-    /* ---- tracker-cues: merged — pinned row, token flight, "Merged today" ---
+    /* ---- tracker-cues: merged — pinned row, glyph flight, "Merged" chip ---
        Owner: "subtle but noticeable … a merge count that rises, and the
        celebration is something that rises out of the column and into the
-       merge count." A merged PR's row does not vanish on the next refresh:
-       it is pinned for STAGE_TRACKER_CELEBRATE_PIN_MS, its ✓ cell glows, a
-       small brand-amber hex token lifts out of that cell and arcs to the
-       toolbar's "Merged today" count, the count ticks +1 with a soft pop
-       (the zap plays on arrival when sound is on), then the row leaves by
-       the usual exit. Several merges in one refresh stagger 200 ms apart
-       and at most STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS tokens fly at once;
-       the rest just tick the count. Reduced motion (or the preview
-       toggle): no token, the count ticks and the row glows. The counter
-       counts merges since local midnight: the payload's merged_24h list
-       seeds it after a reload, the live merge detector adds to it. */
+       merge count"; then (hivecommons/hive#15096): "an animation that
+       originates from the item's row where the check mark is and flies up
+       to the top of the browser border. If the Merged pill is visible, the
+       animation stops there. If not, we just see it go off the screen. It
+       can be a bee or a +1." A merged PR's row does not vanish on the next
+       refresh: it is pinned for STAGE_TRACKER_CELEBRATE_PIN_MS, its ✓ cell
+       glows, a glyph (🐝 by default, "+1" via hive.tracker.celebrate_glyph)
+       rises out of that cell for STAGE_TRACKER_CELEBRATE_FLY_MS — to the
+       sticky "Merged" chip when its box is inside the viewport, otherwise
+       out through the top edge — the count bumps with a soft pop (the zap
+       plays on arrival when sound is on), a banner at the bottom right
+       says what merged, then the row leaves by the usual exit. Several
+       merges in one refresh stagger 200 ms apart and at most
+       STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS glyphs fly at once; the rest
+       just bump the count. Reduced motion (or the preview toggle): the
+       glyph fades in place, the count pops and the row glows.
+       The number on the chip is the server's: /api/stage-tracker carries
+       `merged` from the durable ledger (all_time, today, total_7d, recent),
+       so a reload, a new tab or a roll shows the same count. A merge this
+       tab just watched is added on top until the server's recent list
+       carries it; while its glyph is in flight the count holds back by one
+       so the landing is the moment it bumps. The shown number never goes
+       down within a tab. */
     const STAGE_TRACKER_CELEBRATE_KEY = 'hive.tracker.celebrate';
+    const STAGE_TRACKER_CELEBRATE_GLYPH_KEY = 'hive.tracker.celebrate_glyph';
+    const STAGE_TRACKER_CELEBRATE_GLYPHS = { bee: '🐝', plus1: '+1' };
+    const STAGE_TRACKER_CELEBRATE_GLYPH_DEFAULT = 'bee';
     const STAGE_TRACKER_CELEBRATE_PIN_MS = 2500;
     const STAGE_TRACKER_CELEBRATE_STAGGER_MS = 200;
-    const STAGE_TRACKER_CELEBRATE_FLY_MS = 520;
+    const STAGE_TRACKER_CELEBRATE_FLY_MS = 900;
     const STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS = 3;
+    const STAGE_TRACKER_CELEBRATE_EXIT_PAD = 40;
     const STAGE_TRACKER_MERGED_TIP_MAX = 5;
-    const STAGE_TRACKER_TOKEN_SVG = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/></svg>';
+    const STAGE_TRACKER_MERGED_LIST_MAX = 20;
+    const STAGE_TRACKER_MERGE_BANNER_MS = 30000;
+    const STAGE_TRACKER_MERGE_BANNER_MAX = 5;
     function stageTrackerCelebrateSetting() {
       try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_KEY) !== '0'; } catch { return true; }
     }
@@ -18515,64 +18562,125 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       try { localStorage.setItem(STAGE_TRACKER_CELEBRATE_KEY, on ? '1' : '0'); } catch {}
       return !!on;
     }
+    // Pure: the stored glyph id, defaulting; unknown ids fall back to the bee.
+    function stageTrackerCelebrateGlyphId(raw) {
+      const v = String(raw == null ? '' : raw).trim().toLowerCase();
+      if (v in STAGE_TRACKER_CELEBRATE_GLYPHS) return v;
+      if (v === '+1') return 'plus1';
+      return STAGE_TRACKER_CELEBRATE_GLYPH_DEFAULT;
+    }
+    function stageTrackerCelebrateGlyph() {
+      let raw = null;
+      try { raw = localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch {}
+      return STAGE_TRACKER_CELEBRATE_GLYPHS[stageTrackerCelebrateGlyphId(raw)];
+    }
+    function stageTrackerSetCelebrateGlyph(id) {
+      const v = stageTrackerCelebrateGlyphId(id);
+      try { localStorage.setItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY, v); } catch {}
+      return v;
+    }
     // Pure: local midnight (ms) for the given instant.
     function stageTrackerLocalMidnight(nowMs) { const d = new Date(nowMs); d.setHours(0, 0, 0, 0); return d.getTime(); }
-    // Pure: the "merged today" map (PR key → { repo, number, at }) after
-    // one payload: prev entries still inside today, plus the payload's
-    // merged_24h / recently_merged entries inside today, plus the keys the
-    // live detector just saw merge (stamped now). Items whose merge time
-    // the server did not give are stamped now too.
-    function stageTrackerMergedTodayNext(prev, d, fresh, nowMs, exclude) {
-      const since = stageTrackerLocalMidnight(nowMs);
+    // Pure: a merge's identity for matching the server's list against a key
+    // this tab made — the repo's short name and the number, so
+    // "hive#15067" and "hivecommons/hive#15067" are one PR.
+    function stageTrackerMergedIdent(repo, number) { const r = String(repo || ''); const i = r.lastIndexOf('/'); return (i >= 0 ? r.slice(i + 1) : r).toLowerCase() + '#' + (Number(number) || 0); }
+    // Pure: the chip's state after one payload — { server, local }. server
+    // is the payload's `merged` block (kept from before when a payload has
+    // none); local maps PR key → { repo, number, at, title } for the merges
+    // this tab saw land that the server's recent list does not carry yet.
+    // fresh keys are added (stamped now) unless excluded (a flight still in
+    // the air adds its key when it lands).
+    function stageTrackerMergedNext(prev, d, fresh, nowMs, exclude) {
+      prev = prev || {};
       exclude = exclude || {};
-      const out = {};
-      for (const k of Object.keys(prev || {})) if (prev[k] && prev[k].at >= since) out[k] = prev[k];
-      const lists = d && typeof d === 'object' ? [].concat(Array.isArray(d.merged_24h) ? d.merged_24h : [], Array.isArray(d.recently_merged) ? d.recently_merged : []) : [];
-      const fullRepo = {};
-      for (const it of (d && Array.isArray(d.items) ? d.items : [])) { const repo = String((it && it.repo) || ''); const i = repo.lastIndexOf('/'); if (i > 0) fullRepo[repo.slice(i + 1)] = repo; }
-      for (const m of lists) {
-        if (!m || !m.repo || !(Number(m.number) > 0)) continue;
-        const repo = String(m.repo).indexOf('/') < 0 && fullRepo[m.repo] ? fullRepo[m.repo] : String(m.repo);
-        const at = Date.parse(m.merged_at || '') || nowMs;
-        if (at < since) continue;
-        const key = stageTrackerPRKey(repo, m.number);
-        if (exclude[key]) continue;
-        if (!out[key] || out[key].at > at) out[key] = { repo, number: Number(m.number), at };
-      }
+      const m = d && typeof d === 'object' && d.merged && typeof d.merged === 'object' && Number.isFinite(Number(d.merged.all_time)) ? d.merged : null;
+      const server = m ? {
+        today: Number(m.today) || 0, total_7d: Number(m.total_7d) || 0, total_30d: Number(m.total_30d) || 0, all_time: Number(m.all_time) || 0,
+        recent: (Array.isArray(m.recent) ? m.recent : []).filter(e => e && e.repo && Number(e.number) > 0).map(e => ({ repo: String(e.repo), number: Number(e.number), title: String(e.title || ''), url: String(e.url || ''), merged_by: String(e.merged_by || ''), lane: String(e.lane || ''), issue: Number(e.issue) || 0, at: Date.parse(e.merged_at || '') || 0 })),
+        tz: String(m.tz || ''), day_start: Date.parse(m.day_start || '') || 0,
+      } : (prev.server || null);
+      const known = {};
+      for (const e of (server ? server.recent : [])) known[stageTrackerMergedIdent(e.repo, e.number)] = true;
+      const local = {};
+      for (const k of Object.keys(prev.local || {})) { const e = prev.local[k]; if (e && !known[stageTrackerMergedIdent(e.repo, e.number)]) local[k] = e; }
+      const titles = stageTrackerPRTitles(d);
       for (const key of (Array.isArray(fresh) ? fresh : [])) {
-        if (out[key] || exclude[key]) continue;
+        if (local[key] || exclude[key]) continue;
         const i = key.indexOf('/pr#');
         if (i < 0) continue;
-        out[key] = { repo: key.slice(0, i), number: Number(key.slice(i + 4)) || 0, at: nowMs };
+        const repo = key.slice(0, i), number = Number(key.slice(i + 4)) || 0;
+        if (known[stageTrackerMergedIdent(repo, number)]) continue;
+        local[key] = { repo, number, at: nowMs, title: titles[key] || _stageTrackerPRTitle[key] || '' };
+      }
+      return { server, local };
+    }
+    // Pure: PR key → title for every PR one payload draws (own rows and
+    // the linked PRs on issue rows), for the banner and the recent list.
+    function stageTrackerPRTitles(d) {
+      const out = {};
+      for (const it of (d && Array.isArray(d.items) ? d.items : [])) {
+        if (!it) continue;
+        if (it.kind === 'pr' && it.title) out[stageTrackerPRKey(it.repo, it.number)] = String(it.title);
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) if (lp && Number(lp.number) > 0 && lp.title) out[stageTrackerPRKey(lp.repo || it.repo, lp.number)] = String(lp.title);
       }
       return out;
     }
-    // Pure: count and tooltip for the counter — the last few merged PRs
-    // with their local times, newest first.
-    function stageTrackerMergedTodayText(map, nowMs) {
-      const all = Object.keys(map || {}).map(k => map[k]).sort((a, b) => b.at - a.at);
+    var _stageTrackerPRTitle = {};
+    // Pure: what the chip shows for a state — the all-time number (server
+    // + this tab's unlisted merges − flights still holding back), the
+    // "N today · N this week" sub-text, the tooltip, and the recent list
+    // (this tab's first, then the server's, newest first).
+    function stageTrackerMergedText(state, nowMs, holdback) {
+      state = state || {};
+      const server = state.server || { today: 0, total_7d: 0, total_30d: 0, all_time: 0, recent: [], tz: '', day_start: 0 };
+      const local = Object.keys(state.local || {}).map(k => state.local[k]).filter(Boolean).sort((a, b) => b.at - a.at);
+      const dayStart = server.day_start || stageTrackerLocalMidnight(nowMs);
+      const localToday = local.filter(e => e.at >= dayStart).length;
+      const count = Math.max(0, server.all_time + local.length - (Number(holdback) || 0));
+      const today = server.today + localToday;
+      const week = server.total_7d + local.length;
+      const sub = `${today} today · ${week} this week`;
+      const recent = local.map(e => ({ repo: e.repo, number: e.number, title: e.title || '', url: '', merged_by: '', lane: '', at: e.at, live: true }))
+        .concat(server.recent.map(e => Object.assign({}, e, { live: false }))).slice(0, STAGE_TRACKER_MERGED_LIST_MAX);
       const fmt = at => { const d = new Date(at); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
-      const lines = all.slice(0, STAGE_TRACKER_MERGED_TIP_MAX).map(m => `${m.repo}#${m.number} · ${fmt(m.at)}`);
-      const head = all.length ? `Merged today: ${all.length}` : 'Merged today: 0 — resets at midnight';
-      return { count: all.length, title: lines.length ? head + '\n' + lines.join('\n') + (all.length > lines.length ? `\n… and ${all.length - lines.length} more` : '') : head };
+      const lines = recent.slice(0, STAGE_TRACKER_MERGED_TIP_MAX).map(e => `${e.repo}#${e.number}${e.title ? ' ' + e.title : ''} · ${e.at ? fmt(e.at) : ''}`.trim());
+      const head = `Merged: ${count} all time\n${sub}${server.tz ? ' (' + server.tz + ')' : ''}`;
+      const title = (lines.length ? head + '\n' + lines.join('\n') : head) + '\nClick for the recent list';
+      return { count, today, week, sub, title, recent, allTime: server.all_time, total30d: server.total_30d + local.length, tz: server.tz };
     }
-    var _stageTrackerMergedToday = {};
-    var _stageTrackerMergedTodayCount = -1;
-    // Merges whose token is still on its way: the count holds them back
+    // Pure: who merged, for a list line — the hive, a login, or nothing known.
+    function stageTrackerMergedByText(by) {
+      by = String(by || '').trim();
+      if (!by) return '';
+      return by === 'hive' ? 'by hive' : 'by @' + by;
+    }
+    // Pure: the popover's inner HTML.
+    function stageTrackerMergedPopHtml(txt, nowMs) {
+      const fmtAt = at => { if (!at) return ''; const d = new Date(at); const sameDay = stageTrackerLocalMidnight(at) === stageTrackerLocalMidnight(nowMs); const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; return sameDay ? hm : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${hm}`; };
+      const rows = (txt.recent || []).map(e => {
+        const meta = [stageTrackerMergedByText(e.merged_by), e.lane ? esc(e.lane) : '', e.at ? fmtAt(e.at) : ''].filter(Boolean).join(' · ');
+        const num = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">#${esc(e.number)}</a>` : `#${esc(e.number)}`;
+        return `<li><span class="ham-merged-num" title="${esc(e.repo)}#${esc(e.number)}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-meta">${meta}</span></li>`;
+      }).join('');
+      const head = `<div class="ham-merged-pop-head"><span>Recent merges</span><span class="ham-merged-pop-sum">${esc(txt.today)} today · ${esc(txt.week)} this week · ${esc(txt.total30d)} in 30 days</span></div>`;
+      const body = rows ? `<ol class="ham-merged-list">${rows}</ol>` : `<div class="ham-empty">No merges recorded yet.</div>`;
+      const foot = `<div class="ham-merged-pop-foot">${esc(txt.count)} all time${txt.tz ? ' · days roll at midnight ' + esc(txt.tz) : ''}. Every pull request the hive tracked that reached merged — by the hive, a person or another bot.</div>`;
+      return head + body + foot;
+    }
+    var _stageTrackerMerged = { server: null, local: {} };
+    var _stageTrackerMergedShown = 0;
+    // Merges whose glyph is still on its way: the count holds them back
     // until stageTrackerCelebrateTick lands them.
     var _stageTrackerCelebratePending = {};
-    // Stateful: fold one payload into the map and redraw the chip. The
-    // count only ticks (pop + zap) through stageTrackerCelebrateTick; a
-    // plain reload draws the seeded number without a flourish.
-    function stageTrackerMergedTodaySync(d, fresh, nowMs) {
-      _stageTrackerMergedToday = stageTrackerMergedTodayNext(_stageTrackerMergedToday, d, fresh, nowMs, _stageTrackerCelebratePending);
+    // Stateful: fold one payload into the state and redraw the chip. The
+    // count only bumps (pop + zap) through stageTrackerCelebrateTick; a
+    // plain reload draws the server's number without a flourish.
+    function stageTrackerMergedSync(d, fresh, nowMs) {
+      Object.assign(_stageTrackerPRTitle, stageTrackerPRTitles(d));
+      _stageTrackerMerged = stageTrackerMergedNext(_stageTrackerMerged, d, fresh, nowMs, _stageTrackerCelebratePending);
       stageTrackerMergedCountDraw(false);
     }
-    // The counter is one node for the life of the page. It lives in the
-    // header slot above the Merge gate while rows are drawn (so the token
-    // lands "in the hive" above the gate) and parks in its toolbar home
-    // when the board is empty; the reconcile keys rows on their source
-    // HTML, so the mounted chip never forces a header re-render.
     // The node is cached on the function itself (not a module var) so a
     // lifted copy of it (tests) is self-contained; a detached chip stays
     // cached until a re-mount reattaches it.
@@ -18582,37 +18690,87 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerMergedChip.node = document.getElementById('activity-monitor-merged') || have || null;
       return stageTrackerMergedChip.node;
     }
-    function stageTrackerMergedCountMount(el) {
-      const chip = stageTrackerMergedChip();
-      if (!chip) return null;
-      const slot = el && typeof el.querySelector === 'function' ? el.querySelector('.ham-cols .ham-merged-slot') : null;
-      const target = slot || document.getElementById('activity-monitor-merged-home');
-      if (target && chip.parentNode !== target) target.appendChild(chip);
-      return target;
+    // Pure: how many in-flight merges the server already counts — the
+    // chip holds those back so the landing is when it bumps.
+    function stageTrackerMergedHoldback(state, pending) {
+      const known = {};
+      for (const e of ((state && state.server && state.server.recent) || [])) known[stageTrackerMergedIdent(e.repo, e.number)] = true;
+      let n = 0;
+      for (const key of Object.keys(pending || {})) { const i = key.indexOf('/pr#'); if (i > 0 && known[stageTrackerMergedIdent(key.slice(0, i), key.slice(i + 4))]) n++; }
+      return n;
     }
     function stageTrackerMergedCountDraw(tick) {
       const chip = stageTrackerMergedChip();
-      const txt = stageTrackerMergedTodayText(_stageTrackerMergedToday, Date.now());
-      _stageTrackerMergedTodayCount = txt.count;
+      const now = Date.now();
+      const txt = stageTrackerMergedText(_stageTrackerMerged, now, stageTrackerMergedHoldback(_stageTrackerMerged, _stageTrackerCelebratePending));
+      // Never backwards within a tab: a server that has not caught up yet
+      // (or lost a merge) does not make the number drop.
+      if (txt.count > _stageTrackerMergedShown || tick) _stageTrackerMergedShown = Math.max(_stageTrackerMergedShown, txt.count);
+      const shown = _stageTrackerMergedShown;
       if (!chip) return;
       const n = chip.querySelector('.ham-merged-n');
-      if (n && n.textContent !== String(txt.count)) n.textContent = String(txt.count);
-      if (chip.title !== txt.title) chip.title = txt.title;
-      if (tick) { chip.classList.remove('cue-tick'); void chip.offsetWidth; stageTrackerTransient(chip, 'cue-tick', 320); }
+      if (n && n.textContent !== String(shown)) n.textContent = String(shown);
+      const sub = chip.querySelector('.ham-merged-sub');
+      if (sub && sub.textContent !== txt.sub) sub.textContent = txt.sub;
+      const title = txt.title.replace(/^Merged: \d+ all time/, `Merged: ${shown} all time`);
+      if (chip.title !== title) chip.title = title;
+      if (tick) {
+        chip.classList.remove('cue-tick'); void chip.offsetWidth; stageTrackerTransient(chip, 'cue-tick', 320);
+        const live = document.getElementById('activity-monitor-merged-live');
+        if (live) live.textContent = `Merged: ${shown} all time, ${txt.sub}`;
+      }
+      stageTrackerMergedPopDraw(txt, now);
     }
-    // The token has landed (or, under reduced motion, would have): count
-    // the PR, pop the chip, zap.
+    // Stateful: redraw the popover when it is open.
+    function stageTrackerMergedPopDraw(txt, nowMs) {
+      const pop = document.getElementById('activity-monitor-merged-pop');
+      if (!pop || pop.hidden) return;
+      const html = stageTrackerMergedPopHtml(txt || stageTrackerMergedText(_stageTrackerMerged, nowMs || Date.now(), 0), nowMs || Date.now());
+      if (pop.innerHTML !== html) pop.innerHTML = html;
+    }
+    function hamMergedToggle(open) {
+      const pop = document.getElementById('activity-monitor-merged-pop');
+      const chip = stageTrackerMergedChip();
+      if (!pop) return false;
+      const want = typeof open === 'boolean' ? open : !!pop.hidden;
+      pop.hidden = !want;
+      if (chip) chip.setAttribute('aria-expanded', want ? 'true' : 'false');
+      if (want) stageTrackerMergedPopDraw(null, Date.now());
+      return want;
+    }
+    function hamMergedOpen() {
+      hamMergedToggle(true);
+      const bar = document.getElementById('activity-monitor-sticky');
+      if (bar && typeof bar.scrollIntoView === 'function' && !stageTrackerRectInView(bar.getBoundingClientRect(), window.innerWidth || 0, window.innerHeight || 0)) bar.scrollIntoView({ block: 'start', behavior: stageTrackerReducedMotion() ? 'auto' : 'smooth' });
+    }
+    document.addEventListener('click', function(e) {
+      const pop = document.getElementById('activity-monitor-merged-pop');
+      if (!pop || pop.hidden) return;
+      if (e.target && typeof e.target.closest === 'function' && e.target.closest('.merge-banner')) return;
+      const bar = document.getElementById('activity-monitor-sticky');
+      if (bar && e.target && typeof e.target.closest === 'function' && e.target.closest('#activity-monitor-sticky')) return;
+      hamMergedToggle(false);
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Escape') return;
+      const pop = document.getElementById('activity-monitor-merged-pop');
+      if (pop && !pop.hidden) { hamMergedToggle(false); const chip = stageTrackerMergedChip(); if (chip && chip.focus) chip.focus(); }
+    });
+    // The glyph has landed (or left the screen, or faded): count the PR,
+    // pop the chip, zap.
     function stageTrackerCelebrateTick(key, preview) {
       delete _stageTrackerCelebratePending[key];
       const i = String(key).indexOf('/pr#');
-      if (!preview && i > 0 && !_stageTrackerMergedToday[key]) _stageTrackerMergedToday[key] = { repo: key.slice(0, i), number: Number(key.slice(i + 4)) || 0, at: Date.now() };
+      if (!preview && i > 0) {
+        const repo = key.slice(0, i), number = Number(key.slice(i + 4)) || 0;
+        const known = ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).some(e => stageTrackerMergedIdent(e.repo, e.number) === stageTrackerMergedIdent(repo, number));
+        if (!known && !_stageTrackerMerged.local[key]) _stageTrackerMerged.local[key] = { repo, number, at: Date.now(), title: _stageTrackerPRTitle[key] || '' };
+      }
       stageTrackerMergedCountDraw(true);
       if (stageTrackerSoundGate()) stageTrackerPlayZap(1);
     }
     var _stageTrackerCelebrating = {};
     var _stageTrackerFlights = 0;
-    // Pure-ish: the row that draws this PR — its own row, or the issue row
-    // it is nested under — by key, or '' when it is not on the board.
     // Pure: the PR keys a row draws, space-separated — its own key for a
     // PR row, the covering PRs for an issue row (one inline, several as
     // sub-rows). Stamped as data-ham-prs so a merged PR can be traced to
@@ -18650,8 +18808,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return k && el.querySelector(`[data-ham-key="${CSS.escape(k)}"]`) ? k : '';
     }
     // Stateful: celebrate every freshly merged PR, staggered. A PR whose
-    // row is not on the board (filtered out, other page) still ticks the
-    // count; its row is celebrated before removal only when it is drawn.
+    // row is not on the board (filtered out, other page) still bumps the
+    // count and gets its banner; its row is celebrated before removal only
+    // when it is drawn.
     function stageTrackerCelebrateMerges(keys) {
       const el = document.getElementById('activity-monitor-panel');
       const now = Date.now();
@@ -18659,9 +18818,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const rowKey = stageTrackerCelebrateRowKey(key, el);
         const startAt = now + i * STAGE_TRACKER_CELEBRATE_STAGGER_MS;
         if (rowKey) _stageTrackerCelebrating[rowKey] = { key, kind: 'merged', until: startAt + STAGE_TRACKER_CELEBRATE_PIN_MS };
+        const number = Number(key.slice(key.indexOf('/pr#') + 4)) || 0;
+        stageTrackerMergeBanner({ key, rowKey, number, repo: key.slice(0, key.indexOf('/pr#')), at: now });
         setTimeout(() => {
           const row = rowKey && el ? el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) : null;
-          if (row) celebrateRow(row, { kind: 'merged', key, number: Number(key.slice(key.indexOf('/pr#') + 4)) || 0 });
+          if (row) celebrateRow(row, { kind: 'merged', key, number });
           else stageTrackerCelebrateTick(key);
         }, i * STAGE_TRACKER_CELEBRATE_STAGGER_MS);
       });
@@ -18692,10 +18853,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (_stageTrackerReleaseTimer) return;
       _stageTrackerReleaseTimer = setTimeout(() => { _stageTrackerReleaseTimer = 0; renderStageTracker(); }, Math.max(50, inMs + 50));
     }
+    // Pure: whether a box is wholly inside the viewport.
+    function stageTrackerRectInView(r, vw, vh) {
+      return !!r && r.width > 0 && r.height > 0 && r.top >= 0 && r.left >= 0 && r.top + r.height <= vh && r.left + r.width <= vw;
+    }
+    // Pure: where the glyph flies from the ✓ cell's box — to the chip's
+    // centre when the chip is inside the viewport (lands: true), else
+    // straight up and out through the top edge (lands: false).
+    function stageTrackerFlightTarget(from, chipRect, vw, vh) {
+      const fx = from.left + from.width / 2, fy = from.top + from.height / 2;
+      if (stageTrackerRectInView(chipRect, vw, vh)) {
+        return { lands: true, dx: chipRect.left + chipRect.width / 2 - fx, dy: chipRect.top + chipRect.height / 2 - fy };
+      }
+      return { lands: false, dx: 0, dy: -(fy + STAGE_TRACKER_CELEBRATE_EXIT_PAD) };
+    }
     // Reusable: celebrate one row in place. kind: 'merged' | 'closed-by-merge'.
-    // Glow the ✓ cell, write the event line, fly a token to the counter (or
-    // tick at once under reduced motion / over the flight cap), then let
-    // the row go when its pin window ends.
+    // Glow the ✓ cell, write the event line, fly the glyph (or fade it in
+    // place under reduced motion; bump at once over the flight cap), then
+    // let the row go when its pin window ends.
     function celebrateRow(rowEl, opts) {
       opts = opts || {};
       if (!rowEl || !rowEl.classList) return { flew: false };
@@ -18711,26 +18886,80 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stageTrackerEventLineInject(rowEl, rowEl.dataset.hamKey, text);
       }
       if (kind !== 'merged') return { flew: false };
+      const cap = rowEl.querySelector('.ham-seg.cap');
+      if (!cap || _stageTrackerFlights >= STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS || typeof cap.getBoundingClientRect !== 'function') {
+        stageTrackerCelebrateTick(key, preview);
+        return { flew: false, lands: false };
+      }
       const reduced = stageTrackerReducedMotion();
       const chip = stageTrackerMergedChip();
-      const cap = rowEl.querySelector('.ham-seg.cap');
-      if (reduced || !chip || !cap || _stageTrackerFlights >= STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS || typeof cap.getBoundingClientRect !== 'function') {
-        stageTrackerCelebrateTick(key, preview);
-        return { flew: false };
-      }
-      const from = cap.getBoundingClientRect(), to = chip.getBoundingClientRect();
-      const token = document.createElement('span');
-      token.className = 'cue-token';
-      token.innerHTML = STAGE_TRACKER_TOKEN_SVG;
-      token.style.setProperty('left', (from.left + from.width / 2 - 7) + 'px');
-      token.style.setProperty('top', (from.top + from.height / 2 - 7) + 'px');
-      token.style.setProperty('--cue-dx', (to.left + to.width / 2 - (from.left + from.width / 2)) + 'px');
-      token.style.setProperty('--cue-dy', (to.top + to.height / 2 - (from.top + from.height / 2)) + 'px');
-      token.style.setProperty('--cue-fly-ms', STAGE_TRACKER_CELEBRATE_FLY_MS + 'ms');
-      document.body.appendChild(token);
+      const from = cap.getBoundingClientRect();
+      const vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+      const to = reduced ? { lands: false, dx: 0, dy: 0 } : stageTrackerFlightTarget(from, chip && typeof chip.getBoundingClientRect === 'function' ? chip.getBoundingClientRect() : null, vw, vh);
+      const glyph = document.createElement('span');
+      glyph.className = 'cue-flight' + (reduced ? ' cue-flight-fade' : '');
+      glyph.setAttribute('aria-hidden', 'true');
+      glyph.textContent = stageTrackerCelebrateGlyph();
+      glyph.style.setProperty('left', (from.left + from.width / 2 - 10) + 'px');
+      glyph.style.setProperty('top', (from.top + from.height / 2 - 10) + 'px');
+      glyph.style.setProperty('--cue-dx', to.dx + 'px');
+      glyph.style.setProperty('--cue-dy', to.dy + 'px');
+      glyph.style.setProperty('--cue-end-opacity', to.lands ? '0.25' : '1');
+      glyph.style.setProperty('--cue-fly-ms', STAGE_TRACKER_CELEBRATE_FLY_MS + 'ms');
+      document.body.appendChild(glyph);
       _stageTrackerFlights++;
-      stageTrackerAfter(token, 'animationend', STAGE_TRACKER_CELEBRATE_FLY_MS, () => { token.remove(); _stageTrackerFlights--; stageTrackerCelebrateTick(key, preview); });
-      return { flew: true };
+      stageTrackerAfter(glyph, 'animationend', STAGE_TRACKER_CELEBRATE_FLY_MS, () => { glyph.remove(); _stageTrackerFlights--; stageTrackerCelebrateTick(key, preview); });
+      return { flew: !reduced, lands: to.lands, faded: reduced };
+    }
+    // Pure: the banner's text pieces — "#15067 merged", the title, and
+    // "(lane, 17:42)".
+    function stageTrackerMergeBannerText(b, nowMs) {
+      const d = new Date(b.at || nowMs);
+      const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const who = stageTrackerMergedByText(b.merged_by);
+      const paren = [b.lane || '', who, hm].filter(Boolean).join(', ');
+      return { head: `#${b.number} merged${b.preview ? ' (test)' : ''}`, text: `${b.title || b.repo || ''}${paren ? ' (' + paren + ')' : ''}`.trim() };
+    }
+    // Stateful: a persistent banner, bottom right, for one merge — stays
+    // until dismissed or STAGE_TRACKER_MERGE_BANNER_MS, stacked when
+    // several, with a "show row" link while the row is on the board.
+    function stageTrackerMergeBanner(b) {
+      if (!document.body) return null;
+      let box = document.getElementById('merge-banners');
+      if (!box) { box = document.createElement('div'); box.id = 'merge-banners'; box.className = 'merge-banners'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
+      const recent = ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergedIdent(e.repo, e.number) === stageTrackerMergedIdent(b.repo, b.number));
+      const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b);
+      const t = stageTrackerMergeBannerText(info, Date.now());
+      const el = document.createElement('div');
+      el.className = 'merge-banner';
+      el.setAttribute('role', 'status');
+      if (b.rowKey) el.setAttribute('data-ham-row', b.rowKey);
+      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head"><span class="merge-banner-num">#${esc(info.number)}</span> merged${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}">${esc(t.text)}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
+      box.appendChild(el);
+      while (box.children.length > STAGE_TRACKER_MERGE_BANNER_MAX) box.children[0].remove();
+      el._timer = setTimeout(() => stageTrackerMergeBannerDismiss(el), STAGE_TRACKER_MERGE_BANNER_MS);
+      return el;
+    }
+    function stageTrackerMergeBannerDismiss(el) {
+      if (!el || !el.parentNode) return;
+      if (el._timer) { clearTimeout(el._timer); el._timer = 0; }
+      if (stageTrackerReducedMotion()) { el.remove(); return; }
+      el.classList.add('merge-banner-out');
+      stageTrackerAfter(el, 'animationend', 180, () => el.remove());
+    }
+    function hamBannerDismiss(btn) {
+      const el = btn && typeof btn.closest === 'function' ? btn.closest('.merge-banner') : null;
+      stageTrackerMergeBannerDismiss(el);
+    }
+    // "Show row": scroll the row into view and glow it again; when it has
+    // already left the board, say so and offer the list instead.
+    function hamBannerShowRow(rowKey) {
+      const el = document.getElementById('activity-monitor-panel');
+      const row = el && rowKey ? el.querySelector(`[data-ham-key="${CSS.escape(rowKey)}"]`) : null;
+      if (!row) { showToast('That row has left the board — the merge is in the Merged list.', 'info'); hamMergedToggle(true); return false; }
+      if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'center', behavior: stageTrackerReducedMotion() ? 'auto' : 'smooth' });
+      row.classList.remove('cue-merged'); void row.offsetWidth; stageTrackerTransient(row, 'cue-merged', 1600);
+      return true;
     }
     // Write (or replace) the row's event line in place, so a pinned row
     // whose HTML is never re-rendered still shows what just happened.
@@ -19153,28 +19382,49 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + `<div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="stageTrackerPlayTest" data-arg-types="t" data-stop="1">▶ Play both</button></div></div>`
         + stageTrackerRepoSectionHtml(state.repoChip, state.group)
         + stageTrackerConfirmSectionHtml(state.skippedConfirms)
-        + stageTrackerCelebrateSectionHtml(state.celebrate !== false)
+        + stageTrackerCelebrateSectionHtml(state.celebrate !== false, state.celebrateGlyph)
         + stageTrackerMotionSectionHtml(state.motion, state.stages || []);
     }
-    // Pure: the Merges section — the "Celebrate merges" toggle.
-    function stageTrackerCelebrateSectionHtml(on) {
+    // Pure: the Merges section — the "Celebrate merges" toggle, the glyph.
+    function stageTrackerCelebrateSectionHtml(on, glyph) {
+      const glyphId = stageTrackerCelebrateGlyphId(glyph);
+      const opts = Object.keys(STAGE_TRACKER_CELEBRATE_GLYPHS).map(id => `<option value="${esc(id)}"${id === glyphId ? ' selected' : ''}>${esc(STAGE_TRACKER_CELEBRATE_GLYPHS[id])}${id === STAGE_TRACKER_CELEBRATE_GLYPH_DEFAULT ? ' (default)' : ''}</option>`).join('');
       return `<section class="overview-settings-section" id="sts-celebrate" aria-labelledby="sts-celebrate-title">
           <div class="overview-settings-card-title" id="sts-celebrate-title">Merges</div>
-          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a small token rises into the toolbar's "Merged today" count, which ticks up. Under reduced motion the count ticks and the row glows, nothing flies. The count resets at midnight.</p>
-          <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-celebrate-on" data-change-action="stageTrackerCelebrateChange" data-arg-types="c"${on ? ' checked' : ''}>Celebrate merges <span class="text-muted">(default on)</span></label><button type="button" class="hv-btn btn-sm" data-action="stageTrackerTestCelebration" data-stop="1" title="Play one celebration on the first row of the list — the count does not change">Test celebration</button></div>
+          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a small glyph rises from it towards the top of the window — landing on the "Merged" chip when it is in view, otherwise leaving through the top edge — the count bumps, and a banner at the bottom right names the merge until dismissed (or 30 s). Under reduced motion the glyph fades in place. The chip's number is the hive's all-time count (kept on the server, so it survives a reload); click it for the recent merges.</p>
+          <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-celebrate-on" data-change-action="stageTrackerCelebrateChange" data-arg-types="c"${on ? ' checked' : ''}>Celebrate merges <span class="text-muted">(default on)</span></label><label class="overview-settings-field">Glyph <select class="ham-select" id="sts-celebrate-glyph" data-change-action="stageTrackerCelebrateGlyphChange" data-arg-types="v" aria-label="Celebration glyph">${opts}</select></label><button type="button" class="hv-btn btn-sm" data-action="stageTrackerTestCelebration" data-stop="1" title="Close this dialog and play one celebration on a row in view — the count does not change">Test celebration</button></div>
         </section>`;
     }
     function stageTrackerCelebrateChange(checked) { stageTrackerSetCelebrate(!!checked); }
-    // ⚙ → Merges → Test celebration: one flight from the first drawn row to
-    // the counter (pop + zap, the count itself unchanged) so the effect can
-    // be seen without waiting for a merge. Says why when it cannot play.
+    function stageTrackerCelebrateGlyphChange(v) { stageTrackerSetCelebrateGlyph(v); }
+    // Pure: the first row whose box is inside the viewport (top edge in
+    // view is enough), else the first row at all — so the test plays
+    // where the operator is looking rather than 2,000 px above.
+    function stageTrackerVisibleRow(rows, vh) {
+      let first = null;
+      for (const r of rows) {
+        if (!first) first = r;
+        if (typeof r.getBoundingClientRect !== 'function') continue;
+        const b = r.getBoundingClientRect();
+        if (b.top >= 0 && b.top + b.height <= vh) return r;
+      }
+      return first;
+    }
+    // ⚙ → Merges → Test celebration: close the dialog, then one flight
+    // from a row in view (pop + zap, a "(test)" banner, the count itself
+    // unchanged) so the effect can be seen without waiting for a merge.
+    // Says why when it cannot play.
     function stageTrackerTestCelebration() {
+      if (typeof closeStageTrackerSettings === 'function') closeStageTrackerSettings();
       const el = document.getElementById('activity-monitor-panel');
-      const row = el ? el.querySelector('.ham-row[data-ham-key] .ham-seg.cap') : null;
-      const rowEl = row && typeof row.closest === 'function' ? row.closest('.ham-row[data-ham-key]') : null;
+      const rows = el ? Array.from(el.querySelectorAll('.ham-row[data-ham-key] .ham-seg.cap')).map(c => typeof c.closest === 'function' ? c.closest('.ham-row[data-ham-key]') : null).filter(Boolean) : [];
+      const rowEl = stageTrackerVisibleRow(rows, window.innerHeight || 0);
       if (!rowEl) { showToast('No row to celebrate on — open the Activity Monitor with at least one item listed.', 'warning'); return { flew: false }; }
+      if (typeof rowEl.scrollIntoView === 'function' && typeof rowEl.getBoundingClientRect === 'function') { const b = rowEl.getBoundingClientRect(); if (b.top < 0 || b.top + b.height > (window.innerHeight || 0)) rowEl.scrollIntoView({ block: 'center' }); }
+      stageTrackerMergeBanner({ key: STAGE_TRACKER_CELEBRATE_TEST_KEY, rowKey: rowEl.dataset.hamKey, number: 0, repo: 'preview', title: 'Test celebration — nothing merged', at: Date.now(), preview: true });
       const r = celebrateRow(rowEl, { kind: 'merged', key: STAGE_TRACKER_CELEBRATE_TEST_KEY, number: 0, preview: true });
-      if (!r.flew) showToast(stageTrackerReducedMotion() ? 'Reduced motion is on: the count pops and the row glows, nothing flies.' : 'The token could not fly (counter hidden or too many in flight); the count popped instead.', 'info');
+      if (r.faded) showToast('Reduced motion is on: the glyph fades in place, the count pops and the row glows.', 'info');
+      else if (!r.flew) showToast('Too many glyphs in flight; the count popped instead.', 'info');
       return r;
     }
     const STAGE_TRACKER_CELEBRATE_TEST_KEY = 'preview/pr#0';
@@ -19204,7 +19454,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!body) return;
       const names = {};
       for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
-      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], celebrate: stageTrackerCelebrateSetting(), celebrateGlyph: stageTrackerCelebrateGlyphId((() => { try { return localStorage.getItem(STAGE_TRACKER_CELEBRATE_GLYPH_KEY); } catch { return null; } })()), skippedConfirms: stageTrackerSkippedConfirms(), repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
       const rm = document.getElementById('sts-rm-preview');
       if (rm) rm.checked = document.body.classList.contains('ham-rm-preview');
     }
