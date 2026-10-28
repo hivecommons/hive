@@ -67,7 +67,7 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 	selfAuthored := c.isHiveAccount(pr.GetUser()) || labelPresent(issueLabelNames(pr.Labels), authorkind.Hive.Label())
 
 	reply := ""
-	if closer, closeRequested := supersessionCloseDecision(command); closeRequested {
+	if closer, closeRequested := supersessionCloseDecision(command); closeRequested && !(selfAuthored && closer == 0) {
 		reply, err := c.closeSupersededPRDecision(ctx, displayRepo, owner, repo, pr, actor, closer)
 		if err != nil {
 			return false, err

@@ -382,6 +382,8 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 				wireLabels = append(wireLabels, map[string]string{"name": label})
 			}
 			json.NewEncoder(w).Encode([]map[string]any{{"number": 2, "body": "Fixes #3", "user": map[string]string{"login": "alice"}, "labels": wireLabels}})
+		case "GET /repos/myorg/repo1/issues/2":
+			fmt.Fprint(w, `{"number":2,"labels":[]}`)
 		case "GET /repos/myorg/repo1/issues/3":
 			fmt.Fprint(w, `{"number":3,"state":"closed"}`)
 		case "POST /graphql":
