@@ -108,6 +108,11 @@ func (t *HeadFirstSeenTracker) touchLocked(key string, now time.Time) {
 // it. Shortening a soak with a backdated commit is tolerable; re-attributing
 // a person's approval to a head they never saw is not. Zero when the head
 // has no pinned time yet, which binds nothing.
+//
+// The pin is taken on the sweep's first observation, not at the push, and any
+// comment or label landing in between moves it later. An approval typed in
+// that gap is therefore judged stale and must be re-typed: fail-closed by
+// design, the accepted price of not trusting a pusher-written clock.
 func (c *Engine) headObservedAt(owner, repo string, number int, sha string, pr *gh.PullRequest) time.Time {
 	if strings.TrimSpace(sha) == "" {
 		return time.Time{}
