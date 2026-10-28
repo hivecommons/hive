@@ -483,6 +483,53 @@ func TestRepeatFailureMuseDisplacedSessionIsNotReplayed(t *testing.T) {
 	}
 }
 
+// TestRepeatFailureMuseLogHiddenByCapIsNotReplayed: a log that existed when
+// the reader started but that a cap kept out of the first walk is read from
+// its start when it is finally reached, yet its pre-start history is not
+// emitted.
+func TestRepeatFailureMuseLogHiddenByCapIsNotReplayed(t *testing.T) {
+	root := rfMuseRoot(t)
+	oldLines := rfMuseCall(t, "call_old")
+	for i, line := range oldLines {
+		line = strings.ReplaceAll(line, "1793170680910529", "1000000000000000")
+		oldLines[i] = strings.ReplaceAll(line, "1793170680992012", "1000000000001000")
+	}
+	rfMuseAppend(t, root, "a-session", oldLines...)
+
+	day := filepath.Join(root, "2026", "10", "28")
+	var flood []string
+	for i := 0; i < museDirEntriesMax; i++ {
+		dir := filepath.Join(day, "z"+strconv.Itoa(1000000+i))
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		flood = append(flood, dir)
+	}
+	r := newMuseRecordReader()
+	var s rfMuseScan
+	s.run(r, root)
+	if len(s.records) != 0 {
+		t.Fatalf("records on the first scan = %+v, want none", s.records)
+	}
+	for _, dir := range flood {
+		if err := os.Remove(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	now := strconv.FormatInt(time.Now().UnixMicro(), 10)
+	var fresh []string
+	for _, line := range rfMuseCall(t, "call_new") {
+		line = strings.ReplaceAll(line, "1793170680910529", now)
+		fresh = append(fresh, strings.ReplaceAll(line, "1793170680992012", now))
+	}
+	rfMuseAppend(t, root, "a-session", fresh...)
+	s.run(r, root)
+	if len(s.records) != 1 {
+		t.Fatalf("records = %+v, want exactly the call made after the reader started", s.records)
+	}
+}
+
 // TestRepeatFailureMuseDisplacedSessionsAreCapped: sessions a truncated walk
 // leaves out are kept while their logs exist, but at most
 // museDisplacedSessionsMax of them, newest names first, so an agent minting
