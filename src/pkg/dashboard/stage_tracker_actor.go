@@ -20,8 +20,8 @@ import (
 // StageActorClanker (a registered contributor agent: robot),
 // StageActorHuman (a person: the same glyph as "Needs human decision"),
 // StageActorBot (a non-hive GitHub bot such as github-actions[bot] or
-// dependabot: cog) or StageActorNone (nobody is working on it right now;
-// the tooltip then leads with Why). Login names the account or agent when
+// dependabot: cog) or StageActorNone (nobody is working on it right now —
+// the SPA leads its tooltip with STAGE_TRACKER_NOBODY_LEAD, then Why). Login names the account or agent when
 // known; Since is when the move became theirs (the stage entry time); Why
 // is the plain-words reason, always set.
 type StageTrackerActor struct {
@@ -38,10 +38,6 @@ const (
 	StageActorBot     = "bot"
 	StageActorNone    = "none"
 )
-
-// stageTrackerNobodyLead is the fixed opening of every StageActorNone
-// tooltip (the SPA appends it before Why).
-const stageTrackerNobodyLead = "no one is working on this right now"
 
 // stageTrackerWorker is one busy agent on a current item, from the status
 // payload the tracker already has (FrontendAgent.LastAction with Current
