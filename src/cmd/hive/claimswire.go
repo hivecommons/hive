@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/issueclaim"
@@ -35,8 +37,79 @@ import (
 // PR-claim ledger and the relay leases; overridable in tests).
 var claimsLedgerPath = "/data/issue-claims.json"
 
-// claimsGitHubTimeout bounds each best-effort GitHub side effect.
+// claimsGitHubTimeout bounds each attempt of a best-effort GitHub side
+// effect.
 const claimsGitHubTimeout = 15 * time.Second
+
+// Retry policy for the label and stage side effects (hivecommons/hive#14766).
+// One 15s attempt was the whole budget: on the hosted hive a startup burst
+// serialised behind the per-repo label writer (DefaultMaxWritersPerRepo = 1)
+// and the "claimed stage" write of a scanner claim timed out, so the issue
+// an agent was already working stayed stage/010-actionable (#14633, #14674)
+// until something else touched it. A transient failure — timeout, network,
+// rate limit, 5xx, or a journaled attempt whose outcome is uncertain — is
+// now retried a bounded number of times with a growing pause. The retries
+// run inside the issue's effect queue, so a release scheduled after the
+// claim still waits for the claim's labels to land (or give up) first.
+var (
+	// claimsEffectAttempts is the total number of tries per side effect.
+	claimsEffectAttempts = 4
+	// claimsEffectBackoff is the pause before the second attempt; each
+	// further pause doubles it (2s, 4s, 8s).
+	claimsEffectBackoff = 2 * time.Second
+	// claimsEffectWait pauses between attempts, returning false when ctx
+	// ends first. Tests swap it for an instant no-op.
+	claimsEffectWait = func(ctx context.Context, d time.Duration) bool {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-t.C:
+			return true
+		}
+	}
+)
+
+// retryClaimEffect runs attempt until it succeeds, fails for a reason that
+// is not transient, exhausts claimsEffectAttempts, or ctx ends during a
+// pause. It returns the number of attempts made (for the log and tests).
+func retryClaimEffect(ctx context.Context, logger *slog.Logger, what, key string, attempt func() error) int {
+	backoff := claimsEffectBackoff
+	for n := 1; ; n++ {
+		err := attempt()
+		if err == nil {
+			return n
+		}
+		if n >= claimsEffectAttempts || !claimEffectRetryable(err) {
+			if logger != nil {
+				logger.Warn("issue-claims: GitHub side effect failed", "what", what, "issue", key, "attempts", n, "error", err)
+			}
+			return n
+		}
+		if logger != nil {
+			logger.Warn("issue-claims: retrying GitHub side effect", "what", what, "issue", key, "attempt", n, "retry_in", backoff.String(), "error", err)
+		}
+		if !claimsEffectWait(ctx, backoff) {
+			if logger != nil {
+				logger.Warn("issue-claims: GitHub side effect abandoned, hub stopping", "what", what, "issue", key, "attempts", n, "error", err)
+			}
+			return n
+		}
+		backoff *= 2
+	}
+}
+
+// claimEffectRetryable reports whether a failed side effect is worth another
+// attempt: transient transport failures, or a journaled label mutation whose
+// first attempt timed out before GitHub answered (the next attempt reconciles
+// against the live issue first, so it is safe to repeat).
+func claimEffectRetryable(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	return github.IsRetryableError(err) || errors.Is(err, mutation.ErrNeedsReconciliation)
+}
 
 // claimEffectQueue runs the GitHub side effects of one issue's ledger
 // transitions in the order the ledger fired them, one transition at a time
@@ -147,22 +220,35 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 	comment := cfg.Governor.Claims.CommentEnabled()
 	label := cfg.Governor.Claims.LabelEnabled()
 	queue := &claimEffectQueue{}
+	attempt := func(fn func(ctx context.Context, gh *github.Client) error, gh *github.Client) error {
+		cctx, cancel := context.WithTimeout(ctx, claimsGitHubTimeout)
+		defer cancel()
+		return fn(cctx, gh)
+	}
+	// run retries a transient failure (claimEffectRetryable) up to
+	// claimsEffectAttempts times. Comments go through runOnce: a timed-out
+	// POST may have landed, and a second copy is worse than a missing one.
 	run := func(what string, c claims.Claim, fn func(ctx context.Context, gh *github.Client) error) {
 		gh := client()
 		if gh == nil {
 			return
 		}
-		cctx, cancel := context.WithTimeout(ctx, claimsGitHubTimeout)
-		defer cancel()
-		if err := fn(cctx, gh); err != nil && logger != nil {
-			logger.Warn("issue-claims: GitHub side effect failed", "what", what, "issue", c.Key(), "error", err)
+		retryClaimEffect(ctx, logger, what, c.Key(), func() error { return attempt(fn, gh) })
+	}
+	runOnce := func(what string, c claims.Claim, fn func(ctx context.Context, gh *github.Client) error) {
+		gh := client()
+		if gh == nil {
+			return
+		}
+		if err := attempt(fn, gh); err != nil && logger != nil {
+			logger.Warn("issue-claims: GitHub side effect failed", "what", what, "issue", c.Key(), "attempts", 1, "error", err)
 		}
 	}
 	return claims.Hooks{
 		OnClaimed: func(c claims.Claim, outcome claims.Outcome) {
 			queue.run(c.Key(), func() {
 				if comment && outcome == claims.OutcomeClaimed {
-					run("claim comment", c, func(ctx context.Context, gh *github.Client) error {
+					runOnce("claim comment", c, func(ctx context.Context, gh *github.Client) error {
 						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ClaimComment(c))
 					})
 				}
@@ -189,7 +275,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 		OnTakenOver: func(now, previous claims.Claim) {
 			queue.run(now.Key(), func() {
 				if comment {
-					run("takeover comment", now, func(ctx context.Context, gh *github.Client) error {
+					runOnce("takeover comment", now, func(ctx context.Context, gh *github.Client) error {
 						return gh.CreateIssueComment(ctx, now.Repo, now.Issue, claims.TakeoverComment(now, previous))
 					})
 				}
@@ -249,7 +335,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 				// SetIssueClaimLedgerHive still prevents this hive from
 				// believing its own stale hold.
 				if comment && reason != claims.ReasonExpired {
-					run("release comment", c, func(ctx context.Context, gh *github.Client) error {
+					runOnce("release comment", c, func(ctx context.Context, gh *github.Client) error {
 						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ReleaseComment(c, reason))
 					})
 				}

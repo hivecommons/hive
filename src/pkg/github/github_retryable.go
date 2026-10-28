@@ -11,6 +11,12 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
+// IsRetryableError reports whether err is a transient GitHub/API transport
+// failure (timeout, network error, rate limit, 5xx) that a best-effort
+// mutation may retry after a pause. It is isRetryableGitHubError for callers
+// outside the package.
+func IsRetryableError(err error) bool { return isRetryableGitHubError(err) }
+
 // isRetryableGitHubError reports whether err is a transient GitHub/API
 // transport failure where a guarded mutation should be retried instead of
 // proceeding with incomplete preflight information.
