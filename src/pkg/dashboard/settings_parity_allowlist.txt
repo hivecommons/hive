@@ -13,6 +13,8 @@ agent_sandbox.job.volumes[].claim # TODO #11854
 agent_sandbox.job.volumes[].mount_path # TODO #11854
 agent_sandbox.job.volumes[].name # TODO #11854
 agent_sandbox.job.volumes[].read_only # TODO #11854
+agent_sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
+agent_sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
 agents.<key>.acmm_levels[] # TODO #11854
 agents.<key>.agent_spec # TODO #11854
 agents.<key>.aliases[] # TODO #11854
@@ -115,6 +117,8 @@ agents.<key>.sandbox.job.workspace_claim_mount # TODO #11854
 agents.<key>.sandbox.network_mode # TODO #11854
 agents.<key>.sandbox.runtime # TODO #11854
 agents.<key>.sandbox.timeout_s # TODO #11854
+agents.<key>.sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
+agents.<key>.sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
 agents.<key>.session_recycle.enabled # TODO #11854
 agents.<key>.session_recycle.max_age # TODO #11854
 agents.<key>.session_recycle.max_rss_mb # TODO #11854
