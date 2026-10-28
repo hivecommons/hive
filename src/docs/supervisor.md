@@ -97,7 +97,7 @@ agents:
     bead_role: supervisor
 ```
 
-ACMM packs may override these values. For example, the pack definitions use `backend: copilot`, `kick_template: supervisor-nogithub.md`, `clear_on_kick: false`, and level-specific `stale_timeout` values.
+ACMM packs may override these values. For example, the pack definitions define `backend: copilot` (though the effective backend is subject to the allow/deny fallback), `kick_template: supervisor-nogithub.md`, `clear_on_kick: false`, and level-specific `stale_timeout` values.
 
 ## What to read next
 

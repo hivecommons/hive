@@ -130,7 +130,7 @@ Registered defaults (`applyKnownAgentDefaults` in `src/pkg/config/config.go`), a
 | `lane_keywords` | `observability`, `opentelemetry`, `prometheus`, `grafana`, `tracing`, `metrics`, `structured-logging`, `servicemonitor`, `podmonitor` |
 | `detect_keywords` | `telemetry`, `observability`, `opentelemetry`, `prometheus` |
 
-ACMM packs additionally set `backend: copilot`, `model: claude-sonnet-4-6`, `mode: ISSUES_AND_PRS`, `stale_timeout: 28800`, and the level-appropriate `kick_template`.
+ACMM packs define `backend: copilot` (though the effective backend is subject to the allow/deny fallback), `model: claude-sonnet-4-6`, `mode: ISSUES_AND_PRS`, `stale_timeout: 28800`, and the level-appropriate `kick_template`.
 
 ## Cadence and budget considerations
 

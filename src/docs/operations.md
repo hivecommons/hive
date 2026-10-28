@@ -68,7 +68,7 @@ Registered defaults (`applyKnownAgentDefaults` in `src/pkg/config/config.go`), a
 | `lane_keywords` | `healthz`, `readyz`, `readiness`, `slo-`, `sli-`, `service-level-objective`, `service-level-indicator`, `error-budget`, `runbook`, `incident-response`, `rollback`, `alerting` |
 | `detect_keywords` | `operations`, `operability`, `healthz`, `runbook` |
 
-ACMM packs additionally set `backend: copilot`, `model: claude-sonnet-4-6`, `mode: ISSUES_AND_PRS`, `stale_timeout: 28800`, and the level-appropriate `kick_template`.
+ACMM packs define `backend: copilot` (though the effective backend is subject to the allow/deny fallback), `model: claude-sonnet-4-6`, `mode: ISSUES_AND_PRS`, `stale_timeout: 28800`, and the level-appropriate `kick_template`.
 
 ## Cadence and budget considerations
 
