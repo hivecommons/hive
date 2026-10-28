@@ -184,7 +184,7 @@ func renderSupersessionGraceNotice(grace time.Duration) string {
 	if grace <= 0 {
 		grace = DefaultSupersessionGracePeriod
 	}
-	return fmt.Sprintf("A different merged PR closed the claimed issue and every file this PR touches was also changed by it. "+
+	return fmt.Sprintf("A different merged PR closed the claimed issue and its implementation files were also changed by it (additional tests, docs and changelog fragments are allowed). "+
 		"Unless someone comments here, the sweep will close this PR as superseded once %s have passed since this notice. "+
 		"Reply on this PR to keep it open.", formatSupersessionGrace(grace))
 }
@@ -207,7 +207,7 @@ func renderSupersessionCloseComment(closer supersessionCloser, grace time.Durati
 	if !closer.MergedAt.IsZero() {
 		merged = "which merged at " + closer.MergedAt.UTC().Format("2006-01-02 15:04Z")
 	}
-	fmt.Fprintf(&b, "Closing as superseded by %s, %s. Every file this PR touches was also changed there and nobody replied within the %s grace window, so nothing from this branch looks still needed.\n",
+	fmt.Fprintf(&b, "Closing as superseded by %s, %s. Its implementation files were also changed there (additional tests, docs and changelog fragments are allowed) and nobody replied within the %s grace window, so nothing from this branch looks still needed.\n",
 		ref, merged, formatSupersessionGrace(grace))
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Reopen if that's wrong. The `%s` label marks PRs the supersession sweep closed.\n", SupersededLabel)
@@ -317,7 +317,7 @@ func (c *Client) supersessionReviewThreads(ctx context.Context, owner, repo stri
 // are a subset of closer's. The grace window runs from the notice's last
 // edit (so a reworded notice restarts it); a human reply is detected from the
 // notice's creation, so a later re-edit can never hide an earlier reply.
-func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, identity HiveIdentity, now time.Time, grace time.Duration) (SupersessionSweepEvent, string, error) {
+func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, identity HiveIdentity, now time.Time, grace time.Duration, closingClaim bool) (SupersessionSweepEvent, string, error) {
 	if grace <= 0 {
 		grace = DefaultSupersessionGracePeriod
 	}
@@ -388,9 +388,13 @@ func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owne
 		}
 		return event, "commented", nil
 	default:
+		event.Reason = decision.Reason
+		notice := supersessionDecisionNotice(owner, closer, decision.Reason)
+		if closingClaim {
+			return c.escalateSupersededPR(ctx, owner+"/"+repo, owner, repo, pr, event, closer, notice)
+		}
 		event.Action = SupersessionActionCommentedContributor
-		body := renderSupersessionComment(event, closer, supersessionDecisionNotice(owner, closer, decision.Reason))
-		if _, err := c.ensureSupersessionComment(ctx, owner, repo, number, body); err != nil {
+		if _, err := c.ensureSupersessionComment(ctx, owner, repo, number, renderSupersessionComment(event, closer, notice)); err != nil {
 			return event, "", err
 		}
 		return event, "commented", nil

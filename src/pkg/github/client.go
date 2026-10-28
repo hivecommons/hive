@@ -123,6 +123,10 @@ type Client struct {
 	// per-issue opt-in markers activate the gate.
 	reporterConfirmationMu      sync.RWMutex
 	reporterConfirmationEnabled func() bool
+	// supersededAutoClosePolicy gates the hive-authored superseded PR
+	// auto-close (pr_superseded_hive_autoclose.go); nil means on.
+	supersededAutoCloseMu     sync.Mutex
+	supersededAutoClosePolicy SupersededAutoClosePolicy
 	// autoMergeLabel is the configured merger-queue label. Guarded because
 	// config reload re-applies it while request handlers read it.
 	autoMergeLabelMu sync.RWMutex
@@ -251,6 +255,10 @@ type Client struct {
 	// a negative value disables the backstop.
 	combinedPerspectivesFn func() bool
 	maxReviewsPerHeadFn    func() int
+	// reviewRequireLabelsFn returns review.require_labels, read live so a
+	// Features-tab edit gates the next relay request without a rebuild. nil
+	// or empty means the gate is off.
+	reviewRequireLabelsFn func() []string
 	// prAuthz gates PR-open requests from the request-file watcher against the
 	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
 	// StartPRRequestWatcher.

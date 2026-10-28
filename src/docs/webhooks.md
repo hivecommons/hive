@@ -15,25 +15,78 @@ below exist so that the hive never trades the first for the third.
 
 ## Polling cadence vs webhook patch vs reconcile
 
-Three writers feed one snapshot per repository; everything else reads it.
+Three writers feed one snapshot per repository. A fourth path writes PR
+claims to the duplicate-PR claim ledger and filters the actionable snapshot;
+readers use that ledger to keep covered issues out of the offerable set.
 
 | Writer | Trigger | GitHub cost | Authority |
 | --- | --- | --- | --- |
 | **Reconcile** | the cadence tick: `governor.eval_interval_webhook_s` (default `900`) in webhook mode, `governor.eval_interval_s` (default `300`) in polling mode; the `forgestate` cache additionally runs its own `reconcile_interval_s` (default `900`) per repo | full list of open issues and PRs per repo, ETag-conditional where supported | **Authoritative.** Rebuilds the snapshot and overwrites every patch. A failed pass keeps the last-good snapshot and marks it `stale`; it never publishes an empty one. |
 | **Webhook patch** | one verified delivery naming an issue or PR | one `GET` of that item (1–3 calls with labels/head), debounced and coalesced per item | **Hint + confirming fetch.** The payload only names the item; the re-read decides what the row says. Upserts are monotonic by `updated_at` / head SHA, so out-of-order deliveries cannot roll state backwards. Closed/merged removes at once; reopened re-adds. The `X-GitHub-Delivery` id is recorded for audit. |
 | **Write-through** | the hive's own mutation (stage label, comment, merge, close, claim) | none beyond the mutation itself | **Immediate.** The cache reflects the mutation before the next read, without a confirming call. |
+| **PR claim ledger** | a verified `pull_request` delivery with a claim-changing action | no GitHub calls for claim parsing, persistence or snapshot filtering | **Payload-derived claims.** Records open claims, releases dropped/unmerged claims and records merged claims; separate from the confirming item fetch. See [PR claims and issue stages](#pr-claims-and-issue-stages). |
 
 Where they live:
 
 - Reconcile — the governor's `EnumerateActionable` pass (`src/pkg/github/client.go:1430` records the newest `updated_at` it listed, see [fallback](#fallback-when-webhooks-degrade)) and the ForgeState `Reconcile` writer (`src/pkg/forgestate/reconcile.go:18`), whose per-repo `interval` shortens while drift is high (`src/pkg/forgestate/reconcile.go:18`).
 - Webhook patch — the legacy snapshot's `ApplyWebhookItem` (`src/pkg/github/webhook_item_patch.go:291`) fed by `FetchWebhookItemSnapshot` (`src/pkg/github/webhook_item_refresh.go:75`), and ForgeState's `ApplyWebhook` (`src/pkg/forgestate/webhook.go:38`) with its `supersedes` monotonic check (`src/pkg/forgestate/store.go:400`).
 - Write-through — ForgeState's `WriteThrough` (`src/pkg/forgestate/writethrough.go:38`).
+- PR claim ledger — `ClaimLedger.ApplyPRDelivery` in `src/pkg/github/webhook_pr_claims.go`, wired by `prClaimsHookFor` in `src/cmd/hive/webhook_pr_claims.go`.
 
 Between reconciles the picture is kept current by patches; a cadence tick
 in webhook mode is therefore a slow safety net, not the source of latency.
 Wake cycles (webhook, review, continuous-agent) plan from the patched
 snapshot and never re-list; see the table in
 [operator-reference.md](operator-reference.md#polling-cadence-vs-webhook-patch-vs-reconcile).
+
+## PR claims and issue stages
+
+For a managed repository, `pull_request` actions `opened`, `reopened`,
+`edited`, `synchronize`, `ready_for_review`, `converted_to_draft` and `closed`
+parse the PR title, body and head branch with the same claim grammar as the
+reconcile scan (`Fixes #N`, branch names and references). Label and
+review-request actions skip this path. `HandleWebhookEvent` invokes the
+registered `PRClaimsHook` before the receiver queues the confirming item
+fetch; the claim write does not wait for that fetch or for a cadence tick.
+
+`ApplyPRDelivery` first removes this PR's unsettled claims, then records its
+current claims under the ledger's collision/rank rules. An edit dropping an
+issue or a close without merge releases the claim; a merge records
+`MergedPR` claims anchored at the merge time. The hook saves the ledger and
+re-filters the cached actionable snapshot with `FilterClaimedIssues`, so
+both the contributor offer gate and the governor see the claim immediately.
+A save failure logs `webhook PR claims: failed to persist claim ledger`;
+`webhook PR claims applied to claim ledger` reports the recorded, released
+and suppressed counts. This is distinct from the PR row's cache patch.
+
+With the issue-stage lane enabled, an open hive-authored PR's strong
+same-repo closing claims also emit `CoveredBy` facts on `opened`, `reopened`,
+`edited` and `ready_for_review`, moving those issues to `040-covered-by-pr`.
+This runs in the background with a two-minute timeout and can read issues
+and write labels; the zero-call cost above applies only to the ledger and
+snapshot work. External PRs and non-closing references remain the stage
+sweep's responsibility. See `coverIssuesForWebhookPR` in
+`src/pkg/github/webhook_pr_claims.go`.
+
+### Merge trigger and ledger-to-stage backfill
+
+- **Merged delivery:** after a merged delivery records at least one claim,
+  `prClaimsHookFor` invokes `closeOnMergeForDelivery`. With
+  `issues.close_on_merge` enabled, this starts a background
+  `CloseOnMergeLedgerSweep` restricted by `OnlyPRRepo` / `OnlyPRNumber` to
+  that PR, bounded to two minutes. It re-reads the PR and issue and uses the
+  scheduled sweep's identity/trusted-author policy; the payload alone does
+  not authorize a close. It does not wait for the scheduled sweep interval.
+- **Ledger-to-stage backfill:** `reconcileLedgerCoverRecords` runs every
+  evaluation cycle, including cached cycles and those with `SkipOptional`.
+  `BackfillCoveredByLedger` checks live open covering claims against existing
+  stage-store records below `040-covered-by-pr`. A fresh PR read must confirm
+  open/unmerged before a `CoveredBy` fact repairs the record. It respects the
+  issue-stage lane and the red-and-stale PR release valve, ignores merged or
+  non-covering claims, and leaves unseen records to the sweep. Agreement
+  between ledger and store costs no API calls; repairs can read PRs and write
+  labels. This backfill repairs stage records, whereas the scheduled
+  `CloseOnMergeBackfill` scans open issues for merged fixes.
 
 ## Accuracy guarantees
 

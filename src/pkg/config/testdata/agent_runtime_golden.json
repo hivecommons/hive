@@ -100,6 +100,55 @@
       "managed": false
     }
   },
+  "backends": {
+    "allow": [
+      "claude",
+      "bob",
+      "copilot",
+      "gemini",
+      "goose",
+      "codex",
+      "aider"
+    ],
+    "deny": [
+      "litellm-legacy"
+    ]
+  },
+  "providers": {
+    "status": {
+      "enabled": true
+    }
+  },
+  "tool_approval": {
+    "enabled": true,
+    "rules": [
+      {
+        "name": "deny-rm",
+        "expr": "tool == \"bash\" \u0026\u0026 args.contains(\"rm -rf\")",
+        "action": "deny",
+        "priority": 10
+      }
+    ],
+    "inbox_path": "/data/approvals"
+  },
+  "agent_sandbox": {
+    "enabled": true,
+    "image": "ghcr.io/acme/sandbox:1",
+    "env_allowlist": [
+      "HOME",
+      "PATH"
+    ],
+    "network_mode": "none",
+    "timeout_s": 600,
+    "workspace_dir": "/data/sandbox",
+    "runtime": "podman"
+  },
+  "turn": {
+    "reentrant": {
+      "enabled": true
+    },
+    "pr_follow_up": {}
+  },
   "Governor": {
     "Modes": {
       "busy": {
@@ -221,30 +270,6 @@
       },
       "AuthProbe": null
     },
-    "Health": {
-      "DeprecatedHealthcheckInterval": 0,
-      "ModelLock": false
-    },
-    "Budget": {
-      "TotalTokens": 0,
-      "PeriodDays": 7,
-      "CriticalPct": 90,
-      "Coins": {
-        "bob": {
-          "tokens_per_coin": 500000,
-          "usd_per_coin": 0.5,
-          "label": "BC"
-        }
-      }
-    },
-    "Logging": {
-      "Dir": "/data/logs",
-      "MaxSizeMB": 50,
-      "MaxAgeDays": 7,
-      "MaxBackups": 10,
-      "Compress": true,
-      "Level": "info"
-    },
     "LiteLLM": {
       "Endpoint": "https://litellm.example.com",
       "APIKeyEnv": "HIVE_LITELLM_API_KEY",
@@ -269,7 +294,6 @@
       "key_name": "bob-prod",
       "session_prefix": "hive"
     },
-    "backup": {},
     "Trajectory": {
       "Enabled": true,
       "Endpoint": "https://judge.example.com",
@@ -282,12 +306,6 @@
       "ExemptAgents": [
         "scribe"
       ]
-    },
-    "Replan": {
-      "Enabled": null,
-      "IntervalS": 0,
-      "StallThresholdS": 0,
-      "MaxReplans": 0
     },
     "kick_limits": {
       "max_issues": 40,
@@ -310,29 +328,6 @@
         "region": "us-south"
       }
     ],
-    "AttributionTrailer": null,
-    "first_timer_welcome": {},
-    "advisory": {
-      "max_findings": 10,
-      "show_all": false,
-      "staleness_days": 7,
-      "pr_autoclose": true,
-      "queue_health": {}
-    },
-    "project_observability": {},
-    "work_source": {
-      "type": "",
-      "github_projects": {
-        "project_number": 0
-      },
-      "linear": {},
-      "jira": {
-        "base_url": "",
-        "email": ""
-      },
-      "wavefront": {}
-    },
-    "acmm": {},
     "rotation": {
       "enabled": true,
       "threshold_pct": 85,
@@ -353,6 +348,61 @@
     "provider_budget": {
       "probe_interval_s": 900
     },
+    "Health": {
+      "DeprecatedHealthcheckInterval": 0,
+      "ModelLock": false
+    },
+    "Budget": {
+      "TotalTokens": 0,
+      "PeriodDays": 7,
+      "CriticalPct": 90,
+      "Coins": {
+        "bob": {
+          "tokens_per_coin": 500000,
+          "usd_per_coin": 0.5,
+          "label": "BC"
+        }
+      }
+    },
+    "Logging": {
+      "Dir": "/data/logs",
+      "MaxSizeMB": 50,
+      "MaxAgeDays": 7,
+      "MaxBackups": 10,
+      "Compress": true,
+      "Level": "info"
+    },
+    "backup": {},
+    "Replan": {
+      "Enabled": null,
+      "IntervalS": 0,
+      "StallThresholdS": 0,
+      "MaxReplans": 0
+    },
+    "AttributionTrailer": null,
+    "first_timer_welcome": {},
+    "advisory": {
+      "max_findings": 10,
+      "show_all": false,
+      "staleness_days": 7,
+      "pr_autoclose": true,
+      "queue_health": {}
+    },
+    "auto_close_superseded": true,
+    "project_observability": {},
+    "work_source": {
+      "type": "",
+      "github_projects": {
+        "project_number": 0
+      },
+      "linear": {},
+      "jira": {
+        "base_url": "",
+        "email": ""
+      },
+      "wavefront": {}
+    },
+    "acmm": {},
     "fleet_report": {},
     "claims": {},
     "question_autoclose": {},
@@ -576,25 +626,6 @@
     },
     "SnapshotIntervalMin": 0
   },
-  "backends": {
-    "allow": [
-      "claude",
-      "bob",
-      "copilot",
-      "gemini",
-      "goose",
-      "codex",
-      "aider"
-    ],
-    "deny": [
-      "litellm-legacy"
-    ]
-  },
-  "providers": {
-    "status": {
-      "enabled": true
-    }
-  },
   "issues": {
     "rfc_existing_check": {}
   },
@@ -616,18 +647,6 @@
   "otel": {},
   "Tracing": {},
   "debug": {},
-  "tool_approval": {
-    "enabled": true,
-    "rules": [
-      {
-        "name": "deny-rm",
-        "expr": "tool == \"bash\" \u0026\u0026 args.contains(\"rm -rf\")",
-        "action": "deny",
-        "priority": 10
-      }
-    ],
-    "inbox_path": "/data/approvals"
-  },
   "Mint": {
     "Enabled": false,
     "KeyPath": "",
@@ -704,18 +723,6 @@
   "shared_ci_rerun": {},
   "scanner": {},
   "upstream_watch": {},
-  "agent_sandbox": {
-    "enabled": true,
-    "image": "ghcr.io/acme/sandbox:1",
-    "env_allowlist": [
-      "HOME",
-      "PATH"
-    ],
-    "network_mode": "none",
-    "timeout_s": 600,
-    "workspace_dir": "/data/sandbox",
-    "runtime": "podman"
-  },
   "convergence": {},
   "sla": {
     "targets": {}
@@ -729,11 +736,5 @@
   "forgestate": {},
   "classification": {
     "review_bots": {}
-  },
-  "turn": {
-    "reentrant": {
-      "enabled": true
-    },
-    "pr_follow_up": {}
   }
 }

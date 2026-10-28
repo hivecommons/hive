@@ -651,12 +651,28 @@ func issuePriorityMarker(issue github.Issue) string {
 	return "[hive-filed]"
 }
 
+// reviewLabelGateNotice renders review.require_labels as prompt text for the
+// reviewer lane, mirroring issueFilterNotice: the list is already filtered,
+// and the agent is told why so it does not go looking for the missing PRs.
+func (s *Scheduler) reviewLabelGateNotice(agentName string) string {
+	if s == nil || s.cfg == nil || s.cfg.BaseAgentName(agentName) != "reviewer" {
+		return ""
+	}
+	labels := s.cfg.Review.NormalizedRequireLabels()
+	if len(labels) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("REVIEW LABEL GATE (operator policy — already enforced; the PR list below reflects it):\n  The hive reviews ONLY PRs carrying at least one of these labels: %s\n  ⛔ Do NOT review, comment on, or fetch PRs outside this list; the hive-review relay refuses them.\n", strings.Join(labels, ", "))
+}
+
 func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.ActionableResult, agentName string) (string, bool) {
+	notice := s.reviewLabelGateNotice(agentName)
 	prs := s.prListItemsForAgent(actionable, agentName)
 	if len(prs) == 0 {
-		return "(none)", false
+		return notice + "(none)", false
 	}
 	var b strings.Builder
+	b.WriteString(notice)
 	failClosed := false
 	limit := s.prCap()
 	shown := fairShareByRepo(prs, limit, func(pr github.PullRequest) string { return pr.Repo })
@@ -704,6 +720,7 @@ func (s *Scheduler) prListItemsForAgent(actionable *github.ActionableResult, age
 	}
 	prs := make([]github.PullRequest, 0, len(actionable.PRs.Items)+len(actionable.PRs.Held))
 	seen := map[string]bool{}
+	gated := 0
 	add := func(items []github.PullRequest) {
 		for _, pr := range items {
 			fullRepo := config.QualifyRepo(s.cfg.Project.Org, pr.Repo)
@@ -712,11 +729,23 @@ func (s *Scheduler) prListItemsForAgent(actionable *github.ActionableResult, age
 				continue
 			}
 			seen[key] = true
+			// review.require_labels (PR approval allow-list): an unlabelled
+			// PR never reaches the reviewer's list. The relay refuses it
+			// too, so this is the quiet half of the gate, not the only one.
+			if !s.cfg.Review.AdmitsPRLabels(pr.Labels) {
+				gated++
+				continue
+			}
 			prs = append(prs, pr)
 		}
 	}
 	add(actionable.PRs.Items)
 	add(actionable.PRs.Held)
+	if gated > 0 && s.logger != nil {
+		s.logger.Info("review label gate withheld PRs from reviewer kick",
+			"agent", agentName, "withheld", gated, "listed", len(prs),
+			"require_labels", strings.Join(s.cfg.Review.NormalizedRequireLabels(), ","))
+	}
 	sort.SliceStable(prs, func(i, j int) bool {
 		a, b := prs[i], prs[j]
 		if a.ReviewRank > 0 && b.ReviewRank > 0 && a.ReviewRank != b.ReviewRank {

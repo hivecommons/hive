@@ -59,6 +59,20 @@ specific to that queue flow. A swarm `changes_requested` or `reject` verdict
 is not overridden by a human approval; the head must be fixed or merged
 manually.
 
+For a PR whose closing claims were superseded by another merged PR, a trusted
+maintainer with repository write access can reply `/hive decision reject` or
+`/hive decision close superseded by #N`. Hive rechecks that the claimed issues
+are closed and a different merged PR closed them; an explicit `#N` must match
+that closer. It comments and closes the PR with `hive/superseded`, including
+PRs opened by contributors, without pushing to their branches. Hold and
+`do-not-merge` gates still prevent the close. When nothing supersedes the PR,
+a bare `reject` keeps its ordinary meaning (changes requested, nudging the
+author), while an explicit `close superseded by #N` is answered with why the
+PR stays open. The sweep's
+`hive/supersession-pending` cause label keeps the unresolved decision at 085
+through CI or rebase failures; reopening the issue, rewriting the claim, or
+choosing `hive/keep-open` clears the sweep's park on its next pass.
+
 On a **hive-authored** PR (`author/hive`) parked at `stage/085-needs-decision`
 the same trusted human has a second lever
 ([#13041](https://github.com/hivecommons/hive/issues/13041)): a GitHub

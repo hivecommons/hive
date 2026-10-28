@@ -39,7 +39,7 @@ WORKDIR /src
 COPY src/go.mod src/go.sum src/go.work src/go.work.sum ./
 COPY src/crux/go.mod src/crux/go.sum ./crux/
 RUN --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
-    go mod download
+    for i in 1 2 3; do go mod download && break; [ "$i" = 3 ] && exit 1; sleep $((i * 2)); done
 
 # Layer 2: copy source and build (re-runs on any source change)
 COPY .git /repo/.git

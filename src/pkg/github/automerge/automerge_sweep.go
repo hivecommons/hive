@@ -47,6 +47,21 @@ type levelHoldTransport interface {
 	ReleaseLevelHoldIfEligible(ctx context.Context, owner, repo string, pr *gh.PullRequest) (bool, string, error)
 }
 
+// supersededCloserTransport is the optional transport hook that closes a
+// hive-authored PR as superseded when every issue it closes was already
+// closed by a different merged PR and its head conflicts with the base
+// (hgithub.Client.CloseSupersededHivePRIfEligible; hivecommons/hive#14965).
+// The lane calls it on a conflicting self-authored PR before any verdict
+// or gate is read, so no review cycle is spent on a PR with nothing left
+// to deliver.
+type supersededCloserTransport interface {
+	CloseSupersededHivePRIfEligible(ctx context.Context, repo string, pr *gh.PullRequest) (hgithub.HiveSupersededClose, error)
+}
+
+// autoMergeReasonClosedSuperseded is the skip reason of a conflicting
+// self-authored PR the lane closed as superseded.
+const autoMergeReasonClosedSuperseded = "closed-superseded"
+
 // Options carries policy dependencies owned by the caller.
 type Options struct {
 	Logger           *slog.Logger
@@ -1149,7 +1164,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable", autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod}
+			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable", autoMergeReasonClosedSuperseded, autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod}
 			if sentinelLabel := c.sentinelLabelName(); sentinelLabel != "" {
 				skipReasonOrder = append([]string{sentinelLabel}, skipReasonOrder...)
 			}
@@ -1162,6 +1177,13 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		}
 	}
 	return result, nil
+}
+
+// prMergeableStateConflicting reads GitHub's conflict flag off a single-PR
+// GET payload.
+func prMergeableStateConflicting(pr *gh.PullRequest) bool {
+	state := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
+	return state == "dirty" || state == "conflicting"
 }
 
 // SweepTrustedAuthorAutoMerges merges green PRs whose human author already
@@ -1624,6 +1646,17 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	if c.transport.IsExemptLabels(selfLabels) {
 		return AutoMergeSweepEvent{}, "exempt-label", nil
+	}
+	if lane == "self-authored" && prMergeableStateConflicting(pr) {
+		if closer, ok := c.transport.(supersededCloserTransport); ok {
+			res, err := closer.CloseSupersededHivePRIfEligible(ctx, owner+"/"+repo, pr)
+			if err != nil {
+				c.warn("self-authored sweep: superseded check failed", "repo", displayRepo, "pr", number, "error", err)
+			} else if res.Closed {
+				c.info("self-authored sweep: conflicting PR closed as superseded", "repo", displayRepo, "pr", number, "closer", res.CloserPR, "issue", res.Issue)
+				return AutoMergeSweepEvent{}, autoMergeReasonClosedSuperseded, nil
+			}
+		}
 	}
 
 	evaluatedHeadSHA := ""

@@ -43,6 +43,8 @@ func issueFactsFrom(in IssueStageInput, prStage func(repo string, number int) st
 		c := &stageengine.ClaimFact{Holder: in.ClaimedBy, Kind: claims.Kind(in.ClaimKind), PRStarted: in.PRStarted}
 		if in.Claim != nil {
 			c.PRRepo, c.PRNumber = in.Claim.PRRepo, in.Claim.PRNumber
+			// A non-closing "Refs #N" claim stages 040 but never "covers".
+			c.Partial = in.Claim.Reference && !in.Claim.Closing
 		}
 		f.Issue.Claim = c
 	}

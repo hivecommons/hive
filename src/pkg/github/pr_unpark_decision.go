@@ -67,6 +67,19 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 	selfAuthored := c.isHiveAccount(pr.GetUser()) || labelPresent(issueLabelNames(pr.Labels), authorkind.Hive.Label())
 
 	reply := ""
+	if closer, closeRequested := supersessionCloseDecision(command); closeRequested {
+		reply, handled, err := c.closeSupersededPRDecision(ctx, displayRepo, owner, repo, pr, actor, closer)
+		if err != nil {
+			return false, err
+		}
+		if handled {
+			if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), reply); err != nil {
+				return false, err
+			}
+			result.Replies++
+			return true, nil
+		}
+	}
 	switch {
 	case command.Kind == unparkCommandDecision && selfAuthored && head != "":
 		mode := prDecisionModeFor(command)
@@ -414,6 +427,7 @@ func renderPRHelpReply(selfAuthored bool, head string) string {
 	} else {
 		b.WriteString("- Leave a **changes requested** review and the author is nudged with your text; the hive does not push to a PR it did not open.\n")
 	}
+	b.WriteString("- For a superseded PR, reply `/hive decision reject` or `/hive decision close superseded by #N` to close it.\n")
 	fmt.Fprintf(&b, "\nSee <%s>.", maintainerCommandsDocURL)
 	return b.String()
 }

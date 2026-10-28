@@ -326,6 +326,9 @@ func ClassifyStage(o stageObservation) stageVerdict {
 	if o.Merged && reason == "" {
 		return stageVerdict{Terminal: true, Rank: stageRankOwned}
 	}
+	if reason != "closed" && reason != "gone" && reason != "label-removed" && HasLabelFold(o.Labels, prstage.SupersessionPendingLabel) && HasLabelFold(o.Labels, NeedsHumanLabel) && !HasLabelFold(o.Labels, "hive/keep-open") {
+		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: prstage.ReasonSupersessionPending}
+	}
 	if o.Err {
 		// The lane tripped before deciding. If every author-side gate is
 		// already satisfied the PR is waiting on the hive, not the author.

@@ -76,6 +76,18 @@ func (b *boot) closeOnMergeForDelivery(d github.PRClaimDelivery) {
 		opts.OnlyPRRepo, opts.OnlyPRNumber = d.Repo, d.Number
 		sweep := client.CloseOnMergeLedgerSweep(ctx, ledger, opts)
 		logCloseOnMergeResults(b.logger, "close-on-merge webhook sweep", sweep.Results)
+		// The merged PR closed its issues; a hive-authored PR still open
+		// for one of them is superseded now, not after the next sweep
+		// (hivecommons/hive#14965 → #14957).
+		if cfg.Governor.AutoCloseSupersededEnabled() {
+			closed, err := client.CloseSupersededHivePRsForMergedPR(ctx, d.Repo, d.Number, d.ClaimedIssues())
+			if err != nil && b.logger != nil {
+				b.logger.Warn("close-on-merge: superseded hive PR check failed", "repo", d.Repo, "pr", d.Number, "error", err)
+			}
+			if len(closed) > 0 && b.logger != nil {
+				b.logger.Info("close-on-merge: superseded hive PRs closed", "repo", d.Repo, "merged", d.Number, "closed", closed)
+			}
+		}
 	}()
 }
 

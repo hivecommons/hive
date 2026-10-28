@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -262,6 +264,14 @@ func (c *Client) resolveDuplicateFixGroup(ctx context.Context, repo string, link
 		if c.isHeld(labels) || c.isExempt(labels) {
 			continue
 		}
+		// A stage-074 adoption pair is not a duplicate: the superseding App
+		// PR carries the original's commits and closes the original when it
+		// merges. Closing the adoptee as "duplicate of" the PR it supersedes
+		// (hivecommons/hive#14977 → #14947) undoes the adoption.
+		if PRSupersedes(later.GetBody(), keeper.GetNumber()) || PRSupersedes(keeper.GetBody(), later.GetNumber()) {
+			c.logger.Info("duplicate-fix sweep: adoption pair left to the stage pass", slog.String("repo", repo), slog.Int("issue", link.Issue), slog.Int("keeper", keeper.GetNumber()), slog.Int("pr", later.GetNumber()))
+			continue
+		}
 		already, err := c.hasDuplicateFixComment(ctx, owner, repoName, later.GetNumber())
 		if err != nil {
 			return events, err
@@ -327,6 +337,24 @@ func (c *Client) resolveDuplicateFixGroup(ctx context.Context, repo string, link
 		events = append(events, event)
 	}
 	return events, nil
+}
+
+// prSupersedesRe matches the "Supersedes #N" line the adoption writes into
+// a superseding PR's body (AdoptionPRBody).
+var prSupersedesRe = regexp.MustCompile(`(?im)^\s*Supersedes\s+#(\d+)\b`)
+
+// PRSupersedes reports whether body declares the PR a supersession of
+// pull request n ("Supersedes #n", the adoption's body line).
+func PRSupersedes(body string, n int) bool {
+	if n <= 0 {
+		return false
+	}
+	for _, m := range prSupersedesRe.FindAllStringSubmatch(body, -1) {
+		if v, err := strconv.Atoi(m[1]); err == nil && v == n {
+			return true
+		}
+	}
+	return false
 }
 
 func duplicateFixStaleNote(stale bool) string {

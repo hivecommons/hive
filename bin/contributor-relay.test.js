@@ -14950,6 +14950,8 @@ test('#14940 headless exit 0 with a broken-runtime verdict fails the task withou
       assert.strictEqual(failed[0].result, 'failed');
       assert.strictEqual(failed[0].failure_kind, 'environment');
       assert.ok(failed[0].reason.includes(ENV_FAILURE_REASON));
+      assert.ok(failed[0].tmux_output.some(l => l.includes(`HIVE_VERDICT: ${token}`)),
+        'headless has no tmux pane; the captured output must be the task_failed evidence');
       assert.strictEqual(relay.__readHeadlessStatus().state, relay.HEADLESS_STATE_FAILED);
       assert.strictEqual(relay.getCurrentTask(), null);
       assert.ok(relay.__sent.some(m => m.type === 'ready'));

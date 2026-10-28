@@ -117,6 +117,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		SelfDecisionPolicy *string `json:"self_authored_decision_policy"`
 		ConfidenceScore    *bool   `json:"confidence_score"`
 		PriorityLabels     *bool   `json:"priority_labels"`
+		// RequireLabels replaces review.require_labels whole; an empty list
+		// turns the PR review label gate off.
+		RequireLabels *[]string `json:"require_labels"`
 		// VerdictLabels replaces review.verdict_labels whole: its four keys
 		// only mean something together (one label per state), and an empty
 		// object turns the feature off (hivecommons/hive#13833).
@@ -518,6 +521,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.PriorityLabels != nil {
 		cfg.Review.PriorityLabels = *body.PriorityLabels
+	}
+	if body.RequireLabels != nil {
+		cfg.Review.RequireLabels = config.ReviewConfig{RequireLabels: *body.RequireLabels}.NormalizedRequireLabels()
 	}
 	if body.MaxReviewsPerHead != nil {
 		cfg.Review.MaxReviewsPerHead = *body.MaxReviewsPerHead

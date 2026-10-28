@@ -561,6 +561,31 @@ func (a *AgentConfig) SandboxTimeoutS(global AgentSandboxConfig) int {
 	return global.TimeoutS
 }
 
+// SandboxPublishVerify returns the publish preflight commands for the agent:
+// the per-agent publish block when present (even if its list is empty, which
+// disables the preflight for that agent), else the global one.
+func (a *AgentConfig) SandboxPublishVerify(global AgentSandboxConfig) []string {
+	if a != nil && a.Sandbox != nil && a.Sandbox.Publish != nil {
+		return append([]string(nil), a.Sandbox.Publish.Verify...)
+	}
+	if global.Publish != nil {
+		return append([]string(nil), global.Publish.Verify...)
+	}
+	return nil
+}
+
+// SandboxPublishVerifyTimeoutS returns the per-command verify timeout: the
+// per-agent value, then the global one, then DefaultSandboxVerifyTimeoutS.
+func (a *AgentConfig) SandboxPublishVerifyTimeoutS(global AgentSandboxConfig) int {
+	if a != nil && a.Sandbox != nil && a.Sandbox.Publish != nil && a.Sandbox.Publish.VerifyTimeoutS > 0 {
+		return a.Sandbox.Publish.VerifyTimeoutS
+	}
+	if global.Publish != nil && global.Publish.VerifyTimeoutS > 0 {
+		return global.Publish.VerifyTimeoutS
+	}
+	return DefaultSandboxVerifyTimeoutS
+}
+
 const DefaultBusyNoActivityThreshold = 30 * time.Minute
 
 // EffectiveBusyNoActivityThreshold returns the silence threshold for surfacing

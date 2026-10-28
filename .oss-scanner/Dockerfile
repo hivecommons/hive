@@ -53,7 +53,7 @@ WORKDIR /src/src
 # build and primary_contact gets the log. src/go.work puts the go tool in
 # workspace mode, where ./... covers the root module only; the nested Crux
 # module (src/crux, #13536) is addressed as ./crux/... .
-RUN go mod download \
+RUN for i in 1 2 3; do go mod download && break; [ "$i" = 3 ] && exit 1; sleep $((i * 2)); done \
     && go build ./... ./crux/... \
     && go test -run '^$' ./... ./crux/... >/dev/null
 

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -142,7 +144,7 @@ func supersessionExtraFiles(open, closer map[string]bool) []string {
 // beside the label until the automerge sweep next looks (#13782 wore
 // stage/050-review-pending + needs-human for fifteen minutes).
 func (c *Client) parkSupersededPR(ctx context.Context, prRepo string, number int) error {
-	if err := c.AddLabels(ctx, prRepo, number, []string{issueNeedsHumanLabel}); err != nil {
+	if err := c.AddLabels(ctx, prRepo, number, []string{issueNeedsHumanLabel, prstage.SupersessionPendingLabel}); err != nil {
 		return fmt.Errorf("labeling superseded PR %s#%d: %w", prRepo, number, err)
 	}
 	sink := c.StageFacts()
@@ -170,6 +172,11 @@ func (c *Client) supersessionNeedsHumanByPerson(ctx context.Context, owner, repo
 // hive has taken the resolution over. The stage engine re-derives the lane
 // stage from the next automerge pass (leaving 085 is never a regression).
 func (c *Client) releaseSupersessionPark(ctx context.Context, prRepo string, pr *gh.PullRequest) error {
+	if supersessionHasLabel(pr, prstage.SupersessionPendingLabel) {
+		if err := c.RemoveLabel(ctx, prRepo, pr.GetNumber(), prstage.SupersessionPendingLabel); err != nil {
+			return err
+		}
+	}
 	if !supersessionHasLabel(pr, issueNeedsHumanLabel) {
 		return nil
 	}
@@ -199,24 +206,27 @@ const supersessionEscalationMark = "**Decision needed"
 // one the hive cannot attribute, or one next to no sweep notice is left
 // alone. The lane re-derives the stage from the labels on its next pass.
 func (c *Client) releaseStaleSupersessionPark(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest) (SupersessionSweepEvent, string, error) {
-	if !supersessionHasLabel(pr, issueNeedsHumanLabel) {
+	changed := false
+	if supersessionHasLabel(pr, prstage.SupersessionPendingLabel) {
+		if err := c.RemoveLabel(ctx, prRepo, pr.GetNumber(), prstage.SupersessionPendingLabel); err != nil {
+			return SupersessionSweepEvent{}, "", err
+		}
+		changed = true
+	}
+	if supersessionHasLabel(pr, issueNeedsHumanLabel) {
+		notice, err := c.findSupersessionComment(ctx, owner, repo, pr.GetNumber())
+		if err != nil {
+			return SupersessionSweepEvent{}, "", err
+		}
+		if notice != nil && strings.Contains(notice.GetBody(), supersessionEscalationMark) && !c.supersessionNeedsHumanByPerson(ctx, owner, repo, pr) {
+			if err := c.RemoveLabel(ctx, prRepo, pr.GetNumber(), issueNeedsHumanLabel); err != nil {
+				return SupersessionSweepEvent{}, "", err
+			}
+			changed = true
+		}
+	}
+	if !changed {
 		return SupersessionSweepEvent{}, "", nil
-	}
-	notice, err := c.findSupersessionComment(ctx, owner, repo, pr.GetNumber())
-	if err != nil {
-		return SupersessionSweepEvent{}, "", err
-	}
-	if notice == nil || !strings.Contains(notice.GetBody(), supersessionEscalationMark) {
-		return SupersessionSweepEvent{}, "", nil
-	}
-	if c.supersessionNeedsHumanByPerson(ctx, owner, repo, pr) {
-		return SupersessionSweepEvent{}, "", nil
-	}
-	if err := c.releaseSupersessionPark(ctx, prRepo, pr); err != nil {
-		return SupersessionSweepEvent{}, "", err
-	}
-	if c.logger != nil {
-		c.logger.Info("supersession sweep: released its needs-human, the cause is gone", "repo", prRepo, "pr", pr.GetNumber())
 	}
 	event := SupersessionSweepEvent{Repo: prRepo, Number: pr.GetNumber(), Author: safeGetLogin(pr.GetUser()), Action: SupersessionActionReleased}
 	return event, "resolved", nil
@@ -241,7 +251,7 @@ func (c *Client) prHeadBehindBase(ctx context.Context, owner, repo string, pr *g
 // resolveOwnSupersededPR decides a hive-authored PR whose claimed issue a
 // different merged PR closed. closerFiles are the merged PR's files; subset
 // says every file this PR touches is among them.
-func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, closerFiles map[string]bool, subset bool, level int) (SupersessionSweepEvent, string, error) {
+func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, closerFiles map[string]bool, subset bool, level int, autoClose bool) (SupersessionSweepEvent, string, error) {
 	number := pr.GetNumber()
 	if c.supersessionNeedsHumanByPerson(ctx, owner, repo, pr) {
 		// A person parked it; the hive does not resolve over them.
@@ -269,8 +279,17 @@ func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo
 	if err != nil {
 		return event, "", err
 	}
+	if autoClose && prMergeableStateDirty(pr) {
+		// The payload already says the head conflicts: nothing it still
+		// adds can be measured, and the issues it closes are closed.
+		event.Action = SupersessionActionClosedConflicting
+		if err := c.closeHiveSupersededPR(ctx, owner, repo, pr, event, closer, true); err != nil {
+			return event, "", err
+		}
+		return event, "closed", nil
+	}
 	if behind > 0 {
-		return c.rebaseOwnSupersededPR(ctx, prRepo, owner, repo, pr, event, closer, head, baseRef)
+		return c.rebaseOwnSupersededPR(ctx, prRepo, owner, repo, pr, event, closer, head, baseRef, autoClose)
 	}
 
 	remaining, err := c.prFileSet(ctx, owner, repo, number)
@@ -316,7 +335,7 @@ func (c *Client) resolveOwnSupersededPR(ctx context.Context, prRepo, owner, repo
 // the next pass can measure the remaining diff. The notice names the head,
 // so an unchanged head (the update is still queued, or GitHub refused it)
 // is recognised and not re-requested every tick.
-func (c *Client) rebaseOwnSupersededPR(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, head, baseRef string) (SupersessionSweepEvent, string, error) {
+func (c *Client) rebaseOwnSupersededPR(ctx context.Context, prRepo, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, head, baseRef string, autoClose bool) (SupersessionSweepEvent, string, error) {
 	number := pr.GetNumber()
 	short := stagelabels.ShortSHA(head)
 	updating := renderSupersessionComment(event, closer, fmt.Sprintf("This PR touches files the merged PR did not, so the hive is resolving it itself: updating head %s onto `%s` to measure what #%d left for it to add. If nothing meaningful remains it will close; otherwise its claim becomes `Refs` and it continues in the lane.", short, baseRef, closer.Number))
@@ -347,6 +366,18 @@ func (c *Client) rebaseOwnSupersededPR(ctx context.Context, prRepo, owner, repo 
 		if reason == "" {
 			reason = fmt.Sprintf("HTTP %d", ghErr.Response.StatusCode)
 		}
+		if autoClose && supersessionUpdateRefusedForConflict(ghErr) {
+			// GitHub refused the update because the head conflicts with
+			// the base. The fix lane's rebase would serve an issue another
+			// PR already delivered; the hive closes its own PR instead of
+			// parking it on a person (hivecommons/hive#14965 sat at 085
+			// for over an hour this way).
+			event.Action = SupersessionActionClosedConflicting
+			if err := c.closeHiveSupersededPR(ctx, owner, repo, pr, event, closer, true); err != nil {
+				return event, "", err
+			}
+			return event, "closed", nil
+		}
 		notice = failed(reason)
 	}
 	// One comment write per outcome: the notice is posted after the update
@@ -363,6 +394,21 @@ func (c *Client) rebaseOwnSupersededPR(ctx context.Context, prRepo, owner, repo 
 	return event, "resolved", nil
 }
 
+// supersessionUpdateRefusedForConflict reports whether GitHub's refusal of
+// an update-branch call is the merge-conflict one (HTTP 422 "merge
+// conflict between base and head") rather than a transient or permission
+// failure.
+func supersessionUpdateRefusedForConflict(err *gh.ErrorResponse) bool {
+	if err == nil || err.Response == nil {
+		return false
+	}
+	if err.Response.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	msg := strings.ToLower(err.Message)
+	return strings.Contains(msg, "conflict")
+}
+
 // escalateSupersededPR posts (or edits) the notice and parks the PR at
 // stage/085-needs-decision through the stage engine. An unchanged notice
 // means the escalation was delivered on an earlier pass: a human or hive
@@ -375,6 +421,12 @@ func (c *Client) escalateSupersededPR(ctx context.Context, prRepo, owner, repo s
 		return event, "", err
 	}
 	if !changed {
+		if supersessionHasLabel(pr, issueNeedsHumanLabel) && !supersessionHasLabel(pr, prstage.SupersessionPendingLabel) {
+			if err := c.parkSupersededPR(ctx, prRepo, pr.GetNumber()); err != nil {
+				return event, "", err
+			}
+			return event, "commented", nil
+		}
 		return event, "", nil
 	}
 	if err := c.parkSupersededPR(ctx, prRepo, pr.GetNumber()); err != nil {
@@ -390,4 +442,30 @@ func supersessionSortedFiles(files map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Ignore ancillary additions only when at least one implementation file also
+// overlaps. A docs-only PR or unrelated implementation is never a duplicate
+// merely because it mentions the same closed issue.
+func supersessionBlockingExtraFiles(open, closer map[string]bool) []string {
+	ancillary := func(f string) bool {
+		return strings.HasSuffix(f, "_test.go") || strings.HasSuffix(f, ".md") || strings.HasPrefix(f, "docs/") || strings.Contains(f, "/docs/") || strings.HasPrefix(f, "changelog.d/")
+	}
+	overlap := false
+	for f := range open {
+		if closer[f] && !ancillary(f) {
+			overlap = true
+		}
+	}
+	extra := supersessionExtraFiles(open, closer)
+	if !overlap {
+		return extra
+	}
+	var blocking []string
+	for _, f := range extra {
+		if !ancillary(f) {
+			blocking = append(blocking, f)
+		}
+	}
+	return blocking
 }

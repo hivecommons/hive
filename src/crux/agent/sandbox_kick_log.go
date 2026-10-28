@@ -60,6 +60,22 @@ func sandboxKickLogBody(runtime string, res SandboxKickResult, runErr error) str
 	if !strings.HasSuffix(res.Sandbox.Stderr, "\n") {
 		b.WriteString("\n")
 	}
+	for _, v := range res.Verify {
+		verdict := "passed"
+		switch {
+		case v.TimedOut:
+			verdict = "timed out"
+		case v.Err != "":
+			verdict = "error: " + v.Err
+		case v.ExitCode != 0:
+			verdict = fmt.Sprintf("exit %d", v.ExitCode)
+		}
+		fmt.Fprintf(&b, "\n---- verify: %s (%s) ----\n", v.Command, verdict)
+		b.WriteString(v.Output)
+		if !strings.HasSuffix(v.Output, "\n") {
+			b.WriteString("\n")
+		}
+	}
 	return b.String()
 }
 

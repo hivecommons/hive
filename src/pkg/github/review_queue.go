@@ -269,6 +269,7 @@ const ReviewQueueSupersededReason = "superseded"
 // ReviewQueueSuperseded describes a PR whose claimed issue was closed by a
 // different merged PR. Grace timestamps are present only for automatic closure.
 type ReviewQueueSuperseded struct {
+	KeepReason     string    `json:"keep_reason,omitempty"`
 	Reason         string    `json:"reason"`
 	Issue          string    `json:"issue,omitempty"`
 	CloserRepo     string    `json:"closer_repo,omitempty"`

@@ -38,6 +38,16 @@ type SupersessionSweepOptions struct {
 	// GracePeriod is how long a contributor PR stays open after the
 	// supersession notice. Non-positive means DefaultSupersessionGracePeriod.
 	GracePeriod time.Duration
+	// AutoCloseSuperseded is governor.auto_close_superseded: a hive-authored
+	// superseded PR whose head GitHub refuses to update (merge conflict) is
+	// closed as superseded instead of waiting on the fix lane for a rebase
+	// that no longer serves anything (hivecommons/hive#14965). nil means on.
+	AutoCloseSuperseded func() bool
+}
+
+// autoCloseSupersededOn resolves AutoCloseSuperseded (nil → on).
+func (o SupersessionSweepOptions) autoCloseSupersededOn() bool {
+	return o.AutoCloseSuperseded == nil || o.AutoCloseSuperseded()
 }
 
 type SupersessionSweepEvent struct {
@@ -48,6 +58,7 @@ type SupersessionSweepEvent struct {
 	Issue     int
 	CloserPR  int
 	Action    string
+	Reason    string
 }
 
 type SupersessionSweepResult struct {
@@ -153,17 +164,18 @@ func (c *Client) listOpenPRsForSupersessionSweep(ctx context.Context, owner, rep
 }
 
 func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRepoName string, pr *gh.PullRequest, identity HiveIdentity, now time.Time, opts SupersessionSweepOptions) (SupersessionSweepEvent, string, error) {
-	// A hold or do-not-merge label is an operator's explicit instruction to
-	// leave the PR alone. Honor it the same way the automerge sweep does:
-	// no comment, no label, no close — before any GitHub call is made.
-	if labels := labelNames(pr.Labels); c.isHeld(labels) || c.isExempt(labels) {
-		return SupersessionSweepEvent{}, "", nil
-	}
+	// Holds gate writes, not detection: a sentinel must not hide supersession
+	// from the tracker. No comments, labels or closes happen while held.
+	labels := labelNames(pr.Labels)
+	held := c.isHeld(labels) || c.isExempt(labels)
 	candidate, closer, detected, err := c.detectSupersession(ctx, prRepo, pr, identity, now)
 	if err != nil {
 		return SupersessionSweepEvent{}, "", err
 	}
 	if !detected {
+		if held {
+			return SupersessionSweepEvent{}, "", nil
+		}
 		// Nothing supersedes this PR (any more). A park an earlier pass
 		// put on it for a cause that has since gone — the claimed issue was
 		// reopened, the claim was rewritten — clears with that cause
@@ -180,6 +192,14 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		CloserPR:  closer.Number,
 	}
 
+	if held {
+		if opts.Audit != nil && !identity.Matches(event.Author) {
+			event.Action = SupersessionActionDetectedContributor
+			event.Reason = "held; awaiting an operator decision"
+			opts.Audit(event)
+		}
+		return event, "", nil
+	}
 	reason := ""
 	openFiles, closerFiles, err := c.prFileSets(ctx, prOwner, prRepoName, pr.GetNumber(), closer)
 	if err != nil {
@@ -197,9 +217,17 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	ownPR := identity.Matches(event.Author)
 	if ownPR {
-		return c.resolveOwnSupersededPR(ctx, prRepo, prOwner, prRepoName, pr, event, closer, closerFiles, subset, level)
+		return c.resolveOwnSupersededPR(ctx, prRepo, prOwner, prRepoName, pr, event, closer, closerFiles, subset, level, opts.autoCloseSupersededOn())
 	}
 
+	blockingExtra := supersessionBlockingExtraFiles(openFiles, closerFiles)
+	if len(blockingExtra) == 0 {
+		reason = ""
+	}
+	event.Reason = reason
+	if reason == "" {
+		_, event.Reason = supersessionSizeAllowsAutoClose(supersessionSizeLabel(pr), -1)
+	}
 	// Record every detection, even when the notice is already present or
 	// automatic closure is disabled. This does not consume a write action.
 	if opts.Audit != nil {
@@ -212,12 +240,16 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 			event.Action = SupersessionActionKeptOpen
 			opts.Audit(event)
 		}
+		if supersessionHasLabel(pr, issueNeedsHumanLabel) {
+			return c.releaseStaleSupersessionPark(ctx, prRepo, prOwner, prRepoName, pr)
+		}
+		reason = supersessionReasonKeptOpen
 	}
 	if reason == "" && opts.CloseContributorPRs && level >= acmmLevelAutonomous {
-		return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod)
+		return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod, candidate.Closing)
 	}
 	notice := supersessionDecisionNotice(prOwner, closer, reason)
-	if !subset {
+	if reason == supersessionReasonExtraFiles {
 		notice += "\n\nFiles the merged PR did not touch: " + supersessionFilesSummary(extra) + "."
 		if candidate.Closing {
 			// A contributor's PR that adds files the merged PR did not: the
@@ -230,6 +262,9 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		// closer cannot have superseded it. Say so, never park — #13959
 		// and #14090 (Part of / Refs a closed tracker) sat at 085 for
 		// this until a maintainer removed the label (hivecommons/hive#14155).
+	}
+	if candidate.Closing && reason != supersessionReasonKeptOpen {
+		return c.escalateSupersededPR(ctx, prRepo, prOwner, prRepoName, pr, event, closer, notice)
 	}
 	event.Action = SupersessionActionCommentedContributor
 	body := renderSupersessionComment(event, closer, notice)
@@ -448,7 +483,7 @@ func supersessionDecisionNotice(operator string, closer supersessionCloser, note
 		return fmt.Sprintf("**Decision needed (%s):** #%d already merged and closed the claimed issue, but %s. Recommended: **keep open** until the extra changes are reviewed, or close as superseded if they are not wanted. Another option: merge anyway.", addressee, closer.Number, note)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "**Decision needed (%s):** this PR appears to duplicate #%d, which already merged: every file it touches was also changed there (the sweep compares file names, not contents). Recommended: **close as superseded**. Other options: keep open, or merge anyway.", addressee, closer.Number)
+	fmt.Fprintf(&b, "**Decision needed (%s):** this PR appears to duplicate #%d, which already merged: its implementation files overlap the merged PR (additional tests, docs and changelog fragments do not block this recommendation; the sweep compares file names, not contents). Recommended: **close as superseded**. Other options: keep open, or merge anyway.", addressee, closer.Number)
 	if note != "" {
 		fmt.Fprintf(&b, " The sweep did not close it automatically: %s.", note)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -64,9 +65,17 @@ type StageTrackerResponse struct {
 	// inferred from the PR's hive markers.
 	AuthorKindLabels bool `json:"author_kind_labels"`
 	// NeedsHumanLabels is the "a person must act" label set
-	// (needsHumanPresetLabels) behind the tracker's synthetic Needs human
-	// facet, so the page and the Projects preset cannot disagree.
+	// (needsHumanPresetLabels) the Projects preset filters by. The
+	// tracker's own "Needs human" chip no longer reads it: it counts
+	// StageTrackerItem.NeedsHuman (hivecommons/hive#15008).
 	NeedsHumanLabels []string `json:"needs_human_labels,omitempty"`
+	// NeedsHuman counts Items whose NeedsHuman flag is set — the number the
+	// SPA's "Needs human" chip shows; OnHold likewise for the "On hold"
+	// chip. Both come from the same predicates the per-item flags do
+	// (stageTrackerNeedsHuman / stageTrackerOnHold), so chip, count and
+	// filter cannot disagree.
+	NeedsHuman int `json:"needs_human"`
+	OnHold     int `json:"on_hold"`
 	// Engine is the ADR-0025 central stage engine's mode and counters for
 	// the tracker's status strip; absent when the hive has no engine.
 	Engine *stageengine.Status `json:"engine,omitempty"`
@@ -78,6 +87,11 @@ type StageTrackerResponse struct {
 	// the SPA tell "merged" from "closed" between two polls and play its
 	// opt-in merge sound for the right rows.
 	RecentlyMerged []StageTrackerMerged `json:"recently_merged,omitempty"`
+	// Merged24h is the same list over the last 24 hours, newest first, so
+	// the SPA's "Merged today" counter is right after a reload (it counts
+	// the entries since the viewer's local midnight). Best effort: the
+	// in-memory audit ring is the only source, as for RecentlyMerged.
+	Merged24h []StageTrackerMerged `json:"merged_24h,omitempty"`
 }
 
 // StageTrackerMerged is one recently merged pull request.
@@ -92,6 +106,9 @@ type StageTrackerMerged struct {
 // few polls (throttled in the background) still sees the merge it was
 // watching for, and the SPA dedupes per PR so a longer list never replays.
 const stageTrackerMergedWindow = 30 * time.Minute
+
+// stageTrackerMergedDayWindow bounds Merged24h.
+const stageTrackerMergedDayWindow = 24 * time.Hour
 
 var stageTrackerAuditNumberRe = regexp.MustCompile(`(?:^|[,\s])number=(\d+)`)
 
@@ -132,6 +149,11 @@ func stageTrackerRepoQualifier(status *StatusPayload) func(string) string {
 // only source consulted — a window this short never needs the on-disk log,
 // and reading files on every tracker build would defeat its cache.
 func (s *Server) stageTrackerRecentlyMerged(now time.Time, qualify func(string) string) []StageTrackerMerged {
+	return s.stageTrackerMergedSince(now, stageTrackerMergedWindow, qualify)
+}
+
+// stageTrackerMergedSince is stageTrackerRecentlyMerged over any window.
+func (s *Server) stageTrackerMergedSince(now time.Time, window time.Duration, qualify func(string) string) []StageTrackerMerged {
 	if s == nil || s.audit == nil {
 		return nil
 	}
@@ -140,7 +162,7 @@ func (s *Server) stageTrackerRecentlyMerged(now time.Time, qualify func(string) 
 	}
 	seen := map[string]bool{}
 	var out []StageTrackerMerged
-	for _, e := range s.audit.RecentWithPrefixSince(now.Add(-stageTrackerMergedWindow), github.AuditActionPRMerged) {
+	for _, e := range s.audit.RecentWithPrefixSince(now.Add(-window), github.AuditActionPRMerged) {
 		if e.Action != github.AuditActionPRMerged {
 			continue
 		}
@@ -213,12 +235,13 @@ type StageTrackerHop struct {
 
 // StageTrackerItem is one open issue or PR on the tracker.
 type StageTrackerItem struct {
-	Repo   string `json:"repo"`
-	Number int    `json:"number"`
-	Kind   string `json:"kind"`
-	Title  string `json:"title"`
-	URL    string `json:"url,omitempty"`
-	Author string `json:"author,omitempty"`
+	Superseded *github.ReviewQueueSuperseded `json:"superseded,omitempty"`
+	Repo       string                        `json:"repo"`
+	Number     int                           `json:"number"`
+	Kind       string                        `json:"kind"`
+	Title      string                        `json:"title"`
+	URL        string                        `json:"url,omitempty"`
+	Author     string                        `json:"author,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so
 	// a "waiting for a verdict" caption can name the revision it waits on.
 	Head           string                `json:"head,omitempty"`
@@ -276,6 +299,18 @@ type StageTrackerItem struct {
 	// does not count them until the PR reaches stage/080 or later. The
 	// labels themselves are untouched; this is presentation only.
 	DeferredModifiers []string `json:"deferred_modifiers,omitempty"`
+	// NeedsHuman is true when a person's decision or action is the ONLY
+	// thing that advances the item (stageTrackerNeedsHuman): stages 015
+	// triage-needed, 045/085 needs-decision, 071/072 needs-author /
+	// returned-to-contributor with a human author, 090 ready-for-human-
+	// merge, or a needs-human / needs-decision / unauthorized pill. A
+	// hold is NOT this (OnHold): the owner chose to pause it. Neither are
+	// stalled, a handled regression, blocked-on-pr, 040 covered or a PR
+	// ready for auto-merge — the hive advances those (hivecommons/hive#15008).
+	NeedsHuman bool `json:"needs_human,omitempty"`
+	// OnHold is true when the item wears a hold pill: paused on purpose,
+	// waiting on nobody.
+	OnHold bool `json:"on_hold,omitempty"`
 	// RegressedFrom / RegressedTo / RegressedAt / RegressedReason narrate
 	// the unresolved regression behind the `regressed` modifier: the
 	// high-water stage the item fell from, the stage that fall landed on
@@ -329,6 +364,12 @@ type StageTrackerItem struct {
 	// (hivecommons/hive#14589).
 	UnauthorizedStep string `json:"unauthorized_step,omitempty"`
 	Unauthorized     string `json:"unauthorized,omitempty"`
+	// DecisionNeeded is set on a row parked on a person (085 / 045 / 015,
+	// the needs-human or needs-decision pill): what the person must
+	// decide, who asked, the plain-words blocker and the actions that
+	// advance it, under the row context menu's action ids. See
+	// stage_tracker_decision.go.
+	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
 	// StaleLabels are control labels the row still wears that its stage
 	// has outrun, so they are not read as modifiers: `needs-triage` on an
 	// issue at 020 or later (015 is not a gate; the reconciler removes the
@@ -431,6 +472,9 @@ type StageTrackerLinkedPR struct {
 	HumanMergeReason     string `json:"human_merge_reason,omitempty"`
 	HumanMergeReasonText string `json:"human_merge_reason_text,omitempty"`
 	Head                 string `json:"head,omitempty"`
+	// DecisionNeeded mirrors the nested PR's own row field so the issue's
+	// sub-row can open the same "Needs human" popover.
+	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -1026,6 +1070,11 @@ func humanizeStageReason(reason string) string {
 	switch lower {
 	case "actionable", "live agent claim", "live issue claim", "open pr covers it":
 		return ""
+	}
+	if stageengine.ReasonIsPartialCover(r) {
+		return "the PR references it without closing it (partial)"
+	}
+	switch lower {
 	case "held":
 		return "held by a hold label"
 	case "label:needs-rebase":
@@ -1282,6 +1331,9 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.PRInProgress:
 		return joinClause("An agent has a PR under way; not yet opened", clause), "hive"
 	case stagelabels.CoveredByPR:
+		if stageengine.ReasonIsPartialCover(reason) {
+			return "An open PR" + prRef + " addresses part of this issue — it references it without a closing keyword, so the remainder stays open when it merges", "its PR"
+		}
 		return joinClause("An open PR"+prRef+" covers this issue", clause), "its PR"
 	case stagelabels.ReviewPending:
 		return joinClause("Review swarm requested; waiting for a verdict on the current head", clause), "review swarm"
@@ -1433,11 +1485,22 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		st := s.deps.StageEngineStatus()
 		resp.Engine = &st
 	}
-	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now, stageTrackerRepoQualifier(status))
+	qualify := stageTrackerRepoQualifier(status)
+	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now, qualify)
+	resp.Merged24h = s.stageTrackerMergedSince(now, stageTrackerMergedDayWindow, qualify)
 	if status == nil {
 		return resp
 	}
 	resp.HiveID = status.HiveID
+	qualifyRepo := stageTrackerRepoQualifier(status)
+	superseded := map[string]github.ReviewQueueSuperseded{}
+	entries := append([]AuditEntry(nil), s.supersessionAuditEntries(now)...)
+	for i := range entries {
+		entries[i].Repo = qualifyRepo(entries[i].Repo)
+	}
+	for key, info := range supersededGraceStates(entries, "", s.supersessionGracePeriod()) {
+		superseded[key] = info
+	}
 	var cfg *config.Config
 	if s.deps != nil {
 		cfg = s.deps.Config
@@ -1448,6 +1511,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	if verifierErr == nil {
 		evidenceVerifier = &verifier
 	}
+	// The reviewer's decision question for a parked PR comes from the
+	// local verdict artifact; a missing or unreadable artifact just means
+	// the popover falls back to the reason-derived question.
+	var verdictArtifact *review.Artifact
+	if art, err := review.LoadArtifact(""); err == nil {
+		verdictArtifact = &art
+	}
+	verdictFor := stageTrackerVerdictLookup(verdictArtifact)
+	sentinelLabel := s.sentinelLabel()
 	lookup := func(repo string, number int) (stagelabels.Record, bool) {
 		if store == nil {
 			return stagelabels.Record{}, false
@@ -1594,6 +1666,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
 			}
 		}
+		it.DecisionNeeded = stageTrackerDecisionNeeded(it, nil, sentinelLabel)
 		add(it)
 	}
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
@@ -1632,6 +1705,23 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.DeferredModifiers = append([]string{modSentinel}, it.DeferredModifiers...)
 		}
 		it.LinkedIssues = stageTrackerPRLinkedIssues(pr, repoName, status.GitHubBaseURL)
+		info, found := superseded[github.ReviewQueueKey(qualifyRepo(repoName), pr.Number)]
+		if !found {
+			info, found = superseded[github.ReviewQueueKey(repoName, pr.Number)]
+		}
+		if found && !labelSet(pr.Labels)[github.SupersessionKeepOpenLabel] {
+			it.Superseded = &info
+			it.Caption = fmt.Sprintf("Superseded by #%d — decide", info.CloserPR)
+			if info.KeepReason != "" {
+				it.Caption += ": " + info.KeepReason
+			}
+			it.Actor = "maintainer"
+		}
+		var agg *review.Aggregate
+		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA); ok {
+			agg = &a
+		}
+		it.DecisionNeeded = stageTrackerDecisionNeeded(it, agg, sentinelLabel)
 		add(it)
 	}
 	for _, repo := range status.Repos {
@@ -1660,6 +1750,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
+	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
@@ -1682,6 +1773,63 @@ var stageTrackerAttentionStages = []int{stagelabels.IssueNeedsDecision.Number(),
 // stageTrackerHumanMods are the modifiers that park an item on a person
 // (dashboard STAGE_TRACKER_HUMAN_MODS).
 var stageTrackerHumanMods = []string{modHold, modUnauthorized, modNeedsHuman, modNeedsDecision, modNeedsRebase, modBlocked, modStalled}
+
+// stageTrackerNeedsHumanStages are the stages where only a person can
+// advance the item (dashboard STAGE_TRACKER_NEEDS_HUMAN_STAGES): 015
+// triage-needed, 045 issue needs-decision, 085 PR needs-decision, 090
+// ready-for-human-merge; 071 needs-author and 072 returned-to-contributor
+// count only when the author is a human (stageTrackerNeedsHumanAuthorStages).
+var stageTrackerNeedsHumanStages = []int{stagelabels.TriageNeeded.Number(), stagelabels.IssueNeedsDecision.Number(), stagelabels.NeedsDecision.Number(), stagelabels.ReadyForHumanMerge.Number()}
+
+// stageTrackerNeedsHumanAuthorStages park the PR on its author; a human
+// author must act, a clanker's or hive's PR is re-kicked by the hive.
+var stageTrackerNeedsHumanAuthorStages = []int{stagelabels.NeedsAuthor.Number(), stagelabels.ReturnedToContributor.Number()}
+
+// stageTrackerNeedsHumanMods are the pills that mean "a person must decide
+// or act" (dashboard STAGE_TRACKER_NEEDS_HUMAN_MODS). hold is deliberately
+// absent (On hold is its own chip); stalled, regressed, blocked,
+// needs-rebase and draft are the hive's or nobody's to move.
+var stageTrackerNeedsHumanMods = []string{modNeedsHuman, modNeedsDecision, modUnauthorized}
+
+// stageTrackerNeedsHuman is the ONE definition of "Needs human" behind the
+// payload's per-item flag, its count and the SPA's chip + filter
+// (dashboard stageTrackerItemNeedsHuman mirrors it): a human decision or
+// action is the only thing that advances the item. A hold wins: a held
+// item is paused, not waiting on a person (hivecommons/hive#15008).
+func stageTrackerNeedsHuman(it StageTrackerItem) bool {
+	if stageTrackerOnHold(it) {
+		return false
+	}
+	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerNeedsHumanMods, m) }) {
+		return true
+	}
+	if slices.Contains(stageTrackerNeedsHumanStages, it.Stage) {
+		return true
+	}
+	return slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage) && it.AuthorKind == authorKindHuman
+}
+
+// stageTrackerOnHold mirrors the dashboard's stageTrackerItemOnHold: the
+// row wears the hold pill.
+func stageTrackerOnHold(it StageTrackerItem) bool {
+	return slices.Contains(it.Modifiers, modHold)
+}
+
+// stageTrackerHumanCounts sets every item's NeedsHuman / OnHold flag and
+// returns the two totals for the payload header.
+func stageTrackerHumanCounts(items []StageTrackerItem) (needsHuman, onHold int) {
+	for i := range items {
+		items[i].NeedsHuman = stageTrackerNeedsHuman(items[i])
+		items[i].OnHold = stageTrackerOnHold(items[i])
+		if items[i].NeedsHuman {
+			needsHuman++
+		}
+		if items[i].OnHold {
+			onHold++
+		}
+	}
+	return needsHuman, onHold
+}
 
 // stageTrackerSunkMods are the modifiers that sink a row to the bottom of
 // its stage (dashboard STAGE_TRACKER_SUNK_MODS): a person parked it, or it
@@ -2330,6 +2478,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
+				lp.DecisionNeeded = pr.DecisionNeeded
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
 				}

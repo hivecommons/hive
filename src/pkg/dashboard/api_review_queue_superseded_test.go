@@ -15,6 +15,8 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
 )
 
 // useRingSupersessionAudit points the queue's on-disk audit scan at an empty
@@ -325,6 +327,8 @@ func TestSupersededDetectionReplay(t *testing.T) {
 		start   time.Time
 	}{
 		{"detection only", []AuditEntry{detection}, true, time.Time{}},
+		{"escalation retains decision", []AuditEntry{detection, entry("supersession-sweep-commented-needs-human", now)}, true, time.Time{}},
+		{"escalation cancels grace", []AuditEntry{detection, grace, entry("supersession-sweep-commented-needs-human", now)}, true, time.Time{}},
 		{"plain notice", []AuditEntry{detection, notice, repeat}, true, time.Time{}},
 		{"grace starts at notice", []AuditEntry{detection, grace}, true, now.Add(time.Hour)},
 		{"repeated detection preserves grace", []AuditEntry{detection, grace, repeat, entry(supersessionGraceAuditAction, now.Add(4*time.Hour))}, true, now.Add(time.Hour)},
@@ -368,11 +372,17 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 	useRingSupersessionAudit(t)
 	s := reviewQueueTestServer(t, filepath.Join(t.TempDir(), "missing.json"))
 	var notice string
+	var labels []string
+	var labelWrites int
 	var writes int
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /repos/myorg/repo1/pulls":
-			fmt.Fprint(w, `[{"number":2,"body":"Fixes #3","user":{"login":"alice"}}]`)
+			wireLabels := make([]map[string]string, 0, len(labels))
+			for _, label := range labels {
+				wireLabels = append(wireLabels, map[string]string{"name": label})
+			}
+			json.NewEncoder(w).Encode([]map[string]any{{"number": 2, "body": "Fixes #3", "user": map[string]string{"login": "alice"}, "labels": wireLabels}})
 		case "GET /repos/myorg/repo1/issues/3":
 			fmt.Fprint(w, `{"number":3,"state":"closed"}`)
 		case "POST /graphql":
@@ -385,6 +395,12 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 			} else {
 				json.NewEncoder(w).Encode([]map[string]any{{"id": 1, "body": notice}})
 			}
+		case "POST /repos/myorg/repo1/issues/2/labels":
+			if err := json.NewDecoder(r.Body).Decode(&labels); err != nil {
+				t.Error(err)
+			}
+			labelWrites++
+			fmt.Fprint(w, `[]`)
 		case "POST /repos/myorg/repo1/issues/2/comments":
 			var in struct {
 				Body string `json:"body"`
@@ -403,6 +419,10 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 	defer api.Close()
 	client := ghpkg.NewClient("token", "myorg", []string{"repo1"}, slog.Default(), api.URL)
 	client.SetAppBotLogin("hive-app[bot]")
+	// The park goes through the stage engine; record it instead of letting the
+	// default sink re-read the PR and reconcile against the shared label store.
+	facts := &stageenginetest.Recorder{}
+	client.SetStageFactSink(facts)
 	for pass := 0; pass < 2; pass++ {
 		res, err := client.SweepSupersededOpenPRs(context.Background(), ghpkg.SupersessionSweepOptions{
 			ACMMLevelForRepo: func(string) int { return 6 },
@@ -439,5 +459,17 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 	}
 	if writes != 1 {
 		t.Fatalf("notice writes = %d, want 1", writes)
+	}
+	if labelWrites != 1 || strings.Join(labels, ",") != "needs-human,"+prstage.SupersessionPendingLabel {
+		t.Fatalf("park labels = %v, writes = %d; want one supersession park", labels, labelWrites)
+	}
+	var parked int
+	for _, f := range facts.All() {
+		if f.Method == "Parked" && f.Ref.Number == 2 && f.Label == "needs-human" {
+			parked++
+		}
+	}
+	if parked != 1 {
+		t.Fatalf("Parked facts for PR 2 = %d, want 1: %+v", parked, facts.All())
 	}
 }

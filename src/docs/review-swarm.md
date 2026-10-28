@@ -181,6 +181,7 @@ review:
   contributor_prs:
     base_sync: false                        # optional; let GitHub update-branch unstick hive-authored fork PRs (default off)
   priority_labels: false                    # optional; mirror the PR review queue rank onto review-priority/* labels (default off)
+  require_labels: []                        # optional; review ONLY PRs carrying one of these labels (default empty = every open PR); see "Only review labelled PRs"
   pending_ttl: 45m                          # optional; re-dispatch a review that has posted no verdict after this long (default 45m)
   pending_fix_ttl: 2h                       # optional; dispatch the next bounded fix attempt when a fixer has pushed no new head after this long (default 2h; negative disables expiry)
   max_redispatch: 3                         # optional; expiries per head before the PR is held for a human (default 3)
@@ -201,6 +202,46 @@ review:
 ```
 
 ### Blocking line (`review.severity`, `review.backlog`)
+
+### Only review labelled PRs (`review.require_labels`)
+
+`review.require_labels` is the PR-side counterpart of the issue approval gate
+`project.issue_filter.require_labels` ([agent-configuration.md](agent-configuration.md#label-policy-which-issues-agents-may-work)):
+a team that wants hive reviews **only on PRs a maintainer has opted in** names
+the label(s) here, and the hive reviews nothing else.
+
+```yaml
+review:
+  require_labels: [hive-review]   # a PR is reviewed only if it carries at least one of these
+```
+
+Dashboard: **Settings → Features → Review Gate → "Only review labelled PRs"**
+(toggle + comma-separated label list; saved through `PUT /api/config/review`
+into the dashboard overlay, so it survives restarts and ACMM pack re-applies —
+it is a `review.*` key, not an agent block).
+
+Semantics:
+
+- **Absent/empty = no gate.** Every open PR stays reviewable; no existing hive
+  goes quiet on upgrade.
+- A PR must carry **at least one** listed label. Matching is case-insensitive
+  and **exact** (`approved-for-review` does not satisfy `approved`).
+- **Enforced server-side in three places**, so a prompt cannot route around it:
+  the cadence reviewer's `${PR_LIST}` and the fan-out dispatch planner never
+  offer an unlabelled PR (log line `review label gate withheld PRs from …`),
+  and the `hive-review` relay refuses any request — review, thread reply,
+  resolution or bare `record_verdict` — on a PR that lacks the label after
+  re-reading its labels with the App token (`.denied`, audit
+  `review_label_gate_refused`). A failed label fetch is retried, never waved
+  through.
+- The reviewer's kick carries a `REVIEW LABEL GATE` notice naming the labels,
+  mirroring the issue-filter notice.
+- Labels are **never created** by the hive; name one the repo already
+  maintains. Exempt/hold labels still exclude a PR that also carries an
+  approval label.
+- It is independent of `review.require_approval`: a hive that gates merge on
+  review AND gates review on a label simply does not merge unlabelled PRs
+  until a person labels (or merges) them.
 
 `review.severity.block_at` is the lowest finding priority that still blocks merge, on the P0–P3 scale (critical → P0, high → P1, medium → P2, low/info → P3). **Settings → Features → Review Gate → Severity & backlog** offers three presets: *Strict (P0–P2 block)* sets `P2`, *Ship fast (P0–P1 block)* sets `P1`, and *Everything blocks* sets `P3`. Unset keeps today's behaviour. Findings below the line are posted as non-blocking comments when `comment_below` is true (default) and filed as follow-up work when `backlog_below` is true (default).
 
@@ -278,6 +319,32 @@ decision marker parks the PR for a person. The reviewer template
 (`policies/reviewer-queue.md`) also tells the swarm to check the linked
 issue/spec and PR body before asking, and to cite the answer
 (`per #<issue>: …`) instead of raising a question the issue already settled.
+
+Two decision questions never reach the swarm or a person at all, because
+the hive already owns the answer:
+
+- **"Should this hive PR be closed in favour of #M?"** A hive-authored PR
+  whose closing targets are all closed, one of them by a *different* merged
+  PR #M, and whose head conflicts with the base (or whose files #M already
+  covers) is superseded. With `governor.auto_close_superseded` (default
+  on) the self-authored lane closes it as `hive/superseded` with a notice
+  naming #M *before* dispatching any review, the supersession sweep does
+  the same on a conflicting rebase, and the close-on-merge of #M closes it
+  immediately — no reviewer cycle, no `stage/085-needs-decision`
+  ([#14965](https://github.com/hivecommons/hive/pull/14965) asked the owner
+  this after #14957 merged and sat parked for over an hour). Human-authored
+  PRs keep the notice and the decision.
+- **A `requires_human` on a PR the hive adopted.** When a contributor PR is
+  adopted in supersede mode (stage 074, superseding App PR #N carries the
+  head), the swarm's question is answered on #N. The original's 085 yields
+  to the adoption in the adopting pass: it leaves the merge gate for the
+  CI/Review column with an "Adopted → #N" pill, and is closed as
+  superseded when #N merges
+  ([#14975](https://github.com/hivecommons/hive/pull/14975) → #14980,
+  [#14947](https://github.com/hivecommons/hive/pull/14947) → #14977). A
+  hold, sentinel alert, `needs-human` a person applied, fork guard or
+  manual-merge lane rule still keeps 085. See
+  [labels-and-control-signals.md](labels-and-control-signals.md#supersession-closed-issue-another-merged-pr).
 
 `review.shadow` (default false) evaluates the same approval gate (including the unavailable-artifact case) without enforcing it. A PR that is otherwise merge-eligible stays eligible; the result is recorded as `shadow.review_gate.would_have_held` (with reason and confidence) on the PR head's evidence bundle and logged. Shadow never blocks a merge and never weakens `require_approval: true`, which keeps blocking as above. Recording needs `evidence` enabled and an existing bundle for the head; if `evidence.signing_key_path` points at a key that exists but fails to load, the shadow write is skipped with a warning rather than rewriting a signed bundle unsigned (an absent key path or missing key file still records unsigned).
 

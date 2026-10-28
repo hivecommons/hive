@@ -1667,6 +1667,18 @@ type GovernorConfig struct {
 	// hive retires it. See AdvisoryConfig.
 	Advisory AdvisoryConfig `yaml:"advisory,omitempty" json:"advisory,omitempty"`
 
+	// AutoCloseSuperseded lets the hive close its OWN pull requests as
+	// superseded without asking a person: when every issue a hive-authored
+	// PR closes is already closed, at least one of them by a different
+	// merged PR, and the PR is conflicting (or adds nothing that merged PR
+	// did not), the hive labels it hive/superseded, comments naming the
+	// superseding PR and closes it — in the automerge sweep before the
+	// review swarm is dispatched, on close-on-merge of the superseding PR,
+	// and in the supersession sweep when GitHub refuses the rebase. A
+	// person's PR is never closed by this rule; it keeps the notice and
+	// the stage/085 decision park. Default on (hivecommons/hive#14965).
+	AutoCloseSuperseded *bool `yaml:"auto_close_superseded,omitempty" json:"auto_close_superseded,omitempty"`
+
 	// ProjectObservability configures what the telemetry and operations agents
 	// recommend for the MANAGED PROJECT. It is deliberately separate from
 	// Config.OTel/Tracing, which export Hive's own telemetry.
@@ -2158,6 +2170,12 @@ func (a AdvisoryConfig) ResolvedTarget() string {
 // PRAutoCloseEnabled resolves AdvisoryConfig.PRAutoClose with its default (on).
 func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
 	return a.PRAutoClose == nil || *a.PRAutoClose
+}
+
+// AutoCloseSupersededEnabled resolves GovernorConfig.AutoCloseSuperseded
+// with its default (on).
+func (g GovernorConfig) AutoCloseSupersededEnabled() bool {
+	return g.AutoCloseSuperseded == nil || *g.AutoCloseSuperseded
 }
 
 // Bounds for AdvisoryConfig.UpdateIntervalS. Exported because the dashboard
@@ -6141,6 +6159,10 @@ func (c *Config) applyDefaults() {
 		on := true
 		c.Governor.Advisory.PRAutoClose = &on
 	}
+	if c.Governor.AutoCloseSuperseded == nil {
+		on := true
+		c.Governor.AutoCloseSuperseded = &on
+	}
 
 	if c.Knowledge.Enabled {
 		if c.Knowledge.Engine == "" {
@@ -7565,6 +7587,18 @@ type ReviewConfig struct {
 	// a repo that does not already have them is skipped. Off by default: a
 	// label on every PR is churn a repo must ask for.
 	PriorityLabels bool `yaml:"priority_labels,omitempty" json:"priority_labels,omitempty"`
+	// RequireLabels is the PR-side approval allow-list, the review
+	// counterpart of project.issue_filter.require_labels. Non-empty: a PR is
+	// reviewed by the hive only if it carries AT LEAST ONE of these labels
+	// (case-insensitive exact match). It is enforced in two places so a
+	// prompt cannot route around it: the reviewer kick lists and the review
+	// dispatch planner never offer an unlabelled PR, and the hive-review
+	// relay refuses to post on one. Absent/empty keeps today's behaviour —
+	// every open PR is reviewable — so no existing hive goes quiet on
+	// upgrade. The label is never created: name one the governed repos
+	// already maintain. Operator-added hold/exempt labels still exclude a PR
+	// that also carries an approval label.
+	RequireLabels []string `yaml:"require_labels,omitempty" json:"require_labels,omitempty"`
 	// VerdictLabels mirrors the review swarm's state for each PR's current
 	// head onto exactly one label (hivecommons/hive#13833): reviewing while
 	// the head's review is pending, then the settled verdict. Independent of

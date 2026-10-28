@@ -99,6 +99,14 @@ through `/api/config/auto-merge`, with a watched-repo multi-select (no
 selection means all watched repositories), role selector, GitHub permission
 switch, and excluded-label list.
 
+Governor settings **Features → Review Gate** includes the owner-only
+**Only review labelled PRs** toggle with a comma-separated label list. It
+edits `review.require_labels` through `/api/config/review`; on, the hive
+reviews only PRs carrying one of the labels (enforced in the reviewer kick
+list, the review dispatch planner and the hive-review relay — see
+[review-swarm.md](review-swarm.md#only-review-labelled-prs-reviewrequire_labels)).
+Off (the default) sends an empty list and every open PR stays reviewable.
+
 The cadence table starts each agent row with the same `1`/`0` Agent power
 rocker used in the agent settings panel, so owners can enable or disable an
 agent from the table; disabled rows are dimmed, and read-only viewers see the

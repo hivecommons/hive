@@ -4389,10 +4389,11 @@ function runHeadlessTask(task) {
         const quota = wasTimedOut || spawnError ? null : headlessQuotaExhaustion(diagnostic, BACKEND);
         if (quota) {
           enterQuotaHold(quota);
-          failCurrentTask(reason, { permanent: false, kind: 'environment', skipReady: true });
+          failCurrentTask(reason, { permanent: false, kind: 'environment', skipReady: true, outputTail: outTail });
           return;
         }
         failCurrentTask(reason, {
+          outputTail: outTail,
           permanent: false,
           kind: BACKEND === 'pi' ? 'environment' : undefined,
         });
@@ -4419,7 +4420,7 @@ function runHeadlessTask(task) {
         const reason = `agent reported an environment failure: ${noWork.reason || '(no reason given)'}`;
         setPiInvocationState('failed');
         writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, task_gen: task.task_gen, result: 'failed', reason });
-        failCurrentTask(reason, { kind: 'environment', skipCLI: true });
+        failCurrentTask(reason, { kind: 'environment', skipCLI: true, outputTail: outTail });
         return;
       }
       setPiInvocationState('succeeded');
@@ -7371,6 +7372,11 @@ function restartBackoffMs(attempt) {
 // the pane — it quit and relaunched the CLI itself, or the CLI is already gone.
 // The credential is still dropped; only the quit/relaunch is skipped, so a
 // relaunch already in flight is not nested inside another one.
+//
+// opts.outputTail is the caller's already-captured (and redacted) output lines.
+// Only headless callers pass it: they have no pane of their own, and any tmux
+// session that happens to share TMUX_SESSION's name on the host belongs to
+// someone else, so when it is supplied it is used instead of a pane capture.
 function failCurrentTask(reason, opts) {
   if (!currentTask) return;
   const permanent = !!(opts && opts.permanent);
@@ -7380,7 +7386,9 @@ function failCurrentTask(reason, opts) {
   // Captured BEFORE the agent is stopped: the pane text is the evidence the
   // hub and the operator read to understand the failure, and quitLiveCLI()
   // followed by a relaunch overwrites it with launch chrome.
-  const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
+  const tmuxLines = (opts && Array.isArray(opts.outputTail))
+    ? opts.outputTail
+    : captureTmuxLines(TMUX_TAIL_LINES);
   // Cause B (#5353): the hub is about to release this issue and offer it to
   // someone else. Stop the agent and drop its token FIRST, so the report and
   // the reality agree at the instant the hub acts on it.

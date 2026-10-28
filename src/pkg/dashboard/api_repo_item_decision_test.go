@@ -35,6 +35,9 @@ type repoItemDecisionMock struct {
 	prMergeState string
 	prRedCI      bool
 	prNoCI       bool
+	// priorComments are the comment bodies GET /comments lists (a prior
+	// delegated decision makes a repeat click a no-op).
+	priorComments []string
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -85,7 +88,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 		case r.Method == http.MethodGet && strings.Contains(path, "/timeline"):
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/comments"):
-			_, _ = io.WriteString(w, `[]`)
+			prior := make([]map[string]any, 0, len(m.priorComments))
+			for i, body := range m.priorComments {
+				prior = append(prior, map[string]any{"id": i + 1, "body": body, "created_at": "2026-10-28T12:01:00Z"})
+			}
+			_ = json.NewEncoder(w).Encode(prior)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/comments"):
 			var c map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&c)

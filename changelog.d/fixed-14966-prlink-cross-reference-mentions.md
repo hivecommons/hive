@@ -1,0 +1,1 @@
+- The dashboard no longer marks an issue as Reviewing just because an open pull request mentions it: a PR found by search or by a timeline cross-reference counts as the linked PR only when its title or body closes the issue (Closes/Fixes/Resolves); a PR that names the issue only in a PR comment is still linked ([#14966](https://github.com/hivecommons/hive/issues/14966)).

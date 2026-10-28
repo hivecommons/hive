@@ -76,6 +76,12 @@ func TestStageFacts_ClaimReleaseUnderExternalLedgerClaimDerives040(t *testing.T)
 	if labels, _, _ := srv.snapshot(); stagelabels.Current(labels) != stagelabels.CoveredByPR {
 		t.Fatalf("labels = %v, want 040", labels)
 	}
+	// A "Refs #N" claim is 040 as "addresses part of it", never "covers it"
+	// (hivecommons/hive#15008).
+	rec, _ := stagelabels.Shared().Get(issue.Key())
+	if !stageengine.ReasonIsPartialCover(rec.Reason) {
+		t.Fatalf("record reason = %q, want the partial-cover reason for a non-closing reference claim", rec.Reason)
+	}
 }
 
 // Ledger claims the guard does not suppress for are no cover: a hive

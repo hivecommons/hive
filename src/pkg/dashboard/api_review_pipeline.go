@@ -211,11 +211,18 @@ func (s *Server) handleReviewPipelineSendToHuman(w http.ResponseWriter, r *http.
 		}
 	}
 	s.auditFromRequest(r, "review-loop-send-to-human", auditDetail("repo", repo, "pr", strconv.Itoa(number), "reason", reason), "")
+	result := RowActionResult{Action: rowActionNeedsHuman, Target: rowActionTarget(repo, rowActionTargetPR, number),
+		Outcome: "`" + config.DefaultNeedsHumanLabel + "` applied; marker comment posted.", Next: "A person reviews it; the hive's review loop stands down until the label comes off."}
+	if posted {
+		result = rowActionNoopResult(result.Target, "`"+config.DefaultNeedsHumanLabel+"` was already on with its marker comment", time.Time{}, "")
+		result.Next = "A person reviews it; the hive's review loop stands down until the label comes off."
+	}
 	jsonResponse(w, map[string]any{
 		"status": "sent_to_human",
 		"repo":   repo,
 		"number": number,
 		"label":  config.DefaultNeedsHumanLabel,
 		"posted": !posted,
+		"result": result,
 	})
 }

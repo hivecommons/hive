@@ -123,6 +123,50 @@ type repoItemDecisionResponse struct {
 	// on the spot, when it did.
 	Released []string `json:"released,omitempty"`
 	Stage    string   `json:"stage,omitempty"`
+	// Result is the shared row-action outcome for the dashboard's toast.
+	Result *RowActionResult `json:"result,omitempty"`
+}
+
+// repoItemDecisionResult reads a recorded human decision into the shared
+// row-action result.
+func repoItemDecisionResult(repoFull string, number int, itemType, decision, comment, supersededBy, label string, released []string) *RowActionResult {
+	out := &RowActionResult{Target: rowActionTarget(repoFull, itemType, number)}
+	switch decision {
+	case repoItemDecisionApprove:
+		out.Action = rowActionApproved
+		if itemType == "pr" {
+			out.Outcome = "`/lgtm` + `/approve` posted"
+			if len(released) > 0 {
+				out.Outcome += " (released: " + strings.Join(released, ", ") + ")"
+			}
+			out.Outcome += "."
+			out.Next = "The merge gate takes it from here; the dashboard merges nothing."
+		} else {
+			out.Outcome = "`/hive approve` recorded; parking labels lifted, `" + label + "` applied."
+			out.Next = "The hive un-parks the issue and carries on; nothing is merged."
+		}
+	case repoItemDecisionDirection:
+		out.Action = rowActionDirected
+		out.Outcome = "Direction recorded as `/hive decision`: " + strings.TrimSuffix(strings.TrimSpace(comment), ".") + "."
+		if itemType == "pr" {
+			out.Next = "The author agent pushes a new head; the row moves when it lands."
+		} else {
+			out.Next = "The hive carries on with that direction; nothing is merged."
+		}
+	case repoItemDecisionCloseSuperseded:
+		out.Action = rowActionClosed
+		if supersededBy != "" {
+			out.Outcome = "Closed as superseded by " + supersededBy + "."
+		} else {
+			out.Outcome = "Closed as superseded."
+		}
+		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
+	case repoItemDecisionCloseWontFix:
+		out.Action = rowActionClosed
+		out.Outcome = "Closed as won't fix (not planned)."
+		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
+	}
+	return out
 }
 
 func renderRepoItemDecisionCloseComment(verb, user, comment, supersededBy string) string {
@@ -214,7 +258,8 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 			action = auditRepoItemDecisionDirection
 		}
 		s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "decision", event.Decision), "", repoFull, number)
-		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "unparked", Label: ghpkg.HumanAckLabel})
+		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "unparked", Label: ghpkg.HumanAckLabel,
+			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, "", ghpkg.HumanAckLabel, nil)})
 	case repoItemDecisionCloseSuperseded, repoItemDecisionCloseWontFix:
 		verb := "won't fix"
 		supersededBy := ""
@@ -257,7 +302,8 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 		s.audit.LogRecord(user, auditRepoItemDecisionClose, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "reason", verb, "superseded_by", supersededBy), "", repoFull, number)
-		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "closed", Label: label})
+		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "closed", Label: label,
+			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, supersededBy, label, nil)})
 	default:
 		jsonError(w, "unknown decision; want approve, direction, close-superseded or close-wontfix", http.StatusBadRequest)
 	}
@@ -312,7 +358,8 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	// The row's park was just answered: serve the re-derived stage on the
 	// next tracker read instead of the cached 085.
 	s.invalidateStageTrackerForWebhook()
-	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage})
+	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage,
+		Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", "", released)})
 }
 
 // repoItemApprovalReleased names what a PR approval released, for the

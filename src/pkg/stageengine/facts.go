@@ -92,6 +92,9 @@ type AdoptionFacts struct {
 	InPlace bool
 	Live    bool // superseder still open / hive still pushing
 	Yielded bool
+	// SupersededBy is the superseding App PR of a supersede-mode adoption
+	// (0 in place).
+	SupersededBy int
 }
 
 // IssueBucket is the enumeration cycle's work bucket for an issue. The
@@ -176,6 +179,12 @@ type ClaimFact struct {
 	PRStarted bool
 	PRRepo    string
 	PRNumber  int
+	// Partial says the covering PR references the issue without a closing
+	// keyword ("Refs #N", "Part of #N") — it works the issue but does not
+	// claim to finish it (hivecommons/hive#15008). The deriver still stages
+	// 040 (the hive is on it; dispatch is withheld, #13747) but the reason
+	// and the activity monitor say "addresses part of", never "covers".
+	Partial bool
 }
 
 // PRFacts is the pull-request-side evidence.

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -40,6 +41,8 @@ type repoAcceptTriageResponse struct {
 	Removed         []string `json:"removed"`
 	AlreadyAccepted bool     `json:"alreadyAccepted"`
 	MinStatusSeq    uint64   `json:"minStatusSeq"`
+	// Result is the shared row-action outcome for the dashboard's toast.
+	Result *RowActionResult `json:"result,omitempty"`
 }
 
 // acceptTriageLabels returns the triage label to add and the awaiting labels
@@ -168,6 +171,9 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 	out := repoAcceptTriageResponse{OK: true, Repo: repoFull, Number: number, AcceptLabel: accept, Added: []string{}, Removed: []string{}}
 	if len(add) == 0 && len(remove) == 0 {
 		out.AlreadyAccepted = true
+		res := rowActionNoopResult(rowActionTarget(repoFull, rowActionTargetIssue, number), "triage was already accepted (`"+accept+"` is on)", time.Time{}, "")
+		res.Next = "The reporter-trust gate admits the issue on its next poll."
+		out.Result = &res
 		jsonResponse(w, out)
 		return
 	}
@@ -191,6 +197,12 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 	out.Removed = remove
 	s.auditFromRequest(r, acceptTriageAuditAction, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "added", strings.Join(add, ","), "removed", strings.Join(remove, ",")), "")
 	out.MinStatusSeq = s.applyAcceptTriageToStatus(repoFull, number, add, remove)
+	outcome := "Triage accepted: `" + accept + "` added"
+	if len(remove) > 0 {
+		outcome += ", `" + strings.Join(remove, "`, `") + "` removed"
+	}
+	out.Result = &RowActionResult{Action: rowActionTriaged, Target: rowActionTarget(repoFull, rowActionTargetIssue, number), Outcome: outcome + ".",
+		Next: "The reporter-trust gate admits the issue on its next poll; the stage engine records 015 → 010."}
 	jsonResponse(w, out)
 }
 

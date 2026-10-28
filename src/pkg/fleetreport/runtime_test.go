@@ -994,6 +994,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"issue-request watcher: DENIED (policy)",
 		"merge-request watcher: DENIED (policy)",
 		"pr-request watcher: DENIED (policy)",
+		"review-request watcher: abbreviated verdict head is not the PR's current head; recorded as written",
 		"push-branch-request watcher: DENIED (policy)",
 	} {
 		if !IsBenignMessage(m) {

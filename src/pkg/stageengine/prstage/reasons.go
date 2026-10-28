@@ -6,6 +6,11 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
+// SupersessionPendingLabel records the sweep's unresolved supersession park.
+// It is independent of CI/head state and is removed when the cause clears.
+const SupersessionPendingLabel = "hive/supersession-pending"
+const ReasonSupersessionPending = "supersession-decision-pending"
+
 // Lane reasons are shared by the producers and the stage classifier.
 const (
 	ReviewGateOutcomeAwaiting              = "awaiting-review-approval"

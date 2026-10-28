@@ -39,6 +39,29 @@ type ReposRescanResult struct {
 	Repos       int    `json:"repos"`
 	ScannedAt   string `json:"scanned_at,omitempty"`
 	RetryAfterS int    `json:"retry_after_s,omitempty"`
+	// Result is the shared row-action outcome for the dashboard's toast; the
+	// rescan is hive-wide, so Target is left for the caller to fill.
+	Result *RowActionResult `json:"result,omitempty"`
+}
+
+// reposRescanRowResult reads a rescan outcome into the shared row-action
+// result. A debounced or in-progress answer is a no-op, not an error.
+func reposRescanRowResult(r ReposRescanResult) *RowActionResult {
+	switch r.Status {
+	case "rescanned":
+		return &RowActionResult{Action: rowActionRescanned, Outcome: "Rescanned " + strconv.Itoa(r.Repos) + " repositories: " + strconv.Itoa(r.Issues) + " open issues, " + strconv.Itoa(r.PRs) + " open PRs.",
+			Next: "The tracker re-reads every row from this scan; stages move on the next refresh."}
+	case "in-progress":
+		res := rowActionNoopResult(RowActionTarget{}, "a rescan is already running", time.Time{}, "")
+		res.Next = "Its results land on the next refresh."
+		return &res
+	case "debounced":
+		at, _ := time.Parse(time.RFC3339, r.ScannedAt)
+		res := rowActionNoopResult(RowActionTarget{}, "a rescan finished moments ago", at, "")
+		res.Next = "The data is that fresh; another rescan is allowed in " + strconv.Itoa(r.RetryAfterS) + "s."
+		return &res
+	}
+	return nil
 }
 
 // handleReposRescan re-enumerates the watched repositories' open issues and
@@ -71,6 +94,7 @@ func (s *Server) handleReposRescan(w http.ResponseWriter, r *http.Request) {
 		s.repoRescanMu.Unlock()
 		last.Status = "in-progress"
 		last.RetryAfterS = 0
+		last.Result = reposRescanRowResult(last)
 		jsonResponse(w, last)
 		return
 	}
@@ -80,6 +104,7 @@ func (s *Server) handleReposRescan(w http.ResponseWriter, r *http.Request) {
 			s.repoRescanMu.Unlock()
 			last.Status = "debounced"
 			last.RetryAfterS = int(math.Ceil((repoRescanDebounce - age).Seconds()))
+			last.Result = reposRescanRowResult(last)
 			jsonResponse(w, last)
 			return
 		}
@@ -124,6 +149,7 @@ func (s *Server) handleReposRescan(w http.ResponseWriter, r *http.Request) {
 		result.Repos = len(s.deps.Config.Project.Repos)
 	}
 
+	result.Result = reposRescanRowResult(result)
 	s.repoRescanMu.Lock()
 	s.repoRescanAt = time.Now()
 	s.repoRescanLast = result
