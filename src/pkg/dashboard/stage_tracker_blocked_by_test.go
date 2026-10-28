@@ -58,7 +58,7 @@ func TestStageTrackerBlockedByDependencyIsSurfaced(t *testing.T) {
 	}
 
 	claimed := trackerItem(t, resp, "issue", 14637)
-	if claimed.Stage != 20 || hasMod(claimed, modBlocked) || claimed.BlockedOn != nil {
+	if claimed.Stage != 20 || hasMod(claimed, modBlocked) || claimed.BlockedOn != nil || claimed.BlockedBy != nil {
 		t.Errorf("#14637 past the gate = stage %d mods %v blocked_on %v, want 020 untouched", claimed.Stage, claimed.Modifiers, claimed.BlockedOn)
 	}
 

@@ -267,6 +267,9 @@ type StageTrackerItem struct {
 	// stage/085 on a PR carried as a park signal), needs-rebase, blocked,
 	// draft.
 	Modifiers []string `json:"modifiers"`
+	// BlockedBy lists the canonical work keys of unresolved dependencies.
+	// Resolved predecessors are omitted; labels alone do not populate it.
+	BlockedBy []string `json:"blocked_by,omitempty"`
 	// RegressedFrom / RegressedTo / RegressedAt / RegressedReason narrate
 	// the unresolved regression behind the `regressed` modifier: the
 	// high-water stage the item fell from, the stage that fall landed on
@@ -749,14 +752,20 @@ func stageTrackerBlockedBy(it *StageTrackerItem, blockers []string) {
 	if it == nil || len(blockers) == 0 || it.Stage > trackerNumberPossiblyExists {
 		return
 	}
-	it.BlockedOn = append([]string(nil), blockers...)
+	it.BlockedOn = slices.Compact(append([]string(nil), blockers...))
+	it.BlockedBy = append([]string(nil), it.BlockedOn...)
 	if !slices.Contains(it.Modifiers, modBlocked) {
 		it.Modifiers = append(it.Modifiers, modBlocked)
 		slices.SortFunc(it.Modifiers, func(a, b string) int {
 			return slices.Index(stageTrackerModifierOrder, a) - slices.Index(stageTrackerModifierOrder, b)
 		})
 	}
-	it.Caption = joinClause(it.Caption, "waiting on "+stageTrackerBlockerList(it.Repo, blockers))
+	waiting := "waiting on " + stageTrackerBlockerList(it.Repo, it.BlockedOn)
+	if it.Stage == trackerNumberActionable {
+		it.Caption = "Triaged, but blocked; " + waiting
+	} else {
+		it.Caption = joinClause(it.Caption, waiting)
+	}
 	it.Actor = "its blockers"
 }
 

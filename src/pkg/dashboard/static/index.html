@@ -13930,7 +13930,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const viaPR = item.kind === 'issue' && n >= 50 && (n !== 85 || item.via_pr) ? ' (its PR)' : '';
       switch (n) {
         case 0: return 'Open';
-        case 10: return 'Waiting for a worker';
+        case 10: return mods.indexOf('blocked') >= 0 ? 'Actionable · blocked' : 'Waiting for a worker';
         case 15: return 'Triage needed';
         case 17: return 'Possibly exists · needs author';
         case 20: return 'Claimed';
@@ -13970,10 +13970,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
     }
 
-    // The Open · blocked chevron's reason: the blocker when the payload names
-    // one (`blocked_on`: "owner/repo#N" or a list of them), else the label.
+    // Blocked chevrons name unresolved dependencies, falling back to the
+    // older blocked_on field or the label when no dependency is known.
     function stageTrackerBlockedTip(item) {
-      const on = item && item.blocked_on;
+      const on = item && (item.blocked_by || item.blocked_on);
       const refs = (Array.isArray(on) ? on : (on ? [on] : [])).map(r => String(r || '').trim()).filter(Boolean);
       return refs.length ? 'blocked on ' + refs.join(', ') : 'carries the blocked label';
     }
@@ -14037,9 +14037,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
         const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.
-        const openBlocked = n === 0 && state === 'active' && !openHold && mods.indexOf('blocked') >= 0;
+        const stepBlocked = (n === 0 || (n === 10 && cur === 10)) && state === 'active' && !openHold && mods.indexOf('blocked') >= 0;
         if (openHold) word = 'Open · hold';
-        else if (openBlocked) word = 'Open · blocked';
+        else if (stepBlocked) word = n === 10 ? 'Actionable · blocked' : 'Open · blocked';
         // A plain or blocked Open step (no stage label, not held) says how
         // long it has sat there, from the same instant the since column
         // shows — a stale blocked item is exactly what should stand out.
@@ -14048,7 +14048,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const os = stageTrackerOpenSince(item);
           if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
         }
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, openSince };
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: stepBlocked, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;

@@ -1,0 +1,1 @@
+- The stage tracker now marks issues waiting on open GitHub dependencies as blocked, names their predecessors, and shows “Actionable · blocked” instead of implying they are waiting for a worker ([#14765](https://github.com/hivecommons/hive/issues/14765)).

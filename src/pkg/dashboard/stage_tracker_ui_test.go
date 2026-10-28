@@ -318,6 +318,18 @@ assert.deepStrictEqual(segStates(row), ['active ham-open-blocked ham-open-stale'
 assert.ok(strip(row).includes(' — blocked on acme/api#7 — '), 'a known blocker is named: ' + strip(row));
 assert.strictEqual(stageTrackerBlockedTip({ blocked_on: ['acme/api#7', 'acme/api#8'] }), 'blocked on acme/api#7, acme/api#8');
 assert.strictEqual(stageTrackerBlockedTip({}), 'carries the blocked label');
+// GitHub dependency blockers keep stage 010 but must not look starved for a worker.
+const dependencyBlocked = { repo: 'acme/console', number: 14635, kind: 'issue', title: 'Sequenced work', stage: 10, modifiers: ['blocked'], blocked_by: ['acme/console#7', 'acme/api#8'], caption: 'Triaged, but blocked; waiting on #7, acme/api#8' };
+row = stageTrackerRowHtml(dependencyBlocked, stages, ctx);
+assert.strictEqual(stageTrackerHeadline(dependencyBlocked), 'Actionable · blocked');
+assert.ok(strip(row).includes('<span class="ham-seg-t">Actionable · blocked</span>'), row);
+assert.deepStrictEqual(segStates(row), [D, 'active ham-open-blocked', T, T, T, T, 'todo cap'], 'only the active Actionable step shows the block');
+assert.ok(strip(row).includes('blocked on acme/console#7, acme/api#8'), row);
+assert.ok(tooltip(row).includes('waiting on #7, acme/api#8'), row);
+assert.ok(row.includes('>blocked</span>'), 'the existing modifier pill must render');
+assert.strictEqual(stageTrackerCurrentStageHtml(dependencyBlocked, stages, null, now), '<p class="ham-current-stage">Actionable · blocked</p>');
+assert.strictEqual(stageTrackerHeadline({ stage: 10, modifiers: [] }), 'Waiting for a worker');
+assert.strictEqual(stageTrackerSegments({ stage: 10, modifiers: [] }, stages, now).find(s => s.state === 'active').short, 'Actionable');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 29, kind: 'issue', title: 'Blocked no since', stage: 0, created_at: new Date(now - 3 * 86400000).toISOString(), modifiers: ['blocked'] }, stages, ctx);
 assert.strictEqual(openWord(row), 'Open · blocked · since 3d', 'created_at fallback in the chevron');
 assert.ok(row.includes('<span class="ham-since">3d</span>'), 'created_at fallback in the since column: ' + row);
