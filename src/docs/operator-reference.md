@@ -1793,7 +1793,7 @@ The App's repository permissions decide which steps the hive can take itself.
 A step the App cannot take is not a question for a person to *decide*; it is
 a **capability gap** the hive records as a structured blocker
 (`<!-- hive:blocker kind=capability:… -->`, see
-[labels-and-control-signals.md](labels-and-control-signals.md#blockers----hiveblocker-kind--)),
+[labels-and-control-signals.md](labels-and-control-signals.md#blockers-hiveblocker-marker)),
 parks the item on, and surfaces at ⚙ → Security as *GitHub App permissions:
 missing `<permission>` · N items blocked* ([#15099](https://github.com/hivecommons/hive/issues/15099)).
 

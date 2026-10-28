@@ -1525,7 +1525,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 
 A `/hive decision …` comment the hive itself wrote as the owner's delegate (it carries the delegated-decision marker) is never read as a maintainer's command: not as a change request on the PR, not as an approval. [#14822](https://github.com/hivecommons/hive/pull/14822) fixes the parse of `/hive decision approve <rationale>`; the marker guard covers every other decision text the delegate can post, whichever login it was posted under.
 
-## Blockers: `<!-- hive:blocker kind=… -->`
+## Blockers (`hive:blocker` marker)
 
 `needs-human` says *a person is needed*; it does not say *what for*. When the reason is a **capability gap** — the GitHub App cannot do the next step at all — a direction decision answers a question nobody asked, and "Let hive decide" would un-park the issue only for the next sweep to re-park it with the same text (hivecommons/hive#14976 → #15099). So an agent that parks an item because the hive *cannot* act records a structured blocker next to the label:
 
