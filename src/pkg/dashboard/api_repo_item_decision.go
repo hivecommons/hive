@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -59,6 +60,13 @@ const (
 	repoItemDecisionCloseSuperseded = "close-superseded"
 	repoItemDecisionCloseWontFix    = "close-wontfix"
 	repoItemDecisionAdopt           = "adopt"
+	// Merge-gate answers on a PR parked at stage/090-ready-for-human-merge
+	// (hivecommons/hive#15078). merge-now merges through the hive's App at
+	// once, attributed to the operator; queue-merge records the operator's
+	// approval for the hive's auto-merge sweep, which merges it on the next
+	// tick once CI is green (soak and the self-merge ban still apply).
+	repoItemDecisionMergeNow   = "merge-now"
+	repoItemDecisionQueueMerge = "queue-merge"
 
 	repoItemDecisionMaxBody    = 16 << 10
 	repoItemDecisionMaxComment = 4000
@@ -67,6 +75,8 @@ const (
 	auditRepoItemDecisionDirection = "repo_item_decision_direction"
 	auditRepoItemDecisionClose     = "repo_item_decision_close"
 	auditRepoItemDecisionAdopt     = "repo_item_decision_adopt"
+	auditRepoItemDecisionMerge     = "repo_item_decision_merge"
+	auditRepoItemDecisionQueue     = "repo_item_decision_queue_merge"
 
 	// repoItemDecisionAdoptMarker opens the attributed note an Adopt
 	// decision leaves on the PR.
@@ -190,6 +200,14 @@ func repoItemDecisionResult(repoFull string, number int, itemType, decision, com
 		out.Action = rowActionAdopted
 		out.Outcome = "Adoption queued: `" + label + "` applied."
 		out.Next = "The hive opens its own PR carrying the author's commits and sign-off on its next cycle; the original is closed as superseded."
+	case repoItemDecisionMergeNow:
+		out.Action = rowActionMerged
+		out.Outcome = "Merged into `" + label + "` now via hive's identity, attributed to you."
+		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
+	case repoItemDecisionQueueMerge:
+		out.Action = rowActionQueued
+		out.Outcome = "Your approval is recorded; `" + label + "` applied."
+		out.Next = "Hive's merge sweep merges it on the next tick once CI is green, respecting soak; the dashboard merges nothing itself."
 	}
 	return out
 }
@@ -353,9 +371,114 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		s.audit.LogRecord(user, auditRepoItemDecisionAdopt, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "label", delegatedecision.LabelAdoptSupersede), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "adoption-queued", Label: delegatedecision.LabelAdoptSupersede,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, "", delegatedecision.LabelAdoptSupersede, nil)})
+	case repoItemDecisionMergeNow, repoItemDecisionQueueMerge:
+		if itemType != "pr" {
+			jsonError(w, decision+" applies to pull requests", http.StatusBadRequest)
+			return
+		}
+		if !repoItemMergeDecisionAllowed(r) {
+			jsonError(w, "merger or owner access required to merge or queue a pull request", http.StatusForbidden)
+			return
+		}
+		s.handlePullRequestMergeDecision(ctx, w, repoFull, number, user, decision, comment)
 	default:
-		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix or adopt", http.StatusBadRequest)
+		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, adopt, merge-now or queue-merge", http.StatusBadRequest)
 	}
+}
+
+// repoItemMergeDecisionAllowed is the merge bar on top of the repo-hold bar:
+// a verified owner or a merger (the same bar as POST .../queue-automerge),
+// since both merge decisions end with a commit on the base branch.
+func repoItemMergeDecisionAllowed(r *http.Request) bool {
+	role := r.Header.Get("X-Hive-Role")
+	if isOwnerRole(role) {
+		return r.Header.Get(ownerRoleVerifiedHeader) == "true"
+	}
+	return config.RoleAtLeast(role, config.RoleMerger)
+}
+
+// handlePullRequestMergeDecision answers merge-now / queue-merge on a PR the
+// merge gate parked for a person (stage/090-ready-for-human-merge).
+func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.ResponseWriter, repoFull string, number int, user, decision, comment string) {
+	gh := s.deps.GHClient
+	numStr := strconv.Itoa(number)
+	state, err := gh.GetPRState(ctx, repoFull, number)
+	if err != nil {
+		jsonError(w, "reading the pull request: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !state.MergedAt.IsZero() {
+		jsonError(w, "pull request is already merged", http.StatusConflict)
+		return
+	}
+	if !strings.EqualFold(state.State, "open") {
+		jsonError(w, "pull request is already closed", http.StatusConflict)
+		return
+	}
+	author, err := gh.GetPRAuthor(ctx, repoFull, number)
+	if err != nil {
+		jsonError(w, "reading the pull request author: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if strings.EqualFold(author, user) {
+		jsonError(w, "you opened this pull request; another maintainer has to merge it", http.StatusForbidden)
+		return
+	}
+	base := state.BaseRef
+	if base == "" {
+		base = "the base branch"
+	}
+	if decision == repoItemDecisionQueueMerge {
+		if err := gh.QueuePRAutoMergeWithNote(ctx, repoFull, number, user, renderRepoItemDecisionQueueNote(user, comment)); err != nil {
+			jsonError(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		label := gh.AutoMergeLabel()
+		s.audit.LogRecord(user, auditRepoItemDecisionQueue, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "label", label), "", repoFull, number)
+		s.invalidateStageTrackerForWebhook()
+		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "queued-for-merge", Label: label, Head: state.HeadSHA,
+			Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", label, nil)})
+		return
+	}
+	if err := gh.CreateIssueComment(ctx, repoFull, number, renderRepoItemDecisionMergeComment(user, comment)); err != nil {
+		jsonError(w, "posting merge note: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	// The head the operator saw is the head that merges: a push in between
+	// makes GitHub refuse (409) rather than merge code nobody looked at.
+	res, err := gh.MergePRVia(ctx, repoFull, number, "", state.HeadSHA, ghpkg.PRAuditPathDashboard)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !res.Merged {
+		jsonError(w, "GitHub did not merge the pull request: "+strings.TrimSpace(res.Message), http.StatusConflict)
+		return
+	}
+	s.audit.LogRecord(user, auditRepoItemDecisionMerge, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "base", state.BaseRef, "sha", res.SHA), "", repoFull, number)
+	s.invalidateStageTrackerForWebhook()
+	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "merged", Head: state.HeadSHA,
+		Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", base, nil)})
+}
+
+// renderRepoItemDecisionMergeComment is the attributed note left on the PR
+// before the hive's App merges it for the operator.
+func renderRepoItemDecisionMergeComment(user, comment string) string {
+	body := fmt.Sprintf("Merged as maintainer by @%s from the Hive dashboard: the merge gate parked this pull request for a human because its author is not a trusted merger on this repository.", strings.TrimSpace(user))
+	if c := strings.TrimSpace(comment); c != "" {
+		body += "\n\n> " + strings.ReplaceAll(c, "\n", "\n> ")
+	}
+	return body
+}
+
+// renderRepoItemDecisionQueueNote is the note appended to the App's approval
+// review when the operator lets the hive merge.
+func renderRepoItemDecisionQueueNote(user, comment string) string {
+	note := fmt.Sprintf("Approved from the Hive dashboard by @%s as the owner decision on a Ready-for-human-merge pull request; the hive's merge sweep merges it on green CI.", strings.TrimSpace(user))
+	if c := strings.TrimSpace(comment); c != "" {
+		note += "\n\n> " + strings.ReplaceAll(c, "\n", "\n> ")
+	}
+	return note
 }
 
 // renderRepoItemDecisionAdoptComment is the attributed note an Adopt

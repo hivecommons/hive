@@ -39,6 +39,11 @@ const (
 	operatorActionRelease         = "release"
 	operatorActionAcceptTriage    = "accept-triage"
 	operatorActionMarkNeedsHuman  = "mark-needs-human"
+	// Merge-gate answers on a 090 Ready-for-human-merge PR
+	// (hivecommons/hive#15078): merged by the operator through the hive's
+	// App, or queued for the hive's merge sweep.
+	operatorActionMergeNow   = "merge-now"
+	operatorActionQueueMerge = "queue-merge"
 
 	// Stored outcomes: what the endpoint answered when the action was
 	// submitted. `pending` is a delegated decision still running; the job's
@@ -269,6 +274,10 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			out.Target = strings.TrimSpace(raw.SupersededBy)
 		case repoItemDecisionCloseWontFix:
 			out.Action = operatorActionWontFix
+		case repoItemDecisionMergeNow:
+			out.Action = operatorActionMergeNow
+		case repoItemDecisionQueueMerge:
+			out.Action = operatorActionQueueMerge
 		default:
 			return out, false
 		}

@@ -1696,6 +1696,9 @@
     .ham-decision-act.ham-menu-danger { color: var(--red); }
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
+    .ham-decision-consequences { margin: 0 0 var(--sp-1); padding-left: var(--sp-4); font-size: var(--fs-xs); color: var(--text-muted); }
+    .ham-decision-consequences li { margin: 0; overflow-wrap: anywhere; }
+    .ham-decision-consequences b { font-weight: var(--fw-semibold); color: var(--text); }
     .ham-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-2); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid color-mix(in srgb, var(--accent) 45%, var(--line-subtle)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: var(--fs-xs); }
     .ham-selbar[hidden] { display: none; }
     .ham-selbar .ham-sel-count { font-weight: var(--fw-semibold); color: var(--text); margin-right: var(--sp-2); }
@@ -14825,6 +14828,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTED_LABELS = {
       approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix",
       'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
+      'merge-now': 'Approve & merge as maintainer', 'queue-merge': 'Approve — let hive merge',
     };
     const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed'];
     const STAGE_TRACKER_ACTED_FILTERS = ['any', 'awaiting', 'acted', 'stuck'];
@@ -14908,7 +14912,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Row-menu action id each ledger action was submitted under, so the
     // option the owner just took is not offered back to them.
-    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'accept-triage': 'accept-triage', hold: 'hold' };
+    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'accept-triage': 'accept-triage', hold: 'hold', 'merge-now': 'decide:merge-now', 'queue-merge': 'decide:queue-merge' };
     // Pure: what the owner can still do when their action changed nothing
     // (no-op) or the item has not moved (stuck): the enabled options from
     // the row's decision_needed payload, minus the one just taken.
@@ -15043,7 +15047,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x)) : [];
       return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null,
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, superseded: !!lp.superseded, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null };
     }
@@ -16682,9 +16686,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       'decide:adopt': 'Adopt (hive takes over)',
+      'decide:merge-now': 'Approve & merge as maintainer', 'decide:queue-merge': 'Approve — let hive merge',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
     };
+    // Actions that end with a commit on the base branch (merge now, or an
+    // approval the hive's sweep merges on): merger or owner only, like
+    // POST .../queue-automerge.
+    const STAGE_TRACKER_MERGE_ACTIONS = ['decide:merge-now', 'decide:queue-merge'];
+    // Generic items every row has; a server-named decision option with one
+    // of these ids is not repeated at the top of the menu.
+    const STAGE_TRACKER_GENERIC_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'accept-triage', 'open', 'copy', 'decide:delegate', 'decide:delegate-all', 'decide:adopt'];
     // Accept triage shows on an issue the chevron calls "Triage needed":
     // stage 015, or the needs-triage pill on a pre-claim stage (010 / 017 /
     // 045). A needs-triage left on a claimed or covered issue is reported
@@ -16893,6 +16905,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return next;
     }
+    // Pure: whether this viewer may run a decision option: write access,
+    // and the merger/owner role for anything that merges.
+    function stageTrackerActionAllowed(id, ctx) {
+      ctx = ctx || {};
+      if (STAGE_TRACKER_MERGE_ACTIONS.indexOf(id) >= 0) return ctx.canHuman ? { enabled: true, why: '' } : { enabled: false, why: STAGE_TRACKER_WHY_ROLE };
+      const can = ctx.canHold !== false && !!ctx.user;
+      return { enabled: can, why: can ? '' : STAGE_TRACKER_WHY_WRITE };
+    }
+    // Pure: the row's lead actions — the server's decision_needed.options
+    // (the item's own, else its one asking nested PR's) that neither the
+    // generic items every row has nor the Decide… submenu (`taken`) already
+    // offer, in the server's order, each carrying its consequence as the
+    // hint. Enabled only when the server and this viewer's permissions
+    // agree; otherwise disabled with the reason.
+    function stageTrackerLeadActions(item, ctx, taken) {
+      const dec = typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
+      const d = dec && dec.item && dec.item.decision_needed;
+      const server = d && Array.isArray(d.options) ? d.options : [];
+      const out = [];
+      for (const o of server) {
+        if (!o || !o.action || STAGE_TRACKER_GENERIC_ACTIONS.indexOf(o.action) >= 0 || o.action.indexOf('decide:') !== 0 || (taken && taken[o.action])) continue;
+        const allowed = stageTrackerActionAllowed(o.action, ctx);
+        const enabled = !!o.enabled && allowed.enabled;
+        const why = enabled ? '' : (o.enabled ? allowed.why : (o.reason_if_disabled || 'Not available on this row'));
+        out.push({ id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, hint: o.consequence || '', enabled, why, danger: /^decide:close-/.test(o.action), lead: true, target: dec.item });
+      }
+      return out;
+    }
     // Pure: the actions that apply to one row in its current state.
     function stageTrackerRowActions(item, ctx) {
       ctx = ctx || {};
@@ -16905,10 +16945,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const can = write && !!ctx.user;
         out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: 'per PR', enabled: can, why: can ? '' : STAGE_TRACKER_WHY_WRITE, prs: nested.map(p => p.number) });
       }
+      // The row asks the human for something (decision_needed on the item
+      // or its one asking nested PR): the server's answers lead the menu,
+      // each with its consequence, so the pill's ask always has its action
+      // right here (hivecommons/hive#15078: "Ready for human merge" with no
+      // way to merge).
       const target = stageTrackerDecisionTarget(item);
+      const submenu = target ? stageTrackerDecideOptions(target, ctx) : [];
+      const taken = {};
+      for (const o of submenu) taken[o.id] = true;
+      const lead = stageTrackerLeadActions(item, ctx, taken);
+      for (const a of lead) out.push(a);
       if (target) {
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
-        out.push({ id: 'decide', label: 'Decide' + on + '…', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, submenu: stageTrackerDecideOptions(target, ctx), target });
+        out.push({ id: 'decide', label: 'Decide' + on + '…', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, submenu, target, sep: lead.length > 0 });
       }
       // A nudged contributor PR the engine would adopt but for the owner's
       // say-so (maintainer_policy: ask) offers Adopt (hivecommons/hive#14524).
@@ -16964,7 +17014,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMenuItemHtml(a) {
       const dis = a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`;
       if (a.submenu) {
-        return `<button type="button" role="menuitem" class="ham-menu-item" data-ham-act="${esc(a.id)}" aria-haspopup="menu" aria-expanded="false" tabindex="-1"${dis}>${esc(a.label)}<span class="ham-menu-more" aria-hidden="true">▸</span></button><div class="ham-submenu" role="menu" aria-label="${esc(a.label)}">${a.submenu.map(stageTrackerMenuItemHtml).join('')}</div>`;
+        return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item" data-ham-act="${esc(a.id)}" aria-haspopup="menu" aria-expanded="false" tabindex="-1"${dis}>${esc(a.label)}<span class="ham-menu-more" aria-hidden="true">▸</span></button><div class="ham-submenu" role="menu" aria-label="${esc(a.label)}">${a.submenu.map(stageTrackerMenuItemHtml).join('')}</div>`;
       }
       return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}" tabindex="-1"${dis}>${esc(a.label)}${a.hint ? `<span class="ham-menu-more">${esc(a.hint)}</span>` : ''}</button>`;
     }
@@ -17158,7 +17208,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const c = flat[o.action];
         const enabled = !!o.enabled && !!(c && c.enabled);
         const why = enabled ? '' : (o.reason_if_disabled || (c ? c.why : 'Not available on this row') || '');
-        return { id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, enabled, why, danger: !!(c && c.danger) || /^decide:close-/.test(o.action) };
+        return { id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, enabled, why, consequence: o.consequence || '', danger: !!(c && c.danger) || /^decide:close-/.test(o.action) };
       });
       const lead = out.findIndex(o => o.id === 'decide:delegate');
       if (lead > 0) out.unshift(out.splice(lead, 1)[0]);
@@ -17170,13 +17220,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ref = stageTrackerRefOf(item);
       const sinceMs = Date.parse(d.since || item.stage_since || '');
       const meta = ['Asked by ' + (d.asked_by || 'the hive'), sinceMs ? agentNowAgo(nowMs - sinceMs) : ''].filter(Boolean).join(' · ');
-      const buttons = options.map(o => `<button type="button" class="ham-decision-act${o.danger ? ' ham-menu-danger' : ''}${o.id === 'decide:delegate' ? ' ham-decision-lead' : ''}" data-ham-act="${esc(o.id)}"${o.enabled ? '' : ` aria-disabled="true" title="${esc(o.why)}"`}>${esc(o.label)}</button>`).join('');
+      const buttons = options.map(o => `<button type="button" class="ham-decision-act${o.danger ? ' ham-menu-danger' : ''}${o.id === 'decide:delegate' || (o.id === options[0].id && STAGE_TRACKER_MERGE_ACTIONS.indexOf(o.id) >= 0) ? ' ham-decision-lead' : ''}" data-ham-act="${esc(o.id)}"${o.enabled ? (o.consequence ? ` title="${esc(o.consequence)}"` : '') : ` aria-disabled="true" title="${esc(o.why)}"`}>${esc(o.label)}</button>`).join('');
+      // Each option's consequence in plain words, so the choice is made
+      // knowing what happens next (hivecommons/hive#15078).
+      const consequences = options.filter(o => o.consequence).map(o => `<li><b>${esc(o.label)}</b> — ${esc(o.consequence)}</li>`).join('');
       // Order (owner): WHAT it is waiting on → WHAT you can do → WHO asked, when.
       return `<div class="ham-decision-pop" role="dialog" aria-label="${esc('Decision needed on ' + ref)}" tabindex="-1">
         <div class="ham-decision-head">${esc(ref)}${item.title ? ' · ' + esc(item.title) : ''}</div>
         <p class="ham-decision-q">${esc(d.question || '')}</p>
         ${d.blocker ? `<p class="ham-decision-blocker">${esc(d.blocker)}</p>` : ''}
         ${buttons ? `<div class="ham-decision-acts">${buttons}</div>` : ''}
+        ${consequences ? `<ul class="ham-decision-consequences">${consequences}</ul>` : ''}
         <p class="ham-decision-meta">${esc(meta)}</p>
         ${tip ? `<p class="ham-decision-stage">${esc(tip)}</p>` : ''}
       </div>`;
@@ -17684,6 +17738,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const v = await stageTrackerAsk(id, 'prompt', { title: stageTrackerActionLabel(id), label: 'Comment for ' + refs + ' (optional)', placeholder: 'Why this is closed', confirmLabel: 'Close' });
           return v == null ? null : { comment: v };
         }
+        case 'decide:merge-now': {
+          const base = items.map(it => it.base_ref || '').filter(Boolean)[0] || 'its base branch';
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now via hive\'s identity, attributed to ' + who + '? The merge gate parked it for a human because its author is not a trusted merger on this repo; this is you taking that call. The head you see is the head that merges — a push in between makes GitHub refuse.', confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
+        }
+        case 'decide:queue-merge':
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Record your approval on ' + refs + ' as the owner decision, as ' + who + '? Hive\'s merge sweep merges it on the next tick once CI is green, respecting soak; the dashboard merges nothing itself.', confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:adopt': {
           const why = items.map(it => stageTrackerAdoptionTip(it)).filter(Boolean).join('\n');
           return (await hiveConfirm({ title: 'Adopt pull request' + (items.length > 1 ? 's' : ''), message: (why ? why + '\n\n' : '') + 'Have the hive adopt ' + refs + ' as ' + who + '? The author\'s commits and sign-off are kept; the hive rebases and fixes CI (in place when GitHub allows, else on a superseding hive PR that closes this one when it merges). Recorded as your decision on the PR.', confirmLabel: 'Adopt' })) ? {} : null;
@@ -17712,9 +17772,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'decide:delegate': 'Hive is deciding…', 'decide:delegate-all': 'Hive is deciding each PR…', 'decide:delegate:rerun': 'Hive is deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…',
+      'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Queuing for merge…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
+      merged: 'merged', 'queued-for-merge': 'queued for merge',
       held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: "decided, but it hasn't taken effect",
     };

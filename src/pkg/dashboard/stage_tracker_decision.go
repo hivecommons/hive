@@ -58,6 +58,11 @@ type StageTrackerDecisionOption struct {
 	Label            string `json:"label"`
 	Enabled          bool   `json:"enabled"`
 	ReasonIfDisabled string `json:"reason_if_disabled,omitempty"`
+	// Consequence says, in one clause, what happens when the action is
+	// taken ("merges #317 into main now via hive's identity, attributed to
+	// you"); the ⋯ menu and the popover print it under the label
+	// (hivecommons/hive#15078).
+	Consequence string `json:"consequence,omitempty"`
 }
 
 // Action ids shared with the SPA's row context menu
@@ -68,10 +73,13 @@ const (
 	decisionActionDirection       = "decide:direction"
 	decisionActionCloseSuperseded = "decide:close-superseded"
 	decisionActionCloseWontfix    = "decide:close-wontfix"
+	decisionActionMergeNow        = "decide:merge-now"
+	decisionActionQueueMerge      = "decide:queue-merge"
 	decisionActionAcceptTriage    = "accept-triage"
 	decisionActionHold            = "hold"
 	decisionActionRelease         = "release"
 	decisionActionNeedsHuman      = "needs-human"
+	decisionActionRetry           = "retry"
 )
 
 // Who asked, in the plain words the popover prints (owner, 2026-10-28:
@@ -141,6 +149,8 @@ func stageTrackerDecisionNeededAt(it StageTrackerItem, verdict *review.Aggregate
 	switch {
 	case it.Kind == "pr" && (it.Stage == stagelabels.NeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
 		return decisionForPR(it, verdict, sentinelLabel, held)
+	case it.Kind == "pr" && it.Stage == stagelabels.ReadyForHumanMerge.Number():
+		return decisionForHumanMerge(it, held)
 	case it.Kind == "issue" && it.Mirrored:
 		// The issue rides its covering PR; the PR's own row (nested under
 		// the issue) carries the decision.
@@ -151,10 +161,165 @@ func stageTrackerDecisionNeededAt(it StageTrackerItem, verdict *review.Aggregate
 		return decisionForTriage(it, held)
 	case slices.Contains(it.Modifiers, modNeedsHuman):
 		return decisionForNeedsHuman(it, held)
+	case slices.Contains(it.Modifiers, modUnauthorized):
+		return decisionForUnauthorized(it, held)
 	case it.Kind == "pr" && it.Adoption != nil && it.Adoption.Action == decisionActionAdopt:
 		return decisionForAdoption(it, held, now)
+	case it.Kind == "pr" && it.AuthorKind == authorKindHuman && slices.Contains(stageTrackerNeedsHumanAuthorStages, it.Stage):
+		return decisionForWaitingOnAuthor(it, held)
+	case stageTrackerNeedsHuman(it) || (held && stageTrackerNeedsHuman(stageTrackerWithoutHold(it))):
+		// Flagged for a person by a stage/kind pairing none of the cases
+		// above knows (an issue wearing a PR stage label by hand, a PR at
+		// a triage stage): still never a pill without an action.
+		return decisionForParked(it, held)
 	}
 	return nil
+}
+
+// stageTrackerWithoutHold is the item as it reads with the hold pill off,
+// so a held row still derives the decision its underlying state asks for.
+func stageTrackerWithoutHold(it StageTrackerItem) StageTrackerItem {
+	it.Modifiers = slices.DeleteFunc(slices.Clone(it.Modifiers), func(m string) bool { return m == modHold })
+	return it
+}
+
+// decisionForParked is the fallback for any needs-human state without a
+// dedicated decision: say what the row is parked on and offer the generic
+// moves — look again, hold, flag for a person (hivecommons/hive#15078).
+func decisionForParked(it StageTrackerItem, held bool) *StageTrackerDecision {
+	what := "issue"
+	if it.Kind == "pr" {
+		what = "PR"
+	}
+	stage := strings.TrimSpace(it.StageLabel)
+	if stage == "" {
+		stage = "stage " + strconv.Itoa(it.Stage)
+	}
+	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByLane, BlockerReason: strings.TrimSpace(it.Reason)}
+	d.Question = "This " + what + " sits at " + stage + ", a stage the hive leaves to a person"
+	if clause := decisionPlainReason(strings.TrimSpace(it.Reason)); strings.TrimSpace(it.Reason) != "" {
+		d.Question += " (" + clause + ")"
+	}
+	d.Question += ". Act on it on GitHub, then re-evaluate so the hive picks it up."
+	d.Blocker = "The hive makes no move here until a person does."
+	if held {
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
+	}
+	retry := decisionOption(decisionActionRetry, "Re-evaluate now", true, "")
+	retry.Consequence = "re-reads GitHub and re-derives the stage"
+	d.Options = []StageTrackerDecisionOption{retry, decisionHoldOption(held)}
+	if !slices.Contains(it.Modifiers, modNeedsHuman) {
+		d.Options = append(d.Options, decisionOption(decisionActionNeedsHuman, "Mark needs-human", true, ""))
+	}
+	return d
+}
+
+// decisionForHumanMerge: a PR parked at 090 Ready for human merge — the
+// hive's lanes will not merge it unattended (untrusted author, workflow
+// files, manual-merge path, branch protection, …), so the person is asked
+// to merge. The lead options do exactly that (hivecommons/hive#15078):
+// "Approve & merge as maintainer" merges now through the hive's GitHub
+// App, attributed to the operator; "Approve — let hive merge" queues the
+// PR for the hive's merge sweep, which merges it on its next pass once CI
+// is green and the head has soaked. Both need the merger or owner role;
+// the SPA greys them out for anyone else.
+func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision {
+	base, approver := stagelabels.HumanApprovedReason(it.Reason)
+	base = strings.TrimSpace(base)
+	_, word, _ := stageTrackerHumanMergeReason(it.Reason)
+	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByLane, BlockerReason: base}
+	if word == "" {
+		word = "policy"
+	}
+	ref := "#" + strconv.Itoa(it.Number)
+	into := strings.TrimSpace(it.BaseRef)
+	if into == "" {
+		into = "its base branch"
+	}
+	why := stageTrackerUntrustedAuthorWhy(base, it.Author)
+	if why == "" {
+		why = decisionPlainReason(base)
+		if strings.TrimSpace(base) == "" {
+			why = "the hive's merge rules leave this one to a person"
+		}
+	}
+	d.Question = "This PR is ready to merge, but the hive will not merge it by itself (" + word + "): " + why + ". Merge it now, let the hive merge it, or send it back?"
+	d.Blocker = "The hive never merges this unattended. A maintainer merges: here, or on GitHub."
+	if approver != "" {
+		d.Blocker = "Approved by @" + approver + "; the hive still never merges this unattended. A maintainer merges: here, or on GitHub."
+	}
+	if held {
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
+	}
+	mergeNow := decisionOption(decisionActionMergeNow, "Approve & merge as maintainer", !held, "Release the hold first")
+	mergeNow.Consequence = "merges " + ref + " into " + into + " now via hive's identity, attributed to you"
+	queue := decisionOption(decisionActionQueueMerge, "Approve — let hive merge", !held, "Release the hold first")
+	queue.Consequence = "records your approval; the hive's merge sweep merges " + ref + " on its next pass once CI is green and the head has soaked"
+	direction := decisionOption(decisionActionDirection, "Give direction", it.AuthorKind != authorKindHuman, "The hive did not open this PR, so it cannot carry a direction to its author; leave a changes-requested review on GitHub")
+	direction.Consequence = "asks the author agent for a new head instead of merging"
+	closeSup := decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, "")
+	closeSup.Consequence = "closes " + ref + " unmerged, naming the PR that replaces it"
+	closeWontfix := decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, "")
+	closeWontfix.Consequence = "closes " + ref + " unmerged"
+	d.Options = []StageTrackerDecisionOption{mergeNow, queue, direction, closeSup, closeWontfix, decisionHoldOption(held)}
+	return d
+}
+
+// decisionForUnauthorized: a row wearing hive:unauthorized outside 085 —
+// the hive's GitHub App lacks the permission for its next step, so a
+// person takes that step on GitHub (approve the held workflow runs, merge
+// the workflow-file PR, …) and then asks the hive to look again.
+func decisionForUnauthorized(it StageTrackerItem, held bool) *StageTrackerDecision {
+	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByApp, BlockerReason: strings.TrimSpace(it.Reason)}
+	step := strings.TrimSpace(it.UnauthorizedStep)
+	if step == "" {
+		_, tip := stageTrackerUnauthorized(it.Reason)
+		d.Question = "The hive's GitHub App lacks a permission for the next step. " + tip
+	} else {
+		d.Question = "The hive's GitHub App may not " + unauthorizedStepWords(step) + " here. Do that step on GitHub, then re-evaluate so the hive picks it up."
+	}
+	d.Blocker = strings.TrimSpace(it.Unauthorized)
+	if d.Blocker == "" {
+		d.Blocker = decisionWhyNoPermission + "."
+	}
+	if held {
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
+	}
+	retry := decisionOption(decisionActionRetry, "Re-evaluate now", true, "")
+	retry.Consequence = "re-reads GitHub; the hive resumes and clears the label once the step is done"
+	d.Options = []StageTrackerDecisionOption{retry, decisionHoldOption(held)}
+	if !slices.Contains(it.Modifiers, modNeedsHuman) {
+		d.Options = append(d.Options, decisionOption(decisionActionNeedsHuman, "Mark needs-human", true, ""))
+	}
+	return d
+}
+
+// decisionForWaitingOnAuthor: a human-authored PR at 071 Needs author /
+// 072 Returned to contributor — the hive waits for its author to push.
+// The hive never adopts a human's PR, so the person's choices are to wait,
+// hold, or close it (hivecommons/hive#15078).
+func decisionForWaitingOnAuthor(it StageTrackerItem, held bool) *StageTrackerDecision {
+	who := "its author"
+	if a := strings.TrimSpace(it.Author); a != "" {
+		who = "@" + a
+	}
+	ref := "#" + strconv.Itoa(it.Number)
+	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByLane, BlockerReason: strings.TrimSpace(it.Reason)}
+	what := "a new commit"
+	if clause := decisionPlainReason(strings.TrimSpace(it.Reason)); strings.TrimSpace(it.Reason) != "" && clause != "the hive parked it" {
+		what = "a new commit (" + clause + ")"
+	}
+	d.Question = "This PR waits on " + who + " for " + what + ". The hive never rewrites a person's PR. Wait for them, or close it?"
+	d.Blocker = "Nothing for the hive to do until " + who + " pushes."
+	if held {
+		d.Blocker += " " + decisionHeldBlocker(it.Hold)
+	}
+	closeSup := decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, "")
+	closeSup.Consequence = "closes " + ref + " unmerged, naming the PR that replaces it"
+	closeWontfix := decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, "")
+	closeWontfix.Consequence = "closes " + ref + " unmerged"
+	d.Options = []StageTrackerDecisionOption{closeSup, closeWontfix, decisionHoldOption(held)}
+	return d
 }
 
 // decisionForAdoption: a nudged 072 PR whose author maintains the
@@ -479,12 +644,21 @@ func decisionForNeedsHuman(it StageTrackerItem, held bool) *StageTrackerDecision
 	if it.Kind == "pr" {
 		what = "PR"
 	}
-	d.Question = "This " + what + " is marked needs-human: automated fixes ran out, or a person flagged it. Review it on GitHub and remove the label when the hive may continue."
+	d.Question = "This " + what + " is marked needs-human: automated fixes ran out, or a person flagged it. Review it, then resolve it here (lifts the label) or remove the label on GitHub when the hive may continue."
 	d.Blocker = "The hive does nothing with a needs-human item until a person removes the label."
 	if held {
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
-	d.Options = []StageTrackerDecisionOption{decisionHoldOption(held)}
+	// The matching action for the ask (hivecommons/hive#15078): Approve
+	// lifts needs-human — on a PR it also posts /lgtm + /approve as the
+	// operator, on an issue it records /hive approve and un-parks it.
+	resolve := decisionOption(decisionActionApprove, "Resolve — lift needs-human", !held, "Release the hold first")
+	if it.Kind == "pr" {
+		resolve.Consequence = "lifts needs-human and posts /lgtm + /approve as you; the merge gate takes it from there"
+	} else {
+		resolve.Consequence = "lifts needs-human and records /hive approve as you; the hive carries on"
+	}
+	d.Options = []StageTrackerDecisionOption{resolve, decisionHoldOption(held)}
 	return d
 }
 

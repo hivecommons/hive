@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -210,7 +211,7 @@ func TestStageTrackerDecisionNeeded(t *testing.T) {
 		if !strings.Contains(d.Question, "This PR is marked needs-human") {
 			t.Fatalf("question = %q", d.Question)
 		}
-		if len(d.Options) != 1 || d.Options[0].Action != decisionActionHold {
+		if len(d.Options) != 2 || d.Options[0].Action != decisionActionApprove || !d.Options[0].Enabled || d.Options[0].Consequence == "" || d.Options[1].Action != decisionActionHold {
 			t.Fatalf("options = %+v", d.Options)
 		}
 	})
@@ -245,5 +246,141 @@ func TestStageTrackerVerdictLookup(t *testing.T) {
 	}
 	if _, ok := stageTrackerVerdictLookup(nil)("hivecommons/hive", 7, "abcdef0"); ok {
 		t.Fatal("nil artifact matched")
+	}
+}
+
+// TestStageTrackerDecisionForHumanMerge: a PR at 090 Ready for human merge
+// asks the person to merge, so the decision leads with the two ways to do
+// that — merge now as maintainer, or approve and let the hive's sweep merge
+// — each with its consequence, then direction / close / hold
+// (hivecommons/hive#15078: hotshot#317 had no such action).
+func TestStageTrackerDecisionForHumanMerge(t *testing.T) {
+	since := time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC)
+	it := StageTrackerItem{Repo: "hivecommons/hotshot", Number: 317, Kind: "pr", Author: "Karibhou", AuthorKind: authorKindHuman, BaseRef: "main",
+		Stage: stagelabels.ReadyForHumanMerge.Number(), StageSince: &since, Reason: stageengineprstage.ContributorLaneReasonAuthorAssociation}
+	d := stageTrackerDecisionNeeded(it, nil, "")
+	if d == nil || d.AskedBy != decisionAskedByLane {
+		t.Fatalf("decision = %+v", d)
+	}
+	if got := []string{d.Options[0].Action, d.Options[1].Action}; got[0] != decisionActionMergeNow || got[1] != decisionActionQueueMerge {
+		t.Fatalf("lead options = %v, want merge-now then queue-merge", got)
+	}
+	merge := d.Options[0]
+	if !merge.Enabled || merge.Label != "Approve & merge as maintainer" || merge.Consequence != "merges #317 into main now via hive's identity, attributed to you" {
+		t.Fatalf("merge-now = %+v", merge)
+	}
+	queue := d.Options[1]
+	if !queue.Enabled || queue.Label != "Approve — let hive merge" || !strings.Contains(queue.Consequence, "merge sweep merges #317") || !strings.Contains(queue.Consequence, "soaked") {
+		t.Fatalf("queue-merge = %+v", queue)
+	}
+	for _, want := range []string{"untrusted author", "@Karibhou is not a collaborator", "👥 Contributors", "auto_merge.contributor_lane.require_tiers"} {
+		if !strings.Contains(d.Question, want) {
+			t.Errorf("question lacks %q: %q", want, d.Question)
+		}
+	}
+	dir := decisionOptionByAction(t, d, decisionActionDirection)
+	if dir.Enabled || !strings.Contains(dir.ReasonIfDisabled, "did not open this PR") {
+		t.Fatalf("direction on a human PR = %+v", dir)
+	}
+	for _, want := range []string{decisionActionCloseSuperseded, decisionActionCloseWontfix, decisionActionHold} {
+		if o := decisionOptionByAction(t, d, want); !o.Enabled {
+			t.Errorf("%s should be enabled: %+v", want, o)
+		}
+	}
+
+	t.Run("hive-authored PR may take direction", func(t *testing.T) {
+		agent := it
+		agent.Author, agent.AuthorKind, agent.Reason = "hive[bot]", "hive", "contributor-lane:workflow-files"
+		d := stageTrackerDecisionNeeded(agent, nil, "")
+		if d == nil || !decisionOptionByAction(t, d, decisionActionDirection).Enabled {
+			t.Fatalf("decision = %+v", d)
+		}
+		if d.Options[0].Action != decisionActionMergeNow {
+			t.Fatalf("merge-now must lead: %+v", d.Options)
+		}
+	})
+
+	t.Run("held row disables the merges with the reason", func(t *testing.T) {
+		held := it
+		held.Modifiers = []string{modHold}
+		d := stageTrackerDecisionNeeded(held, nil, "")
+		for _, a := range []string{decisionActionMergeNow, decisionActionQueueMerge} {
+			if o := decisionOptionByAction(t, d, a); o.Enabled || o.ReasonIfDisabled != "Release the hold first" {
+				t.Errorf("%s on a held row = %+v", a, o)
+			}
+		}
+		decisionOptionByAction(t, d, decisionActionRelease)
+	})
+}
+
+// TestStageTrackerNeedsHumanStatesCarryAnAction: every state
+// stageTrackerNeedsHuman flags — the stages, the author stages on a human
+// PR and the modifiers — yields a decision_needed whose options are
+// non-empty and hold at least one enabled action, or a disabled one whose
+// reason_if_disabled is plain words. A pill that asks for a person with no
+// matching action is the bug this guards (hivecommons/hive#15078).
+func TestStageTrackerNeedsHumanStatesCarryAnAction(t *testing.T) {
+	since := time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC)
+	type tc struct {
+		name string
+		it   StageTrackerItem
+	}
+	var cases []tc
+	for _, stage := range stageTrackerNeedsHumanStages {
+		for _, kind := range []string{"issue", "pr"} {
+			it := StageTrackerItem{Repo: "o/r", Number: 1, Kind: kind, Stage: stage, StageSince: &since}
+			if kind == "pr" {
+				it.Author, it.AuthorKind, it.BaseRef = "someone", authorKindHuman, "main"
+				if stage == stagelabels.ReadyForHumanMerge.Number() {
+					it.Reason = stageengineprstage.ContributorLaneReasonAuthorAssociation
+				}
+			}
+			cases = append(cases, tc{"stage " + strconv.Itoa(stage) + " " + kind, it})
+		}
+	}
+	for _, stage := range stageTrackerNeedsHumanAuthorStages {
+		cases = append(cases, tc{"author stage " + strconv.Itoa(stage) + " human pr", StageTrackerItem{Repo: "o/r", Number: 2, Kind: "pr", Author: "someone", AuthorKind: authorKindHuman, Stage: stage, StageSince: &since, Reason: "changes-requested"}})
+	}
+	for _, mod := range stageTrackerNeedsHumanMods {
+		for _, kind := range []string{"issue", "pr"} {
+			it := StageTrackerItem{Repo: "o/r", Number: 3, Kind: kind, Stage: 60, StageSince: &since, Modifiers: []string{mod}}
+			if mod == modUnauthorized {
+				it.Reason = "unauthorized:approve-workflow-runs"
+			}
+			cases = append(cases, tc{"modifier " + mod + " " + kind, it})
+		}
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if !stageTrackerNeedsHuman(c.it) {
+				t.Fatalf("fixture is not flagged needs-human: %+v", c.it)
+			}
+			d := stageTrackerDecisionNeeded(c.it, nil, "hive:sentinel-alert")
+			if d == nil {
+				t.Fatalf("no decision_needed for a needs-human row: %+v", c.it)
+			}
+			if strings.TrimSpace(d.Question) == "" {
+				t.Fatal("decision has no question")
+			}
+			if len(d.Options) == 0 {
+				t.Fatalf("decision_needed.options is empty: %+v", d)
+			}
+			enabled := false
+			for _, o := range d.Options {
+				if o.Action == "" || o.Label == "" {
+					t.Errorf("option without action/label: %+v", o)
+				}
+				if o.Enabled {
+					enabled = true
+					continue
+				}
+				if r := strings.TrimSpace(o.ReasonIfDisabled); r == "" || strings.Contains(r, ":") && !strings.Contains(r, " ") {
+					t.Errorf("disabled option %q lacks a plain-words reason: %+v", o.Action, o)
+				}
+			}
+			if !enabled {
+				t.Errorf("no enabled action among %+v", d.Options)
+			}
+		})
 	}
 }

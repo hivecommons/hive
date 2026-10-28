@@ -59,6 +59,8 @@ func TestOperatorActionFromBody(t *testing.T) {
 		{"decision", `{"decision":"direction","comment":" ship B "}`, operatorActionRequest{Action: operatorActionGiveDirection, Note: "ship B"}, true},
 		{"decision", `{"decision":"close-superseded","superseded_by":"#41"}`, operatorActionRequest{Action: operatorActionCloseSuperseded, Target: "#41"}, true},
 		{"decision", `{"decision":"close-wontfix"}`, operatorActionRequest{Action: operatorActionWontFix}, true},
+		{"decision", `{"decision":"merge-now","head":"abc"}`, operatorActionRequest{Action: operatorActionMergeNow, Head: "abc"}, true},
+		{"decision", `{"decision":"queue-merge"}`, operatorActionRequest{Action: operatorActionQueueMerge}, true},
 		{"decision", `{"decision":"bogus"}`, operatorActionRequest{}, false},
 		{"decide-delegated", ``, operatorActionRequest{Action: operatorActionLetHiveDecide}, true},
 		{"hold", `{"held":true}`, operatorActionRequest{Action: operatorActionHold}, true},

@@ -31,6 +31,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_POLL_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_POLL_MAX"),
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_ALL_MIN"),
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_ACTIONS"),
+		jsConstLine(t, html, "STAGE_TRACKER_GENERIC_ACTIONS"),
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
 		"var _stageTrackerSel = new Set(); var _stageTrackerSelAnchor = ''; var _stageTrackerMenu = null; var _stageTracker = null; var _statusSeqFloor = 0; var _stageTrackerEtag = 'e'; var _stageTrackerSig = 's';",
 		jsFunc(t, html, "esc"),
@@ -58,6 +60,9 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerSupersederValid"),
 		jsFunc(t, html, "stageTrackerTriageNeeded"),
 		jsFunc(t, html, "stageTrackerTriageAccepted"),
+		jsFunc(t, html, "stageTrackerDecisionOf"),
+		jsFunc(t, html, "stageTrackerActionAllowed"),
+		jsFunc(t, html, "stageTrackerLeadActions"),
 		jsFunc(t, html, "stageTrackerRowActions"),
 		jsFunc(t, html, "stageTrackerFlatActions"),
 		jsFunc(t, html, "stageTrackerSelectionActions"),
@@ -968,5 +973,99 @@ assert.ok(!acting('o/r/issue#7'), 'a no-op or an error clears at once');
   assert.deepStrictEqual(del.pending[0].keys, ['o/r/pr#14947', 'o/r/issue#14938']);
   assert.ok(acting('o/r/issue#14938') && acting('o/r/pr#14947'));
 })().catch(e => { console.error(e); process.exit(1); });
+`)
+}
+
+// TestStageTrackerRowActionsLeadWithDecisionOptions: a row the hive parked
+// for a person carries the matching actions at the top of its ⋯ menu, each
+// with the server's consequence line, on the issue row (one nested asking
+// PR) and on the PR sub-row alike (hivecommons/hive#15078: hotshot#317 at
+// 090 "Ready for human merge · untrusted author" offered only Hold /
+// Re-evaluate / Mark needs-human / Open / Copy). The merge actions need the
+// merger role; a server-disabled option keeps its plain-words reason; the
+// options the Decide… submenu already offers are not repeated.
+func TestStageTrackerRowActionsLeadWithDecisionOptions(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+`
+const ids = as => as.map(a => a.id);
+const merger = { user: true, canHold: true, canHuman: true };
+const writer = { user: true, canHold: true, canHuman: false };
+const decision090 = { question: 'This PR is ready to merge, but the hive will not merge it by itself (untrusted author): @Karibhou is not a collaborator…', blocker: 'The hive never merges this unattended.', asked_by: 'the merge lane', since: '2026-10-28T12:00:00Z',
+  options: [
+    { action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you' },
+    { action: 'decide:queue-merge', label: 'Approve — let hive merge', enabled: true, consequence: 'records your approval; the hive\'s merge sweep merges #317 on its next pass once CI is green and the head has soaked' },
+    { action: 'decide:direction', label: 'Give direction', enabled: false, reason_if_disabled: 'The hive did not open this PR, so it cannot carry a direction to its author; leave a changes-requested review on GitHub' },
+    { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, consequence: 'closes #317 unmerged, naming the PR that replaces it' },
+    { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true, consequence: 'closes #317 unmerged' },
+    { action: 'hold', label: 'Hold', enabled: true },
+  ] };
+const pr317 = { repo: 'hivecommons/hotshot', kind: 'pr', number: 317, title: 'docs: prepare v0.2.0 release notes', url: 'https://github.com/hivecommons/hotshot/pull/317', author: 'Karibhou', author_kind: 'human', base_ref: 'main',
+  stage: 90, modifiers: [], human_merge_reason: 'untrusted-author', decision_needed: decision090 };
+const issue316 = { repo: 'hivecommons/hotshot', kind: 'issue', number: 316, title: 'Release v0.2.0', url: 'https://github.com/hivecommons/hotshot/issues/316', stage: 90, mirrored: true, modifiers: [],
+  linked_prs: [{ number: 317, title: pr317.title, url: pr317.url, author: 'Karibhou', author_kind: 'human', base_ref: 'main', stage: 90, modifiers: [], human_merge_reason: 'untrusted-author', decision_needed: decision090 }] };
+
+// The PR sub-row: the two merge answers lead, then Decide… with the rest,
+// then the generic items.
+let as = stageTrackerRowActions(pr317, merger);
+assert.deepStrictEqual(ids(as), ['decide:merge-now', 'decide:queue-merge', 'decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.strictEqual(as[0].label, 'Approve & merge as maintainer');
+assert.strictEqual(as[0].hint, 'merges #317 into main now via hive\'s identity, attributed to you', 'the consequence rides as the hint');
+assert.ok(as[0].enabled && as[1].enabled, 'a merger may merge or queue');
+assert.ok(as[0].lead && as[1].lead);
+assert.strictEqual(as[2].sep, true, 'the Decide… group is separated from the lead answers');
+assert.deepStrictEqual(ids(as[2].submenu), ['decide:delegate', 'decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction'], 'options the submenu already offers are not repeated at the top');
+// The menu markup lists the lead answers above everything else, with the
+// consequence under the label.
+const menu = stageTrackerMenuHtml(as, 'hivecommons/hotshot#317');
+const at = s => menu.indexOf(s);
+assert.ok(at('data-ham-act="decide:merge-now"') > 0 && at('data-ham-act="decide:merge-now"') < at('data-ham-act="decide:queue-merge"'));
+assert.ok(at('data-ham-act="decide:queue-merge"') < at('data-ham-act="decide"'), 'merge answers above Decide…');
+assert.ok(at('data-ham-act="decide"') < at('data-ham-act="hold"') && at('data-ham-act="hold"') < at('data-ham-act="open"'), 'generic items last');
+assert.ok(menu.includes('<span class="ham-menu-more">merges #317 into main now via hive&#39;s identity, attributed to you</span>') || menu.includes('<span class="ham-menu-more">merges #317 into main now via hive\'s identity, attributed to you</span>'), 'consequence line rendered: ' + menu);
+
+// A writer without the merger role sees the merge answers, greyed with the
+// role reason — never silently missing.
+as = stageTrackerRowActions(pr317, writer);
+assert.deepStrictEqual(ids(as).slice(0, 2), ['decide:merge-now', 'decide:queue-merge']);
+assert.strictEqual(as[0].enabled, false); assert.strictEqual(as[0].why, STAGE_TRACKER_WHY_ROLE);
+assert.strictEqual(as[1].enabled, false); assert.strictEqual(as[1].why, STAGE_TRACKER_WHY_ROLE);
+
+// The issue row over its one asking PR: the same lead answers, acting on
+// PR #317 (runRowAction resolves the decision target to the PR).
+as = stageTrackerRowActions(issue316, merger);
+assert.deepStrictEqual(ids(as), ['decide:merge-now', 'decide:queue-merge', 'decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.strictEqual(as[0].target.number, 317); assert.strictEqual(as[0].target.kind, 'pr');
+assert.strictEqual(as[2].label, 'Decide PR #317…');
+assert.strictEqual(stageTrackerDecisionTarget(issue316).number, 317, 'a human-merge reason parks the PR for the issue row');
+const req = stageTrackerActionRequest(stageTrackerDecisionTarget(issue316), 'decide:merge-now', {});
+assert.strictEqual(req.url, '/api/repos/hivecommons/hotshot/items/317/decision');
+assert.deepStrictEqual(req.body, { decision: 'merge-now', comment: '', type: 'pr' });
+assert.deepStrictEqual(stageTrackerActionRequest(pr317, 'decide:queue-merge', {}).body, { decision: 'queue-merge', comment: '', type: 'pr' });
+assert.strictEqual(STAGE_TRACKER_ACTING_CAPTIONS['decide:merge-now'], 'Merging…');
+assert.strictEqual(STAGE_TRACKER_ACTION_WORDS.merged, 'merged');
+assert.strictEqual(STAGE_TRACKER_ACTION_WORDS['queued-for-merge'], 'queued for merge');
+
+// A human-authored PR waiting on its author (072): no Decide… submenu, so
+// the server's close answers lead, with their consequences.
+const waiting = { repo: 'o/r', kind: 'pr', number: 9, url: 'u', author: 'someone', author_kind: 'human', stage: 72, modifiers: [],
+  decision_needed: { question: 'This PR waits on @someone for a new commit.', options: [
+    { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, consequence: 'closes #9 unmerged, naming the PR that replaces it' },
+    { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true, consequence: 'closes #9 unmerged' },
+    { action: 'hold', label: 'Hold', enabled: true } ] } };
+as = stageTrackerRowActions(waiting, writer);
+assert.deepStrictEqual(ids(as), ['decide:close-superseded', 'decide:close-wontfix', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+assert.ok(as[0].danger && as[1].danger);
+assert.strictEqual(as[0].hint, 'closes #9 unmerged, naming the PR that replaces it');
+
+// A server-disabled lead keeps the server's plain-words reason.
+const refused = { ...pr317, decision_needed: { ...decision090, options: [{ action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: false, reason_if_disabled: 'Release the hold first' }] } };
+as = stageTrackerRowActions(refused, merger);
+assert.strictEqual(as[0].id, 'decide:merge-now'); assert.strictEqual(as[0].enabled, false); assert.strictEqual(as[0].why, 'Release the hold first');
+
+// Generic options the server names (hold / needs-human / retry) are never
+// doubled; a 085 PR's menu is unchanged.
+const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'],
+  decision_needed: { question: 'q', options: [{ action: 'decide:delegate', label: 'Let hive decide', enabled: true }, { action: 'decide:approve', label: 'Approve', enabled: true }, { action: 'hold', label: 'Hold', enabled: true }, { action: 'needs-human', label: 'Mark needs-human', enabled: true }] } };
+assert.deepStrictEqual(ids(stageTrackerRowActions(pr85, merger)), ['decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
 `)
 }

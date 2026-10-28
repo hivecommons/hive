@@ -53,6 +53,8 @@ const (
 	rowActionRescanned   = "rescanned"
 	rowActionTriaged     = "triage-accepted"
 	rowActionNeedsHuman  = "needs-human"
+	rowActionMerged      = "merged"
+	rowActionQueued      = "queued-for-merge"
 	rowActionNoop        = "noop-already-applied"
 	// rowActionDecidedEach is an issue job that decided each nested PR on
 	// its own; the per-PR results ride delegatedDecisionJob.Items.

@@ -143,6 +143,11 @@ const (
 	// Merge) carried out through MergePRVia, so forge-driven merges are not
 	// counted as relay merges.
 	PRAuditPathForge = "forge"
+	// PRAuditPathDashboard marks a merge an operator asked for from the
+	// dashboard's activity monitor ("Approve & merge as maintainer" on a
+	// Ready-for-human-merge row, hivecommons/hive#15078): the hive's App
+	// performs it, the audit line names the person.
+	PRAuditPathDashboard = "dashboard"
 )
 
 // System "agent" names recorded for creations no single coding agent

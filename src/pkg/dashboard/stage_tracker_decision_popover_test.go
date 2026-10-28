@@ -19,7 +19,6 @@ func stageTrackerDecisionPopPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_DECISION_LEAVE_MS"),
 		"var _stageTrackerDecisionPop = null;",
 		jsFunc(t, html, "agentNowAgo"),
-		jsFunc(t, html, "stageTrackerDecisionOf"),
 		jsFunc(t, html, "stageTrackerDecisionTriggerHtml"),
 		jsFunc(t, html, "stageTrackerDecisionOptions"),
 		jsFunc(t, html, "stageTrackerDecisionPopHtml"),

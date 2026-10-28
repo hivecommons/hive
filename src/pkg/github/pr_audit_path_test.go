@@ -99,7 +99,7 @@ func TestMergePRViaAuditsCallerPath(t *testing.T) {
 }
 
 func TestRecordPRMergedAuditCarriesPath(t *testing.T) {
-	for _, path := range []string{PRAuditPathSweep, PRAuditPathQueue, PRAuditPathRelay, PRAuditPathForge} {
+	for _, path := range []string{PRAuditPathSweep, PRAuditPathQueue, PRAuditPathRelay, PRAuditPathForge, PRAuditPathDashboard} {
 		t.Run(path, func(t *testing.T) {
 			c := &Client{}
 			var trail []prAuditRec

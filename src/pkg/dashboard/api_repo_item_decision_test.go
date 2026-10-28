@@ -42,6 +42,10 @@ type repoItemDecisionMock struct {
 	// an adoption marker on #8 may name (hivecommons/hive#15052); "" is 404.
 	supersederState  string
 	supersederMerged bool
+	// merges records PUT /pulls/8/merge bodies; reviews the POST /reviews
+	// bodies (merge-now / queue-merge, hivecommons/hive#15078).
+	merges  []map[string]any
+	reviews []map[string]any
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -52,8 +56,10 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 		w.Header().Set("Content-Type", "application/json")
 		path := r.URL.Path
 		switch {
-		case r.Method == http.MethodGet && strings.HasSuffix(path, "/collaborators/writer/permission"):
+		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/collaborators/writer/permission") || strings.HasSuffix(path, "/collaborators/someone/permission")):
 			_, _ = io.WriteString(w, `{"permission":"write"}`)
+		case r.Method == http.MethodPost && strings.Contains(path, "/statuses/"):
+			_, _ = io.WriteString(w, `{}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/collaborators/reader/permission"):
 			_, _ = io.WriteString(w, `{"permission":"read"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/issues/7"):
@@ -93,7 +99,19 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			for _, label := range m.prLabels {
 				prLabels = append(prLabels, map[string]string{"name": label})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": prLabels, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": prLabels, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}, "base": map[string]any{"ref": "main"}})
+		case r.Method == http.MethodPut && strings.HasSuffix(path, "/pulls/8/merge"):
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			m.merges = append(m.merges, body)
+			_, _ = io.WriteString(w, `{"sha":"0ddba11","merged":true,"message":"Pull Request successfully merged"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/8/reviews"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/pulls/8/reviews"):
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			m.reviews = append(m.reviews, body)
+			_, _ = io.WriteString(w, `{"id":1,"state":"APPROVED"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/commits/feedfacefeedfacefeedfacefeedfacefeedface/status"):
 			switch {
 			case m.prRedCI:
@@ -432,5 +450,106 @@ func TestParseRepoItemSupersededBy(t *testing.T) {
 		if _, err := parseRepoItemSupersededBy(bad, "o/r"); err == nil {
 			t.Errorf("parse(%q) must fail", bad)
 		}
+	}
+}
+
+func postRepoItemDecisionAs(t *testing.T, srv *Server, number int, user, role, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/repos/testorg/testrepo/items/"+strconv.Itoa(number)+"/decision", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-User", user)
+	req.Header.Set("X-Hive-Role", role)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+	return w
+}
+
+// TestRepoItemDecisionMergeNowMergesAsMaintainer: "Approve & merge as
+// maintainer" on a Ready-for-human-merge PR leaves an attributed note, then
+// merges through the hive's App against the head the operator saw, audits
+// it on the dashboard path and answers the shared result (merged)
+// (hivecommons/hive#15078).
+func TestRepoItemDecisionMergeNowMergesAsMaintainer(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge"}}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecisionAs(t, srv, 8, "writer", "merger", `{"decision":"merge-now","type":"pr","comment":"release notes look right"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("merge-now: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != "merged" || resp.Head != "feedfacefeedfacefeedfacefeedfacefeedface" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.Result == nil || resp.Result.Action != rowActionMerged || !strings.Contains(resp.Result.Outcome, "`main`") || !strings.Contains(resp.Result.Outcome, "attributed to you") {
+		t.Fatalf("result = %+v", resp.Result)
+	}
+	if len(mock.merges) != 1 || mock.merges[0]["sha"] != "feedfacefeedfacefeedfacefeedfacefeedface" {
+		t.Fatalf("merge must pin the head the operator saw: %v", mock.merges)
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "Merged as maintainer by @writer") || !strings.Contains(mock.comments[0], "> release notes look right") {
+		t.Fatalf("comments = %q", mock.comments)
+	}
+	if actions := decisionAuditActions(srv); len(actions) == 0 || actions[0] != auditRepoItemDecisionMerge {
+		t.Fatalf("audit = %v", actions)
+	}
+}
+
+// TestRepoItemDecisionQueueMergeApprovesForTheSweep: "Approve — let hive
+// merge" posts the App's approval naming the operator as the queuer and
+// applies the auto-merge label; the dashboard merges nothing.
+func TestRepoItemDecisionQueueMergeApprovesForTheSweep(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge"}}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecisionAs(t, srv, 8, "writer", "merger", `{"decision":"queue-merge","type":"pr"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("queue-merge: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != "queued-for-merge" || resp.Label != srv.deps.GHClient.AutoMergeLabel() {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.Result == nil || resp.Result.Action != rowActionQueued || !strings.Contains(resp.Result.Next, "merge sweep") {
+		t.Fatalf("result = %+v", resp.Result)
+	}
+	if len(mock.merges) != 0 {
+		t.Fatalf("queue-merge must not merge: %v", mock.merges)
+	}
+	if len(mock.reviews) != 1 || mock.reviews[0]["event"] != "APPROVE" || !strings.HasPrefix(mock.reviews[0]["body"].(string), "Approved by @writer for Hive auto-merge on green CI.") {
+		t.Fatalf("reviews = %v", mock.reviews)
+	}
+	if !strings.Contains(mock.reviews[0]["body"].(string), "Approved from the Hive dashboard by @writer") {
+		t.Fatalf("approval must carry the dashboard note: %v", mock.reviews[0]["body"])
+	}
+	if len(mock.added) != 1 || mock.added[0] != srv.deps.GHClient.AutoMergeLabel() {
+		t.Fatalf("labels added = %v", mock.added)
+	}
+	if actions := decisionAuditActions(srv); len(actions) == 0 || actions[0] != auditRepoItemDecisionQueue {
+		t.Fatalf("audit = %v", actions)
+	}
+}
+
+// TestRepoItemDecisionMergeDecisionsGuard: both merge answers need the
+// merger or owner role on top of write access, apply to PRs only, and
+// refuse the operator's own PR.
+func TestRepoItemDecisionMergeDecisionsGuard(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true}
+	srv := newRepoItemDecisionServer(t, mock)
+	for _, decision := range []string{"merge-now", "queue-merge"} {
+		if w := postRepoItemDecisionAs(t, srv, 8, "writer", "write", `{"decision":"`+decision+`","type":"pr"}`); w.Code != http.StatusForbidden {
+			t.Errorf("%s as a plain writer: code=%d body=%s", decision, w.Code, w.Body.String())
+		}
+		if w := postRepoItemDecisionAs(t, srv, 7, "writer", "merger", `{"decision":"`+decision+`","type":"issue"}`); w.Code != http.StatusBadRequest {
+			t.Errorf("%s on an issue: code=%d body=%s", decision, w.Code, w.Body.String())
+		}
+		if w := postRepoItemDecisionAs(t, srv, 8, "someone", "merger", `{"decision":"`+decision+`","type":"pr"}`); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "you opened this pull request") {
+			t.Errorf("%s on one's own PR: code=%d body=%s", decision, w.Code, w.Body.String())
+		}
+	}
+	if len(mock.merges)+len(mock.reviews) != 0 {
+		t.Fatalf("guards must stop before GitHub writes: merges=%v reviews=%v", mock.merges, mock.reviews)
 	}
 }

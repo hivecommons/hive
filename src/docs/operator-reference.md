@@ -456,6 +456,28 @@ from **Settings → Features → Auto-merge**. The dashboard writes the same
 owner-only `/api/config/auto-merge` overlay as the other auto-merge controls, so
 hosted spoke changes survive restarts without editing `hive.yaml`.
 
+**When a lane leaves the merge to a person (`stage/090-ready-for-human-merge`).**
+A PR no lane vouches for — an untrusted author (`contributor-lane:author-association`,
+`untrusted-author-role`, `author-permission-missing`, `fork-non-member`, the
+claim-tier family), workflow files, a manual-merge path — parks at 090 with a
+*Ready for human merge* pill whose tooltip names the reason and the fix in plain
+words (the config key and where in ⚙ / 👥 it is set). The Activity Monitor's ⋯
+menu and needs-human popover lead with the two actions that do what the pill
+asks ([#15078](https://github.com/hivecommons/hive/issues/15078)), both
+`POST /api/repos/{owner}/{repo}/items/{n}/decision` and both limited to a
+verified owner or an authorized user with the `merger` role:
+
+| Decision | What it does | Audit / ledger |
+|---|---|---|
+| `merge-now` — *Approve & merge as maintainer* | Comments on the PR that @you merged it from the dashboard, then merges it at once through the hive's GitHub App (`MergePRVia`, audit path `dashboard`). Refused when the PR is merged or closed, or when you are its author. | `repo_item_decision_merge`; `last_operator_action.action: merge-now`; toast *merged*. |
+| `queue-merge` — *Approve — let hive merge* | Leaves an `APPROVED` review in your name with a note, adds the automerge label, and leaves the merge to the App self-merge sweep, which merges on its next pass once CI is green and the head has soaked. Refused on your own PR. | `repo_item_decision_queue_merge`; `last_operator_action.action: queue-merge`; toast *queued for merge*. |
+
+Neither widens who the lanes trust: to stop a contributor's PRs parking at 090
+give them the `trusted` / `merger` tier under 👥 Contributors
+(`auto_merge.contributor_lane.require_tiers`), add them as a repository
+collaborator, or list them under `dashboard.authorized_users` with the
+`merger` role.
+
 Actionable merge failures surface as dashboard system alerts, deduplicated by
 repo+reason and cleared by the next successful merge in that repo. Alerts name
 the operator action: grant/install the App with Contents and Pull requests write,
