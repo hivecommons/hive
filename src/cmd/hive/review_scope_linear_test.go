@@ -49,3 +49,13 @@ func TestReviewScopeContractForSkipsAndFailures(t *testing.T) {
 
 	reviewScopeContractFor(context.Background(), nil, &item, restoreTestLogger())
 }
+
+func TestReviewScopeContractForCachesFailures(t *testing.T) {
+	failing := &fakeScopeReader{err: errors.New("boom")}
+	item := review.PullRequest{ScopeContract: "linked Linear issue ZZZ-1"}
+	reviewScopeContractFor(context.Background(), failing, &item, restoreTestLogger())
+	reviewScopeContractFor(context.Background(), failing, &item, restoreTestLogger())
+	if len(failing.asked) != 1 {
+		t.Fatalf("asked = %v, want one fetch within the failure TTL", failing.asked)
+	}
+}

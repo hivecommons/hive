@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/review"
@@ -51,6 +52,35 @@ func reviewScopeLinearReader(cfg *config.Config, logger *slog.Logger) reviewScop
 	return src
 }
 
+// reviewScopeFailTTL bounds how long a failed Linear read is not retried, so
+// an outage costs one timeout per issue per window, not per eval cycle.
+const reviewScopeFailTTL = 2 * time.Minute
+
+var reviewScopeFailures struct {
+	mu sync.Mutex
+	at map[string]time.Time
+}
+
+func reviewScopeRecentlyFailed(id string) bool {
+	reviewScopeFailures.mu.Lock()
+	defer reviewScopeFailures.mu.Unlock()
+	t, ok := reviewScopeFailures.at[id]
+	if ok && time.Since(t) >= reviewScopeFailTTL {
+		delete(reviewScopeFailures.at, id)
+		return false
+	}
+	return ok
+}
+
+func reviewScopeMarkFailed(id string) {
+	reviewScopeFailures.mu.Lock()
+	defer reviewScopeFailures.mu.Unlock()
+	if reviewScopeFailures.at == nil {
+		reviewScopeFailures.at = map[string]time.Time{}
+	}
+	reviewScopeFailures.at[id] = time.Now()
+}
+
 // reviewScopeContractFor fills the Linear issue text for a PR whose scope
 // contract is a Linear issue. A failed read leaves the text empty, and the
 // prompt falls back to naming the identifier.
@@ -59,8 +89,12 @@ func reviewScopeContractFor(ctx context.Context, reader reviewScopeIssueReader, 
 	if !ok || reader == nil {
 		return
 	}
+	if reviewScopeRecentlyFailed(id) {
+		return
+	}
 	issue, err := reader.ScopeContractIssue(ctx, id)
 	if err != nil {
+		reviewScopeMarkFailed(id)
 		if logger != nil {
 			logger.Debug("review scope contract: Linear issue not fetched", "repo", item.Repo, "pr", item.Number, "issue", id, "error", err)
 		}

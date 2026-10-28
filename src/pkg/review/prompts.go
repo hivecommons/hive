@@ -512,7 +512,10 @@ func scopeContractSection(pr PullRequest) string {
 	linearText := strings.TrimSpace(pr.ScopeContractText)
 	switch {
 	case isLinear && linearText != "":
-		state := strings.TrimSpace(pr.ScopeContractState)
+		state := strings.Join(strings.Fields(pr.ScopeContractState), " ")
+		if r := []rune(state); len(r) > 40 {
+			state = string(r[:40])
+		}
 		if state == "" {
 			state = "unknown"
 		}
