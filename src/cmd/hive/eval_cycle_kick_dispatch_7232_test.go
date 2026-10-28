@@ -27,10 +27,12 @@ type kickDispatchRecorder struct {
 	spansEnded []string
 	spanErrs   []error
 	probeStamp []time.Time
-	sendErr    map[string]error
-	startErr   map[string]error
-	started    []string
-	backoff    map[string]bool
+	// deliveredAt is what onDelivered received per delivered message.
+	deliveredAt []time.Time
+	sendErr     map[string]error
+	startErr    map[string]error
+	started     []string
+	backoff     map[string]bool
 }
 
 func newKickDispatchRecorder() *kickDispatchRecorder {
@@ -87,10 +89,11 @@ func (r *kickDispatchRecorder) deps() kickDispatchDeps {
 			defer r.mu.Unlock()
 			r.calls = append(r.calls, "review:"+msg.Agent)
 		},
-		onDelivered: func(msg scheduler.KickMessage) {
+		onDelivered: func(msg scheduler.KickMessage, deliveredAt time.Time) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
 			r.calls = append(r.calls, "delivered:"+msg.Agent)
+			r.deliveredAt = append(r.deliveredAt, deliveredAt)
 		},
 		markProbeReleased: func(at time.Time) {
 			r.mu.Lock()

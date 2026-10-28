@@ -189,6 +189,7 @@ type Diagnostics struct {
 	LastClaudeScanError  string `json:"last_claude_scan_error,omitempty"`
 	LastCopilotScanError string `json:"last_copilot_scan_error,omitempty"`
 	LastBobScanError     string `json:"last_bob_scan_error,omitempty"`
+	LastSandboxScanError string `json:"last_sandbox_scan_error,omitempty"`
 	LiveCaptureEnabled   bool   `json:"live_capture_enabled,omitempty"`
 }
 
@@ -206,6 +207,7 @@ type Collector struct {
 	claudeSessionsDir         string
 	copilotSessionsDir        string
 	bobSessionsDir            string
+	sandboxRunHistoryPath     string
 	copilotLiveCaptureSinceMs int64
 	persistPath               string
 	detector                  func(string) string
@@ -263,6 +265,13 @@ func (c *Collector) SetClaudeSessionsDir(dir string) {
 
 func (c *Collector) SetCopilotSessionsDir(dir string) {
 	c.copilotSessionsDir = dir
+}
+
+// SetSandboxRunHistoryPath points the collector at the sandbox run history
+// (crux/agent sandbox-runs/runs.jsonl) so usage reported by podman and Job
+// sandbox kicks is attributed to their agents like any other session.
+func (c *Collector) SetSandboxRunHistoryPath(path string) {
+	c.sandboxRunHistoryPath = path
 }
 
 func (c *Collector) SetBobSessionsDir(dir string) {
@@ -373,6 +382,16 @@ func (c *Collector) scan() {
 		c.mu.Lock()
 		c.errorStreaks = streaks
 		c.mu.Unlock()
+	}
+
+	if c.sandboxRunHistoryPath != "" {
+		sandboxAgg, err := ScanSandboxRuns(c.sandboxRunHistoryPath)
+		if err != nil {
+			c.logger.Warn("sandbox run history scan failed", "error", err)
+			diag.LastSandboxScanError = err.Error()
+		} else if sandboxAgg != nil && sandboxAgg.SessionCount > 0 {
+			MergeAggregates(agg, sandboxAgg)
+		}
 	}
 
 	sessionDelta := agg.SessionCount - c.prevSessionCount

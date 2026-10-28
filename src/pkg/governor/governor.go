@@ -1370,28 +1370,53 @@ func (g *Governor) RecordKick(agentName string) {
 }
 
 func (g *Governor) RecordKickForRepo(agentName, repo string) {
+	g.RecordKickForRepoAt(agentName, repo, time.Time{})
+}
+
+// RecordKickForRepoAt records a delivered kick that went out at kickedAt (zero
+// means now). The dispatch pass applies delivery effects in message order, so
+// this can run minutes after the kick was typed while an earlier agent's lane
+// waited out a prompt timeout. If the kicked turn has ALREADY ended by then
+// (a kick outcome newer than kickedAt), the continuous scheduler has already
+// armed the next re-kick from that turn end, and zeroing NextKick here would
+// leave the agent idle with no re-arm path until the turn-ceiling presumption
+// — the hosted scanner sat at its prompt for 45 minutes this way after a
+// 3-minute turn. In that case the kick is counted but the schedule is kept.
+func (g *Governor) RecordKickForRepoAt(agentName, repo string, kickedAt time.Time) {
 	report, hasReport := g.validateAgentReportIfPresent(agentName)
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
+	if kickedAt.IsZero() || kickedAt.After(now) {
+		kickedAt = now
+	}
 	key := config.CadenceTargetKey(agentName, repo)
-	g.state.LastKick[key] = now
+	g.state.LastKick[key] = kickedAt
 	if _, ok := g.agents[agentName]; ok && g.agentContinuousInCurrentModeLocked(agentName) {
 		st := g.state.Continuous[agentName]
-		if !st.NextKick.IsZero() && !now.Before(st.NextKick) {
+		if !st.NextKick.IsZero() && !kickedAt.Before(st.NextKick) {
 			st.Kicks++
 			st.TokenBaseline = g.budget.ByAgent[agentName]
 			st.Blocked = ""
 		}
-		st.NextKick = time.Time{}
-		st.BackoffUntil = time.Time{}
-		st.Backoff = 0
-		st.Failures = 0
-		st.LastError = ""
+		rec, ended := g.kickOutcomes[agentName]
+		turnAlreadyEnded := ended && rec.At.After(kickedAt)
+		if !turnAlreadyEnded {
+			st.NextKick = time.Time{}
+			st.BackoffUntil = time.Time{}
+			st.Backoff = 0
+			st.Failures = 0
+			st.LastError = ""
+		} else if g.logger != nil {
+			g.logger.Info("kick recorded after its turn already ended; keeping the scheduled re-kick",
+				"agent", agentName, "kicked_at", kickedAt.UTC().Format(time.RFC3339),
+				"turn_ended", rec.At.UTC().Format(time.RFC3339),
+				"next_kick", st.NextKick.UTC().Format(time.RFC3339))
+		}
 		g.state.Continuous[agentName] = st
 	}
-	g.appendKickHistory(KickRecord{Timestamp: now, Agent: agentName, Repo: repo})
+	g.appendKickHistory(KickRecord{Timestamp: kickedAt, Agent: agentName, Repo: repo})
 	if hasReport {
 		g.agentReports[agentName] = report
 	}

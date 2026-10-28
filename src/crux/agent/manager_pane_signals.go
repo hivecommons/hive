@@ -508,6 +508,7 @@ func (a *AgentProcess) snapshot() crux.Process {
 		BootstrapOverride:         a.BootstrapOverride,
 		LastError:                 a.LastError,
 		KickOutcome:               a.KickOutcome,
+		SandboxLastRun:            cloneSandboxRun(a.SandboxLastRun),
 		NeedsLogin:                needsLogin,
 		LoginURL:                  loginURL,
 		Starting:                  a.startupLaunchQueued || a.launching,

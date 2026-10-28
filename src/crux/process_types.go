@@ -119,3 +119,46 @@ type TurnLoss struct {
 	// Recent is the newest records, oldest first; the runtime bounds the ring.
 	Recent []TurnInterruption
 }
+
+// SandboxRunUsage is the token usage one sandboxed kick reported, when its
+// transcript carried any. Zero when the backend printed no usage footer.
+type SandboxRunUsage struct {
+	Model       string `json:"model,omitempty"`
+	Input       int64  `json:"input,omitempty"`
+	Output      int64  `json:"output,omitempty"`
+	CacheRead   int64  `json:"cacheRead,omitempty"`
+	CacheCreate int64  `json:"cacheCreate,omitempty"`
+}
+
+// Total is the sum of the four counters.
+func (u SandboxRunUsage) Total() int64 {
+	return u.Input + u.Output + u.CacheRead + u.CacheCreate
+}
+
+// SandboxRun is the outcome of the most recent sandboxed kick of an agent
+// (podman or Kubernetes Job runtime). A sandboxed agent has no tmux session
+// or in-pod process between kicks, so this record — not the process state —
+// is what its health derives from.
+type SandboxRun struct {
+	Runtime     string    `json:"runtime,omitempty"`
+	StartedAt   time.Time `json:"startedAt"`
+	EndedAt     time.Time `json:"endedAt"`
+	Succeeded   bool      `json:"succeeded"`
+	TimedOut    bool      `json:"timedOut,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	CommitCount int       `json:"commitCount,omitempty"`
+	Branch      string    `json:"branch,omitempty"`
+	PRURL       string    `json:"prURL,omitempty"`
+	// Summary is the agent's own report summary when it left one, else the
+	// scrubbed tail of the transcript. Bounded; see sandboxRunSummaryMax.
+	Summary string          `json:"summary,omitempty"`
+	Usage   SandboxRunUsage `json:"usage,omitempty"`
+}
+
+// Duration is how long the run took, zero when the record is incomplete.
+func (r SandboxRun) Duration() time.Duration {
+	if r.StartedAt.IsZero() || r.EndedAt.Before(r.StartedAt) {
+		return 0
+	}
+	return r.EndedAt.Sub(r.StartedAt)
+}

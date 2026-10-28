@@ -829,7 +829,12 @@ type FrontendAgent struct {
 	ProxyViolations        int    `json:"proxyViolations"`
 	OnDemand               bool   `json:"onDemand,omitempty"`
 	Sandboxed              bool   `json:"sandboxed,omitempty"`
-	LastError              string `json:"lastError,omitempty"`
+	// SandboxRun is the last sandboxed run and the health verdict derived
+	// from it (sandbox_health.go). Present only for sandboxed agents; the
+	// SPA reads health from here instead of State, which is "idle" between
+	// kicks for an agent that has no session to be down.
+	SandboxRun *FrontendSandboxRun `json:"sandboxRun,omitempty"`
+	LastError  string              `json:"lastError,omitempty"`
 	StallNudges            int    `json:"stallNudges,omitempty"`
 	StallRecoveries        int    `json:"stallRecoveries,omitempty"`
 	ActionNudges           int    `json:"actionNudges,omitempty"`

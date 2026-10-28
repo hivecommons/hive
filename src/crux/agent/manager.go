@@ -441,6 +441,12 @@ type AgentProcess struct {
 	// report, or plain "ended". Settled(LastKick) is false while the current
 	// turn is still running. Guarded by m.mu; see kick_outcome.go.
 	KickOutcome KickOutcome
+	// SandboxLastRun is the outcome of this agent's most recent sandboxed
+	// kick (podman or Job runtime). Sandboxed agents sit in StateIdle between
+	// kicks with no session to probe, so health and the activity summary are
+	// read from here. Restored from the sandbox run file on Start. Guarded by
+	// m.mu; see manager_sandbox.go.
+	SandboxLastRun *crux.SandboxRun
 	// sandboxResumeAfterCancel is set when an operator resumes a paused
 	// sandbox agent while the canceled sandbox goroutine is still draining.
 	// The completion handler then turns the expected cancellation into Idle
@@ -809,10 +815,7 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 }
 
 func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext, options ...ManagerOption) *Manager {
-	workDir := os.Getenv("HIVE_WORK_DIR")
-	if workDir == "" {
-		workDir = "/data/agents"
-	}
+	workDir := crux.WorkDir()
 	var opts managerOptions
 	for _, option := range options {
 		if option != nil {
@@ -997,6 +1000,13 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		agent.HasLaunched = true
 		agent.LaunchedMode = m.agentMode(agent)
 		agent.startupLaunchQueued = false
+		if agent.SandboxLastRun == nil {
+			if run, err := loadSandboxRun(m.workDir, name); err != nil {
+				m.logger.Warn("sandbox last run not restored", "name", name, "error", err)
+			} else if run != nil {
+				agent.SandboxLastRun = run
+			}
+		}
 		m.logger.Info("audit: sandbox agent ready", "name", name)
 		m.mu.Unlock()
 		return nil
