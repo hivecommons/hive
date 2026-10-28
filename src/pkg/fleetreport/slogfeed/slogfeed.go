@@ -141,15 +141,34 @@ func expectedKickHold(r slog.Record) bool {
 	return held
 }
 
-// diagnostics renders "level attr=value …" from the bound and record
-// attributes, bounded. It runs only for WARN+ records that passed the
-// filters, so the allocation is paid on the rare path.
+// Classifier errors stay in local logs only: transport errors can expose the
+// private endpoint in both the URL and the nested DNS/dial error.
+func redactClassifierError(a slog.Attr) slog.Attr {
+	if a.Key == "error" || a.Key == "classifier_error" {
+		return slog.String(a.Key, "[withheld: see local logs]")
+	}
+	a.Value = a.Value.Resolve()
+	if a.Value.Kind() == slog.KindGroup {
+		attrs := append([]slog.Attr(nil), a.Value.Group()...)
+		for i := range attrs {
+			attrs[i] = redactClassifierError(attrs[i])
+		}
+		a.Value = slog.GroupValue(attrs...)
+	}
+	return a
+}
+
+// diagnostics renders bounded attributes for WARN+ records that passed the filters.
 func diagnostics(r slog.Record, bound []slog.Attr) string {
+	classifier := fleetreport.LogFedClass(r.Message) == fleetreport.ClassIOScanClassifierUnavail
 	var b strings.Builder
 	b.WriteString(r.Level.String())
 	write := func(a slog.Attr) bool {
 		if b.Len() >= maxDiagnosticsBytes {
 			return false
+		}
+		if classifier {
+			a = redactClassifierError(a)
 		}
 		b.WriteByte(' ')
 		b.WriteString(a.Key)

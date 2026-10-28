@@ -3,7 +3,9 @@ package slogfeed
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -463,6 +465,55 @@ func TestHandlerSkipsContributorTierLimits(t *testing.T) {
 		logger.Warn(msg)
 		if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
 			t.Errorf("failure %q should remain reportable: %+v", msg, *seen)
+		}
+	}
+}
+
+func TestClassifierErrorsStayInLocalLogs(t *testing.T) {
+	const host = "private-inference.internal"
+	err := &url.Error{Op: "Post", URL: "https://" + host + "/v1/chat/completions", Err: errors.New("dial tcp: lookup " + host + ": no such host")}
+	for _, msg := range []string{
+		"ioscan classifier failed closed; text withheld",
+		"ioscan classifier failed open; text passes on unclassified",
+		"ioscan fail-closed blocked kick",
+	} {
+		for _, key := range []string{"error", "classifier_error"} {
+			for _, placement := range []string{"record", "bound", "group"} {
+				t.Run(msg+"/"+key+"/"+placement, func(t *testing.T) {
+					now := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
+					tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+					var out bytes.Buffer
+					logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+					attr := slog.Any(key, err)
+					if key == "classifier_error" {
+						attr = slog.String(key, err.Error())
+					}
+					args := []any{"agent", "reviewer", "fix", "check ioscan.classifier.model"}
+					switch placement {
+					case "record":
+						args = append(args, attr)
+					case "bound":
+						logger = logger.With(attr)
+					case "group":
+						logger = logger.With(slog.Group("classifier", slog.Group("transport", attr)))
+					}
+					logger.Warn(msg, args...)
+					if !strings.Contains(out.String(), host) || !strings.Contains(out.String(), "no such host") {
+						t.Fatalf("local log lost the original error: %s", out.String())
+					}
+					ev := tr.Evidence()
+					if len(ev) != 1 || ev[0].Class != fleetreport.ClassIOScanClassifierUnavail {
+						t.Fatalf("classifier warning lost its report: %+v", ev)
+					}
+					report := fleetreport.BuildRuntimeReport(fleetreport.Observation{}, ev[0], "fp", "inst", "hive", "v5", "commit", now)
+					if strings.Contains(report.Body, host) || strings.Contains(report.Body, "no such host") || strings.Contains(report.Body, "/v1/chat/completions") {
+						t.Fatalf("public report leaked classifier error: %s", report.Body)
+					}
+					if !strings.Contains(report.Body, msg) || !strings.Contains(report.Body, "agent=reviewer") || !strings.Contains(report.Body, "fix=check ioscan.classifier.model") {
+						t.Fatalf("public report lost actionable context: %s", report.Body)
+					}
+				})
+			}
 		}
 	}
 }
