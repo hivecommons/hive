@@ -113,7 +113,7 @@ func TestSweepEscalationSurvivesHeartbeats(t *testing.T) {
 		h := &s.registry.Hives[0]
 		h.Upgrading = true
 		h.UpgradeTarget = "fc32ae4"
-		h.UpgradeStartedAt = time.Now().Add(-orphanedUpgradeClearAfter - time.Minute)
+		h.UpgradeStartedAt = time.Now().Add(-silentDrainClearAfter - time.Minute)
 		h.LastHeartbeat = time.Now().Format(time.RFC3339)
 		s.mu.Unlock()
 	}
@@ -227,10 +227,11 @@ func TestPausedSweepStillClearsConvergedLatch(t *testing.T) {
 			LastHeartbeat:    time.Now().Format(time.RFC3339),
 		},
 		{
-			// Abandoned orphan: alive but still on the old SHA.
+			// Abandoned orphan: alive but still on the old SHA, past the
+			// silent-drain hold too.
 			ID: "wedge1", GitBranch: "v2", GitHash: "old0000",
 			Upgrading: true, UpgradeTarget: "fc32ae4",
-			UpgradeStartedAt: time.Now().Add(-orphanedUpgradeClearAfter - time.Minute),
+			UpgradeStartedAt: time.Now().Add(-silentDrainClearAfter - time.Minute),
 			LastHeartbeat:    time.Now().Format(time.RFC3339),
 		},
 	}

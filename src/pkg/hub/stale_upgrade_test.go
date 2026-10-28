@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // fixedSweepNow is an arbitrary but stable clock for these tests.
@@ -682,5 +684,99 @@ func TestSweepExhaustedMessageNamesDrain(t *testing.T) {
 	}
 	if !strings.Contains(h.UpgradeError, "brainstorm") || strings.Contains(h.UpgradeError, "floating tag") {
 		t.Fatalf("UpgradeError should name the drained kick, not the floating-tag hint: %q", h.UpgradeError)
+	}
+}
+
+// TestSilentDrainUpgradeHold covers the #14856 shape: three vllm-d :stable
+// hives on a build that predates drain reporting were alive, still on their
+// old SHA and reporting no drain block, so the sweep orphaned them at ~20m
+// while the spoke was quietly draining its 45m default window. The latch must
+// hold for the default drain window plus the usual grace unless the spoke
+// reports a drain itself or the start clock is lost.
+func TestSilentDrainUpgradeHold(t *testing.T) {
+	hold, reason := silentDrainUpgradeHold(nil, false, orphanedUpgradeClearAfter+time.Minute)
+	if !hold {
+		t.Fatal("an alive spoke with no drain report must be held inside the default drain window")
+	}
+	if !strings.Contains(reason, "older build") || !strings.Contains(reason, "draining") {
+		t.Errorf("reason %q should say the spoke may be an older build draining", reason)
+	}
+	if hold, _ := silentDrainUpgradeHold(nil, false, silentDrainClearAfter); hold {
+		t.Error("past the default drain window the attempt is an orphan")
+	}
+	if hold, _ := silentDrainUpgradeHold(nil, true, 0); hold {
+		t.Error("a lost start clock must never be held — the hold would be unbounded")
+	}
+	d := &UpgradeDrainReport{Target: "a37b7f2", WaitedS: 2700, RemainingS: 0}
+	if hold, _ := silentDrainUpgradeHold(d, false, time.Minute); hold {
+		t.Error("a spoke that reports a drain is judged by drainingUpgradeHold, not held here")
+	}
+	if silentDrainClearAfter <= time.Duration(config.DefaultUpgradeDrainTimeoutS)*time.Second {
+		t.Errorf("silentDrainClearAfter %v must exceed the spoke's default drain %ds", silentDrainClearAfter, config.DefaultUpgradeDrainTimeoutS)
+	}
+}
+
+// TestEvaluateOrphanedUpgradeHoldsSilentLegacyDrain is the FMA timeline of
+// 2026-10-27 replayed against the sweep: instructed 17:14Z, alive on 551ffc3
+// at 17:37Z with no drain report. The old sweep cleared it there; the spoke
+// would have rolled at 17:59Z had the instruction kept arriving.
+func TestEvaluateOrphanedUpgradeHoldsSilentLegacyDrain(t *testing.T) {
+	started := fixedSweepNow.Add(-23 * time.Minute)
+	entry := RegistryEntry{
+		Upgrading:        true,
+		UpgradeStartedAt: started,
+		GitHash:          "551ffc3",
+		UpgradeTarget:    "a37b7f2",
+		ImageRef:         "ghcr.io/hivecommons/hive:stable",
+		LastHeartbeat:    rfc3339(fixedSweepNow.Add(-30 * time.Second)),
+	}
+	ev := evaluateOrphanedUpgrade(&entry, fixedSweepNow, "")
+	if ev.orphaned {
+		t.Fatalf("23m into a silent attempt on an alive spoke must hold, got orphaned: %q", ev.reason)
+	}
+	if !strings.Contains(ev.reason, "draining") {
+		t.Errorf("hold reason should explain the drain hypothesis, got %q", ev.reason)
+	}
+	// Past the spoke's default drain window plus grace the hold ends.
+	entry.UpgradeStartedAt = fixedSweepNow.Add(-silentDrainClearAfter - time.Minute)
+	ev = evaluateOrphanedUpgrade(&entry, fixedSweepNow, "")
+	if !ev.orphaned || ev.converged {
+		t.Fatalf("past the default drain window the attempt must be orphaned (not converged): %+v", ev)
+	}
+	// A spoke that DOES report its drain is governed by that report: once it
+	// says remaining_s == 0 and keeps heartbeating on the old SHA, it is an
+	// orphan at the ordinary threshold rather than being granted the silent
+	// window again.
+	entry.UpgradeStartedAt = fixedSweepNow.Add(-orphanedUpgradeClearAfter - time.Minute)
+	entry.UpgradeDrain = &UpgradeDrainReport{Target: "a37b7f2", WaitedS: 2700, RemainingS: 0}
+	ev = evaluateOrphanedUpgrade(&entry, fixedSweepNow, "")
+	if !ev.orphaned {
+		t.Fatalf("a reported, exhausted drain must not get the silent-drain hold: %q", ev.reason)
+	}
+}
+
+// TestSweepKeepsSilentLegacyDrainLatched checks the sweep leaves the registry
+// latch — the only durable copy of the instruction — in place while the
+// silent-drain hold applies, so the stale-recovery path keeps re-arming
+// delivery across hub restarts instead of the daily window being lost.
+func TestSweepKeepsSilentLegacyDrainLatched(t *testing.T) {
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID:        "hosted-llm-d-incubation-llm-d-fast-m-yfzz",
+		Upgrading: true, UpgradeStartedAt: time.Now().Add(-28 * time.Minute),
+		GitHash: "551ffc3", UpgradeTarget: "a37b7f2",
+		ImageRef:      "ghcr.io/hivecommons/hive:stable",
+		LastHeartbeat: rfc3339(time.Now().Add(-30 * time.Second)),
+	}}
+	s.sweepOrphanedUpgrades()
+	h := s.registry.Hives[0]
+	if !h.Upgrading || h.UpgradeTarget != "a37b7f2" || h.UpgradeStartedAt.IsZero() {
+		t.Fatalf("sweep must keep a silently draining spoke latched: %+v", h)
+	}
+	if h.OrphanedUpgradeSweeps != 0 {
+		t.Errorf("no retry budget may be spent while holding, got %d", h.OrphanedUpgradeSweeps)
 	}
 }

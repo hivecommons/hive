@@ -345,7 +345,7 @@ func TestSpokePauseBlocksOrphanSweep(t *testing.T) {
 		s := &HubServer{logger: slog.Default(), saveCh: make(chan struct{}, 1), heartbeatUpgrade: make(map[string]string)}
 		s.registry.Hives = []RegistryEntry{{
 			ID: "h1", Upgrading: true, UpgradeTarget: "tgt7777", GitHash: "old7777",
-			UpgradeStartedAt: time.Now().Add(-3 * staleUpgradeTimeout),
+			UpgradeStartedAt: time.Now().Add(-silentDrainClearAfter - time.Minute),
 			LastHeartbeat:    time.Now().Format(time.RFC3339),
 		}}
 		return s

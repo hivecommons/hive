@@ -154,7 +154,21 @@ normal path is:
    upgrade, a full upgrade wave, the merge debounce, or a hive that has not
    heartbeated recently), the panel shows a `Held` row with that reason from
    `autoUpdate.heldReason` / `heldAt`, so a missed window is explained instead
-   of only showing the previous upgrade.
+   of only showing the previous upgrade. On a `stable` hive the `Next update`
+   / `overdue since` line is the **channel's** next promotion estimate (the
+   newest `v5` build's 24-hour soak deadline), not your hive's daily or weekly
+   window; `overdue since` means a build crossed the soak line and the hub has
+   not promoted it yet, and says nothing about whether your hive rolled.
+   While a hub-managed spoke drains in-flight agent kicks before restarting
+   (default 45 minutes, `hub.upgrade_drain_timeout_s`), the hub timeline
+   shows the instruction as still in progress and the hub keeps re-delivering
+   it on every heartbeat — including after a hub restart — until the spoke's
+   drain deadline plus 20 minutes has passed. Spokes on builds newer than
+   [#14322](https://github.com/hivecommons/hive/pull/14322) report the drain
+   and are held for exactly the window they report; older spokes drain
+   silently and are held for the default window
+   ([#14856](https://github.com/hivecommons/hive/issues/14856)). Only after
+   that does the hub record a `stale-upgrade-sweep` and retry.
 5. **Need it now?** Once `stable` itself points at the desired build,
    **Upgrade now** skips the automatic-upgrade wait for that hive and arms the
    rollout immediately. It does not promote `stable`; it only follows the channel

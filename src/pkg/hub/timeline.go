@@ -413,7 +413,7 @@ func detectTransitions(old, new *RegistryEntry, now time.Time) []TimelineEvent {
 						shortDur(time.Duration(d.RemainingS)*time.Second)))
 				} else {
 					add(TimelineUpgradeStale, fmt.Sprintf(
-						"upgrade to %s has been in flight for %s with no version change — the hive may be unreachable or pinned to an immutable tag",
+						"upgrade to %s has been in flight for %s with no version change — the hive may be unreachable, pinned to an immutable tag, or an older build draining in-flight agent kicks without reporting it",
 						target, shortDur(elapsed)))
 				}
 			}

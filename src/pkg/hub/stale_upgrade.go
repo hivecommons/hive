@@ -3,6 +3,8 @@ package hub
 import (
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // orphanedUpgradeGrace is the EXTRA time, beyond staleUpgradeTimeout, that a
@@ -227,6 +229,25 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 		ev.reason = reason
 		return ev
 	}
+	// No drain report at all. That is also what an OLDER spoke build looks
+	// like: drain reporting only shipped with #14322, and a spoke on a build
+	// before it drains silently for the full default window. Judged by
+	// liveness alone it was orphaned at orphanedUpgradeClearAfter — the three
+	// vllm-d :stable hives in #14856 (two daily windows running): the sweep
+	// cleared the latch at ~20-28m, the only remaining copy of the instruction
+	// was the in-memory heartbeatUpgrade map, the next merge-driven hub
+	// restart wiped it, the spoke's drain went stale a few beats later, and
+	// the daily fire date was already spent. Hold the latch for the default
+	// drain window plus the usual grace instead: the latch is what keeps the
+	// stale-recovery path re-arming delivery across hub restarts, so a spoke
+	// that is quietly draining keeps receiving UpgradeTo until its own
+	// deadline and rolls. A genuine orphan is re-armed by that same recovery
+	// path at staleUpgradeTimeout regardless of this sweep, so the hold costs
+	// only a longer "Upgrading" spinner before the retry budget is spent.
+	if hold, reason := silentDrainUpgradeHold(entry.UpgradeDrain, zeroStart, ev.elapsed); hold {
+		ev.reason = reason
+		return ev
+	}
 
 	ev.orphaned = true
 	if zeroStart {
@@ -270,6 +291,27 @@ func drainingUpgradeHold(d *UpgradeDrainReport, elapsed time.Duration) (bool, st
 	reason += " — waited " + roundedDuration(time.Duration(d.WaitedS)*time.Second) +
 		", at most " + roundedDuration(time.Duration(d.RemainingS)*time.Second) + " more"
 	return true, reason
+}
+
+// silentDrainClearAfter is how long an alive spoke that is still on its old
+// build and reports NO drain block is left latched before the sweep treats
+// the attempt as orphaned: the spoke's default drain window plus the same
+// grace the sweep already allows every attempt. Derived from the spoke-side
+// default so the two sides cannot drift apart again (#14856).
+const silentDrainClearAfter = time.Duration(config.DefaultUpgradeDrainTimeoutS)*time.Second + orphanedUpgradeClearAfter
+
+// silentDrainUpgradeHold reports whether a latched upgrade on an alive,
+// still-old spoke should be left alone because the spoke reports no drain at
+// all — the signature of a build that predates drain reporting (#14322) and
+// may be draining in-flight agent kicks silently for the default window.
+// A zero start clock is never held: with no elapsed to measure the hold would
+// be unbounded, and that entry belongs to the lost-clock path instead.
+func silentDrainUpgradeHold(d *UpgradeDrainReport, zeroStart bool, elapsed time.Duration) (bool, string) {
+	if d != nil || zeroStart || elapsed >= silentDrainClearAfter {
+		return false, ""
+	}
+	return true, "spoke is alive on its old build and reports no drain — holding " +
+		roundedDuration(silentDrainClearAfter-elapsed) + " more in case it is an older build draining in-flight agent kicks before restarting"
 }
 
 // joinNames renders a short agent list for log and timeline text.
