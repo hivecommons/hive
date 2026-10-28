@@ -113,6 +113,10 @@ func TestStageTrackerPersonPresenceJS(t *testing.T) {
 	html := indexHTML(t)
 	script := strings.Join([]string{
 		stageTrackerRowActionsPreamble(t, html),
+		"function selectedDashboardTimeZone() { return 'UTC'; } const _dashboardDateFormatters = new Map();",
+		jsFunc(t, html, "dashboardDateFormatter"),
+		jsFunc(t, html, "formatDashboardDateTime"),
+		jsFunc(t, html, "formatDashboardTime"),
 		jsFunc(t, html, "stageTrackerShortAgo"),
 		jsFunc(t, html, "stageTrackerPresenceTip"),
 		jsFunc(t, html, "stageTrackerPresenceHtml"),
@@ -134,6 +138,7 @@ row.presence.adopt_at = '2026-10-28T16:38:00Z';
 assert.ok(stageTrackerPresenceHtml(row, now).includes('ham-presence-offline'));
 assert.ok(stageTrackerPresenceTip(row, now).includes('offline 26h'));
 assert.ok(stageTrackerPresenceTip(row, now).includes('hive will adopt at'));
+assert.ok(stageTrackerPresenceTip(row, now).includes(formatDashboardTime(Date.parse(row.presence.adopt_at))));
 assert.ok(stageTrackerPresenceTip(row, now).includes('(in 38m)'));
 assert.ok(stageTrackerPresenceTip(row, now + 3600000).includes('adoption due'));
 row.presence = {login:'zoe', kind:'human', state:'unknown', available:true, next:'wait'};

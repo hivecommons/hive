@@ -1519,9 +1519,9 @@
     .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }
     .ham-presence { display:inline-block; width:8px; height:8px; margin-right:5px; vertical-align:middle; flex-shrink:0; }
-    .ham-presence-online { border-radius:50%; background:var(--cue-decision); animation:ham-presence-breathe 3s ease-in-out infinite; }
+    .ham-presence-online { border-radius:var(--r-pill); background:var(--cue-decision); animation:ham-presence-breathe 3s ease-in-out infinite; }
     .ham-presence-offline { background:var(--cue-state); }
-    .ham-presence-unknown { border:1.5px solid var(--cue-work); border-radius:50%; }
+    .ham-presence-unknown { border:1.5px solid var(--cue-work); border-radius:var(--r-pill); }
     @keyframes ham-presence-breathe { 50% { opacity:.5; } }
     @media (prefers-reduced-motion: reduce) { .ham-presence-online { animation:none; } }
     /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
@@ -14203,7 +14203,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else text = who + ': no clanker registered';
       const at = Date.parse(p.adopt_at || '');
       if (p.next === 'adopt' && Number.isFinite(at)) {
-        text += at <= nowMs ? ' — adoption due' : ' — hive will adopt at ' + new Date(at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + ' (in ' + stageTrackerShortAgo(at - nowMs) + ')';
+        text += at <= nowMs ? ' — adoption due' : ' — hive will adopt at ' + formatDashboardTime(at) + ' (in ' + stageTrackerShortAgo(at - nowMs) + ')';
       } else text += p.kind === 'human' ? ' — waiting for a human reply' : ' — hive is waiting for them';
       return text;
     }
