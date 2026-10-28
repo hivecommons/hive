@@ -7706,8 +7706,8 @@ func runEvalCycle(
 					logUndeliveredReviewKick(logger, dashSrv, k, err)
 				}
 			},
-			onDelivered: func(msg scheduler.KickMessage) {
-				gov.RecordKickForRepo(msg.Agent, msg.Repo)
+			onDelivered: func(msg scheduler.KickMessage, deliveredAt time.Time) {
+				gov.RecordKickForRepoAt(msg.Agent, msg.Repo, deliveredAt)
 				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 
 				// Record issue-scoped kicks into the lifecycle timeline. Cheap,

@@ -470,8 +470,13 @@ type kickDispatchDeps struct {
 	onReviewDelivered func(msg scheduler.KickMessage)
 	// onDelivered runs last, for the effects that must NOT happen when a kick
 	// was withheld or failed: governor repo accounting, audit log, lifecycle
-	// timeline, token snapshot.
-	onDelivered func(msg scheduler.KickMessage)
+	// timeline, token snapshot. deliveredAt is when the lane finished typing
+	// the kick, not when this callback runs: effects are applied in message
+	// order, so a fast agent's callback can run minutes after its kick while
+	// an earlier agent's lane waits out a prompt timeout. The governor needs
+	// the real delivery time to tell whether the kicked turn has already
+	// ended (hivecommons/hive continuous re-kick lost after a slow lane).
+	onDelivered func(msg scheduler.KickMessage, deliveredAt time.Time)
 	// onFailed runs when a kick was selected but could not be delivered. The
 	// continuous-mode scheduler uses this to exponential-backoff instead of
 	// returning the same due agent on every eval while the CLI is stalled.
@@ -488,6 +493,8 @@ type kickDispatchDeps struct {
 type kickDeliveryOutcome struct {
 	startErr error
 	sendErr  error
+	// deliveredAt is the lane's clock reading right after a successful send.
+	deliveredAt time.Time
 }
 
 // dispatchAgentKicks sends this cycle's kick messages, applying the two skip
@@ -529,6 +536,10 @@ type kickDeliveryOutcome struct {
 //     the entire point of releasing a probe.
 func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps kickDispatchDeps, logger *slog.Logger) []string {
 	var delivered []string
+	now := deps.now
+	if now == nil {
+		now = time.Now
+	}
 	// Decide, open spans and log in message order BEFORE any lane starts, so a
 	// withheld agent never has a lane and the audit log reads in plan order.
 	attempted := make([]bool, len(msgs))
@@ -568,7 +579,9 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 				msg := msgs[i]
 				var out kickDeliveryOutcome
 				if out.startErr = deps.startStoppedAgent(msg.Agent); out.startErr == nil {
-					out.sendErr = deps.sendKick(msg.Agent, msg.Message)
+					if out.sendErr = deps.sendKick(msg.Agent, msg.Message); out.sendErr == nil {
+						out.deliveredAt = now()
+					}
 				}
 				results[i] <- out
 			}
@@ -605,7 +618,7 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 			deps.markProbeReleased(deps.now())
 			releaseProbe = false
 		}
-		deps.onDelivered(msg)
+		deps.onDelivered(msg, out.deliveredAt)
 		delivered = append(delivered, msg.Agent)
 	}
 	return delivered
