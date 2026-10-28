@@ -1499,12 +1499,27 @@
     /* hive:unauthorized — the App lacks a permission for the next step; muted, never red: a person must take the step. */
     .ham-badge-mod.ham-mod-unauthorized { color: var(--text-muted); border-color: var(--line-subtle); border-style: dashed; }
     .ham-badge-mod.ham-mod-possible-dupe { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 45%, transparent); }
+    /* "Did I act on this?" badge (operator_actions.go): green ✓ once an
+       action is recorded, amber when the row has not moved since, red when
+       the action failed, dotted while the hive is still deciding. It rides
+       the shared .config-info tooltip portal, so the circle recipe is undone
+       here in favour of the pill. */
+    .config-info.ham-acted { width: auto; height: auto; min-width: 1.6em; border-radius: var(--r-pill); margin-left: 0; padding: 0 var(--sp-2); background: color-mix(in srgb, var(--green) 14%, transparent); border-color: color-mix(in srgb, var(--green) 55%, transparent); color: var(--green); font-size: var(--fs-xs); font-weight: 600; cursor: help; }
+    .config-info.ham-acted:hover, .config-info.ham-acted:focus-visible { background: var(--green); border-color: var(--green); color: var(--bg); }
+    .config-info.ham-acted.ham-acted-stuck { background: color-mix(in srgb, var(--yellow) 16%, transparent); border-color: color-mix(in srgb, var(--yellow) 60%, transparent); color: var(--yellow); }
+    .config-info.ham-acted.ham-acted-stuck:hover, .config-info.ham-acted.ham-acted-stuck:focus-visible { background: var(--yellow); border-color: var(--yellow); color: var(--bg); }
+    .config-info.ham-acted.ham-acted-failed { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: color-mix(in srgb, var(--red) 55%, transparent); color: var(--red); }
+    .config-info.ham-acted.ham-acted-failed:hover, .config-info.ham-acted.ham-acted-failed:focus-visible { background: var(--red); border-color: var(--red); color: var(--bg); }
+    .config-info.ham-acted.ham-acted-pending { border-style: dotted; color: var(--text-muted); background: transparent; }
+    .ham-acted-tip { white-space: normal; text-align: left; font-weight: 400; }
     /* Sentinel-flagged PR, #13535 follow-up: the chip beside needs rebase /
        regressed, and the human-decision chevron itself when its word
        reads "Sentinel alert · needs human". Danger-tinted from the
        status token the sentinel pill on the repo card already uses. */
     .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }
+    /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
+    .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
@@ -7190,6 +7205,7 @@
           <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="decision" data-arg1="stuck" aria-pressed="false" title="Items still on the same step more than 30 minutes after an operator action">Acted, still stuck</button>
         </span>
         <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, unauthorized, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person. Merge-gate pills (sentinel, needs-human, needs-decision) count only once the PR reaches the merge gate">Needs attention</button>
+        <label class="ham-repo-filter"><span>Decisions</span><select id="activity-monitor-acted" class="ham-select" data-change-action="hamFilter" data-arg0="acted" data-arg-types="s,v" aria-label="Filter by whether you acted on the row" title="Awaiting my decision: parked on a person, no action recorded yet. I acted: an action was recorded from this dashboard (✓ badge). Acted, still stuck: acted, but the item has not moved past that stage (amber ✓)"><option value="any">Any</option><option value="awaiting">Awaiting my decision</option><option value="acted">I acted</option><option value="stuck">Acted, still stuck</option></select></label>
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
         <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
@@ -14079,7 +14095,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
     function stageTrackerDefaultFilter() {
-      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, decision: '', age: 'any', author: 'any', attention: false, sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
+      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, onHold: false, decision: '', age: 'any', author: 'any', attention: false, acted: 'any', sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
     var _stageTrackerFilter = stageTrackerDefaultFilter();
     // Type-to-filter text of the "all labels" dialog (not persisted).
@@ -14230,6 +14246,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_BLOCKED_ON_PR_OPEN = 'lifts when it merges; re-triage if closed unmerged';
     const STAGE_TRACKER_BLOCKED_ON_PR_MERGED = 'merged; the blocked sweep lifts the label next';
     const STAGE_TRACKER_BLOCKED_ON_PR_CLOSED = 'closed unmerged; the blocked sweep re-triages it next';
+
+    // The 072 adoption line (`adoption`: {due, blocked_by, since, nudges,
+    // author_online, action, text} — hivecommons/hive#14524): the payload's
+    // plain-words text, '' when the row carries none.
+    function stageTrackerAdoptionTip(item) {
+      const a = item && item.adoption;
+      return a && a.text ? String(a.text) : '';
+    }
+    // Whether the row offers the owner's Adopt: the engine found adoption
+    // due and held it for a reason the owner settles (maintainer_policy:
+    // ask names `action: "decide:adopt"`).
+    function stageTrackerAdoptOffered(item) {
+      const a = item && item.kind === 'pr' ? item.adoption : null;
+      return !!(a && a.due && a.action === 'decide:adopt');
+    }
+    // The chip text: "adopt?" when the owner is asked, else "waiting on @x".
+    function stageTrackerAdoptionChipText(item) {
+      const a = item && item.adoption;
+      if (!a) return '';
+      if (stageTrackerAdoptOffered(item)) return 'adopt?';
+      return a.blocked_by ? 'not adopted' : ('waiting on ' + (a.author ? '@' + a.author : 'author'));
+    }
+    function stageTrackerAdoptionChipHtml(item) {
+      const tip = stageTrackerAdoptionTip(item);
+      if (!tip) return '';
+      const offered = stageTrackerAdoptOffered(item);
+      const cls = 'ham-badge ham-badge-adoption' + (offered ? ' ham-badge-adoption-ask' : '');
+      // "adopt?" opens the Needs-human popover (its decision_needed carries
+      // the Adopt option) when the popover helpers are present.
+      const decision = offered && typeof stageTrackerDecisionOf === 'function' && item.decision_needed ? stageTrackerDecisionOf(item) : null;
+      if (decision) return stageTrackerDecisionTriggerHtml(decision, esc(stageTrackerAdoptionChipText(item)), tip, cls);
+      return `<span class="${cls}" title="${esc(tip)}" aria-label="${esc('Adoption — ' + tip)}">${esc(stageTrackerAdoptionChipText(item))}</span>`;
+    }
 
     // "Sentinel flagged security-relevant changes at <head short sha>:
     // <reason>" — the sentinel wording for an item's tooltips and aria
@@ -14559,6 +14608,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (actorKind) lines.push('Next move: ' + actorKind);
       const blockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
       if (blockedPR) lines.push(blockedPR.tip);
+      // Guarded: the test harnesses load helpers by name, and this one is additive.
+      const adoption = typeof stageTrackerAdoptionTip === 'function' ? stageTrackerAdoptionTip(item) : '';
+      if (adoption) lines.push('Adoption: ' + adoption + (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item) ? ' (row menu → Adopt)' : ''));
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       const stale = stageTrackerStaleLabelsText(item);
       if (stale) lines.push(stale);
@@ -14581,7 +14633,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerChipsHtml(item) {
-      const sentinel = stageTrackerSentinelChipHtml(item);
+      const sentinel = stageTrackerSentinelChipHtml(item) + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '');
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return sentinel;
@@ -14620,6 +14672,180 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const decision = (mods[0] === 'needs-human' || mods[0] === 'needs-decision') && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
       if (decision) return sentinel + stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-badge ham-badge-mod ' + cls);
       return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${inner}</span>`;
+    }
+
+    /* ---- "Did I act on this?" badge ------------------------------------
+       Owner (2026-10-28): "I need a way to see if I selected an action on
+       an item so I can keep track of whether or not I addressed it.
+       Hovering over the indicator should show me what action I requested."
+       The server keeps a ledger of every row action submitted from the
+       dashboard (operator_actions.go) and the tracker payload carries the
+       newest one per item as `last_operator_action` with a derived state:
+       waiting (same stage, recent), addressed (the item moved on, or the
+       control asked for is in effect), stuck (same stage past the window),
+       pending (Let hive decide still running), failed. The row wears a ✓
+       badge in the cap cell — green at rest, amber when stuck, red when
+       failed, dotted while pending — whose in-app tooltip names the action,
+       when, the outcome and what hive did next. The in-flight spinner (the
+       request still on the wire) is a different thing drawn on the chevron;
+       this badge appears once the server has recorded the action. */
+    const STAGE_TRACKER_ACTED_LABELS = {
+      approve: 'Approve', 'give-direction': 'Give direction', 'close-superseded': 'Close as superseded', wontfix: "Close as won't-fix",
+      'let-hive-decide': 'Let hive decide', hold: 'Hold', release: 'Release hold', 'accept-triage': 'Accept triage', 'mark-needs-human': 'Mark needs-human',
+    };
+    const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed'];
+    const STAGE_TRACKER_ACTED_FILTERS = ['any', 'awaiting', 'acted', 'stuck'];
+    const STAGE_TRACKER_ACTED_STUCK_DEFAULT_S = 30 * 60;
+    const STAGE_TRACKER_ACTED_GLYPH = { waiting: '✓', addressed: '✓', stuck: '✓', pending: '…', failed: '✗' };
+    function stageTrackerActedLabel(action) { return STAGE_TRACKER_ACTED_LABELS[action] || String(action || '').replace(/-/g, ' '); }
+    // Pure: the record a row's badge reads — the item's own, else (an issue
+    // row drawn over its single covering PR) that PR's; null when none.
+    function stageTrackerActedSource(item) {
+      if (!item) return null;
+      if (item.last_operator_action) return { item, action: item.last_operator_action, count: Number(item.operator_action_count) || 1 };
+      const linked = Array.isArray(item.linked_prs) ? item.linked_prs : [];
+      if (item.kind === 'issue' && linked.length === 1 && linked[0].last_operator_action) {
+        return { item: { repo: item.repo, number: linked[0].number, kind: 'pr', stage: linked[0].stage || 0, modifiers: linked[0].modifiers || [], reason: linked[0].reason || '', caption: linked[0].caption || '', decision_needed: linked[0].decision_needed || null }, action: linked[0].last_operator_action, count: Number(linked[0].operator_action_count) || 1 };
+      }
+      return null;
+    }
+    // Pure: the badge state as of nowMs. The server judges `stuck` when it
+    // builds the payload; a row still `waiting` ages into `stuck` here once
+    // the window passes, so the badge turns amber between refreshes too.
+    function stageTrackerActedState(action, nowMs) {
+      if (!action) return '';
+      let state = STAGE_TRACKER_ACTED_STATES.indexOf(action.state) >= 0 ? action.state : 'waiting';
+      if (state === 'waiting') {
+        const at = Date.parse(action.at || '');
+        const windowMs = (Number(action.stuck_after_seconds) || STAGE_TRACKER_ACTED_STUCK_DEFAULT_S) * 1000;
+        if (at && (Number(nowMs) || Date.now()) - at >= windowMs) state = 'stuck';
+      }
+      return state;
+    }
+    // Pure: minutes/hours/days in words for the badge tooltip.
+    function stageTrackerActedAgo(ms) {
+      const min = Math.max(0, Math.floor((Number(ms) || 0) / 60000));
+      if (min < 1) return 'just now';
+      if (min < 60) return min + ' min ago';
+      const h = Math.floor(min / 60);
+      if (h < 48) return h + ' h ago';
+      return Math.floor(h / 24) + ' d ago';
+    }
+    function stageTrackerActedOutcomeWords(action) {
+      switch (action.outcome) {
+        case 'applied': return 'done' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
+        case 'no-op': return 'nothing changed' + (action.detail ? ': ' + stageTrackerActedPlain(action.detail) : '');
+        case 'failed': return 'failed' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
+        case 'pending': return 'the hive is deciding…';
+        case 'superseded-by-state-change': return 'the item moved on by itself';
+      }
+      return action.outcome || '';
+    }
+    // Pure: the stage in plain words, never a code ("Merge gate", not 085).
+    function stageTrackerActedStageName(n) {
+      const num = Number(n) || 0;
+      const st = ((_stageTracker && _stageTracker.stages) || []).find(s => Number(s.number) === num);
+      return st && (st.short || st.label) ? (st.short || st.label) : (num ? 'stage ' + num : 'an unknown stage');
+    }
+    // Pure: operator-facing gloss for the slugs the hive writes into stage
+    // reasons and endpoint status words. Unknown input is returned with its
+    // dashes and colons spelled as words so nothing reads like a code.
+    const STAGE_TRACKER_ACTED_PLAIN = {
+      'contributor-lane:changes-requested': 'a reviewer requested changes; needs a new commit',
+      'contributor-lane:approved': 'a reviewer approved it',
+      'contributor-lane:ci-failed': 'CI failed on the latest commit',
+      'needs-rebase': 'needs a rebase onto the base branch',
+      'needs-human': 'waiting on a person',
+      'needs-decision': 'waiting on your decision',
+      unparked: 'released to the hive',
+      'approval-commented': 'your approval was posted as a comment',
+      closed: 'closed on GitHub',
+      held: 'put on hold',
+      released: 'hold released',
+      'already accepted': 'it was already accepted',
+    };
+    function stageTrackerActedPlain(text) {
+      const t = String(text || '').trim();
+      if (!t) return '';
+      if (STAGE_TRACKER_ACTED_PLAIN[t]) return STAGE_TRACKER_ACTED_PLAIN[t];
+      if (/^hive decided: /.test(t)) return t.replace(/^hive decided: /, 'the hive decided: ').replace(/ \(([^)]+)\)/, (m, r) => ' (rule: ' + r.replace(/[-_:]/g, ' ') + ')');
+      if (/^[a-z0-9]+([-_:][a-z0-9]+)+$/.test(t)) return t.replace(/[-_:]/g, ' ');
+      // Slugs inside a sentence ("… — contributor-lane:changes-requested blocks it").
+      return t.replace(/\b[a-z0-9]+(?:[-_:][a-z0-9]+)+\b/g, m => STAGE_TRACKER_ACTED_PLAIN[m] || (/[a-z]/.test(m) ? m.replace(/[-_:]/g, ' ') : m));
+    }
+    // Row-menu action id each ledger action was submitted under, so the
+    // option the owner just took is not offered back to them.
+    const STAGE_TRACKER_ACTED_OPTION_ID = { 'let-hive-decide': 'decide:delegate', approve: 'decide:approve', 'give-direction': 'decide:direction', 'close-superseded': 'decide:close-superseded', wontfix: 'decide:close-wontfix', 'accept-triage': 'accept-triage', hold: 'hold' };
+    // Pure: what the owner can still do when their action changed nothing
+    // (no-op) or the item has not moved (stuck): the enabled options from
+    // the row's decision_needed payload, minus the one just taken.
+    function stageTrackerActedOptions(item, action, state) {
+      if (!(action.outcome === 'no-op' || state === 'stuck' || state === 'failed')) return '';
+      const dn = item && item.decision_needed;
+      const opts = dn && Array.isArray(dn.options) ? dn.options : [];
+      const taken = STAGE_TRACKER_ACTED_OPTION_ID[action.action] || '';
+      return opts.filter(o => o && o.enabled && o.action !== taken && o.label).map(o => o.label).join(' · ');
+    }
+    // Pure: the tooltip — the decision trail in plain words, in the order
+    // every cue on the row uses: what it is waiting on → what you chose →
+    // what the hive did next (who, when). ≤ 2 short lines per fact.
+    function stageTrackerActedTip(item, nowMs) {
+      const src = stageTrackerActedSource(item);
+      if (!src) return '';
+      const a = src.action;
+      nowMs = Number(nowMs) || Date.now();
+      const state = stageTrackerActedState(a, nowMs);
+      const atMs = Date.parse(a.at || '') || nowMs;
+      const me = !a.actor || (window._hiveUser && a.actor.toLowerCase() === String(window._hiveUser).toLowerCase());
+      const who = me ? 'You' : '@' + a.actor;
+      const label = stageTrackerActedLabel(a.action) + (a.target ? ' ' + a.target : '');
+      const ago = stageTrackerActedAgo(nowMs - atMs);
+      const stageNow = stageTrackerActedStageName(src.item.stage);
+      const waitingOn = stageTrackerActedPlain(src.item.caption || src.item.reason);
+      const lines = [];
+      if (state === 'addressed') lines.push('Addressed — now at ' + stageNow + '.');
+      else if (state === 'stuck') lines.push('Still at ' + stageNow + ' ' + ago.replace(/ ago$/, '') + ' after you asked' + (waitingOn ? ' — hive says: ' + waitingOn : '') + '.');
+      else if (state === 'pending') lines.push('At ' + stageNow + ' while the hive decides.');
+      else if (state === 'failed') lines.push('Still at ' + stageNow + ' — try again, or act on GitHub.');
+      else lines.push('At ' + stageNow + (waitingOn ? ' — ' + waitingOn : '') + '.');
+      lines.push(who + ' chose ' + label + ' · ' + agentNowClockTime(atMs, nowMs) + ' (' + ago + ') · ' + stageTrackerActedOutcomeWords(a) + '.');
+      if (a.note) lines.push('Your note: ' + a.note);
+      const options = stageTrackerActedOptions(src.item, a, state);
+      if (options) lines.push('Options: ' + options + '.');
+      const followed = Array.isArray(a.followed) ? a.followed : [];
+      followed.slice(-3).forEach(h => {
+        const hopMs = Date.parse(h.at || '') || nowMs;
+        lines.push('Then the hive ' + (h.regressed ? 'sent it back to ' : 'moved it to ') + stageTrackerActedStageName(h.number) + (h.reason ? ' — ' + stageTrackerActedPlain(h.reason) : '') + ' · ' + stageTrackerActedAgo(nowMs - hopMs) + '.');
+      });
+      if (src.count > 1) lines.push((src.count - 1) + ' earlier action' + (src.count > 2 ? 's' : '') + ' on this item.');
+      return lines.join('\n');
+    }
+    // Pure: the badge HTML ('' when the row has no recorded action). An
+    // in-app tooltip (the shared .config-info portal: hover or focus),
+    // never a native title.
+    function stageTrackerActedBadgeHtml(item, nowMs) {
+      const src = stageTrackerActedSource(item);
+      if (!src) return '';
+      const state = stageTrackerActedState(src.action, nowMs);
+      const id = 'ham-acted-tip-' + String((src.item.repo || '') + '-' + (Number(src.item.number) || 0)).replace(/[^A-Za-z0-9_-]/g, '-');
+      const tip = stageTrackerActedTip(item, nowMs);
+      const short = stageTrackerActedLabel(src.action.action);
+      return `<span class="ham-badge ham-acted ham-acted-${esc(state)} config-info" tabindex="0" role="img" data-action="gh3" data-stop="1" data-ham-acted="${esc(state)}" aria-label="${esc(short + ' — ' + state)}" aria-describedby="${id}">${STAGE_TRACKER_ACTED_GLYPH[state] || '✓'}<span id="${id}" class="config-tooltip ham-acted-tip" role="tooltip">${esc(tip).replace(/\n/g, '<br>')}</span></span>`;
+    }
+    // Pure: the Decisions filter. awaiting = parked on a person with no
+    // action recorded yet (or the last one failed / was overtaken without
+    // moving it); acted = any action recorded; stuck = acted and still at
+    // the same stage past the window.
+    function stageTrackerActedMatches(item, mode, nowMs) {
+      if (!mode || mode === 'any') return true;
+      const src = stageTrackerActedSource(item);
+      const state = src ? stageTrackerActedState(src.action, nowMs) : '';
+      switch (mode) {
+        case 'acted': return !!src;
+        case 'stuck': return state === 'stuck';
+        case 'awaiting': return !!stageTrackerDecisionTarget(item) && (!src || state === 'failed');
+      }
+      return true;
     }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
@@ -14678,7 +14904,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
-        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null };
+        human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null,
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0 };
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       ref += stageTrackerOperatorPRBadge(lp, issue, nowMs, ctx);
       if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
@@ -14687,7 +14914,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], '', stageTrackerChipsHtml(pr))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr))}
           </div>
           <div class="ham-strip-row">
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
@@ -14859,7 +15086,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + stageTrackerOperatorPRBadge(lp, item, nowMs, ctx) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, adoption: lp.adoption || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -14921,7 +15148,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerChipsHtml(shown))}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
@@ -15582,6 +15809,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
+      if (STAGE_TRACKER_ACTED_FILTERS.indexOf(f.acted) < 0) f.acted = 'any';
       if (STAGE_TRACKER_SORTS.indexOf(f.sort) < 0) f.sort = 'furthest';
       f.dir = f.dir === 'asc' ? 'asc' : 'desc';
       f.size = STAGE_TRACKER_PAGE_SIZES.indexOf(Number(f.size)) >= 0 ? Number(f.size) : STAGE_TRACKER_DEFAULT_PAGE_SIZE;
@@ -15591,7 +15819,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // True when any narrowing filter (not sort / paging) is set.
     function stageTrackerFilterActive(f) {
-      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || !!f.decision || f.age !== 'any' || f.author !== 'any' || f.attention;
+      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.onHold || !!f.decision || f.age !== 'any' || f.author !== 'any' || f.attention || f.acted !== 'any';
     }
 
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
@@ -15620,6 +15848,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!stageTrackerDecisionMatches(item, f.decision, Number(ctx.nowMs) || Date.now())) return false;
       if (f.author !== 'any' && (item.author_kind || '') !== f.author) return false;
       if (f.attention && !stageTrackerNeedsAttention(item)) return false;
+      if (f.acted !== 'any' && !stageTrackerActedMatches(item, f.acted, Number(ctx.nowMs) || Date.now())) return false;
       if (f.age !== 'any') {
         const nowMs = Number(ctx.nowMs) || Date.now();
         const since = stageTrackerWaitSince(item);
@@ -15836,6 +16065,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'author': f.author = value || 'any'; break;
         case 'decision': f.decision = f.decision === value ? '' : value; break;
         case 'attention': f.attention = value === 'toggle' ? !f.attention : !!value; break;
+        case 'acted': f.acted = value || 'any'; break;
         case 'sort': f.sort = value || 'furthest'; break;
         case 'dir': f.dir = value === 'toggle' ? (f.dir === 'asc' ? 'desc' : 'asc') : value; break;
         case 'size': f.size = Number(value) || STAGE_TRACKER_DEFAULT_PAGE_SIZE; break;
@@ -15861,6 +16091,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setVal('activity-monitor-q', f.q);
       setVal('activity-monitor-age', f.age);
       setVal('activity-monitor-author', f.author);
+      setVal('activity-monitor-acted', f.acted);
       setVal('activity-monitor-sort', f.sort);
       setVal('activity-monitor-group', _stageTrackerGroup);
       setVal('activity-monitor-size', f.size);
@@ -16208,6 +16439,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
+      'decide:adopt': 'Adopt (hive takes over)',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
     };
@@ -16396,6 +16628,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
         out.push({ id: 'decide', label: 'Decide' + on + '…', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, submenu: stageTrackerDecideOptions(target, ctx), target });
       }
+      // A nudged contributor PR the engine would adopt but for the owner's
+      // say-so (maintainer_policy: ask) offers Adopt (hivecommons/hive#14524).
+      if (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item)) out.push({ id: 'decide:adopt', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt'] + '…', hint: 'adoption', enabled: write && !!ctx.user, why: write && ctx.user ? '' : STAGE_TRACKER_WHY_WRITE });
       out.push(has('hold')
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
@@ -17104,6 +17339,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const v = await stageTrackerAsk(id, 'prompt', { title: stageTrackerActionLabel(id), label: 'Comment for ' + refs + ' (optional)', placeholder: 'Why this is closed', confirmLabel: 'Close' });
           return v == null ? null : { comment: v };
         }
+        case 'decide:adopt': {
+          const why = items.map(it => stageTrackerAdoptionTip(it)).filter(Boolean).join('\n');
+          return (await hiveConfirm({ title: 'Adopt pull request' + (items.length > 1 ? 's' : ''), message: (why ? why + '\n\n' : '') + 'Have the hive adopt ' + refs + ' as ' + who + '? The author\'s commits and sign-off are kept; the hive rebases and fixes CI (in place when GitHub allows, else on a superseding hive PR that closes this one when it merges). Recorded as your decision on the PR.', confirmLabel: 'Adopt' })) ? {} : null;
+        }
         case 'needs-human': {
           const v = await stageTrackerAsk(id, 'prompt', { title: 'Mark needs-human', label: 'Why does ' + refs + ' need a human? (optional)', placeholder: 'Reason', confirmLabel: 'Mark' });
           return v == null ? null : { comment: v };
@@ -17292,7 +17531,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         } catch (e) { showToast('Could not copy: ' + (e && e.message ? e.message : 'clipboard unavailable'), 'error'); }
         return { toasts: [], pending: [] };
       }
-      if (id.indexOf('decide:') === 0) {
+      if (id === 'decide:adopt') {
+        // Adopt acts on the nudged PR row itself (072, not a decision park).
+        items = items.filter(stageTrackerAdoptOffered);
+        if (!items.length) return { toasts: [], pending: [] };
+      } else if (id.indexOf('decide:') === 0) {
         // A row decides its parked PR when it has one (the issue's stage is
         // only mirrored from it); dedupe when the PR row is selected too.
         const seen = {};
@@ -41992,6 +42235,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Stalled requires quiet', key: 'governor.labels.stage.stalled.require_quiet', text: 'stalled no activity quiet dwell head push comment review ci label governor.labels.stage.stalled.require_quiet governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Central stage engine', key: 'governor.labels.stage.engine.mode', text: 'stage engine mode shadow enforce dry run pause anomaly reconciler ADR-0025 governor.labels.stage.engine.mode' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
+      { tab: 'Labels', section: 'Labels', label: 'Adoption of a maintainer\'s PR', key: 'governor.labels.stage.adoption.maintainer_policy', text: 'adoption maintainer policy adopt ask never maintainer own pr clanker disconnected offline adopt action governor.labels.stage.adoption.maintainer_policy' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
@@ -48781,6 +49025,14 @@ function burnAreaChart() {
       const stageAdoptionOn = (_configState.dirty.labels && _configState.dirty.labels.stage_adoption_enabled !== undefined)
         ? _configState.dirty.labels.stage_adoption_enabled
         : (_configState.data.stageAdoptionEnabled !== false);
+      const stageAdoptionMaintainerPolicy = (_configState.dirty.labels && _configState.dirty.labels.stage_adoption_maintainer_policy !== undefined)
+        ? _configState.dirty.labels.stage_adoption_maintainer_policy
+        : (_configState.data.stageAdoptionMaintainerPolicy || 'adopt');
+      const stageAdoptionMaintainerOptions = [
+        ['adopt', 'adopt — a clanker PR whose hive disconnected is adopted whoever wrote it, repo role ignored (default)'],
+        ['ask', 'ask — never adopt a maintainer\'s PR on its own; mark it for an owner decision and offer Adopt in the activity monitor'],
+        ['never', 'never — the hive never takes over a maintainer\'s PR and releases any adoption of one'],
+      ].map(([v, label]) => `<option value="${v}" ${stageAdoptionMaintainerPolicy === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
       const stageStalledQuietOn = (_configState.dirty.labels && _configState.dirty.labels.stage_stalled_require_quiet !== undefined)
         ? _configState.dirty.labels.stage_stalled_require_quiet
         : (_configState.data.stageStalledRequireQuiet !== false);
@@ -48849,6 +49101,11 @@ function burnAreaChart() {
           <div class="config-help">A contributor counts as online when their relay heartbeat is within this window; online contributors get the fix-pr interrupt immediately, offline ones only the comment (their fix waits in the queue).</div>
         </div>
         <div class="config-toggle"><div class="config-toggle-switch ${stageAdoptionOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_adoption_enabled"></div><span class="config-toggle-label">Adopt red contributor PRs after the grace ${yamlHint('governor.labels.stage.adoption.enabled')} ${settingHelpMark('settings', 'labels', 'Adopt red contributor PRs', `When a nudged contributor PR is still red after its grace (online 2h / offline 1h, below) the hive moves it to stage/074-adopted-by-hive: it pushes hive/adopt-N at the contributor's head (commits and sign-off preserved), opens a superseding App PR carrying the original Closes lines, comments once on the original, and the scanner's red-PR fix-first kick rebases and fixes CI on that branch. The original closes automatically when the superseding PR merges. Off: the PR stays in 072 and just stalls. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-field">
+          <label for="cfg-stage-adoption-maintainer-policy">When the PR author maintains the repository ${yamlHint('governor.labels.stage.adoption.maintainer_policy')} ${settingHelpMark('settings', 'labels', 'Adoption of a maintainer\'s PR', `What adoption does when the author of a nudged author/clanker PR holds admin or maintain on the repository. adopt (default): the role is ignored — clanker PRs are adoptable on disconnect regardless of the owner's repo role (hivecommons/hive#14524: a maintainer's own hive PR sat at 072 for 26h with its hive offline). ask: the hive never adopts such a PR by itself; the activity monitor row reads "waiting on @author (maintainer, offline Nh) — adopt?" and its menu offers Adopt, which queues the same adoption as a contributor going offline. never: the pre-#14524 rule — a maintainer's PR is never taken over and an existing adoption of one is released. Human-authored PRs are never adopted under any setting.`)}</label>
+          <select id="cfg-stage-adoption-maintainer-policy" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_adoption_maintainer_policy" data-arg-types="s,s,v">${stageAdoptionMaintainerOptions}</select>
+          <div class="config-help">adopt: repo role ignored, adopt on disconnect like any clanker PR. ask: park it for an owner decision with an Adopt action. never: hands-off and release.</div>
+        </div>
         <div class="config-field">
           <label for="cfg-stage-grace-online">Online contributor grace ${yamlHint('governor.labels.stage.contributor_grace_online')}</label>
           <input type="text" id="cfg-stage-grace-online" value="${esc(stageGraceOnline)}" placeholder="2h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_grace_online" data-arg-types="s,s,w">

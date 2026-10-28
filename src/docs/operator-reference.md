@@ -650,7 +650,19 @@ on) — judged against live hub presence each sweep: relay offline for
 heartbeat, no contributor profile here for `adoption.after_unregistered`
 (default 2h) since the first nudge, or online but silent for
 `contributor_grace_online` (default 2h; `contributor_grace_offline`, 15m, when
-the hub reports no presence). `hold`/`do-not-merge` blocks adoption. When the
+the hub reports no presence). `hold`/`do-not-merge` blocks adoption. The
+author's repository role does not: clanker PRs are adoptable on disconnect
+regardless of the owner's repo role
+(`governor.labels.stage.adoption.maintainer_policy`, default `adopt`; owner
+decision on hivecommons/hive#14524 — the PR a contributor's hive opened is the
+hive's to stand in for when that hive disconnects, maintainer or not).
+`ask` holds a maintainer's PR for an owner: the activity monitor row says
+"waiting on @author (maintainer, offline 26h) — adopt?" and offers **Adopt**
+(decision API `adopt`, which sets `adoption/supersede` for the next sweep);
+`never` keeps the earlier hands-off rule and releases any existing adoption
+of a maintainer's head. Human-authored PRs stay unadopted under all three.
+Dashboard: Settings → Labels → "When the PR author maintains the
+repository". When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
 `ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR

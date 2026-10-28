@@ -128,6 +128,12 @@ func stageTrackerVerdictLookup(artifact *review.Artifact) func(repo string, numb
 // aggregate for the PR's current head when the artifact has one;
 // sentinelLabel is the configured sentinel alert label.
 func stageTrackerDecisionNeeded(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel string) *StageTrackerDecision {
+	return stageTrackerDecisionNeededAt(it, verdict, sentinelLabel, time.Now())
+}
+
+// stageTrackerDecisionNeededAt is stageTrackerDecisionNeeded with the clock
+// the tracker build uses, so spans in questions match the row's pill.
+func stageTrackerDecisionNeededAt(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel string, now time.Time) *StageTrackerDecision {
 	held := slices.Contains(it.Modifiers, modHold)
 	switch {
 	case it.Kind == "pr" && (it.Stage == stagelabels.NeedsDecision.Number() || slices.Contains(it.Modifiers, modNeedsDecision)):
@@ -142,8 +148,41 @@ func stageTrackerDecisionNeeded(it StageTrackerItem, verdict *review.Aggregate, 
 		return decisionForTriage(it, held)
 	case slices.Contains(it.Modifiers, modNeedsHuman):
 		return decisionForNeedsHuman(it, held)
+	case it.Kind == "pr" && it.Adoption != nil && it.Adoption.Action == decisionActionAdopt:
+		return decisionForAdoption(it, held, now)
 	}
 	return nil
+}
+
+// decisionForAdoption: a nudged 072 PR whose author maintains the
+// repository, held for an owner under
+// governor.labels.stage.adoption.maintainer_policy: ask
+// (hivecommons/hive#14524). The question names the author and how long
+// their hive has been gone; the lead option is Adopt.
+func decisionForAdoption(it StageTrackerItem, held bool, now time.Time) *StageTrackerDecision {
+	a := it.Adoption
+	who := "the author"
+	if a.Author != "" {
+		who = "@" + a.Author
+	}
+	d := &StageTrackerDecision{Since: a.Since, AskedBy: decisionAskedByLane, BlockerReason: "adoption:" + a.BlockedBy}
+	gone := "has been offline since the nudge"
+	if off := strings.TrimSpace(stageTrackerAdoptionOfflineFor(*a, now)); off != "" {
+		gone = "has been offline for " + off
+	}
+	if a.AuthorOnline {
+		gone = "is online but has not answered " + plural(a.Nudges, "nudge")
+	}
+	d.Question = who + " maintains this repository and " + gone + "; adopt the PR? The hive would take it over as it does any contributor's (the author's commits and sign-off are kept)."
+	d.Blocker = "maintainer_policy is ask: the hive never adopts a maintainer's PR on its own; a person decides."
+	if held {
+		d.Blocker += " " + decisionHeldBlocker
+	}
+	d.Options = []StageTrackerDecisionOption{
+		decisionOption(decisionActionAdopt, "Adopt (hive takes over)", !held, "Release the hold first"),
+		decisionHoldOption(held),
+	}
+	return d
 }
 
 func decisionHoldOption(held bool) StageTrackerDecisionOption {

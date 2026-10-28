@@ -393,6 +393,11 @@ type StageTrackerItem struct {
 	NudgeCount  int                      `json:"nudge_count,omitempty"`
 	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
 	AdoptedBy   int                      `json:"adopted_by,omitempty"`
+	// Adoption is, on a nudged PR at stage/072, whether adoption is due,
+	// what holds it, and the author's live presence, with the plain-words
+	// line the row shows instead of a bare "Returned to contributor"
+	// (hivecommons/hive#14524).
+	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -422,7 +427,13 @@ type StageTrackerItem struct {
 	// chip. StateReason "not_planned" adds an "issue closed (not planned)"
 	// chip so the reader can tell the PR may be moot (hivecommons/hive#14655).
 	ClosedIssue *StageTrackerLinkedIssue `json:"closed_issue,omitempty"`
-	History     []StageTrackerHop        `json:"history"`
+	// LastOperatorAction is the newest owner row action recorded for the
+	// item (approve, give-direction, hold, let-hive-decide, …) with what
+	// became of it, and OperatorActionCount how many were recorded; the
+	// row's ✓ badge and its hover read these (operator_actions.go).
+	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
+	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
+	History             []StageTrackerHop           `json:"history"`
 }
 
 // StageTrackerLinkedIssue is one issue a PR closes, as its row's issue
@@ -475,6 +486,12 @@ type StageTrackerLinkedPR struct {
 	// DecisionNeeded mirrors the nested PR's own row field so the issue's
 	// sub-row can open the same "Needs human" popover.
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
+	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
+	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
+	// LastOperatorAction / OperatorActionCount mirror the nested PR's own
+	// row fields so its sub-row wears the ✓ badge too.
+	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
+	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -1526,6 +1543,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		return store.Get(stagelabels.Key(repo, number))
 	}
+	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
 		// "Needs human decision" is read from the item's current labels, not
 		// a store record that outlived them: once the park label is gone
@@ -1585,6 +1603,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		// Adoption is clanker-only (a human's PR is never adopted), so a
+		// human-authored 072 row keeps its plain caption.
+		if stage == stagelabels.ReturnedToContributor && it.Kind == "pr" && it.AuthorKind != authorKindHuman {
+			if it.Adoption = stageTrackerAdoption(*it, rec, hasRec, presence, maintainerPolicy, now); it.Adoption != nil {
+				it.Caption = stageTrackerAdoptionCaption(it.Caption, it.Adoption)
+			}
+		}
 		base, approver := stagelabels.HumanApprovedReason(it.Reason)
 		it.HumanApprover = approver
 		it.ManualMerge = stageTrackerManualMergeReason(base)
@@ -1666,7 +1691,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
 			}
 		}
-		it.DecisionNeeded = stageTrackerDecisionNeeded(it, nil, sentinelLabel)
+		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, nil, sentinelLabel, now)
 		add(it)
 	}
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
@@ -1721,7 +1746,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA); ok {
 			agg = &a
 		}
-		it.DecisionNeeded = stageTrackerDecisionNeeded(it, agg, sentinelLabel)
+		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, agg, sentinelLabel, now)
 		add(it)
 	}
 	for _, repo := range status.Repos {
@@ -1750,6 +1775,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
+	s.applyOperatorActions(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
@@ -2475,10 +2501,12 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
+				lp.Adoption = pr.Adoption
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
 				lp.DecisionNeeded = pr.DecisionNeeded
+				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
 				}

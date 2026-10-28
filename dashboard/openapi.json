@@ -1786,10 +1786,22 @@
                       "type": "object",
                       "description": "ADR-0025 central stage engine: governor.labels.stage.engine.mode and the process counters. Absent when the hive has no engine.",
                       "properties": {
-                        "mode": { "type": "string", "enum": ["shadow", "enforce"] },
-                        "derivations": { "type": "integer" },
-                        "anomalies": { "type": "integer" },
-                        "healed": { "type": "integer" }
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "shadow",
+                            "enforce"
+                          ]
+                        },
+                        "derivations": {
+                          "type": "integer"
+                        },
+                        "anomalies": {
+                          "type": "integer"
+                        },
+                        "healed": {
+                          "type": "integer"
+                        }
                       }
                     },
                     "overview_bands": {
@@ -28200,6 +28212,210 @@
           },
           "503": {
             "description": "GitHub client not configured"
+          }
+        }
+      }
+    },
+    "/api/repos/{owner}/{repo}/items/{number}": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Per-item detail: the operator-action ledger behind the activity monitor's decision badge",
+        "description": "Returns the stage the dashboard knows for one issue or pull request and every row action submitted for it from the dashboard (hold/release, decision, let-hive-decide, send-to-human, accept-triage), newest last, plus the derived last_operator_action the stage-tracker rows also carry. Persisted in /data/operator-actions.json; HIVE_OPERATOR_ACTION_STUCK_AFTER (default 30m) sets the window after which an unmoved item is reported as stuck.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "stage": {
+                      "type": "integer"
+                    },
+                    "stage_slug": {
+                      "type": "string"
+                    },
+                    "operator_actions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "action": {
+                            "type": "string",
+                            "enum": [
+                              "approve",
+                              "give-direction",
+                              "close-superseded",
+                              "wontfix",
+                              "let-hive-decide",
+                              "hold",
+                              "release",
+                              "accept-triage",
+                              "mark-needs-human"
+                            ]
+                          },
+                          "actor": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "note": {
+                            "type": "string"
+                          },
+                          "target": {
+                            "type": "string",
+                            "description": "what the action pointed at, e.g. the superseding PR"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "applied",
+                              "no-op",
+                              "failed"
+                            ]
+                          },
+                          "detail": {
+                            "type": "string"
+                          },
+                          "head_sha": {
+                            "type": "string"
+                          },
+                          "stage": {
+                            "type": "integer",
+                            "description": "stage number when the action was recorded"
+                          }
+                        }
+                      }
+                    },
+                    "operator_action_count": {
+                      "type": "integer"
+                    },
+                    "last_operator_action": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "actor": {
+                          "type": "string"
+                        },
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "note": {
+                          "type": "string"
+                        },
+                        "target": {
+                          "type": "string"
+                        },
+                        "outcome": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "applied",
+                            "no-op",
+                            "failed",
+                            "superseded-by-state-change"
+                          ]
+                        },
+                        "detail": {
+                          "type": "string"
+                        },
+                        "head_sha": {
+                          "type": "string"
+                        },
+                        "stage_at": {
+                          "type": "integer"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "waiting",
+                            "addressed",
+                            "stuck",
+                            "pending",
+                            "failed"
+                          ]
+                        },
+                        "stuck_after_seconds": {
+                          "type": "integer"
+                        },
+                        "followed": {
+                          "type": "array",
+                          "description": "stage hops recorded after the action, oldest first",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "number": {
+                                "type": "integer"
+                              },
+                              "slug": {
+                                "type": "string"
+                              },
+                              "at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "from": {
+                                "type": "integer"
+                              },
+                              "regressed": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad owner/repo/number"
           }
         }
       }

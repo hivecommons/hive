@@ -201,7 +201,8 @@
           "AfterUnregistered": "",
           "InPlace": null,
           "StrictAttribution": null,
-          "AutoMerge": null
+          "AutoMerge": null,
+          "MaintainerPolicy": ""
         },
         "Stalled": {
           "RequireQuiet": null

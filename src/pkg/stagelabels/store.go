@@ -174,6 +174,16 @@ type Record struct {
 	// for; it survives ClearAdoptionEscalation so a blocker that flaps on
 	// one head is noted once.
 	AdoptEscalationNotedHead string `json:"adopt_escalation_noted_head,omitempty"`
+	// AdoptBlockedHead / AdoptBlockedBy / AdoptBlockedAt record that
+	// adoption came due at this head and the engine held it for a reason a
+	// person must settle (AdoptBlockedAuthorMaintainer: the author
+	// maintains the repository under maintainer_policy: ask —
+	// hivecommons/hive#14524). The activity monitor reads it to say why a
+	// nudged PR is not adopted and to offer Adopt; adoption or a new nudge
+	// head clears it.
+	AdoptBlockedHead string    `json:"adopt_blocked_head,omitempty"`
+	AdoptBlockedBy   string    `json:"adopt_blocked_by,omitempty"`
+	AdoptBlockedAt   time.Time `json:"adopt_blocked_at,omitempty"`
 	// DCORepairHead is the in-place-adopted head whose unsigned hive
 	// commits the hive last rewrote with its sign-off on the contributor
 	// branch (hivecommons/hive#14666); one attempt per head.
@@ -970,6 +980,7 @@ func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, 0, now, now
 	r.AdoptMode, r.AdoptReason = AdoptModeInPlace, reason
+	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
 	r.AdoptedHeadAt = now
 	s.items[key] = r
 	s.dirty = true
@@ -1062,8 +1073,52 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, by, now, now
 	r.AdoptMode = AdoptModeSupersede
+	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
 	s.items[key] = r
 	s.dirty = true
+}
+
+// AdoptBlockedAuthorMaintainer is the AdoptBlockedBy reason for a due
+// adoption held under governor.labels.stage.adoption.maintainer_policy: ask.
+const AdoptBlockedAuthorMaintainer = "author-is-maintainer"
+
+// NoteAdoptionBlocked records that adoption is due at head but held for
+// reason; the first sighting's time is kept while head and reason hold.
+func (s *Store) NoteAdoptionBlocked(key, head, reason string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || reason == "" {
+		return
+	}
+	if r.AdoptBlockedHead == head && r.AdoptBlockedBy == reason {
+		return
+	}
+	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = head, reason, now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearAdoptionBlocked forgets a held adoption (it went ahead, or the
+// policy no longer holds it).
+func (s *Store) ClearAdoptionBlocked(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptBlockedHead == "" && r.AdoptBlockedBy == "" {
+		return
+	}
+	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// AdoptionBlocked reports the reason a due adoption at head is held, or "".
+func (r Record) AdoptionBlocked(head string) string {
+	if head == "" || r.AdoptBlockedHead != head || r.Adopted(head) {
+		return ""
+	}
+	return r.AdoptBlockedBy
 }
 
 // NoteAdoptReason records why the current adoption happened (the marker's

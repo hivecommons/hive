@@ -886,6 +886,23 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    (hivecommons/hive#12527: the author's relay was polling for work during
    the nudge and dropped off 30 minutes later; a snapshot-based grace kept
    the PR at 072 indefinitely). The marker records which rule fired:
+   The author's repository role does not change this. **Clanker PRs are
+   adoptable on disconnect regardless of the owner's repo role**
+   (`governor.labels.stage.adoption.maintainer_policy`, default `adopt`;
+   owner decision 2026-10-28 on hivecommons/hive#14524, where a
+   maintainer's own `author/clanker` PR sat at 072 for 26h with its hive
+   gone while every sweep logged "author maintains the repository; not
+   adopting"): a PR a contributor's hive opened is the hive's to stand in
+   for when that hive goes away, whoever owns the account. `ask` holds a
+   maintainer's PR for an owner's decision instead — the stage record
+   notes `author-is-maintainer`, the activity monitor row reads
+   "waiting on @author (maintainer, offline 26h) — adopt?" and its menu
+   offers **Adopt**, which sets `adoption/supersede` (the owner-delegate's
+   own request label) so the next sweep adopts as `contributor-offline`;
+   `never` is the earlier hands-off rule (projectbluefin/utah-packages#619):
+   never adopt, and release an existing adoption of a maintainer's head.
+   Under every setting a human-authored PR (no `author/clanker`) is never
+   adopted.
    - `reason=contributor-offline` — the author has a contributor profile
      here and no relay heartbeat within `governor.labels.stage.presence_window`:
      adopted `governor.labels.stage.adoption.after_offline` (default 15m)
