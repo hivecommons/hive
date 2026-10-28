@@ -674,6 +674,17 @@
     .nps-admin-response-text { font-size: var(--fs-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--sp-2); }
       .upgrade-ctl[aria-disabled="true"] { cursor: not-allowed !important; opacity: 0.5; pointer-events: auto; }
       .version-missing { font-size: var(--fs-2xs); white-space: nowrap; color: var(--muted); }
+      /* Scheduled-upgrade progress pill, history badge and interrupt action
+         on the hive card's Version cell (#14950). */
+      .upgrade-progress-pill { display: inline-block; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); font-size: var(--fs-2xs); background: var(--surface); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .upgrade-progress-pill.is-draining { color: var(--amber); }
+      .upgrade-progress-pill.is-missed, .upgrade-progress-pill.has-missed { color: var(--red); }
+      .upgrade-progress-pill.is-done { color: var(--green); }
+      .upgrade-progress-history { margin-left: var(--sp-2); cursor: help; }
+      .upgrade-progress-interrupt { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; color: var(--red); margin-left: var(--sp-2); font-size: var(--fs-2xs); }
+      .upgrade-progress-mono { font-family: monospace; font-size: var(--fs-base); color: var(--muted); }
+      .upgrade-progress-mono.is-target { color: var(--green); }
+      .upgrade-progress-warn { color: var(--red); }
   </style>
 </head>
 <body>
@@ -9099,12 +9110,11 @@
              now: the hub enforces owner/admin on the POST, the card only
              hides it from readers who could not click it anyway. */
           var upgradeProgressLine = renderUpgradeProgress(h, isHosted && h.role === 'owner' && !h.upgradeInterruptPending);
-          if (h.upgradeInterruptPending) upgradeProgressLine += '<span style="' + UPGRADE_STATE_BADGE_STYLE + ';margin-left:var(--sp-2)" title="The owner asked this upgrade to interrupt in-flight agent turns; the spoke picks it up on its next heartbeat.">interrupt requested</span>';
+          if (h.upgradeInterruptPending) upgradeProgressLine += '<span class="upgrade-progress-pill upgrade-progress-history" title="The owner asked this upgrade to interrupt in-flight agent turns; the spoke picks it up on its next heartbeat.">interrupt requested</span>';
           versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
             '<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>' +
             '<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>' +
-            (upgradeIcon ? '<div style="' + STACKED_LINE_STYLE + '">' + upgradeIcon + '</div>' : '') +
-            (upgradeProgressLine ? '<div style="' + STACKED_LINE_STYLE + '">' + upgradeProgressLine + '</div>' : '') +
+            (upgradeIcon || upgradeProgressLine ? '<div style="' + STACKED_LINE_STYLE + '">' + upgradeIcon + (upgradeIcon && upgradeProgressLine ? ' ' : '') + upgradeProgressLine + '</div>' : '') +
             (autoUpgradeCheck ? '<div style="' + STACKED_LINE_STYLE + '">' + autoUpgradeCheck + '</div>' : '') +
             '</div>';
         /* No version reported, but drift can still exist (e.g. heartbeat-stale on a
@@ -9906,13 +9916,6 @@
       return UPGRADE_PROGRESS_LABELS[state] || (state ? state.charAt(0).toUpperCase() + state.slice(1) : '');
     }
 
-    function upgradeProgressColor(state) {
-      if (state === 'missed') return 'var(--red)';
-      if (state === 'draining') return 'var(--amber, #f59e0b)';
-      if (state === 'done') return 'var(--green)';
-      return 'var(--muted)';
-    }
-
     /* upgradeAgentsInTurnText renders "2/5 agents in turn: reviewer 38m,
        scanner 12m" from the state's agentsInTurn list. */
     function upgradeAgentsInTurnText(st) {
@@ -9941,7 +9944,7 @@
         return ts + ': ' + what + to + (a.trigger ? ' (' + a.trigger + ')' : '') + why;
       });
       var tip = 'Upgrade history (last ' + lines.length + ')\n' + lines.join('\n');
-      return '<span style="' + UPGRADE_STATE_BADGE_STYLE + (missed ? ';color:var(--red)' : '') + ';margin-left:var(--sp-2);cursor:help" title="' + escAttr(tip) + '">history' + (missed ? ' · ' + missed + ' missed' : '') + '</span>';
+      return '<span class="upgrade-progress-pill upgrade-progress-history' + (missed ? ' has-missed' : '') + '" title="' + escAttr(tip) + '">history' + (missed ? ' · ' + missed + ' missed' : '') + '</span>';
     }
 
     /* renderUpgradeProgress builds the state pill line for the Version cell.
@@ -9961,13 +9964,13 @@
         extra = ' · ' + st.reason;
       }
       var tip = st.detail || label;
-      var pill = '<span style="' + UPGRADE_STATE_BADGE_STYLE + ';color:' + upgradeProgressColor(st.state) + '" title="' + escAttr(tip) + '">' + esc(label + extra) + '</span>';
+      var pill = '<span class="upgrade-progress-pill is-' + escAttr(st.state) + '" title="' + escAttr(tip) + '">' + esc(label + extra) + '</span>';
       var action = '';
       if (canAct && (st.state === 'draining' || st.state === 'missed')) {
         var actTitle = st.state === 'draining'
           ? 'Stop waiting for the agents and roll the upgrade now. The turns listed are interrupted and will be retried by their owners.'
           : 'The scheduled window was missed; roll the upgrade now, interrupting any agent turn in progress.';
-        action = ' <span' + ' role="button" tabindex="0" style="' + UPGRADE_LINK_STYLE + ';color:var(--red);margin-left:var(--sp-2)" title="' + escAttr(actTitle) + '"' +
+        action = ' <span class="upgrade-progress-interrupt" role="button" tabindex="0" title="' + escAttr(actTitle) + '"' +
           ' onclick="upgradeHiveInterrupt(' + jsArg(h.id) + ', ' + jsArg(h.gitHash || '') + ', ' + jsArg(st.target || '') + ')"' +
           ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();this.click()}">Upgrade now (interrupt turns)</span>';
       }
@@ -10216,8 +10219,8 @@
       var fromSHA = currentSHA ? currentSHA.substring(0, 7) : '?';
       var toSHA = targetSHA ? targetSHA.substring(0, 7) : 'latest';
       var ok = await hiveConfirm('Upgrade ' + id + ' now and interrupt in-flight agent turns?<br><br>' +
-        '<span style="font-family:monospace;font-size:0.85rem;color:var(--muted)">' + esc(fromSHA) + '</span> → <span style="font-family:monospace;font-size:0.85rem;color:var(--green)">' + esc(toSHA) + '</span><br><br>' +
-        '<span style="color:var(--red)">Agents still in a turn are stopped mid-work</span>; their owners will have to re-run those turns. Use this when a drain has stalled or a window was missed.', true);
+        '<span class="upgrade-progress-mono">' + esc(fromSHA) + '</span> → <span class="upgrade-progress-mono is-target">' + esc(toSHA) + '</span><br><br>' +
+        '<span class="upgrade-progress-warn">Agents still in a turn are stopped mid-work</span>; their owners will have to re-run those turns. Use this when a drain has stalled or a window was missed.', true);
       if (!ok) return;
       try {
         hiveToast('Upgrading ' + id + ' (interrupting turns)...', 'info');
