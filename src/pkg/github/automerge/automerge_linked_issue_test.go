@@ -94,6 +94,11 @@ func newLinkedIssueFront(t *testing.T, backend string, f *linkedIssueFront) *htt
 		f.mu.Unlock()
 		if baseRef != "" && r.Method == http.MethodGet {
 			switch r.URL.Path {
+			case "/repos/acme/widget/branches":
+				// A "vN" base makes the forward-merge guard list protected
+				// release lines (HeadMergesReleaseLine); none here.
+				json.NewEncoder(w).Encode([]any{})
+				return
 			case "/repos/acme/widget/branches/" + baseRef:
 				json.NewEncoder(w).Encode(map[string]any{"name": baseRef, "commit": map[string]string{"sha": "base1"}})
 				return
