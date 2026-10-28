@@ -938,7 +938,7 @@ An empty allowlist denies every repo even with `allow_github_prompt: true` — t
 
 A fetched file is capped at 512 KiB (`maxDefinitionBytes`, `defsrc.go:43`); an oversized file is truncated (and likely then fails to parse) rather than consuming unbounded memory.
 
-The per-agent `prompt_source` (a kick template fetched from GitHub by `pkg/promptsrc`) has a tighter, token-oriented cap and a stricter failure mode ([#12130](https://github.com/hivecommons/hive/issues/12130)): 64 KiB by default (`promptsrc.DefaultMaxPromptBytes`, >2× the largest shipped template; `HIVE_PROMPT_SOURCE_MAX_BYTES` overrides), and a body over it is **rejected whole, never truncated**. The kick falls back to the last successfully fetched copy, then to the normal `kick_template` chain, with a logged warning naming the repo, path, size and cap; the dashboard's save/bake flow fails with the same message instead of writing a cut-off policy. See [operator-reference.md](operator-reference.md#notable-fields).
+The per-agent `prompt_source` (a kick template fetched from GitHub by `pkg/promptsrc`) has a tighter, token-oriented cap and a stricter failure mode ([#12130](https://github.com/hivecommons/hive/issues/12130)): 96 KiB by default (`promptsrc.DefaultMaxPromptBytes`, >2× the largest shipped template; `HIVE_PROMPT_SOURCE_MAX_BYTES` overrides), and a body over it is **rejected whole, never truncated**. The kick falls back to the last successfully fetched copy, then to the normal `kick_template` chain, with a logged warning naming the repo, path, size and cap; the dashboard's save/bake flow fails with the same message instead of writing a cut-off policy. See [operator-reference.md](operator-reference.md#notable-fields).
 
 ### Validating a source before saving it
 
