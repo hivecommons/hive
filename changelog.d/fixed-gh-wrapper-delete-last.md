@@ -1,0 +1,1 @@
+- The `bin/gh-wrapper.sh` wrapper now allows `gh issue comment` and `gh pr comment` with `--delete-last` flag without requiring a body, since `--delete-last` does not need one ([#15031](https://github.com/hivecommons/hive/issues/15031)).

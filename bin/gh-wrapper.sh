@@ -1454,7 +1454,7 @@ _args_fill_body() {
   local a
   for a in "${args[@]}"; do
     case "$a" in
-      --fill|--fill-first|--fill-verbose|-f|--template|--template=*|-T|-T?*|--web|-w|--recover|--recover=*) return 0 ;;
+      --fill|--fill-first|--fill-verbose|-f|--template|--template=*|-T|-T?*|--web|-w|--recover|--recover=*|--delete-last) return 0 ;;
     esac
   done
   return 1
