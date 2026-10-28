@@ -104,7 +104,8 @@ func TestOpenPRIsMergeable_ReadsFrontendPR(t *testing.T) {
 }
 
 // The pill structure: three states, the verdict decides, and the queue action
-// stays gated on GitHub's "no" as #7475 left it.
+// stays gated on GitHub's "no" as #7475 left it — through queueAutoMergeGate,
+// which exempts the blocked/behind states the sweep resolves itself (#14937).
 func TestPRPillMergeVerdictStructure(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
@@ -114,7 +115,9 @@ func TestPRPillMergeVerdictStructure(t *testing.T) {
 		`mergeState === 'eligible' ? '<span class="pill-merge-icon" title="Merge-eligible on the sweep verdict">✓</span>'`,
 		`mergeState === 'outstanding' ? '<span class="pill-merge-icon" title="GitHub says mergeable; sweep still wants something">◐</span>'`,
 		"const mergeClass = mergeState === 'eligible' ? ' mergeable' : mergeState === 'outstanding' ? ' merge-outstanding' : '';",
-		"const notMergeable = p.mergeable === 'no';",
+		"const queueGate = queueAutoMergeGate(p);",
+		"const notMergeable = queueGate.disabled;",
+		"if (p && p.mergeable === 'no') return { disabled: true,",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q", snippet)

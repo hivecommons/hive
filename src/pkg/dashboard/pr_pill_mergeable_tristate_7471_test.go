@@ -144,9 +144,13 @@ func TestPRPillMergeableReadersUseTriStateHelper(t *testing.T) {
 
 	// The Queue auto-merge action is withheld (rendered disabled, with the
 	// GitHub state as the reason) when the verdict is "no" — and only then:
-	// an unknown verdict means not fetched yet, never refused.
-	if !strings.Contains(html, "const notMergeable = p.mergeable === 'no';") {
-		t.Errorf("the Queue auto-merge action is not gated on mergeable === 'no'")
+	// an unknown verdict means not fetched yet, never refused. Since #14937
+	// the gate lives in queueAutoMergeGate so blocked/behind can be exempted.
+	if !strings.Contains(html, "const notMergeable = queueGate.disabled;") {
+		t.Errorf("the Queue auto-merge action is not gated on queueAutoMergeGate(p)")
+	}
+	if !strings.Contains(html, "if (p && p.mergeable === 'no') return { disabled: true,") {
+		t.Errorf("queueAutoMergeGate is not gated on mergeable === 'no'")
 	}
 	if !strings.Contains(html, `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`) {
 		t.Errorf("a not-mergeable PR should render the auto-merge marker disabled with a reason")
