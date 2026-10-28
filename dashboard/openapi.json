@@ -25870,6 +25870,249 @@
         }
       }
     },
+    "/api/search": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Search this spoke's portfolio index",
+        "description": "Owner or merger role. Full-text search over the spoke-local portfolio search index (no hub fan-out): highlighted hits plus facets by kind, repo, verdict and sentinel.rule. Hit text passes through ioscan, so injected text appears only as a visible redaction marker. The query string, actor and role are audited; result bodies are not. 404 unless search is enabled in hive.yaml.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Full-text query; empty matches every document admitted by the filters."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Document kind filter (evidence, finding, sentinel, complexity, bead, fact); repeatable or comma-separated."
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Repository filter as owner/repo; repeatable or comma-separated."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Inclusive lower bound, RFC 3339 or YYYY-MM-DD."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Exclusive upper bound, RFC 3339 or YYYY-MM-DD (a date covers that whole day)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "description": "Maximum hits returned (default 20)."
+          },
+          {
+            "name": "semantic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Reserved for semantic search; true is rejected with 400."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search hits and facets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "query": {
+                      "type": "string"
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "hits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "visibility": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "fields": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "score": {
+                            "type": "integer"
+                          },
+                          "terms": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "highlight": {
+                            "type": "object",
+                            "properties": {
+                              "snippet": {
+                                "type": "string"
+                              },
+                              "spans": {
+                                "type": "array",
+                                "items": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "redacted": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "facets": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        },
+                        "repo": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        },
+                        "verdict": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        },
+                        "sentinel.rule": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "value": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "coverage": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter, or semantic=true (reserved)"
+          },
+          "403": {
+            "description": "Caller lacks owner or merger role"
+          },
+          "404": {
+            "description": "Search is not enabled"
+          },
+          "500": {
+            "description": "Search query failed"
+          },
+          "503": {
+            "description": "Search index not yet available"
+          }
+        }
+      }
+    },
     "/api/review/evidence": {
       "get": {
         "tags": [

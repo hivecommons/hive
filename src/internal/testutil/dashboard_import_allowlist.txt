@@ -20,6 +20,7 @@
 # crux/agent: the v6 Spek hub executor (spek_hub_executor.go) launches headless agents through crux/agent Headless*/UIDMap/proxy-env helpers; counted by the crux boundary ratchet (hivecommons/hive#14340 forward-merge), follow-up to lift those leaves onto crux.
 # crux/logscrub: pkg/logscrub moved into the Crux module with the cut (hivecommons/hive#13950).
 # search: GET /api/repos/{owner}/{repo}/health serves the report-only repo health score the search indexer computes (search.Health), wired through a setter so the dashboard never builds or walks the index (hivecommons/hive#14638).
+# search: GET /api/search reads the portfolio search Backend the indexer publishes; pkg/search is a leaf (no dashboard deps) (hivecommons/hive#14637).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agent
 github.com/hivecommons/hive/crux/agentparse

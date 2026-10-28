@@ -529,7 +529,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/review/evidence", s.handleReviewEvidence)
 	s.mux.HandleFunc("GET /api/review/evidence/list", s.handleReviewEvidenceList)
 	// Portfolio search (#14637): the spoke-local search index; owner or
-	// maintainer only, 404 unless search.enabled.
+	// maintainer only, 404 while the search index is disabled.
 	s.mux.HandleFunc("GET /api/search", s.handleSearch)
 	// Durable attempted-vs-blocked agent write counters (#12069); owner/merger only.
 	s.mux.HandleFunc("GET /api/evidence/write-counters", s.handleWriteCounters)

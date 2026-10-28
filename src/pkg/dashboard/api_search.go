@@ -14,7 +14,7 @@ import (
 
 // Portfolio search (hivecommons/hive#14637, RFC #14491 Part A): the spoke's
 // GET /api/search over the local pkg/search index. Owner/maintainer only,
-// spoke-local (no hub fan-out), and 404 unless search.enabled is set. Query
+// spoke-local (no hub fan-out), and 404 while the search index is off. Query
 // strings are audited with actor and role; result bodies never are. Every
 // text field surfaced from the index passes through ioscan as untrusted
 // input, so injected text reaches a dashboard, chat or agent consumer only as
