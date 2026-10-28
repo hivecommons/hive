@@ -93,6 +93,12 @@ type StageLabelPolicy struct {
 	// author holds admin or maintain on the repository. "" reads as the
 	// default, adopt (hivecommons/hive#14524).
 	AdoptionMaintainerPolicy string
+	// AdoptSupersedeCloseFirst closes the original as soon as the hive's
+	// superseding copy is open and reopens it if the copy fails
+	// (governor.labels.stage.adoption.supersede.close_first, default on;
+	// hivecommons/hive#15135). Off, the original stays open at 074 until
+	// the copy merges.
+	AdoptSupersedeCloseFirst bool
 	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
 	// override for "owner/repo"; ok false means "detect" (a DCO context in
 	// the branch's required checks or on the head). nil = always detect.
@@ -1248,6 +1254,14 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		// The hive's own comments are not outside activity.
 		store.CountOwnComments(key, result.Comments-commentsBefore)
+	}
+	// hivecommons/hive#15135: a close-first original is in no lane's
+	// listing; its copy is polled from the store.
+	if n, err := c.settleCloseFirstSupersessions(ctx, store, policy, now); true {
+		result.Comments += n
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	store.Prune(stageStorePruneAge)
 	if err := store.Save(); err != nil {

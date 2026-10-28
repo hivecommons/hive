@@ -405,7 +405,9 @@ type StageTrackerItem struct {
 	// AdoptedByState qualifies AdoptedBy when the hive's copy is not simply
 	// open (hivecommons/hive#15052): "closed" — the copy was closed without
 	// merging and the hive is re-adopting; "closed-twice" — two copies were
-	// closed within the hour, so the hive stopped and a person must decide.
+	// closed within the hour, so the hive stopped and a person must decide;
+	// "copy-failed" — a close-first copy failed and the original was
+	// reopened for a person (hivecommons/hive#15135).
 	AdoptedByState string `json:"adopted_by_state,omitempty"`
 	// Adoption is, on a nudged PR at stage/072, whether adoption is due,
 	// what holds it, and the author's live presence, with the plain-words
@@ -1162,6 +1164,8 @@ func humanizeStageReason(reason string) string {
 	switch lower {
 	case stagelabels.LaneReasonAdoptionChildClosedTwice:
 		return "the hive's copies of this PR were closed without merging twice within an hour"
+	case stagelabels.LaneReasonAdoptionCopyFailed:
+		return "the hive's copy of this PR failed and this PR was reopened"
 	case "held":
 		return "held by a hold label"
 	case "label:needs-rebase":
@@ -1490,8 +1494,11 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.AwaitingMergeAdmission:
 		return joinClause("Green and approved; waiting for the automerge lane to admit it", clause), "automerge lane"
 	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
-		if hasRec && stageTrackerAdoptedByState(rec) == stageTrackerAdoptedClosedTwice {
+		switch stageTrackerAdoptedByState(rec) {
+		case stageTrackerAdoptedClosedTwice:
 			return stageTrackerAdoptionLoopCaption(rec), "maintainer"
+		case stageTrackerAdoptedCopyFailed:
+			return "The hive's copy #" + strconv.Itoa(rec.AdoptedBy) + " failed; this PR was reopened and needs a person", "maintainer"
 		}
 		if step, _ := stageTrackerUnauthorized(reason); step != "" {
 			// hivecommons/hive#14589: not a decision but a step only a
@@ -1582,6 +1589,9 @@ func timePtr(t time.Time) *time.Time {
 const (
 	stageTrackerAdoptedClosed      = "closed"
 	stageTrackerAdoptedClosedTwice = "closed-twice"
+	// stageTrackerAdoptedCopyFailed: a close-first supersession whose copy
+	// failed; the original was reopened for a person (hivecommons/hive#15135).
+	stageTrackerAdoptedCopyFailed = "copy-failed"
 )
 
 // stageTrackerAdoptedByState reads the copy's state from the record
@@ -1593,6 +1603,8 @@ func stageTrackerAdoptedByState(rec stagelabels.Record) string {
 		return ""
 	case rec.AdoptionChildClosedTwice():
 		return stageTrackerAdoptedClosedTwice
+	case rec.AdoptionCopyFailed():
+		return stageTrackerAdoptedCopyFailed
 	case rec.AdoptOrphanedBy == rec.AdoptedBy:
 		return stageTrackerAdoptedClosed
 	}

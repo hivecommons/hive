@@ -86,6 +86,20 @@ type Record struct {
 	SupersededBy   int       `json:"superseded_by,omitempty"`
 	SupersededAt   time.Time `json:"superseded_at,omitempty"`
 	SupersededOpen bool      `json:"superseded_open,omitempty"`
+	// SupersededClosedFirst is true while the original was closed at
+	// adoption time, before its copy merged (close-first supersession,
+	// hivecommons/hive#15135). The reconciler keeps polling the copy
+	// (CloseFirstPollDue): merged clears the flag and the record reads as
+	// an ordinary supersession; closed unmerged, red across two heads, or a
+	// branch that cannot be pushed reopens the original
+	// (MarkAdoptionReopened). AdoptCopyRedHeads are the copy heads seen red
+	// so far; AdoptReopenedAt / AdoptReopenedFrom record the last reopen
+	// and the copy that failed, so one original is reopened at most once
+	// per AdoptionReopenWindow.
+	SupersededClosedFirst bool      `json:"superseded_closed_first,omitempty"`
+	AdoptCopyRedHeads     []string  `json:"adopt_copy_red_heads,omitempty"`
+	AdoptReopenedAt       time.Time `json:"adopt_reopened_at,omitempty"`
+	AdoptReopenedFrom     int       `json:"adopt_reopened_from,omitempty"`
 	// SupersederMergedNotedHead is the original's head for which the
 	// "superseder merged but this PR has moved on" note was posted, so a
 	// diverged original is told once per head rather than every poll.
@@ -1311,6 +1325,7 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
 	r.AdoptOrphanedBy, r.AdoptOrphanedAt, r.AdoptOrphanCount = 0, time.Time{}, 0
 	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
+	r.SupersededClosedFirst, r.AdoptCopyRedHeads, r.AdoptReopenedFrom = false, nil, 0
 	s.items[key] = r
 	s.dirty = true
 }
@@ -1352,9 +1367,122 @@ func (s *Store) MarkSupersederMergedNoted(key, head string) {
 }
 
 // Superseded reports whether the adoption's superseding PR merged and the
-// original was told: the row is finished whatever its labels say.
+// original was told — or, under close-first supersession, the original was
+// closed in favour of a copy still in flight: the row is finished whatever
+// its labels say.
 func (r Record) Superseded() bool {
 	return r.SupersededBy > 0
+}
+
+// AdoptionReopenWindow is how long after a reopen-on-failure the same
+// original is not reopened again (hivecommons/hive#15135): a copy that
+// keeps failing must not flip the original closed/open every sweep.
+const AdoptionReopenWindow = 24 * time.Hour
+
+// LaneReasonAdoptionCopyFailed is the 085 reason for an original the hive
+// reopened because its close-first copy was closed unmerged, stayed red
+// across two heads, or could not be pushed: a person must decide.
+const LaneReasonAdoptionCopyFailed = "adoption-copy-failed"
+
+// MarkSupersededClosedFirst records that the original was closed as soon
+// as superseding PR `by` existed (close-first supersession). The copy is
+// still polled; see CloseFirstPollDue. open is true when GitHub refused
+// the close and the original stays open with the note.
+func (s *Store) MarkSupersededClosedFirst(key string, by int, open bool, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || by <= 0 {
+		return
+	}
+	if r.SupersededBy != by {
+		r.SupersededAt = now
+	}
+	r.SupersededBy, r.SupersededOpen, r.SupersededClosedFirst = by, open, true
+	r.AdoptCopyRedHeads = nil
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkCloseFirstSettled ends the polling of a close-first supersession:
+// the copy merged (the record reads as an ordinary finished supersession)
+// or the reopen guard left the original closed for a person.
+func (s *Store) MarkCloseFirstSettled(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || !r.SupersededClosedFirst {
+		return
+	}
+	r.SupersededClosedFirst, r.AdoptCopyRedHeads = false, nil
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NoteAdoptCopyRedHead records that the copy's required checks were red at
+// head and returns how many distinct red heads the copy has shown.
+func (s *Store) NoteAdoptCopyRedHead(key, head string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return 0
+	}
+	head = strings.TrimSpace(head)
+	if head == "" {
+		return len(r.AdoptCopyRedHeads)
+	}
+	for _, h := range r.AdoptCopyRedHeads {
+		if h == head {
+			return len(r.AdoptCopyRedHeads)
+		}
+	}
+	r.AdoptCopyRedHeads = append(r.AdoptCopyRedHeads, head)
+	s.items[key] = r
+	s.dirty = true
+	return len(r.AdoptCopyRedHeads)
+}
+
+// MarkAdoptionReopened records that the original was reopened because copy
+// `from` failed: the supersession is forgotten, the adoption record stays
+// (one attempt per head) and the reopen time starts AdoptionReopenWindow.
+// The caller parks the head with MarkAdoptionEscalated.
+func (s *Store) MarkAdoptionReopened(key string, from int, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersededClosedFirst = 0, time.Time{}, false, false
+	r.AdoptCopyRedHeads = nil
+	r.AdoptReopenedAt, r.AdoptReopenedFrom = now, from
+	r.AdoptCheckedAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// AdoptionCopyFailed reports whether the record's current copy is the one
+// whose failure reopened the original (hivecommons/hive#15135): the copy is
+// not polled again and the row reads "copy failed" until a person acts.
+func (r Record) AdoptionCopyFailed() bool {
+	return r.AdoptedBy > 0 && r.AdoptReopenedFrom == r.AdoptedBy && r.AdoptEscalatedReason == LaneReasonAdoptionCopyFailed
+}
+
+// AdoptionReopenedWithin reports whether the original was reopened for a
+// failed copy less than window before now.
+func (r Record) AdoptionReopenedWithin(now time.Time, window time.Duration) bool {
+	return !r.AdoptReopenedAt.IsZero() && now.Sub(r.AdoptReopenedAt) < window
+}
+
+// CloseFirstPollDue reports whether a close-first supersession's copy
+// should be polled: the original is closed in its favour, the copy has not
+// merged, and the last poll is older than interval.
+func (r Record) CloseFirstPollDue(now time.Time, interval time.Duration) bool {
+	if !r.SupersededClosedFirst || r.AdoptedBy <= 0 || r.SupersededBy != r.AdoptedBy {
+		return false
+	}
+	return r.AdoptCheckedAt.IsZero() || now.Sub(r.AdoptCheckedAt) >= interval
 }
 
 // SupersederPollDue reports whether a supersede-mode adoption with a

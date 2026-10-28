@@ -202,7 +202,10 @@
           "InPlace": null,
           "StrictAttribution": null,
           "AutoMerge": null,
-          "MaintainerPolicy": ""
+          "MaintainerPolicy": "",
+          "Supersede": {
+            "CloseFirst": null
+          }
         },
         "Stalled": {
           "RequireQuiet": null

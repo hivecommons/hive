@@ -303,7 +303,8 @@ stateDiagram-v2
     s074 --> s080: in-place fix green and approved (adoption outranks 050/060; the merge gate takes it)
     s074 --> s095: lane admits the hive's head, soak running
     s074 --> s100: lane admits the hive's head, soak complete
-    s074 --> [*]: superseder merged (original closed)
+    s074 --> [*]: superseder merged (original closed); close_first (default) closes the original in the adopting pass instead
+    s074 --> s085: close-first copy closed unmerged or red at two heads → original reopened, adoption-copy-failed
     s074 --> s072: superseder closed unmerged, or contributor pushed over an in-place adoption (handed back; 050 if that head is green)
     s074 --> s085: adopted head unchanged past the dwell with CI idle and a real blocker the hive cannot push past (adoption-stalled:<reason>; a red optional check alone never counts), or the re-home failed
     s085 --> s074: the adoption-stalled reason cleared (CI re-ran, check green, verdict landed); escalation released
@@ -1097,10 +1098,45 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      carries the original's `Closes/Fixes/Resolves` lines and instructs the
      fix agent to rebase on the base and fix CI **on that branch** without
      opening another PR;
-   - posts ONE `<!-- hive:adopted by=<hive-id> reason=<r> mode=supersede
-     superseded_by=M head=<sha> -->` comment on the original and moves it to
-     `stage/074-adopted-by-hive` (its linked issue mirrors the stage). The
-     hub drops the PR from the contributor's fix queue (either mode).
+   - **close-first** (`governor.labels.stage.adoption.supersede.close_first`,
+     default on; hivecommons/hive#15135 — the operator saw two active PRs
+     for one issue, #15029 and its copy #15123, and had not asked for
+     either): in the same pass, right after the copy opens, posts ONE
+     `<!-- hive:adopted by=<hive-id> reason=<r> mode=supersede
+     superseded_by=M head=<sha> close_first=true -->` comment reading
+     "Superseded by hive: re-authored as #M with the same commits and
+     sign-off because <the author's clanker is offline / an operator asked
+     for it / CI stayed red and the author was unavailable>. This PR is
+     closed; if #M fails, hive reopens it.", applies `hive/superseded`, and
+     **closes the original**. The order is push branch → open copy → note →
+     label → close, never with a sweep between, so the note names the copy
+     and the Activity Monitor never shows the original as active once the
+     copy exists: the stage record is superseded (no row, no chevron, no
+     needs-human) and the copy is the one PR for the issue. A close GitHub
+     refuses (403/404) leaves the original open with the note, superseded
+     all the same. `close_first: false` restores the keep-open behaviour
+     below: the note has no `close_first` field, the original moves to
+     `stage/074-adopted-by-hive` (its linked issue mirrors the stage) and
+     closes only when the copy merges. The hub drops the PR from the
+     contributor's fix queue in every mode.
+   - **Reopen on failure** (close-first only). The hive polls the copy from
+     the stage store at most every 10 minutes (a closed original is in no
+     lane's listing). Copy merged → done. Copy closed unmerged, or its
+     required checks red at **two** distinct copy heads (the fixer's one
+     repair push did not take; the same loop cap as the rebase/adoption
+     guard) → the original is **reopened**, gets ONE
+     `<!-- hive:adoption-copy-failed superseded_by=M head=<sha> why=copy-closed|copy-red-twice -->`
+     note ("Hive's copy #M failed (<why>); reopening this PR; needs a
+     person"), loses `hive/superseded`, and parks at `stage/085` with reason
+     `adoption-copy-failed` (tracker word "Adopted → #M (copy failed) ·
+     reopened, needs a person"; the park holds until a person acts, an
+     `adoption/supersede` request re-runs the takeover from the same head).
+     **Ping-pong guard:** one reopen per original per 24h — a second failed
+     copy inside the window leaves the original closed with a `held=true`
+     note saying so. The orphan recovery below never runs for a close-first
+     original (its copy being closed is a failure, not an orphan); the
+     `hive:adoption-copy-failed` note is a settled marker, so the marker scan
+     never re-adopts a reopened original on its own.
    The superseding PR is App-authored and red with the same failures, so the
    existing machinery takes over: it lands in `ci-failing.json` and the
    scanner's FIX-BEFORE-NEW kick (the route every red hive-authored PR takes,
@@ -1111,7 +1147,8 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    superseded PR is never re-homed again. One adoption attempt per
    contributor head, whatever the outcome — the DCO re-home likewise records
    its attempt before touching GitHub, so a failed `hive/adopt-<n>` push is
-   not retried on the next sweep. While in 074 the hive polls the superseder at most
+   not retried on the next sweep. While in 074 (keep-open mode,
+   `close_first: false`) the hive polls the superseder at most
    every 10 minutes: merged → one `<!-- hive:adopted-merged -->` note and the
    original is closed; closed unmerged → the adoption is **orphaned** and the
    hive recovers it rather than leaving the original parked

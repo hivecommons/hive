@@ -103,7 +103,7 @@ func ParseAdoptionMarker(body string) (AdoptionMarker, bool) {
 // adoption was reverted or loop-parked, yielded, or released.
 func AdoptionSettledMarker(body string) bool {
 	body = strings.TrimSpace(body)
-	for _, prefix := range []string{adoptionCloseMarker, AdoptionRevertedMarker, AdoptionChildClosedTwiceMarker, AdoptionYieldMarker, AdoptionSupersederMergedDivergedMarker, AdoptionMaintainerSupersederMarker} {
+	for _, prefix := range []string{adoptionCloseMarker, AdoptionRevertedMarker, AdoptionChildClosedTwiceMarker, AdoptionCopyFailedMarker, AdoptionYieldMarker, AdoptionSupersederMergedDivergedMarker, AdoptionMaintainerSupersederMarker} {
 		if strings.HasPrefix(body, prefix) {
 			return true
 		}

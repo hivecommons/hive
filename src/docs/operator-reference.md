@@ -703,8 +703,17 @@ not consulted, because the hive owns an adopted head
 (`governor.labels.stage.adoption.auto_merge`, default on; `false` leaves an
 untrusted contributor's adopted PR waiting for a maintainer `/lgtm`). If the hive cannot push in place, it
 pushes `hive/adopt-<n>` at the contributor head, opens a superseding App PR
-that preserves the author's commits, moves the original to 074 and closes it
-once the superseder merges. Whether that rework reaches each agent is visible per row
+that preserves the author's commits, and — in the same pass — **closes the
+original** with one note naming the copy and why ("Superseded by hive:
+re-authored as #M … This PR is closed; if #M fails, hive reopens it."),
+labelled `hive/superseded`, so one issue never shows two active PRs
+(`governor.labels.stage.adoption.supersede.close_first`, default on;
+hivecommons/hive#15135). If the copy is closed unmerged or its required
+checks are red at two heads, the hive reopens the original, removes
+`hive/superseded`, and parks it at `stage/085` with `adoption-copy-failed`
+("needs a person"); at most one reopen per original per 24h. `close_first:
+false` keeps the earlier behaviour: the original moves to 074 and closes
+only once the superseder merges. Whether that rework reaches each agent is visible per row
 on Operations → Connected contributor agents: the relay's parallel capacity
 (`capacity N · spawn|preempt`, or *not advertised*), one line per in-flight
 item tagged **NEW** / **REWORK** with its stage label, and a red *N PRs

@@ -2836,6 +2836,26 @@ type StageAdoptionConfig struct {
 	// AdoptionMaintainerPolicyNever is the pre-#14524 rule: the hive never
 	// takes a maintainer's PR over and releases any adoption of one.
 	MaintainerPolicy string `yaml:"maintainer_policy,omitempty"`
+	// Supersede tunes supersede-mode adoption (the hive-authored copy from
+	// hive/adopt-<n>).
+	Supersede StageAdoptionSupersedeConfig `yaml:"supersede,omitempty"`
+}
+
+// StageAdoptionSupersedeConfig is governor.labels.stage.adoption.supersede.
+type StageAdoptionSupersedeConfig struct {
+	// CloseFirst closes the original PR as soon as the hive's copy is open
+	// (hivecommons/hive#15135): one `hive/superseded` note names the copy,
+	// and the hive reopens the original if the copy is closed unmerged, its
+	// required checks stay red across two heads, or the adoption branch
+	// cannot be pushed. nil = true. False keeps the pre-#15135 behaviour:
+	// the original stays open at 074 until the copy merges.
+	CloseFirst *bool `yaml:"close_first,omitempty"`
+}
+
+// CloseFirstEnabled reports whether a supersede adoption closes the
+// original as soon as the copy exists (default on).
+func (c StageAdoptionSupersedeConfig) CloseFirstEnabled() bool {
+	return c.CloseFirst == nil || *c.CloseFirst
 }
 
 // Values for governor.labels.stage.adoption.maintainer_policy.

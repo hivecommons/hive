@@ -98,6 +98,9 @@ const (
 	AdoptReasonOffline      = "contributor-offline"
 	AdoptReasonUnregistered = "contributor-unregistered"
 	AdoptReasonGrace        = "grace-elapsed"
+	// AdoptReasonOperator is an owner-delegate's `adoption/supersede`
+	// request: no nudge or grace, the operator asked (hivecommons/hive#15135).
+	AdoptReasonOperator = "operator-asked"
 	// AdoptReasonDCORehome marks a second takeover: an in-place adoption
 	// whose head stayed DCO-red with unsigned commits the hive cannot
 	// rewrite on the contributor branch, re-homed onto hive/adopt-<n>.
@@ -193,6 +196,8 @@ func adoptReasonText(reason string, grace time.Duration, online bool) string {
 		return "your hive has been offline since the nudge"
 	case AdoptReasonUnregistered:
 		return "no hive of yours is registered here and nothing moved after the nudge"
+	case AdoptReasonOperator:
+		return "a maintainer asked the hive to take it over"
 	case AdoptReasonSignoffRehome:
 		return "the hive's fix on this branch cannot carry a sign-off the squash merge accepts (the hive signs as the App, the squash lands as you)"
 	case AdoptReasonRebaseRehome:
@@ -420,6 +425,8 @@ func adoptionBodyCause(reason string) string {
 		return "adopted in place, re-homed because a review finding on the adopted head sat unaddressed past the stage dwell"
 	case AdoptReasonDCORehome:
 		return "adopted in place, re-homed for DCO repair"
+	case AdoptReasonOperator:
+		return "adopted at a maintainer's request"
 	}
 	return "adopted after CI went red and the contributor was unavailable"
 }
@@ -580,10 +587,10 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	}
 	requested := hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede)
 	due, reason := adoptionDue(rec, obs.HeadSHA, policy, now, presence, hasPresence)
-	if requested && obs.HeadSHA != "" && !(rec.Adopted(obs.HeadSHA) && rec.AdoptedBy > 0) {
+	if requested && obs.HeadSHA != "" && !(rec.Adopted(obs.HeadSHA) && rec.AdoptedBy > 0 && !rec.AdoptionCopyFailed()) {
 		// An explicit owner-delegate decision bypasses the nudge/grace and
 		// re-homes a stalled in-place adoption through the same supersede path.
-		due, reason = true, AdoptReasonOffline
+		due, reason = true, AdoptReasonOperator
 	}
 	if !due {
 		return 0, nil
@@ -739,6 +746,8 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		return effects.Result{Provenance: tip}, nil
 	})
 	if err != nil {
+		// Close-first (hivecommons/hive#15135) orders push → copy → close,
+		// so a failed push leaves the original open; nothing to reopen.
 		c.warn("stage labels: adoption failed to push branch", "repo", obs.Display, "pr", number, "branch", branch, "error", err)
 		return 0, err
 	}
@@ -768,6 +777,11 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	store.MarkAdopted(key, obs.HeadSHA, superseding, now)
 	c.info("stage labels: contributor PR adopted", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "branch", branch, "fence", rec.AdoptDiffFence)
 
+	if policy.AdoptSupersedeCloseFirst {
+		// hivecommons/hive#15135: one PR per issue — the original closes
+		// now, with the note naming the copy, not when the copy merges.
+		return c.closeSupersededOriginalFirst(ctx, store, key, obs, policy, superseding, reason, rec.AdoptDiffFence, now)
+	}
 	body := AdoptionComment(obs, policy.HiveID, superseding, reason, grace, online)
 	if dcoRehome {
 		body = AdoptionDCORehomeComment(obs, policy.HiveID, superseding)
@@ -993,7 +1007,7 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 // A copy closed unmerged is an orphaned adoption (hivecommons/hive#15052):
 // recoverOrphanedAdoption re-adopts, reverts, or parks it.
 func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) (int, error) {
-	if obs.Merged || rec.AdoptionChildClosedTwice() || !rec.SupersederPollDue(now, adoptCheckInterval) {
+	if obs.Merged || rec.AdoptionChildClosedTwice() || rec.AdoptionCopyFailed() || !rec.SupersederPollDue(now, adoptCheckInterval) {
 		return 0, nil
 	}
 	store.MarkAdoptChecked(key, now)
@@ -1573,7 +1587,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	if rec.AdoptionEscalated(obs.HeadSHA) {
 		// A workflow-path refusal is a verdict on the head itself: it holds
 		// until the head moves, whatever the re-home or stall reasons say.
-		if rec.AdoptEscalatedReason == adoptionWorkflowRefusedReason || rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionChildClosedTwice || (rehomeReason == "" && adoptionStalledReason(obs, rec, policy, now) != "") {
+		if rec.AdoptEscalatedReason == adoptionWorkflowRefusedReason || rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionChildClosedTwice || rec.AdoptEscalatedReason == stagelabels.LaneReasonAdoptionCopyFailed || (rehomeReason == "" && adoptionStalledReason(obs, rec, policy, now) != "") {
 			return adoptionEscape{Escalated: true, Reason: rec.AdoptEscalatedReason}, 0, nil
 		}
 		store.ClearAdoptionEscalation(key)

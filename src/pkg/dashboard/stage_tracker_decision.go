@@ -519,6 +519,8 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Question = "The security check flagged " + reason + at + ". Accept it as is, give direction, or close it?"
 	case lower == stagelabels.LaneReasonAdoptionChildClosedTwice:
 		d.Question = "The hive's copies of this PR were closed without merging twice within an hour, so the hive stopped opening copies. Reopen the last copy (#" + strconv.Itoa(it.AdoptedBy) + "), give direction, or close it?"
+	case lower == stagelabels.LaneReasonAdoptionCopyFailed:
+		d.Question = "The hive's copy of this PR (#" + strconv.Itoa(it.AdoptedBy) + ") failed, so this PR was reopened. Ask the hive to supersede it again, give direction, or close it?"
 	case adoptionStalled:
 		d.Question = "The hive took this PR over but could not move it (" + decisionPlainReason(adoptionLane) + "). Give direction, or close it?"
 	case forkGuarded:

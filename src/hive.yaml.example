@@ -525,6 +525,10 @@ governor:
       #   after_offline: 15m            # default 15m; registered relay offline, measured from the later
       #                                 # of its last heartbeat and the first stage/072 nudge
       #   after_unregistered: 15m       # default 15m; no contributor profile, wait after the nudge with no new head
+      #   supersede:
+      #     close_first: true           # default true; close the original (hive/superseded, one note naming the
+      #                                 # copy) in the pass that opens the copy; reopened if the copy fails.
+      #                                 # false: original stays stage/074 and closes when the copy merges
 
   # Optional: read actionable work from Linear instead of GitHub Issues.
   # Secrets should come from env interpolation, not literal values.
