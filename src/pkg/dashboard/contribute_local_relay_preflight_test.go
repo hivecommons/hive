@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // hivecommons/hive#14832 and #14833: local-mode contributor preflight and stop.
@@ -127,16 +129,11 @@ func startFakeRelay(t *testing.T) (*exec.Cmd, <-chan struct{}) {
 		<-done
 	})
 	// Wait for exec -a to take effect before anything inspects the argv.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.Eventually(t, 5*time.Second, func() bool {
 		out, _ := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(cmd.Process.Pid)).Output()
-		if strings.Contains(string(out), "contributor-relay") {
-			return cmd, done
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatal("fake relay never showed contributor-relay in its argv")
-	return nil, nil
+		return strings.Contains(string(out), "contributor-relay")
+	}, "fake relay never showed contributor-relay in its argv")
+	return cmd, done
 }
 
 func writeRelayPidRecord(t *testing.T, pid int, extra string) string {
