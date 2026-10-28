@@ -9111,10 +9111,13 @@
              hides it from readers who could not click it anyway. */
           var upgradeProgressLine = renderUpgradeProgress(h, isHosted && h.role === 'owner' && !h.upgradeInterruptPending);
           if (h.upgradeInterruptPending) upgradeProgressLine += '<span class="upgrade-progress-pill upgrade-progress-history" title="The owner asked this upgrade to interrupt in-flight agent turns; the spoke picks it up on its next heartbeat.">interrupt requested</span>';
+          /* The progress pill shares the upgrade line so the cell keeps its
+             one-element-per-line shape (TestVersionCellPutsEachElementOnItsOwnLine). */
+          if (upgradeProgressLine) upgradeIcon = upgradeIcon ? upgradeIcon + ' ' + upgradeProgressLine : upgradeProgressLine;
           versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
             '<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>' +
             '<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>' +
-            (upgradeIcon || upgradeProgressLine ? '<div style="' + STACKED_LINE_STYLE + '">' + upgradeIcon + (upgradeIcon && upgradeProgressLine ? ' ' : '') + upgradeProgressLine + '</div>' : '') +
+            (upgradeIcon ? '<div style="' + STACKED_LINE_STYLE + '">' + upgradeIcon + '</div>' : '') +
             (autoUpgradeCheck ? '<div style="' + STACKED_LINE_STYLE + '">' + autoUpgradeCheck + '</div>' : '') +
             '</div>';
         /* No version reported, but drift can still exist (e.g. heartbeat-stale on a
