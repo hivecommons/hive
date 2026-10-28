@@ -2953,7 +2953,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.sched.SetRunTriageDeps(b.dashSrv, liveTriageCommenter{client: b.currentGitHubClient})
 	// Prior-art gate search (hivecommons/hive#13575): knowledge, the
 	// Settings index and the forge, through the client provider.
-	priorArtSearcher := newPriorArtSearcher(b.cfg, func() *knowledge.KnowledgeAPI { return b.knowledgeAPI }, func() []rfccoverage.Setting { return b.rfcCoverageState().index(b.logger) }, b.currentGitHubClient, b.logger)
+	priorArtSearcher := newPriorArtSearcher(b.cfg, func() *knowledge.KnowledgeAPI { return b.knowledgeAPI }, func() []rfccoverage.Setting { return b.rfcCoverageState().index(b.logger) }, b.currentGitHubClient, b.priorArtSearchBackend, b.logger)
 	b.priorArtSearcher.Store(priorArtSearcher)
 	b.sched.SetPriorArtSearcher(priorArtSearcher)
 	b.sched.SetAdvisoryFunc(func(title, detail, agentName string) {

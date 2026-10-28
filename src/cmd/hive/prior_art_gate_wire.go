@@ -14,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/rfccoverage"
+	"github.com/hivecommons/hive/pkg/search"
 )
 
 // Prior-art gate wiring (runs.triage.prior_art, hivecommons/hive#13575).
@@ -31,11 +32,15 @@ const priorArtGateResumeSweepInterval = issueUnparkSweepInterval
 // dashboard Settings index (shared with the rfc_existing_check), the forge
 // (merged PRs, closed issues) through the client provider so a swapped
 // client is picked up (#9621), and docs/code from a local codeindex snapshot
-// over every registered repo's checkout (#13878).
+// over every registered repo's checkout (#13878), plus, only when
+// search.enabled is set, past verdicts, findings, sentinel hits and beads
+// from the portfolio search index (#14639).
 // knowledgeAPI is resolved per search: bootKnowledge runs after
 // bootDashboard, where the scheduler is wired, so the API is nil at wiring
-// time; without one the knowledge source answers nothing.
-func newPriorArtSearcher(cfg *config.Config, knowledgeAPI func() *knowledge.KnowledgeAPI, settings func() []rfccoverage.Setting, current func() *github.Client, logger *slog.Logger) *priorart.Searcher {
+// time; without one the knowledge source answers nothing. searchBackend is
+// resolved per search for the same reason: the search indexer starts after
+// the gate is wired.
+func newPriorArtSearcher(cfg *config.Config, knowledgeAPI func() *knowledge.KnowledgeAPI, settings func() []rfccoverage.Setting, current func() *github.Client, searchBackend func() search.Backend, logger *slog.Logger) *priorart.Searcher {
 	var sources []priorart.Source
 	if knowledgeAPI != nil {
 		sources = append(sources, priorart.SourceFunc{SourceName: "knowledge", Fn: func(ctx context.Context, q priorart.Query) ([]priorart.Candidate, error) {
@@ -58,6 +63,9 @@ func newPriorArtSearcher(cfg *config.Config, knowledgeAPI func() *knowledge.Know
 	codeIdx := github.NewPriorArtCodeIndex(func() []github.PriorArtCheckout { return priorArtCheckouts(cfg) }, 0)
 	codeIdx.Warm()
 	sources = append(sources, codeIdx.Sources()...)
+	if searchBackend != nil && cfg.Search.IsEnabled() {
+		sources = append(sources, search.PriorArtSource(searchBackend))
+	}
 	gate := cfg.Runs.Triage.PriorArt
 	return priorart.NewSearcher(priorart.Options{
 		Sources:     sources,

@@ -68,6 +68,18 @@ one incremental rebuild off the hot path:
   indexer's kinds that no current source produces.
 - Every title, text and field value passes through `crux/logscrub` first.
 - No ingest runs during the hosted startup budget (#14389).
+
+## Prior-art gate source
+
+`PriorArtSource` (#14639) adds a lexical `search` source to the Governor
+prior-art gate, wired by `cmd/hive` only when `search.enabled: true`. It
+queries `evidence`, `finding`, `sentinel` and `bead` documents for the
+issue's identifiers and top terms (knowledge facts stay with the gate's own
+knowledge source) and hands at most 10 hits to the gate's ranker as
+knowledge candidates; the gate keeps its thresholds and parking. Titles and
+text pass through `ioscan.EnforceInput`, and documents it blocks are dropped.
+One query is bounded by `PriorArtTimeout` (5s); an error or timeout only
+counts as a failed source, so the gate answers from its other sources.
 - Documents are `private` (never federated) unless the `Visibility` hook
   reports the repo `public`.
 

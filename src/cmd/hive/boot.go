@@ -42,6 +42,7 @@ import (
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/search"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -89,6 +90,10 @@ type boot struct {
 	// priorArtSearcher is the prior-art gate's Searcher, shared by the
 	// scheduler's park and the issue relay's filing verdict (#13879).
 	priorArtSearcher atomic.Pointer[priorart.Searcher]
+	// searchIndexer is the portfolio search indexer once started
+	// (search.enabled); the prior-art gate's search source reads its
+	// backend through it (#14639).
+	searchIndexer atomic.Pointer[search.Indexer]
 
 	// forgeState is the per-repo GitHub state cache the governor work
 	// source reads from when `forgestate.enabled` is on (#13375). Built

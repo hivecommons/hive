@@ -100,6 +100,7 @@ func (b *boot) startSearchIndexer() {
 	if b.dashSrv != nil {
 		b.dashSrv.SetRepoHealthSource(ix.RepoHealth)
 	}
+	b.searchIndexer.Store(ix)
 	ctx, cancel := context.WithCancel(b.ctx)
 	done := ix.Start(ctx)
 	b.preShutdownHooks.add(searchIndexerShutdownHook, func() {
@@ -107,4 +108,15 @@ func (b *boot) startSearchIndexer() {
 		<-done
 	})
 	b.logger.Info("search indexer started", "dir", searchIndexDir, "interval", search.DefaultRebuildInterval)
+}
+
+// priorArtSearchBackend is the prior-art gate's view of the search index:
+// nil until startSearchIndexer has built one (and always when
+// search.enabled is off).
+func (b *boot) priorArtSearchBackend() search.Backend {
+	ix := b.searchIndexer.Load()
+	if ix == nil {
+		return nil
+	}
+	return ix.Backend
 }
