@@ -805,8 +805,8 @@ func (m *Manager) RefreshAgentTokens(ctx context.Context) {
 // attempt a token re-cache before pausing: the likeliest cause of a `gh`
 // "gh auth login" prompt on an App-authenticated hive is an expired cached
 // token, so refreshing it means a subsequent Resume works immediately.
-// Returns an error when the agent is unknown, has no UID, or no App auth is
-// wired.
+// Returns an error when the agent is unknown, lacks an enabled cache path,
+// or no App auth is wired.
 func (m *Manager) RefreshAgentTokenFor(ctx context.Context, name string) error {
 	m.mu.RLock()
 	auth := m.appAuth
@@ -819,10 +819,10 @@ func (m *Manager) RefreshAgentTokenFor(ctx context.Context, name string) error {
 	if !ok {
 		return fmt.Errorf("agent %s not found", name)
 	}
-	if agent.UID <= 0 {
+	if !m.agentTokenCacheEnabled(agent) {
 		return fmt.Errorf("agent %s has no dedicated UID", name)
 	}
-	tier := TokenTierForRole(m.agentMode(agent), agent.Config.Role)
+	tier := m.agentTokenTier(agent)
 	if err := auth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
 		return fmt.Errorf("re-caching scoped token for %s: %w", name, err)
 	}
@@ -834,7 +834,7 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 	auth := m.appAuth
 	agents := make([]*AgentProcess, 0, len(m.agents))
 	for _, a := range m.agents {
-		if a.State == StateRunning && a.UID > 0 {
+		if a.State == StateRunning && m.agentTokenCacheEnabled(a) {
 			agents = append(agents, a)
 		}
 	}
@@ -851,7 +851,7 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 	// GitHub App auth: a Linear-sourced hive with no App still needs this,
 	// hence it runs before the auth == nil return below.
 	for _, a := range agents {
-		if a.tmuxSession == "" {
+		if a.UID <= 0 || a.tmuxSession == "" {
 			continue
 		}
 		for _, args := range m.linearRefreshTmuxArgs(a) {
@@ -864,13 +864,21 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 	}
 
 	for _, a := range agents {
-		tier := TokenTierForRole(m.agentMode(a), a.Config.Role)
+		tier := m.agentTokenTier(a)
 		if err := auth.WriteAgentToken(ctx, a.Name, tier, a.UID); err != nil {
 			m.logger.Warn("agent token refresh failed", "agent", a.Name, "error", err)
 			continue
 		}
+		// App auth can arrive after launch. Publish the cache path then too, so
+		// the next turn can read without a restart of the shared-UID agent.
+		if a.UID == 0 && a.tmuxSession != "" {
+			_ = m.tmuxCmd(a, "set-environment", "-t", a.tmuxSession, "HIVE_AGENT_TOKEN_CACHE",
+				crux.AgentTokenCachePath(crux.DefaultAgentTokenCacheDir, a.Name)).Run()
+		}
 		// Refresh the opt-in mint token alongside the App token (no-op when off).
-		m.issueAgentMintToken(a.Name, tier, a.UID)
+		if a.UID > 0 {
+			m.issueAgentMintToken(a.Name, tier, a.UID)
+		}
 		// Re-inject the freshly-minted App token into the running session so the
 		// GitHub MCP server keeps authenticating as the App bot. The scoped token
 		// expires hourly; WriteAgentToken above rewrites the cache FILE (which the
@@ -882,7 +890,7 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 		// turn picks up the current token. Gated on the opt-in flag + CanPush() to
 		// match the launch injection — advisory agents stay GITHUB_TOKEN-less, and
 		// hives that have not opted in get nothing injected.
-		if m.project.AppAuthoredPRs && a.tmuxSession != "" && m.agentMode(a).CanPush() {
+		if a.UID > 0 && m.project.AppAuthoredPRs && a.tmuxSession != "" && m.agentMode(a).CanPush() {
 			if data, err := os.ReadFile(crux.AgentTokenCachePath(crux.DefaultAgentTokenCacheDir, a.Name)); err == nil {
 				if tok := strings.TrimSpace(string(data)); tok != "" {
 					_ = m.tmuxCmd(a, "set-environment", "-t", a.tmuxSession, "GITHUB_TOKEN", tok).Run()
@@ -918,10 +926,10 @@ func truncateStr(s string, maxRunes int) string {
 // race-free. m.appAuth is read without the lock exactly as Start's unlocked
 // phase always did: it is injected once at wiring time, before agents start.
 func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProcess) {
-	if m.appAuth == nil || agent.UID <= 0 {
+	if m.appAuth == nil || !m.agentTokenCacheEnabled(agent) {
 		return
 	}
-	tier := TokenTierForRole(m.agentMode(agent), agent.Config.Role)
+	tier := m.agentTokenTier(agent)
 	if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil && errors.Is(err, crux.ErrGitHubAppNotInstalled) {
 		// Static misconfiguration: every tick would fail identically, so log
 		// once per agent until a mint succeeds instead of every supervisor tick.
@@ -949,5 +957,19 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 	}
 	// Additionally issue an opt-in short-lived mint token (no-op when the mint
 	// is disabled). This is additive and fail-safe — it never blocks launch.
-	m.issueAgentMintToken(agent.Name, tier, agent.UID)
+	if agent.UID > 0 {
+		m.issueAgentMintToken(agent.Name, tier, agent.UID)
+	}
+}
+
+// agentTokenCacheEnabled keeps the shared-UID read path opt-in and App-only.
+func (m *Manager) agentTokenCacheEnabled(a *AgentProcess) bool {
+	return a.UID > 0 || (a.UID == 0 && m.project.SharedUIDReadToken && m.appAuth != nil)
+}
+
+func (m *Manager) agentTokenTier(a *AgentProcess) string {
+	if a.UID == 0 {
+		return crux.SharedUIDReadTokenTier
+	}
+	return TokenTierForRole(m.agentMode(a), a.Config.Role)
 }

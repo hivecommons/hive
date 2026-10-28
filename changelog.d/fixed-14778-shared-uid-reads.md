@@ -1,0 +1,1 @@
+- Add opt-in `github.shared_uid_read_token` for App-authenticated shared-UID deployments, delivering refreshed read-only agent tokens so GitHub reads work without a personal login while writes continue through relays ([#14778](https://github.com/hivecommons/hive/issues/14778)).

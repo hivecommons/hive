@@ -2121,18 +2121,19 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		// and AgentPrimaryRepo to the ones a given agent serves (#6204) — so a
 		// pause taken or a scope edited mid-run reaches the next agent launch
 		// without rebuilding this context.
-		Repos:            b.cfg.Project.Repos,
-		RepoPaused:       b.cfg.IsRepoPaused,
-		AgentRepos:       b.cfg.ReposForAgent,
-		AgentPrimaryRepo: b.cfg.PrimaryRepoForAgent,
-		PrimaryRepoName:  b.cfg.Project.PrimaryRepo,
-		ACMMLevel:        b.acmmLevel,
-		PRsAllowed:       b.cfg.Project.PRsAllowed(),
-		PolicyDir:        b.policyDirPath,
-		AppAuthoredPRs:   b.cfg.GitHub.AppAuthoredPRsEnabled(),
-		AppBotLogin:      b.cfg.GitHub.BotLogin(),
-		AppBotUserID:     b.appBotUserIDResolver(),
-		BobSessionPrefix: b.cfg.Governor.Bob.SessionPrefix,
+		Repos:              b.cfg.Project.Repos,
+		RepoPaused:         b.cfg.IsRepoPaused,
+		AgentRepos:         b.cfg.ReposForAgent,
+		AgentPrimaryRepo:   b.cfg.PrimaryRepoForAgent,
+		PrimaryRepoName:    b.cfg.Project.PrimaryRepo,
+		ACMMLevel:          b.acmmLevel,
+		PRsAllowed:         b.cfg.Project.PRsAllowed(),
+		PolicyDir:          b.policyDirPath,
+		SharedUIDReadToken: b.cfg.GitHub.SharedUIDReadToken,
+		AppAuthoredPRs:     b.cfg.GitHub.AppAuthoredPRsEnabled(),
+		AppBotLogin:        b.cfg.GitHub.BotLogin(),
+		AppBotUserID:       b.appBotUserIDResolver(),
+		BobSessionPrefix:   b.cfg.Governor.Bob.SessionPrefix,
 	}
 	return true
 }

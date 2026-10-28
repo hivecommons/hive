@@ -916,6 +916,10 @@ github:
   # app_id: 12345
   # installation_id: 67890
   # key_file: /secrets/gh-app-key.pem
+  # Opt in on shared-UID deployments (e.g. OpenShift restricted-v2).
+  # Gives agents read-only App caches; agents can read each other's caches.
+  # Writes still use the relays. Requires App auth; default false. Restart to apply.
+  # shared_uid_read_token: true
   # agent_reserve_floor: 400              # Keep this many core requests reserved for daemon scan/merge paths.
 
   # Shared GitHub App/PAT core API budget floors. When remaining core quota

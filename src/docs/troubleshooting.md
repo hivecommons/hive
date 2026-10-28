@@ -363,7 +363,18 @@ Common causes:
 - The agent is running in a deployment that does not use the per-UID manager
   path (native/systemd, Compose/Quadlet, or a Kubernetes pod whose UID
   isolation did not initialize), so `HIVE_AGENT_TOKEN_CACHE` is legitimately
-  absent and the native `gh auth login` fallback must be used instead.
+  absent. On native installs, use the native `gh auth login` fallback.
+  For App-identity deployments that intentionally share a UID (for example,
+  OpenShift `restricted-v2`), set `github.shared_uid_read_token: true` and
+  restart the hive. With App auth configured, the manager mints and refreshes
+  per-agent caches under `/var/run/hive-metrics/agent-tokens/`, owned by the
+  shared UID with mode `0600`, and exports `HIVE_AGENT_TOKEN_CACHE`. Tokens
+  grant only metadata, contents, actions, checks, pull requests and issues
+  **read** access, regardless of agent role; writes continue through relays.
+  This is default-off because shared-UID agents can read each other's caches.
+  The boot log reports the opt-in next to `no UID map found`.
+  Ensure the shared UID can write the cache directory. This option does not
+  restore UID isolation or clear the `uid_isolation` health alert.
 - The cache file exists but is empty, unreadable, or was not pre-created by the
   entrypoint as `dev:hive-<agent> 0640`.
 - The GitHub App is not installed on the repo, or token minting failed for the
@@ -380,10 +391,11 @@ Check from inside the hive container:
 su -s /bin/sh hive-<agent> -c 'printf "%s\n" "${HIVE_AGENT_TOKEN_CACHE:-unset}"; test -r "$HIVE_AGENT_TOKEN_CACHE" && echo readable || echo MISSING'
 ```
 
-Never print the file contents. If this says `unset` on a native/shared-UID
-deployment, check that the launch environment has the shared App token available
-to the launcher (`HIVE_GITHUB_TOKEN`) and that `gh auth status --hostname
-github.ibm.com` succeeds after launch. For GitHub Enterprise, set the primary
+Never print the file contents. On an intentional shared-UID App deployment,
+check the opt-in above and the manager's token-mint logs; no personal login or
+shared full-privilege token fallback is needed. For a native install using a
+personal login, check that `gh auth status --hostname github.ibm.com` succeeds
+after launch. For GitHub Enterprise, set the primary
 GitHub host/base URL so agents inherit `GH_HOST=github.ibm.com`, and
 install/authorize the GitHub App on the target repo (`Jaedon-Paget/kie` in the
 reported case). On per-UID Kubernetes, `unset` or `MISSING` points to a broken

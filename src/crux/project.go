@@ -26,6 +26,9 @@ type ProjectContext struct {
 	// MCP server authors PRs/commits as the App bot. Default false → no token is
 	// injected and behavior is unchanged (opt-in per hive).
 	AppAuthoredPRs bool
+	// SharedUIDReadToken permits read-only App caches without dedicated UIDs.
+	// Cross-agent read isolation is unavailable in this explicit opt-in mode.
+	SharedUIDReadToken bool
 	// AppBotLogin and AppBotUserID identify the installed GitHub App's bot
 	// account. When AppAuthoredPRs is on, push-capable agents use this bot's
 	// noreply address ("<user id>+<login>@users.noreply.github.com") for git

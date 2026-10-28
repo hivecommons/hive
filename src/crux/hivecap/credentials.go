@@ -109,6 +109,14 @@ func (w *AppTokenWriter) WriteAgentToken(ctx context.Context, agentName, tier st
 	if err != nil {
 		return fmt.Errorf("opening agent token cache %s: %w", cachePath, err)
 	}
+	// Shared-UID mode has no private agent group; keep this owner-only even
+	// if a previous deployment pre-created a group-readable cache.
+	if agentUID == 0 && tier == crux.SharedUIDReadTokenTier {
+		if err := f.Chmod(agentTokenCachePerms); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("securing shared-UID token cache %s: %w", cachePath, err)
+		}
+	}
 	if _, err := f.WriteString(resp.Token); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("writing agent token cache %s: %w", cachePath, err)

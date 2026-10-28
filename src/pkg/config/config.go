@@ -3172,6 +3172,11 @@ func (m ModeConfig) MarshalYAML() (interface{}, error) {
 }
 
 type GitHubConfig struct {
+	// SharedUIDReadToken opts shared-UID agents into per-agent read-only App
+	// token caches. Default off; agents sharing a UID can read each other's
+	// caches. Requires App auth; writes continue through the relays.
+	SharedUIDReadToken bool `yaml:"shared_uid_read_token,omitempty" json:"shared_uid_read_token,omitempty"`
+
 	AppID              int64  `yaml:"app_id"`
 	InstallationID     int64  `yaml:"installation_id"`
 	DocsInstallationID int64  `yaml:"docs_installation_id"`

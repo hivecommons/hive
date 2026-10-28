@@ -125,18 +125,19 @@ func projectContextFromConfig(cfg *config.Config) crux.ProjectContext {
 		return crux.ProjectContext{}
 	}
 	pc := crux.ProjectContext{
-		Org:              cfg.Project.Org,
-		Repos:            cfg.Project.Repos,
-		RepoPaused:       cfg.IsRepoPaused,
-		AgentRepos:       cfg.ReposForAgent,
-		AgentPrimaryRepo: cfg.PrimaryRepoForAgent,
-		PrimaryRepoName:  cfg.Project.PrimaryRepo,
-		ACMMLevel:        cfg.ACMMLevelOrZero(),
-		PRsAllowed:       cfg.Project.PRsAllowed(),
-		PolicyDir:        policyDir(cfg.Policies),
-		AppAuthoredPRs:   cfg.GitHub.AppAuthoredPRsEnabled(),
-		AppBotLogin:      cfg.GitHub.BotLogin(),
-		BobSessionPrefix: cfg.Governor.Bob.SessionPrefix,
+		Org:                cfg.Project.Org,
+		Repos:              cfg.Project.Repos,
+		RepoPaused:         cfg.IsRepoPaused,
+		AgentRepos:         cfg.ReposForAgent,
+		AgentPrimaryRepo:   cfg.PrimaryRepoForAgent,
+		PrimaryRepoName:    cfg.Project.PrimaryRepo,
+		ACMMLevel:          cfg.ACMMLevelOrZero(),
+		PRsAllowed:         cfg.Project.PRsAllowed(),
+		PolicyDir:          policyDir(cfg.Policies),
+		SharedUIDReadToken: cfg.GitHub.SharedUIDReadToken,
+		AppAuthoredPRs:     cfg.GitHub.AppAuthoredPRsEnabled(),
+		AppBotLogin:        cfg.GitHub.BotLogin(),
+		BobSessionPrefix:   cfg.Governor.Bob.SessionPrefix,
 	}
 	if cfg.GitHub.IsGHE() {
 		pc.GHHost = cfg.GitHub.HostLabel()

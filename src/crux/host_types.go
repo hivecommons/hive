@@ -17,6 +17,9 @@ import (
 // sidecar runtime will receive them over a hive-side callback endpoint
 // (stage 2 decides the shape). crux/agent aliases every one of them.
 
+// SharedUIDReadTokenTier grants only GitHub reads for agents without UID isolation.
+const SharedUIDReadTokenTier = "shared-uid-read"
+
 // AppTokenMinter is implemented by the host's GitHub App auth
 // (pkg/github.AppAuth) to mint per-agent scoped tokens.
 type AppTokenMinter interface {

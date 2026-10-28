@@ -860,7 +860,9 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 		}
 	}
 	if uidMap == nil {
-		logger.Info("no UID map found, agents will share dev UID", "path", loadUIDMapPath)
+		logger.Info("no UID map found, agents will share dev UID", "path", loadUIDMapPath,
+			"shared_uid_read_token", project.SharedUIDReadToken,
+			"cross_agent_read_isolation", false)
 	}
 
 	kickLogDir, kickLogRetention, kickLogMaxBytes := kickLogSettingsFromEnv()

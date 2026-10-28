@@ -293,3 +293,34 @@ func TestSetCarriesCredentialWriters(t *testing.T) {
 		t.Error("plain capabilities must not claim mint")
 	}
 }
+
+func TestAppTokenWriterSharedUIDReadCache(t *testing.T) {
+	d := &direct{expiry: time.Now().Add(time.Hour)}
+	w := NewAppTokenWriter(d)
+	w.CacheDir = t.TempDir()
+	w.injectOn = func() bool { return false }
+	path := crux.AgentTokenCachePath(w.CacheDir, "scanner")
+	if err := os.WriteFile(path, []byte("stale"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteAgentToken(context.Background(), "scanner", crux.SharedUIDReadTokenTier, 0); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
+	}
+	if len(d.mints) != 1 || d.mints[0].Tier != crux.SharedUIDReadTokenTier {
+		t.Fatalf("wrong mint scope: %+v", d.mints)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 || string(data) == "stale" {
+		t.Fatalf("cache not refreshed: %v", err)
+	}
+}

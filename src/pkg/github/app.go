@@ -304,6 +304,17 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 
 	var perms *gh.InstallationPermissions
 	switch tier {
+	case crux.SharedUIDReadTokenTier:
+		// Shared-UID agents cannot isolate credentials from one another.
+		// Never deliver a write-capable token, regardless of the agent's role.
+		perms = &gh.InstallationPermissions{
+			Metadata:     gh.Ptr("read"),
+			Contents:     gh.Ptr("read"),
+			Actions:      gh.Ptr("read"),
+			Checks:       gh.Ptr("read"),
+			PullRequests: gh.Ptr("read"),
+			Issues:       gh.Ptr("read"),
+		}
 	case "newcomer":
 		// Newcomers (ISSUES_ONLY agents) can comment on and file issues, and
 		// READ code — filing a meaningful issue requires reading the repo it
@@ -586,6 +597,14 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	f, err := os.OpenFile(cachePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, agentTokenCachePerms)
 	if err != nil {
 		return fmt.Errorf("opening agent token cache %s: %w", cachePath, err)
+	}
+	// Shared-UID mode has no private agent group; keep this owner-only even
+	// if a previous deployment pre-created a group-readable cache.
+	if agentUID == 0 && tier == crux.SharedUIDReadTokenTier {
+		if err := f.Chmod(agentTokenCachePerms); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("securing shared-UID token cache %s: %w", cachePath, err)
+		}
 	}
 	if _, err := f.WriteString(fileToken); err != nil {
 		_ = f.Close() // best-effort cleanup; the write error is what's returned
