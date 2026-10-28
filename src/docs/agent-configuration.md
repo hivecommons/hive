@@ -586,7 +586,7 @@ When it is on, backends that run every shell command in a fresh, non-interactive
 - A `BASH_ENV` already in Hive's environment is chained, not overwritten: the script sources it after installing the trap, so it still runs.
 - **bob shell change:** bob runs commands with `$SHELL -c`, falling back to `/bin/sh` (dash in the agent image). With the check on Hive exports `SHELL=/bin/bash`, so bob's commands run in bash instead of dash. opencode and kilo also follow `$SHELL`. This change of shell is accepted and only applies while the check is on.
 
-Turning the check off removes the script at each agent's next launch and drops a Hive-set `BASH_ENV` from the agent's tmux session; a pane shell that still holds the old variable points at a missing file, which bash skips silently.
+Turning the check off removes the script at each agent's next launch and drops a Hive-set `BASH_ENV` from the agent's tmux session; a pane shell that still holds the old variable points at a missing file, which bash skips silently. Each backend-specific route similarly removes only what it added.
 
 ### Backend-specific routes
 
@@ -595,6 +595,7 @@ Backends whose shell commands never reach a fresh `bash -c` get their own route 
 - **copilot** keeps one long-lived shell per session, so Hive reads Copilot's own session log (`~/.copilot/session-state/<id>/events.jsonl`) on each collection and records every completed shell tool call with its exit code. Nothing is written into Copilot's files. A log that already exists when Hive starts, or when the check is turned on, is read from its end: calls logged before that point are not replayed.
 - **omp** strips `BASH_ENV`, so at each launch Hive writes its own extension to `~/.hive/repeat-failure/omp_extension.ts` and loads it with `--extension`; the extension records each bash tool result. omp's `config.yml` is never touched. With the check off, the next launch passes no flag and removes the file Hive wrote.
 - **agy** (headless launch only) records each `run_command` step from the `agy-turn` output; the TUI launch has no route.
+- **aider** (tmux only) runs commands with an interactive shell that reads `~/.bashrc` rather than `BASH_ENV`, so Hive replaces the agent's `~/.bashrc` with a per-agent file that sources the shared rc file and then (only in a `-c` shell) the Hive-owned BASH_ENV script. With the check off, the next launch removes the file and restores the bridge.
 
 ## Methods: subscription CLIs vs self-hosted inference
 
