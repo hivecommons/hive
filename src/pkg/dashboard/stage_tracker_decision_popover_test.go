@@ -110,7 +110,7 @@ globalThis.runRowAction = (act, item) => { calls.push([act, item]); return 'ran'
 assert.strictEqual(stageTrackerDecisionRun(pr, 'decide:delegate'), 'ran');
 assert.deepStrictEqual(calls, [['decide:delegate', pr]]);
 // Without it, the context menu's own path (stageTrackerDoAction) runs on the row.
-delete globalThis.runRowAction;
+globalThis.runRowAction = undefined; // the fixture declares the real one; a declared function cannot be deleted
 const done = [];
 globalThis.stageTrackerDoAction = (items, id) => { done.push([items, id]); return 'menu'; };
 assert.strictEqual(stageTrackerDecisionRun(pr, 'decide:approve'), 'menu');
