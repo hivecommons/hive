@@ -61,10 +61,10 @@ Each line is explained in the [quick start](src/docs/quickstart-docker-compose.m
 
 ## Learn more
 
-[Overview](src/docs/what-is-hive.md) · [Architecture](src/docs/architecture.md) · [Security model](src/docs/security-model.md) · [Terminal UI](src/docs/hivectl.md#tui--live-terminal-dashboard) · [Integrations](src/docs/integrations.md) · [Contribute compute](src/docs/contributor-relay.md) · [Contributing](CONTRIBUTING.md) · [Adopters](ADOPTERS.md) · [Repositories](docs/repositories.md) · [Changelog](CHANGELOG.md) · [Vulnerabilities](SECURITY.md) · [Telemetry](src/docs/telemetry.md) · [Hosted service](https://hive.hivecommons.dev)
+[Overview](src/docs/what-is-hive.md) · [Architecture](src/docs/architecture.md) · [Security model](src/docs/security-model.md) · [Terminal UI](src/docs/hivectl.md#tui--live-terminal-dashboard) · [Integrations](src/docs/integrations.md) · [Contribute compute](src/docs/contributor-relay.md) · [Contributing](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [Adopters](ADOPTERS.md) · [Repositories](docs/repositories.md) · [Changelog](CHANGELOG.md) · [Vulnerabilities](SECURITY.md) · [Telemetry](src/docs/telemetry.md) · [Hosted service](https://hive.hivecommons.dev)
 
 That maintainer now reads every repo. Only run images from `ghcr.io/hivecommons/hive`.
 
 ---
 
-Apache-2.0. Hive is a [Cloud Native Computing Foundation](https://www.cncf.io/) sandbox project candidate ([onboarding status](src/docs/cncf-sandbox-onboarding.md)); this does not imply CNCF acceptance or endorsement. Copyright The Linux Foundation and Hive contributors; trademarks are used per the [Linux Foundation Trademark Usage page](https://www.linuxfoundation.org/legal/trademark-usage).
+Apache-2.0. Hive is a [Cloud Native Computing Foundation](https://www.cncf.io/) sandbox project ([onboarding status](src/docs/cncf-sandbox-onboarding.md)) and follows the [CNCF Code of Conduct](CODE_OF_CONDUCT.md). Copyright The Linux Foundation and Hive contributors; trademarks are used per the [Linux Foundation Trademark Usage page](https://www.linuxfoundation.org/legal/trademark-usage).
