@@ -6,6 +6,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -15,23 +16,37 @@ const adoptionChildClosedTwice = "adoption-child-closed-twice"
 // Restore ownership from public evidence when an old sweep cleared the store.
 // A marker's head is retained even when the contributor subsequently pushed:
 // the merged-child path must still check whether it carried that new head.
+//
+// The marker is read once per record and again when the head moves or a
+// known comment count changes. It is not gated on the comment count being
+// known: only a lane's deep PullRequests.Get learns it (noteStagePR), and a
+// PR parked at 085 may never take that path (hivecommons/hive#14947).
 func (c *Engine) restoreAdoptionMarker(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) error {
 	rec, ok := store.Get(key)
-	if rec.AdoptedBy > 0 || rec.AdoptedInPlace() || !obs.Detail.CommentsKnown || obs.Detail.Comments == 0 ||
-		(rec.AdoptMarkerChecked && rec.AdoptMarkerComments == obs.Detail.Comments) {
+	// Adoption is clanker-only: a human's PR never carried a marker.
+	if rec.AdoptedBy > 0 || rec.AdoptedInPlace() || obs.AuthorKind == authorkind.Human {
+		return nil
+	}
+	if rec.AdoptMarkerChecked && rec.AdoptMarkerHead == obs.HeadSHA &&
+		(!obs.Detail.CommentsKnown || rec.AdoptMarkerComments == obs.Detail.Comments) {
+		return nil
+	}
+	if !ok {
+		store.Observe(key, stagelabels.None, "")
+	}
+	if obs.Detail.CommentsKnown && obs.Detail.Comments == 0 {
+		// Nothing to list: a marker is a comment.
+		store.NoteAdoptionMarkerRead(key, obs.HeadSHA, 0)
 		return nil
 	}
 	marker, err := hgithub.ReadSupersedeAdoption(ctx, c.gh, obs.Owner, obs.Repo, obs.Number, c.transport.IsHiveAuthorLogin)
 	if err != nil {
 		return err
 	}
-	if !ok {
-		store.Observe(key, stagelabels.None, "")
-	}
 	if marker.By > 0 {
 		store.MarkAdopted(key, marker.Head, marker.By, now)
 	}
-	store.NoteAdoptionMarkerRead(key, obs.Detail.Comments)
+	store.NoteAdoptionMarkerRead(key, obs.HeadSHA, obs.Detail.Comments)
 	return nil
 }
 
@@ -48,6 +63,15 @@ func (c *Engine) recoverOrphanedAdoption(ctx context.Context, store *stagelabels
 	}
 	if obs.HeadSHA != rec.AdoptedHead || !policy.Adoption || adoptionBlocked(obs.Labels) != "" {
 		return c.revertOrphanedAdoption(ctx, store, key, obs, rec.AdoptedBy, "the contributor head changed, adoption is disabled, or a hold label prevents takeover")
+	}
+	// supersedeAdoptedPR defers (no child, nil error) on an unreadable or
+	// deferring diff fence; that is a retry-next-sweep, not a failed copy.
+	// Check it here so a transient GitHub fault does not post a permanent
+	// public reversion. The retry guard above still allows the next attempt
+	// because AdoptOrphanPrevious stays equal to AdoptedBy.
+	if fence, err := c.adoptionDiffRefusal(ctx, obs); err != nil || adoptionFenceDefers(fence) {
+		c.info("stage labels: orphan re-adoption deferred before publishing", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", fence, "error", err)
+		return 0, err
 	}
 	store.NoteAdoptionOrphan(key, rec.AdoptedBy, now, true)
 	retry, _ := store.Get(key)

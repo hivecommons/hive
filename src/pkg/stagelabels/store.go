@@ -171,6 +171,7 @@ type Record struct {
 	AdoptChildClosed        bool      `json:"adopt_child_closed,omitempty"`
 	AdoptMarkerComments     int       `json:"adopt_marker_comments,omitempty"`
 	AdoptMarkerChecked      bool      `json:"adopt_marker_checked,omitempty"`
+	AdoptMarkerHead         string    `json:"adopt_marker_head,omitempty"`
 	// AdoptEscalatedHead / AdoptEscalatedReason record that the adoption
 	// sits at this head past the 074 dwell with nothing the hive can push
 	// and is a person's (stage 085) for that lane reason. The escalation
@@ -1270,15 +1271,16 @@ func (s *Store) RevertOrphanAdoption(key, head string) {
 	s.items[key], s.dirty = r, true
 }
 
-// NoteAdoptionMarkerRead avoids re-listing unchanged comment history.
-func (s *Store) NoteAdoptionMarkerRead(key string, comments int) {
+// NoteAdoptionMarkerRead records that the ownership marker was read at this
+// head so unchanged comment history is not re-listed every pass.
+func (s *Store) NoteAdoptionMarkerRead(key, head string, comments int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
 	if !ok {
 		return
 	}
-	r.AdoptMarkerChecked, r.AdoptMarkerComments = true, comments
+	r.AdoptMarkerChecked, r.AdoptMarkerHead, r.AdoptMarkerComments = true, head, comments
 	s.items[key], s.dirty = r, true
 }
 

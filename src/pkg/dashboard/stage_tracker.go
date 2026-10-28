@@ -1619,18 +1619,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LastNudgeAt = &t2
 			}
 			it.AdoptedBy = rec.AdoptedBy
+			// Cache-only (hivecommons/hive#14952): the engine persists the
+			// child's closed state via NoteAdoptionOrphan; no live GET here.
 			it.AdoptChildClosed = rec.AdoptChildClosed
-			if rec.AdoptedBy > 0 && s.deps != nil && s.deps.GHClient != nil && s.deps.GHClient.GoGitHub() != nil {
-				owner, repo, ok := strings.Cut(it.Repo, "/")
-				if ok {
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					child, _, err := s.deps.GHClient.GoGitHub().PullRequests.Get(ctx, owner, repo, rec.AdoptedBy)
-					cancel()
-					if err == nil {
-						it.AdoptChildClosed = child.GetState() == "closed" && !child.GetMerged()
-					}
-				}
-			}
 			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
 		}
 		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)

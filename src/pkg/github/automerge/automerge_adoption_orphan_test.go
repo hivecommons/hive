@@ -103,3 +103,38 @@ func TestOrphanMarkerRestoresLostStoreForClosedAndMergedCopy(t *testing.T) {
 		})
 	}
 }
+
+// A transient fence read fault (GitHub 5xx on the files list) while
+// re-adopting an orphan is a retry-next-sweep, not a failed copy: no public
+// reversion, no AdoptOrphanRevertedHead, and the next clean sweep re-adopts.
+func TestOrphanDefersOnTransientFenceFaultWithoutReverting(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	key := stageKey("acme", "widget", 7)
+	h.adopt.setSuperseder(90, "closed", false)
+	h.adopt.failPRFiles = true
+	h.api.reset()
+	pr := adoptPR(7, "aaa", "stage/085-needs-decision", "needs-human", "role/contributor", "author/clanker")
+	h.adopt.heads[7] = "aaa"
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "label:needs-human", false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(t.Context()); err == nil {
+		t.Fatal("transient files fault must surface so the sweep retries")
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.AdoptedBy != 90 || rec.AdoptOrphanRevertedHead != "" || !rec.AdoptChildClosed || len(h.adopt.pulls) != 1 {
+		t.Fatalf("transient fault reverted the adoption: %+v pulls=%v", rec, h.adopt.pulls)
+	}
+	for _, note := range h.api.comments {
+		if strings.HasPrefix(note, "<!-- hive:adoption-reverted -->") {
+			t.Fatalf("public reversion posted on a transient fault: %q", note)
+		}
+	}
+	h.adopt.failPRFiles = false
+	h.api.reset()
+	h.observe(pr, "label:needs-human")
+	rec, _ = h.e.stageStoreOrShared().Get(key)
+	if rec.AdoptedBy != 91 || len(h.adopt.pulls) != 2 {
+		t.Fatalf("deferred orphan not re-adopted on the next sweep: %+v pulls=%v", rec, h.adopt.pulls)
+	}
+}
