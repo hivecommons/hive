@@ -293,6 +293,8 @@ type Engine struct {
 	sweepTrigger *SweepTrigger
 	// sweepFloor overrides automergeSweepFloorInterval (tests only).
 	sweepFloor time.Duration
+	// sweepClock records the lanes' passes for the dashboard (sweep_clock.go).
+	sweepClock *SweepClock
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -305,6 +307,7 @@ func New(transport Transport, opts Options) *Engine {
 		transport:                         transport,
 		gh:                                ghClient,
 		logger:                            opts.Logger,
+		sweepClock:                        defaultSweepClock,
 		mergerAuthz:                       opts.MergerAuthorizer,
 		requiredChecks:                    opts.RequiredChecks,
 		requiredChecksForRepo:             opts.RequiredChecksForRepo,
@@ -1439,6 +1442,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 		defer close(done)
 		t := time.NewTicker(interval)
 		defer t.Stop()
+		c.sweepClock.armFloor(c.now().Add(interval))
 		// cautionTick is non-zero while the ticker is running at the caution
 		// floor instead of the adaptive interval.
 		var cautionTick time.Duration
@@ -1452,6 +1456,11 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 					t.Reset(gate.tick)
 				}
 				cautionTick = gate.cautionTick
+				tick := interval
+				if cautionTick != 0 {
+					tick = cautionTick
+				}
+				c.sweepClock.armFloor(c.now().Add(tick))
 				if gate.skip {
 					continue
 				}
@@ -1461,6 +1470,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 				}
 				if next, changed := nextSelfAuthoredSweepInterval(repos, interval, result); changed {
 					t.Reset(next)
+					c.sweepClock.armFloor(c.now().Add(next))
 					c.info("self-authored automerge sweep interval adjusted",
 						"previous_interval", interval,
 						"next_interval", next,
@@ -1486,6 +1496,8 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 // for the log. It returns nil when the self-authored lane failed outright
 // (its callers then keep the current cadence).
 func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool, targets SweepTargets, cause string) *AutoMergeSweepResult {
+	c.sweepClock.begin(cause, targets, c.now())
+	defer func() { c.sweepClock.end(c.now()) }()
 	result := &AutoMergeSweepResult{}
 	if acmmAllowed {
 		var err error

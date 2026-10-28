@@ -123,6 +123,9 @@ type Server struct {
 	// presenceLookup overrides the contribute hub as the tracker's author
 	// presence source for 072 rows (stage_tracker_adoption.go); tests only.
 	presenceLookup func(login string) (automerge.ContributorPresence, bool)
+	// sweepState overrides the automerge lanes' live sweep state for the
+	// tracker's merge-gate rows (stage_tracker_merge_gate.go); tests only.
+	sweepState func() automerge.SweepState
 	// stageTrackerCache is the last /api/stage-tracker payload built from
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache

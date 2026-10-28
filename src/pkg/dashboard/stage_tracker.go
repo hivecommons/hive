@@ -330,6 +330,10 @@ type StageTrackerItem struct {
 	// `soaking(remaining=…)` reason aged by the time since it was recorded);
 	// 0 when unknown or not soaking.
 	SoakRemainingSeconds int64 `json:"soak_remaining_seconds,omitempty"`
+	// MergeGate narrates a PR's position at the merge gate (060 / 080 /
+	// 095 / 100): state, what holds it, whether hive's merge sweep is on
+	// it now, the next pass and the soak countdown (hivecommons/hive#15073).
+	MergeGate *StageTrackerMergeGate `json:"merge_gate,omitempty"`
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head
@@ -491,6 +495,10 @@ type StageTrackerLinkedPR struct {
 	// DecisionNeeded mirrors the nested PR's own row field so the issue's
 	// sub-row can open the same "Needs human" popover.
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
+	// SoakRemainingSeconds / MergeGate mirror the PR item's (#15073): a
+	// nested Soaking sub-row shows its time left too.
+	SoakRemainingSeconds int64                  `json:"soak_remaining_seconds,omitempty"`
+	MergeGate            *StageTrackerMergeGate `json:"merge_gate,omitempty"`
 	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
 	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
 	// LastOperatorAction / OperatorActionCount mirror the nested PR's own
@@ -1580,6 +1588,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		return store.Get(stagelabels.Key(repo, number))
 	}
 	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
+	sweep := s.stageTrackerSweepState()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
 		// "Needs human decision" is read from the item's current labels, not
 		// a store record that outlived them: once the park label is gone
@@ -1615,6 +1624,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.Stage = stage.Number()
 		it.StageSlug = stage.Slug()
 		it.StageLabel = stage.Label()
+		if it.Kind == "pr" {
+			it.MergeGate = stageTrackerMergeGate(it.Repo, it.Number, stage, rec, hasRec, sweep, now)
+		}
 		if m := trackerPRNumberRE.FindStringSubmatch(it.Reason); m != nil && it.Kind == "issue" {
 			it.LinkedPR, _ = strconv.Atoi(m[1])
 		}
@@ -2543,6 +2555,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.BaseRef = pr.BaseRef
 				lp.DecisionNeeded = pr.DecisionNeeded
+				lp.SoakRemainingSeconds, lp.MergeGate = pr.SoakRemainingSeconds, pr.MergeGate
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
 				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {

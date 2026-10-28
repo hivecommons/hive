@@ -354,12 +354,14 @@ func (c *Engine) runEventDrivenSweep(ctx context.Context, maxMerges int, acmmAll
 	}
 	floor := time.NewTicker(c.floorInterval())
 	defer floor.Stop()
+	c.sweepClock.armFloor(c.now().Add(c.floorInterval()))
 	c.sweepPass(ctx, maxMerges, acmmAllowed, nil, "startup")
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-floor.C:
+			c.sweepClock.armFloor(c.now().Add(c.floorInterval()))
 			// The floor pass is low-priority work like the legacy tick: under
 			// rate-limit caution it yields to the queue (#13382); event passes
 			// are targeted and still run.

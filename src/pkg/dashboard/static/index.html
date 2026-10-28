@@ -1556,6 +1556,14 @@
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
     .ham-active-ico { display: none; }
     .cue-working .ham-seg.active:not(.cap) .ham-active-ico { display: inline-block; margin-right: var(--sp-1); }
+    .ham-active-ico-wrap { display: contents; }
+    /* Merge-gate cue (#15073): the leading glyph every row on the gate
+       wears — spinning while hive's sweep / merge is on it, a clock while
+       it waits; its title + aria-label say so in words. The live detail
+       after the word ("next sweep in 42s", "7m left") is muted. */
+    .ham-gate-ico { display: inline-flex; align-items: center; margin-right: var(--sp-1); cursor: help; }
+    .ham-gate-ico .ham-ico { width: 12px; height: 12px; }
+    .ham-gate-detail { font-weight: normal; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; }
     @keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
     /* ---- tracker-cues: the Activity Monitor's shared cue vocabulary ------
        Owner request: a viewer must always read where an item stands,
@@ -13961,7 +13969,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_POSSIBLY_EXISTS = 17;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
-    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
+    // Merge-gate pill vocabulary (hivecommons/hive#15073), one word per
+    // stage sharing the Merge gate column, in pipeline order:
+    //   060 Awaiting merge gate  — review approved; a gate still holds
+    //                              (CI pending / red, …): the pill says which
+    //   080 Ready for auto merge — green and approved; waiting for hive's
+    //                              merge sweep: "next sweep in 42s"
+    //   095 Soaking              — admitted; the soak window runs: "7m left"
+    //   100 Merging              — admitted and soaked; the merge is being
+    //                              attempted (GitHub merge queue / tide)
+    //   110 Merged               — the ✓ cap
+    // stageTrackerMergeGateWordHtml adds the live detail; the leading glyph
+    // (stageTrackerGateCueHtml) says the same in a tooltip + aria-label.
+    // STAGE_TRACKER_ACTIVE_WORD repeats the words literally (fixtures lift
+    // it alone); stage_tracker_merge_gate_test.go pins the two equal.
+    const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Awaiting merge gate', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Awaiting merge gate', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
     const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
@@ -14142,10 +14165,123 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // " — Xm left" for a 095 row whose payload carries the soak remaining.
     function stageTrackerSoakLeft(item) {
-      const sec = Number(item.soak_remaining_seconds) || 0;
+      const sec = Number(item.soak_remaining_seconds) || (item.merge_gate && Number(item.merge_gate.soak_remaining_seconds)) || 0;
       if (sec <= 0) return '';
       const min = Math.ceil(sec / 60);
       return ' — ' + (min >= 60 ? Math.floor(min / 60) + 'h' + (min % 60 ? (min % 60) + 'm' : '') : min + 'm') + ' left';
+    }
+
+    /* ---- Merge gate (hivecommons/hive#15073) --------------------------------
+       Pure helpers over the payload's merge_gate {state, reason,
+       sweep_running, last_sweep_at, next_sweep_at, soak_until,
+       soak_remaining_seconds}: the pill word with its live detail, the
+       plain-words sentence the leading glyph carries as tooltip + aria-label,
+       and the glyph itself. Every row on the gate gets the glyph — a sweep
+       on it now spins, a wait shows the clock — so two rows in the same
+       state never differ. Countdowns tick in place (data-ham-until) from the
+       cue age timer; no re-render. Run under node by
+       stage_tracker_merge_gate_test.go. */
+    // Pure: a stage number's merge-gate state when the payload has none.
+    function stageTrackerMergeGateStateOf(item) {
+      if (item && item.merge_gate && item.merge_gate.state) return String(item.merge_gate.state);
+      const n = Number(item && item.stage) || 0;
+      if (n === 60) return 'gate-pending';
+      if (n === 80) return 'ready';
+      if (n === STAGE_TRACKER_PRE_MERGE_SOAK) return 'soaking';
+      if (n === 100) return 'merging';
+      if (n >= STAGE_TRACKER_TERMINAL) return 'merged';
+      return '';
+    }
+    // Pure: "42s" / "3m" / "1h05m" for a positive duration; '' otherwise.
+    function stageTrackerShortLeft(ms) {
+      if (!(ms > 0)) return '';
+      const s = Math.ceil(ms / 1000);
+      if (s < 60) return s + 's';
+      const m = Math.ceil(s / 60);
+      if (m < 60) return m + 'm';
+      return Math.floor(m / 60) + 'h' + (m % 60 ? String(m % 60).padStart(2, '0') + 'm' : '');
+    }
+    // Pure: the gate's reason token in plain words — "CI still running
+    // (build-and-test)", "CI is red (lint)"; '' for none.
+    const STAGE_TRACKER_GATE_REASON_WORDS = {
+      'check-pending': 'CI still running', 'required-check-pending': 'CI still running', 'check-failing': 'CI is red', 'required-check-failing': 'CI is red',
+      'optional-check-failing': 'an optional check is red', conflicting: 'branch has conflicts', 'needs-rebase': 'needs a rebase', 'dco-missing': 'DCO sign-off missing',
+    };
+    function stageTrackerGateReasonText(reason) {
+      const raw = String(reason || '').trim();
+      if (!raw) return '';
+      const i = raw.indexOf(':');
+      const slug = (i >= 0 ? raw.slice(0, i) : raw).replace(/\(.*$/, '');
+      const detail = i >= 0 ? raw.slice(i + 1).replace(/\(.*$/, '') : '';
+      const words = STAGE_TRACKER_GATE_REASON_WORDS[slug];
+      if (!words) return raw;
+      return words + (detail ? ' (' + detail + ')' : '');
+    }
+    // Pure: { word, detail, tip, cue } for an item on the gate, null off it.
+    //   word   — the pill word (STAGE_TRACKER_MERGE_GATE_WORD)
+    //   detail — the live part after " · " ("next sweep in 42s", "7m left")
+    //   tip    — one plain sentence for the glyph's title + aria-label
+    //   cue    — 'running' (sweep on it now) | 'waiting' | 'soaking' | 'merging' | ''
+    //   until  — ms epoch the detail counts down to (0 when none)
+    function stageTrackerMergeGateInfo(item, nowMs) {
+      const state = stageTrackerMergeGateStateOf(item);
+      if (!state || state === 'merged') return null;
+      const mg = (item && item.merge_gate) || {};
+      nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      const word = STAGE_TRACKER_MERGE_GATE_WORD[state] || state;
+      const nextAt = mg.next_sweep_at ? Date.parse(mg.next_sweep_at) : 0;
+      const lastAt = mg.last_sweep_at ? Date.parse(mg.last_sweep_at) : 0;
+      const lastSeen = lastAt > 0 ? ' Last checked ' + stageTrackerAgoText(lastAt, nowMs) + '.' : '';
+      if (mg.sweep_running) {
+        return { state, word, detail: 'merge sweep running', tip: "hive's merge sweep is running on this PR now.", cue: 'running', until: 0 };
+      }
+      const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
+      const sooner = ' A GitHub event on the PR (check run, review, push) triggers a pass sooner.';
+      if (state === 'soaking') {
+        const soakSec = Number(mg.soak_remaining_seconds) || Number(item.soak_remaining_seconds) || 0;
+        const until = mg.soak_until ? Date.parse(mg.soak_until) : (soakSec > 0 ? nowMs + soakSec * 1000 : 0);
+        const left = until > nowMs ? stageTrackerShortLeft(until - nowMs) : '';
+        return { state, word, detail: left ? left + ' left' : 'soak window complete', tip: left ? 'Admitted by the automerge lane; waiting for the soak window: ' + left + ' left. hive merges on its first sweep after that.' + lastSeen : 'Admitted; the soak window is complete — hive merges on its next sweep' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: left ? until : 0 };
+      }
+      if (state === 'ready') {
+        return { state, word, detail: nextWords, tip: "Approved and green; waiting for hive's merge sweep" + (nextWords ? ' — ' + nextWords + '.' : '.') + sooner + lastSeen, cue: 'waiting', until: nextAt > nowMs ? nextAt : 0 };
+      }
+      if (state === 'merging') {
+        return { state, word, detail: '', tip: 'Admitted and soaked; hive is merging it now (GitHub merge queue / merge window).' + lastSeen, cue: 'merging', until: 0 };
+      }
+      const why = stageTrackerGateReasonText(mg.reason || item.reason);
+      return { state, word, detail: why, tip: 'Review approved, not yet admitted to auto merge' + (why ? ' — ' + why : '') + '.' + (nextWords ? ' hive re-checks the gate on its ' + nextWords.replace(/^next /, 'next ') + '.' : '') + sooner + lastSeen, cue: 'waiting', until: 0 };
+    }
+    // Pure: the pill word with its live detail — "Ready for auto merge ·
+    // next sweep in 42s". The detail span carries data-ham-until so the
+    // countdown ticks in place.
+    function stageTrackerMergeGateWordHtml(item, nowMs) {
+      const info = stageTrackerMergeGateInfo(item, nowMs);
+      if (!info) return '';
+      const detail = info.detail ? ` <span class="ham-gate-detail"${info.until ? ` data-ham-until="${info.until}" data-ham-until-kind="${esc(info.state)}"` : ''}>· ${esc(info.detail)}</span>` : '';
+      return `<span class="ham-seg-t">${esc(info.word)}${detail}</span>`;
+    }
+    // Pure: the leading glyph for a row on the gate — spinning while hive's
+    // sweep is on it, a clock while it waits — with the sentence as title
+    // and aria-label. '' off the gate.
+    function stageTrackerGateCueHtml(item, nowMs) {
+      const info = stageTrackerMergeGateInfo(item, nowMs);
+      if (!info) return '';
+      const spin = info.cue === 'running' || info.cue === 'merging';
+      return `<span class="ham-gate-ico${spin ? ' cue-spin' : ''}" data-gate-cue="${esc(info.cue)}" role="img" title="${esc(info.tip)}" aria-label="${esc(info.tip)}">${stageTrackerIcon(spin ? 'sweep' : 'wait', 'ham-ico')}</span>`;
+    }
+    // Pure: ticks every countdown in el from nowMs; "sweep due now" once a
+    // ready row's next pass has come.
+    function stageTrackerGateCountdownSync(el, nowMs) {
+      if (!el || typeof el.querySelectorAll !== 'function') return;
+      nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      for (const n of Array.from(el.querySelectorAll('.ham-gate-detail[data-ham-until]'))) {
+        const until = Number(n.getAttribute('data-ham-until'));
+        const left = stageTrackerShortLeft(until - nowMs);
+        const kind = n.getAttribute('data-ham-until-kind');
+        const t = kind === 'soaking' ? (left ? '· ' + left + ' left' : '· soak window complete') : (left ? '· next sweep in ' + left : '· sweep due now');
+        if (n.textContent !== t) n.textContent = t;
+      }
     }
 
     function stageTrackerHoldLabels(item) {
@@ -14328,6 +14464,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       clanker: '<rect x="3" y="5" width="10" height="8" rx="1.5"/><path d="M8 5V2M5 2h6"/><circle cx="6" cy="9" r="0.9"/><circle cx="10" cy="9" r="0.9"/>',
       hive: '<path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/>',
       pr: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="13" r="1.5"/><path d="M4 4.5v7M12 11.5V7a2 2 0 0 0-2-2H8"/>',
+      // Merge-gate cues (#15073): sweep = two arrows chasing (spins while
+      // hive's sweep is on the PR); wait = a clock (waiting for the next pass).
+      sweep: '<path d="M13.5 8a5.5 5.5 0 0 1-9.6 3.7M2.5 8a5.5 5.5 0 0 1 9.6-3.7"/><path d="M12.5 1.5v3h-3M3.5 14.5v-3h3"/>',
+      wait: '<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/>',
     };
     // label is exposed to assistive tech only (aria-label, no <title>): hover
     // text in a tracker row belongs to the links, titles and the lit chevron.
@@ -14424,7 +14564,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
-          if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
+          // With merge_gate in the payload the sentence is the gate's own
+          // (what holds it, next sweep, soak left — #15073).
+          const gateInfo = !sg.detour && typeof stageTrackerMergeGateInfo === 'function' ? stageTrackerMergeGateInfo(item, nowMs) : null;
+          if (gateInfo) tip = sg.label + ' — ' + gateInfo.tip;
+          else if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
@@ -14442,9 +14586,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // becomes a button and the chevron drops its native title so the
         // popover (which repeats the stage line) is its one hover text.
         const decision = active && !sg.cap && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
-        const word = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`;
+        // On the merge gate the word carries its live detail and the
+        // leading glyph says in words what hive is doing (#15073).
+        const gateWord = active && !sg.cap && !sg.detour && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
+        const word = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : (gateWord || `<span class="ham-seg-t">${esc(sg.short)}</span>`);
+        const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs) : '';
+        // The agent-working spinner (tracker-cues) names the agent and what
+        // it did, so a spinning glyph is never unexplained.
+        const workTip = worker && typeof stageTrackerCueLead === 'function' ? stageTrackerCueLead(item, worker, nowMs).replace(/ — $/, '') : '';
+        const workIco = workTip ? `<span class="ham-active-ico-wrap" role="img" title="${esc(workTip)}" aria-label="${esc(workTip)}">${stageTrackerIcon(sg.number, 'ham-ico ham-active-ico')}</span>` : stageTrackerIcon(sg.number, 'ham-ico ham-active-ico');
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
-        else if (active) inner = stageTrackerIcon(sg.number, 'ham-ico ham-active-ico') + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;
+        else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : ''}>${inner}</li>`;
       }).join('');
@@ -15297,6 +15449,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const t = stageTrackerAgoText(Number(n.getAttribute('data-at')), nowMs);
         if (n.textContent !== t) n.textContent = t;
       }
+      if (typeof stageTrackerGateCountdownSync === 'function') stageTrackerGateCountdownSync(el, nowMs);
     }
     let _stageTrackerCueTimer = null;
     function stageTrackerCueTick() {
