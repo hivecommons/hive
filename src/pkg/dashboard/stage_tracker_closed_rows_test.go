@@ -302,6 +302,9 @@ func TestClosedSweepEvictsRowsGitHubReportsClosed(t *testing.T) {
 			{Repo: repo, Number: 13999, IsPR: true, State: "closed", Merged: true, UpdatedAt: unlabel14064At},
 		}, nil
 	}
+	// A ledger seeded this boot widens the first look (see
+	// TestClosedSweepBackfillsMergedLedger); this test covers the steady state.
+	s.mergedLedger().Backfilled()
 	// Synchronous run.
 	evicted, err := s.sweepClosedRows(context.Background(), closedRowsViewedAt)
 	if err != nil || evicted != 2 {

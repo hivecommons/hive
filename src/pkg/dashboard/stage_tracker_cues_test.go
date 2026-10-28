@@ -179,28 +179,29 @@ const merged = { today: 4, total_7d: 9, total_30d: 20, all_time: 33, tz: 'EDT', 
   { repo: 'hivecommons/hive', number: 100, title: 'fix: a', merged_at: new Date(midnight + 3600000).toISOString(), merged_by: 'clubanderson' },
 ] };
 const d = { items: [{ repo: 'hivecommons/hive', kind: 'issue', number: 1, stage: 10, linked_prs: [{ number: 102, title: 'feat: c' }] }], merged };
-let st = stageTrackerMergedNext({}, d, [], now);
-assert.strictEqual(st.server.all_time, 33); assert.strictEqual(st.server.recent.length, 2); assert.deepStrictEqual(st.local, {});
-let txt = stageTrackerMergedText(st, now, 0);
+Object.assign(_stageTrackerPRTitle, stageTrackerPRTitles(d)); // what stageTrackerMergedSync does before folding a payload
+let ms = stageTrackerMergedNext({}, d, [], now);
+assert.strictEqual(ms.server.all_time, 33); assert.strictEqual(ms.server.recent.length, 2); assert.deepStrictEqual(ms.local, {});
+let txt = stageTrackerMergedText(ms, now, 0);
 assert.strictEqual(txt.count, 33, 'first render shows the server number');
 assert.strictEqual(txt.sub, '4 today · 9 this week');
 assert.ok(txt.title.startsWith('Merged: 33 all time\n4 today · 9 this week (EDT)\nhivecommons/hive#101 fix: b · '), txt.title);
-st = stageTrackerMergedNext(st, { items: [] }, ['hivecommons/hive/pr#102'], now + 1000);
-assert.deepStrictEqual(Object.keys(st.local), ['hivecommons/hive/pr#102'], 'a live merge the server has not listed yet is added');
-assert.strictEqual(st.local['hivecommons/hive/pr#102'].title, 'feat: c', 'titled from the last payload that drew it');
-txt = stageTrackerMergedText(st, now + 1000, 0);
+ms = stageTrackerMergedNext(ms, { items: [] }, ['hivecommons/hive/pr#102'], now + 1000);
+assert.deepStrictEqual(Object.keys(ms.local), ['hivecommons/hive/pr#102'], 'a live merge the server has not listed yet is added');
+assert.strictEqual(ms.local['hivecommons/hive/pr#102'].title, 'feat: c', 'titled from the last payload that drew it');
+txt = stageTrackerMergedText(ms, now + 1000, 0);
 assert.strictEqual(txt.count, 34); assert.strictEqual(txt.sub, '5 today · 10 this week');
 assert.strictEqual(txt.recent[0].number, 102, 'this tab\'s merge leads the list'); assert.strictEqual(txt.recent.length, 3);
-st = stageTrackerMergedNext(st, { items: [], merged: Object.assign({}, merged, { all_time: 34, today: 5, total_7d: 10, recent: [{ repo: 'hive', number: 102, merged_at: new Date(now).toISOString() }].concat(merged.recent) }) }, [], now + 2000);
-assert.deepStrictEqual(st.local, {}, 'once the server lists it (even by short repo name) the local copy goes');
-assert.strictEqual(stageTrackerMergedText(st, now + 2000, 0).count, 34, 'and the number is unchanged');
-st = stageTrackerMergedNext(st, { items: [] }, ['hivecommons/hive/pr#103'], now + 3000, { 'hivecommons/hive/pr#103': true });
-assert.deepStrictEqual(st.local, {}, 'a merge whose glyph is still in flight is not counted yet');
-assert.strictEqual(stageTrackerMergedText(st, now + 3000, 1).count, 33, 'holdback subtracts');
+ms = stageTrackerMergedNext(ms, { items: [], merged: Object.assign({}, merged, { all_time: 34, today: 5, total_7d: 10, recent: [{ repo: 'hive', number: 102, merged_at: new Date(now).toISOString() }].concat(merged.recent) }) }, [], now + 2000);
+assert.deepStrictEqual(ms.local, {}, 'once the server lists it (even by short repo name) the local copy goes');
+assert.strictEqual(stageTrackerMergedText(ms, now + 2000, 0).count, 34, 'and the number is unchanged');
+ms = stageTrackerMergedNext(ms, { items: [] }, ['hivecommons/hive/pr#103'], now + 3000, { 'hivecommons/hive/pr#103': true });
+assert.deepStrictEqual(ms.local, {}, 'a merge whose glyph is still in flight is not counted yet');
+assert.strictEqual(stageTrackerMergedText(ms, now + 3000, 1).count, 33, 'holdback subtracts');
 assert.strictEqual(stageTrackerMergedText({}, now, 0).count, 0);
 assert.strictEqual(stageTrackerMergedText({}, now, 0).sub, '0 today · 0 this week');
 assert.strictEqual(stageTrackerMergedByText('hive'), 'by hive'); assert.strictEqual(stageTrackerMergedByText('bob'), 'by @bob'); assert.strictEqual(stageTrackerMergedByText(''), '');
-const pop = stageTrackerMergedPopHtml(stageTrackerMergedText(st, now, 0), now);
+const pop = stageTrackerMergedPopHtml(stageTrackerMergedText(ms, now, 0), now);
 assert.ok(pop.includes('<span>Recent merges</span>'), pop);
 assert.ok(pop.includes('#102</span>') && pop.includes('>fix: b<') && pop.includes('by hive · hive · ') && pop.includes('by @clubanderson'), pop);
 assert.ok(pop.includes('34 all time · days roll at midnight EDT'), pop);
@@ -529,7 +530,7 @@ assert.strictEqual(hamMergedToggle(), false); assert.strictEqual(pop.hidden, tru
 // A lower server number later (a roll before the ledger caught up) does not pull the chip down.
 stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 1, stage: 50, title: 'feat: one' }], merged: merged(30, [rec(30)]) });
 assert.strictEqual(n.textContent, '33', 'never backwards');
-// The server already counts the merge (webhook beat the poll): the chip holds back by one until the glyph lands.
+// The server already counts the merge (webhook beat the poll; the ledger's recent list is what settles it): the chip holds back by one until the glyph lands.
 stageTrackerNoteMerges({ items: [], merged: merged(34, [rec(1, 'hive', 'feat: one'), rec(31, 'clubanderson'), rec(30)]) });
 assert.strictEqual(n.textContent, '33', 'held back while the glyph flies');
 tick(0); assert.strictEqual(flights().length, 1);
@@ -542,7 +543,7 @@ assert.strictEqual(n.textContent, '34', 'steady once the server lists it');
 // A merge the server has not recorded yet still counts in this tab, and reconciles when it arrives.
 panel.appendChild(row('o/r/pr#2'));
 stageTrackerNoteMerges({ items: [{ repo: 'o/r', kind: 'pr', number: 2, stage: 50, title: 'fix: two' }], merged: merged(34, [rec(1), rec(31), rec(30)]) });
-stageTrackerNoteMerges({ items: [], merged: merged(34, [rec(1), rec(31), rec(30)]) });
+stageTrackerNoteMerges({ items: [], recently_merged: [{ repo: 'o/r', number: 2 }], merged: merged(34, [rec(1), rec(31), rec(30)]) });
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
 assert.strictEqual(n.textContent, '35', 'local merge on top of the server number');
 assert.strictEqual(sub.textContent, '5 today · 10 this week');

@@ -108,6 +108,10 @@ type MergedLedger struct {
 	// fromDisk is true when the constructor found a file: the ledger has
 	// history and must not be seeded again.
 	fromDisk bool
+	// backfill is true from Seed until the first closed sweep has looked
+	// back over GitHub's merge history for this hive (Backfilled clears
+	// it): a first boot has only what the audit log remembered.
+	backfill bool
 	// onNew is called (without the lock) after a PR is recorded for the
 	// first time; the server uses it to drop the tracker cache.
 	onNew func(MergedLedgerEntry)
@@ -167,9 +171,27 @@ func (l *MergedLedger) Seed(entries []MergedLedgerEntry, floor int, now time.Tim
 		l.allTime = floor
 	}
 	l.fromDisk = true
+	l.backfill = true
 	l.sortLocked()
 	l.pruneLocked(now)
 	l.persistLocked()
+}
+
+// NeedsBackfill reports whether this boot seeded the ledger from the
+// audit log alone, so the next closed sweep should look back over
+// GitHub's merge history (mergedLedgerBackfillLookback) instead of one
+// day. Backfilled clears it once a sweep has read every repo.
+func (l *MergedLedger) NeedsBackfill() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.backfill
+}
+
+// Backfilled records that a sweep has read GitHub's merge history.
+func (l *MergedLedger) Backfilled() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.backfill = false
 }
 
 // Record adds a merged PR, or fills in what an earlier record of the same

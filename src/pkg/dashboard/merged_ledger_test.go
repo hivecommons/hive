@@ -1,13 +1,16 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -360,5 +363,65 @@ func TestStageTrackerAPIMergedShape(t *testing.T) {
 	e := merged.Recent[0]
 	if e.Repo != "acme/console" || e.Number != 102 || e.Title != "feat: soak done" || e.MergedBy != "octocat" || e.URL == "" || e.MergedAt.IsZero() {
 		t.Fatalf("recent entry: %+v", e)
+	}
+}
+
+// TestClosedSweepBackfillsMergedLedger: a ledger seeded on this boot (no
+// file under /data) makes the first closed sweep look back
+// mergedLedgerBackfillLookback over GitHub's closed list, so merges by
+// people and other bots the audit log never saw are counted; every merged
+// PR it lists lands in the ledger, and once every repo was read the next
+// sweep is an ordinary one. A ledger loaded from disk never widens.
+func TestClosedSweepBackfillsMergedLedger(t *testing.T) {
+	isolateMergedLedger(t)
+	t.Cleanup(github.ResetWebhookTrackerForTestWithClock(func() time.Time { return closedRowsViewedAt }))
+	s := closedRowsFixture(t)
+	s.deps = &Dependencies{Ctx: context.Background(), Logger: s.logger, Config: &config.Config{}, ApplyWebhookItems: func([]github.WebhookItemSnapshot) {}}
+	var sinces []time.Time
+	fail := true
+	s.closedSweep.list = func(_ context.Context, repo string, since time.Time) ([]github.WebhookItemSnapshot, error) {
+		sinces = append(sinces, since)
+		if fail {
+			return nil, errors.New("503")
+		}
+		return []github.WebhookItemSnapshot{
+			{Repo: repo, Number: 13990, IsPR: true, State: "closed", Merged: true, Title: "fix: by a person", MergedBy: "octocat", MergedAt: closedRowsViewedAt.Add(-20 * 24 * time.Hour)},
+			{Repo: repo, Number: 13991, IsPR: true, State: "closed", Merged: false, Title: "closed unmerged"},
+		}, nil
+	}
+	if !s.mergedLedger().NeedsBackfill() {
+		t.Fatal("a ledger seeded this boot needs the GitHub backfill")
+	}
+	// A failed read keeps the wide look for the retry.
+	if _, err := s.sweepClosedRows(context.Background(), closedRowsViewedAt); err == nil {
+		t.Fatal("list failure must surface")
+	}
+	fail = false
+	if _, err := s.sweepClosedRows(context.Background(), closedRowsViewedAt.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	wide := closedRowsViewedAt.Add(-mergedLedgerBackfillLookback)
+	if len(sinces) != 2 || !sinces[0].Equal(wide) || !sinces[1].Equal(wide.Add(time.Minute)) {
+		t.Fatalf("sinces = %v, want both from %v back", sinces, mergedLedgerBackfillLookback)
+	}
+	if s.mergedLedger().NeedsBackfill() {
+		t.Fatal("a sweep that read every repo ends the backfill")
+	}
+	sum := s.mergedLedger().Summary(closedRowsViewedAt.Add(time.Minute), nil)
+	if sum.AllTime != 1 || len(sum.Recent) != 1 || sum.Recent[0].Number != 13990 || sum.Recent[0].MergedBy != "octocat" || sum.Total30d != 1 {
+		t.Fatalf("the human merge is in the ledger: %+v", sum)
+	}
+	// The next sweep is an ordinary one.
+	if _, err := s.sweepClosedRows(context.Background(), closedRowsViewedAt.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if want := closedRowsViewedAt.Add(time.Minute - closedSweepOverlap); !sinces[2].Equal(want) {
+		t.Fatalf("third since = %v, want %v", sinces[2], want)
+	}
+
+	// Loaded from disk on the next boot: no backfill.
+	s2 := closedRowsFixture(t)
+	if s2.mergedLedger().NeedsBackfill() || s2.mergedLedger().Summary(closedRowsViewedAt, nil).AllTime != 1 {
+		t.Fatal("a ledger with history on disk does not widen the first sweep")
 	}
 }
