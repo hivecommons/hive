@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -183,6 +184,10 @@ type repoItemDecisionResponse struct {
 	// the hive bot is not an approver, so they would only draw another
 	// "NOT APPROVED" (dibs#510). The approval itself is still recorded.
 	CommandsSkipped string `json:"commands_skipped,omitempty"`
+	// Rebase is set when an approval landed on a PR that is behind or
+	// conflicting with its base: the rebase episode the approval opened
+	// (hivecommons/hive#15103), so the row reads "Rebasing · attempt n/2".
+	Rebase *StageTrackerRebase `json:"rebase,omitempty"`
 }
 
 // admitPullRequestHead records user's Approve as the trust override for
@@ -535,6 +540,20 @@ func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.Resp
 			Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", label, nil)})
 		return
 	}
+	// A head GitHub reports behind or conflicting cannot merge (405): the
+	// same click becomes "Rebase, then merge as maintainer" — approval on
+	// record, rebase kicked, merge on green (hivecommons/hive#14822).
+	if ms, err := gh.GetPRMergeState(ctx, repoFull, number); err == nil && ms.NeedsRebase() {
+		s.armRebaseThenMerge(ctx, w, repoFull, number, user, comment, ms)
+		return
+	} else if err == nil && rebaseMergeStore().Armed(repoFull, number) {
+		// The rebase landed but the follow-through has not merged yet: the
+		// follow-through owns the merge; do not race it.
+		prev, _ := rebaseMergeStore().Get(repoFull, number)
+		jsonStatusResponse(w, http.StatusAccepted, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: repoItemStatusRebaseQd, Head: prev.ApprovedHead,
+			Result: rebaseMergeQueuedResult(prev, true)})
+		return
+	}
 	if err := gh.CreateIssueComment(ctx, repoFull, number, renderRepoItemDecisionMergeComment(user, comment)); err != nil {
 		jsonError(w, "posting merge note: "+err.Error(), http.StatusBadGateway)
 		return
@@ -657,13 +676,73 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		}
 	}
 	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage, "admitted_by", admitted, "commands_skipped", commandsSkipped, "to_contributor", toContributor), "", repoFull, number)
+	result := repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
+		User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ToContributor: toContributor,
+	})
+	var rebase *StageTrackerRebase
+	if decision == repoItemDecisionApprove {
+		// An approval on a PR that is behind or conflicting does not
+		// reach the merge gate (it skips `conflicting` for good): say so,
+		// and ask the fixer for the rebase now instead of promising the
+		// gate "takes it from here" (hivecommons/hive#15103).
+		if ms, err := gh.GetPRMergeState(ctx, repoFull, number); err == nil && ms.NeedsRebase() {
+			rebase = s.queueRebaseOnApprove(ctx, repoFull, number, user, nonEmptyString(head, ms.HeadSHA), ms)
+			approveNeedsRebaseResult(result, number, ms, rebase)
+		}
+	}
 	// The row's park was just answered: serve the re-derived stage on the
 	// next tracker read instead of the cached 085.
 	s.invalidateStageTrackerForWebhook()
-	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head, AdmittedBy: admitted, CommandsSkipped: commandsSkipped,
-		Result: repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
-			User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ToContributor: toContributor,
-		})})
+	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head, AdmittedBy: admitted, CommandsSkipped: commandsSkipped, Rebase: rebase,
+		Result: result})
+}
+
+// queueRebaseOnApprove opens the rebase episode for an approved PR that
+// needs one: GitHub's update-branch on the spot for the hive's own PR that
+// is merely behind, otherwise the fixer's rebase-resolve task on the next
+// router pass (the episode carries the operator as requester so the router
+// lists the PR whoever opened it, as long as the hive can push to it).
+func (s *Server) queueRebaseOnApprove(ctx context.Context, repoFull string, number int, user, head string, ms ghpkg.PRMergeState) *StageTrackerRebase {
+	gh := s.deps.GHClient
+	now := rebaseMergeNow()
+	a := rebaseAttemptsStore().Request(repoFull, number, head, user, now)
+	how := "fixer rebase-resolve (next router pass)"
+	if gh.IsHiveAuthorLogin(ms.Author) && !ms.Conflicting() {
+		if err := gh.UpdateBranch(ctx, repoFull, number); err == nil {
+			how = "update-branch"
+		} else if s.logger != nil {
+			s.logger.Warn("approve: update-branch failed; leaving the rebase to the fixer", "repo", repoFull, "number", number, "error", err)
+		}
+	}
+	if s.logger != nil {
+		s.logger.Info("approve on a PR that needs a rebase: rebase queued", "repo", repoFull, "number", number, "actor", user, "head", head, "base", ms.BaseRef, "mergeable_state", ms.MergeableState, "attempt", a.Count(), "max", rebasemerge.MaxRebaseAttempts, "kick", how)
+	}
+	return &StageTrackerRebase{Attempt: min(max(a.Count(), 1), rebasemerge.MaxRebaseAttempts), Max: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), Head: rebaseMergeShortSHA(a.Head()), Text: rebasemerge.AttemptText(a)}
+}
+
+// approveNeedsRebaseResult rewrites the approve toast for a PR that is
+// behind or conflicting: what the approval did, what the hive does next,
+// and the one-click upgrade to "Rebase, then merge as maintainer".
+func approveNeedsRebaseResult(out *RowActionResult, number int, ms ghpkg.PRMergeState, rebase *StageTrackerRebase) {
+	base := nonEmptyString(ms.BaseRef, "its base branch")
+	attempt := ""
+	if rebase != nil && !rebase.Exhausted {
+		attempt = fmt.Sprintf(" (attempt %d/%d)", rebase.Attempt, rebase.Max)
+	}
+	if ms.Conflicting() {
+		out.Outcome = fmt.Sprintf("Approved — #%d conflicts with %s; hive will rebase it next pass%s.", number, base, attempt)
+	} else {
+		out.Outcome = fmt.Sprintf("Approved — #%d is behind %s; hive is updating the branch%s.", number, base, attempt)
+	}
+	if rebase != nil && rebase.Exhausted {
+		out.Outcome = fmt.Sprintf("Approved — #%d conflicts with %s and hive's %d rebase attempts are used up; a person has to resolve it.", number, base, rebase.Max)
+		out.Next = "Resolve the conflict on the branch yourself, or adopt it into a fresh branch / close it as superseded from the row menu."
+		return
+	}
+	out.Next = "The merge gate skips a conflicting PR, so your approval alone would not land it. Once the rebased head is green the gate takes it — or have hive merge it for you right after the rebase:"
+	opt := decisionOption(decisionActionMergeNow, rebaseMergeFollowThroughLabel, true, "")
+	opt.Consequence = rebaseMergeFollowThroughConsequence(number, ms.BaseRef)
+	out.Options = []StageTrackerDecisionOption{opt}
 }
 
 // repoItemApprovalReleased names what a PR approval released, for the

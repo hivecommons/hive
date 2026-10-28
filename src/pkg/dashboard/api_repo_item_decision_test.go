@@ -35,11 +35,16 @@ type repoItemDecisionMock struct {
 	// prNoCI shape the head's combined status when the state alone does not
 	// settle CI (e.g. "blocked").
 	prMergeState string
+	updates      int
 	prRedCI      bool
 	prNoCI       bool
 	// priorComments are the comment bodies GET /comments lists (a prior
 	// delegated decision makes a repeat click a no-op).
 	priorComments []string
+	// merges records PUT /pulls/8/merge bodies; reviews the POST /reviews
+	// bodies (merge-now / queue-merge, hivecommons/hive#15078).
+	merges  []map[string]any
+	reviews []map[string]any
 	// supersederState / supersederMerged shape GET pulls/90, the hive copy
 	// an adoption marker on #8 may name (hivecommons/hive#15052); "" is 404.
 	supersederState  string
@@ -105,6 +110,10 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				prLabels = append(prLabels, map[string]string{"name": label})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": prLabels, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}, "base": map[string]any{"ref": "main"}})
+		case r.Method == http.MethodPut && strings.HasSuffix(path, "/pulls/8/update-branch"):
+			m.updates++
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, `{"message":"Updating pull request branch."}`)
 		case r.Method == http.MethodPut && strings.HasSuffix(path, "/pulls/8/merge"):
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)

@@ -22,6 +22,7 @@ func stageTrackerCuesJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerWorkers"),
 		jsFunc(t, html, "stageTrackerWorkerKey"),
 		jsFunc(t, html, "stageTrackerWorkingOn"),
+		jsFunc(t, html, "stageTrackerRebaseMergeLive"),
 		jsFunc(t, html, "stageTrackerCueLead"),
 		jsFunc(t, html, "stageTrackerAgoText"),
 		jsFunc(t, html, "stageTrackerCueClasses"),

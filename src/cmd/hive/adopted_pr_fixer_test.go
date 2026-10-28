@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -145,5 +147,85 @@ func TestWriteMergeEligible_NonAdoptedContributorPRGetsNoHivePush(t *testing.T) 
 				t.Errorf("red contributor fork PR row = %+v, want comment-only and not adopted", row)
 			}
 		}
+	}
+}
+
+func useMemoryRebaseAttempts(t *testing.T) *rebasemerge.Attempts {
+	t.Helper()
+	store := rebasemerge.NewAttempts("")
+	prev := rebaseAttempts
+	rebaseAttempts = func() *rebasemerge.Attempts { return store }
+	t.Cleanup(func() { rebaseAttempts = prev })
+	return store
+}
+
+func trustedAuthorRebaseConfig() *config.Config {
+	cfg := &config.Config{}
+	cfg.Dashboard.AuthorizedUsers = []string{"clubanderson:owner"}
+	cfg.AutoMerge.TrustedAuthors.Enabled = true
+	return cfg
+}
+
+// hivecommons/hive#15103: a trusted author's PR (the operator's own
+// identity, opened through a session agent) that goes dirty is the hive's
+// rebase work — the trusted-author lane never rebases, so the fixer router
+// must list it. Attempts are capped: the third dirty head stops the kicks.
+func TestWriteMergeEligible_TrustedAuthorConflictGetsRebaseKickWithLoopGuard(t *testing.T) {
+	store := useMemoryRebaseAttempts(t)
+	cfg := trustedAuthorRebaseConfig()
+	mk := func(head string) github.PullRequest {
+		return github.PullRequest{Number: 15087, Repo: "hive", Author: "clubanderson", HeadSHA: head,
+			HeadRef: "feat/decision-actions", HeadRepo: "hivecommons/hive", BaseRef: "v5",
+			Mergeable: github.MergeableNo, MergeableState: "dirty", CIStatus: "pending",
+			Labels: []string{"needs-rebase"}}
+	}
+	_, failing := runWriteMergeEligible(t, []github.PullRequest{mk("aaa1111")}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 1 {
+		t.Fatalf("ci_failing = %+v, want the trusted author's dirty PR listed once", failing)
+	}
+	row := failing[0]
+	if !row.Conflict || !row.TrustedAuthor || row.ReachableAction != github.ReachableActionPush || row.Agent != "scanner" {
+		t.Errorf("row = %+v, want a trusted-author push conflict row owned by the fallback fixer", row)
+	}
+	if row.RebaseAttempt != 1 || row.RebaseAttemptsMax != rebasemerge.MaxRebaseAttempts || row.BaseRef != "v5" {
+		t.Errorf("row = %+v, want attempt 1/%d onto v5", row, rebasemerge.MaxRebaseAttempts)
+	}
+	// The fixer pushed and the head is still dirty: attempt 2 of 2.
+	_, failing = runWriteMergeEligible(t, []github.PullRequest{mk("bbb2222")}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 1 || failing[0].RebaseAttempt != 2 {
+		t.Fatalf("second dirty head: ci_failing = %+v, want attempt 2", failing)
+	}
+	// A third dirty head is past the cap: no kick, a person's turn.
+	_, failing = runWriteMergeEligible(t, []github.PullRequest{mk("ccc3333")}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 0 {
+		t.Fatalf("third dirty head: ci_failing = %+v, want nothing (attempts exhausted)", failing)
+	}
+	if a, ok := store.Get("hivecommons/hive", 15087); !ok || !a.Exhausted() {
+		t.Fatalf("attempts = %+v ok=%v, want an exhausted episode", a, ok)
+	}
+	// Once the PR is clean again the episode ends.
+	clean := mk("ddd4444")
+	clean.Mergeable, clean.MergeableState, clean.Labels = github.MergeableYes, "clean", nil
+	runWriteMergeEligible(t, []github.PullRequest{clean}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if _, ok := store.Get("hivecommons/hive", 15087); ok {
+		t.Fatal("episode should be cleared once the PR is no longer conflicting")
+	}
+}
+
+func TestWriteMergeEligible_UntrustedConflictIsNotHiveRebaseWork(t *testing.T) {
+	useMemoryRebaseAttempts(t)
+	cfg := trustedAuthorRebaseConfig()
+	pr := github.PullRequest{Number: 15090, Repo: "hive", Author: "stranger", HeadSHA: "eee5555",
+		HeadRef: "feat/x", HeadRepo: "hivecommons/hive", BaseRef: "v5",
+		Mergeable: github.MergeableNo, MergeableState: "dirty", CIStatus: "pending", Labels: []string{"needs-rebase"}}
+	_, failing := runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 0 {
+		t.Fatalf("ci_failing = %+v, want nothing for an untrusted author's conflict", failing)
+	}
+	cfg.AutoMerge.TrustedAuthors.Enabled = false
+	pr.Author = "clubanderson"
+	_, failing = runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 0 {
+		t.Fatalf("ci_failing = %+v, want nothing when the trusted-author tier is off", failing)
 	}
 }

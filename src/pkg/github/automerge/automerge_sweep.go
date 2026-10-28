@@ -1229,6 +1229,15 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 
 // prMergeableStateConflicting reads GitHub's conflict flag off a single-PR
 // GET payload.
+// staleNeedsRebaseLabel: prow's needs-rebase label lags GitHub's
+// mergeable_state. When GitHub says the branch is merely "behind" (clean
+// update), the label must not block the lane — the lane's UpdateBranch is
+// exactly what clears it, and before hivecommons/hive#15103 no lane ever
+// reached that call under the label.
+func staleNeedsRebaseLabel(blocked string, pr *gh.PullRequest) bool {
+	return blocked == "label:needs-rebase" && strings.EqualFold(strings.TrimSpace(pr.GetMergeableState()), "behind")
+}
+
 func prMergeableStateConflicting(pr *gh.PullRequest) bool {
 	state := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
 	return state == "dirty" || state == "conflicting"
@@ -1741,7 +1750,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			}
 		}
 	}
-	if blocked != "" {
+	// A needs-rebase label left on a head GitHub now reports merely behind
+	// is stale: the gate still sees a mergeable PR (hivecommons/hive#15103).
+	if blocked != "" && !staleNeedsRebaseLabel(blocked, pr) {
 		return AutoMergeSweepEvent{}, blocked, nil
 	}
 	if c.transport.IsExemptLabels(selfLabels) {
@@ -2130,7 +2141,7 @@ func (c *Engine) prefilterTrustedAuthorPR(pr *gh.PullRequest, policy TrustedAuth
 		return "draft"
 	}
 	labels := labelNames(pr.Labels)
-	if blocked := c.labelBlockReason(labels, true); blocked != "" {
+	if blocked := c.labelBlockReason(labels, true); blocked != "" && !staleNeedsRebaseLabel(blocked, pr) {
 		return blocked
 	}
 	if excluded := policy.excludedLabel(labels); excluded != "" {

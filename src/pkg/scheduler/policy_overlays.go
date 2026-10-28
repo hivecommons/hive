@@ -240,6 +240,10 @@ func formatRedPRFixData(data []byte, agent string) string {
 		DeferredIncident int      `json:"deferred_incident"`
 		BaseRedChecks    []string `json:"base_red_checks"`
 		BaseRed          bool     `json:"base_red"`
+		RebaseAttempt    int      `json:"rebase_attempt"`
+		RebaseMax        int      `json:"rebase_attempts_max"`
+		BaseRef          string   `json:"base_ref"`
+		TrustedAuthor    bool     `json:"trusted_author"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -337,6 +341,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 				state = "dirty"
 			}
 			b.WriteString("    conflict: mergeable_state=" + state + " — merge the base branch or rebase the PR branch\n")
+			b.WriteString("    " + rebaseResolveInstructions(pr.BaseRef, pr.RebaseAttempt, pr.RebaseMax, pr.TrustedAuthor) + "\n")
 			if from := strings.TrimSpace(pr.ReroutedFrom); from != "" {
 				b.WriteString("    rerouted from paused/unavailable lane: " + from + "\n")
 			}
@@ -688,3 +693,32 @@ const adoptedSentinelNote = "sentinel-alert: repair CI / rebase as usual, but do
 // pending `tide` or a missing lgtm is never the hive's blocker below stage
 // 080 (hivecommons/hive#12858).
 const adoptedPRStatusRule = "    ADOPTED BRANCH: when needs-rebase/conflicting, fetch the contributor's actual fork branch and the PR base, rebase onto the base, preserve original authors and Signed-off-by trailers (never --reset-author), and push back to that fork with --force-with-lease against the observed head. Stop if the contributor moved it; never overwrite their new work. Sign only your own new commits.\n    STATUS RULE: green CI is not done on a 074 PR. Read the stage comment/lane reason: an open review-swarm finding (reviewer-verdict:changes_requested) is YOUR blocker — fix it and let the swarm re-review. Never report \"only tide remains\" or \"needs maintainer lgtm/approve\" unless the stage label is already >= stage/080; below that, a pending tide check means the lane has not admitted the head yet, not that a person owes an approval.\n"
+
+// rebaseResolveInstructions is the fixer's rebase-resolve task for a
+// conflicting PR (hivecommons/hive#15103): rebase onto the base branch,
+// resolve, force-with-lease to the PR's own branch, never open a new PR.
+// attempt/max is the loop guard the fixer sees so it knows a second dirty
+// head ends the hive's attempts.
+func rebaseResolveInstructions(baseRef string, attempt, max int, trustedAuthor bool) string {
+	base := strings.TrimSpace(baseRef)
+	if base == "" {
+		base = "the base branch"
+	} else {
+		base = "origin/" + base
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	if max < attempt {
+		max = attempt
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "rebase-resolve (attempt %d/%d): `gh pr checkout`, `git rebase %s`, resolve every conflict keeping both sides' intent, re-run the build and tests, then `git push --force-with-lease` to the PR's OWN branch. Do not open a new PR; do not squash away the author's commits.", attempt, max, base)
+	if trustedAuthor {
+		b.WriteString(" This is a trusted author's PR the hive carries on their behalf — keep their authorship and sign-off intact.")
+	}
+	if attempt >= max {
+		b.WriteString(" Last attempt: if the head is still conflicting after this push the hive stops and asks a person.")
+	}
+	return b.String()
+}

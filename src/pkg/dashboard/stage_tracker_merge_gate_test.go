@@ -260,6 +260,24 @@ stageTrackerGateCountdownSync(el, now + 30000);
 assert.deepStrictEqual([n1.textContent, n2.textContent], ['· next sweep in 12s', '· 8m left']);
 stageTrackerGateCountdownSync(el, now + 500000);
 assert.deepStrictEqual([n1.textContent, n2.textContent], ['· sweep due now', '· soak window complete']);
+
+// hivecommons/hive#15103: the fixer's rebase loop guard is the pill while
+// the hive rebases a conflicting PR, spinning on attempt n/2 and asking
+// for a person once exhausted; a live rebase-then-merge follow-through
+// keeps its own caption instead.
+const rebasing = { stage: 90, number: 15087, rebase: { attempt: 1, max: 2, exhausted: false, head: 'aaa1111', text: 'Rebasing · attempt 1/2' } };
+const rbi = stageTrackerMergeGateInfo(rebasing, now);
+assert.deepStrictEqual([rbi.state, rbi.word, rbi.detail, rbi.cue], ['rebasing', 'Rebasing · attempt 1/2', '', 'running']);
+assert.ok(rbi.tip.includes('attempt 1 of 2'), rbi.tip);
+assert.ok(stageTrackerGateCueHtml(rebasing, now).includes('cue-spin'), 'rebasing spins');
+const exhausted = { stage: 90, rebase: { attempt: 2, max: 2, exhausted: true, head: 'ccc3333', text: 'Rebase failed · 2/2 — needs a person' } };
+const exi = stageTrackerMergeGateInfo(exhausted, now);
+assert.deepStrictEqual([exi.state, exi.word, exi.cue], ['rebase-failed', 'Rebase failed · 2/2 — needs a person', 'waiting']);
+assert.ok(exi.tip.includes('2 times') && exi.tip.includes('ccc3333') && exi.tip.includes('Adopt into fresh branch'), exi.tip);
+assert.ok(stageTrackerMergeGateWordHtml(exhausted, now).includes('Rebase failed · 2/2 — needs a person'));
+const withFollowThrough = { stage: 90, rebase: rebasing.rebase, rebase_merge: { state: 'rebasing' } };
+assert.strictEqual(stageTrackerMergeGateInfo(withFollowThrough, now), null, 'a live follow-through owns the row caption');
+assert.strictEqual(stageTrackerMergeGateInfo({ stage: 90, rebase: rebasing.rebase, rebase_merge: { state: 'failed' } }, now).state, 'rebasing', 'a settled follow-through hands the pill back');
 console.log('merge-gate helpers ok');
 `)
 }

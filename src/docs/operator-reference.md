@@ -472,6 +472,7 @@ verified owner or an authorized user with the `merger` role:
 | Decision | What it does | Audit / ledger |
 |---|---|---|
 | `merge-now` — *Approve & merge as maintainer* | Comments on the PR that @you merged it from the dashboard, then merges it at once through the hive's GitHub App (`MergePRVia`, audit path `dashboard`). Refused when the PR is merged or closed, or when you are its author. | `repo_item_decision_merge`; `last_operator_action.action: merge-now`; toast *merged*. |
+| `merge-now` on a PR whose `mergeable_state` is `dirty` or `behind` — *Rebase, then merge as maintainer* | Never a GitHub 405. Records your approval first (/lgtm + /approve naming you), arms a rebase-then-merge follow-through (`/data/rebase-merge-followups.json`), kicks the rebase (update-branch on the hive's own PR when only behind; otherwise the fixer lane, which owns a parked PR with an armed follow-through), and answers `202 rebase-queued`. A 2-minute ticker then reads the PR: `mergeable_state: clean` on the rebased head → merges it with your approval attributed; still `dirty` after 2 h, CI red, or no rebase within the deadline → `failed` with the conflicting files and the options *Adopt into fresh branch* / *Close as superseded* (also left as a note on the PR). Refused on a fork whose author has not allowed maintainer edits (`head-not-pushable`). | `repo_item_decision_merge` with `status: rebase-queued`; `last_operator_action.action: merge-now`, outcome `pending` → `applied` / `failed`, `followed[]` steps `approval-recorded`, `rebase-kicked`, `rebased`, `ci-green`, `merged` / `failed`; row `rebase_merge.state`; toast *rebase queued, merge to follow*. |
 | `queue-merge` — *Approve — let hive merge* | Leaves an `APPROVED` review in your name with a note, adds the automerge label, and leaves the merge to the App self-merge sweep, which merges on its next pass once CI is green and the head has soaked. Refused on your own PR. | `repo_item_decision_queue_merge`; `last_operator_action.action: queue-merge`; toast *queued for merge*. |
 
 **Approve is the trust override for that head
@@ -514,7 +515,61 @@ A sentinel alert, your own PR, a writer without the `merger` role on a good
 head, adoption turned off, or any other 090 reason keep the plain-words
 no-effect answer with the two merge buttons.
 
-Neither merge action widens who the lanes trust: to stop a contributor's PRs parking at 090
+
+Two related repairs ride with the rebase-then-merge action
+([#14822](https://github.com/hivecommons/hive/issues/14822)). The fixer
+router now classifies a conflicting (`mergeable_state: dirty`) PR *before*
+skipping rows parked at 085 *Needs human decision*, and a PR with an armed
+follow-through is routed as pushable (like an in-place adoption), so a
+parked PR that falls behind its base is no longer owned by no lane. And on
+each unpark sweep the hive dismisses, with an Info log line
+`dismissed self-inflicted changes_requested: source comment is hive's own /hive decision`,
+any recorded changes-requested whose source comment is the hive's own
+delegated `/hive decision` — the self-inflicted verdict the guard in
+[#15063](https://github.com/hivecommons/hive/pull/15063) now prevents but
+which older records still carried.
+
+**Autonomous rebase-resolve** ([#15103](https://github.com/hivecommons/hive/issues/15103)).
+No merge lane ever rebased a conflicting PR: the self and trusted-author
+lanes stopped at `label:needs-rebase` before reaching the update-branch call,
+and the fixer router only listed hive-authored or adopted PRs as rebase
+work — so a PR the operator opened under their own identity through a
+session agent sat `dirty` with nobody kicked to fix it. Now:
+
+- **`behind` (clean update):** prow's `needs-rebase` label no longer blocks
+  the self or trusted-author lane when GitHub says `mergeable_state: behind`
+  — the lane's update-branch runs and clears the label.
+- **`dirty` (real conflict):** the fixer router lists a trusted author's PR
+  (`auto_merge.trusted_authors` enabled, repo allowed, author at the required
+  role, head pushable, no exclude label) as rebase work alongside the hive's
+  own and adopted PRs. The kick says
+  *rebase-resolve (attempt n/2): `gh pr checkout`, `git rebase origin/<base>`,
+  resolve, re-run build and tests, `git push --force-with-lease` to the PR's
+  OWN branch; do not open a new PR*. Loop guard: `/data/rebase-attempts.json`
+  counts distinct dirty heads per PR — the first dirty head is attempt 1, a
+  fixer push that is still dirty is attempt 2, a third dirty head is
+  exhausted: the router stops listing the PR (Warn log
+  `rebase attempts exhausted; leaving the conflict to a person`) and the row's
+  gate pill reads **Rebase failed · 2/2 — needs a person**. While it runs the
+  pill reads **Rebasing · attempt n/2** with the working cue; the episode
+  clears as soon as the PR is no longer conflicting. The row payload carries
+  `rebase: {attempt, max, exhausted, head, text}`.
+- **Approve on a PR that is behind or conflicting** no longer promises that
+  "the merge gate takes it from here" (the gate skips `conflicting` for
+  good). The approval is recorded, the rebase episode opens in your name
+  (`requested_by`, which admits the PR to the fixer router whoever opened it,
+  as long as the hive can push to it; a hive-authored PR that is merely
+  `behind` gets update-branch on the spot), the toast reads *Approved — #N
+  conflicts with base; hive will rebase it next pass (attempt 1/2)* with a
+  **Rebase, then merge as maintainer** button, the response carries
+  `rebase: {attempt, max, …}`, and the row's *Approving…* cue clears as soon
+  as the decision records.
+- **Rebase, then merge as maintainer** uses the same task: a rebased head that
+  is still dirty goes back to *Rebasing* (step `still-conflicting`, the 2 h
+  rebase clock restarting) while attempts remain, and settles *failed* with
+  the conflicting files once the guard is exhausted.
+
+Neither widens who the lanes trust: to stop a contributor's PRs parking at 090
 give them the `trusted` / `merger` tier under 👥 Contributors
 (`auto_merge.contributor_lane.require_tiers`), add them as a repository
 collaborator, or list them under `dashboard.authorized_users` with the
