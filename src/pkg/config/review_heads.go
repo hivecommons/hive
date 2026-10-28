@@ -173,14 +173,16 @@ func (r ReviewConfig) EffectiveHeadMaxRetries() int {
 }
 
 // validateReviewHeads checks each head's backend is one the governor can
-// launch, review.head_max_retries is not negative, and that the admitted
-// reviewers either all declare review_heads or none do. Head dispatch asks
-// every perspective of every head, split or combined (hivecommons/hive#15058),
-// and leaves nothing for a plain reviewer lane alongside them, so a mixed set
-// would silently idle the lanes without heads (hivecommons/hive#13542). Structural
-// checks (required fields, aliases, replicas, name collisions) run where the
-// heads are expanded, so a bad head fails config load the same way a bad
-// replicas value does.
+// launch, review.head_max_retries is not negative, and that with split
+// perspectives the admitted reviewers either all declare review_heads or
+// none do. Head dispatch asks every perspective of every head and leaves
+// nothing for a plain reviewer lane alongside them, so a mixed set would
+// silently idle the lanes without heads (hivecommons/hive#13542). Under
+// combined perspectives that mix loaded before heads were dispatched there
+// (hivecommons/hive#15058), so it stays loadable and ReviewHeadsWarnings
+// reports it instead. Structural checks (required fields, aliases, replicas,
+// name collisions) run where the heads are expanded, so a bad head fails
+// config load the same way a bad replicas value does.
 func (c *Config) validateReviewHeads() error {
 	if c.Review.HeadMaxRetries < 0 {
 		return fmt.Errorf("review.head_max_retries must be >= 0")
@@ -197,7 +199,40 @@ func (c *Config) validateReviewHeads() error {
 			}
 		}
 	}
-	var withHeads, without []string
+	if c.Review.CombinedPerspectives {
+		return nil
+	}
+	if withHeads, without := c.mixedReviewHeadBases(); len(withHeads) > 0 {
+		return fmt.Errorf("review_heads: with review.combined_perspectives: false every reviewer must declare review_heads: %s do, %s do not; add review_heads to them or leave them out of review.reviewer_agents",
+			strings.Join(withHeads, ", "), strings.Join(without, ", "))
+	}
+	return nil
+}
+
+// ReviewHeadsWarnings reports, under combined perspectives, an admitted
+// reviewer set that mixes bases with and without review_heads. Combined head
+// dispatch (hivecommons/hive#15058) asks every perspective of every head, so
+// the lanes without heads receive no combined perspectives while the heads
+// cover them. Split perspectives reject the same mix at load
+// (validateReviewHeads); here it is a warning because the mix loaded fine
+// before heads were dispatched under combined perspectives.
+func ReviewHeadsWarnings(cfg *Config) []string {
+	if cfg == nil || !cfg.Review.CombinedPerspectives {
+		return nil
+	}
+	withHeads, without := cfg.mixedReviewHeadBases()
+	if len(withHeads) == 0 {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"review_heads under review.combined_perspectives: %s declare review_heads, %s do not — while the heads cover every perspective, %s will receive no combined perspectives; add review_heads to them or leave them out of review.reviewer_agents",
+		strings.Join(withHeads, ", "), strings.Join(without, ", "), strings.Join(without, ", "))}
+}
+
+// mixedReviewHeadBases splits the dispatched reviewer bases into those that
+// declare review_heads and those that do not, returning both only when the
+// set mixes them.
+func (c *Config) mixedReviewHeadBases() (withHeads, without []string) {
 	for _, name := range c.dispatchedReviewerBases() {
 		if len(c.Agents[name].ReviewHeads) > 0 {
 			withHeads = append(withHeads, name)
@@ -205,9 +240,8 @@ func (c *Config) validateReviewHeads() error {
 			without = append(without, name)
 		}
 	}
-	if len(withHeads) > 0 && len(without) > 0 {
-		return fmt.Errorf("review_heads: every reviewer must declare review_heads: %s do, %s do not; add review_heads to them or leave them out of review.reviewer_agents",
-			strings.Join(withHeads, ", "), strings.Join(without, ", "))
+	if len(withHeads) == 0 || len(without) == 0 {
+		return nil, nil
 	}
-	return nil
+	return withHeads, without
 }

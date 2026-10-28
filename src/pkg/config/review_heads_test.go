@@ -189,16 +189,26 @@ func TestReviewHeadsRejectMixedReviewerSet(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "security-reviewer do not") {
 		t.Fatalf("mixed reviewers accepted: %v", err)
 	}
-	// Combined perspectives dispatch heads too (#15058), so the mix is
-	// rejected there as well.
+	if got := ReviewHeadsWarnings(cfg); got != nil {
+		t.Fatalf("split perspectives warned instead of rejecting: %v", got)
+	}
+	// Combined perspectives dispatch heads too (#15058), but that mix loaded
+	// before, so it still loads and is reported as a warning instead.
 	cfg.Review.CombinedPerspectives = true
-	if err := cfg.validateReviewHeads(); err == nil {
-		t.Fatal("mixed reviewers accepted under combined perspectives")
+	if err := cfg.validateReviewHeads(); err != nil {
+		t.Fatalf("mixed reviewers rejected under combined perspectives: %v", err)
+	}
+	warnings := ReviewHeadsWarnings(cfg)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "security-reviewer will receive no combined perspectives") {
+		t.Fatalf("combined mixed set warnings = %v, want one naming the idle lane", warnings)
 	}
 	// Leaving the plain lane out of reviewer_agents is fine in either mode.
 	cfg.Review.ReviewerAgents = []string{"code-reviewer"}
 	if err := cfg.validateReviewHeads(); err != nil {
 		t.Fatalf("heads-only reviewer set rejected under combined perspectives: %v", err)
+	}
+	if got := ReviewHeadsWarnings(cfg); got != nil {
+		t.Fatalf("heads-only reviewer set warned: %v", got)
 	}
 	cfg.Review.CombinedPerspectives = false
 	if err := cfg.validateReviewHeads(); err != nil {

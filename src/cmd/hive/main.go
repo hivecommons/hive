@@ -1145,6 +1145,9 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	for _, warning := range config.WriteSurfaceWarnings(b.cfg) {
 		b.logger.Warn("write surface allowlist", "issue", warning)
 	}
+	for _, warning := range config.ReviewHeadsWarnings(b.cfg) {
+		b.logger.Warn("review heads config", "issue", warning)
+	}
 	startupRepoTargetIssue := config.ValidateRepoTargets(b.cfg)
 	if startupRepoTargetIssue != nil {
 		b.logger.Warn("repo target misconfigured — owner action required",
