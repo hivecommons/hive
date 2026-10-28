@@ -11143,8 +11143,10 @@ type reviewFixAuditor interface {
 // not get a bot commit — and silence is the one thing an operator cannot
 // investigate, so each one names the PR, who opened it, and the
 // review.fix_human_prs value at the time (on no longer permits the push:
-// hivecommons/hive#12897). The planner reports each head once, so
-// this does not repeat on every eval cycle.
+// hivecommons/hive#12897). The planner records the exclusion and
+// the withheld fix only on the cycle that first withholds a head (a persisted
+// State.Withheld entry suppresses later cycles), so this does not repeat on
+// every eval cycle.
 func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
 	// One WARN per changes_requested head that ends the cycle without a fix
 	// kick: a PR shown as "Fixing" that nobody is fixing must be loud
