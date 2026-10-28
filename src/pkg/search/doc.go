@@ -102,9 +102,11 @@ func (d Document) clone() Document {
 }
 
 // tokenRE preserves identifiers, dotted keys and --flags as whole terms and
-// also indexes their components, as pkg/codeindex does. Classes are ASCII and
-// matched on original-case text so highlight offsets stay byte-accurate.
-var tokenRE = regexp.MustCompile(`--[A-Za-z][A-Za-z0-9_-]*|[A-Za-z_][A-Za-z0-9_]*(?:[.-][A-Za-z0-9_]+)*`)
+// also indexes their components, as pkg/codeindex does. Unlike codeindex,
+// terms may start with a digit so issue and PR numbers ("14491") are
+// searchable. Classes are ASCII and matched on original-case text so
+// highlight offsets stay byte-accurate.
+var tokenRE = regexp.MustCompile(`--[A-Za-z][A-Za-z0-9_-]*|[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*`)
 var componentRE = regexp.MustCompile(`[A-Za-z0-9]+`)
 
 func tokens(text string) map[string]bool {

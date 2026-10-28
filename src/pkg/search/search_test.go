@@ -127,6 +127,35 @@ func TestQueryExactTermsAndComponents(t *testing.T) {
 	}
 }
 
+func TestQueryNumericTermsAndZeroTokenText(t *testing.T) {
+	e := newBackend(t, Options{})
+	docs := []Document{
+		doc("org/a", "1", "issue", t0, "Follow-up to #14491", "see PR 14634", nil),
+		doc("org/a", "2", "issue", t0, "Other", "nothing", nil),
+	}
+	if err := e.Index(context.Background(), docs); err != nil {
+		t.Fatal(err)
+	}
+	res := query(t, e, Query{Text: "14491"})
+	if got := ids(res); !reflect.DeepEqual(got, []string{"org/a#1"}) || res.Hits[0].Score != 1 {
+		t.Fatalf("hits=%v res=%+v", got, res.Hits)
+	}
+	if hl := res.Hits[0].Highlight; hl.Snippet != "Follow-up to #14491" || !reflect.DeepEqual(hl.Spans, [][2]int{{14, 19}}) {
+		t.Fatalf("highlight=%+v", hl)
+	}
+	if got := ids(query(t, e, Query{Text: "pr 14634"})); !reflect.DeepEqual(got, []string{"org/a#1"}) {
+		t.Fatalf("hits=%v", got)
+	}
+	for _, text := range []string{"#", "...", "@@ !!", "99999"} {
+		if res := query(t, e, Query{Text: text}); res.Total != 0 || res.Hits != nil {
+			t.Fatalf("Text=%q must match nothing, got %+v", text, res)
+		}
+	}
+	if res := query(t, e, Query{Text: "  "}); res.Total != 2 {
+		t.Fatalf("blank text must match everything, got %+v", res)
+	}
+}
+
 func TestQueryFiltersAndTimeRange(t *testing.T) {
 	e := newBackend(t, Options{})
 	if err := e.Index(context.Background(), fixture()); err != nil {
@@ -376,6 +405,46 @@ func TestCorruptIndexIgnoredAndRebuilt(t *testing.T) {
 				t.Fatalf("rebuilt file not reloadable: %+v", res)
 			}
 		})
+	}
+}
+
+func TestCorruptIndexReplacedByNoopDelete(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "org"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "org", "a.idx"), []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e := newBackend(t, Options{Dir: dir})
+	if res := query(t, e, Query{}); !errors.Is(res.Coverage["org/a"], ErrCorruptIndex) {
+		t.Fatalf("res=%+v", res)
+	}
+	if err := e.Delete(ctx, "org/a", []string{"absent"}); err != nil {
+		t.Fatal(err)
+	}
+	if res := query(t, e, Query{}); len(res.Coverage) != 0 || res.Total != 0 {
+		t.Fatalf("coverage must clear after Delete, got %+v", res)
+	}
+	sh, err := readShard(dir, "org/a")
+	if err != nil || sh == nil || len(sh.docs) != 0 {
+		t.Fatalf("file not rewritten as empty index: sh=%+v err=%v", sh, err)
+	}
+	// A healthy repo is not rewritten by a no-op Delete.
+	if err := e.Index(ctx, []Document{doc("org/a", "1", "bead", t0, "x", "", nil)}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(indexPath(dir, "org/a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Delete(ctx, "org/a", []string{"absent"}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(indexPath(dir, "org/a"))
+	if err != nil || !after.ModTime().Equal(before.ModTime()) || after.Size() != before.Size() {
+		t.Fatalf("no-op Delete rewrote a healthy index: before=%v after=%v err=%v", before.ModTime(), after.ModTime(), err)
 	}
 }
 

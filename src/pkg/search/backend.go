@@ -27,7 +27,8 @@ const DefaultLimit = 20
 
 // Query selects documents. Text is tokenised like documents and matched by
 // exact (case-insensitive) terms; documents sharing more distinct terms rank
-// higher. Empty Text matches every document admitted by the filters. Filters
+// higher. Empty Text matches every document admitted by the filters; Text
+// that yields no terms (punctuation only) matches nothing. Filters
 // map a field (kind, repo, visibility or a Document.Fields key) to accepted
 // values: values within one field are ORed, fields are ANDed. From is
 // inclusive and To exclusive; zero times are unbounded. Facets lists extra

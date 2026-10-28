@@ -18,9 +18,11 @@ are tokenised for full-text search; `Fields` holds keyword values such as
 Modelled on `pkg/codeindex` (decision 1 of #14491: extend codeindex-style
 postings rather than adopt bleve; no new module):
 
-- Tokenisation matches `codeindex`: identifiers, dotted keys and `--flags` are
-  whole terms and their components are indexed too. Terms match exactly
-  (case-insensitively); results rank by distinct shared terms, then newest
+- Tokenisation follows `codeindex`: identifiers, dotted keys and `--flags` are
+  whole terms and their components are indexed too. Unlike `codeindex`, terms
+  may start with a digit, so issue and PR numbers are searchable. Terms match
+  exactly (case-insensitively); query text that yields no terms matches
+  nothing. Results rank by distinct shared terms, then newest
   `At`, then repo and ID.
 - Each repo has an immutable snapshot (postings plus per-field facet postings)
   that is swapped in atomically, so concurrent queries never see a partial
@@ -36,7 +38,8 @@ postings rather than adopt bleve; no new module):
   loaded snapshots are accounted by serialised size; least-recently-queried
   repos are dropped from memory and reload from disk on demand.
 - An unreadable or corrupt index file is a coverage error (`ErrCorruptIndex`)
-  for queries and is ignored by updates, so the next `Index` rebuilds it.
+  for queries and is treated as empty by updates, so the next `Index` or
+  `Delete` for the repo (even a no-op one) rewrites it and clears the error.
 
 As with `codeindex`, a repo listed in `Result.Coverage` may be incomplete;
 missing hits there are not proof that no matching document exists.

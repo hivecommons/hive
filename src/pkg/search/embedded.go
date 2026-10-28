@@ -62,11 +62,12 @@ func buildShard(docs []Document, size int64) *shard {
 	return sh
 }
 
-// match returns admitted doc ids with the query terms each shares. With no
-// terms every admitted document matches.
-func (sh *shard) match(terms []string, q Query) map[int][]string {
+// match returns admitted doc ids with the query terms each shares. When all
+// is set every admitted document matches (empty query text); otherwise a
+// query with no terms matches nothing.
+func (sh *shard) match(terms []string, all bool, q Query) map[int][]string {
 	hits := map[int][]string{}
-	if len(terms) == 0 {
+	if all {
 		for id := range sh.docs {
 			hits[id] = nil
 		}
@@ -204,7 +205,7 @@ func (e *Embedded) update(ctx context.Context, byRepo map[string][]Document, app
 			return errors.Join(append(errs, err)...)
 		}
 		cur := map[string]Document{}
-		sh, err := e.current(repo)
+		sh, corrupt, err := e.current(repo)
 		if err != nil {
 			ce := &CoverageError{Repo: repo, Err: err}
 			e.mu.Lock()
@@ -218,7 +219,9 @@ func (e *Embedded) update(ctx context.Context, byRepo map[string][]Document, app
 				cur[d.ID] = d
 			}
 		}
-		if !apply(cur, byRepo[repo]) {
+		// A corrupt file is republished even by a no-op update so the
+		// coverage error clears, as the ErrCorruptIndex contract promises.
+		if !apply(cur, byRepo[repo]) && !corrupt {
 			continue
 		}
 		if err := e.publish(repo, cur); err != nil {
@@ -229,20 +232,24 @@ func (e *Embedded) update(ctx context.Context, byRepo map[string][]Document, app
 }
 
 // current returns the repo's snapshot, loading it if needed. A corrupt file
-// is ignored so the next publish rebuilds it from scratch; any other read
-// error is returned so the on-disk snapshot is never overwritten blindly.
-func (e *Embedded) current(repo string) (*shard, error) {
+// is ignored (reported via corrupt) so the next publish rebuilds it from
+// scratch; any other read error is returned so the on-disk snapshot is never
+// overwritten blindly.
+func (e *Embedded) current(repo string) (sh *shard, corrupt bool, err error) {
 	e.mu.Lock()
 	l := e.shards[repo]
 	e.mu.Unlock()
 	if l != nil {
-		return l.sh, nil
+		return l.sh, false, nil
 	}
-	sh, err := readShard(e.dir, repo)
-	if err != nil && !errors.Is(err, ErrCorruptIndex) {
-		return nil, err
+	sh, err = readShard(e.dir, repo)
+	if err != nil {
+		if !errors.Is(err, ErrCorruptIndex) {
+			return nil, false, err
+		}
+		return nil, true, nil
 	}
-	return sh, nil
+	return sh, false, nil
 }
 
 func (e *Embedded) publish(repo string, byID map[string]Document) error {
@@ -366,7 +373,9 @@ func (e *Embedded) Query(ctx context.Context, q Query) (Result, error) {
 		terms = append(terms, t)
 	}
 	sort.Strings(terms)
-
+	// Empty text matches every admitted document; non-empty text that
+	// tokenises to nothing (punctuation only) matches none, as in codeindex.
+	matchAll := strings.TrimSpace(q.Text) == ""
 	type candidate struct {
 		doc   *Document
 		terms []string
@@ -384,7 +393,7 @@ func (e *Embedded) Query(ctx context.Context, q Query) (Result, error) {
 		if sh == nil {
 			continue
 		}
-		for id, ts := range sh.match(terms, q) {
+		for id, ts := range sh.match(terms, matchAll, q) {
 			found = append(found, candidate{doc: &sh.docs[id], terms: ts})
 		}
 	}
