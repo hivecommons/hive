@@ -66,3 +66,40 @@ var (
 	_ gfi.Forge       = (*Client)(nil)
 	_ gfi.LabelReader = (*Client)(nil)
 )
+
+// MaintainerAppliedLabels implements gfi.MaintainerLabelReader. Only the
+// latest application of a currently present label counts; automation cannot
+// turn its own advertising into evidence of maintainer endorsement.
+func (c *Client) MaintainerAppliedLabels(ctx context.Context, repo string, number int, labels []string) ([]string, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	events, err := c.listIssueLabelEvents(ctx, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	var verified []string
+	for _, label := range labels {
+		var latest *issueLabelEvent
+		for i := len(events) - 1; i >= 0; i-- {
+			if strings.EqualFold(strings.TrimSpace(events[i].Label), strings.TrimSpace(label)) {
+				latest = &events[i]
+				break
+			}
+		}
+		if latest == nil || latest.Event != "labeled" {
+			continue
+		}
+		_, trusted, err := c.labelApplierTrusted(ctx, owner, name, latest.Actor, LabelApprovalPolicy{TrustOrgMembers: true})
+		if err != nil {
+			return nil, err
+		}
+		if trusted {
+			verified = append(verified, label)
+		}
+	}
+	return verified, nil
+}
+
+var _ gfi.MaintainerLabelReader = (*Client)(nil)
