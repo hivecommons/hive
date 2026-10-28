@@ -174,7 +174,7 @@ func blockerQuestionTail(b *StageTrackerBlocker) string {
 
 // blockerOptionsContext resolves the App settings link and whether the
 // hive has a human-authorised identity that could push the patch. Today
-// no such path exists: github.shared_uid_read_token is read-only by
+// no such path exists: the shared-UID App read token is read-only by
 // construction and the dashboard holds no operator PAT, so (b) is
 // disabled with that reason rather than greyed out silently.
 func (s *Server) blockerOptionsContext() blockerOptionsContext {

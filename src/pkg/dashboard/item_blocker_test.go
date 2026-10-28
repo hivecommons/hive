@@ -88,6 +88,7 @@ func TestDecisionForBlockerWorkflowsPermission(t *testing.T) {
 	}
 	// Held: close-partial waits for the hold to lift; the hold option leads.
 	it.Hold = &StageTrackerHold{By: "owner"}
+	it.Modifiers = append(it.Modifiers, modHold)
 	d3 := stageTrackerDecisionNeededWith(it, nil, "", at, bctx)
 	if o := decisionOptionByAction(t, d3, blocker.ActionClosePartial); o.Enabled {
 		t.Fatalf("close-partial while held = %+v", o)
@@ -228,6 +229,9 @@ func TestRepoItemBlockerRecheck(t *testing.T) {
 	mock := &repoItemDecisionMock{issueLabels: []string{"needs-human", "stage/045-needs-decision"}}
 	srv := newDelegatedServer(t, mock)
 	at := time.Date(2026, 10, 20, 19, 33, 0, 0, time.UTC)
+	// A grant stamps cleared-at from the ledger clock; pin it so the later
+	// re-report (at+1h) is fresh rather than stale.
+	l.SetNow(func() time.Time { return at })
 
 	// No blocker on record → 404; not a capability → 409.
 	if w := postBlockerAction(t, srv, "recheck", "writer"); w.Code != http.StatusNotFound {

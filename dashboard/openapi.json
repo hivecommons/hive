@@ -33873,6 +33873,247 @@
           }
         }
       }
+    },
+    "/api/repos/{owner}/{repo}/items/{number}/blocker/recheck": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Re-check the GitHub App's permissions for an issue parked on a capability blocker",
+        "description": "Backs the *Re-check permissions* option on an issue the tracker shows as *Blocked · App lacks <permission> permission* (hivecommons/hive#15099). Probes the App installation's permissions now: when the missing permission (for example `workflows: write`) is granted, every ledger entry blocked on it is cleared, the issue is un-parked and the result reads `released`; otherwise the result is `no-effect` with the plain-words reason and the same options the popover lists. 404 when the item has no recorded blocker, 409 when its blocker is not a capability gap (a human-only step no permission grant clears), 502 when the installation lookup fails. Same authorisation as the hold toggle plus a signed-in GitHub user; audited as repo_item_blocker_recheck.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Probe completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "permission": {
+                      "type": "string",
+                      "description": "The permission the blocker names"
+                    },
+                    "granted": {
+                      "type": "boolean",
+                      "description": "True when the installation now has it"
+                    },
+                    "released": {
+                      "type": "integer",
+                      "description": "Items un-blocked by this grant"
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "description": "Fleet-wide missing permissions after the probe (same shape as /api/status.capabilities)"
+                    },
+                    "result": {
+                      "type": "object",
+                      "description": "RowActionResult the activity monitor's result toast renders",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "target": {
+                          "type": "object"
+                        },
+                        "outcome": {
+                          "type": "string"
+                        },
+                        "next": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "options": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Dashboard session or GitHub user sign-in required"
+          },
+          "403": {
+            "description": "Not permitted for this repository"
+          },
+          "404": {
+            "description": "No blocker is recorded on this item"
+          },
+          "409": {
+            "description": "The blocker is not a capability gap"
+          },
+          "502": {
+            "description": "Installation permission probe failed"
+          }
+        }
+      }
+    },
+    "/api/repos/{owner}/{repo}/items/{number}/blocker/close-partial": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Mark an issue parked on a blocker partially addressed and close it",
+        "description": "Backs the *Mark partially addressed and close* option on a blocked issue (hivecommons/hive#15099): adds `hive/partially-addressed`, posts the operator's comment naming what remains (the blocker in plain words when the comment is empty), closes the issue as completed and clears the blocker ledger entry. 404 when the item has no recorded blocker; 409 when the issue is on hold. Same authorisation as the hold toggle plus a signed-in GitHub user; audited as repo_item_blocker_close_partial.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "comment": {
+                    "type": "string",
+                    "description": "What remains for a person, posted on the issue"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Issue closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "decision": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "type": "object",
+                      "description": "RowActionResult the activity monitor's result toast renders",
+                      "properties": {
+                        "action": {
+                          "type": "string"
+                        },
+                        "target": {
+                          "type": "object"
+                        },
+                        "outcome": {
+                          "type": "string"
+                        },
+                        "next": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "options": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Dashboard session or GitHub user sign-in required"
+          },
+          "403": {
+            "description": "Not permitted for this repository"
+          },
+          "404": {
+            "description": "No blocker is recorded on this item"
+          },
+          "409": {
+            "description": "The issue is on hold"
+          },
+          "502": {
+            "description": "GitHub write failed"
+          }
+        }
+      }
     }
   },
   "components": {

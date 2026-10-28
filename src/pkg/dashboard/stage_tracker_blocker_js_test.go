@@ -127,7 +127,7 @@ assert.ok(gap.indexOf('missing `+"`workflows`"+`') >= 0, gap);
 func TestStageTrackerBlockerWiredInRow(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`(cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item))`,
+		`(typeof stageTrackerBlockerWord === 'function' && cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION && stageTrackerBlockerWord(item))`,
 		`if (typeof stageTrackerBlockerActions === 'function') for (const a of stageTrackerBlockerActions(item, ctx)) out.push(a);`,
 		`renderSecuritySection('GitHub App permissions'`,
 		`.ham-capability-gap { color: var(--amber); }`,
