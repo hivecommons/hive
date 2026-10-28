@@ -22,6 +22,9 @@ const sharedPoolIdleEvictionDelay = 5 * time.Minute
 // expires the lease. A definitive "lease not found" from the Hub evicts at once.
 const sharedPoolRenewGrace = 60 * time.Second
 
+// sharedPoolRenewInterval is a var so tests can tick the lease watcher fast.
+var sharedPoolRenewInterval = 20 * time.Second
+
 var errSharedSessionPoolBusy = fmt.Errorf("shared session pool is busy")
 
 // ErrSharedSessionLeaseNotFound reports that the Hub no longer recognises the
@@ -149,7 +152,7 @@ func (c *sharedSessionPoolClient) Release(ctx context.Context, leaseID string) e
 }
 
 func (m *Manager) watchSharedPoolLease(ctx context.Context, name, leaseID string) {
-	ticker := time.NewTicker(20 * time.Second)
+	ticker := time.NewTicker(sharedPoolRenewInterval)
 	defer ticker.Stop()
 	lastRenewed := time.Now()
 	for {
