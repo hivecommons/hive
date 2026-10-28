@@ -449,6 +449,20 @@ func TestParkRecheckFollowsReferringPRCopy(t *testing.T) {
 	}
 }
 
+// A closed copy that itself refers to the issue is not followed to a copy of
+// its own: that would spend a copy-lookup slot and a timeline read on a PR
+// that has none.
+func TestParkRecheckSkipsAdoptionCopyWhenFollowing(t *testing.T) {
+	f := prAdoptedCopyIssue("hanthor")
+	f.comments[0]["body"] = "Maintainer decision needed."
+	f.timeline[len(f.timeline)-1] = prCrossRef("org/repo", 722, true, "closed", parkT0.Add(21*24*time.Hour), time.Time{}, "Refs #13")
+	f.timeline = append(f.timeline, prCrossRefBy("hive[bot]", "org/repo", 873, true, "closed", parkCopyClosed, time.Time{}, parkCopyBody+"\nRefs #13"))
+	recheck(t, f)
+	if got := strings.Join(intsToStrings(f.reads), ","); got != "722" {
+		t.Fatalf("timeline reads %s, want only 722 (the copy has no copy of its own)", got)
+	}
+}
+
 // A merged copy: the hive closes the original once its copy merges, so the
 // original reads "closed without merging" and the merge would go unseen
 // unless the copy itself refers to the issue.

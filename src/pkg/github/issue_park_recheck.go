@@ -481,6 +481,9 @@ func (c *Client) parkCopyChanges(ctx context.Context, refs map[string]parkRef, n
 	}
 	var follow []string
 	for key, ref := range refs {
+		if _, _, adopted := AdoptedFrom(ref.body); adopted {
+			continue // an adoption copy has no copy of its own to follow
+		}
 		if ref.isPR && ref.mergedAt.IsZero() && strings.EqualFold(ref.state, "closed") && ref.closedAt.After(start) &&
 			(isNamed[key] || parkRefersTo(ref.body, ref.repo, issueRepo, number)) {
 			follow = append(follow, key)
