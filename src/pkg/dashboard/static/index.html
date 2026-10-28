@@ -14219,16 +14219,52 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!words) return raw;
       return words + (detail ? ' (' + detail + ')' : '');
     }
+    // Pure: "open PR #15090 covers it · at 060-reviewed" from an issue row's
+    // lane reason ("open PR #15090 covers it (PR at 060-reviewed)"); '' for
+    // any other reason. The lane reason is the issue's, never a gate token,
+    // so it must not be read as one (hivecommons/hive#15084 regression).
+    const STAGE_TRACKER_COVER_REASON_RE = /^open PR #(\d+) covers it(?: \(PR at ([^)]*)\))?$/i;
+    function stageTrackerCoverReasonText(item) {
+      const m = STAGE_TRACKER_COVER_REASON_RE.exec(String((item && item.reason) || '').trim());
+      if (!m) return '';
+      return 'open PR #' + m[1] + ' covers it' + (m[2] ? ' · at ' + m[2] : '');
+    }
+    // Pure: the nested PR an issue row mirrors — the one its lane reason
+    // names, else the linked PR at the issue's mirrored stage. null for PR
+    // rows and for issues with no linked PR. The issue row reads the gate
+    // from it so the row and its PR sub-row never disagree.
+    function stageTrackerCoveringPR(item) {
+      if (!item || item.kind === 'pr') return null;
+      const prs = Array.isArray(item.linked_prs) ? item.linked_prs : [];
+      if (!prs.length) return null;
+      const m = STAGE_TRACKER_COVER_REASON_RE.exec(String(item.reason || '').trim());
+      const n = m ? Number(m[1]) : 0;
+      return prs.find(p => n && Number(p.number) === n) || prs.find(p => Number(p.stage) === Number(item.stage)) || null;
+    }
     // Pure: { word, detail, tip, cue } for an item on the gate, null off it.
     //   word   — the pill word (STAGE_TRACKER_MERGE_GATE_WORD)
-    //   detail — the live part after " · " ("next sweep in 42s", "7m left")
-    //   tip    — one plain sentence for the glyph's title + aria-label
+    //   detail — the live part after " · " ("next sweep in 42s", "7m left");
+    //            always a gate fact, never the issue's lane reason
+    //   tip    — one plain sentence for the glyph's title + aria-label; on
+    //            an issue row it leads with "open PR #N covers it · at <stage>"
     //   cue    — 'running' (sweep on it now) | 'waiting' | 'soaking' | 'merging' | ''
     //   until  — ms epoch the detail counts down to (0 when none)
     function stageTrackerMergeGateInfo(item, nowMs) {
-      const state = stageTrackerMergeGateStateOf(item);
+      const cover = stageTrackerCoveringPR(item);
+      const src = cover && cover.merge_gate && cover.merge_gate.state ? cover : item;
+      const state = stageTrackerMergeGateStateOf(src);
       if (!state || state === 'merged') return null;
-      const mg = (item && item.merge_gate) || {};
+      const info = stageTrackerMergeGateInfoFor(src, item, nowMs);
+      const coverWhy = stageTrackerCoverReasonText(item);
+      if (coverWhy) info.tip = coverWhy.charAt(0).toUpperCase() + coverWhy.slice(1) + ' — ' + info.tip;
+      return info;
+    }
+    // src carries the merge_gate / stage read; item is the row itself (its
+    // lane reason stands in for a gate reason only on a PR row).
+    function stageTrackerMergeGateInfoFor(src, item, nowMs) {
+      const state = stageTrackerMergeGateStateOf(src);
+      const mg = (src && src.merge_gate) || {};
+      const laneReason = item && item.kind !== 'issue' && !stageTrackerCoverReasonText(item) ? item.reason : '';
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
       const word = STAGE_TRACKER_MERGE_GATE_WORD[state] || state;
       const nextAt = mg.next_sweep_at ? Date.parse(mg.next_sweep_at) : 0;
@@ -14240,7 +14276,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
       const sooner = ' A GitHub event on the PR (check run, review, push) triggers a pass sooner.';
       if (state === 'soaking') {
-        const soakSec = Number(mg.soak_remaining_seconds) || Number(item.soak_remaining_seconds) || 0;
+        const soakSec = Number(mg.soak_remaining_seconds) || Number(src.soak_remaining_seconds) || Number(item.soak_remaining_seconds) || 0;
         const until = mg.soak_until ? Date.parse(mg.soak_until) : (soakSec > 0 ? nowMs + soakSec * 1000 : 0);
         const left = until > nowMs ? stageTrackerShortLeft(until - nowMs) : '';
         return { state, word, detail: left ? left + ' left' : 'soak window complete', tip: left ? 'Admitted by the automerge lane; waiting for the soak window: ' + left + ' left. hive merges on its first sweep after that.' + lastSeen : 'Admitted; the soak window is complete — hive merges on its next sweep' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: left ? until : 0 };
@@ -14251,7 +14287,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (state === 'merging') {
         return { state, word, detail: '', tip: 'Admitted and soaked; hive is merging it now (GitHub merge queue / merge window).' + lastSeen, cue: 'merging', until: 0 };
       }
-      const why = stageTrackerGateReasonText(mg.reason || item.reason);
+      const why = stageTrackerGateReasonText(mg.reason || laneReason);
       return { state, word, detail: why, tip: 'Review approved, not yet admitted to auto merge' + (why ? ' — ' + why : '') + '.' + (nextWords ? ' hive re-checks the gate on its ' + nextWords.replace(/^next /, 'next ') + '.' : '') + sooner + lastSeen, cue: 'waiting', until: 0 };
     }
     // Pure: the pill word with its live detail — "Ready for auto merge ·
