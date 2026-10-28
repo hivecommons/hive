@@ -67,6 +67,7 @@ const (
 	GlossaryNoNewCommit     = "no-new-commit"
 	GlossarySelfDecision    = "self-decision-read-as-changes"
 	GlossaryEffectUnknown   = "effect-unknown"
+	GlossaryHumanMerge      = "human-merge" // 090: no lane vouches for the author (hivecommons/hive#15078)
 	glossaryFallbackUnknown = "the hive did not say why"
 )
 
@@ -173,6 +174,9 @@ var glossary = []GlossaryEntry{
 		Detail: "The hive decided to close it, but it is still open; the close call did not land."},
 	{Slug: GlossaryNoNewCommit, Kind: GlossaryReason, Plain: "no new commit has been pushed",
 		Detail: "The hive gave direction, but no new commit has been pushed yet."},
+	{Slug: GlossaryHumanMerge, Kind: GlossaryReason, Plain: "no merge lane vouches for this PR's author; a maintainer merges",
+		Detail:  "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors.",
+		Aliases: []string{"untrusted-author", "ready-for-human-merge", "contributor-lane:author-association", "author-association"}},
 	{Slug: GlossaryNoEffect, Kind: GlossaryReason, Plain: "the decision hasn't taken effect",
 		Detail: "The hive recorded this decision, but what it was supposed to cause has not happened within the expected time."},
 	{Slug: GlossaryEffectUnknown, Kind: GlossaryReason, Plain: glossaryFallbackUnknown,

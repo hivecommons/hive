@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -211,7 +212,7 @@ func TestStageTrackerDecisionNeeded(t *testing.T) {
 		if !strings.Contains(d.Question, "This PR is marked needs-human") {
 			t.Fatalf("question = %q", d.Question)
 		}
-		if len(d.Options) != 2 || d.Options[0].Action != decisionActionApprove || !d.Options[0].Enabled || d.Options[0].Consequence == "" || d.Options[1].Action != decisionActionHold {
+		if len(d.Options) != 3 || d.Options[0].Action != decisionActionApprove || !d.Options[0].Enabled || d.Options[0].Consequence == "" || d.Options[1].Action != decisionActionDelegate || d.Options[2].Action != decisionActionHold {
 			t.Fatalf("options = %+v", d.Options)
 		}
 	})
@@ -380,6 +381,11 @@ func TestStageTrackerNeedsHumanStatesCarryAnAction(t *testing.T) {
 			}
 			if !enabled {
 				t.Errorf("no enabled action among %+v", d.Options)
+			}
+			// "Let hive decide" is on every needs-human state: where the
+			// hive cannot act it answers in plain words why, with options.
+			if !slices.ContainsFunc(d.Options, func(o StageTrackerDecisionOption) bool { return o.Action == decisionActionDelegate }) {
+				t.Errorf("no Let hive decide among %+v", d.Options)
 			}
 		})
 	}

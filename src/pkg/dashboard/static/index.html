@@ -16599,6 +16599,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes."},
       "approve-review": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes."},
       "approved": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes."},
+      "author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "author-online": {"kind": "reason", "plain": "the author's hive is connected, so hive won't take the PR over", "detail": "Adoption is for authors whose hive has gone offline; this author's hive is connected, so the hive leaves the PR with them."},
       "behind": {"kind": "reason", "plain": "the branch is behind the base branch", "detail": "The branch is behind the base branch and must be updated before it can merge."},
       "changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
@@ -16614,6 +16615,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "comment-decision": {"kind": "action", "plain": "recorded the decision on GitHub", "detail": "The hive posted the decision as a `/hive decision` comment, the way a maintainer would."},
       "conflict": {"kind": "reason", "plain": "the branch conflicts with the base branch", "detail": "The branch has merge conflicts with the base branch; it needs a rebase before anything can merge."},
       "conflicting": {"kind": "reason", "plain": "the branch conflicts with the base branch", "detail": "The branch has merge conflicts with the base branch; it needs a rebase before anything can merge."},
+      "contributor-lane:author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "contributor-lane:changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
       "contributor-lane:sentinel-blocked": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},
       "contributor-offline": {"kind": "rule", "plain": "the author's hive hasn't been connected since the nudge", "detail": "The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting."},
@@ -16632,6 +16634,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "hive-policy": {"kind": "rule", "plain": "this changes the hive's own rules", "detail": "This changes the hive's own settings, governance or security posture; the hive only recommends and the owner confirms."},
       "hold": {"kind": "reason", "plain": "on hold; the hive does nothing until it is released", "detail": "The item is on hold. The hive does nothing with it until a person releases the hold."},
       "human-changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
+      "human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "label:needs-human": {"kind": "reason", "plain": "marked needs-human; a person must remove the label", "detail": "The item is marked needs-human: automated fixes ran out or a person flagged it. The hive waits until the label is removed."},
       "labels-add": {"kind": "action", "plain": "added labels", "detail": "The hive added labels to the item."},
       "labels-remove": {"kind": "action", "plain": "removed labels", "detail": "The hive removed labels from the item."},
@@ -16647,6 +16650,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "prefer-contributor": {"kind": "rule", "plain": "a contributor's PR and a hive PR do the same work", "detail": "A contributor's PR and a hive-authored PR cover the same work; the hive prefers the contributor's when it is mergeable and current."},
       "quarantine-flaky": {"kind": "action", "plain": "quarantined the flaky test", "detail": "The flaky test is quarantined with a retry and a deflake task is filed."},
       "rail-hold": {"kind": "rule", "plain": "the item is on hold", "detail": "The item carries the hold label; the hive never acts on a held item until a person releases the hold."},
+      "ready-for-human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "recommend-only": {"kind": "action", "plain": "recommended only; a person confirms", "detail": "The hive only recommended; the item stays parked until a person confirms."},
       "recommended": {"kind": "action", "plain": "recommended only; a person confirms", "detail": "The hive only recommended; the item stays parked until a person confirms."},
       "red": {"kind": "reason", "plain": "CI is failing on this branch", "detail": "Required checks are failing on this branch; nothing merges until they are green."},
@@ -16667,6 +16671,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "supersede-now": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there."},
+      "untrusted-author": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
     };
     // Pure: plain words for a glossary slug ("supersede" → "close this PR and
     // open a fresh hive-authored PR with the same commits"). Strips a lane
@@ -17210,8 +17215,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const why = enabled ? '' : (o.reason_if_disabled || (c ? c.why : 'Not available on this row') || '');
         return { id: o.action, label: o.label || STAGE_TRACKER_ACTION_LABELS[o.action] || o.action, enabled, why, consequence: o.consequence || '', danger: !!(c && c.danger) || /^decide:close-/.test(o.action) };
       });
+      // "Let hive decide" leads — except where the server's first option
+      // is the merge the pill asks for (090: hivecommons/hive#15078).
       const lead = out.findIndex(o => o.id === 'decide:delegate');
-      if (lead > 0) out.unshift(out.splice(lead, 1)[0]);
+      if (lead > 0 && STAGE_TRACKER_MERGE_ACTIONS.indexOf(out[0].id) < 0) out.unshift(out.splice(lead, 1)[0]);
       return out;
     }
     // Pure: the popover markup.

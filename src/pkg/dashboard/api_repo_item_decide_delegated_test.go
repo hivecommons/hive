@@ -594,3 +594,56 @@ func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {
 		}
 	}
 }
+
+// "Let hive decide" on a PR at 090 Ready for human merge answers at once
+// (hivecommons/hive#15078): no policy run, no comment, a no-effect result
+// that says in plain words why the hive will not merge it and carries the
+// merge answers as buttons — enabled for a merger, greyed for a writer.
+func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge", "role/newcomer"}}
+	srv := newDelegatedServer(t, mock)
+	body := `{"type":"pr","reason":"contributor-lane:author-association","caption":"Ready for human merge · untrusted author"}`
+	w := postDelegated(t, srv, 8, "writer", body, map[string]string{"X-Hive-Role": "merger"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Status != delegatedJobStatusDone || job.Result == nil || job.Result.Action != rowActionNoEffect {
+		t.Fatalf("job = %+v", job)
+	}
+	res := job.Result
+	t.Logf("outcome: %s\nnext: %s\nwhy: %s", res.Outcome, res.Next, res.Why)
+	for _, want := range []string{"I can't merge this: author @someone is untrusted on testrepo", "not a collaborator", "trusted or merger tier", "👥 Contributors"} {
+		if !strings.Contains(res.Outcome, want) {
+			t.Errorf("outcome %q missing %q", res.Outcome, want)
+		}
+	}
+	if res.Why != delegatedecision.GlossaryHumanMerge || res.Rule != delegatedHumanMergeRule {
+		t.Errorf("why=%q rule=%q", res.Why, res.Rule)
+	}
+	if !strings.Contains(res.Next, "Approve & merge as maintainer · Approve — let hive merge") || !strings.Contains(res.Next, "promote the author to trusted") {
+		t.Errorf("next = %q", res.Next)
+	}
+	if len(res.Options) < 2 || res.Options[0].Action != decisionActionMergeNow || !res.Options[0].Enabled || res.Options[1].Action != decisionActionQueueMerge || !res.Options[1].Enabled {
+		t.Fatalf("options = %+v", res.Options)
+	}
+	for _, o := range res.Options {
+		if o.Action == decisionActionDirection && (o.Enabled || o.ReasonIfDisabled == "") {
+			t.Errorf("direction on a human PR must be disabled with a reason: %+v", o)
+		}
+	}
+	if len(mock.comments) != 0 || len(mock.edits) != 0 || len(mock.reviews) != 0 || len(mock.merges) != 0 {
+		t.Fatalf("nothing may be written: comments=%v edits=%v reviews=%v merges=%v", mock.comments, mock.edits, mock.reviews, mock.merges)
+	}
+
+	// A writer without the merger role gets the same answer with the merge
+	// buttons greyed and the reason in plain words.
+	w = postDelegated(t, srv, 8, "writer", body, nil)
+	job = decodeDelegatedJob(t, w)
+	if job.Result == nil || len(job.Result.Options) < 2 {
+		t.Fatalf("job = %+v", job)
+	}
+	if o := job.Result.Options[0]; o.Enabled || o.ReasonIfDisabled != decisionWhyMergerRole {
+		t.Errorf("merge-now for a writer = %+v", o)
+	}
+}

@@ -154,6 +154,8 @@ type Input struct {
 	// question, when one was recorded.
 	Reasons  []string
 	Question string
+	// Author is the PR's / issue's GitHub login, for plain-words answers.
+	Author string
 	// HiveAuthored: the hive opened the PR / filed the issue.
 	HiveAuthored bool
 	// TrustedAuthor: the author is the hive or holds write on the repo.

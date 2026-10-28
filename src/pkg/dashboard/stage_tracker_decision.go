@@ -183,6 +183,15 @@ func stageTrackerWithoutHold(it StageTrackerItem) StageTrackerItem {
 	return it
 }
 
+// decisionDelegateOption is "Let hive decide" for a state the hive would
+// not otherwise decide: the delegate answers in plain words why it won't
+// act itself and lists the person's options (hivecommons/hive#15078).
+func decisionDelegateOption(held bool, consequence string) StageTrackerDecisionOption {
+	o := decisionOption(decisionActionDelegate, "Let hive decide", !held, decisionWhyHeld)
+	o.Consequence = consequence
+	return o
+}
+
 // decisionForParked is the fallback for any needs-human state without a
 // dedicated decision: say what the row is parked on and offer the generic
 // moves — look again, hold, flag for a person (hivecommons/hive#15078).
@@ -207,7 +216,7 @@ func decisionForParked(it StageTrackerItem, held bool) *StageTrackerDecision {
 	}
 	retry := decisionOption(decisionActionRetry, "Re-evaluate now", true, "")
 	retry.Consequence = "re-reads GitHub and re-derives the stage"
-	d.Options = []StageTrackerDecisionOption{retry, decisionHoldOption(held)}
+	d.Options = []StageTrackerDecisionOption{retry, decisionDelegateOption(held, "the hive says in plain words what it can and cannot do here"), decisionHoldOption(held)}
 	if !slices.Contains(it.Modifiers, modNeedsHuman) {
 		d.Options = append(d.Options, decisionOption(decisionActionNeedsHuman, "Mark needs-human", true, ""))
 	}
@@ -261,7 +270,8 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 	closeSup.Consequence = "closes " + ref + " unmerged, naming the PR that replaces it"
 	closeWontfix := decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, "")
 	closeWontfix.Consequence = "closes " + ref + " unmerged"
-	d.Options = []StageTrackerDecisionOption{mergeNow, queue, direction, closeSup, closeWontfix, decisionHoldOption(held)}
+	delegate := decisionDelegateOption(held, "the hive answers at once why it will not merge this itself and lists these options; it never merges it")
+	d.Options = []StageTrackerDecisionOption{mergeNow, queue, delegate, direction, closeSup, closeWontfix, decisionHoldOption(held)}
 	return d
 }
 
@@ -287,7 +297,7 @@ func decisionForUnauthorized(it StageTrackerItem, held bool) *StageTrackerDecisi
 	}
 	retry := decisionOption(decisionActionRetry, "Re-evaluate now", true, "")
 	retry.Consequence = "re-reads GitHub; the hive resumes and clears the label once the step is done"
-	d.Options = []StageTrackerDecisionOption{retry, decisionHoldOption(held)}
+	d.Options = []StageTrackerDecisionOption{retry, decisionDelegateOption(held, "the hive says in plain words which step it may not take and what would let it"), decisionHoldOption(held)}
 	if !slices.Contains(it.Modifiers, modNeedsHuman) {
 		d.Options = append(d.Options, decisionOption(decisionActionNeedsHuman, "Mark needs-human", true, ""))
 	}
@@ -318,7 +328,7 @@ func decisionForWaitingOnAuthor(it StageTrackerItem, held bool) *StageTrackerDec
 	closeSup.Consequence = "closes " + ref + " unmerged, naming the PR that replaces it"
 	closeWontfix := decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, "")
 	closeWontfix.Consequence = "closes " + ref + " unmerged"
-	d.Options = []StageTrackerDecisionOption{closeSup, closeWontfix, decisionHoldOption(held)}
+	d.Options = []StageTrackerDecisionOption{decisionDelegateOption(held, "the hive weighs waiting against closing and says so in plain words; it never rewrites the PR"), closeSup, closeWontfix, decisionHoldOption(held)}
 	return d
 }
 
@@ -630,6 +640,7 @@ func decisionForTriage(it StageTrackerItem, held bool) *StageTrackerDecision {
 	}
 	d.Options = []StageTrackerDecisionOption{
 		decisionOption(decisionActionAcceptTriage, "Accept triage", true, ""),
+		decisionDelegateOption(held, "the hive triages it as the owner's delegate: accepts it, or says in plain words why not"),
 		decisionHoldOption(held),
 	}
 	if !slices.Contains(it.Modifiers, modNeedsHuman) {
@@ -658,7 +669,7 @@ func decisionForNeedsHuman(it StageTrackerItem, held bool) *StageTrackerDecision
 	} else {
 		resolve.Consequence = "lifts needs-human and records /hive approve as you; the hive carries on"
 	}
-	d.Options = []StageTrackerDecisionOption{resolve, decisionHoldOption(held)}
+	d.Options = []StageTrackerDecisionOption{resolve, decisionDelegateOption(held, "the hive reviews it as the owner's delegate and either lifts needs-human or says in plain words why it kept it"), decisionHoldOption(held)}
 	return d
 }
 

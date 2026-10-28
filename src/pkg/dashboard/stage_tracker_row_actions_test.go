@@ -994,6 +994,7 @@ const decision090 = { question: 'This PR is ready to merge, but the hive will no
   options: [
     { action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you' },
     { action: 'decide:queue-merge', label: 'Approve — let hive merge', enabled: true, consequence: 'records your approval; the hive\'s merge sweep merges #317 on its next pass once CI is green and the head has soaked' },
+    { action: 'decide:delegate', label: 'Let hive decide', enabled: true, consequence: 'the hive answers at once why it will not merge this itself and lists these options; it never merges it' },
     { action: 'decide:direction', label: 'Give direction', enabled: false, reason_if_disabled: 'The hive did not open this PR, so it cannot carry a direction to its author; leave a changes-requested review on GitHub' },
     { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, consequence: 'closes #317 unmerged, naming the PR that replaces it' },
     { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true, consequence: 'closes #317 unmerged' },
@@ -1067,5 +1068,56 @@ assert.strictEqual(as[0].id, 'decide:merge-now'); assert.strictEqual(as[0].enabl
 const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'],
   decision_needed: { question: 'q', options: [{ action: 'decide:delegate', label: 'Let hive decide', enabled: true }, { action: 'decide:approve', label: 'Approve', enabled: true }, { action: 'hold', label: 'Hold', enabled: true }, { action: 'needs-human', label: 'Mark needs-human', enabled: true }] } };
 assert.deepStrictEqual(ids(stageTrackerRowActions(pr85, merger)), ['decide', 'hold', 'retry', 'needs-human', 'open', 'copy']);
+`)
+}
+
+// The live case (hivecommons/hive#15078, operator screenshot 2026-10-28):
+// hotshot#316 with its one nested PR #317 at 090. The ISSUE row's ⋯ menu
+// must carry all three — Approve & merge as maintainer, Approve — let hive
+// merge, Let hive decide — and the popover the same, merge answers first.
+func TestStageTrackerIssueRowWithNested090PRCarriesAllThree(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerDecisionPopPreamble(t, html)+`
+const ids = as => as.map(a => a.id);
+const merger = { user: true, canHold: true, canHuman: true };
+const decision090 = { question: 'This PR is ready to merge, but the hive will not merge it by itself (untrusted author).', blocker: 'The hive never merges this unattended.', asked_by: 'the merge lane', since: '2026-10-28T12:00:00Z',
+  options: [
+    { action: 'decide:merge-now', label: 'Approve & merge as maintainer', enabled: true, consequence: 'merges #317 into main now via hive\'s identity, attributed to you' },
+    { action: 'decide:queue-merge', label: 'Approve — let hive merge', enabled: true, consequence: 'records your approval; the hive\'s merge sweep merges #317 on its next pass' },
+    { action: 'decide:delegate', label: 'Let hive decide', enabled: true, consequence: 'the hive answers at once why it will not merge this itself and lists these options; it never merges it' },
+    { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true, consequence: 'closes #317 unmerged, naming the PR that replaces it' },
+    { action: 'decide:close-wontfix', label: "Close as won't fix", enabled: true, consequence: 'closes #317 unmerged' },
+    { action: 'hold', label: 'Hold', enabled: true },
+  ] };
+const lp317 = { number: 317, title: 'docs: prepare v0.2.0 release notes', url: 'https://github.com/hivecommons/hotshot/pull/317', author: 'Karibhou', author_kind: 'human', base_ref: 'main', stage: 90, modifiers: [], human_merge_reason: 'untrusted-author', decision_needed: decision090 };
+const issue316 = { repo: 'hivecommons/hotshot', kind: 'issue', number: 316, title: 'Release v0.2.0', url: 'https://github.com/hivecommons/hotshot/issues/316', stage: 90, mirrored: true, modifiers: [], linked_prs: [lp317] };
+
+const as = stageTrackerRowActions(issue316, merger);
+const flat = stageTrackerFlatActions(as);
+assert.deepStrictEqual(ids(as).slice(0, 3), ['decide:merge-now', 'decide:queue-merge', 'decide'], 'issue row leads with the two merge answers: ' + ids(as));
+assert.ok(flat['decide:merge-now'] && flat['decide:merge-now'].enabled, 'Approve & merge as maintainer present and enabled');
+assert.ok(flat['decide:queue-merge'] && flat['decide:queue-merge'].enabled, 'Approve — let hive merge present and enabled');
+assert.ok(flat['decide:delegate'] && flat['decide:delegate'].enabled, 'Let hive decide present (in Decide PR #317…) and enabled');
+assert.strictEqual(as[2].label, 'Decide PR #317…');
+assert.strictEqual(as[2].submenu[0].id, 'decide:delegate', 'Let hive decide leads the Decide… group');
+for (const id of ['decide:merge-now', 'decide:queue-merge']) assert.strictEqual(flat[id].target.number, 317, id + ' acts on PR #317');
+const menu = stageTrackerMenuHtml(as, 'hivecommons/hotshot#316');
+for (const id of ['decide:merge-now', 'decide:queue-merge', 'decide:delegate']) assert.ok(menu.includes('data-ham-act="' + id + '"'), id + ' rendered in the issue-row menu');
+assert.ok(menu.indexOf('data-ham-act="decide:merge-now"') < menu.indexOf('data-ham-act="hold"'), 'merge answers above the generic items');
+
+// The needs-human popover on the issue row resolves to PR #317 and lists
+// the same three, merge answers first, Let hive decide right after.
+const dec = stageTrackerDecisionOf(issue316);
+assert.strictEqual(dec.item.number, 317);
+const pop = stageTrackerDecisionOptions(dec.item, merger);
+assert.deepStrictEqual(ids(pop).slice(0, 3), ['decide:merge-now', 'decide:queue-merge', 'decide:delegate'], 'popover order: ' + ids(pop));
+assert.ok(pop[0].enabled && pop[1].enabled && pop[2].enabled);
+const html = stageTrackerDecisionPopHtml(dec.item, pop, Date.now(), '');
+for (const id of ['decide:merge-now', 'decide:queue-merge', 'decide:delegate']) assert.ok(html.includes('data-ham-act="' + id + '"'), id + ' rendered in the popover');
+
+// A 085 popover still leads with Let hive decide.
+const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'],
+  decision_needed: { question: 'q', options: [{ action: 'decide:approve', label: 'Approve', enabled: true }, { action: 'decide:delegate', label: 'Let hive decide', enabled: true }] } };
+assert.strictEqual(stageTrackerDecisionOptions(pr85, merger)[0].id, 'decide:delegate');
 `)
 }

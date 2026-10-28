@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -472,6 +473,12 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated+"_failed", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "error", err.Error()), "", repoFull, number)
 		return delegatedOutcome{Err: err}
 	}
+	// A PR at 090 Ready for human merge is one the hive's lanes already
+	// declined to merge: no policy run changes that, so answer at once in
+	// plain words with the actions that do (hivecommons/hive#15078).
+	if out, ok := s.delegatedHumanMergeOutcome(repoFull, number, itemType, user, mergerRole, in, req); ok {
+		return out
+	}
 	d, deciderNotes := s.decideDelegated(ctx, in)
 	// An adoption whose copy was closed unmerged (hivecommons/hive#15052)
 	// overrides the policy: the recorded decision no longer stands, so the
@@ -559,6 +566,7 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		in.Labels = append(in.Labels, l.GetName())
 	}
 	author := strings.TrimSpace(issue.GetUser().GetLogin())
+	in.Author = author
 	in.HiveAuthored = client.IsHiveAuthorLogin(author)
 	in.TrustedAuthor = in.HiveAuthored
 	if issue.IsPullRequest() || itemType == "pr" {
@@ -567,7 +575,13 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		if err != nil {
 			return in, fmt.Errorf("reading PR %s#%d: %w", repoFull, number, err)
 		}
+		for _, l := range pr.Labels {
+			if name := l.GetName(); name != "" && !slices.Contains(in.Labels, name) {
+				in.Labels = append(in.Labels, name)
+			}
+		}
 		author = strings.TrimSpace(pr.GetUser().GetLogin())
+		in.Author = author
 		in.HiveAuthored = client.IsHiveAuthorLogin(author)
 		in.TrustedAuthor = in.HiveAuthored
 		if err := s.gatherDelegatedPRContext(ctx, repoFull, pr, &in); err != nil {
