@@ -205,3 +205,31 @@ func TestKickCancelledMidSendIsNotDelivered(t *testing.T) {
 		t.Fatal("cancelled delivery recorded success, blamed the new session, or retained the pane claim")
 	}
 }
+
+// A turn can become busy after the prompt wait but before the final locked
+// delivery check. The caller must see a deferral and no successful kick.
+func TestSendKickBusyBounceIsDeferral(t *testing.T) {
+	origExists := tmuxSessionExists
+	tmuxSessionExists = func(*Manager, *AgentProcess) bool { return true }
+	t.Cleanup(func() { tmuxSessionExists = origExists })
+	m, a, _ := kickLogTestManager(t, "")
+	a.LastTranscriptActivity = time.Now()
+	captures := 0
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string {
+		captures++
+		if captures >= 3 {
+			return "shell$"
+		}
+		return "❯"
+	}
+	termSeams(m).sendLiteralErr = func(*AgentProcess, string) error {
+		t.Fatal("typed into an unready pane")
+		return nil
+	}
+	if err := m.SendKick(a.Name, "task"); !errors.Is(err, crux.ErrAgentBusy) {
+		t.Fatalf("busy bounce = %v, want ErrAgentBusy", err)
+	}
+	if a.LastKick != nil || len(a.KickHistory) != 0 {
+		t.Fatal("busy bounce recorded a delivered kick")
+	}
+}

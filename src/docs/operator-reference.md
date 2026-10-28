@@ -206,7 +206,7 @@ The keys the agent runtime owns — the part of Hive being carved out as **Crux*
 
 | Struct | Embedded in | YAML keys (unchanged position) |
 |---|---|---|
-| `AgentRuntimeConfig` (`pkg/config/agent_config.go`) | `Config` | `agents` (including the `agents.github_api_hourly_cap` scalar), `backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn` |
+| `AgentRuntimeConfig` (`pkg/config/agent_config.go`) | `Config` | `agents` (including the `agents.github_api_hourly_cap` scalar and the `agents.session_recycle` block), `backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn` |
 | `AgentRuntimeGovernorConfig` (`pkg/config/agent_config.go`) | `GovernorConfig` | `governor.watchdog`, `governor.litellm`, `governor.vllm`, `governor.llm-d`, `governor.bob`, `governor.trajectory`, `governor.kick_limits`, `governor.gateways`, `governor.rotation`, `governor.provider_budget` |
 
 Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through field promotion; only composite literals name the embedded struct (`config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: …}}`). `pkg/config/testdata/agent_runtime_golden.{yaml,json}` pins the parse of a representative file so the boundary cannot drift the schema.
@@ -270,7 +270,7 @@ Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through 
 | `knowledge.publish` | Unset (`connector` empty): publishing off. | One-way mirror of curator-promoted facts into one connector target: `connector` (a `knowledge.connectors` name whose type can publish), `layers` (`project`/`org`/`community`; personal is never published), `root`, optional `include_types`, `dry_run`, `propose_via`. Facts are read from each layer's `knowledge.layers[].path`. Started at boot (a bad connector logs `knowledge publish mirror disabled` and leaves publishing off); state in `/data/knowledge/connector-state/_publish`. Status in the `publish` object of `GET /api/knowledge/connectors`; owner-only `POST /api/knowledge/publish/sync`. See [knowledge-connectors.md](knowledge-connectors.md#publish-mirror). |
 | `knowledge.bead_synthesizer.publish` | Off (`enabled: false`). | Publishes synthesized facts into a repository through one PR on `hive/bead-synth-knowledge`: `enabled`, `repo` (empty = `project.primary_repo`), `path` (default `docs/knowledge/`; `.hive/knowledge/` is the alternative; relative, no `..`), `base_branch` (empty = repo default branch), `mode` (`pr` default or `commit`), `cadence` (`per_run` default or `daily`). ACMM L<=4 hives publish via PR only; `commit` is warned about and still opens a PR. See [knowledge-curator.md](knowledge-curator.md#repository-publish-knowledgebead_synthesizerpublish). |
 | `variables.security.*` | Deny by default. | `allow_exec`, `allow_http`, and GitHub prompt-source allowlists are honored only from the trusted seed, not dashboard overlays. |
-| `agents.<name>.prompt_source` (size cap) | 64 KiB (`promptsrc.DefaultMaxPromptBytes`); `HIVE_PROMPT_SOURCE_MAX_BYTES` overrides it. | A fetched kick template over the cap is **rejected whole, not truncated** ([#12130](https://github.com/hivecommons/hive/issues/12130)): the kick uses the last successfully fetched copy if there is one, otherwise the ordinary `kick_template` → pack → convention → embedded-default chain, and the scheduler logs `prompt from GitHub exceeds size cap; REJECTED whole (not truncated), falling back` with `repo`, `path`, `size_bytes` and `cap_bytes`. Saving an agent whose source is over the cap fails in the dashboard with the same sizes rather than baking a cut-off policy. A half-policy is a policy with its closing rules missing; no remote policy is the safer failure. Every shipped template fits with >2× headroom (`TestShippedTemplatesFitUnderCap`). |
+| `agents.<name>.prompt_source` (size cap) | 96 KiB (`promptsrc.DefaultMaxPromptBytes`); `HIVE_PROMPT_SOURCE_MAX_BYTES` overrides it. | A fetched kick template over the cap is **rejected whole, not truncated** ([#12130](https://github.com/hivecommons/hive/issues/12130)): the kick uses the last successfully fetched copy if there is one, otherwise the ordinary `kick_template` → pack → convention → embedded-default chain, and the scheduler logs `prompt from GitHub exceeds size cap; REJECTED whole (not truncated), falling back` with `repo`, `path`, `size_bytes` and `cap_bytes`. Saving an agent whose source is over the cap fails in the dashboard with the same sizes rather than baking a cut-off policy. A half-policy is a policy with its closing rules missing; no remote policy is the safer failure. Every shipped template fits with >2× headroom (`TestShippedTemplatesFitUnderCap`). |
 | `data.claude_sessions_dir` | `/data/home/.claude/projects` | Where the dashboard reads Claude Code session JSONL for per-agent token/cost accounting. Point it at the agents' real session directory if you relocate `HOME`. |
 | `data.copilot_sessions_dir` | `/data/home/.copilot/session-state` | Same, for the Copilot CLI backend's session state. |
 
@@ -447,7 +447,7 @@ advanced into the merge path.
 | `auto_merge.contributor_lane.auto_promotion_scope` | `hive` | Where the clean-merged-PR ratchet (`auto_merge.contributor_tier.auto_promote_after_merged`) counts an author's merges: `hive` counts across every repository the hive manages (one `search/issues` query finds the repos holding the author's merges; the PR's own repo is always walked first), `repo` counts only the PR's repository. Revert and sentinel-alert evidence blocks promotion in either scope. |
 | `auto_merge.contributor_tier.auto_promote_after_merged` | `5` | Clean merged PRs (no revert, no sentinel label, not undone by a later merged revert) after which the contributor lane treats an author as `trusted` without an operator grant, unless the registry marks them `revoked`. Negative disables the ratchet. |
 | `auto_merge.contributor_lane.approve_held_runs_for_registry_trusted` | `true` | When the registry path admitted the PR author and the lane stops at `required-check-missing:<ctx>`, approve the head's `action_required` workflow runs once (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`, fork heads included), post one `hive:contributor-held-runs-approved` audit comment and log `contributor-lane approved held runs`. Never acts for claim-marker, auto-promoted or association admissions, sentinel/exclude-labelled PRs, or diffs touching `.github/workflows/**`. Needs the App's **Actions: Read and write** permission. See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
-| `auto_merge.contributor_lane.owner_approval_releases_workflow_fence` | `true` | A hive owner / trusted merger's explicit approval on the **current** head — a GitHub `APPROVED` review on that commit, or a dashboard `/hive decision approve` bound to it — releases the contributor lane's `contributor-lane:workflow-path` fence, so the lane merges a PR editing `.github/workflows/**` / `.github/actions/**` itself once CI, soak and the other gates are clear. Logs `workflow-path fence released by owner approval`, leaves one `hive:workflow-approval` audit comment per head; approval on an older head does not count. Needs the App's **Workflows: Read and write**; without it the merge is refused, the PR is marked `hive:unauthorized` (`merge-workflow-path`) and parks at 090 for a person's click. `false` keeps every workflow-path PR a person's merge ([#14664](https://github.com/hivecommons/hive/issues/14664)). See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
+| `auto_merge.contributor_lane.owner_approval_releases_workflow_fence` | `true` | A hive owner / trusted merger's explicit approval on the **current** head — a GitHub `APPROVED` review on that commit, or a dashboard `/hive decision approve` bound to it — releases the contributor lane's `contributor-lane:workflow-path` fence, so the lane merges a PR editing `.github/workflows/**` / `.github/actions/**` itself once CI, soak and the other gates are clear. Logs `workflow-path fence released by owner approval`, leaves one `hive:workflow-approval` audit comment per head; approval on an older head does not count. An unmarked approval binds to the PR `updated_at` pinned on the hive's first sweep of the head, not to the push, so one typed between the push and that sweep is judged stale and must be typed again ([#14754](https://github.com/hivecommons/hive/issues/14754)). Needs the App's **Workflows: Read and write**; without it the merge is refused, the PR is marked `hive:unauthorized` (`merge-workflow-path`) and parks at 090 for a person's click. `false` keeps every workflow-path PR a person's merge ([#14664](https://github.com/hivecommons/hive/issues/14664)). See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
 | `auto_merge.contributor_lane.repos` | empty = all watched repos | Optional repo allow-list for the contributor-lane tier (bare name or `owner/repo`). |
 | `auto_merge.contributor_lane.exclude_labels` | `hold`, `do-not-merge`, `needs-human`, `blocked`, `needs-rebase` | Labels that keep a PR out of contributor-lane auto-merge (`do-not-merge/*` always excluded). |
 
@@ -763,7 +763,29 @@ between. Two mechanisms close that gap
   already links this issue (claim skipped)* with the PR as evidence
   (reason `open_pr_linked`). A failed listing fails **open**: the
   ledger-backed guards still apply, and a flaky listing must not stall every
-  claim.
+  claim. The gate also refuses an issue the confirming read says is already
+  **closed** (`issue closed`), so an issue closed between enumerations is
+  never dispatched from the cached snapshot.
+- **Webhook claim linking.** A `pull_request` delivery (opened, reopened,
+  edited, synchronize, ready-for-review, draft, closed) is parsed with the
+  same closing-keyword and branch-name grammar and written into the claim
+  ledger the moment it lands
+  ([#14814](https://github.com/hivecommons/hive/issues/14814);
+  `src/pkg/github/webhook_pr_claims.go`): an open PR's claims are recorded
+  (and the cached actionable snapshot re-filtered, so the hub's own agents
+  stop seeing the issue too), a PR edited to stop naming an issue or closed
+  without merging releases it, and a merged PR's claims become merged
+  claims. Before this the link was only made on the full reconcile pass —
+  about an hour apart on a busy spoke — and an owner PR opened with
+  `Fixes #N` in between left #N offerable for that long; the `/contribute`
+  lane handed [#14765](https://github.com/hivecommons/hive/issues/14765) out
+  nine minutes after #14772 (Fixes #14765) opened. The receiver's response
+  lists the issues as `claimed_issues`, the governor logs `webhook PR claims
+  applied to claim ledger` with the PR, state and counts, and the open-PR
+  listing cache for the repo is invalidated so the pre-dispatch guard
+  re-lists on its next call. An `issues` closed delivery (or a PR merged
+  with a closing keyword, which GitHub delivers as the issue's own close)
+  already evicts the issue from the status snapshot the lane offers from.
 - **Duplicate-fix sweep.** Every ~15 minutes (an unstick step, alongside the
   supersession sweep) the hive looks for an open issue two or more open PRs
   close and resolves the pair deterministically. The **earlier-created PR
@@ -916,6 +938,28 @@ services:
 ```
 
 To relate an image to source, compare the `<git-short-sha>` tag published by the same workflow with commits on `v4`, or inspect the Docker workflow run for the commit SHA that produced the digest.
+
+## Scheduled-upgrade progress and history
+
+A hub-instructed upgrade is a short state machine, and both dashboards expose it as data so a window that does not roll is never silent ([#14856](https://github.com/hivecommons/hive/issues/14856)). The hub derives it per hive on `/api/saas/my-hives` (`upgradeState`, `upgradeHistory`), and the spoke derives the same vocabulary locally on `/api/status.upgradeProgress` from its drain latch, self-upgrade marker, last landed outcome and the hub's heartbeat policy (`upgrade_policy.next_window_at`, `upgrade_policy.upgrade_history`).
+
+| State | Meaning | Extra fields |
+| --- | --- | --- |
+| `scheduled` | Nothing in flight. | `nextWindowAt` — the hive's own daily/weekly slot (always, even on `stable`, where `nextUpdateAt` is the channel's promotion ETA instead). |
+| `draining` | The spoke received the instruction and is waiting for kicked agent turns to end. | `drainDeadline`, `drainRemainingS`, `agentsInTurn[]` (`agent`, `elapsedS`), `agentsTotal`; `detail` reads `2/5 agents in turn: reviewer 38m, scanner 12m — proceeds in 40m`. |
+| `pulling` | Instruction delivered; the spoke acknowledged it, or (older build) may be draining without reporting it. | `reason` qualifies a silent spoke or a Deployment-patch fallback. |
+| `rolling` | No heartbeat since the instruction — the pod is restarting onto the target. | |
+| `verifying` | The spoke is back and reports the target commit; the hub has not yet closed the attempt. | |
+| `done` | The most recent attempt landed (shown for 24 h, then `scheduled`). | `endedAt` |
+| `missed` | The attempt or window did not land. | `reason`: drain lapsed, hub restarted, spoke unreachable, image pull failed, abandoned after N attempts, or the schedule gate's hold reason while the window is still open. |
+
+**Drain window.** When the instruction arrives mid-turn the spoke holds the restart for up to `hub.upgrade_drain_timeout_s` (default 45 min) and reports what it is waiting on every heartbeat (`upgrade_drain.turns`). The hub's orphan sweep leaves a draining spoke alone for that window plus a 20-minute grace; the countdown both dashboards show is anchored on the last heartbeat that carried the report.
+
+**History.** The hub persists the last `HIVE_HUB_UPGRADE_HISTORY_MAX` (default 14) attempts and held windows per hive under `/data/saas/upgrade-history/<hive>.json`, so they survive a hub restart. Each row carries `target`, `from`, `trigger` (`scheduled` / `instant` / `manual` / `observed` / `window`), `startedAt`, `endedAt`, `outcome` (`done` / `missed`) and `reason`. A daily window the gate held records exactly one `window` row per calendar day (ET), updated in place if the hold reason changes; a window that fired records the attempt instead. Deleting a hive drops its history.
+
+**Where it shows.** On the hub, the hive card's Version cell gains a pill for the `draining`, `pulling`, `rolling`, `verifying` and `missed` states — `Draining · 2/5 agents in turn: reviewer 38m, scanner 12m · 14m left` — and a `history` badge whose tooltip lists the recent attempts (it turns red and counts the misses when any are present); a quiet `scheduled` row renders as before. On the spoke, `/api/version` carries the same `upgradeProgress` and `upgradeHistory`, and the operator dashboard's version menu shows a **Progress** row with the pill and an **Upgrade history** list; the header chip adds a `Draining 14m` / `Missed window` pill while either state holds.
+
+**Upgrade now (interrupt turns).** While a hive is `draining` or `missed`, its owner sees an *Upgrade now (interrupt turns)* action on the hub card. It is the ordinary upgrade request — `POST /api/saas/hives/{id}/upgrade?interrupt=1`, same owner/admin check as every other hub mutation — with an interrupt flag the hub audit-logs (`audit: hosted hive upgrade requested … interrupt_turns=true`), records on the hive timeline, and hands to the spoke on the next heartbeat (`upgrade_interrupt: true` beside `upgrade_to`). The spoke then skips the drain and restarts at once; the agents listed as in-turn are cut and their owners must re-run those turns. The request is held in hub memory for 2 hours and cleared when the upgrade closes, so a stale interrupt never cuts a later upgrade's turns; a hub restart drops it (the spoke falls back to draining). While it is armed the card shows `interrupt requested` instead of the action.
 
 ## Governor cadence and budget
 
@@ -1115,6 +1159,33 @@ through the hub (`POST /api/selfreport/ingest`, heartbeat bearer). The
 dashboard shows "Self-reports: N open (last: <class> → #NNN)" in the Fleet
 Report panel and the toggle/repo/cap under Settings → Governor →
 "Self-Reported Issues". Full details: [fleet-report.md](fleet-report.md).
+
+## Agent CLI session recycling
+
+Each agent's CLI (Copilot, Claude, …) is a long-lived Node/V8 process whose
+heap grows with every turn and never shrinks while idle. The health tick
+samples the resident memory of the whole process tree under each agent's
+tmux pane and recycles a session that is over budget — but only while the
+agent is idle at its input prompt with no kick pending, so a turn is never
+interrupted. A recycle is an ordinary restart (`last_restart_reason: session
+recycle`): claims, queues and the kick log are preserved exactly as on any
+other restart, and the governor re-kicks on the next cadence. After a recycle
+the same agent is left alone for ten minutes even if it is over budget again.
+
+```yaml
+agents:
+  session_recycle:        # fleet default; on unless enabled: false
+    max_rss_mb: 1536      # recycle an idle session whose process tree exceeds this (MiB)
+    max_age: 6h           # …or whose CLI session is older than this
+    min_idle: 2m          # pane + transcript must be silent this long first
+  scanner:
+    session_recycle:      # optional per-agent override; absent fields inherit the fleet value
+      max_rss_mb: 2048
+```
+
+The sampled value is shown as **Session RSS** (with the session age and a
+`↻N` recycle count) in the agent detail panel. The log line is
+`agent session recycled` with `rss_mb`, `age` and `reason`.
 
 ## GitHub API quota
 

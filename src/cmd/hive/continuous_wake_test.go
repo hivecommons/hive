@@ -211,3 +211,50 @@ func TestRunLoopContinuousWakeBacksOffWhenDueAgentIsSkipped(t *testing.T) {
 		t.Fatalf("evals = %d after the re-kick moved, want 4", len(h.evals))
 	}
 }
+
+// A long cadence cycle leaves another cadence tick ready and a continuous
+// re-kick due. No wake timer is fired: the loop must serve the re-kick first.
+func TestRunLoopContinuousWakeServedBetweenBusyTicks(t *testing.T) {
+	b, log, cancel := newLoopBoot(t, 900, 0)
+	defer cancel()
+	b.cfg.Governor.Modes = map[string]config.ModeConfig{"idle": {Cadences: map[string]config.Cadence{"alpha": "continuous"}}}
+	b.gov = governor.New(b.cfg.Governor, b.cfg.EnabledAgents(), b.logger)
+	b.gov.Evaluate(0, 0, 0, 0)
+	clock := time.Now()
+	b.gov.SeedContinuousNextKickForTest("alpha", clock.Add(time.Minute))
+	gov := &fakeTicker{ch: make(chan time.Time, 1)}
+	wake := newFakeTicker()
+	h := &loopHarness{startupOK: true, pending: []*fakeTicker{gov}, persisted: make(chan struct{}, 8)}
+	deps := h.deps()
+	deps.now = func() time.Time { return clock }
+	deps.newWakeTimer = func(time.Duration) loopTicker { return wake }
+	eval := deps.runEval
+	deps.runEval = func(b *boot, restarted []string, source evalCycleSource) {
+		eval(b, restarted, source)
+		switch len(h.evals) {
+		case 2:
+			clock = clock.Add(10 * time.Minute)
+			gov.ch <- clock // cadence elapsed again while the cycle was busy
+		case 3:
+			// Stop after the competing next cycle, whichever source won.
+			select {
+			case <-gov.ch:
+			default:
+			}
+			cancel()
+		}
+	}
+	done := runLoopAsync(b, deps)
+	<-h.persisted
+	gov.fire()
+	waitDone(t, done)
+	if len(h.sources) != 3 || h.sources[2] != evalSourceCached {
+		t.Fatalf("sources = %v, want initial/cadence followed by cached re-kick", h.sources)
+	}
+	if h.sweeps != 2 || h.rotations != 2 {
+		t.Fatalf("sweeps=%d rotations=%d: continuous wake must omit maintenance", h.sweeps, h.rotations)
+	}
+	if !strings.Contains(log.String(), "continuous re-kick wake: running an early eval cycle") {
+		t.Fatalf("missing continuous wake: %s", log.String())
+	}
+}

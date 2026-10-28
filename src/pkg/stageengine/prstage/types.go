@@ -115,6 +115,9 @@ type Observation struct {
 	Body    string
 	// HeadRepo is the head's owner/repo (differs from Display on a fork).
 	HeadRepo string
+	// HeadRef is the head branch name; with HeadRepo it names the ref an
+	// in-place DCO repair rewrites (hivecommons/hive#14666).
+	HeadRef string
 	// ForwardMerge is set for a sync/top-up head between release lines
 	// (head-ref match only: the title is contributor-controlled).
 	ForwardMerge bool

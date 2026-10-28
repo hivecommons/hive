@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func testLogger() *slog.Logger {
@@ -164,7 +166,7 @@ func TestReviewScopeContract(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := reviewScopeContract(tt.title, tt.body, tt.defaultRepo, tt.runKey, tt.planRef)
+			got := reviewScopeContract(tt.title, tt.body, tt.defaultRepo, tt.runKey, tt.planRef, "", nil)
 			if got != tt.want {
 				t.Fatalf("reviewScopeContract() = %q, want %q", got, tt.want)
 			}
@@ -1035,5 +1037,41 @@ func TestClaimLedgerBackCompatPreThreeSevenSixEight(t *testing.T) {
 	result := &ActionableResult{Issues: IssueResult{Count: 1, Items: []Issue{{Repo: "r", Number: 1}}}}
 	if got := FilterClaimedIssues(result, l, nil, testLogger()); got != 1 {
 		t.Fatalf("upgraded ledger stopped suppressing: got %d, want 1", got)
+	}
+}
+
+func TestReviewScopeContractLinear(t *testing.T) {
+	tests := []struct{ name, title, body, branch, run, want string }{
+		{"body", "", "Fixes ONB-3872", "", "", "linked Linear issue ONB-3872"},
+		{"title", "[ONB-3872] fix", "", "", "", "linked Linear issue ONB-3872"},
+		{"branch", "", "", "feature/onb-3872-fix", "", "linked Linear issue ONB-3872"},
+		{"unknown", "[OTHER-42]", "Closes OTHER-42", "other-42-fix", "", ""},
+		{"precedence", "[ONB-2]", "Part of ONB-1", "onb-3-fix", "", "linked Linear issue ONB-1"},
+		{"github wins", "[ONB-2]", "Fixes #42", "", "", "linked issue org/repo#42 from the PR closing keyword"},
+		{"lease wins", "[ONB-2]", "", "", "run", "lease task Hive-Run run"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := reviewScopeContract(tt.title, tt.body, "org/repo", tt.run, "", tt.branch, []string{"ONB"})
+			if got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLinearScopeTeamsByRepo(t *testing.T) {
+	c := &Client{}
+	c.SetLinearScopeTeams([]config.LinearTeamSourceConfig{
+		{Key: "ONB", Repo: "org/repo", Projects: []config.LinearProjectSourceConfig{{Repo: "org/project"}}},
+		{Key: "OTHER", Repo: "org/other"},
+	})
+	for _, repo := range []string{"org/repo", "ORG/PROJECT"} {
+		if got := reviewScopeContract("[onb-7]", "", repo, "", "", "", c.linearScopeTeams(repo)); got != "linked Linear issue ONB-7" {
+			t.Fatalf("%s: got %q", repo, got)
+		}
+	}
+	if got := reviewScopeContract("[ONB-7]", "", "org/other", "", "", "", c.linearScopeTeams("org/other")); got != "" {
+		t.Fatalf("other repo: got %q", got)
 	}
 }

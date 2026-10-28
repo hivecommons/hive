@@ -72,6 +72,7 @@ func TestStageTrackerRegressedPillExplainsItself(t *testing.T) {
 		"function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }",
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_PRIORITY"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
+		jsConstLine(t, html, "STAGE_TRACKER_DRAFT_TIP"),
 		jsFunc(t, html, "stageTrackerStageWord"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
 		stageTrackerManualMergeJS(t, html),

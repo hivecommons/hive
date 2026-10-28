@@ -37,8 +37,12 @@ func (s *Server) registerGitHubWebhookRoutes() {
 // events invalidate the matching cached PR state and mark it dirty for the
 // next eval cycle, queue a targeted re-read of the named PR or issue for the
 // activity monitor (webhook_tracker_refresh.go), and every delivery for a
-// managed repo refreshes webhook health. A `pull_request` opened/synchronize/
-// reopened delivery also hands the PR to the sentinel (#13379), and the
+// managed repo refreshes webhook health. A `pull_request` delivery records
+// the issues the PR claims (`Fixes #N`, branch name, references) into the
+// duplicate-PR claim ledger on the event (hivecommons/hive#14814), so the
+// contribute lane stops offering them without waiting for the reconcile
+// pass; opened/synchronize/reopened also hands the PR to the sentinel
+// (#13379), and the
 // organization-scoped `projects_v2_item` delivery patches the GitHub
 // Projects work source cache. Deliveries for repositories this hive does not
 // manage are ignored.
@@ -106,6 +110,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	// its own sample (WriterForgeState) when it applies the item patch.
 	forgestate.RecordEventToPatch(r.Context(), res.Repo, forgestate.WriterCacheInvalidate, receivedAt, time.Now())
 	resp := map[string]any{"status": "ok", "event": event, "repo": res.Repo, "invalidated": res.Invalidated}
+	if len(res.ClaimedIssues) > 0 {
+		resp["claimed_issues"] = res.ClaimedIssues
+	}
 	if n := s.scheduleWebhookTrackerRefresh(res, r.Header.Get("X-GitHub-Delivery")); n > 0 {
 		resp["tracker_refresh"] = n
 	}

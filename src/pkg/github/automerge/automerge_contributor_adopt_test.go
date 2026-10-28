@@ -147,6 +147,16 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ref": body.Ref, "object": map[string]string{"sha": body.SHA}})
 		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/git/ref/"):
+		ref := "refs/" + strings.TrimPrefix(path, "/repos/acme/widget/git/ref/")
+		sha, ok := a.refs[ref]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Not Found"})
+			return true
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ref": ref, "object": map[string]string{"sha": sha}})
+		return true
 	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/acme/widget/git/refs/"):
 		var body struct {
 			SHA string `json:"sha"`
@@ -511,8 +521,12 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 		t.Fatal("unknown unsigned commit ownership must re-home")
 	}
 	obs.Detail.DCOUnsignedHive = 2
+	if !adoptionNeedsDCORehome(obs, true) {
+		t.Fatal("a fork head must re-home even when only hive-authored commits are unsigned: the engine cannot rewrite a fork branch")
+	}
+	obs.Owner, obs.Repo, obs.HeadRepo = "acme", "widget", "acme/widget"
 	if adoptionNeedsDCORehome(obs, true) {
-		t.Fatal("branch push permission with only hive-authored unsigned commits allows in-place repair")
+		t.Fatal("branch push permission with only hive-authored unsigned commits on a base-repo head allows in-place repair")
 	}
 	if !adoptionNeedsDCORehome(obs, false) {
 		t.Fatal("hive-authored unsigned commits without branch push permission must still re-home")
@@ -520,6 +534,13 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 	inPlace := stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeInPlace}
 	if adoptedHeadNeedsDCORehome(obs, inPlace, true) {
 		t.Fatal("already adopted in place with App-owned unsigned commits and push access stays in place")
+	}
+	if !adoptedHeadNeedsDCORepair(obs, inPlace, true) {
+		t.Fatal("that head is the in-place repair's job")
+	}
+	obs.HeadRepo = ""
+	if !adoptedHeadNeedsDCORehome(obs, inPlace, true) {
+		t.Fatal("already adopted in place on a fork must re-home")
 	}
 	if !adoptedHeadNeedsDCORehome(obs, inPlace, false) {
 		t.Fatal("already adopted in place without push access must re-home")
@@ -1151,32 +1172,186 @@ func TestAlreadyAdoptedInPlaceRehomeIsTriedOncePerHead(t *testing.T) {
 	}
 }
 
-func TestAlreadyAdoptedInPlaceAppAuthoredDCOFailureStaysInPlace(t *testing.T) {
+// hiveUnsignedFixture is a signed contributor commit followed by an unsigned
+// commit the hive's fix lane pushed (hivecommons/hive#14666: the inherited
+// unsigned commit on an adopted PR is the hive's own more often than not).
+func hiveUnsignedFixture() []stageCommitFixture {
+	return []stageCommitFixture{
+		{message: "feat: signed contributor\n\nSigned-off-by: Mallory <mallory@example.com>", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"},
+		{message: "fix: unsigned hive fixer", authorLogin: testHiveAppBotLogin, authorName: "architect", authorEmail: "12345+hive[bot]@users.noreply.github.com"},
+	}
+}
+
+// The App's REST token cannot rewrite a fork branch, so an in-place adoption
+// whose only unsigned commits are the hive's still re-homes, with the
+// commits re-signed, rather than holding at 074 for a rewrite nobody runs.
+func TestAlreadyAdoptedInPlaceAppAuthoredDCOFailureOnForkRehomesResigned(t *testing.T) {
 	p := adoptPolicy()
 	p.AdoptInPlace = true
 	p.DCORequired = func(string) (bool, bool) { return true, true }
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
 	defer done()
 	h.adopt.allowMaintainerEdits(7, true)
-	h.api.commitDetails = map[int][]stageCommitFixture{7: {
-		{message: "feat: signed contributor\n\nSigned-off-by: Mallory <mallory@example.com>", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"},
-		{message: "fix: unsigned hive fixer", authorLogin: testHiveAppBotLogin, authorName: "architect", authorEmail: "12345+hive[bot]@users.noreply.github.com"},
-	}}
-	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	h.api.commitDetails = map[int][]stageCommitFixture{7: hiveUnsignedFixture()}
+	h.observe(adoptPR(7, "c1"), "check-failing:DCO")
 	key := stageKey("acme", "widget", 7)
 	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.DCOUnsigned != 1 || rec.DCOUnsignedHive != 1 {
 		t.Fatalf("cached split: %+v", rec)
 	}
-	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "c1", AdoptReasonOffline, h.clock.at)
 
 	h.api.reset()
 	h.clock.advance(time.Minute)
-	res := h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
-	if res.Comments != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || len(h.adopt.prEdits) != 0 {
-		t.Fatalf("App-authored unsigned commits should stay in-place for rewrite: res=%+v pulls=%v refs=%v edits=%v comments=%v", res, h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
+	h.observe(adoptPR(7, "c1", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 2 {
+		t.Fatalf("re-signed commits=%v", h.adopt.newCommits)
 	}
-	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || rec.AdoptedBy != 0 {
-		t.Fatalf("record should remain in-place adoption: %+v", rec)
+	msg, _ := h.adopt.newCommits[1]["message"].(string)
+	if !strings.Contains(msg, "fix: unsigned hive fixer") || !signedOffByRE.MatchString(msg) {
+		t.Fatalf("hive commit not re-signed: %q", msg)
+	}
+	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "signed2" {
+		t.Fatalf("rehome branch sha=%q, want the re-signed tip; refs=%v", got, h.adopt.refs)
+	}
+	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 {
+		t.Fatalf("fork head should re-home: pulls=%v edits=%v", h.adopt.pulls, h.adopt.prEdits)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonDCORehome {
+		t.Fatalf("record should be a dco-rehome supersession: %+v", rec)
+	}
+}
+
+// basePR is adoptPR with its head in the base repository on branch fix/widget.
+func basePR(number int, head string, labels ...string) *gh.PullRequest {
+	pr := adoptPR(number, head, labels...)
+	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("acme/widget")}
+	pr.Head.Ref = gh.Ptr("fix/widget")
+	return pr
+}
+
+// A base-repo head whose unsigned commits are all the hive's is rewritten in
+// place: the commits are replayed with the App's sign-off, the PR branch is
+// force-updated to the new tip, no superseding PR opens, the adoption stays
+// in place and the push is recorded as the hive's. The rewrite runs once per
+// head.
+func TestAlreadyAdoptedInPlaceAppAuthoredDCOFailureInBaseRepoResignsInPlace(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.api.commitDetails = map[int][]stageCommitFixture{7: hiveUnsignedFixture()}
+	h.adopt.refs["refs/heads/fix/widget"] = "c1"
+	h.observe(basePR(7, "c1"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	store.MarkAdoptedInPlace(key, "c1", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	labels := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel}
+	res := h.observe(basePR(7, "c1", labels...), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 2 {
+		t.Fatalf("re-signed commits=%v", h.adopt.newCommits)
+	}
+	first, _ := h.adopt.newCommits[0]["message"].(string)
+	second, _ := h.adopt.newCommits[1]["message"].(string)
+	if strings.Count(first, "Signed-off-by:") != 1 || !strings.Contains(second, "fix: unsigned hive fixer") || !signedOffByRE.MatchString(second) {
+		t.Fatalf("replay must keep the signed commit and sign the hive's: %q / %q", first, second)
+	}
+	if got := h.adopt.refs["refs/heads/fix/widget"]; got != "signed2" || len(h.adopt.refUpdates) != 1 {
+		t.Fatalf("PR branch sha=%q updates=%v, want force-update to the re-signed tip", got, h.adopt.refUpdates)
+	}
+	if res.Comments != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
+		t.Fatalf("in-place repair must not supersede or comment: res=%+v pulls=%v edits=%v comments=%v", res, h.adopt.pulls, h.adopt.prEdits, h.api.comments)
+	}
+	rec, _ := store.Get(key)
+	if !rec.AdoptedInPlace() || rec.AdoptedBy != 0 || !rec.HivePushedHead("signed2") || !rec.DCORepairAttempted("c1") {
+		t.Fatalf("record should stay in place, own the new head and remember the attempt: %+v", rec)
+	}
+
+	// The same head is not rewritten twice while the lane re-reads it.
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(basePR(7, "c1", labels...), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 2 || len(h.adopt.refUpdates) != 1 {
+		t.Fatalf("repair retried on the same head: commits=%d updates=%v", len(h.adopt.newCommits), h.adopt.refUpdates)
+	}
+}
+
+// The branch is re-read before the force-update: a head that moved since
+// the lane observed it is left alone, the attempt is recorded, and the error
+// surfaces so the sweep re-evaluates the new head.
+func TestInPlaceDCORepairRefusesWhenHeadMoved(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.api.commitDetails = map[int][]stageCommitFixture{7: hiveUnsignedFixture()}
+	h.adopt.refs["refs/heads/fix/widget"] = "bbb"
+	h.observe(basePR(7, "c1"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "c1", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	labels := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel}
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", basePR(7, "c1", labels...), "check-failing:DCO", false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("ApplyStageLabels should surface the refused rewrite")
+	}
+	if len(h.adopt.newCommits) != 0 || len(h.adopt.refUpdates) != 0 || h.adopt.refs["refs/heads/fix/widget"] != "bbb" {
+		t.Fatalf("moved head must not be rewritten: commits=%v updates=%v refs=%v", h.adopt.newCommits, h.adopt.refUpdates, h.adopt.refs)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || !rec.DCORepairAttempted("c1") {
+		t.Fatalf("attempt not recorded or adoption lost: %+v", rec)
+	}
+}
+
+// A base-sync merge commit on the adopted head (hivecommons/hive#14500's
+// recovery) no longer blocks the re-sign: it replays with its tree and both
+// parents, the in-PR parent mapped to its rewritten counterpart, and keeps
+// its message (the DCO checks exempt merges).
+func TestDCORehomeReplaysMergeCommitWithMappedParents(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	fixture := hiveUnsignedFixture()
+	fixture = append(fixture, stageCommitFixture{message: "Merge branch 'v5' into fix/widget", authorLogin: testHiveAppBotLogin, authorName: "hive[bot]", authorEmail: "12345+hive[bot]@users.noreply.github.com", parents: []string{"c1", "base"}})
+	h.api.commitDetails = map[int][]stageCommitFixture{7: fixture}
+	h.observe(adoptPR(7, "c2"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "c2", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "c2", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.newCommits) != 3 {
+		t.Fatalf("replayed commits=%v", h.adopt.newCommits)
+	}
+	merge := h.adopt.newCommits[2]
+	msg, _ := merge["message"].(string)
+	if signedOffByRE.MatchString(msg) {
+		t.Fatalf("merge commit must keep its message unsigned: %q", msg)
+	}
+	parents, _ := merge["parents"].([]any)
+	if len(parents) != 2 || parents[0] != "signed2" || parents[1] != "base" {
+		t.Fatalf("merge parents=%v, want [signed2 base]", parents)
+	}
+	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "signed3" {
+		t.Fatalf("rehome branch sha=%q, want the replayed merge tip; refs=%v", got, h.adopt.refs)
+	}
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("pulls=%v", h.adopt.pulls)
+	}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	if !strings.Contains(body, "re-signed as `signed3`") || strings.Contains(body, "**DCO repair required:**") {
+		t.Fatalf("body must name the re-signed tip and omit the manual DCO block:\n%s", body)
 	}
 }
 

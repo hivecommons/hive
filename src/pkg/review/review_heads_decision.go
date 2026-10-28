@@ -123,13 +123,26 @@ func aggregateWithHeads(reports []PerspectiveReport, opts AggregateOptions) Aggr
 		return agg
 	}
 
+	// Historical reports remain evidence, but only configured perspectives can
+	// receive new head dispatches or participate in the current decision.
+	allHeads := heads
+	configured := map[Perspective]bool{}
+	for _, p := range opts.Perspectives.List() {
+		configured[p] = true
+	}
+	heads = nil
+	for _, r := range allHeads {
+		if configured[r.Perspective] {
+			heads = append(heads, r)
+		}
+	}
 	settled, waiting := headsSettled(heads, final, opts.ExpectedHeads, missing)
 	complete := len(settledPerspectives(heads, final)) >= requiredPerspectiveCount(opts.MaxPerspectivesPerPR, opts.Perspectives.Len())
-	if settled && complete && headsClean(heads) && plainClean(final) {
+	if settled && complete && headsClean(allHeads) && plainClean(final) {
 		agg := aggregatePlainReports(append(append([]PerspectiveReport(nil), final...), heads...), opts)
 		if agg.Verdict == VerdictApprove {
 			agg.DecisionSkipped = true
-			attachHeadEvidence(&agg, heads, final, missing)
+			attachHeadEvidence(&agg, allHeads, final, missing)
 			return agg
 		}
 	}
@@ -152,7 +165,7 @@ func aggregateWithHeads(reports []PerspectiveReport, opts AggregateOptions) Aggr
 		agg.AwaitingDecision = true
 		agg.Reasons = []string{"awaiting the decision step to reconcile the review heads"}
 	}
-	attachHeadEvidence(&agg, heads, final, missing)
+	attachHeadEvidence(&agg, allHeads, final, missing)
 	return agg
 }
 

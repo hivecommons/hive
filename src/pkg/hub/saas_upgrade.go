@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // hubUpgradeDebounce is the minimum gap between hub self-upgrade rollout
@@ -610,10 +612,29 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	// arm) so a LATER refusal for this same target is reported afresh rather than
 	// suppressed by a stale entry.
 	s.forgetUncollectibleUpgrade(id)
+	// "Upgrade now (interrupt turns)": the owner accepts cutting whatever the
+	// agents are mid-way through. Recorded separately from the arm so the
+	// audit trail says who chose to interrupt, and delivered on the next
+	// heartbeat alongside UpgradeTo (#14950).
+	interrupt := upgradeInterruptRequested(r)
+	if interrupt {
+		s.upgradeInterrupts.arm(id, latestSHA, username, time.Now())
+	} else {
+		s.upgradeInterrupts.clear(id)
+	}
 	s.logger.Info("audit: hosted hive upgrade requested",
-		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode)
-	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard ("+mode+")", username)
+		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode, "interrupt_turns", interrupt)
+	detail := "upgrade requested from the hub dashboard (" + mode + ")"
+	if interrupt {
+		detail = "upgrade requested from the hub dashboard (" + mode + ", interrupting in-flight agent turns)"
+	}
+	s.recordTimeline(id, TimelineUpgradeStarted, detail, username)
+	s.noteUpgradeStarted(id, currentSHA, latestSHA, spoke.UpgradeTriggerManual)
 	w.Header().Set("Content-Type", "application/json")
+	if interrupt {
+		_, _ = w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `","interrupt":true}`))
+		return
+	}
 	_, _ = w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `"}`))
 }
 
@@ -1086,6 +1107,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		holdScheduled := func(reason string) {
 			if h.AutoUpgrade && scheduledUpgradeWindowOpen(h.AutoUpgradeMode, h.AutoUpgradeLastFired, holdNow) {
 				s.noteScheduledUpgradeHold(&h, reason, holdNow)
+				s.noteUpgradeWindowMissed(h.ID, currentSHA, reason, holdNow)
 			}
 		}
 		if alreadyUpgrading {
@@ -1251,17 +1273,20 @@ func (s *HubServer) triggerAutoUpgrades() {
 					s.mu.Lock()
 					for i := range s.registry.Hives {
 						if s.registry.Hives[i].ID == h.ID {
-							// Route through beginUpgrade so the start time
-							// SURVIVES a same-target re-arm (the crash-loop retry
-							// case): re-arming delivery for the same target must
-							// not reset the elapsed clock, or a thrashing upgrade
-							// never crosses staleUpgradeTimeout and the stuck-
-							// upgrade alert never fires. A genuinely advanced
-							// target (recoverTarget != old UpgradeTarget) is a new
-							// upgrade and DOES get a fresh clock. A lost/zero start
-							// is re-stamped either way, which self-heals the
-							// ibm-alchemy zero-timestamp wedge.
+							// Recovery continues the existing attempt, even when a
+							// channel promotion advances its target. Adopt the target
+							// before beginUpgrade so it preserves the original clock:
+							// promotions must not restart the silent-drain hold or
+							// postpone stuck-upgrade alerting. A lost/zero clock is
+							// still stamped by beginUpgrade.
+							s.registry.Hives[i].UpgradeTarget = recoverTarget
 							s.beginUpgrade(i, recoverTarget)
+							if recoverTarget != upgradeTarget {
+								// The promoted target still causes a rollout. Record it
+								// separately so its restart is not counted as a crash,
+								// without resetting the attempt's hold clock.
+								s.alerts.noteUpgrade(h.ID, time.Now())
+							}
 							break
 						}
 					}
@@ -1530,6 +1555,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 			"schedule", effectiveAutoUpgradeSchedule(h.AutoUpgradeMode, reach.Channel), "reason", decision.Reason)
 		s.recordTimeline(h.ID, TimelineUpgradeStarted,
 			fmt.Sprintf("auto-upgrade triggered on %s: %s → %s", branch, orDash(currentSHA), latestSHA), "auto-upgrade")
+		s.noteUpgradeStarted(h.ID, currentSHA, latestSHA, upgradeTriggerForSchedule(h.AutoUpgradeMode, reach.Channel))
 		s.mu.Lock()
 		for i := range s.registry.Hives {
 			if s.registry.Hives[i].ID == h.ID {

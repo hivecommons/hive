@@ -6,6 +6,7 @@ type (
 	AgentBobConfig             = cruxconfig.AgentBobConfig
 	AgentConfig                = cruxconfig.AgentConfig
 	AgentRuntimeConfig         = cruxconfig.AgentRuntimeConfig
+	SessionRecycleConfig       = cruxconfig.SessionRecycleConfig
 	AgentRuntimeGovernorConfig = cruxconfig.AgentRuntimeGovernorConfig
 	AgentSandboxConfig         = cruxconfig.AgentSandboxConfig
 	AgentSandboxOverride       = cruxconfig.AgentSandboxOverride

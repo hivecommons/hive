@@ -129,6 +129,7 @@ type reviewEvidenceUpdate struct {
 	verdicts []evidence.Verdict
 	posted   []evidence.PostedReview
 	sentinel []evidence.SentinelFinding
+	actions  []evidence.Action
 	ci       *evidence.CI
 	signals  review.ConfidenceSignals
 }
@@ -335,6 +336,12 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 			changed = true
 		}
 	}
+	for _, a := range u.actions {
+		if !containsEvidenceAction(b.HumanActions, a) {
+			b.HumanActions = append(b.HumanActions, a)
+			changed = true
+		}
+	}
 	if u.ci != nil && b.Merge == nil &&
 		(b.CI.CapturedAt.IsZero() || b.CI.Status != u.ci.Status || !sameEvidenceChecks(b.CI.Checks, u.ci.Checks)) {
 		b.CI = *u.ci
@@ -487,6 +494,46 @@ func (c *Client) recordReviewEvidenceSentinel(repo string, pr *gh.PullRequest, f
 	}
 	c.upsertReviewEvidence(owner+"/"+name, pr.GetNumber(), head, u, settings.Policy, key,
 		func() *gh.PullRequest { return pr }, now.UTC())
+}
+
+// RecordReviewEvidenceSentinelAck records that actor approved head knowing
+// the sentinel findings the bundle holds for it (hivecommons/hive: owner
+// Approve on a sentinel-flagged PR). Readers that alert on bundle findings
+// (the stage tracker's sentinel_alert) read the acknowledgment as the human
+// review the alert asked for; the findings themselves stay on record. It
+// returns true when an acknowledgment was written or already stood, and
+// false when the head has no bundle or no sentinel findings — there is then
+// nothing to acknowledge. Like every evidence write, failures are logged and
+// swallowed: the approval that prompted it is already on GitHub.
+func (c *Client) RecordReviewEvidenceSentinelAck(repo string, number int, head, actor string, now time.Time) bool {
+	settings, ok := c.reviewEvidenceSettings(repo)
+	head, actor = strings.TrimSpace(head), strings.TrimSpace(actor)
+	if !ok || head == "" || actor == "" || number <= 0 {
+		return false
+	}
+	owner, name := c.splitRepo(strings.TrimSpace(repo))
+	full := owner + "/" + name
+	b, err := LoadReviewEvidence(ReviewEvidencePath("", full, number, head))
+	if err != nil || b == nil || len(b.Sentinel) == 0 {
+		return false
+	}
+	if b.SentinelAcknowledgedBy() != "" {
+		return true
+	}
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
+			slog.String("error", err.Error()))
+		key = nil
+	}
+	u := reviewEvidenceUpdate{actions: []evidence.Action{{
+		Actor:  actor,
+		Kind:   evidence.ActionSentinelAcknowledged,
+		Detail: "approved from the Hive dashboard with the sentinel findings shown",
+		At:     now.UTC(),
+	}}}
+	c.upsertReviewEvidence(full, number, head, u, settings.Policy, key, func() *gh.PullRequest { return nil }, now.UTC())
+	return true
 }
 
 // evidenceSentinelFinding maps a sentinel finding onto the bundle schema.

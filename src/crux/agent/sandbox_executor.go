@@ -31,6 +31,9 @@ const (
 	sandboxPRBodyRelPath  = ".hive/pr-body.md"
 	sandboxPRTitleMaxLen  = 200
 	sandboxPRBodyMaxLen   = 60000
+	// sandboxWithheldReasonMax bounds the report summary quoted in a
+	// publish-gate refusal, which lands in the run record and the audit log.
+	sandboxWithheldReasonMax = 300
 )
 
 type sandboxCommandRunner interface {
@@ -75,13 +78,21 @@ type configSnapshot struct {
 }
 
 type SandboxKickResult struct {
-	Workspace      string
-	Branch         string
-	BaseSHA        string
-	HeadSHA        string
-	CommitCount    int
-	ReportPath     string
-	Report         *outputschema.AgentReport
+	Workspace   string
+	Branch      string
+	BaseSHA     string
+	HeadSHA     string
+	CommitCount int
+	ReportPath  string
+	Report      *outputschema.AgentReport
+	// ReportStatus is the agent's own verdict from the report's status field,
+	// read leniently so a report that fails schema validation can still say
+	// "failed" and keep its commits from being published.
+	ReportStatus outputschema.RunStatus
+	// PRWithheld names why commits the run left were NOT pushed or turned
+	// into a PR (the agent reported failure, or the sandbox exited non-zero).
+	// Empty when nothing was withheld.
+	PRWithheld     string
 	TranscriptPath string
 	Sandbox        sandbox.Result
 	Broker         *pushbroker.Result
@@ -175,7 +186,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	}
 	res.TranscriptPath = filepath.Join(workspace, sandboxTranscriptRelPath)
 	_ = writeTranscript(res.TranscriptPath, sres)
-	res.ReportPath, res.Report = collectAgentReport(workspace)
+	res.ReportPath, res.Report, res.ReportStatus = collectAgentReport(workspace)
 	headSHA, count, commitErr := e.commitsSince(ctx, workspace, baseSHA)
 	res.HeadSHA, res.CommitCount = headSHA, count
 	if runErr != nil {
@@ -185,6 +196,20 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	if commitErr != nil {
 		res.Error = commitErr.Error()
 		return res, commitErr
+	}
+	// Publish gate: commits alone do not earn a PR. The agent's own verdict
+	// (report status failed/blocked) or a non-zero sandbox exit means the
+	// work was not proven, and a PR that only fails CI is worse than none.
+	if reason := sandboxPublishWithheld(res); reason != "" {
+		if count > 0 {
+			res.PRWithheld = reason
+			err := fmt.Errorf("%w: %s; %d commit(s) not pushed, no PR opened", ErrSandboxRunReportedFailure, reason, count)
+			res.Error = err.Error()
+			return res, err
+		}
+		err := fmt.Errorf("%w: %s", ErrSandboxRunReportedFailure, reason)
+		res.Error = err.Error()
+		return res, err
 	}
 	if count == 0 {
 		return res, nil
@@ -532,7 +557,34 @@ func writeTranscript(path string, res sandbox.Result) error {
 	return os.WriteFile(path, []byte(b.String()), 0o660)
 }
 
-func collectAgentReport(workspace string) (string, *outputschema.AgentReport) {
+// ErrSandboxRunReportedFailure wraps every publish-gate refusal so callers
+// can tell "the agent said its run failed" from an infrastructure error.
+var ErrSandboxRunReportedFailure = errors.New("sandbox run reported failure")
+
+// sandboxPublishWithheld returns why the run's commits must not be published,
+// or "" when the gate is open. The order matters for the message an operator
+// reads: the agent's own words first, the exit code second.
+func sandboxPublishWithheld(res SandboxKickResult) string {
+	if res.ReportStatus.PublishBlocked() {
+		reason := "agent report status=" + string(res.ReportStatus)
+		if res.Report != nil && strings.TrimSpace(res.Report.Summary) != "" {
+			reason += ": " + truncateRunes(strings.TrimSpace(res.Report.Summary), sandboxWithheldReasonMax)
+		}
+		return reason
+	}
+	if res.Sandbox.ExitCode != 0 {
+		return fmt.Sprintf("sandbox exited %d", res.Sandbox.ExitCode)
+	}
+	return ""
+}
+
+// collectAgentReport finds the agent's report in the workspace. The third
+// value is the report's status: from the validated report when it parses,
+// else read straight from the JSON so an agent that wrote
+// {"status":"failed"} with an otherwise malformed report still stops the
+// publish gate — the one field that must survive a sloppy report is the one
+// that says "do not ship this".
+func collectAgentReport(workspace string) (string, *outputschema.AgentReport, outputschema.RunStatus) {
 	candidates := []string{
 		filepath.Join(workspace, ".hive", "agent-report.json"),
 		filepath.Join(workspace, "agent-report.json"),
@@ -555,14 +607,16 @@ func collectAgentReport(workspace string) (string, *outputschema.AgentReport) {
 		}
 		report, err := outputschema.Validate(data)
 		if err == nil {
-			return path, report
+			return path, report, report.Status
 		}
-		var raw map[string]any
+		var raw struct {
+			Status string `json:"status"`
+		}
 		if json.Unmarshal(data, &raw) == nil {
-			return path, nil
+			return path, nil, outputschema.RunStatus(strings.ToLower(strings.TrimSpace(raw.Status)))
 		}
 	}
-	return "", nil
+	return "", nil, ""
 }
 
 func (e *SandboxExecutor) launcher() sandbox.Launcher {

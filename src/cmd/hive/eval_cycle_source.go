@@ -93,21 +93,30 @@ func (p *snapshotPatcher) apply(snaps []github.WebhookItemSnapshot) int {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	cur := p.target.Load()
-	if cur == nil {
-		return 0
-	}
-	next := cur.Clone()
+	var next *github.ActionableResult
 	applied := 0
-	for _, snap := range snaps {
-		if next.ApplyWebhookItem(snap) {
-			applied++
+	// Compare-and-swap, not Store: a reconcile pass publishing between the
+	// load and the store (publishEnumeratedSnapshot) must not be overwritten
+	// by a patch of the snapshot it replaced.
+	for {
+		cur := p.target.Load()
+		if cur == nil {
+			return 0
+		}
+		next = cur.Clone()
+		applied = 0
+		for _, snap := range snaps {
+			if next.ApplyWebhookItem(snap) {
+				applied++
+			}
+		}
+		if applied == 0 {
+			return 0
+		}
+		if p.target.CompareAndSwap(cur, next) {
+			break
 		}
 	}
-	if applied == 0 {
-		return 0
-	}
-	p.target.Store(next)
 	if p.logger != nil {
 		p.logger.Info("webhook re-read patched the cached actionable snapshot",
 			"items", applied, "issues", next.Issues.Count, "prs", next.PRs.Count, "hold", next.Hold.Total,
@@ -126,6 +135,36 @@ func (b *boot) applyWebhookItemsFunc() func([]github.WebhookItemSnapshot) {
 		if b.evalLoop != nil {
 			b.snapshotPatch.onPatch = b.evalLoop.notePatch
 		}
+		// A `pull_request` delivery's issue claims land in the ledger and
+		// drop out of this snapshot on the event (hivecommons/hive#14814).
+		github.SetPRClaimsHook(prClaimsHookFor(func() *github.ClaimLedger { return getClaimLedger(b.logger) }, b.snapshotPatch, b.logger, b.closeOnMergeForDelivery))
 	}
 	return func(snaps []github.WebhookItemSnapshot) { b.snapshotPatch.apply(snaps) }
+}
+
+// publishEnumeratedSnapshot makes a reconcile pass's result the governor's
+// stored snapshot. Webhook re-reads that patched the previous snapshot after
+// this enumeration started are replayed onto the result first
+// (ActionableResult.ReplayWebhookPatches): the enumeration's copy of such an
+// item predates the read, so storing it unpatched would roll the item back
+// — the hive's own `blocked` removal, re-read within seconds, showed as
+// still blocked until the next pass (hivecommons/hive#14952). Published by
+// compare-and-swap so a patch landing meanwhile is retried on top.
+func publishEnumeratedSnapshot(last *atomic.Pointer[github.ActionableResult], next *github.ActionableResult, logger *slog.Logger) {
+	if last == nil || next == nil {
+		return
+	}
+	for {
+		prev := last.Load()
+		replayed := next.ReplayWebhookPatches(prev)
+		if !last.CompareAndSwap(prev, next) {
+			continue
+		}
+		if replayed > 0 && logger != nil {
+			logger.Info("reconcile pass replayed webhook re-reads newer than its listing onto the published snapshot",
+				"items", replayed, "issues", next.Issues.Count, "prs", next.PRs.Count,
+				"snapshot_age", time.Since(next.GeneratedAt).Round(time.Second).String())
+		}
+		return
+	}
 }

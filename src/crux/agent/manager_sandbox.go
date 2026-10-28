@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -161,7 +162,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		prClient = m.sandboxPRClient
 		pushEnabled = true
 	}
-	go m.runSandboxKick(runCtx, agent.Name, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, mutationBoundary)
+	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, mutationBoundary)
 	return nil
 }
 
@@ -189,7 +190,8 @@ func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter 
 	}
 }
 
-func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, mutationBoundary effects.Boundary) {
+func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, mutationBoundary effects.Boundary) {
+	started := time.Now()
 	exec := &SandboxExecutor{
 		Launcher:    launcher,
 		Runner:      runner,
@@ -201,6 +203,26 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 		Logger:      m.logger,
 	}
 	res, err := exec.Run(ctx, spec)
+	ended := time.Now()
+	// The run record is written to disk after m.mu is released (defers run
+	// LIFO), so a slow volume never stalls every status reader.
+	var pending *SandboxRunHistoryEntry
+	var persist func(string, SandboxRunHistoryEntry) error
+	var logArchive *sandboxKickLogArchive
+	workDir := ""
+	defer func() {
+		// The log first: it is what an operator opens to understand the run
+		// record, and the record names it by id.
+		if perr := m.writeSandboxKickLog(name, logArchive); perr != nil {
+			m.logger.Warn("sandbox kick log not archived", "name", name, "error", perr)
+		}
+		if pending == nil {
+			return
+		}
+		if perr := persist(workDir, *pending); perr != nil {
+			m.logger.Warn("sandbox run record not persisted", "name", name, "error", perr)
+		}
+	}()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	agent, ok := m.agents[name]
@@ -208,6 +230,29 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 		return
 	}
 	agent.cancel = nil
+	// The run record is what a sandboxed agent's health and activity derive
+	// from: there is no session to probe between kicks. Recorded on every
+	// outcome but an operator cancel, and persisted so a pod roll does not
+	// turn yesterday's successful run into "never ran".
+	if err == nil || !agent.sandboxResumeAfterCancel {
+		run := buildSandboxRun(runtime, started, ended, res, err)
+		logArchive = m.prepareSandboxKickLogLocked(agent, runtime, started, res, err)
+		if logArchive != nil {
+			run.LogID = logArchive.id
+		}
+		agent.SandboxLastRun = &run
+		agent.KickOutcome = KickOutcome{Kind: KickOutcomeEnded, At: ended, KickAt: started}
+		if agent.LastKick != nil {
+			agent.KickOutcome.KickAt = *agent.LastKick
+		}
+		entry := SandboxRunHistoryEntry{Agent: name, Backend: effectiveBackend(agent), Model: agent.Config.Model, Run: run}
+		pending = &entry
+		workDir = m.workDir
+		persist = m.sandboxRunPersister
+		if persist == nil {
+			persist = persistSandboxRun
+		}
+	}
 	if err != nil {
 		if agent.sandboxResumeAfterCancel {
 			agent.sandboxResumeAfterCancel = false
@@ -227,6 +272,9 @@ func (m *Manager) runSandboxKick(ctx context.Context, name string, spec SandboxK
 		agent.LastError = err.Error()
 		if agent.OutputBuffer != nil {
 			agent.OutputBuffer.Write("sandbox kick failed: " + err.Error())
+		}
+		if errors.Is(err, ErrSandboxRunReportedFailure) {
+			m.auditSandbox(name, "sandbox_pr_withheld", fmt.Sprintf("workspace=%s commits=%d branch=%s reason=%s", res.Workspace, res.CommitCount, res.Branch, res.PRWithheld))
 		}
 		m.auditSandbox(name, "sandbox_failed", err.Error())
 		if res.Broker != nil && res.Broker.Error != "" {

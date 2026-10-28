@@ -479,8 +479,15 @@ change labels, close issues, open pull requests, or dispatch workflows.
    #14613. Use `add_comment` with that issue number. If that issue is closed or
    missing, search this repository for an open issue with that exact title and
    comment there. If none exists, use `create_issue` with the title "Weekly
-   competitor report" and the report as the body, and skip the comment. Only
-   one comment or one new issue per run for the report itself.
+   competitor report", the label `hive/tracking`, and a body that opens with
+   the line `<!-- hive:tracking -->`, then this paragraph verbatim: "Tracking
+   issue for the weekly competitor and SWOT report. Each run appends its
+   report here as a comment. Keep this issue open. If it is closed, the
+   workflow creates a new tracking issue with the same title.", then the
+   report; skip the comment in that case. The label and marker tell the hive
+   this issue is an archive, not work: it is never advertised as a good first
+   issue and never auto-closed. Only one comment or one new issue per run for
+   the report itself.
 2. **Discord.** Call `post_to_discord` once with the same report formatted
    for Discord:
    - Start with one line: `**Hive weekly competitor report - <ISO date>**`.

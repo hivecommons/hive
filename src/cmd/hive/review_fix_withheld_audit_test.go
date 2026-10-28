@@ -69,3 +69,16 @@ func TestAuditWithheldReviewFixesRecordsSettingOn(t *testing.T) {
 		t.Fatalf("audit entry must record the setting as on: %v", auditor.entries)
 	}
 }
+
+func TestAuditWithheldReviewFixesNotHiveAuthoredExclusionIsNotWarn(t *testing.T) {
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	plan := review.DispatchPlan{FixExclusions: []review.FixDispatchExclusion{
+		{Repo: "acme/x", Number: 1, HeadSHA: "abc", Author: "human", Reason: review.FixDispatchExcludedNotHiveAuthored},
+	}}
+	auditWithheldReviewFixes(plan, nil, logger)
+	out := buf.String()
+	if !strings.Contains(out, "review fix dispatch excluded") || strings.Contains(out, "level=WARN") {
+		t.Fatalf("not-hive-authored exclusion must log below WARN, got: %s", out)
+	}
+}

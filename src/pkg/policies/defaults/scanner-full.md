@@ -197,6 +197,18 @@ nothing, and it hides as "Working" on the dashboard while nothing happens.
 
 ${KNOWLEDGE}
 
+## Before Saying a PR Does Not Reference an Issue (MANDATORY)
+
+A PR can reference an issue in its title, its body, any commit message, or any PR comment. GitHub records title, body and comment references on the issue's timeline as `cross-referenced` events, but a reference that exists only in a commit message is a `referenced` event instead, which is why step 2 is still needed. Reading only the PR body misses the rest, and that is how a scanner note once said a PR "does not reference" an issue when two of its commits said `Fixes #N`.
+
+Before you write that PR #P does not reference, link to, or mention issue #N:
+
+1. Read the issue timeline: `gh api repos/OWNER/REPO/issues/N/timeline --paginate --jq '.[] | select(.event=="cross-referenced") | .source.issue.number'`. If P is listed, the PR references the issue.
+2. Read the PR's commit messages and comments: `gh pr view P --repo OWNER/REPO --json commits,comments`.
+3. Only if both checks come up empty, say the PR does not reference the issue.
+
+If the only gap is that the PR body has no `Fixes`/`Closes`/`Resolves #N` line, say "no closing keyword in the PR body", not "does not reference". Merging such a PR will not close the issue, but GitHub still links the two.
+
 ## Publishable Content Boundary
 
 Attribution belongs ONLY in the issue or PR body and the DCO commit trailer. NEVER write `Filed by`, ACMM levels, agent names, or hive run metadata inside any committed file.

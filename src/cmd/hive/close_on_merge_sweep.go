@@ -96,6 +96,23 @@ func (s *closeOnMergeScheduler) mode(client *github.Client) github.APIBudgetMode
 	return fn(client)
 }
 
+// closeOnMergeOptionsFor is the policy both the scheduled sweep and the
+// webhook-triggered one (closeOnMergeForDelivery) close issues under.
+func closeOnMergeOptionsFor(cfg *config.Config, logger *slog.Logger, now func() time.Time) github.CloseOnMergeOptions {
+	return github.CloseOnMergeOptions{
+		Identity: hiveIdentity(cfg),
+		Logger:   logger,
+		TrustedAuthor: func(repo, login string) bool {
+			decision := trustedAuthorFunc(cfg)(login, cfg.AutoMerge.TrustedAuthors.EffectiveRequireRole())
+			return decision.Allowed
+		},
+		RecheckAfter: cfg.Issues.EffectiveCloseOnMergeRecheck(),
+		Now:          now,
+		LabelDriven:  cfg.RepoLabelDriven,
+		RepoOnGitHub: cfg.RepoOnGitHub,
+	}
+}
+
 func runCloseOnMergeSweep(ctx context.Context, cfg *config.Config, ghClient *github.Client, ledger *github.ClaimLedger, logger *slog.Logger) {
 	runCloseOnMergeSweepWith(ctx, cfg, ghClient, ledger, logger, closeOnMergeSched)
 }
@@ -114,19 +131,8 @@ func runCloseOnMergeSweepWith(ctx context.Context, cfg *config.Config, ghClient 
 	if plan.BudgetChanged && logger != nil {
 		logger.Info("close-on-merge: sweeps resumed", "budget_mode", plan.Mode.String())
 	}
-	opts := github.CloseOnMergeOptions{
-		Identity: hiveIdentity(cfg),
-		Logger:   logger,
-		TrustedAuthor: func(repo, login string) bool {
-			decision := trustedAuthorFunc(cfg)(login, cfg.AutoMerge.TrustedAuthors.EffectiveRequireRole())
-			return decision.Allowed
-		},
-		RecheckAfter: cfg.Issues.EffectiveCloseOnMergeRecheck(),
-		MergedAfter:  plan.MergedAfter,
-		Now:          sched.clock(),
-		LabelDriven:  cfg.RepoLabelDriven,
-		RepoOnGitHub: cfg.RepoOnGitHub,
-	}
+	opts := closeOnMergeOptionsFor(cfg, logger, sched.clock())
+	opts.MergedAfter = plan.MergedAfter
 	sweep := ghClient.CloseOnMergeLedgerSweep(ctx, ledger, opts)
 	msg := "close-on-merge ledger sweep"
 	if !plan.FullSweep {

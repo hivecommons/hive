@@ -282,14 +282,33 @@ func adoptionNeedsDCORehome(obs stageObservation, canPushInPlace bool) bool {
 	return adoptionDCORepairMode(obs, canPushInPlace) == stagelabels.AdoptModeSupersede
 }
 
+// adoptionDCORepairMode decides how a DCO-red head gets its sign-off:
+// AdoptModeInPlace rewrites the hive's own unsigned commits on the PR
+// branch, which the stage pass can only do through the git-data API of the
+// base repository — a fork branch is pushable by an agent's git but not by
+// the App's REST token, so a fork head re-homes (AdoptModeSupersede) even
+// when every unsigned commit is the hive's (hivecommons/hive#14666).
 func adoptionDCORepairMode(obs stageObservation, canPushInPlace bool) string {
 	if obs.Detail.DCO != stagelabels.DCONo || obs.Detail.DCOUnsigned <= 0 {
 		return ""
 	}
-	if canPushInPlace && obs.Detail.DCOUnsignedHive == obs.Detail.DCOUnsigned && obs.Detail.DCOUnsignedOther == 0 {
+	if canPushInPlace && headInBaseRepo(obs) && obs.Detail.DCOUnsignedHive == obs.Detail.DCOUnsigned && obs.Detail.DCOUnsignedOther == 0 {
 		return stagelabels.AdoptModeInPlace
 	}
 	return stagelabels.AdoptModeSupersede
+}
+
+// headInBaseRepo reports whether the PR head lives in the base repository
+// (not a fork), where the App's git-data API can rewrite it.
+func headInBaseRepo(obs stageObservation) bool {
+	return obs.HeadRepo != "" && strings.EqualFold(obs.HeadRepo, obs.Owner+"/"+obs.Repo)
+}
+
+// adoptedHeadNeedsDCORepair decides, for an in-place-adopted PR, whether the
+// unsigned commits are the hive's own on a base-repo branch it rewrites in
+// place with its sign-off.
+func adoptedHeadNeedsDCORepair(obs stageObservation, rec stagelabels.Record, canPushInPlace bool) bool {
+	return adoptedHeadDCORed(obs, rec) && adoptionDCORepairMode(obs, canPushInPlace) == stagelabels.AdoptModeInPlace
 }
 
 // adoptedHeadDCORed reports whether an in-place-adopted PR's head carries
@@ -759,12 +778,15 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	return 1, nil
 }
 
-// resignAdoptionCommits replays the contributor's commits as a linear chain
-// with the App's Signed-off-by added where missing (the API equivalent of
+// resignAdoptionCommits replays the PR's commits with the App's
+// Signed-off-by added where missing (the API equivalent of
 // `git rebase --signoff`), keeping each commit's tree, author and message,
-// and returns the new tip. It returns "" when the commits cannot be replayed
-// without changing content (a merge commit, or no commits), so the caller
-// keeps the contributor head.
+// and returns the new tip. Parents inside the PR map to their rewritten
+// counterparts, so a base-sync merge commit (which the DCO checks exempt and
+// hivecommons/hive#14500's recovery adds) replays with its tree and both
+// parents rather than refusing the rewrite (hivecommons/hive#14666). It
+// returns "" when the listing does not end at the observed head or a parent
+// cannot be resolved, so the caller keeps the unsigned head.
 func (c *Engine) resignAdoptionCommits(ctx context.Context, obs stageObservation) (string, error) {
 	opts := &gh.ListOptions{PerPage: 100}
 	var all []*gh.RepositoryCommit
@@ -782,30 +804,107 @@ func (c *Engine) resignAdoptionCommits(ctx context.Context, obs stageObservation
 	if len(all) == 0 || all[len(all)-1].GetSHA() != obs.HeadSHA {
 		return "", nil
 	}
+	inPR := make(map[string]bool, len(all))
 	for _, rc := range all {
-		if len(rc.Parents) != 1 {
+		if rc == nil || len(rc.Parents) == 0 || rc.GetSHA() == "" {
 			return "", nil
 		}
+		inPR[rc.GetSHA()] = true
 	}
 	trailer := hgithub.BotSignedOffByTrailer(c.transport.AppBotLogin())
-	parent := all[0].Parents[0].GetSHA()
+	rewritten := make(map[string]string, len(all))
 	for _, rc := range all {
+		parents := make([]*gh.Commit, 0, len(rc.Parents))
+		for _, p := range rc.Parents {
+			sha := p.GetSHA()
+			if inPR[sha] {
+				// The listing is oldest-first; a parent inside the PR
+				// that is not rewritten yet means the order is not
+				// topological and the replay would detach it.
+				mapped, ok := rewritten[sha]
+				if !ok {
+					return "", nil
+				}
+				sha = mapped
+			}
+			parents = append(parents, &gh.Commit{SHA: gh.Ptr(sha)})
+		}
 		msg := rc.GetCommit().GetMessage()
-		if !signedOffByRE.MatchString(msg) {
+		if len(rc.Parents) == 1 && !signedOffByRE.MatchString(msg) {
 			msg = strings.TrimRight(msg, "\n") + "\n\n" + trailer + "\n"
 		}
 		created, _, err := c.gh.Git.CreateCommit(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), obs.Owner, obs.Repo, &gh.Commit{
 			Message: gh.Ptr(msg),
 			Tree:    &gh.Tree{SHA: gh.Ptr(rc.GetCommit().GetTree().GetSHA())},
-			Parents: []*gh.Commit{{SHA: gh.Ptr(parent)}},
+			Parents: parents,
 			Author:  rc.GetCommit().GetAuthor(),
 		}, nil)
 		if err != nil {
 			return "", fmt.Errorf("re-signing %s: %w", shortSHA(rc.GetSHA()), err)
 		}
-		parent = created.GetSHA()
+		rewritten[rc.GetSHA()] = created.GetSHA()
 	}
-	return parent, nil
+	return rewritten[obs.HeadSHA], nil
+}
+
+// adoptionDCORepaired is the reason logged and recorded when the hive
+// rewrote its own unsigned commits in place with its sign-off.
+const adoptionDCORepaired = "dco-rehomed"
+
+// repairAdoptedDCOInPlace rewrites the unsigned hive commits of an
+// in-place-adopted base-repo head with the App's Signed-off-by and
+// force-updates the PR branch to the new tip — once per head, with the ref
+// re-read first so a push that raced the rewrite is not overwritten
+// (hivecommons/hive#14666). The next sweep re-reads the new head's commits
+// and the DCO gate clears. Returns 0: a branch push is not a comment, so
+// nothing is added to the caller's count.
+func (c *Engine) repairAdoptedDCOInPlace(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record) (int, error) {
+	if rec.DCORepairAttempted(obs.HeadSHA) {
+		return 0, nil
+	}
+	if obs.HeadRef == "" {
+		c.warn("stage labels: in-place DCO repair skipped, head ref unknown", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
+		return 0, nil
+	}
+	store.MarkDCORepair(key, obs.HeadSHA)
+	c.info("stage labels: re-signing hive commits on adopted PR in place", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "branch", obs.HeadRef, "unsigned_hive", obs.Detail.DCOUnsignedHive, "reason", adoptionDCORepaired)
+	ref := "refs/heads/" + obs.HeadRef
+	var tip string
+	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
+		Repo: obs.Owner + "/" + obs.Repo, Kind: effects.KindBranchPush, Target: obs.HeadRef, Actor: "stage_labels",
+		Inputs: map[string]string{"pr": strconv.Itoa(obs.Number), "head_sha": obs.HeadSHA, "dco_repair": "true"},
+	}, func(ctx context.Context) (effects.Result, error) {
+		current, _, apiErr := c.gh.Git.GetRef(ctx, obs.Owner, obs.Repo, ref)
+		if apiErr != nil {
+			return effects.Result{}, effects.NotApplied(apiErr)
+		}
+		if got := current.GetObject().GetSHA(); got != obs.HeadSHA {
+			return effects.Result{}, effects.NotApplied(fmt.Errorf("head moved to %s before the rewrite; re-evaluating", shortSHA(got)))
+		}
+		signed, signErr := c.resignAdoptionCommits(ctx, obs)
+		if signErr != nil {
+			return effects.Result{}, effects.NotApplied(signErr)
+		}
+		if signed == "" {
+			return effects.Result{}, effects.NotApplied(fmt.Errorf("commits of %s cannot be replayed with sign-off", shortSHA(obs.HeadSHA)))
+		}
+		if _, _, apiErr := c.gh.Git.UpdateRef(ctx, obs.Owner, obs.Repo, &gh.Reference{
+			Ref:    gh.Ptr(ref),
+			Object: &gh.GitObject{SHA: gh.Ptr(signed)},
+		}, true); apiErr != nil {
+			return effects.Result{}, effects.NotApplied(apiErr)
+		}
+		tip = signed
+		return effects.Result{Provenance: signed}, nil
+	})
+	if err != nil {
+		c.warn("stage labels: in-place DCO repair failed; branch keeps the unsigned head", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "branch", obs.HeadRef, "error", err)
+		return 0, err
+	}
+	store.MarkHivePushedHead(key, tip)
+	c.info("stage labels: adopted PR re-signed in place", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "new_head", tip, "branch", obs.HeadRef, "reason", adoptionDCORepaired)
+	// A branch push, not a comment: nothing to add to the caller's count.
+	return 0, nil
 }
 
 // settleAdoption polls the superseding App PR for a PR in stage 074 (at
@@ -829,6 +928,9 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	}
 	if adoptedHeadDCORed(obs, rec) {
 		canPushInPlace := c.canPushToPRBranch(ctx, obs)
+		if adoptedHeadNeedsDCORepair(obs, rec, canPushInPlace) {
+			return c.repairAdoptedDCOInPlace(ctx, store, key, obs, rec)
+		}
 		if adoptedHeadNeedsDCORehome(obs, rec, canPushInPlace) {
 			fence, err := c.adoptionDiffRefusal(ctx, obs)
 			if fence != "" && (err != nil || adoptionFenceDefers(fence)) {

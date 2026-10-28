@@ -66,3 +66,56 @@ var (
 	_ gfi.Forge       = (*Client)(nil)
 	_ gfi.LabelReader = (*Client)(nil)
 )
+
+// MaintainerAppliedLabels implements gfi.MaintainerLabelReader. Only the
+// latest application of a currently present label counts; automation cannot
+// turn its own advertising into evidence of maintainer endorsement.
+func (c *Client) MaintainerAppliedLabels(ctx context.Context, repo string, number int, labels []string) ([]string, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	events, err := c.listIssueLabelEvents(ctx, owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+	policy := c.gfiLabelApprovalPolicy(repo, owner, name)
+	var verified []string
+	for _, label := range labels {
+		var latest *issueLabelEvent
+		for i := len(events) - 1; i >= 0; i-- {
+			if strings.EqualFold(strings.TrimSpace(events[i].Label), strings.TrimSpace(label)) {
+				latest = &events[i]
+				break
+			}
+		}
+		if latest == nil || latest.Event != "labeled" {
+			continue
+		}
+		_, trusted, err := c.labelApplierTrusted(ctx, owner, name, latest.Actor, policy)
+		if err != nil {
+			return nil, err
+		}
+		if trusted {
+			verified = append(verified, label)
+		}
+	}
+	return verified, nil
+}
+
+// gfiLabelApprovalPolicy is the repo's configured label-approval policy, so
+// its trusted-bot allowlist and org-member setting decide who counts as a
+// maintainer. A repo with no configured policy keeps the default of trusting
+// organisation members.
+func (c *Client) gfiLabelApprovalPolicy(repo, owner, name string) LabelApprovalPolicy {
+	policy, ok := c.labelApprovalPolicyFor(repo)
+	if !ok {
+		policy, ok = c.labelApprovalPolicyFor(owner + "/" + name)
+	}
+	if !ok {
+		return LabelApprovalPolicy{TrustOrgMembers: true}
+	}
+	return policy
+}
+
+var _ gfi.MaintainerLabelReader = (*Client)(nil)

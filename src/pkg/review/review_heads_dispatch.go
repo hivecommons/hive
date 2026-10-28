@@ -240,14 +240,6 @@ func decisionPerspectives(agg Aggregate, set PerspectiveSet) []Perspective {
 			delete(judged, p)
 		}
 	}
-	var rest []string
-	for p := range judged {
-		rest = append(rest, string(p))
-	}
-	sort.Strings(rest)
-	for _, p := range rest {
-		out = append(out, Perspective(p))
-	}
 	return out
 }
 

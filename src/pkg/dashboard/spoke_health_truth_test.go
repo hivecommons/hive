@@ -181,7 +181,10 @@ func TestSpokeHealthTruthUIWiring(t *testing.T) {
 			why:     "any failing deep check must flip the navbar chip to Degraded while preserving the shared chip slots",
 		},
 		{
-			snippet: "const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;",
+			// agentSessionDown is `a.state !== 'running'` for every agent
+			// with a session; only a sandboxed agent (no session between
+			// kicks) derives down from its last run instead.
+			snippet: "const isDown = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;",
 			why:     "the sidebar dot must treat every non-running, non-paused process state (stopped, failed, idle) as down",
 		},
 		{

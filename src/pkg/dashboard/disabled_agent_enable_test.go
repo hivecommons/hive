@@ -232,6 +232,11 @@ func TestAgentNowLineStates(t *testing.T) {
 		jsFunc(t, html, "agentNowItem"),
 		jsFunc(t, html, "agentNowItemHtml"),
 		jsFunc(t, html, "agentNowReservations"),
+		jsFunc(t, html, "agentSandboxRun"),
+		jsFunc(t, html, "agentSessionDown"),
+		jsFunc(t, html, "agentSandboxDownLabel"),
+		jsFunc(t, html, "agentSandboxRunText"),
+		jsFunc(t, html, "agentSandboxRunHtml"),
 		jsFunc(t, html, "agentNowLineHtml"),
 	}, "\n") + `
 const assert = require('assert');

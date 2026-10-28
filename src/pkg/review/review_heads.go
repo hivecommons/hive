@@ -199,7 +199,11 @@ func removePendingForPerspectivesAndHeads(pending []PendingReview, pr PullReques
 	}
 	out := pending[:0]
 	for _, p := range pending {
-		if _, done := reported[p.Perspective]; done && samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+		_, done := reported[p.Perspective]
+		if _, hasHeads := heads[p.Perspective]; hasHeads {
+			done = true
+		}
+		if done && samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
 			// The decision dispatch stays pending until its decided report
 			// settles the PR head: the heads' reports for a perspective do not
 			// answer it.

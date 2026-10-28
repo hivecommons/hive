@@ -174,6 +174,10 @@ type Record struct {
 	// for; it survives ClearAdoptionEscalation so a blocker that flaps on
 	// one head is noted once.
 	AdoptEscalationNotedHead string `json:"adopt_escalation_noted_head,omitempty"`
+	// DCORepairHead is the in-place-adopted head whose unsigned hive
+	// commits the hive last rewrote with its sign-off on the contributor
+	// branch (hivecommons/hive#14666); one attempt per head.
+	DCORepairHead string `json:"dco_repair_head,omitempty"`
 	// AdoptRecoveryAttempt is the "<head>@<base tip>" pair the hive last
 	// tried to recover a stale-red in-place adoption on (update-branch or a
 	// re-run of the failed jobs, hivecommons/hive#14500); one attempt per
@@ -923,6 +927,12 @@ func (r Record) AdoptionEscalationNoted(head string) bool {
 	return head != "" && r.AdoptEscalationNotedHead == head
 }
 
+// DCORepairAttempted reports whether the in-place sign-off rewrite already
+// ran for head.
+func (r Record) DCORepairAttempted(head string) bool {
+	return head != "" && r.DCORepairHead == head
+}
+
 // AdoptionRecoveryKey is the "<head>@<base>" pair AdoptRecoveryAttempt stores.
 func AdoptionRecoveryKey(head, base string) string { return head + "@" + base }
 
@@ -1094,6 +1104,21 @@ func (s *Store) MarkAdoptionEscalated(key, head, reason string) {
 		return
 	}
 	r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = head, reason, head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkDCORepair records one in-place sign-off rewrite attempt for head.
+// Recorded before the API call, as every adoption path does, so a refused
+// rewrite is not retried each sweep.
+func (s *Store) MarkDCORepair(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.DCORepairHead == head {
+		return
+	}
+	r.DCORepairHead = head
 	s.items[key] = r
 	s.dirty = true
 }

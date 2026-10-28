@@ -63,7 +63,26 @@ func BuildDecisionPrompt(pr PullRequest, perspectives []Perspective, agg Aggrega
 	b.WriteString("For Hive-authored PRs, resolve sequencing, naming, config-shape, scope, and land-now-vs-later questions yourself; use requires_human only for risk a human must own: security, data loss, irreversible or public-facing behavior, policy/governance, licensing, spend, or when you could not read the diff.\n")
 	b.WriteString(permissionsTighteningGuidance)
 
-	b.WriteString(decisionHeadReportsSection(perspectives, agg))
+	reportPerspectives := append([]Perspective(nil), perspectives...)
+	seen := map[Perspective]bool{}
+	for _, p := range reportPerspectives {
+		seen[p] = true
+	}
+	var historical []string
+	for _, r := range agg.HeadReports {
+		if !seen[r.Perspective] {
+			seen[r.Perspective] = true
+			historical = append(historical, string(r.Perspective))
+		}
+	}
+	sort.Strings(historical)
+	for _, p := range historical {
+		reportPerspectives = append(reportPerspectives, Perspective(p))
+	}
+	if len(historical) > 0 {
+		b.WriteString("\nReports from removed perspectives are historical evidence. Reconcile their findings and verdicts into the most relevant configured perspective; do not return a separate verdict for a removed perspective.\n")
+	}
+	b.WriteString(decisionHeadReportsSection(reportPerspectives, agg))
 	if len(agg.MissingHeads) > 0 {
 		b.WriteString("\nHEADS THAT NEVER ANSWERED.\n")
 		fmt.Fprintf(&b, "These head reviews expired without a verdict after the retry limit: %s. Decide on the heads that did answer, and say so in the comment: one line per missing head, e.g. `<head>: no verdict after N attempts; decided on <the heads that answered> only`.\n", strings.Join(agg.MissingHeads, ", "))

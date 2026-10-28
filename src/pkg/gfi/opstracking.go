@@ -91,14 +91,15 @@ var withdrawLabels = map[string]bool{"blocked": true, "hold": true}
 
 // Withdrawable reports whether a Decision.Skip reason means a labelled
 // issue must have its advertisement withdrawn: parked on a person
-// (hard-suppress), blocked or held, an ops-tracking checklist, or
+// (hard-suppress), blocked or held, an ops-tracking checklist, a
+// tracking/archive issue, or
 // time-gated. Softer reasons (too fresh, low score, an epic a maintainer
 // labelled by hand) leave a hand-applied label alone.
 func Withdrawable(skip string) bool {
 	switch {
 	case strings.HasPrefix(skip, "hard-suppress:"):
 		return true
-	case skip == SkipTimeGated, strings.HasPrefix(skip, SkipOpsTracking):
+	case skip == SkipTimeGated, strings.HasPrefix(skip, SkipOpsTracking), strings.HasPrefix(skip, SkipTracking+":"):
 		return true
 	case strings.HasPrefix(skip, "excluded-label:"):
 		return withdrawLabels[strings.ToLower(strings.TrimPrefix(skip, "excluded-label:"))]

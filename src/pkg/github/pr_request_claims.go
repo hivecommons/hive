@@ -246,6 +246,9 @@ func incompleteIssueReason(issue *gh.Issue) string {
 	if issue == nil {
 		return "issue metadata is empty"
 	}
+	if why, ok := isTrackingIssue(issue); ok {
+		return "issue is a tracking/archive issue (" + why + "); merging does not resolve it"
+	}
 	labels := make([]string, 0, len(issue.Labels))
 	for _, label := range issue.Labels {
 		name := label.GetName()

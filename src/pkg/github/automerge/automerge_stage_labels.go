@@ -405,6 +405,7 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	}
 	if pr.GetHead() != nil {
 		obs.HeadSHA = pr.GetHead().GetSHA()
+		obs.HeadRef = pr.GetHead().GetRef()
 	}
 	if pr.GetHead() != nil && pr.GetHead().GetRepo() != nil {
 		obs.HeadRepo = pr.GetHead().GetRepo().GetFullName()

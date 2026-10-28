@@ -245,7 +245,8 @@ func TestUpgradeDrain_ReportReflectsDeferralForHub(t *testing.T) {
 	if r == nil {
 		t.Fatal("deferring drain must report")
 	}
-	want := &spoke.UpgradeDrainReport{Target: "4f8be0b", InFlight: []string{"brainstorm"}, WaitedS: 600, RemainingS: 2100}
+	want := &spoke.UpgradeDrainReport{Target: "4f8be0b", InFlight: []string{"brainstorm"}, WaitedS: 600, RemainingS: 2100,
+		Turns: []spoke.UpgradeTurn{{Agent: "brainstorm"}}}
 	if !reflect.DeepEqual(r, want) {
 		t.Fatalf("Report = %+v, want %+v", r, want)
 	}
@@ -257,5 +258,49 @@ func TestUpgradeDrain_ReportReflectsDeferralForHub(t *testing.T) {
 	d.decide("4f8be0b", nil, timeout, at.Add(time.Minute))
 	if r := d.Report(at.Add(time.Minute)); r != nil {
 		t.Fatalf("released drain must report nil, got %+v", r)
+	}
+}
+
+// #14856: the drain report names how long each held turn has been running,
+// so the hub card can say "reviewer 38m" instead of just "reviewer".
+func TestUpgradeDrain_ReportCarriesTurnElapsed(t *testing.T) {
+	d := &upgradeDrain{}
+	now := time.Date(2026, 10, 26, 17, 10, 0, 0, time.UTC)
+	reviewerKick := now.Add(-38 * time.Minute)
+	scannerKick := now.Add(-12 * time.Minute)
+	statuses := map[string]*crux.Process{
+		"reviewer": {State: crux.StateRunning, LastKick: &reviewerKick},
+		"scanner":  {State: crux.StateRunning, LastKick: &scannerKick},
+		"idle":     {State: crux.StateRunning},
+	}
+	inFlight := []string{"reviewer", "scanner"}
+
+	// Not open yet: kick times are ignored rather than retained.
+	d.setKickTimes(agentKickTimes(statuses, inFlight))
+	if d.kickAt != nil {
+		t.Fatal("kick times must not stick to a closed drain")
+	}
+
+	d.decide("abc1234", inFlight, 45*time.Minute, now)
+	d.setKickTimes(agentKickTimes(statuses, inFlight))
+	r := d.Report(now.Add(time.Minute))
+	if r == nil {
+		t.Fatal("open drain must report")
+	}
+	want := []spoke.UpgradeTurn{{Agent: "reviewer", ElapsedS: 39 * 60}, {Agent: "scanner", ElapsedS: 13 * 60}}
+	if !reflect.DeepEqual(r.Turns, want) {
+		t.Fatalf("Turns = %+v, want %+v", r.Turns, want)
+	}
+	if got := spoke.FormatTurns(r.Turns, 3); got != "2/3 agents in turn: reviewer 39m, scanner 13m" {
+		t.Fatalf("FormatTurns = %q", got)
+	}
+
+	// Release clears the kick times with the rest of the drain inputs.
+	d.decide("abc1234", nil, 45*time.Minute, now.Add(2*time.Minute))
+	if d.kickAt != nil || d.Report(now.Add(2*time.Minute)) != nil {
+		t.Fatal("released drain must drop kick times and report nil")
+	}
+	if agentKickTimes(statuses, nil) != nil {
+		t.Fatal("no names, no map")
 	}
 }

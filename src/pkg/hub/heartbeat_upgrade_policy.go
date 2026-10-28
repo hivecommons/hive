@@ -50,9 +50,20 @@ func (s *HubServer) heartbeatUpgradePolicy(payload *HeartbeatPayload, saasHive *
 	} else if schedule == AutoUpgradeModeDaily || schedule == AutoUpgradeModeWeekly {
 		policy.ScheduleHour = autoUpgradeDailyHour
 		policy.ScheduleTimezone = autoUpgradeTimezone
-		if policy.NextUpdateAt == "" && reach.Channel != ReleaseChannelStable {
-			policy.NextUpdateAt = nextScheduledAutoUpgradeAt(schedule, saasHive.AutoUpgradeLastFired, time.Now())
+		lastFired := ""
+		if saasHive != nil {
+			lastFired = saasHive.AutoUpgradeLastFired
 		}
+		// NextWindowAt is always the hive's own window regardless of channel —
+		// NextUpdateAt on the stable channel is the promotion ETA instead, which
+		// is what made "overdue since" read as a mystery time (#14856).
+		policy.NextWindowAt = nextScheduledAutoUpgradeAt(schedule, lastFired, time.Now())
+		if policy.NextUpdateAt == "" && reach.Channel != ReleaseChannelStable {
+			policy.NextUpdateAt = policy.NextWindowAt
+		}
+	}
+	if payload != nil && s.upgradeHistory != nil {
+		policy.UpgradeHistory = s.upgradeHistory.recent(payload.HiveID)
 	}
 	if schedule == AutoUpgradeModeWeekly {
 		policy.ScheduleWeekday = autoUpgradeWeeklyDay.String()

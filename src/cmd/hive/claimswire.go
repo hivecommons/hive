@@ -52,6 +52,9 @@ const claimsGitHubTimeout = 15 * time.Second
 // run inside the issue's effect queue, so a release scheduled after the
 // claim still waits for the claim's labels to land (or give up) first.
 var (
+	// claimsEffectMu guards the three knobs below: a hook goroutine can
+	// outlive the test that started it while a later test swaps them.
+	claimsEffectMu sync.RWMutex
 	// claimsEffectAttempts is the total number of tries per side effect.
 	claimsEffectAttempts = 4
 	// claimsEffectBackoff is the pause before the second attempt; each
@@ -75,13 +78,15 @@ var (
 // is not transient, exhausts claimsEffectAttempts, or ctx ends during a
 // pause. It returns the number of attempts made (for the log and tests).
 func retryClaimEffect(ctx context.Context, logger *slog.Logger, what, key string, attempt func() error) int {
-	backoff := claimsEffectBackoff
+	claimsEffectMu.RLock()
+	attempts, backoff, wait := claimsEffectAttempts, claimsEffectBackoff, claimsEffectWait
+	claimsEffectMu.RUnlock()
 	for n := 1; ; n++ {
 		err := attempt()
 		if err == nil {
 			return n
 		}
-		if n >= claimsEffectAttempts || !claimEffectRetryable(err) {
+		if n >= attempts || !claimEffectRetryable(err) {
 			if logger != nil {
 				logger.Warn("issue-claims: GitHub side effect failed", "what", what, "issue", key, "attempts", n, "error", err)
 			}
@@ -90,7 +95,7 @@ func retryClaimEffect(ctx context.Context, logger *slog.Logger, what, key string
 		if logger != nil {
 			logger.Warn("issue-claims: retrying GitHub side effect", "what", what, "issue", key, "attempt", n, "retry_in", backoff.String(), "error", err)
 		}
-		if !claimsEffectWait(ctx, backoff) {
+		if !wait(ctx, backoff) {
 			if logger != nil {
 				logger.Warn("issue-claims: GitHub side effect abandoned, hub stopping", "what", what, "issue", key, "attempts", n, "error", err)
 			}

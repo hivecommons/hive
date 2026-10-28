@@ -3020,6 +3020,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetClaudeSessionsDir(b.cfg.Data.ClaudeSessionsDir)
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
+	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
 	deps.startTokenCollector(b.tokenCollector, tokenStop)
 	b.cleanup.push(func() { close(tokenStop) })
@@ -3690,6 +3691,10 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
+	// The hive's own unblock (blocked sweep, review-backlog block lift)
+	// re-reads the issue into the cached snapshot and the Activity Monitor
+	// the way an inbound label webhook does (hivecommons/hive#14952).
+	github.SetItemRefreshHook(b.dashSrv.RefreshSelfEditedItem)
 	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	ghClientFn := func() *github.Client { return b.ghClient }
@@ -3720,6 +3725,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	})
 
 	b.dashSrv.SetGitHubAppRequired(b.githubAppRequired)
+	b.dashSrv.SetUpgradeDrainSource(selfUpgradeDrain.Report)
 	// Order matters: SetGitHubAppRequired(false) clears both fields, so the
 	// classified state is applied only after it, and only when a failure was
 	// actually detected.
@@ -5155,7 +5161,8 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// heartbeat) and withhold new kicks; proceed once the turns end or
 				// hub.upgrade_drain_timeout_s elapses.
 				if b.agentMgr != nil {
-					inFlight, wedged := agentKicksInFlight(b.agentMgr.AllStatuses(), b.startTime, selfUpgradeDrainNow(), func(name string) time.Duration {
+					statuses := b.agentMgr.AllStatuses()
+					inFlight, wedged := agentKicksInFlight(statuses, b.startTime, selfUpgradeDrainNow(), func(name string) time.Duration {
 						if ac, ok := b.cfg.Agents[name]; ok {
 							return ac.EffectiveContinuousTurnCeiling()
 						}
@@ -5171,7 +5178,15 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					}
 					ignoredWedged := wedgedKickAgents(wedged)
 					drainTimeout := b.cfg.Hub.EffectiveUpgradeDrainTimeout()
+					if spoke.UpgradeInterruptRequested() && drainTimeout > 0 && len(inFlight) > 0 {
+						// The owner chose "Upgrade now (interrupt turns)" on the
+						// hub: cut the drain rather than wait for these turns.
+						b.logger.Warn("self-upgrade: interrupting in-flight agent turns on the owner's request",
+							"target", targetSHA, "in_flight", inFlight)
+						drainTimeout = 0
+					}
 					dec := selfUpgradeDrain.decide(targetSHA, inFlight, drainTimeout, selfUpgradeDrainNow())
+					selfUpgradeDrain.setKickTimes(agentKickTimes(statuses, inFlight))
 					switch {
 					case !dec.Proceed:
 						b.logger.Info("self-upgrade deferred: draining in-flight agent kicks",
@@ -6376,7 +6391,38 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		}
 	}()
 
+	serveContinuousWake := func() {
+		if deps.newWakeTimer == nil || b.gov == nil || b.ctx.Err() != nil {
+			return
+		}
+		now := wakeNow()
+		next, who := b.gov.NextContinuousKickAt()
+		if _, due := continuousWakeDecision(next, now, lastWake, wakeHold.untilFor(next, who)); due {
+			idleFor := time.Duration(0)
+			if st, ok := b.gov.GetState().Continuous[who]; ok && !st.LastKickEnd.IsZero() {
+				idleFor = now.Sub(st.LastKickEnd).Round(time.Second)
+			}
+			b.logger.Info("continuous re-kick wake: running an early eval cycle",
+				"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
+				"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
+			lastWake = now
+			// Keep this cycle lean: planning and delivery without sweeps.
+			b.cfgReloadMu.Lock()
+			b.evalCycles++
+			deps.runEval(b, nil, evalSourceCached)
+			deps.persist(b)
+			b.cfgReloadMu.Unlock()
+			after, afterWho := b.gov.NextContinuousKickAt()
+			if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
+				b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
+					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "backoff", backoff.String())
+			}
+		}
+	}
+
 	for {
+		// Serve due kicks between cycles even when other channels stay ready.
+		serveContinuousWake()
 		select {
 		case <-b.ctx.Done():
 			b.logger.Info("shutting down, persisting state")
@@ -6434,24 +6480,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			b.cfgReloadMu.Unlock()
 			armWebhookHealthRecheck()
 		case <-wakeCh:
-			now := wakeNow()
-			next, who := b.gov.NextContinuousKickAt()
-			if _, due := continuousWakeDecision(next, now, lastWake, wakeHold.untilFor(next, who)); due {
-				idleFor := time.Duration(0)
-				if st, ok := b.gov.GetState().Continuous[who]; ok && !st.LastKickEnd.IsZero() {
-					idleFor = now.Sub(st.LastKickEnd).Round(time.Second)
-				}
-				b.logger.Info("continuous re-kick wake: running an early eval cycle",
-					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
-					"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
-				lastWake = now
-				tick(evalSourceCached)
-				after, afterWho := b.gov.NextContinuousKickAt()
-				if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
-					b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
-						"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "backoff", backoff.String())
-				}
-			}
+			// The loop-top due check services this timer.
 			armContinuousWake()
 		case <-agentTickCh:
 			b.cfgReloadMu.Lock()
@@ -7185,6 +7214,10 @@ func runEvalCycle(
 	if !budgetDecision.SkipOptional {
 		applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 	}
+	// Every cycle, cached ones included: heal issue stage records the
+	// claim ledger says an open PR covers but the store still holds below
+	// 040 (a claim release written over the cover between reconcile passes).
+	reconcileLedgerCoverRecords(ctx, cfg, ghClient, actionable, logger)
 
 	// PR review queue (#9590): stamp each PR's rank, priority and reasons
 	// onto the snapshot so last-actionable.json carries them next to
@@ -7196,7 +7229,7 @@ func runEvalCycle(
 	// on a copy, and storing it back would overwrite a webhook patch that
 	// landed while the cycle ran.
 	if cachedSnapshot == nil {
-		lastActionable.Store(actionable)
+		publishEnumeratedSnapshot(lastActionable, actionable, logger)
 		if data, err := json.Marshal(actionable); err == nil {
 			atomicWrite(lastActionablePath, data)
 		}
@@ -7706,8 +7739,8 @@ func runEvalCycle(
 					logUndeliveredReviewKick(logger, dashSrv, k, err)
 				}
 			},
-			onDelivered: func(msg scheduler.KickMessage) {
-				gov.RecordKickForRepo(msg.Agent, msg.Repo)
+			onDelivered: func(msg scheduler.KickMessage, deliveredAt time.Time) {
+				gov.RecordKickForRepoAt(msg.Agent, msg.Repo, deliveredAt)
 				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 
 				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
@@ -10097,6 +10130,26 @@ func recheckSoakHubURL(cfg *config.Config) string {
 // applyDuplicatePRGuard filters issues already claimed by an open hive-authored
 // PR out of the actionable set. Failures are logged, never fatal: the guard is
 // a safety net, and a broken net must not take the hive down with it.
+// reconcileLedgerCoverRecords runs github.BackfillCoveredByLedger with the
+// cycle's red+stale valve. It is not an optional step: with webhook-driven
+// cached cycles the reconcile pass (and the stage sweep with it) can be
+// hours apart, and a record at 010 under an open covering PR re-offers the
+// issue to the scanner for all of that time.
+func reconcileLedgerCoverRecords(ctx context.Context, cfg *config.Config, ghClient *github.Client, actionable *github.ActionableResult, logger *slog.Logger) {
+	ledger := getClaimLedger(logger)
+	if ledger == nil || ledger.Len() == 0 || ghClient == nil {
+		return
+	}
+	backfillCtx, cancel := context.WithTimeout(ctx, issueStageSyncTimeout)
+	defer cancel()
+	res := ghClient.BackfillCoveredByLedger(backfillCtx, ledger, claimingPRRedStale(cfg, actionable))
+	if res.Covered+res.Errors > 0 && logger != nil {
+		logger.Info("stage backfill: issue records reconciled with the claim ledger",
+			"checked", res.Checked, "covered", res.Covered, "skipped_red_stale", res.SkippedRedStale,
+			"skipped_not_open", res.SkippedNotOpen, "errors", res.Errors)
+	}
+}
+
 func applyDuplicatePRGuard(
 	ctx context.Context,
 	cfg *config.Config,
@@ -11128,14 +11181,21 @@ type reviewFixAuditor interface {
 // not get a bot commit — and silence is the one thing an operator cannot
 // investigate, so each one names the PR, who opened it, and the
 // review.fix_human_prs value at the time (on no longer permits the push:
-// hivecommons/hive#12897). The planner reports each head once, so
-// this does not repeat on every eval cycle.
+// hivecommons/hive#12897). The planner records the exclusion and
+// the withheld fix only on the cycle that first withholds a head (a persisted
+// State.Withheld entry suppresses later cycles), so this does not repeat on
+// every eval cycle.
 func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
 	// One WARN per changes_requested head that ends the cycle without a fix
 	// kick: a PR shown as "Fixing" that nobody is fixing must be loud
 	// (hivecommons/hive#14665).
 	for _, x := range plan.FixExclusions {
-		logger.Warn("review fix dispatch excluded",
+		level := slog.LevelWarn
+		if x.Reason == review.FixDispatchExcludedNotHiveAuthored || x.Reason == review.FixDispatchExcludedNotHiveAuthoredDCO {
+			// Policy skip (the hive never pushes to PRs it did not author), not a fault.
+			level = slog.LevelInfo
+		}
+		logger.Log(context.Background(), level, "review fix dispatch excluded",
 			"repo", x.Repo, "pr", x.Number, "head_sha", x.HeadSHA, "author", x.Author, "reason", x.Reason, "attempts", x.Attempts)
 	}
 	for _, w := range plan.WithheldFixes {

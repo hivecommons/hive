@@ -51,13 +51,13 @@ func stageTrackerManualMergeJS(t *testing.T, html string) string {
 	}, "\n")
 }
 
-func writeSentinelBundle(t *testing.T, root, repo string, number int, head string, findings []evidence.SentinelFinding) {
+func writeSentinelBundle(t *testing.T, root, repo string, number int, head string, findings []evidence.SentinelFinding, actions ...evidence.Action) {
 	t.Helper()
 	path := github.ReviewEvidencePath(root, repo, number, head)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	b := evidence.Bundle{SchemaVersion: evidence.SchemaVersion, Repo: repo, Number: number, HeadSHA: head, Sentinel: findings}
+	b := evidence.Bundle{SchemaVersion: evidence.SchemaVersion, Repo: repo, Number: number, HeadSHA: head, Sentinel: findings, HumanActions: actions}
 	if err := evidence.Seal(&b, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -203,15 +203,24 @@ func TestStageTrackerSentinelLabelClearsBlockingBundle(t *testing.T) {
 	notice := []evidence.SentinelFinding{{Rule: "sensitive_path", Summary: "touches OWNERS", Notice: true}}
 	mixed := []evidence.SentinelFinding{blocking[0], notice[0]}
 
+	ack := evidence.Action{Actor: "clubanderson", Kind: evidence.ActionSentinelAcknowledged, Detail: "approved from the Hive dashboard", At: time.Date(2026, 10, 28, 12, 50, 0, 0, time.UTC)}
+	other := evidence.Action{Actor: "clubanderson", Kind: "label_removed", At: ack.At}
+
 	tests := []struct {
 		name         string
 		number       int
 		findings     []evidence.SentinelFinding
+		actions      []evidence.Action
 		labels       []string
 		wantAlert    bool
 		wantFindings int
 		wantReason   string
 	}{
+		// The owner's Approve acknowledged the findings on this head
+		// (hivecommons/crux#30 had no label, so nothing else could clear it).
+		{name: "notice-only bundle acknowledged by owner approval", number: 406, findings: notice, actions: []evidence.Action{other, ack}, labels: []string{"stage/085-needs-decision"}, wantAlert: false, wantFindings: 1, wantReason: "touches OWNERS — acknowledged by @clubanderson"},
+		{name: "blocking bundle acknowledged, label still on", number: 407, findings: blocking, actions: []evidence.Action{ack}, labels: []string{config.DefaultSentinelLabel}, wantAlert: true, wantFindings: 2, wantReason: "changes 1 sensitive path(s) (+1 more) — acknowledged by @clubanderson"},
+		{name: "unrelated action does not acknowledge", number: 408, findings: notice, actions: []evidence.Action{other}, labels: nil, wantAlert: true, wantFindings: 1, wantReason: "touches OWNERS"},
 		{name: "blocking bundle, label still on", number: 401, findings: blocking, labels: []string{"lgtm", config.DefaultSentinelLabel}, wantAlert: true, wantFindings: 2, wantReason: "changes 1 sensitive path(s) (+1 more)"},
 		{name: "blocking bundle, label removed by maintainer", number: 402, findings: blocking, labels: []string{"lgtm", "stage/085-needs-decision"}, wantAlert: false, wantFindings: 2, wantReason: "changes 1 sensitive path(s) (+1 more)"},
 		{name: "notice-only bundle, never labelled", number: 403, findings: notice, labels: []string{"stage/050-review-pending"}, wantAlert: true, wantFindings: 1, wantReason: "touches OWNERS"},
@@ -221,7 +230,7 @@ func TestStageTrackerSentinelLabelClearsBlockingBundle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.findings != nil {
-				writeSentinelBundle(t, root, "acme/console", tt.number, head, tt.findings)
+				writeSentinelBundle(t, root, "acme/console", tt.number, head, tt.findings, tt.actions...)
 			}
 			alert, findings, reason := s.stageTrackerSentinel(verifier, "acme/console", tt.number, head, tt.labels)
 			if alert != tt.wantAlert || findings != tt.wantFindings || reason != tt.wantReason {

@@ -403,6 +403,15 @@
     .oc-version-channel { flex: 0 1 auto; min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent); font-weight: 700; }
     .oc-version-manual-pill { white-space: nowrap; padding: 1px 7px; border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); }
     .oc-version-upgrade-note { color: var(--muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+    .oc-version-state-pill { white-space: nowrap; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+    .oc-version-state-pill.is-draining { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 40%, transparent); }
+    .oc-version-state-pill.is-missed { color: var(--red, var(--danger)); border-color: color-mix(in srgb, var(--red, var(--danger)) 40%, transparent); }
+    .oc-version-state-pill.is-done { color: var(--green, var(--success)); }
+    .oc-version-history { list-style: none; margin: 0; padding: 0; font-size: var(--fs-xs); color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
+    .oc-version-history li { display: flex; gap: var(--sp-2); min-width: 0; }
+    .oc-version-history li.is-missed { color: var(--red, var(--danger)); }
+    .oc-version-history time { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+    .oc-version-history span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .oc-version-chip-chevron { flex: 0 0 auto; width: 0.8rem; font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1; text-align: center; margin-left: auto; transition: transform 0.15s ease; }
     .oc-version-chip[aria-expanded="false"] .oc-version-chip-chevron { transform: rotate(-90deg); }
     .oc-version-update-dot { flex: 0 0 auto; color: var(--amber); font-weight: 900; }
@@ -1338,6 +1347,8 @@
     /* Sound toggle (merge zap + new-item buzz): a speaker chip at the toolbar's far end; pressed = on. */
     .ham-sound { margin-left: auto; padding: var(--sp-1) var(--sp-2); min-width: 2em; line-height: 1; }
     .ham-sound[aria-pressed="true"] { color: var(--green); border-color: var(--green); }
+    /* Sound on but the browser holds audio back until a click/key on the page (autoplay policy). */
+    .ham-sound.ham-sound-blocked, .ham-sound[aria-pressed="true"].ham-sound-blocked { color: var(--amber); border-color: var(--amber); }
     /* Settings modal rows: one per sound — label, current clip, actions. */
     .ham-sound-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--border); font-size: var(--fs-xs); }
     .ham-sound-row-label { color: var(--text); font-weight: 600; flex: 1 1 14rem; }
@@ -1477,6 +1488,8 @@
     .ham-gd-4 { height: 100%; background: var(--amber); }
     .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
+    a.ham-badge-mod { color: var(--text-faint); text-decoration: none; }
+    a.ham-badge-mod:hover { text-decoration: underline; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
     /* A regression the hive is already working through: muted, never red. */
     .ham-badge-mod.ham-mod-regressed.ham-mod-handled { color: var(--text-muted); border-color: var(--line-subtle); border-style: dashed; }
@@ -1519,6 +1532,8 @@
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-blocked { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-blocked .ham-seg-t::before { content: '⛔'; margin-right: var(--sp-1); }
+    .ham-seg.active.ham-open-draft { background: var(--band-draft); color: var(--surface-0); }
+    .ham-seg.active.ham-open-draft .ham-seg-t::before { content: '✎'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
@@ -10614,6 +10629,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval. If the previous pass is still running at that time, the kick waits for the CLI's input dialog.">Next Kick</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? esc(agentCadenceOffLabel()) : esc(agentKickDisplay(a.nextKick, a.nextKickAt))}</div></div>
           <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
           <div class="oc-detail-field"><div class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability.">Restarts</div><div class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts ?? 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? ` <button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></div></div>
+          ${a.sessionRssMb ? `<div class="oc-detail-field"><div class="label" title="Resident memory of this agent's CLI process tree (MiB) and how long the current CLI session has been up. Idle sessions over the agents.session_recycle RSS or age budget are recycled through a normal restart.">Session RSS</div><div class="value">${a.sessionRssMb} MiB${a.sessionAge ? ` <span class="restart-label">${esc(a.sessionAge)}</span>` : ''}${a.sessionRecycles ? ` <span class="restart-label" title="Sessions recycled over the RSS/age budget since boot">↻${a.sessionRecycles}</span>` : ''}</div></div>` : ''}
           <div class="oc-detail-field"><div class="label" title="Average tokens consumed per work pass (kick session). Lower is more efficient.">Avg/Pass</div><div class="value">${_tokAvg > 0 ? fmtTokens(_tokAvg) : '—'}</div></div>
           <div class="oc-detail-field"><div class="label" title="Number of separate CLI sessions this agent has had in the last 24 hours.">Sessions</div><div class="value">${_tok.sessions ?? '—'}</div></div>
           <div class="oc-detail-field"><div class="label" title="Total number of messages (prompts + responses) across all sessions in the last 24 hours.">Messages</div><div class="value">${_tok.messages ?? '—'}</div></div>
@@ -10659,7 +10675,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Post-restart boot stagger / launch in progress: the agent is not down,
       // it just hasn't reached its pane yet. Render as 'starting', not red.
       const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
-      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+      // Sandboxed agents: down = last run failed / cadence missed, never
+      // "no session" (agentSessionDown).
+      const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
       // Same formula as the Auth section's Login button below: a down agent
       // with an unauthenticated CLI gets the amber needs-login state instead
       // of plain down-red (#2465).
@@ -10686,7 +10704,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       /* 'disabled' outranks 'down': both reach here with state!=='running',
          but a switched-off agent is not a fault, and labelling it "down" sent
          operators looking for a crash that never happened. */
-      const stateLabel = agentSessionUnavailable(a) ? 'disabled' : needsLoginDown ? 'needs login' : isStopped ? (a.operatorStopped ? 'stopped by operator' : 'down') : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : isRunning ? (a.awaitingCI ? 'Waiting on CI' : 'working') : 'idle';
+      const stateLabel = agentSessionUnavailable(a) ? 'disabled' : needsLoginDown ? 'needs login' : isStopped ? (agentSandboxDownLabel(a) || (a.operatorStopped ? 'stopped by operator' : 'down')) : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : isRunning ? (a.awaitingCI ? 'Waiting on CI' : 'working') : 'idle';
 
       const kickId = `oc-kick-${a.name}`;
       const prevInput = document.getElementById(kickId);
@@ -10874,8 +10892,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             : `<button class="hv-btn btn-secondary btn-sm btn-toggle running" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="false" title="${esc(agentToggleTitle(a, false, false))}">⏸ pause</button>`}
           ${agentPowerSwitchHtml(a)}
           ${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open the live tmux terminal session for this agent in a new tab">▶ terminal</a>`)}
-          ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Open the full retained log of this agent's latest run as selectable, searchable text in a new tab">📄 full log</a>`)}
-          ${sessionChip(a, '📋 log text', `<a href="${fullLogUrl(a.name, false)}" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Open the full retained log in the in-app viewer for copying">📋 log text</a>`)}
+          ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="${esc(fullLogTitle(a, 'Open the full retained log of this agent\'s latest run as selectable, searchable text in a new tab'))}">📄 full log</a>`)}
+          ${sessionChip(a, '📋 log text', `<a href="${fullLogUrl(a.name, false)}" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="${esc(fullLogTitle(a, 'Open the full retained log in the in-app viewer for copying'))}">📋 log text</a>`)}
           <a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Browse archived logs of this agent's previous kicks — history survives restarts and hive upgrades">🕘 past kicks</a>
           <button class="hv-btn btn-danger btn-sm restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill this agent's tmux session — supervisor will respawn it with fresh context">↻ restart</button>
           <button class="hv-btn config-gear btn-primary" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Open configuration dialog for this agent (cadences, model, pipeline, hooks, etc.)">⚙️</button>
@@ -11055,7 +11073,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // down (#2465). Match the deep check: non-running + non-paused = down,
       // with paused/off/on-demand keeping their own styling.
       const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
-      const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+      const isDown = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
       // A down agent whose CLI is unauthenticated is not merely down — it can
       // never do work until someone logs it in. Same formula as the agent
       // panel's Login button; rendered amber with a "needs login" note. Only
@@ -13474,7 +13492,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let showReservations = true;
       if (st.isPoweredOff || st.isOff) { lead = 'Off'; showReservations = false; }
       else if (st.isPaused) { lead = 'Paused'; showReservations = false; }
-      else if (st.isStopped) { lead = "Stopped — see the agent's log"; showReservations = false; }
+      else if (st.isStopped) {
+        const sbLabel = agentSandboxDownLabel(a);
+        lead = sbLabel ? sbLabel.charAt(0).toUpperCase() + sbLabel.slice(1) + " — see the agent's log" : "Stopped — see the agent's log";
+        showReservations = false;
+        const sandboxHtml = (sbLabel && !outdated) ? agentSandboxRunHtml(a, ctx.hiveNowMs) : '';
+        if (sandboxHtml) parts.push(sandboxHtml);
+      }
       else if (st.isStarting || (!a.lastKickAt && a.busy !== 'working')) { lead = 'Not started yet'; showReservations = false; }
       const la = a.lastAction || null;
       const item = (!lead && la) ? agentNowItem(la.repo, la.number, la.action, ctx) : null;
@@ -13502,6 +13526,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const age = ago(la.at);
           parts.push('last: ' + agentNowItemHtml(item, false) + (age ? ', ' + age : ''));
         }
+        const sandboxHtml = outdated ? '' : agentSandboxRunHtml(a, ctx.hiveNowMs);
+        if (sandboxHtml) parts.push(sandboxHtml);
       } else if (!lead) {
         lead = esc(st.stateLabel || a.busy || '');
         showReservations = false;
@@ -13528,7 +13554,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const isPaused = a.paused === true && !isOnDemand;
       const isOff = agentHeldByMode(a) && !isPaused && !isOnDemand;
       const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
-      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+      const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
       return { isPoweredOff, isOff, isPaused, isStopped, isStarting, stateLabel: isOnDemand ? 'on demand' : a.busy };
     }
 
@@ -13935,6 +13961,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (mods.indexOf('regressed') >= 0 && !stageTrackerRegressionHandled(item)) return 'Sent back';
       if (n === 0 && mods.indexOf('hold') >= 0) return 'Open · on hold' + (holdLabels.length ? ' (' + holdLabels.join(', ') + ')' : '');
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
+      if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
       const viaPR = item.kind === 'issue' && n >= 50 && (n !== 85 || item.via_pr) ? ' (its PR)' : '';
@@ -13981,12 +14008,37 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // The Open · blocked chevron's reason: the blocker when the payload names
-    // one (`blocked_on`: "owner/repo#N" or a list of them), else the label.
+    // one (`blocked_on`: "owner/repo#N" or a list of them, or `blocked_on_pr`:
+    // the PR a hive:blocked-on marker names), else the label.
     function stageTrackerBlockedTip(item) {
       const on = item && item.blocked_on;
       const refs = (Array.isArray(on) ? on : (on ? [on] : [])).map(r => String(r || '').trim()).filter(Boolean);
+      const pr = stageTrackerBlockedOnPR(item);
+      if (pr && refs.indexOf(pr.ref) < 0) refs.push(pr.ref);
       return refs.length ? 'blocked on ' + refs.join(', ') : 'carries the blocked label';
     }
+
+    // The PR a blocked issue waits on (`blocked_on_pr`: {repo, number, url,
+    // state}), normalised: `ref` is "owner/repo#N", `short` is "#N" when the
+    // PR lives in the item's own repo, `tip` the full explanation. null when
+    // the payload names none.
+    function stageTrackerBlockedOnPR(item) {
+      const pr = item && item.blocked_on_pr;
+      const number = pr ? Number(pr.number) || 0 : 0;
+      if (!number) return null;
+      const repo = String(pr.repo || '').trim();
+      const ref = (repo ? repo + '#' : '#') + number;
+      const own = String(item.repo || '').trim().toLowerCase();
+      const lower = repo.toLowerCase();
+      const same = !repo || !own || lower === own || own.endsWith('/' + lower) || lower.endsWith('/' + own);
+      const state = String(pr.state || '').trim().toLowerCase();
+      const outcome = state === 'merged' ? STAGE_TRACKER_BLOCKED_ON_PR_MERGED : state === 'closed' ? STAGE_TRACKER_BLOCKED_ON_PR_CLOSED : STAGE_TRACKER_BLOCKED_ON_PR_OPEN;
+      return { ref, short: same ? '#' + number : ref, url: String(pr.url || '').trim(), state,
+        tip: 'Blocked on PR ' + ref + (state ? ' (' + state + ')' : '') + ' — ' + outcome };
+    }
+    const STAGE_TRACKER_BLOCKED_ON_PR_OPEN = 'lifts when it merges; re-triage if closed unmerged';
+    const STAGE_TRACKER_BLOCKED_ON_PR_MERGED = 'merged; the blocked sweep lifts the label next';
+    const STAGE_TRACKER_BLOCKED_ON_PR_CLOSED = 'closed unmerged; the blocked sweep re-triages it next';
 
     // "Sentinel flagged security-relevant changes at <head short sha>:
     // <reason>" — the sentinel wording for an item's tooltips and aria
@@ -14041,24 +14093,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         let state = 'todo';
         if (terminal || n < anchor) state = 'done';
         else if (n === anchor) state = 'active';
-        // The lit column's tooltip names the real stage (030 vs 040, 060 vs 080).
-        const tipStage = (state === 'active' && !detour && curStage.label) ? curStage : st;
+        // The lit column's tooltip names the real stage (030 vs 040, 060 vs
+        // 080) — for a detour too: a 085 row lights the 080 column, and its
+        // hover must say "Needs human decision", not borrow the column's
+        // "Awaiting merge admission" text (hivecommons/hive#14821, #14822
+        // read as 080 with "Next move: human").
+        const tipStage = (state === 'active' && curStage.label) ? curStage : st;
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
         const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.
         const openBlocked = n === 0 && state === 'active' && !openHold && mods.indexOf('blocked') >= 0;
+        // A draft PR with no stage is the author's, not the hive's: the
+        // Open word says so, muted, and it never tints stale (#14572).
+        const openDraft = n === 0 && state === 'active' && !openHold && !openBlocked && mods.indexOf('draft') >= 0;
         if (openHold) word = 'Open · hold';
         else if (openBlocked) word = 'Open · blocked';
-        // A plain or blocked Open step (no stage label, not held) says how
-        // long it has sat there, from the same instant the since column
-        // shows — a stale blocked item is exactly what should stand out.
+        else if (openDraft) word = 'Draft';
+        // A plain, blocked or draft Open step (no stage label, not held)
+        // says how long it has sat there, from the same instant the since
+        // column shows — a stale blocked item is exactly what should stand out.
         let openSince = null;
         if (n === 0 && state === 'active' && !openHold && !detour && nowMs) {
           const os = stageTrackerOpenSince(item);
-          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
+          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
         }
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, openSince };
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, draft: openDraft, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;
@@ -14066,6 +14126,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'unauthorized', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
     const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
+    // The draft pill and the Draft chevron explain themselves on hover: no
+    // maintainer action is pending, the lanes resume when the author is ready.
+    const STAGE_TRACKER_DRAFT_TIP = 'Draft PR — hive review and merge lanes skip drafts until the author marks it ready for review.';
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
     const STAGE_TRACKER_ICONS = {
       0: '<circle cx="8" cy="8" r="5"/>',
@@ -14162,12 +14225,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         if (active) {
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
+          if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
           if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
@@ -14247,13 +14311,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return text;
     }
 
+    // The name of one trail hop. The payload's history entries carry
+    // {number, slug, at, ...} (StageTrackerHop); the strip word for the
+    // number wins, the slug stands in before the stage table is loaded, and
+    // '' means the hop cannot be named and is left out of the trail.
+    function stageTrackerHopName(h) {
+      if (!h || typeof h !== 'object') return '';
+      const raw = h.number !== undefined ? h.number : h.stage;
+      const num = Number(raw);
+      if (raw !== undefined && raw !== null && raw !== '' && !isNaN(num)) {
+        if (num === 0) return 'Open';
+        const st = ((_stageTracker && _stageTracker.stages) || []).find(s => Number(s.number) === num);
+        if (st && (st.short || st.label)) return st.short || st.label;
+      }
+      return h.slug ? String(h.slug) : '';
+    }
+
+    // "Trail: CI / Review → Needs human decision" — the last few hops of the
+    // item's history by stage name; '' when fewer than two hops can be named.
+    function stageTrackerTrailText(item) {
+      const hist = Array.isArray(item && item.history) ? item.history : [];
+      const names = hist.slice(-STAGE_TRACKER_TRAIL_HOPS).map(stageTrackerHopName).filter(Boolean);
+      return names.length > 1 ? names.join(' → ') : '';
+    }
+
     // Row tooltip: headline, reason, repo, author, flags, since, recent hops.
     function stageTrackerTooltip(item, nowMs) {
       const ak = item.author_kind || '';
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const sinceMs = Date.parse(item.stage_since || '');
-      const trail = Array.isArray(item.history) && item.history.length > 1
-        ? item.history.slice(-STAGE_TRACKER_TRAIL_HOPS).map(h => String(h.stage).padStart(3, '0')).join(' → ') : '';
+      const trail = stageTrackerTrailText(item);
       const openHeld = (Number(item.stage) || 0) === 0 && mods.indexOf('hold') >= 0;
       const lines = openHeld
         ? [stageTrackerHeadline(item) + (item.caption || item.reason ? ' · ' + (item.caption || item.reason) : '') + (item.repo ? ' · ' + item.repo : '')]
@@ -14264,6 +14351,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr);
       const actorKind = stageTrackerActorKind(item);
       if (actorKind) lines.push('Next move: ' + actorKind);
+      const blockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
+      if (blockedPR) lines.push(blockedPR.tip);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       const stale = stageTrackerStaleLabelsText(item);
       if (stale) lines.push(stale);
@@ -14295,19 +14384,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const handled = stageTrackerRegressionHandled(item);
       if (handled && mods.length > 1) mods.push(mods.shift());
       let text = handled && mods[0] === 'regressed' ? STAGE_TRACKER_HANDLED_TEXT : (STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '));
-      // A row the scheduler withholds for open GitHub "blocked by" dependencies names them (hivecommons/hive#14765).
+      // A row the scheduler withholds for open GitHub "blocked by" dependencies names them (hivecommons/hive#14765);
+      // one blocked on a PR (hive:blocked-on marker) names it and links to it (hivecommons/hive#14952).
+      const blockedPR = mods[0] === 'blocked' ? stageTrackerBlockedOnPR(item) : null;
       if (mods[0] === 'blocked' && Array.isArray(item.blocked_on) && item.blocked_on.length) text = stageTrackerBlockedTip(item);
+      else if (blockedPR) text = 'blocked on ' + blockedPR.short;
       // A blocked row with a hive:recheck-after deadline ("blocked until <RFC3339>") names when the sweep re-checks it.
       const recheck = mods[0] === 'blocked' ? /^blocked until (\S+)/i.exec(String(item.bucket_reason || '')) : null;
       const recheckMs = recheck ? Date.parse(recheck[1]) : NaN;
       if (!isNaN(recheckMs)) text += ' · re-check at ' + agentNowClockTime(recheckMs, Date.now());
-      // The regressed pill (lead or folded into "+1") explains itself on hover.
+      // The regressed pill (lead or folded into "+1") explains itself on
+      // hover; failing that, a draft pill (lead or folded) does.
       const regressed = stageTrackerRegressionText(item, Date.now());
-      // An unauthorized pill names the missing App permission and the human step.
+      // An unauthorized pill names the missing App permission and the human step;
+      // the regressed pill explains itself; a blocked pill names what it waits on;
+      // failing all three, a draft pill does.
+      const anyBlockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
       const tip = (mods.indexOf('unauthorized') >= 0 && String(item.unauthorized || '').trim()) || regressed
-        || (mods.indexOf('blocked') >= 0 && Array.isArray(item.blocked_on) && item.blocked_on.length ? 'Withheld from the scanner until ' + item.blocked_on.join(', ') + (item.blocked_on.length > 1 ? ' close' : ' closes') : '');
+        || (mods.indexOf('blocked') >= 0 && Array.isArray(item.blocked_on) && item.blocked_on.length ? 'Withheld from the scanner until ' + item.blocked_on.join(', ') + (item.blocked_on.length > 1 ? ' close' : ' closes') : '')
+        || (anyBlockedPR ? anyBlockedPR.tip : '')
+        || (mods.indexOf('draft') >= 0 ? STAGE_TRACKER_DRAFT_TIP : '');
       const cls = 'ham-mod-' + mods[0] + (handled && mods[0] === 'regressed' ? ' ham-mod-handled' : '');
-      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
+      const inner = `${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}`;
+      // The lead pill of a row blocked on a PR is the link to that PR.
+      if (blockedPR && blockedPR.url) return sentinel + `<a class="ham-badge ham-badge-mod ${esc(cls)}" href="${esc(blockedPR.url)}" target="_blank" rel="noopener"${tip ? ` title="${esc(tip)}"` : ''} aria-label="${esc(blockedPR.tip)}">${inner}</a>`;
+      return sentinel + `<span class="ham-badge ham-badge-mod ${esc(cls)}"${tip ? ` title="${esc(tip)}"` : ''}>${inner}</span>`;
     }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
@@ -16424,7 +16525,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        AudioContext is created lazily on a user gesture and resumed when
        suspended; a context the autoplay policy still holds suspended at
        play time re-arms the gesture listeners instead of queueing stale
-       voices. */
+       voices. A reload (the SPA reloads itself whenever the hive deploys
+       a new version) is a fresh document with no user activation, so a
+       context created for the first automatic play after it is suspended
+       and every zap/buzz is dropped until the user clicks or presses a
+       key on the page: the chip turns amber and a one-time toast with an
+       "Enable sounds" action says so, instead of failing silently. Gesture
+       plays (▶ Play, turning sound on) start their voices inside the
+       gesture itself alongside resume() — WebKit unlocks the context on
+       either, and only inside the gesture — and a resume() that resolves
+       before the state has flipped waits for statechange rather than
+       counting as blocked. */
     const STAGE_TRACKER_SOUND_KEY = 'hive.tracker.sound';
     const STAGE_TRACKER_SOUND_MAX_PLAYS = 2;
     const STAGE_TRACKER_SOUND_OFFSET_S = 0.26;
@@ -16469,6 +16580,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_SOUND_BLOCKED_MSG = 'The browser blocked audio for this page — click ▶ Play again, or allow sound/auto-play for this site in the browser\'s site settings.';
     const STAGE_TRACKER_SOUND_UNSUPPORTED_MSG = 'This browser has no Web Audio support, so the tracker sounds cannot play.';
     const STAGE_TRACKER_SOUND_PLAYING_LABEL = 'Playing…';
+    // Autoplay-policy affordance: shown once per page load when sound is on
+    // but the browser holds the audio engine back until a click or key press
+    // on this page (every reload — including the automatic one on a new hive
+    // version — starts without user activation).
+    const STAGE_TRACKER_SOUND_HELD_MSG = 'Tracker sounds are on, but the browser holds audio back until you click or press a key on this page.';
+    const STAGE_TRACKER_SOUND_HELD_SKIPPED_MSG = ' A zap or buzz was just skipped.';
+    const STAGE_TRACKER_SOUND_HELD_ACTION = 'Enable sounds';
+    const STAGE_TRACKER_SOUND_HELD_TOAST_MS = 60000;
+    const STAGE_TRACKER_SOUND_HELD_CLASS = 'ham-sound-blocked';
+    const STAGE_TRACKER_SOUND_HELD_TITLE = 'Sound on, but held back by the browser until you click or press a key on this page';
+    // Gestures the autoplay policies count as user activation: WebKit does
+    // not treat every pointerdown as one, so click and touchend are armed too.
+    const STAGE_TRACKER_PRIME_EVENTS = Object.freeze(['pointerdown', 'keydown', 'click', 'touchend']);
     const STAGE_TRACKER_SOUND_KINDS = Object.freeze({
       open: { label: 'Open sound', builtin: 'Built-in (bee buzz)', event: 'a new issue or pull request appears' },
       merge: { label: 'Merge sound', builtin: 'Built-in (zapper)', event: 'a pull request merges' },
@@ -16480,6 +16604,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerAudioCtx = null;
     var _stageTrackerSoundOn = false;
     var _stageTrackerSoundPrimed = false;
+    var _stageTrackerSoundHeldShown = false;
     var _stageTrackerVolume = STAGE_TRACKER_VOLUME_DEFAULT;
     // kind → { name, bytes (ArrayBuffer), buffer (AudioBuffer|null), failed }
     var _stageTrackerClips = { open: null, merge: null };
@@ -16587,24 +16712,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Resolves with ctx once it is running. Any other state ('suspended',
     // Safari's 'interrupted', …) gets a resume(); the promise rejects when
-    // resume() throws or rejects, resolves without the context running, or
-    // does not settle within timeoutMs.
+    // resume() throws or rejects, or when the context is not running within
+    // timeoutMs. A resume() that resolves while the state still reads
+    // blocked is not a verdict — WebKit can settle the promise a beat before
+    // the state flips — so the context's statechange is awaited until the
+    // deadline.
     function stageTrackerResumeContext(ctx, timeoutMs) {
       if (!ctx) return Promise.reject(new Error('no AudioContext'));
       if (ctx.state === 'running') return Promise.resolve(ctx);
       return new Promise((resolve, reject) => {
         let settled = false;
+        const canListen = typeof ctx.addEventListener === 'function';
+        const onState = () => { if (ctx.state === 'running') finish(true); };
         const finish = (ok, err) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          if (canListen) ctx.removeEventListener('statechange', onState);
           if (ok) resolve(ctx); else reject(err || new Error('AudioContext did not resume'));
         };
         const timer = setTimeout(() => finish(false, new Error('AudioContext resume timed out')), timeoutMs);
+        if (canListen) ctx.addEventListener('statechange', onState);
         let p;
         try { p = ctx.resume(); } catch (e) { p = Promise.reject(e); }
-        Promise.resolve(p).then(() => finish(ctx.state === 'running'), e => finish(false, e));
+        Promise.resolve(p).then(() => { if (ctx.state === 'running') finish(true); }, e => finish(false, e));
       });
+    }
+
+    // Drops the context so voices queued on it can never burst out later;
+    // the next play creates a fresh one. Decoded clips are plain AudioBuffers
+    // and survive.
+    function stageTrackerDiscardContext(ctx) {
+      if (_stageTrackerAudioCtx === ctx) _stageTrackerAudioCtx = null;
+      try { const p = ctx && typeof ctx.close === 'function' && ctx.close(); if (p && typeof p.catch === 'function') p.catch(() => {}); } catch {}
     }
 
     // Prime the context on a gesture after load when sound was left on in a
@@ -16619,8 +16759,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let inFlight = false;
       const disarm = () => {
         _stageTrackerSoundPrimed = false;
-        document.removeEventListener('pointerdown', prime);
-        document.removeEventListener('keydown', prime);
+        STAGE_TRACKER_PRIME_EVENTS.forEach(n => document.removeEventListener(n, prime));
       };
       const prime = () => {
         if (!_stageTrackerSoundOn) { disarm(); return; }
@@ -16628,10 +16767,43 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const ctx = stageTrackerAudioContext();
         if (!ctx) { disarm(); return; }
         inFlight = true;
-        stageTrackerResumeContext(ctx, STAGE_TRACKER_GESTURE_RESUME_MS).then(disarm, () => { inFlight = false; });
+        stageTrackerResumeContext(ctx, STAGE_TRACKER_GESTURE_RESUME_MS).then(() => { disarm(); stageTrackerSoundHeldClear(); }, () => { inFlight = false; });
       };
-      document.addEventListener('pointerdown', prime, { passive: true });
-      document.addEventListener('keydown', prime, { passive: true });
+      STAGE_TRACKER_PRIME_EVENTS.forEach(n => document.addEventListener(n, prime, { passive: true }));
+    }
+
+    // Pure: whether this document has had the user activation the autoplay
+    // policies want before an AudioContext may run outside a gesture. A
+    // browser without navigator.userActivation is assumed not to have it.
+    function stageTrackerHasUserActivation(nav) {
+      const ua = nav && nav.userActivation;
+      return !!(ua && ua.hasBeenActive);
+    }
+
+    // The autoplay-policy affordance: the chip turns amber and, once per
+    // page load, a toast with an "Enable sounds" action explains that a
+    // click or key press on the page is needed. The action runs inside the
+    // click, so it is itself the gesture that resumes the context.
+    function stageTrackerSoundHeldNotice(skipped) {
+      const b = document.getElementById('activity-monitor-sound');
+      if (b) {
+        b.classList.add(STAGE_TRACKER_SOUND_HELD_CLASS);
+        b.setAttribute('title', STAGE_TRACKER_SOUND_HELD_TITLE);
+      }
+      stageTrackerSoundPrime();
+      if (_stageTrackerSoundHeldShown) return;
+      _stageTrackerSoundHeldShown = true;
+      showToast(STAGE_TRACKER_SOUND_HELD_MSG + (skipped ? STAGE_TRACKER_SOUND_HELD_SKIPPED_MSG : ''), 'warning', {
+        autoDismissMs: STAGE_TRACKER_SOUND_HELD_TOAST_MS,
+        actionLabel: STAGE_TRACKER_SOUND_HELD_ACTION,
+        onAction: () => { stageTrackerPlayOnGesture(() => true).then(ok => { if (ok) stageTrackerSoundHeldClear(); }); },
+      });
+    }
+    function stageTrackerSoundHeldClear() {
+      const b = document.getElementById('activity-monitor-sound');
+      if (!b) return;
+      b.classList.remove(STAGE_TRACKER_SOUND_HELD_CLASS);
+      stageTrackerSoundSyncButton();
     }
 
     // Baked sample by sample like the reference render: the snap is a raw
@@ -16709,7 +16881,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Automatic play (a merge or new item landed): schedules at once on a
     // running context. A context the autoplay policy still holds gets one
     // short resume() window; voices that would otherwise burst out together
-    // on the next gesture are dropped and gesture priming is re-armed instead.
+    // on the next gesture are dropped, gesture priming is re-armed and the
+    // held-back affordance is shown instead.
     // Returns true only when the voices were scheduled synchronously.
     function stageTrackerPlayVoices(voice, count, gain, startOffsetS) {
       const ctx = stageTrackerAudioContext();
@@ -16717,22 +16890,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (ctx.state === 'running') return stageTrackerScheduleVoices(ctx, voice, count, gain, startOffsetS);
       stageTrackerResumeContext(ctx, STAGE_TRACKER_AUTO_RESUME_MS).then(
         () => stageTrackerScheduleVoices(ctx, voice, count, gain, startOffsetS),
-        () => stageTrackerSoundPrime());
+        () => stageTrackerSoundHeldNotice(true));
       return false;
     }
 
     // Gesture play (▶ Play, ▶ Play both, turning sound on): must be called
-    // from the gesture handler itself. Creates the context there, waits for
-    // resume() and then calls schedule(ctx). Resolves true when scheduled;
-    // when the browser refuses, toasts why and resolves false — a preview
-    // never fails silently.
+    // from the gesture handler itself. Creates the context there and, when
+    // it is not yet running, calls resume() and schedule(ctx) synchronously
+    // inside the gesture — WebKit only unlocks a context for a resume() or a
+    // node start() made while processing the gesture, and a promise
+    // continuation is no longer that. Resolves true once the context runs;
+    // when the browser refuses, the context (and the voices queued on it)
+    // is discarded, a toast says why and it resolves false — a preview never
+    // fails silently.
     function stageTrackerPlayOnGesture(schedule) {
       const ctx = stageTrackerAudioContext();
       if (!ctx) { showToast(STAGE_TRACKER_SOUND_UNSUPPORTED_MSG, 'error'); return Promise.resolve(false); }
       if (ctx.state === 'running') return Promise.resolve(!!schedule(ctx));
-      return stageTrackerResumeContext(ctx, STAGE_TRACKER_GESTURE_RESUME_MS).then(
-        () => !!schedule(ctx),
-        () => { showToast(STAGE_TRACKER_SOUND_BLOCKED_MSG, 'warning'); return false; });
+      const resumed = stageTrackerResumeContext(ctx, STAGE_TRACKER_GESTURE_RESUME_MS);
+      const scheduled = !!schedule(ctx);
+      return resumed.then(
+        () => { stageTrackerSoundHeldClear(); return scheduled; },
+        () => { stageTrackerDiscardContext(ctx); showToast(STAGE_TRACKER_SOUND_BLOCKED_MSG, 'warning'); return false; });
     }
 
     // Marks btn as playing for the life of promise plus lengthS of audio,
@@ -16962,7 +17141,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSetSoundOn(on) {
       _stageTrackerSoundOn = !!on;
       try { localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0'); } catch {}
-      stageTrackerSoundSyncButton();
+      stageTrackerSoundHeldClear();
       stageTrackerRenderSettings();
       if (_stageTrackerSoundOn) stageTrackerPlayTest();
     }
@@ -17026,7 +17205,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         _stageTrackerVolume = v === null ? STAGE_TRACKER_VOLUME_DEFAULT : Math.max(0, Math.min(Number(v) || 0, STAGE_TRACKER_VOLUME_MAX));
       } catch { _stageTrackerVolume = STAGE_TRACKER_VOLUME_DEFAULT; }
       stageTrackerSoundSyncButton();
-      if (_stageTrackerSoundOn) stageTrackerSoundPrime();
+      // Sound left on from a previous visit on a document nobody has clicked
+      // yet (every reload, including the automatic one on a new hive
+      // version): the browser will hold the audio engine back, so say so
+      // now rather than after the first zap has been dropped.
+      if (_stageTrackerSoundOn && !stageTrackerHasUserActivation(window.navigator)) stageTrackerSoundHeldNotice(false);
+      else if (_stageTrackerSoundOn) stageTrackerSoundPrime();
       stageTrackerClipsLoad().then(() => { stageTrackerDecodeClips(); stageTrackerRenderSettings(); });
     }
 
@@ -17660,6 +17844,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // explicit API opt-in for external clients. Dashboard navigations never
     // carry the shared token in the URL; token-secured spokes use
     // authenticated fetches for API calls instead.
+    /* A sandboxed agent (Podman or runtime: job) has no tmux pane: its full
+       log is the container/Job stdout+stderr hive archived when the last run
+       ended, so the tooltip says what the reader will get. */
+    function fullLogTitle(a, paneTitle) {
+      if (!a || !a.sandboxed) return paneTitle;
+      const rt = (a.sandboxRun && a.sandboxRun.runtime === 'job') ? 'Job' : 'sandbox container';
+      const when = (a.sandboxRun && a.sandboxRun.lastRunAt) ? ' (last run ' + a.sandboxRun.lastRunAt + ')' : '';
+      return 'Captured stdout/stderr of the last sandboxed run — the ' + rt + ' output hive archived when the run ended' + when + '. Earlier runs: 🕘 kick history.';
+    }
+
     function fullLogUrl(agentName, download) {
       const proto = window.location.protocol;
       const host = window.location.host;
@@ -17799,13 +17993,62 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tip = `${who} is enabled but NO governor mode gives it a cadence, and it has never been kicked \u2014 it will sit idle forever. Click to set cadences.`;
       return `<button class="never-scheduled-chip" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" data-tab="Cadences" title="${esc(tip)}">\u23F1 never scheduled \u2014 set cadences</button>`;
     }
+    /* Sandboxed agents (podman or Kubernetes Job runtime) run each kick in a
+       throwaway container and sit in state 'idle' between kicks: there is no
+       tmux session or in-pod process to be "down". Their health comes from
+       the server-side sandboxRun verdict (last run + cadence), never from
+       state !== 'running'. */
+    function agentSandboxRun(a) {
+      return (a && a.sandboxed && a.sandboxRun && a.sandboxRun.health) ? a.sandboxRun : null;
+    }
+    function agentSessionDown(a) {
+      const sr = agentSandboxRun(a);
+      if (sr) return sr.health === 'failed' || sr.health === 'overdue';
+      return a.state !== 'running';
+    }
+    function agentSandboxDownLabel(a) {
+      const sr = agentSandboxRun(a);
+      if (!sr) return '';
+      if (sr.health === 'failed') return sr.timedOut ? 'last run timed out' : 'last run failed';
+      if (sr.health === 'overdue') return 'run overdue';
+      return '';
+    }
+    function agentSandboxRunText(a, hiveNowMs) {
+      const sr = agentSandboxRun(a);
+      if (!sr || !sr.lastRunAt) return '';
+      const ago = agentNowAgo((hiveNowMs || Date.now()) - Date.parse(sr.lastRunAt));
+      const dur = sr.durationS >= 60 ? Math.round(sr.durationS / 60) + ' min' : (sr.durationS || 0) + ' s';
+      let text = (sr.succeeded ? 'last run succeeded' : (sr.timedOut ? 'last run timed out' : 'last run failed')) + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
+      if (sr.commitCount) text += ' \u00b7 ' + sr.commitCount + (sr.commitCount === 1 ? ' commit' : ' commits');
+      return text;
+    }
+    function agentSandboxRunHtml(a, hiveNowMs) {
+      const sr = agentSandboxRun(a);
+      const text = agentSandboxRunText(a, hiveNowMs);
+      if (!text) return '';
+      let html = esc(text);
+      if (sr.prURL) html += ' \u00b7 <a href="' + esc(sr.prURL) + '" target="_blank" rel="noopener" data-stop="1">PR</a>';
+      if (sr.prWithheld) {
+        html += ' \u00b7 <span title="' + esc(sr.prWithheld) + '">no PR opened: ' + esc(sr.prWithheld.length > 120 ? sr.prWithheld.slice(0, 120) + '\u2026' : sr.prWithheld) + '</span>';
+      } else if (sr.error && !sr.succeeded) {
+        html += ' \u2014 ' + esc(sr.error.length > 160 ? sr.error.slice(0, 160) + '\u2026' : sr.error);
+      }
+      return html;
+    }
     function agentBlockerLineHtml(a) {
       const onDemand = a.onDemand === true;
       let session = 'up', sessionCls = 'ab-ok';
       let sessionTip = 'The tmux session is alive.';
+      const sandboxRun = agentSandboxRun(a);
       if (agentIsDisabled(a)) {
         session = 'disabled'; sessionCls = 'ab-bad';
         sessionTip = 'Disabled in config \u2014 the governor never starts this agent. Enable it with \u2699\uFE0F.';
+      } else if (sandboxRun) {
+        const rt = sandboxRun.runtime === 'job' ? 'Job' : 'sandbox';
+        if (sandboxRun.health === 'running') { session = rt + ' running'; sessionCls = 'ab-ok'; sessionTip = 'A sandboxed kick is in flight.'; }
+        else if (sandboxRun.health === 'failed') { session = agentSandboxDownLabel(a); sessionCls = 'ab-bad'; sessionTip = 'The last sandboxed run failed: ' + (sandboxRun.error || 'see the full log.'); }
+        else if (sandboxRun.health === 'overdue') { session = 'run overdue'; sessionCls = 'ab-bad'; sessionTip = 'A scheduled kick was due' + (sandboxRun.dueAt ? ' at ' + sandboxRun.dueAt : '') + ' and no run has started.'; }
+        else { session = sandboxRun.lastRunAt ? rt + ' ok' : rt + ' ready'; sessionCls = 'ab-ok'; sessionTip = 'Sandboxed agent: each kick runs in its own container, so there is no session between kicks. ' + (agentSandboxRunText(a) || 'No run yet.'); }
       } else if (a.state !== 'running') {
         session = 'down'; sessionCls = 'ab-bad';
         sessionTip = 'No live tmux session \u2014 \u21bb restart asks the supervisor to respawn it.';
@@ -17876,7 +18119,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // Down = process not alive — anything but 'running'. 'stopped'-only
         // matching rendered crash-looping ('failed') agents green (#2465).
         const isStarting = !!a.starting && a.state !== 'running' && !isPaused && !isOff;
-        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand && !isStarting;
+        const isStopped = agentSessionDown(a) && !isPaused && !isOff && !isOnDemand && !isStarting;
         const needsLogin = _agentNeedsLogin(a, isStopped);
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
@@ -17954,7 +18197,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const agentSpanHandle = `<button type="button" class="agent-card-resize-col" data-agent-resize-col data-agent="${esc(a.name)}" data-stop="1" aria-label="${esc(agentSpanTip)}" title="${esc(agentSpanTip)}" aria-valuemin="1" aria-valuemax="3" aria-valuenow="${layoutSize.span || 1}"></button>`;
         const disabledEnableBtn = isDisabled ? `<button class="hv-btn btn-primary btn-sm oc-enable-agent" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" data-tab="General" title="Configure ${esc(a.displayName || a.name)} — review its settings and enable it from the General tab">⚙ Enable…</button>` : '';
         const historyLink = `<a href="${kickHistoryUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Archived logs of previous kicks — survives restarts and upgrades">🕘 past kicks</a>`;
-        const liveSessionActions = `${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="Full log of the latest run as selectable, searchable text">📄 full log</a>`)} ${historyLink}`;
+        const liveSessionActions = `${sessionChip(a, '▶ terminal', `<a href="${terminalUrl(a.name)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openTerminal" data-agent="${esc(a.name)}" title="Open tmux session">▶ terminal</a>`)} ${sessionChip(a, '📄 full log', `<a href="${fullLogUrl(a.name, false)}" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm terminal-link" data-action="openAuthenticatedLink" title="${esc(fullLogTitle(a, 'Full log of the latest run as selectable, searchable text'))}">📄 full log</a>`)} ${historyLink}`;
         const sessionActions = isPoweredOff
           ? `${historyLink}`
           : isDisabled
@@ -39160,6 +39403,79 @@ function burnAreaChart() {
       return 'Version current';
     }
 
+    /* Scheduled-upgrade progress (#14950). /api/version carries the state
+       the hub and spoke derive together (upgradeProgress: scheduled →
+       draining → pulling → rolling → verifying → done | missed) and the
+       hub's history of recent attempts (upgradeHistory). The menu shows the
+       state as a pill — with the drain countdown and the agents holding the
+       upgrade — and lists the history so a missed window is never silent. */
+    function versionStateLabels() {
+      return { scheduled: 'Scheduled', draining: 'Draining', pulling: 'Pulling', rolling: 'Rolling', verifying: 'Verifying', done: 'Upgraded', missed: 'Missed window' };
+    }
+
+    function versionStateLabel(state) {
+      return versionStateLabels()[state] || (state ? String(state).charAt(0).toUpperCase() + String(state).slice(1) : '');
+    }
+
+    function versionFormatDuration(sec) {
+      sec = Math.floor(Number(sec) || 0);
+      if (sec < 0) return '';
+      if (sec < 60) return sec + 's';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return min + 'm';
+      return Math.floor(min / 60) + 'h' + (min % 60) + 'm';
+    }
+
+    function versionAgentsInTurnText(st) {
+      const turns = (st && st.agentsInTurn) || [];
+      if (!turns.length) return '';
+      const parts = turns.map(function(t) {
+        const el = versionFormatDuration(t.elapsedS || 0);
+        return (t.agent || '?') + (el ? ' ' + el : '');
+      });
+      return turns.length + (st.agentsTotal ? '/' + st.agentsTotal : '') + ' agent' + (turns.length === 1 && !st.agentsTotal ? '' : 's') + ' in turn: ' + parts.join(', ');
+    }
+
+    function versionUpgradeStateText(st) {
+      if (!st || !st.state) return '';
+      let text = versionStateLabel(st.state);
+      if (st.state === 'draining') {
+        const agents = versionAgentsInTurnText(st);
+        const left = typeof st.drainRemainingS === 'number' && st.drainRemainingS > 0 ? versionFormatDuration(st.drainRemainingS) + ' left' : 'deadline reached';
+        text += (agents ? ' · ' + agents : '') + ' · ' + left;
+      } else if (st.state === 'missed' && st.reason) {
+        text += ' · ' + st.reason;
+      } else if (st.state === 'scheduled' && st.nextWindowAt) {
+        const at = new Date(st.nextWindowAt);
+        if (!isNaN(at.getTime())) text += ' · next window ' + formatDashboardDateTime(at);
+      } else if (st.state === 'done' && st.target) {
+        text += ' → ' + versionShortSHA(st.target);
+      }
+      return text;
+    }
+
+    function versionUpgradeStatePillHTML(st) {
+      const text = versionUpgradeStateText(st);
+      if (!text) return '';
+      return '<span class="oc-version-state-pill is-' + escapeHtml(st.state) + '" title="' + escapeHtml(st.detail || text) + '">' + escapeHtml(text) + '</span>';
+    }
+
+    function versionUpgradeHistoryHTML(v) {
+      const rows = (v && v.upgradeHistory) || [];
+      if (!rows.length) return '';
+      const items = rows.slice(0, 14).map(function(a) {
+        const when = a.endedAt && a.endedAt !== '0001-01-01T00:00:00Z' ? a.endedAt : a.startedAt;
+        const d = when ? new Date(when) : null;
+        const ts = d && !isNaN(d.getTime()) ? formatDashboardDateTime(d) : '?';
+        const what = a.outcome ? versionStateLabel(a.outcome) : 'In flight';
+        const to = a.target ? ' → ' + versionShortSHA(a.target) : '';
+        const why = a.reason ? ' — ' + a.reason : '';
+        const text = what + to + (a.trigger ? ' (' + a.trigger + ')' : '') + why;
+        return '<li class="' + (a.outcome === 'missed' ? 'is-missed' : '') + '" title="' + escapeHtml(ts + ': ' + text) + '"><time datetime="' + escapeHtml(when || '') + '">' + escapeHtml(ts) + '</time><span>' + escapeHtml(text) + '</span></li>';
+      });
+      return '<ul class="oc-version-history" aria-label="Upgrade history">' + items.join('') + '</ul>';
+    }
+
     function versionLastUpgradeText(v) {
       const rs = v && v.releaseStatus;
       const at = rs && rs.attempt ? rs.attempt : null;
@@ -39469,7 +39785,11 @@ function burnAreaChart() {
         }
       }
       if (au.heldReason) html += row('Held', value(au.heldReason, 'The scheduled update window opened but the hub held the upgrade' + (au.heldAt ? ' at ' + au.heldAt : '') + ': ' + au.heldReason), au.heldReason);
+      const statePill = versionUpgradeStatePillHTML(v && v.upgradeProgress);
+      if (statePill) html += row('Progress', statePill, (v.upgradeProgress && v.upgradeProgress.detail) || '');
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
+      const historyHTML = versionUpgradeHistoryHTML(v);
+      if (historyHTML) html += '<div class="oc-version-row" title="Recent scheduled and manual upgrade attempts, as recorded by the hub"><span>Upgrade history</span></div>' + historyHTML;
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
         html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
       }
@@ -39504,7 +39824,11 @@ function burnAreaChart() {
       const progress = ctx.upgradeProgress || null;
       const updateDot = ctx.hasUpgrade ? '<span class="oc-version-update-dot" title="Upgrade available">↑</span>' : '';
       const upgrading = progress && !progress.completedAt;
-      const progressGlyph = progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '';
+      const serverState = v.upgradeProgress || null;
+      const stateChip = !upgrading && serverState && (serverState.state === 'draining' || serverState.state === 'missed')
+        ? '<span class="oc-version-state-pill is-' + escapeHtml(serverState.state) + '" title="' + escapeHtml(serverState.detail || versionUpgradeStateText(serverState)) + '">' + escapeHtml(versionStateLabel(serverState.state)) + (serverState.state === 'draining' && serverState.drainRemainingS > 0 ? ' ' + escapeHtml(versionFormatDuration(serverState.drainRemainingS)) : '') + '</span>'
+        : '';
+      const progressGlyph = (progress && progress.completedAt ? '<span class="text-success" title="Upgrade complete">✓</span>' : '') + stateChip;
       if (chip.classList && chip.classList.toggle) chip.classList.toggle('is-upgrading', !!upgrading);
       const html = upgrading ? versionNavbarUpgradeHTML(progress, v) + '<span class="oc-version-chip-chevron" aria-hidden="true">▼</span>' :
         (v.release ? '<span class="oc-version-release">v' + escapeHtml(String(v.release).replace(/^v/i, '')) + '</span>' : '') +

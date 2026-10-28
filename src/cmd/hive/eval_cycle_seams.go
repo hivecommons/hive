@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -470,8 +471,13 @@ type kickDispatchDeps struct {
 	onReviewDelivered func(msg scheduler.KickMessage)
 	// onDelivered runs last, for the effects that must NOT happen when a kick
 	// was withheld or failed: governor repo accounting, audit log, lifecycle
-	// timeline, token snapshot.
-	onDelivered func(msg scheduler.KickMessage)
+	// timeline, token snapshot. deliveredAt is when the lane finished typing
+	// the kick, not when this callback runs: effects are applied in message
+	// order, so a fast agent's callback can run minutes after its kick while
+	// an earlier agent's lane waits out a prompt timeout. The governor needs
+	// the real delivery time to tell whether the kicked turn has already
+	// ended (hivecommons/hive continuous re-kick lost after a slow lane).
+	onDelivered func(msg scheduler.KickMessage, deliveredAt time.Time)
 	// onFailed runs when a kick was selected but could not be delivered. The
 	// continuous-mode scheduler uses this to exponential-backoff instead of
 	// returning the same due agent on every eval while the CLI is stalled.
@@ -486,8 +492,11 @@ type kickDispatchDeps struct {
 // kickDeliveryOutcome is what one delivery lane reports back for one message:
 // which step failed (start or send), if any.
 type kickDeliveryOutcome struct {
+	deferred bool
 	startErr error
 	sendErr  error
+	// deliveredAt is the lane's clock reading right after a successful send.
+	deliveredAt time.Time
 }
 
 // dispatchAgentKicks sends this cycle's kick messages, applying the two skip
@@ -508,8 +517,9 @@ type kickDeliveryOutcome struct {
 // (separate tmux panes; SendKick is already called concurrently by the
 // dashboard and the request watchers), so each agent gets its own delivery
 // lane and the tick waits only for the SLOWEST agent, not for all of them.
-// Messages to the same agent keep their order: a fix kick ordered ahead of the
-// governor kick by orderReviewFixKicksFirst still goes first.
+// Messages to the same agent keep their priority: a fix kick ordered ahead of
+// the governor kick goes first. Once a kick lands or finds a live turn, the
+// remaining messages in that lane are deferred until a later cycle.
 //
 // Only the slow legs — startStoppedAgent and sendKick — run on the lanes. The
 // backoff check, the span, and every delivered/failed effect run on the
@@ -529,6 +539,10 @@ type kickDeliveryOutcome struct {
 //     the entire point of releasing a probe.
 func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps kickDispatchDeps, logger *slog.Logger) []string {
 	var delivered []string
+	now := deps.now
+	if now == nil {
+		now = time.Now
+	}
 	// Decide, open spans and log in message order BEFORE any lane starts, so a
 	// withheld agent never has a lane and the audit log reads in plan order.
 	attempted := make([]bool, len(msgs))
@@ -564,12 +578,21 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 	}
 	for _, agentName := range laneOrder {
 		go func(indexes []int) {
+			deferLane := false
 			for _, i := range indexes {
 				msg := msgs[i]
 				var out kickDeliveryOutcome
-				if out.startErr = deps.startStoppedAgent(msg.Agent); out.startErr == nil {
-					out.sendErr = deps.sendKick(msg.Agent, msg.Message)
+				if deferLane {
+					results[i] <- kickDeliveryOutcome{deferred: true}
+					continue
 				}
+				if out.startErr = deps.startStoppedAgent(msg.Agent); out.startErr == nil {
+					if out.sendErr = deps.sendKick(msg.Agent, msg.Message); out.sendErr == nil {
+						out.deliveredAt = now()
+					}
+				}
+				// Success or a busy bounce leaves this lane occupied.
+				deferLane = out.startErr == nil && (out.sendErr == nil || errors.Is(out.sendErr, crux.ErrAgentBusy))
 				results[i] <- out
 			}
 		}(lanes[agentName])
@@ -583,6 +606,11 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 		}
 		out := <-results[i]
 		endSpan := endSpans[i]
+		if out.deferred || errors.Is(out.sendErr, crux.ErrAgentBusy) {
+			endSpan(nil)
+			logger.Info("agent busy: deferring kick", "agent", msg.Agent)
+			continue
+		}
 		if out.startErr != nil {
 			endSpan(out.startErr)
 			logger.Warn("failed to start stopped agent before kick", "agent", msg.Agent, "error", out.startErr)
@@ -605,7 +633,7 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 			deps.markProbeReleased(deps.now())
 			releaseProbe = false
 		}
-		deps.onDelivered(msg)
+		deps.onDelivered(msg, out.deliveredAt)
 		delivered = append(delivered, msg.Agent)
 	}
 	return delivered

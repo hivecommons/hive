@@ -173,10 +173,13 @@ type Candidate struct {
 	Title  string
 	Body   string
 	// URL is the issue's html_url; derived from Repo/Number when empty.
-	URL       string
-	Labels    []string
-	Assignees []string
-	CreatedAt time.Time
+	URL    string
+	Labels []string
+	// MaintainerLabels is the verified subset added by human maintainers.
+	// Missing provenance gives no size/help-wanted scoring credit.
+	MaintainerLabels []string
+	Assignees        []string
+	CreatedAt        time.Time
 	// IsPR marks a pull request wearing the issue shape.
 	IsPR bool
 	// ClaimedBy is a live claimant (hive:claim marker or assignee).
@@ -298,6 +301,9 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 			return skip(d, "excluded-label:"+l)
 		}
 	}
+	if why, ok := TrackingReason(c.Title, c.Labels, c.Body); ok {
+		return skip(d, SkipTracking+":"+why)
+	}
 	if why, ok := OpsTrackingReason(c.Title, c.Body); ok {
 		return skip(d, SkipOpsTracking+":"+why)
 	}
@@ -333,13 +339,19 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 		return skip(d, fmt.Sprintf("touches-%d-packages", len(pkgs)))
 	}
 
-	if hasAny(labels, sizeLabels) {
+	maintainerLabels := lowerSet(c.MaintainerLabels)
+	for label := range maintainerLabels {
+		if !labels[label] {
+			delete(maintainerLabels, label)
+		}
+	}
+	if hasAny(maintainerLabels, sizeLabels) {
 		d.Reasons = append(d.Reasons, "already sized small by a maintainer")
 	}
 	if hasAny(labels, bugLabels) {
 		d.Reasons = append(d.Reasons, "a concrete, reproducible bug report")
 	}
-	if labels[HelpWantedLabel] {
+	if maintainerLabels[HelpWantedLabel] {
 		d.Reasons = append(d.Reasons, "maintainers asked for help on it")
 	}
 	if len(headingOrBullet.FindAllStringIndex(body, -1)) >= 2 || criteriaWords.MatchString(body) {
@@ -442,6 +454,48 @@ type Forge interface {
 // enumeration and the sweep, and the stale snapshot was what got labelled.
 type LabelReader interface {
 	IssueLabels(ctx context.Context, repo string, number int) ([]string, error)
+}
+
+// MaintainerLabelReader verifies the latest application of scoring labels.
+// Bots, unknown actors and failed lookups must never grant scoring credit.
+type MaintainerLabelReader interface {
+	MaintainerAppliedLabels(ctx context.Context, repo string, number int, labels []string) ([]string, error)
+}
+
+// verifyLabelSignals reads provenance only for potentially eligible issues.
+func verifyLabelSignals(ctx context.Context, forge Forge, c *Candidate, p Policy, now time.Time, logger *slog.Logger) {
+	reader, ok := forge.(MaintainerLabelReader)
+	if !ok {
+		return
+	}
+	c.MaintainerLabels = nil
+	potential := *c
+	potential.MaintainerLabels = c.Labels
+	if !Score(potential, p, now).Eligible {
+		return
+	}
+	signalLabels := lowerSet(sizeLabels)
+	signalLabels[HelpWantedLabel] = true
+	var signals []string
+	for _, label := range c.Labels {
+		l := strings.ToLower(strings.TrimSpace(label))
+		if signalLabels[l] {
+			signals = append(signals, label)
+		}
+	}
+	if len(signals) == 0 {
+		return
+	}
+	verified, err := reader.MaintainerAppliedLabels(ctx, c.Repo, c.Number, signals)
+	if err != nil {
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("gfi: label provenance lookup failed; size and help-wanted labels earn no point",
+			"issue", c.Key(), "error", err)
+		return
+	}
+	c.MaintainerLabels = verified
 }
 
 // MarkerComment is what UpsertIssueMarkerComment found before it wrote.
@@ -611,6 +665,7 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 			logger.Debug("gfi skip", "issue", c.Key(), "reason", "reselect-cooldown", "until", until)
 			continue
 		}
+		verifyLabelSignals(ctx, forge, &c, p, now, logger)
 		d := Score(c, p, now)
 		if !d.Eligible {
 			res.Skipped[d.Skip]++
@@ -659,6 +714,7 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 				logger.Info("gfi skip", "issue", sc.c.Key(), "reason", "stale:"+reason)
 				continue
 			}
+			sc.d = Score(sc.c, p, now)
 			agentsMD := ""
 			if opts.AgentsMD != nil {
 				agentsMD = opts.AgentsMD(ctx, repo)
@@ -717,6 +773,7 @@ func (s *Sweeper) staleSkip(ctx context.Context, forge Forge, c *Candidate, opts
 	}
 	live := *c
 	live.Labels = fresh
+	verifyLabelSignals(ctx, forge, &live, p, now, opts.Logger)
 	if d := Score(live, p, now); !d.Eligible {
 		if d.AlreadyLabelled && Withdrawable(d.Skip) {
 			if _, released := s.releasedUntil(c.Key(), p.ReselectCooldown); !released {
@@ -725,7 +782,7 @@ func (s *Sweeper) staleSkip(ctx context.Context, forge Forge, c *Candidate, opts
 		}
 		return true, d.Skip
 	}
-	c.Labels = fresh
+	*c = live
 	return false, ""
 }
 
@@ -740,6 +797,8 @@ func WithdrawnComment(c Candidate, reason string, l Links, at time.Time) string 
 	}
 	var why string
 	switch {
+	case strings.HasPrefix(reason, SkipTracking+":"):
+		why = "it is a persistent tracking/archive issue (" + TrackingReasonText(strings.TrimPrefix(reason, SkipTracking+":")) + "), not work"
 	case strings.HasPrefix(reason, SkipOpsTracking):
 		why = "it is a maintainer's operations checklist, not a code change"
 	case reason == SkipTimeGated:

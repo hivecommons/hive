@@ -30,11 +30,25 @@ type LaunchCostCollector struct {
 	snap        LaunchCostResponse
 	ready       bool
 	collectedAt time.Time
+	// rollup holds settled per-day, per-ref totals of launches the join no
+	// longer sees; rollupLive holds the launches it still sees, keyed by
+	// launch, so each is folded into rollup exactly once when it ages out.
+	rollup         map[string]map[string]LaunchCostRollupRef
+	rollupLive     map[string]launchCostLiveLaunch
+	rollupDayCache map[string][]LaunchCostRollupRef
+	// settledDayCache holds the sorted settled-only list per day for the store,
+	// invalidated alongside rollupDayCache.
+	settledDayCache map[string]LaunchCostDailyRollup
 }
 
 type persistedLaunchCost struct {
 	Snapshot    LaunchCostResponse `json:"snapshot"`
 	CollectedAt time.Time          `json:"collected_at"`
+	// DailyRollup is absent in files written before the rollup existed.
+	DailyRollup []LaunchCostDailyRollup `json:"daily_rollup,omitempty"`
+	// LiveLaunches are the launches still visible to the join at write time,
+	// keyed by agent@launched_at; they are not yet part of DailyRollup.
+	LiveLaunches map[string]launchCostLiveLaunch `json:"live_launches,omitempty"`
 }
 
 // NewLaunchCostCollector builds a collector over the token collector. A nil
@@ -66,6 +80,7 @@ func (lc *LaunchCostCollector) EnablePersistence(path string) {
 		}
 		return
 	}
+	lc.seedRollupLocked(stored.DailyRollup, stored.LiveLaunches)
 	if stored.CollectedAt.IsZero() {
 		return
 	}
@@ -74,23 +89,40 @@ func (lc *LaunchCostCollector) EnablePersistence(path string) {
 	lc.ready = true
 }
 
-func (lc *LaunchCostCollector) persistLocked() {
+// persistSnapshotLocked captures what persistLocked will write. It runs under
+// lc.mu; the marshal and file I/O in writePersist do not, so a tick holds the
+// lock only for the map-to-list fold of the days it changed (settled days are
+// cached per day).
+func (lc *LaunchCostCollector) persistSnapshotLocked() (persistedLaunchCost, bool) {
 	if lc.persistPath == "" {
-		return
+		return persistedLaunchCost{}, false
 	}
-	data, err := json.Marshal(persistedLaunchCost{Snapshot: lc.snap, CollectedAt: lc.collectedAt})
+	live := make(map[string]launchCostLiveLaunch, len(lc.rollupLive))
+	for k, v := range lc.rollupLive {
+		live[k] = v
+	}
+	return persistedLaunchCost{
+		Snapshot:     lc.snap,
+		CollectedAt:  lc.collectedAt,
+		DailyRollup:  lc.settledRollupListLocked(),
+		LiveLaunches: live,
+	}, true
+}
+
+func (lc *LaunchCostCollector) writePersist(path string, stored persistedLaunchCost) {
+	data, err := json.Marshal(stored)
 	if err != nil {
 		return
 	}
-	tmp := lc.persistPath + ".tmp"
+	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		if lc.logger != nil {
-			lc.logger.Warn("failed to write launch-cost store", "path", lc.persistPath, "error", err)
+			lc.logger.Warn("failed to write launch-cost store", "path", path, "error", err)
 		}
 		return
 	}
-	if err := os.Rename(tmp, lc.persistPath); err != nil && lc.logger != nil {
-		lc.logger.Warn("failed to replace launch-cost store", "path", lc.persistPath, "error", err)
+	if err := os.Rename(tmp, path); err != nil && lc.logger != nil {
+		lc.logger.Warn("failed to replace launch-cost store", "path", path, "error", err)
 	}
 }
 
@@ -114,13 +146,19 @@ func (lc *LaunchCostCollector) Start(ctx context.Context) {
 
 func (lc *LaunchCostCollector) collect() {
 	now := lc.nowFn()
-	resp := ComputeLaunchCost(lc.tokens.Summary(), lc.tokens.Launches(), now)
+	launches := lc.tokens.Launches()
+	resp := ComputeLaunchCost(lc.tokens.Summary(), launches, now)
 	lc.mu.Lock()
 	lc.snap = resp
 	lc.collectedAt = now
 	lc.ready = resp.Ready
-	lc.persistLocked()
+	lc.mergeLaunchCostRollupLocked(resp, launches, now)
+	stored, ok := lc.persistSnapshotLocked()
+	path := lc.persistPath
 	lc.mu.Unlock()
+	if ok {
+		lc.writePersist(path, stored)
+	}
 }
 
 // Snapshot returns the last computed response and whether a collect has ever

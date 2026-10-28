@@ -249,6 +249,8 @@ governor:
       session_agent: scanner           # which hive agent takes Linear agent sessions
 ```
 
+A team's (or project's) `repo` also gates review scope-contract recognition: a Linear key found in a PR's body, title, or branch is treated as its scope contract only when that key maps to the PR's repository.
+
 `api_key` and at least one `teams[].key`/`teams[].repo` are required —
 construction fails closed with an explicit error naming the missing field
 otherwise (`factory.go:32-53`). `assigned_only: true` additionally requires

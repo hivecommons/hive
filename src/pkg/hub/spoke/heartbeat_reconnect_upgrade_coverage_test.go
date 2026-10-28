@@ -45,16 +45,17 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	var beats atomic.Int32
 	isPublic := true
 	resp := HeartbeatResponse{
-		OK:              true,
-		UpgradeTo:       "deadbeef",
-		GitHubAppConfig: &HeartbeatGitHubAppConfig{AppID: 7, InstallationID: 99},
-		HubBanner:       &HubBanner{ID: "b1", Message: "hi"},
-		IsPublic:        &isPublic,
-		AuthorizedUsers: []string{"alice:owner"},
-		ProjectConfig:   &HeartbeatProjectConfig{Org: "acme", Repos: []string{"r"}},
-		PendingGateway:  &HeartbeatGatewayConfig{Name: "gw", Key: "k"},
-		ClusterID:       "vllm-d",
-		RestartSpoke:    true,
+		OK:               true,
+		UpgradeTo:        "deadbeef",
+		UpgradeInterrupt: true,
+		GitHubAppConfig:  &HeartbeatGitHubAppConfig{AppID: 7, InstallationID: 99},
+		HubBanner:        &HubBanner{ID: "b1", Message: "hi"},
+		IsPublic:         &isPublic,
+		AuthorizedUsers:  []string{"alice:owner"},
+		ProjectConfig:    &HeartbeatProjectConfig{Org: "acme", Repos: []string{"r"}},
+		PendingGateway:   &HeartbeatGatewayConfig{Name: "gw", Key: "k"},
+		ClusterID:        "vllm-d",
+		RestartSpoke:     true,
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if beats.Add(1) == 1 {
@@ -69,6 +70,7 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	var (
 		mu              sync.Mutex
 		gotUpgrade      string
+		gotInterrupt    bool
 		gotApp          *HeartbeatGitHubAppConfig
 		gotBanner       *HubBanner
 		gotVisibility   *bool
@@ -83,6 +85,9 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	onUpgrade := UpgradeCallback(func(tag string) {
 		mu.Lock()
 		gotUpgrade = tag
+		// The interrupt flag must already be visible when the upgrade
+		// callback runs — that is when the drain decision reads it.
+		gotInterrupt = UpgradeInterruptRequested()
 		mu.Unlock()
 	})
 	onApp := GitHubAppConfigCallback(func(c *HeartbeatGitHubAppConfig) {
@@ -164,6 +169,9 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	defer mu.Unlock()
 	if gotUpgrade != "deadbeef" {
 		t.Errorf("upgrade callback got %q, want deadbeef", gotUpgrade)
+	}
+	if !gotInterrupt {
+		t.Error("upgrade_interrupt=true was not visible to the upgrade callback")
 	}
 	if gotSwitchBranch != "" {
 		t.Errorf("switch-branch callback fired (%q) though response carried only upgrade_to", gotSwitchBranch)

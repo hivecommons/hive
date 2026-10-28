@@ -65,6 +65,10 @@ var (
 	adoptedSupersedeRE     = regexp.MustCompile(`(?i)<!--\s*hive:adopted\b[^>]*\bmode=supersede\b[^>]*\bsuperseded_by=(\d+)`)
 	adoptedSupersedeAttrRE = regexp.MustCompile(`(?i)<!--\s*hive:adopted\b[^>]*\bsuperseded_by=(\d+)[^>]*\bmode=supersede`)
 	supersededByRE         = regexp.MustCompile(`(?i)\bSuperseded by #?(\d+)\b`)
+	// blockedFilterReasonRE recognises blockedFilterReason's marker form so
+	// a snapshot row that carries only the reason (RepoWorkIssue.Reason)
+	// can still name its blocker.
+	blockedFilterReasonRE = regexp.MustCompile(`^` + blockedFilterReasonPrefix + ` on ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)$`)
 )
 
 // ParseSupersededBy finds a superseding PR number in text from an adoption
@@ -104,6 +108,29 @@ func ParseBlockedOnMarker(text string) (repo string, pr int, ok bool) {
 		return "", 0, false
 	}
 	return m[1], n, true
+}
+
+// ParseBlockedOnReason returns the PR a blockedFilterReason names ("blocked
+// on owner/repo#N"); false for every other reason.
+func ParseBlockedOnReason(reason string) (repo string, pr int, ok bool) {
+	m := blockedFilterReasonRE.FindStringSubmatch(strings.TrimSpace(reason))
+	if m == nil {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(m[2])
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return m[1], n, true
+}
+
+// BlockedOnTarget names the PR an issue is blocked on from its body marker
+// when the body is at hand, else from the enumeration's filtered reason.
+func BlockedOnTarget(body, reason string) (repo string, pr int, ok bool) {
+	if repo, pr, ok = ParseBlockedOnMarker(body); ok {
+		return repo, pr, true
+	}
+	return ParseBlockedOnReason(reason)
 }
 
 // blockedFilterReasonPrefix opens the enumeration's filtered reason for a
@@ -435,7 +462,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 					continue
 				}
 				if ySettled {
-					if err := c.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+					if err := c.unblockIssue(ctx, t.repo, t.number); err != nil {
 						res.Errors++
 						logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 						continue
@@ -476,7 +503,7 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 				continue
 			}
 
-			if err := c.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+			if err := c.unblockIssue(ctx, t.repo, t.number); err != nil {
 				res.Errors++
 				logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 				continue
@@ -532,7 +559,7 @@ func liftBlockedMarkerless(ctx context.Context, client *Client, t blockedIssueTa
 		}
 		return false
 	}
-	if err := client.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+	if err := client.unblockIssue(ctx, t.repo, t.number); err != nil {
 		res.Errors++
 		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 		return false
@@ -602,7 +629,7 @@ func liftBlockedDeadline(ctx context.Context, client *Client, t blockedIssueTarg
 	if noted {
 		return
 	}
-	if err := client.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+	if err := client.unblockIssue(ctx, t.repo, t.number); err != nil {
 		res.Errors++
 		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
 		return

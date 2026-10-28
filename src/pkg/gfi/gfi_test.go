@@ -1,6 +1,7 @@
 package gfi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -17,8 +18,9 @@ func good() Candidate {
 		Repo: "acme/widgets", Number: 42, Title: "Fix off-by-one in pkg/paginate page count",
 		Body: strings.Repeat("The last page is dropped when total is a multiple of page size. ", 2) +
 			"\n\n## Acceptance criteria\n- `pkg/paginate.Pages(10, 5)` returns 2\n- add a table test\n",
-		Labels:    []string{"kind/bug", "size/S"},
-		CreatedAt: now.Add(-48 * time.Hour),
+		Labels:           []string{"kind/bug", "size/S"},
+		MaintainerLabels: []string{"size/S"},
+		CreatedAt:        now.Add(-48 * time.Hour),
 	}
 }
 
@@ -67,7 +69,10 @@ func TestScoreTable(t *testing.T) {
 			c.Labels = nil
 			c.Body = strings.Repeat("A long paragraph with no structure at all and nothing scoped here whatsoever. ", 40)
 		}, false, "score-0-below-2", ""},
-		{"help wanted counts", func(c *Candidate) { c.Labels = []string{"help wanted"} }, true, "", "maintainers asked for help on it"},
+		{"help wanted counts", func(c *Candidate) {
+			c.Labels = []string{"help wanted"}
+			c.MaintainerLabels = []string{"help wanted"}
+		}, true, "", "maintainers asked for help on it"},
 		{"already labelled is noted", func(c *Candidate) { c.Labels = append(c.Labels, "Good First Issue") }, true, "", "already sized small by a maintainer"},
 		{"two packages", func(c *Candidate) { c.Body += "\nSee also pkg/render/table.go" }, true, "", "scoped to two packages (pkg/paginate, pkg/render)"},
 	}
@@ -564,5 +569,107 @@ func TestScoreAlwaysExcludesParkedAndClaimed(t *testing.T) {
 	c.Labels = []string{"kind/bug", "approved-direction"}
 	if d := Score(c, policy, now); !d.Eligible {
 		t.Fatalf("approved-direction alone must not disqualify, skip=%q", d.Skip)
+	}
+}
+
+func TestScoreRequiresMaintainerLabelProvenance(t *testing.T) {
+	c := good()
+	c.Body = strings.Repeat("A focused description without steps or paths. ", 4)
+	c.Labels = []string{"size/S", HelpWantedLabel, Label}
+	for _, tc := range []struct {
+		name     string
+		verified []string
+		want     int
+	}{
+		{"unknown or bot labels", nil, 1},
+		{"maintainer size", []string{" SIZE/s "}, 2},
+		{"maintainer help", []string{HelpWantedLabel}, 2},
+		{"both verified", []string{"size/S", HelpWantedLabel}, 3},
+		{"removed label", []string{"easy"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c.MaintainerLabels = tc.verified
+			d := Score(c, Policy{}, now)
+			if d.Score != tc.want || d.Eligible != (tc.want >= DefaultMinScore) {
+				t.Fatalf("decision = %+v, want score %d", d, tc.want)
+			}
+		})
+	}
+}
+
+type provenanceForge struct {
+	*fakeForge
+	verified []string
+	err      error
+	reads    int
+}
+
+func (f *provenanceForge) MaintainerAppliedLabels(context.Context, string, int, []string) ([]string, error) {
+	f.reads++
+	return f.verified, f.err
+}
+
+func TestSweepVerifiesLabelSignals(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		verified []string
+		err      error
+		want     int
+	}{
+		{"bot help and size", nil, nil, 0},
+		{"human help", []string{HelpWantedLabel}, nil, 1},
+		{"lookup error", []string{HelpWantedLabel}, errors.New("unavailable"), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := good()
+			c.Body = strings.Repeat("A focused description without steps or paths. ", 4)
+			c.Labels = []string{"size/S", HelpWantedLabel}
+			f := &provenanceForge{fakeForge: newFakeForge(), verified: tc.verified, err: tc.err}
+			r := NewSweeper().Sweep(context.Background(), f, []Candidate{c}, quietOpts())
+			if len(r.Selected) != tc.want || f.reads == 0 {
+				t.Fatalf("selected = %v, reads = %d", r.Selected, f.reads)
+			}
+		})
+	}
+}
+
+func TestSweepLogsProvenanceLookupFailure(t *testing.T) {
+	var buf bytes.Buffer
+	opts := quietOpts()
+	opts.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	c := good()
+	c.Body = strings.Repeat("A focused description without steps or paths. ", 4)
+	c.Labels = []string{"size/S", HelpWantedLabel}
+	f := &provenanceForge{fakeForge: newFakeForge(), err: errors.New("timeline unavailable")}
+	r := NewSweeper().Sweep(context.Background(), f, []Candidate{c}, opts)
+	if len(r.Selected) != 0 {
+		t.Fatalf("selected = %v, want none", r.Selected)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "provenance lookup failed") || !strings.Contains(out, "acme/widgets#42") || !strings.Contains(out, "timeline unavailable") {
+		t.Fatalf("missing warning, got %q", out)
+	}
+}
+
+// A bot can replace a human's label between enumeration and advertising.
+// The welcome comment must use the reasons verified against the fresh read.
+type relabeledForge struct{ *provenanceForge }
+
+func (f *relabeledForge) IssueLabels(context.Context, string, int) ([]string, error) {
+	f.verified = nil
+	return []string{"kind/bug", "size/S", HelpWantedLabel}, nil
+}
+
+func TestSweepRefreshesMaintainerReasons(t *testing.T) {
+	f := &relabeledForge{&provenanceForge{fakeForge: newFakeForge(), verified: []string{"size/S", HelpWantedLabel}}}
+	c := good()
+	c.Labels = append(c.Labels, HelpWantedLabel)
+	r := NewSweeper().Sweep(context.Background(), f, []Candidate{c}, quietOpts())
+	if len(r.Selected) != 1 || f.reads != 2 {
+		t.Fatalf("result = %+v, reads = %d", r, f.reads)
+	}
+	body := f.comments[c.Key()][0]
+	if strings.Contains(body, "already sized small by a maintainer") || strings.Contains(body, "maintainers asked for help on it") {
+		t.Fatalf("stale maintainer endorsement in comment: %s", body)
 	}
 }

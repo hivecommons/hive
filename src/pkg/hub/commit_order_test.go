@@ -281,7 +281,7 @@ func TestEvaluateOrphanedUpgradeAheadOfTargetIsConverged(t *testing.T) {
 	now := time.Now()
 	entry := &RegistryEntry{
 		ID: "h1", Upgrading: true, UpgradeTarget: "aaaaaaa", GitHash: "bbbbbbb",
-		UpgradeStartedAt: now.Add(-3 * orphanedUpgradeClearAfter),
+		UpgradeStartedAt: now.Add(-silentDrainClearAfter - orphanedUpgradeClearAfter),
 		LastHeartbeat:    now.Add(-time.Minute).UTC().Format(time.RFC3339),
 	}
 

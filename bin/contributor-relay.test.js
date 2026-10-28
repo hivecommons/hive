@@ -14869,6 +14869,151 @@ test('#11775 markIssueBlocked refuses a tooling-failure reason even when called 
   } finally { console.log = log; teardown(relay); }
 });
 
+// ── hivecommons/hive#14832: an environment-failure verdict is not a completion ──
+//
+// On Ubuntu's AppArmor user-namespace restriction every Bash call inside
+// Claude's sandbox failed, and the agent printed the verdict below. Booked as
+// complete, the hub counted a finished task and the relay took the next issue
+// to drop it the same way.
+
+const ENV_FAILURE_REASON = 'environment failure: Bash tool broken this session (every command, even pwd/true, fails with "apply-seccomp: write /proc/self/setgroups ..."); cannot clone repo, read issue, or open PR. Offering issue to another contributor.';
+
+test('#14832 isEnvironmentFailureReason: table of broken-runtime reasons vs ordinary verdict reasons', () => {
+  const relay = loadRelay({});
+  try {
+    assert.ok(relay.ENVIRONMENT_FAILURE_REASON_PATTERNS.length > 0);
+    for (const r of [
+      ENV_FAILURE_REASON,
+      'environment failure — nothing runs',
+      'Environmental failure: the shell is gone',
+      'the environment is broken, cannot proceed',
+      'Bash tool broken this session',
+      'shell tool is unusable in this sandbox',
+      'the sandbox is broken on this host',
+      'every command fails with Permission denied',
+      'every shell command failed before running',
+      'apply-seccomp refuses to start',
+      'write /proc/self/setgroups: Permission denied',
+    ]) assert.ok(relay.isEnvironmentFailureReason(r), `environment: ${r}`);
+    for (const r of [
+      BLOCKED_REASON,
+      TOOLING_BLOCKED_REASON,
+      'opened https://github.com/foo/bar/pull/12 fixing the parser',
+      'merged PR #4410 already resolves this',
+      'added a test for the environment variable parser',
+      'every command in the README now has an example',
+      'the sandbox docs now describe the Seatbelt profile',
+      '', null, undefined,
+    ]) assert.ok(!relay.isEnvironmentFailureReason(r), `not environment: ${r}`);
+  } finally { teardown(relay); }
+});
+
+test('#14832 a complete verdict reporting a broken environment is classified blocked and flagged', () => {
+  const relay = loadRelay({});
+  try {
+    const line = `HIVE_VERDICT: complete — ${ENV_FAILURE_REASON}`;
+    const v = relay.detectCompletionVerdict([line], null);
+    assert.strictEqual(v.verdict, 'blocked');
+    assert.strictEqual(v.environmentFailure, true);
+    assert.strictEqual(v.toolingFailure, true, 'never a genuine external blocker');
+    assert.strictEqual(v.reason, ENV_FAILURE_REASON);
+    // Headless detection must classify complete before filtering tokens.
+    for (const token of ['complete', 'no_work_needed', 'blocked']) {
+      const nw = relay.detectNoWorkVerdict([`HIVE_VERDICT: ${token} — ${ENV_FAILURE_REASON}`]);
+      assert.strictEqual(nw.verdict, 'blocked', token);
+      assert.strictEqual(nw.environmentFailure, true, token);
+    }
+    // wrong_base keeps its own meaning.
+    assert.strictEqual(relay.detectNoWorkVerdict(['HIVE_VERDICT: wrong_base — v6']).environmentFailure, undefined);
+    // An ordinary complete is untouched.
+    const ok = relay.detectCompletionVerdict(['HIVE_VERDICT: complete — opened the fix'], null);
+    assert.strictEqual(ok.verdict, 'complete');
+    assert.strictEqual(ok.environmentFailure, undefined);
+    assert.strictEqual(relay.detectNoWorkVerdict(['HIVE_VERDICT: complete — opened the fix']), null);
+  } finally { teardown(relay); }
+});
+
+test('#14940 headless exit 0 with a broken-runtime verdict fails the task without labelling the issue', () => {
+  for (const token of ['complete', 'no_work_needed', 'blocked']) {
+    const relay = loadRelay({
+      backend: 'claude', mode: 'headless',
+      execFileResult: { stdout: `HIVE_VERDICT: ${token} — ${ENV_FAILURE_REASON}\n` },
+    });
+    try {
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+      assignHeadlessTask(relay, { task_gen: 4 });
+      assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, token);
+      const failed = relay.__sent.filter(m => m.type === 'task_failed');
+      assert.strictEqual(failed.length, 1, token);
+      assert.strictEqual(failed[0].task_id, 'ct-h-1');
+      assert.strictEqual(failed[0].task_gen, 4);
+      assert.strictEqual(failed[0].result, 'failed');
+      assert.strictEqual(failed[0].failure_kind, 'environment');
+      assert.ok(failed[0].reason.includes(ENV_FAILURE_REASON));
+      assert.strictEqual(relay.__readHeadlessStatus().state, relay.HEADLESS_STATE_FAILED);
+      assert.strictEqual(relay.getCurrentTask(), null);
+      assert.ok(relay.__sent.some(m => m.type === 'ready'));
+      assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#14940 headless preserves ordinary completion, external blockers, wrong_base and shipped PR precedence', () => {
+  const prURL = 'https://github.com/foo/bar/pull/9';
+  for (const [stdout, verdict, prMeta] of [
+    ['HIVE_VERDICT: complete — finished the fix', undefined, null],
+    ['HIVE_VERDICT: blocked — waiting on another repository release', 'no_work_needed', null],
+    ['HIVE_VERDICT: wrong_base — v6', 'wrong_base', null],
+    [`${prURL}\nHIVE_VERDICT: complete — ${ENV_FAILURE_REASON}`, undefined,
+      { url: prURL, author: { login: 'test-contributor' }, createdAt: new Date(Date.now() + 1000).toISOString(), mergedAt: null, state: 'OPEN' }],
+  ]) {
+    const relay = loadRelay({ backend: 'claude', mode: 'headless', execFileResult: { stdout }, prMeta,
+      env: { HIVE_CONTRIBUTOR_USERNAME: 'test-contributor' } });
+    try {
+      assignHeadlessTask(relay);
+      assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0, stdout);
+      const complete = relay.__sent.filter(m => m.type === 'task_complete');
+      assert.strictEqual(complete.length, 1, stdout);
+      assert.strictEqual(complete[0].verdict, verdict);
+      if (verdict === 'no_work_needed') assert.strictEqual(complete[0].verdict_blocked, true);
+      if (verdict === 'wrong_base') assert.strictEqual(complete[0].verdict_target_branch, 'v6');
+      if (prMeta) assert.strictEqual(complete[0].pr_url, prURL);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#14832 end to end: an environment-failure verdict is reported as task_failed [environment], never task_complete, and labels nothing', () => {
+  const PANE = `HIVE_VERDICT: complete — ${ENV_FAILURE_REASON}\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+  const log = console.log; console.log = () => {};
+  const warn = console.warn; const warned = []; console.warn = (...a) => warned.push(a.join(' '));
+  const err = console.error; console.error = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    dispatchTask(relay, 'ct-14832-env', 104);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, 'must not be booked as completed');
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failed.length, 1, `expected one task_failed, sent ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(failed[0].task_id, 'ct-14832-env');
+    assert.strictEqual(failed[0].failure_kind, 'environment');
+    assert.ok(failed[0].reason.includes('apply-seccomp'), failed[0].reason);
+    assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0, 'no blocked label for this contributor\'s own environment');
+    assert.ok(warned.some(l => /#14832/.test(l)), `expected the reclassification to be logged, got ${JSON.stringify(warned)}`);
+  } finally { console.log = log; console.warn = warn; console.error = err; teardown(relay); }
+});
+
+test('#14832 markIssueBlocked refuses an environment-failure reason even when called directly with issues:write', () => {
+  const relay = loadRelay({});
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    const before = relay.__commands.length;
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, 'Bash tool broken this session');
+    assert.strictEqual(relay.__commands.slice(before).filter(c => /gh /.test(c)).length, 0);
+  } finally { console.log = log; teardown(relay); }
+});
+
 test('#7924 a label the repository does not define is created once and the add retried once; a second failure costs only a log line', () => {
   const PANE = `HIVE_VERDICT: blocked — ${BLOCKED_REASON}\n${IDLE_PANE}`;
   // First add fails (label missing) → create → retry lands.

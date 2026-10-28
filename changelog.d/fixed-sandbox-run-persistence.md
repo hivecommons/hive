@@ -1,0 +1,1 @@
+- Sandboxed agent run records are now written without holding the agent manager lock, so a slow data volume no longer stalls status and kick calls, and `sandbox-runs/runs.jsonl` is compacted to its newest 1000 records so the token collector's scan cost stays bounded.

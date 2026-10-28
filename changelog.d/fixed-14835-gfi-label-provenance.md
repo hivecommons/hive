@@ -1,0 +1,1 @@
+- Good-first-issue scoring counts size and help-wanted labels only when their latest application came from a verified human maintainer, preventing automation from endorsing its own advertisements (#14835).

@@ -500,3 +500,71 @@ func TestEvidenceCIVerdict(t *testing.T) {
 		})
 	}
 }
+
+// TestRecordReviewEvidenceSentinelAck: the owner's Approve on a
+// sentinel-flagged head records a head-keyed acknowledgment in the bundle
+// (hivecommons/crux#30 carried findings but no label, so nothing could clear
+// its alert); a head with no bundle or no findings has nothing to
+// acknowledge, and a second approval does not duplicate the action.
+func TestRecordReviewEvidenceSentinelAck(t *testing.T) {
+	t0 := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	findings := []sentinel.Finding{{Rule: sentinel.RuleSensitivePath, Summary: "touches workflows", Paths: []string{".github/workflows/ci.yml"}}}
+	enabled := &ReviewEvidenceSettings{Enabled: true}
+
+	t.Run("not wired", func(t *testing.T) {
+		withEvidenceRoot(t)
+		c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, nil)
+		if c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0) {
+			t.Fatal("no evidence wiring must acknowledge nothing")
+		}
+	})
+	t.Run("no bundle", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, enabled)
+		if c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0) {
+			t.Fatal("a head without a bundle has nothing to acknowledge")
+		}
+		if _, err := os.Stat(ReviewEvidencePath(root, "o/r", 7, "h1")); !os.IsNotExist(err) {
+			t.Fatalf("acknowledging must not start a bundle: %v", err)
+		}
+	})
+	t.Run("bundle without findings", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		writeTestEvidence(t, root, "h1", "", t0)
+		c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, enabled)
+		if c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0) {
+			t.Fatal("a bundle without sentinel findings has nothing to acknowledge")
+		}
+		if b := mustLoadBundle(t, root, "h1"); b.SentinelAcknowledgedBy() != "" || len(b.HumanActions) != 0 {
+			t.Fatalf("actions written without findings: %+v", b.HumanActions)
+		}
+	})
+	t.Run("acknowledges once", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		c := evidenceTestClient(t, &evidencePRFixture{head: "h1"}, enabled)
+		c.recordReviewEvidenceSentinel("o/r", evidenceSentinelPR("h1"), findings, false, t0)
+		if b := mustLoadBundle(t, root, "h1"); b.SentinelAcknowledgedBy() != "" {
+			t.Fatalf("fresh findings must not read as acknowledged: %+v", b.HumanActions)
+		}
+		if !c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0.Add(time.Hour)) {
+			t.Fatal("findings on the head must be acknowledgeable")
+		}
+		if !c.RecordReviewEvidenceSentinelAck("o/r", 7, "h1", "clubanderson", t0.Add(2*time.Hour)) {
+			t.Fatal("a standing acknowledgment reports true")
+		}
+		b := mustLoadBundle(t, root, "h1")
+		if got := b.SentinelAcknowledgedBy(); got != "clubanderson" {
+			t.Fatalf("SentinelAcknowledgedBy = %q, want clubanderson", got)
+		}
+		if len(b.HumanActions) != 1 || b.HumanActions[0].Kind != evidence.ActionSentinelAcknowledged || !b.HumanActions[0].At.Equal(t0.Add(time.Hour)) {
+			t.Fatalf("one acknowledgment expected, got %+v", b.HumanActions)
+		}
+		if len(b.Sentinel) != 1 {
+			t.Fatalf("findings must stay on record, got %+v", b.Sentinel)
+		}
+		// A new head carries no acknowledgment.
+		if c.RecordReviewEvidenceSentinelAck("o/r", 7, "h2", "clubanderson", t0) {
+			t.Fatal("another head has no bundle to acknowledge")
+		}
+	})
+}

@@ -20,6 +20,11 @@ type IssueCloseOptions struct {
 	// StateReason, when set, is sent as GitHub's state_reason ("completed" or
 	// "not_planned"). Empty leaves GitHub's default.
 	StateReason string
+	// AllowTrackingIssue lets an explicit human decision close a
+	// tracking/archive issue (hivecommons/hive#14613). Every automated
+	// path (close-on-merge, already-done, stale and advisory sweeps) leaves
+	// it unset and gets ErrTrackingIssue instead.
+	AllowTrackingIssue bool
 }
 
 // IssueStateReasonCompleted is GitHub's state_reason for an issue closed
@@ -66,6 +71,11 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 		return false, fmt.Errorf("reading issue %s/%s#%d before close: %w", owner, repoName, number, err)
 	}
 	isPR := issue.IsPullRequest()
+	if why, ok := isTrackingIssue(issue); ok && !isPR && !opts.AllowTrackingIssue {
+		c.logger.Info("issue close refused: tracking/archive issue",
+			"repo", owner+"/"+repoName, "issue", number, "why", why)
+		return false, fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, ErrTrackingIssue)
+	}
 	reason := c.reporterConfirmationCloseGateReason(issue)
 	overrideReason := strings.TrimSpace(opts.OverrideReason)
 	if reason != "" && overrideReason == "" {

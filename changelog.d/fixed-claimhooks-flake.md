@@ -1,0 +1,1 @@
+- Claim-hook retry settings are now read under a lock, fixing a data race between a lingering claim-effect goroutine and a test swapping them ([#14839](https://github.com/hivecommons/hive/issues/14839)).

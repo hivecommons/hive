@@ -78,15 +78,42 @@ const (
 	BeadTypeFeature  BeadType = "feature"
 )
 
+// RunStatus is the agent's own verdict on its sandboxed run. A sandboxed
+// agent cannot push or open a PR; hive does that from whatever commits the
+// run left behind. Status is how the agent tells hive that those commits are
+// NOT fit to publish — the build it was asked to prove did not run, a smoke
+// test failed — so hive withholds the push instead of opening a PR that only
+// fails CI (hivecommons/hive: deps on a1-vllm-spyre, Artifactory 401).
+type RunStatus string
+
+const (
+	// StatusSuccess: the work is done and verified; commits may be published.
+	StatusSuccess RunStatus = "success"
+	// StatusFailed: the work could not be completed or verified; hive must
+	// not push or open a PR from this run.
+	StatusFailed RunStatus = "failed"
+	// StatusBlocked: the agent stopped on an external blocker (credentials,
+	// hardware, missing access); treated like failed for publishing.
+	StatusBlocked RunStatus = "blocked"
+)
+
 type AgentReport struct {
 	Lane       string        `json:"lane"`
 	Kind       ReportKind    `json:"kind"`
+	Status     RunStatus     `json:"status,omitempty"`
 	Findings   []Finding     `json:"findings"`
 	PRsOpened  []PROpened    `json:"prs_opened"`
 	BeadsFiled []BeadFiled   `json:"beads_filed"`
 	Artifacts  []Artifact    `json:"artifacts,omitempty"`
 	Summary    string        `json:"summary"`
 	Receipt    *StageReceipt `json:"stage_receipt,omitempty"`
+}
+
+// PublishBlocked reports whether the status forbids publishing the run's
+// commits. An empty status is "unspecified" and does not block, so reports
+// written before the field existed keep their behaviour.
+func (s RunStatus) PublishBlocked() bool {
+	return s == StatusFailed || s == StatusBlocked
 }
 
 // Artifact records a repository file produced or materially updated by an agent.
@@ -203,6 +230,9 @@ func validateReport(report AgentReport) []Violation {
 	violations = append(violations, requireBounded("kind", string(report.Kind), MaxKindLength)...)
 	if report.Kind != "" && !validKind(report.Kind) {
 		violations = append(violations, Violation{Field: "kind", Message: "must be one of findings, fix, review, advisory, summary, instrument, stage_receipt"})
+	}
+	if report.Status != "" && !validStatus(report.Status) {
+		violations = append(violations, Violation{Field: "status", Message: "must be one of success, failed, blocked"})
 	}
 	if report.Findings == nil {
 		violations = append(violations, Violation{Field: "findings", Message: "is required; use [] when there are no findings"})
@@ -415,6 +445,15 @@ func validStageReceiptResultClass(result StageReceiptResultClass) bool {
 func validKind(kind ReportKind) bool {
 	switch kind {
 	case KindFindings, KindFix, KindReview, KindAdvisory, KindSummary, KindInstrument, KindStageReceipt:
+		return true
+	default:
+		return false
+	}
+}
+
+func validStatus(status RunStatus) bool {
+	switch status {
+	case StatusSuccess, StatusFailed, StatusBlocked:
 		return true
 	default:
 		return false

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/review"
@@ -18,7 +19,12 @@ import (
 //
 //   - approval posts the `/lgtm` and `/approve` commands as two comments —
 //     the merge gate (Prow / tide, then the hive's own queue) decides from
-//     there, exactly as when the maintainer types them;
+//     there, exactly as when the maintainer types them. A person's approval
+//     (PullRequestApprovalOptions) is also recorded against the head as the
+//     answer to a requires_human verdict, lifts the `needs-human` park and
+//     the sentinel alert, and is submitted to the stage engine — the
+//     comments alone were read by no lane (#14821, #14822, crux#30 stayed
+//     at stage/085 after the owner approved);
 //   - a direction is the `/hive decision <text>` lane of
 //     tryUnparkPullRequest: recorded against the head so the review
 //     planner kicks the author agent, then acknowledged in a reply.
@@ -48,6 +54,49 @@ type PullRequestApprovalEvent struct {
 	Number  int
 	HeadSHA string
 	Actor   string
+	// Recorded is true when the approval was written to the human change
+	// request store as the head-scoped answer the merge lanes and the stage
+	// engine honour (PullRequestApprovalOptions.HumanChangeRequests).
+	Recorded bool
+	// NeedsHumanLifted is true when the PR's `needs-human` label was taken
+	// off by this approval.
+	NeedsHumanLifted bool
+	// SentinelLabelCleared is true when the sentinel alert label was taken
+	// off by this approval; SentinelAcknowledged when the review evidence
+	// bundle for the head now records the person's acknowledgment of its
+	// sentinel findings.
+	SentinelLabelCleared bool
+	SentinelAcknowledged bool
+	// Stage is the stage label the engine derived when the approval was
+	// submitted to it, or "" when the stage write was deferred to the sweep.
+	Stage string
+}
+
+// PullRequestApprovalOptions is what a person's Approve decision releases
+// beyond posting the commands (hivecommons/hive: #14821, #14822, crux#30
+// sat at stage/085 after the owner approved from the dashboard — the
+// comments were read by nobody but the workflow-path fence). The zero value
+// posts the commands only, which is what the delegated "Let hive decide"
+// path keeps: a recommendation must not clear a person's gate.
+type PullRequestApprovalOptions struct {
+	// HumanChangeRequests, when set, records the approval against the head
+	// as a bare `approve` decision — the fact withRecordedDecision and the
+	// stage engine read as "the requires_human verdict on this head has
+	// been answered", for every lane, whoever authored the PR.
+	HumanChangeRequests review.HumanChangeRequestStore
+	// LiftNeedsHuman takes `needs-human` off the PR. The hive's own park
+	// (a supersession or adoption ask) is what the person just answered; a
+	// person's label is lifted on the same reasoning as an issue decision
+	// (stageengine.DecisionLiftsNeedsHuman).
+	LiftNeedsHuman bool
+	// SentinelLabel, when non-empty, is the alert label to take off: the
+	// Decide dialog showed the sentinel reason and styled Approve as
+	// dangerous, so the approval is the human review the alert asked for.
+	// The acknowledgment is also recorded in the head's evidence bundle so
+	// a bundle-only alert (no label) clears too.
+	SentinelLabel string
+	// Now stamps the acknowledgment; time.Now when nil.
+	Now func() time.Time
 }
 
 // prApprovalCommentMarkerPrefix opens the hidden marker a dashboard approval
@@ -121,21 +170,29 @@ func ParsePRApprovalCommandComment(body string) (command, actor, head string, ok
 // openPullRequestHead returns the PR's head SHA and whether the hive opened
 // it, or ErrPullRequestClosed / a not-found error.
 func (c *Client) openPullRequestHead(ctx context.Context, owner, name string, number int) (head string, selfAuthored bool, err error) {
+	head, selfAuthored, _, err = c.openPullRequestHeadLabels(ctx, owner, name, number)
+	return head, selfAuthored, err
+}
+
+// openPullRequestHeadLabels is openPullRequestHead plus the PR's labels as
+// read in the same fetch.
+func (c *Client) openPullRequestHeadLabels(ctx context.Context, owner, name string, number int) (head string, selfAuthored bool, labels []string, err error) {
 	pr, resp, err := c.client.PullRequests.Get(ctx, owner, name, number)
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return "", false, fmt.Errorf("pull request %s/%s#%d: %w", owner, name, number, ErrPullRequestNotFound)
+			return "", false, nil, fmt.Errorf("pull request %s/%s#%d: %w", owner, name, number, ErrPullRequestNotFound)
 		}
-		return "", false, fmt.Errorf("fetching pull request %s/%s#%d: %w", owner, name, number, err)
+		return "", false, nil, fmt.Errorf("fetching pull request %s/%s#%d: %w", owner, name, number, err)
 	}
 	if strings.EqualFold(pr.GetState(), "closed") {
-		return "", false, ErrPullRequestClosed
+		return "", false, nil, ErrPullRequestClosed
 	}
 	if pr.GetHead() != nil {
 		head = strings.TrimSpace(pr.GetHead().GetSHA())
 	}
-	selfAuthored = c.isHiveAccount(pr.GetUser()) || labelPresent(issueLabelNames(pr.Labels), authorkind.Hive.Label())
-	return head, selfAuthored, nil
+	labels = issueLabelNames(pr.Labels)
+	selfAuthored = c.isHiveAccount(pr.GetUser()) || labelPresent(labels, authorkind.Hive.Label())
+	return head, selfAuthored, labels, nil
 }
 
 func (c *Client) operatorPRTarget(repo string, number int, actor, what string) (owner, name string, err error) {
@@ -161,25 +218,90 @@ func (c *Client) operatorPRTarget(repo string, number int, actor, what string) (
 // the commands exactly as it would had the maintainer typed them. The
 // caller is responsible for having verified actor's write access.
 func (c *Client) RecordOperatorPullRequestApproval(ctx context.Context, repo string, number int, actor string) (PullRequestApprovalEvent, error) {
+	return c.RecordOperatorPullRequestApprovalWith(ctx, repo, number, actor, PullRequestApprovalOptions{})
+}
+
+// RecordOperatorPullRequestApprovalWith is RecordOperatorPullRequestApproval
+// plus what opts asks the person's approval to release, in this order: the
+// commands are posted first (the durable, visible record), then the
+// approval is recorded against the head, the park labels the person just
+// answered come off, the sentinel acknowledgment is written, and the stage
+// engine is given the decision so the row moves now rather than on the
+// next sweep. A failed label or stage write after the record is logged and
+// reported on the event, not returned: the record stands, and the lanes
+// derive the same answer from it on their next pass.
+func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo string, number int, actor string, opts PullRequestApprovalOptions) (PullRequestApprovalEvent, error) {
 	owner, name, err := c.operatorPRTarget(repo, number, actor, "RecordOperatorPullRequestApproval")
 	if err != nil {
 		return PullRequestApprovalEvent{}, err
 	}
 	actor = strings.TrimSpace(actor)
-	head, _, err := c.openPullRequestHead(ctx, owner, name, number)
+	head, selfAuthored, labels, err := c.openPullRequestHeadLabels(ctx, owner, name, number)
 	if err != nil {
 		return PullRequestApprovalEvent{}, err
 	}
+	full := owner + "/" + name
 	for _, command := range PRApprovalCommands {
-		if err := c.CreateIssueComment(ctx, owner+"/"+name, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
+		if err := c.CreateIssueComment(ctx, full, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
 			return PullRequestApprovalEvent{}, fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
 		}
 	}
-	event := PullRequestApprovalEvent{Repo: owner + "/" + name, Number: number, HeadSHA: head, Actor: actor}
+	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor}
 	if c.logger != nil {
 		c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
 	}
+	if opts.HumanChangeRequests != nil && head != "" {
+		req := review.HumanChangeRequest{
+			Repo:     full,
+			Number:   number,
+			HeadSHA:  head,
+			Source:   review.HumanChangeRequestSourceDecision,
+			SourceID: operatorDecisionMarkerID,
+			Actor:    actor,
+			Body:     prDecisionApproveBody,
+			Kind:     review.HumanChangeRequestKindApprove,
+		}
+		if err := opts.HumanChangeRequests.Record(req); err != nil {
+			return event, fmt.Errorf("recording dashboard approval on %s#%d: %w", full, number, err)
+		}
+		event.Recorded = true
+	}
+	if opts.LiftNeedsHuman && labelPresent(labels, issueNeedsHumanLabel) {
+		if err := c.RemoveLabel(ctx, full, number, issueNeedsHumanLabel); err != nil {
+			c.warnOperatorApproval("needs-human not lifted", full, number, head, err)
+		} else {
+			event.NeedsHumanLifted = true
+		}
+	}
+	if label := strings.TrimSpace(opts.SentinelLabel); label != "" {
+		if labelPresent(labels, label) {
+			if err := c.RemoveLabel(ctx, full, number, label); err != nil {
+				c.warnOperatorApproval("sentinel label not cleared", full, number, head, err)
+			} else {
+				event.SentinelLabelCleared = true
+			}
+		}
+		now := time.Now
+		if opts.Now != nil {
+			now = opts.Now
+		}
+		event.SentinelAcknowledged = c.RecordReviewEvidenceSentinelAck(full, number, head, actor, now())
+	}
+	if event.Recorded {
+		event.Stage = c.applyPRDecisionStage(ctx, owner, name, number, head, actor, prDecisionApprove, selfAuthored)
+		c.logPRDecision(full, number, head, actor, prDecisionApprove, event.Stage, false)
+	}
 	return event, nil
+}
+
+// prDecisionApproveBody is the decision text a dashboard approval records,
+// the bare form `/hive decision approve` carries.
+const prDecisionApproveBody = "approve"
+
+func (c *Client) warnOperatorApproval(what, repo string, number int, head string, err error) {
+	if c.logger != nil {
+		c.logger.Warn("dashboard approval: "+what, "repo", repo, "pr", number, "head", head, "error", err)
+	}
 }
 
 // RecordOperatorPullRequestDecision records a maintainer's direction on a

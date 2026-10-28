@@ -36,6 +36,10 @@ type upgradeDrain struct {
 	// tell the hub WHAT the drain is waiting on and for how much longer.
 	inFlight []string
 	timeout  time.Duration
+	// kickAt is when each in-flight agent's current turn was kicked, so
+	// Report can say "reviewer 38m" (#14856). Names absent from the map are
+	// reported with an unknown elapsed time.
+	kickAt map[string]time.Time
 	// released is set once decide lets the upgrade proceed. Every path after
 	// that point exits the process or blocks until SIGTERM, so kicks stay
 	// withheld for good: a kick started now would be cut by the restart.
@@ -135,12 +139,48 @@ func (d *upgradeDrain) Report(now time.Time) *spoke.UpgradeDrainReport {
 	if remaining < 0 {
 		remaining = 0
 	}
-	return &spoke.UpgradeDrainReport{
+	rep := &spoke.UpgradeDrainReport{
 		Target:     d.target,
 		InFlight:   append([]string(nil), d.inFlight...),
 		WaitedS:    int(waited / time.Second),
 		RemainingS: int(remaining / time.Second),
 	}
+	for _, name := range d.inFlight {
+		turn := spoke.UpgradeTurn{Agent: name}
+		if at, ok := d.kickAt[name]; ok && !at.IsZero() && now.After(at) {
+			turn.ElapsedS = int(now.Sub(at) / time.Second)
+		}
+		rep.Turns = append(rep.Turns, turn)
+	}
+	return rep
+}
+
+// setKickTimes records when the in-flight agents' turns started. Called next
+// to decide with the same statuses it classified; a drain that is not open
+// ignores it.
+func (d *upgradeDrain) setKickTimes(kickAt map[string]time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.released || d.target == "" {
+		d.kickAt = nil
+		return
+	}
+	d.kickAt = kickAt
+}
+
+// agentKickTimes returns the kick time of each named agent, for
+// upgradeDrain.setKickTimes.
+func agentKickTimes(statuses map[string]*crux.Process, names []string) map[string]time.Time {
+	if len(names) == 0 {
+		return nil
+	}
+	out := make(map[string]time.Time, len(names))
+	for _, name := range names {
+		if proc := statuses[name]; proc != nil && proc.LastKick != nil {
+			out[name] = *proc.LastKick
+		}
+	}
+	return out
 }
 
 // releaseLocked closes the drain window and latches the kick hold until the
@@ -150,6 +190,7 @@ func (d *upgradeDrain) releaseLocked(target string, now time.Time) {
 	d.startedAt = time.Time{}
 	d.checkedAt = now
 	d.inFlight, d.timeout = nil, 0
+	d.kickAt = nil
 	d.released = true
 }
 

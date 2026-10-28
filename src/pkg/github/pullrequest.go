@@ -361,6 +361,9 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	// default-branch PRs; release-line PRs get theirs here
 	// (hivecommons/hive#11888). Best-effort: the PR is already open.
 	c.linkClosingIssuesForPR(ctx, owner, repo, pr.GetNumber(), body)
+	// A closing keyword for a tracking/archive issue resolves nothing; say
+	// so on the PR before anyone reviews it (hivecommons/hive#14613).
+	c.NudgeTrackingIssueClosingRefs(ctx, owner+"/"+repo, pr.GetNumber(), body, c.logger)
 	return CreatePRResult{Number: pr.GetNumber(), URL: pr.GetHTMLURL(), Author: pr.GetUser().GetLogin()}, nil
 }
 

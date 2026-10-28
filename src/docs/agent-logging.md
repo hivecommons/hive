@@ -279,8 +279,20 @@ read the logs of the last several runs — not just the latest —
   `GET /api/agents/{name}/kicks/{id}` (`text/plain`; `?download=1` for an
   attachment). Same auth rule as the full-log endpoint (any authenticated
   role), and archived content passes through the same token redaction.
-- **Limitations.** Sandbox-executor kicks have no tmux session and are not
-  archived here. The archive holds at most the retained scrollback
+- **Sandboxed agents.** A sandboxed kick (`sandbox.enabled: true`, Podman or
+  `runtime: job`) has no tmux session. When the run ends hive archives the
+  container's captured stdout/stderr here instead, as
+  `<kick-start>-sandbox.log` with `source: sandbox-podman` or
+  `source: sandbox-job` and an outcome block (exit code, commits, branch,
+  PR or `pr_withheld` reason, agent-report path and status, error) ahead of
+  the output. For these agents the `📄 full log` / `📋 log text` controls and
+  `GET /api/agents/{name}/log` serve the newest such archive — the only
+  durable copy, since a completed Job is deleted at once and the sandbox
+  workspace is swept after two hours — and an agent that has not run yet
+  gets a plain "no archived run yet" message rather than a pane error.
+  `HIVE_KICK_LOG_RETENTION=0` disables these archives too, and the card
+  then has no log to show.
+- **Limitations.** The archive holds at most the retained scrollback
   (`history-limit`, 50000 lines by default), so an extremely long run
   self-truncates from the top. A hard kill (SIGKILL, node loss) skips the
   shutdown snapshot; the previous kicks' archives on `/data` are unaffected.

@@ -77,7 +77,7 @@ func rescanRepos(
 	ghClient.EnrichLinkedIssueTitles(ctx, actionable.WorkDetailsByRepo, actionable.PRs.Items, actionable.PRs.Held, actionable.PRs.StaleDrafts)
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
-	lastActionable.Store(actionable)
+	publishEnumeratedSnapshot(lastActionable, actionable, logger)
 	publishStageSharedCIIncidents(actionable)
 	if data, marshalErr := json.Marshal(actionable); marshalErr == nil {
 		atomicWrite(lastActionablePath, data)

@@ -406,3 +406,67 @@ func TestUpgradeStartedAtRoundTripsThroughRegistryAndRecovery(t *testing.T) {
 		t.Fatalf("recovery must keep the rehydrated clock, got %v want %v", s.registry.Hives[0].UpgradeStartedAt, started)
 	}
 }
+
+// Channel promotions during stale recovery must not extend the silent-drain
+// window. The deadline belongs to the original attempt, not its latest target.
+func TestTriggerAutoUpgradesPromotionPreservesHoldDeadline(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	resetSHACaches(t)
+	stubChannelImageVerificationUnavailable(t)
+	resetCommitOrderState(t)
+	stubCommitCompare(func(base, head string, logger *slog.Logger) (string, error) {
+		return "behind", nil
+	})
+	seedLatestSHA(t, "v5", "bbbbbbb")
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "stable-hold", Owner: "alice", AutoUpgrade: true,
+		Status: "running", ClusterID: "remote", TrackedChannel: "stable",
+	}); err != nil {
+		t.Fatalf("save hive: %v", err)
+	}
+	started := time.Now().Add(-23 * time.Minute)
+	s := &HubServer{
+		logger: slog.Default(), heartbeatUpgrade: make(map[string]string),
+		alerts:   newAlertState(),
+		clusters: map[string]ClusterConfig{"remote": {ID: "remote"}},
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID: "stable-hold", GitBranch: "v5", GitHash: "1111111",
+		ImageRef:  "ghcr.io/hivecommons/hive:stable",
+		Upgrading: true, UpgradeTarget: "2222222", UpgradeStartedAt: started,
+		LastHeartbeat: rfc3339At(time.Now()),
+	}}
+	s.alerts.noteUpgrade("stable-hold", started)
+	for promotion, target := range []string{"3333333", "4444444"} {
+		stubChannelRevisions(t, map[string]string{"stable": target})
+		s.triggerAutoUpgrades()
+		entry := s.registry.Hives[0]
+		if !entry.Upgrading || entry.UpgradeTarget != target || s.heartbeatUpgrade[entry.ID] != target {
+			t.Fatalf("promotion must advance registry and delivery targets to %s: %+v", target, entry)
+		}
+		if !entry.UpgradeStartedAt.Equal(started) {
+			t.Fatalf("promotion reset the original start: got %v, want %v", entry.UpgradeStartedAt, started)
+		}
+		// Distinct starts after each promotion are planned rollouts, even
+		// though the preserved attempt clock is beyond the upgrade grace.
+		restarted := time.Now().Add(time.Duration(promotion+1) * time.Minute)
+		if crashes := s.alerts.observeStart(entry.ID, rfc3339At(restarted), restarted); crashes != 0 {
+			t.Fatalf("promotion restart must not count as a crash: got %d", crashes)
+		}
+		if ev := evaluateOrphanedUpgrade(&entry, started.Add(silentDrainClearAfter-time.Second), ""); ev.orphaned {
+			t.Fatalf("original silent-drain window must still hold: %+v", ev)
+		}
+		entry.LastHeartbeat = rfc3339At(started.Add(silentDrainClearAfter))
+		if ev := evaluateOrphanedUpgrade(&entry, started.Add(silentDrainClearAfter+time.Second), ""); !ev.orphaned || ev.converged {
+			t.Fatalf("promotion must not extend the original silent-drain deadline: %+v", ev)
+		}
+	}
+	// Recovery must still self-heal a lost clock when advancing the target.
+	s.registry.Hives[0].UpgradeStartedAt = time.Time{}
+	stubChannelRevisions(t, map[string]string{"stable": "5555555"})
+	s.triggerAutoUpgrades()
+	if entry := s.registry.Hives[0]; entry.UpgradeStartedAt.IsZero() || entry.UpgradeTarget != "5555555" {
+		t.Fatalf("recovery must stamp a lost clock and advance the target: %+v", entry)
+	}
+}

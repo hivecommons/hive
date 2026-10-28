@@ -24,14 +24,16 @@ import (
 // other forever.
 
 // liveWedgeEntry builds the z-mlz-manager fixture: latched-upgrading well past
-// the clear threshold, with a spoke that has heartbeated SINCE the instruction.
+// the clear threshold — and past the silent-drain hold an alive spoke on its
+// old SHA is granted (#14856) — with a spoke that has heartbeated SINCE the
+// instruction.
 func liveWedgeEntry(now time.Time, gitHash, target string) *RegistryEntry {
 	return &RegistryEntry{
 		ID:               "z-mlz-manager",
 		Upgrading:        true,
 		UpgradeTarget:    target,
 		GitHash:          gitHash,
-		UpgradeStartedAt: now.Add(-35 * time.Minute),
+		UpgradeStartedAt: now.Add(-silentDrainClearAfter - 5*time.Minute),
 		LastHeartbeat:    now.Add(-2 * time.Minute).Format(time.RFC3339),
 		ImageRef:         "ghcr.io/hivecommons/hive:v4-latest",
 		GitBranch:        "v4",
@@ -123,7 +125,9 @@ func TestOrphanSweepDoesNotReportConvergedWhenSpokeStillOnOldSHA(t *testing.T) {
 func TestOrphanSweepLeavesGenuineInFlightUpgradeAlone(t *testing.T) {
 	now := time.Now()
 	e := liveWedgeEntry(now, "815d7e4", "815d7e4")
-	// Silent since the upgrade was instructed — the pod is rolling.
+	// Silent since the upgrade was instructed — the pod is rolling. Keep the
+	// attempt inside silentUpgradeDeadline so the silence stays exculpatory.
+	e.UpgradeStartedAt = now.Add(-35 * time.Minute)
 	e.LastHeartbeat = now.Add(-40 * time.Minute).Format(time.RFC3339)
 	ev := evaluateOrphanedUpgrade(e, now, "")
 	if ev.orphaned {

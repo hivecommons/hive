@@ -379,6 +379,10 @@ type Server struct {
 	// one, or forever on a spoke the hub does not manage. Guarded by versionMu.
 	hubUpgradePolicy   *spoke.HeartbeatUpgradePolicy
 	hubUpgradePolicyAt time.Time
+	// upgradeDrain reports the live self-upgrade drain latch (cmd/hive's
+	// selfUpgradeDrain) so /api/status can show the countdown and the agents
+	// holding it (#14856). Guarded by versionMu; nil when not installed.
+	upgradeDrain upgradeDrainSource
 	// hubPushedDashboardURL is the vanity dashboard URL the hub last delivered
 	// on a heartbeat (#7451). Non-empty means the hub owns hub.dashboard_url:
 	// an operator edit would be reverted by the next push, and until then a
@@ -829,11 +833,23 @@ type FrontendAgent struct {
 	ProxyViolations        int    `json:"proxyViolations"`
 	OnDemand               bool   `json:"onDemand,omitempty"`
 	Sandboxed              bool   `json:"sandboxed,omitempty"`
-	LastError              string `json:"lastError,omitempty"`
-	StallNudges            int    `json:"stallNudges,omitempty"`
-	StallRecoveries        int    `json:"stallRecoveries,omitempty"`
-	ActionNudges           int    `json:"actionNudges,omitempty"`
-	TransientNudges        int    `json:"transientNudges,omitempty"`
+	// SandboxRun is the last sandboxed run and the health verdict derived
+	// from it (sandbox_health.go). Present only for sandboxed agents; the
+	// SPA reads health from here instead of State, which is "idle" between
+	// kicks for an agent that has no session to be down.
+	SandboxRun      *FrontendSandboxRun `json:"sandboxRun,omitempty"`
+	LastError       string              `json:"lastError,omitempty"`
+	StallNudges     int                 `json:"stallNudges,omitempty"`
+	StallRecoveries int                 `json:"stallRecoveries,omitempty"`
+	ActionNudges    int                 `json:"actionNudges,omitempty"`
+	TransientNudges int                 `json:"transientNudges,omitempty"`
+	// SessionRssMb is the resident memory of the agent's CLI process tree
+	// (MiB) and SessionAge how long the current CLI session has been up,
+	// both sampled on the health tick (#14842). SessionRecycles counts
+	// RSS/age-budget recycles since boot.
+	SessionRssMb    int    `json:"sessionRssMb,omitempty"`
+	SessionAge      string `json:"sessionAge,omitempty"`
+	SessionRecycles int    `json:"sessionRecycles,omitempty"`
 	// LastAction is the last issue or PR the agent acted on through the hive
 	// (#10925); see FrontendAgentLastAction.
 	LastAction *FrontendAgentLastAction `json:"lastAction,omitempty"`
@@ -3563,11 +3579,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		statusJSONResponse(w, r, map[string]string{"status": "initializing"})
 		return
 	}
-	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, time.Now().UTC()), Webhooks: github.WebhookHealthSnapshot()}
+	now := time.Now().UTC()
+	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot()}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
 	}
+	payload.UpgradeProgress = s.upgradeProgress(status, now)
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
@@ -3578,6 +3596,11 @@ type statusWithWebhooks struct {
 	*StatusPayload
 	Webhooks github.WebhookHealth `json:"webhooks"`
 	*EvalLoopStatus
+	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
+	// machine (scheduled / draining / pulling / … / missed) with the drain
+	// countdown, derived at serve time (#14856). Absent on a hive the hub
+	// does not manage and that has no upgrade in flight.
+	UpgradeProgress *spoke.UpgradeProgress `json:"upgradeProgress,omitempty"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {
