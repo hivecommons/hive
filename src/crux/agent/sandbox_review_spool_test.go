@@ -25,6 +25,8 @@ type spoolProbeLauncher struct {
 	manifests   *[]crux.SandboxReviewSpool
 	// request, when set, is written into the spool as the sandbox's last act.
 	request string
+	// written, when set, receives the request's path once it is in the spool.
+	written chan string
 }
 
 func (l spoolProbeLauncher) Run(_ context.Context, spec sandbox.LaunchSpec) (sandbox.Result, error) {
@@ -34,8 +36,12 @@ func (l spoolProbeLauncher) Run(_ context.Context, spec sandbox.LaunchSpec) (san
 	*l.manifests = readSpoolManifests(l.manifestDir)
 	if l.request != "" {
 		spool := filepath.Join(spec.Workspace, crux.SandboxReviewSpoolRelPath)
-		if err := os.WriteFile(filepath.Join(spool, "r.json"), []byte(l.request), 0o660); err != nil {
+		path := filepath.Join(spool, "r.json")
+		if err := os.WriteFile(path, []byte(l.request), 0o660); err != nil {
 			return sandbox.Result{}, err
+		}
+		if l.written != nil {
+			l.written <- path
 		}
 	}
 	return sandbox.Result{Stdout: "ok"}, nil
@@ -134,22 +140,24 @@ func TestSandboxExecutorWaitsForTheRelayToDrainTheSpool(t *testing.T) {
 	manifestDir := filepath.Join(t.TempDir(), "sandbox-review-spools")
 	launcher, _, _ := spoolProbe(manifestDir)
 	launcher.request = `{"repo":"o/r","number":7,"event":"comment","body":"x"}`
+	launcher.written = make(chan string, 1)
 	var consumed atomic.Bool
 	go func() {
-		// The relay: take the request once it appears. The flag is set
-		// BEFORE the remove, so a Run that returned only after the spool
-		// drained always sees it.
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			matches, _ := filepath.Glob(filepath.Join(root, "*", crux.SandboxReviewSpoolRelPath, "r.json"))
-			if len(matches) == 1 {
-				time.Sleep(50 * time.Millisecond)
-				consumed.Store(true)
-				_ = os.Remove(matches[0])
-				return
-			}
-			time.Sleep(time.Millisecond)
+		// The relay: take the request once the sandbox has written it. The
+		// flag is set BEFORE the remove, so a Run that returned only after
+		// the spool drained always sees it.
+		var path string
+		select {
+		case path = <-launcher.written:
+		case <-time.After(5 * time.Second):
+			return
 		}
+		// Deliberate hold, not a wait on a condition: it gives Run time to
+		// return if it did NOT wait for the drain, so that regression fails
+		// this test instead of racing the remove below.
+		time.Sleep(50 * time.Millisecond)
+		consumed.Store(true)
+		_ = os.Remove(path)
 	}()
 	exec := &SandboxExecutor{Runner: &sandboxFakeRunner{}, Launcher: launcher}
 	res, err := exec.Run(context.Background(), SandboxKickSpec{

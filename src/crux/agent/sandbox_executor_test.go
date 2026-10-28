@@ -316,17 +316,11 @@ func TestManagerSandboxPauseCancelsRunningKick(t *testing.T) {
 	if err := m.Pause("scanner", "test", "pause while running"); err != nil {
 		t.Fatalf("Pause: %v", err)
 	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
+	waitFor(t, "sandbox agent to stay paused after cancellation", func() bool {
 		m.mu.RLock()
-		done := m.agents["scanner"].cancel == nil && m.agents["scanner"].State == StatePaused
-		m.mu.RUnlock()
-		if done {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("sandbox agent did not stay paused after cancellation: %+v", m.AllStatuses()["scanner"])
+		defer m.mu.RUnlock()
+		return m.agents["scanner"].cancel == nil && m.agents["scanner"].State == StatePaused
+	})
 }
 
 func TestManagerSandboxResumeWhileCancelDrainsReturnsIdle(t *testing.T) {
@@ -350,17 +344,11 @@ func TestManagerSandboxResumeWhileCancelDrainsReturnsIdle(t *testing.T) {
 	if err := m.Resume(context.Background(), "scanner", "test", "resume immediately"); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
+	waitFor(t, "sandbox agent to return idle after resumed cancellation", func() bool {
 		m.mu.RLock()
-		done := m.agents["scanner"].cancel == nil && m.agents["scanner"].State == StateIdle
-		m.mu.RUnlock()
-		if done {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("sandbox agent did not return idle after resumed cancellation: %+v", m.AllStatuses()["scanner"])
+		defer m.mu.RUnlock()
+		return m.agents["scanner"].cancel == nil && m.agents["scanner"].State == StateIdle
+	})
 }
 
 func TestManagerSandboxRunningSkippedByTmuxCrashDetector(t *testing.T) {
@@ -387,17 +375,11 @@ func TestManagerSandboxRunningSkippedByTmuxCrashDetector(t *testing.T) {
 	if err := m.Pause("scanner", "test", "cleanup"); err != nil {
 		t.Fatalf("Pause cleanup: %v", err)
 	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
+	waitFor(t, "sandbox cleanup to finish", func() bool {
 		m.mu.RLock()
-		done := m.agents["scanner"].cancel == nil
-		m.mu.RUnlock()
-		if done {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("sandbox cleanup did not finish")
+		defer m.mu.RUnlock()
+		return m.agents["scanner"].cancel == nil
+	})
 }
 
 func TestManagerSandboxDoesNotPushWhenModeCannotPush(t *testing.T) {
@@ -419,17 +401,10 @@ func TestManagerSandboxDoesNotPushWhenModeCannotPush(t *testing.T) {
 	if err := m.SendKick("scanner", "fix"); err != nil {
 		t.Fatalf("SendKick: %v", err)
 	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if got := m.AllStatuses()["scanner"].State; got == StateIdle {
-			if runner.pushed || pr.called {
-				t.Fatalf("non-push mode pushed=%v pr=%v", runner.pushed, pr.called)
-			}
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	waitFor(t, "sandbox agent to complete", func() bool { return m.AllStatuses()["scanner"].State == StateIdle })
+	if runner.pushed || pr.called {
+		t.Fatalf("non-push mode pushed=%v pr=%v", runner.pushed, pr.called)
 	}
-	t.Fatalf("sandbox agent did not complete: %+v", m.AllStatuses()["scanner"])
 }
 
 func TestAgentSandboxConfigGating(t *testing.T) {
