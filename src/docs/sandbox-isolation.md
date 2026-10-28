@@ -173,6 +173,36 @@ agents:
 
 Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-runtime agent resolves no `workspace_claim` or names a runtime hive does not have, and refuses the kick with the same message rather than failing it after the agent is marked running.
 
+### Posting reviews from a sandbox
+
+A reviewer can run in a sandbox too, so a review of an accelerator change can actually run it on the card node ([#14986](https://github.com/hivecommons/hive/issues/14986)). `sandbox.runtime: job` is a legal setting for a `reviewer`-base agent; the review runs on the node the Job lands on.
+
+```yaml
+agents:
+  reviewer:
+    sandbox:
+      enabled: true
+      runtime: job
+      image: registry.example/project-dev:latest   # must include hive-review
+      job:
+        node_selector: { accelerator: spyre }
+        resources:
+          limits: { "vendor.com/device": "1" }
+```
+
+A sandbox cannot reach the pod-local review relay (`/var/run/hive-metrics/review-requests`), and it never holds a GitHub credential. Instead, every sandbox kick (Podman or Job) gets a **review spool**:
+
+1. Before launch, hive creates `.hive/review-requests` in the kick workspace and sets `HIVE_REVIEW_REQUEST_DIR=/workspace/.hive/review-requests` inside the sandbox. `hive-review` writes its request there instead of the pod-local dir, in the same JSON schema.
+2. Hive registers the spool with a manifest under `<work_dir>/sandbox-review-spools/` (`work_dir` is `HIVE_WORK_DIR`, default `/data/agents`). The manifest names the kick's agent. It lives outside every workspace, in a directory only hive's uid may write, so the sandbox can neither see nor forge it.
+3. The review-request watcher moves each spooled request into a hive-owned staging directory beside the manifest and runs it through the same handler as the pod-local drop box. `review.max_reviews_per_head`, repo pause, the lane write allowlist, the sentinel approval block, the contributor COMMENT-only guard, the canary scan and the `agent_pr_reviewed` audit all apply unchanged. The request is **attributed to the manifest's agent**, whatever its own `agent` field says; the per-agent authorization (ACMM `CanPush` or the `converse` capability) is checked for that agent.
+4. The result is copied back to `<request>.result.json` in the spool, where the sandboxed agent reads it exactly as it would in-pod. A bad `--verdict-file` is refused with the validator's message, so the agent can fix the verdict and resubmit within the same kick.
+
+While any spool is registered, the watcher scans on its short poll interval: a Job writes its spool over a shared volume, often from another node, where no file-change notification reaches the hive pod. After the sandbox exits, the kick waits up to a minute for the relay to take any request still in the spool, because a run-stage worktree is removed when the kick returns. The manifest is dropped once the kick has ended and nothing is left to deliver, or after 24 hours.
+
+The relay touches the spool only through an `os.Root` opened at the workspace. A symlink the sandbox plants can't redirect a read, rename or write outside its own workspace, and a request file that is a symlink, FIFO or oversized is set aside as `.rejected`. The relay ignores a manifest directory or manifest that is not owned by its own uid or is group- or world-writable. In the sidecar runtime (`CRUX_MODE=sidecar`), the runtime and hive must therefore share both `/data` and a uid.
+
+Out of scope: the quality and deps lanes are unchanged, and nothing inside a Job writes to GitHub directly.
+
 ## Health and metrics for sandboxed agents
 
 A sandboxed agent (Podman or Job runtime) has no tmux session, no in-pod process and no `pluk` log between kicks: the manager parks it in the `idle` state and each kick runs to completion in a container or Job. The dashboard therefore must not read "not running" as "session down" for these agents, and the token collector cannot find their CLI session files because the CLI's home directory lives in the sandbox, not in the hive pod.

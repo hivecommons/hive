@@ -164,7 +164,7 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 	// them (the race detector flagged exactly that on v4 CI). Reading them
 	// here is sequenced with the caller.
 	poll, fallback := reviewRequestPollInterval, reviewRequestFallbackInterval
-	dir := reviewRequestDir()
+	dir, spools := reviewRequestDir(), sandboxReviewSpoolsDir()
 	// Event-driven since #13378: a request-file drop (fsnotify) or a
 	// review-shaped webhook delivery (reviewRequestWakeEvent) wakes the
 	// loop; the timer is a reconcile that runs every fallback while webhooks
@@ -176,7 +176,7 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 	go func() {
 		defer close(done)
 		defer stopNotify()
-		t := time.NewTimer(reviewRequestScanInterval(dirNotify != nil, poll, fallback))
+		t := time.NewTimer(reviewRequestScanInterval(dirNotify != nil && !hasSandboxReviewSpools(spools), poll, fallback))
 		defer t.Stop()
 		for {
 			select {
@@ -200,7 +200,10 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 				default:
 				}
 			}
-			t.Reset(reviewRequestScanInterval(dirNotify != nil, poll, fallback))
+			// A registered sandbox spool keeps the poll cadence: its writes
+			// land on a shared volume, often from another node, where no
+			// change notification reaches this pod.
+			t.Reset(reviewRequestScanInterval(dirNotify != nil && !hasSandboxReviewSpools(spools), poll, fallback))
 		}
 	}()
 	c.logger.Info("review-request watcher started", slog.String("dir", dir),
@@ -220,17 +223,23 @@ func (c *Client) reviewRequestTick(ctx context.Context, nowFn func() time.Time) 
 	c.processReviewRequests(WithPacingClass(ctx, PacingLow), nowFn)
 }
 
+// processReviewRequests drains the pod-local drop box, then every sandbox
+// review spool (review_request_sandbox_spool.go).
 func (c *Client) processReviewRequests(ctx context.Context, nowFn func() time.Time) {
-	entries, err := os.ReadDir(reviewRequestDir())
+	c.processReviewRequestDir(ctx, reviewRequestDir(), reviewRequestSource{}, nowFn)
+	c.processSandboxReviewSpools(ctx, nowFn)
+}
+
+func (c *Client) processReviewRequestDir(ctx context.Context, dir string, src reviewRequestSource, nowFn func() time.Time) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".result.json") {
+		if !isReviewRequestFile(e) {
 			continue
 		}
-		c.handleOneReviewRequest(ctx, filepath.Join(reviewRequestDir(), name), nowFn)
+		c.handleOneReviewRequest(ctx, filepath.Join(dir, e.Name()), src, nowFn)
 	}
 }
 
@@ -242,7 +251,7 @@ func (c *Client) ProcessReviewRequestsOnce(ctx context.Context) {
 	c.processReviewRequests(ctx, time.Now)
 }
 
-func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn func() time.Time) {
+func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src reviewRequestSource, nowFn func() time.Time) {
 	if !c.reviewRetries.allows(path, nowFn()) {
 		return
 	}
@@ -270,6 +279,11 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 		c.logger.Warn("review-request watcher: bad request file quarantined",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
+	}
+	// A sandbox spool's requests belong to the agent its manifest names,
+	// whatever the file says (hivecommons/hive#14986).
+	if src.agent != "" {
+		req.Agent = src.agent
 	}
 
 	apiEvent, state, okEvent := reviewEventToAPI(req.Event)
@@ -332,6 +346,12 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	// Authorize: forge-resistance (file UID must be the claimed agent) + the same
 	// push-capability gate as opening a PR. A nil authorizer fails closed.
 	fileUID := statUID(data, path)
+	if src.agent != "" {
+		// A staged spool file is owned by hive, not the agent: its owning
+		// UID proves nothing, and the manifest already did the proving. 0
+		// is the authorizer's "no owning UID" value.
+		fileUID = 0
+	}
 	if c.reviewAuthz == nil {
 		c.denyReviewRequest(path, req, "no authorizer configured (fail closed)", nowFn)
 		return

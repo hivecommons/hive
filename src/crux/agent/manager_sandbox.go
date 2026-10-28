@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/kubejob"
@@ -148,6 +149,9 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		EnvAllowlist: agent.Config.SandboxEnvAllowlist(m.sandboxConfig),
 		NetworkMode:  agent.Config.SandboxNetworkMode(m.sandboxConfig),
 		Timeout:      time.Duration(agent.Config.SandboxTimeoutS(m.sandboxConfig)) * time.Second,
+		// Every sandbox kick gets a review spool (hivecommons/hive#14986);
+		// whether the agent may post through it is the relay's decision.
+		ReviewSpoolDir: crux.SandboxReviewSpoolsDir(m.workDir),
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	agent.cancel = cancel

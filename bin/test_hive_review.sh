@@ -163,6 +163,20 @@ else
   echo "  PASS: no .tmp file remains (atomic replace)"; PASS=$((PASS + 1))
 fi
 
+# --- sandbox spool (#14986): HIVE_REVIEW_REQUEST_DIR redirects the request ---
+# Runs the UNMODIFIED script: the override is the script's own behavior.
+echo ""
+echo "--- sandbox spool via HIVE_REVIEW_REQUEST_DIR ---"
+SPOOL_DIR="$TMPDIR_ROOT/workspace/.hive/review-requests"
+env HIVE_AGENT="spoolbot" HIVE_REVIEW_REQUEST_DIR="$SPOOL_DIR" bash "$SCRIPT" --repo "org/repo" 12 --comment --body "ran on the card" >/dev/null 2>&1 || true
+SPOOL_FILES=("$SPOOL_DIR"/spoolbot-*.json)
+if [ -f "${SPOOL_FILES[0]}" ]; then
+  check "spooled request is a comment" "comment" "$(field "${SPOOL_FILES[0]}" event)"
+  check "spooled request names the PR" "12" "$(field "${SPOOL_FILES[0]}" number)"
+else
+  echo "  FAIL: request not written to HIVE_REVIEW_REQUEST_DIR"; FAIL=$((FAIL + 2))
+fi
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

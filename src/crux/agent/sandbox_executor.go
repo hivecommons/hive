@@ -69,6 +69,10 @@ type SandboxKickSpec struct {
 	EnvAllowlist []string
 	NetworkMode  string
 	Timeout      time.Duration
+	// ReviewSpoolDir is where the kick registers its review spool with the
+	// relay (crux.SandboxReviewSpoolsDir). Empty disables spooling: the
+	// sandbox then has no way to post a review.
+	ReviewSpoolDir string
 }
 
 type configSnapshot struct {
@@ -156,6 +160,17 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		res.Error = err.Error()
 		return res, err
 	}
+	// A spool the relay cannot see is a lost review, not a failed kick: the
+	// rest of the run is still worth doing, so log and go on without one.
+	spool, spoolErr := e.openReviewSpool(spec.ReviewSpoolDir, spec.Agent, workspace)
+	if spoolErr != nil && e.Logger != nil {
+		e.Logger.Warn("sandbox review spool unavailable; the sandbox cannot post reviews this kick", "agent", spec.Agent, "error", spoolErr)
+	}
+	defer func() {
+		if err := spool.end(e.now()); err != nil && e.Logger != nil {
+			e.Logger.Warn("sandbox review spool: could not mark the kick ended", "agent", spec.Agent, "error", err)
+		}
+	}()
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 	sres, runErr := e.launcher().Run(runCtx, sandbox.LaunchSpec{
@@ -165,9 +180,13 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		WorkspaceMount: sandbox.DefaultWorkspaceMount,
 		WorkDir:        sandbox.DefaultWorkspaceMount,
 		Command:        command,
+		Env:            spool.sandboxEnv(),
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
 	})
+	if ctx.Err() == nil && !spool.awaitDrain(ctx) && e.Logger != nil {
+		e.Logger.Warn("sandbox review spool: requests still pending after the drain wait", "agent", spec.Agent, "spool", spool.entry.Spool)
+	}
 	// SECURITY (#3940, CWE-532): the agent CLI (notably one supplied via a
 	// direct launch_cmd override, which never passes through agent-launch.sh's
 	// stderr scrubber) can emit token-shaped values on stdout/stderr — e.g.

@@ -45,3 +45,7 @@ func readUntrustedFile(path string, maxBytes int64) ([]byte, fs.FileInfo, error)
 	}
 	return data, fi, nil
 }
+
+// untrustedRootOpenFlags: see read_untrusted_unix.go. Off unix O_NONBLOCK is
+// not portable; the os.Root confinement and the type checks remain.
+const untrustedRootOpenFlags = 0

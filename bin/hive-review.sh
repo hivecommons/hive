@@ -49,7 +49,11 @@
 
 set -euo pipefail
 
-REQ_DIR="/var/run/hive-metrics/review-requests"
+# Inside a sandbox (Podman or a Kubernetes Job) the pod-local relay dir is not
+# reachable; hive sets HIVE_REVIEW_REQUEST_DIR to the kick's workspace spool and
+# relays from there, attributing the request to the kick's own agent whatever
+# this script writes in "agent" (hivecommons/hive#14986).
+REQ_DIR="${HIVE_REVIEW_REQUEST_DIR:-/var/run/hive-metrics/review-requests}"
 
 REPO=""; NUMBER=""; EVENT=""; BODY=""; BODY_FILE=""; THREAD=""; VERDICT_FILE=""; VERDICT=""; REVISE=0
 while [ $# -gt 0 ]; do
