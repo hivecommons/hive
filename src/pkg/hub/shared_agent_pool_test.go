@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	cruxagent "github.com/hivecommons/hive/crux/agent"
+	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 )
 
 func serveSharedPoolRequest(t *testing.T, pool *sharedAgentPool, s *HubServer, method, bearerHive string, body map[string]string) *httptest.ResponseRecorder {
@@ -85,11 +85,11 @@ func TestSharedAgentPoolHTTPSerializesTwoHives(t *testing.T) {
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 
-	school, err := cruxagent.NewSharedSessionPoolClient(ts.URL, "school", srv.heartbeatKeyFor("school"))
+	school, err := cruxruntime.NewSharedSessionPoolClient(ts.URL, "school", srv.heartbeatKeyFor("school"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	reef, err := cruxagent.NewSharedSessionPoolClient(ts.URL, "reef", srv.heartbeatKeyFor("reef"))
+	reef, err := cruxruntime.NewSharedSessionPoolClient(ts.URL, "reef", srv.heartbeatKeyFor("reef"))
 	if err != nil {
 		t.Fatal(err)
 	}
