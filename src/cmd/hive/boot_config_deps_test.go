@@ -75,6 +75,11 @@ func newBootConfigFake(t *testing.T) *bootConfigFake {
 			cfg.Project.Org = "acme"
 			cfg.Project.Repos = []string{"acme/widgets"}
 			cfg.Agents = map[string]config.AgentConfig{}
+			// Never bind the real pprof listener from a unit test: whether
+			// 127.0.0.1:6060 is free decides whether startRuntimeObservability
+			// registers an extra cleanup, which made the cleanup-count
+			// assertions below depend on what else runs on the CI host.
+			cfg.Debug.PprofAddr = config.PprofAddrOff
 			return cfg, nil
 		},
 		// Every logger the phase installs is captured, including the stdout
@@ -348,6 +353,7 @@ func TestBootConfigWith_ConfigPathDisagreementAndTracingFailureAreWarnings(t *te
 		cfg.Agents = map[string]config.AgentConfig{}
 		cfg.Project.Org = "acme"
 		cfg.Project.Repos = []string{"other/repo"} // not under the org
+		cfg.Debug.PprofAddr = config.PprofAddrOff
 		return cfg, nil
 	}
 	b := &boot{}
