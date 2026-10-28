@@ -30,11 +30,14 @@ type LaunchCostCollector struct {
 	snap        LaunchCostResponse
 	ready       bool
 	collectedAt time.Time
+	rollup      map[string]map[string]LaunchCostRollupRef
 }
 
 type persistedLaunchCost struct {
 	Snapshot    LaunchCostResponse `json:"snapshot"`
 	CollectedAt time.Time          `json:"collected_at"`
+	// DailyRollup is absent in files written before the rollup existed.
+	DailyRollup []LaunchCostDailyRollup `json:"daily_rollup,omitempty"`
 }
 
 // NewLaunchCostCollector builds a collector over the token collector. A nil
@@ -66,6 +69,7 @@ func (lc *LaunchCostCollector) EnablePersistence(path string) {
 		}
 		return
 	}
+	lc.seedRollupLocked(stored.DailyRollup)
 	if stored.CollectedAt.IsZero() {
 		return
 	}
@@ -78,7 +82,7 @@ func (lc *LaunchCostCollector) persistLocked() {
 	if lc.persistPath == "" {
 		return
 	}
-	data, err := json.Marshal(persistedLaunchCost{Snapshot: lc.snap, CollectedAt: lc.collectedAt})
+	data, err := json.Marshal(persistedLaunchCost{Snapshot: lc.snap, CollectedAt: lc.collectedAt, DailyRollup: launchCostRollupList(lc.rollup)})
 	if err != nil {
 		return
 	}
@@ -119,6 +123,7 @@ func (lc *LaunchCostCollector) collect() {
 	lc.snap = resp
 	lc.collectedAt = now
 	lc.ready = resp.Ready
+	lc.mergeLaunchCostRollupLocked(resp, now)
 	lc.persistLocked()
 	lc.mu.Unlock()
 }

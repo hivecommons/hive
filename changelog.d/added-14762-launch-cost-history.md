@@ -1,0 +1,1 @@
+- `GET /api/launch-cost/history` returns a persisted daily per-ref rollup (`share_usd`, `launches` per UTC day) of launch attribution, so cost per merged PR can be measured over 14+ days instead of the ~1-day `/api/launch-cost` window ([#14762](https://github.com/hivecommons/hive/issues/14762)).

@@ -130,3 +130,44 @@ func TestLaunchCostEmptyRefsAndNilSlices(t *testing.T) {
 		t.Fatal("zero ms must render empty")
 	}
 }
+
+func TestLaunchCostDailyRollupSurvivesWindow(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	base := now.Add(-time.Hour)
+	reader := &fakeLaunchReader{
+		summary: &tokens.AggregateSummary{Sessions: []tokens.SessionSummary{
+			rcSession("s1", "scanner", rcUsage(rcTime(base, 15), 200, 20)),
+		}},
+		launches: []tokens.LaunchRecord{lcLaunch("scanner", "review", rcTime(base, 10), lcIssue("o/r", 7))},
+	}
+	persist := filepath.Join(t.TempDir(), "launch-cost.json")
+	lc := NewLaunchCostCollector(reader, nil)
+	lc.nowFn = func() time.Time { return now }
+	lc.EnablePersistence(persist)
+	lc.collect()
+
+	days := lc.DailyRollup()
+	if len(days) != 1 || days[0].Day != "2026-10-27" || len(days[0].ByRef) != 1 {
+		t.Fatalf("rollup = %+v", days)
+	}
+	ref := days[0].ByRef[0]
+	if ref.Ref != "o/r#7" || ref.Launches != 1 || ref.ShareUSD <= 0 {
+		t.Fatalf("ref = %+v", ref)
+	}
+
+	// The launch ages out of the window; the stored day must remain.
+	reader.launches = nil
+	reader.summary = &tokens.AggregateSummary{}
+	lc.nowFn = func() time.Time { return now.Add(3 * 24 * time.Hour) }
+	lc.collect()
+	if got := lc.DailyRollup(); len(got) != 1 || got[0].ByRef[0].Launches != 1 {
+		t.Fatalf("rollup lost after window: %+v", got)
+	}
+
+	// And it survives a restart.
+	lc2 := NewLaunchCostCollector(reader, nil)
+	lc2.EnablePersistence(persist)
+	if got := lc2.DailyRollup(); len(got) != 1 || got[0].ByRef[0].Ref != "o/r#7" {
+		t.Fatalf("rollup not restored: %+v", got)
+	}
+}
