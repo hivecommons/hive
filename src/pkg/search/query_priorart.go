@@ -62,9 +62,17 @@ func priorArtSearch(ctx context.Context, backend func() Backend, q priorart.Quer
 		res Result
 		err error
 	}
+	// The index is portfolio-wide and its documents are private to the
+	// spoke, while the gate comments on one repository's issue. Scoping the
+	// query to that repository keeps another repository's review output out
+	// of the comment, and keeps "#N" from naming a different repository's PR.
+	filters := map[string][]string{FieldKind: priorArtKinds}
+	if repo := strings.TrimSpace(q.Repo); repo != "" {
+		filters[FieldRepo] = []string{repo}
+	}
 	done := make(chan answer, 1)
 	go func() {
-		res, err := b.Query(ctx, Query{Text: text, Filters: map[string][]string{FieldKind: priorArtKinds}, Limit: priorArtLimit})
+		res, err := b.Query(ctx, Query{Text: text, Filters: filters, Limit: priorArtLimit})
 		done <- answer{res, err}
 	}()
 	var res Result

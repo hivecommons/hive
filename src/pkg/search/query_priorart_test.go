@@ -63,7 +63,7 @@ func TestPriorArtSourceFindsSimilarPastFix(t *testing.T) {
 
 func TestPriorArtSourceQueryShape(t *testing.T) {
 	b := &stubBackend{}
-	q := priorart.Query{Terms: []priorart.Term{{Text: "webhook.retry_backoff", Identifier: true}, {Text: "relay"}}, Identifiers: []string{"webhook.retry_backoff"}}
+	q := priorart.Query{Repo: "org/a", Terms: []priorart.Term{{Text: "webhook.retry_backoff", Identifier: true}, {Text: "relay"}}, Identifiers: []string{"webhook.retry_backoff"}}
 	if _, err := priorArtSearch(context.Background(), func() Backend { return b }, q, time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +72,18 @@ func TestPriorArtSourceQueryShape(t *testing.T) {
 	}
 	if got := b.got.Filters[FieldKind]; len(got) != len(priorArtKinds) || b.got.Limit != priorArtLimit {
 		t.Fatalf("query = %+v", b.got)
+	}
+	// Only the gated repository's documents may reach its issue.
+	if got := b.got.Filters[FieldRepo]; len(got) != 1 || got[0] != "org/a" {
+		t.Fatalf("repo filter = %v, want [org/a]", got)
+	}
+	b = &stubBackend{}
+	q.Repo = ""
+	if _, err := priorArtSearch(context.Background(), func() Backend { return b }, q, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.got.Filters[FieldRepo]; ok {
+		t.Fatalf("query without a repo set a repo filter: %+v", b.got)
 	}
 }
 
