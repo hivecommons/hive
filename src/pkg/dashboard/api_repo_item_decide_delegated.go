@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,6 +72,13 @@ type delegatedDecisionRequest struct {
 	Reason         string `json:"reason"`
 	Caption        string `json:"caption"`
 	SentinelReason string `json:"sentinel_reason"`
+	// PRs, on an issue, names the open pull requests nested under it as the
+	// tracker row showed them. Two or more make the job decide each PR on
+	// its own and report every outcome (delegatedDecisionItem) instead of
+	// deciding the issue — an issue row with several PRs never silently
+	// picks one (hivecommons/hive#15009). Empty: the dashboard's own
+	// snapshot is consulted the same way.
+	PRs []int `json:"prs,omitempty"`
 }
 
 // delegatedDecisionJob is the wire shape of one job.
@@ -90,6 +98,31 @@ type delegatedDecisionJob struct {
 	// Result is the shared row-action outcome (what was decided, on which
 	// item, what happens next), added for the dashboard's result toast.
 	Result *RowActionResult `json:"result,omitempty"`
+	// Items is set when an issue job decided each of its nested PRs
+	// separately: one entry per PR, in number order, each with its own
+	// decision, notes and result. Result then summarises them
+	// (rowActionDecidedEach) and Decision is unset.
+	Items []delegatedDecisionItem `json:"items,omitempty"`
+}
+
+// delegatedDecisionItem is one nested PR's outcome inside an issue job.
+type delegatedDecisionItem struct {
+	Number   int                        `json:"number"`
+	Type     string                     `json:"type"`
+	Status   string                     `json:"status"`
+	Decision *delegatedecision.Decision `json:"decision,omitempty"`
+	Notes    []string                   `json:"notes,omitempty"`
+	Error    string                     `json:"error,omitempty"`
+	Result   *RowActionResult           `json:"result,omitempty"`
+}
+
+// delegatedOutcome is what deciding one item produced, before it is
+// written into a job or an item.
+type delegatedOutcome struct {
+	Decision *delegatedecision.Decision
+	Notes    []string
+	Result   *RowActionResult
+	Err      error
 }
 
 type delegatedDecisionJobs struct {
@@ -243,19 +276,198 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 	jsonResponse(w, done)
 }
 
-// runDelegatedDecision gathers, decides, executes and records one job.
+// runDelegatedDecision gathers, decides, executes and records one job. An
+// issue with two or more open nested PRs is decided per PR (see
+// delegatedDecisionRequest.PRs); anything else is decided as one item.
 func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string, number int, itemType, user string, mergerRole bool, req delegatedDecisionRequest) {
+	if itemType == "issue" {
+		if prs := s.delegatedNestedOpenPRs(repoFull, number, req.PRs); len(prs) >= delegatedFanOutMinPRs {
+			s.runDelegatedDecisionPerPR(ctx, key, repoFull, number, prs, user, mergerRole, req)
+			return
+		}
+	}
+	out := s.decideDelegatedOne(ctx, repoFull, number, itemType, user, mergerRole, req)
+	s.delegatedJobs.finish(key, func(j *delegatedDecisionJob) {
+		j.Decision = out.Decision
+		j.Notes = out.Notes
+		j.Result = out.Result
+		if out.Err != nil {
+			j.Status = delegatedJobStatusFailed
+			j.Error = out.Err.Error()
+			return
+		}
+		j.Status = delegatedJobStatusDone
+	})
+	s.settleDelegatedJob(key, repoFull, number)
+}
+
+// settleDelegatedJob records the finished job's outcome on the operator-
+// action ledger so the row's decision badge can show what hive did next.
+func (s *Server) settleDelegatedJob(key, repoFull string, number int) {
+	if done, ok := s.delegatedJobs.get(key); ok {
+		s.settleOperatorAction(repoFull, number, &done)
+	}
+}
+
+// delegatedFanOutMinPRs is the number of open nested PRs from which an
+// issue's delegated decision is made per PR rather than on the issue.
+const delegatedFanOutMinPRs = 2
+
+// runDelegatedDecisionPerPR decides each nested PR on its own — each under
+// its own job key too, so a GET on the PR's path reads it and a concurrent
+// click on that PR is answered as already running — and writes the per-PR
+// outcomes and a summary into the issue's job.
+func (s *Server) runDelegatedDecisionPerPR(ctx context.Context, key, repoFull string, number int, prs []int, user string, mergerRole bool, req delegatedDecisionRequest) {
+	items := make([]delegatedDecisionItem, 0, len(prs))
+	prReq := req
+	prReq.PRs = nil
+	for _, pr := range prs {
+		item := delegatedDecisionItem{Number: pr, Type: "pr", Status: delegatedJobStatusDone}
+		prKey := delegatedJobKey(repoFull, pr)
+		now := time.Now()
+		sub := &delegatedDecisionJob{
+			ID: prKey + "@" + strconv.FormatInt(now.UnixNano(), 36), Repo: repoFull, Number: pr, Type: "pr",
+			Status: delegatedJobStatusRunning, Requester: user, StartedAt: now, Marker: delegatedecision.Marker(s.delegateHiveID()),
+		}
+		if _, started := s.delegatedJobs.start(prKey, sub, now); !started {
+			item.Status = delegatedJobStatusFailed
+			item.Error = "a delegated decision is already running for this pull request"
+			items = append(items, item)
+			continue
+		}
+		out := s.decideDelegatedOne(ctx, repoFull, pr, "pr", user, mergerRole, prReq)
+		item.Decision, item.Notes, item.Result = out.Decision, out.Notes, out.Result
+		if out.Err != nil {
+			item.Status = delegatedJobStatusFailed
+			item.Error = out.Err.Error()
+		}
+		s.delegatedJobs.finish(prKey, func(j *delegatedDecisionJob) {
+			j.Decision, j.Notes, j.Result, j.Status, j.Error = item.Decision, item.Notes, item.Result, item.Status, item.Error
+		})
+		s.settleDelegatedJob(prKey, repoFull, pr)
+		items = append(items, item)
+	}
+	result := delegatedPerPRResult(repoFull, number, items)
+	s.delegatedJobs.finish(key, func(j *delegatedDecisionJob) {
+		j.Items = items
+		j.Result = &result
+		j.Status = delegatedJobStatusDone
+		failed := 0
+		for _, it := range items {
+			if it.Error != "" {
+				failed++
+				if j.Error == "" {
+					j.Error = fmt.Sprintf("#%d: %s", it.Number, it.Error)
+				}
+			}
+			j.Notes = append(j.Notes, fmt.Sprintf("#%d: %s", it.Number, delegatedItemWord(it)))
+		}
+		if failed == len(items) {
+			j.Status = delegatedJobStatusFailed
+		} else {
+			j.Error = ""
+		}
+	})
+	s.settleDelegatedJob(key, repoFull, number)
+	numbers := make([]string, 0, len(prs))
+	for _, pr := range prs {
+		numbers = append(numbers, strconv.Itoa(pr))
+	}
+	s.audit.LogRecord(user, auditRepoItemDecisionDelegated, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", "issue",
+		"per_pr", strings.Join(numbers, ","), "policy", delegatedecision.PolicyName), "", repoFull, number)
+}
+
+// delegatedNestedOpenPRs is the open PRs nested under an issue: the
+// dashboard's hint when it sent one, else the tracker's own pairing from
+// the last enumeration (the same linked_prs the row drew). Sorted, deduped,
+// never the issue itself.
+func (s *Server) delegatedNestedOpenPRs(repoFull string, number int, hint []int) []int {
+	if len(hint) == 0 && s != nil {
+		s.statusMu.RLock()
+		status := s.status
+		s.statusMu.RUnlock()
+		if status != nil {
+			hint = delegatedNestedPRNumbers(s.buildStageTracker(status, s.stageStoreOrShared(), time.Now().UTC()).Items, repoFull, number)
+		}
+	}
+	seen := map[int]bool{}
+	out := make([]int, 0, len(hint))
+	for _, n := range hint {
+		if n <= 0 || n == number || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// delegatedNestedPRNumbers reads an issue's linked_prs out of tracker items.
+func delegatedNestedPRNumbers(items []StageTrackerItem, repoFull string, number int) []int {
+	for _, it := range items {
+		if it.Kind != "issue" || it.Number != number || !strings.EqualFold(it.Repo, repoFull) {
+			continue
+		}
+		out := make([]int, 0, len(it.LinkedPRs))
+		for _, lp := range it.LinkedPRs {
+			out = append(out, lp.Number)
+		}
+		return out
+	}
+	return nil
+}
+
+// delegatedItemWord is one PR's outcome in a few words for the summary.
+func delegatedItemWord(it delegatedDecisionItem) string {
+	switch {
+	case it.Error != "":
+		return "failed — " + it.Error
+	case it.Result != nil && it.Result.Action == rowActionNoop:
+		return "no change (already decided)"
+	case it.Result != nil:
+		word := it.Result.Action
+		if it.Result.Rule != "" {
+			word += " (" + strings.ReplaceAll(it.Result.Rule, "-", " ") + ")"
+		}
+		return word
+	}
+	return "decided"
+}
+
+// delegatedPerPRResult summarises the per-PR outcomes for the issue row's
+// toast: "#17 approved (small low risk); #20 recommended (sentinel
+// untrusted)". Each PR's own result carries its outcome and next step.
+func delegatedPerPRResult(repoFull string, number int, items []delegatedDecisionItem) RowActionResult {
+	parts := make([]string, 0, len(items))
+	decided, noop, failed := 0, 0, 0
+	for _, it := range items {
+		parts = append(parts, "#"+strconv.Itoa(it.Number)+" "+delegatedItemWord(it))
+		switch {
+		case it.Error != "":
+			failed++
+		case it.Result != nil && it.Result.Action == rowActionNoop:
+			noop++
+		default:
+			decided++
+		}
+	}
+	out := RowActionResult{Action: rowActionDecidedEach, Target: rowActionTarget(repoFull, rowActionTargetIssue, number)}
+	out.Outcome = fmt.Sprintf("Decided each of the %d nested pull requests: %s.", len(items), strings.Join(parts, "; "))
+	out.Next = fmt.Sprintf("%d sent · %d decided · %d no-op", len(items), decided, noop)
+	if failed > 0 {
+		out.Next += fmt.Sprintf(" · %d failed", failed)
+	}
+	out.Next += ". Each PR's own toast says what happens next."
+	return out
+}
+
+// decideDelegatedOne gathers, decides, executes and audits one item.
+func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number int, itemType, user string, mergerRole bool, req delegatedDecisionRequest) delegatedOutcome {
 	in, err := s.gatherDelegatedInput(ctx, repoFull, number, itemType, req)
 	if err != nil {
-		s.delegatedJobs.finish(key, func(j *delegatedDecisionJob) {
-			j.Status = delegatedJobStatusFailed
-			j.Error = err.Error()
-		})
-		if done, ok := s.delegatedJobs.get(key); ok {
-			s.settleOperatorAction(repoFull, number, &done)
-		}
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated+"_failed", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "error", err.Error()), "", repoFull, number)
-		return
+		return delegatedOutcome{Err: err}
 	}
 	d, deciderNotes := s.decideDelegated(ctx, in)
 	// The same rule firing again on an item the hive already decided would
@@ -270,36 +482,13 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 			blocked = strings.TrimSpace(req.Reason)
 		}
 		res := rowActionNoopResult(rowActionTarget(repoFull, kind, number), "hive already recorded this decision (rule `"+d.Rule+"`)", prior, blocked)
-		s.delegatedJobs.finish(key, func(j *delegatedDecisionJob) {
-			j.Decision = &d
-			j.Notes = append(deciderNotes, "already applied; nothing written")
-			j.Result = &res
-			j.Status = delegatedJobStatusDone
-		})
-		if done, ok := s.delegatedJobs.get(key); ok {
-			s.settleOperatorAction(repoFull, number, &done)
-		}
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", itemType,
 			"verdict", string(d.Verdict), "rule", d.Rule, "actions", "", "noop", "already-applied", "policy", delegatedecision.PolicyName, "decision", d.Text), "", repoFull, number)
-		return
+		return delegatedOutcome{Decision: &d, Notes: append(deciderNotes, "already applied; nothing written"), Result: &res}
 	}
 	notes, execErr := s.executeDelegatedDecision(ctx, in, d, user, mergerRole)
 	notes = append(deciderNotes, notes...)
 	result := delegatedRowActionResult(in, d, notes)
-	s.delegatedJobs.finish(key, func(j *delegatedDecisionJob) {
-		j.Decision = &d
-		j.Notes = notes
-		j.Result = &result
-		if execErr != nil {
-			j.Status = delegatedJobStatusFailed
-			j.Error = execErr.Error()
-			return
-		}
-		j.Status = delegatedJobStatusDone
-	})
-	if done, ok := s.delegatedJobs.get(key); ok {
-		s.settleOperatorAction(repoFull, number, &done)
-	}
 	kinds := make([]string, 0, len(d.Actions))
 	for _, a := range d.Actions {
 		kinds = append(kinds, string(a.Kind))
@@ -315,6 +504,7 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 		detail = auditDetail("repo", repoFull, "number", strconv.Itoa(number), "verdict", string(d.Verdict), "rule", d.Rule, "error", execErr.Error())
 	}
 	s.audit.LogRecord(user, action, detail, "", repoFull, number)
+	return delegatedOutcome{Decision: &d, Notes: notes, Result: &result, Err: execErr}
 }
 
 // delegatedPriorDecision reports when the hive last recorded a delegated

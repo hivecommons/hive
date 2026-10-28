@@ -1532,7 +1532,7 @@
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
     .ham-seg.blank { visibility: hidden; }
-    .ham-sub { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
+    .ham-sub { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); position: relative; }
     /* Only the two moving buckets animate (see stageTrackerMotion): the hive
        acting = gentle pulse; waiting on a person = slower amber→red breathe.
        A lit step with no data-motion (Open, Open · hold, Claimed, …) is a
@@ -1628,6 +1628,14 @@
     .ham-row:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: calc(-1 * var(--focus-ring-width)); border-radius: var(--r-sm); }
     .ham-row.ham-selected { background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset var(--sp-1) 0 0 var(--accent); border-radius: var(--r-sm); }
     .ham-row-tools { position: absolute; left: calc(-1 * var(--ham-gutter)); top: var(--sp-5); width: var(--ham-gutter); display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); }
+    /* A nested PR sub-row carries its own gutter (checkbox + ⋯), so each
+       PR under an issue is selected and acted on by itself (two PRs under
+       one issue, one decision each — the owner's 2026-10-28 report). The
+       row's horizontal padding is what the sub-row's gutter reaches back
+       over to sit in the same column as its parent's. */
+    .ham-sub.ham-selected { background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset var(--sp-1) 0 0 var(--accent); border-radius: var(--r-sm); }
+    .ham-sub > .ham-row-tools { top: 0; left: calc(-1 * var(--ham-gutter) - var(--sp-2)); }
+    .ham-sub.ham-selected .ham-sel, .ham-sub.ham-selected .ham-kebab, .ham-sub:hover .ham-sel, .ham-sub:hover .ham-kebab, .ham-sub:focus-within .ham-sel, .ham-sub:focus-within .ham-kebab { opacity: 1; }
     .ham-sel, .ham-kebab { appearance: none; -webkit-appearance: none; margin: 0; padding: 0; width: var(--ham-tool-size); height: var(--ham-tool-size); border: var(--line-width) solid var(--line-strong); border-radius: var(--r-sm); background: var(--panel); color: var(--muted); font: inherit; font-size: var(--fs-xs); line-height: 1; cursor: pointer; opacity: var(--ham-tool-rest-opacity); transition: opacity var(--ham-tool-fade-ms); }
     .ham-row:hover .ham-sel, .ham-row:hover .ham-kebab, .ham-row:focus-within .ham-sel, .ham-row:focus-within .ham-kebab, .ham-row.ham-selected .ham-sel, .ham-row.ham-selected .ham-kebab, .ham-has-sel .ham-sel, .ham-has-sel .ham-kebab, .ham-menu-open .ham-sel, .ham-menu-open .ham-kebab { opacity: 1; }
     @media (hover: none) { .ham-sel, .ham-kebab { opacity: 1; } }
@@ -14836,17 +14844,37 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // A covering PR nested under its issue: "[author icon] #N title" at the
     // PR column, then the PR's own strip from PR in progress onwards. The
     // PR's full tooltip rides its link; the sub-row container has none.
-    function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
-      const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
-        stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
+    // Pure: a nested PR as a row item of its own — the object every row
+    // action receives (runRowAction(action, row)), so a ⋯ menu or popover
+    // on a sub-row acts on THAT PR: its number, repo and head, never the
+    // parent issue's. `parent` names the issue; `siblings` the other open
+    // PRs under it (the superseded-by prompt pre-fills the one sibling).
+    function stageTrackerLinkedPRItem(issue, lp) {
+      const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x)) : [];
+      return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
+        stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null,
+        adoption: lp.adoption || null, superseded: !!lp.superseded, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0 };
+    }
+    // Pure: whether a linked PR is still open (not merged / closed / superseded).
+    function stageTrackerLinkedPROpen(lp) {
+      return !!lp && !lp.superseded && (Number(lp.stage) || 0) < STAGE_TRACKER_TERMINAL && (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('merged') < 0;
+    }
+    // Pure: an issue's open nested PRs as row items.
+    function stageTrackerNestedOpenPRs(issue) {
+      if (!issue || issue.kind === 'pr') return [];
+      return (Array.isArray(issue.linked_prs) ? issue.linked_prs : []).filter(stageTrackerLinkedPROpen).map(lp => stageTrackerLinkedPRItem(issue, lp));
+    }
+    function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
+      const pr = stageTrackerLinkedPRItem(issue, lp);
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
       if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
+          ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr))}
           </div>
@@ -16361,7 +16389,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MENU_MARGIN = 4;
     const STAGE_TRACKER_MENU_FAIL_LINES = 3;
     const STAGE_TRACKER_ACTION_LABELS = {
-      'decide:delegate': 'Let hive decide', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
+      'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       'decide:adopt': 'Adopt (hive takes over)',
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
@@ -16378,6 +16406,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_WHY_ROLE = 'Needs the merger or owner role';
     const STAGE_TRACKER_DELEGATE_POLL_MS = 1500;
     const STAGE_TRACKER_DELEGATE_POLL_MAX = 40;
+    // An issue row with this many open nested PRs offers "Let hive decide —
+    // all N PRs" (one decision per PR, server-side fan-out) and no longer a
+    // single Decide that would silently pick one (hivecommons/hive#15009).
+    const STAGE_TRACKER_DELEGATE_ALL_MIN = 2;
     var _stageTrackerSel = new Set();
     var _stageTrackerSelAnchor = '';
     var _stageTrackerMenu = null;
@@ -16418,22 +16450,42 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       sel.forEach(k => { if (present.has(k)) next.add(k); });
       return next;
     }
+    // The nested PR sub-rows of a row node, in document order.
+    function stageTrackerSubNodes(n) {
+      return n && typeof n.querySelectorAll === 'function' ? Array.from(n.querySelectorAll('[data-ham-sub-key]')) : [];
+    }
+    function stageTrackerSubKeyOf(n) {
+      return n ? (n.dataset && n.dataset.hamSubKey) || (typeof n.getAttribute === 'function' ? n.getAttribute('data-ham-sub-key') : '') || '' : '';
+    }
     function stageTrackerApplySelection(el, sel) {
       let any = false;
-      for (const n of Array.from(el.children || [])) {
-        const key = n.dataset && n.dataset.hamKey;
-        if (!stageTrackerSelectableKey(key)) continue;
+      const paint = (n, key) => {
         const on = sel.has(key);
         if (on) any = true;
         if (on) n.classList.add('ham-selected'); else n.classList.remove('ham-selected');
         const cb = typeof n.querySelector === 'function' ? n.querySelector('.ham-sel') : null;
         if (cb) cb.setAttribute('aria-checked', on ? 'true' : 'false');
+      };
+      for (const n of Array.from(el.children || [])) {
+        const key = n.dataset && n.dataset.hamKey;
+        if (!stageTrackerSelectableKey(key)) continue;
+        paint(n, key);
+        for (const sub of stageTrackerSubNodes(n)) paint(sub, stageTrackerSubKeyOf(sub));
       }
       if (any) el.classList.add('ham-has-sel'); else el.classList.remove('ham-has-sel');
       return any;
     }
+    // Row keys in document order, each row followed by its nested PR
+    // sub-row keys, so a Shift+click range runs over sub-rows too.
     function stageTrackerRowKeys(el) {
-      return Array.from(el.children || []).map(n => n.dataset && n.dataset.hamKey).filter(stageTrackerSelectableKey);
+      const out = [];
+      for (const n of Array.from(el.children || [])) {
+        const key = n.dataset && n.dataset.hamKey;
+        if (!stageTrackerSelectableKey(key)) continue;
+        out.push(key);
+        for (const sub of stageTrackerSubNodes(n)) { const k = stageTrackerSubKeyOf(sub); if (k && out.indexOf(k) < 0) out.push(k); }
+      }
+      return out;
     }
     // After a render: drop keys whose rows left, paint the rest, refresh the bar.
     function stageTrackerSelectionSync(el, keys) {
@@ -16448,7 +16500,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of d.items) if (stageTrackerItemKey(it) === key) return it;
       for (const it of d.items) {
         for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
-          const pr = { repo: it.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, stage_slug: lp.stage_slug || '', caption: lp.caption || '', modifiers: lp.modifiers || [], decision_needed: lp.decision_needed || null, sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '' };
+          const pr = stageTrackerLinkedPRItem(it, lp);
           if (stageTrackerItemKey(pr) === key) return pr;
         }
       }
@@ -16473,16 +16525,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // an issue row decides a nested PR parked at 085 when it has one (its
     // own stage is only mirrored from that PR), else itself when parked at
     // 045. null when nothing on the row is waiting on a person.
+    // Pure: whether a PR waits on a person — parked at 045/085, the
+    // needs-decision pill, superseded, or "Ready for human merge" (a
+    // human-merge reason such as an untrusted author).
+    function stageTrackerPRParked(it) {
+      return !!it && (!!it.superseded || (Array.isArray(it.modifiers) ? it.modifiers : []).indexOf('needs-decision') >= 0 || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(it.stage) || 0) >= 0 || !!it.manual_merge || !!it.human_merge_reason);
+    }
+    // Pure: the parked nested PRs of an issue row, as row items.
+    function stageTrackerParkedNestedPRs(item) {
+      if (!item || item.kind === 'pr') return [];
+      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && stageTrackerPRParked(lp)).map(lp => stageTrackerLinkedPRItem(item, lp));
+    }
     function stageTrackerDecisionTarget(item) {
       if (!item) return null;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      const parked = it => !!it.superseded || (Array.isArray(it.modifiers) ? it.modifiers : []).indexOf('needs-decision') >= 0 || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(it.stage) || 0) >= 0;
-      if (item.kind === 'pr') return parked(item) ? item : null;
-      for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
-        const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], author: lp.author || '',
-          human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null };
-        if (parked(pr)) return pr;
-      }
+      if (item.kind === 'pr') return stageTrackerPRParked(item) ? item : null;
+      // Exactly one parked nested PR: the issue row decides it. Two or more
+      // is ambiguous — each sub-row has its own menu, and the issue row
+      // offers "Let hive decide — all N PRs" (hivecommons/hive#15009).
+      const parkedPRs = stageTrackerParkedNestedPRs(item);
+      if (parkedPRs.length === 1) return parkedPRs[0];
+      if (parkedPRs.length > 1) return null;
       if (item.mirrored) return null;
       return (mods.indexOf('needs-decision') >= 0 || (Number(item.stage) || 0) === 45) ? item : null;
     }
@@ -16547,6 +16610,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const has = m => mods.indexOf(m) >= 0;
       const write = ctx.canHold !== false;
       const out = [];
+      const nested = stageTrackerNestedOpenPRs(item);
+      if (nested.length >= STAGE_TRACKER_DELEGATE_ALL_MIN) {
+        const can = write && !!ctx.user;
+        out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: 'per PR', enabled: can, why: can ? '' : STAGE_TRACKER_WHY_WRITE, prs: nested.map(p => p.number) });
+      }
       const target = stageTrackerDecisionTarget(item);
       if (target) {
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
@@ -16597,6 +16665,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
       }
       const out = [Object.assign({ id: 'decide', label: 'Decide…', submenu }, submenu.some(s => s.enabled) ? { enabled: true, why: '' } : { enabled: false, why: submenu[0].why })];
+      // One click for the whole selection: each item is decided on its own
+      // (a nested PR sub-row by its own number), summed up in one toast.
+      out.push(Object.assign({}, submenu[0], { label: 'Let hive decide (' + items.length + ' selected)', hint: 'per item' }));
       for (const id of STAGE_TRACKER_SEL_ACTIONS) out.push(Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'needs-human' ? '…' : id === 'copy' ? 's' : '') }, judge(id)));
       return out;
     }
@@ -16712,12 +16783,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // on: a selected row with company stands for the whole selection.
     function stageTrackerMenuTargets(target) {
       const sub = target && target.closest ? target.closest('[data-ham-sub-key]') : null;
-      if (sub) return { items: stageTrackerItemsForKeys([sub.dataset.hamSubKey]), restore: sub.closest('.ham-row') };
       const row = target && target.closest ? target.closest('.ham-row[data-ham-key]') : null;
-      if (!row) return null;
-      const key = row.dataset.hamKey;
-      const keys = _stageTrackerSel.has(key) && _stageTrackerSel.size > 1 ? stageTrackerRowKeys(row.parentNode).filter(k => _stageTrackerSel.has(k)) : [key];
-      return { items: stageTrackerItemsForKeys(keys), restore: row };
+      if (!row && !sub) return null;
+      const key = sub ? sub.dataset.hamSubKey : row.dataset.hamKey;
+      const list = row ? row.parentNode : sub.closest('#activity-monitor-panel');
+      const keys = _stageTrackerSel.has(key) && _stageTrackerSel.size > 1 && list ? stageTrackerRowKeys(list).filter(k => _stageTrackerSel.has(k)) : [key];
+      return { items: stageTrackerItemsForKeys(keys), restore: sub ? (sub.querySelector('.ham-kebab') || row) : row };
     }
     function stageTrackerWireRowActions(el) {
       if (!el || !el.dataset || el.dataset.hamWired === '1' || typeof el.addEventListener !== 'function') return;
@@ -16774,12 +16845,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!item) return null;
       if (item.decision_needed && item.decision_needed.question) return { key: stageTrackerItemKey(item), item };
       if (item.kind !== 'issue') return null;
-      for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
-        if (!lp || !lp.decision_needed || !lp.decision_needed.question) continue;
-        const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], decision_needed: lp.decision_needed };
-        return { key: stageTrackerItemKey(pr), item: pr };
-      }
-      return null;
+      // Two or more nested PRs each asking: the issue's chevron has no one
+      // decision to show — each sub-row's own chevron opens its PR's.
+      const asking = (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && lp.decision_needed && lp.decision_needed.question);
+      if (asking.length !== 1) return null;
+      const pr = stageTrackerLinkedPRItem(item, asking[0]);
+      return { key: stageTrackerItemKey(pr), item: pr };
     }
     // Pure: the trigger — the chevron word or the pill, as a button that
     // owns the popover. No native title: the popover is the hover text.
@@ -16948,8 +17019,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerRenderSelBar();
     }
     function hamSelectClick(e, btn) {
+      const sub = btn && btn.closest ? btn.closest('[data-ham-sub-key]') : null;
       const row = btn && btn.closest ? btn.closest('.ham-row[data-ham-key]') : null;
-      if (row) stageTrackerSelect(row.dataset.hamKey, { shift: !!(e && e.shiftKey), meta: !!(e && (e.metaKey || e.ctrlKey)) });
+      const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+      if (key) stageTrackerSelect(key, { shift: !!(e && e.shiftKey), meta: !!(e && (e.metaKey || e.ctrlKey)) });
     }
     function hamRowMenu(e, btn) {
       const t = stageTrackerMenuTargets(btn);
@@ -17008,6 +17081,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (id === 'decide:delegate') {
         return { url: '/api/repos/' + seg + '/items/' + n + '/decide-delegated', body: { type, reason: item.reason || '', caption: item.caption || '', sentinel_reason: item.sentinel_reason || '' }, poll: true };
       }
+      if (id === 'decide:delegate-all') {
+        // The issue's open nested PRs by number: the server decides each
+        // one and answers with `items` (one outcome per PR) + a summary.
+        const prs = stageTrackerNestedOpenPRs(item).map(p => p.number);
+        if (type !== 'issue' || prs.length < STAGE_TRACKER_DELEGATE_ALL_MIN) return null;
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decide-delegated', body: { type, prs, reason: item.reason || '', caption: item.caption || '', sentinel_reason: item.sentinel_reason || '' }, poll: true };
+      }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
         if (payload.supersededBy) body.superseded_by = payload.supersededBy;
@@ -17016,11 +17096,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return null;
     }
     // Pure: one line for the result toast.
-    function stageTrackerActionSummary(label, results) {
+    function stageTrackerActionSummary(label, results, id) {
       const n = results.length;
       const fails = results.filter(r => !r.ok);
       const ok = n - fails.length;
-      let msg = label + ': ' + ok + '/' + n + ' done';
+      let msg = label + ': ' + (id === 'decide:delegate' || id === 'decide:delegate-all' ? stageTrackerDelegateTally(results) : ok + '/' + n + ' done');
       const debounced = results.some(r => r.ok && r.data && (r.data.status === 'debounced' || r.data.status === 'in-progress'));
       if (debounced) msg += ' (a rescan was already running — the next one is queued by the hive)';
       if (fails.length) {
@@ -17031,11 +17111,41 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (decided) msg += '. ' + decided;
       return { msg, type: fails.length ? 'error' : 'success' };
     }
+    // Pure: the delegate tally — "3 sent · 2 decided · 1 no-op[ · 1 failed]".
+    // An issue decided per PR (`items`) counts each PR, not the issue.
+    function stageTrackerDelegateTally(results) {
+      let sent = 0, decided = 0, noop = 0, failed = 0;
+      const one = (ok, action, error) => { sent++; if (!ok || error) failed++; else if (action === STAGE_TRACKER_ACTION_NOOP) noop++; else decided++; };
+      for (const r of results) {
+        const subs = r && r.ok && r.data && Array.isArray(r.data.items) ? r.data.items : null;
+        if (subs && subs.length) { for (const it of subs) one(true, it.result && it.result.action, it.error); continue; }
+        one(!!r.ok, r.result ? r.result.action : (r.data && r.data.result ? r.data.result.action : ''), '');
+      }
+      return sent + ' sent · ' + decided + ' decided · ' + noop + ' no-op' + (failed ? ' · ' + failed + ' failed' : '');
+    }
+    // Pure: the per-PR outcomes of an issue decided per PR, as
+    // {item, result} pairs for one toast each; [] when the job had none.
+    function stageTrackerDelegatedSubResults(issue, data) {
+      const subs = data && Array.isArray(data.items) ? data.items : [];
+      return subs.map(it => {
+        const n = Number(it.number) || 0;
+        const key = stageTrackerItemKey({ repo: issue.repo, kind: 'pr', number: n });
+        const item = stageTrackerItemByKey(_stageTracker, key) || { repo: issue.repo, kind: 'pr', number: n, url: '' };
+        const result = it.error ? stageTrackerErrorResult('decide:delegate', item, it.error) : stageTrackerResultOf('decide:delegate', item, it);
+        return { item, result };
+      });
+    }
     // Pure: one clause per delegated decision — "#12 approve (small-low-risk)",
     // with "kept for owner" when the hive only recommended.
     function stageTrackerDelegatedSummary(results) {
       const parts = [];
       for (const r of results) {
+        const subs = r && r.ok && r.data && Array.isArray(r.data.items) ? r.data.items : [];
+        for (const it of subs) {
+          const sd = it.decision;
+          if (sd) parts.push((r.item.repo || '') + '#' + it.number + ' ' + (sd.verdict || '?') + (sd.rule ? ' (' + sd.rule + ')' : '') + (sd.keeps_park ? ' — kept for the owner' : ''));
+          else if (it.error) parts.push((r.item.repo || '') + '#' + it.number + ' failed — ' + it.error);
+        }
         const d = r && r.ok && r.data && r.data.decision;
         if (!d) continue;
         parts.push(stageTrackerRefOf(r.item) + ' ' + (d.verdict || '?') + (d.rule ? ' (' + d.rule + ')' : '') + (d.keeps_park ? ' — kept for the owner' : ''));
@@ -17124,6 +17234,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (result.action === STAGE_TRACKER_ACTION_NOOP) stageTrackerClearPending(pend); else stageTrackerArmPending(pend, result.target);
           if (result.action !== STAGE_TRACKER_ACTION_NOOP && typeof stageTrackerNoteOwnerEvent === 'function') stageTrackerNoteOwnerEvent(stageTrackerTargetKey(result.target) || stageTrackerItemKey(it), STAGE_TRACKER_ACTION_WORDS[result.action] || stageTrackerActionLabel(id));
           if (items.length <= STAGE_TRACKER_RESULT_TOAST_MAX) toasts.push(stageTrackerResultToast(result, it, { id, rowRef: stageTrackerRefOf(it) }));
+          // An issue decided per PR: one toast per PR as well, each on its
+          // own sub-row (hivecommons/hive#15009).
+          for (const sub of stageTrackerDelegatedSubResults(it, data)) {
+            if (sub.result.action !== STAGE_TRACKER_ACTION_NOOP && sub.result.action !== 'error') { const sp = stageTrackerSetPending([stageTrackerItemKey(sub.item)], stageTrackerActingCaption('decide:delegate')); pending.push(sp); stageTrackerArmPending(sp, sub.result.target); }
+            if (items.length <= STAGE_TRACKER_RESULT_TOAST_MAX) toasts.push(stageTrackerResultToast(sub.result, sub.item, { id: 'decide:delegate', rowRef: stageTrackerRefOf(sub.item) }));
+          }
         } catch (e) {
           const error = e && e.message ? e.message : 'network error';
           results.push({ item: it, ok: false, error });
@@ -17131,7 +17247,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (items.length <= STAGE_TRACKER_RESULT_TOAST_MAX) toasts.push(stageTrackerResultToast(stageTrackerErrorResult(id, it, error), it, { id, rowRef: stageTrackerRefOf(it) }));
         }
       }
-      const sum = stageTrackerActionSummary(label, results);
+      const sum = stageTrackerActionSummary(label, results, id);
       // One item that succeeded: its result toast says it all. A batch or
       // a failure keeps the summary line beside the per-item toasts.
       if (toasts.length === 1 && results.length === 1 && results[0].ok) prog.done(null); else prog.done(sum.msg, sum.type);
@@ -17240,6 +17356,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       switch (id) {
         case 'decide:delegate':
           return (await stageTrackerAsk(id, 'confirm', stageTrackerDelegateConfirm(items))) ? {} : null;
+        case 'decide:delegate-all': {
+          // Confirms as Let hive decide (same opt-out key), naming each PR.
+          const prs = [].concat(...items.map(stageTrackerNestedOpenPRs));
+          return (await stageTrackerAsk('decide:delegate', 'confirm', stageTrackerDelegateConfirm(prs))) ? {} : null;
+        }
         case 'decide:approve':
           if (prs) {
             return (await stageTrackerAsk(id, 'confirm', { title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge gate takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
@@ -17254,7 +17375,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         case 'decide:close-superseded': {
           const options = stageTrackerSupersederOptions(_stageTracker, items);
-          const by = await hivePrompt({ title: 'Close as superseded by', label: 'Which pull request supersedes ' + refs + '? (#number, owner/repo#number or URL; leave empty if none)', placeholder: options.length ? options[0].value : '#123', options, validate: s => stageTrackerSupersederValid(s, items) });
+          // A nested PR with exactly one open sibling under the same issue
+          // (two PRs for one issue): the sibling is the likely winner.
+          const sibling = items.length === 1 && Array.isArray(items[0].siblings) && items[0].siblings.length === 1 ? items[0].repo + '#' + items[0].siblings[0] : '';
+          const by = await hivePrompt({ title: 'Close as superseded by', label: 'Which pull request supersedes ' + refs + '? (#number, owner/repo#number or URL; leave empty if none)', placeholder: options.length ? options[0].value : '#123', defaultValue: sibling, options, validate: s => stageTrackerSupersederValid(s, items) });
           if (by == null) return null;
           const v = await stageTrackerAsk(id, 'prompt', { title: 'Close as superseded', label: 'Comment for ' + refs + ' (optional)', placeholder: 'Why this is closed', confirmLabel: 'Close' });
           return v == null ? null : { comment: v, supersededBy: by };
@@ -17287,10 +17411,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
       'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
-      'decide:delegate': 'Hive is deciding…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…',
+      'decide:delegate': 'Hive is deciding…', 'decide:delegate-all': 'Hive is deciding each PR…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
-      adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused',
+      adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
       held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
     };
     function stageTrackerActingCaption(id) { return STAGE_TRACKER_ACTING_CAPTIONS[id] || 'acting…'; }
@@ -17458,6 +17582,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (id === 'decide:adopt') {
         // Adopt acts on the nudged PR row itself (072, not a decision park).
         items = items.filter(stageTrackerAdoptOffered);
+        if (!items.length) return { toasts: [], pending: [] };
+      } else if (id === 'decide:delegate-all') {
+        // The issue row itself is the request; the server fans out per PR.
+        items = items.filter(it => stageTrackerNestedOpenPRs(it).length >= STAGE_TRACKER_DELEGATE_ALL_MIN);
         if (!items.length) return { toasts: [], pending: [] };
       } else if (id.indexOf('decide:') === 0) {
         // A row decides its parked PR when it has one (the issue's stage is

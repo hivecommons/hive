@@ -58,9 +58,19 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				labels = append(labels, map[string]string{"name": label})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": labels, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
-		case r.Method == http.MethodGet && strings.HasSuffix(path, "/issues/8"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "labels": []any{}, "pull_request": map[string]any{"url": "x"}, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
-		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/8"):
+		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/issues/8") || strings.HasSuffix(path, "/issues/9")):
+			n := 8
+			if strings.HasSuffix(path, "/issues/9") {
+				n = 9
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": []any{}, "pull_request": map[string]any{"url": "x"}, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/pulls/8") || strings.HasSuffix(path, "/pulls/9")):
+			// PR #9 is a second hive PR nested under issue #7 (the per-PR
+			// delegated decision); it reads like #8.
+			n := 8
+			if strings.HasSuffix(path, "/pulls/9") {
+				n = 9
+			}
 			author := map[string]any{"login": "hive[bot]", "type": "Bot"}
 			if m.prForeign {
 				author = map[string]any{"login": "someone", "type": "User"}
@@ -73,7 +83,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			for _, label := range m.prLabels {
 				prLabels = append(prLabels, map[string]string{"name": label})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "labels": prLabels, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": prLabels, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/commits/feedfacefeedfacefeedfacefeedfacefeedface/status"):
 			switch {
 			case m.prRedCI:
