@@ -252,10 +252,12 @@ func TestAttemptsRequestRecordsOperator(t *testing.T) {
 // The process-wide singletons point at the configured /data paths and are
 // stable across calls.
 func TestSharedSingletons(t *testing.T) {
-	if Shared() != Shared() || Shared() == nil {
+	first, second := Shared(), Shared()
+	if first == nil || first != second {
 		t.Fatal("Shared store is not a singleton")
 	}
-	if SharedAttempts() != SharedAttempts() || SharedAttempts() == nil {
+	a1, a2 := SharedAttempts(), SharedAttempts()
+	if a1 == nil || a1 != a2 {
 		t.Fatal("SharedAttempts is not a singleton")
 	}
 	var nilStore *Store
