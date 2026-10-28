@@ -3203,6 +3203,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 			// so the Overview never shows pre-restart totals as current
 			// (hivecommons/hive#13373); the first enumeration replaces it.
 			cached.MarkAllStale()
+			cached.RestoredAt = time.Now().UTC()
 			b.lastActionable.Store(&cached)
 			if b.sched != nil {
 				b.sched.SetLastActionable(&cached)

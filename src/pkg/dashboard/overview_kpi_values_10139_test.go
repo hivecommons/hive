@@ -65,6 +65,8 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewOutsideBreakdownText") + `
 ` + jsFunc(t, html, "overviewStaleSince") + `
 ` + jsFunc(t, html, "fmtOverviewStaleSince") + `
+` + jsFunc(t, html, "overviewRestartRefresh") + `
+` + jsFunc(t, html, "overviewStaleBadgeText") + `
 ` + jsFunc(t, html, "relativeTimeShort") + `
 ` + jsFunc(t, html, "renderOverviewTotalPartitionSubline") + `
 ` + jsFunc(t, html, "renderOverviewSplitSubline") + `
