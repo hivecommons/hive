@@ -216,16 +216,16 @@ func IsDelegatedComment(body string) bool {
 }
 
 var (
-	secretsRE     = regexp.MustCompile(`(?i)\b(secrets?|PATs?|personal access tokens?|org(?:anization)? (?:membership|permissions?|admin|owner)|token scopes?|GITHUB_TOKEN|credentials?|app installation|billing)\b`)
-	flakyRE       = regexp.MustCompile(`(?i)\b(flak(?:y|e|iness)|intermittent(?:ly)? fail\w*|non-?deterministic test)\b`)
-	ratchetRE     = regexp.MustCompile(`(?i)\b(actionlint|ratchet|duplication (?:gate|threshold|check)|link[- ]?checker|allow-?list|lint gate|hygiene gate|shellcheck|yamllint|markdownlint)\b`)
-	proposalRE    = regexp.MustCompile(`(?i)\bacceptance criteria\b`)
-	hivePolicyRE  = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
+	secretsRE    = regexp.MustCompile(`(?i)\b(secrets?|PATs?|personal access tokens?|org(?:anization)? (?:membership|permissions?|admin|owner)|token scopes?|GITHUB_TOKEN|credentials?|app installation|billing)\b`)
+	flakyRE      = regexp.MustCompile(`(?i)\b(flak(?:y|e|iness)|intermittent(?:ly)? fail\w*|non-?deterministic test)\b`)
+	ratchetRE    = regexp.MustCompile(`(?i)\b(actionlint|ratchet|duplication (?:gate|threshold|check)|link[- ]?checker|allow-?list|lint gate|hygiene gate|shellcheck|yamllint|markdownlint)\b`)
+	proposalRE   = regexp.MustCompile(`(?i)\bacceptance criteria\b`)
+	hivePolicyRE = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
 	// capabilityGapRE matches a blocker no direction decision can clear: the
 	// GitHub App lacks a permission (for example `workflows`).
 	capabilityGapRE = regexp.MustCompile(`(?i)\b(?:app(?: token)?|installation|github app)\b[^\n]{0,80}\b(?:cannot|can't|lacks?|no|without|missing)\b[^\n]{0,60}\b(?:workflows?|permissions?)\b|\bno [\x60]?workflows[\x60]? permission\b`)
-	duplicateOfRE = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
-	blockedOnPRRE = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
+	duplicateOfRE   = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
+	blockedOnPRRE   = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
 )
 
 // Classifier labels.
