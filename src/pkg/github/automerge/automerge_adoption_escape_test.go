@@ -838,3 +838,50 @@ func TestAdoptionEscalationHoldsAgainstErroredLane(t *testing.T) {
 		t.Fatalf("escalation churned: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
 	}
 }
+
+// A queued, unattempted adopted head does not run the 074 clock
+// (hivecommons/hive#15036).
+func TestAdoptionStaleWaitsForFixerQueue(t *testing.T) {
+	policy := adoptPolicy()
+	start := time.Date(2026, 10, 28, 11, 0, 0, 0, time.UTC)
+	obs := stageObservation{HeadSHA: "aaa", Reason: "label:needs-rebase", LaneReason: "label:needs-rebase", Labels: []string{"needs-rebase"}}
+	base := stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeInPlace, AdoptedAt: start, AdoptedHeadAt: start}
+	queued := func(seen time.Time) stagelabels.Record {
+		r := base
+		r.FixerQueuedHead, r.FixerQueuedSeenAt = "aaa", seen
+		return r
+	}
+	attempted := func(at time.Time) stagelabels.Record {
+		r := queued(at)
+		r.FixerAttemptedHead, r.FixerAttemptedAt = "aaa", at
+		return r
+	}
+	tests := []struct {
+		name string
+		rec  stagelabels.Record
+		at   time.Time
+		want bool
+	}{
+		{"no queue record behaves as today", base, start.Add(adoptedDwell), true},
+		{"queued and unattempted past the dwell waits", queued(start.Add(adoptedDwell)), start.Add(adoptedDwell + time.Minute), false},
+		{"attempted 1h ago is not stale", attempted(start.Add(2 * adoptedDwell)), start.Add(2*adoptedDwell + time.Hour), false},
+		{"attempted 4h ago is stale", attempted(start.Add(adoptedDwell)), start.Add(adoptedDwell + 4*time.Hour), true},
+		{"queue no longer listing the row (fixer unavailable) is stale at the dwell", queued(start.Add(time.Hour)), start.Add(adoptedDwell), true},
+		{"past the hard cap while queued is stale", queued(start.Add(4*adoptedDwell - time.Minute)), start.Add(4 * adoptedDwell), true},
+		{"queue entry for another head does not pause", func() stagelabels.Record {
+			r := queued(start.Add(adoptedDwell))
+			r.FixerQueuedHead = "bbb"
+			return r
+		}(), start.Add(adoptedDwell + time.Minute), true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := adoptionStale(obs, tc.rec, policy, tc.at); got != tc.want {
+				t.Fatalf("adoptionStale=%v, want %v", got, tc.want)
+			}
+			if got := inPlaceRehomeReason(obs, tc.rec, policy, tc.at); got != "" && !tc.want {
+				t.Fatalf("inPlaceRehomeReason=%q while waiting on the fixer queue", got)
+			}
+		})
+	}
+}

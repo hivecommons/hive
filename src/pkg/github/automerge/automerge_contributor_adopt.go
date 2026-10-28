@@ -1506,8 +1506,21 @@ func adoptionStale(obs stageObservation, rec stagelabels.Record, policy StageLab
 		// sat yet under that plan.
 		return false
 	}
-	return now.Sub(since) >= stagelabels.Dwell(stagelabels.AdoptedByHive, policy.Dwell)
+	dwell := stagelabels.Dwell(stagelabels.AdoptedByHive, policy.Dwell)
+	if attempted := rec.FixerAttemptedSince(obs.HeadSHA); attempted.After(since) {
+		// The fixer reached the head: the dwell is the fixer's time to act.
+		since = attempted
+	} else if rec.FixerQueuedUnattempted(obs.HeadSHA, now) && now.Sub(since) < dwell*adoptionQueuedDwellCap {
+		// Waiting in the fixer queue is not the adopter sitting idle
+		// (hivecommons/hive#15036); the cap keeps a dead fixer escalating.
+		return false
+	}
+	return now.Sub(since) >= dwell
 }
+
+// adoptionQueuedDwellCap bounds, in 074 dwells from the head clock, how long a
+// queued but unattempted row pauses adoptionStale.
+const adoptionQueuedDwellCap = 4
 
 // adoptedHeadSignoffUnfixable reports a head whose App sign-off cannot
 // survive a squash attributed to the contributor. Re-home it without

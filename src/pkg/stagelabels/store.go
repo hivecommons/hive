@@ -163,6 +163,16 @@ type Record struct {
 	// than reading the dwell from AdoptedAt, which may be a head or more
 	// behind. AdoptedHeadSince resolves it.
 	AdoptedHeadAt time.Time `json:"adopted_head_at,omitempty"`
+	// FixerQueuedHead / FixerQueuedSeenAt record that the fixer queue last
+	// listed the adopted PR at this head for work the hive can push, and
+	// when. FixerAttemptedHead / FixerAttemptedAt record when a fixer kick
+	// first carried that row. Together they let the 074 dwell wait while a
+	// busy fixer has not reached the head (hivecommons/hive#15036); a new
+	// head matches neither, so both reset on their own.
+	FixerQueuedHead    string    `json:"fixer_queued_head,omitempty"`
+	FixerQueuedSeenAt  time.Time `json:"fixer_queued_seen_at,omitempty"`
+	FixerAttemptedHead string    `json:"fixer_attempted_head,omitempty"`
+	FixerAttemptedAt   time.Time `json:"fixer_attempted_at,omitempty"`
 	// AdoptEscalatedHead / AdoptEscalatedReason record that the adoption
 	// sits at this head past the 074 dwell with nothing the hive can push
 	// and is a person's (stage 085) for that lane reason. The escalation
@@ -920,6 +930,60 @@ func (r Record) AdoptedHeadSince() time.Time {
 		return r.AdoptedHeadAt
 	}
 	return r.AdoptedAt
+}
+
+// FixerQueueFreshness is how recently the fixer queue must have listed an
+// adopted row for it to still count as queued; a queue that stopped listing
+// it (CI running, fixer paused or unavailable) stops pausing the dwell.
+const FixerQueueFreshness = 30 * time.Minute
+
+// FixerAttemptedSince is when a fixer kick first carried the adopted head,
+// or zero when it has not reached it.
+func (r Record) FixerAttemptedSince(head string) time.Time {
+	if head == "" || r.FixerAttemptedHead != head {
+		return time.Time{}
+	}
+	return r.FixerAttemptedAt
+}
+
+// FixerQueuedUnattempted reports whether the fixer queue listed the adopted
+// head within FixerQueueFreshness of now and no kick has carried it yet.
+func (r Record) FixerQueuedUnattempted(head string, now time.Time) bool {
+	if head == "" || r.FixerQueuedHead != head || !r.FixerAttemptedSince(head).IsZero() {
+		return false
+	}
+	return !r.FixerQueuedSeenAt.IsZero() && now.Sub(r.FixerQueuedSeenAt) <= FixerQueueFreshness
+}
+
+// MarkFixerQueued notes that the fixer queue lists the live adoption at head
+// for pushable work. A different head starts a fresh queue entry.
+func (s *Store) MarkFixerQueued(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.AdoptedHead != head {
+		return
+	}
+	if r.FixerQueuedHead != head {
+		r.FixerAttemptedHead, r.FixerAttemptedAt = "", time.Time{}
+	}
+	r.FixerQueuedHead, r.FixerQueuedSeenAt = head, s.now()
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkFixerAttempted notes the first fixer kick that carried the live
+// adoption at head; later kicks for the same head do not move it.
+func (s *Store) MarkFixerAttempted(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.AdoptedHead != head || r.FixerAttemptedHead == head {
+		return
+	}
+	r.FixerAttemptedHead, r.FixerAttemptedAt = head, s.now()
+	s.items[key] = r
+	s.dirty = true
 }
 
 // AdoptionEscalated reports whether the adoption at head is currently a
