@@ -198,6 +198,7 @@ func TestStageTrackerDeferredPillsJS(t *testing.T) {
 		jsFunc(t, html, "stageTrackerHeadline"),
 		jsFunc(t, html, "stageTrackerRegressionHandled"),
 		jsFunc(t, html, "stageTrackerRegressionText"),
+		jsFunc(t, html, "stageTrackerStaleLabelsText"),
 		jsFunc(t, html, "stageTrackerTooltip"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
