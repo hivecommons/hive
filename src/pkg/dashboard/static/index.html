@@ -1338,6 +1338,8 @@
     /* Sound toggle (merge zap + new-item buzz): a speaker chip at the toolbar's far end; pressed = on. */
     .ham-sound { margin-left: auto; padding: var(--sp-1) var(--sp-2); min-width: 2em; line-height: 1; }
     .ham-sound[aria-pressed="true"] { color: var(--green); border-color: var(--green); }
+    /* Sound on but the browser holds audio back until a click/key on the page (autoplay policy). */
+    .ham-sound.ham-sound-blocked, .ham-sound[aria-pressed="true"].ham-sound-blocked { color: var(--amber); border-color: var(--amber); }
     /* Settings modal rows: one per sound — label, current clip, actions. */
     .ham-sound-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--border); font-size: var(--fs-xs); }
     .ham-sound-row-label { color: var(--text); font-weight: 600; flex: 1 1 14rem; }
@@ -16471,7 +16473,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        AudioContext is created lazily on a user gesture and resumed when
        suspended; a context the autoplay policy still holds suspended at
        play time re-arms the gesture listeners instead of queueing stale
-       voices. */
+       voices. A reload (the SPA reloads itself whenever the hive deploys
+       a new version) is a fresh document with no user activation, so a
+       context created for the first automatic play after it is suspended
+       and every zap/buzz is dropped until the user clicks or presses a
+       key on the page: the chip turns amber and a one-time toast with an
+       "Enable sounds" action says so, instead of failing silently. Gesture
+       plays (▶ Play, turning sound on) start their voices inside the
+       gesture itself alongside resume() — WebKit unlocks the context on
+       either, and only inside the gesture — and a resume() that resolves
+       before the state has flipped waits for statechange rather than
+       counting as blocked. */
     const STAGE_TRACKER_SOUND_KEY = 'hive.tracker.sound';
     const STAGE_TRACKER_SOUND_MAX_PLAYS = 2;
     const STAGE_TRACKER_SOUND_OFFSET_S = 0.26;
@@ -16516,6 +16528,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_SOUND_BLOCKED_MSG = 'The browser blocked audio for this page — click ▶ Play again, or allow sound/auto-play for this site in the browser\'s site settings.';
     const STAGE_TRACKER_SOUND_UNSUPPORTED_MSG = 'This browser has no Web Audio support, so the tracker sounds cannot play.';
     const STAGE_TRACKER_SOUND_PLAYING_LABEL = 'Playing…';
+    // Autoplay-policy affordance: shown once per page load when sound is on
+    // but the browser holds the audio engine back until a click or key press
+    // on this page (every reload — including the automatic one on a new hive
+    // version — starts without user activation).
+    const STAGE_TRACKER_SOUND_HELD_MSG = 'Tracker sounds are on, but the browser holds audio back until you click or press a key on this page.';
+    const STAGE_TRACKER_SOUND_HELD_SKIPPED_MSG = ' A zap or buzz was just skipped.';
+    const STAGE_TRACKER_SOUND_HELD_ACTION = 'Enable sounds';
+    const STAGE_TRACKER_SOUND_HELD_TOAST_MS = 60000;
+    const STAGE_TRACKER_SOUND_HELD_CLASS = 'ham-sound-blocked';
+    const STAGE_TRACKER_SOUND_HELD_TITLE = 'Sound on, but held back by the browser until you click or press a key on this page';
+    // Gestures the autoplay policies count as user activation: WebKit does
+    // not treat every pointerdown as one, so click and touchend are armed too.
+    const STAGE_TRACKER_PRIME_EVENTS = Object.freeze(['pointerdown', 'keydown', 'click', 'touchend']);
     const STAGE_TRACKER_SOUND_KINDS = Object.freeze({
       open: { label: 'Open sound', builtin: 'Built-in (bee buzz)', event: 'a new issue or pull request appears' },
       merge: { label: 'Merge sound', builtin: 'Built-in (zapper)', event: 'a pull request merges' },
@@ -16527,6 +16552,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerAudioCtx = null;
     var _stageTrackerSoundOn = false;
     var _stageTrackerSoundPrimed = false;
+    var _stageTrackerSoundHeldShown = false;
     var _stageTrackerVolume = STAGE_TRACKER_VOLUME_DEFAULT;
     // kind → { name, bytes (ArrayBuffer), buffer (AudioBuffer|null), failed }
     var _stageTrackerClips = { open: null, merge: null };
@@ -16634,24 +16660,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Resolves with ctx once it is running. Any other state ('suspended',
     // Safari's 'interrupted', …) gets a resume(); the promise rejects when
-    // resume() throws or rejects, resolves without the context running, or
-    // does not settle within timeoutMs.
+    // resume() throws or rejects, or when the context is not running within
+    // timeoutMs. A resume() that resolves while the state still reads
+    // blocked is not a verdict — WebKit can settle the promise a beat before
+    // the state flips — so the context's statechange is awaited until the
+    // deadline.
     function stageTrackerResumeContext(ctx, timeoutMs) {
       if (!ctx) return Promise.reject(new Error('no AudioContext'));
       if (ctx.state === 'running') return Promise.resolve(ctx);
       return new Promise((resolve, reject) => {
         let settled = false;
+        const canListen = typeof ctx.addEventListener === 'function';
+        const onState = () => { if (ctx.state === 'running') finish(true); };
         const finish = (ok, err) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          if (canListen) ctx.removeEventListener('statechange', onState);
           if (ok) resolve(ctx); else reject(err || new Error('AudioContext did not resume'));
         };
         const timer = setTimeout(() => finish(false, new Error('AudioContext resume timed out')), timeoutMs);
+        if (canListen) ctx.addEventListener('statechange', onState);
         let p;
         try { p = ctx.resume(); } catch (e) { p = Promise.reject(e); }
-        Promise.resolve(p).then(() => finish(ctx.state === 'running'), e => finish(false, e));
+        Promise.resolve(p).then(() => { if (ctx.state === 'running') finish(true); }, e => finish(false, e));
       });
+    }
+
+    // Drops the context so voices queued on it can never burst out later;
+    // the next play creates a fresh one. Decoded clips are plain AudioBuffers
+    // and survive.
+    function stageTrackerDiscardContext(ctx) {
+      if (_stageTrackerAudioCtx === ctx) _stageTrackerAudioCtx = null;
+      try { const p = ctx && typeof ctx.close === 'function' && ctx.close(); if (p && typeof p.catch === 'function') p.catch(() => {}); } catch {}
     }
 
     // Prime the context on a gesture after load when sound was left on in a
@@ -16666,8 +16707,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let inFlight = false;
       const disarm = () => {
         _stageTrackerSoundPrimed = false;
-        document.removeEventListener('pointerdown', prime);
-        document.removeEventListener('keydown', prime);
+        STAGE_TRACKER_PRIME_EVENTS.forEach(n => document.removeEventListener(n, prime));
       };
       const prime = () => {
         if (!_stageTrackerSoundOn) { disarm(); return; }
@@ -16675,10 +16715,43 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const ctx = stageTrackerAudioContext();
         if (!ctx) { disarm(); return; }
         inFlight = true;
-        stageTrackerResumeContext(ctx, STAGE_TRACKER_GESTURE_RESUME_MS).then(disarm, () => { inFlight = false; });
+        stageTrackerResumeContext(ctx, STAGE_TRACKER_GESTURE_RESUME_MS).then(() => { disarm(); stageTrackerSoundHeldClear(); }, () => { inFlight = false; });
       };
-      document.addEventListener('pointerdown', prime, { passive: true });
-      document.addEventListener('keydown', prime, { passive: true });
+      STAGE_TRACKER_PRIME_EVENTS.forEach(n => document.addEventListener(n, prime, { passive: true }));
+    }
+
+    // Pure: whether this document has had the user activation the autoplay
+    // policies want before an AudioContext may run outside a gesture. A
+    // browser without navigator.userActivation is assumed not to have it.
+    function stageTrackerHasUserActivation(nav) {
+      const ua = nav && nav.userActivation;
+      return !!(ua && ua.hasBeenActive);
+    }
+
+    // The autoplay-policy affordance: the chip turns amber and, once per
+    // page load, a toast with an "Enable sounds" action explains that a
+    // click or key press on the page is needed. The action runs inside the
+    // click, so it is itself the gesture that resumes the context.
+    function stageTrackerSoundHeldNotice(skipped) {
+      const b = document.getElementById('activity-monitor-sound');
+      if (b) {
+        b.classList.add(STAGE_TRACKER_SOUND_HELD_CLASS);
+        b.setAttribute('title', STAGE_TRACKER_SOUND_HELD_TITLE);
+      }
+      stageTrackerSoundPrime();
+      if (_stageTrackerSoundHeldShown) return;
+      _stageTrackerSoundHeldShown = true;
+      showToast(STAGE_TRACKER_SOUND_HELD_MSG + (skipped ? STAGE_TRACKER_SOUND_HELD_SKIPPED_MSG : ''), 'warning', {
+        autoDismissMs: STAGE_TRACKER_SOUND_HELD_TOAST_MS,
+        actionLabel: STAGE_TRACKER_SOUND_HELD_ACTION,
+        onAction: () => { stageTrackerPlayOnGesture(() => true).then(ok => { if (ok) stageTrackerSoundHeldClear(); }); },
+      });
+    }
+    function stageTrackerSoundHeldClear() {
+      const b = document.getElementById('activity-monitor-sound');
+      if (!b) return;
+      b.classList.remove(STAGE_TRACKER_SOUND_HELD_CLASS);
+      stageTrackerSoundSyncButton();
     }
 
     // Baked sample by sample like the reference render: the snap is a raw
@@ -16756,7 +16829,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Automatic play (a merge or new item landed): schedules at once on a
     // running context. A context the autoplay policy still holds gets one
     // short resume() window; voices that would otherwise burst out together
-    // on the next gesture are dropped and gesture priming is re-armed instead.
+    // on the next gesture are dropped, gesture priming is re-armed and the
+    // held-back affordance is shown instead.
     // Returns true only when the voices were scheduled synchronously.
     function stageTrackerPlayVoices(voice, count, gain, startOffsetS) {
       const ctx = stageTrackerAudioContext();
@@ -16764,22 +16838,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (ctx.state === 'running') return stageTrackerScheduleVoices(ctx, voice, count, gain, startOffsetS);
       stageTrackerResumeContext(ctx, STAGE_TRACKER_AUTO_RESUME_MS).then(
         () => stageTrackerScheduleVoices(ctx, voice, count, gain, startOffsetS),
-        () => stageTrackerSoundPrime());
+        () => stageTrackerSoundHeldNotice(true));
       return false;
     }
 
     // Gesture play (▶ Play, ▶ Play both, turning sound on): must be called
-    // from the gesture handler itself. Creates the context there, waits for
-    // resume() and then calls schedule(ctx). Resolves true when scheduled;
-    // when the browser refuses, toasts why and resolves false — a preview
-    // never fails silently.
+    // from the gesture handler itself. Creates the context there and, when
+    // it is not yet running, calls resume() and schedule(ctx) synchronously
+    // inside the gesture — WebKit only unlocks a context for a resume() or a
+    // node start() made while processing the gesture, and a promise
+    // continuation is no longer that. Resolves true once the context runs;
+    // when the browser refuses, the context (and the voices queued on it)
+    // is discarded, a toast says why and it resolves false — a preview never
+    // fails silently.
     function stageTrackerPlayOnGesture(schedule) {
       const ctx = stageTrackerAudioContext();
       if (!ctx) { showToast(STAGE_TRACKER_SOUND_UNSUPPORTED_MSG, 'error'); return Promise.resolve(false); }
       if (ctx.state === 'running') return Promise.resolve(!!schedule(ctx));
-      return stageTrackerResumeContext(ctx, STAGE_TRACKER_GESTURE_RESUME_MS).then(
-        () => !!schedule(ctx),
-        () => { showToast(STAGE_TRACKER_SOUND_BLOCKED_MSG, 'warning'); return false; });
+      const resumed = stageTrackerResumeContext(ctx, STAGE_TRACKER_GESTURE_RESUME_MS);
+      const scheduled = !!schedule(ctx);
+      return resumed.then(
+        () => { stageTrackerSoundHeldClear(); return scheduled; },
+        () => { stageTrackerDiscardContext(ctx); showToast(STAGE_TRACKER_SOUND_BLOCKED_MSG, 'warning'); return false; });
     }
 
     // Marks btn as playing for the life of promise plus lengthS of audio,
@@ -17009,7 +17089,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSetSoundOn(on) {
       _stageTrackerSoundOn = !!on;
       try { localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0'); } catch {}
-      stageTrackerSoundSyncButton();
+      stageTrackerSoundHeldClear();
       stageTrackerRenderSettings();
       if (_stageTrackerSoundOn) stageTrackerPlayTest();
     }
@@ -17073,7 +17153,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         _stageTrackerVolume = v === null ? STAGE_TRACKER_VOLUME_DEFAULT : Math.max(0, Math.min(Number(v) || 0, STAGE_TRACKER_VOLUME_MAX));
       } catch { _stageTrackerVolume = STAGE_TRACKER_VOLUME_DEFAULT; }
       stageTrackerSoundSyncButton();
-      if (_stageTrackerSoundOn) stageTrackerSoundPrime();
+      // Sound left on from a previous visit on a document nobody has clicked
+      // yet (every reload, including the automatic one on a new hive
+      // version): the browser will hold the audio engine back, so say so
+      // now rather than after the first zap has been dropped.
+      if (_stageTrackerSoundOn && !stageTrackerHasUserActivation(window.navigator)) stageTrackerSoundHeldNotice(false);
+      else if (_stageTrackerSoundOn) stageTrackerSoundPrime();
       stageTrackerClipsLoad().then(() => { stageTrackerDecodeClips(); stageTrackerRenderSettings(); });
     }
 

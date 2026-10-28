@@ -38,6 +38,27 @@ func TestStageTrackerSoundResumeWiring(t *testing.T) {
 			t.Errorf("%s must await stageTrackerResumeContext", fn)
 		}
 	}
+	// A blocked automatic play must surface the autoplay affordance (which
+	// re-arms priming) rather than only re-arming priming silently.
+	if pv := jsFunc(t, html, "stageTrackerPlayVoices"); !strings.Contains(pv, "stageTrackerSoundHeldNotice(true)") {
+		t.Errorf("stageTrackerPlayVoices must call stageTrackerSoundHeldNotice(true) when the context stays blocked:\n%s", pv)
+	}
+	// Gesture plays schedule inside the gesture (WebKit unlock) and discard a
+	// context the browser refused so the queued voices never burst later.
+	if pg := jsFunc(t, html, "stageTrackerPlayOnGesture"); !strings.Contains(pg, "const scheduled = !!schedule(ctx);") || !strings.Contains(pg, "stageTrackerDiscardContext(ctx)") {
+		t.Errorf("stageTrackerPlayOnGesture must schedule synchronously inside the gesture and discard a refused context:\n%s", pg)
+	}
+	for _, want := range []string{"'pointerdown'", "'keydown'", "'click'", "'touchend'"} {
+		if !strings.Contains(jsConstLine(t, html, "STAGE_TRACKER_PRIME_EVENTS"), want) {
+			t.Errorf("STAGE_TRACKER_PRIME_EVENTS must arm %s", want)
+		}
+	}
+	if !strings.Contains(html, `.ham-sound.ham-sound-blocked`) {
+		t.Errorf("index.html missing the .ham-sound-blocked chip style")
+	}
+	if init := jsFunc(t, html, "stageTrackerSoundInit"); !strings.Contains(init, "stageTrackerHasUserActivation(window.navigator)") || !strings.Contains(init, "stageTrackerSoundHeldNotice(false)") {
+		t.Errorf("stageTrackerSoundInit must show the held-back affordance on a document without user activation:\n%s", init)
+	}
 	num := func(name string) int {
 		m := regexp.MustCompile(`const ` + name + ` = (\d+);`).FindStringSubmatch(html)
 		if m == nil {
@@ -62,7 +83,12 @@ func TestStageTrackerSoundResumeWiring(t *testing.T) {
 // "Playing…" meanwhile; an automatic play on a context that resumes quickly
 // plays exactly once; one that never resumes plays nothing and re-arms
 // priming; a rejected resume() toasts; 'interrupted' behaves like suspended;
-// a context that is already running schedules synchronously.
+// a context that is already running schedules synchronously. Also: a
+// gesture play starts its voices inside the gesture (WebKit unlock), a
+// resume() that resolves before the state flips waits for statechange, a
+// refused context is discarded with its queued voices, and a blocked
+// automatic play (or a reload with sound on) shows the one-time "Enable
+// sounds" affordance that resumes the context from its own click.
 func TestStageTrackerSoundResumeAsync(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node not on PATH — async resume paths were NOT executed by this run")
@@ -70,7 +96,9 @@ func TestStageTrackerSoundResumeAsync(t *testing.T) {
 	html := indexHTML(t)
 	script := strings.Join([]string{
 		"const assert = require('assert');",
-		"const window = {}; const document = { hidden: false, listeners: {}, addEventListener(n, f) { (this.listeners[n] = this.listeners[n] || []).push(f); }, removeEventListener(n, f) { this.listeners[n] = (this.listeners[n] || []).filter(g => g !== f); } };",
+		"const chip = { textContent: '🔇', attrs: {}, classes: new Set(), setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k]; }, removeAttribute(k) { delete this.attrs[k]; }, classList: { add: c => chip.classes.add(c), remove: c => chip.classes.delete(c), contains: c => chip.classes.has(c) } };",
+		"const window = { navigator: { userActivation: { hasBeenActive: false } } }; const document = { hidden: false, listeners: {}, addEventListener(n, f) { (this.listeners[n] = this.listeners[n] || []).push(f); }, removeEventListener(n, f) { this.listeners[n] = (this.listeners[n] || []).filter(g => g !== f); }, getElementById(id) { return id === 'activity-monitor-sound' ? chip : null; } };",
+		"const localStorage = { store: {}, getItem(k) { return k in this.store ? this.store[k] : null; }, setItem(k, v) { this.store[k] = String(v); } };",
 		jsConstLine(t, html, "STAGE_TRACKER_SOUND_MAX_PLAYS"),
 		jsConstLine(t, html, "STAGE_TRACKER_SOUND_OFFSET_S"),
 		jsConstLine(t, html, "STAGE_TRACKER_SOUND_MASTER_GAIN"),
@@ -81,6 +109,15 @@ func TestStageTrackerSoundResumeAsync(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_SOUND_BLOCKED_MSG"),
 		jsConstLine(t, html, "STAGE_TRACKER_SOUND_UNSUPPORTED_MSG"),
 		jsConstLine(t, html, "STAGE_TRACKER_SOUND_PLAYING_LABEL"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_HELD_MSG"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_HELD_SKIPPED_MSG"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_HELD_ACTION"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_HELD_TOAST_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_HELD_CLASS"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_HELD_TITLE"),
+		jsConstLine(t, html, "STAGE_TRACKER_PRIME_EVENTS"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_KEY"),
+		jsConstLine(t, html, "STAGE_TRACKER_VOLUME_KEY"),
 		jsConstLine(t, html, "STAGE_TRACKER_ZAP_S"),
 		jsConstLine(t, html, "STAGE_TRACKER_BUZZ_S"),
 		// Short windows keep the fixture fast; the real values are pinned by
@@ -88,7 +125,13 @@ func TestStageTrackerSoundResumeAsync(t *testing.T) {
 		"const STAGE_TRACKER_GESTURE_RESUME_MS = 80; const STAGE_TRACKER_AUTO_RESUME_MS = 40;",
 		jsFunc(t, html, "stageTrackerAudioContext"),
 		jsFunc(t, html, "stageTrackerResumeContext"),
+		jsFunc(t, html, "stageTrackerDiscardContext"),
 		jsFunc(t, html, "stageTrackerSoundPrime"),
+		jsFunc(t, html, "stageTrackerHasUserActivation"),
+		jsFunc(t, html, "stageTrackerSoundHeldNotice"),
+		jsFunc(t, html, "stageTrackerSoundHeldClear"),
+		jsFunc(t, html, "stageTrackerSoundSyncButton"),
+		jsFunc(t, html, "stageTrackerSoundInit"),
 		jsFunc(t, html, "stageTrackerScheduleVoices"),
 		jsFunc(t, html, "stageTrackerPlayVoices"),
 		jsFunc(t, html, "stageTrackerPlayOnGesture"),
@@ -107,48 +150,62 @@ func TestStageTrackerSoundResumeAsync(t *testing.T) {
 		"function stageTrackerBuzzVoice(ctx, out, at) { out.voices.push('buzz@' + at); }",
 		"function stageTrackerDecodeClips() { if (decodeThrows) throw new Error('decode exploded'); }",
 		"let decodeThrows = false;",
-		"const toasts = []; function showToast(m, type) { toasts.push({ m, type }); }",
+		"const toasts = []; function showToast(m, type, opts) { toasts.push({ m, type, opts: opts || {} }); }",
+		"function stageTrackerClipsLoad() { return Promise.resolve(); } function stageTrackerRenderSettings() {}",
 		"const STAGE_TRACKER_SOUND_KINDS = { open: { label: 'Open sound' }, merge: { label: 'Merge sound' } };",
-		"var _stageTrackerAudioCtx = null; var _stageTrackerSoundOn = true; var _stageTrackerSoundPrimed = false;",
+		"var _stageTrackerAudioCtx = null; var _stageTrackerSoundOn = true; var _stageTrackerSoundPrimed = false; var _stageTrackerSoundHeldShown = false;",
 		"var _stageTrackerVolume = STAGE_TRACKER_VOLUME_DEFAULT; var _stageTrackerClips = { open: null, merge: null };",
 	}, "\n") + `
 // Fake AudioContext: resume() is asynchronous and the test decides when (or
 // whether) it settles. 'mode' is 'later' (resolve after resumeDelayMs),
+// 'stale' (resolve at once with the state still 'suspended', then flip to
+// 'running' and fire statechange after resumeDelayMs — WebKit's ordering),
 // 'never', or 'reject'. Voices land in the master gain it hands out.
 const gains = [];
-let created = 0;
+let created = 0, closed = 0;
 let mode = 'later', resumeDelayMs = 5;
 class FakeAudioContext {
-  constructor() { created++; this.state = 'suspended'; this.currentTime = 0; this.sampleRate = 48000; this.destination = {}; this.resumes = 0; }
-  createGain() { const g = { gain: { value: 1 }, voices: [], connect() {} }; gains.push(g); return g; }
+  constructor() { created++; this.state = 'suspended'; this.currentTime = 0; this.sampleRate = 48000; this.destination = {}; this.resumes = 0; this.stateListeners = []; }
+  addEventListener(n, f) { if (n === 'statechange') this.stateListeners.push(f); }
+  removeEventListener(n, f) { this.stateListeners = this.stateListeners.filter(g => g !== f); }
+  close() { closed++; this.state = 'closed'; return Promise.resolve(); }
+  createGain() { const g = { gain: { value: 1 }, voices: [], ctx: this, connect() {} }; gains.push(g); return g; }
   createBufferSource() { return { buffer: null, connect(out) { this.out = out; }, start(at) { this.out.voices.push('clip@' + at); } }; }
   resume() {
     this.resumes++;
     if (mode === 'reject') return Promise.reject(new Error('NotAllowedError'));
     if (mode === 'never') return new Promise(() => {});
+    if (mode === 'stale') { setTimeout(() => { this.state = 'running'; this.stateListeners.slice().forEach(f => f()); }, resumeDelayMs); return Promise.resolve(); }
     return new Promise(resolve => setTimeout(() => { this.state = 'running'; resolve(); }, resumeDelayMs));
   }
 }
 window.AudioContext = FakeAudioContext;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const voices = () => gains.flatMap(g => g.voices);
+// Voices on a context that is still open — a discarded (closed) context's
+// voices can never sound, so they do not count.
+const voices = () => gains.filter(g => g.ctx.state !== 'closed').flatMap(g => g.voices);
 const fakeButton = () => ({ textContent: '▶ Play', attrs: {}, classes: new Set(), setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; }, classList: { add: c => {}, remove: c => {} } });
-const reset = () => { gains.length = 0; toasts.length = 0; _stageTrackerAudioCtx = null; _stageTrackerSoundPrimed = false; document.listeners = {}; };
+const reset = () => { gains.length = 0; toasts.length = 0; closed = 0; _stageTrackerAudioCtx = null; _stageTrackerSoundPrimed = false; _stageTrackerSoundHeldShown = false; _stageTrackerSoundOn = true; chip.classes.clear(); chip.attrs = {}; document.listeners = {}; };
+const heldToasts = () => toasts.filter(t => t.m.indexOf(STAGE_TRACKER_SOUND_HELD_MSG) === 0);
 
 (async () => {
-  // (a) Preview inside a gesture on a suspended context: nothing plays
-  // synchronously, the button reads "Playing…", and the voice is scheduled
-  // once resume() resolves. The context is created inside the handler.
+  // (a) Preview inside a gesture on a suspended context: resume() is called
+  // and the voice is scheduled synchronously inside the gesture (WebKit
+  // unlocks the context only for a resume()/start() made while processing
+  // the gesture), the button reads "Playing…" until the context runs, and
+  // the preview resolves true once it does. The context is created inside
+  // the handler.
   reset();
   const btn = fakeButton();
   const p = stageTrackerPreviewSound('merge', btn);
   assert.strictEqual(created, 1, 'context created inside the gesture handler');
   assert.strictEqual(_stageTrackerAudioCtx.state, 'suspended', 'state is still stale-suspended synchronously');
-  assert.deepStrictEqual(voices(), [], 'nothing scheduled before resume() settles');
+  assert.strictEqual(_stageTrackerAudioCtx.resumes, 1, 'resume() called synchronously inside the gesture');
+  assert.deepStrictEqual(voices(), ['zap@0'], 'the voice is started synchronously inside the gesture');
   assert.strictEqual(btn.textContent, STAGE_TRACKER_SOUND_PLAYING_LABEL);
   assert.strictEqual(btn.attrs['aria-busy'], 'true');
-  assert.strictEqual(await p, true, 'preview resolves true once scheduled');
-  assert.deepStrictEqual(voices(), ['zap@0'], 'the preview voice plays after resume() resolves');
+  assert.strictEqual(await p, true, 'preview resolves true once the context runs');
+  assert.deepStrictEqual(voices(), ['zap@0'], 'no second voice after resume() resolves');
   assert.deepStrictEqual(toasts, [], 'no toast on success');
   await sleep(Math.ceil(STAGE_TRACKER_ZAP_S * 1000) + 10);
   assert.strictEqual(btn.textContent, '▶ Play', 'label restored after the sound length');
@@ -175,6 +232,8 @@ const reset = () => { gains.length = 0; toasts.length = 0; _stageTrackerAudioCtx
   assert.strictEqual(voices().length, STAGE_TRACKER_SOUND_MAX_PLAYS, 'scheduled once resume() resolved, capped');
   assert.strictEqual(gains.length, 1, 'exactly one play, not a burst');
   assert.strictEqual(_stageTrackerSoundPrimed, false, 'priming not re-armed when the resume succeeded');
+  assert.deepStrictEqual(heldToasts(), [], 'no held-back toast when the resume succeeded');
+  assert.ok(!chip.classes.has(STAGE_TRACKER_SOUND_HELD_CLASS), 'chip not marked held when the resume succeeded');
   await sleep(STAGE_TRACKER_AUTO_RESUME_MS + 10);
   assert.strictEqual(gains.length, 1, 'the timed-out branch did not fire after the resolved one');
 
@@ -186,22 +245,52 @@ const reset = () => { gains.length = 0; toasts.length = 0; _stageTrackerAudioCtx
   await sleep(STAGE_TRACKER_AUTO_RESUME_MS + 10);
   assert.deepStrictEqual(voices(), [], 'nothing queued for a later burst');
   assert.strictEqual(_stageTrackerSoundPrimed, true, 'priming re-armed');
-  assert.strictEqual((document.listeners.pointerdown || []).length, 1);
-  assert.strictEqual((document.listeners.keydown || []).length, 1);
+  for (const n of ['pointerdown', 'keydown', 'click', 'touchend']) assert.strictEqual((document.listeners[n] || []).length, 1, n + ' armed');
+  // The dropped play is not silent: the chip goes amber and one toast with
+  // an "Enable sounds" action explains the autoplay policy.
+  assert.ok(chip.classes.has(STAGE_TRACKER_SOUND_HELD_CLASS), 'chip marked held');
+  assert.strictEqual(chip.attrs.title, STAGE_TRACKER_SOUND_HELD_TITLE);
+  assert.strictEqual(heldToasts().length, 1, 'one held-back toast');
+  assert.strictEqual(heldToasts()[0].m, STAGE_TRACKER_SOUND_HELD_MSG + STAGE_TRACKER_SOUND_HELD_SKIPPED_MSG);
+  assert.strictEqual(heldToasts()[0].type, 'warning');
+  assert.strictEqual(heldToasts()[0].opts.actionLabel, STAGE_TRACKER_SOUND_HELD_ACTION);
+  assert.strictEqual(typeof heldToasts()[0].opts.onAction, 'function');
+  // A second dropped play re-marks the chip but never toasts again.
+  assert.strictEqual(stageTrackerPlayZap(1), false);
+  await sleep(STAGE_TRACKER_AUTO_RESUME_MS + 10);
+  assert.strictEqual(heldToasts().length, 1, 'the toast is shown once per page load');
   // A gesture whose resume() does not settle keeps the listeners armed.
   document.listeners.pointerdown[0]();
   await sleep(STAGE_TRACKER_GESTURE_RESUME_MS + 10);
   assert.strictEqual(_stageTrackerSoundPrimed, true, 'still primed after a blocked gesture');
   assert.strictEqual(document.listeners.pointerdown.length, 1, 'listeners kept (not once:true) until a resume succeeds');
-  // The next gesture succeeds: it resumes the context and disarms.
+  assert.ok(chip.classes.has(STAGE_TRACKER_SOUND_HELD_CLASS), 'chip still held after a blocked gesture');
+  // The next gesture (a click this time) succeeds: it resumes the context,
+  // disarms and clears the affordance.
   mode = 'later';
-  document.listeners.pointerdown[0]();
+  document.listeners.click[0]();
   await sleep(resumeDelayMs + 10);
   assert.strictEqual(_stageTrackerAudioCtx.state, 'running');
   assert.strictEqual(_stageTrackerSoundPrimed, false, 'disarmed after a successful resume');
-  assert.strictEqual(document.listeners.pointerdown.length, 0);
-  assert.strictEqual(document.listeners.keydown.length, 0);
+  for (const n of ['pointerdown', 'keydown', 'click', 'touchend']) assert.strictEqual(document.listeners[n].length, 0, n + ' disarmed');
   assert.deepStrictEqual(voices(), [], 'priming itself never plays');
+  assert.ok(!chip.classes.has(STAGE_TRACKER_SOUND_HELD_CLASS), 'chip cleared once the context runs');
+  assert.strictEqual(chip.attrs.title, 'Sound on (merge zap + new-item buzz) — turn off', 'chip title restored');
+
+  // The toast's "Enable sounds" action is itself the gesture: it resumes
+  // the context and clears the affordance without playing anything.
+  reset();
+  mode = 'never';
+  assert.strictEqual(stageTrackerPlayBuzz(1), false);
+  await sleep(STAGE_TRACKER_AUTO_RESUME_MS + 10);
+  assert.strictEqual(heldToasts().length, 1);
+  mode = 'later';
+  heldToasts()[0].opts.onAction();
+  await sleep(resumeDelayMs + 10);
+  assert.strictEqual(_stageTrackerAudioCtx.state, 'running');
+  assert.ok(!chip.classes.has(STAGE_TRACKER_SOUND_HELD_CLASS), 'action clears the chip');
+  assert.deepStrictEqual(voices(), [], 'the action plays nothing');
+  assert.strictEqual(toasts.length, 1, 'no blocked toast from the action');
 
   // (d) resume() rejects: the preview toasts and resolves false; label
   // restored at once. An automatic play re-arms priming instead of toasting.
@@ -214,10 +303,13 @@ const reset = () => { gains.length = 0; toasts.length = 0; _stageTrackerAudioCtx
   assert.strictEqual(toasts[0].type, 'warning');
   await sleep(1);
   assert.strictEqual(rb.textContent, '▶ Play', 'label restored after a blocked preview');
-  assert.deepStrictEqual(voices(), []);
+  assert.strictEqual(closed, 1, 'the refused context is closed');
+  assert.strictEqual(_stageTrackerAudioCtx, null, 'and dropped, so the next play starts fresh');
+  assert.deepStrictEqual(voices(), [], 'the voice queued inside the gesture went with it');
   assert.strictEqual(stageTrackerPlayZap(1), false);
   await sleep(5);
-  assert.strictEqual(toasts.length, 1, 'automatic plays never toast');
+  assert.strictEqual(toasts.length, 2, 'an automatic play never shows the blocked toast, only the held-back one');
+  assert.strictEqual(heldToasts().length, 1);
   assert.strictEqual(_stageTrackerSoundPrimed, true);
 
   // Gesture that times out (resume() pending past the gesture window) toasts too.
@@ -232,7 +324,7 @@ const reset = () => { gains.length = 0; toasts.length = 0; _stageTrackerAudioCtx
   mode = 'later';
   stageTrackerAudioContext().state = 'interrupted';
   const ip = stageTrackerPreviewSound('merge', null);
-  assert.deepStrictEqual(voices(), []);
+  assert.deepStrictEqual(voices(), ['zap@0'], 'scheduled inside the gesture');
   assert.strictEqual(await ip, true);
   assert.deepStrictEqual(voices(), ['zap@0']);
   reset();
@@ -241,13 +333,57 @@ const reset = () => { gains.length = 0; toasts.length = 0; _stageTrackerAudioCtx
   await sleep(resumeDelayMs + 10);
   assert.deepStrictEqual(voices(), ['buzz@0'], 'automatic play after an interrupted context resumes');
 
-  // A resume() that resolves while the state stays blocked counts as blocked.
+  // (f) WebKit ordering: resume() resolves while the state still reads
+  // 'suspended' and statechange flips it a beat later. That is not a
+  // blocked context — the play waits for the statechange and succeeds.
   reset();
+  mode = 'stale';
+  assert.strictEqual(await stageTrackerPreviewSound('merge', null), true);
+  assert.deepStrictEqual(toasts, [], 'a stale-but-resuming context never toasts');
+  assert.deepStrictEqual(voices(), ['zap@0']);
+  assert.strictEqual(_stageTrackerAudioCtx.stateListeners.length, 0, 'statechange listener removed once settled');
+  reset();
+  assert.strictEqual(stageTrackerPlayBuzz(1), false);
+  await sleep(resumeDelayMs + 10);
+  assert.deepStrictEqual(voices(), ['buzz@0'], 'automatic play on a stale-resolving context plays once it runs');
+  assert.deepStrictEqual(heldToasts(), []);
+  // A resume() that resolves and a state that never flips is still blocked,
+  // on the deadline.
+  reset();
+  mode = 'later';
   const stuck = stageTrackerAudioContext();
   stuck.resume = () => Promise.resolve();
   assert.strictEqual(await stageTrackerPreviewSound('merge', null), false);
   assert.strictEqual(toasts.length, 1);
   assert.deepStrictEqual(voices(), []);
+
+  // (g) Sound left on across a reload: on a document without user
+  // activation the affordance shows at init, before any event is dropped,
+  // and does not when the document has been interacted with.
+  reset();
+  localStorage.store[STAGE_TRACKER_SOUND_KEY] = '1';
+  window.navigator.userActivation.hasBeenActive = false;
+  stageTrackerSoundInit();
+  assert.strictEqual(_stageTrackerSoundOn, true);
+  assert.strictEqual(heldToasts().length, 1, 'held-back toast at init without activation');
+  assert.strictEqual(heldToasts()[0].m, STAGE_TRACKER_SOUND_HELD_MSG, 'no "skipped" suffix before anything was dropped');
+  assert.ok(chip.classes.has(STAGE_TRACKER_SOUND_HELD_CLASS));
+  assert.strictEqual(_stageTrackerSoundPrimed, true, 'priming armed by the notice');
+  reset();
+  window.navigator.userActivation.hasBeenActive = true;
+  stageTrackerSoundInit();
+  assert.deepStrictEqual(heldToasts(), [], 'no toast when the document has user activation');
+  assert.ok(!chip.classes.has(STAGE_TRACKER_SOUND_HELD_CLASS));
+  assert.strictEqual(_stageTrackerSoundPrimed, true, 'priming still armed for a browser that wants a gesture anyway');
+  reset();
+  localStorage.store[STAGE_TRACKER_SOUND_KEY] = '0';
+  window.navigator.userActivation.hasBeenActive = false;
+  stageTrackerSoundInit();
+  assert.strictEqual(_stageTrackerSoundOn, false);
+  assert.deepStrictEqual(heldToasts(), [], 'sound off: nothing to hold back, no toast');
+  assert.strictEqual(stageTrackerHasUserActivation({}), false, 'no userActivation API counts as no activation');
+  assert.strictEqual(stageTrackerHasUserActivation(undefined), false);
+  _stageTrackerSoundOn = true;
 
   // Clip decoding that throws cannot abort context creation.
   reset();
