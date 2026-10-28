@@ -856,7 +856,8 @@ const adoptionDCORepaired = "dco-rehomed"
 // force-updates the PR branch to the new tip — once per head, with the ref
 // re-read first so a push that raced the rewrite is not overwritten
 // (hivecommons/hive#14666). The next sweep re-reads the new head's commits
-// and the DCO gate clears. Returns 1 when the branch moved.
+// and the DCO gate clears. Returns 0: a branch push is not a comment, so
+// nothing is added to the caller's count.
 func (c *Engine) repairAdoptedDCOInPlace(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record) (int, error) {
 	if rec.DCORepairAttempted(obs.HeadSHA) {
 		return 0, nil
