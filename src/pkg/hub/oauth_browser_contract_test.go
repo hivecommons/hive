@@ -12,9 +12,11 @@ import (
 	"testing"
 )
 
-// These tests pin the browser contract already available on v6. The verifier
-// rejection matrix and S256 challenge assertions belong alongside these once
-// the PKCE implementation (#14633) lands; do not weaken the state checks then.
+// These tests pin the end-to-end browser contract of the Hub's GitHub login
+// (#14598): state cookie plus S256 PKCE at authorize, a form-POST exchange that
+// carries the exact redirect_uri and the cookie's code_verifier, and fail-closed
+// rejection before any exchange or session. oauth_pkce_test.go pins the PKCE
+// helpers in isolation; do not weaken either set.
 func TestGitHubBrowserLoginContract(t *testing.T) {
 	const (
 		clientID = "browser-contract-client"
@@ -32,6 +34,9 @@ func TestGitHubBrowserLoginContract(t *testing.T) {
 		{"malformed user", `{"access_token":"` + token + `"}`, `{"login":`, http.StatusBadGateway, 1},
 		{"empty identity", `{"access_token":"` + token + `"}`, `{"login":""}`, http.StatusBadGateway, 1},
 		{"invalid identity", `{"access_token":"` + token + `"}`, `{"login":"bad login!"}`, http.StatusBadGateway, 1},
+		// GitHub rejects a code_verifier that does not hash to the challenge
+		// (a verifier from another login) with an error body and no token.
+		{"verifier rejected", `{"error":"bad_verification_code","error_description":"The code passed is incorrect or expired."}`, "", http.StatusBadGateway, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cleanup := helperSetupTempDirs(t)
@@ -41,12 +46,13 @@ func TestGitHubBrowserLoginContract(t *testing.T) {
 			var logs bytes.Buffer
 			s := &HubServer{logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), hubSecret: testHubSecret}
 			var tokenCalls, userCalls atomic.Int32
+			var verifier string
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// Inspect the URL at both endpoints, not just the token exchange.
 				if r.URL.RawQuery != "" || r.URL.ForceQuery || r.URL.User != nil {
 					t.Error("GitHub endpoint request must not carry query or URL credentials")
 				}
-				for _, value := range []string{secret, code, token} {
+				for _, value := range []string{secret, code, token, verifier} {
 					if strings.Contains(r.URL.String(), value) {
 						t.Error("secret found in GitHub request URL")
 					}
@@ -60,7 +66,7 @@ func TestGitHubBrowserLoginContract(t *testing.T) {
 					if err := r.ParseForm(); err != nil {
 						t.Errorf("parse form: %v", err)
 					}
-					for key, want := range map[string]string{"client_id": clientID, "client_secret": secret, "code": code, "redirect_uri": oauthRedirectURI()} {
+					for key, want := range map[string]string{"client_id": clientID, "client_secret": secret, "code": code, "redirect_uri": oauthRedirectURI(), "code_verifier": verifier} {
 						if values := r.PostForm[key]; len(values) != 1 || values[0] != want {
 							t.Errorf("missing or incorrect token form field %s", key)
 						}
@@ -82,7 +88,9 @@ func TestGitHubBrowserLoginContract(t *testing.T) {
 			defaultGHTokenURL, defaultGHUserURL = fake.URL+"/token", fake.URL+"/user"
 			defer func() { defaultGHTokenURL, defaultGHUserURL = oldToken, oldUser }()
 
-			state, cookies := beginGitHubBrowserContract(t, s)
+			var state string
+			var cookies []*http.Cookie
+			state, verifier, cookies = beginGitHubBrowserContract(t, s)
 			callbackURL := "/api/auth/callback?" + url.Values{"code": {code}, "state": {state}}.Encode()
 			req := httptest.NewRequest(http.MethodGet, callbackURL, nil)
 			for _, cookie := range cookies {
@@ -94,6 +102,12 @@ func TestGitHubBrowserLoginContract(t *testing.T) {
 				t.Fatalf("callback status/calls = %d/%d/%d, want %d/1/%d", rec.Code, tokenCalls.Load(), userCalls.Load(), tc.status, tc.userCalls)
 			}
 			assertBrowserContractSession(t, rec, tc.status == http.StatusTemporaryRedirect)
+			if !pkceCookieCleared(rec) {
+				t.Error("callback must consume the PKCE verifier cookie on every outcome")
+			}
+			if tc.status != http.StatusTemporaryRedirect && loadSaaSUser("octocat") != nil {
+				t.Error("a failed login must not write a user record")
+			}
 			if tc.status == http.StatusTemporaryRedirect {
 				u := loadSaaSUser("octocat")
 				if u == nil || u.EncryptedToken == "" || u.EncryptedToken == token {
@@ -121,7 +135,7 @@ func TestGitHubBrowserLoginContract(t *testing.T) {
 				}
 				assertBrowserContractSession(t, replay, false)
 			}
-			for _, value := range []string{secret, code, token} {
+			for _, value := range []string{secret, code, token, verifier} {
 				if strings.Contains(logs.String(), value) {
 					t.Error("OAuth logger exposed a secret")
 				}
@@ -130,7 +144,7 @@ func TestGitHubBrowserLoginContract(t *testing.T) {
 	}
 }
 
-func beginGitHubBrowserContract(t *testing.T, s *HubServer) (string, []*http.Cookie) {
+func beginGitHubBrowserContract(t *testing.T, s *HubServer) (state, verifier string, cookies []*http.Cookie) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	s.startProviderLogin(rec, httptest.NewRequest(http.MethodGet, "/login", nil), s.resolveProvider("github"), "/dashboard")
@@ -145,16 +159,34 @@ func beginGitHubBrowserContract(t *testing.T, s *HubServer) (string, []*http.Coo
 	if authorize.Scheme+"://"+authorize.Host+authorize.Path != defaultGHAuthorizeURL || !q.Has("scope") || q.Get("scope") != "" || q.Get("redirect_uri") != oauthRedirectURI() || q.Get("client_id") != s.resolveProvider("github").ClientID {
 		t.Fatal("incorrect authorize endpoint, scopes, client or redirect URI")
 	}
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == oauthStateCookieName {
+	cookies = rec.Result().Cookies()
+	for _, c := range cookies {
+		switch c.Name {
+		case oauthStateCookieName:
 			if c.Value == "" || !strings.HasPrefix(q.Get("state"), c.Value+oauthStateSeparator) || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.MaxAge <= 0 {
 				t.Fatal("authorize state must be bound to a short-lived secure browser cookie")
 			}
-			return q.Get("state"), rec.Result().Cookies()
+			state = q.Get("state")
+		case oauthPKCECookieName:
+			if !validPKCEVerifier(c.Value) || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.MaxAge <= 0 || c.MaxAge > int(oauthStateTTL.Seconds()) {
+				t.Fatal("PKCE verifier must live in a short-lived secure browser cookie")
+			}
+			verifier = c.Value
 		}
 	}
-	t.Fatal("authorize did not set a state cookie")
-	return "", nil
+	if state == "" {
+		t.Fatal("authorize did not set a state cookie")
+	}
+	if verifier == "" {
+		t.Fatal("authorize did not set a PKCE verifier cookie")
+	}
+	if q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") != pkceS256Challenge(verifier) {
+		t.Fatal("authorize must send the S256 challenge of the cookie verifier")
+	}
+	if strings.Contains(authorize.RawQuery, verifier) {
+		t.Fatal("the PKCE verifier must never appear in the authorize URL")
+	}
+	return state, verifier, cookies
 }
 
 func assertBrowserContractSession(t *testing.T, rec *httptest.ResponseRecorder, want bool) {
@@ -202,6 +234,67 @@ func TestGitHubBrowserStateFailsBeforeExchange(t *testing.T) {
 			assertBrowserContractSession(t, rec, false)
 			if strings.Contains(logs.String(), "rejected-secret-code") {
 				t.Error("rejected callback code leaked to logger")
+			}
+		})
+	}
+}
+
+// TestGitHubBrowserVerifierFailsBeforeExchange starts a real login, so the state
+// is valid, then presents the callback without a usable PKCE verifier. An
+// expired verifier cookie is dropped by the browser and arrives as "missing".
+// Each case must be rejected before the code is redeemed.
+func TestGitHubBrowserVerifierFailsBeforeExchange(t *testing.T) {
+	const code = "verifier-rejected-secret-code"
+	for _, tc := range []struct {
+		name     string
+		verifier func(issued string) (string, bool)
+	}{
+		{"missing or expired", func(string) (string, bool) { return "", false }},
+		{"empty", func(string) (string, bool) { return "", true }},
+		{"malformed", func(string) (string, bool) { return "not a verifier", true }},
+		{"truncated", func(v string) (string, bool) { return v[:42], true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanup := helperSetupTempDirs(t)
+			defer cleanup()
+			var calls atomic.Int32
+			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "unexpected-token", "login": "octocat"})
+			}))
+			defer fake.Close()
+			oldToken, oldUser := defaultGHTokenURL, defaultGHUserURL
+			defaultGHTokenURL, defaultGHUserURL = fake.URL+"/token", fake.URL+"/user"
+			defer func() { defaultGHTokenURL, defaultGHUserURL = oldToken, oldUser }()
+
+			var logs bytes.Buffer
+			s := &HubServer{logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})), hubSecret: testHubSecret}
+			state, issued, cookies := beginGitHubBrowserContract(t, s)
+			req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?"+url.Values{"code": {code}, "state": {state}}.Encode(), nil)
+			for _, c := range cookies {
+				if c.Name != oauthPKCECookieName {
+					req.AddCookie(c)
+				}
+			}
+			if v, present := tc.verifier(issued); present {
+				req.AddCookie(&http.Cookie{Name: oauthPKCECookieName, Value: v})
+			}
+			rec := httptest.NewRecorder()
+			s.handleOAuthCallback(rec, req)
+			if rec.Code != http.StatusBadRequest || calls.Load() != 0 {
+				t.Fatalf("status/calls = %d/%d, want 400/0: invalid verifier must fail before token exchange", rec.Code, calls.Load())
+			}
+			assertBrowserContractSession(t, rec, false)
+			if !pkceCookieCleared(rec) {
+				t.Error("rejected callback must still clear the PKCE cookie")
+			}
+			if loadSaaSUser("octocat") != nil {
+				t.Error("rejected callback must not write a user record")
+			}
+			for _, value := range []string{code, issued} {
+				if strings.Contains(logs.String(), value) {
+					t.Error("rejected callback leaked the code or verifier to the logger")
+				}
 			}
 		})
 	}
