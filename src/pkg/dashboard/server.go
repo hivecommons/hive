@@ -523,8 +523,14 @@ type StatusPayload struct {
 	// last-good open totals after a failed reconcile (#13376). The Overview
 	// says "stale since <t>" instead of showing zeros. Empty when fresh.
 	StaleSince string `json:"staleSince,omitempty"`
-	Timestamp  string `json:"timestamp"`
-	TimeZone   string `json:"timeZone,omitempty"`
+	// RestartRefresh is set while StaleSince points at the snapshot this
+	// process restored from disk at startup, before its first enumeration
+	// completed. The Overview then says "refreshing after restart · N/M
+	// repos scanned · showing snapshot from <t>" instead of "stale since
+	// <previous process's time>". Nil once a fresh enumeration publishes.
+	RestartRefresh *FrontendRestartRefresh `json:"restartRefresh,omitempty"`
+	Timestamp      string                  `json:"timestamp"`
+	TimeZone       string                  `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -1078,6 +1084,20 @@ type FrontendSession struct {
 	Messages   int    `json:"messages"`
 	LastActive string `json:"lastActive,omitempty"`
 	Estimated  bool   `json:"estimated,omitempty"`
+}
+
+// FrontendRestartRefresh describes the post-restart window in which the
+// Overview serves the snapshot restored from disk (FrontendStatus.RestartRefresh).
+type FrontendRestartRefresh struct {
+	// RestoredAt (RFC 3339) is when this process read the snapshot back.
+	RestoredAt string `json:"restoredAt"`
+	// SnapshotAt (RFC 3339) is when the restored snapshot was last read
+	// from GitHub by the previous process.
+	SnapshotAt string `json:"snapshotAt,omitempty"`
+	// ReposScanned is how many unpaused configured repos already have a
+	// fresh read this process; ReposTotal is the unpaused configured count.
+	ReposScanned int `json:"reposScanned"`
+	ReposTotal   int `json:"reposTotal"`
 }
 
 type FrontendRepo struct {

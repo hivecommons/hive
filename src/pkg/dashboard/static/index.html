@@ -24199,6 +24199,35 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
       return earliest;
     }
+    /* Pure: the post-restart window the server reports while it still
+       serves the snapshot restored from disk (status.restartRefresh,
+       status_builder.go restartRefreshInfo). Null outside that window. */
+    function overviewRestartRefresh() {
+      if (_overviewKPILocalScope !== 'all') return null;
+      const rr = window._lastStatus?.restartRefresh;
+      return rr && rr.restoredAt ? rr : null;
+    }
+    /* Pure: the stale badge's text and tooltip. During the post-restart
+       window the figures are not "stale since <previous pod's time>" — this
+       process restarted and its first full scan is still running — so the
+       badge says so with the process's own clock and the scan progress. */
+    function overviewStaleBadgeText(staleSince, rr) {
+      if (rr) {
+        const ago = relativeTimeShort(rr.restoredAt);
+        const total = Number(rr.reposTotal || 0);
+        const scanned = Math.min(Number(rr.reposScanned || 0), total);
+        const snapAt = rr.snapshotAt || staleSince;
+        const text = `refreshing after restart${ago ? ` (${ago})` : ''}${total > 0 ? ` · ${scanned}/${total} repos scanned` : ''}${snapAt ? ` · showing snapshot from ${fmtOverviewStaleSince(snapAt)}` : ''}`;
+        const title = `Hive restarted${ago ? ` ${ago}` : ''} and its first full scan of every repo has not finished yet${total > 0 ? ` (${scanned} of ${total} repos read so far)` : ''}. Until it does, these figures are the snapshot the previous process saved${snapAt ? ` at ${fmtOverviewStaleSince(snapAt)}` : ''} plus webhook updates since; the scan clears this.`;
+        return { icon: '⟳', text, title };
+      }
+      const ago = relativeTimeShort(staleSince);
+      return {
+        icon: '⚠',
+        text: `stale since ${fmtOverviewStaleSince(staleSince)}${ago ? ` (${ago})` : ''} · serving last-good`,
+        title: `GitHub refused the latest enumeration or count reconcile (rate limit or outage). These figures are the last successful read plus webhook updates since, as of ${fmtOverviewStaleSince(staleSince)}; the next enumeration or hourly reconcile clears this.`
+      };
+    }
     function fmtOverviewStaleSince(ts) {
       if (typeof formatDashboardDateTime === 'function') return formatDashboardDateTime(ts, undefined, String(ts || ''));
       const t = new Date(ts || '').getTime();
@@ -24362,7 +24391,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (!state.showKPIs) return '';
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
-      const staleBadge = staleSince ? `<span class="overview-kpi-stale" role="status" title="GitHub refused the latest enumeration or count reconcile (rate limit or outage), or this is the snapshot restored at startup. These figures are the last successful read plus webhook updates since, as of ${esc(fmtOverviewStaleSince(staleSince))}; the next enumeration or hourly reconcile clears this.">⚠ stale since ${esc(fmtOverviewStaleSince(staleSince))}${(() => { const ago = relativeTimeShort(staleSince); return ago ? ` (${esc(ago)})` : ''; })()} · serving last-good</span>` : '';
+      const staleText = staleSince ? overviewStaleBadgeText(staleSince, overviewRestartRefresh()) : null;
+      const staleBadge = staleText ? `<span class="overview-kpi-stale" role="status" title="${esc(staleText.title)}">${esc(staleText.icon)} ${esc(staleText.text)}</span>` : '';
       const unlistedBadge = unlisted.issues + unlisted.prs > 0 ? `<span class="overview-kpi-stale" role="status" title="${esc(overviewUnlistedNote(unlisted))}">+${unlisted.issues + unlisted.prs} not yet listed</span>` : '';
       // A repo listing open PRs but no issues while its issue side is
       // stale or unlisted (repos[].issuesSyncing) is a pending issue fetch,
@@ -24388,7 +24418,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const issues = Number(openIssues) || 0;
       const prs = Number(openPRs) || 0;
       let title = equationLabel || `${issues} total open issues + ${prs} total open PRs`;
-      if (staleSince) title += ` (stale since ${fmtOverviewStaleSince(staleSince)} · serving last-good)`;
+      if (staleSince) title += ` (${overviewStaleBadgeText(staleSince, overviewRestartRefresh()).text})`;
       const syncing = overviewSyncingNote(unlisted);
       if (syncing) title += ` · ${syncing}`;
       const note = overviewUnlistedNote(unlisted);
