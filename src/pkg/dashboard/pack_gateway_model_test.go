@@ -399,3 +399,51 @@ func TestApplyPackRepairsTwoLateAddedPackAgents(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyPackFollowsUnownedGatewayBackends covers the #14678 reopen: the
+// operator's agents were on the LiteLLM gateway without a backend_owner stamp
+// (hive.yaml, a pre-ownership hive, or POST /api/config/governor/agents), so
+// no agent counted as an operator pick, no gateway was found, and the L2
+// reviewer stayed on copilot even with the #14777 fix.
+func TestApplyPackFollowsUnownedGatewayBackends(t *testing.T) {
+	srv := gatewayHive(t, "litellm")
+	for _, name := range []string{"scanner", "quality", "guide"} {
+		a := srv.deps.Config.Agents[name]
+		a.BackendOwner = ""
+		srv.deps.Config.Agents[name] = a
+	}
+	srv.deps.Config.Agents["reviewer"] = config.AgentConfig{
+		ID: "reviewer", Role: "reviewer", Enabled: true,
+		Backend: "copilot", BackendOwner: config.FieldOwnerPack,
+		Model: "claude-fable-5", ModelOwner: config.FieldOwnerPack,
+	}
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	if got := srv.deps.Config.Agents["reviewer"]; got.Backend != "litellm" || got.Model != "" {
+		t.Errorf("reviewer backend=%q model=%q, want litellm with no model", got.Backend, got.Model)
+	}
+	for _, name := range []string{"scanner", "quality", "guide"} {
+		if got := srv.deps.Config.Agents[name]; got.Backend != "litellm" || got.BackendOwner != "" {
+			t.Errorf("%s backend=%q owner=%q, want its unowned litellm left as is", name, got.Backend, got.BackendOwner)
+		}
+	}
+}
+
+// TestApplyPackUnownedCLIBackendsDoNotChooseGateway: an unowned CLI backend
+// may be a legacy pack placement, so it neither picks a gateway nor vetoes
+// one; with only unowned CLI agents there is no gateway to follow.
+func TestApplyPackUnownedCLIBackendsDoNotChooseGateway(t *testing.T) {
+	srv := gatewayHive(t, "copilot")
+	for _, name := range []string{"scanner", "quality", "guide"} {
+		a := srv.deps.Config.Agents[name]
+		a.BackendOwner = ""
+		srv.deps.Config.Agents[name] = a
+	}
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	if got := srv.deps.Config.Agents["reviewer"]; got.Backend == "litellm" {
+		t.Errorf("reviewer moved onto %q with no gateway picked", got.Backend)
+	}
+}

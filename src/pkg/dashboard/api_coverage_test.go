@@ -2365,6 +2365,21 @@ func TestHandleGovernorAddAgent_WithModel(t *testing.T) {
 		t.Error("agent not added")
 	} else if agentCfg.Model != "gpt-4" {
 		t.Errorf("model = %q, want gpt-4", agentCfg.Model)
+	} else if !agentCfg.BackendIsOperatorOwned() || !agentCfg.ModelIsOperatorOwned() {
+		t.Errorf("backend_owner=%q model_owner=%q, want both operator: the operator named them (#14678)", agentCfg.BackendOwner, agentCfg.ModelOwner)
+	}
+}
+
+// TestHandleGovernorAddAgent_DefaultBackendUnowned: the "claude" the endpoint
+// fills in when no backend is given is not an operator pick.
+func TestHandleGovernorAddAgent_DefaultBackendUnowned(t *testing.T) {
+	s, deps := apiServer(t)
+	rec := doPost(s, "/api/config/governor/agents", map[string]string{"name": "new-agent"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := deps.Config.Agents["new-agent"]; got.Backend != "claude" || got.BackendOwner != "" {
+		t.Errorf("backend=%q owner=%q, want claude with no owner", got.Backend, got.BackendOwner)
 	}
 }
 

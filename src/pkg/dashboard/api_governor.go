@@ -2712,7 +2712,8 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if body.Backend == "" {
+	backendPicked := body.Backend != ""
+	if !backendPicked {
 		body.Backend = "claude"
 	}
 	// Reject an unsupported backend before the agent is created, rather than
@@ -2726,6 +2727,15 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 		Backend: body.Backend,
 		Model:   body.Model,
 		Enabled: true,
+	}
+	// A backend the operator named is their pick, like every other dashboard
+	// backend write: the pack apply on each restart must not move it, and it
+	// counts when the pack decides which gateway the hive is on (#14678).
+	if backendPicked {
+		agentCfg.BackendOwner = config.FieldOwnerOperator
+	}
+	if body.Model != "" {
+		agentCfg.ModelOwner = config.FieldOwnerOperator
 	}
 	// An explicit re-add is the operator changing their mind, and it is the
 	// only signal that lifts a deletion tombstone. Without this the agent

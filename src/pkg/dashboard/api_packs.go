@@ -1176,13 +1176,32 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 		if !agent.Enabled || s.deps.Config.IsAgentRemoved(name) {
 			continue
 		}
+		backend := strings.TrimSpace(agent.Backend)
 		backends[name] = agentBackendVote{
-			backend:       strings.TrimSpace(agent.Backend),
-			operatorOwned: agent.BackendIsOperatorOwned(),
-			packCLI:       agent.BackendIsPackOwned() && config.IsCLIBackend(strings.TrimSpace(agent.Backend)),
+			backend:       backend,
+			operatorOwned: agent.BackendIsOperatorOwned() || s.unownedGatewayBackend(agent),
+			packCLI:       agent.BackendIsPackOwned() && config.IsCLIBackend(backend),
 		}
 	}
 	return backends
+}
+
+// unownedGatewayBackend reports whether agent sits on an inference backend or
+// configured gateway with no backend_owner stamp. A pack only ever writes a
+// subscription CLI, and stamps a gateway it moved an agent onto as pack-owned,
+// so an unowned gateway backend is the operator's own choice — set in hive.yaml,
+// through an endpoint that does not stamp ownership, or before ownership
+// stamping existed. It counts as an operator pick for hiveGatewayBackend
+// (#14678): a hive whose operator moved every agent onto LiteLLM that way had
+// no operator-owned picks, so no gateway was found and the reviewer stayed on
+// copilot. An unowned CLI is not counted either way: it may be a legacy pack
+// placement, which must not veto the move it is the subject of.
+func (s *Server) unownedGatewayBackend(agent config.AgentConfig) bool {
+	backend := strings.TrimSpace(agent.Backend)
+	if agent.BackendOwner != "" || backend == "" {
+		return false
+	}
+	return s.agentOnForeignGatewayBackend(backend, "")
 }
 
 // hiveGatewayBackend is the inference gateway the operator moved the hive
@@ -1191,7 +1210,8 @@ func (s *Server) hiveAgentBackends() map[string]agentBackendVote {
 // its own placement is not counted against the move.
 //
 // The rule, in order:
-//  1. Unanimity: the operator-owned backends among those agents must all name
+//  1. Unanimity: the operator-owned backends among those agents (including an
+//     unowned gateway backend, see unownedGatewayBackend) must all name
 //     the same inference backend or configured gateway. Any operator pick of
 //     a subscription CLI, of the hive default or of a different gateway, or no
 //     operator pick at all, yields "".
