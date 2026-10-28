@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,16 @@ import (
 // sandbox cannot reach it: it lives outside every workspace, in an
 // owner-only directory, and the relay ignores one that is not owned by its
 // own uid or that anyone else could write.
+//
+// The manifest says which workspace a request came from, not who wrote it:
+// the spool is group-writable, so any agent sharing hive's group could drop
+// a file there. So the request must also carry a MAC under the run's spool
+// key (crux.SandboxReviewEnvelope), which the executor mints per kick, keeps
+// in the manifest and hands to the sandbox only through its environment. A
+// request without a valid MAC, or one whose MAC this spool has already
+// accepted (a copied request), is set aside as .rejected and never staged.
+// That is what stands in for the file-owner forge check the pod-local path
+// relies on.
 
 // sandboxReviewSpoolsDirForTest lets tests point the relay at a temp dir.
 var sandboxReviewSpoolsDirForTest string
@@ -59,6 +70,10 @@ func sandboxReviewSpoolsDir() string {
 // outlives it, so an older manifest belongs to a run whose executor died
 // before marking it ended.
 const sandboxReviewSpoolMaxAge = 24 * time.Hour
+
+// sandboxReviewSpoolKeyMinLen is the shortest spool key a manifest may carry:
+// 128 bits, hex-encoded. The executor mints 256.
+const sandboxReviewSpoolKeyMinLen = 32
 
 // sandboxReviewManifestMaxBytes caps a manifest read; a real one is a few
 // hundred bytes.
@@ -109,7 +124,7 @@ func (c *Client) processSandboxReviewSpools(ctx context.Context, nowFn func() ti
 		ws, rel := s.workspace()
 		root, err := os.OpenRoot(ws)
 		if err == nil {
-			c.ingestSandboxSpool(root, rel, staging, nowFn())
+			c.ingestSandboxSpool(root, rel, staging, s.Key, nowFn())
 		}
 		c.processReviewRequestDir(ctx, staging, reviewRequestSource{agent: s.Agent}, nowFn)
 		spoolPending := false
@@ -225,6 +240,8 @@ func sandboxSpoolRefusal(m crux.SandboxReviewSpool, now time.Time) string {
 		return "manifest names no agent"
 	case !filepath.IsAbs(m.Spool) || filepath.Clean(m.Spool) != m.Spool || !strings.HasSuffix(m.Spool, suffix):
 		return "spool is not <workspace>/" + crux.SandboxReviewSpoolRelPath
+	case len(m.Key) < sandboxReviewSpoolKeyMinLen:
+		return "manifest carries no spool key"
 	case !m.StartedAt.IsZero() && now.Sub(m.StartedAt) > sandboxReviewSpoolMaxAge:
 		return "manifest is older than " + sandboxReviewSpoolMaxAge.String()
 	}
@@ -234,10 +251,10 @@ func sandboxSpoolRefusal(m crux.SandboxReviewSpool, now time.Time) string {
 // ingestSandboxSpool moves each request out of the spool into staging. A
 // name already staged (a request still retrying) waits in the spool for a
 // later pass rather than replacing it. A file that is not yet valid JSON is
-// left alone for inFlightGrace, in case the sandbox is still writing it; past
-// that it is staged as-is and fails validation there, so the agent gets a
-// result file that says why.
-func (c *Client) ingestSandboxSpool(root *os.Root, rel, staging string, now time.Time) {
+// left alone for inFlightGrace, in case the sandbox is still writing it.
+// Only the request inside an envelope MACed with this run's key is staged;
+// anything else is set aside (sandboxSpoolEnvelope).
+func (c *Client) ingestSandboxSpool(root *os.Root, rel, staging, key string, now time.Time) {
 	d, err := root.Open(rel)
 	if err != nil {
 		return
@@ -269,10 +286,74 @@ func (c *Client) ingestSandboxSpool(root *os.Root, rel, staging string, now time
 		if !json.Valid(data) && now.Sub(fi.ModTime()) < inFlightGrace {
 			continue
 		}
-		if err := writeRequestFile(dst, data); err != nil {
+		request, mac, reason := sandboxSpoolEnvelope(data, key)
+		if reason != "" {
+			c.rejectSandboxSpoolFile(root, src, reason, now)
+			continue
+		}
+		marker, err := markSpoolMACSeen(staging, mac)
+		if errors.Is(err, fs.ErrExist) {
+			c.rejectSandboxSpoolFile(root, src, "replay of a request this spool already accepted", now)
+			continue
+		}
+		if err != nil {
+			continue // left in the spool for the next pass
+		}
+		if err := writeRequestFile(dst, request); err != nil {
+			_ = os.Remove(marker)
 			continue
 		}
 		_ = root.Remove(src)
+	}
+}
+
+// sandboxSpoolEnvelope returns the request inside data and its MAC, or why
+// data is not a request this run's sandbox wrote. A request without the key
+// is indistinguishable from one another agent planted, so it is refused.
+func sandboxSpoolEnvelope(data []byte, key string) (request []byte, mac, reason string) {
+	var env crux.SandboxReviewEnvelope
+	if err := json.Unmarshal(data, &env); err != nil || env.Request == "" || env.MAC == "" {
+		return nil, "", "not a signed spool envelope"
+	}
+	request = []byte(env.Request)
+	want := crux.SandboxReviewMAC(key, request)
+	if !hmac.Equal([]byte(env.MAC), []byte(want)) {
+		return nil, "", "MAC does not match this run's spool key"
+	}
+	return request, want, ""
+}
+
+// markSpoolMACSeen records that this spool accepted a request with mac, so
+// a copy of it (the spool is group-readable) cannot be submitted twice. It
+// returns the marker path; an fs.ErrExist error means a replay.
+func markSpoolMACSeen(staging, mac string) (string, error) {
+	seen := filepath.Join(staging, "seen")
+	if err := os.MkdirAll(seen, 0o700); err != nil {
+		return "", err
+	}
+	marker := filepath.Join(seen, mac)
+	f, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", err
+	}
+	_ = f.Close()
+	return marker, nil
+}
+
+// rejectSandboxSpoolFile sets an unsigned, mis-signed or replayed request
+// aside as .rejected and leaves a result file saying why, so a sandbox
+// running an old hive-review is not left waiting.
+func (c *Client) rejectSandboxSpoolFile(root *os.Root, src, reason string, now time.Time) {
+	_ = root.Rename(src, src+".rejected")
+	c.logger.Warn("review-request watcher: REJECTED sandbox spool file (not from this run's sandbox)",
+		slog.String("path", src), slog.String("reason", reason))
+	result := strings.TrimSuffix(src, ".json") + ".result.json"
+	if _, err := root.Lstat(result); err == nil {
+		return // never overwrite a real result with this one
+	}
+	resp := ReviewResponse{OK: false, Error: "rejected: " + reason, At: now.UTC().Format(time.RFC3339)}
+	if b, err := json.Marshal(resp); err == nil {
+		_ = writeRootFile(root, result, b)
 	}
 }
 

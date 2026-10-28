@@ -36,13 +36,35 @@ func newSandboxSpool(t *testing.T, manifests, agent string, ended bool) (spool, 
 	if err := os.MkdirAll(spool, 0o770); err != nil {
 		t.Fatal(err)
 	}
-	m := crux.SandboxReviewSpool{Agent: agent, Spool: spool, StartedAt: time.Now().UTC()}
+	m := crux.SandboxReviewSpool{Agent: agent, Spool: spool, Key: testSpoolKey(agent), StartedAt: time.Now().UTC()}
 	if ended {
 		at := time.Now().UTC()
 		m.EndedAt = &at
 	}
 	manifest = writeSandboxManifest(t, manifests, agent, m)
 	return spool, manifest
+}
+
+// testSpoolKey is the spool key a test manifest for agent carries.
+func testSpoolKey(agent string) string { return crux.SandboxReviewMAC("test-key", []byte(agent)) }
+
+// writeSignedSpoolRequest writes req into spool as hive-review does inside a
+// sandbox: the request JSON in an envelope MACed with key.
+func writeSignedSpoolRequest(t *testing.T, spool, name, key string, req ReviewRequest) string {
+	t.Helper()
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(crux.SandboxReviewEnvelope{Request: string(raw), MAC: crux.SandboxReviewMAC(key, raw)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(spool, name)
+	if err := os.WriteFile(path, b, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func writeSandboxManifest(t *testing.T, manifests, agent string, m crux.SandboxReviewSpool) string {
@@ -81,10 +103,7 @@ func TestSandboxSpool_PostsReviewAttributedToManifestAgent(t *testing.T) {
 		}
 	})
 
-	reqPath, err := WriteReviewRequest(spool, ReviewRequest{Repo: "o/r", Number: 7, Event: "comment", Body: "card run passed", Agent: "someone-else"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	reqPath := writeSignedSpoolRequest(t, spool, "r.json", testSpoolKey("reviewer-spyre"), ReviewRequest{Repo: "o/r", Number: 7, Event: "comment", Body: "card run passed", Agent: "someone-else"})
 	c.ProcessReviewRequestsOnce(context.Background())
 
 	if reviewed != 1 || apiEvent != "COMMENT" {
@@ -119,10 +138,7 @@ func TestSandboxSpool_DenialIsMirroredAndNothingPosted(t *testing.T) {
 	manifests := withSandboxSpools(t)
 	spool, _ := newSandboxSpool(t, manifests, "reviewer-spyre", false)
 
-	reqPath, err := WriteReviewRequest(spool, ReviewRequest{Repo: "o/r", Number: 7, Event: "comment", Body: "x", Agent: "reviewer-spyre"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	reqPath := writeSignedSpoolRequest(t, spool, "r.json", testSpoolKey("reviewer-spyre"), ReviewRequest{Repo: "o/r", Number: 7, Event: "comment", Body: "x", Agent: "reviewer-spyre"})
 	c.ProcessReviewRequestsOnce(context.Background())
 
 	if reviewed != 0 {
@@ -131,6 +147,100 @@ func TestSandboxSpool_DenialIsMirroredAndNothingPosted(t *testing.T) {
 	resp := readReviewResult(t, reqPath)
 	if resp.OK || !strings.Contains(resp.Error, "not push-capable") {
 		t.Errorf("mirrored result = %+v, want the denial", resp)
+	}
+}
+
+// The spool is group-writable, so another agent sharing hive's group can
+// drop a request into it. Without a MAC under this run's key — unsigned, or
+// signed with another run's key (a request copied from a different spool) —
+// it is refused, set aside as .rejected and answered, and nothing is posted.
+func TestSandboxSpool_RefusesRequestNotSignedForThisRun(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(t *testing.T, spool string) string
+	}{
+		{"unsigned, as another agent would write it", func(t *testing.T, spool string) string {
+			p, err := WriteReviewRequest(spool, ReviewRequest{Repo: "o/r", Number: 7, Event: "approve", Agent: "reviewer-spyre"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}},
+		{"signed for another run", func(t *testing.T, spool string) string {
+			return writeSignedSpoolRequest(t, spool, "r.json", testSpoolKey("other-run"), ReviewRequest{Repo: "o/r", Number: 7, Event: "approve"})
+		}},
+		{"MAC over different bytes", func(t *testing.T, spool string) string {
+			raw, _ := json.Marshal(ReviewRequest{Repo: "o/r", Number: 7, Event: "comment", Body: "harmless"})
+			forged, _ := json.Marshal(ReviewRequest{Repo: "o/r", Number: 7, Event: "approve"})
+			b, _ := json.Marshal(crux.SandboxReviewEnvelope{Request: string(forged), MAC: crux.SandboxReviewMAC(testSpoolKey("reviewer-spyre"), raw)})
+			p := filepath.Join(spool, "r.json")
+			if err := os.WriteFile(p, b, 0o660); err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reviewed := 0
+			srv := newReviewMockServer(t, &reviewed, nil)
+			defer srv.Close()
+			c := reviewTestClient(t, srv.URL)
+			authorized := false
+			c.reviewAuthz = func(agent string, uid int) error { authorized = true; return nil }
+			withReviewDir(t)
+			manifests := withSandboxSpools(t)
+			spool, _ := newSandboxSpool(t, manifests, "reviewer-spyre", false)
+
+			reqPath := tc.write(t, spool)
+			c.ProcessReviewRequestsOnce(context.Background())
+
+			if reviewed != 0 || authorized {
+				t.Fatalf("request not signed for this run reached the relay: %d reviews posted, authorized=%v", reviewed, authorized)
+			}
+			if _, err := os.Lstat(reqPath + ".rejected"); err != nil {
+				t.Errorf("request should be set aside as .rejected: %v", err)
+			}
+			if resp := readReviewResult(t, reqPath); resp.OK || !strings.Contains(resp.Error, "rejected") {
+				t.Errorf("result = %+v, want a rejection", resp)
+			}
+		})
+	}
+}
+
+// A copy of a request this spool already accepted — the spool is
+// group-readable — is a replay, refused even under a fresh name.
+func TestSandboxSpool_RefusesReplayOfAcceptedRequest(t *testing.T) {
+	reviewed := 0
+	srv := newReviewMockServer(t, &reviewed, nil)
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	c.reviewAuthz = func(agent string, uid int) error { return nil }
+	withReviewDir(t)
+	manifests := withSandboxSpools(t)
+	spool, _ := newSandboxSpool(t, manifests, "reviewer-spyre", false)
+
+	req := ReviewRequest{Repo: "o/r", Number: 7, Event: "comment", Body: "card run passed"}
+	first := writeSignedSpoolRequest(t, spool, "first.json", testSpoolKey("reviewer-spyre"), req)
+	copied, err := os.ReadFile(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+	if reviewed != 1 {
+		t.Fatalf("signed request: %d reviews posted, want 1", reviewed)
+	}
+
+	replay := filepath.Join(spool, "replay.json")
+	if err := os.WriteFile(replay, copied, 0o660); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+
+	if reviewed != 1 {
+		t.Fatalf("replayed request was posted: %d reviews, want 1", reviewed)
+	}
+	if _, err := os.Lstat(replay + ".rejected"); err != nil {
+		t.Errorf("replay should be set aside as .rejected: %v", err)
 	}
 }
 
@@ -258,10 +368,12 @@ func TestSandboxSpool_DropsInvalidAndStaleManifests(t *testing.T) {
 		name string
 		m    crux.SandboxReviewSpool
 	}{
-		{"no agent", crux.SandboxReviewSpool{Spool: "/data/agents/sandbox/x/.hive/review-requests", StartedAt: now}},
-		{"not a workspace spool", crux.SandboxReviewSpool{Agent: "a", Spool: "/var/run/hive-metrics/review-requests", StartedAt: now}},
-		{"relative", crux.SandboxReviewSpool{Agent: "a", Spool: "x/.hive/review-requests", StartedAt: now}},
-		{"stale", crux.SandboxReviewSpool{Agent: "a", Spool: "/data/agents/sandbox/x/.hive/review-requests", StartedAt: now.Add(-sandboxReviewSpoolMaxAge - time.Hour)}},
+		{"no agent", crux.SandboxReviewSpool{Spool: "/data/agents/sandbox/x/.hive/review-requests", Key: testSpoolKey("a"), StartedAt: now}},
+		{"not a workspace spool", crux.SandboxReviewSpool{Agent: "a", Spool: "/var/run/hive-metrics/review-requests", Key: testSpoolKey("a"), StartedAt: now}},
+		{"relative", crux.SandboxReviewSpool{Agent: "a", Spool: "x/.hive/review-requests", Key: testSpoolKey("a"), StartedAt: now}},
+		{"stale", crux.SandboxReviewSpool{Agent: "a", Spool: "/data/agents/sandbox/x/.hive/review-requests", Key: testSpoolKey("a"), StartedAt: now.Add(-sandboxReviewSpoolMaxAge - time.Hour)}},
+		{"no spool key", crux.SandboxReviewSpool{Agent: "a", Spool: "/data/agents/sandbox/x/.hive/review-requests", StartedAt: now}},
+		{"short spool key", crux.SandboxReviewSpool{Agent: "a", Spool: "/data/agents/sandbox/x/.hive/review-requests", Key: "0123456789abcdef", StartedAt: now}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := reviewTestClient(t, "http://127.0.0.1:0")

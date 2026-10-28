@@ -1,6 +1,9 @@
 package crux
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"time"
 )
@@ -20,8 +23,12 @@ const (
 	SandboxReviewSpoolRelPath = ".hive/review-requests"
 	// SandboxReviewSpoolEnv is the environment variable hive sets inside the
 	// sandbox to the spool's in-sandbox path.
-	SandboxReviewSpoolEnv  = "HIVE_REVIEW_REQUEST_DIR"
-	sandboxReviewSpoolsDir = "sandbox-review-spools"
+	SandboxReviewSpoolEnv = "HIVE_REVIEW_REQUEST_DIR"
+	// SandboxReviewSpoolKeyEnv carries the kick's spool key into the
+	// sandbox. The name must not contain TOKEN or SECRET: the launchers
+	// strip those (sandbox.IsCredentialName).
+	SandboxReviewSpoolKeyEnv = "HIVE_REVIEW_SPOOL_KEY"
+	sandboxReviewSpoolsDir   = "sandbox-review-spools"
 )
 
 // SandboxReviewSpoolsDir is where the sandbox executor writes one manifest
@@ -34,9 +41,31 @@ func SandboxReviewSpoolsDir(workDir string) string {
 // SandboxReviewSpool is one kick's manifest. Spool is the host-side path of
 // the workspace spool. EndedAt is set once the sandbox has exited; the relay
 // drops the manifest after that when nothing is left to deliver.
+//
+// Key is the kick's spool key: random, minted by the executor for this run
+// only, and handed to the sandbox solely through its environment. The spool
+// is group-writable, so knowing WHICH workspace a request came from does not
+// say WHO wrote it; the relay accepts only a request MACed with this key
+// (SandboxReviewMAC), which nothing outside this run's sandbox holds.
 type SandboxReviewSpool struct {
 	Agent     string     `json:"agent"`
 	Spool     string     `json:"spool"`
+	Key       string     `json:"key"`
 	StartedAt time.Time  `json:"started_at"`
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
+}
+
+// SandboxReviewEnvelope is what a sandbox writes to its spool: the request
+// JSON, verbatim, and its MAC under the kick's spool key.
+type SandboxReviewEnvelope struct {
+	Request string `json:"request"`
+	MAC     string `json:"mac"`
+}
+
+// SandboxReviewMAC is hex(HMAC-SHA256(key, request)), with the key's text as
+// the HMAC key. bin/hive-review.sh computes the same value.
+func SandboxReviewMAC(key string, request []byte) string {
+	m := hmac.New(sha256.New, []byte(key))
+	m.Write(request)
+	return hex.EncodeToString(m.Sum(nil))
 }

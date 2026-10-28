@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -104,6 +105,47 @@ func TestSandboxExecutorRegistersReviewSpool(t *testing.T) {
 	after := readSpoolManifests(manifestDir)
 	if len(after) != 1 || after[0].EndedAt == nil {
 		t.Errorf("manifest after the run = %+v, want one marked ended", after)
+	}
+	// The run's spool key reaches the sandbox through its env only: it is
+	// in the manifest the relay reads, never in the workspace.
+	key := (*during)[0].Key
+	if len(key) != 64 {
+		t.Fatalf("manifest spool key = %q, want 256 bits hex-encoded", key)
+	}
+	if got := (*env)[crux.SandboxReviewSpoolKeyEnv]; got != key {
+		t.Errorf("sandbox %s = %q, want the manifest's key", crux.SandboxReviewSpoolKeyEnv, got)
+	}
+	if sandbox.IsCredentialName(crux.SandboxReviewSpoolKeyEnv) {
+		t.Errorf("%s would be stripped by the launchers' credential filter", crux.SandboxReviewSpoolKeyEnv)
+	}
+	_ = filepath.WalkDir(res.Workspace, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if b, rerr := os.ReadFile(p); rerr == nil && strings.Contains(string(b), key) {
+				t.Errorf("spool key written into the workspace at %s", p)
+			}
+		}
+		return nil
+	})
+}
+
+// Each kick mints its own key, so a request signed in one run is refused in
+// any other.
+func TestSandboxExecutorMintsAKeyPerKick(t *testing.T) {
+	manifestDir := filepath.Join(t.TempDir(), "sandbox-review-spools")
+	keys := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		launcher, env, _ := spoolProbe(manifestDir)
+		exec := &SandboxExecutor{Runner: &sandboxFakeRunner{}, Launcher: launcher}
+		if _, err := exec.Run(context.Background(), SandboxKickSpec{
+			Agent: "reviewer-spyre", AgentConfig: configSnapshot{Backend: "claude"}, Message: "review #7",
+			Org: "o", Repo: "r", WorkspaceDir: t.TempDir(), Image: "img", ReviewSpoolDir: manifestDir,
+		}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		keys[(*env)[crux.SandboxReviewSpoolKeyEnv]] = true
+	}
+	if len(keys) != 2 || keys[""] {
+		t.Errorf("spool keys across two kicks = %v, want two distinct keys", keys)
 	}
 }
 

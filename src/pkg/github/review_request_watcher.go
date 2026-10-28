@@ -349,8 +349,10 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	fileUID := statUID(data, path)
 	if src.agent != "" {
 		// A staged spool file is owned by hive, not the agent: its owning
-		// UID proves nothing, and the manifest already did the proving. 0
-		// is the authorizer's "no owning UID" value.
+		// UID proves nothing. The proving was done at ingest instead: the
+		// manifest names the agent, and the request's MAC under the run's
+		// spool key shows that agent's sandbox wrote it
+		// (ingestSandboxSpool). 0 is the authorizer's "no owning UID" value.
 		fileUID = 0
 	}
 	if c.reviewAuthz == nil {

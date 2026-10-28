@@ -110,9 +110,13 @@ func PodmanArgs(spec LaunchSpec) ([]string, error) {
 	args = append(args, "--userns=keep-id")
 	args = append(args, "-v", filepath.Clean(spec.Workspace)+":"+mount+":Z")
 	args = append(args, "--workdir", workdir)
-	for k, v := range spec.Env {
+	// Name only: podman takes the value from its own environment, which Run
+	// sets from the same spec.Env. A value on the command line would be
+	// readable by every user on the host through /proc/<pid>/cmdline, and
+	// some values (the review spool key, #14986) are per-run secrets.
+	for k := range spec.Env {
 		if !isCredentialName(k) {
-			args = append(args, "--env", k+"="+v)
+			args = append(args, "--env", k)
 		}
 	}
 	args = append(args, spec.Image)

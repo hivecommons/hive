@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -49,9 +51,17 @@ func (e *SandboxExecutor) openReviewSpool(manifestDir, agentName, workspace stri
 	if err := os.Chmod(manifestDir, 0o700); err != nil {
 		return nil, fmt.Errorf("secure review spool manifest dir: %w", err)
 	}
+	// The run's spool key: the only thing that lets the relay tell this
+	// sandbox's requests from ones another agent drops into the
+	// group-writable spool. It reaches the sandbox only through its
+	// environment, never through the workspace.
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("mint review spool key: %w", err)
+	}
 	h := &reviewSpoolHandle{
 		manifest: filepath.Join(manifestDir, fmt.Sprintf("%s-%d.json", sanitizeBranchPart(agentName), time.Now().UnixNano())),
-		entry:    crux.SandboxReviewSpool{Agent: agentName, Spool: spool, StartedAt: e.now().UTC()},
+		entry:    crux.SandboxReviewSpool{Agent: agentName, Spool: spool, Key: hex.EncodeToString(key), StartedAt: e.now().UTC()},
 	}
 	if err := h.write(); err != nil {
 		return nil, err
@@ -59,13 +69,17 @@ func (e *SandboxExecutor) openReviewSpool(manifestDir, agentName, workspace stri
 	return h, nil
 }
 
-// sandboxEnv is what the sandbox needs to find the spool: hive-review writes
-// to HIVE_REVIEW_REQUEST_DIR when it is set.
+// sandboxEnv is what the sandbox needs to use the spool: hive-review writes
+// to HIVE_REVIEW_REQUEST_DIR when it is set, and MACs each request with
+// HIVE_REVIEW_SPOOL_KEY.
 func (h *reviewSpoolHandle) sandboxEnv() map[string]string {
 	if h == nil {
 		return nil
 	}
-	return map[string]string{crux.SandboxReviewSpoolEnv: path.Join(sandbox.DefaultWorkspaceMount, crux.SandboxReviewSpoolRelPath)}
+	return map[string]string{
+		crux.SandboxReviewSpoolEnv:    path.Join(sandbox.DefaultWorkspaceMount, crux.SandboxReviewSpoolRelPath),
+		crux.SandboxReviewSpoolKeyEnv: h.entry.Key,
+	}
 }
 
 func (h *reviewSpoolHandle) write() error {

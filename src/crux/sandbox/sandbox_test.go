@@ -24,6 +24,23 @@ func TestPodmanArgsUseCredentialFreeNetworklessDefaults(t *testing.T) {
 	}
 }
 
+// Explicit env goes to podman by name only; the value travels in podman's
+// own environment, never its argv, which every host user can read through
+// /proc/<pid>/cmdline (the review spool key is a per-run secret, #14986).
+func TestPodmanArgsKeepEnvValuesOffTheCommandLine(t *testing.T) {
+	args, err := PodmanArgs(LaunchSpec{Image: "agent:latest", Workspace: "/w", Command: []string{"true"}, Env: map[string]string{"HIVE_REVIEW_SPOOL_KEY": "per-run-key-value"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "per-run-key-value") {
+		t.Fatalf("env value on podman argv: %q", joined)
+	}
+	if !strings.Contains(joined, "--env HIVE_REVIEW_SPOOL_KEY ") {
+		t.Fatalf("args %q do not pass HIVE_REVIEW_SPOOL_KEY by name", joined)
+	}
+}
+
 func TestSanitizedEnvAllowlistDropsCredentials(t *testing.T) {
 	env := SanitizedEnv([]string{"PATH=/bin", "HOME=/home/dev", "GITHUB_TOKEN=secret", "MY_TOKEN=secret"}, []string{"PATH", "HOME", "GITHUB_TOKEN", "MY_TOKEN"}, map[string]string{"SAFE": "1", "GH_TOKEN": "nope"})
 	if !slices.Contains(env, "PATH=/bin") || !slices.Contains(env, "HOME=/home/dev") || !slices.Contains(env, "SAFE=1") {
