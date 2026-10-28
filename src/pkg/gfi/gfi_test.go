@@ -1,6 +1,7 @@
 package gfi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
@@ -629,6 +630,24 @@ func TestSweepVerifiesLabelSignals(t *testing.T) {
 				t.Fatalf("selected = %v, reads = %d", r.Selected, f.reads)
 			}
 		})
+	}
+}
+
+func TestSweepLogsProvenanceLookupFailure(t *testing.T) {
+	var buf bytes.Buffer
+	opts := quietOpts()
+	opts.Logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	c := good()
+	c.Body = strings.Repeat("A focused description without steps or paths. ", 4)
+	c.Labels = []string{"size/S", HelpWantedLabel}
+	f := &provenanceForge{fakeForge: newFakeForge(), err: errors.New("timeline unavailable")}
+	r := NewSweeper().Sweep(context.Background(), f, []Candidate{c}, opts)
+	if len(r.Selected) != 0 {
+		t.Fatalf("selected = %v, want none", r.Selected)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "provenance lookup failed") || !strings.Contains(out, "acme/widgets#42") || !strings.Contains(out, "timeline unavailable") {
+		t.Fatalf("missing warning, got %q", out)
 	}
 }
 

@@ -94,7 +94,7 @@ Gates, in order; the first failure is the `gfi skip reason=…` logged:
 Positive signals, each worth one point and each quoted in the comment as a
 reason ("hive picked this issue because: …"):
 
-- already sized small by a maintainer (`size/XS`, `size/S`, `good-first-issue`, `beginner`, `easy`, …) — the label's latest application must be by a human collaborator with admin, maintain, write or triage permissions, or a member of the owning organization
+- already sized small by a maintainer (`size/XS`, `size/S`, `good-first-issue`, `beginner`, `easy`, …) — the label's latest application must be by a human collaborator with admin, maintain, write or triage permissions, or a member of the owning organization (unless the repo's label-driven approval policy turns org-member trust off; its trusted bots also count)
 - a concrete, reproducible bug report (`bug`, `kind/bug`)
 - maintainers asked for help on it (`help wanted`) — the same label-provenance rule as the size signal
 - has clear steps or acceptance criteria (two or more headings/bullets/checkboxes, or phrases like "acceptance criteria", "steps to reproduce")

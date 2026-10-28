@@ -463,7 +463,7 @@ type MaintainerLabelReader interface {
 }
 
 // verifyLabelSignals reads provenance only for potentially eligible issues.
-func verifyLabelSignals(ctx context.Context, forge Forge, c *Candidate, p Policy, now time.Time) {
+func verifyLabelSignals(ctx context.Context, forge Forge, c *Candidate, p Policy, now time.Time, logger *slog.Logger) {
 	reader, ok := forge.(MaintainerLabelReader)
 	if !ok {
 		return
@@ -487,9 +487,15 @@ func verifyLabelSignals(ctx context.Context, forge Forge, c *Candidate, p Policy
 		return
 	}
 	verified, err := reader.MaintainerAppliedLabels(ctx, c.Repo, c.Number, signals)
-	if err == nil {
-		c.MaintainerLabels = verified
+	if err != nil {
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("gfi: label provenance lookup failed; size and help-wanted labels earn no point",
+			"issue", c.Key(), "error", err)
+		return
 	}
+	c.MaintainerLabels = verified
 }
 
 // MarkerComment is what UpsertIssueMarkerComment found before it wrote.
@@ -659,7 +665,7 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 			logger.Debug("gfi skip", "issue", c.Key(), "reason", "reselect-cooldown", "until", until)
 			continue
 		}
-		verifyLabelSignals(ctx, forge, &c, p, now)
+		verifyLabelSignals(ctx, forge, &c, p, now, logger)
 		d := Score(c, p, now)
 		if !d.Eligible {
 			res.Skipped[d.Skip]++
@@ -767,7 +773,7 @@ func (s *Sweeper) staleSkip(ctx context.Context, forge Forge, c *Candidate, opts
 	}
 	live := *c
 	live.Labels = fresh
-	verifyLabelSignals(ctx, forge, &live, p, now)
+	verifyLabelSignals(ctx, forge, &live, p, now, opts.Logger)
 	if d := Score(live, p, now); !d.Eligible {
 		if d.AlreadyLabelled && Withdrawable(d.Skip) {
 			if _, released := s.releasedUntil(c.Key(), p.ReselectCooldown); !released {
