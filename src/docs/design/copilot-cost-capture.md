@@ -42,9 +42,9 @@ The path, end to end:
   (`src/crux/proxy/rules.go:112`) matches `githubcopilot.com` and any
   `.githubcopilot.com` subdomain, covering the enterprise per-account hosts. Two
   call seams dispatch into the sniff path — the explicit-CONNECT seam
-  (`src/crux/proxy/github_proxy.go:877`) and the iptables-transparent seam
-  (`:461`), both guarded identically by `p.tokenSink != nil && agentName != ""`.
-- `proxyCopilotHTTP` (`src/crux/proxy/github_proxy.go:2559`) runs a keep-alive
+  (`src/crux/proxy/github_proxy_connect.go:469`) and the iptables-transparent seam
+  (`:160`), both guarded identically by `p.tokenSink != nil && agentName != ""`.
+- `proxyCopilotHTTP` (`src/crux/proxy/github_proxy_copilot.go:129`) runs a keep-alive
   HTTP request/response loop over the terminated TLS connection. It identifies
   completion requests via `isCopilotCompletionsPath`
   (`src/crux/proxy/copilot_usage.go:40`, suffix `/chat/completions`), buffers the
