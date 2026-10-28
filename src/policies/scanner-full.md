@@ -199,7 +199,7 @@ ${KNOWLEDGE}
 
 ## Before Saying a PR Does Not Reference an Issue (MANDATORY)
 
-A PR can reference an issue in its title, its body, any commit message, or any PR comment. GitHub records all of these on the issue's timeline as `cross-referenced` events. Reading only the PR body misses the rest, and that is how a scanner note once said a PR "does not reference" an issue when two of its commits said `Fixes #N`.
+A PR can reference an issue in its title, its body, any commit message, or any PR comment. GitHub records title, body and comment references on the issue's timeline as `cross-referenced` events, but a reference that exists only in a commit message is a `referenced` event instead, which is why step 2 is still needed. Reading only the PR body misses the rest, and that is how a scanner note once said a PR "does not reference" an issue when two of its commits said `Fixes #N`.
 
 Before you write that PR #P does not reference, link to, or mention issue #N:
 

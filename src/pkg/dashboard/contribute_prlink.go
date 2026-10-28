@@ -134,7 +134,7 @@ func (r *prLinkResolver) resolve(ctx context.Context, repo string, number int) *
 // PR wins over a merely-open one (the fix landed), so results are scanned for a
 // merged hit first, then an open one. When the search yields no merged PR it also
 // reads the issue's timeline, whose cross-referenced events catch a PR that names
-// the issue only in a commit message or comment. A nil client or empty result is
+// the issue in its body or a comment. A nil client or empty result is
 // "no linked PR" (nil, nil) — never an error the caller must handle.
 func searchLinkedPR(ctx context.Context, gc *gh.Client, repo string, number int) (*prLinkStatus, error) {
 	if gc == nil || repo == "" || number <= 0 {
@@ -173,9 +173,10 @@ func searchLinkedPR(ctx context.Context, gc *gh.Client, repo string, number int)
 	}
 
 	// The title/body check above cannot see a PR that names the issue only in
-	// a commit message or a PR comment (hivecommons/hive#14859). GitHub
-	// records every such mention as a cross-referenced event on the issue's
-	// timeline, so one timeline read covers commits and comments alike. A
+	// a PR comment (hivecommons/hive#14859). GitHub records such a mention
+	// as a cross-referenced event on the issue's timeline, so one timeline
+	// read covers body and comment references. Commit-message references
+	// arrive as referenced events and are not matched here. A
 	// timeline error keeps whatever the search already found.
 	for _, iss := range crossReferencingPRs(ctx, gc, repo, number) {
 		st, merged := prLinkCandidate(iss)
@@ -209,7 +210,8 @@ func prLinkCandidate(iss *gh.Issue) (*prLinkStatus, bool) {
 
 // crossReferencingPRs returns the same-repo pull requests named by the
 // issue's timeline cross-referenced events — a reference from a PR's title,
-// body, commit messages, or comments. It reads at most prLinkTimelineMaxPages
+// body, or comments (commit-message references are referenced events and are
+// not matched). It reads at most prLinkTimelineMaxPages
 // pages; errors and the page cap yield what was read so far.
 func crossReferencingPRs(ctx context.Context, gc *gh.Client, repo string, number int) []*gh.Issue {
 	owner, name, ok := strings.Cut(repo, "/")

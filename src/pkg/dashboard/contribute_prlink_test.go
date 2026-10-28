@@ -406,7 +406,7 @@ func TestSearchLinkedPR_CountsCommitCommentAndTimelineReferences(t *testing.T) {
 		wantState  string
 	}{
 		{
-			name:       "commit message reference only (timeline cross-reference, search miss)",
+			name:       "comment reference only (cross-referenced event, search miss)",
 			search:     `[]`,
 			timeline:   `[` + crossRef(openPR) + `]`,
 			wantNumber: 14656,
