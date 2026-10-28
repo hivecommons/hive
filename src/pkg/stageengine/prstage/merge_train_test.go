@@ -2,6 +2,7 @@ package prstage
 
 import (
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -49,6 +50,56 @@ func TestMergeTrainSentence(t *testing.T) {
 	for n, want := range map[int]string{1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 11: "11th", 12: "12th", 13: "13th", 21: "21st", 22: "22nd", 103: "103rd", 111: "111th"} {
 		if got := Ordinal(n); got != want {
 			t.Fatalf("Ordinal(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func TestParseMergeTrainRejectsMalformed(t *testing.T) {
+	for _, reason := range []string{
+		"held",
+		MergeTrainReasonPrefix + "queued-behind",
+		MergeTrainReasonPrefix + "#7:2/4:0/2",
+		MergeTrainReasonPrefix + "queued-behind#7",
+		MergeTrainReasonPrefix + "queued-behind#7:2",
+		MergeTrainReasonPrefix + "queued-behind#7:2:0/2",
+		MergeTrainReasonPrefix + "queued-behind#7:2/4:0",
+		MergeTrainReasonPrefix + "queued-behind#x:2/4:0/2",
+		MergeTrainReasonPrefix + "queued-behind#7:x/4:0/2",
+		MergeTrainReasonPrefix + "queued-behind#7:2/x:0/2",
+		MergeTrainReasonPrefix + "queued-behind#7:2/4:x/2",
+		MergeTrainReasonPrefix + "queued-behind#7:2/4:0/x",
+	} {
+		if m, ok := ParseMergeTrain(reason); ok {
+			t.Errorf("ParseMergeTrain(%q) = %+v, want !ok", reason, m)
+		}
+		if reason != "held" && !IsMergeTrainReason(reason) {
+			t.Errorf("IsMergeTrainReason(%q) must be true by prefix", reason)
+		}
+	}
+	if IsMergeTrainReason("held") {
+		t.Fatal("a plain reason is no train")
+	}
+	// The human-approved suffix is stripped, duplicate and empty file names dropped.
+	m, ok := ParseMergeTrain(MergeTrain{State: MergeTrainStateQueuedBehind, Front: 7, Position: 2, Size: 4, OverlapFiles: []string{"src/a.go", "pkg/a.go", " ", "."}}.Reason() + ":human-approved@pat")
+	if !ok || m.Front != 7 || len(m.OverlapFiles) != 1 || m.OverlapFiles[0] != "a.go" {
+		t.Fatalf("parsed %+v ok=%v", m, ok)
+	}
+	many := make([]string, 0, MergeTrainReasonMaxFiles+3)
+	for i := 0; i < MergeTrainReasonMaxFiles+3; i++ {
+		many = append(many, "f"+strconv.Itoa(i)+".go")
+	}
+	m, _ = ParseMergeTrain(MergeTrain{State: MergeTrainStateQueuedBehind, Front: 7, Position: 2, Size: 9, OverlapFiles: many}.Reason())
+	if len(m.OverlapFiles) != MergeTrainReasonMaxFiles+1 || m.OverlapFiles[MergeTrainReasonMaxFiles] != "+3" {
+		t.Fatalf("files capped wrong: %v", m.OverlapFiles)
+	}
+	for state, want := range map[string]string{
+		MergeTrainStateRebasing:        "front of the merge train, conflicting; the hive is rebasing it onto the base (attempt 1/2; 1st of 3)",
+		MergeTrainStateRebaseExhausted: "front of the merge train, still conflicting after 2 rebase attempts; a person decides (1st of 3)",
+		MergeTrainStateFront:           "front of the merge train (1st of 3)",
+		MergeTrainStateQueuedBehind:    "behind #7 in merge train (1st of 3)",
+	} {
+		if got := (MergeTrain{State: state, Front: 7, Position: 1, Size: 3, Attempt: 1, MaxAttempts: 2}).Sentence(); got != want {
+			t.Errorf("Sentence(%s) = %q, want %q", state, got, want)
 		}
 	}
 }
