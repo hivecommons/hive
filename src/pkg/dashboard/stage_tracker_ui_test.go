@@ -131,6 +131,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerLabelDialogData"),
 		jsFunc(t, html, "stageTrackerNormalizeFilter"),
 		jsFunc(t, html, "stageTrackerFilterActive"),
+		stageTrackerOperatorJS(t, html),
 		jsFunc(t, html, "stageTrackerMatches"),
 		jsFunc(t, html, "stageTrackerSort"),
 		jsFunc(t, html, "stageTrackerPage"),
@@ -851,6 +852,7 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsFunc(t, html, "stageTrackerLabelDialogData"),
 		jsFunc(t, html, "stageTrackerNormalizeFilter"),
 		jsFunc(t, html, "stageTrackerFilterActive"),
+		stageTrackerOperatorJS(t, html),
 		jsFunc(t, html, "stageTrackerMatches"),
 		jsFunc(t, html, "stageTrackerVisible"),
 		jsFunc(t, html, "stageTrackerRowCount"),
@@ -914,6 +916,18 @@ assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ author: 'human' }), c
 assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ attention: true }), ctx)), [3, 5]);
 assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ repo: 'a/c', kind: 'pr' }), ctx)), [4]);
 assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ attention: true, author: 'human' }), ctx)), [], 'filters compose');
+
+// Decision filters run through the same shipped predicate as the row badge.
+const decisions = [
+  { kind: 'pr', repo: 'a/b', number: 30, stage: 85 },
+  { kind: 'pr', repo: 'a/b', number: 31, stage: 85, last_operator_action: { stage: 85, at: ago(31 * 60000) } },
+  { kind: 'pr', repo: 'a/b', number: 32, stage: 110, last_operator_action: { stage: 85, at: ago(H) } },
+];
+assert.deepStrictEqual(nums(stageTrackerVisible(decisions, F({ decision: 'awaiting' }), ctx)), [30]);
+assert.deepStrictEqual(nums(stageTrackerVisible(decisions, F({ decision: 'acted' }), ctx)), [31, 32]);
+assert.deepStrictEqual(nums(stageTrackerVisible(decisions, F({ decision: 'stuck' }), ctx)), [31]);
+assert.strictEqual(stageTrackerFilterActive(F({ decision: 'acted' })), true);
+assert.strictEqual(stageTrackerNormalizeFilter({ decision: 'bogus' }).decision, '');
 
 // A PR nested under a listed issue shares that issue's row; when a filter
 // (label chips, the Pull requests tab, …) drops the issue the PR must still

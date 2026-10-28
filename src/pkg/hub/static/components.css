@@ -826,3 +826,14 @@ a.nav-chip:active,
 .py-1-px-4 { padding: var(--sp-1) var(--sp-4); }
 .py-2-px-4 { padding: var(--sp-2) var(--sp-4); }
 .d-block { display: block; }
+
+/* Persistent decision receipt, separate from the progress arrow's motion. */
+.ham-badge.ham-operator-badge {
+  color: var(--green);
+  border-color: currentColor;
+}
+.ham-badge.ham-operator-stuck { color: var(--amber); }
+.ham-operator-badge:focus-visible {
+  outline: var(--focus-ring-width) solid color-mix(in srgb, var(--brand) var(--component-border-emphasis), transparent);
+  outline-offset: var(--sp-1);
+}

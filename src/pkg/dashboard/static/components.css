@@ -835,5 +835,5 @@ a.nav-chip:active,
 .ham-badge.ham-operator-stuck { color: var(--amber); }
 .ham-operator-badge:focus-visible {
   outline: var(--focus-ring-width) solid color-mix(in srgb, var(--brand) var(--component-border-emphasis), transparent);
-  outline-offset: var(--focus-ring-offset);
+  outline-offset: var(--sp-1);
 }
