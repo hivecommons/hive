@@ -71,6 +71,7 @@ import (
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/issueclaim"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -1130,7 +1131,23 @@ func (c *Engine) contributorLaneVerdictFor(fullRepo string, number int, headSHA 
 	if c == nil || c.contributorLaneVerdict == nil {
 		return ContributorLaneVerdict{}
 	}
-	return normalizeContributorLaneVerdict(c.contributorLaneVerdict(fullRepo, number, headSHA))
+	return c.withRecordedDecision(fullRepo, number, headSHA, normalizeContributorLaneVerdict(c.contributorLaneVerdict(fullRepo, number, headSHA)))
+}
+
+// withRecordedDecision folds the trusted human's recorded decision on
+// headSHA (review-human-change-requests.json) into the reviewer verdict, so
+// a requires_human / decision-requested verdict the person already answered
+// reads as answered on every tick and after every restart — never back to
+// 085 until a new head draws a new verdict (hivecommons/hive#14679).
+func (c *Engine) withRecordedDecision(fullRepo string, number int, headSHA string, v ContributorLaneVerdict) ContributorLaneVerdict {
+	if c == nil || c.humanChangeRequests == nil {
+		return v
+	}
+	req, ok := review.DecisionAnswerFor(c.humanChangeRequests, fullRepo, number, headSHA)
+	if !ok {
+		return v
+	}
+	return v.WithDecisionAnswer(strings.ToLower(req.Actor), headSHA, req.Directive())
 }
 
 // contributorLaneEval is what the contributor lane established about one PR

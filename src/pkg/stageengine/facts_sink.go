@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -221,7 +222,11 @@ func (s *factSink) PRDecided(ctx context.Context, ref Ref, d PRDecisionFact) (Tr
 			lane = stageLaneTrusted
 		}
 		pr.Review.HumanChangeRequester = strings.TrimSpace(d.By)
+		pr.Review.DecisionAnswered, pr.Review.DecisionDirective = true, prstage.DecisionDirectiveChanges
 		pr.Lanes = []LaneFact{{Lane: lane, Reason: autoMergeReasonHumanChangesRequested}}
+	} else if head != "" && strings.TrimSpace(d.By) != "" {
+		pr.Review.HumanApprover = strings.TrimSpace(d.By)
+		pr.Review.DecisionAnswered, pr.Review.DecisionDirective = true, prstage.DecisionDirectiveApprove
 	}
 	f.PR = pr
 	if s.opts.Enrich != nil {

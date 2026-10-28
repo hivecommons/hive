@@ -186,6 +186,38 @@ type ReviewVerdict struct {
 	// FixCycleCapReached preserves a human hold once review repair attempts are
 	// exhausted, even if the review text also names concrete remediation.
 	FixCycleCapReached bool
+	// DecisionAnswered is set when a trusted human answered this head's
+	// requires_human / decision-requested verdict — a `/hive decision` or a
+	// CHANGES_REQUESTED review recorded against DecisionAnsweredHead
+	// (hivecommons/hive#14679). The question is no longer open: a
+	// DecisionDirective of changes_requested routes to fixing with the
+	// instruction, approve lets the lane proceed. A new head produces a new
+	// verdict with no answer, so the stage asks again.
+	DecisionAnswered     bool
+	DecisionAnsweredBy   string
+	DecisionAnsweredHead string
+	DecisionDirective    string
+}
+
+// Decision directives, mirroring review.DecisionDirective*.
+const (
+	DecisionDirectiveApprove = "approve"
+	DecisionDirectiveChanges = "changes_requested"
+)
+
+// WithDecisionAnswer returns v with the human's answer on head folded in.
+func (v ReviewVerdict) WithDecisionAnswer(by, head, directive string) ReviewVerdict {
+	by, head = strings.TrimSpace(by), strings.TrimSpace(head)
+	if by == "" || head == "" {
+		return v
+	}
+	v.DecisionAnswered, v.DecisionAnsweredBy, v.DecisionAnsweredHead = true, by, head
+	if strings.TrimSpace(directive) == DecisionDirectiveApprove {
+		v.DecisionDirective = DecisionDirectiveApprove
+	} else {
+		v.DecisionDirective = DecisionDirectiveChanges
+	}
+	return v
 }
 
 func NormalizeReviewVerdict(v ReviewVerdict) ReviewVerdict {

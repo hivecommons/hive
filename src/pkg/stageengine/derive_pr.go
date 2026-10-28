@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -90,6 +91,7 @@ func FactsFromPRObservations(list []stageObservation) Facts {
 // reads: Approved ↔ VerdictApproved, the raw verdict string, the decision
 // request flag and a human approval that matches the head.
 func ReviewFactsFrom(d stageDetail, head string) ReviewFacts {
+	d = NormalizeStageDetail(d)
 	r := ReviewFacts{
 		Verdict:           d.Verdict.Verdict,
 		VerdictKnown:      d.VerdictKnown,
@@ -102,6 +104,9 @@ func ReviewFactsFrom(d stageDetail, head string) ReviewFacts {
 	}
 	if requester := strings.TrimSpace(d.HumanChangeRequester); requester != "" && strings.TrimSpace(d.HumanChangeRequestHead) != "" && strings.TrimSpace(d.HumanChangeRequestHead) == strings.TrimSpace(head) {
 		r.HumanChangeRequester = requester
+	}
+	if v := d.Verdict; d.VerdictKnown && v.DecisionAnswered && strings.TrimSpace(v.DecisionAnsweredHead) == strings.TrimSpace(head) {
+		r.DecisionAnswered, r.DecisionDirective = true, v.DecisionDirective
 	}
 	r.State = VerdictStateFrom(d)
 	return r
@@ -158,6 +163,13 @@ func ObservationsFromPRFacts(f Facts) []stageObservation {
 	}
 	if pr.Review.HumanChangeRequester != "" && pr.HeadSHA != "" {
 		detail.HumanChangeRequester, detail.HumanChangeRequestHead = pr.Review.HumanChangeRequester, pr.HeadSHA
+	}
+	if pr.Review.DecisionAnswered && pr.HeadSHA != "" {
+		by := pr.Review.HumanChangeRequester
+		if pr.Review.DecisionDirective == prstage.DecisionDirectiveApprove {
+			by = pr.Review.HumanApprover
+		}
+		detail.Verdict = detail.Verdict.WithDecisionAnswer(by, pr.HeadSHA, pr.Review.DecisionDirective)
 	}
 	if pr.DCOGate {
 		detail.DCOGateHead = pr.HeadSHA

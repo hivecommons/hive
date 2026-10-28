@@ -280,6 +280,13 @@ type ReviewFacts struct {
 	// reviewer-verdict:requires_human). Additive to the ADR-0025 shape: the
 	// legacy verdict carries it as a separate flag the deriver reads.
 	DecisionRequested bool
+	// DecisionAnswered is set when a trusted human answered the verdict on
+	// HeadSHA (`/hive decision` or a change-request review); DecisionDirective
+	// is approve or changes_requested. The answer is what keeps a
+	// decision-requested head out of 085 on every later derivation
+	// (hivecommons/hive#14679).
+	DecisionAnswered  bool
+	DecisionDirective string
 }
 
 // LaneFact is one automerge lane's view of the PR this cycle. It is the

@@ -75,6 +75,23 @@ func (r HumanChangeRequest) IsApproval() bool {
 	return r.Kind == HumanChangeRequestKindApprove
 }
 
+// Decision directives: what a recorded `/hive decision` told the hive to do
+// with the head it names. They ride on the reviewer verdict for that head
+// (prstage.ReviewVerdict.DecisionDirective) so every stage derivation reads
+// the requires_human / decision-requested question as answered.
+const (
+	DecisionDirectiveApprove = "approve"
+	DecisionDirectiveChanges = "changes_requested"
+)
+
+// Directive is the decision directive the request carries.
+func (r HumanChangeRequest) Directive() string {
+	if r.IsApproval() {
+		return DecisionDirectiveApprove
+	}
+	return DecisionDirectiveChanges
+}
+
 // HumanChangeRequestStore records maintainer change requests and answers
 // which one, if any, stands against a PR head. Implementations are safe for
 // concurrent use: the automerge sweep records while the planner reads.
@@ -250,6 +267,23 @@ func HumanChangeRequestFor(store HumanChangeRequestStore, repo string, number in
 		return nil
 	}
 	return &req
+}
+
+// DecisionAnswerFor returns the newest recorded trusted-human decision —
+// instruction or bare approval, from a review or a `/hive decision` — that
+// stands against pr's exact head. It is the durable, head-scoped fact that a
+// reviewer verdict asking for a person on that head has been ANSWERED
+// (hivecommons/hive#14679): a newer head carries no answer until someone
+// gives one.
+func DecisionAnswerFor(store HumanChangeRequestStore, repo string, number int, head string) (HumanChangeRequest, bool) {
+	if store == nil || strings.TrimSpace(head) == "" {
+		return HumanChangeRequest{}, false
+	}
+	req, ok := store.For(repo, number, strings.TrimSpace(head))
+	if !ok || strings.TrimSpace(req.Actor) == "" {
+		return HumanChangeRequest{}, false
+	}
+	return req, true
 }
 
 // HumanApprovalFor returns the bare `/hive decision approve` standing

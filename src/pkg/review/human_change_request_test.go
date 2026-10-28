@@ -294,3 +294,33 @@ func TestHumanChangeRequestApprovalKindIsNotAFixRequest(t *testing.T) {
 		t.Fatalf("superseded approval still standing: %+v", got)
 	}
 }
+
+// The fix kick carries every line of the decision, not just the first:
+// the numbered instructions under `/hive decision approve` on hive#14628
+// are the whole scope of the fix (hivecommons/hive#14679).
+func TestHumanChangeRequestPromptSectionCarriesEveryDecisionLine(t *testing.T) {
+	req := liveCaseRequest()
+	req.Source, req.Body = HumanChangeRequestSourceDecision, "approve\n1. Change `Closes #14605` to `Refs #14605`.\n2. Keep #14605 open.\n3. Merge on green."
+	got := humanChangeRequestPromptSection(req)
+	for _, want := range []string{"> approve\n", "> 1. Change `Closes #14605` to `Refs #14605`.\n", "> 2. Keep #14605 open.\n", "> 3. Merge on green.\n", "via /hive decision"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prompt section missing %q:\n%s", want, got)
+		}
+	}
+	if req.Directive() != DecisionDirectiveChanges {
+		t.Fatalf("directive = %q", req.Directive())
+	}
+	if _, ok := DecisionAnswerFor(nil, liveCaseRepo, liveCaseNumber, liveCaseHead); ok {
+		t.Fatal("nil store answered")
+	}
+	store := NewHumanChangeRequests("")
+	if err := store.Record(req); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := DecisionAnswerFor(store, liveCaseRepo, liveCaseNumber, liveCaseHead); !ok || got.Actor != req.Actor || got.Directive() != DecisionDirectiveChanges {
+		t.Fatalf("DecisionAnswerFor = %+v ok=%v", got, ok)
+	}
+	if _, ok := DecisionAnswerFor(store, liveCaseRepo, liveCaseNumber, "0ther"); ok {
+		t.Fatal("answer leaked onto another head")
+	}
+}

@@ -127,11 +127,41 @@ const StageReasonVerdictRequiresHuman = "reviewer-verdict:requires_human"
 
 const StageReasonDecisionRequested = "contributor-lane:decision-requested"
 
+// StageReasonDecisionAnswered is the fixing reason when a trusted human's
+// `/hive decision <instruction>` answered the decision-requested /
+// requires_human verdict on the head: 085 cleared because the person spoke,
+// and the author agent is pushing the fix (hivecommons/hive#14679).
+const StageReasonDecisionAnswered = "contributor-lane:decision-answered"
+
+// NormalizeStageDetail normalizes the reviewer verdict and folds a decision
+// answer it carries into the detail's human approver / change requester, so
+// every derivation — lane tracker, startup reconcile, dashboard — reads the
+// answered question the same way whichever lane noted it.
 func NormalizeStageDetail(d stageDetail) stageDetail {
 	if d.VerdictKnown {
 		d.Verdict = normalizeContributorLaneVerdict(d.Verdict)
+		if v := d.Verdict; v.DecisionAnswered && v.DecisionAnsweredBy != "" && v.DecisionAnsweredHead != "" {
+			switch v.DecisionDirective {
+			case prstage.DecisionDirectiveApprove:
+				if d.HumanApprover == "" || d.HumanApprovalHead != v.DecisionAnsweredHead {
+					d.HumanApprover, d.HumanApprovalHead = v.DecisionAnsweredBy, v.DecisionAnsweredHead
+				}
+			default:
+				if d.HumanChangeRequester == "" || d.HumanChangeRequestHead != v.DecisionAnsweredHead {
+					d.HumanChangeRequester, d.HumanChangeRequestHead = v.DecisionAnsweredBy, v.DecisionAnsweredHead
+				}
+			}
+		}
 	}
 	return d
+}
+
+// DecisionAnswered reports whether a recorded human decision stands against
+// head and the reviewer verdict on that head asked for one.
+func DecisionAnswered(d stageDetail, head string) bool {
+	d = NormalizeStageDetail(d)
+	v := d.Verdict
+	return d.VerdictKnown && v.DecisionAnswered && strings.TrimSpace(v.DecisionAnsweredHead) == strings.TrimSpace(head) && VerdictNeedsHuman(d)
 }
 
 // StageVerdictReason is the recorded reason when the reviewer verdict, not
@@ -182,6 +212,7 @@ func TrustedHumanApprovedRequiresHuman(d stageDetail, head string) bool {
 // PR belongs in fixing with the instruction, not parked on the question
 // it already answered (hivecommons/hive#14679, seen on #14628).
 func TrustedHumanChangeRequested(d stageDetail, head string) bool {
+	d = NormalizeStageDetail(d)
 	return strings.TrimSpace(d.HumanChangeRequester) != "" && strings.TrimSpace(d.HumanChangeRequestHead) != "" && strings.TrimSpace(d.HumanChangeRequestHead) == strings.TrimSpace(head)
 }
 
@@ -189,10 +220,15 @@ func TrustedHumanChangeRequested(d stageDetail, head string) bool {
 // request on the head carries: owned rank, reason human-changes-requested,
 // whatever the reviewer verdict on that head says.
 func HumanChangeRequestStage(o stageObservation) (stageVerdict, bool) {
-	if !TrustedHumanChangeRequested(o.Detail, o.HeadSHA) {
+	d := NormalizeStageDetail(o.Detail)
+	if !TrustedHumanChangeRequested(d, o.HeadSHA) {
 		return stageVerdict{}, false
 	}
-	return stageVerdict{Stage: FixingStage(o), Rank: stageRankOwned, Reason: autoMergeReasonHumanChangesRequested}, true
+	reason := autoMergeReasonHumanChangesRequested
+	if DecisionAnswered(d, o.HeadSHA) && d.Verdict.DecisionDirective != prstage.DecisionDirectiveApprove {
+		reason = StageReasonDecisionAnswered
+	}
+	return stageVerdict{Stage: FixingStage(o), Rank: stageRankOwned, Reason: reason}, true
 }
 
 func WithHumanApprovalReason(v stageVerdict, reason string) stageVerdict {
@@ -266,7 +302,7 @@ var stageMergeQueueReasons = map[string]bool{
 
 // stageFixingReasons are reasons an agent (or the author) must fix the head.
 var stageFixingReasons = map[string]bool{
-	"changes-requested": true, autoMergeReasonHumanChangesRequested: true, contributorLaneReasonChangesRequested: true, "conflicting": true, "not-mergeable": true,
+	"changes-requested": true, autoMergeReasonHumanChangesRequested: true, StageReasonDecisionAnswered: true, contributorLaneReasonChangesRequested: true, "conflicting": true, "not-mergeable": true,
 	"label:needs-rebase": true, autoMergeReasonForkNotEditable: true,
 }
 
@@ -458,6 +494,7 @@ func ReviewGateStage(reason string, fixing stagelabels.Stage) (stageVerdict, boo
 // is requires_human / needs-decision and that no trusted human has approved
 // since; rank is the strength the caller's reason carries.
 func RequiresHumanStage(o stageObservation, rank int) (stageVerdict, bool) {
+	o.Detail = NormalizeStageDetail(o.Detail)
 	if !VerdictNeedsHuman(o.Detail) || TrustedHumanApprovedRequiresHuman(o.Detail, o.HeadSHA) || TrustedHumanChangeRequested(o.Detail, o.HeadSHA) {
 		return stageVerdict{}, false
 	}

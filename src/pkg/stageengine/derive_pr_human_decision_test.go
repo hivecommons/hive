@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -165,4 +166,77 @@ func (r deriveOnlyReconciler) ReconcileBatch(ctx context.Context, facts []Facts)
 		out = append(out, tr)
 	}
 	return out, nil
+}
+
+// hivecommons/hive#14679 (the 070↔085 flap on #14628): the decision answer
+// rides on the reviewer verdict for the head, so a reconcile tick that only
+// sees the verdict — no lane noted a requester this cycle — still derives
+// fixing with reason decision-answered, never 085. A new head's fresh
+// requires_human verdict carries no answer and parks again; a decision
+// recorded for the old head does not leak onto the new one.
+func TestClassifyStageDecisionAnsweredVerdictNeverParks(t *testing.T) {
+	const newHead = "beef5678newhead"
+	asked := ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true}
+	answered := asked.WithDecisionAnswer("clubanderson", goldenHead, prstage.DecisionDirectiveChanges)
+	approved := asked.WithDecisionAnswer("clubanderson", goldenHead, prstage.DecisionDirectiveApprove)
+	fixing := FixingStage(stageObservation{Lane: stageLaneSelf})
+	cases := []struct {
+		name       string
+		head       string
+		reason     string
+		verdict    ContributorLaneVerdict
+		labels     []string
+		wantStage  stagelabels.Stage
+		wantReason string
+	}{
+		{name: "tick after the instruction → 070 decision-answered", head: goldenHead, reason: "ci-pending", verdict: answered, wantStage: fixing, wantReason: StageReasonDecisionAnswered},
+		{name: "tick with the lane's own decision-requested reason → still 070", head: goldenHead, reason: StageReasonDecisionRequested, verdict: answered, wantStage: fixing, wantReason: StageReasonDecisionAnswered},
+		{name: "manual 070 label stands while the decision stands", head: goldenHead, reason: "ci-pending", verdict: answered, labels: []string{stagelabels.Fixing.Label()}, wantStage: fixing, wantReason: StageReasonDecisionAnswered},
+		{name: "bare approve → not parked", head: goldenHead, reason: "ci-pending", verdict: approved, wantStage: stagelabels.None},
+		{name: "new head, fresh requires_human → 085 again", head: newHead, reason: "ci-pending", verdict: asked, wantStage: stagelabels.NeedsDecision, wantReason: StageReasonDecisionRequested},
+		{name: "new head carrying the old head's answer → 085 again", head: newHead, reason: "ci-pending", verdict: answered, wantStage: stagelabels.NeedsDecision, wantReason: StageReasonDecisionRequested},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			o := stageObservation{Lane: stageLaneSelf, Reason: tc.reason, HeadSHA: tc.head, Labels: tc.labels, Detail: stageDetail{VerdictKnown: true, Verdict: tc.verdict}}
+			v := ClassifyStage(o)
+			if tc.wantStage == stagelabels.None {
+				if v.Stage == stagelabels.NeedsDecision || v.Stage == fixing {
+					t.Fatalf("classified as %+v, want the merge path", v)
+				}
+				return
+			}
+			if v.Stage != tc.wantStage || v.Reason != tc.wantReason {
+				t.Fatalf("classified as %+v, want stage=%s reason=%q", v, tc.wantStage, tc.wantReason)
+			}
+			if tc.wantStage == fixing && v.Human {
+				t.Fatalf("classified as %+v, want no human route", v)
+			}
+			// The derive path (startup reconcile, dashboard) reads the same
+			// answer through ReviewFacts.
+			facts := FactsFromPRObservations([]stageObservation{o})
+			if facts.PR == nil {
+				t.Fatal("no PR facts")
+			}
+			if got := ClassifyStage(ObservationsFromPRFacts(facts)[0]); got.Stage != v.Stage || got.Reason != v.Reason {
+				t.Fatalf("derived %+v, want %+v", got, v)
+			}
+		})
+	}
+}
+
+func TestReviewFactsRoundTripDecisionAnswer(t *testing.T) {
+	asked := ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true}
+	d := stageDetail{VerdictKnown: true, Verdict: asked.WithDecisionAnswer("clubanderson", goldenHead, prstage.DecisionDirectiveChanges)}
+	r := ReviewFactsFrom(d, goldenHead)
+	if !r.DecisionAnswered || r.DecisionDirective != prstage.DecisionDirectiveChanges || r.HumanChangeRequester != "clubanderson" {
+		t.Fatalf("ReviewFacts = %+v", r)
+	}
+	if r := ReviewFactsFrom(d, "0ther"); r.DecisionAnswered || r.HumanChangeRequester != "" {
+		t.Fatalf("answer leaked onto another head: %+v", r)
+	}
+	d = stageDetail{VerdictKnown: true, Verdict: asked.WithDecisionAnswer("clubanderson", goldenHead, prstage.DecisionDirectiveApprove)}
+	if r := ReviewFactsFrom(d, goldenHead); !r.DecisionAnswered || r.DecisionDirective != prstage.DecisionDirectiveApprove || r.HumanApprover != "clubanderson" || r.HumanChangeRequester != "" {
+		t.Fatalf("approve ReviewFacts = %+v", r)
+	}
 }

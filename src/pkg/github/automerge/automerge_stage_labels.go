@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -462,6 +463,32 @@ func (c *Engine) noteStageHumanChangeRequest(owner, repo string, number int, hea
 	})
 }
 
+// foldRecordedDecision stamps the trusted human's recorded decision on each
+// observation's head into its verdict before classification. The lanes note
+// the same answer when they reach it, but a lane that skips early (the
+// contributor lane on an app-authored PR, a lane stopped at CI) never does,
+// and the stage pass must not re-derive 085 from the stale decision-requested
+// verdict in that case — that was the 070↔085 flap on hive#14628
+// (hivecommons/hive#14679). Reads the durable store, so it holds across
+// restarts and across the drain that clears the tracker's details.
+func (c *Engine) foldRecordedDecision(list []stageObservation) {
+	if c == nil || c.humanChangeRequests == nil {
+		return
+	}
+	for i := range list {
+		o := &list[i]
+		if o.HeadSHA == "" || (o.Detail.VerdictKnown && o.Detail.Verdict.DecisionAnswered && o.Detail.Verdict.DecisionAnsweredHead == o.HeadSHA) {
+			continue
+		}
+		req, ok := review.DecisionAnswerFor(c.humanChangeRequests, o.Owner+"/"+o.Repo, o.Number, o.HeadSHA)
+		if !ok {
+			continue
+		}
+		o.Detail.Verdict = o.Detail.Verdict.WithDecisionAnswer(strings.ToLower(req.Actor), o.HeadSHA, req.Directive())
+		o.Detail = normalizeStageDetail(o.Detail)
+	}
+}
+
 // noteStageRole records the author's admission tier as the lane computed
 // it. Lanes disagree by design (the contributor lane reports "untrusted"
 // for a maintainer with no registry profile), so tiers merge by precedence
@@ -615,6 +642,7 @@ const (
 	ciReasonRed                     = stageengine.CIReasonRed
 	stageReasonVerdictRequiresHuman = stageengine.StageReasonVerdictRequiresHuman
 	stageReasonDecisionRequested    = stageengine.StageReasonDecisionRequested
+	stageReasonDecisionAnswered     = stageengine.StageReasonDecisionAnswered
 )
 
 func classifyCIReason(reason string) ciReasonKind      { return stageengine.ClassifyCIReason(reason) }
@@ -743,6 +771,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			continue
 		}
 		result.Items++
+		c.foldRecordedDecision(list)
 		verdict, role, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)
 		if verdict.Rank == stageRankNone {
@@ -949,7 +978,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		if obs.Detail.VerdictKnown {
 			rawVerdict := obs.Detail.Verdict
 			normalizedVerdict := normalizeContributorLaneVerdict(rawVerdict)
-			c.info("stage labels: reviewer verdict route", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "lane", obs.Lane, "raw_verdict", rawVerdict.Verdict, "normalized_verdict", normalizedVerdict.Verdict, "decision_requested", normalizedVerdict.DecisionRequested, "stage", verdict.Stage.String(), "reason", obs.Reason)
+			c.info("stage labels: reviewer verdict route", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "lane", obs.Lane, "raw_verdict", rawVerdict.Verdict, "normalized_verdict", normalizedVerdict.Verdict, "decision_requested", normalizedVerdict.DecisionRequested, "decision_answered", normalizedVerdict.DecisionAnswered && normalizedVerdict.DecisionAnsweredHead == obs.HeadSHA, "decision_by", normalizedVerdict.DecisionAnsweredBy, "decision_directive", normalizedVerdict.DecisionDirective, "stage", verdict.Stage.String(), "reason", obs.Reason)
 		}
 		add, remove := stagelabels.Plan(obs.Labels, want)
 		if len(add)+len(remove) > 0 {
