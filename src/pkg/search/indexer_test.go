@@ -527,6 +527,7 @@ func TestIndexerCancelledContext(t *testing.T) {
 	updated := f.clock.t.Add(-time.Hour)
 	writeBundle(t, f.root, testBundle("org/a", 1, "aaa", updated))
 	rebuildOK(t, ix)
+	f.backend.take()
 	writeBundle(t, f.root, testBundle("org/a", 2, "bbb", updated))
 
 	ctx, cancel := context.WithCancel(context.Background())
