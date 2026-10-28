@@ -1656,6 +1656,56 @@ func (h *ContributeWSHub) reconcilePRAttribution(prURL string, contributor *Cont
 	}
 }
 
+// linkReportedPRToIssue appends `Fixes #N` to a verified contributor PR that
+// does not yet close the issue it was dispatched for, and ensures the GitHub
+// sidebar link (hivecommons/hive#14763). The relay's task prompt only asks the
+// model for the trailer; hivecommons/hive#14701 shipped #14633 with an empty
+// body, the PR-claim ledger (PR text and branch names only) never saw the
+// issue as covered, and it sat at stage/010-actionable for hours while the PR
+// waited in review as "no linked issue".
+//
+// Only GitHub-issue tasks in the task's own repo qualify: a fix-pr task or an
+// external work item has no issue to close. The PR was verified moments ago as
+// open, in this repo and authored by username, and LinkContributorPRToIssue
+// re-checks the author before editing; it never edits a stranger's PR or a
+// body that says the issue stays open. Best-effort and detached like
+// reconcilePRAttribution: it gates nothing.
+func (h *ContributeWSHub) linkReportedPRToIssue(task *WSTaskAssign, prURL, username string) {
+	if task == nil || task.Kind != "issue" || task.Number <= 0 || prURL == "" || username == "" {
+		return
+	}
+	if task.SourceType != "" && task.SourceType != "github" {
+		return
+	}
+	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return
+	}
+	ref, err := ghpkg.ParsePRURL(prURL)
+	if err != nil || !strings.EqualFold(ref.FullName(), task.Repo) {
+		return
+	}
+	ctx := h.server.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, prAttributionReconcileTimeout)
+	defer cancel()
+	res, err := h.server.deps.GHClient.LinkContributorPRToIssue(ctx, task.Repo, ref.Number, task.Number, username)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] linking reported PR to dispatched issue failed",
+			"repo", task.Repo, "issue", task.Number, "pr_url", prURL, "username", username, "error", err.Error())
+		return
+	}
+	if res.EditedBody || res.SidebarLinked {
+		h.logger.Info("[contribute-ws] linked reported PR to dispatched issue",
+			"repo", task.Repo, "issue", task.Number, "pr_url", prURL, "username", username,
+			"edited_body", res.EditedBody, "sidebar_linked", res.SidebarLinked, "base", res.Base)
+		return
+	}
+	h.logger.Info("[contribute-ws] reported PR already linked to dispatched issue, or left alone",
+		"repo", task.Repo, "issue", task.Number, "pr_url", prURL, "username", username, "skipped", res.Skipped)
+}
+
 // abandonReason is the synthetic reason text written to the run log for a task
 // that ended with no terminal report. Free text like a client-reported reason,
 // but hub-authored, and phrased to say what the hub OBSERVED rather than to
@@ -3918,6 +3968,13 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// push a perfectly healthy contributor to `Stale` in the
 				// fleet view for the sake of a PR-body edit.
 				go h.reconcilePRAttribution(msg.PRURL, s.contributor)
+				// Same detachment, same reasoning: make the PR↔issue link
+				// durable so the claim ledger and the issue list see the
+				// dispatched issue as covered (hivecommons/hive#14763).
+				if completedTask != nil {
+					taskCopy := *completedTask
+					go h.linkReportedPRToIssue(&taskCopy, msg.PRURL, s.contributor.profile.GitHubUsername)
+				}
 				// A MERGED fix retires the finding it addresses, so the
 				// digest stops carrying work that is already done. Gated
 				// on prDetail.Merged, not on verification alone: a PR
