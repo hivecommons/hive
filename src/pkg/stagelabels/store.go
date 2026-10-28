@@ -172,6 +172,10 @@ type Record struct {
 	AdoptMarkerComments     int       `json:"adopt_marker_comments,omitempty"`
 	AdoptMarkerChecked      bool      `json:"adopt_marker_checked,omitempty"`
 	AdoptMarkerHead         string    `json:"adopt_marker_head,omitempty"`
+	// AdoptMarkerReleasedBy is the superseder whose adoption this hive
+	// explicitly released (reverted orphan, maintainer hand-back). Its
+	// stale hive:adopted marker on the PR must not re-adopt on a re-read.
+	AdoptMarkerReleasedBy int `json:"adopt_marker_released_by,omitempty"`
 	// AdoptEscalatedHead / AdoptEscalatedReason record that the adoption
 	// sits at this head past the 074 dwell with nothing the hive can push
 	// and is a person's (stage 085) for that lane reason. The escalation
@@ -1258,8 +1262,9 @@ func (s *Store) NoteAdoptionOrphan(key string, previous int, now time.Time, retr
 
 // RevertOrphanAdoption releases ownership without automatically re-trying
 // the same failed takeover on the next stage pass. An explicit request or
-// a new contributor head can still start a new adoption.
-func (s *Store) RevertOrphanAdoption(key, head string) {
+// a new contributor head can still start a new adoption. The reverted
+// child's marker is remembered so a marker re-read does not re-adopt it.
+func (s *Store) RevertOrphanAdoption(key, head string, previous int) {
 	s.ClearAdoption(key)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1268,6 +1273,23 @@ func (s *Store) RevertOrphanAdoption(key, head string) {
 		return
 	}
 	r.AdoptOrphanRevertedHead = head
+	if previous > 0 {
+		r.AdoptMarkerReleasedBy = previous
+	}
+	s.items[key], s.dirty = r, true
+}
+
+// NoteAdoptionMarkerReleased records that the hive gave up superseder `by`
+// on purpose: its hive:adopted marker still on the PR is no longer evidence
+// of ownership and restoreAdoptionMarker must ignore it.
+func (s *Store) NoteAdoptionMarkerReleased(key string, by int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || by <= 0 {
+		return
+	}
+	r.AdoptMarkerReleasedBy = by
 	s.items[key], s.dirty = r, true
 }
 
@@ -1285,6 +1307,10 @@ func (s *Store) NoteAdoptionMarkerRead(key, head string, comments int) {
 }
 
 // ClearAdoption forgets the adoption, preserving the orphan retry guard.
+// The marker-read cache is reset too: with no adoption on record the
+// public hive:adopted marker is the only ownership evidence left, and a
+// lost-store orphan must be re-read on the next pass even when the
+// contributor head and comment count have not moved.
 func (s *Store) ClearAdoption(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1297,6 +1323,7 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
 	r.AdoptChildClosed = false
+	r.AdoptMarkerChecked, r.AdoptMarkerHead, r.AdoptMarkerComments = false, "", 0
 	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
 	s.items[key] = r
 	s.dirty = true

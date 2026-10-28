@@ -1205,6 +1205,9 @@ func (c *Engine) releaseMaintainerAdoption(ctx context.Context, store *stagelabe
 		}
 	}
 	store.ClearAdoption(key)
+	// The hive:adopted marker stays on the maintainer's PR; without this
+	// the marker re-read would re-adopt and hand back again every pass.
+	store.NoteAdoptionMarkerReleased(key, superseding)
 	return comments, nil
 }
 

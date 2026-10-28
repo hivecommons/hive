@@ -43,7 +43,10 @@ func (c *Engine) restoreAdoptionMarker(ctx context.Context, store *stagelabels.S
 	if err != nil {
 		return err
 	}
-	if marker.By > 0 {
+	// A marker naming a child this hive already released (reverted orphan,
+	// maintainer hand-back) is stale evidence: re-adopting it would loop
+	// revert → re-read → revert on every pass.
+	if marker.By > 0 && marker.By != rec.AdoptMarkerReleasedBy {
 		store.MarkAdopted(key, marker.Head, marker.By, now)
 	}
 	store.NoteAdoptionMarkerRead(key, obs.HeadSHA, obs.Detail.Comments)
@@ -95,6 +98,6 @@ func (c *Engine) revertOrphanedAdoption(ctx context.Context, store *stagelabels.
 		return 0, err
 	}
 	rec, _ := store.Get(key)
-	store.RevertOrphanAdoption(key, nonEmpty(rec.AdoptedHead, obs.HeadSHA))
+	store.RevertOrphanAdoption(key, nonEmpty(rec.AdoptedHead, obs.HeadSHA), previous)
 	return 1, nil
 }

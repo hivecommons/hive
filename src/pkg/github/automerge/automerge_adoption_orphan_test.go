@@ -104,6 +104,50 @@ func TestOrphanMarkerRestoresLostStoreForClosedAndMergedCopy(t *testing.T) {
 	}
 }
 
+// After a reversion the stale `hive:adopted … superseded_by=90` marker is
+// still on the PR (and a listing may lag the reversion note). Resetting the
+// marker cache on ClearAdoption must not turn that into a revert → re-read →
+// MarkAdopted → revert loop: a marker naming the released child is ignored.
+func TestOrphanRevertDoesNotReadoptFromStaleMarker(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	key := stageKey("acme", "widget", 7)
+	h.adopt.setSuperseder(90, "closed", false)
+	prior := h.api.extra
+	h.api.extra = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments" {
+			_ = json.NewEncoder(w).Encode([]any{map[string]any{"body": "<!-- hive:adopted by=acme-hive reason=contributor-offline mode=supersede superseded_by=90 head=aaa -->", "user": map[string]string{"login": testHiveAppBotLogin}}})
+			return true
+		}
+		return prior(w, r)
+	}
+	pr := adoptPR(7, "bbb", "stage/074-adopted-by-hive", "author/clanker")
+	pr.Comments = gh.Ptr(1)
+	h.api.reset()
+	h.observe(pr, "check-failing:unit")
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.AdoptedBy != 0 || rec.AdoptMarkerReleasedBy != 90 || rec.AdoptMarkerChecked {
+		t.Fatalf("orphan not reverted with released marker: %+v", rec)
+	}
+	for i := 0; i < 3; i++ {
+		h.clock.advance(time.Minute)
+		h.observe(pr, "check-failing:unit")
+	}
+	rec, _ = h.e.stageStoreOrShared().Get(key)
+	if rec.AdoptedBy != 0 || len(h.adopt.pulls) != 1 {
+		t.Fatalf("stale marker re-adopted after reversion: %+v pulls=%v", rec, h.adopt.pulls)
+	}
+	reverted := 0
+	for _, note := range h.api.comments {
+		if strings.HasPrefix(note, "<!-- hive:adoption-reverted -->") {
+			reverted++
+		}
+	}
+	if reverted != 1 {
+		t.Fatalf("reversion note posted %d times: %v", reverted, h.api.comments)
+	}
+}
+
 // A transient fence read fault (GitHub 5xx on the files list) while
 // re-adopting an orphan is a retry-next-sweep, not a failed copy: no public
 // reversion, no AdoptOrphanRevertedHead, and the next clean sweep re-adopts.
