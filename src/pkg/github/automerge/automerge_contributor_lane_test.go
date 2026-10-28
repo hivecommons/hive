@@ -85,6 +85,10 @@ type contributorLaneFixture struct {
 	// endpoint reports for sha7 (RFC 3339) and the PR's updated_at; empty
 	// leaves the route unserved and the timestamp omitted.
 	headCommittedAt string
+	// prUpdatedAt, when set, overrides the PR's updated_at (RFC 3339) so a
+	// test can give the head a committer date that disagrees with when
+	// GitHub actually saw it pushed.
+	prUpdatedAt string
 	// headStatus, when set, is the combined-status state and check-run
 	// conclusion reported for sha7; empty means "success".
 	headStatus string
@@ -178,6 +182,9 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			}
 			if fx.headCommittedAt != "" {
 				p["updated_at"] = fx.headCommittedAt
+			}
+			if fx.prUpdatedAt != "" {
+				p["updated_at"] = fx.prUpdatedAt
 			}
 			return p
 		}

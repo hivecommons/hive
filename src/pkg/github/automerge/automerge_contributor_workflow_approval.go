@@ -17,7 +17,9 @@ package automerge
 //     and `/approve` attributed to the maintainer — ParsePRApprovalCommandComment)
 //     or a person's own `/hive decision approve` comment, by a trusted
 //     merger, bound to the current head: the comment's head marker names
-//     it, or the comment was posted after the head was pushed.
+//     it, or the comment was posted after the head was first observed
+//     (headObservedAt — the pinned server-side updated_at, never the
+//     commit's own committer date, which the pusher chooses).
 //
 // Approval on an older head never counts, so a new push re-arms the fence.
 // A released fence is logged once per head and leaves one audit marker per
@@ -107,7 +109,7 @@ func (c *Engine) workflowFenceApproval(ctx context.Context, owner, repo string, 
 	if login, ok := c.latestTrustedHumanApproval(ctx, owner, repo, number, headSHA); ok {
 		return login, true
 	}
-	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
+	headPushedAt := c.headObservedAt(owner, repo, number, headSHA, pr)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
 	for i := len(comments) - 1; i >= 0; i-- {
 		login, ok := workflowApprovalCommentActor(comments[i], headSHA, headPushedAt, appLogin)

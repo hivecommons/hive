@@ -216,6 +216,62 @@ func TestContributorLaneWorkflowFenceOwnerApproval(t *testing.T) {
 	}
 }
 
+// An unmarked approval binds to when GitHub first showed the head, never to
+// the head commit's committer date: that date is whatever the pusher's git
+// wrote, so a later push carrying a backdated commit must not inherit an
+// approval typed on the head before it — even while the min_head_age window
+// (where headPushedAt lets the committer date win) is still open.
+func TestContributorLaneWorkflowFenceApprovalIgnoresCommitterDate(t *testing.T) {
+	const clockAt = "2026-10-27T13:00:00Z"
+	for _, tc := range []struct {
+		name       string
+		comment    map[string]any
+		wantReason string
+		wantMerges int
+	}{
+		{
+			name:       "typed approve older than the observed push, committer date backdated",
+			comment:    map[string]any{"id": 5, "user": map[string]string{"login": "clubanderson"}, "body": "/hive decision approve", "created_at": "2026-10-27T12:00:00Z"},
+			wantReason: contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:       "unmarked dashboard approve older than the observed push, committer date backdated",
+			comment:    dashboardApproveComment(5, "clubanderson", "", "2026-10-27T12:00:00Z"),
+			wantReason: contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:       "typed approve after the observed push still releases",
+			comment:    map[string]any{"id": 5, "user": map[string]string{"login": "clubanderson"}, "body": "/hive decision approve", "created_at": "2026-10-27T12:50:00Z"},
+			wantMerges: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.files = workflowPathFiles()
+			// Commit claims 10:00; GitHub first showed this head at 12:40.
+			fx.headCommittedAt = "2026-10-27T10:00:00Z"
+			fx.prUpdatedAt = "2026-10-27T12:40:00Z"
+			fx.prComments = []map[string]any{tc.comment}
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			policy.OwnerApprovalReleasesWorkflowFence = true
+			clock := &contributorLaneClock{at: mustParseTime(t, clockAt)}
+			// A min_head_age wider than the head's observed age keeps
+			// headPushedAt's committer-date branch live for the whole test.
+			engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock), MinHeadAge: time.Hour})
+			engine.SetMergerAuthorizer(func(login string) bool { return strings.EqualFold(login, "clubanderson") })
+			_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason != tc.wantReason || fx.merges != tc.wantMerges {
+				t.Fatalf("reason=%q merges=%d, want %q/%d (comments=%v)", reason, fx.merges, tc.wantReason, tc.wantMerges, fx.allComments)
+			}
+		})
+	}
+}
+
 // The audit marker is left once per head: a second tick on a head already
 // marked merges without a second comment.
 func TestContributorLaneWorkflowFenceMarkerOncePerHead(t *testing.T) {
