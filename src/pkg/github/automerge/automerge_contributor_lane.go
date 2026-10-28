@@ -1351,6 +1351,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 }
 
 func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, owner, repo string, number int, policy ContributorLanePolicy) (AutoMergeSweepEvent, string, error) {
+	defer c.workingPR(displayRepo, number)()
 	eval, reason, err := c.evaluateContributorLanePR(ctx, displayRepo, owner, repo, number, policy, false)
 	if err != nil || reason != "" {
 		return AutoMergeSweepEvent{}, reason, err

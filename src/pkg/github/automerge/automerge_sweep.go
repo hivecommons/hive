@@ -1437,6 +1437,8 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 	ctx = lowPriority(ctx)
 	go func() {
 		defer close(done)
+		c.scheduleSweep(time.Now().Add(interval))
+		defer c.scheduleSweep(time.Time{})
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		// cautionTick is non-zero while the ticker is running at the caution
@@ -1446,10 +1448,16 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
+			case tick := <-t.C:
+				tickInterval := interval
+				if cautionTick != 0 {
+					tickInterval = cautionTick
+				}
+				c.scheduleSweep(tick.Add(tickInterval))
 				gate := c.sweepTickGate(interval, cautionTick, hgithub.ShedLowPriorityTick)
 				if gate.reset {
 					t.Reset(gate.tick)
+					c.scheduleSweep(time.Now().Add(gate.tick))
 				}
 				cautionTick = gate.cautionTick
 				if gate.skip {
@@ -1461,6 +1469,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 				}
 				if next, changed := nextSelfAuthoredSweepInterval(repos, interval, result); changed {
 					t.Reset(next)
+					c.scheduleSweep(time.Now().Add(next))
 					c.info("self-authored automerge sweep interval adjusted",
 						"previous_interval", interval,
 						"next_interval", next,
@@ -1471,6 +1480,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 					if cautionTick != 0 {
 						cautionTick = cautionSweepInterval(interval)
 						t.Reset(cautionTick)
+						c.scheduleSweep(time.Now().Add(cautionTick))
 					}
 				}
 			}
@@ -1486,6 +1496,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 // for the log. It returns nil when the self-authored lane failed outright
 // (its callers then keep the current cadence).
 func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool, targets SweepTargets, cause string) *AutoMergeSweepResult {
+	defer c.beginSweep()()
 	result := &AutoMergeSweepResult{}
 	if acmmAllowed {
 		var err error
@@ -1615,6 +1626,7 @@ func (c *Engine) releaseHoldActive(ctx context.Context, owner, repo, branch stri
 }
 
 func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner, repo string, number int, branchUpdateAllowed bool) (AutoMergeSweepEvent, string, error) {
+	defer c.workingPR(displayRepo, number)()
 	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
@@ -2085,6 +2097,7 @@ func (c *Engine) listQueuedPullRequestIssues(ctx context.Context, owner, repo, l
 }
 
 func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner, repo string, number int, policy TrustedAuthorPolicy) (AutoMergeSweepEvent, string, error) {
+	defer c.workingPR(displayRepo, number)()
 	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:trusted_author_automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
@@ -2430,6 +2443,7 @@ func (c *Engine) commentTrustedAuthorMerge(ctx context.Context, owner, repo stri
 }
 
 func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo string, number int, label string) (AutoMergeSweepEvent, string, error) {
+	defer c.workingPR(displayRepo, number)()
 	pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {

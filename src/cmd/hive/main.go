@@ -9314,6 +9314,8 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	if lastRun != nil {
 		*lastRun = now
 	}
+	ghClient.MergeSweepClock().Schedule("queued", now.Add(autoMergeSweepInterval))
+	defer ghClient.MergeSweepClock().Begin("queued")()
 	ctx = github.WithPacingClass(ctx, github.PacingLow)
 	// governor.automerge covers the queued, trusted-author and contributor-
 	// lane sweeps plus the stage-label pass that follows them. The sweep runs

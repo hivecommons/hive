@@ -324,7 +324,8 @@ type StageTrackerItem struct {
 	// soak window was left as of the last sweep (the lane's
 	// `soaking(remaining=…)` reason aged by the time since it was recorded);
 	// 0 when unknown or not soaking.
-	SoakRemainingSeconds int64 `json:"soak_remaining_seconds,omitempty"`
+	SoakRemainingSeconds int64                  `json:"soak_remaining_seconds,omitempty"`
+	MergeGate            *StageTrackerMergeGate `json:"merge_gate,omitempty"`
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head
@@ -458,16 +459,19 @@ type StageTrackerLinkedIssue struct {
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
 type StageTrackerLinkedPR struct {
-	BaseRef    string     `json:"base_ref,omitempty"`
-	Number     int        `json:"number"`
-	Title      string     `json:"title,omitempty"`
-	URL        string     `json:"url,omitempty"`
-	Author     string     `json:"author,omitempty"`
-	AuthorKind string     `json:"author_kind,omitempty"`
-	Stage      int        `json:"stage,omitempty"`
-	StageSince *time.Time `json:"stage_since,omitempty"`
-	Caption    string     `json:"caption,omitempty"`
-	Modifiers  []string   `json:"modifiers,omitempty"`
+	MergeGate            *StageTrackerMergeGate `json:"merge_gate,omitempty"`
+	SoakRemainingSeconds int64                  `json:"soak_remaining_seconds,omitempty"`
+	Reason               string                 `json:"reason,omitempty"`
+	BaseRef              string                 `json:"base_ref,omitempty"`
+	Number               int                    `json:"number"`
+	Title                string                 `json:"title,omitempty"`
+	URL                  string                 `json:"url,omitempty"`
+	Author               string                 `json:"author,omitempty"`
+	AuthorKind           string                 `json:"author_kind,omitempty"`
+	Stage                int                    `json:"stage,omitempty"`
+	StageSince           *time.Time             `json:"stage_since,omitempty"`
+	Caption              string                 `json:"caption,omitempty"`
+	Modifiers            []string               `json:"modifiers,omitempty"`
 	// DeferredModifiers mirrors the nested PR's own row field: the
 	// merge-gate pills it is not yet drawing.
 	DeferredModifiers []string `json:"deferred_modifiers,omitempty"`
@@ -1777,6 +1781,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
+	s.applyMergeGates(resp.Items, now)
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
@@ -2500,6 +2505,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 			if pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]; pr != nil {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
+				lp.MergeGate, lp.SoakRemainingSeconds, lp.Reason = pr.MergeGate, pr.SoakRemainingSeconds, pr.Reason
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
 				lp.Adoption = pr.Adoption
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge

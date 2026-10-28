@@ -1,0 +1,1 @@
+- Activity Monitor distinguishes awaiting the merge gate, ready, soaking and merging, labels merge-sweep and agent glyphs separately, and shows sweep timing and nested PR soak countdowns ([#15073](https://github.com/hivecommons/hive/issues/15073)).

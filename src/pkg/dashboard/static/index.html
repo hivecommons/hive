@@ -1556,6 +1556,7 @@
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
     .ham-active-ico { display: none; }
     .cue-working .ham-seg.active:not(.cap) .ham-active-ico { display: inline-block; margin-right: var(--sp-1); }
+    .ham-seg.active .ham-active-ico[data-merge-gate] { display: inline-block; margin-right: var(--sp-1); animation: none; }
     @keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
     /* ---- tracker-cues: the Activity Monitor's shared cue vocabulary ------
        Owner request: a viewer must always read where an item stands,
@@ -1610,6 +1611,7 @@
     @keyframes cue-count-pop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
     @media (prefers-reduced-motion: reduce) { .cue-token { display: none; } .ham-merged-count.cue-tick { animation: none; } .cue-merged .ham-seg.cap { animation-duration: 0.01ms; } }
     .ham-rm-preview .cue-token { display: none; }
+    .cue-working .ham-seg.active:not(.cap) .ham-active-ico[data-merge-gate] { animation: none; }
     @media (prefers-reduced-motion: reduce) { .cue-working .ham-seg.active .ham-active-ico, .cue-spin, .cue-acting .ham-seg.active, .cue-event { animation: none; } }
     @keyframes ham-breathe-human { 0%, 100% { opacity: 0; } 50% { opacity: 0.55; } }
     .ham-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-4) 0; }
@@ -8438,7 +8440,7 @@
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
       'agents-section': { heading: 'Agents', help: 'Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.' },
       'agent-activity-section': { heading: 'Agent activity', help: 'One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.' },
-      'activity-monitor-section': { heading: 'Hive activity monitor', help: 'A progress strip per open issue and pull request showing which step of the pipeline it is on and who must act next.' },
+      'activity-monitor-section': { heading: 'Hive activity monitor', help: 'A progress strip per open issue and pull request showing which step of the pipeline it is on and who must act next. Merge gate: Awaiting merge gate → Ready for auto merge → Soaking → Merging → Merged. Every gate has a labelled status glyph; hover for the gate reason, soak time left or next scheduled floor sweep (events may run sooner). A separate spinning agent glyph means an agent is working on the PR.' },
       'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people ask once a hive is running, each linking to the guide that explains it fully.' },
     });
     // The one place that decides where dashboard help lives: every help mark and
@@ -13961,7 +13963,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_POSSIBLY_EXISTS = 17;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
-    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Awaiting merge gate', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
     const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
@@ -14146,6 +14148,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (sec <= 0) return '';
       const min = Math.ceil(sec / 60);
       return ' — ' + (min >= 60 ? Math.floor(min / 60) + 'h' + (min % 60 ? (min % 60) + 'm' : '') : min + 'm') + ' left';
+    }
+
+    // The sweep glyph describes the merge lane; agent activity is independent.
+    function stageTrackerMergeGateTip(item, nowMs) {
+      const gate = item.merge_gate || {};
+      const stage = Number(item.stage) || 0;
+      if (stage === 110) return 'merged';
+      if (stage === 95) return 'soaking' + stageTrackerSoakLeft(item);
+      if (gate.sweep_running) return "hive's merge sweep is running on this PR now";
+      if (stage === 100) return 'merging — admitted to the merge queue';
+      if (stage === 60) return 'awaiting merge gate — ' + (item.caption || gate.reason || item.reason || 'waiting for merge gate evaluation');
+      const next = Date.parse(gate.next_sweep_at || '');
+      return "waiting for hive's merge sweep" + (Number.isFinite(next) ? (next > nowMs ? ' — next pass in ' + Math.ceil((next - nowMs) / 1000) + 's (events may run sooner)' : ' — next pass due; waiting for the scheduler') : ' — next pass not scheduled yet');
     }
 
     function stageTrackerHoldLabels(item) {
@@ -14423,7 +14438,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
-          // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
+          // The tooltip includes admission details in addition to the distinct pill words.
           if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
@@ -14436,15 +14451,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // Working or waiting leads: what happens now, or what it waits on.
           if (!sg.cap && typeof stageTrackerCueLead === 'function') tip = stageTrackerCueLead(item, worker, nowMs) + tip;
         }
+        const gateRow = active && !sg.cap && sg.number === STAGE_TRACKER_MERGE_COLUMN;
+        const gateTip = gateRow && !sg.detour && typeof stageTrackerMergeGateTip === 'function' ? stageTrackerMergeGateTip(item, nowMs || Date.now()) : '';
+        if (gateTip) tip = gateTip + ' — ' + tip;
         let inner;
         // A lit chevron on a row parked on a person ("Needs human decision",
         // "Triage needed") is the trigger of the decision popover: the word
         // becomes a button and the chevron drops its native title so the
         // popover (which repeats the stage line) is its one hover text.
         const decision = active && !sg.cap && typeof stageTrackerDecisionOf === 'function' ? stageTrackerDecisionOf(item) : null;
-        const word = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`;
+        const word = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short + (curStage === 95 && active ? stageTrackerSoakLeft(item) : ''))}</span>`;
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
-        else if (active) inner = stageTrackerIcon(sg.number, 'ham-ico ham-active-ico') + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;
+        else if (active) {
+          const iconLabel = gateRow ? (gateTip || tip) : 'An agent is working on this item now';
+          const icon = stageTrackerIcon(sg.number, 'ham-ico ham-active-ico', iconLabel).replace(' viewBox=', ` title="${esc(iconLabel)}"${gateRow ? ' data-merge-gate="true"' : ''} viewBox=`).replace('><', `><title>${esc(iconLabel)}</title><`);
+          const agentIcon = gateRow && worker ? stageTrackerIcon(50, 'ham-ico cue-spin', 'An agent is working on this PR now').replace(' viewBox=', ' title="An agent is working on this PR now" viewBox=').replace('><', '><title>An agent is working on this PR now</title><') : '';
+          inner = icon + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco + agentIcon;
+        }
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : ''}>${inner}</li>`;
       }).join('');
@@ -14852,7 +14875,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerLinkedPRItem(issue, lp) {
       const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x)) : [];
       return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
-        stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
+        merge_gate: lp.merge_gate || null, soak_remaining_seconds: lp.soak_remaining_seconds || 0, stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, superseded: !!lp.superseded, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0 };
@@ -15047,7 +15070,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
-          shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
+          shown = Object.assign({}, item, { via_pr: true, merge_gate: lp.merge_gate || null, soak_remaining_seconds: lp.soak_remaining_seconds || 0, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, adoption: lp.adoption || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed

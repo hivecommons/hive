@@ -103,6 +103,11 @@ func TestRunAutoMergeSweepIfDue_DueSweepStampsLastRunAndCallsAPI(t *testing.T) {
 	if lastRun.Before(start) {
 		t.Fatalf("due sweep must stamp lastRun, got %v", lastRun)
 	}
+	clock := ghClient.MergeSweepClock().Snapshot("testorg/widget", 1)
+	if clock.LastSweepAt == nil || clock.LastSweepAt.Before(start) || clock.NextSweepAt == nil || !clock.NextSweepAt.Equal(lastRun.Add(autoMergeSweepInterval)) {
+		t.Fatalf("sweep clock did not publish actual pass timing: %+v", clock)
+	}
+
 }
 
 func TestRunAutoMergeSweepIfDue_NilLastRunStillSweeps(t *testing.T) {

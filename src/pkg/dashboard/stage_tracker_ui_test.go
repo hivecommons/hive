@@ -233,7 +233,7 @@ const segStates = (html) => Array.from(strip(html).matchAll(/<li class="ham-seg 
 const titles = (html, t) => (html.match(new RegExp('>' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<', 'g')) || []).length;
 const prCol = (html) => Array.from(html.slice(0, html.indexOf('aria-label="Pipeline progress"')).matchAll(/<a class="ham-pr-ref"[^>]*>(.*?)<\/a>/g)).map(m => m[1]);
 const B = 'blank';
-const text = (h) => h.replace(/<[^>]+>/g, '').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
+const text = (h) => h.replace(/<svg\b[\s\S]*?<\/svg>/g, '').replace(/<[^>]+>/g, '').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
 // The row tooltip rides the issue's #N link on an issue row and the PR link
 // (after "PR title · ") on a PR row; the issue slot of a PR row carries none.
 const tooltip = (row) => (/<a class="ham-ref"[^>]*title="([^"]*)"/.exec(row) || /<a class="ham-pr-ref"[^>]*title="([^"]*)"/.exec(row))[1];
@@ -422,7 +422,7 @@ assert.ok(!stageTrackerRowHtml({ repo: 'acme/console', number: 30, kind: 'pr', t
 // With the PR's stage known the issue strip rides it (merge queue → Merge gate lit, hive move).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 40, linked_prs: [{ number: 102, title: 'Fix it', author_kind: 'human', author: 'bob', stage: 100, stage_since: new Date(now - 7200000).toISOString(), modifiers: ['stalled'], caption: 'Admitted, merging' }] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
-assert.ok(row.includes('<span class="ham-seg-t">Ready for auto merge</span><svg class="ham-ico ham-actor-ico"') && row.includes('aria-label="Next move: hive"'), row);
+assert.ok(row.includes('<span class="ham-seg-t">Merging</span><svg class="ham-ico ham-actor-ico"') && row.includes('aria-label="Next move: hive"'), row);
 assert.ok(row.includes('ham-mod-stalled">stalled</span>') && row.includes('<span class="ham-since ham-stalled">2h</span>'), 'chips + since come from the covering PR: ' + row);
 assert.ok(tooltip(row).includes('Admitted, merging') && tooltip(row).includes('Covering PR: #102'), tooltip(row));
 assert.ok(prCol(row)[0].includes('ham-author-human') && prCol(row)[0].includes('<span class="ham-pr-title">Fix it</span>'), prCol(row)[0]);
@@ -431,17 +431,18 @@ assert.strictEqual(subs(row).length, 0);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 40, linked_prs: [{ number: 102, stage: 100 }, { number: 104 }] }, stages, ctx);
 assert.ok(subs(row)[1].includes('#104') && segStates(subs(row)[1]).every(st => st.startsWith('blank') || st === 'todo' || st === 'todo cap'), 'unknown PR stage: blank lead-in, nothing lit');
 assert.ok(tooltip(row).includes('acme/console'), 'repo lives in the tooltip');
-// Full PR row for 100: Merge gate lit as Ready for auto merge with the hive actor icon.
+// Full PR row for 100: Merge gate lit as Merging with the hive actor icon.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', stage: 100, author: 'hive-bot', author_kind: 'hive' }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
 assert.ok(strip(row).includes('title="Merge queue — admitted, merging · Next move: hive"'), 'chevron tooltip carries 100: ' + row);
-assert.ok(text(row).includes('#102 Ready for auto merge'), text(row));
+assert.ok(text(row).includes('#102 Merging'), text(row));
 // Full PR row for 095: Merge gate lit as Soaking (not a detour), hive actor,
 // chevron tooltip names the real stage and the time left; headline carries it too.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 13020, kind: 'pr', stage: 95, author: 'hive-bot', author_kind: 'hive', soak_remaining_seconds: 17 * 60 + 1 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap'], '095 lights the Merge gate column, no detour');
 assert.ok(strip(row).includes('title="Pre-merge soak — admitted, soaking — 18m left · Next move: hive"'), 'chevron tooltip carries 095 + time left: ' + row);
 assert.ok(tooltip(row).startsWith('Pre-merge soak — 18m left'), 'headline: ' + tooltip(row));
+assert.ok(row.includes('>Soaking — 18m left</span>'), 'soak time is visible in the pill');
 assert.strictEqual(stageTrackerHeadline({ stage: 95 }), 'Pre-merge soak', 'no remaining known → plain headline');
 assert.strictEqual(stageTrackerHeadline({ stage: 95, soak_remaining_seconds: 5400 }), 'Pre-merge soak — 1h30m left');
 assert.strictEqual(stageTrackerHeadline({ stage: 95, kind: 'issue', soak_remaining_seconds: 60 }), 'Pre-merge soak — 1m left (its PR)');
@@ -689,7 +690,7 @@ assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 // is what the chevron says, the actor is whose move it is. The active
 // chevron now leads with its stage icon, so the regex skips that svg.
 const prWords = {};
-for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Ready for auto merge', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Ready for auto merge', 'hive']]) {
+for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Awaiting merge gate', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
   const m = /aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
   assert.ok(m, 'stage ' + st + ' has no active word + actor: ' + r);
@@ -700,7 +701,7 @@ for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Ready for au
 // and the next mover for the strip's active segment; it stays empty when no
 // active segment is in range.
 assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages), '<p class="ham-current-stage">CI / Review · Fixing · Next move: clanker</p>');
-assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 560, kind: 'pr', stage: 60 }, stages), '<p class="ham-current-stage">Ready for auto merge · Next move: hive</p>', 'no detour → column word only');
+assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 560, kind: 'pr', stage: 60 }, stages), '<p class="ham-current-stage">Awaiting merge gate · Next move: hive</p>', 'no detour → column word only');
 assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages, { from: 500 }), '', 'no caption when the active segment is out of range');
 assert.strictEqual(STAGE_TRACKER_ACTOR[70], 'author', '070 fixing is the author\'s move');
 // Filters.
@@ -744,11 +745,11 @@ assert.deepStrictEqual(stageTrackerVisible(g, { kind: 'pr', repo: '' }).map(it =
 // Hover text budget per row (owner request): only the #N link, the PR link,
 // the item title and the active chevron carry title="…". The row container,
 // sub-row container, kind / author / actor icons, chips, since cells and
-// every non-active chevron carry none; icons expose their label via aria-label.
+// every non-active chevron carry none. Active glyphs have their own title and aria-label, checked below.
 const tags = (html) => Array.from(html.matchAll(/<(\w+)\b([^>]*)>/g)).map(m => ({ tag: m[1], attrs: m[2] }));
-const titled = (html) => tags(html).filter(t => / title="/.test(t.attrs));
+const titled = (html) => tags(html).filter(t => / title="/.test(t.attrs) && !/ham-active-ico|cue-spin/.test(t.attrs));
 const expectTitles = (html, want, what) => assert.deepStrictEqual(titled(html).map(t => t.tag + '.' + ((/class="([^" ]+)/.exec(t.attrs) || [])[1] || '')), want, what + ': ' + html);
-assert.ok(!/<svg[^>]*>\s*<title>/.test(golden), 'no svg <title> tooltips anywhere in the tracker');
+for (const m of golden.matchAll(/<svg([^>]*)>\s*<title>/g)) assert.ok(/ham-active-ico|cue-spin/.test(m[1]), 'only status and agent activity glyphs have SVG titles');
 assert.ok(!/<(div|span)[^>]*class="ham-(row|sub|since|badge|kind-ico)[^>]*title="/.test(golden), 'containers, since cells, chips and kind icons carry no title');
 for (const r of golden.split('<div class="ham-row"').slice(1)) {
   const seg = Array.from(r.matchAll(/<li class="ham-seg ([^"]*)"([^>]*)>/g));
@@ -784,12 +785,27 @@ assert.ok(/<a class="ham-pr-ref"[^>]*title="First PR · Back with the contributo
 row = stageTrackerRowHtml(g[6], stages, ctx);
 expectTitles(row, ['a.ham-pr-ref', 'li.ham-seg'], 'standalone PR');
 assert.ok(/<a class="ham-pr-ref"[^>]*title="Standalone PR · Not yet admitted to auto merge[^"]*@cy \(author\/human\)/.test(row), 'PR link: title, then the row tooltip: ' + row);
-assert.ok(row.includes('aria-label="human · @cy"') && !row.includes('<title>'), 'author icon label is aria-only: ' + row);
+assert.ok(row.includes('aria-label="human · @cy"') && !/<svg[^>]*ham-author-ico[^>]*>\s*<title>/.test(row), 'author icon label is aria-only: ' + row);
 // Since cells are untouched: plain text, no title.
 assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/ham-since[^>]*title=/.test(golden), 'since cells unchanged');
 // Merged: the lit cap is the only chevron with hover text.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
 assert.ok(/<li class="ham-seg active cap merged" title="Merged — [^"]*" aria-current="step">/.test(row) && titled(strip(row)).length === 1, row);
+` + "\n globalThis.stageTrackerMergeGateTip = " + jsFunc(t, html, "stageTrackerMergeGateTip") + `;
+for (const stage of [60, 80, 95, 100]) {
+  const it = {repo: 'acme/console', kind: 'pr', number: 900, stage, soak_remaining_seconds: 420, reason: 'check-pending', merge_gate: {next_sweep_at: new Date(now + 42000).toISOString()}};
+  const idle = stageTrackerRowHtml(it, stages, ctx);
+  assert.ok(/<svg class="ham-ico ham-active-ico"[^>]*title="[^"]+"[^>]*data-merge-gate="true"[^>]*aria-label="[^"]+"/.test(idle), 'every gate has a labelled glyph without a worker: ' + idle);
+  const busy = stageTrackerRowHtml(it, stages, Object.assign({}, ctx, {workers: {'acme/console#900': {agent: 'scout', action: 'agent_comment_created', at: new Date(now).toISOString()}}}));
+  assert.ok(busy.includes('title="An agent is working on this PR now"') && busy.includes('aria-label="An agent is working on this PR now"'), 'agent activity is independently labelled: ' + busy);
+}
+const soakingPR = {number: 901, stage: 95, soak_remaining_seconds: 420, merge_gate: {state: 'soaking'}};
+const issue = {repo: 'acme/console', kind: 'issue', number: 800, stage: 40, linked_prs: [soakingPR, {number: 902, stage: 60}]};
+const nestedSoak = stageTrackerRowHtml(issue, stages, ctx);
+assert.ok(subs(nestedSoak).some(sub => sub.includes('Soaking — 7m left')), 'nested PR retains visible soak countdown: ' + nestedSoak);
+const nestedItem = stageTrackerLinkedPRItem(issue, soakingPR);
+assert.strictEqual(nestedItem.merge_gate.state, 'soaking');
+assert.strictEqual(nestedItem.soak_remaining_seconds, 420);
 `
 	// Over stdin: the lifted fixture exceeds Linux's per-argument limit.
 	cmd := exec.Command(node, "-")
@@ -1040,5 +1056,28 @@ assert.strictEqual(stageTrackerLabelDialogData(stageTrackerLabelFacets(parked, F
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node Hive activity monitor fixture failed: %v\n%s", err, out)
+	}
+}
+
+func TestStageTrackerMergeGateTips(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH")
+	}
+	html := indexHTML(t)
+	script := jsFunc(t, html, "stageTrackerSoakLeft") + "\n" + jsFunc(t, html, "stageTrackerMergeGateTip") + `
+const assert = require('assert');
+const now = Date.parse('2026-10-28T19:00:00Z');
+assert.strictEqual(stageTrackerMergeGateTip({stage: 60, reason: 'required-check-pending:build'}, now), 'awaiting merge gate — required-check-pending:build');
+assert.strictEqual(stageTrackerMergeGateTip({stage: 80, merge_gate: {next_sweep_at: new Date(now + 42000).toISOString()}}, now), "waiting for hive's merge sweep — next pass in 42s (events may run sooner)");
+assert.ok(stageTrackerMergeGateTip({stage: 80}, now).includes('not scheduled yet'));
+assert.ok(stageTrackerMergeGateTip({stage: 80, merge_gate: {next_sweep_at: new Date(now - 1).toISOString()}}, now).includes('next pass due'));
+assert.strictEqual(stageTrackerMergeGateTip({stage: 80, merge_gate: {sweep_running: true}}, now), "hive's merge sweep is running on this PR now");
+assert.strictEqual(stageTrackerMergeGateTip({stage: 95, soak_remaining_seconds: 420}, now), 'soaking — 7m left');
+assert.strictEqual(stageTrackerMergeGateTip({stage: 100}, now), 'merging — admitted to the merge queue');
+assert.strictEqual(stageTrackerMergeGateTip({stage: 110}, now), 'merged');
+`
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("merge gate tips: %v\n%s", err, out)
 	}
 }

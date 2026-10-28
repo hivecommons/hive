@@ -38,8 +38,9 @@ import (
 var ErrNoGitHubClient = errors.New("no github client configured (hive is running without GitHub credentials)")
 
 type Client struct {
-	client      *gh.Client
-	linearTeams map[string][]string
+	mergeSweepClock MergeSweepClock
+	client          *gh.Client
+	linearTeams     map[string][]string
 	// foldedTrackers records issues that finding folds landed on (#11587).
 	foldedTrackers foldedTrackerSet
 	// commentBudget caps automated comments per issue per day (#12733).
