@@ -140,7 +140,7 @@ func (m *Manager) repeatFailureOmpLaunchFlag(agent *AgentProcess, backend string
 		return ""
 	}
 	recordPath := RepeatFailureRecordPath(home)
-	if err := writeRepeatFailureBashEnv(m.agentExecUserSpec(agent), recordPath, ext, renderRepeatFailureOmpExtension(agent.Name, recordPath)); err != nil {
+	if err := writeRepeatFailureRouteFile(m.agentExecUserSpec(agent), recordPath, ext, renderRepeatFailureOmpExtension(agent.Name, recordPath)); err != nil {
 		m.logger.Warn("repeat-failure: writing the omp extension failed; agent launches without it",
 			"agent", agent.Name, "path", ext, "error", err)
 		return ""

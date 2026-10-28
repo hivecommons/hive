@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -30,6 +31,14 @@ import (
 // stopped; a log that already existed when the reader started is read from its
 // end, so a Hive restart does not replay history, and a toolCallId is recorded
 // at most once even when a log is rewritten and read again.
+//
+// The logs live under the agent's HOME and Hive reads them as itself (root in
+// multi-uid mode) while the extracted commands land in a file the agent can
+// read, so the reader never follows a link the agent could plant: the
+// session-state tree, every session directory and every events.jsonl are
+// Lstat-checked, the log is opened O_NOFOLLOW, and in multi-uid mode a log
+// not owned by the agent's uid is skipped (audit F12 discipline, as on the
+// record-file side).
 
 // RepeatFailureRouteCopilotEvents names the Copilot session-log reader in a
 // record's Route.
@@ -69,9 +78,14 @@ func newCopilotRecordReader() *copilotRecordReader {
 
 // scan reads what was appended to every session log under home since the last
 // scan. emit receives one record per completed shell call and observe the
-// shell activity (finished false at start, true at completion).
-func (r *copilotRecordReader) scan(home string, emit func(RepeatFailureRecord), observe func(finished bool, at time.Time)) {
+// shell activity (finished false at start, true at completion). When uid > 0
+// only logs owned by uid are read.
+func (r *copilotRecordReader) scan(home string, uid int, emit func(RepeatFailureRecord), observe func(finished bool, at time.Time)) {
 	root := filepath.Join(home, ".copilot", "session-state")
+	if !copilotRecordRealDir(filepath.Join(home, ".copilot")) || !copilotRecordRealDir(root) {
+		r.started = true
+		return
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		r.started = true
@@ -79,13 +93,14 @@ func (r *copilotRecordReader) scan(home string, emit func(RepeatFailureRecord), 
 	}
 	present := make(map[string]bool, len(entries))
 	for _, entry := range entries {
+		// A symlinked session directory is not a directory to ReadDir.
 		if !entry.IsDir() {
 			continue
 		}
 		name := entry.Name()
 		present[name] = true
-		info, err := os.Stat(filepath.Join(root, name, "events.jsonl"))
-		if err != nil || !info.Mode().IsRegular() {
+		info, err := os.Lstat(filepath.Join(root, name, "events.jsonl"))
+		if err != nil || !info.Mode().IsRegular() || !copilotRecordOwnedBy(info, uid) {
 			continue
 		}
 		sess := r.sessions[name]
@@ -112,12 +127,34 @@ func (r *copilotRecordReader) scan(home string, emit func(RepeatFailureRecord), 
 	r.started = true
 }
 
+// copilotRecordRealDir reports whether path is a directory and not a link.
+func copilotRecordRealDir(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.IsDir()
+}
+
+// copilotRecordOwnedBy reports whether info's file belongs to uid. Any uid
+// passes with uid <= 0 (single-uid mode, where Hive and the agents share one
+// user) and nothing passes on a platform without Stat_t.
+func copilotRecordOwnedBy(info os.FileInfo, uid int) bool {
+	if uid <= 0 {
+		return true
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == uid
+}
+
 func (r *copilotRecordReader) readSession(path string, sess *copilotRecordSession, size int64, emit func(RepeatFailureRecord), observe func(bool, time.Time)) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return
 	}
 	defer f.Close()
+	// The log was Lstat-checked a moment ago; make sure the descriptor still
+	// holds a regular file and not something swapped in since.
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return
+	}
 	n := min(size-sess.offset, copilotRecordReadMax)
 	buf := make([]byte, n)
 	read, err := f.ReadAt(buf, sess.offset)
@@ -282,7 +319,7 @@ func (m *Manager) readCopilotRepeatFailureRecords() {
 
 	for _, a := range agents {
 		var records []RepeatFailureRecord
-		readers[a.name].scan(a.home, func(rec RepeatFailureRecord) {
+		readers[a.name].scan(a.home, a.uid, func(rec RepeatFailureRecord) {
 			rec.Agent = a.name
 			records = append(records, rec)
 		}, func(finished bool, at time.Time) {

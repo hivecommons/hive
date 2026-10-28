@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -153,7 +154,12 @@ func loadKickTranscript(t kickTranscriptTarget) (string, error) {
 	if !t.since.IsZero() && h.LastActive.Before(t.since) {
 		return "", fmt.Errorf("newest %s transcript %s predates the kick", t.backend, h.Transcript)
 	}
-	f, err := os.Open(h.Transcript)
+	// The transcript sits in the agent's HOME: never follow a link planted
+	// there (the same discipline as the repeat-failure Copilot reader).
+	if info, err := os.Lstat(h.Transcript); err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s transcript %s is not a regular file", t.backend, h.Transcript)
+	}
+	f, err := os.OpenFile(h.Transcript, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return "", fmt.Errorf("opening %s transcript: %w", t.backend, err)
 	}

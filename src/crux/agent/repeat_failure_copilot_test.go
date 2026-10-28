@@ -36,13 +36,14 @@ func rfCopilotWriteSession(t *testing.T, home, session, content string) string {
 }
 
 type rfCopilotScan struct {
+	uid      int
 	records  []RepeatFailureRecord
 	starts   int
 	finishes int
 }
 
 func (s *rfCopilotScan) run(r *copilotRecordReader, home string) {
-	r.scan(home, func(rec RepeatFailureRecord) { s.records = append(s.records, rec) }, func(finished bool, _ time.Time) {
+	r.scan(home, s.uid, func(rec RepeatFailureRecord) { s.records = append(s.records, rec) }, func(finished bool, _ time.Time) {
 		if finished {
 			s.finishes++
 		} else {
@@ -57,9 +58,12 @@ func (s *rfCopilotScan) run(r *copilotRecordReader, home string) {
 // with the exit code, although Copilot marks the call success=true, and the
 // shell call is reported to the safeguard once started and once finished.
 func TestRepeatFailureCopilotHarness(t *testing.T) {
-	version, err := os.ReadFile("testdata/repeat_failure/copilot/version.txt")
-	if err != nil || !strings.Contains(string(version), "Copilot CLI") {
-		t.Fatalf("harness evidence lacks `copilot --version`: %q, %v", version, err)
+	version := rfCopilotFixtureVersion(t)
+	if !strings.Contains(version, "Copilot CLI") {
+		t.Fatalf("harness evidence lacks `copilot --version`: %q", version)
+	}
+	if row := rfCoverageRow(t, "copilot"); !strings.Contains(row.Evidence, version) {
+		t.Fatalf("coverage evidence %q does not carry the harness version %q; update repeat_failure_coverage.go and the docs table", row.Evidence, version)
 	}
 	home := t.TempDir()
 	r := newCopilotRecordReader()
@@ -78,6 +82,91 @@ func TestRepeatFailureCopilotHarness(t *testing.T) {
 	}
 	if s.starts != 1 || s.finishes != 1 {
 		t.Fatalf("shell activity: %d starts, %d finishes; want 1 and 1", s.starts, s.finishes)
+	}
+}
+
+// rfCopilotFixtureVersion is the `copilot --version` line the harness
+// recorded, without its trailing period.
+func rfCopilotFixtureVersion(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("testdata/repeat_failure/copilot/version.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSuffix(strings.TrimSpace(string(data)), ".")
+}
+
+// TestRepeatFailureCopilotNeverFollowsLinks: the reader runs as Hive over
+// files the agent controls, so a session-state tree, a session directory or
+// an events.jsonl that is a link (here, to another agent's log) is skipped,
+// and in multi-uid mode so is a log owned by anyone but the agent.
+func TestRepeatFailureCopilotNeverFollowsLinks(t *testing.T) {
+	fixture := rfCopilotFixture(t)
+	other := t.TempDir()
+	otherLog := rfCopilotWriteSession(t, other, "victim", "")
+	otherState := filepath.Dir(filepath.Dir(otherLog))
+
+	home := t.TempDir()
+	state := filepath.Join(home, ".copilot", "session-state")
+	if err := os.MkdirAll(state, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(otherLog), filepath.Join(state, "linked-dir")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(state, "linked-file"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(otherLog, filepath.Join(state, "linked-file", "events.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	r := newCopilotRecordReader()
+	var s rfCopilotScan
+	s.run(r, home)
+	if err := os.WriteFile(otherLog, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.run(r, home)
+	if len(s.records) != 0 || s.starts != 0 {
+		t.Fatalf("a linked session dir or log was read: %+v", s.records)
+	}
+
+	// The whole session-state tree as a link.
+	linkedHome := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(linkedHome, ".copilot"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(otherState, filepath.Join(linkedHome, ".copilot", "session-state")); err != nil {
+		t.Fatal(err)
+	}
+	r2 := newCopilotRecordReader()
+	var s2 rfCopilotScan
+	s2.run(r2, linkedHome)
+	if err := os.WriteFile(otherLog, []byte(fixture+fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s2.run(r2, linkedHome)
+	if len(s2.records) != 0 {
+		t.Fatalf("a linked session-state tree was read: %+v", s2.records)
+	}
+
+	// Owner check: the agent's own uid reads, any other uid is skipped.
+	ownHome := t.TempDir()
+	path := rfCopilotWriteSession(t, ownHome, "s", "")
+	r3 := newCopilotRecordReader()
+	wrong := rfCopilotScan{uid: os.Getuid() + 1}
+	wrong.run(r3, ownHome)
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wrong.run(r3, ownHome)
+	if len(wrong.records) != 0 {
+		t.Fatalf("a log owned by another uid was read: %+v", wrong.records)
+	}
+	right := rfCopilotScan{uid: os.Getuid()}
+	right.run(r3, ownHome)
+	if len(right.records) != 1 {
+		t.Fatalf("the agent's own log was not read as uid %d: %+v", os.Getuid(), right.records)
 	}
 }
 

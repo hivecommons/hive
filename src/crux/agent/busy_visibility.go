@@ -107,7 +107,8 @@ func newestCopilotTranscriptActivityCached(home string, cache *transcriptSession
 			}
 		}
 		var mod time.Time
-		if info, err := os.Stat(filepath.Join(root, name, "events.jsonl")); err == nil {
+		// Lstat: a link planted in the agent's HOME is never followed.
+		if info, err := os.Lstat(filepath.Join(root, name, "events.jsonl")); err == nil && info.Mode().IsRegular() {
 			mod = info.ModTime()
 		}
 		if cache != nil {

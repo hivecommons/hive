@@ -10,6 +10,18 @@ import (
 	"github.com/hivecommons/hive/crux/config"
 )
 
+// rfCoverageRow returns backend's row of the coverage table.
+func rfCoverageRow(t *testing.T, backend string) RepeatFailureCoverage {
+	t.Helper()
+	for _, row := range RepeatFailureCoverageTable() {
+		if row.Backend == backend {
+			return row
+		}
+	}
+	t.Fatalf("no coverage row for %q", backend)
+	return RepeatFailureCoverage{}
+}
+
 // TestRepeatFailureCoverageListsEveryBackend is C13/C-AC11: the code table has
 // exactly one row for every config.CLIBackends and config.InferenceBackends
 // entry, so removing a backend from it fails here.
@@ -110,7 +122,7 @@ func TestRepeatFailureCoverageDocsMatchCode(t *testing.T) {
 	}
 	want := RepeatFailureCoverageMarkdownRows()
 	if !slices.Equal(got, want) {
-		t.Errorf("docs repeated-failure table differs from the code table (pkg/agent/repeat_failure_coverage.go).\nwant rows:\n%s\n\ngot rows:\n%s",
+		t.Errorf("docs repeated-failure table differs from the code table (crux/agent/repeat_failure_coverage.go).\nwant rows:\n%s\n\ngot rows:\n%s",
 			strings.Join(want, "\n"), strings.Join(got, "\n"))
 	}
 }

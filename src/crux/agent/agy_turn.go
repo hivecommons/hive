@@ -373,7 +373,8 @@ type agyTurnRenderer struct {
 	result      *agyTurnResult
 	// recordFile receives one repeat-failure record per run_command step that
 	// ends; empty records nothing. commands holds each run_command step's
-	// CommandLine from its ACTIVE update, recorded the steps already written.
+	// CommandLine from its ACTIVE update; recorded holds the steps already
+	// written.
 	recordFile string
 	commands   map[int]string
 	recorded   map[int]bool

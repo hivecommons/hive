@@ -33,13 +33,13 @@ func TestRepeatFailureOmpHarnessEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	var version bool
+	var version string
 	var recs []RepeatFailureRecord
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
 		if strings.HasPrefix(line, "omp/") {
-			version = true
+			version = strings.TrimSpace(line)
 		}
 		if strings.HasPrefix(line, "{") {
 			rec, ok := parseRepeatFailureRecord([]byte(line + "\n"))
@@ -49,8 +49,11 @@ func TestRepeatFailureOmpHarnessEvidence(t *testing.T) {
 			recs = append(recs, rec)
 		}
 	}
-	if !version {
+	if version == "" {
 		t.Fatal("evidence lacks the `omp --version` output")
+	}
+	if row := rfCoverageRow(t, "omp"); !strings.Contains(row.Evidence, version) {
+		t.Fatalf("coverage evidence %q does not carry the harness version %q; update repeat_failure_coverage.go and the docs table", row.Evidence, version)
 	}
 	if len(recs) != 1 {
 		t.Fatalf("evidence records = %+v, want exactly one", recs)

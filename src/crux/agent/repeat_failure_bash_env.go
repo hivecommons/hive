@@ -239,24 +239,24 @@ func (m *Manager) provisionRepeatFailureBashEnv(agent *AgentProcess, backend str
 	}
 	recordPath := RepeatFailureRecordPath(home)
 	content := renderRepeatFailureBashEnv(agent.Name, backend, recordPath, repeatFailureChainedBashEnv(script))
-	if err := writeRepeatFailureBashEnv(m.agentExecUserSpec(agent), recordPath, script, content); err != nil {
+	if err := writeRepeatFailureRouteFile(m.agentExecUserSpec(agent), recordPath, script, content); err != nil {
 		m.logger.Warn("repeat-failure: writing the BASH_ENV route failed; agent launches without it",
 			"agent", agent.Name, "path", script, "error", err)
 	}
 }
 
-// writeRepeatFailureBashEnv creates the 0700 record directory and writes a
+// writeRepeatFailureRouteFile creates the 0700 record directory and writes a
 // route file (the BASH_ENV script, the omp extension) into it, as the agent's
 // user when there is one (the same su-exec discipline as the advisor hook
 // files) and directly otherwise.
-func writeRepeatFailureBashEnv(userSpec, recordPath, script string, content []byte) error {
+func writeRepeatFailureRouteFile(userSpec, recordPath, path string, content []byte) error {
 	if err := ensureRepeatFailureRecordDirAs(userSpec, recordPath); err != nil {
 		return err
 	}
 	if userSpec == "" {
-		return writeRepeatFailureBashEnvFile(script, content)
+		return writeRepeatFailureRouteFileNoFollow(path, content)
 	}
-	return writeFileAsUser(userSpec, script, content)
+	return writeFileAsUser(userSpec, path, content)
 }
 
 // ensureRepeatFailureRecordDirAs creates the 0700 record directory as the
@@ -273,16 +273,16 @@ func ensureRepeatFailureRecordDirAs(userSpec, recordPath string) error {
 	return nil
 }
 
-// writeRepeatFailureBashEnvFile replaces script atomically, never following a
-// planted link.
-func writeRepeatFailureBashEnvFile(script string, content []byte) error {
-	tmp := script + ".new"
+// writeRepeatFailureRouteFileNoFollow replaces the route file at path
+// atomically, never following a planted link.
+func writeRepeatFailureRouteFileNoFollow(path string, content []byte) error {
+	tmp := path + ".new"
 	_ = os.Remove(tmp)
 	if err := writeFileNoFollow(tmp, content, repeatFailureRecordFileMode); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, script); err != nil {
+	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}

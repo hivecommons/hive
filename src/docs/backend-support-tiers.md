@@ -565,7 +565,7 @@ signal is what the "not receiving data" safeguard watches for a covered
 backend, or "safeguard unavailable" where the backend has none.
 
 This table is generated from the code table in
-`src/pkg/agent/repeat_failure_coverage.go`;
+`src/crux/agent/repeat_failure_coverage.go`;
 `TestRepeatFailureCoverageDocsMatchCode` fails when a backend is missing or a
 row here differs from the code.
 
