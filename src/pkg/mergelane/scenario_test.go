@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/effects"
 	ghub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -820,5 +821,31 @@ func TestExtendedFrontMergesWhenChecksFinish(t *testing.T) {
 	expectOutcome(t, h.advance(1), OutcomeMerged, "")
 	if got := len(h.eventsFor(ActionExtend)); got != 1 {
 		t.Fatalf("extensions = %d, want 1", got)
+	}
+}
+
+// A definite GitHub refusal of the front's merge (403/405/422) leaves the
+// front at once, before the front timeout, and the next waiter is promoted.
+func TestFrontWhoseMergeIsRefusedLeavesAndNextWaiterIsPromoted(t *testing.T) {
+	h := newHarness(t)
+	p := h.f.addPR(1, "h1")
+	h.f.addPR(2, "h2")
+	expectOutcome(t, h.acquire(1), OutcomeFront, "")
+	h.now = h.now.Add(time.Minute)
+	expectOutcome(t, h.acquire(2), OutcomeDeferred, ReasonNotAtFront)
+
+	refusal := effects.NotApplied(errors.New("PUT /pulls/1/merge: 403 Resource not accessible by integration []"))
+	h.f.errs["Merge"] = refusal
+	dec := h.advance(1)
+	expectOutcome(t, dec, OutcomeLeft, "merge refused by GitHub: ")
+	if !errors.Is(dec.MergeError, refusal) {
+		t.Fatalf("merge error = %v, want the typed GitHub refusal carried out of the lane", dec.MergeError)
+	}
+	if p.Merged || h.frontPR() != 2 {
+		t.Fatalf("merged=%v front=#%d, want #1 unmerged and #2 promoted", p.Merged, h.frontPR())
+	}
+	exit := h.record().LastExit
+	if exit == nil || exit.PR != 1 || !strings.Contains(exit.Reason, "403") || strings.Contains(exit.Reason, "front timeout") {
+		t.Fatalf("last exit = %+v, want #1 leaving with GitHub's refusal", exit)
 	}
 }

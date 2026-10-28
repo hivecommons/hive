@@ -397,6 +397,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 		maxMerges = DefaultAutoMergeSweepMaxMerges
 	}
 	ctx = contextWithExpectedCheckCache(ctx, newExpectedCheckCache())
+	ctx = contextWithLaneMergedBranches(ctx)
 	for _, displayRepo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
@@ -430,6 +431,8 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 				c.recordStage(stageLaneContributor, displayRepo, owner, repoName, pr, reason, merged, err)
 			}
 			if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
+				serialized, gate := c.serializedLane(displayRepo)
+				_, _, _ = c.rejectBeforeLane(ctx, serialized, gate, owner, repoName, number, pr, hgithub.PRAuditPathSweep, reason)
 				c.recordContributorLaneSkip(displayRepo, number, reason)
 				result.Skipped++
 				stage(reason, false, nil)
@@ -1260,8 +1263,9 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	} else if blocked {
 		return eval, contributorLaneReasonChangesRequested, nil
 	}
+	serialized, _ := c.serializedLane(displayRepo)
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
-	if mergeableState == "behind" {
+	if mergeableState == "behind" && (!serialized || relay) {
 		if relay {
 			return eval, "behind", nil
 		}
@@ -1280,7 +1284,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		Actor:  "automerge",
 		Inputs: mergeClaimInputs(eval.method, methodReason, headSHA, contributorLaneTier),
 	}
-	if !relay {
+	if !relay && !serialized {
 		c.reconcileOpenPRMergeEffect(ctx, eval.mergeClaim, owner, repo, number)
 	}
 	baseBranch := pr.GetBase().GetRef()
@@ -1338,8 +1342,12 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	// Current-base gate (hivecommons/hive#13634): only a green, soaked,
 	// approved head is worth an update-branch commit; a relay evaluation
 	// never updates the branch.
-	if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr)); stop {
-		return eval, reason, err
+	// The serialized lane alone updates its front PR. Relay/authorization
+	// evaluations remain read-only and still require the current base.
+	if !serialized || relay {
+		if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr)); stop {
+			return eval, reason, err
+		}
 	}
 	if gateReason, err := c.forgestateMergeGate(ctx, owner, repo, number, headSHA); gateReason != "" || err != nil {
 		return eval, gateReason, err
@@ -1358,9 +1366,49 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 }
 
 func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, owner, repo string, number int, policy ContributorLanePolicy) (AutoMergeSweepEvent, string, error) {
+	serialized, laneGate := c.serializedLane(displayRepo)
 	eval, reason, err := c.evaluateContributorLanePR(ctx, displayRepo, owner, repo, number, policy, false)
-	if err != nil || reason != "" {
+	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
+	}
+	if reason != "" {
+		return c.rejectBeforeLane(ctx, serialized, laneGate, owner, repo, number, eval.pr, hgithub.PRAuditPathSweep, reason)
+	}
+	if serialized {
+		event := AutoMergeSweepEvent{Repo: displayRepo, Number: number, Author: eval.author, HeadSHA: eval.headSHA, Tier: contributorLaneTier}
+		// The lane retains the front on merge API failures. Preserve the
+		// workflow fence's human-action parking when that failure is a
+		// missing App permission, just as on the direct merge path.
+		contributorGate := func(ctx context.Context, req hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+			res, err := hgithub.RunSerializedLane(ctx, laneGate, req)
+			if reason := c.workflowFenceMergeUnauthorized(ctx, displayRepo, owner, repo, eval, res.MergeError); reason != "" {
+				res.Reason = reason
+			}
+			return res, err
+		}
+		event, reason, err = c.mergeThroughLane(ctx, contributorGate, owner, repo, eval.pr.GetBase().GetRef(), hgithub.PRAuditPathSweep, eval.method, event,
+			func(ctx context.Context, head string) error {
+				if head == "" || head != eval.headSHA {
+					return fmt.Errorf("head %s is not the contributor head %s evaluated green", head, eval.headSHA)
+				}
+				current, reason, err := c.evaluateContributorLanePR(ctx, displayRepo, owner, repo, number, policy, true)
+				if err != nil {
+					return err
+				}
+				if reason != "" {
+					return fmt.Errorf("contributor-lane authorization: %s", reason)
+				}
+				if current.headSHA != head {
+					return fmt.Errorf("contributor head changed since lane evaluation")
+				}
+				return nil
+			})
+		if err == nil && event.Number != 0 {
+			if err := c.commentContributorLaneMerge(ctx, owner, repo, number, eval.author, eval.claim, policy.Soak, eval.verdict); err != nil {
+				c.warn("contributor-lane automerge audit comment failed", "repo", displayRepo, "pr", number, "error", err)
+			}
+		}
+		return event, reason, err
 	}
 	author, headSHA, claim, verdict, method, mergeClaim := eval.author, eval.headSHA, eval.claim, eval.verdict, eval.method, eval.mergeClaim
 	fullRepo := owner + "/" + repo
@@ -1375,7 +1423,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
-			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
+			return effects.Result{}, hgithub.MergeAPIErrorNotApplied(apiErr)
 		}
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})

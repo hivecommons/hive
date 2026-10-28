@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/effects"
 	ghub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -98,7 +99,11 @@ type GitHub interface {
 	IssueCommentsContain(ctx context.Context, repo string, number int, needle string) (bool, error)
 	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
 	// Merge is the REST merge with head pinned, no admin bypass; it returns
-	// the merge commit SHA.
+	// the merge commit SHA. On a 409 head mismatch it returns ErrHeadMoved.
+	// When GitHub definitively refuses the merge (403/405/422) it returns an
+	// error wrapping effects.ErrNotApplied so the lane can let the front
+	// leave at once; any other error (5xx, transport) is reported as-is and
+	// the front keeps waiting.
 	Merge(ctx context.Context, repo string, number int, head string) (string, error)
 	CommitParents(ctx context.Context, repo, sha string) ([]string, error)
 	PullRequestsForCommit(ctx context.Context, repo, sha string) ([]int, error)
@@ -175,6 +180,9 @@ type Decision struct {
 	Reason   string
 	Position int
 	MergeSHA string
+	// MergeError is the underlying failure when a merge call holds the front
+	// or GitHub definitively refuses it.
+	MergeError error
 }
 
 // Lane is the gate. One Lane per process; it resets every in-progress front on
@@ -800,9 +808,19 @@ func (r *round) merge(head, tip string) (Decision, error) {
 		r.front.Stage = StageValidating
 		return r.hold(head, tip, "merge refused: head moved past the pinned SHA; validation restarts")
 	}
+	if errors.Is(err, effects.ErrNotApplied) {
+		// GitHub definitively refused the merge, so nothing happened and
+		// the front need not wait out its timeout. The typed refusal still
+		// travels with the decision so callers can explain it.
+		dec, leaveErr := r.leave(head, tip, "merge refused by GitHub: "+err.Error())
+		dec.MergeError = err
+		return dec, leaveErr
+	}
 	if err != nil {
 		r.front.Stage = StageValidating
-		return r.hold(head, tip, "merge call failed; no merge assumed this round: "+err.Error())
+		dec, holdErr := r.hold(head, tip, "merge call failed; no merge assumed this round: "+err.Error())
+		dec.MergeError = err
+		return dec, holdErr
 	}
 	reason := fmt.Sprintf("merged as %s after the final re-check", short(sha))
 	r.l.emit([]Event{r.event(head, tip, ActionMerge, reason)})

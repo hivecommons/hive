@@ -1,0 +1,1 @@
+- Contributor-lane auto-merge now respects the serialized merge lane, rechecks contributor authorization for the pinned head, and leaves branch updates and merge effects to the lane ([#14935](https://github.com/hivecommons/hive/issues/14935)). Owner-approved workflow changes retain human-action parking when the App lacks workflow permissions.

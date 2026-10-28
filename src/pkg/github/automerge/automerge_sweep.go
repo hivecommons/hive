@@ -1886,7 +1886,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
-			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
+			return effects.Result{}, hgithub.MergeAPIErrorNotApplied(apiErr)
 		}
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
@@ -2404,7 +2404,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
-			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
+			return effects.Result{}, hgithub.MergeAPIErrorNotApplied(apiErr)
 		}
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
@@ -2759,7 +2759,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		var apiErr error
 		mergeResult, _, apiErr = c.gh.PullRequests.Merge(ctx, owner, repo, number, mergeMessage, mergeOpts)
 		if apiErr != nil {
-			return effects.Result{}, mergeAPIErrorNotApplied(apiErr)
+			return effects.Result{}, hgithub.MergeAPIErrorNotApplied(apiErr)
 		}
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
@@ -3150,21 +3150,6 @@ func (c *Engine) mergeQueueBaseKnown(owner, repo, base string) bool {
 		return false
 	}
 	return c.mergeQueueMemory().Required(owner+"/"+repo, base, c.clock())
-}
-
-func mergeAPIErrorNotApplied(err error) error {
-	if err == nil {
-		return nil
-	}
-	var ghErr *gh.ErrorResponse
-	if !errors.As(err, &ghErr) || ghErr.Response == nil {
-		return err
-	}
-	switch ghErr.Response.StatusCode {
-	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusForbidden:
-		return effects.NotApplied(err)
-	}
-	return err
 }
 
 func (c *Engine) executeMergeEffect(ctx context.Context, claim effects.Claim, owner, repo string, number int, merge func(context.Context) (effects.Result, error)) (effects.Result, error) {
