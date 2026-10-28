@@ -391,17 +391,6 @@ func decisionForNeedsHuman(it StageTrackerItem, held bool) *StageTrackerDecision
 	return d
 }
 
-// decisionParkLabel pulls the label out of a 045 reason ("held for a
-// person: needs-human", "parked on a person: needs-decision"); "" otherwise.
-func decisionParkLabel(reason string) string {
-	for _, prefix := range []string{"held for a person:", "parked on a person:"} {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(reason), prefix); ok {
-			return strings.TrimSpace(rest)
-		}
-	}
-	return ""
-}
-
 func decisionFirstNonEmpty(ss []string) string {
 	for _, s := range ss {
 		if t := strings.TrimSpace(s); t != "" {
