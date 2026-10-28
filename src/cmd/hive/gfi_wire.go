@@ -193,7 +193,8 @@ func sortedRepoKeys(m map[string]github.RepoWorkDetails) []string {
 // runGoodFirstIssueSweepIfDue is the periodic curation pass
 // (good_first_issue.enabled, default on), once per
 // good_first_issue.interval. It reads the last enumeration rather than
-// re-listing issues, so it costs GitHub calls only for the few it labels.
+// re-listing issues. GitHub calls verify label provenance on potentially
+// eligible candidates and refresh labels before advertising selected issues.
 // The labelled set is refreshed from every enumeration, not just the ones a
 // sweep runs on, so an issue a maintainer labelled by hand between sweeps is
 // still released the moment a hive agent starts it.

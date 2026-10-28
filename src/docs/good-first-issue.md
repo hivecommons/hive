@@ -69,8 +69,10 @@ advertisement the moment it does start.
 
 The scorer (`src/pkg/gfi`) runs over the hive's last enumeration — the
 actionable issue list, which already excludes hard-suppressed, claimed and
-PR-covered items — and never calls GitHub to decide. Gates, in order; the
-first failure is the `gfi skip reason=…` logged:
+PR-covered items. For potentially eligible candidates carrying size or
+`help wanted` labels, the sweep reads GitHub's label timeline and checks
+permissions or organization membership to verify who applied those labels.
+Gates, in order; the first failure is the `gfi skip reason=…` logged:
 
 | Gate | Skip reason |
 |---|---|
@@ -92,17 +94,23 @@ first failure is the `gfi skip reason=…` logged:
 Positive signals, each worth one point and each quoted in the comment as a
 reason ("hive picked this issue because: …"):
 
-- already sized small by a maintainer (`size/XS`, `size/S`, `good-first-issue`, `beginner`, `easy`, …)
+- already sized small by a maintainer (`size/XS`, `size/S`, `good-first-issue`, `beginner`, `easy`, …) — the label's latest application must be by a human collaborator with admin, maintain, write or triage permissions, or a member of the owning organization
 - a concrete, reproducible bug report (`bug`, `kind/bug`)
-- maintainers asked for help on it (`help wanted`)
+- maintainers asked for help on it (`help wanted`) — the same label-provenance rule as the size signal
 - has clear steps or acceptance criteria (two or more headings/bullets/checkboxes, or phrases like "acceptance criteria", "steps to reproduce")
 - scoped to one or two packages (paths mentioned in the body)
 - short, focused description (body at most half of `max_body_chars`)
 
+Size and `help wanted` labels last applied by bots (including hive accounts
+and `github-actions[bot]`) earn no point. Missing provenance or a failed
+timeline, permission or membership lookup also earns no point
+([#14835](https://github.com/hivecommons/hive/issues/14835)).
+
 Candidates come from the last enumeration, which can be many minutes old,
 so immediately before labelling the sweep re-reads the issue's labels from
-GitHub and scores again; an issue that picked up `blocked`, a claim or a
-park label in between is skipped as `stale:<reason>` (a failed read skips
+GitHub, re-verifies label provenance and scores again. The welcome comment's
+reasons are recomputed from that fresh result. An issue that picked up
+`blocked`, a claim or a park label in between is skipped as `stale:<reason>` (a failed read skips
 as `stale:label-read`). #13267 was labelled from a snapshot taken before a
 contributor's agent had returned "blocked" on it.
 
@@ -213,7 +221,7 @@ the next pass; `exclude_labels` and `repos` are YAML-only.
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Set `false` to opt out. Requires `dashboard.public_url` or a hub-assigned dashboard URL; otherwise the sweep logs `gfi skip reason=no-public-url` and does nothing. |
-| `interval` | `15m` | Sweep cadence (over the last enumeration; costs GitHub calls only for the issues it labels). The labelled set used for release-on-claim is refreshed every cycle regardless. |
+| `interval` | `15m` | Sweep cadence (over the last enumeration; costs GitHub calls for label-provenance checks on potentially eligible candidates and for the issues it labels). The labelled set used for release-on-claim is refreshed every cycle regardless. |
 | `max_per_repo` | `5` | Issues wearing the label per repository at once. |
 | `max_per_sweep` | `2` | New selections per repository per pass. |
 | `min_age` | `1h` | Minimum issue age (long enough that a reporter has finished editing). |
