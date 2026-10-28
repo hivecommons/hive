@@ -1,1 +1,1 @@
-- The `bin/gh-wrapper.sh` wrapper now allows `gh issue comment` and `gh pr comment` with `--delete-last` flag without requiring a body, since `--delete-last` does not need one ([#15031](https://github.com/hivecommons/hive/issues/15031)).
+- The `bin/gh-wrapper.sh` wrapper now passes `gh issue comment --delete-last` and `gh pr comment --delete-last` through without a body: the missing body is no longer refused and the hive footer is no longer injected as `--body`, which gh rejects alongside `--delete-last` ([#15031](https://github.com/hivecommons/hive/issues/15031)).

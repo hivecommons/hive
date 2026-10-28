@@ -1382,7 +1382,12 @@ ${footer}")
     if $require_body && { [[ "$action" = "comment" ]] || _contributor_mode; } && ! _args_fill_body; then
       _deny empty_body "gh ${verb}: no body was given, so only the hive footer would be posted. Pass --body <text> or --body-file <path>."
     fi
-    new_args+=("--body" "${footer}")
+    # `--delete-last` removes a comment and posts nothing, and gh refuses any
+    # body alongside it ("should not provide comment body when using
+    # --delete-last"), so the footer must not be added either (#15031).
+    if ! _args_delete_last; then
+      new_args+=("--body" "${footer}")
+    fi
   fi
   args=("${new_args[@]}")
 }
@@ -1448,14 +1453,24 @@ _guard_edit_body() {
 }
 
 # _args_fill_body reports whether gh is asked to build the body itself
-# (`--fill*`, `--template`, `--web`, `--recover`), so a missing body flag is
-# not an empty body.
+# (`--fill*`, `--template`, `--web`, `--recover`) or needs none at all
+# (`--delete-last`), so a missing body flag is not an empty body.
 _args_fill_body() {
   local a
   for a in "${args[@]}"; do
     case "$a" in
       --fill|--fill-first|--fill-verbose|-f|--template|--template=*|-T|-T?*|--web|-w|--recover|--recover=*|--delete-last) return 0 ;;
     esac
+  done
+  return 1
+}
+
+# _args_delete_last reports whether a comment is being deleted rather than
+# posted (`gh issue|pr comment --delete-last`); gh rejects any body there.
+_args_delete_last() {
+  local a
+  for a in "${args[@]}"; do
+    [[ "$a" = "--delete-last" ]] && return 0
   done
   return 1
 }

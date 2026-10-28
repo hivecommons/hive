@@ -971,6 +971,25 @@ fi
 _capture_run /dev/null pr comment 42 --repo test/repo
 _expect_refused "pr comment with no body flag is refused, not posted as the footer alone" empty_body pr comment
 
+# `--delete-last` posts nothing, and gh refuses a body alongside it, so the
+# wrapper must neither refuse the missing body nor inject the footer (#15031).
+for _dl_sub in issue pr; do
+  _capture_run /dev/null "$_dl_sub" comment 42 --repo test/repo --delete-last --yes
+  if [[ "$CAPTURE_RC" -ne 0 ]] || grep -qF 'reason=empty_body' "${CAPTURE_DIR}/stderr"; then
+    _body_fail "${_dl_sub} comment --delete-last without a body is not refused" "refused (rc=${CAPTURE_RC})" "$(cat "${CAPTURE_DIR}/stderr")"
+  elif inv="$(_capture_invocation "$_dl_sub" comment)"; then
+    flags="$(_count_body_flags "$inv")"
+    if [[ "$flags" == "0" ]]; then
+      echo "PASS: ${_dl_sub} comment --delete-last reaches gh with no injected --body footer"
+      PASSED=$((PASSED + 1))
+    else
+      _body_fail "${_dl_sub} comment --delete-last reaches gh with no injected --body footer" "expected 0 body flags, got ${flags}"
+    fi
+  else
+    _body_fail "${_dl_sub} comment --delete-last" "no recorded 'gh ${_dl_sub} comment' invocation"
+  fi
+done
+
 # An unreadable body file stays the caller's error: the wrapper must not stack
 # a --body on top of it and turn "file not found" into a flag conflict.
 _capture_run /dev/null pr comment 42 --repo test/repo -F "$MISSING_BODY_FILE"
