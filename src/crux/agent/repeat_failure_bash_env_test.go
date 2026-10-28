@@ -39,7 +39,7 @@ func newRFFixture(t *testing.T, chain string) rfFixture {
 		t.Fatal(err)
 	}
 	script := filepath.Join(dir, repeatFailureBashEnvName)
-	if err := os.WriteFile(script, renderRepeatFailureBashEnv("scanner", "claude", record, chain), 0o600); err != nil {
+	if err := os.WriteFile(script, renderRepeatFailureBashEnv("scanner", "claude", RepeatFailureRouteBashEnv, record, chain), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return rfFixture{dir: dir, record: record, script: script}
@@ -236,7 +236,7 @@ func TestRepeatFailureBashEnv_NeverChangesTheCommand(t *testing.T) {
 			fx := newRFFixture(t, "")
 			want := runRFBash(t, fx.dir, tc.extra, tc.args...)
 			unwritable := newRFFixture(t, "")
-			if err := os.WriteFile(unwritable.script, renderRepeatFailureBashEnv("scanner", "claude", filepath.Join(unwritable.dir, "missing", "records.jsonl"), ""), 0o600); err != nil {
+			if err := os.WriteFile(unwritable.script, renderRepeatFailureBashEnv("scanner", "claude", RepeatFailureRouteBashEnv, filepath.Join(unwritable.dir, "missing", "records.jsonl"), ""), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			hooks := map[string]rfFixture{

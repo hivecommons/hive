@@ -125,8 +125,13 @@ func repeatFailureBashEnvPath(home string) string {
 }
 
 // repeatFailureEnvPairs returns BASH_ENV and SHELL for a launch the neutral
-// route applies to, and nothing otherwise (C14: off adds nothing).
+// route applies to, only SHELL for the aider route (aider runs commands in
+// `$SHELL -i -c`, which must be bash to read ~/.bashrc), and nothing otherwise
+// (C14: off adds nothing).
 func (m *Manager) repeatFailureEnvPairs(agent *AgentProcess, backend string) []agentEnvPair {
+	if m.repeatFailureAiderBashrcActive(agent, backend) {
+		return []agentEnvPair{{"SHELL", repeatFailureShell, false}}
+	}
 	if agent == nil || !m.repeatFailureBashEnvActive(backend) {
 		return nil
 	}
@@ -148,13 +153,14 @@ func repeatFailureChainedBashEnv(script string) string {
 	return existing
 }
 
-// renderRepeatFailureBashEnv renders the BASH_ENV script for one agent. All
-// values are baked in as quoted literals so the script reads no variable
-// beyond bash's own and the marker.
-func renderRepeatFailureBashEnv(agentName, backend, recordPath, chain string) []byte {
+// renderRepeatFailureBashEnv renders the BASH_ENV script for one agent, with
+// route naming the producer in each record (the aider route sources the same
+// script from ~/.bashrc). All values are baked in as quoted literals so the
+// script reads no variable beyond bash's own and the marker.
+func renderRepeatFailureBashEnv(agentName, backend, route, recordPath, chain string) []byte {
 	agentJSON, _ := json.Marshal(agentName)
 	backendJSON, _ := json.Marshal(backend)
-	routeJSON, _ := json.Marshal(RepeatFailureRouteBashEnv)
+	routeJSON, _ := json.Marshal(route)
 	head := `{"agent":` + string(agentJSON) + `,"backend":` + string(backendJSON) + `,"time":"`
 	tail := `,"route":` + string(routeJSON)
 	fixed := len(head) + len(`","raw_command":"`) + len(`","exit_code":`) + len(`,"failed":`) + len(tail)
@@ -219,7 +225,7 @@ func renderRepeatFailureBashEnv(agentName, backend, recordPath, chain string) []
 }
 
 // provisionRepeatFailureBashEnv writes the agent's BASH_ENV script when the
-// neutral route applies to this launch, or removes a script Hive wrote
+// neutral route or the aider route applies to this launch, or removes a script Hive wrote
 // earlier when it no longer does, so turning the check off needs nothing but
 // the next launch. Best-effort like the other launch provisioning: a failure
 // is logged and the agent launches without a record route (BASH_ENV then
@@ -233,12 +239,18 @@ func (m *Manager) provisionRepeatFailureBashEnv(agent *AgentProcess, backend str
 		return
 	}
 	script := repeatFailureBashEnvPath(home)
-	if !m.repeatFailureBashEnvActive(backend) {
+	route, chain := "", ""
+	switch {
+	case m.repeatFailureBashEnvActive(backend):
+		route, chain = RepeatFailureRouteBashEnv, repeatFailureChainedBashEnv(script)
+	case m.repeatFailureAiderBashrcActive(agent, backend):
+		route = RepeatFailureRouteAiderBashrc
+	default:
 		m.removeRepeatFailureBashEnv(agent, script)
 		return
 	}
 	recordPath := RepeatFailureRecordPath(home)
-	content := renderRepeatFailureBashEnv(agent.Name, backend, recordPath, repeatFailureChainedBashEnv(script))
+	content := renderRepeatFailureBashEnv(agent.Name, backend, route, recordPath, chain)
 	if err := writeRepeatFailureBashEnv(m.agentExecUserSpec(agent), recordPath, script, content); err != nil {
 		m.logger.Warn("repeat-failure: writing the BASH_ENV route failed; agent launches without it",
 			"agent", agent.Name, "path", script, "error", err)
