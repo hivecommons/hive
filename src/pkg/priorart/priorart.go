@@ -35,7 +35,10 @@ const Marker = "<!-- hive:prior-art-gate -->"
 type Kind string
 
 const (
-	KindKnowledge   Kind = "knowledge"
+	KindKnowledge Kind = "knowledge"
+	// KindReview is past review output found by the search source: PR
+	// review evidence, reviewer findings, sentinel hits and bead notes.
+	KindReview      Kind = "review"
 	KindMergedPR    Kind = "merged_pr"
 	KindClosedIssue Kind = "closed_issue"
 	KindOpenIssue   Kind = "open_issue"
@@ -342,14 +345,16 @@ func kindRank(k Kind) int {
 		return 2
 	case KindKnowledge:
 		return 3
-	case KindClosedIssue:
+	case KindReview:
 		return 4
-	case KindOpenIssue:
+	case KindClosedIssue:
 		return 5
-	case KindCode:
+	case KindOpenIssue:
 		return 6
+	case KindCode:
+		return 7
 	}
-	return 7
+	return 8
 }
 
 // SourceFunc adapts a function to Source.

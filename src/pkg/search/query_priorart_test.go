@@ -32,7 +32,7 @@ func priorArtFixture(t *testing.T) *Embedded {
 	e := newBackend(t, Options{})
 	docs := []Document{
 		doc("org/a", "pr/41/finding/0-0", KindFinding, t0, "Retry webhook delivery on 502",
-			"reviewer: webhook.retry_backoff now retries delivery on 502 from the relay", map[string]string{"verdict": "approved"}),
+			"reviewer: webhook.retry_backoff now retries delivery on 502 from the relay", map[string]string{"verdict": "approved", "number": "41"}),
 		doc("org/a", "fact/repo/webhooks", KindFact, t0, "Retry webhook delivery on 502",
 			"webhook.retry_backoff retries delivery", nil),
 		doc("org/a", "complexity/2026-01", KindComplexity, t0, "Retry webhook delivery on 502",
@@ -56,7 +56,7 @@ func TestPriorArtSourceFindsSimilarPastFix(t *testing.T) {
 		t.Fatalf("findings = %+v, want only the past finding (facts and complexity excluded)", r.Findings)
 	}
 	f := r.Findings[0]
-	if f.Kind != priorart.KindKnowledge || f.Ref != "org/a/pr/41/finding/0-0" || f.URL == "" || f.Confidence < priorart.DefaultMinConfidence {
+	if f.Kind != priorart.KindReview || f.Ref != "#41" || f.URL == "" || f.Confidence < priorart.DefaultMinConfidence {
 		t.Fatalf("finding = %+v", f)
 	}
 }
@@ -125,7 +125,24 @@ func TestPriorArtSourceScansAndTitlesCandidates(t *testing.T) {
 		t.Fatalf("candidates = %+v, want the injection-bearing documents dropped", got)
 	}
 	c := got[0]
-	if c.Title != "org/a: bead" || c.Ref != "org/a/bead/scanner/1" || c.URL != "u1" || len(c.Terms) != 1 || c.Kind != priorart.KindKnowledge {
+	if c.Title != "org/a: bead" || c.Ref != "1" || c.URL != "u1" || len(c.Terms) != 1 || c.Kind != priorart.KindReview {
 		t.Fatalf("candidate = %+v", c)
+	}
+}
+
+func TestPriorArtRefIsAShortHandle(t *testing.T) {
+	cases := []struct {
+		doc  Document
+		want string
+	}{
+		{Document{ID: "evidence/41/abc/finding/0-0", Kind: KindFinding, Fields: map[string]string{"number": "41"}}, "#41"},
+		{Document{ID: "bead/scanner/fix-14639", Kind: KindBead}, "fix-14639"},
+		{Document{ID: "bead/odd", Kind: KindBead}, "bead/odd"},
+		{Document{ID: "evidence/41/abc", Kind: KindEvidence}, "evidence/41/abc"},
+	}
+	for _, tc := range cases {
+		if got := priorArtRef(tc.doc); got != tc.want {
+			t.Errorf("priorArtRef(%q) = %q, want %q", tc.doc.ID, got, tc.want)
+		}
 	}
 }

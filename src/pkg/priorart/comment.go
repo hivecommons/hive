@@ -145,6 +145,8 @@ func KindLabel(k Kind) string {
 		return "setting"
 	case KindKnowledge:
 		return "knowledge"
+	case KindReview:
+		return "review"
 	case KindCode:
 		return "code"
 	}

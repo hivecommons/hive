@@ -402,7 +402,7 @@ func TestRenderHelpersAndSourceFunc(t *testing.T) {
 	if got := formatTTL(90 * time.Minute); got != "1h30m0s" {
 		t.Fatalf("formatTTL(90m) = %q", got)
 	}
-	for _, k := range []Kind{KindMergedPR, KindSetting, KindDoc, KindKnowledge, KindClosedIssue, KindOpenIssue, KindCode} {
+	for _, k := range []Kind{KindMergedPR, KindSetting, KindDoc, KindKnowledge, KindReview, KindClosedIssue, KindOpenIssue, KindCode} {
 		if kindRank(k) >= kindRank(Kind("other")) {
 			t.Errorf("kindRank(%s) must sort before unknown kinds", k)
 		}

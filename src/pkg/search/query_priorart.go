@@ -93,13 +93,30 @@ func priorArtSearch(ctx context.Context, backend func() Backend, q priorart.Quer
 			continue
 		}
 		out = append(out, priorart.Candidate{
-			Kind:  priorart.KindKnowledge,
+			Kind:  priorart.KindReview,
 			Title: title,
 			Text:  body,
 			Terms: append([]string(nil), h.Terms...),
 			URL:   d.URL,
-			Ref:   d.Repo + "/" + d.ID,
+			Ref:   priorArtRef(d),
 		})
 	}
 	return out, nil
+}
+
+// priorArtRef is the candidate's short human handle: "#<pr>" for review
+// evidence, findings and sentinel hits (the ingester records the PR number
+// in the "number" field), the bead's own ID for beads, else the document ID.
+func priorArtRef(d Document) string {
+	if n := d.Fields["number"]; n != "" {
+		return "#" + n
+	}
+	if d.Kind == KindBead {
+		if rest, ok := strings.CutPrefix(d.ID, KindBead+"/"); ok {
+			if _, id, ok := strings.Cut(rest, "/"); ok && id != "" {
+				return id
+			}
+		}
+	}
+	return d.ID
 }

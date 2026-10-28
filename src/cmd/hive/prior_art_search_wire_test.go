@@ -20,8 +20,9 @@ func priorArtSearchFixture(t *testing.T) search.Backend {
 	err = b.Index(context.Background(), []search.Document{{
 		ID: "pr/41/finding/0-0", Repo: "org/a", Kind: search.KindFinding, At: time.Now(),
 		URL: "https://github.com/org/a/pull/41", Visibility: search.Public,
-		Title: "Retry webhook delivery on 502",
-		Text:  "reviewer: webhook.retry_backoff now retries webhook delivery when the relay answers 502",
+		Title:  "Retry webhook delivery on 502",
+		Text:   "reviewer: webhook.retry_backoff now retries webhook delivery when the relay answers 502",
+		Fields: map[string]string{"number": "41"},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +63,7 @@ func TestNewPriorArtSearcherSearchSourceFollowsSearchEnabled(t *testing.T) {
 			}
 			found := false
 			for _, f := range r.Findings {
-				if f.Ref == "org/a/pr/41/finding/0-0" {
+				if f.Kind == priorart.KindReview && f.Ref == "#41" {
 					found = true
 				}
 			}
