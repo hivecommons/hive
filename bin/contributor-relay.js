@@ -4400,8 +4400,6 @@ function runHeadlessTask(task) {
       return;
     }
     finish(() => {
-      setPiInvocationState('succeeded');
-      console.log(`Headless task ${task.task_id} completed (exit 0)`);
       const prFinding = resolveTaskPR(outScan, {
         repo: task.repo,
         taskId: task.task_id,
@@ -4415,6 +4413,17 @@ function runHeadlessTask(task) {
       // does; see resolveTaskPR.
       const noWork = prFinding.suppressesVerdict ? null : detectNoWorkVerdict(outTail);
       if (noWork) console.log(`Detected ${noWork.verdict} verdict for ${task.task_id}: ${noWork.reason || '(no reason)'}`);
+      // #14940: exit 0 only means the CLI exited cleanly. A verdict about
+      // its broken runtime must be failed just as it is in finishCurrentTask.
+      if (noWork && noWork.environmentFailure) {
+        const reason = `agent reported an environment failure: ${noWork.reason || '(no reason given)'}`;
+        setPiInvocationState('failed');
+        writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, task_gen: task.task_gen, result: 'failed', reason });
+        failCurrentTask(reason, { kind: 'environment', skipCLI: true });
+        return;
+      }
+      setPiInvocationState('succeeded');
+      console.log(`Headless task ${task.task_id} completed (exit 0)`);
       writeHeadlessStatus(HEADLESS_STATE_DONE, { task_id: task.task_id, task_gen: task.task_gen, result: 'completed', pr_url: prURL });
       // #7924: the label goes on with the task credential, so it must be
       // applied BEFORE stopAgentForTaskExit drops it below.
@@ -6047,9 +6056,10 @@ function detectHiveVerdicts(lines, wanted) {
 // no_work_needed, blocked, and wrong_base. Returns null when no marker is
 // found — the hub then treats the completion exactly as an idle one.
 function detectNoWorkVerdict(lines) {
-  return detectHiveVerdict(lines, [
-    HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED, HIVE_VERDICT_WRONG_BASE,
-  ]);
+  // Classify every token before filtering: a `complete` about a broken
+  // environment is rewritten to `blocked` by detectHiveVerdicts (#14940).
+  const verdict = detectHiveVerdicts(lines, HIVE_VERDICT_TOKENS).find(isNoWorkVerdict);
+  return verdict ? withoutPaneIndex(verdict) : null;
 }
 
 // detectCompletionVerdict reports whether the agent SAID it finished (#5376).

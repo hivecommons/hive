@@ -14917,8 +14917,8 @@ test('#14832 a complete verdict reporting a broken environment is classified blo
     assert.strictEqual(v.environmentFailure, true);
     assert.strictEqual(v.toolingFailure, true, 'never a genuine external blocker');
     assert.strictEqual(v.reason, ENV_FAILURE_REASON);
-    // Same for the no_work_needed and blocked spellings.
-    for (const token of ['no_work_needed', 'blocked']) {
+    // Headless detection must classify complete before filtering tokens.
+    for (const token of ['complete', 'no_work_needed', 'blocked']) {
       const nw = relay.detectNoWorkVerdict([`HIVE_VERDICT: ${token} — ${ENV_FAILURE_REASON}`]);
       assert.strictEqual(nw.verdict, 'blocked', token);
       assert.strictEqual(nw.environmentFailure, true, token);
@@ -14929,7 +14929,57 @@ test('#14832 a complete verdict reporting a broken environment is classified blo
     const ok = relay.detectCompletionVerdict(['HIVE_VERDICT: complete — opened the fix'], null);
     assert.strictEqual(ok.verdict, 'complete');
     assert.strictEqual(ok.environmentFailure, undefined);
+    assert.strictEqual(relay.detectNoWorkVerdict(['HIVE_VERDICT: complete — opened the fix']), null);
   } finally { teardown(relay); }
+});
+
+test('#14940 headless exit 0 with a broken-runtime verdict fails the task without labelling the issue', () => {
+  for (const token of ['complete', 'no_work_needed', 'blocked']) {
+    const relay = loadRelay({
+      backend: 'claude', mode: 'headless',
+      execFileResult: { stdout: `HIVE_VERDICT: ${token} — ${ENV_FAILURE_REASON}\n` },
+    });
+    try {
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+      assignHeadlessTask(relay, { task_gen: 4 });
+      assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, token);
+      const failed = relay.__sent.filter(m => m.type === 'task_failed');
+      assert.strictEqual(failed.length, 1, token);
+      assert.strictEqual(failed[0].task_id, 'ct-h-1');
+      assert.strictEqual(failed[0].task_gen, 4);
+      assert.strictEqual(failed[0].result, 'failed');
+      assert.strictEqual(failed[0].failure_kind, 'environment');
+      assert.ok(failed[0].reason.includes(ENV_FAILURE_REASON));
+      assert.strictEqual(relay.__readHeadlessStatus().state, relay.HEADLESS_STATE_FAILED);
+      assert.strictEqual(relay.getCurrentTask(), null);
+      assert.ok(relay.__sent.some(m => m.type === 'ready'));
+      assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#14940 headless preserves ordinary completion, external blockers, wrong_base and shipped PR precedence', () => {
+  const prURL = 'https://github.com/foo/bar/pull/9';
+  for (const [stdout, verdict, prMeta] of [
+    ['HIVE_VERDICT: complete — finished the fix', undefined, null],
+    ['HIVE_VERDICT: blocked — waiting on another repository release', 'no_work_needed', null],
+    ['HIVE_VERDICT: wrong_base — v6', 'wrong_base', null],
+    [`${prURL}\nHIVE_VERDICT: complete — ${ENV_FAILURE_REASON}`, undefined,
+      { url: prURL, author: { login: 'test-contributor' }, createdAt: new Date(Date.now() + 1000).toISOString(), mergedAt: null, state: 'OPEN' }],
+  ]) {
+    const relay = loadRelay({ backend: 'claude', mode: 'headless', execFileResult: { stdout }, prMeta,
+      env: { HIVE_CONTRIBUTOR_USERNAME: 'test-contributor' } });
+    try {
+      assignHeadlessTask(relay);
+      assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0, stdout);
+      const complete = relay.__sent.filter(m => m.type === 'task_complete');
+      assert.strictEqual(complete.length, 1, stdout);
+      assert.strictEqual(complete[0].verdict, verdict);
+      if (verdict === 'no_work_needed') assert.strictEqual(complete[0].verdict_blocked, true);
+      if (verdict === 'wrong_base') assert.strictEqual(complete[0].verdict_target_branch, 'v6');
+      if (prMeta) assert.strictEqual(complete[0].pr_url, prURL);
+    } finally { teardown(relay); }
+  }
 });
 
 test('#14832 end to end: an environment-failure verdict is reported as task_failed [environment], never task_complete, and labels nothing', () => {
