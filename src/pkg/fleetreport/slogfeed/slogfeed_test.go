@@ -564,3 +564,51 @@ func TestGitHubRateLimitStormLogsWithoutFleetReport(t *testing.T) {
 		t.Fatalf("non-rate-limit failures must remain reportable: %+v", *seen)
 	}
 }
+
+// #15333: keep repeated translator identity refusals visible under their own
+// gateway class, without treating them as backend credential failures.
+func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
+	now := time.Date(2026, 10, 29, 6, 26, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "inference request from unidentified caller refused"
+	warn := func() {
+		logger.Warn(msg, "remote", "127.0.0.1:47724", "method", "POST", "path", "/v1/messages")
+	}
+	for i := 0; i < 4; i++ {
+		warn()
+		now = now.Add(time.Minute)
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("below threshold produced evidence: %+v", ev)
+		}
+	}
+	warn()
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassInferenceCallerUnknown || ev[0].Count != 5 || ev[0].Severity != "medium" || ev[0].Component != "inference-gateway" {
+		t.Fatalf("repeated identity refusals = %+v", ev)
+	}
+	for _, want := range []string{"remote=127.0.0.1:47724", "method=POST", "path=/v1/messages"} {
+		if !strings.Contains(ev[0].Diagnostics, want) {
+			t.Errorf("diagnostics %q missing %q", ev[0].Diagnostics, want)
+		}
+	}
+	if n := strings.Count(out.String(), "\n"); n != 5 {
+		t.Fatalf("wrapped handler saw %d records, want 5", n)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("idle identity refusals still reported: %+v", ev)
+	}
+	cleared := tr.TakeCleared()
+	if len(cleared) != 1 || cleared[0].Class != fleetreport.ClassInferenceCallerUnknown {
+		t.Fatalf("cleared = %+v", cleared)
+	}
+	// Other translator failures must still reach their existing classes.
+	logger2, seen, _ := newFeed(t)
+	logger2.Warn("inference upstream failed")
+	logger2.Warn("inference no route", "agent", "scanner")
+	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassInferenceUpstreamError || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("unrelated inference failures = %+v", *seen)
+	}
+}

@@ -1,0 +1,1 @@
+- Repeated inference translator caller-identification refusals now report as `inference_caller_unidentified` under the inference gateway, with medium severity, instead of `unclassified_error_repeated`; the HTTP 401 identity guard remains enforced (#15333).
