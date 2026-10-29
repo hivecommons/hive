@@ -3500,11 +3500,13 @@
     .toast-action { margin-left: 10px; vertical-align: middle; }
     /* Row-action result toast (runRowAction): sticky until the target row
        changes state in the tracker, or ×. Headline, outcome, what happens
-       next, a ⚠ sentinel line when the head was flagged, and a link to the
+       next, a muted "Posted:" line, a ⚠ sentinel line while the head is
+       still flagged after the action, and a link to the
        item acted on (which may be a nested PR, not the clicked row). */
     .ham-result-toast { display: grid; gap: var(--sp-2); }
     .ham-result-head { font-weight: var(--fw-medium); }
     .ham-result-next { color: var(--muted); }
+    .ham-result-posted { color: var(--text-faint); font-size: var(--fs-xs); }
     .ham-result-warn { color: var(--status-error); white-space: pre-line; }
     .ham-result-options { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
     .ham-result-link { color: var(--accent); text-decoration: none; justify-self: start; }
@@ -18208,9 +18210,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The rule in plain words from the glossary, never the bare slug.
       const rule = result.rule ? ' (' + stageTrackerPlainWords(result.rule) + ')' : '';
       if (word) head += ': ' + word + rule;
-      const warn = typeof stageTrackerSentinelPreface === 'function' ? stageTrackerSentinelPreface([item]) : '';
+      const warn = stageTrackerResultWarn(result, item);
+      const posted = Array.isArray(result.posted) ? result.posted.filter(p => typeof p === 'string' && p.trim()).map(p => p.replace(/`/g, '')) : [];
       const options = noEffect && Array.isArray(result.options) ? result.options.filter(o => o && o.action && o.label) : [];
-      return { head, outcome: result.outcome || '', next: result.next || '', warn, options, why: noEffect ? stageTrackerPlainWords(result.why || 'no-effect', true) : '', type: error ? 'error' : (noEffect ? 'warning' : (noop ? 'info' : 'success')), url: t.url || item.url || '', linkText: 'Open ' + (t.kind === 'pr' ? 'PR' : 'issue') + ' #' + (t.number || item.number) };
+      return { head, outcome: result.outcome || '', next: result.next || '', warn, posted: posted.length ? 'Posted: ' + posted.join(' · ') : '', options, why: noEffect ? stageTrackerPlainWords(result.why || 'no-effect', true) : '', type: error ? 'error' : (noEffect ? 'warning' : (noop ? 'info' : 'success')), url: t.url || item.url || '', linkText: 'Open ' + (t.kind === 'pr' ? 'PR' : 'issue') + ' #' + (t.number || item.number) };
+    }
+    // Pure: the ⚠ sentinel paragraph a result toast carries. The row's
+    // alert is what the action started from, so it is repeated only while
+    // the alert is still open: a result that says it cleared the alert
+    // (sentinel_cleared) drops the warning; one that says it is still on
+    // (sentinel_open) keeps it, with Next saying what the person must do.
+    function stageTrackerResultWarn(result, item) {
+      if (result && result.sentinel_cleared) return '';
+      return typeof stageTrackerSentinelPreface === 'function' ? stageTrackerSentinelPreface([item]) : '';
     }
     let _stageTrackerResultToasts = [];
     // Build and show the persistent result toast; it leaves on × or when
@@ -18225,6 +18237,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (text.outcome) { const o = document.createElement('div'); o.className = 'ham-result-outcome'; o.textContent = text.outcome; el.appendChild(o); }
       if (text.warn) { const w = document.createElement('div'); w.className = 'ham-result-warn'; w.textContent = text.warn; el.appendChild(w); }
       if (text.next) { const n = document.createElement('div'); n.className = 'ham-result-next'; n.textContent = text.next; el.appendChild(n); }
+      if (text.posted) { const p = document.createElement('div'); p.className = 'ham-result-posted'; p.textContent = text.posted; el.appendChild(p); }
       if (text.options && text.options.length) {
         // The stuck decision's next actions (#14822): each runs the row
         // action on the toast's target; "open:github" is a link.

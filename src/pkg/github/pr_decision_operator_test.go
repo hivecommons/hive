@@ -155,6 +155,9 @@ func TestRecordOperatorPullRequestApprovalWithReleasesThePark(t *testing.T) {
 	if !event.Recorded || !event.NeedsHumanLifted || !event.SentinelLabelCleared || !event.SentinelAcknowledged || event.HeadSHA != liveDecisionHead {
 		t.Fatalf("event = %+v", event)
 	}
+	if event.SentinelLabelOpen || event.ProwManaged {
+		t.Fatalf("a cleared alert on a non-Prow repo: event = %+v", event)
+	}
 	if posted := rec.posted[liveDecisionPR]; len(posted) != len(PRApprovalCommands) {
 		t.Fatalf("the command comments are still posted, got %v", posted)
 	}
@@ -197,6 +200,26 @@ func TestRecordOperatorPullRequestApprovalWithReleasesThePark(t *testing.T) {
 	}
 	if b, _ = LoadReviewEvidence(ReviewEvidencePath(root, "org/repo", liveDecisionPR, liveDecisionHead)); len(b.HumanActions) != 1 {
 		t.Fatalf("acknowledgment duplicated: %+v", b.HumanActions)
+	}
+}
+
+// TestProwManagedLabels pins the Prow markers an approval reports so the
+// dashboard does not claim the relayed `/approve` counted for Prow.
+func TestProwManagedLabels(t *testing.T) {
+	for _, tc := range []struct {
+		labels []string
+		want   bool
+	}{
+		{[]string{"size/M", "role/trusted"}, true},
+		{[]string{"approved", "lgtm"}, true},
+		{[]string{"do-not-merge/hold"}, true},
+		{[]string{"needs-ok-to-test"}, true},
+		{[]string{"lgtm", "role/trusted", PRNeedsDecisionStageLabel}, false},
+		{nil, false},
+	} {
+		if got := prowManagedLabels(tc.labels); got != tc.want {
+			t.Errorf("prowManagedLabels(%v) = %v, want %v", tc.labels, got, tc.want)
+		}
 	}
 }
 

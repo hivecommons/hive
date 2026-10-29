@@ -67,6 +67,15 @@ type PullRequestApprovalEvent struct {
 	// sentinel findings.
 	SentinelLabelCleared bool
 	SentinelAcknowledged bool
+	// SentinelLabelOpen is true when the PR wore the sentinel alert label
+	// and this approval could not take it off: the alert is still open and
+	// a person must clear it on GitHub before the merge lanes touch the PR.
+	SentinelLabelOpen bool
+	// ProwManaged is true when the PR wears Prow's plugin labels (`approved`,
+	// `size/*`, `do-not-merge/*`, `ok-to-test`), so the relayed `/approve`
+	// came from the hive's account, which is not in OWNERS: Prow ignores it
+	// ("NOT APPROVED"), and an OWNERS reviewer still has to approve there.
+	ProwManaged bool
 	// Stage is the stage label the engine derived when the approval was
 	// submitted to it, or "" when the stage write was deferred to the sweep.
 	Stage string
@@ -246,7 +255,7 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 			return PullRequestApprovalEvent{}, fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
 		}
 	}
-	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor}
+	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor, ProwManaged: prowManagedLabels(labels)}
 	if c.logger != nil {
 		c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
 	}
@@ -277,6 +286,7 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		if labelPresent(labels, label) {
 			if err := c.RemoveLabel(ctx, full, number, label); err != nil {
 				c.warnOperatorApproval("sentinel label not cleared", full, number, head, err)
+				event.SentinelLabelOpen = true
 			} else {
 				event.SentinelLabelCleared = true
 			}
@@ -292,6 +302,21 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		c.logPRDecision(full, number, head, actor, prDecisionApprove, event.Stage, false)
 	}
 	return event, nil
+}
+
+// prowManagedLabels reports whether labels carry Prow's plugin markers:
+// the approve plugin's `approved`, size's `size/*`, the `do-not-merge/*`
+// family and trigger's `ok-to-test` / `needs-ok-to-test`.
+func prowManagedLabels(labels []string) bool {
+	for _, l := range labels {
+		l = strings.ToLower(strings.TrimSpace(l))
+		switch {
+		case l == "approved", l == "ok-to-test", l == "needs-ok-to-test",
+			strings.HasPrefix(l, "size/"), strings.HasPrefix(l, "do-not-merge/"), strings.HasPrefix(l, "tide/"):
+			return true
+		}
+	}
+	return false
 }
 
 // prDecisionApproveBody is the decision text a dashboard approval records,

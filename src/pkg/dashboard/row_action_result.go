@@ -30,6 +30,15 @@ type RowActionResult struct {
 	// the popover's shape (hivecommons/hive#14822). Both additive.
 	Why     string                       `json:"why,omitempty"`
 	Options []StageTrackerDecisionOption `json:"options,omitempty"`
+	// Posted lists what the action wrote on GitHub (`/lgtm`, `/approve`,
+	// a label removed) for the toast's muted secondary line; Outcome stays
+	// the plain-words headline. SentinelCleared says the action took the
+	// sentinel alert off, so the toast drops its ⚠ paragraph; SentinelOpen
+	// says the PR still wears the alert after the action and a person must
+	// clear it. Both additive.
+	Posted          []string `json:"posted,omitempty"`
+	SentinelCleared bool     `json:"sentinel_cleared,omitempty"`
+	SentinelOpen    bool     `json:"sentinel_open,omitempty"`
 }
 
 // RowActionTarget names the issue or PR a row action acted on.
@@ -162,9 +171,10 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 		case note("queued for auto-merge"):
 			out.Next = "Queued: the auto-merge engine merges per repository settings."
 		case note("/lgtm"):
-			out.Next = "`/lgtm` + `/approve` posted; the merge gate takes it from here."
+			out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
+			out.Posted = append(out.Posted, "`/lgtm` posted", "`/approve` posted")
 		default:
-			out.Next = "The merge gate takes it from here; the dashboard merges nothing."
+			out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
 		}
 	}
 	return out

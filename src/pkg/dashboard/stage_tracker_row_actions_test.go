@@ -95,6 +95,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerTargetKey"),
 		jsFunc(t, html, "stageTrackerResultOf"),
 		jsFunc(t, html, "stageTrackerErrorResult"),
+		jsFunc(t, html, "stageTrackerResultWarn"),
 		jsFunc(t, html, "stageTrackerResultText"),
 		jsFunc(t, html, "stageTrackerResultToast"),
 		jsFunc(t, html, "stageTrackerResultToastStale"),
@@ -857,6 +858,59 @@ const plain = { repo: 'o/r', kind: 'pr', number: 4, url: 'u4', stage: 85, modifi
   await stageTrackerActionPayload([plain], 'decide:approve');
   assert.strictEqual(dialogs.length, 1, 'asks again after reset');
 })().catch(e => { console.error(e); process.exit(1); });
+`)
+}
+
+// TestStageTrackerApproveToastSentinelWording (owner, hivecommons/dibs#510:
+// "approved `/lgtm` + `/approve` posted (released: approval-recorded,
+// sentinel-label). ⚠ … a maintainer must review before merge. The merge
+// gate takes it from here; the dashboard merges nothing" — "that's a
+// confusing response"): the toast leads with the server's plain-words
+// outcome, repeats the row's ⚠ sentinel paragraph only while the alert is
+// still open after the action (sentinel_cleared drops it), renders Next
+// as the concrete step, and lists what was posted on a muted line.
+func TestStageTrackerApproveToastSentinelWording(t *testing.T) {
+	html := indexHTML(t)
+	if !strings.Contains(html, `.ham-result-posted {`) {
+		t.Fatalf("index.html missing the muted ham-result-posted rule")
+	}
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+stageTrackerConfirmOptOutJS(t, html)+`
+const flagged = { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 85, head: '30e94a9ffff', sentinel_alert: true, sentinel_reason: 'possible security override', modifiers: ['needs-decision'] };
+const target = { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510' };
+const posted = ['\u0060/lgtm\u0060 posted', '\u0060/approve\u0060 posted', '\u0060sentinel-alert\u0060 label removed'];
+// Released: the alert the row carried is gone, so no ⚠ paragraph.
+const cleared = { action: 'approved', target, outcome: 'Approved #510 as @clubanderson · sentinel alert cleared by your review.', next: "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked (≈30 min).", posted, sentinel_cleared: true };
+let text = stageTrackerResultText(cleared, flagged, { id: 'decide:approve', rowRef: 'hivecommons/dibs#510' });
+assert.strictEqual(text.head, 'Approve on hivecommons/dibs#510: approved');
+assert.strictEqual(text.outcome, cleared.outcome);
+assert.strictEqual(text.warn, '', 'a released alert is not re-warned: ' + text.warn);
+assert.strictEqual(text.next, cleared.next);
+assert.strictEqual(text.posted, 'Posted: /lgtm posted · /approve posted · sentinel-alert label removed');
+assert.ok(!text.next.includes('merges nothing') && !text.outcome.includes('released:'), 'no "released:" / "merges nothing"');
+let toast = stageTrackerResultToast(cleared, flagged, { id: 'decide:approve' });
+let classes = toast.el.children.map(c => c.className).filter(c => c !== 'toast-close');
+assert.deepStrictEqual(classes, ['ham-result-head', 'ham-result-outcome', 'ham-result-next', 'ham-result-posted', 'ham-result-link'], classes.join(','));
+assert.ok(classes.indexOf('ham-result-next') < classes.indexOf('ham-result-posted'), 'the posted list is the muted trailer, under Next');
+// Still open: the ⚠ paragraph stays and Next says what the person must do.
+const open = { action: 'approved', target, outcome: 'Approved #510 as @clubanderson · sentinel alert still open.', next: 'The \u0060sentinel-alert\u0060 label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive\'s merge sweep will touch it.', posted: posted.slice(0, 2), sentinel_open: true };
+text = stageTrackerResultText(open, flagged, { id: 'decide:approve', rowRef: 'hivecommons/dibs#510' });
+assert.ok(text.warn.startsWith('⚠ hivecommons/dibs#510 — Sentinel flagged security-relevant changes at 30e94a9: possible security override'), text.warn);
+assert.ok(text.next.includes('take the label off on GitHub'), text.next);
+toast = stageTrackerResultToast(open, flagged, { id: 'decide:approve' });
+classes = toast.el.children.map(c => c.className).filter(c => c !== 'toast-close');
+assert.deepStrictEqual(classes, ['ham-result-head', 'ham-result-outcome', 'ham-result-warn', 'ham-result-next', 'ham-result-posted', 'ham-result-link'], classes.join(','));
+// An older hive's result (no flags) keeps the legacy behaviour: warn from the row.
+text = stageTrackerResultText({ action: 'approved', target, outcome: 'x', next: '' }, flagged, { id: 'decide:approve' });
+assert.ok(text.warn.startsWith('⚠ hivecommons/dibs#510'), text.warn);
+assert.strictEqual(text.posted, '');
+// A human-merge lane: Next names who merges.
+text = stageTrackerResultText({ action: 'approved', target, outcome: 'Approved #510 as @clubanderson.', next: 'Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Approve & merge as maintainer.', posted: posted.slice(0, 2) }, { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 90 }, { id: 'decide:approve' });
+assert.strictEqual(text.warn, '');
+assert.ok(text.next.startsWith('Hive cannot merge this one'), text.next);
+// A Prow-managed repo: the headline says recorded-in-hive, Next says who still approves.
+text = stageTrackerResultText({ action: 'approved', target, outcome: 'Approval of #510 recorded in hive as @clubanderson.', next: 'Prow approval still needs an OWNERS reviewer: the relayed \u0060/approve\u0060 came from hive\'s account, which Prow does not count. Hive\'s merge sweep merges it on its next pass once CI is green and the head has soaked (≈3 min).', posted: posted.slice(0, 2) }, { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 85 }, { id: 'decide:approve' });
+assert.ok(text.outcome.startsWith('Approval of #510 recorded in hive'), text.outcome);
+assert.ok(text.next.startsWith('Prow approval still needs an OWNERS reviewer'), text.next);
 `)
 }
 

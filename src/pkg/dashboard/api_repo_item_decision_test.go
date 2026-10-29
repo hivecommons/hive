@@ -559,3 +559,83 @@ func TestRepoItemDecisionMergeDecisionsGuard(t *testing.T) {
 		t.Fatalf("guards must stop before GitHub writes: merges=%v reviews=%v", mock.merges, mock.reviews)
 	}
 }
+
+// TestRepoItemApproveResultWording (owner, hivecommons/dibs#510 — "that's
+// a confusing response"): the approve toast leads with the outcome in
+// plain words, says who merges next, flags the sentinel alert only while
+// it is still open, and lists what was posted as a secondary line.
+func TestRepoItemApproveResultWording(t *testing.T) {
+	cases := []struct {
+		name      string
+		facts     repoItemApproveFacts
+		outcome   string
+		next      string
+		posted    string
+		cleared   bool
+		stillOpen bool
+	}{
+		{
+			name:    "sentinel released, lane merges",
+			facts:   repoItemApproveFacts{User: "clubanderson", Released: []string{"approval-recorded", "sentinel-label", "sentinel-acknowledged", "admitted"}, SentinelLabel: "sentinel-alert", SoakMinutes: 30},
+			outcome: "Approved #510 as @clubanderson · sentinel alert cleared by your review.",
+			next:    "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked (≈30 min).",
+			posted:  "`/lgtm` posted|`/approve` posted|`sentinel-alert` label removed|head admitted as-is on your approval",
+			cleared: true,
+		},
+		{
+			name:      "sentinel still open",
+			facts:     repoItemApproveFacts{User: "clubanderson", Released: []string{"approval-recorded"}, SentinelOpen: true, SentinelLabel: "sentinel-alert", SoakMinutes: 30},
+			outcome:   "Approved #510 as @clubanderson · sentinel alert still open.",
+			next:      "The `sentinel-alert` label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive's merge sweep will touch it.",
+			posted:    "`/lgtm` posted|`/approve` posted",
+			stillOpen: true,
+		},
+		{
+			name:    "human must merge",
+			facts:   repoItemApproveFacts{User: "clubanderson", Released: []string{"approval-recorded", "needs-human"}, Stage: stagelabels.ReadyForHumanMerge.Label(), SoakMinutes: 3},
+			outcome: "Approved #510 as @clubanderson.",
+			next:    "Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Approve & merge as maintainer.",
+			posted:  "`/lgtm` posted|`/approve` posted|`needs-human` label removed",
+		},
+		{
+			name:    "prow-managed repo: approval recorded, not claimed approved for prow",
+			facts:   repoItemApproveFacts{User: "clubanderson", Released: []string{"approval-recorded"}, SoakMinutes: 3, Prow: true},
+			outcome: "Approval of #510 recorded in hive as @clubanderson.",
+			next:    "Prow approval still needs an OWNERS reviewer: the relayed `/approve` came from hive's account, which Prow does not count. Hive's merge sweep merges it on its next pass once CI is green and the head has soaked (≈3 min).",
+			posted:  "`/lgtm` posted|`/approve` posted",
+		},
+		{
+			name:    "no user, no soak figure",
+			facts:   repoItemApproveFacts{Released: []string{"approval-recorded"}},
+			outcome: "Approved #510.",
+			next:    "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked.",
+			posted:  "`/lgtm` posted|`/approve` posted",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := repoItemDecisionResultWith("hivecommons/dibs", 510, "pr", repoItemDecisionApprove, "", "", "", tc.facts)
+			if got.Action != rowActionApproved || got.Outcome != tc.outcome || got.Next != tc.next {
+				t.Fatalf("result = %+v", got)
+			}
+			if p := strings.Join(got.Posted, "|"); p != tc.posted {
+				t.Fatalf("posted = %q", p)
+			}
+			if got.SentinelCleared != tc.cleared || got.SentinelOpen != tc.stillOpen {
+				t.Fatalf("sentinel flags cleared=%v open=%v", got.SentinelCleared, got.SentinelOpen)
+			}
+			for _, bad := range []string{"released:", "merges nothing", "merge gate takes it"} {
+				if strings.Contains(got.Outcome+got.Next, bad) {
+					t.Fatalf("old wording %q survives: %+v", bad, got)
+				}
+			}
+			if !tc.facts.Prow && strings.Contains(got.Outcome+got.Next, "Prow") {
+				t.Fatalf("non-prow repo mentions Prow: %+v", got)
+			}
+		})
+	}
+	// The legacy builder keeps the same shape for callers without facts.
+	if got := repoItemDecisionResult("o/r", 1, "pr", repoItemDecisionApprove, "", "", "", nil); got.Outcome != "Approved #1." {
+		t.Fatalf("legacy = %+v", got)
+	}
+}
