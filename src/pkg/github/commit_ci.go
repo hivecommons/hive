@@ -165,9 +165,12 @@ func RequiredStatusCheckContexts(ctx context.Context, client *gh.Client, owner, 
 }
 
 // RequiredStatusCheckContextsDetailed returns the branch-protection-required
-// status/check contexts. GitHub branch protection is authoritative; the
-// non-admin branch and rules endpoints are fallbacks when protection cannot be
-// read, and the config set is the final operator-declared fallback.
+// status/check contexts. GitHub branch protection is authoritative when it
+// lists required checks; the non-admin branch and rules endpoints are
+// fallbacks when protection cannot be read, and the config set is the final
+// operator-declared fallback. A classic "nothing required" answer defers to
+// the branch's rulesets when they list required checks
+// (rulesetRequiredWhenClassicEmpty).
 func RequiredStatusCheckContextsDetailed(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) (required map[string]bool, known bool, fromConfig bool, fallback bool) {
 	required, known, fromConfig, fallback, _ = RequiredStatusCheckContextsDetailedWithSource(ctx, client, owner, repo, branch, configSet, configKnown)
 	return required, known, fromConfig, fallback
@@ -184,13 +187,21 @@ func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *
 	if !sharedRequiredChecksForbiddenCache.get(cacheKey) {
 		rsc, _, err := client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
 		if err == nil {
-			if rsc == nil {
+			if rsc != nil {
+				required = requiredContextsFromRequiredStatusChecks(rsc.Contexts, rsc.Checks)
+			}
+			if len(required) == 0 {
+				if rules, ok := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
+					return rules, true, false, false, "rules"
+				}
 				return map[string]bool{}, true, false, false, "protection"
 			}
-			required = requiredContextsFromRequiredStatusChecks(rsc.Contexts, rsc.Checks)
 			return required, true, false, false, "protection"
 		}
 		if errors.Is(err, gh.ErrBranchNotProtected) {
+			if rules, ok := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
+				return rules, true, false, false, "rules"
+			}
 			return map[string]bool{}, true, false, false, "protection-unprotected"
 		}
 		if isRequiredChecksForbiddenCacheable(err) {
@@ -199,6 +210,11 @@ func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *
 	}
 
 	if branchRequired, branchKnown, err := requiredStatusChecksFromBranchEndpoint(ctx, client, owner, repo, branch); err == nil && branchKnown {
+		if len(branchRequired) == 0 {
+			if rules, ok := rulesetRequiredWhenClassicEmpty(ctx, client, owner, repo, branch); ok {
+				return rules, true, false, false, "rules"
+			}
+		}
 		return branchRequired, true, false, false, "branch"
 	}
 	if rulesRequired, rulesKnown, err := requiredStatusChecksFromRulesEndpoint(ctx, client, owner, repo, branch); err == nil && rulesKnown {
@@ -208,6 +224,23 @@ func RequiredStatusCheckContextsDetailedWithSource(ctx context.Context, client *
 		return configSet, true, true, true, "config"
 	}
 	return nil, false, false, false, "none"
+}
+
+// rulesetRequiredWhenClassicEmpty reads the ruleset required checks for a
+// branch whose classic answer was "nothing required": an unprotected branch,
+// or protection (or the branch payload's protection, `enabled:false`) without
+// required checks. Classic protection never lists ruleset rules, so on a
+// rulesets-only repository that answer is not authoritative; GitHub still
+// enforces the ruleset's checks at merge time (projectbluefin/testsuite and
+// bluefin-bling read as known-empty and their held fork runs were never
+// approved). It reports false when the rules endpoint fails or lists no
+// required check, leaving the classic answer standing.
+func rulesetRequiredWhenClassicEmpty(ctx context.Context, client *gh.Client, owner, repo, branch string) (map[string]bool, bool) {
+	rules, known, err := requiredStatusChecksFromRulesEndpoint(ctx, client, owner, repo, branch)
+	if err != nil || !known || len(rules) == 0 {
+		return nil, false
+	}
+	return rules, true
 }
 
 func requiredContextsFromRequiredStatusChecks(contexts *[]string, checks *[]*gh.RequiredStatusCheck) map[string]bool {

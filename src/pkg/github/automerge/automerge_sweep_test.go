@@ -895,6 +895,8 @@ func TestCommitGreenKnownEmptyRequiredChecksBlocksCompletedFailures(t *testing.T
 						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
 					}
 					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
+					json.NewEncoder(w).Encode([]any{}) // no rulesets
 				default:
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
@@ -1463,6 +1465,8 @@ func TestCommitGreenUnprotectedBaseIgnoresMetaWithEvidence(t *testing.T) {
 						runs = append(runs, map[string]string{"name": c.name, "status": c.status, "conclusion": c.conclusion})
 					}
 					json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "check_runs": runs})
+				case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
+					json.NewEncoder(w).Encode([]any{}) // no rulesets
 				default:
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
@@ -1666,6 +1670,8 @@ func TestCommitGreenKnownEmptyRequiredChecksBlocksFailedCheck(t *testing.T) {
 				{"name": "build", "status": "completed", "conclusion": "failure"},
 				{"name": "lint", "status": "completed", "conclusion": "success"},
 			}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
+			json.NewEncoder(w).Encode([]any{}) // no rulesets
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -3220,6 +3226,8 @@ func TestCommitGreenKnownEmptyRequiredChecksRequiresEvidence(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/check-runs":
 			json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []map[string]any{}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
+			json.NewEncoder(w).Encode([]any{}) // no rulesets
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}

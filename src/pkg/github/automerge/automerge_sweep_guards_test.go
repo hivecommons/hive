@@ -174,6 +174,8 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]any{"merged": fx.mergeApplied, "sha": "merge7"})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/rules/branches/"):
+			json.NewEncoder(w).Encode([]any{}) // no rulesets
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}

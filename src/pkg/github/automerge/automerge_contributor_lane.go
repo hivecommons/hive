@@ -1384,7 +1384,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return eval, reason, err
 	}
 	if !green {
-		if strings.HasPrefix(reason, requiredCheckMissingPrefix) {
+		if contributorHeldRunsReason(reason) {
 			_, reason = c.approveHeldRunsForRegistryTrusted(ctx, displayRepo, owner, repo, pr, number, headSHA, claim, policy, files, reason)
 		}
 		if !strings.HasPrefix(reason, unauthorizedReasonPrefix) {

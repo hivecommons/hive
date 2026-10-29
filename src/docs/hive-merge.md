@@ -469,8 +469,9 @@ lane's held runs (the `hive-ok-to-test` workflow approves same-repo heads
 only). hivecommons/docs#481 by a `trusted` registry contributor sat 17 hours
 at `required-check-missing:Audit production dependencies` until an operator
 clicked "Approve and run". When the registry path admitted the author and the
-lane stops at `required-check-missing:<ctx>`, it now approves the head's held
-runs once (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`, fork head
+lane stops at `required-check-missing:<ctx>`, or at `ci-unverified` while
+every `pull_request` run on the head is held (the branch's required checks
+are unreadable or empty), it now approves the head's held runs once (`POST /repos/{owner}/{repo}/actions/runs/{id}/approve`, fork head
 included), posts one `<!-- hive:contributor-held-runs-approved … -->` audit
 comment naming the author and tier, and logs `contributor-lane approved held
 runs` with the run ids (`approve_held_runs_for_registry_trusted`, default
@@ -479,6 +480,16 @@ approved for, nor is a PR carrying the sentinel or an `exclude_labels` label,
 nor one touching `.github/workflows/**`. The App needs **Actions: Read and
 write** for the call; without it the approve fails, is logged once per head,
 and the PR waits for a person as before.
+
+The required checks come from classic branch protection first. When classic
+protection says nothing is required (the branch is unprotected, or protected
+with no required checks), the sweep also reads the branch's rulesets
+(`GET /repos/{owner}/{repo}/rules/branches/{branch}`) and uses their
+`required_status_checks` if any. On a rulesets-only repository the classic
+answer is always empty, so before this the sweep logged `automerge required
+checks source … source=branch known=false count=0`, a held head stayed at
+`ci-unverified`, and its runs were never approved (projectbluefin/testsuite,
+bluefin-bling).
 
 A PR merges through this tier only when all of the following hold:
 

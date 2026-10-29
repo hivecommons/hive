@@ -450,3 +450,105 @@ func TestUnauthorizedCommentAndMarker(t *testing.T) {
 		t.Fatalf("reason = %q", got)
 	}
 }
+
+// A rulesets-only repository (projectbluefin/testsuite, bluefin-bling): the
+// classic protection answer is "Branch not protected", the ruleset lists the
+// required checks. The lane must read the ruleset, stop at
+// required-check-missing and approve the registry-trusted author's held runs
+// rather than sit at ci-unverified forever.
+func TestContributorLaneApprovesHeldRunsOnRulesetsOnlyBranch(t *testing.T) {
+	fx := validContributorFixture()
+	fx.baseRef = "main"
+	fx.body = "Part of #42\n\nSome change."
+	fx.issueComments = nil
+	fx.headRepo = "thatguywob/widget"
+	fx.rulesetContexts = []string{"ci/build", contributorHeldRunsTestContext}
+	fx.workflowRuns = []map[string]any{heldRun(11, "thatguywob/widget"), heldRun(12, "thatguywob/widget")}
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	policy.RegistryTiersSufficient = true
+	policy.ApproveHeldRunsForRegistryTrusted = true
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorRegistryTier: registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}), ContributorSoak: soakedTracker(clock)})
+
+	_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := requiredCheckMissingPrefix + contributorHeldRunsTestContext; reason != want {
+		t.Fatalf("reason = %q, want %q (ruleset required checks read)", reason, want)
+	}
+	if !slices.Equal(fx.approvedRuns, []int64{11, 12}) {
+		t.Fatalf("approved runs = %v, want [11 12]", fx.approvedRuns)
+	}
+	if fx.merges != 0 {
+		t.Fatalf("merges = %d, want 0", fx.merges)
+	}
+}
+
+// With no readable required checks a held head reports ci-unverified. The
+// approver acts only when every pull_request run on the head is held; a head
+// where some run already started is an ordinary evidence gap.
+func TestContributorLaneApprovesHeldRunsWhenCIUnverifiedAndAllHeld(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		runs         []map[string]any
+		registry     map[string]string
+		wantApproved []int64
+	}{
+		{
+			name:         "every run held approves",
+			runs:         []map[string]any{heldRun(11, "acme/widget"), heldRun(12, "acme/widget"), heldRun(14, "mallory/widget")},
+			registry:     map[string]string{contributorLaneTestAuthor: "trusted"},
+			wantApproved: []int64{11, 12},
+		},
+		{
+			name: "a run already in progress leaves it alone",
+			runs: []map[string]any{
+				heldRun(11, "acme/widget"),
+				{"id": 13, "name": "lint", "status": "in_progress", "head_repository": map[string]any{"full_name": "acme/widget"}},
+			},
+			registry: map[string]string{contributorLaneTestAuthor: "trusted"},
+		},
+		{
+			name:     "claim marker author is not approved for",
+			runs:     []map[string]any{heldRun(11, "acme/widget")},
+			registry: nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.baseRef = "main"
+			if tc.registry != nil {
+				fx.body = "Part of #42\n\nSome change."
+				fx.issueComments = nil
+			}
+			fx.noCIEvidence = true
+			fx.workflowRuns = tc.runs
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			policy.RegistryTiersSufficient = true
+			policy.ApproveHeldRunsForRegistryTrusted = true
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)}
+			engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorRegistryTier: registryTiers(tc.registry), ContributorSoak: soakedTracker(clock)})
+
+			for tick := 1; tick <= 2; tick++ {
+				_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+				if err != nil {
+					t.Fatalf("tick %d: %v", tick, err)
+				}
+				if reason != contributorHeldRunsCIUnverified {
+					t.Fatalf("tick %d reason = %q, want %q", tick, reason, contributorHeldRunsCIUnverified)
+				}
+			}
+			if !slices.Equal(fx.approvedRuns, tc.wantApproved) {
+				t.Fatalf("approved runs = %v, want %v (once across two ticks)", fx.approvedRuns, tc.wantApproved)
+			}
+			if fx.merges != 0 {
+				t.Fatalf("merges = %d, want 0", fx.merges)
+			}
+		})
+	}
+}

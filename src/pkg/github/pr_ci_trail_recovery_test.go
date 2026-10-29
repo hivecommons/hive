@@ -175,6 +175,8 @@ func (f *trailFixture) serve(t *testing.T) *httptest.Server {
 				})
 			}
 			enc(map[string]any{"total_count": len(runs), "check_runs": runs})
+		case strings.Contains(r.URL.Path, "/rules/branches/"):
+			enc([]any{}) // no rulesets
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
 			fail(http.StatusNotFound, "Not Found")

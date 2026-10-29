@@ -104,6 +104,12 @@ type contributorLaneFixture struct {
 	// unprotected. The status/check-runs routes only ever report ci/build,
 	// so any other name yields required-check-missing:<name>.
 	requiredContexts []string
+	// rulesetContexts, when set with baseRef, is what the branch's rulesets
+	// (rules/branches) list as required_status_checks; empty serves [].
+	rulesetContexts []string
+	// noCIEvidence makes the status and check-runs routes for sha7 report
+	// nothing, as for a head whose only workflow runs GitHub is holding.
+	noCIEvidence bool
 	// workflowRuns is the payload of GET actions/runs?head_sha=sha7; nil
 	// serves an empty list.
 	workflowRuns []map[string]any
@@ -302,6 +308,10 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			json.NewEncoder(w).Encode(fx.reviews)
 		case r.Method == http.MethodGet && (r.URL.Path == "/repos/acme/widget/commits/sha7/status" ||
 			(fx.recheckHeadSHA != "" && r.URL.Path == "/repos/acme/widget/commits/"+fx.recheckHeadSHA+"/status")):
+			if fx.noCIEvidence {
+				json.NewEncoder(w).Encode(map[string]any{"state": "pending", "total_count": 0, "statuses": []any{}})
+				return
+			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"state":       headStatus,
 				"total_count": 1,
@@ -309,6 +319,10 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			})
 		case r.Method == http.MethodGet && (r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs" ||
 			(fx.recheckHeadSHA != "" && r.URL.Path == "/repos/acme/widget/commits/"+fx.recheckHeadSHA+"/check-runs")):
+			if fx.noCIEvidence {
+				json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []any{}})
+				return
+			}
 			run := map[string]string{"name": "build", "status": "completed", "conclusion": headStatus}
 			if fx.checkCompletedAt != "" {
 				run["completed_at"] = fx.checkCompletedAt
@@ -361,6 +375,14 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			}
 			w.WriteHeader(http.StatusCreated)
 		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/rules/branches/"+fx.baseRef:
+			if len(fx.rulesetContexts) > 0 {
+				checks := make([]map[string]string, 0, len(fx.rulesetContexts))
+				for _, name := range fx.rulesetContexts {
+					checks = append(checks, map[string]string{"context": name})
+				}
+				json.NewEncoder(w).Encode([]any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{"required_status_checks": checks}}})
+				return
+			}
 			json.NewEncoder(w).Encode([]any{})
 		case fx.baseRef != "" && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/base1/status":
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []any{}})

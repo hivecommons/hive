@@ -11,8 +11,10 @@ package automerge
 // is pure drag (hivecommons/docs#481 sat 17h). The lane approves those runs
 // once per head with the App token when, and only when, the registry path
 // admitted the author and the lane's own CI reason is
-// `required-check-missing:<ctx>`. Claim-marker, auto-promotion and
-// association admissions stay untouched.
+// `required-check-missing:<ctx>`, or `ci-unverified` with every
+// `pull_request` run on the head held (a branch whose required checks the
+// hive cannot read). Claim-marker, auto-promotion and association
+// admissions stay untouched.
 
 import (
 	"context"
@@ -35,11 +37,18 @@ const (
 	// contributorHeldRunsApprovalKeyPrefix namespaces the once-per-head
 	// bookkeeping inside Engine.heldRunApprovals.
 	contributorHeldRunsApprovalKeyPrefix = "registry-held-approve:"
+	// contributorHeldRunsCIUnverified is the commit-CI reason for a head with
+	// no CI evidence while its required checks are unknown or known-empty.
+	contributorHeldRunsCIUnverified = "ci-unverified"
 )
 
 // approveHeldRunsForRegistryTrusted approves the `action_required` workflow
 // runs for a contributor-lane head once, when the author was admitted by the
-// registry path and the lane stopped at reason (`required-check-missing:<ctx>`).
+// registry path and the lane stopped at reason `required-check-missing:<ctx>`,
+// or at `ci-unverified` while every `pull_request` run GitHub has for the
+// head is held: with the required set unreadable or known-empty, no CI
+// evidence ever appears until someone approves, so the lane would wait
+// forever on a contributor the operator already trusts.
 // It refuses for any other admission path, when the toggle is off, when the
 // PR carries the sentinel or an exclude label, or when the diff touches CI
 // definitions. It returns the run ids it approved (nil when it did nothing)
@@ -55,7 +64,7 @@ func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayR
 	if !policy.ApproveHeldRunsForRegistryTrusted || !claim.admittedByRegistry() {
 		return nil, reason
 	}
-	if !strings.HasPrefix(reason, requiredCheckMissingPrefix) {
+	if !contributorHeldRunsReason(reason) {
 		return nil, reason
 	}
 	labels := labelNames(pr.Labels)
@@ -73,7 +82,10 @@ func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayR
 		}
 		return nil, reason
 	}
-	missing := strings.TrimPrefix(reason, requiredCheckMissingPrefix)
+	missing := ""
+	if strings.HasPrefix(reason, requiredCheckMissingPrefix) {
+		missing = strings.TrimPrefix(reason, requiredCheckMissingPrefix)
+	}
 	runs, _, err := c.gh.Actions.ListRepositoryWorkflowRuns(hgithub.WithRESTCaller(ctx, "hive:contributor_lane_automerge_sweep"), owner, repo, &gh.ListWorkflowRunsOptions{
 		HeadSHA:     headSHA,
 		Event:       "pull_request",
@@ -83,8 +95,14 @@ func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayR
 		c.warn("contributor-lane could not list workflow runs for held-run approval", "repo", displayRepo, "pr", number, "head", headSHA, "error", err)
 		return nil, reason
 	}
-	held := heldWorkflowRunsForHead(runs.WorkflowRuns, contributorLaneHeadRepo(pr, owner, repo))
+	headRepo := contributorLaneHeadRepo(pr, owner, repo)
+	held := heldWorkflowRunsForHead(runs.WorkflowRuns, headRepo)
 	if len(held) == 0 {
+		return nil, reason
+	}
+	if missing == "" && len(held) != len(workflowRunsForHeadRepo(runs.WorkflowRuns, headRepo)) {
+		// ci-unverified with some run already started or finished: the
+		// evidence gap is not the approval hold, so leave it alone.
 		return nil, reason
 	}
 	// Mark before calling the API: a partial failure must not be retried
@@ -120,6 +138,12 @@ func (c *Engine) approveHeldRunsForRegistryTrusted(ctx context.Context, displayR
 	return approved, reason
 }
 
+// contributorHeldRunsReason reports whether a lane CI reason is one the
+// held-run approver acts on.
+func contributorHeldRunsReason(reason string) bool {
+	return strings.HasPrefix(reason, requiredCheckMissingPrefix) || reason == contributorHeldRunsCIUnverified
+}
+
 // approveWorkflowRun is POST /repos/{owner}/{repo}/actions/runs/{run_id}/approve.
 // go-github v72 has no binding for it.
 func (c *Engine) approveWorkflowRun(ctx context.Context, owner, repo string, runID int64) error {
@@ -141,6 +165,17 @@ func contributorLaneHeadRepo(pr *gh.PullRequest, owner, repo string) string {
 		}
 	}
 	return owner + "/" + repo
+}
+
+// workflowRunsForHeadRepo returns the runs whose head repository is headRepo.
+func workflowRunsForHeadRepo(runs []*gh.WorkflowRun, headRepo string) []*gh.WorkflowRun {
+	var out []*gh.WorkflowRun
+	for _, run := range runs {
+		if run != nil && run.GetHeadRepository() != nil && strings.EqualFold(run.GetHeadRepository().GetFullName(), headRepo) {
+			out = append(out, run)
+		}
+	}
+	return out
 }
 
 // heldWorkflowRunsForHead returns the runs waiting on approval whose head
