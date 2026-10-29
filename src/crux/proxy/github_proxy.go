@@ -148,12 +148,12 @@ type GitHubProxy struct {
 	// identical upstream timeouts emit one WARN per window (see logTimeout).
 	timeoutWarnMu sync.Mutex
 	timeoutWarnAt map[string]time.Time
-	listenAddr          string
-	caCert              tls.Certificate
-	caX509              *x509.Certificate
-	logger              *slog.Logger
-	uidMap              *agent.UIDMap
-	allowedRepos        map[string]bool
+	listenAddr    string
+	caCert        tls.Certificate
+	caX509        *x509.Certificate
+	logger        *slog.Logger
+	uidMap        *agent.UIDMap
+	allowedRepos  map[string]bool
 
 	// repoPaused reports whether a repo ("owner/repo", as ExtractRepo yields it)
 	// is under an operator pause (#6203). Guarded because the dashboard can

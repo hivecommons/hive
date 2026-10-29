@@ -2,9 +2,9 @@ package proxy
 
 import (
 	"bytes"
-	"log/slog"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
