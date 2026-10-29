@@ -91,9 +91,12 @@ func (c *Client) GetPRMergeState(ctx context.Context, repo string, number int) (
 // CommitByHive reports whether the commit at sha is the hive's own work:
 // its author or committer resolves to the App bot (by login or noreply
 // address) or to an address in the pane identity domain — the fixer's
-// rebase or GitHub's update-branch under the App. A head a person pushed
-// after a rebase-then-merge approval is new content the approval never
-// covered, so the follow-through fails closed on it (hivecommons/hive#15104).
+// rebase or GitHub's update-branch under the App. When GitHub resolves no
+// login for that identity, the email-only match also requires the commit's
+// signature to be verified by GitHub (hivecommons/hive#15182). A head a
+// person pushed after a rebase-then-merge approval is new content the
+// approval never covered, so the follow-through fails closed on it
+// (hivecommons/hive#15104).
 func (c *Client) CommitByHive(ctx context.Context, repo, sha string) (bool, error) {
 	if c == nil || c.client == nil {
 		return false, ErrNoGitHubClient
@@ -107,10 +110,16 @@ func (c *Client) CommitByHive(ctx context.Context, repo, sha string) (bool, erro
 	if err != nil {
 		return false, fmt.Errorf("reading %s/%s@%s: %w", owner, repoName, shortSHA(sha), err)
 	}
-	if c.hiveCommitIdentity(safeGetLogin(rc.GetCommitter()), rc.GetCommit().GetCommitter().GetEmail()) {
+	verified := rc.GetCommit().GetVerification().GetVerified()
+	byHive := func(login, email string) bool {
+		// An email-only match (no login resolved) counts only on a commit
+		// GitHub verified; a login resolved to the App bot counts as is.
+		return c.hiveCommitIdentity(login, email) && (login != "" || verified)
+	}
+	if byHive(safeGetLogin(rc.GetCommitter()), rc.GetCommit().GetCommitter().GetEmail()) {
 		return true, nil
 	}
-	return c.hiveCommitIdentity(safeGetLogin(rc.GetAuthor()), rc.GetCommit().GetAuthor().GetEmail()), nil
+	return byHive(safeGetLogin(rc.GetAuthor()), rc.GetCommit().GetAuthor().GetEmail()), nil
 }
 
 // PRConflictCandidates names the files a PR changed that its base also

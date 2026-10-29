@@ -1,0 +1,1 @@
+- The rebase-then-merge follow-through now counts a head as the hive's own by its email domain alone (no GitHub login resolved) only when GitHub reports the commit as verified; a commit whose login resolves to the App bot counts as before ([#15182](https://github.com/hivecommons/hive/issues/15182)).
