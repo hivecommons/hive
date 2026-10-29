@@ -807,12 +807,7 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	if stored, ok := store.Get(key); ok && stored.AdoptedBy > 0 && stored.AdoptOrphanedBy == stored.AdoptedBy {
 		priorCopy = stored.AdoptedBy
 	}
-	claimInputs := func(prior int, inputs map[string]string) map[string]string {
-		if prior > 0 {
-			inputs["prior_copy"] = strconv.Itoa(prior)
-		}
-		return inputs
-	}
+	claimInputs := priorCopyInputs
 	// resignedTip stays "" when the branch falls back to the unsigned
 	// contributor head; the body then keeps the manual DCO repair steps.
 	var resignedTip string
@@ -860,7 +855,7 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		// The head is red on a conflict: opening the copy as-is would just
 		// move the conflict. Replay the base onto the hive branch first; a
 		// git conflict is terminal for this head (one note, 07x reason).
-		conflicted, n, err := c.replaySupersedeOntoBase(ctx, store, key, obs, branch, now)
+		conflicted, n, err := c.replaySupersedeOntoBase(ctx, store, key, obs, branch, priorCopy, now)
 		if err != nil || conflicted {
 			return n, err
 		}
@@ -976,12 +971,12 @@ func AdoptionSupersedeConflictComment(obs stageObservation, branch string, files
 // recorded as supersede-conflict so the request is consumed and the 07x
 // reason names it, and one note is posted. Other API failures return the
 // error with the attempt already recorded by the caller.
-func (c *Engine) replaySupersedeOntoBase(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, branch string, now time.Time) (conflicted bool, comments int, err error) {
+func (c *Engine) replaySupersedeOntoBase(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, branch string, priorCopy int, now time.Time) (conflicted bool, comments int, err error) {
 	owner, repo, number := obs.Owner, obs.Repo, obs.Number
 	var status int
 	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo: owner + "/" + repo, Kind: effects.KindBranchPush, Target: branch, Actor: "stage_labels",
-		Inputs: map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "base": obs.BaseRef, "reason": "supersede-replay"},
+		Inputs: priorCopyInputs(priorCopy, map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "base": obs.BaseRef, "reason": "supersede-replay"}),
 	}, func(ctx context.Context) (effects.Result, error) {
 		commit, resp, apiErr := c.gh.Repositories.Merge(ctx, owner, repo, &gh.RepositoryMergeRequest{
 			Base:          gh.Ptr(branch),
@@ -1016,6 +1011,15 @@ func (c *Engine) replaySupersedeOntoBase(ctx context.Context, store *stagelabels
 		return true, 0, cErr
 	}
 	return true, 1, nil
+}
+
+// priorCopyInputs keys a claim by the closed copy it follows, so a
+// re-adoption is not answered by the first adoption's journal entry.
+func priorCopyInputs(prior int, inputs map[string]string) map[string]string {
+	if prior > 0 {
+		inputs["prior_copy"] = strconv.Itoa(prior)
+	}
+	return inputs
 }
 
 // adoptionReplayedPRNumber reads the PR number from a pull_request_create

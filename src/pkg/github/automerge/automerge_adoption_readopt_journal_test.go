@@ -144,6 +144,27 @@ func TestAdoptionReadoptAfterClosedCopyIsNotJournalReplayed(t *testing.T) {
 // The journal replays the PR-create claim and hands back a copy that is
 // closed: the adoption claims a fresh copy rather than reading the replay
 // as a failure and clearing the adoption.
+func TestAdoptionReadoptReplaysBaseMergeKeyedByPriorCopy(t *testing.T) {
+	h, jb, done, adopted := adoptAt074Journaled(t)
+	defer done()
+	h.adopt.setSuperseder(90, "closed", false)
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "aaa", append(adopted, "needs-rebase")...), "check-failing:unit")
+	var replay effects.Claim
+	for _, c := range jb.claims {
+		if c.Kind == effects.KindBranchPush && c.Inputs["reason"] == "supersede-replay" {
+			replay = c
+		}
+	}
+	if got := replay.Inputs["prior_copy"]; got != "90" {
+		t.Fatalf("supersede-replay claim prior_copy = %q, want 90 (claims %v)", got, jb.claims)
+	}
+	if len(h.adopt.merges) != 1 || h.adopt.merges[0] != "hive/adopt-7<-v5" {
+		t.Fatalf("base not merged on re-adoption: %v", h.adopt.merges)
+	}
+}
+
 func TestAdoptionJournalReplayOfClosedCopyOpensFreshCopy(t *testing.T) {
 	h, jb, done, adopted := adoptAt074Journaled(t)
 	defer done()
