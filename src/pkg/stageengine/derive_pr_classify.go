@@ -399,6 +399,15 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		if HasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
+		if v, ok := HumanChangeRequestStage(o); ok {
+			// The "needs a human" the lane parked on — a sentinel alert, a
+			// workflow-path fence, a hold — is answered for this head: a
+			// trusted maintainer reviewed it and asked for changes, so the
+			// author acts next. Without this the sentinel-blocked
+			// contributor lane re-derived 085 over the owner's 072 every
+			// sweep (hivecommons/hive#15159); a new head re-asks.
+			return v
+		}
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}
 	if v, ok := HumanChangeRequestStage(o); ok {

@@ -22,6 +22,7 @@ import (
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/review"
+	hreview "github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -1756,4 +1757,64 @@ func TestContributorTrustedChangeRequestAnswersRequiresHuman(t *testing.T) {
 	if v := classifyStage(o); v.Stage != stagelabels.ReturnedToContributor {
 		t.Fatalf("stage=%+v, want returned to contributor", v)
 	}
+}
+
+// TestTrySweepContributorLaneSentinelYieldsToHumanChangesRequested: the
+// sentinel alert parks a contributor PR for a human; a trusted human's
+// CHANGES_REQUESTED review on the current head is that human. The lane
+// reports human-changes-requested (→ 071/072) instead of sentinel-blocked
+// (→ 085), reads the standing request from the durable store too, and
+// re-arms the park on a new head (hivecommons/hive#15159).
+func TestTrySweepContributorLaneSentinelYieldsToHumanChangesRequested(t *testing.T) {
+	review := func(state, commit, login string) []map[string]any {
+		return []map[string]any{{"id": 1, "state": state, "commit_id": commit, "user": map[string]string{"login": login}, "body": "drop the workflow change"}}
+	}
+	for _, tt := range []struct {
+		name       string
+		reviews    []map[string]any
+		trusted    bool
+		store      *hreview.HumanChangeRequests
+		wantReason string
+	}{
+		{name: "no review stays parked", trusted: true, wantReason: contributorLaneReasonSentinelBlocked},
+		{name: "trusted changes requested on head", reviews: review("CHANGES_REQUESTED", "sha7", "clubanderson"), trusted: true, wantReason: autoMergeReasonHumanChangesRequested},
+		{name: "untrusted reviewer stays parked", reviews: review("CHANGES_REQUESTED", "sha7", "clubanderson"), wantReason: contributorLaneReasonSentinelBlocked},
+		{name: "review on an older head re-arms", reviews: review("CHANGES_REQUESTED", "sha6", "clubanderson"), trusted: true, wantReason: contributorLaneReasonSentinelBlocked},
+		{name: "approval is not a change request", reviews: review("APPROVED", "sha7", "clubanderson"), trusted: true, wantReason: contributorLaneReasonSentinelBlocked},
+		{name: "standing request in the store", trusted: true, store: storedChangeRequest(t, "sha7"), wantReason: autoMergeReasonHumanChangesRequested},
+		{name: "stored request on an older head re-arms", trusted: true, store: storedChangeRequest(t, "sha6"), wantReason: contributorLaneReasonSentinelBlocked},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.labels = []string{"hive-sentinel"}
+			fx.reviews = tt.reviews
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+			engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock), HumanChangeRequests: tt.store})
+			if tt.trusted {
+				engine.SetMergerAuthorizer(func(login string) bool { return strings.EqualFold(login, "clubanderson") })
+			}
+			_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
+			}
+			if fx.merges != 0 {
+				t.Fatalf("merged %d, want 0", fx.merges)
+			}
+		})
+	}
+}
+
+func storedChangeRequest(t *testing.T, head string) *hreview.HumanChangeRequests {
+	t.Helper()
+	store := hreview.NewHumanChangeRequests("")
+	if err := store.Record(hreview.HumanChangeRequest{Repo: "acme/widget", Number: 7, HeadSHA: head, Source: hreview.HumanChangeRequestSourceDecision, Actor: "clubanderson", Body: "drop it"}); err != nil {
+		t.Fatal(err)
+	}
+	return store
 }

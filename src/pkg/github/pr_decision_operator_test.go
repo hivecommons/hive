@@ -290,3 +290,50 @@ func TestRecordOperatorPullRequestApprovalSkipsCommandsProwRejected(t *testing.T
 		})
 	}
 }
+
+// TestRecordOperatorPullRequestDecisionCarriesDirectionToContributorHive:
+// a direction on a contributor's clanker PR (author/clanker) is accepted
+// and carried to that contributor's hive — recorded against the head as a
+// change request, the stage fact says the PR is not the hive's own, and the
+// reply addresses the contributor's hive, not "the author agent"
+// (hivecommons/hive#15159 answered 409 and left the row at 085). A bare
+// "approve" is still not a direction a foreign hive can act on.
+func TestRecordOperatorPullRequestDecisionCarriesDirectionToContributorHive(t *testing.T) {
+	clanker := parkedPR(78, "thatguywob", []string{PRNeedsDecisionStageLabel, "author/clanker", "role/trusted", "sentinel-alert"})
+	c, rec := newUnparkPRClient(t, []unparkWireIssue{hiveParkedPR(), clanker}, nil)
+	store := review.NewHumanChangeRequests("")
+
+	event, err := c.RecordOperatorPullRequestDecision(context.Background(), "org/repo", 78, "clubanderson", "drop the workflow change", store)
+	if err != nil {
+		t.Fatalf("direction on a clanker PR: %v", err)
+	}
+	if event.ToContributor != "thatguywob" || event.Mode != string(prDecisionChangesRequested) || event.HeadSHA != liveDecisionHead {
+		t.Fatalf("event = %+v, want the contributor named", event)
+	}
+	got, ok := store.For("org/repo", 78, liveDecisionHead)
+	if !ok || got.Actor != "clubanderson" || got.Body != "drop the workflow change" || got.IsApproval() {
+		t.Fatalf("stored request = %+v ok=%v", got, ok)
+	}
+	facts := prDecisionFacts(t, c)
+	if len(facts) != 1 || !facts[0].Instruction || facts[0].SelfAuthored || facts[0].Head != liveDecisionHead || facts[0].By != "clubanderson" {
+		t.Fatalf("stage facts = %+v, want one non-self PRDecided with the instruction", facts)
+	}
+	posted := strings.Join(rec.posted[78], "\n")
+	if !strings.Contains(posted, "Direction recorded by @clubanderson") || !strings.Contains(posted, "@thatguywob's hive") || !strings.Contains(posted, "> drop the workflow change") {
+		t.Fatalf("reply must address the contributor's hive with the direction, got %q", posted)
+	}
+	if strings.Contains(posted, "author agent") || strings.Contains(posted, "did not open this PR") {
+		t.Fatalf("reply must not speak of the hive's own fixer or refuse, got %q", posted)
+	}
+
+	if _, err := c.RecordOperatorPullRequestDecision(context.Background(), "org/repo", 78, "clubanderson", "approve", store); !errors.Is(err, ErrPullRequestNotHiveAuthored) {
+		t.Fatalf("bare approve on a clanker PR: err = %v, want ErrPullRequestNotHiveAuthored", err)
+	}
+	// The hive's own PR keeps the hive-fixer reply.
+	if _, err := c.RecordOperatorPullRequestDecision(context.Background(), "org/repo", liveDecisionPR, "clubanderson", "do it", store); err != nil {
+		t.Fatalf("own PR: %v", err)
+	}
+	if own := strings.Join(rec.posted[liveDecisionPR], "\n"); !strings.Contains(own, "Decision recorded by @clubanderson") || strings.Contains(own, "'s hive") {
+		t.Fatalf("own-PR reply = %q", own)
+	}
+}

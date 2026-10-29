@@ -631,3 +631,42 @@ func TestRouteHumanAuthorOwesAnswer(t *testing.T) {
 		t.Fatalf("approved head routed to %s: %+v", r.Stage, r)
 	}
 }
+
+// TestRouteHumanChangeRequesterWinsOverParks: a trusted maintainer's
+// CHANGES_REQUESTED review on the head is the person's answer to every
+// "needs a human" park on it — the sentinel alert, a hold, a manual-merge
+// lane rule — so the PR goes back to its author (072 for a clanker's, 071
+// for a person's, 070 for the hive's) instead of 085
+// (hivecommons/hive#15159: "Sentinel alert · needs human" re-derived over
+// the owner's 072 every sweep).
+func TestRouteHumanChangeRequesterWinsOverParks(t *testing.T) {
+	e := readyEvidence()
+	e.Sentinel = true
+	e.Cause = CauseDecision
+	e.CauseReason = "contributor-lane:sentinel-blocked"
+	e.Holds = []string{"hold"}
+	e.ManualMergeRule = true
+	if r := RouteHuman(e); r.Stage != NeedsDecision {
+		t.Fatalf("without a review the parks hold: %+v", r)
+	}
+	e.HumanChangeRequester = "@clubanderson"
+	e.AuthorKind = authorkind.Clanker
+	r := RouteHuman(e)
+	if r.Stage != ReturnedToContributor || r.LaneReason != LaneReasonHumanChangesRequested {
+		t.Fatalf("clanker route = %+v", r)
+	}
+	if len(r.Reasons) != 1 || r.Reasons[0] != "@clubanderson requested changes @abc1234" {
+		t.Fatalf("reasons = %q", r.Reasons)
+	}
+	if !strings.Contains(r.Summary, "changes requested by @clubanderson") {
+		t.Fatalf("summary = %q", r.Summary)
+	}
+	e.AuthorKind = authorkind.Human
+	if r := RouteHuman(e); r.Stage != NeedsAuthor {
+		t.Fatalf("human route = %+v", r)
+	}
+	e.SelfAuthored = true
+	if r := RouteHuman(e); r.Stage != Fixing {
+		t.Fatalf("self-authored route = %+v", r)
+	}
+}

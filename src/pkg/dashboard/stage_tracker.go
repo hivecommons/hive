@@ -1300,6 +1300,9 @@ func humanizeStageReason(reason string) string {
 	if rest, ok := strings.CutPrefix(r, "shared-ci-incident:"); ok {
 		return "deferred to shared-CI incident #" + rest + " — not this PR's fault"
 	}
+	if lower == stageengineprstage.AutoMergeReasonHumanChangesRequested {
+		return "a maintainer requested changes"
+	}
 	if rest, ok := strings.CutPrefix(lower, "reviewer-verdict:"); ok {
 		switch rest {
 		case "changes_requested", "request_changes":
@@ -1517,6 +1520,48 @@ func adoptedWorkCaption(reason string) string {
 		return owned + "; hive is addressing the review findings"
 	}
 	return owned
+}
+
+// stageTrackerReturnedToHiveCaption rewrites a 072 caption for a
+// clanker-authored PR so it names whose hive the PR went back to and who
+// sent it: "Returned to @thatguywob's hive — @clubanderson requested
+// changes" (hivecommons/hive#15159). The human has already acted and
+// nothing is owed by a maintainer, so the "@x must act" tail goes; the
+// contributor's hive is the actor.
+func stageTrackerReturnedToHiveCaption(caption, author string, requesters []string) string {
+	who := strings.TrimSpace(author)
+	if who == "" {
+		return caption
+	}
+	who = "@" + strings.TrimPrefix(who, "@")
+	head := "Returned to " + who
+	if !strings.HasPrefix(caption, head) {
+		return caption
+	}
+	rest := strings.TrimPrefix(caption, head)
+	rest = strings.Replace(rest, " — "+who+" must act", "", 1)
+	if by := mentionLogins(requesters); by != "" {
+		rest = strings.Replace(rest, " — a maintainer requested changes", " — "+by+" requested changes", 1)
+	}
+	return head + "'s hive" + rest
+}
+
+// mentionLogins is "@a", "@a and @b" or "@a, @b and @c" for the given
+// logins; "" when there are none.
+func mentionLogins(logins []string) string {
+	out := make([]string, 0, len(logins))
+	for _, l := range logins {
+		if l = strings.TrimPrefix(strings.TrimSpace(l), "@"); l != "" {
+			out = append(out, "@"+l)
+		}
+	}
+	switch len(out) {
+	case 0:
+		return ""
+	case 1:
+		return out[0]
+	}
+	return strings.Join(out[:len(out)-1], ", ") + " and " + out[len(out)-1]
 }
 
 func joinClause(head, clause string) string {
@@ -2083,6 +2128,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Lane = laneHive
 		}
 		finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
+		if it.Stage == stagelabels.ReturnedToContributor.Number() && it.AuthorKind == authorKindClanker {
+			var requesters []string
+			if pr.Protection != nil {
+				requesters = pr.Protection.ChangesRequestedBy
+			}
+			it.Caption = stageTrackerReturnedToHiveCaption(it.Caption, it.Author, requesters)
+		}
 		applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
 		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
 		// The sentinel chip is a merge-gate pill too (the trusted-author

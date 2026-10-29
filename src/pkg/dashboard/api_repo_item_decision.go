@@ -38,7 +38,10 @@ import (
 //     (hivecommons/hive#14821, #14822, crux#30).
 //   - direction   → `/hive decision <comment>`; the comment is required. On
 //     a hive-authored PR it is recorded as a human change request so the
-//     author agent is kicked with it (Client.RecordOperatorPullRequestDecision).
+//     author agent is kicked with it (Client.RecordOperatorPullRequestDecision);
+//     on a contributor's clanker PR it is recorded the same way and carried
+//     to that contributor's hive — the PR goes to 072 returned-to-contributor
+//     (hivecommons/hive#15159). A PR a person opened answers 409.
 //   - close-superseded / close-wontfix → one comment naming the operator
 //     (and, when given, the superseding PR), then a not_planned close (a PR
 //     takes the supersession sweep's own labelled close path).
@@ -220,6 +223,11 @@ type repoItemApproveFacts struct {
 	// because Prow already rejected the hive's commands on this PR
 	// (dibs#510); the hive's own approval record is what counts.
 	CommandsSkipped bool
+
+	// ToContributor is the contributor whose hive a direction was carried
+	// to (a clanker-authored PR, hivecommons/hive#15159); "" when the
+	// hive's own author agent takes it.
+	ToContributor string
 }
 
 // repoItemDecisionResult reads a recorded human decision into the shared
@@ -242,7 +250,9 @@ func repoItemDecisionResultWith(repoFull string, number int, itemType, decision,
 	case repoItemDecisionDirection:
 		out.Action = rowActionDirected
 		out.Outcome = "Direction recorded as `/hive decision`: " + strings.TrimSuffix(strings.TrimSpace(comment), ".") + "."
-		if itemType == "pr" {
+		if itemType == "pr" && strings.TrimSpace(facts.ToContributor) != "" {
+			out.Next = "Returned to @" + strings.TrimPrefix(strings.TrimSpace(facts.ToContributor), "@") + "'s hive with your direction; the row moves when it pushes a new head."
+		} else if itemType == "pr" {
 			out.Next = "The author agent pushes a new head; the row moves when it lands."
 		} else {
 			out.Next = "The hive carries on with that direction; nothing is merged."
@@ -598,6 +608,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	var released []string
 	stage, commandsSkipped := "", ""
 	sentinelOpen, prow := false, false
+	toContributor := ""
 	if decision == repoItemDecisionApprove {
 		var event ghpkg.PullRequestApprovalEvent
 		event, err = gh.RecordOperatorPullRequestApprovalWith(ctx, repoFull, number, user, ghpkg.PullRequestApprovalOptions{
@@ -611,7 +622,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	} else {
 		var event ghpkg.PullRequestDecisionEvent
 		event, err = gh.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, comment, repoItemDecisionChangeRequests())
-		head = event.HeadSHA
+		head, toContributor = event.HeadSHA, event.ToContributor
 	}
 	switch {
 	case errors.Is(err, ghpkg.ErrPullRequestNotFound):
@@ -634,6 +645,9 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	admitted := ""
 	if decision == repoItemDecisionDirection {
 		action, status = auditRepoItemDecisionDirection, "direction-recorded"
+		if toContributor != "" {
+			status = "direction-returned-to-contributor"
+		}
 	} else {
 		// The person's Approve is the trust override for this head: the
 		// contributor lane merges it as-is and the adoption engine leaves
@@ -642,13 +656,13 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 			released = append(released, "admitted")
 		}
 	}
-	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage, "admitted_by", admitted, "commands_skipped", commandsSkipped), "", repoFull, number)
+	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage, "admitted_by", admitted, "commands_skipped", commandsSkipped, "to_contributor", toContributor), "", repoFull, number)
 	// The row's park was just answered: serve the re-derived stage on the
 	// next tracker read instead of the cached 085.
 	s.invalidateStageTrackerForWebhook()
 	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head, AdmittedBy: admitted, CommandsSkipped: commandsSkipped,
 		Result: repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
-			User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "",
+			User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ToContributor: toContributor,
 		})})
 }
 

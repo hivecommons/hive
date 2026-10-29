@@ -443,7 +443,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 				stage(reason, false, nil)
 				continue
 			}
-			if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
+			if reason := c.sentinelBlockedUnlessHumanChangesRequested(ctx, owner, repoName, pr, c.prefilterContributorLanePR(pr, policy)); reason != "" {
 				c.recordContributorLaneSkip(displayRepo, number, reason)
 				result.Skipped++
 				stage(reason, false, nil)
@@ -1237,7 +1237,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return contributorLaneEval{}, "fetch-pr", err
 	}
 	c.noteStagePR(owner, repo, number, pr)
-	if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
+	if reason := c.sentinelBlockedUnlessHumanChangesRequested(caller, owner, repo, pr, c.prefilterContributorLanePR(pr, policy)); reason != "" {
 		if reason == contributorLaneReasonAppAuthored {
 			c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 		} else {

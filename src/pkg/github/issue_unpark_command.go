@@ -192,6 +192,10 @@ type PullRequestDecisionEvent struct {
 	// or "approve" (an approval word followed by optional rationale).
 	Mode       string
 	CommentURL string
+	// ToContributor is the owning contributor's login when the direction
+	// was carried to their hive rather than the hive's own author agent (a
+	// clanker-authored PR, hivecommons/hive#15159); "" for the hive's PRs.
+	ToContributor string
 }
 
 // IssueLabelApprovalEvent records one acceptance the sweep acted on, for the

@@ -376,3 +376,29 @@ func TestStageTrackerAdoptionPersonAuthoredSaysNotAdopted(t *testing.T) {
 		}
 	}
 }
+
+// hivecommons/hive#15159: a clanker-authored 072 row names whose hive the
+// PR went back to and who sent it; the "@x must act" tail — a person's
+// turn — goes.
+func TestStageTrackerReturnedToHiveCaption(t *testing.T) {
+	cases := []struct {
+		caption    string
+		requesters []string
+		want       string
+	}{
+		{"Returned to @thatguywob — a maintainer requested changes — @thatguywob must act", []string{"clubanderson"}, "Returned to @thatguywob's hive — @clubanderson requested changes"},
+		{"Returned to @thatguywob — a maintainer requested changes — @thatguywob must act", nil, "Returned to @thatguywob's hive — a maintainer requested changes"},
+		{"Returned to @thatguywob — a maintainer requested changes — @thatguywob must act (2 nudges sent)", []string{"a", "b"}, "Returned to @thatguywob's hive — @a and @b requested changes (2 nudges sent)"},
+		{"Returned to @thatguywob — review swarm requested changes — @thatguywob must act", []string{"clubanderson"}, "Returned to @thatguywob's hive — review swarm requested changes"},
+		{"Returned to @thatguywob — review swarm requested changes — waiting on @thatguywob (offline 2h)", nil, "Returned to @thatguywob's hive — review swarm requested changes — waiting on @thatguywob (offline 2h)"},
+		{"Returned to contributor", nil, "Returned to contributor"},
+	}
+	for _, tc := range cases {
+		if got := stageTrackerReturnedToHiveCaption(tc.caption, "thatguywob", tc.requesters); got != tc.want {
+			t.Errorf("%q → %q, want %q", tc.caption, got, tc.want)
+		}
+	}
+	if got := stageTrackerReturnedToHiveCaption("Returned to @x — @x must act", "", nil); got != "Returned to @x — @x must act" {
+		t.Errorf("no author changed the caption: %q", got)
+	}
+}

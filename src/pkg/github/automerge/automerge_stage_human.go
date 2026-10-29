@@ -120,6 +120,13 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	if approver := strings.TrimSpace(obs.Detail.HumanApprover); approver != "" && obs.HeadSHA != "" && strings.TrimSpace(obs.Detail.HumanApprovalHead) == obs.HeadSHA {
 		e.HumanApprover = approver
 	}
+	// A trusted maintainer's CHANGES_REQUESTED review (or recorded
+	// direction) on exactly this head is the human answer every park on it
+	// was waiting for: the route is the author's fixing stage, not 085
+	// (hivecommons/hive#15159).
+	if requester := strings.TrimSpace(obs.Detail.HumanChangeRequester); requester != "" && obs.HeadSHA != "" && strings.TrimSpace(obs.Detail.HumanChangeRequestHead) == obs.HeadSHA {
+		e.HumanChangeRequester = requester
+	}
 	if rec, ok := c.stageStoreOrShared().Get(key); ok && rec.AdoptedHead != "" && rec.AdoptDiffFence != "" && rec.AdoptDiffFence == obs.Reason && e.CauseReason != "" {
 		// An adopted head whose diff fence is the blocker: the 085 note
 		// says the hive repaired it and why it still will not merge it.
