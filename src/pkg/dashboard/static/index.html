@@ -1328,9 +1328,14 @@
        Review, 085/090 on Merge gate) light the chevron they branch from in
        their own words, so every strip is the same width. An issue parked on
        a person (045) lights Actionable with the decision word. */
-    /* The sticky chip bar's height (the header strip sticks beneath it) and
-       the layers for the merge flight and banners (above the modal chrome). */
-    #activity-monitor-section { --ham-sticky-bar-h: 34px; --z-cue-flight: 10000; --z-merge-banner: 10001; }
+    /* The sticky chip bar's height (the header strip sticks beneath it). */
+    #activity-monitor-section { --ham-sticky-bar-h: 34px; }
+    /* Layers for the merge flight glyph and the merged-toast stack. Both are
+       appended to <body>, not to #activity-monitor-section, so these must be
+       :root-scoped — scoped to the section they resolved to nothing, the
+       stack fell back to z-index:auto and the chat FAB (9000) covered the
+       lowest toast's close × and text. Above the FAB and the modal chrome. */
+    :root { --z-cue-flight: 10000; --z-merge-banner: 10001; }
     .ham-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
     .ham-toolbar label { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .ham-repo-filter { position: static; flex: 0 1 auto; gap: 0; min-width: 0; white-space: nowrap; }

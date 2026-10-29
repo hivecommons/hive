@@ -721,3 +721,37 @@ assert.ok(toasts.some(x => x[0] === 'warning' && /No row to celebrate on/.test(x
 console.log('ok');
 `)
 }
+
+// TestStageTrackerMergeBannersAboveChatFab guards the merged-toast layer
+// against the chat FAB: #merge-banners and the .cue-flight glyph are appended
+// to <body>, so their z-index tokens must resolve at :root. Scoped to
+// #activity-monitor-section they resolved to nothing, the stack fell back to
+// z-index:auto and the FAB (z-index 9000) covered the lowest toast's close ×
+// and truncated its text. The toast stack must also stay pointer-transparent
+// around the banners while each banner remains clickable.
+func TestStageTrackerMergeBannersAboveChatFab(t *testing.T) {
+	html := indexHTML(t)
+	root := ":root { --z-cue-flight: 10000; --z-merge-banner: 10001; }"
+	if !strings.Contains(html, root) {
+		t.Fatalf("merge-banner layer tokens must be :root-scoped, want %q", root)
+	}
+	if strings.Contains(cssRule(t, html, "#activity-monitor-section"), "--z-merge-banner") {
+		t.Fatalf("--z-merge-banner must not be scoped to #activity-monitor-section (banners mount on <body>)")
+	}
+	if !strings.Contains(html, "box.id = 'merge-banners'; box.className = 'merge-banners'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box);") {
+		t.Fatalf("merge-banners container must mount on document.body")
+	}
+	banners := cssRule(t, html, ".merge-banners")
+	for _, want := range []string{"position: fixed;", "z-index: var(--z-merge-banner);", "pointer-events: none;"} {
+		if !strings.Contains(banners, want) {
+			t.Errorf(".merge-banners rule missing %q: %s", want, banners)
+		}
+	}
+	if !strings.Contains(cssRule(t, html, ".merge-banner"), "pointer-events: auto;") {
+		t.Errorf(".merge-banner must re-enable pointer events so the close × stays clickable")
+	}
+	fab := cssRule(t, html, ".hive-chat-fab")
+	if !strings.Contains(fab, "z-index: 9000;") {
+		t.Errorf(".hive-chat-fab z-index moved; keep it below --z-merge-banner (10001): %s", fab)
+	}
+}
