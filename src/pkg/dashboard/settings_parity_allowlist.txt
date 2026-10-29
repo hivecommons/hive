@@ -199,6 +199,8 @@ governor.claims.contributor_flap_window_s # contributor flap cool-off (#13579); 
 governor.claims.contributor_flap_cooloff_s # contributor flap cool-off (#13579); yaml-only
 governor.claims.contributor_starvation_s # contributor starvation guard (#13579); yaml-only
 governor.auto_close_superseded # superseded hive-PR auto-close; yaml-only
+governor.ci_failure_webhook_kick # failed-check webhook reaction (#15291); yaml-only
+governor.ci_failure_kick_cooldown_s # failed-check webhook reaction (#15291); yaml-only
 governor.cadence_owners.<key> # TODO #11854
 governor.gateways[].api_key_env # TODO #11854
 governor.gateways[].api_key_file # TODO #11854

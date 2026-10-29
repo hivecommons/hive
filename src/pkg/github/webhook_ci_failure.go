@@ -55,6 +55,9 @@ func (s *ciFailureStore) pruneLocked(now time.Time) {
 			delete(s.signals, k)
 		}
 	}
+	if s.last != nil && now.Sub(s.last.At) >= ciFailureRetention {
+		s.last = nil
+	}
 	if len(s.signals) <= ciFailureMaxSignals {
 		return
 	}

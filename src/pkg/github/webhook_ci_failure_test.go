@@ -63,7 +63,7 @@ func TestHandleWebhookEventRecordsCIFailureSignals(t *testing.T) {
 		t.Fatalf("ci_failures = %+v, want count 3, last #3 ci/dco", snap)
 	}
 	clock.now = clock.now.Add(ciFailureRetention)
-	if got := CIFailureSignalsSnapshot().Count; got != 0 {
-		t.Fatalf("signals older than the retention must be pruned, count = %d", got)
+	if got := CIFailureSignalsSnapshot(); got.Count != 0 || got.Last != nil {
+		t.Fatalf("signals older than the retention must be pruned, got %+v", got)
 	}
 }
