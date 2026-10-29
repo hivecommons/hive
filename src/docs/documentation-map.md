@@ -96,6 +96,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 ### Agent writes and network reference
 - [`hive-open-pr`](hive-open-pr.md) — how agents open pull requests as the App bot instead of via `gh pr create`: the flags, the UID-ownership anchor that makes the request forge-resistant, and the asynchronous contract (exit `0` means requested, not opened).
 - [`hive-merge`](hive-merge.md) — how agents merge pull requests as the App bot instead of the GitHub MCP `merge_pull_request` tool: the flags, the F4 target-binding (pinned head SHA + governor merge-eligible list), and the retry/re-engagement behavior when required checks are still red.
+- [Native merge queue](native-merge-queue.md) — how the auto-merge lanes enqueue eligible PRs into GitHub's native merge queue (App auth only), the `native-merge-queued`/`native-merge-queue-*` stage reasons, and how Hive withdraws only its own entries when a gate breaks.
 - [`hive-open-issue`](hive-open-issue.md) — **Agent/developer reference:** request issue creation, comments, or claims through the App bot, with deduplication and retries.
 - [Review-bot threads on hive-mediated PRs](review-bot-threads.md) — route bot feedback back to the authoring agent while protecting human review threads.
 - [Network and port requirements](network-requirements.md) — inbound ports, proxy paths, egress, and firewall guidance.

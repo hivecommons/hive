@@ -10,9 +10,20 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
-const nativeQueueReason = "native-merge-queued"
+const (
+	nativeQueueReason        = prstage.AutoMergeReasonNativeQueued
+	nativeQueueReasonRead    = prstage.AutoMergeReasonNativeQueuePrefix + "-read"
+	nativeQueueReasonEnqueue = prstage.AutoMergeReasonNativeQueuePrefix + "-enqueue"
+	nativeQueueReasonMethod  = prstage.AutoMergeReasonNativeQueuePrefix + "-method"
+
+	// Lanes passed to reconcileNativeQueueGate by callers outside the three
+	// authoring lanes.
+	nativeQueueLaneQueued   = "queued"
+	nativeQueueLaneInactive = "inactive"
+)
 
 // inactiveQueueInterval bounds how often a paused repo's open PRs are re-read;
 // each read costs GraphQL points per PR.
@@ -23,6 +34,13 @@ type nativeQueueTransport interface {
 	ReadNativeMergeQueue(context.Context, string) (hgithub.NativeMergeQueueState, error)
 	EnqueueNativePullRequest(context.Context, string, string) (*hgithub.NativeMergeQueueEntry, error)
 	DequeueNativePullRequest(context.Context, string) error
+	NativeMergeQueueMethod(context.Context, string, string) (string, error)
+}
+
+// botSlug normalises a bot login: REST reports "<slug>[bot]" while GraphQL's
+// Bot.login omits the suffix.
+func botSlug(login string) string {
+	return strings.TrimSuffix(strings.TrimSpace(login), "[bot]")
 }
 
 func (c *Engine) nativeQueue() nativeQueueTransport {
@@ -42,7 +60,7 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 	}
 	state, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
 	if err != nil {
-		return "native-merge-queue-read", err
+		return nativeQueueReasonRead, err
 	}
 	if !state.IsMergeQueueEnabled && !state.IsInMergeQueue {
 		return "", nil
@@ -53,18 +71,12 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 	// A queue chooses its own merge method. Preserve the attribution gate
 	// that elected a merge commit to retain each author's signed commits.
 	if claim.Inputs["method_reason"] == mergeMethodReasonMixedAuthorship {
-		mt, ok := c.transport.(interface {
-			NativeMergeQueueMethod(context.Context, string, string) (string, error)
-		})
-		if !ok {
-			return "native-merge-queue-method", fmt.Errorf("queue merge method cannot be verified")
-		}
-		method, err := mt.NativeMergeQueueMethod(ctx, state.ID, pr.GetBase().GetRef())
+		method, err := t.NativeMergeQueueMethod(ctx, state.ID, pr.GetBase().GetRef())
 		if err != nil {
-			return "native-merge-queue-method", err
+			return nativeQueueReasonMethod, err
 		}
 		if !strings.EqualFold(method, "MERGE") {
-			return "native-merge-queue-method", fmt.Errorf("mixed authorship requires a merge commit; queue uses %s", method)
+			return nativeQueueReasonMethod, fmt.Errorf("mixed authorship requires a merge commit; queue uses %s", method)
 		}
 	}
 	if !state.IsInMergeQueue {
@@ -95,7 +107,7 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 			return effects.Result{Provenance: entry.ID}, nil
 		})
 		if err != nil {
-			return "native-merge-queue-enqueue", err
+			return nativeQueueReasonEnqueue, err
 		}
 	}
 	if e := state.MergeQueueEntry; e != nil {
@@ -118,7 +130,7 @@ func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo
 		return
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
-	if _, own := c.sweepLaneForAuthor(author); own && lane != stageLaneSelf && lane != "inactive" {
+	if _, own := c.sweepLaneForAuthor(author); own && lane != stageLaneSelf && lane != nativeQueueLaneInactive {
 		return
 	}
 	if lane == stageLaneTrusted && reason == "untrusted-author-role" {
@@ -127,12 +139,12 @@ func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo
 	if lane == stageLaneContributor && c.trustedAuthorDecision(author, c.currentTrustedAuthorPolicy().RequireRole).Allowed {
 		return
 	}
-	login := strings.TrimSpace(c.transport.AppBotLogin())
+	login := botSlug(c.transport.AppBotLogin())
 	if login == "" {
 		return
 	}
 	state, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
-	if err == nil && state.IsInMergeQueue && state.MergeQueueEntry != nil && strings.EqualFold(state.MergeQueueEntry.Enqueuer.Login, login) {
+	if err == nil && state.IsInMergeQueue && state.MergeQueueEntry != nil && strings.EqualFold(botSlug(state.MergeQueueEntry.Enqueuer.Login), login) {
 		entryID := state.MergeQueueEntry.ID
 		claim := effects.Claim{Repo: owner + "/" + repo, Kind: effects.KindPullRequestMerge, Target: strconv.Itoa(pr.GetNumber()), Actor: "automerge", Inputs: map[string]string{"operation": "dequeue", "entry": entryID}}
 		observe := func(ctx context.Context) (effects.ExternalState, error) {
@@ -149,7 +161,7 @@ func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo
 			if err != nil {
 				return effects.Result{}, err
 			}
-			if !current.IsInMergeQueue || current.MergeQueueEntry == nil || current.MergeQueueEntry.ID != entryID || !strings.EqualFold(current.MergeQueueEntry.Enqueuer.Login, login) {
+			if !current.IsInMergeQueue || current.MergeQueueEntry == nil || current.MergeQueueEntry.ID != entryID || !strings.EqualFold(botSlug(current.MergeQueueEntry.Enqueuer.Login), login) {
 				return effects.Result{}, nil
 			}
 			if err := t.DequeueNativePullRequest(ctx, state.ID); err != nil {
@@ -189,7 +201,7 @@ func (c *Engine) reconcileInactiveNativeQueues(ctx context.Context) {
 				break
 			}
 			for _, pr := range prs {
-				c.reconcileNativeQueueGate(ctx, "inactive", owner, repo, pr, "repo-paused-or-disabled")
+				c.reconcileNativeQueueGate(ctx, nativeQueueLaneInactive, owner, repo, pr, "repo-paused-or-disabled")
 			}
 			if resp == nil || resp.NextPage == 0 {
 				break

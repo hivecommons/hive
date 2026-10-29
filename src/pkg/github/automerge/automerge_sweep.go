@@ -955,7 +955,7 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 			if reason := c.prefilterQueuedIssue(issue, label); reason != "" {
 				if c.nativeQueue() != nil {
 					if pr, _, err := c.gh.PullRequests.Get(ctx, owner, repoName, issue.GetNumber()); err == nil {
-						c.reconcileNativeQueueGate(ctx, "queued", owner, repoName, pr, reason)
+						c.reconcileNativeQueueGate(ctx, nativeQueueLaneQueued, owner, repoName, pr, reason)
 					}
 				}
 				if reason == "held" || reason == "exempt-label" {
@@ -2565,7 +2565,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
-	defer func() { c.reconcileNativeQueueGate(ctx, "queued", owner, repo, pr, reasonOut) }()
+	defer func() { c.reconcileNativeQueueGate(ctx, nativeQueueLaneQueued, owner, repo, pr, reasonOut) }()
 	c.noteStagePR(owner, repo, number, pr)
 	if !strings.EqualFold(pr.GetState(), "open") {
 		return AutoMergeSweepEvent{}, "closed", nil

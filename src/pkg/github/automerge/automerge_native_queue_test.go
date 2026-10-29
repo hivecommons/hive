@@ -42,7 +42,8 @@ func (f *nativeQueueFake) DequeueNativePullRequest(context.Context, string) erro
 }
 func queueEntry(login string) *hgithub.NativeMergeQueueEntry {
 	e := &hgithub.NativeMergeQueueEntry{ID: "entry1", Position: 2, State: "AWAITING_CHECKS"}
-	e.Enqueuer.Login = login
+	// GraphQL Bot.login omits the REST "[bot]" suffix.
+	e.Enqueuer.Login = strings.TrimSuffix(login, "[bot]")
 	return e
 }
 func nativeQueueEngine() (*Engine, *nativeQueueFake, *gh.PullRequest, effects.Claim) {

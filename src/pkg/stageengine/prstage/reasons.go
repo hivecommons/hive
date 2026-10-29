@@ -26,6 +26,8 @@ const (
 	AutoMergeReasonMergeQueueRequired      = "merge-queue-required"
 	AutoMergeReasonMergeRefusedMethod      = "merge-refused:method-not-allowed"
 	AutoMergeReasonMergeRefusedReview      = "merge-refused:review-required"
+	AutoMergeReasonNativeQueuePrefix       = "native-merge-queue"
+	AutoMergeReasonNativeQueued            = "native-merge-queued"
 	AutoMergeReasonNoAppBotLogin           = "no-app-bot-login"
 	AutoMergeReasonReviewGatePrefix        = "review-gate:"
 	ContributorLaneReasonAdoptedByHive     = "contributor-lane:adopted-by-hive"
