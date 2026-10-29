@@ -81,6 +81,7 @@ import (
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -2569,6 +2570,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
+	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	autoMergeOpts.RequireCurrentBaseStrict = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseStrictFor(repo)
@@ -2581,10 +2583,24 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// episode (#15104): the request admits the PR to the fixer router —
 	// which still requires a head the hive can push to — under the shared
 	// two-attempt guard, and the lane merges the clean head on its next pass.
+	// The adoption lane opens the same episode on the hive's own copy of
+	// a contributor PR whose head would not replay onto the base
+	// (hivecommons/hive#15307), with RequestedBy naming it.
 	autoMergeOpts.RebaseResolver = automerge.RebaseResolverFunc(func(_ context.Context, req automerge.RebaseRequest) error {
-		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, mergeTrainRebaseRequester, time.Now())
+		requester := mergeTrainRebaseRequester
+		if req.RequestedBy != "" {
+			requester = req.RequestedBy
+		}
+		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, requester, time.Now())
 		return nil
 	})
+	autoMergeOpts.RebaseEpisode = func(repo string, number int) (automerge.RebaseEpisode, bool) {
+		a, ok := rebasemerge.SharedAttempts().Get(repo, number)
+		if !ok {
+			return automerge.RebaseEpisode{}, false
+		}
+		return automerge.RebaseEpisode{Attempt: a.Count(), MaxAttempts: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), RequestedBy: a.RequestedBy}, true
+	}
 	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
 		if b.cfg == nil {
 			return automerge.DefaultMergeTrainPolicy
@@ -9454,6 +9470,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
 		opts.RepoOnGitHub = func(repo string) bool { return cfg.RepoOnGitHub(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+		opts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 		opts.RequireCurrentBaseStrict = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseStrictFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
@@ -10036,6 +10053,7 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	if cfg != nil {
 		approveOpts.RepoAutoMergeEnabled = cfg.RepoAutoMergeEnabled
 		approveOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+		approveOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
 		approveOpts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	}
 	approveEngine := automerge.New(ghClient, approveOpts)

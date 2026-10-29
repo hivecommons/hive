@@ -231,6 +231,8 @@ Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through 
 | `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
 | `auto_merge.human_merge_paths` | Unset (off). | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge. Applies to every merge lane (App self-merge, trusted-author, label-queued, merge-request relay) whatever the intent tier; a matching PR is held with one comment, and an incomplete changed-file list fails closed. Details in the sweep key table below. |
+| `auto_merge.human_merge_title_prefixes` | `["⚠️", "⚠"]` | Title prefixes (after trimming) that mark a PR as a breaking change a person must merge. Every auto-merge lane and the merge train skip the PR; the tracker parks it at 090 *Ready for human merge · human merge*. Set to `[]` to disable. |
+| `auto_merge.human_merge_labels` | `["needs-owner-merge"]` | Labels (case-insensitive) that mark a PR a person must merge; same effect as the title prefixes. Set to `[]` to disable. |
 | `forgestate.enabled` | `false` | Runs the per-repo ForgeState cache ([#13373](https://github.com/hivecommons/hive/issues/13373)) and switches the automerge sweep lanes (self-authored, trusted-author, contributor lane) to it: no `/pulls` list per 10 s tick, passes triggered by `check_suite`/`check_run`/`status`/`pull_request_review`/`pull_request` webhooks for the affected PR plus a 5-minute floor pass, and a 60 s freshness-bounded read-through before every merge; a stale snapshot never merges ([#13377](https://github.com/hivecommons/hive/issues/13377)). `forgestate.reconcile_interval_s` (900), `freshness_bound_s` (60), `drift_threshold` (0.05) and `search_budget` (20) tune the cache. |
 | `evidence.enabled` | On by default. | The review relay writes one [review evidence bundle](review-evidence.md) per PR head to `/data/evidence/<owner>/<repo>/<number>/<head>.json` when it records a verdict or posts a review; the sentinel sweep adds its findings to the flagged head's bundle; and every merge path adds the head's CI check-run summary, the human approvals and label changes, and the merge event. Owners and mergers read bundles through `GET /api/review/evidence` and `GET /api/review/evidence/list` (see the [API reference](api-reference.md)). Set `false` to stop writing new bundles; existing ones are left in place. |
 | `evidence.signing_key_file` | Unset (bundles unsigned). | Path to an Ed25519 private key (32-byte seed or 64-byte key, hex or base64). When set and readable, bundles are signed. Dashboard/API readers require a valid signature under its public half and fail closed when the configured key is unavailable; unsigned mode verifies only the bundle content hash. Writers still record `"signed": false` when the key is empty, absent or unusable and log a warning for an unusable key, so an evidence write failure never blocks review or merge work. Keep the key off shared hosts. |
@@ -430,6 +432,8 @@ advanced into the merge path.
 | `auto_merge.allow_unprotected_base` | deprecated no-op | Accepted for compatibility only. [`hive-merge`](hive-merge.md) no longer refuses solely because a base branch has no GitHub branch protection; it may merge into any branch the App can write after positive CI evidence. |
 | `auto_merge.no_ci_ok` | unset (refuse) | **Merge-request watcher key, not a sweep key.** Per-repo opt-in that downgrades only the "unverified" CI verdict (zero statuses, check runs, and workflow runs) to green, for adopted repos with no CI by design. Red and pending verdicts are never downgraded (#6281). See [hive-merge.md](hive-merge.md). |
 | `auto_merge.human_merge_paths` | unset | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge, e.g. `Danathar/goodreads-mcp: [".claude/settings.json", ".claude/hooks/**"]`. Every App merge path honors it: the automerge sweep lanes (App self-merge, trusted-author, label-queued) and the agent merge-request relay refuse a PR that touches a listed path, add `hold`, and post one `<!-- hive-human-merge-path -->` comment naming the path(s); a person must merge it. If the changed-file list cannot be fetched completely for a configured repo, the merge is withheld (#11038, #11039). |
+| `auto_merge.human_merge_title_prefixes` | `["⚠️", "⚠"]` | PR-title prefixes that mean "breaking change — owner merges" (U+26A0 with or without the VS16 selector by default, matched after trimming leading whitespace). One shared predicate, `automerge.RequiresHumanMerge(pr)`, runs where each lane computes eligibility — App self-merge, label-queued, trusted-author and contributor lanes, plus the refetch before a merge — so a matching PR is never merged by hive and never fronts a merge train, however green and however approved. The PR parks at stage 090 *Ready for human merge* with the `human merge` chip and reason *breaking change — owner merges*; the owner merges it with **Approve & merge as maintainer** or on GitHub. Hive posts one writeback-gated comment saying it will wait for a human. Set to `[]` to turn the title rule off. Added after a ⚠️-titled PR was auto-merged by the trusted-author lane while its owner was still deciding whether to ship it. |
+| `auto_merge.human_merge_labels` | `["needs-owner-merge"]` | Labels (case-insensitive, trimmed) that carry the same "a person merges this" meaning as the title prefixes above; either match is enough. Set to `[]` to turn the label rule off. |
 | `auto_merge.require_current_base` | unset | Repo list (`owner/repo`) with an explicit **on** override for the current-base merge gate (Settings → Repos → "Merge only on current base"). On a gated repo the App self-merge, trusted-author and contributor lanes only merge a head that contains the current base tip. A green head tested against an older base is updated with GitHub update-branch (a merge commit; no author commit is rewritten) and merges once CI is green on the new head, so a semantic conflict with work merged since turns that PR red instead of breaking the base ([#13634](https://github.com/hivecommons/hive/issues/13634), [#15335](https://github.com/hivecommons/hive/issues/15335)). Costs one compare call per merge candidate. Listing a repo here is also **strict**: a behind head the App cannot update (fork without maintainer edits, branch protection or a missing `contents: write`) is parked (`fork-not-editable` / `update-branch`) rather than merged as tested. Wins over `skip_current_base` and over the default. |
 | `auto_merge.require_current_base_default` | `false` | Hive-wide default of the current-base gate for repos in neither `require_current_base` nor `skip_current_base` (Settings → Features → Auto-merge → "Merge only on current base"). **Off** by default: the merge train already update-branches overlapping siblings, so the gate is being soaked per repo (hive's own hive first, via `require_current_base`) before any hive turns it on everywhere. When `true`, a behind head the App cannot update merges as it was tested, with one WARN per PR (`automerge current-base gate: … merging as tested`), so fork-heavy repos are not parked wholesale. |
 | `auto_merge.skip_current_base` | unset | Repo list (`owner/repo`) with an explicit **off** override for the current-base gate (Settings → Repos → "Merge only on current base" unchecked): a green head there merges even if the base has moved, whatever `require_current_base_default` says. An explicit `require_current_base` entry wins over this list. |
@@ -834,7 +838,22 @@ original** with one note naming the copy and why ("Superseded by hive:
 re-authored as #M … This PR is closed; if #M fails, hive reopens it."),
 labelled `hive/superseded`, so one issue never shows two active PRs
 (`governor.labels.stage.adoption.supersede.close_first`, default on;
-hivecommons/hive#15135). If the copy is closed unmerged or its required
+hivecommons/hive#15135). A contributor head that **conflicts with the base**
+(`needs-rebase` / `conflicting`) is first replayed onto `hive/adopt-<n>`
+(a merge of the base); when that replay itself conflicts the copy still
+opens, on the hive's own branch, and the fixer's rebase-resolve episode
+takes it (`requested_by: adoption`, the same two-attempt guard as the
+merge-train, hivecommons/hive#15104) — the row reads "Adopting · fixer
+resolving conflicts". If both attempts fail the copy parks at `stage/085`
+with `rebase-failed-twice` and the original (when still open) with
+`adoption-stalled:rebase-failed-twice`; the Needs-human popover offers
+**Adopt into fresh branch** / **Close as superseded**. A plain conflict
+never hands a PR back to a contributor who cannot act (hivecommons/hive#15307):
+an earlier attempt that opened nothing is re-admitted once the clanker has
+stayed offline or unregistered for `governor.labels.stage.adoption.offline_grace`
+(default 30m) since the attempt or its last heartbeat. (Without a fixer
+wired the replay conflict is still terminal for the head: one note,
+`supersede-conflict`.) If the copy is closed unmerged or its required
 checks are red at two heads, the hive reopens the original, removes
 `hive/superseded`, and parks it at `stage/085` with `adoption-copy-failed`
 ("needs a person"); at most one reopen per original per 24h. The note,
@@ -962,6 +981,18 @@ between. Two mechanisms close that gap
   re-lists on its next call. An `issues` closed delivery (or a PR merged
   with a closing keyword, which GitHub delivers as the issue's own close)
   already evicts the issue from the status snapshot the lane offers from.
+  The same open delivery also **preempts a fixer already at work**
+  ([#15469](https://github.com/hivecommons/hive/issues/15469)): the
+  `/contribute` hub releases every in-flight contributor task on the
+  covered issue whose session is not the PR's own author (reason
+  `preempted: open PR #N by @login already covers this issue`) and hands
+  the session other work, exactly as a claim takeover does. Before this
+  the ledger stopped *offering* the issue but never told the contributor
+  it had dispatched nine seconds after the issue was filed, so that
+  fixer finished and opened a second PR
+  ([#15473](https://github.com/hivecommons/hive/pull/15473)) for an issue
+  the owner's PR ([#15470](https://github.com/hivecommons/hive/pull/15470))
+  already covered.
 - **Duplicate-fix sweep.** Every ~15 minutes (an unstick step, alongside the
   supersession sweep) the hive looks for an open issue two or more open PRs
   close and resolves the pair deterministically. The **earlier-created PR
@@ -972,7 +1003,20 @@ between. Two mechanisms close that gap
   audit entry. A later PR a person authored (`author/human`) is never
   closed: it gets the comment, with a request to close it or say why both
   should land, and stays open at its current stage
-  (`duplicate-fix-commented`). Only when the earlier PR is **red or stale**
+  (`duplicate-fix-commented`). A later PR by a **relay contributor
+  registered on this hive** (the login has a contributor profile — the
+  hive's own fixer under its contributor account) is read as the hive's
+  own for the write-back gate, so the notice is never suppressed as
+  unsolicited, but it is likewise left open with one comment
+  (`Superseded by #<keeper> … held out of the merge queue and returned to
+  its author`) rather than closed: the merge train holds it as
+  `duplicate-of#<keeper>` and the stage engine parks it at
+  `stage/072-returned-to-contributor` (071 for a person, 070 for the App's
+  own) with the tracker pill *Duplicate of #keeper · needs a pick* — never
+  "Approved; waiting its turn" — and the 07x pass neither nudges nor adopts
+  it ([#15469](https://github.com/hivecommons/hive/issues/15469): a relay
+  login with no `author/*` label yet read as a person, the L4 gate refused
+  the notice, and both PRs rode the merge train). Only when the earlier PR is **red or stale**
   (no update for 24h) **and** the later PR is green does the hive ask the
   owner: the later PR is parked `needs-human` → `stage/085-needs-decision`
   with a comment naming both PRs and the check states
@@ -1025,7 +1069,7 @@ that level, the power the write-back exists to govern?
 | Stage labeler (`pkg/github/stage_labeler.go`, `stage_writer.go`, `pkg/stagelabels`) | stage engine reconcile | `stage/NNN-*` add/remove, `hive:stage-needs-decision` comment, role/author labels | every tracked PR and issue | `stage_label`, `needs_decision_comment` → L5 + opt-in label on foreign PRs; issue stage labels follow the issue filter, not this gate |
 | Supersession sweep (`pr_supersession_sweep.go`, `_autoclose.go`, `_resolve.go`) | hourly sweep | supersession notice comment, `hive/superseded` close, `needs-human` label | contributor PRs overlapping a hive PR | `supersession_notice` → L5 + label; `supersession_close` → L6 + label |
 | Duplicate-fix sweep (`pr_duplicate_fix_sweep.go`, `open_pr_links.go`) | hourly sweep | `hive:duplicate-fix` comment, `has-open-pr` label, `hive/superseded` close | PR pairs fixing one issue | `duplicate_fix_notice` → L5 + label |
-| Reporter-trust reconcile (`pr_reporter_trust.go`, `reporter_trust_wait.go`) | PR watcher | hold comment + `needs-human` | PRs tracing to issues from untrusted reporters | `reporter_trust_hold` → L5 + label |
+| Reporter-trust reconcile (`pr_reporter_trust.go`, `reporter_trust_wait.go`) | PR watcher | hold comment + `needs-human` | PRs tracing to issues from untrusted reporters | `reporter_trust_hold` → L5 + label. Held issues read **Triage needed** in the Activity Monitor from the moment the gate holds them and carry `needs-triage` (`reporter_trust.awaiting_label`) once the wait notice is posted. |
 | PR↔issue linker (`pr_issue_link.go`, `pr_contributor_link.go`, `linked_prs.go`) | PR watcher | "covered by PR" label on the issue, link comments | issues referenced by any PR | `covered_by_pr_label` → L5 + label |
 | Verdict / decision labels (`pr_decision_operator.go`, `human_decision_label.go`, `legacy_decision_labels.go`, `contribute_verdict_settle.go`) | review verdicts, dashboard decisions | `hive:verdict-*`, decision labels | reviewed PRs | `verdict_label` → L3 + label; dashboard-triggered decisions are solicited |
 | Contributor adopt / nudge / bot takeover (`automerge/automerge_contributor_*.go`, `automerge_bot_takeover.go`) | auto-merge sweep | adopt comment, update-branch push, workflow approval, nudge comments | contributor PRs in the contributor lane | `contributor_adopt` → L6 + label |
@@ -1351,7 +1395,7 @@ The hive already predicts PR file overlap for the merge train. The advisor reuse
 
 - A file is a **hotspot** when, over the rolling window, at least `hotspot_min_prs` distinct PRs touched it and at least `hotspot_min_overlaps` pairs of them were open at the same time. Score = concurrent pairs × a size weight (1 / 1.25 / 1.5 / 2 at 800 / 1500 / 4000 lines) + 2 × attributed conflicts. Hunk-level "same region" weighting is not available from the train's records and is skipped.
 - **Don't splinter.** A split is only recommended for code when the file has at least `hotspot_min_lines` lines **and** two or more top-level symbol groups (Go: funcs and types via `go/ast`, methods grouped under their receiver; JS/TS/Python: top-level declarations; Markdown: `##` headings). The proposal targets at most 4 files of at least 150 lines, no behaviour change, exported API unchanged, tests move with the code.
-- **By kind.** Docs (`*.md`, `*.rst`, `*.txt`) are reported but only recommended for a by-section split above 1500 lines (the `docs/api-reference/<area>.md` pattern). Generated files (`// Code generated … DO NOT EDIT`, `*.pb.go`, the dashboard SPA under `pkg/dashboard/static/` → `static-src/`) point at their source. Lock and data files are report-only.
+- **By kind.** Docs (`*.md`, `*.rst`, `*.txt`) are reported but only recommended for a by-section split above 1500 lines (the `docs/api-reference/<area>.md` pattern). Generated files (`// Code generated … DO NOT EDIT`, `*.pb.go`, the dashboard SPA under `pkg/dashboard/static/` → `static-src/`) point at their source — unless that source tree is already split into more than 4 files, in which case they are report-only (regeneration makes the output touch every source change). Lock and data files are report-only.
 - **One issue per file.** Title `refactor: <path> is a merge hotspot — split into <N> units`, labels `agent/ci-maintainer` + `kind/cleanup`, origin `governor`, body marker `<!-- hive:hotspot file=<path> -->`, evidence table, the top-level units, a concrete split proposal and the don't-splinter rule. While that issue is open no second one is filed; after it closes the file waits `hotspot_refile_days` before it can be filed again. Issues go through the writeback gate as `issue_file` (a paused repo or `writeback.per_repo[<repo>].mode: off` stops them) and are skipped when the GitHub budget governor is skipping optional sweeps.
 - **Where to look.** `GET /api/hotspots` (or `hivectl governor hotspots [--repo owner/name]`) lists every hotspot with its recommendation and issue; `/api/status` carries `hotspots: {count, actionable, filed}`. State lives in `/data/hotspots.json`; the analysis runs at most hourly in the eval cycle, the intake on every merge-train sweep. A PR the train has not seen for two hours has its interval closed at its last sighting.
 

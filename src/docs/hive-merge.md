@@ -312,6 +312,28 @@ auto_merge:
     enabled: true   # default; set false to leave such PRs held
 ```
 
+### Breaking-titled or `needs-owner-merge` PRs wait for a human
+
+A PR whose trimmed title starts with `⚠️` (U+26A0, with or without the VS16
+selector — the PR-title convention for a breaking change) or that carries a
+`needs-owner-merge` label is never merged by hive. One shared predicate,
+`automerge.RequiresHumanMerge(pr)`, is evaluated once per PR where each lane
+already computes eligibility (the App self-merge, label-queued, trusted-author
+and contributor prefilters, and the refetch just before a merge), so the merge
+train — which draws its candidates from the same prefilters — never fronts or
+carries such a PR either. The prefixes and labels are configurable via
+`auto_merge.human_merge_title_prefixes` and `auto_merge.human_merge_labels`
+(see the operator reference); an empty list turns that half of the rule off.
+
+When the PR is otherwise merge-ready (green checks, approvals satisfied) the
+stage tracker parks it at **090 Ready for human merge** with the chip
+*human merge* and the reason *breaking change — owner merges*; the owner
+merges it with **Approve & merge as maintainer** (the existing gated
+operator path) or on GitHub. Hive posts one comment, through the writeback
+gate, saying it will wait for a human. The rule exists because a ⚠️-titled
+PR was auto-merged by the trusted-author lane while its owner was still
+deciding whether to ship it.
+
 ### Trusted-author auto-merge
 
 `auto_merge.trusted_authors` is a third, default-off sweep tier for
@@ -763,6 +785,21 @@ queued fixes are served before new work ("contributors should clean up their
 mess before taking on new stuff"). Code:
 `src/pkg/github/automerge/automerge_contributor_nudge.go`, `src/pkg/fixqueue`
 and `src/pkg/dashboard/contribute_fixqueue.go`.
+
+One exception: a PR the merge train holds because **another open PR already
+fixes the same issue** (lane reason `merge-train:duplicate-of#<winner>:…`)
+is parked with its author — 072 for a relay contributor, 071 for a person,
+070 for the App's own — as *superseded*, not at the merge gate as "Approved;
+waiting its turn", and the 07x pass neither nudges nor adopts it: there is
+nothing to fix, and adopting it would land the issue twice. Its one notice
+is the duplicate-fix sweep's gated `<!-- hive:duplicate-fix -->` comment;
+the tracker pill reads *Duplicate of #winner · needs a pick*, and *Let hive
+decide* on either row closes it as superseded
+([#15469](https://github.com/hivecommons/hive/issues/15469)). Upstream of
+the train, an open PR's webhook that covers an issue also releases any
+contributor task already dispatched on it (see
+[operator-reference.md § Open-PR dispatch guard](operator-reference.md#open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner)),
+so the hive does not open the second PR in the first place.
 
 ## Usage
 

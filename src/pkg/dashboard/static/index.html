@@ -14220,7 +14220,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // "workflow-files" / "untrusted-author" / "branch-protection", falling
     // back to "policy"); the tooltip carries the payload's one-sentence
     // human_merge_reason_text (hivecommons/hive#14658).
-    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'policy': 'policy' };
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'policy': 'policy' };
+    // 090 under the breaking-change rule (human_merge_reason
+    // "breaking-change": a ⚠️ title or needs-owner-merge label,
+    // hivecommons/hive#15442): no approval lets the hive merge it, so the
+    // word is the stage's own, "Ready for human merge", and the chip says
+    // "human merge".
+    const STAGE_TRACKER_BREAKING_CHANGE_CODE = 'breaking-change';
+    const STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD = 'Ready for human merge';
     function stageTrackerHumanMergeReasonWord(item) {
       const code = String((item && item.human_merge_reason) || '').trim();
       if (!code) return '';
@@ -14229,7 +14236,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerManualMergeWord(item) {
       const approver = String((item && item.human_approver) || '').trim();
       const why = stageTrackerHumanMergeReasonWord(item);
-      return STAGE_TRACKER_MANUAL_MERGE_WORD + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
+      const code = String((item && item.human_merge_reason) || '').trim();
+      const lead = code === STAGE_TRACKER_BREAKING_CHANGE_CODE ? STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD : STAGE_TRACKER_MANUAL_MERGE_WORD;
+      return lead + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
     }
     // The plain 090 word (no manual-merge rule): the stage's short word
     // plus the reason, "Ready for human merge · untrusted author".
@@ -14257,6 +14266,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (state === 'closed') return 'Adopted → #' + by + ' (closed) · recovering';
       if (state === 'closed-twice') return 'Adopted → #' + by + ' (closed twice) · needs a person';
       if (state === 'copy-failed') return 'Adopted → #' + by + ' (copy failed) · reopened, needs a person';
+      // hivecommons/hive#15307: one label while the fixer works (#15416 rule).
+      if (state === 'resolving-conflicts') return 'Adopting · fixer resolving conflicts';
       return 'Adopted → #' + by;
     }
     const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Awaiting human';
@@ -14685,6 +14696,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
+      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed';
       if (n === 0 && typeof stageTrackerNewState === 'function' && stageTrackerNewState(item)) return 'New';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
@@ -15631,10 +15643,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // names who moves it next (hivecommons/hive#15094).
         const openNew = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && typeof stageTrackerNewState === 'function' && !!stageTrackerNewState(item);
         const advisory = n === 0 && state === 'active' && !openHold && !openBlocked && typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
+        // An issue waiting on a maintainer's triage says so in the column
+        // (hivecommons/hive#15437 read "New" while the caption held the ask).
+        const openTriage = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && !advisory && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item);
         if (openHold) word = 'Open · hold';
         else if (openBlocked) word = 'Open · blocked';
         else if (advisory) word = advisory.chip || 'Advisory · read & close';
         else if (openDraft) word = 'Draft';
+        else if (openTriage) word = 'Triage needed';
         else if (openNew) word = 'New';
         // A plain, blocked or draft Open step (no stage label, not held)
         // says how long it has sat there, from the same instant the since
@@ -15796,6 +15812,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!item || (Number(item.stage) || 0) !== 0 || !item.new || typeof item.new !== 'object') return null;
       return item.new;
     }
+    // Pure: an issue in the Open column that waits on a maintainer's triage
+    // — the needs-triage pill, or a 000-new reporter-trust hold whose next
+    // mover is the maintainer (triage gate next) before the awaiting label
+    // has landed. The chevron then says "Triage needed", not "New": the ask
+    // is in the column, not only in the caption.
+    function stageTrackerOpenTriageNeeded(item) {
+      if (!item || item.kind === 'pr' || (Number(item.stage) || 0) !== 0) return false;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (mods.indexOf('needs-triage') >= 0) return true;
+      const fresh = stageTrackerNewState(item);
+      if (!fresh || fresh.next_mover !== 'maintainer') return false;
+      const gates = Array.isArray(fresh.gates) ? fresh.gates : [];
+      return gates.some(g => g && g.name === 'triage' && g.state === 'next');
+    }
     // "Next: …" and "Gates ahead: triage ✓ → actionable → claimed" for the
     // row tooltip and the lit chevron. nowMs refreshes the next-pass countdown.
     function stageTrackerNewLines(item, nowMs) {
@@ -15890,7 +15920,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
-          if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = 'New — ' + stageTrackerNewLines(item, nowMs).join(' — ');
+          if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = (typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item) ? 'Triage needed — ' : 'New — ') + stageTrackerNewLines(item, nowMs).join(' — ');
           if (sg.advisory) tip = (item.advisory && item.advisory.caption) || 'Advisory for maintainers · read, then close';
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
@@ -45905,7 +45935,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Adoption of a maintainer\'s PR', key: 'governor.labels.stage.adoption.maintainer_policy', text: 'adoption maintainer policy adopt ask never maintainer own pr clanker disconnected offline adopt action governor.labels.stage.adoption.maintainer_policy' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
-      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed' },
+      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
@@ -52783,7 +52813,7 @@ function burnAreaChart() {
         <div class="config-field">
           <label for="cfg-stage-grace-offline">Offline contributor grace ${yamlHint('governor.labels.stage.contributor_grace_offline')}</label>
           <input type="text" id="cfg-stage-grace-offline" value="${esc(stageGraceOffline)}" placeholder="1h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_grace_offline" data-arg-types="s,s,w">
-          <div class="config-help">Go duration after the comment-only nudge before an offline or external author's red PR is adopted. With live hub presence the hive instead waits ${yamlHint('governor.labels.stage.adoption.after_offline')} (default 30m) after a registered relay's last heartbeat, or ${yamlHint('governor.labels.stage.adoption.after_unregistered')} (default 2h) for an author with no profile here, and adopts in place on the PR's own branch when GitHub permits ${yamlHint('governor.labels.stage.adoption.in_place')} (default on) rather than opening a superseding PR. An in-place adoption keeps a changed head only when GitHub links the commit to the App bot ${yamlHint('governor.labels.stage.adoption.strict_attribution')} (default on); otherwise the hive hands the PR back to the contributor. Once the hive owns the head, the contributor lane merges it under the hive's own authority when the hive-authored gates pass (CI green on the adopted head, reviewer verdict, DCO, diff fences, soak), without requiring the original author's trust tier ${yamlHint('governor.labels.stage.adoption.auto_merge')} (default on). When the hive supersedes instead, it closes the original in the same pass that opens its copy — one note naming the copy, <code>hive/superseded</code> — and reopens it if the copy is closed unmerged or red at two heads ${yamlHint('governor.labels.stage.adoption.supersede.close_first')} (default on; off keeps the original open at stage 074 until the copy merges).</div>
+          <div class="config-help">Go duration after the comment-only nudge before an offline or external author's red PR is adopted. With live hub presence the hive instead waits ${yamlHint('governor.labels.stage.adoption.after_offline')} (default 30m) after a registered relay's last heartbeat, or ${yamlHint('governor.labels.stage.adoption.after_unregistered')} (default 2h) for an author with no profile here, and adopts in place on the PR's own branch when GitHub permits ${yamlHint('governor.labels.stage.adoption.in_place')} (default on) rather than opening a superseding PR. An in-place adoption keeps a changed head only when GitHub links the commit to the App bot ${yamlHint('governor.labels.stage.adoption.strict_attribution')} (default on); otherwise the hive hands the PR back to the contributor. Once the hive owns the head, the contributor lane merges it under the hive's own authority when the hive-authored gates pass (CI green on the adopted head, reviewer verdict, DCO, diff fences, soak), without requiring the original author's trust tier ${yamlHint('governor.labels.stage.adoption.auto_merge')} (default on). When the hive supersedes instead, it closes the original in the same pass that opens its copy — one note naming the copy, <code>hive/superseded</code> — and reopens it if the copy is closed unmerged or red at two heads ${yamlHint('governor.labels.stage.adoption.supersede.close_first')} (default on; off keeps the original open at stage 074 until the copy merges). A copy that conflicts with the base is handed to the fixer's rebase-resolve episode (two attempts, then stage 085 <code>rebase-failed-twice</code>); an adoption attempt that opened nothing is retried once the author's clanker has stayed offline for ${yamlHint('governor.labels.stage.adoption.offline_grace')} (default 30m).</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>
