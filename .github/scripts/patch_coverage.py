@@ -23,8 +23,11 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from typing import Dict, List, Optional, Set, Tuple
 
 MARKER = "<!-- hive-patch-coverage -->"
@@ -444,15 +447,32 @@ def write_step_summary(
         print(f"Warning: could not write step summary to {summary_path}: {e}", file=sys.stderr)
 
 
-def upsert_comment(repo: str, pr: int, body: str, uncovered: int, dry_run: bool = False) -> None:
-    if dry_run:
-        print(f"[DRY RUN] Would update/post comment on {repo}#{pr}:")
-        print(body)
-        return
+def _rest_request(method: str, path: str, body: Optional[bytes] = None) -> Tuple[bool, str, Dict[str, str]]:
+    """Call the GitHub REST API without the gh CLI.
 
-    # Check for existing comment carrying the marker
-    comment_id: Optional[str] = None
+    Self-hosted runner images do not ship gh, so the comment upsert falls back
+    to plain HTTPS with the same token gh would have read (GH_TOKEN, else
+    GITHUB_TOKEN) against GITHUB_API_URL. Returns (ok, response body, headers).
+    """
+    api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "hive-patch-coverage"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"{api}/{path}", data=body, method=method, headers=headers)
     try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return True, resp.read().decode("utf-8", errors="ignore"), dict(resp.headers)
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code}: {e.read().decode('utf-8', errors='ignore').strip()}", {}
+    except Exception as e:  # URLError, timeout
+        return False, str(e), {}
+
+
+def _find_marker_comment_id(repo: str, pr: int) -> Optional[str]:
+    if shutil.which("gh"):
         cmd = [
             "gh",
             "api",
@@ -463,7 +483,45 @@ def upsert_comment(repo: str, pr: int, body: str, uncovered: int, dry_run: bool 
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if res.returncode == 0 and res.stdout.strip():
-            comment_id = res.stdout.strip().splitlines()[0]
+            return res.stdout.strip().splitlines()[0]
+        return None
+    page = 1
+    while True:
+        ok, text, headers = _rest_request("GET", f"repos/{repo}/issues/{pr}/comments?per_page=100&page={page}")
+        if not ok:
+            raise RuntimeError(text)
+        comments = json.loads(text) if text.strip() else []
+        for c in comments:
+            if MARKER in (c.get("body") or ""):
+                return str(c.get("id"))
+        if 'rel="next"' not in headers.get("Link", "") or not comments:
+            return None
+        page += 1
+
+
+def _write_api(method: str, path: str, req_bytes: bytes) -> Tuple[bool, str]:
+    if shutil.which("gh"):
+        res = subprocess.run(
+            ["gh", "api", "-X", method, path, "--input", "-"],
+            input=req_bytes,
+            capture_output=True,
+            check=False,
+        )
+        return res.returncode == 0, res.stderr.decode("utf-8", errors="ignore").strip()
+    ok, text, _ = _rest_request(method, path, req_bytes)
+    return ok, "" if ok else text
+
+
+def upsert_comment(repo: str, pr: int, body: str, uncovered: int, dry_run: bool = False) -> None:
+    if dry_run:
+        print(f"[DRY RUN] Would update/post comment on {repo}#{pr}:")
+        print(body)
+        return
+
+    # Check for existing comment carrying the marker
+    comment_id: Optional[str] = None
+    try:
+        comment_id = _find_marker_comment_id(repo, pr)
     except Exception as e:
         print(f"::notice::Could not query comments on PR #{pr}: {e}", file=sys.stderr)
 
@@ -471,16 +529,10 @@ def upsert_comment(repo: str, pr: int, body: str, uncovered: int, dry_run: bool 
 
     if comment_id:
         try:
-            res = subprocess.run(
-                ["gh", "api", "-X", "PATCH", f"repos/{repo}/issues/comments/{comment_id}", "--input", "-"],
-                input=req_bytes,
-                capture_output=True,
-                check=False,
-            )
-            if res.returncode == 0:
+            ok, err = _write_api("PATCH", f"repos/{repo}/issues/comments/{comment_id}", req_bytes)
+            if ok:
                 print(f"Updated patch coverage comment on PR #{pr} (comment ID {comment_id})")
             else:
-                err = res.stderr.decode("utf-8", errors="ignore").strip()
                 print(f"::notice::Could not update patch coverage comment (ID {comment_id}): {err}", file=sys.stderr)
         except Exception as e:
             print(f"::notice::Error updating patch coverage comment: {e}", file=sys.stderr)
@@ -489,16 +541,10 @@ def upsert_comment(repo: str, pr: int, body: str, uncovered: int, dry_run: bool 
         if uncovered == 0:
             return
         try:
-            res = subprocess.run(
-                ["gh", "api", "-X", "POST", f"repos/{repo}/issues/{pr}/comments", "--input", "-"],
-                input=req_bytes,
-                capture_output=True,
-                check=False,
-            )
-            if res.returncode == 0:
+            ok, err = _write_api("POST", f"repos/{repo}/issues/{pr}/comments", req_bytes)
+            if ok:
                 print(f"Posted patch coverage comment on PR #{pr}")
             else:
-                err = res.stderr.decode("utf-8", errors="ignore").strip()
                 print(f"::notice::Could not post patch coverage comment on PR #{pr}: {err}", file=sys.stderr)
         except Exception as e:
             print(f"::notice::Error posting patch coverage comment: {e}", file=sys.stderr)
