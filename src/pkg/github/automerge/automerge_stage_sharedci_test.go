@@ -56,12 +56,18 @@ func TestStageActivitySharedCIAndBudgetWaitOnHive(t *testing.T) {
 	}
 }
 
-// A contributor PR skipped for no-linked-issue is waiting on a person, so
+// A contributor PR skipped for admission is waiting on a person, so
 // the stage-dwell "waits on the hive" warning must not fire for it.
-func TestStageActivityNoLinkedIssueDoesNotWaitOnHive(t *testing.T) {
-	obs := stageObservation{HeadSHA: "sha", Reason: contributorLaneReasonNoLinkedIssue}
-	if a := stageActivity(obs, stagelabels.ReviewPending); a.WaitingOnHive {
-		t.Fatal("no-linked-issue waits on the hive")
+func TestStageActivityAdmissionSkipDoesNotWaitOnHive(t *testing.T) {
+	for _, reason := range []string{
+		contributorLaneReasonNoLinkedIssue, contributorLaneReasonNoClaim, contributorLaneReasonClaimUnverified,
+		contributorLaneReasonClaimAuthor, contributorLaneReasonClaimOtherHive, contributorLaneReasonClaimTier,
+		contributorLaneReasonAuthorAssociation,
+	} {
+		obs := stageObservation{HeadSHA: "sha", Reason: reason}
+		if a := stageActivity(obs, stagelabels.ReviewPending); a.WaitingOnHive {
+			t.Errorf("%q waits on the hive", reason)
+		}
 	}
 	if a := stageActivity(stageObservation{HeadSHA: "sha"}, stagelabels.ReviewPending); !a.WaitingOnHive {
 		t.Fatal("verdict-less review-pending head no longer waits on the hive")

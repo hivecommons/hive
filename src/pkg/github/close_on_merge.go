@@ -528,8 +528,15 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	}
 	author := safeGetLogin(pr.GetUser())
 	if !opts.Identity.Matches(author) && (opts.TrustedAuthor == nil || !opts.TrustedAuthor(prRepo, author)) {
-		res.Action, res.Reason = CloseOnMergeSkipped, "untrusted_author"
-		return res
+		// Merging is the hive's acceptance of an external contributor's PR.
+		// List/cache entries can omit merged_by; resolve the terminal actor
+		// before rejecting it, especially on non-default release branches
+		// where GitHub does not apply closing keywords itself (#15148).
+		owner, repoName := c.splitRepo(prRepo)
+		if !opts.Identity.Matches(c.prTerminalMergedBy(ctx, owner, repoName, pr)) {
+			res.Action, res.Reason = CloseOnMergeSkipped, "untrusted_author"
+			return res
+		}
 	}
 	if !claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) {
 		res.Action, res.Reason = CloseOnMergeSkipped, "no_closing_or_claim_metadata"
