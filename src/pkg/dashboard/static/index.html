@@ -478,10 +478,12 @@
     }
     /* Drawer toggle. Hidden on desktop; the ≤1024px block flips it to
        inline-flex. It lives with the project title so the center run-state
-       group remains visually anchored. */
+       group remains visually anchored. No negative margin: .oc-topbar-left
+       clips overflow, so anything pulled past its left edge is cut off —
+       on phones that showed up as a half-circle hamburger (#15476). */
     #oc-drawer-toggle {
       display: none;
-      margin-left: -10px;
+      flex: 0 0 auto;
     }
     #oc-drawer-backdrop { display: none; }
     .oc-topbar-center { container: navbar-center / inline-size; position: relative; z-index: 1; justify-self: stretch; display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
@@ -1328,8 +1330,10 @@
        Review, 085/090 on Merge gate) light the chevron they branch from in
        their own words, so every strip is the same width. An issue parked on
        a person (045) lights Actionable with the decision word. */
-    /* The sticky chip bar's height (the header strip sticks beneath it). */
-    #activity-monitor-section { --ham-sticky-bar-h: 34px; }
+    /* The sticky chip bar's height (the header strip sticks beneath it):
+       the Merged pill (--ham-merged-bee + 2 × --sp-1 tall) plus the bar's
+       own vertical padding. */
+    #activity-monitor-section { --ham-sticky-bar-h: 42px; }
     /* Layers for the merge flight glyph and the merged-toast stack. Both are
        appended to document.body, not to #activity-monitor-section, so these must be
        :root-scoped — scoped to the section they resolved to nothing, the
@@ -1774,24 +1778,48 @@
     .cue-flight.cue-flight-fade { animation: cue-flight-fade var(--cue-fly-ms, 2000ms) ease-out both; }
     .ham-sticky { position: sticky; top: var(--navbar-sticky-height); z-index: calc(var(--z-sticky) + 1); display: flex; justify-content: flex-end; align-items: center; min-height: var(--ham-sticky-bar-h); box-sizing: border-box; padding: var(--sp-1) var(--sp-2); background: var(--panel); }
     .ham-sticky-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-    .ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text); cursor: pointer; }
+    /* The Merged pill (hivecommons/hive issue 15398 follow-up — "where is my
+       odometer look and feel?"): PR 15409 only enlarged the *flying* bee
+       (.cue-flight) and the roll was a 900 ms overlay over plain text, so
+       at rest the pill was a 12 px hexagon and a bold number. Now the
+       hexagon-bee is --ham-merged-bee (28 px) and the pill grows to fit it,
+       and the all-time count is a drum of wheels at rest, always: each
+       digit in its own dark inset cell (.ham-merged-n .ham-odo-col) with
+       a roller gradient, a top/bottom inner shadow and a hairline between
+       cells, monospace tabular digits at --ham-odo-digit (≥ 18 px). The
+       day/week line keeps its size and rolls with the same columns, drawn
+       plain. A wheel that changes (.ham-odo-roll) slides its strip through
+       the digits it passes (--odo-shift) over --odo-ms; reduced motion
+       swaps instantly (no transition; the strip is drawn at its end). */
+    :root { --ham-merged-bee: 28px; --ham-odo-digit: 18px; }
+    .ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); min-height: calc(var(--ham-merged-bee) + 2 * var(--sp-1)); color: var(--text); cursor: pointer; }
     .ham-merged-count:hover { border-color: var(--line-strong); }
-    .ham-merged-count .ham-merged-ico { width: 12px; height: 12px; color: var(--amber); }
-    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
+    .ham-merged-count .ham-merged-ico { flex: 0 0 auto; width: var(--ham-merged-bee); height: var(--ham-merged-bee); color: var(--amber); filter: drop-shadow(0 1px 1px color-mix(in srgb, var(--surface-0) 50%, transparent)); }
+    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--ham-odo-digit); font-family: var(--font-mono); }
     .ham-merged-count .ham-merged-sub { color: var(--text-faint, var(--muted)); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-merged-count.cue-tick { animation: cue-count-pop 320ms ease-out; }
-    .ham-merged-count .ham-merged-n, .ham-merged-count .ham-merged-sub { position: relative; }
-    .ham-merged-count .ham-odo-rolling { color: transparent; }
-    .ham-odo { position: absolute; inset: 0; display: flex; align-items: center; overflow: hidden; white-space: pre; pointer-events: none; }
-    .ham-merged-count .ham-merged-n .ham-odo { color: var(--text); }
-    /* The dark theme's token sheet has no --text-faint (only body.light-mode
-       sets it), so without a fallback the overlay inherited the rolling
-       line's transparent colour and the day/week counts vanished mid-roll. */
-    .ham-merged-count .ham-merged-sub .ham-odo { left: var(--sp-2); color: var(--text-faint, var(--muted)); }
+    .ham-merged-count .ham-merged-n, .ham-merged-count .ham-merged-sub { position: relative; display: inline-flex; align-items: center; }
+    /* The drum: one wrap of columns per counter, laid out inline (it is the
+       element's only content, so it sets the width). */
+    .ham-odo { display: inline-flex; align-items: stretch; white-space: pre; pointer-events: none; }
     .ham-odo-static, .ham-odo-col, .ham-odo-d { display: block; height: 1.25em; line-height: 1.25; }
+    .ham-odo-static { align-self: center; }
     .ham-odo-col { overflow: hidden; }
-    .ham-odo-strip { display: block; transform: translateY(0); transition: transform var(--odo-ms, 900ms) cubic-bezier(0.22, 0.61, 0.36, 1); }
-    .ham-odo-run .ham-odo-strip { transform: translateY(var(--odo-shift, 0%)); }
+    .ham-odo-d { text-align: center; }
+    .ham-odo-strip { display: block; transform: translateY(var(--odo-shift, 0%)); }
+    .ham-odo-run .ham-odo-roll .ham-odo-strip { transition: transform var(--odo-ms, 900ms) cubic-bezier(0.22, 0.61, 0.36, 1); }
+    .ham-odo:not(.ham-odo-run) .ham-odo-roll .ham-odo-strip { transform: translateY(0); }
+    /* The all-time count's wheels are drum cells: dark inset, a subtle
+       roller gradient (lighter band through the middle, darker at the lip
+       and the foot), an inner shadow at top and bottom, a hairline between
+       digits, the outer corners rounded. Light mode keeps the inset but on
+       a paler drum. */
+    .ham-merged-count .ham-merged-n .ham-odo { gap: 0; border-radius: var(--r-sm); overflow: hidden; border: var(--line-width) solid color-mix(in srgb, var(--surface-0) 70%, var(--line-strong)); box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 10%, transparent); }
+    .ham-merged-count .ham-merged-n .ham-odo-col { position: relative; min-width: 0.78em; height: 1.35em; line-height: 1.35; padding: 0; color: var(--text); background: linear-gradient(to bottom, color-mix(in srgb, var(--surface-0) 92%, black) 0%, var(--surface-3) 42%, var(--surface-3) 58%, color-mix(in srgb, var(--surface-0) 92%, black) 100%); box-shadow: inset 0 5px 5px -4px color-mix(in srgb, black 75%, transparent), inset 0 -5px 5px -4px color-mix(in srgb, black 75%, transparent); }
+    .ham-merged-count .ham-merged-n .ham-odo-col + .ham-odo-col { border-left: var(--line-width) solid color-mix(in srgb, var(--surface-0) 80%, black); }
+    .ham-merged-count .ham-merged-n .ham-odo-col .ham-odo-d { height: 1.35em; line-height: 1.35; }
+    body.light-mode .ham-merged-count .ham-merged-n .ham-odo-col { color: var(--text); background: linear-gradient(to bottom, color-mix(in srgb, var(--surface-3) 80%, black) 0%, var(--surface-0) 42%, var(--surface-0) 58%, color-mix(in srgb, var(--surface-3) 80%, black) 100%); box-shadow: inset 0 5px 5px -4px color-mix(in srgb, black 35%, transparent), inset 0 -5px 5px -4px color-mix(in srgb, black 35%, transparent); }
+    body.light-mode .ham-merged-count .ham-merged-n .ham-odo-col + .ham-odo-col { border-left-color: color-mix(in srgb, var(--surface-3) 60%, black); }
     .ham-merged-pop { position: absolute; right: var(--sp-2); top: calc(var(--full-size) - var(--sp-1)); min-width: 22rem; max-width: 34rem; max-height: 60vh; overflow: auto; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-radius: var(--r-lg); background: var(--panel-strong); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); color: var(--text); z-index: var(--z-cue-flight); }
     .ham-merged-pop-head { display: flex; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-3); font-weight: var(--fw-semibold); }
     .ham-merged-pop-head .ham-merged-pop-sum { color: var(--text-faint); font-weight: var(--fw-medium); }
@@ -1825,7 +1853,7 @@
     @keyframes cue-flight { 0% { opacity: 0; transform: translate(0, 0) scale(0.9); } 12% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.08), calc(var(--cue-dy, 0px) * 0.1)) scale(1.1); } 55% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.45 + 10px), calc(var(--cue-dy, 0px) * 0.62)) scale(1.05); } 100% { opacity: var(--cue-end-opacity, 0.25); transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.7); } }
     @keyframes cue-flight-fade { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
     @keyframes cue-count-pop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
-    @media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; } .ham-merged-count.cue-tick { animation: none; } .ham-odo-strip { transition: none; } .cue-merged .ham-seg.cap { animation-duration: 0.01ms; } .merge-banner, .merge-banner.merge-banner-out { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; } .ham-merged-count.cue-tick { animation: none; } .ham-odo-strip { transition: none !important; } .cue-merged .ham-seg.cap { animation-duration: 0.01ms; } .merge-banner, .merge-banner.merge-banner-out { animation: none; } }
     .ham-rm-preview .cue-flight { animation-name: cue-flight-fade; }
     @media (prefers-reduced-motion: reduce) { .cue-working .ham-seg.active .ham-active-ico, .cue-spin, .cue-acting .ham-seg.active, .cue-event { animation: none; } }
     @keyframes ham-breathe-human { 0%, 100% { opacity: 0; } 50% { opacity: 0.55; } }
@@ -6200,6 +6228,17 @@
         justify-content: center;
       }
     }
+    /* Narrowest phones (iPhone SE/mini class): the right strip's five icon
+       chips plus the ≡ and ACMM chips no longer fit one row, and the strip
+       clips overflow rather than wrapping, so the lowest-priority chips go.
+       Both stay reachable — Feedback from the drawer and the account menu,
+       Settings from the account menu (#15476). */
+    @media (max-width: 360px) {
+      #feedback-bug-btn,
+      #oc-settings-btn {
+        display: none;
+      }
+    }
 
     /* ══ Input system (Phase 2) ══
        One recipe for text inputs/selects/textareas (derived from the old
@@ -7108,6 +7147,7 @@
           <a href="#" id="oc-gh-menu-my-hives" class="avatar-menu-item" target="_blank" rel="noopener noreferrer" hidden>My hives ↗</a>
           <a href="/api/docs" target="_blank" class="avatar-menu-item">API Docs ↗</a>
           <button class="avatar-menu-item" type="button" data-action="openFeedbackModal" data-arg0="submit">Feedback</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-settings" data-action="openConfigDialog" data-arg0="governor">Settings</button>
           <div class="avatar-menu-divider"></div>
           <div id="oc-gh-menu-export-label" class="avatar-menu-label" hidden>Export</div>
           <button type="button" id="oc-gh-menu-widget" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/widget" data-arg1="hive-widget.json" data-arg-types="s,s" title="View Übersicht widget JSON">⬇ Widget</button>
@@ -17413,20 +17453,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { number: 0, text: 'no linked issue' };
     }
     // Pure: the chip(s) beside a closed issue in a PR row's issue slot.
-    // `closed` when nothing more is known; `closed by #N` linking to the
-    // merged PR that closed it (the server's merged ledger) when another PR
-    // delivered the issue — the open PR on this row is then a duplicate
-    // (hivecommons/hive#15232). A not-planned close adds an "issue closed
-    // (not planned)" chip: the PR may be moot (hivecommons/hive#14655).
+    // `closed by #N` linking to the merged PR that closed it (GitHub's
+    // closedByPullRequestsReferences, else the server's merged ledger) when
+    // another PR delivered the issue — the open PR on this row is then a
+    // follow-up or a duplicate (hivecommons/hive#15232). When no merged
+    // closer is known the chip still says the issue closed while THIS PR is
+    // unmerged, so the row cannot read as the issue having been closed by
+    // an unmerged PR: the hive only ever closes an issue after its PR has
+    // merged. A not-planned close adds an "issue closed (not planned)"
+    // chip: the PR may be moot (hivecommons/hive#14655).
     function stageTrackerClosedChipHtml(item, slot) {
+      // Inline (not a module const): the UI test lifts this function alone.
+      const unmergedTip = 'Issue #' + slot.number + ' is closed, but this PR is still open and unmerged: it did not close the issue. A person or another merged PR did (the hive closes an issue only after its PR merges); this hive could not name the closer.';
       const notPlanned = String(slot.state_reason || '') === 'not_planned';
       const by = Number(slot.closed_by) || 0;
       let chip;
       if (by > 0 && by !== Number(item.number)) {
         const url = stageTrackerItemURL(item.repo, by, 'pull', item.url);
-        chip = `<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="${esc(url)}" target="_blank" rel="noopener" title="${esc('Issue #' + slot.number + ' was closed by the merge of #' + by + '; this PR is still open against it')}">closed by #${by}</a>`;
+        chip = `<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="${esc(url)}" target="_blank" rel="noopener" title="${esc('Issue #' + slot.number + ' was closed by the merge of #' + by + '; this PR is still open against it and merging it will not close anything')}">closed by #${by}</a>`;
       } else {
-        chip = '<span class="ham-badge ham-issue-closed-chip">closed</span>';
+        chip = `<span class="ham-badge ham-issue-closed-chip" title="${esc(unmergedTip)}">closed · this PR unmerged</span>`;
       }
       return chip + (notPlanned ? ' <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned" title="The issue this PR closes was closed as not planned; the PR may be moot.">issue closed (not planned)</span>' : '');
     }
@@ -18803,8 +18849,35 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // One click for the whole selection: each item is decided on its own
       // (a nested PR sub-row by its own number), summed up in one toast.
       out.push(Object.assign({}, submenu[0], { label: 'Let hive decide (' + items.length + ' selected)', hint: 'per item' }));
+      // Accept triage for every selected issue waiting on a maintainer's
+      // triage, one click (hivecommons/hive#15475: four "Triage needed"
+      // rows selected, no bulk Accept triage). Rows that are not — PRs, issues past 015 —
+      // are skipped, and the count says so ("3 of 4"). It leads the bar
+      // and the menu when the whole selection is triage, as on one row.
+      const triage = stageTrackerSelectionTriage(items, per);
+      if (triage) { if (triage.lead) out.unshift(triage); else out.push(triage); }
       for (const id of STAGE_TRACKER_SEL_ACTIONS) out.push(Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'needs-human' ? '…' : id === 'copy' ? 's' : '') }, judge(id)));
       return out;
+    }
+    // Pure: the selection's Accept triage entry, or null when no selected
+    // row is waiting on triage. `per` is the per-item flat action map
+    // stageTrackerSelectionActions built; enabled when every eligible row
+    // allows it (the first reason otherwise), `lead` when every selected
+    // row is eligible.
+    function stageTrackerSelectionTriage(items, per) {
+      const eligible = per.filter(p => p.flat['accept-triage']);
+      if (!eligible.length) return null;
+      const blocked = eligible.find(p => !p.flat['accept-triage'].enabled);
+      const all = eligible.length === items.length;
+      return {
+        id: 'accept-triage',
+        label: 'Accept triage (' + (all ? items.length + ' selected' : eligible.length + ' of ' + items.length) + ')',
+        hint: all ? 'per issue' : 'skips the ' + (items.length - eligible.length) + ' not waiting on triage',
+        enabled: !blocked,
+        why: blocked ? blocked.flat['accept-triage'].why + ' (' + stageTrackerRefOf(blocked.it) + ')' : '',
+        lead: all,
+        count: eligible.length,
+      };
     }
     function stageTrackerMenuItemHtml(a) {
       const dis = a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`;
@@ -19252,9 +19325,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // Pure: the selection bar — count, Clear, and the shared actions
     // (disabled ones keep their tooltip, so aria-disabled rather than disabled).
+    // An entry flagged `lead` (Accept triage when every selected row waits
+    // on triage) renders as the row header's lead button, not a chip.
     function stageTrackerSelBarHtml(items, actions) {
       if (!items.length) return '';
-      const btn = a => `<button type="button" class="ham-chip" data-action="hamSelAction" data-arg0="${esc(a.id)}" data-arg-types="s,t"${a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`}>${esc(a.label)}</button>`;
+      const btn = a => `<button type="button" class="${a.lead ? 'ham-lead-act' : 'ham-chip'}" data-action="hamSelAction" data-arg0="${esc(a.id)}" data-arg-types="s,t"${a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`}>${esc(a.label)}</button>`;
       return `<span class="ham-sel-count">${items.length} selected</span><button type="button" class="ham-chip" data-action="hamSelClear">Clear</button>${actions.map(btn).join('')}`;
     }
     function stageTrackerRenderSelBar() {
@@ -19318,12 +19393,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return null;
     }
-    // Pure: one line for the result toast.
+    // Pure: one line for the result toast. A bulk Accept triage sums up as
+    // "Accepted 4 issues" (the per-row toasts carry the rest).
     function stageTrackerActionSummary(label, results, id) {
       const n = results.length;
       const fails = results.filter(r => !r.ok);
       const ok = n - fails.length;
       let msg = label + ': ' + (id === 'decide:delegate' || id === 'decide:delegate-all' ? stageTrackerDelegateTally(results) : ok + '/' + n + ' done');
+      if (id === 'accept-triage' && n > 1) msg = 'Accepted ' + ok + (fails.length ? ' of ' + n : '') + ' issue' + (ok === 1 && !fails.length ? '' : 's');
       const debounced = results.some(r => r.ok && r.data && (r.data.status === 'debounced' || r.data.status === 'in-progress'));
       if (debounced) msg += ' (a rescan was already running — the next one is queued by the hive)';
       if (fails.length) {
@@ -20195,6 +20272,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // Adopt now / Reroute act on the PR waiting on its contributor (072 / 071).
         items = items.map(stageTrackerTakeoverTarget).filter(Boolean);
         if (!items.length) return { toasts: [], pending: [] };
+      } else if (id === 'accept-triage') {
+        // Accept triage acts on the issues waiting on it; a bulk selection
+        // may carry PRs or issues past 015, which are skipped and counted
+        // out in the menu label ("3 of 4").
+        items = items.filter(stageTrackerTriageNeeded);
+        if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       } else if (id === 'decide:close-read') {
         // Close (read) acts on the advisory row itself: an advisory is not
         // a decision park, so it has no decision target
@@ -20593,7 +20676,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        values last shown are kept in sessionStorage
        (STAGE_TRACKER_MERGED_LAST_KEY) so a reload rolls up from them. The
        glyph is drawn at --cue-flight-size (two type steps up) with a
-       theme-aware halo; STAGE_TRACKER_CELEBRATE_GLYPH_HALF centres it. */
+       theme-aware halo; STAGE_TRACKER_CELEBRATE_GLYPH_HALF centres it.
+       Owner (2026-10-29, again): "where is my odometer look and feel?" —
+       that PR sized the flying bee, not the pill's, and the roll was an
+       overlay that existed for 900 ms over plain text. The counter is
+       now a drum at rest, always (stageTrackerOdometerRest /
+       stageTrackerOdometerDraw): a wheel per digit, the day/week line the
+       same columns drawn plain; the pill's bee is --ham-merged-bee. */
     const STAGE_TRACKER_CELEBRATE_KEY = 'hive.tracker.celebrate';
     const STAGE_TRACKER_MERGED_LAST_KEY = 'hive.tracker.merged.last';
     const STAGE_TRACKER_CELEBRATE_GLYPH_KEY = 'hive.tracker.celebrate_glyph';
@@ -20765,9 +20854,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: the odometer columns for a change of text from `from` to `to`,
     // or null when nothing should roll — the texts split into different
     // static runs ("201 today · 730 this week" keeps its words), no number
-    // rose, or every rise is a fall elsewhere. A column is { text } (sits
-    // still: static runs, unchanged digits, numbers that fell or held) or
-    // { steps: ['9', '0'] } — the digits the column passes, old to new. In
+    // rose, or every rise is a fall elsewhere. A column is { text } (a
+    // static run of non-digits), a wheel that sits still — { steps: ['4'] },
+    // an unchanged digit or one of a number that fell or held, drawn as a
+    // drum cell like the rest — or a wheel that rolls, { steps: ['9', '0']
+    // } — the digits the column passes, old to new. In
     // a number that rose, the first changed wheel rolls just the digits
     // between old and new (wrapping past 9 the way a carry does); every
     // wheel to its right — and the rightmost wheel always — spins through
@@ -20785,7 +20876,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const num = /^\d+$/.test(b[i]);
         if (num !== /^\d+$/.test(a[i])) return null;
         if (!num) { if (a[i] !== b[i]) return null; cols.push({ text: b[i] }); continue; }
-        if (Number(b[i]) <= Number(a[i]) || a[i].length > b[i].length) { cols.push({ text: b[i] }); continue; }
+        if (Number(b[i]) <= Number(a[i]) || a[i].length > b[i].length) { for (const d of b[i]) cols.push({ steps: [d] }); continue; }
         rose = true;
         const old = a[i].padStart(b[i].length, ' ');
         const last = b[i].length - 1;
@@ -20794,7 +20885,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         for (let j = 0; j <= last; j++) {
           const o = old[j], nw = b[i][j];
           const spin = j > first || j === last;
-          if (o === nw && !spin) { cols.push({ text: nw }); continue; }
+          if (o === nw && !spin) { cols.push({ steps: [nw] }); continue; }
           const steps = [o];
           if (o === ' ') steps.push(nw);
           else { let d = Number(o); do { d = (d + 1) % 10; steps.push(String(d)); } while (d !== Number(nw) || (spin && steps.length <= STAGE_TRACKER_ODOMETER_TURN)); }
@@ -20803,16 +20894,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       return rose ? cols : null;
     }
-    // Stateful: write `text` into el, rolling the digits that rose like an
-    // odometer. The element's own text is always the plain value (it sets
-    // the width, and it is what a screen reader and a test read); the roll
-    // is an aria-hidden overlay of digit columns appended over it for `ms`
-    // (STAGE_TRACKER_ODOMETER_MS unless given), during which the plain
-    // text is transparent (.ham-odo-rolling). The value last written is
-    // kept on data-odo-value so a redraw mid-roll compares against it, not
-    // the overlay's digits. Instant (no overlay) on the first write, under
-    // reduced motion, and when stageTrackerOdometerPlan says nothing rolls.
-    // Returns whether a roll started.
+    // Pure: the columns that draw `text` at rest — every digit its own
+    // { steps: [d] } wheel, every non-digit run a { text } plate — the
+    // shape stageTrackerOdometerPlan returns when something rolls, so one
+    // renderer draws both states.
+    function stageTrackerOdometerRest(text) {
+      const cols = [];
+      for (const run of (String(text == null ? '' : text).match(/\d+|\D+/g) || [])) {
+        if (/^\d+$/.test(run)) for (const d of run) cols.push({ steps: [d] });
+        else cols.push({ text: run });
+      }
+      return cols;
+    }
+    // Stateful: write `text` into el as an odometer. The element always
+    // holds one aria-hidden .ham-odo drum of columns: a .ham-odo-col wheel
+    // per digit (a .ham-odo-strip of .ham-odo-d cells; one cell at rest)
+    // and a .ham-odo-static plate per run of other characters, so the
+    // Merged counter looks like a mileage counter at rest, not only
+    // mid-roll (hivecommons/hive#15398 follow-up: the previous overlay
+    // existed for 900 ms and the resting value was plain text). The value
+    // is on data-odo-value (what a redraw mid-roll compares against, and
+    // what the node tests read) and aria-label (what a screen reader
+    // reads; the drum's cells are hidden from it). A rise (per
+    // stageTrackerOdometerPlan) gives each wheel that changes the digits it
+    // passes and the class ham-odo-roll; the strip slides for `ms`
+    // (STAGE_TRACKER_ODOMETER_MS unless given), then settles to its final
+    // cell. Instant (drawn at rest) on the first write, under reduced
+    // motion, and when the plan says nothing rolls. Returns whether a roll
+    // started.
     function stageTrackerOdometerSet(el, text, ms) {
       if (!el) return false;
       text = String(text);
@@ -20820,19 +20929,42 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const prev = el.getAttribute('data-odo-value');
       if (prev === text) return false;
       el.setAttribute('data-odo-value', text);
+      el.setAttribute('role', 'img');
+      el.setAttribute('aria-label', text);
       if (el._odoTimer) { clearTimeout(el._odoTimer); el._odoTimer = 0; }
-      if (el._odoWrap) { el._odoWrap.remove(); el._odoWrap = null; }
-      el.textContent = text;
-      el.classList.remove('ham-odo-rolling');
       const plan = prev == null || stageTrackerReducedMotion() ? null : stageTrackerOdometerPlan(prev, text);
+      const wrap = stageTrackerOdometerDraw(el, plan || stageTrackerOdometerRest(text));
+      wrap.style.setProperty('--odo-ms', ms + 'ms');
+      el.classList.remove('ham-odo-rolling');
       if (!plan) return false;
-      const wrap = document.createElement('span');
-      wrap.className = 'ham-odo';
-      wrap.setAttribute('aria-hidden', 'true');
-      for (const c of plan) {
+      el.classList.add('ham-odo-rolling');
+      void el.offsetWidth;
+      wrap.classList.add('ham-odo-run');
+      el._odoTimer = setTimeout(() => {
+        el._odoTimer = 0;
+        el.classList.remove('ham-odo-rolling');
+        stageTrackerOdometerDraw(el, stageTrackerOdometerRest(el.getAttribute('data-odo-value')));
+      }, ms + 80);
+      return true;
+    }
+    // Stateful: (re)draw el's drum from columns; returns the .ham-odo wrap.
+    function stageTrackerOdometerDraw(el, cols) {
+      let wrap = el._odoWrap;
+      if (!wrap || wrap.parentNode !== el) {
+        // The markup's placeholder text ("0") goes; the drum is the content.
+        el.textContent = '';
+        wrap = document.createElement('span');
+        wrap.className = 'ham-odo';
+        wrap.setAttribute('aria-hidden', 'true');
+        el.appendChild(wrap);
+        el._odoWrap = wrap;
+      }
+      wrap.classList.remove('ham-odo-run');
+      while (wrap.children.length) wrap.children[0].remove();
+      for (const c of cols) {
         const col = document.createElement('span');
         if (!c.steps) { col.className = 'ham-odo-static'; col.textContent = c.text; wrap.appendChild(col); continue; }
-        col.className = 'ham-odo-col';
+        col.className = c.steps.length > 1 ? 'ham-odo-col ham-odo-roll' : 'ham-odo-col';
         const strip = document.createElement('span');
         strip.className = 'ham-odo-strip';
         for (const d of c.steps) { const cell = document.createElement('span'); cell.className = 'ham-odo-d'; cell.textContent = d; strip.appendChild(cell); }
@@ -20840,14 +20972,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         col.appendChild(strip);
         wrap.appendChild(col);
       }
-      wrap.style.setProperty('--odo-ms', ms + 'ms');
-      el.appendChild(wrap);
-      el._odoWrap = wrap;
-      el.classList.add('ham-odo-rolling');
-      void el.offsetWidth;
-      wrap.classList.add('ham-odo-run');
-      el._odoTimer = setTimeout(() => { el._odoTimer = 0; el._odoWrap = null; el.classList.remove('ham-odo-rolling'); wrap.remove(); }, ms + 80);
-      return true;
+      return wrap;
     }
     // Stateful: seed an element that has not been written yet with the
     // value it showed last time (so the first real write rolls up from
@@ -20857,7 +20982,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!el || last == null || el.getAttribute('data-odo-value') != null) return false;
       if (!stageTrackerOdometerPlan(String(last), String(next))) return false;
       el.setAttribute('data-odo-value', String(last));
-      el.textContent = String(last);
+      el.setAttribute('role', 'img');
+      el.setAttribute('aria-label', String(last));
+      stageTrackerOdometerDraw(el, stageTrackerOdometerRest(String(last)));
       return true;
     }
     // Pure: the chip's remembered values ({ n, sub }) from a sessionStorage

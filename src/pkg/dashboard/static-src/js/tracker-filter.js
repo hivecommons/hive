@@ -38,20 +38,26 @@
       return { number: 0, text: 'no linked issue' };
     }
     // Pure: the chip(s) beside a closed issue in a PR row's issue slot.
-    // `closed` when nothing more is known; `closed by #N` linking to the
-    // merged PR that closed it (the server's merged ledger) when another PR
-    // delivered the issue — the open PR on this row is then a duplicate
-    // (hivecommons/hive#15232). A not-planned close adds an "issue closed
-    // (not planned)" chip: the PR may be moot (hivecommons/hive#14655).
+    // `closed by #N` linking to the merged PR that closed it (GitHub's
+    // closedByPullRequestsReferences, else the server's merged ledger) when
+    // another PR delivered the issue — the open PR on this row is then a
+    // follow-up or a duplicate (hivecommons/hive#15232). When no merged
+    // closer is known the chip still says the issue closed while THIS PR is
+    // unmerged, so the row cannot read as the issue having been closed by
+    // an unmerged PR: the hive only ever closes an issue after its PR has
+    // merged. A not-planned close adds an "issue closed (not planned)"
+    // chip: the PR may be moot (hivecommons/hive#14655).
     function stageTrackerClosedChipHtml(item, slot) {
+      // Inline (not a module const): the UI test lifts this function alone.
+      const unmergedTip = 'Issue #' + slot.number + ' is closed, but this PR is still open and unmerged: it did not close the issue. A person or another merged PR did (the hive closes an issue only after its PR merges); this hive could not name the closer.';
       const notPlanned = String(slot.state_reason || '') === 'not_planned';
       const by = Number(slot.closed_by) || 0;
       let chip;
       if (by > 0 && by !== Number(item.number)) {
         const url = stageTrackerItemURL(item.repo, by, 'pull', item.url);
-        chip = `<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="${esc(url)}" target="_blank" rel="noopener" title="${esc('Issue #' + slot.number + ' was closed by the merge of #' + by + '; this PR is still open against it')}">closed by #${by}</a>`;
+        chip = `<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="${esc(url)}" target="_blank" rel="noopener" title="${esc('Issue #' + slot.number + ' was closed by the merge of #' + by + '; this PR is still open against it and merging it will not close anything')}">closed by #${by}</a>`;
       } else {
-        chip = '<span class="ham-badge ham-issue-closed-chip">closed</span>';
+        chip = `<span class="ham-badge ham-issue-closed-chip" title="${esc(unmergedTip)}">closed · this PR unmerged</span>`;
       }
       return chip + (notPlanned ? ' <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned" title="The issue this PR closes was closed as not planned; the PR may be moot.">issue closed (not planned)</span>' : '');
     }

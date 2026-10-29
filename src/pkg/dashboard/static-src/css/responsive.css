@@ -801,4 +801,15 @@
         justify-content: center;
       }
     }
+    /* Narrowest phones (iPhone SE/mini class): the right strip's five icon
+       chips plus the ≡ and ACMM chips no longer fit one row, and the strip
+       clips overflow rather than wrapping, so the lowest-priority chips go.
+       Both stay reachable — Feedback from the drawer and the account menu,
+       Settings from the account menu (#15476). */
+    @media (max-width: 360px) {
+      #feedback-bug-btn,
+      #oc-settings-btn {
+        display: none;
+      }
+    }
 

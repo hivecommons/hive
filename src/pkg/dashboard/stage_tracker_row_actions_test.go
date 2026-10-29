@@ -100,6 +100,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMenuTextHtml"),
 		jsFunc(t, html, "stageTrackerFlatActions"),
 		jsFunc(t, html, "stageTrackerSelectionActions"),
+		jsFunc(t, html, "stageTrackerSelectionTriage"),
 		jsFunc(t, html, "stageTrackerMenuItemHtml"),
 		jsFunc(t, html, "stageTrackerMenuHasHints"),
 		jsFunc(t, html, "stageTrackerMenuHtml"),
@@ -1768,6 +1769,90 @@ global.fetch = async (url, init) => {
   out = await runRowAction('decide:close-wontfix', [pr]);
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(caption('hivecommons/hive/pr#9'), 'Closed · leaving list');
+})().catch(e => { console.error(e); process.exit(1); });
+`)
+}
+
+// TestStageTrackerBulkAcceptTriage: the selection bar and the bulk ⋯ menu
+// offer Accept triage for every selected issue waiting on triage at once
+// (owner report: four "Triage needed" rows multi-selected, no Accept
+// triage in the menu). It leads the bar when the whole selection is
+// triage ("Accept triage (4 selected)"), counts out the rows it skips
+// otherwise ("Accept triage (2 of 4)"), is greyed with the first reason
+// when a viewer may not write, posts the per-item accept-triage endpoint
+// once per eligible row in order, re-renders each as Actionable and sums
+// up as one toast "Accepted N issues".
+func TestStageTrackerBulkAcceptTriage(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+`
+const ctx = { user: true, canHold: true, canHuman: true };
+const tri = n => ({ repo: 'o/r', kind: 'issue', number: n, url: 'u' + n, stage: 15, caption: 'Triage needed', modifiers: ['needs-triage'] });
+const t1 = tri(15437), t2 = tri(15438), t3 = tri(15439), t4 = tri(15440);
+const plain = { repo: 'o/r', kind: 'issue', number: 7, url: 'u7', stage: 10, caption: 'Actionable', modifiers: [] };
+const pr = { repo: 'o/r', kind: 'pr', number: 8, url: 'u8', stage: 20, caption: 'Claimed', modifiers: [] };
+
+// All four waiting on triage: Accept triage leads the selection.
+const all = stageTrackerSelectionActions([t1, t2, t3, t4], () => ctx);
+assert.strictEqual(all[0].id, 'accept-triage');
+assert.strictEqual(all[0].label, 'Accept triage (4 selected)');
+assert.strictEqual(all[0].enabled, true);
+assert.strictEqual(all[0].lead, true, 'leads when every selected row waits on triage');
+assert.strictEqual(all[0].count, 4);
+const bar = stageTrackerSelBarHtml([t1, t2, t3, t4], all);
+assert.ok(bar.includes('class="ham-lead-act" data-action="hamSelAction" data-arg0="accept-triage"'), 'the bar renders it as the lead button: ' + bar);
+assert.ok(bar.includes('>Accept triage (4 selected)<'));
+const menu = stageTrackerMenuHtml(all, '4 selected');
+assert.ok(menu.indexOf('data-ham-act="accept-triage"') < menu.indexOf('data-ham-act="decide"'), 'the ⋯ menu offers it first');
+
+// Mixed: a PR and an actionable issue in the selection are skipped and counted out.
+const mixed = stageTrackerSelectionActions([t1, plain, t2, pr], () => ctx);
+const mt = mixed.find(a => a.id === 'accept-triage');
+assert.ok(mt, 'offered when at least one selected row waits on triage');
+assert.strictEqual(mt.label, 'Accept triage (2 of 4)');
+assert.strictEqual(mt.hint, 'skips the 2 not waiting on triage');
+assert.strictEqual(mt.enabled, true);
+assert.strictEqual(mt.lead, false, 'not the lead when some rows are skipped');
+assert.ok(mixed.indexOf(mt) > mixed.findIndex(a => a.id === 'decide'), 'sits after Decide… when it does not lead');
+assert.ok(stageTrackerSelBarHtml([t1, plain], mixed).includes('class="ham-chip" data-action="hamSelAction" data-arg0="accept-triage"'), 'a chip, not the lead button, when mixed');
+
+// Nothing waiting on triage: not offered at all.
+assert.ok(!stageTrackerSelectionActions([plain, pr], () => ctx).some(a => a.id === 'accept-triage'));
+
+// No write access: greyed with the reason, never hidden.
+const denied = stageTrackerSelectionActions([t1, t2], () => ({ user: true, canHold: false, canHuman: false }))[0];
+assert.strictEqual(denied.id, 'accept-triage');
+assert.strictEqual(denied.enabled, false);
+assert.ok(denied.why.includes('o/r#15437'), denied.why);
+
+// The run: one POST per eligible row, in order; skipped rows are not posted.
+const calls = [];
+global.fetch = async (url, init) => { calls.push(url); return { ok: true, status: 200, json: async () => ({ ok: true, result: { action: 'triage-accepted', target: { repo: 'o/r', kind: 'issue', number: Number(url.match(/items\/(\d+)/)[1]) }, outcome: 'accepted' } }) }; };
+const toasts = [];
+global.showToast = (msg, type) => { toasts.push(type + ':' + msg); return null; }; global.dismissToast = () => {};
+function stageTrackerProgressToast() { return { update() {}, done(msg, type) { if (msg) toasts.push('summary:' + type + ':' + msg); } }; }
+function stageTrackerAfterActions() {}
+function stageTrackerNoteOwnerEvent() {}
+// Accept triage asks nothing first (no dialog, native or in-app).
+async function stageTrackerActionPayload(items, id) { assert.strictEqual(id, 'accept-triage'); return {}; }
+_stageTracker = { items: [t1, plain, t2, pr] };
+(async () => {
+  const res = await runRowAction('accept-triage', [t1, plain, t2, pr]);
+  assert.deepStrictEqual(calls, ['/api/repos/o/r/items/15437/accept-triage', '/api/repos/o/r/items/15438/accept-triage'], 'only the rows waiting on triage are posted, each to the per-item endpoint');
+  assert.strictEqual(res.results.length, 2);
+  assert.ok(res.results.every(r => r.ok));
+  assert.strictEqual(_stageTracker.items[0].stage, 10, 'each accepted row re-reads Actionable at once');
+  assert.strictEqual(_stageTracker.items[2].stage, 10);
+  assert.ok(toasts.includes('summary:success:Accepted 2 issues'), 'one summary toast: ' + JSON.stringify(toasts));
+
+  // Nothing eligible: a warning toast, no request.
+  calls.length = 0; toasts.length = 0;
+  await runRowAction('accept-triage', [plain, pr]);
+  assert.deepStrictEqual(calls, []);
+  assert.ok(toasts.some(x => x.startsWith('warning:Accept triage: nothing to act on')), JSON.stringify(toasts));
+
+  // The summary counts failures.
+  assert.strictEqual(stageTrackerActionSummary('Accept triage', [{ item: t1, ok: true }, { item: t2, ok: false, error: 'HTTP 403' }], 'accept-triage').msg, 'Accepted 1 of 2 issues. Failed: o/r#15438 — HTTP 403');
+  assert.strictEqual(stageTrackerActionSummary('Accept triage', [{ item: t1, ok: true }, { item: t2, ok: true }, { item: t3, ok: true }, { item: t4, ok: true }], 'accept-triage').msg, 'Accepted 4 issues');
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }

@@ -2886,8 +2886,13 @@ const (
 // or pr when the number names a pull request; ok is false for a failed GET.
 type stageTrackerLinkInfo struct {
 	title, state string
-	pr, ok       bool
-	at           time.Time
+	// stateReason and closedBy are set on a closed issue when the forge
+	// reports them: GitHub's stateReason and the merged PR that closed it
+	// (never an open PR, whatever its body says).
+	stateReason string
+	closedBy    int
+	pr, ok      bool
+	at          time.Time
 }
 
 // stageTrackerLinkMemo memoises link lookups keyed by owner/repo#number.
@@ -2934,6 +2939,11 @@ func (in stageTrackerLinkInfo) ttl() time.Duration {
 // reference titled (soft refs / title / mention links, and closing keywords
 // hive read from the PR text) a title and state, from one issues GET per
 // distinct same-repo number, memoised across rebuilds (stageTrackerLinkMemo).
+// A closed issue also gets its stateReason and the merged PR that closed it
+// (ClosedBy, from GitHub's closedByPullRequestsReferences), so a follow-up
+// PR opened against an issue an earlier merge already delivered reads
+// `closed by #N` rather than a bare `closed` that looks like the issue was
+// closed before any PR merged (hivecommons/hive#15232 for the ledger path).
 // A number that turns out to be a pull request, open or closed (`Supersedes
 // #N`, an adoption's "close #N"), is dropped: it is not an issue the PR
 // covers (hivecommons/hive#14667). A failed or skipped lookup leaves the link
@@ -2961,8 +2971,8 @@ func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify f
 				in, hit := s.stageTrackerLinks.get(key, now)
 				if !hit && lookups < stageTrackerLinkLookups && ctx.Err() == nil {
 					lookups++
-					title, state, isPR, err := s.deps.GHClient.IssueTitleState(ctx, owner, name, li.Number)
-					in = stageTrackerLinkInfo{title: title, state: state, pr: isPR, ok: err == nil}
+					facts, err := s.deps.GHClient.IssueLinkState(ctx, owner, name, li.Number, pr.Number)
+					in = stageTrackerLinkInfo{title: facts.Title, state: facts.State, stateReason: facts.StateReason, closedBy: facts.ClosedBy, pr: facts.IsPR, ok: err == nil}
 					// Running out of this rebuild's budget says nothing
 					// about the issue: leave it for the next rebuild.
 					if err == nil || ctx.Err() == nil {
@@ -2974,6 +2984,9 @@ func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify f
 				}
 				if in.ok {
 					li.Title, li.State = in.title, in.state
+					if in.state == "closed" {
+						li.StateReason, li.ClosedBy = in.stateReason, in.closedBy
+					}
 				}
 			}
 			kept = append(kept, li)

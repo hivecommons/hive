@@ -112,10 +112,12 @@
     }
     /* Drawer toggle. Hidden on desktop; the ≤1024px block flips it to
        inline-flex. It lives with the project title so the center run-state
-       group remains visually anchored. */
+       group remains visually anchored. No negative margin: .oc-topbar-left
+       clips overflow, so anything pulled past its left edge is cut off —
+       on phones that showed up as a half-circle hamburger (#15476). */
     #oc-drawer-toggle {
       display: none;
-      margin-left: -10px;
+      flex: 0 0 auto;
     }
     #oc-drawer-backdrop { display: none; }
     .oc-topbar-center { container: navbar-center / inline-size; position: relative; z-index: 1; justify-self: stretch; display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
