@@ -584,6 +584,15 @@
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
     .ham-decision-act.ham-decision-more { color: var(--text-muted); }
+    /* The row's inline lead action (the ⋯ menu's lead entry, in sight): a
+       small primary pill in the chip slot, the popover lead's recipe, the
+       row's cue colour; dashed and faint with its reason when the viewer
+       may not take it. */
+    .ham-lead-act { padding: 0 var(--sp-3); border: var(--line-width) solid var(--cue-state, var(--accent)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--cue-state, var(--accent)) 10%, transparent); color: var(--cue-state, var(--accent)); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.4; cursor: pointer; white-space: nowrap; }
+    .ham-lead-act:hover, .ham-lead-act:focus-visible { background: color-mix(in srgb, var(--cue-state, var(--accent)) 22%, transparent); outline: none; }
+    .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
+    .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+    .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
     /* The technical background folds behind one collapsed Details. */
     .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }

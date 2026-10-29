@@ -110,10 +110,11 @@ func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo s
 	c.info("automerge head is behind the current base; updating before merge", "repo", displayRepo, "pr", number, "base", baseBranch, "behind_by", cmp.GetBehindBy())
 	event, reason, err := c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, currentBaseUpdateReason, fork)
 	if currentBaseUpdateUnavailable(reason, err) && !c.requireCurrentBaseStrictFor(owner+"/"+repo) {
-		// Default-on gate (#15335) on a head the App may not write: parking
-		// it would turn every non-editable fork PR fleet-wide into a stall
-		// a human has to clear, so keep the pre-gate behaviour for this PR
-		// and say so once. Strict (explicitly listed) repos still park.
+		// Gate inherited from the hive-wide default (#15335) on a head the App
+		// may not write: parking it would turn every non-editable fork PR
+		// into a stall a human has to clear, so keep the pre-gate behaviour
+		// for this PR and say so once. Strict (explicitly listed) repos
+		// still park.
 		c.warnCurrentBaseFallbackOnce(displayRepo, number, reason, err)
 		return AutoMergeSweepEvent{}, "", false, nil
 	}

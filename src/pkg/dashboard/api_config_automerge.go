@@ -153,7 +153,11 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
 		// dialog's plain toggle can stage it.
 		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
-		TrustedAuthors     *struct {
+		// RequireCurrentBaseDefault is auto_merge.require_current_base_default,
+		// the Features toggle "Merge only on current base" (#15335). Per-repo
+		// overrides travel on PUT /api/config/governor/repos.
+		RequireCurrentBaseDefault *bool `json:"require_current_base_default"`
+		TrustedAuthors            *struct {
 			Enabled                 *bool    `json:"enabled"`
 			Repos                   []string `json:"repos"`
 			RequireRole             *string  `json:"require_role"`
@@ -290,6 +294,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		v := *body.BotTakeoverEnabled
 		cfg.AutoMerge.BotTakeover.Enabled = &v
 	}
+	if body.RequireCurrentBaseDefault != nil {
+		v := *body.RequireCurrentBaseDefault
+		cfg.AutoMerge.RequireCurrentBaseDefault = &v
+	}
 	if body.TrustedAuthors != nil {
 		if body.TrustedAuthors.Enabled != nil {
 			cfg.AutoMerge.TrustedAuthors.Enabled = *body.TrustedAuthors.Enabled
@@ -401,16 +409,19 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		contributorLaneLabels = append([]string{}, config.DefaultContributorLaneExcludeLabels...)
 	}
 	return map[string]interface{}{
-		"self_authored":           selfAuthored,
-		"self_authored_set":       am.SelfAuthored != nil,
-		"max_merges":              am.MaxMerges,
-		"min_head_age":            am.EffectiveMinHeadAge().String(),
-		"required_checks":         checks,
-		"allow_unprotected_base":  allowUnprotected,
-		"no_ci_ok":                noCIOK,
-		"trusted_bot_authors":     trustedBots,
-		"trusted_bot_authors_set": am.TrustedBotAuthors != nil,
-		"bot_takeover_enabled":    am.BotTakeover.IsEnabled(),
+		"self_authored":                selfAuthored,
+		"self_authored_set":            am.SelfAuthored != nil,
+		"max_merges":                   am.MaxMerges,
+		"min_head_age":                 am.EffectiveMinHeadAge().String(),
+		"required_checks":              checks,
+		"allow_unprotected_base":       allowUnprotected,
+		"no_ci_ok":                     noCIOK,
+		"trusted_bot_authors":          trustedBots,
+		"trusted_bot_authors_set":      am.TrustedBotAuthors != nil,
+		"bot_takeover_enabled":         am.BotTakeover.IsEnabled(),
+		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
+		"require_current_base":         emptyIfNilStrings(am.RequireCurrentBase),
+		"skip_current_base":            emptyIfNilStrings(am.SkipCurrentBase),
 		"trusted_authors": map[string]interface{}{
 			"enabled":                   ta.Enabled,
 			"repos":                     trustedAuthorRepos,
@@ -457,4 +468,11 @@ func normalizeAutoMergeRepoList(repos []string) []string {
 		}
 	}
 	return out
+}
+
+func emptyIfNilStrings(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
 }
