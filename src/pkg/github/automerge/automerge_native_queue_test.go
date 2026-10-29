@@ -2,7 +2,9 @@ package automerge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +48,10 @@ func queueEntry(login string) *hgithub.NativeMergeQueueEntry {
 	e := &hgithub.NativeMergeQueueEntry{ID: "entry1", Position: 2, State: "AWAITING_CHECKS"}
 	// GraphQL Bot.login omits the REST "[bot]" suffix.
 	e.Enqueuer.Login = strings.TrimSuffix(login, "[bot]")
+	e.Enqueuer.Typename = "User"
+	if strings.HasSuffix(login, "[bot]") {
+		e.Enqueuer.Typename = "Bot"
+	}
 	return e
 }
 func nativeQueueEngine() (*Engine, *nativeQueueFake, *gh.PullRequest, effects.Claim) {
@@ -119,8 +125,9 @@ func (denyNativeQueueBoundary) Execute(context.Context, effects.Claim, func(cont
 }
 
 func TestNativeQueueGateWithdrawsOnlyHiveEntries(t *testing.T) {
-	for _, reason := range []string{"held", "changes-requested", "no-approval", "stale-approval", "label:hold"} {
-		for _, actor := range []string{testHiveAppBotLogin, "maintainer", "another-app[bot]", ""} {
+	for _, reason := range []string{"held", "label:hold", "label:do-not-merge", "changes-requested", autoMergeReasonHumanChangesRequested, autoMergeReasonReviewGatePrefix + ReviewGateOutcomeChangesRequested, autoMergeReasonNoHiveQueueApproval, "queue-approval-head-changed", "label-removed", nativeQueueReasonPaused, "draft", "closed"} {
+		// A user account named like the App's slug is not the App.
+		for _, actor := range []string{testHiveAppBotLogin, "maintainer", "another-app[bot]", "", botSlug(testHiveAppBotLogin)} {
 			t.Run(reason+"/"+actor, func(t *testing.T) {
 				c, f, pr, _ := nativeQueueEngine()
 				f.state.IsInMergeQueue = true
@@ -378,5 +385,99 @@ func TestSelfAuthoredSweepReadErrorKeepsQueuedEntry(t *testing.T) {
 	}
 	if f.dequeues != 0 {
 		t.Fatalf("dequeues=%d, transient read error must not withdraw own entry", f.dequeues)
+	}
+}
+
+// Only eligibility loss withdraws the App's entry (#15198); transient and
+// non-gate reasons must leave it for GitHub's queue to settle.
+func TestNativeQueueTransientReasonsPreserveOwnEntry(t *testing.T) {
+	for _, reason := range []string{"behind", "not-mergeable", "conflicting", "fetch-pr-recheck", "head-changed-since-eval", "check-pending", "update-branch", "queue-approval-check", "review-state-check", "author-permission-check", autoMergeReasonCurrentBaseCheck, autoMergeReasonReviewGatePrefix + ReviewGateOutcomeAwaiting, "not-app-authored", "untrusted-author-role", "merge-failed", ""} {
+		t.Run(reason, func(t *testing.T) {
+			c, f, pr, _ := nativeQueueEngine()
+			f.state.IsInMergeQueue = true
+			f.state.MergeQueueEntry = queueEntry(testHiveAppBotLogin)
+			for _, lane := range []string{stageLaneSelf, nativeQueueLaneQueued} {
+				c.reconcileNativeQueueGate(context.Background(), lane, "acme", "widget", pr, reason)
+			}
+			if f.dequeues != 0 {
+				t.Fatalf("dequeues=%d, %q must not withdraw own entry", f.dequeues, reason)
+			}
+		})
+	}
+}
+
+// A queue-required base reports blocked until the PR merges through the
+// queue, so the queued lane must enqueue instead of stopping at
+// not-mergeable; without a queue, blocked still stops the lane.
+func TestQueuedLaneEnqueuesBlockedPROnQueueBase(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(map[bool]string{true: "queue", false: "no-queue"}[enabled], func(t *testing.T) {
+			var merged []int
+			api := newAutoMergeSweepAPI(t, hgithub.AutoMergeQueuedLabel, []sweepPR{{number: 7, nodeID: "PR_7", author: "alice", queuedBy: "bob", label: true, mergeableState: "blocked", statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged)
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: enabled}}
+			c.transport = f
+			c.trustedAuthorizer = func(string, string) TrustedAuthorDecision {
+				return TrustedAuthorDecision{Allowed: true, Role: "merger"}
+			}
+			result, err := c.SweepQueuedAutoMerges(context.Background(), AutoMergeSweepOptions{})
+			want := 0
+			if enabled {
+				want = 1
+			}
+			if err != nil || len(merged) != 0 || len(result.Merged) != 0 || f.enqueues != want || f.dequeues != 0 {
+				t.Fatalf("result=%+v merged=%v enqueues=%d dequeues=%d error=%v", result, merged, f.enqueues, f.dequeues, err)
+			}
+		})
+	}
+}
+
+// On a queue-enabled base the merge group tests the merged result, so the
+// behind update and the default-on current-base gate must not update the
+// branch: a new head would drop the PR from the queue.
+func TestNativeQueueSkipsCurrentBaseUpdate(t *testing.T) {
+	for _, lane := range []string{stageLaneSelf, stageLaneTrusted} {
+		for _, state := range []string{"behind", "clean"} {
+			t.Run(lane+"/"+state, func(t *testing.T) {
+				var merged []int
+				author := testHiveAppBotLogin
+				if lane == stageLaneTrusted {
+					author = "alice"
+				}
+				updates := 0
+				api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, mergeableState: state, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
+					switch {
+					case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/update-branch"):
+						updates++
+						w.WriteHeader(http.StatusAccepted)
+						_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
+					case strings.Contains(r.URL.Path, "/compare/"):
+						_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
+					default:
+						t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+						w.WriteHeader(http.StatusNotFound)
+					}
+				})
+				defer api.Close()
+				c := newAutoMergeSweepClient(api.URL)
+				c.requireCurrentBase = func(string) bool { return true }
+				f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true}}
+				c.transport = f
+				var err error
+				if lane == stageLaneSelf {
+					_, err = c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+				} else {
+					c.trustedAuthorizer = func(string, string) TrustedAuthorDecision {
+						return TrustedAuthorDecision{Allowed: true, Role: "merger"}
+					}
+					c.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"} }
+					_, err = c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{})
+				}
+				if err != nil || updates != 0 || f.enqueues != 1 || len(merged) != 0 {
+					t.Fatalf("updates=%d enqueues=%d merged=%v error=%v", updates, f.enqueues, merged, err)
+				}
+			})
+		}
 	}
 }

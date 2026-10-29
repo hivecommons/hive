@@ -20,17 +20,28 @@ Already queued PRs are left in place. The sweep reason reports
 `stage/100-merge-queue`; enqueueing does not emit a completed-merge event or
 close an issue. The stage observation carries the reason to the dashboard.
 
-When the owning lane rejects a PR for any reason other than its own
-native-queue outcomes or author-routing skips (for example a hold, withdrawn
-approval, changes request, stale approval, or a transient refusal such as
-`not-mergeable`, `required-checks-expected`, `behind`, soak or `release-hold*`),
-Hive rechecks the entry's enqueuer and withdraws it only if it belongs to this
-App. A transient refusal therefore dequeues the entry, and a later sweep
-re-enqueues it once the gates pass again. Entries from a person or another App are preserved.
+When the owning lane rejects a PR because it lost merge eligibility — a hold
+or `do-not-merge`/`needs-human` label, a removed merger label, a missing,
+untrusted or stale queue approval, changes requested, or a draft or closed
+PR — Hive rechecks the entry's enqueuer and withdraws it only if it belongs to
+this App (a `Bot` enqueuer whose login matches the App's slug). Every other
+reason, including transient refusals such as `behind`, `not-mergeable`, pending
+checks, a moved head, API read errors, author-routing skips and Hive's own
+native-queue outcomes, leaves the entry for GitHub's queue to settle. Entries
+from a person or another App are preserved.
 The queued sweep also withdraws this App's entries on paused repositories or
 repositories with automerge disabled. Every enqueue and dequeue uses the
 existing mutation boundary, including its write denials. Reconciliation is
 periodic/event-driven, so a gate change can race GitHub's eventual merge.
+
+A queue-required base reports `mergeable_state: blocked` (or `behind`) until
+the PR merges through the queue, so on a queue-enabled base the queued lane
+does not treat those states as `not-mergeable`. For the same reason the lanes
+do not update a PR's branch on a queue-enabled base: neither the `behind`
+update nor the `auto_merge.require_current_base` gate (on by default) runs
+there, since the merge group already tests the PR against the current base
+and a pushed head would drop the PR from the queue. A failed queue read keeps
+the non-queue behavior.
 
 Queue rules choose the merge method. Where Hive elected a merge commit to
 preserve mixed authorship and DCO attribution, the queue must use `MERGE`;

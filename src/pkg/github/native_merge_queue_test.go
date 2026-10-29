@@ -28,10 +28,10 @@ func TestNativeMergeQueueGraphQL(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch mode {
 				case "read":
-					if !strings.Contains(body.Query, "isMergeQueueEnabled") || string(body.Variables["id"]) != `"PR_7"` {
+					if !strings.Contains(body.Query, "isMergeQueueEnabled") || !strings.Contains(body.Query, "enqueuer { __typename login }") || string(body.Variables["id"]) != `"PR_7"` {
 						t.Errorf("query=%+v", body)
 					}
-					_, _ = w.Write([]byte(`{"data":{"node":{"id":"PR_7","headRefOid":"validated","isMergeQueueEnabled":true,"isInMergeQueue":true,"mergeQueueEntry":{"id":"entry","position":3,"state":"AWAITING_CHECKS","enqueuer":{"login":"hive[bot]"}}}}}`))
+					_, _ = w.Write([]byte(`{"data":{"node":{"id":"PR_7","headRefOid":"validated","isMergeQueueEnabled":true,"isInMergeQueue":true,"mergeQueueEntry":{"id":"entry","position":3,"state":"AWAITING_CHECKS","enqueuer":{"__typename":"Bot","login":"hive[bot]"}}}}}`))
 				case "graphql-error":
 					_, _ = w.Write([]byte(`{"errors":[{"message":"expectedHeadOid mismatch"}],"data":null}`))
 				case "missing-entry":
@@ -64,7 +64,7 @@ func TestNativeMergeQueueGraphQL(t *testing.T) {
 			switch mode {
 			case "read":
 				state, err := c.ReadNativeMergeQueue(context.Background(), "PR_7")
-				if err != nil || !state.IsMergeQueueEnabled || state.MergeQueueEntry == nil || state.MergeQueueEntry.Enqueuer.Login != "hive[bot]" {
+				if err != nil || !state.IsMergeQueueEnabled || state.MergeQueueEntry == nil || state.MergeQueueEntry.Enqueuer.Login != "hive[bot]" || state.MergeQueueEntry.Enqueuer.Typename != "Bot" {
 					t.Fatalf("state=%+v error=%v", state, err)
 				}
 			case "dequeue":

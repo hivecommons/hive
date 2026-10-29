@@ -10,7 +10,10 @@ type NativeMergeQueueEntry struct {
 	ID       string
 	Position int
 	State    string
-	Enqueuer struct{ Login string }
+	Enqueuer struct {
+		Typename string `json:"__typename"`
+		Login    string
+	}
 }
 
 // NativeMergeQueueState describes the queue on a PR's target branch.
@@ -31,7 +34,7 @@ func (c *Client) ReadNativeMergeQueue(ctx context.Context, id string) (NativeMer
 	var out struct{ Node *NativeMergeQueueState }
 	err := c.graphQL(ctx, `query($id: ID!) { node(id: $id) { ... on PullRequest {
  id headRefOid isMergeQueueEnabled isInMergeQueue
- mergeQueueEntry { id position state enqueuer { login } }
+ mergeQueueEntry { id position state enqueuer { __typename login } }
  timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { id } } }
  } } }`, map[string]any{"id": id}, &out)
 	if err != nil {
@@ -52,7 +55,7 @@ func (c *Client) EnqueueNativePullRequest(ctx context.Context, id, head string) 
 		EnqueuePullRequest struct{ MergeQueueEntry *NativeMergeQueueEntry }
 	}
 	err := c.graphQL(ctx, `mutation($input: EnqueuePullRequestInput!) {
- enqueuePullRequest(input: $input) { mergeQueueEntry { id position state enqueuer { login } } }
+ enqueuePullRequest(input: $input) { mergeQueueEntry { id position state enqueuer { __typename login } } }
  }`, map[string]any{"input": map[string]any{"pullRequestId": id, "expectedHeadOid": head}}, &out)
 	if err != nil {
 		return nil, err

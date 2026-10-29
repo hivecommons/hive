@@ -18,6 +18,7 @@ const (
 	nativeQueueReasonRead    = prstage.AutoMergeReasonNativeQueuePrefix + "-read"
 	nativeQueueReasonEnqueue = prstage.AutoMergeReasonNativeQueuePrefix + "-enqueue"
 	nativeQueueReasonMethod  = prstage.AutoMergeReasonNativeQueueMethod
+	nativeQueueReasonPaused  = "repo-paused-or-disabled"
 
 	// Lanes passed to reconcileNativeQueueGate by callers outside the three
 	// authoring lanes.
@@ -41,6 +42,52 @@ type nativeQueueTransport interface {
 // Bot.login omits the suffix.
 func botSlug(login string) string {
 	return strings.TrimSuffix(strings.TrimSpace(login), "[bot]")
+}
+
+// ownNativeQueueEntry matches the enqueuer by type as well as slug: a user
+// account may hold a login equal to the App's slug.
+func ownNativeQueueEntry(e *hgithub.NativeMergeQueueEntry, slug string) bool {
+	return e != nil && e.Enqueuer.Typename == "Bot" && strings.EqualFold(botSlug(e.Enqueuer.Login), slug)
+}
+
+// nativeQueueWithdrawReason reports whether a lane's rejection reason means
+// the PR lost merge eligibility (#15198): a hold, a withdrawn or stale
+// approval, changes requested, a paused or disabled repo, or a draft or
+// closed PR. Anything else — pending or red checks, behind, a moved head, an
+// API error, a routing observation — keeps the App's queue entry.
+func nativeQueueWithdrawReason(reason string) bool {
+	switch reason {
+	case "held", "label:hold", "label:needs-human", "sentinel", contributorLaneReasonSentinelBlocked, "exempt-label",
+		"label-removed", autoMergeReasonNoHiveQueueApproval, autoMergeReasonUntrustedQueueApproval,
+		"queue-approval-missing-head", "queue-approval-head-changed", "self-merge-ban", autoMergeReasonUntrustedMerger,
+		"changes-requested", autoMergeReasonHumanChangesRequested, contributorLaneReasonChangesRequested,
+		nativeQueueReasonPaused, "repo-auto-merge-disabled", relayLaneReasonDisabled,
+		"draft", "closed":
+		return true
+	}
+	return strings.HasPrefix(reason, "label:do-not-merge") || strings.HasPrefix(reason, "excluded-label:") ||
+		strings.HasPrefix(reason, autoMergeReasonReviewGatePrefix+ReviewGateOutcomeChangesRequested)
+}
+
+// nativeQueueEnabled reports whether the PR's base has a native merge queue.
+// A read failure reports false so the lane keeps its pre-queue behaviour.
+func (c *Engine) nativeQueueEnabled(ctx context.Context, pr *gh.PullRequest) bool {
+	t := c.nativeQueue()
+	if t == nil || pr.GetNodeID() == "" {
+		return false
+	}
+	state, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
+	return err == nil && state.IsMergeQueueEnabled
+}
+
+// nativeQueueGatedState: a PR not yet merged through a required queue reads
+// blocked (or behind) even when every gate the queue re-tests has passed.
+func nativeQueueGatedState(pr *gh.PullRequest) bool {
+	switch strings.ToLower(strings.TrimSpace(pr.GetMergeableState())) {
+	case "blocked", "behind":
+		return true
+	}
+	return false
 }
 
 func (c *Engine) nativeQueue() nativeQueueTransport {
@@ -127,19 +174,11 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 // including cheap prefilter holds. Never withdraw another actor's entry.
 func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo string, pr *gh.PullRequest, reason string) {
 	t := c.nativeQueue()
-	if t == nil || pr == nil || pr.GetNodeID() == "" || reason == "" || strings.HasPrefix(reason, prstage.AutoMergeReasonNativeQueuePrefix) {
-		return
-	}
-	// Routing observations are not eligibility decisions by the owning lane.
-	switch reason {
-	case "not-app-authored", trustedAuthorReasonAppAuthored, trustedBotLaneSkipReason, contributorLaneReasonAppAuthored:
+	if t == nil || pr == nil || pr.GetNodeID() == "" || !nativeQueueWithdrawReason(reason) {
 		return
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	if _, own := c.sweepLaneForAuthor(author); own && lane != stageLaneSelf && lane != nativeQueueLaneInactive {
-		return
-	}
-	if lane == stageLaneTrusted && reason == "untrusted-author-role" {
 		return
 	}
 	if lane == stageLaneContributor && c.trustedAuthorDecision(author, c.currentTrustedAuthorPolicy().RequireRole).Allowed {
@@ -150,7 +189,7 @@ func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo
 		return
 	}
 	state, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
-	if err == nil && state.IsInMergeQueue && state.MergeQueueEntry != nil && strings.EqualFold(botSlug(state.MergeQueueEntry.Enqueuer.Login), login) {
+	if err == nil && state.IsInMergeQueue && ownNativeQueueEntry(state.MergeQueueEntry, login) {
 		entryID := state.MergeQueueEntry.ID
 		claim := effects.Claim{Repo: owner + "/" + repo, Kind: effects.KindPullRequestMerge, Target: strconv.Itoa(pr.GetNumber()), Actor: "automerge", Inputs: map[string]string{"operation": "dequeue", "entry": entryID}}
 		observe := func(ctx context.Context) (effects.ExternalState, error) {
@@ -167,7 +206,7 @@ func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo
 			if err != nil {
 				return effects.Result{}, err
 			}
-			if !current.IsInMergeQueue || current.MergeQueueEntry == nil || current.MergeQueueEntry.ID != entryID || !strings.EqualFold(botSlug(current.MergeQueueEntry.Enqueuer.Login), login) {
+			if !current.IsInMergeQueue || current.MergeQueueEntry == nil || current.MergeQueueEntry.ID != entryID || !ownNativeQueueEntry(current.MergeQueueEntry, login) {
 				return effects.Result{}, nil
 			}
 			if err := t.DequeueNativePullRequest(ctx, state.ID); err != nil {
@@ -207,7 +246,7 @@ func (c *Engine) reconcileInactiveNativeQueues(ctx context.Context) {
 				break
 			}
 			for _, pr := range prs {
-				c.reconcileNativeQueueGate(ctx, nativeQueueLaneInactive, owner, repo, pr, "repo-paused-or-disabled")
+				c.reconcileNativeQueueGate(ctx, nativeQueueLaneInactive, owner, repo, pr, nativeQueueReasonPaused)
 			}
 			if resp == nil || resp.NextPage == 0 {
 				break
