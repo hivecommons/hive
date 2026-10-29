@@ -74,7 +74,8 @@ func counterPoints(t *testing.T, reader *sdkmetric.ManualReader) map[attribute.D
 }
 
 func attrSet(capability, class, code string) attribute.Distinct {
-	return attribute.NewSet(attrCapability.String(capability), attrStatusClass.String(class), attrCode.String(code)).Equivalent()
+	set := attribute.NewSet(attrCapability.String(capability), attrStatusClass.String(class), attrCode.String(code))
+	return set.Equivalent()
 }
 
 func TestRequestMetricsBoundedAttributes(t *testing.T) {
