@@ -357,6 +357,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassGitHubAppRepoNotCovered, message: "github app recheck: installation does not cover every configured repo"},
 		{class: ClassGitHubAppNotInstalled, message: "github app installation id is unset — per-agent scoped token NOT delivered"},
 		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
+		{class: ClassInferenceCallerUnknown, message: "inference request from unidentified caller refused"},
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassSHAPollCommitMsgUnavail, message: "SHA poll: commit message fetch non-200"},
 		{class: ClassAgentLoginRequired, message: "login required detected"},
