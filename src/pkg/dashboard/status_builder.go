@@ -2469,6 +2469,7 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 			NonActionableIssues: nonActionableIssuesByRepo[repoName],
 			NonActionablePrs:    nonActionablePrsByRepo[repoName],
 			AutoMerge:           cfg.RepoAutoMergeEnabled(repoName),
+			RequireCurrentBase:  cfg.AutoMerge.RequireCurrentBaseFor(full),
 			Forge:               forgeKind,
 			ForgeURL:            forgeURL,
 		}

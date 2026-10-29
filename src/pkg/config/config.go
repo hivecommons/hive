@@ -8033,30 +8033,33 @@ type AutoMergeConfig struct {
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
 	// RequireCurrentBase lists owner/repo names whose automerge sweeps only
-	// merge a PR head that already contains the current base branch tip.
-	// A head that is green but was tested against an older base is updated
-	// (GitHub update-branch, a merge commit) and merged once CI is green on
-	// the new head, so a semantic conflict with anything merged since shows
-	// up as red CI instead of a broken base.
+	// merge a PR head that already contains the current base branch tip
+	// (hivecommons/hive#13634). A head that is green but was tested against
+	// an older base is updated (GitHub update-branch, a merge commit) and
+	// merged once CI is green on the new head, so a semantic conflict with
+	// anything merged since shows up as red CI instead of a broken base.
 	//
-	// Since hivecommons/hive#15335 the gate is ON for every repo by default
-	// (RequireCurrentBaseDefault); this list is the STRICT form: a listed
+	// This list is the explicit per-repo "on" and its STRICT form: a listed
 	// repo never falls back to merging an un-updated head, even when the App
 	// cannot update the branch (fork head without maintainer edits, branch
-	// protection or a missing contents:write). Repos covered only by the
-	// default merge the green head as tested in that case, with one WARN per
-	// PR, so a fork-heavy repo is not parked wholesale by the default.
+	// protection or a missing contents:write). It wins over SkipCurrentBase
+	// and RequireCurrentBaseDefault. The dashboard's per-repo override
+	// ("Merge only on current base: inherit / on / off") writes this list and
+	// SkipCurrentBase (hivecommons/hive#15335).
 	RequireCurrentBase []string `yaml:"require_current_base,omitempty" json:"require_current_base,omitempty"`
-	// RequireCurrentBaseDefault is the fleet-wide default for the gate above
-	// on repos that appear in neither RequireCurrentBase nor
-	// SkipCurrentBase. nil/unset means true (hivecommons/hive#15335: a
-	// stale-green merge broke v5 for every open PR for 20 minutes because the
-	// repo was not listed). `false` restores the opt-in-only behaviour.
+	// RequireCurrentBaseDefault is the hive-wide default of the gate above
+	// for repos in neither RequireCurrentBase nor SkipCurrentBase. nil/unset
+	// means OFF (hivecommons/hive#15335: the owner kept the fleet default off
+	// — the merge train already update-branches overlapping siblings — and
+	// soaks the gate per repo first). The Features dialog toggle "Merge only
+	// on current base" writes it. A repo gated only by this default merges a
+	// behind head the App cannot update as tested, with one WARN per PR, so
+	// turning the default on does not park every fork PR.
 	RequireCurrentBaseDefault *bool `yaml:"require_current_base_default,omitempty" json:"require_current_base_default,omitempty"`
-	// SkipCurrentBase lists owner/repo names opted OUT of the current-base
-	// gate: a green head there merges even if the base has moved (the
-	// pre-#15335 behaviour). An explicit RequireCurrentBase entry wins over
-	// this list.
+	// SkipCurrentBase lists owner/repo names explicitly opted OUT of the
+	// current-base gate: a green head there merges even if the base has
+	// moved, whatever RequireCurrentBaseDefault says. A RequireCurrentBase
+	// entry for the same repo wins over this list.
 	SkipCurrentBase []string `yaml:"skip_current_base,omitempty" json:"skip_current_base,omitempty"`
 	// MergeForwardTrustedHuman lists owner/repo names where a role/trusted
 	// author/human PR that GitHub reports as conflicting ("dirty") gets the
@@ -8511,19 +8514,78 @@ func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
 // matched case-insensitively). Resolution order: an explicit
 // auto_merge.require_current_base entry (on, strict), then
 // auto_merge.skip_current_base (off), then
-// auto_merge.require_current_base_default (unset means on).
+// auto_merge.require_current_base_default (unset means off).
 func (a AutoMergeConfig) RequireCurrentBaseFor(repo string) bool {
 	key := strings.ToLower(strings.TrimSpace(repo))
 	if key == "" {
 		return false
 	}
+	if v := a.CurrentBaseOverrideFor(key); v != nil {
+		return *v
+	}
+	return a.CurrentBaseDefaultEnabled()
+}
+
+// CurrentBaseDefaultEnabled reports auto_merge.require_current_base_default
+// with its unset value resolved (off).
+func (a AutoMergeConfig) CurrentBaseDefaultEnabled() bool {
+	return a.RequireCurrentBaseDefault != nil && *a.RequireCurrentBaseDefault
+}
+
+// CurrentBaseOverrideFor returns the explicit per-repo setting of the
+// current-base gate: true when repo is in auto_merge.require_current_base,
+// false when it is in auto_merge.skip_current_base (and not in the former),
+// nil when the repo inherits the hive-wide default.
+func (a AutoMergeConfig) CurrentBaseOverrideFor(repo string) *bool {
+	key := strings.ToLower(strings.TrimSpace(repo))
+	if key == "" {
+		return nil
+	}
 	if repoListSet(a.RequireCurrentBase)[key] {
-		return true
+		v := true
+		return &v
 	}
 	if repoListSet(a.SkipCurrentBase)[key] {
-		return false
+		v := false
+		return &v
 	}
-	return a.RequireCurrentBaseDefault == nil || *a.RequireCurrentBaseDefault
+	return nil
+}
+
+// SetCurrentBaseOverride records the dashboard's per-repo tri-state for the
+// current-base gate: true adds repo to require_current_base, false adds it
+// to skip_current_base, nil removes it from both so it inherits the default.
+// The repo is removed from the other list in every case, so a repo is never
+// in both. repo should be owner/repo; matching is case-insensitive.
+func (a *AutoMergeConfig) SetCurrentBaseOverride(repo string, value *bool) {
+	if a == nil {
+		return
+	}
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return
+	}
+	drop := func(list []string) []string {
+		out := list[:0:0]
+		for _, r := range list {
+			if !strings.EqualFold(strings.TrimSpace(r), repo) {
+				out = append(out, r)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	}
+	a.RequireCurrentBase = drop(a.RequireCurrentBase)
+	a.SkipCurrentBase = drop(a.SkipCurrentBase)
+	switch {
+	case value == nil:
+	case *value:
+		a.RequireCurrentBase = append(a.RequireCurrentBase, repo)
+	default:
+		a.SkipCurrentBase = append(a.SkipCurrentBase, repo)
+	}
 }
 
 // RequireCurrentBaseStrictFor reports whether repo is explicitly listed in

@@ -417,6 +417,55 @@
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
       return out;
     }
+    // Pure: the one action a row leads with, rendered inline on the row
+    // header so the ask the caption makes has its answer in sight
+    // (hivecommons/hive#15456: "waiting for a maintainer's triage" with
+    // Accept triage hidden behind ⋯). The ⋯ menu's `lead` entry first
+    // (Accept triage, the server's lead answer such as Merge now, Close
+    // (read)); else the first Decide… option (Let hive decide, carrying the
+    // decide target); else Adopt, Adopt now or Let hive decide — all N
+    // PRs. null when the row asks nothing of the viewer here. Disabled
+    // entries are returned as-is so the button can say why.
+    function stageTrackerLeadAction(item, ctx) {
+      if (!item) return null;
+      const actions = stageTrackerRowActions(item, ctx);
+      const lead = actions.find(a => a.lead);
+      if (lead) return lead;
+      const decide = actions.find(a => a.id === 'decide');
+      if (decide && Array.isArray(decide.submenu) && decide.submenu.length) {
+        const o = decide.submenu.find(x => x.enabled) || decide.submenu[0];
+        const enabled = !!decide.enabled && !!o.enabled;
+        return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
+      }
+      for (const id of ['decide:adopt', 'decide:adopt-now', 'decide:delegate-all']) {
+        const a = actions.find(x => x.id === id);
+        if (a && (a.enabled || id !== 'decide:adopt-now')) return a;
+      }
+      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
+      return null;
+    }
+    // Pure: whether the server says the next move is the maintainer's.
+    function stageTrackerMaintainerMoved(item) {
+      return !!item && (item.actor === 'maintainer' || !!(item.new && item.new.next_mover === 'maintainer'));
+    }
+    // A console warning on a development host only (localhost, 127.0.0.1).
+    function stageTrackerDevWarn(msg) {
+      const host = typeof window !== 'undefined' && window.location ? String(window.location.hostname || '') : '';
+      if ((host === 'localhost' || host === '127.0.0.1') && typeof console !== 'undefined' && console.warn) console.warn('[tracker] ' + msg);
+    }
+    // The inline lead button for a row: a real <button> carrying the same
+    // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
+    // '' when the row has no lead. Click handling is delegated in
+    // stageTrackerWireRowActions and runs runRowAction, the menu's path.
+    function stageTrackerLeadActionHtml(item, ctx) {
+      const a = stageTrackerLeadAction(item, ctx);
+      if (!a) return '';
+      const label = String(a.label || a.id);
+      const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
+      const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
+      const state = a.enabled ? (tip ? ` title="${esc(tip)}"` : '') : ` aria-disabled="true" title="${esc(tip)}"`;
+      return `<button type="button" class="ham-lead-act${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}"${state} aria-label="${esc(label + (ref ? ' — ' + ref : ''))}">${esc(label)}</button>`;
+    }
     // Pure: the actions for a row parked on a blocker (hivecommons/hive#15099):
     // the server lists them in decision_needed.options (a capability gap
     // offers the App settings link, a permission re-check and the disabled
@@ -634,6 +683,20 @@
           e.preventDefault();
           stageTrackerSelect(row.dataset.hamKey, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey });
         }
+      });
+      // The row's inline lead button runs the same path as its ⋯ entry.
+      el.addEventListener('click', e => {
+        const b = e.target.closest ? e.target.closest('.ham-lead-act[data-ham-act]') : null;
+        if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        if (b.getAttribute('aria-disabled') === 'true') return;
+        // The one row (or nested PR) the button sits on, never the selection.
+        const sub = b.closest('[data-ham-sub-key]');
+        const row = b.closest('.ham-row[data-ham-key]');
+        const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+        const item = key ? stageTrackerItemByKey(_stageTracker, key) : null;
+        if (!item) return;
+        stageTrackerDecisionRun(item, b.dataset.hamAct);
       });
       // Cmd/Ctrl- or Shift-click anywhere on a row (not on its links or
       // buttons) selects it too.

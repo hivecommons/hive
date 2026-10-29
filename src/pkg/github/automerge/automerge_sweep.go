@@ -92,7 +92,8 @@ type Options struct {
 	// nil means no repo has any.
 	HumanMergePaths func(repo string) []string
 	// RequireCurrentBase returns the live current-base gate switch for an
-	// owner/repo (hivecommons/hive#13634, default on since #15335 via
+	// owner/repo (hivecommons/hive#13634; since #15335 resolved from the
+	// hive-wide default plus per-repo overrides via
 	// config.AutoMergeConfig.RequireCurrentBaseFor). nil means off.
 	RequireCurrentBase func(repo string) bool
 	// RequireCurrentBaseStrict reports whether owner/repo is explicitly
