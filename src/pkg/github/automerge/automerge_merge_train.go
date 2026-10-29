@@ -18,24 +18,39 @@ import (
 
 // Merge train (hivecommons/hive#15117).
 //
-// Six approved PRs to v5 all touched stage_tracker.go and index.html; the
-// moment one merged the rest went `dirty`, and every lane logged
-// `conflicting` / `label:needs-rebase` each cycle while a person stacked
-// branches by hand. The train makes the lane order them instead:
+// Approved PRs to the same base that touch the same files were all merged in
+// parallel; the first to land turned every sibling dirty and each lane then
+// logged them `conflicting` / `label:needs-rebase` every cycle with nothing
+// ordering them. The train makes the lane order them instead:
 //
-//   - candidates on the same base whose changed files overlap form one
-//     train (GET /pulls/{n}/files, cached by head SHA);
-//   - the train has one front — clean-mergeable first, then oldest — that
-//     the lane evaluates and merges as before; every sibling is parked as
+//   - candidates on the same base whose changed files overlap (transitively)
+//     form one train (GET /pulls/{n}/files, cached by head SHA);
+//   - the train has one front — a head not last seen conflicting, red or
+//     held first, then the oldest — that the lane evaluates and merges as
+//     before; every sibling is parked as
 //     `merge-train:queued-behind#<front>:<pos>/<size>:…` (stage 080, never a
-//     human stage);
+//     human stage); a group whose best member is itself blocked imposes no
+//     ordering (fail-open), so nobody waits behind a PR that is not moving;
 //   - right after the front merges each sibling is read back: `behind` gets
 //     update-branch, `dirty` gets a rebase-resolve request through the
 //     RebaseResolver hook, at most MaxRebaseAttempts per PR per front; a
-//     front that stays dirty past the guard parks at 085 for a person.
+//     conflicting front is sent to the same hook, and past the guard it
+//     parks at 085 for a person and stops fronting its train.
 //
-// Train state (attempt counters, last merged front, transition log
-// signatures) is in-memory per process; a restart simply re-plans.
+// Train state (files cache, blocked heads, attempt counters, last merged
+// front, transition log) is in-memory per process; a restart re-plans.
+
+// autoMergeReasonMergeTrainQueued is the skip reason of an approved PR that
+// shares changed files with another candidate on the same base and is not
+// that group's merge-train front (hivecommons/hive#15117). Merging every
+// overlapping PR in parallel dirties all but the first; the train merges one
+// front per group and leaves the rest for the next pass against the new base.
+const autoMergeReasonMergeTrainQueued = "merge-train-queued"
+
+// autoMergeReasonMergeTrainRebasing is the tick-stat bucket of a conflicting
+// front the train sent for a rebase (or gave up on); the per-PR stage reason
+// is the full prstage.MergeTrain reason with the attempt count.
+const autoMergeReasonMergeTrainRebasing = "merge-train-rebasing"
 
 // MergeTrainPolicy is the live auto_merge.merge_train.* policy.
 type MergeTrainPolicy struct {
@@ -43,8 +58,8 @@ type MergeTrainPolicy struct {
 	MaxRebaseAttempts int
 }
 
-// DefaultMergeTrainPolicy is the policy without an Options.MergeTrain hook:
-// on, two rebase attempts per PR per front (config.DefaultMergeTrainMaxRebaseAttempts).
+// DefaultMergeTrainPolicy is the policy without Options hooks: on, two rebase
+// attempts per PR per front (config.DefaultMergeTrainMaxRebaseAttempts).
 var DefaultMergeTrainPolicy = MergeTrainPolicy{Enabled: true, MaxRebaseAttempts: 2}
 
 // RebaseRequest names the PR the merge train wants rebased onto its base.
@@ -66,13 +81,19 @@ type RebaseRequest struct {
 	Lane string
 }
 
+// String renders a request for logs.
+func (r RebaseRequest) String() string {
+	return fmt.Sprintf("%s#%d onto %s (behind #%d, attempt %d/%d, %s)", r.Repo, r.Number, r.Base, r.Front, r.Attempt, r.MaxAttempts, r.Lane)
+}
+
 // RebaseResolver enqueues a rebase-resolve task for a conflicting PR. The
 // rebase-then-merge follow-through (hivecommons/hive#15104, pkg/rebasemerge)
 // is the intended implementation: cmd/hive adapts its store here so the
 // fixer lane rebases the head and the dashboard ticker merges it on green.
 // TODO(hivecommons/hive#15104): wire pkg/rebasemerge.Store as the resolver
 // once it lands; until then a nil resolver leaves a dirty front on its
-// normal `conflicting` path and logs the gap once per PR head.
+// normal `conflicting` path (which then stops it fronting its train) and
+// logs the gap once per PR head.
 type RebaseResolver interface {
 	RequestRebase(ctx context.Context, req RebaseRequest) error
 }
@@ -85,36 +106,121 @@ func (f RebaseResolverFunc) RequestRebase(ctx context.Context, req RebaseRequest
 	return f(ctx, req)
 }
 
-// Tick-stat buckets for the train's park reasons (the full reason is per
-// PR and carries the position).
-const (
-	autoMergeReasonMergeTrainQueued   = "merge-train-queued"
-	autoMergeReasonMergeTrainRebasing = "merge-train-rebasing"
-)
-
-// mergeTrainFilesPages bounds the /files pagination per PR (100 per page).
-const mergeTrainFilesPages = 3
-
-// mergeTrainMember is one candidate the planner groups.
+// mergeTrainMember is one candidate PR as the train planner sees it.
 type mergeTrainMember struct {
-	Number         int
-	Base           string
+	Number  int
+	Base    string
+	Created time.Time
+	// Blocked marks a head the sweep last saw unable to merge on its own
+	// (conflicting, red, or a terminal hold): it never fronts a train while a
+	// mergeable member exists, so it cannot stall its siblings.
+	Blocked bool
+	Files   []string
+	// Head and HeadSHA are the head branch and commit; MergeableState is
+	// GitHub's live mergeable_state, read for a front only (the list API
+	// does not carry it) to decide whether the train must rebase it.
 	Head           string
 	HeadSHA        string
-	Files          []string
-	CreatedAt      time.Time
 	MergeableState string
-	Fork           bool
-	// Blocked marks a head the lane last saw unable to merge on its own
-	// (red required check, terminal hold, permanent merge refusal): it
-	// does not front a train, and a group whose best member is blocked
-	// imposes no ordering at all (fail-open), so nobody waits behind a PR
-	// that is not moving.
-	Blocked bool
 }
 
-// mergeTrainGroup is one train: the ordered members (front first) and the
-// files at least two of them touch.
+// mergeTrainSlot is a PR's place in its overlap group. Position 1 is the
+// front; OverlapFiles are the member's files that another member also changes.
+type mergeTrainSlot struct {
+	Front        int
+	Position     int
+	Size         int
+	OverlapFiles []string
+}
+
+// planMergeTrains groups members per base branch by transitively overlapping
+// changed files and orders each group of two or more: mergeable before
+// blocked, then oldest, then lowest number. A group whose best member is
+// itself blocked gets no slots, so a train never holds back siblings behind a
+// front that cannot merge.
+func planMergeTrains(members []mergeTrainMember) map[int]mergeTrainSlot {
+	parent := make([]int, len(members))
+	for i := range parent {
+		parent[i] = i
+	}
+	var find func(int) int
+	find = func(i int) int {
+		if parent[i] != i {
+			parent[i] = find(parent[i])
+		}
+		return parent[i]
+	}
+	owner := make(map[string]int)
+	for i, m := range members {
+		for _, f := range m.Files {
+			key := m.Base + "\x00" + f
+			if j, ok := owner[key]; ok {
+				parent[find(i)] = find(j)
+				continue
+			}
+			owner[key] = i
+		}
+	}
+	groups := make(map[int][]int)
+	for i := range members {
+		root := find(i)
+		groups[root] = append(groups[root], i)
+	}
+	slots := make(map[int]mergeTrainSlot)
+	for _, group := range groups {
+		if len(group) < 2 {
+			continue
+		}
+		sort.Slice(group, func(a, b int) bool {
+			ma, mb := members[group[a]], members[group[b]]
+			if ma.Blocked != mb.Blocked {
+				return !ma.Blocked
+			}
+			if !ma.Created.IsZero() && !mb.Created.IsZero() && !ma.Created.Equal(mb.Created) {
+				return ma.Created.Before(mb.Created)
+			}
+			return ma.Number < mb.Number
+		})
+		front := members[group[0]]
+		if front.Blocked {
+			continue
+		}
+		touches := make(map[string]int)
+		for _, i := range group {
+			for _, f := range uniqueStrings(members[i].Files) {
+				touches[f]++
+			}
+		}
+		for pos, i := range group {
+			var overlap []string
+			for _, f := range uniqueStrings(members[i].Files) {
+				if touches[f] > 1 {
+					overlap = append(overlap, f)
+				}
+			}
+			sort.Strings(overlap)
+			slots[members[i].Number] = mergeTrainSlot{Front: front.Number, Position: pos + 1, Size: len(group), OverlapFiles: overlap}
+		}
+	}
+	return slots
+}
+
+func uniqueStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// mergeTrainGroup is one train as the lanes and the stage reasons see it:
+// the members in slot order (front first) and the files at least two of them
+// touch. It is a view over planMergeTrains' slots, not a second planner.
 type mergeTrainGroup struct {
 	Base         string
 	Order        []int
@@ -148,26 +254,43 @@ func (g mergeTrainGroup) Siblings() []int {
 	return g.Order[1:]
 }
 
-func (g mergeTrainGroup) signature() string {
-	parts := make([]string, len(g.Order))
-	for i, n := range g.Order {
-		parts[i] = strconv.Itoa(n)
+// mergeTrainGroups folds slots into one group per front, ordered by base and
+// then front number so callers iterate deterministically.
+func mergeTrainGroups(members []mergeTrainMember, slots map[int]mergeTrainSlot) []mergeTrainGroup {
+	byNumber := make(map[int]mergeTrainMember, len(members))
+	for _, m := range members {
+		byNumber[m.Number] = m
 	}
-	return g.Base + ":" + strings.Join(parts, ",")
-}
-
-// mergeTrainStateRank orders members for the front: a head GitHub says
-// merges cleanly leads, an unknown state next, then behind, then dirty.
-func mergeTrainStateRank(state string) int {
-	switch strings.ToLower(strings.TrimSpace(state)) {
-	case "clean", "unstable", "has_hooks", "blocked":
-		return 0
-	case "", "unknown":
-		return 1
-	case "behind":
-		return 2
+	byFront := make(map[int]*mergeTrainGroup)
+	var fronts []int
+	for n, slot := range slots {
+		g, ok := byFront[slot.Front]
+		if !ok {
+			g = &mergeTrainGroup{Base: byNumber[slot.Front].Base, Order: make([]int, slot.Size), members: make(map[int]mergeTrainMember, slot.Size)}
+			byFront[slot.Front] = g
+			fronts = append(fronts, slot.Front)
+		}
+		if slot.Position >= 1 && slot.Position <= len(g.Order) {
+			g.Order[slot.Position-1] = n
+		}
+		g.members[n] = byNumber[n]
+		g.OverlapFiles = append(g.OverlapFiles, slot.OverlapFiles...)
 	}
-	return 3
+	sort.Slice(fronts, func(a, b int) bool {
+		ga, gb := byFront[fronts[a]], byFront[fronts[b]]
+		if ga.Base != gb.Base {
+			return ga.Base < gb.Base
+		}
+		return fronts[a] < fronts[b]
+	})
+	out := make([]mergeTrainGroup, 0, len(fronts))
+	for _, f := range fronts {
+		g := byFront[f]
+		g.OverlapFiles = uniqueStrings(g.OverlapFiles)
+		sort.Strings(g.OverlapFiles)
+		out = append(out, *g)
+	}
+	return out
 }
 
 // mergeTrainDirty reports whether a mergeable state is a conflict.
@@ -176,117 +299,10 @@ func mergeTrainDirty(state string) bool {
 	return s == "dirty" || s == "conflicting"
 }
 
-// groupMergeTrains groups members per base by overlapping files (union of
-// pairwise overlaps) and orders each group front-first. Groups of one are
-// dropped: a PR with nothing to collide with is no train.
-func groupMergeTrains(members []mergeTrainMember) []mergeTrainGroup {
-	byBase := map[string][]mergeTrainMember{}
-	bases := []string{}
-	for _, m := range members {
-		if m.Number <= 0 || len(m.Files) == 0 {
-			continue
-		}
-		if _, ok := byBase[m.Base]; !ok {
-			bases = append(bases, m.Base)
-		}
-		byBase[m.Base] = append(byBase[m.Base], m)
-	}
-	sort.Strings(bases)
-	var out []mergeTrainGroup
-	for _, base := range bases {
-		list := byBase[base]
-		parent := make([]int, len(list))
-		for i := range parent {
-			parent[i] = i
-		}
-		var find func(int) int
-		find = func(i int) int {
-			for parent[i] != i {
-				parent[i] = parent[parent[i]]
-				i = parent[i]
-			}
-			return i
-		}
-		owner := map[string]int{}
-		shared := map[string]bool{}
-		for i, m := range list {
-			seen := map[string]bool{}
-			for _, f := range m.Files {
-				f = strings.TrimSpace(f)
-				if f == "" || seen[f] {
-					continue
-				}
-				seen[f] = true
-				if j, ok := owner[f]; ok {
-					shared[f] = true
-					parent[find(i)] = find(j)
-				} else {
-					owner[f] = i
-				}
-			}
-		}
-		groups := map[int][]mergeTrainMember{}
-		roots := []int{}
-		for i, m := range list {
-			r := find(i)
-			if _, ok := groups[r]; !ok {
-				roots = append(roots, r)
-			}
-			groups[r] = append(groups[r], m)
-		}
-		sort.Ints(roots)
-		for _, r := range roots {
-			ms := groups[r]
-			if len(ms) < 2 {
-				continue
-			}
-			sort.SliceStable(ms, func(a, b int) bool {
-				if ms[a].Blocked != ms[b].Blocked {
-					return !ms[a].Blocked
-				}
-				ra, rb := mergeTrainStateRank(ms[a].MergeableState), mergeTrainStateRank(ms[b].MergeableState)
-				if ra != rb {
-					return ra < rb
-				}
-				if !ms[a].CreatedAt.Equal(ms[b].CreatedAt) {
-					if ms[a].CreatedAt.IsZero() != ms[b].CreatedAt.IsZero() {
-						return !ms[a].CreatedAt.IsZero()
-					}
-					return ms[a].CreatedAt.Before(ms[b].CreatedAt)
-				}
-				return ms[a].Number < ms[b].Number
-			})
-			if ms[0].Blocked {
-				continue
-			}
-			g := mergeTrainGroup{Base: base, members: map[int]mergeTrainMember{}}
-			count := map[string]int{}
-			for _, m := range ms {
-				g.Order = append(g.Order, m.Number)
-				g.members[m.Number] = m
-				seen := map[string]bool{}
-				for _, f := range m.Files {
-					if f = strings.TrimSpace(f); f != "" && !seen[f] {
-						seen[f] = true
-						count[f]++
-					}
-				}
-			}
-			for f, n := range count {
-				if n >= 2 && shared[f] {
-					g.OverlapFiles = append(g.OverlapFiles, f)
-				}
-			}
-			sort.Strings(g.OverlapFiles)
-			out = append(out, g)
-		}
-	}
-	return out
-}
-
 // mergeTrainPlan is one lane's trains for one repository this pass.
 type mergeTrainPlan struct {
 	lane, displayRepo, owner, repo string
+	slots                          map[int]mergeTrainSlot
 	groups                         []mergeTrainGroup
 	byNumber                       map[int]*mergeTrainGroup
 }
@@ -302,235 +318,364 @@ func (p *mergeTrainPlan) group(number int) (*mergeTrainGroup, bool) {
 
 // isSibling reports whether number waits behind a front this pass.
 func (p *mergeTrainPlan) isSibling(number int) bool {
-	g, ok := p.group(number)
-	return ok && g.Front() != number
+	if p == nil {
+		return false
+	}
+	_, queued := mergeTrainQueued(p.slots, number)
+	return queued
 }
 
 // isFront reports whether number leads a train this pass.
 func (p *mergeTrainPlan) isFront(number int) bool {
-	g, ok := p.group(number)
-	return ok && g.Front() == number
+	if p == nil {
+		return false
+	}
+	slot, ok := p.slots[number]
+	return ok && slot.Position == 1
+}
+
+// mergeTrainQueued reports whether number waits behind another PR's front.
+func mergeTrainQueued(slots map[int]mergeTrainSlot, number int) (mergeTrainSlot, bool) {
+	slot, ok := slots[number]
+	return slot, ok && slot.Position > 1
+}
+
+// mergeTrainState is the engine's per-process train memory: changed files per
+// PR cached by head SHA, heads last seen blocked, the slot last logged per
+// PR so a transition logs once rather than every pass, the rebase attempts
+// per PR behind a front and the front that last merged per base.
+type mergeTrainState struct {
+	mu       sync.Mutex
+	files    map[string]mergeTrainFiles
+	blocked  map[string]string
+	logged   map[string]string
+	attempts map[string]int
+	merged   map[string]int
+}
+
+type mergeTrainFiles struct {
+	sha   string
+	files []string
+}
+
+func (c *Engine) mergeTrainEnabled() bool {
+	return c.mergeTrainEnabledFn == nil || c.mergeTrainEnabledFn()
 }
 
 // mergeTrainPolicyNow reads the live policy.
 func (c *Engine) mergeTrainPolicyNow() MergeTrainPolicy {
-	if c == nil || c.mergeTrainPolicy == nil {
+	if c == nil {
 		return DefaultMergeTrainPolicy
 	}
-	p := c.mergeTrainPolicy()
+	p := MergeTrainPolicy{Enabled: c.mergeTrainEnabled()}
+	if c.mergeTrainMaxRebaseAttemptsFn != nil {
+		p.MaxRebaseAttempts = c.mergeTrainMaxRebaseAttemptsFn()
+	}
 	if p.MaxRebaseAttempts <= 0 {
 		p.MaxRebaseAttempts = DefaultMergeTrainPolicy.MaxRebaseAttempts
 	}
 	return p
 }
 
-// mergeTrainCandidate reports whether a prefilter verdict admits a PR to
-// the train: a clean pass, or a `needs-rebase` label — the very PR the
-// train exists to order and repair.
-func mergeTrainCandidate(prefilterReason string) bool {
-	return prefilterReason == "" || prefilterReason == "label:needs-rebase"
+// mergeTrainCandidate reports whether a lane's prefilter verdict admits a PR
+// to the train: a clean pass, or — when a rebase resolver can repair it — a
+// `needs-rebase` label, the very PR the train exists to order and repair.
+func (c *Engine) mergeTrainCandidate(prefilterReason string) bool {
+	if prefilterReason == "" {
+		return true
+	}
+	return prefilterReason == "label:needs-rebase" && c != nil && c.rebaseResolver != nil
 }
 
-// planMergeTrains groups this lane's candidates on owner/repo into trains.
-// prefilter is the lane's own cheap gate; API reads (files, then the
-// mergeable state of grouped members) are spent only where two or more
-// candidates share a base. Errors are logged and leave the PR out of any
-// train, so a failed read never blocks a merge the lane would have made.
-func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, repo string, prs []*gh.PullRequest, prefilter func(*gh.PullRequest) string) *mergeTrainPlan {
-	plan := &mergeTrainPlan{lane: lane, displayRepo: displayRepo, owner: owner, repo: repo, byNumber: map[int]*mergeTrainGroup{}}
-	if !c.mergeTrainPolicyNow().Enabled || c == nil || c.gh == nil {
+// mergeTrainBlockingReason reports whether a lane's skip reason means the head
+// cannot merge without someone changing it, so it must not front a train.
+func mergeTrainBlockingReason(reason string) bool {
+	switch reason {
+	case "conflicting", "not-mergeable", "label:needs-rebase", autoMergeReasonForkNotEditable, autoMergeReasonClosedSuperseded:
+		return true
+	}
+	return isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) || classifyCIReason(reason) == ciReasonRed
+}
+
+// noteMergeTrainOutcome records whether the lane's verdict for a head blocks
+// it from fronting a train. A merged or non-blocking verdict clears the mark.
+func (c *Engine) noteMergeTrainOutcome(owner, repo string, number int, sha, reason string) {
+	if c == nil || number <= 0 {
+		return
+	}
+	key := c.evaluatedHeadKey(owner, repo, number)
+	c.mergeTrain.mu.Lock()
+	defer c.mergeTrain.mu.Unlock()
+	if !mergeTrainBlockingReason(reason) || strings.TrimSpace(sha) == "" {
+		delete(c.mergeTrain.blocked, key)
+		return
+	}
+	if c.mergeTrain.blocked == nil {
+		c.mergeTrain.blocked = make(map[string]string)
+	}
+	c.mergeTrain.blocked[key] = sha
+}
+
+// noteMergeTrainFrontSkip records a lane skip that stopped a train's front
+// before its merge attempt, so a front that cannot move stops fronting.
+func (c *Engine) noteMergeTrainFrontSkip(plan *mergeTrainPlan, pr *gh.PullRequest, reason string) {
+	if pr == nil || !plan.isFront(pr.GetNumber()) {
+		return
+	}
+	c.noteMergeTrainOutcome(plan.owner, plan.repo, pr.GetNumber(), pr.GetHead().GetSHA(), reason)
+}
+
+// mergeTrainHeadBlocked reports whether this exact head was last seen blocked.
+func (c *Engine) mergeTrainHeadBlocked(owner, repo string, number int, sha string) bool {
+	if c == nil || strings.TrimSpace(sha) == "" {
+		return false
+	}
+	c.mergeTrain.mu.Lock()
+	defer c.mergeTrain.mu.Unlock()
+	return c.mergeTrain.blocked[c.evaluatedHeadKey(owner, repo, number)] == sha
+}
+
+// mergeTrainChangedFiles returns pr's changed file names, served from the
+// cache while the head SHA is unchanged.
+func (c *Engine) mergeTrainChangedFiles(ctx context.Context, owner, repo string, pr *gh.PullRequest) ([]string, error) {
+	key := c.evaluatedHeadKey(owner, repo, pr.GetNumber())
+	sha := pr.GetHead().GetSHA()
+	c.mergeTrain.mu.Lock()
+	cached, ok := c.mergeTrain.files[key]
+	c.mergeTrain.mu.Unlock()
+	if ok && cached.sha == sha {
+		return cached.files, nil
+	}
+	changed, err := ListChangedFiles(hgithub.WithRESTCaller(ctx, "hive:automerge_merge_train"), c.gh, owner, repo, pr)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]string, 0, len(changed))
+	for _, f := range changed {
+		files = append(files, f.Filename)
+	}
+	c.mergeTrain.mu.Lock()
+	if c.mergeTrain.files == nil {
+		c.mergeTrain.files = make(map[string]mergeTrainFiles)
+	}
+	c.mergeTrain.files[key] = mergeTrainFiles{sha: sha, files: files}
+	c.mergeTrain.mu.Unlock()
+	return files, nil
+}
+
+// mergeTrainSlots plans the merge trains for one lane's listed PRs on one
+// repo. eligible is the lane's cheap list-payload prefilter; only PRs it
+// admits, on a base with at least two of them, cost a files lookup, and each
+// train's front one live read of its mergeable state. A PR whose files cannot
+// be read stays out of every train, so a lookup failure never holds a merge
+// back. The plan is never nil; a disabled train plans nothing.
+func (c *Engine) mergeTrainSlots(ctx context.Context, lane, displayRepo, owner, repo string, prs []*gh.PullRequest, eligible func(*gh.PullRequest) bool) *mergeTrainPlan {
+	plan := &mergeTrainPlan{lane: lane, displayRepo: displayRepo, owner: owner, repo: repo, slots: map[int]mergeTrainSlot{}, byNumber: map[int]*mergeTrainGroup{}}
+	if c == nil || c.gh == nil || !c.mergeTrainEnabled() {
 		return plan
 	}
-	perBase := map[string][]*gh.PullRequest{}
+	perBase := make(map[string][]*gh.PullRequest)
 	for _, pr := range prs {
-		if pr == nil || pr.GetNumber() <= 0 || pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {
-			continue
-		}
-		if !mergeTrainCandidate(prefilter(pr)) {
+		if pr == nil || pr.GetNumber() <= 0 || !eligible(pr) {
 			continue
 		}
 		base := pr.GetBase().GetRef()
 		perBase[base] = append(perBase[base], pr)
 	}
 	var members []mergeTrainMember
-	for base, list := range perBase {
-		if len(list) < 2 {
+	live := make(map[string]bool)
+	listed := make(map[string]bool)
+	for _, group := range perBase {
+		for _, pr := range group {
+			listed[c.evaluatedHeadKey(owner, repo, pr.GetNumber())] = true
+		}
+	}
+	for base, group := range perBase {
+		if len(group) < 2 {
 			continue
 		}
-		for _, pr := range list {
-			files, err := c.mergeTrainFiles(ctx, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA())
+		for _, pr := range group {
+			files, err := c.mergeTrainChangedFiles(ctx, owner, repo, pr)
 			if err != nil {
-				c.warn("merge train: could not list PR files; left out of the train", "repo", displayRepo, "pr", pr.GetNumber(), "error", err)
+				c.warn("merge train could not list PR files; PR stays out of the train", "repo", displayRepo, "pr", pr.GetNumber(), "error", err)
 				continue
 			}
+			key := c.evaluatedHeadKey(owner, repo, pr.GetNumber())
+			live[key] = true
 			members = append(members, mergeTrainMember{
 				Number:         pr.GetNumber(),
 				Base:           base,
+				Created:        pr.GetCreatedAt().Time,
+				Blocked:        c.mergeTrainHeadBlocked(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
+				Files:          files,
 				Head:           pr.GetHead().GetRef(),
 				HeadSHA:        pr.GetHead().GetSHA(),
-				Files:          files,
-				CreatedAt:      pr.GetCreatedAt().Time,
 				MergeableState: pr.GetMergeableState(),
-				Fork:           c.isForkPR(pr),
-				Blocked:        c.mergeTrainHeadBlocked(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
 			})
 		}
 	}
-	if len(members) == 0 {
-		return plan
+	slots := planMergeTrains(members)
+	// Each front's live mergeable state decides whether the train must
+	// rebase it; a front closed since the listing leaves and the group
+	// re-plans. Bounded: every re-plan has one member fewer.
+	read := make(map[int]bool)
+	for {
+		closed := false
+		for n, slot := range slots {
+			if slot.Position != 1 || read[n] {
+				continue
+			}
+			read[n] = true
+			i := mergeTrainMemberIndex(members, n)
+			if i < 0 || members[i].MergeableState != "" {
+				continue
+			}
+			pr, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_merge_train"), owner, repo, n)
+			if err != nil {
+				c.warn("merge train could not read the front's state; treated as unknown", "repo", displayRepo, "pr", n, "error", err)
+				continue
+			}
+			if !strings.EqualFold(pr.GetState(), "open") {
+				members = append(members[:i], members[i+1:]...)
+				closed = true
+				continue
+			}
+			members[i].MergeableState = pr.GetMergeableState()
+			if sha := pr.GetHead().GetSHA(); sha != "" {
+				members[i].HeadSHA = sha
+			}
+			if ref := pr.GetHead().GetRef(); ref != "" {
+				members[i].Head = ref
+			}
+		}
+		if !closed {
+			break
+		}
+		slots = planMergeTrains(members)
 	}
-	// A first grouping on files alone says which members need their live
-	// mergeable state (the list API does not carry it); then regroup so
-	// the front is chosen on what GitHub reports now.
-	needState := map[int]bool{}
-	for _, g := range groupMergeTrains(members) {
-		for _, n := range g.Order {
-			needState[n] = true
-		}
-	}
-	for i := range members {
-		m := &members[i]
-		if !needState[m.Number] || m.MergeableState != "" {
-			continue
-		}
-		live, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_merge_train"), owner, repo, m.Number)
-		if err != nil {
-			c.warn("merge train: could not read PR state; treated as unknown", "repo", displayRepo, "pr", m.Number, "error", err)
-			continue
-		}
-		if !strings.EqualFold(live.GetState(), "open") {
-			m.Number = 0 // closed between listing and here: not a member
-			continue
-		}
-		m.MergeableState = live.GetMergeableState()
-		if live.GetHead() != nil && live.GetHead().GetSHA() != "" {
-			m.HeadSHA = live.GetHead().GetSHA()
-		}
-	}
-	plan.groups = groupMergeTrains(members)
+	plan.slots = slots
+	plan.groups = mergeTrainGroups(members, slots)
 	for i := range plan.groups {
 		g := &plan.groups[i]
 		for _, n := range g.Order {
 			plan.byNumber[n] = g
 		}
-		c.logMergeTrainTransition(displayRepo, lane, *g)
 	}
+	c.logMergeTrainTransitions(displayRepo, owner, repo, lane, slots, live, listed)
 	return plan
 }
 
-// mergeTrainFiles lists a PR's changed paths, cached by head SHA.
-func (c *Engine) mergeTrainFiles(ctx context.Context, owner, repo string, number int, headSHA string) ([]string, error) {
-	key := owner + "/" + repo + "#" + strconv.Itoa(number)
-	c.mergeTrainMu.Lock()
-	if c.mergeTrainFilesCache == nil {
-		c.mergeTrainFilesCache = map[string]mergeTrainFilesEntry{}
-	}
-	if e, ok := c.mergeTrainFilesCache[key]; ok && e.sha == headSHA {
-		c.mergeTrainMu.Unlock()
-		return e.files, nil
-	}
-	c.mergeTrainMu.Unlock()
-	var files []string
-	opts := &gh.ListOptions{PerPage: 100}
-	for page := 0; page < mergeTrainFilesPages; page++ {
-		list, resp, err := c.gh.PullRequests.ListFiles(hgithub.WithRESTCaller(ctx, "hive:automerge_merge_train"), owner, repo, number, opts)
-		if err != nil {
-			return nil, err
+func mergeTrainMemberIndex(members []mergeTrainMember, number int) int {
+	for i, m := range members {
+		if m.Number == number {
+			return i
 		}
-		for _, f := range list {
-			if name := f.GetFilename(); name != "" {
-				files = append(files, name)
-			}
-			if prev := f.GetPreviousFilename(); prev != "" {
-				files = append(files, prev)
-			}
-		}
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-		opts.Page = resp.NextPage
 	}
-	c.mergeTrainMu.Lock()
-	c.mergeTrainFilesCache[key] = mergeTrainFilesEntry{sha: headSHA, files: files}
-	c.mergeTrainMu.Unlock()
-	return files, nil
+	return -1
 }
 
-type mergeTrainFilesEntry struct {
-	sha   string
-	files []string
-}
-
-// logMergeTrainTransition logs one INFO line when a train's order changes
-// (first sight, a new front, a member joining or leaving), never per cycle.
-func (c *Engine) logMergeTrainTransition(displayRepo, lane string, g mergeTrainGroup) {
-	if len(g.Order) == 0 {
-		return
+// logMergeTrainTransitions writes one INFO line when a PR joins a train or its
+// slot changes, and forgets cached files and blocked marks of this repo's PRs
+// that are no longer listed (live: files were read; listed: lane-eligible).
+func (c *Engine) logMergeTrainTransitions(displayRepo, owner, repo, lane string, slots map[int]mergeTrainSlot, live, listed map[string]bool) {
+	prefix := strings.ToLower(strings.TrimSpace(owner)) + "/" + strings.ToLower(strings.TrimSpace(repo)) + "#"
+	numbers := make([]int, 0, len(slots))
+	for n := range slots {
+		numbers = append(numbers, n)
 	}
-	key := displayRepo + "|" + lane + "|" + g.Base + "|" + strconv.Itoa(c.mergeTrainMemberRoot(g))
-	sig := g.signature()
-	c.mergeTrainMu.Lock()
-	if c.mergeTrainLogged == nil {
-		c.mergeTrainLogged = map[string]string{}
+	sort.Ints(numbers)
+	c.mergeTrain.mu.Lock()
+	if c.mergeTrain.logged == nil {
+		c.mergeTrain.logged = make(map[string]string)
 	}
-	prev := c.mergeTrainLogged[key]
-	c.mergeTrainLogged[key] = sig
-	c.mergeTrainMu.Unlock()
-	if prev == sig {
-		return
+	var lines [][]any
+	current := make(map[string]bool, len(slots))
+	for _, n := range numbers {
+		slot := slots[n]
+		key := c.evaluatedHeadKey(owner, repo, n)
+		current[key] = true
+		summary := strconv.Itoa(slot.Front) + "/" + strconv.Itoa(slot.Position) + "/" + strconv.Itoa(slot.Size)
+		if c.mergeTrain.logged[key] == summary {
+			continue
+		}
+		c.mergeTrain.logged[key] = summary
+		lines = append(lines, []any{"repo", displayRepo, "lane", lane, "pr", n, "front", slot.Front, "position", slot.Position, "size", slot.Size, "overlap_files", strings.Join(slot.OverlapFiles, ",")})
 	}
-	c.info("merge train", "repo", displayRepo, "lane", lane, "base", g.Base, "front", g.Front(), "order", g.Order, "size", len(g.Order), "overlap_files", g.OverlapFiles)
-}
-
-// mergeTrainMemberRoot is the lowest member number: the key that names a
-// train across passes while its front changes.
-func (c *Engine) mergeTrainMemberRoot(g mergeTrainGroup) int {
-	root := 0
-	for _, n := range g.Order {
-		if root == 0 || n < root {
-			root = n
+	for key := range c.mergeTrain.logged {
+		if strings.HasPrefix(key, prefix) && !current[key] {
+			delete(c.mergeTrain.logged, key)
 		}
 	}
-	return root
+	for key := range c.mergeTrain.files {
+		if strings.HasPrefix(key, prefix) && !live[key] {
+			delete(c.mergeTrain.files, key)
+		}
+	}
+	for key := range c.mergeTrain.blocked {
+		if strings.HasPrefix(key, prefix) && !listed[key] {
+			delete(c.mergeTrain.blocked, key)
+		}
+	}
+	c.mergeTrain.mu.Unlock()
+	for _, args := range lines {
+		c.info("automerge merge train", args...)
+	}
 }
 
 // mergeTrainAttemptKey keys the rebase loop guard: one PR behind one front.
-func mergeTrainAttemptKey(owner, repo string, number, front int) string {
-	return owner + "/" + repo + "#" + strconv.Itoa(number) + "@" + strconv.Itoa(front)
+func (c *Engine) mergeTrainAttemptKey(owner, repo string, number, front int) string {
+	return c.evaluatedHeadKey(owner, repo, number) + "@" + strconv.Itoa(front)
 }
 
 func (c *Engine) mergeTrainAttempts(owner, repo string, number, front int) int {
-	c.mergeTrainMu.Lock()
-	defer c.mergeTrainMu.Unlock()
-	return c.mergeTrainAttemptCount[mergeTrainAttemptKey(owner, repo, number, front)]
+	c.mergeTrain.mu.Lock()
+	defer c.mergeTrain.mu.Unlock()
+	return c.mergeTrain.attempts[c.mergeTrainAttemptKey(owner, repo, number, front)]
 }
 
 func (c *Engine) bumpMergeTrainAttempts(owner, repo string, number, front int) int {
-	c.mergeTrainMu.Lock()
-	defer c.mergeTrainMu.Unlock()
-	if c.mergeTrainAttemptCount == nil {
-		c.mergeTrainAttemptCount = map[string]int{}
+	c.mergeTrain.mu.Lock()
+	defer c.mergeTrain.mu.Unlock()
+	if c.mergeTrain.attempts == nil {
+		c.mergeTrain.attempts = make(map[string]int)
 	}
-	key := mergeTrainAttemptKey(owner, repo, number, front)
-	c.mergeTrainAttemptCount[key]++
-	return c.mergeTrainAttemptCount[key]
+	key := c.mergeTrainAttemptKey(owner, repo, number, front)
+	c.mergeTrain.attempts[key]++
+	return c.mergeTrain.attempts[key]
+}
+
+func mergeTrainBaseKey(owner, repo, base string) string {
+	return strings.ToLower(strings.TrimSpace(owner)) + "/" + strings.ToLower(strings.TrimSpace(repo)) + ":" + base
 }
 
 // mergeTrainLastFront is the front that last merged on owner/repo:base
 // (0 when none this process), the "front" a leading dirty PR is behind.
 func (c *Engine) mergeTrainLastFront(owner, repo, base string) int {
-	c.mergeTrainMu.Lock()
-	defer c.mergeTrainMu.Unlock()
-	return c.mergeTrainMerged[owner+"/"+repo+":"+base]
+	c.mergeTrain.mu.Lock()
+	defer c.mergeTrain.mu.Unlock()
+	return c.mergeTrain.merged[mergeTrainBaseKey(owner, repo, base)]
 }
 
 func (c *Engine) noteMergeTrainFrontMerged(owner, repo, base string, front int) {
-	c.mergeTrainMu.Lock()
-	defer c.mergeTrainMu.Unlock()
-	if c.mergeTrainMerged == nil {
-		c.mergeTrainMerged = map[string]int{}
+	c.mergeTrain.mu.Lock()
+	defer c.mergeTrain.mu.Unlock()
+	if c.mergeTrain.merged == nil {
+		c.mergeTrain.merged = make(map[string]int)
 	}
-	c.mergeTrainMerged[owner+"/"+repo+":"+base] = front
+	c.mergeTrain.merged[mergeTrainBaseKey(owner, repo, base)] = front
+}
+
+// markMergeTrainHeadBlocked stops a head fronting its train until it changes.
+func (c *Engine) markMergeTrainHeadBlocked(owner, repo string, number int, sha string) {
+	if strings.TrimSpace(sha) == "" {
+		return
+	}
+	c.mergeTrain.mu.Lock()
+	defer c.mergeTrain.mu.Unlock()
+	if c.mergeTrain.blocked == nil {
+		c.mergeTrain.blocked = make(map[string]string)
+	}
+	c.mergeTrain.blocked[c.evaluatedHeadKey(owner, repo, number)] = sha
 }
 
 // mergeTrainSiblingReason is the park reason for a PR behind the front.
@@ -558,11 +703,13 @@ func mergeTrainFrontReason(g *mergeTrainGroup, state string, attempt, maxAttempt
 	}.Reason()
 }
 
-// mergeTrainFront handles a train's front before the lane evaluates it:
-// a conflicting front is sent to the rebase resolver (bounded by the loop
-// guard) and parked as rebasing; past the guard it parks for a person.
-// handled=false hands a clean or behind front to the lane's normal path,
-// and a dirty one too when no resolver is wired.
+// mergeTrainFront handles a train's front before the lane evaluates it: a
+// conflicting front is sent to the rebase resolver (bounded by the loop
+// guard) and parked as rebasing; past the guard it parks for a person and
+// is marked blocked, so the next pass fronts a sibling that can move.
+// handled=false hands a clean or behind front to the lane's normal path, and
+// a dirty one too when no resolver is wired (its `conflicting` verdict then
+// marks it blocked through noteMergeTrainOutcome).
 func (c *Engine) mergeTrainFront(ctx context.Context, plan *mergeTrainPlan, pr *gh.PullRequest) (reason string, handled bool) {
 	if plan == nil || pr == nil {
 		return "", false
@@ -580,6 +727,7 @@ func (c *Engine) mergeTrainFront(ctx context.Context, plan *mergeTrainPlan, pr *
 	behind := c.mergeTrainLastFront(plan.owner, plan.repo, g.Base)
 	attempts := c.mergeTrainAttempts(plan.owner, plan.repo, number, behind)
 	if attempts >= policy.MaxRebaseAttempts {
+		c.markMergeTrainHeadBlocked(plan.owner, plan.repo, number, m.HeadSHA)
 		return mergeTrainFrontReason(g, prstage.MergeTrainStateRebaseExhausted, attempts, policy.MaxRebaseAttempts), true
 	}
 	if c.rebaseResolver == nil {
@@ -603,7 +751,7 @@ func (c *Engine) mergeTrainFront(ctx context.Context, plan *mergeTrainPlan, pr *
 // sent for a rebase (dirty, within the loop guard). A sibling GitHub has
 // not re-evaluated yet (unknown) is left to the next pass, which replans.
 func (c *Engine) mergeTrainAfterFrontMerge(ctx context.Context, plan *mergeTrainPlan, front int) {
-	if plan == nil {
+	if plan == nil || c == nil || c.gh == nil {
 		return
 	}
 	g, ok := plan.group(front)
@@ -661,67 +809,15 @@ func (c *Engine) mergeTrainRequestSiblingRebase(ctx context.Context, plan *merge
 	c.info("merge train: rebase requested for sibling after the front merged", "repo", plan.displayRepo, "pr", n, "front", front, "attempt", attempt, "max_attempts", policy.MaxRebaseAttempts)
 }
 
-// mergeTrainSkip is the per-cycle sibling skip: recorded on the stage
-// tracker (so the row reads "In merge train · 3rd of 4") and logged at
-// debug only — the train's INFO line is the transition, not the wait.
+// mergeTrainSkip is the per-cycle sibling skip reason: recorded on the stage
+// tracker (so the row reads "In merge train · 3rd of 4") and logged at debug
+// only — the train's INFO line is the transition, not the wait.
 func (c *Engine) mergeTrainSkip(plan *mergeTrainPlan, number int) string {
-	g, _ := plan.group(number)
+	g, ok := plan.group(number)
+	if !ok {
+		return autoMergeReasonMergeTrainQueued
+	}
 	reason := mergeTrainSiblingReason(g, number)
 	c.debug("automerge skip", "repo", plan.displayRepo, "pr", number, "reason", reason, "lane", plan.lane)
 	return reason
-}
-
-// mergeTrainState is the engine's in-memory train bookkeeping.
-type mergeTrainState struct {
-	mergeTrainMu           sync.Mutex
-	mergeTrainFilesCache   map[string]mergeTrainFilesEntry
-	mergeTrainAttemptCount map[string]int
-	mergeTrainMerged       map[string]int
-	mergeTrainLogged       map[string]string
-	mergeTrainBlocked      map[string]string
-}
-
-// mergeTrainBlockingReason reports whether a lane's verdict means the head
-// cannot merge without someone changing it. A conflict is NOT blocking: the
-// train's own rebase step repairs it.
-func mergeTrainBlockingReason(reason string) bool {
-	switch reason {
-	case "not-mergeable", autoMergeReasonForkNotEditable, autoMergeReasonClosedSuperseded:
-		return true
-	}
-	return isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) || classifyCIReason(reason) == ciReasonRed
-}
-
-// noteMergeTrainOutcome remembers, per head, whether the lane's verdict
-// blocks it from fronting a train; a non-blocking verdict clears the mark.
-func (c *Engine) noteMergeTrainOutcome(owner, repo string, number int, sha, reason string) {
-	if c == nil || number <= 0 {
-		return
-	}
-	key := owner + "/" + repo + "#" + strconv.Itoa(number)
-	c.mergeTrainMu.Lock()
-	defer c.mergeTrainMu.Unlock()
-	if !mergeTrainBlockingReason(reason) || strings.TrimSpace(sha) == "" {
-		delete(c.mergeTrainBlocked, key)
-		return
-	}
-	if c.mergeTrainBlocked == nil {
-		c.mergeTrainBlocked = map[string]string{}
-	}
-	c.mergeTrainBlocked[key] = sha
-}
-
-// mergeTrainHeadBlocked reports whether this exact head was last seen blocked.
-func (c *Engine) mergeTrainHeadBlocked(owner, repo string, number int, sha string) bool {
-	if c == nil || sha == "" {
-		return false
-	}
-	c.mergeTrainMu.Lock()
-	defer c.mergeTrainMu.Unlock()
-	return c.mergeTrainBlocked[owner+"/"+repo+"#"+strconv.Itoa(number)] == sha
-}
-
-// String renders a request for logs.
-func (r RebaseRequest) String() string {
-	return fmt.Sprintf("%s#%d onto %s (behind #%d, attempt %d/%d, %s)", r.Repo, r.Number, r.Base, r.Front, r.Attempt, r.MaxAttempts, r.Lane)
 }

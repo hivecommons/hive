@@ -1,0 +1,1 @@
+- Contributor PRs skipped for missing or unverified claims and other admission failures no longer read as waiting on the hive reviewer or trigger its dwell warning; running checks still count as waiting on the hive ([#15164](https://github.com/hivecommons/hive/issues/15164)).

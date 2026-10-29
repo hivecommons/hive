@@ -54,6 +54,19 @@ assert.strictEqual(viaIssue.item.kind, 'pr');
 assert.strictEqual(viaIssue.item.decision_needed.question, decision.question);
 assert.strictEqual(stageTrackerDecisionOf(plain), null);
 assert.strictEqual(stageTrackerDecisionOf(null), null);
+// An issue row with one covering PR renders through an overlay (stageTrackerRowHtml's
+// "shown"): the issue's number, the PR's decision_needed. Its trigger must key on the
+// PR — the issue key looks up the real issue, which has no decision, and the popover
+// never opened on stage-085 rows (hivecommons/hive#15096 N1).
+const shown = Object.assign({}, issue, { via_pr: true, stage: 85, modifiers: ['needs-decision'], decision_needed: decision });
+const viaShown = stageTrackerDecisionOf(shown);
+assert.strictEqual(viaShown.key, 'o/r/pr#7');
+assert.strictEqual(viaShown.item.kind, 'pr');
+assert.strictEqual(viaShown.item.number, 7);
+assert.strictEqual(viaShown.item.decision_needed.question, decision.question);
+// An issue asking its own question (045 triage, hive hold) still keys on itself.
+const own = Object.assign({}, issue, { stage: 45, linked_prs: [], decision_needed: decision });
+assert.strictEqual(stageTrackerDecisionOf(own).key, 'o/r/issue#3');
 
 // Options: server narrowed by the viewer's role; "Let hive decide" leads; disabled carry their reason.
 let opts = stageTrackerDecisionOptions(pr, ctx);

@@ -152,13 +152,17 @@ func (c *Client) emitPRTerminalObserved(obs PRTerminalObservation) {
 	(*hook)(obs)
 }
 
+// PRMergeAttributionHive is prTerminalMergeAttribution's "the hive merged
+// it" value; the dashboard's merged ledger records it as merged_by.
+const PRMergeAttributionHive = "hive"
+
 func prTerminalMergeAttribution(actor string, identity HiveIdentity, appBotLogin string) string {
 	login := strings.TrimSpace(actor)
 	if login == "" {
 		return "unknown"
 	}
 	if identity.Matches(login) || (appBotLogin != "" && strings.EqualFold(login, appBotLogin)) {
-		return "hive"
+		return PRMergeAttributionHive
 	}
 	if strings.HasSuffix(strings.ToLower(login), "[bot]") {
 		return "other_automation"

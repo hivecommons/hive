@@ -417,8 +417,8 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			c.info("contributor-lane automerge sweep skipped repo", "repo", displayRepo, "reason", skipReason)
 			continue
 		}
-		train := c.planMergeTrains(ctx, stageLaneContributor, displayRepo, owner, repoName, prs, func(pr *gh.PullRequest) string {
-			return c.prefilterContributorLanePR(pr, policy)
+		train := c.mergeTrainSlots(ctx, stageLaneContributor, displayRepo, owner, repoName, prs, func(pr *gh.PullRequest) bool {
+			return c.mergeTrainCandidate(c.prefilterContributorLanePR(pr, policy))
 		})
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
@@ -446,6 +446,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 				c.recordContributorLaneSkip(displayRepo, number, reason)
 				result.Skipped++
+				c.noteMergeTrainFrontSkip(train, pr, reason)
 				stage(reason, false, nil)
 				continue
 			}
@@ -549,6 +550,9 @@ type contributorClaimMatch struct {
 	// PR: the head SHA the stage store records as adopted/pushed by the
 	// hive, which the lane verified equals the PR head it is evaluating.
 	AdoptedHead string
+	// OperatorLogin is set when a person's Approve admitted the head
+	// (hivecommons/hive#15136, operatorAdmission).
+	OperatorLogin string
 	// ObservedTier is the raw tier the lane saw for the author (registry
 	// profile or this hive's claim marker), admitted or not. It feeds the
 	// author/* stage label; admission itself still goes through Reason.
@@ -636,6 +640,9 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 	if headSHA := pr.GetHead().GetSHA(); c.adoptedHeadOwnedByHive(owner, repo, pr.GetNumber(), headSHA) {
 		return contributorClaimMatch{AdoptedHead: headSHA, ObservedTier: c.observedRegistryTier(author)}, nil
 	}
+	if login := c.operatorAdmission(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()); login != "" {
+		return contributorClaimMatch{OperatorLogin: login, ObservedTier: c.observedRegistryTier(author)}, nil
+	}
 	if tier := c.admittedRegistryTier(author, policy); tier != "" {
 		return contributorClaimMatch{RegistryTier: tier, ObservedTier: tier}, nil
 	}
@@ -659,6 +666,30 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 		}
 	}
 	return match, err
+}
+
+// noteRegistryRole records the author's CURRENT registry tier as the PR's
+// role for this cycle without the deep admission pass. The lane short-cuts
+// a parked PR (needs-rebase, hold, excluded label, draft) before
+// admitContributor runs, and without this the stage pass fell back to the
+// role/<tier> label the PR already carried — a tier the operator changed in
+// the registry never reached a parked PR, so two PRs by one author showed
+// different tiers (hivecommons/hive: #14822 vs #14947). The lookup is a
+// local registry read, so it is cheap enough for every sweep; an author
+// with no profile notes nothing and keeps the marker/label evidence.
+func (c *Engine) noteRegistryRole(owner, repo string, number int, author string, policy ContributorLanePolicy) {
+	if c == nil || c.contributorRegistryTier == nil {
+		return
+	}
+	author = strings.TrimSpace(strings.TrimPrefix(author, "@"))
+	if author == "" {
+		return
+	}
+	tier, ok := c.contributorRegistryTier(author)
+	if !ok {
+		return
+	}
+	c.noteStageRole(owner, repo, number, stagelabels.RoleFromTier(tier, policy.RequireTiers))
 }
 
 // observedRegistryTier returns the author's raw registry tier for labelling,
@@ -1210,6 +1241,8 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 		if reason == contributorLaneReasonAppAuthored {
 			c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
+		} else {
+			c.noteRegistryRole(owner, repo, number, hgithub.SafeGetLogin(pr.GetUser()), policy)
 		}
 		return contributorLaneEval{pr: pr}, reason, nil
 	}
@@ -1248,6 +1281,9 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	if claim.admittedByAdoption() {
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonAdoptedByHive, "adopted_head", claim.AdoptedHead)
+	}
+	if claim.admittedByOperator() {
+		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonOperatorApproval, "admitted_by", claim.OperatorLogin, "head", headSHA)
 	}
 	if claim.admittedByRegistry() {
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonRegistryTrusted, "registry_tier", claim.RegistryTier)
@@ -1450,6 +1486,9 @@ func contributorLaneAdmitPath(claim contributorClaimMatch) string {
 	if claim.admittedByAdoption() {
 		return contributorLaneReasonAdoptedByHive
 	}
+	if claim.admittedByOperator() {
+		return contributorLaneReasonOperatorApproval
+	}
 	if claim.admittedByRegistry() {
 		return contributorLaneReasonRegistryTrusted
 	}
@@ -1474,6 +1513,10 @@ func contributorLaneMergeComment(author string, claim contributorClaimMatch, soa
 	if claim.admittedByAdoption() {
 		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, head `%s` adopted by the hive (`%s`) with @%s's commits — merged under the hive's own authority.",
 			int(soak.Minutes()), verdictText, shortSHA(claim.AdoptedHead), stagelabels.AdoptedByHive.Label(), login)
+	}
+	if claim.admittedByOperator() {
+		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, @%s approved this head as the owner decision (`admitted_by: %s`) — merged as-is on that approval.",
+			int(soak.Minutes()), verdictText, claim.OperatorLogin, stagelabels.OperatorApprovalAdmission(claim.OperatorLogin))
 	}
 	if claim.admittedByRegistry() {
 		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, @%s holds the %s tier in this hive's contributor registry.",

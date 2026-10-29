@@ -7939,18 +7939,19 @@ type AutoMergeConfig struct {
 	// false` sends the merge with GitHub's default message as before.
 	CreditIssueAuthors *bool `yaml:"credit_issue_authors,omitempty" json:"credit_issue_authors,omitempty"`
 	// MergeTrain orders approved PRs on the same base whose changed files
-	// overlap: one front merges at a time, the siblings wait as
-	// "queued-behind" (stage 080, never a human stage) and are updated or
-	// rebased right after the front lands instead of each going
-	// `conflicting` with nothing owning the repair
-	// (hivecommons/hive#15117). Default ON.
+	// overlap so they merge one at a time instead of dirtying each other:
+	// the siblings wait as "queued-behind" (stage 080, never a human stage)
+	// and are updated or rebased right after the front lands
+	// (hivecommons/hive#15117).
 	MergeTrain MergeTrainAutoMergeConfig `yaml:"merge_train,omitempty" json:"merge_train,omitempty"`
 }
 
 // MergeTrainAutoMergeConfig is auto_merge.merge_train.*.
 type MergeTrainAutoMergeConfig struct {
-	// Enabled turns the train on. nil/unset means ON; `enabled: false`
-	// restores the independent per-PR evaluation.
+	// Enabled groups each sweep's candidate PRs per repo and base branch by
+	// overlapping changed files and lets only one front per group merge per
+	// pass: the mergeable one first, then the oldest. nil/unset means ON;
+	// an explicit `enabled: false` merges every green PR as before.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// MaxRebaseAttempts bounds how many rebase-resolve tasks the train
 	// asks for on one PR behind one front before it parks the PR for a

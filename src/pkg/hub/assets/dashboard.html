@@ -261,6 +261,7 @@
     .hive-group-caret { display: inline-block; width: 12px; font-size: 0.7rem; }
     .table-wrap { overflow: visible; margin: 0 auto; position: relative; }
     .hive-menu-cell:hover .hive-menu-dropdown { display: block !important; }
+    .hive-menu-item { display: block; padding: var(--sp-3) var(--sp-5); color: var(--text); text-decoration: none; font-size: var(--fs-sm); cursor: pointer; }
     .hive-menu-dropdown a:hover, .hive-menu-dropdown div[onclick]:hover { background: color-mix(in srgb,var(--hub-dashboard-accent) 8%,transparent); border-radius: var(--r-sm); }
     .table-wrap::-webkit-scrollbar { height: 10px; display: block; }
     .table-wrap::-webkit-scrollbar-track { background: var(--bg-soft); border-radius: var(--r-sm); }
@@ -8690,41 +8691,48 @@
         var snapUrl = snapshotLink(h);
         var apiUrl = apiLink(h);
         var menuItems = [];
-        var mi = 'display:block;padding:7px 14px;color:#c9d1d9;text-decoration:none;font-size:0.78rem;cursor:pointer';
-        if (_isAdmin && h.provStatus === 'available' && !h.assigning) menuItems.push('<div onclick="openAssignModal(\'' + esc(h.id) + '\')" style="' + mi + ';color:#3fb950;font-weight:600">Assign / Claim</div><div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div>');
+        if (_isAdmin && h.provStatus === 'available' && !h.assigning) menuItems.push('<div onclick="openAssignModal(\'' + esc(h.id) + '\')" class="hive-menu-item" style="color:#3fb950;font-weight:600">Assign / Claim</div><div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div>');
         /* Reset assignment: escape hatch for a placeholder wedged at
            assigned && !claim_delivered (assignedUnclaimed) — its spoke never
            reported the project back, so it can be neither re-approved (needs a
            pending request) nor re-assigned (needs an available slot). This
            returns the slot to the pool so it can be re-armed. Admin-only,
            mirroring the endpoint's own guard. */
-        if (_isAdmin && h.assignedUnclaimed) menuItems.push('<div onclick="resetAssignment(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + ';color:#d29922;font-weight:600">Reset assignment</div><div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div>');
-        if (contributeUrl) menuItems.push('<a href="' + contributeUrl + '" target="_blank" style="' + mi + '">Contribute</a>');
-        if (h.snapshotUrl) menuItems.push('<a href="' + esc(h.snapshotUrl) + '" target="_blank" style="' + mi + '">Preview</a>');
+        if (_isAdmin && h.assignedUnclaimed) menuItems.push('<div onclick="resetAssignment(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item" style="color:#d29922;font-weight:600">Reset assignment</div><div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div>');
+        if (contributeUrl) menuItems.push('<a href="' + contributeUrl + '" target="_blank" class="hive-menu-item">Contribute</a>');
+        if (h.snapshotUrl) menuItems.push('<a href="' + esc(h.snapshotUrl) + '" target="_blank" class="hive-menu-item">Preview</a>');
         var apiBase = rb ? esc(rb) : '';
-        if (apiBase) menuItems.push('<a href="' + apiBase + '/api/docs" target="_blank" style="' + mi + '">API Docs</a>');
+        if (apiBase) menuItems.push('<a href="' + apiBase + '/api/docs" target="_blank" class="hive-menu-item">API Docs</a>');
         if (menuItems.length > 0 && (canConvert || isHosted || isLocal)) menuItems.push('<div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div>');
-        if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" style="' + mi + '">Convert to Hosted</div>');
-        if (isHosted && (roleAtLeast(h.role, 'read-write'))) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" style="' + mi + '">Permissions</div>');
+        if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" class="hive-menu-item">Convert to Hosted</div>');
+        if (isHosted && (roleAtLeast(h.role, 'read-write'))) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" class="hive-menu-item">Permissions</div>');
         /* Timeline is owner-or-admin, matching the API's authorization. */
-        if (isHosted && (h.role === 'owner' || _isAdmin)) menuItems.push('<div onclick="openTimelineModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Activity Timeline</div>');
-        if (roleAtLeast(h.role, 'read-write') || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">⚡ Fund with OpenRouter</div>');
-        if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Send Banner</div>');
+        if (isHosted && (h.role === 'owner' || _isAdmin)) menuItems.push('<div onclick="openTimelineModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item">Activity Timeline</div>');
+        /* Pause/Resume hive (#15092): the spoke's own top-bar "running ⏸"
+           fleet breaker, reachable without opening its dashboard. Owner-or-
+           admin like the endpoint. The breaker is engaged when any agent
+           reports pausedTrigger 'fleet-breaker' (crux.BreakerTrigger). */
+        if (isHosted && (h.role === 'owner' || _isAdmin)) {
+          var breakerOn = (h.agents || []).some(function(a) { return a.paused && a.pausedTrigger === 'fleet-breaker'; });
+          menuItems.push('<div onclick="setHiveBreaker(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\',' + (!breakerOn) + ')" class="hive-menu-item">' + (breakerOn ? '▶︎ Resume hive' : '⏸︎ Pause hive') + '</div>');
+        }
+        if (roleAtLeast(h.role, 'read-write') || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item">⚡ Fund with OpenRouter</div>');
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item">Send Banner</div>');
         /* Reset App clears ONLY the spoke's installation_id, which makes
            HasUsableApp() false and prompts the owner to install the App again.
            Admin-only and hosted-only, matching the endpoint's own guard. The
            case it exists for: a hive provisioned with its own GitHub App keeps
            that App's installation_id after its identity is moved to the fleet
            App, so every field reads correct while freshly minted tokens 404. */
-        if (_isAdmin && isHosted) menuItems.push('<div onclick="resetHiveApp(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Reset Forge App</div>');
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="resetHiveApp(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item">Reset Forge App</div>');
         /* Restart Spoke rolling-restarts every instance reporting as this
            hive. The case it exists for: two instances alternating as one hive
            (conflictingReporters drift) on a cluster the hub cannot reach —
            the heartbeat is the only channel, and a restart sheds the stale
            instance while costing the healthy one a single rolling restart. */
-        if (_isAdmin && isHosted) menuItems.push('<div onclick="restartHiveSpoke(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Restart Spoke</div>');
-        if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
-        if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="restartHiveSpoke(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item">Restart Spoke</div>');
+        if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" class="hive-menu-item">Remove</div>');
+        if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" class="hive-menu-item" style="color:#f85149">Delete</div>');
         var sha = h.gitHash || '';
         /* Drift folded ONTO Version: config drift is overwhelmingly "this hive's
            version/branch differs from the fleet", so the drift indicator reads as
@@ -10339,6 +10347,30 @@
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
         await hiveNotify('Restart failed', String(e));
+      }
+    }
+
+    /* Pause or resume a whole hive through its fleet breaker (#15092). The
+       hub queues the instruction and the spoke applies it on its next
+       heartbeat, exactly as if its own top-bar ⏸ had been clicked. */
+    async function setHiveBreaker(hiveId, hiveName, engage) {
+      var verb = engage ? 'Pause' : 'Resume';
+      var detail = engage
+        ? 'Every running agent pauses on the spoke\'s next heartbeat (up to 2 minutes). Agents already paused and on-demand agents are left alone.'
+        : 'Only the agents the pause stopped resume on the spoke\'s next heartbeat (up to 2 minutes).';
+      if (!await hiveConfirm(verb + ' hive "' + hiveName + '"?\n\n' + detail)) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/breaker', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({engaged: engage})
+        });
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) { hiveToast(verb + ' failed: ' + String(data.error || resp.status), 'error'); return; }
+        hiveToast(verb + ' queued for ' + hiveName + ' — applies on its next heartbeat', 'success');
+        if (typeof loadHives === 'function') loadHives();
+      } catch (e) {
+        hiveToast(verb + ' failed: ' + String(e), 'error');
       }
     }
 

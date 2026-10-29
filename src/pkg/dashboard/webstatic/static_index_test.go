@@ -724,3 +724,32 @@ func TestStaticCostStaleRecordingNoticeWiring(t *testing.T) {
 		}
 	}
 }
+
+// TestStaticRowMenuHintWraps: the Activity Monitor row menu's consequence
+// hints ("merges #15118 into v5 now via hive's identity, attributed to
+// you") ran ~1150px past the menu border because the item was a nowrap
+// flex row with the hint inline after the label. A menu with hints is
+// wider (ham-menu-hinted), and each hint stacks under its label and wraps,
+// so no hint length can overflow (hivecommons/hive#15175).
+func TestStaticRowMenuHintWraps(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`.ham-menu.ham-menu-hinted { max-width: min(45em, calc(100vw - 2 * var(--sp-3))); }`,
+		`.ham-menu-item.ham-menu-item-hinted { flex-direction: column; align-items: flex-start; gap: var(--sp-1); white-space: normal; }`,
+		`.ham-menu-item .ham-menu-hint { display: block; color: var(--text-faint); font-size: var(--fs-xs); white-space: normal; overflow-wrap: anywhere; }`,
+		`${a.hint ? ' ham-menu-item-hinted' : ''}`,
+		"${a.hint ? `<span class=\"ham-menu-hint\">${esc(a.hint)}</span>` : ''}",
+		`<div class="ham-menu${stageTrackerMenuHasHints(actions) ? ' ham-menu-hinted' : ''}"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing row-menu hint wrap wiring %q", want)
+		}
+	}
+	if strings.Contains(html, `<span class="ham-menu-more">${esc(a.hint)}</span>`) {
+		t.Error("a text hint must not reuse .ham-menu-more (the nowrap ▸ submenu affordance)")
+	}
+}

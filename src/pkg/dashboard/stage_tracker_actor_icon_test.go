@@ -172,37 +172,48 @@ assert.strictEqual(rows[1], null);
 `)
 }
 
-// The "Merged today" counter lives in the column header, over the Merge
-// gate and ✓ columns (not in the filter chip bar), so a merge token's flight
-// from a row's ✓ cell is short and ends above the gate. It is one node for
-// the life of the page: the renderer mounts it into the header slot after
-// each reconcile and parks it in its toolbar home when the board is empty.
+// The Merged chip lives in a sticky bar at the top of the tracker — pinned
+// under the card header while the list scrolls, with the stage column
+// header strip pinned just below it — so the chip is in view whenever the
+// list is (hivecommons/hive#15147; the operator never saw the celebration
+// land in a toolbar 2,300 px above the viewport). It is one node for the
+// life of the page, resolved through stageTrackerMergedChip() by the count
+// draw, the popover and the flight alike; the column header is a single
+// decorative row again (no counter slot).
 func TestStageTrackerMergedCounterPlacement(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`<span class="ham-merged-home" id="activity-monitor-merged-home"><span class="ham-chip ham-merged-count" id="activity-monitor-merged" role="status" aria-live="polite"`,
-		`<li class="ham-seg ham-merged-slot-seg"><span class="ham-merged-slot"></span></li>`,
-		`.ham-cols-top .ham-seg.ham-merged-slot-seg { flex: 1 1 calc(4em + var(--sp-1)); justify-content: flex-end;`,
-		`stageTrackerMergedCountMount(el);`,
-		`stageTrackerMergedCountMount(null);`,
-		`@media (prefers-reduced-motion: reduce) { .cue-token { display: none; } .ham-merged-count.cue-tick { animation: none; }`,
+		`<div class="ham-sticky" id="activity-monitor-sticky">`,
+		`<button type="button" class="ham-chip ham-merged-count" id="activity-monitor-merged" data-action="hamMergedToggle" data-stop="1" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-monitor-merged-pop"`,
+		`<div class="ham-merged-pop" id="activity-monitor-merged-pop" role="dialog" aria-label="Recent merges" hidden></div>`,
+		`.ham-sticky { position: sticky; top: var(--navbar-sticky-height); z-index: calc(var(--z-sticky) + 1);`,
+		`.ham-cols { position: sticky; top: calc(var(--navbar-sticky-height) + var(--ham-sticky-bar-h));`,
+		`@media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; } .ham-merged-count.cue-tick { animation: none; }`,
 		`id="sts-celebrate-on" data-change-action="stageTrackerCelebrateChange"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("index.html missing merged-counter placement wiring %q", want)
+			t.Errorf("index.html missing merged-chip placement wiring %q", want)
 		}
 	}
-	for _, fn := range []string{"celebrateRow", "stageTrackerMergedCountDraw"} {
+	if i, j := strings.Index(html, `id="activity-monitor-sticky"`), strings.Index(html, `id="activity-monitor-panel"`); i < 0 || j < 0 || i > j {
+		t.Errorf("the sticky bar must precede the panel: sticky=%d panel=%d", i, j)
+	}
+	for _, gone := range []string{"ham-merged-home", "ham-merged-slot", "ham-cols-top", "stageTrackerMergedCountMount", "Merged today"} {
+		if strings.Contains(html, gone) {
+			t.Errorf("index.html still carries the retired %q", gone)
+		}
+	}
+	for _, fn := range []string{"celebrateRow", "stageTrackerMergedCountDraw", "hamMergedToggle"} {
 		src := jsFunc(t, html, fn)
 		if strings.Contains(src, "getElementById('activity-monitor-merged')") || !strings.Contains(src, "stageTrackerMergedChip()") {
-			t.Errorf("%s must resolve the counter through stageTrackerMergedChip() so the token targets the mounted node", fn)
+			t.Errorf("%s must resolve the chip through stageTrackerMergedChip() so the flight, the draw and the popover share one node", fn)
 		}
 	}
-	// The toolbar-home markup and the header slot CSS name no literal colour.
+	// The sticky bar and chip CSS name no literal colour.
 	for _, line := range strings.Split(html, "\n") {
-		if strings.Contains(line, ".ham-merged-slot") || strings.Contains(line, ".ham-cols-top") || strings.Contains(line, ".ham-merged-home") {
+		if strings.Contains(line, ".ham-sticky") || strings.Contains(line, ".ham-merged-pop") {
 			if strings.Contains(line, "#") || strings.Contains(line, "rgb(") {
-				t.Errorf("merged-counter CSS must use tokens only: %s", strings.TrimSpace(line))
+				t.Errorf("merged-chip CSS must use tokens only: %s", strings.TrimSpace(line))
 			}
 		}
 	}
@@ -214,63 +225,37 @@ func TestStageTrackerMergedCounterPlacement(t *testing.T) {
 		jsFunc(t, html, "stageTrackerIcon"),
 		jsFunc(t, html, "stageTrackerHeaderHtml"),
 		jsFunc(t, html, "stageTrackerMergedChip"),
-		jsFunc(t, html, "stageTrackerMergedCountMount"),
 	}, "\n")
 	runStageTrackerRowActionsScript(t, lifted+`
 const assert = require('assert');
 const stages = [{ number: 10, short: 'Actionable' }, { number: 20, short: 'Claimed' }, { number: 30, short: 'PR in progress' }, { number: 50, short: 'CI / Review' }, { number: 80, short: 'Merge gate' }];
 const header = stageTrackerHeaderHtml(stages);
-const top = /<div class="ham-strip-row ham-cols-top">([\s\S]*?)<\/div>/.exec(header)[1];
-const names = header.slice(header.indexOf('</div>') + 6);
-assert.ok(header.indexOf('ham-cols-top') < header.indexOf('Merge gate'), 'the counter row sits above the column names');
-assert.ok(names.startsWith('<div class="ham-strip-row" aria-hidden="true">'), 'only the decorative column names are hidden from AT; the live counter is not: ' + names);
-assert.ok(!header.startsWith('<div class="ham-cols" aria-hidden'), 'the header wrapper is no longer aria-hidden (it hosts the live counter)');
-const lis = top.match(/<li class="ham-seg[^"]*"/g);
-assert.strictEqual(lis.length, STAGE_TRACKER_PATH.length, 'one cell per column; the slot cell spans Merge gate + ✓');
-assert.strictEqual(lis.filter(x => x.includes('blank')).length, STAGE_TRACKER_PATH.length - 1, 'blank spacers under every column but the last');
-assert.ok(lis[lis.length - 1].includes('ham-merged-slot-seg'), 'the slot is the last cell, over the Merge gate and the ✓ cap');
-assert.ok(top.endsWith('<span class="ham-merged-slot"></span></li></ol><span class="ham-since"></span>'), 'an empty since spacer keeps the slot aligned with the strips below: ' + top);
+assert.ok(header.startsWith('<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row">'), 'one decorative row, hidden from AT: ' + header);
+assert.strictEqual((header.match(/<div class="ham-strip-row/g) || []).length, 1, 'no counter row above the names');
+assert.ok(!header.includes('ham-merged'), 'the header carries no chip slot');
+const lis = header.match(/<li class="ham-seg[^"]*"/g);
+assert.strictEqual(lis.length, STAGE_TRACKER_PATH.length + 1, 'one cell per column plus the ✓ cap');
+assert.ok(lis[lis.length - 1].includes('cap'), 'the last cell is the cap');
 
-// ---- DOM fake: the chip is mounted into the slot and survives a header re-render ----
+// ---- DOM fake: the chip is one node, cached, re-resolved by id when detached ----
 function el(tag, attrs) {
-  const e = { tag, attrs: Object.assign({}, attrs || {}), children: [], parentNode: null, classList: { contains(c) { return (e.attrs['class'] || '').split(' ').includes(c); } },
+  const e = { tag, attrs: Object.assign({}, attrs || {}), children: [], parentNode: null,
     get isConnected() { let n = e; while (n.parentNode) n = n.parentNode; return n === body; },
     appendChild(c) { if (c.parentNode) c.parentNode.children = c.parentNode.children.filter(x => x !== c); c.parentNode = e; e.children.push(c); return c; },
     remove() { if (e.parentNode) e.parentNode.children = e.parentNode.children.filter(c => c !== e); e.parentNode = null; },
-    // Descendant class selectors only ('.a .b'), enough for the mount lookup.
-    querySelector(sel) { const parts = sel.trim().split(/\s+/).map(p => p.slice(1)); const walk = (n, i) => { for (const c of n.children) { if (c.classList.contains(parts[i])) { if (i === parts.length - 1) return c; const d = walk(c, i + 1); if (d) return d; } const d = walk(c, i); if (d) return d; } return null; }; return walk(e, 0); },
     byId(id) { if (e.attrs.id === id) return e; for (const c of e.children) { const f = c.byId(id); if (f) return f; } return null; },
   };
   return e;
 }
 const body = el('body');
-const toolbar = el('div'); body.appendChild(toolbar);
-const home = el('span', { id: 'activity-monitor-merged-home', class: 'ham-merged-home' }); toolbar.appendChild(home);
-const chip = el('span', { id: 'activity-monitor-merged', class: 'ham-chip ham-merged-count' }); home.appendChild(chip);
-const panel = el('div', { id: 'activity-monitor-panel' }); body.appendChild(panel);
+const bar = el('div', { id: 'activity-monitor-sticky', class: 'ham-sticky' }); body.appendChild(bar);
+const chip = el('button', { id: 'activity-monitor-merged', class: 'ham-chip ham-merged-count' }); bar.appendChild(chip);
 global.document = { body, getElementById(id) { return body.byId(id); } };
-function headerNode() { const h = el('div', { class: 'ham-cols', 'data-ham-key': '__cols' }); const row = el('div', { class: 'ham-strip-row ham-cols-top' }); const slot = el('span', { class: 'ham-merged-slot' }); row.appendChild(slot); h.appendChild(row); return h; }
-
-// Empty board: the chip stays (or goes) home.
-assert.strictEqual(stageTrackerMergedCountMount(panel), home, 'no header → toolbar home');
-assert.strictEqual(chip.parentNode, home);
-// Rows drawn: the chip moves into the header slot and is still reachable by id.
-let h1 = headerNode(); panel.appendChild(h1);
-assert.strictEqual(stageTrackerMergedCountMount(panel), h1.querySelector('.ham-merged-slot'));
-assert.strictEqual(chip.parentNode.attrs['class'], 'ham-merged-slot', 'the counter lives in the header slot');
-assert.strictEqual(document.getElementById('activity-monitor-merged'), chip, 'the celebration target id still resolves');
-assert.strictEqual(stageTrackerMergedChip(), chip, 'celebrateRow and the count draw get the same node');
-assert.strictEqual(home.children.length, 0, 'the home is empty (and hidden by :empty) while the board is drawn');
-// The header is re-rendered (stages changed): the detached chip is re-mounted into the new slot, same node.
-h1.remove(); const h2 = headerNode(); panel.appendChild(h2);
-assert.strictEqual(chip.isConnected, false, 'detached with the old header');
-assert.strictEqual(stageTrackerMergedChip(), chip, 'the cached node is kept although detached');
-stageTrackerMergedCountMount(panel);
-assert.strictEqual(chip.parentNode, h2.querySelector('.ham-merged-slot'));
-assert.strictEqual(chip.isConnected, true);
-// Back to empty: mount(null) parks it home.
-assert.strictEqual(stageTrackerMergedCountMount(null), home);
-assert.strictEqual(chip.parentNode, home);
-assert.strictEqual(document.getElementById('activity-monitor-merged'), chip);
+assert.strictEqual(stageTrackerMergedChip(), chip, 'resolved by id');
+assert.strictEqual(stageTrackerMergedChip(), chip, 'cached');
+chip.remove();
+assert.strictEqual(stageTrackerMergedChip(), chip, 'a detached chip stays cached until a node with the id is back');
+const chip2 = el('button', { id: 'activity-monitor-merged' }); bar.appendChild(chip2);
+assert.strictEqual(stageTrackerMergedChip(), chip2, 'a new node with the id replaces the detached one');
 `)
 }

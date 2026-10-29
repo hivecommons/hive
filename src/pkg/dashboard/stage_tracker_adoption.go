@@ -158,6 +158,8 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 		text += " — adopt?"
 	case a.BlockedBy == stagelabels.AdoptBlockedAuthorMaintainer:
 		text += " — not adopted: maintainer_policy is never"
+	case a.BlockedBy == stagelabels.AdoptBlockedOperatorAdmission:
+		text += " — not adopted: a maintainer approved this head; the hive merges it as-is"
 	case a.BlockedBy != "":
 		text += " — not adopted: " + a.BlockedBy
 	}

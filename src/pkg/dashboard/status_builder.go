@@ -406,6 +406,7 @@ func BuildFrontendStatus(
 		Repos:                 repos,
 		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable) || overviewStaleSince(repos) != "",
 		StaleSince:            earliestRFC3339(staleSinceRFC3339(actionable), overviewStaleSince(repos)),
+		RestartRefresh:        restartRefreshInfo(actionable, repos),
 		Beads:                 BuildBeadsFromConfig(beadStores, cfg),
 		Planning:              BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
 		Health:                health,
@@ -2247,6 +2248,34 @@ func resolveAgentModels(sessions []tokens.SessionSummary) map[string]string {
 type forgeOpenCounter interface {
 	Open(repo string) (forgestate.OpenCounts, bool)
 	OpenItems(repo string) (forgestate.Snapshot, bool)
+}
+
+// restartRefreshInfo reports the post-restart window: the published
+// snapshot is the one this process restored from disk (RestoredAt set,
+// cmd/hive bootCollectors) and is still marked stale because no
+// enumeration has replaced it. Nil otherwise, including once the first
+// enumeration publishes a fresh result (which carries no RestoredAt), so
+// the Overview's "refreshing after restart" wording clears with the stale
+// badge. The repo tally counts unpaused configured repos whose counts are
+// not stale, so the banner can say "N/M repos scanned".
+func restartRefreshInfo(actionable *github.ActionableResult, repos []FrontendRepo) *FrontendRestartRefresh {
+	if actionable == nil || !actionable.Stale() || actionable.RestoredAt.IsZero() {
+		return nil
+	}
+	out := &FrontendRestartRefresh{RestoredAt: actionable.RestoredAt.UTC().Format(time.RFC3339)}
+	if !actionable.GeneratedAt.IsZero() {
+		out.SnapshotAt = actionable.GeneratedAt.UTC().Format(time.RFC3339)
+	}
+	for _, r := range repos {
+		if r.Paused {
+			continue
+		}
+		out.ReposTotal++
+		if !r.CountsStale {
+			out.ReposScanned++
+		}
+	}
+	return out
 }
 
 // overviewStaleSince is the earliest countsStaleSince over repos, or "" when

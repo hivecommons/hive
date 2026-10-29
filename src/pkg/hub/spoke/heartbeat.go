@@ -1327,6 +1327,17 @@ type FreshStatusCollector func() *HeartbeatPayload
 type RestartSpokeCallback func()
 type AgentRestartResetCallback func(agent string)
 
+// Values of HeartbeatResponse.Breaker (#15092).
+const (
+	BreakerEngage  = "engage"
+	BreakerRelease = "release"
+)
+
+// BreakerCallback applies a hub-requested whole-hive pause (BreakerEngage) or
+// resume (BreakerRelease) through the fleet breaker — the same mechanism as
+// the dashboard's top-bar ⏸ button.
+type BreakerCallback func(action string)
+
 type UpgradeCallback func(targetSHA string)
 
 func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, interval time.Duration, logger *slog.Logger, callbacks ...any) {
@@ -1364,6 +1375,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onClusterID ClusterIDCallback
 	var onRestartSpoke RestartSpokeCallback
 	var onAgentRestartReset AgentRestartResetCallback
+	var onBreaker BreakerCallback
 	var freshCollect FreshStatusCollector
 	var onUpgradePolicy UpgradePolicyCallback
 	for _, cb := range callbacks {
@@ -1390,6 +1402,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onRestartSpoke = fn
 		case AgentRestartResetCallback:
 			onAgentRestartReset = fn
+		case BreakerCallback:
+			onBreaker = fn
 		case FreshStatusCollector:
 			freshCollect = fn
 		case UpgradePolicyCallback:
@@ -1456,6 +1470,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			for _, name := range resp.ResetAgentRestarts {
 				onAgentRestartReset(name)
 			}
+		}
+		if resp.Breaker != "" && onBreaker != nil {
+			onBreaker(resp.Breaker)
 		}
 	}
 
@@ -2761,11 +2778,15 @@ type HeartbeatResponse struct {
 	// so ALL instances reporting as this hive receive it; the spoke's own
 	// uptime guard keeps a freshly restarted process from acting on the same
 	// window twice.
-	RestartSpoke       bool                      `json:"restart_spoke,omitempty"`
-	ResetAgentRestarts []string                  `json:"reset_agent_restarts,omitempty"`
-	GitHubAppConfig    *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
-	HubBanner          *HubBanner                `json:"hub_banner,omitempty"`
-	IsPublic           *bool                     `json:"is_public,omitempty"`
+	RestartSpoke       bool     `json:"restart_spoke,omitempty"`
+	ResetAgentRestarts []string `json:"reset_agent_restarts,omitempty"`
+	// Breaker is a one-shot whole-hive pause/resume (BreakerEngage /
+	// BreakerRelease) an owner requested from the hub's per-hive menu
+	// (#15092); empty means none.
+	Breaker         string                    `json:"breaker,omitempty"`
+	GitHubAppConfig *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
+	HubBanner       *HubBanner                `json:"hub_banner,omitempty"`
+	IsPublic        *bool                     `json:"is_public,omitempty"`
 	// AuthorizedUsers is the hub's authoritative per-hive access list, as
 	// "username:role" entries. The hub can't reach heartbeat-only spokes (e.g.
 	// the heartbeat-only cluster) over kubectl, and those spokes authorize their own device-flow

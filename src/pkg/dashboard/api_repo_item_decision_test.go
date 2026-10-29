@@ -10,9 +10,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // repoItemDecisionMock is the slice of GitHub the decision endpoint touches:
@@ -348,6 +350,10 @@ func TestRepoItemDecisionApprovePRPostsLgtmAndApproveComments(t *testing.T) {
 func TestRepoItemDecisionApprovePRReleasesThePark(t *testing.T) {
 	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/085-needs-decision", "needs-human", "sentinel-alert", "role/trusted"}}
 	srv := newRepoItemDecisionServer(t, mock)
+	// Own store: with no stage record there is no head admission to
+	// report (hivecommons/hive#15136), whatever other tests left in the
+	// process-wide store.
+	srv.stageStore = stagelabels.NewStore("", time.Now)
 	srv.stageTrackerCacheMu.Lock()
 	gen := srv.stageTrackerGen
 	srv.stageTrackerCacheMu.Unlock()

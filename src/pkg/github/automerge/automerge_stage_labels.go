@@ -617,6 +617,19 @@ func (c *Engine) noteOwnStageComment(owner, repo string, number int) {
 	c.stageStoreOrShared().CountOwnComments(key, 1)
 }
 
+// stageReasonSkipsContributorReview reports admission failures that stop the
+// contributor lane before it requests a reviewer verdict. A person must clear
+// admission before a missing verdict can mean the hive owes a review.
+func stageReasonSkipsContributorReview(reason string) bool {
+	switch reason {
+	case contributorLaneReasonNoClaim, contributorLaneReasonNoLinkedIssue, contributorLaneReasonClaimUnverified,
+		contributorLaneReasonClaimAuthor, contributorLaneReasonClaimOtherHive, contributorLaneReasonClaimTier,
+		contributorLaneReasonAuthorAssociation:
+		return true
+	}
+	return false
+}
+
 // stageActivity derives this cycle's outside-activity view of a PR.
 func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Activity {
 	a := stagelabels.Activity{Head: obs.HeadSHA, Comments: -1, Reviews: -1}
@@ -641,9 +654,14 @@ func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Ac
 	sort.Strings(labels)
 	a.Digest = verdict + "|ci:" + ci.String() + "|" + strings.Join(labels, ",")
 	// Checks still running, or a review-pending head with no reviewer
-	// verdict yet, is waiting on the hive, not on a person.
+	// verdict yet, is waiting on the hive, not on a person. A contributor PR
+	// the lane skipped for an admission failure gets no verdict until the
+	// contributor or a maintainer acts, so the missing verdict alone does
+	// not make it wait on the hive (ApplyStageLabels still honours the
+	// head's running checks from the human route's digest).
 	a.WaitingOnHive = ci == ciReasonPending || stageReasonWaitsOnHive(obs.Reason) ||
-		(stage == stagelabels.ReviewPending && !(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
+		(stage == stagelabels.ReviewPending && !stageReasonSkipsContributorReview(obs.Reason) &&
+			!(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
 	return a
 }
 
@@ -1027,7 +1045,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if verdict.Stage != stagelabels.ReturnedToContributor && verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
 			}
-			store.NoteActivity(key, stageActivity(obs, verdict.Stage))
+			act := stageActivity(obs, verdict.Stage)
+			if !act.WaitingOnHive && verdict.Stage == stagelabels.ReviewPending && pass.Route != nil && pass.Route.Checks.Known && pass.Route.Checks.Pending > 0 {
+				// An admission reason decided before CI was read (no
+				// linked issue) says nothing about the checks; the human
+				// route's digest of the head does, and running checks
+				// wait on the hive.
+				act.WaitingOnHive = true
+			}
+			store.NoteActivity(key, act)
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{
 				Stage:       verdict.Stage,

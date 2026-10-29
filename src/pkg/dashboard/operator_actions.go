@@ -44,6 +44,9 @@ const (
 	// App, or queued for the hive's merge sweep.
 	operatorActionMergeNow   = "merge-now"
 	operatorActionQueueMerge = "queue-merge"
+	// The operator's explicit re-authoring of a head that cannot merge
+	// as-is (hivecommons/hive#15136).
+	operatorActionReauthor = "re-author"
 
 	// Stored outcomes: what the endpoint answered when the action was
 	// submitted. `pending` is a delegated decision still running; the job's
@@ -278,6 +281,8 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			out.Action = operatorActionMergeNow
 		case repoItemDecisionQueueMerge:
 			out.Action = operatorActionQueueMerge
+		case repoItemDecisionReauthor:
+			out.Action = operatorActionReauthor
 		default:
 			return out, false
 		}
@@ -360,7 +365,9 @@ func operatorActionOutcome(status int, body []byte) (outcome, detail, head strin
 		if d, ok := resp["decision"].(map[string]any); ok && status == http.StatusOK {
 			if v, _ := d["verdict"].(string); v != "" {
 				detail = "hive decided: " + v
-				if rule, _ := d["rule"].(string); rule != "" {
+				if rule, _ := d["rule"].(string); delegatedHumanMergeDecidedPath(rule) != "" {
+					detail = "hive decided: " + delegatedHumanMergeDecidedPath(rule)
+				} else if rule != "" {
 					detail += " (" + rule + ")"
 				}
 			}
@@ -469,7 +476,9 @@ func (s *Server) settleOperatorAction(repoFull string, number int, job *delegate
 	outcome, detail := operatorActionOutcomeApplied, ""
 	if job.Decision != nil {
 		detail = "hive decided: " + string(job.Decision.Verdict)
-		if job.Decision.Rule != "" {
+		if p := delegatedHumanMergeDecidedPath(job.Decision.Rule); p != "" {
+			detail = "hive decided: " + p
+		} else if job.Decision.Rule != "" {
 			detail += " (" + job.Decision.Rule + ")"
 		}
 		if job.Decision.KeepsPark {

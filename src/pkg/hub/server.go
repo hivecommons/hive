@@ -3341,6 +3341,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if resets := pendingAgentRestartResetsForHeartbeat(payload.HiveID); len(resets) > 0 {
 		resp.ResetAgentRestarts = resets
 	}
+	resp.Breaker = s.pendingBreakerForHeartbeat(payload.HiveID)
 
 	w.Header().Set("Content-Type", "application/json")
 	s.signHeartbeatResponse(w, &resp, payload.HiveID)

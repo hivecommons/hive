@@ -1136,6 +1136,12 @@ type ActionableResult struct {
 	// StaleSince is the time the stale share of the result was last fetched
 	// for real: the data is current as of then. Zero when nothing is stale.
 	StaleSince time.Time `json:"stale_since,omitzero"`
+	// RestoredAt is when this process read the snapshot back from disk at
+	// startup (cmd/hive bootCollectors). Set only on that restored copy, so
+	// the dashboard can say "refreshing after restart" with the process's
+	// own clock instead of "stale since <previous pod's time>"; the first
+	// enumeration replaces the snapshot and the marker with it.
+	RestoredAt time.Time `json:"restored_at,omitzero"`
 	// ItemPatches records, per item, when its copy was last read from GitHub
 	// and (for a webhook-driven upsert) from which delivery, so an
 	// irreversible action can bound its staleness and an operator can audit

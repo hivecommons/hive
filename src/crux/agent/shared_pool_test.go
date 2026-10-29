@@ -71,12 +71,11 @@ func (p *recordingSharedSessionPool) setRenewFn(fn func(ctx context.Context, id 
 	p.mu.Unlock()
 }
 
-// fastSharedPoolRenew shrinks the lease watcher tick for the test's duration.
-func fastSharedPoolRenew(t *testing.T) {
-	t.Helper()
-	prev := sharedPoolRenewInterval
-	sharedPoolRenewInterval = 5 * time.Millisecond
-	t.Cleanup(func() { sharedPoolRenewInterval = prev })
+// fastSharedPoolRenew shrinks m's lease watcher tick. It must run before any
+// watcher on m starts; it never touches package state, so watchers leaked by
+// other tests (e.g. a restarted tmux agent) keep their own tick.
+func fastSharedPoolRenew(m *Manager) {
+	m.sharedPoolRenewInterval = 5 * time.Millisecond
 }
 
 // newSharedPoolManager returns a manager with one "scanner" agent that is
@@ -310,9 +309,9 @@ func TestSharedPoolRestartRefusedWhenPoolBusy(t *testing.T) {
 }
 
 func TestSharedPoolWatcherRenewsWhileTurnInFlight(t *testing.T) {
-	fastSharedPoolRenew(t)
 	pool := &recordingSharedSessionPool{}
 	m, a := newSharedPoolManager(t, pool)
+	fastSharedPoolRenew(m)
 	now := time.Now()
 	a.StartedAt = &now
 	a.LastKick = &now // unsettled outcome: the agent is mid-turn, never idle
@@ -355,11 +354,11 @@ func TestSharedPoolWatcherRenewsWhileTurnInFlight(t *testing.T) {
 }
 
 func TestSharedPoolWatcherToleratesTransientRenewFailures(t *testing.T) {
-	fastSharedPoolRenew(t)
 	pool := &recordingSharedSessionPool{renewFn: func(context.Context, string) error {
 		return errors.New("dial tcp: connection refused")
 	}}
 	m, a := newSharedPoolManager(t, pool)
+	fastSharedPoolRenew(m)
 	now := time.Now()
 	a.StartedAt = &now
 	a.LastKick = &now
@@ -388,6 +387,12 @@ func TestSharedPoolWatcherToleratesTransientRenewFailures(t *testing.T) {
 		defer m.mu.RUnlock()
 		return a.State == StateStopped && a.poolLeaseID == "" && a.poolLeaseCancel == nil
 	}, "lease-not-found did not evict the session")
+	// Eviction clears the agent's lease under m.mu and only then calls
+	// Release with the lock dropped, so wait for the Hub call as well.
+	testutil.EventuallyEvery(t, 2*time.Second, time.Millisecond, func() bool {
+		_, _, released := pool.snapshot()
+		return len(released) > 0
+	}, "evicted lease was not released")
 	_, _, released := pool.snapshot()
 	if len(released) != 1 || released[0] != "lease-blip" {
 		t.Fatalf("released = %v, want [lease-blip]", released)
@@ -395,9 +400,9 @@ func TestSharedPoolWatcherToleratesTransientRenewFailures(t *testing.T) {
 }
 
 func TestSharedPoolWatcherExitsWhenLeaseChanges(t *testing.T) {
-	fastSharedPoolRenew(t)
 	pool := &recordingSharedSessionPool{}
 	m, a := newSharedPoolManager(t, pool)
+	fastSharedPoolRenew(m)
 	now := time.Now()
 	a.LastKick = &now
 	a.poolLeaseID = "lease-new"
@@ -436,9 +441,9 @@ func TestSharedPoolWatcherExitsWhenLeaseChanges(t *testing.T) {
 }
 
 func TestSharedPoolWatcherIdleWithoutPromptKeepsRenewing(t *testing.T) {
-	fastSharedPoolRenew(t)
 	pool := &recordingSharedSessionPool{}
 	m, a := newSharedPoolManager(t, pool)
+	fastSharedPoolRenew(m)
 	started := time.Now().Add(-2 * sharedPoolIdleEvictionDelay)
 	a.StartedAt = &started
 	a.poolLeaseID = "lease-idle"

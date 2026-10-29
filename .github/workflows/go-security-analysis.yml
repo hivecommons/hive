@@ -163,6 +163,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       # Installed by version rather than via a marketplace action so the tool
       # itself is pinned and the supply chain is one hop shorter.
@@ -200,6 +205,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       # Version floor is load-bearing: gosec v2.21.4 pins golang.org/x/tools
       # v0.25.0, which does not COMPILE under Go 1.25 ("invalid array length").
@@ -254,6 +264,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       # skip-cache: the action's own cache save/restore is the same multi-GB
       # tar problem as setup-go's; the runners already keep GOCACHE warm.
@@ -343,6 +358,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       - name: Regenerate NOTICE from the current module graph
         run: src/scripts/generate-notice.sh /tmp/NOTICE.generated

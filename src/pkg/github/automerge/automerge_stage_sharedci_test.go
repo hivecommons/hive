@@ -56,6 +56,24 @@ func TestStageActivitySharedCIAndBudgetWaitOnHive(t *testing.T) {
 	}
 }
 
+// A contributor PR skipped for admission is waiting on a person, so
+// the stage-dwell "waits on the hive" warning must not fire for it.
+func TestStageActivityAdmissionSkipDoesNotWaitOnHive(t *testing.T) {
+	for _, reason := range []string{
+		contributorLaneReasonNoLinkedIssue, contributorLaneReasonNoClaim, contributorLaneReasonClaimUnverified,
+		contributorLaneReasonClaimAuthor, contributorLaneReasonClaimOtherHive, contributorLaneReasonClaimTier,
+		contributorLaneReasonAuthorAssociation,
+	} {
+		obs := stageObservation{HeadSHA: "sha", Reason: reason}
+		if a := stageActivity(obs, stagelabels.ReviewPending); a.WaitingOnHive {
+			t.Errorf("%q waits on the hive", reason)
+		}
+	}
+	if a := stageActivity(stageObservation{HeadSHA: "sha"}, stagelabels.ReviewPending); !a.WaitingOnHive {
+		t.Fatal("verdict-less review-pending head no longer waits on the hive")
+	}
+}
+
 // A base-red clanker PR stays at 050 across repeated sweeps — no 072, no
 // nudge comment or relay interrupt, no stall — and is handed back to its
 // author with a nudge only once the incident closes and the head is still

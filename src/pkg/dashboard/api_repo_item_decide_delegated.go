@@ -480,13 +480,19 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated+"_failed", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "error", err.Error()), "", repoFull, number)
 		return delegatedOutcome{Err: err}
 	}
-	// A PR at 090 Ready for human merge is one the hive's lanes already
-	// declined to merge: no policy run changes that, so answer at once in
+	// A PR at 090 held only for its author's trust is decided here: approve
+	// when nothing is wrong with it, adopt otherwise (hivecommons/hive#15173).
+	// Any other 090 PR is one no policy run changes, so answer at once in
 	// plain words with the actions that do (hivecommons/hive#15078).
-	if out, ok := s.delegatedHumanMergeOutcome(repoFull, number, itemType, user, mergerRole, in, req); ok {
-		return out
+	d, deciderNotes, humanMergeDecided := s.delegatedHumanMergeDecision(in, req, user, mergerRole)
+	if !humanMergeDecided {
+		if out, ok := s.delegatedHumanMergeOutcome(repoFull, number, itemType, user, mergerRole, in, req); ok {
+			return out
+		}
+		d, deciderNotes = s.decideDelegated(ctx, in)
+	} else if d.Verdict == delegatedecision.VerdictApprove {
+		deciderNotes = append(deciderNotes, s.admitDelegatedHumanMergeHead(ctx, repoFull, number, user))
 	}
-	d, deciderNotes := s.decideDelegated(ctx, in)
 	// An adoption whose copy was closed unmerged (hivecommons/hive#15052)
 	// overrides the policy: the recorded decision no longer stands, so the
 	// answer is to re-adopt, not "already decided".

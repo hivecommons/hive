@@ -174,13 +174,14 @@ func TestBootHeartbeatWith_PublishesIdentityBeforeTheLoopAndWiresEveryCallback(t
 	heartbeatCallback[spoke.VisibilityCallback](t, f)
 	heartbeatCallback[spoke.SwitchBranchCallback](t, f)
 	heartbeatCallback[spoke.AgentRestartResetCallback](t, f)
+	heartbeatCallback[spoke.BreakerCallback](t, f)
 	heartbeatCallback[spoke.AuthorizedUsersCallback](t, f)
 	heartbeatCallback[spoke.ProjectConfigCallback](t, f)
 	heartbeatCallback[spoke.GatewayConfigCallback](t, f)
 	heartbeatCallback[spoke.ClusterIDCallback](t, f)
 	heartbeatCallback[spoke.FreshStatusCollector](t, f)
-	if len(f.callbacks) != 13 {
-		t.Fatalf("registered %d callbacks, want 13 (one of each)", len(f.callbacks))
+	if len(f.callbacks) != 14 {
+		t.Fatalf("registered %d callbacks, want 14 (one of each)", len(f.callbacks))
 	}
 
 	// The collector honours a runtime hub.enabled=false without being torn
@@ -245,6 +246,40 @@ func TestBootHeartbeatWith_CallbacksReconcileRunningConfig(t *testing.T) {
 	gw(&spoke.HeartbeatGatewayConfig{Name: "openrouter"})
 	if strings.Contains(f.log.String(), "failed to apply hub-delivered gateway") {
 		t.Fatal("keyless gateway delivery treated as an apply")
+	}
+}
+
+// #15092: a hub "Pause hive" / "Resume hive" click reaches the spoke as
+// HeartbeatResponse.Breaker and must drive the same fleet breaker as the
+// dashboard's top-bar ⏸ button; anything else is ignored, never applied.
+func TestBootHeartbeatWith_BreakerCallbackDrivesFleetBreaker(t *testing.T) {
+	f := newBootHeartbeatFake()
+	b := newBootHeartbeatBoot(t, f, bootHeartbeatConfig())
+	b.bootHeartbeatWith(f.deps)
+	apply := heartbeatCallback[spoke.BreakerCallback](t, f)
+
+	apply(spoke.BreakerEngage)
+	if engaged, _ := b.agentMgr.BreakerState(); !engaged {
+		t.Fatal("engage from hub did not engage the fleet breaker")
+	}
+	if !strings.Contains(f.log.String(), "fleet breaker engaged from hub") {
+		t.Fatalf("engage not audited:\n%s", f.log.String())
+	}
+
+	apply("bogus")
+	if engaged, _ := b.agentMgr.BreakerState(); !engaged {
+		t.Fatal("an unknown instruction changed the breaker")
+	}
+	if !strings.Contains(f.log.String(), "unknown breaker instruction from hub") {
+		t.Fatalf("unknown instruction not reported:\n%s", f.log.String())
+	}
+
+	apply(spoke.BreakerRelease)
+	if engaged, _ := b.agentMgr.BreakerState(); engaged {
+		t.Fatal("release from hub did not release the fleet breaker")
+	}
+	if !strings.Contains(f.log.String(), "fleet breaker released from hub") {
+		t.Fatalf("release not audited:\n%s", f.log.String())
 	}
 }
 

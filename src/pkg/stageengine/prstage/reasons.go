@@ -38,6 +38,9 @@ const (
 	ContributorLaneReasonClaimUnverified   = "contributor-lane:claim-unverified"
 	ContributorLaneReasonFilesEvidence     = "contributor-lane:files-evidence"
 	ContributorLaneReasonNoAppBotLogin     = "contributor-lane:no-app-bot-login"
+	// ContributorLaneReasonOperatorApproval is the admit reason when a
+	// person's Approve admitted the head (hivecommons/hive#15136).
+	ContributorLaneReasonOperatorApproval  = "contributor-lane:operator-approval"
 	ContributorLaneReasonNoAuthor          = "contributor-lane:no-author"
 	ContributorLaneReasonNoClaim           = "contributor-lane:no-claim"
 	ContributorLaneReasonNoLinkedIssue     = "contributor-lane:no-linked-issue"

@@ -793,6 +793,14 @@ type SaaSHive struct {
 	// cannot touch any other way.
 	RequestedRestartAt string `json:"requested_restart_at,omitempty"`
 
+	// PendingBreaker queues a whole-hive pause ("engage") or resume
+	// ("release") requested from the hub's per-hive menu (#15092), with the
+	// requesting user in PendingBreakerBy. Delivered once on the next
+	// heartbeat (pendingBreakerForHeartbeat) and then cleared; durable here so
+	// a hub restart between click and beat does not drop it.
+	PendingBreaker   string `json:"pending_breaker,omitempty"`
+	PendingBreakerBy string `json:"pending_breaker_by,omitempty"`
+
 	Error           string                 `json:"error,omitempty"`
 	AutoUpgrade     bool                   `json:"auto_upgrade"`
 	IsPublic        bool                   `json:"is_public"`

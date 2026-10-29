@@ -32,6 +32,14 @@ const closedSweepFirstLookback = 24 * time.Hour
 // closedSweepMaxPages caps one sweep's list calls per repo.
 const closedSweepMaxPages = 3
 
+// mergedLedgerBackfillLookback is the first sweep's `since` when the
+// merged ledger was seeded on this boot (no file under /data yet): the
+// audit log only remembers the hive's own merges, so the ledger backfills
+// from GitHub's closed list — every PR merged in the last 30 days, by
+// anyone — within closedSweepMaxPages pages per repo
+// (hivecommons/hive#15147).
+const mergedLedgerBackfillLookback = 30 * 24 * time.Hour
+
 // closedSweepOverlap is re-read on each sweep so an item whose updated_at
 // fell just before the previous `since` is not missed.
 const closedSweepOverlap = 2 * time.Minute
@@ -106,7 +114,10 @@ func (s *Server) sweepClosedRows(ctx context.Context, now time.Time) (int, error
 	since := st.since
 	list := st.list
 	st.mu.Unlock()
-	if since.IsZero() {
+	backfill := since.IsZero() && s.mergedLedger() != nil && s.mergedLedger().NeedsBackfill()
+	if backfill {
+		since = now.Add(-mergedLedgerBackfillLookback)
+	} else if since.IsZero() {
 		since = now.Add(-closedSweepFirstLookback)
 	} else {
 		since = since.Add(-closedSweepOverlap)
@@ -125,7 +136,7 @@ func (s *Server) sweepClosedRows(ctx context.Context, now time.Time) (int, error
 	}
 	var firstErr error
 	allRead := true
-	var evict []github.WebhookItemSnapshot
+	var evict, merged []github.WebhookItemSnapshot
 	for _, repo := range status.Repos {
 		if ctx.Err() != nil {
 			return 0, ctx.Err()
@@ -146,10 +157,20 @@ func (s *Server) sweepClosedRows(ctx context.Context, now time.Time) (int, error
 			if !strings.EqualFold(snap.Repo, name) && !strings.EqualFold(snap.Repo, repo.Name) {
 				snap.Repo = name
 			}
+			if snap.IsPR && snap.Merged {
+				merged = append(merged, snap)
+			}
 			if frontendRepoLists(repo, snap.Number, snap.IsPR) {
 				evict = append(evict, snap)
 			}
 		}
+	}
+	// Every merged PR feeds the ledger, listed or not: a PR that left the
+	// tracker before the sweep saw it close still counts as merged.
+	s.recordMergedSnapshots(merged)
+	if backfill && allRead {
+		s.mergedLedger().Backfilled()
+		s.webhookLogger().Info("merged ledger backfilled from GitHub", "merged", len(merged), "since", since.UTC().Format(time.RFC3339))
 	}
 	evicted := 0
 	if len(evict) > 0 {

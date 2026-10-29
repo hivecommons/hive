@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"slices"
 	"strconv"
 	"strings"
@@ -104,4 +105,118 @@ func (s *Server) delegatedHumanMergeOutcome(repoFull string, number int, itemTyp
 	s.audit.LogRecord(user, auditRepoItemDecisionDelegated, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "type", itemType,
 		"verdict", string(d.Verdict), "rule", d.Rule, "actions", "", "noop", "human-merge:"+code, "policy", delegatedecision.PolicyName, "decision", d.Text), "", repoFull, number)
 	return delegatedOutcome{Decision: &d, Notes: []string{"ready for human merge (" + code + "); nothing written"}, Result: &res}, true
+}
+
+// "Let hive decide" on an untrusted author's 090 PR takes the decision
+// (hivecommons/hive#15173) instead of answering that it cannot merge: when
+// nothing is wrong with the PR the owner's delegate approves it — the same
+// path as "Approve — let hive merge", so the merge sweep merges the PR under
+// its own number once the head has soaked — and only a red, conflicting or
+// unreviewed head falls back to adoption in supersede mode.
+const (
+	delegatedHumanMergeApproveRule     = "human-merge-approve"
+	delegatedHumanMergeAdoptCIRedRule  = "human-merge-adopt-ci-red"
+	delegatedHumanMergeAdoptRebaseRule = "human-merge-adopt-conflicting"
+	delegatedHumanMergeAdoptReviewRule = "human-merge-adopt-review"
+)
+
+// delegatedHumanMergeDecidedPath is the chosen path and its reason for a
+// rule this file decides, as the tracker's ✓ hover reads it after
+// "hive decided: "; "" for any other rule.
+func delegatedHumanMergeDecidedPath(rule string) string {
+	switch rule {
+	case delegatedHumanMergeApproveRule:
+		return "approve · review passed, CI green"
+	case delegatedHumanMergeAdoptCIRedRule:
+		return "adopt · CI red"
+	case delegatedHumanMergeAdoptRebaseRule:
+		return "adopt · conflicting, needs rebase"
+	case delegatedHumanMergeAdoptReviewRule:
+		return "adopt · review not passed"
+	}
+	return ""
+}
+
+// delegatedHumanMergeReviewPassed reports the review swarm settled the
+// head without blocking findings: no reviewing, changes-requested or
+// requires-human verdict label (review.verdict_labels) is on the PR.
+func (s *Server) delegatedHumanMergeReviewPassed(in delegatedecision.Input) bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return true
+	}
+	v := s.deps.Config.Review.VerdictLabels
+	for _, l := range []string{v.Reviewing, v.ChangesRequested, v.RequiresHuman} {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		if slices.ContainsFunc(in.Labels, func(have string) bool { return strings.EqualFold(strings.TrimSpace(have), l) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// delegatedHumanMergeDecision decides a 090 PR held only for its author's
+// trust. ok=false leaves the answer to delegatedHumanMergeOutcome: another
+// 090 reason, a hive-authored PR, a sentinel alert (a person's call), the
+// delegating user's own PR, an approval the user's role cannot give, or an
+// adoption this hive has turned off.
+func (s *Server) delegatedHumanMergeDecision(in delegatedecision.Input, req delegatedDecisionRequest, user string, mergerRole bool) (delegatedecision.Decision, []string, bool) {
+	if in.Kind != delegatedecision.KindPR || !slices.Contains(in.Labels, stagelabels.ReadyForHumanMerge.Label()) {
+		return delegatedecision.Decision{}, nil, false
+	}
+	if stageengineprstage.HumanMergeReason(delegatedHumanMergeReason(in, req)) != stageengineprstage.HumanMergeReasonUntrustedAuthor {
+		return delegatedecision.Decision{}, nil, false
+	}
+	if in.HiveAuthored || in.SentinelAlert || strings.EqualFold(strings.TrimSpace(in.Author), strings.TrimSpace(user)) {
+		return delegatedecision.Decision{}, nil, false
+	}
+	ref := "#" + strconv.Itoa(in.Number)
+	adopt := func(rule, why string) (delegatedecision.Decision, []string, bool) {
+		if !s.stageAdoptionEnabled() {
+			return delegatedecision.Decision{}, nil, false
+		}
+		text := "supersede now: adopt " + ref + " in supersede mode, preserving the author's commits and sign-off — " + why
+		return delegatedecision.Decision{
+			Verdict:   delegatedecision.VerdictAdoptSupersede,
+			Rule:      rule,
+			Text:      text,
+			Rationale: "the PR waits on a person only because its author is untrusted, and " + why + ", so the hive adopts it to finish the work (hivecommons/hive#15173)",
+			Actions:   []delegatedecision.Action{{Kind: delegatedecision.ActionCommentDecision, Text: text}, {Kind: delegatedecision.ActionAdoptSupersede}},
+		}, []string{"hive decided: " + delegatedHumanMergeDecidedPath(rule)}, true
+	}
+	switch {
+	case in.Conflicting:
+		return adopt(delegatedHumanMergeAdoptRebaseRule, "the branch conflicts with the base and needs a rebase")
+	case !in.CIGreen:
+		return adopt(delegatedHumanMergeAdoptCIRedRule, "CI is not green on its head")
+	case !s.delegatedHumanMergeReviewPassed(in):
+		return adopt(delegatedHumanMergeAdoptReviewRule, "the review has not passed on its head")
+	case !mergerRole:
+		return delegatedecision.Decision{}, nil, false
+	}
+	text := "approve " + ref + ": review passed, CI green and mergeable — the hive's merge sweep merges it under its own number once the head has soaked"
+	return delegatedecision.Decision{
+		Verdict:   delegatedecision.VerdictApprove,
+		Rule:      delegatedHumanMergeApproveRule,
+		Text:      text,
+		Rationale: "nothing about the PR is wrong; only its author's trust kept it from merging, and the owner delegated that call (hivecommons/hive#15173)",
+		Actions:   []delegatedecision.Action{{Kind: delegatedecision.ActionCommentDecision, Text: text}, {Kind: delegatedecision.ActionApproveReview}},
+	}, []string{"hive decided: " + delegatedHumanMergeDecidedPath(delegatedHumanMergeApproveRule)}, true
+}
+
+// admitDelegatedHumanMergeHead writes the delegating person's approval as
+// the trust override for the PR's current head before the approval lands —
+// what "Approve — let hive merge" writes (hivecommons/hive#15136) — so the
+// adoption engine cannot take the PR over before the sweep merges it.
+func (s *Server) admitDelegatedHumanMergeHead(ctx context.Context, repoFull string, number int, user string) string {
+	state, err := s.deps.GHClient.GetPRState(ctx, repoFull, number)
+	if err != nil {
+		return "head not admitted (" + err.Error() + "); the lane derives the admission from the recorded approval"
+	}
+	if by := s.admitPullRequestHead(repoFull, number, state.HeadSHA, user); by != "" {
+		return "head " + state.HeadSHA + " admitted (" + by + "): merged as-is, not adopted"
+	}
+	return "no stage record to admit the head on; the lane derives the admission from the recorded approval"
 }

@@ -424,6 +424,9 @@ func (s *HubServer) registerSaaSRoutes() {
 	// which is the authoritative check for both.
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/secondary-app", s.requireAuth(s.handleSetHiveSecondaryApp))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/restart-spoke", s.requireAuth(s.handleRestartSpoke))
+	// Whole-hive pause/resume (the spoke's fleet breaker) from the hub's
+	// per-hive menu (#15092). requireAuth plus an inner owner-or-admin check.
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/breaker", s.requireAuth(s.handleSpokeBreaker))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("GET /api/saas/release-notes", s.handleReleaseNotes)

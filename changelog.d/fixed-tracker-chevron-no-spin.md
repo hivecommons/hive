@@ -1,0 +1,1 @@
+- Activity Monitor: no status symbol rotates on a chevron or pill any more — the working glyph, the merge gate's ⟳ sweep glyph and the acting caption's spinner are static icons; their tooltips still say what the hive is doing (#15187).

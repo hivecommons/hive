@@ -26,7 +26,7 @@ func TestOrderReviewFixKicksBeforeGovernorKicks(t *testing.T) {
 		reviewKickKey(reviewKick): {Kind: "review", Agent: "reviewer", PRRef: "acme/x#9"},
 		reviewKickKey(fixKick):    {Kind: "fix", Agent: "scanner", PRRef: "acme/x#9"},
 	}
-	got := orderReviewFixKicksFirst([]scheduler.KickMessage{govScanner, govReviewer, reviewKick, fixKick}, byMessage)
+	got := orderReviewFixKicksFirst([]scheduler.KickMessage{govScanner, govReviewer, reviewKick, fixKick}, byMessage, nil)
 	want := []scheduler.KickMessage{fixKick, govScanner, govReviewer, reviewKick}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d, want %d: %+v", len(got), len(want), got)
@@ -49,13 +49,13 @@ func TestOrderReviewFixKicksFirstLeavesOtherOrdersAlone(t *testing.T) {
 		reviewKickKey(fixKick):    {Kind: "fix", Agent: "ci-maintainer"},
 	}
 	in := []scheduler.KickMessage{gov, reviewKick, fixKick}
-	got := orderReviewFixKicksFirst(in, byMessage)
+	got := orderReviewFixKicksFirst(in, byMessage, nil)
 	for i := range in {
 		if got[i].Agent != in[i].Agent || got[i].Message != in[i].Message {
 			t.Fatalf("order changed at %d: %+v", i, got)
 		}
 	}
-	if got := orderReviewFixKicksFirst(nil, byMessage); len(got) != 0 {
+	if got := orderReviewFixKicksFirst(nil, byMessage, nil); len(got) != 0 {
 		t.Fatalf("nil input = %+v", got)
 	}
 }
@@ -85,4 +85,77 @@ func TestLogUndeliveredReviewKickNamesPR(t *testing.T) {
 	}
 	// No dashboard: the log line still fires, nothing panics.
 	logUndeliveredReviewKick(logger, nil, k, errors.New("x"))
+}
+
+// hivecommons/hive#15166: a fix kick delivered first leaves the lane busy, so
+// the governor kick behind it is deferred; an adopted PR under
+// changes_requested is re-planned as a fix kick every cycle, so the scanner's
+// backlog kick was deferred cycle after cycle (live: 0 backlog kicks and 6
+// fix kicks in 71 minutes, 13 issues sitting at stage/010-actionable). After
+// governorKickDisplacementLimit consecutive displacements the governor kick
+// goes first for that agent; a delivered governor kick resets the count.
+func TestKickLaneFairnessPutsGovernorFirstAfterConsecutiveDisplacement(t *testing.T) {
+	gov := scheduler.KickMessage{Agent: "scanner", Message: "issues"}
+	fix := scheduler.KickMessage{Agent: "scanner", Message: "[review-fix:acme/x#9]"}
+	byMessage := map[string]review.DispatchKick{
+		reviewKickKey(fix): {Kind: "fix", Agent: "scanner", PRRef: "acme/x#9"},
+	}
+	f := newKickLaneFairness()
+
+	for cycle := 1; cycle <= governorKickDisplacementLimit; cycle++ {
+		if f.GovernorFirst("scanner") {
+			t.Fatalf("cycle %d: governor first before the limit was reached", cycle)
+		}
+		ordered := orderReviewFixKicksFirst([]scheduler.KickMessage{gov, fix}, byMessage, f.GovernorFirst)
+		if ordered[0].Message != fix.Message {
+			t.Fatalf("cycle %d: order = %+v, want fix kick first", cycle, ordered)
+		}
+		// The fix kick went out; the governor kick was deferred behind it.
+		f.ObserveCycle(ordered, []scheduler.KickMessage{fix}, byMessage)
+	}
+	if !f.GovernorFirst("scanner") {
+		t.Fatalf("displaced %d cycles, governor still not first", governorKickDisplacementLimit)
+	}
+	ordered := orderReviewFixKicksFirst([]scheduler.KickMessage{gov, fix}, byMessage, f.GovernorFirst)
+	if ordered[0].Message != gov.Message || ordered[1].Message != fix.Message {
+		t.Fatalf("after displacement limit order = %+v, want governor first", ordered)
+	}
+	f.ObserveCycle(ordered, []scheduler.KickMessage{gov}, byMessage)
+	if f.GovernorFirst("scanner") || f.Displaced("scanner") != 0 {
+		t.Fatalf("delivered governor kick did not reset: displaced=%d", f.Displaced("scanner"))
+	}
+}
+
+// Another agent's displacement is its own; a cycle with no governor kick for
+// the agent, or one where the governor kick failed outright rather than
+// being deferred behind a delivered fix, does not count.
+func TestKickLaneFairnessCountsOnlyDeferralBehindDeliveredFix(t *testing.T) {
+	govScanner := scheduler.KickMessage{Agent: "scanner", Message: "issues"}
+	fixScanner := scheduler.KickMessage{Agent: "scanner", Message: "[review-fix:acme/x#9]"}
+	fixCI := scheduler.KickMessage{Agent: "ci-maintainer", Message: "[review-fix:acme/x#8]"}
+	byMessage := map[string]review.DispatchKick{
+		reviewKickKey(fixScanner): {Kind: "fix", Agent: "scanner"},
+		reviewKickKey(fixCI):      {Kind: "fix", Agent: "ci-maintainer"},
+	}
+	f := newKickLaneFairness()
+
+	// Fix kick only, no governor kick assembled for the scanner: nothing to starve.
+	f.ObserveCycle([]scheduler.KickMessage{fixScanner}, []scheduler.KickMessage{fixScanner}, byMessage)
+	if f.Displaced("scanner") != 0 {
+		t.Fatalf("no governor kick assembled yet displaced=%d", f.Displaced("scanner"))
+	}
+	// Both assembled, neither delivered (send failed): a kick failure, not a displacement.
+	f.ObserveCycle([]scheduler.KickMessage{fixScanner, govScanner}, nil, byMessage)
+	if f.Displaced("scanner") != 0 {
+		t.Fatalf("failed send counted as displacement: %d", f.Displaced("scanner"))
+	}
+	// A displacement on the scanner lane leaves ci-maintainer untouched.
+	f.ObserveCycle([]scheduler.KickMessage{fixScanner, govScanner, fixCI}, []scheduler.KickMessage{fixScanner, fixCI}, byMessage)
+	if f.Displaced("scanner") != 1 || f.Displaced("ci-maintainer") != 0 {
+		t.Fatalf("displaced scanner=%d ci-maintainer=%d, want 1 / 0", f.Displaced("scanner"), f.Displaced("ci-maintainer"))
+	}
+	var nilFairness *kickLaneFairness
+	if nilFairness.GovernorFirst("scanner") {
+		t.Fatal("nil fairness must never put the governor first")
+	}
 }

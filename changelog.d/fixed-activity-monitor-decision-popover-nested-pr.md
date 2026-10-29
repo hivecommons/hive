@@ -1,0 +1,1 @@
+- Activity Monitor: the "Needs human decision" popover now opens on an issue row whose one covering PR is parked for a decision (stage 085); the trigger was keyed on the issue instead of the PR, so clicking or hovering did nothing.

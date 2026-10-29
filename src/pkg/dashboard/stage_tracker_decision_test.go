@@ -312,6 +312,67 @@ func TestStageTrackerDecisionForHumanMerge(t *testing.T) {
 		}
 		decisionOptionByAction(t, d, decisionActionRelease)
 	})
+
+	// hivecommons/hive#15136: the popover warns about DCO BEFORE anyone
+	// presses Approve and offers re-authoring as its own choice; once a
+	// person approved, the row says who admitted the head and the second
+	// Approve is no longer offered.
+	t.Run("unsigned commits warn before acting and offer re-author", func(t *testing.T) {
+		agent := it
+		agent.Author, agent.AuthorKind, agent.DCOUnsigned, agent.DCOTotal = "hive[bot]", "hive", 2, 3
+		d := stageTrackerDecisionNeeded(agent, nil, "")
+		if !strings.Contains(d.Blocker, "2 of 3 commits have no Signed-off-by") || !strings.Contains(d.Blocker, "Re-author as hive PR is the separate choice") {
+			t.Fatalf("blocker lacks the DCO warning: %q", d.Blocker)
+		}
+		if got := []string{d.Options[0].Action, d.Options[1].Action, d.Options[2].Action}; got[2] != decisionActionReauthor || got[0] != decisionActionMergeNow || got[1] != decisionActionQueueMerge {
+			t.Fatalf("options = %v, want merge-now, queue-merge, re-author", got)
+		}
+		for _, a := range []string{decisionActionMergeNow, decisionActionQueueMerge} {
+			if o := decisionOptionByAction(t, d, a); !o.Enabled || !strings.Contains(o.Consequence, "no Signed-off-by") {
+				t.Errorf("%s must stay available with the DCO caveat: %+v", a, o)
+			}
+		}
+		re := d.Options[2]
+		if !re.Enabled || re.Label != "Re-author as hive PR" || !strings.Contains(re.Consequence, "nothing is merged as-is") {
+			t.Fatalf("re-author = %+v", re)
+		}
+		human := it
+		human.DCOUnsigned, human.DCOTotal = 1, 1
+		d = stageTrackerDecisionNeeded(human, nil, "")
+		if o := decisionOptionByAction(t, d, decisionActionReauthor); o.Enabled || !strings.Contains(o.ReasonIfDisabled, "@Karibhou to sign off") {
+			t.Fatalf("re-author on a person's PR = %+v", o)
+		}
+		if d := stageTrackerDecisionNeeded(it, nil, ""); decisionHasAction(d, decisionActionReauthor) {
+			t.Fatalf("re-author offered without unsigned commits: %+v", d.Options)
+		}
+	})
+
+	t.Run("admitted head names the approver and drops the second approve", func(t *testing.T) {
+		admitted := it
+		admitted.AdmittedBy = stagelabels.OperatorApprovalAdmission("octo")
+		d := stageTrackerDecisionNeeded(admitted, nil, "")
+		if !strings.Contains(d.Blocker, "Admitted by @octo (operator-approval:octo)") {
+			t.Fatalf("blocker = %q", d.Blocker)
+		}
+		if o := decisionOptionByAction(t, d, decisionActionQueueMerge); o.Enabled || !strings.Contains(o.ReasonIfDisabled, "@octo already approved") {
+			t.Fatalf("queue-merge after admission = %+v", o)
+		}
+		if o := decisionOptionByAction(t, d, decisionActionMergeNow); !o.Enabled {
+			t.Fatalf("merge-now must stay available: %+v", o)
+		}
+	})
+}
+
+func decisionHasAction(d *StageTrackerDecision, action string) bool {
+	if d == nil {
+		return false
+	}
+	for _, o := range d.Options {
+		if o.Action == action {
+			return true
+		}
+	}
+	return false
 }
 
 // TestStageTrackerNeedsHumanStatesCarryAnAction: every state

@@ -34,6 +34,16 @@ func (h *ContributeWSHub) auditRelayAs(user, agent, action string, task *WSTaskA
 	h.server.AuditLogRecord(user, action, agentaudit.FormatAuditDetail(agentaudit.Fields(kv...)), agent, repo, number)
 }
 
+// auditTierChange writes the contributor-tier-changed audit event for a tier
+// the hub itself moved (auto-promotion); the operator handlers write theirs
+// through Server.auditContributorTierChange.
+func (h *ContributeWSHub) auditTierChange(username string, change ContributorTierChange) {
+	if h == nil || h.server == nil || h.server.audit == nil || username == "" || change.Tier == "" {
+		return
+	}
+	h.server.audit.Log(change.By, auditActionContributorTierChanged, tierChangeAuditDetail(username, change), "")
+}
+
 // auditRelayText bounds relay-supplied free text before it lands in a detail.
 func auditRelayText(s string) string {
 	return sanitizeCapabilityField(sanitizeString(s))

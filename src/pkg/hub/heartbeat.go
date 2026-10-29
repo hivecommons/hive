@@ -432,18 +432,21 @@ type HeartbeatGatewayConfig struct {
 }
 
 type HeartbeatResponse struct {
-	OK                  bool                      `json:"ok"`
-	UpgradeTo           string                    `json:"upgrade_to,omitempty"`
+	OK        bool   `json:"ok"`
+	UpgradeTo string `json:"upgrade_to,omitempty"`
 	// UpgradeInterrupt rides with UpgradeTo when the owner asked the upgrade
 	// to proceed without draining in-flight agent turns (#14950). The spoke
 	// skips its drain for this instruction only.
-	UpgradeInterrupt bool `json:"upgrade_interrupt,omitempty"`
-	HubGitHash          string                    `json:"hub_git_hash,omitempty"`
-	LatestSHA           string                    `json:"latest_sha,omitempty"`
-	LatestTag           string                    `json:"latest_tag,omitempty"`
-	SwitchToTag         string                    `json:"switch_to_tag,omitempty"`
-	RestartSpoke        bool                      `json:"restart_spoke,omitempty"`
-	ResetAgentRestarts  []string                  `json:"reset_agent_restarts,omitempty"`
+	UpgradeInterrupt   bool     `json:"upgrade_interrupt,omitempty"`
+	HubGitHash         string   `json:"hub_git_hash,omitempty"`
+	LatestSHA          string   `json:"latest_sha,omitempty"`
+	LatestTag          string   `json:"latest_tag,omitempty"`
+	SwitchToTag        string   `json:"switch_to_tag,omitempty"`
+	RestartSpoke       bool     `json:"restart_spoke,omitempty"`
+	ResetAgentRestarts []string `json:"reset_agent_restarts,omitempty"`
+	// Breaker is a one-shot fleet-breaker instruction ("engage"/"release")
+	// queued from the hub's per-hive menu (#15092); empty means none.
+	Breaker             string                    `json:"breaker,omitempty"`
 	GitHubAppConfig     *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
 	HubBanner           *HubBanner                `json:"hub_banner,omitempty"`
 	IsPublic            *bool                     `json:"is_public,omitempty"`

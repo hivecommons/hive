@@ -2547,6 +2547,11 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// auto_merge.trusted_bot_authors takes effect without a restart.
 	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
 	autoMergeOpts.BotTakeoverEnabled = func() bool { return b.cfg.AutoMerge.BotTakeover.IsEnabled() }
+	autoMergeOpts.MergeTrainEnabled = func() bool { return b.cfg.AutoMerge.MergeTrain.IsEnabled() }
+	// Merge train rebase loop guard (#15117). RebaseResolver stays nil until
+	// the rebase-then-merge follow-through (#15104) lands and is wired here;
+	// a conflicting front then keeps its conflicting path.
+	autoMergeOpts.MergeTrainMaxRebaseAttempts = func() int { return b.cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts() }
 	// Intent tier gate (#6258): the human lane only queues PRs that
 	// survive writeMergeEligible's intent check, but this sweep lists
 	// the App's PRs on its own, so it carries the same policy (same
@@ -2569,15 +2574,6 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
-	}
-	// Merge train (#15117): read live so a reload applies. RebaseResolver
-	// stays nil until the rebase-then-merge follow-through (#15104) lands
-	// and is wired here; a conflicting front then keeps its conflicting path.
-	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
-		if b.cfg == nil {
-			return automerge.DefaultMergeTrainPolicy
-		}
-		return automerge.MergeTrainPolicy{Enabled: b.cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: b.cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
 	}
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
 		laneGate := relayLanePolicyGate(autoMergeOpts)(client)
@@ -3212,6 +3208,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 			// so the Overview never shows pre-restart totals as current
 			// (hivecommons/hive#13373); the first enumeration replaces it.
 			cached.MarkAllStale()
+			cached.RestoredAt = time.Now().UTC()
 			b.lastActionable.Store(&cached)
 			if b.sched != nil {
 				b.sched.SetLastActionable(&cached)
@@ -5708,6 +5705,24 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 				b.logger.Info("audit: agent restart counter reset from hub", "agent", name)
 			}),
+			// Whole-hive pause/resume requested from the hub's per-hive menu
+			// (#15092). Same fleet-breaker calls as the dashboard's
+			// /api/breaker/{engage,release}; the run loop's regular persist
+			// makes the result durable.
+			spoke.BreakerCallback(func(action string) {
+				switch action {
+				case spoke.BreakerEngage:
+					paused := b.agentMgr.EngageBreaker()
+					b.dashSrv.AuditLog("hub", "breaker-engage", "count="+strconv.Itoa(len(paused))+", agents="+strings.Join(paused, ","), "")
+					b.logger.Info("audit: fleet breaker engaged from hub", "agents", paused)
+				case spoke.BreakerRelease:
+					resumed := b.agentMgr.ReleaseBreaker(b.ctx)
+					b.dashSrv.AuditLog("hub", "breaker-release", "count="+strconv.Itoa(len(resumed))+", agents="+strings.Join(resumed, ","), "")
+					b.logger.Info("audit: fleet breaker released from hub", "agents", resumed)
+				default:
+					b.logger.Warn("unknown breaker instruction from hub; ignoring", "action", action)
+				}
+			}),
 			spoke.AuthorizedUsersCallback(func(users []string, names map[string]string) {
 				// The hub delivered its authoritative access list. Reconcile our
 				// login allowlist so Manage Access grants take effect on this
@@ -6582,6 +6597,12 @@ var providerBudgetNotify governor.ProviderBudgetNotifyState
 // provider spend rebuff is latched. Package-level for the same reason as
 // providerBudgetNotify: runEvalCycle has no state of its own.
 var providerBudgetProbe governor.ProviderBudgetProbeState
+
+// governorKickFairness remembers, per agent, how many cycles in a row the
+// governor kick was deferred behind a delivered review-fix kick
+// (hivecommons/hive#15166). Package-level for the same reason as
+// providerBudgetProbe: runEvalCycle has no state of its own.
+var governorKickFairness = newKickLaneFairness()
 
 var evalAPIBudgetCycle atomic.Uint64
 
@@ -7603,7 +7624,13 @@ func runEvalCycle(
 	// the swarm's) goes ahead of the governor kick for the same agent, or
 	// the governor kick owns the agent and the fix kick times out every
 	// cycle (hivecommons/hive#13100).
-	messages = orderReviewFixKicksFirst(messages, reviewKickByMessage)
+	for _, agent := range pendingKickAgentsFromMessages(messages) {
+		if governorKickFairness.GovernorFirst(agent) {
+			logger.Warn("governor kick displaced by fix kicks on consecutive cycles; governor kick goes first this cycle",
+				"agent", agent, "displaced_cycles", governorKickFairness.Displaced(agent), "limit", governorKickDisplacementLimit)
+		}
+	}
+	messages = orderReviewFixKicksFirst(messages, reviewKickByMessage, governorKickFairness.GovernorFirst)
 	// Freshness bound before a kick (#13375): a ref older than
 	// github.DecisionFreshnessBound in a cache-served or last-good snapshot
 	// is confirmed with one targeted GET; a stale repo's refs are withheld.
@@ -7720,6 +7747,7 @@ func runEvalCycle(
 	// single-probe rule are the decisions worth testing, and they were
 	// previously unreachable without a tmux session and a live governor.
 	var deliveredReviewKicks []review.DispatchKick
+	var deliveredKicks []scheduler.KickMessage
 	if len(messages) > 0 {
 		// governor.kick wraps the whole dispatch pass; each delivered kick
 		// still gets its own agent.kick child via startKickSpan below.
@@ -7774,6 +7802,7 @@ func runEvalCycle(
 				}
 			},
 			onDelivered: func(msg scheduler.KickMessage, deliveredAt time.Time) {
+				deliveredKicks = append(deliveredKicks, msg)
 				gov.RecordKickForRepoAt(msg.Agent, msg.Repo, deliveredAt)
 				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 
@@ -7821,6 +7850,7 @@ func runEvalCycle(
 		kickPassSpan.SetAttributes(attribute.Int("hive.kicks.review_delivered", len(deliveredReviewKicks)))
 		kickPassSpan.End()
 	}
+	governorKickFairness.ObserveCycle(messages, deliveredKicks, reviewKickByMessage)
 	persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
 
 	if actionable.Issues.SLAViolations > 0 {
@@ -9383,9 +9413,8 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
-		opts.MergeTrain = func() automerge.MergeTrainPolicy {
-			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
-		}
+		opts.MergeTrainEnabled = func() bool { return cfg.AutoMerge.MergeTrain.IsEnabled() }
+		opts.MergeTrainMaxRebaseAttempts = func() int { return cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts() }
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	}
 	audit := func(event automerge.AutoMergeSweepEvent) {
