@@ -259,6 +259,12 @@ const (
 	// could push; the suffix is the lane reason it was stuck on
 	// ("adoption-stalled:reviewer-verdict:changes_requested").
 	LaneReasonAdoptionStalledPrefix = "adoption-stalled:"
+	// LaneReasonRebaseFailedTwice is the 085 reason for the hive's copy of
+	// an adopted PR (hive/adopt-<n>) that opened conflicting and stayed
+	// dirty after the fixer's rebase-resolve episode used both attempts
+	// (hivecommons/hive#15104 guard); the same suffix under
+	// LaneReasonAdoptionStalledPrefix parks a still-open original.
+	LaneReasonRebaseFailedTwice = "rebase-failed-twice"
 )
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.

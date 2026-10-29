@@ -65,6 +65,24 @@ type RebaseRequest struct {
 	MaxAttempts int
 	// Lane is the sweep lane that owns the PR (prstage.StageLane*).
 	Lane string
+	// RequestedBy names the requester the episode is opened for: "" (the
+	// merge train) or AdoptionRebaseRequester for the hive's conflicting
+	// copy of an adopted PR (hivecommons/hive#15307).
+	RequestedBy string
+}
+
+// AdoptionRebaseRequester is RebaseRequest.RequestedBy for a rebase the
+// adoption lane asks of the fixer on the hive's own copy branch.
+const AdoptionRebaseRequester = "adoption"
+
+// RebaseEpisode is what Options.RebaseEpisode reports for a PR with an
+// open conflict episode: how many attempts the fixer has used of the
+// guard, and whether the guard is exhausted.
+type RebaseEpisode struct {
+	Attempt     int
+	MaxAttempts int
+	Exhausted   bool
+	RequestedBy string
 }
 
 // RebaseResolver enqueues a rebase-resolve task for a conflicting PR.

@@ -834,7 +834,22 @@ original** with one note naming the copy and why ("Superseded by hive:
 re-authored as #M … This PR is closed; if #M fails, hive reopens it."),
 labelled `hive/superseded`, so one issue never shows two active PRs
 (`governor.labels.stage.adoption.supersede.close_first`, default on;
-hivecommons/hive#15135). If the copy is closed unmerged or its required
+hivecommons/hive#15135). A contributor head that **conflicts with the base**
+(`needs-rebase` / `conflicting`) is first replayed onto `hive/adopt-<n>`
+(a merge of the base); when that replay itself conflicts the copy still
+opens, on the hive's own branch, and the fixer's rebase-resolve episode
+takes it (`requested_by: adoption`, the same two-attempt guard as the
+merge-train, hivecommons/hive#15104) — the row reads "Adopting · fixer
+resolving conflicts". If both attempts fail the copy parks at `stage/085`
+with `rebase-failed-twice` and the original (when still open) with
+`adoption-stalled:rebase-failed-twice`; the Needs-human popover offers
+**Adopt into fresh branch** / **Close as superseded**. A plain conflict
+never hands a PR back to a contributor who cannot act (hivecommons/hive#15307):
+an earlier attempt that opened nothing is re-admitted once the clanker has
+stayed offline or unregistered for `governor.labels.stage.adoption.offline_grace`
+(default 30m) since the attempt or its last heartbeat. (Without a fixer
+wired the replay conflict is still terminal for the head: one note,
+`supersede-conflict`.) If the copy is closed unmerged or its required
 checks are red at two heads, the hive reopens the original, removes
 `hive/superseded`, and parks it at `stage/085` with `adoption-copy-failed`
 ("needs a person"); at most one reopen per original per 24h. The note,
