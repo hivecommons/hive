@@ -109,7 +109,10 @@ func (c *Client) sentinelClearedAfterLatestPush(ctx context.Context, owner, repo
 // The approval comment is the durable, hive-authored record of that
 // release: its marker names the head the person saw, so it is never
 // honoured on a later push. Only comments the hive itself wrote count;
-// anyone can type the marker.
+// anyone can type the marker. Unlike markerAuthorTrusted, a hive that cannot
+// name its own accounts trusts no author here: the comment releases a
+// security alert, and under the legacy any-author rule the PR author could
+// forge it for their own head (hivecommons/hive#15262).
 func (c *Client) sentinelReleasedByDashboardApproval(ctx context.Context, owner, repo string, number int, head string) (string, error) {
 	head = strings.ToLower(strings.TrimSpace(head))
 	if head == "" {
@@ -120,7 +123,7 @@ func (c *Client) sentinelReleasedByDashboardApproval(ctx context.Context, owner,
 		return "", fmt.Errorf("listing comments of %s/%s#%d for sentinel release: %w", owner, repo, number, err)
 	}
 	for _, comment := range comments {
-		if comment == nil || !c.markerAuthorTrusted(comment.GetUser()) {
+		if comment == nil || !c.knowsOwnAccounts() || !c.isHiveAccount(comment.GetUser()) {
 			continue
 		}
 		_, actor, boundHead, ok := ParsePRApprovalCommandComment(comment.GetBody())
@@ -185,7 +188,9 @@ func (c *Client) sentinelHeadArrivedAt(ctx context.Context, owner, repo, sha str
 // sentinelReleasedNote, already formatted), in the form
 // sentinelClearedByMaintainer reads back, so a hub restart (empty
 // sentinelHeads) finds "alert for this head, label absent" and stays quiet.
-// When the hive has no marker comment on the PR one is posted.
+// When the hive has no marker comment on the PR one is posted, as it is when
+// the hive cannot name its own accounts: the clearance record must not be
+// written into a comment of unverified authorship (hivecommons/hive#15262).
 func (c *Client) recordSentinelClearance(ctx context.Context, owner, repo string, number int, note, alert string) error {
 	body := alert + "\n" + note + "\n"
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
@@ -194,7 +199,7 @@ func (c *Client) recordSentinelClearance(ctx context.Context, owner, repo string
 	}
 	var own *gh.IssueComment
 	for _, comment := range comments {
-		if comment == nil || !strings.Contains(comment.GetBody(), SentinelMarker) || !c.markerAuthorTrusted(comment.GetUser()) {
+		if comment == nil || !strings.Contains(comment.GetBody(), SentinelMarker) || !c.knowsOwnAccounts() || !c.isHiveAccount(comment.GetUser()) {
 			continue
 		}
 		own = comment

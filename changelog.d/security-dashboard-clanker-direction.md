@@ -1,0 +1,1 @@
+- Dashboard directions for contributor PRs now require the sweep's classification label, honoring `governor.labels.author` names, instead of falling back directly to PR-body markers; the sweep's body-marker classification remains unchanged ([#15268](https://github.com/hivecommons/hive/issues/15268)).

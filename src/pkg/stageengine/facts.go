@@ -151,6 +151,21 @@ type IssueFacts struct {
 	// NeedsHumanLabel names the needs-human label when Park.NeedsHuman is
 	// set (the reason cites it).
 	NeedsHumanLabel string
+	// Blocker is the structured blocker kind recorded on the issue
+	// (pkg/blocker: "capability:workflows-permission", …), "" when none.
+	// A parked issue with a blocker stays 045 whatever direction a person
+	// gave: no decision grants the App a permission
+	// (hivecommons/hive#15099).
+	Blocker string
+	// BlockerShort is the blocker's pill text ("App lacks workflows
+	// permission") for the reason.
+	BlockerShort string
+	// ApprovedDirectionLabel is the `approved-direction` label the issue
+	// wears (a recorded /hive approve|decision), "" when absent. Next to
+	// `needs-human` it is the stale one — the un-park that applied it
+	// removed the park label, so a surviving `needs-human` came later —
+	// and the writer clears it (hivecommons/hive#15099).
+	ApprovedDirectionLabel string
 	// UmbrellaLabel is the never-claim label the issue carries
 	// (governor.claims.never_claim_labels, default `epic`).
 	UmbrellaLabel string

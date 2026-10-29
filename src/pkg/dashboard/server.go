@@ -124,6 +124,9 @@ type Server struct {
 	// presenceLookup overrides the contribute hub as the tracker's author
 	// presence source for 072 rows (stage_tracker_adoption.go); tests only.
 	presenceLookup func(login string) (automerge.ContributorPresence, bool)
+	// fixWorkLookup overrides the contribute hub as the tracker's fix-queue
+	// source for the rework-pickup signal (stage_tracker_rework.go); tests only.
+	fixWorkLookup func(login, repo string, number int) (StageTrackerFixWork, bool)
 	// sweepState overrides the automerge lanes' live sweep state for the
 	// tracker's merge-gate rows (stage_tracker_merge_gate.go); tests only.
 	sweepState func() automerge.SweepState
@@ -633,8 +636,13 @@ type StatusPayload struct {
 	SystemResources     *SystemResources            `json:"systemResources,omitempty"`
 	GitHubAppRequired   bool                        `json:"githubAppRequired,omitempty"`
 	GitHubAppInstallURL string                      `json:"githubAppInstallURL,omitempty"`
-	GitHubAppPermIssue  string                      `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState      string                      `json:"githubAppState,omitempty"`
+	// Capabilities summarises the GitHub App permissions tracker items are
+	// blocked on (pkg/blocker ledger): ⚙ → Security/Features reads
+	// "GitHub App permissions: missing `workflows` · N items blocked"
+	// (hivecommons/hive#15099).
+	Capabilities       *FrontendCapabilities `json:"capabilities,omitempty"`
+	GitHubAppPermIssue string                `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState     string                `json:"githubAppState,omitempty"`
 	// GitHubAppInstallMissing is CONFIG TRUTH, independent of any auth probe
 	// or classification: a real App is named (app_id set, not the placeholder)
 	// but installation_id is 0. That state alone means every token is a
@@ -1694,6 +1702,11 @@ func (s *Server) Start() error {
 	costTicker := time.NewTicker(costHistoryMinIntervalMs * time.Millisecond)
 	defer costTicker.Stop()
 	go s.runCostSampler(costTicker.C)
+	// The operator's "Rebase, then merge as maintainer" follow-throughs
+	// (rebase_merge_followthrough.go) poll from here.
+	followCtx, cancelFollow := context.WithCancel(context.Background())
+	defer cancelFollow()
+	s.StartRebaseMergeFollowThrough(followCtx)
 	return srv.Serve(ln)
 }
 
@@ -2627,6 +2640,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	s.githubAppMu.RLock()
 	status.GitHubAppRequired = s.githubAppRequired
 	status.GitHubAppInstallURL = s.githubAppInstallURL
+	status.Capabilities = s.capabilitiesStatus()
 	status.GitHubAppPermIssue = s.githubAppPermIssue
 	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()
@@ -3649,7 +3663,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot()}
+	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot()}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
@@ -3665,6 +3679,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 type statusWithWebhooks struct {
 	*StatusPayload
 	Webhooks github.WebhookHealth `json:"webhooks"`
+	// CIFailureSignals is the webhook CI-failure signal store: retained
+	// signals, the last one, webhook-triggered kicks and unmatched heads.
+	CIFailureSignals github.CIFailureSignalsStatus `json:"ci_failure_signals"`
 	*EvalLoopStatus
 	// UpgradeProgress is the spoke's view of the scheduled-upgrade state
 	// machine (scheduled / draining / pulling / … / missed) with the drain

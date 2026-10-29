@@ -306,15 +306,43 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 // of its closing claims is still open, no closer resolves, or an earlier
 // pass already rewrote the claim into a reference.
 func (c *Client) detectSupersession(ctx context.Context, prRepo string, pr *gh.PullRequest, identity HiveIdentity, now time.Time) (candidate IssueClaim, closer supersessionCloser, detected bool, err error) {
+	det, err := c.detectSupersessionDetail(ctx, prRepo, pr, identity, now)
+	return det.candidate, det.closer, det.detected, err
+}
+
+// supersessionDetail is detectSupersessionDetail's answer: the merged-closer
+// supersession (candidate/closer/detected) plus what the hive-authored
+// auto-close rule reads when no merged closer resolves — whether every
+// candidate claim is closed (allClosingClosed) and the first closed claim
+// (closedClaim), which names the issue in the close comment.
+type supersessionDetail struct {
+	candidate        IssueClaim
+	closer           supersessionCloser
+	detected         bool
+	allClosingClosed bool
+	closedClaim      IssueClaim
+	// closingClaims: the PR states what it delivers (`Fixes #N`); a
+	// bare-reference PR never reads as "nothing left to deliver".
+	closingClaims bool
+	// allNotPlanned: every candidate issue was closed as not planned
+	// (wontfix) — the one no-closer case where nothing is left to deliver
+	// for certain; a "completed" close whose PR did not resolve may be a
+	// transient lookup failure.
+	allNotPlanned bool
+}
+
+func (c *Client) detectSupersessionDetail(ctx context.Context, prRepo string, pr *gh.PullRequest, identity HiveIdentity, now time.Time) (supersessionDetail, error) {
+	var det supersessionDetail
 	claims := supersessionCandidateClaims(claimsFromPR(pr, prRepo, identity, now))
 	if len(claims) == 0 {
-		return IssueClaim{}, supersessionCloser{}, false, nil
+		return det, nil
 	}
+	det.allNotPlanned = true
 	for _, claim := range claims {
 		issueOwner, issueRepoName := c.splitRepo(claim.Repo)
 		issue, _, err := c.client.Issues.Get(ctx, issueOwner, issueRepoName, claim.Issue)
 		if err != nil {
-			return IssueClaim{}, supersessionCloser{}, false, fmt.Errorf("checking claimed issue %s#%d for PR %s#%d: %w", claim.Repo, claim.Issue, prRepo, pr.GetNumber(), err)
+			return supersessionDetail{}, fmt.Errorf("checking claimed issue %s#%d for PR %s#%d: %w", claim.Repo, claim.Issue, prRepo, pr.GetNumber(), err)
 		}
 		if !strings.EqualFold(issue.GetState(), "closed") {
 			// An issue this PR claims to close is still open, so the PR is
@@ -322,27 +350,36 @@ func (c *Client) detectSupersession(ctx context.Context, prRepo string, pr *gh.P
 			// hivecommons/hive#12349 this escalated to needs-human as "also
 			// claims another issue that is still open", which flagged #12322
 			// (Fixes open #12117, Part of closed #12080) as superseded.
-			return IssueClaim{}, supersessionCloser{}, false, nil
+			return supersessionDetail{}, nil
+		}
+		if det.closedClaim.Issue == 0 {
+			det.closedClaim = claim
+		}
+		if !strings.EqualFold(issue.GetStateReason(), issueStateReasonNotPlanned) {
+			det.allNotPlanned = false
 		}
 		resolved, ok, err := c.resolveIssueClosingPR(ctx, claim.Repo, issueOwner, issueRepoName, claim.Issue, pr.GetNumber())
 		if err != nil {
-			return IssueClaim{}, supersessionCloser{}, false, err
+			return supersessionDetail{}, err
 		}
-		if ok && candidate.Issue == 0 {
-			candidate = claim
-			closer = resolved
+		if ok && det.candidate.Issue == 0 {
+			det.candidate = claim
+			det.closer = resolved
 		}
 	}
-	if candidate.Issue == 0 {
-		return IssueClaim{}, supersessionCloser{}, false, nil
+	det.allClosingClosed = true
+	det.closingClaims = claims[0].Closing
+	if det.candidate.Issue == 0 {
+		return det, nil
 	}
-	if supersessionResolvedInBody(pr.GetBody(), candidate.Issue, closer.Number) {
+	if supersessionResolvedInBody(pr.GetBody(), det.candidate.Issue, det.closer.Number) {
 		// An earlier pass already turned this claim into a reference; the
 		// issue stays closed, so without this check the rewrite would read
 		// as a fresh supersession every tick.
-		return IssueClaim{}, supersessionCloser{}, false, nil
+		return supersessionDetail{closedClaim: det.closedClaim, allClosingClosed: true, closingClaims: det.closingClaims, allNotPlanned: det.allNotPlanned}, nil
 	}
-	return candidate, closer, true, nil
+	det.detected = true
+	return det, nil
 }
 
 // supersessionCandidateClaims picks the claims whose closure can supersede
@@ -517,9 +554,12 @@ func renderSupersessionComment(event SupersessionSweepEvent, closer supersession
 	fmt.Fprintln(&b, "Supersession sweep found that this PR's claimed issue is already closed by another merged PR.")
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "- Claimed issue: %s#%d\n", event.IssueRepo, event.Issue)
-	if closer.URL != "" {
+	switch {
+	case closer.Number <= 0:
+		fmt.Fprintln(&b, "- Closing PR: none (the issue was closed without a merged PR)")
+	case closer.URL != "":
 		fmt.Fprintf(&b, "- Closing PR: [#%d](%s)\n", closer.Number, closer.URL)
-	} else {
+	default:
 		fmt.Fprintf(&b, "- Closing PR: %s#%d\n", closer.Repo, closer.Number)
 	}
 	fmt.Fprintln(&b)

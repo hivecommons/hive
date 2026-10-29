@@ -35,19 +35,32 @@ type repoItemDecisionMock struct {
 	// prNoCI shape the head's combined status when the state alone does not
 	// settle CI (e.g. "blocked").
 	prMergeState string
+	updates      int
 	prRedCI      bool
 	prNoCI       bool
 	// priorComments are the comment bodies GET /comments lists (a prior
 	// delegated decision makes a repeat click a no-op).
 	priorComments []string
-	// supersederState / supersederMerged shape GET pulls/90, the hive copy
-	// an adoption marker on #8 may name (hivecommons/hive#15052); "" is 404.
-	supersederState  string
-	supersederMerged bool
 	// merges records PUT /pulls/8/merge bodies; reviews the POST /reviews
 	// bodies (merge-now / queue-merge, hivecommons/hive#15078).
 	merges  []map[string]any
 	reviews []map[string]any
+	// supersederState / supersederMerged shape GET pulls/90, the hive copy
+	// an adoption marker on #8 may name (hivecommons/hive#15052); "" is 404.
+	supersederState  string
+	supersederMerged bool
+	// timeline is what GET /issues/N/timeline answers (nil = empty): the
+	// re-park read of hivecommons/hive#15021.
+	timeline []map[string]any
+	// commitBy maps a head SHA to the login GET /commits/{sha} reports as
+	// its committer; an unlisted SHA reads as a person's push.
+	commitBy map[string]string
+	// prBody is PR #8's body; fixedIssueClosedBy > 0 makes GET /issues/42
+	// a closed issue whose closedByPullRequestsReferences names that merged
+	// PR (GET /pulls/<n> answers merged with a merge_commit_sha): the
+	// already-fixed rung of hivecommons/hive#15289.
+	prBody             string
+	fixedIssueClosedBy int
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -76,6 +89,20 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				n = 9
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": []any{}, "pull_request": map[string]any{"url": "x"}, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/issues/42"):
+			state := "open"
+			if m.fixedIssueClosedBy > 0 {
+				state = "closed"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 42, "state": state, "labels": []any{}, "user": map[string]any{"login": "someone", "type": "User"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/graphql"):
+			if m.fixedIssueClosedBy == 0 {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": []map[string]any{{"number": m.fixedIssueClosedBy, "url": "https://example.test/pr/" + strconv.Itoa(m.fixedIssueClosedBy), "merged": true, "mergedAt": "2026-10-28T11:00:00Z"}}}}}}})
+		case r.Method == http.MethodGet && m.fixedIssueClosedBy > 0 && strings.HasSuffix(path, "/pulls/"+strconv.Itoa(m.fixedIssueClosedBy)):
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": m.fixedIssueClosedBy, "state": "closed", "merged": true, "merged_at": "2026-10-28T11:00:00Z", "merge_commit_sha": "25de3ba24fa0c0ffee0000000000000000000000", "user": map[string]any{"login": "hive[bot]", "type": "Bot"}, "head": map[string]any{"sha": "cafecafecafecafecafecafecafecafecafecafe"}, "base": map[string]any{"ref": "main"}})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/90"):
 			if m.supersederState == "" {
 				http.NotFound(w, r)
@@ -101,7 +128,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			for _, label := range m.prLabels {
 				prLabels = append(prLabels, map[string]string{"name": label})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": prLabels, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}, "base": map[string]any{"ref": "main"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": m.prBody, "labels": prLabels, "user": author, "mergeable": mergeState != "dirty", "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}, "base": map[string]any{"ref": "main"}})
+		case r.Method == http.MethodPut && strings.HasSuffix(path, "/pulls/8/update-branch"):
+			m.updates++
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, `{"message":"Updating pull request branch."}`)
 		case r.Method == http.MethodPut && strings.HasSuffix(path, "/pulls/8/merge"):
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -125,8 +156,23 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			}
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/commits/feedfacefeedfacefeedfacefeedfacefeedface/check-runs"):
 			_, _ = io.WriteString(w, `{"total_count":0,"check_runs":[]}`)
+		case r.Method == http.MethodGet && strings.Contains(path, "/commits/") && !strings.HasSuffix(path, "/status") && !strings.HasSuffix(path, "/check-runs"):
+			sha := path[strings.LastIndex(path, "/")+1:]
+			login, typ := "someone", "User"
+			if by, ok := m.commitBy[sha]; ok {
+				login = by
+				if strings.HasSuffix(by, "[bot]") {
+					typ = "Bot"
+				}
+			}
+			who := map[string]any{"login": login, "type": typ}
+			_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": who, "committer": who, "commit": map[string]any{"author": map[string]any{"name": login, "email": login + "@example.com"}, "committer": map[string]any{"name": login, "email": login + "@example.com"}}})
 		case r.Method == http.MethodGet && strings.Contains(path, "/timeline"):
-			_, _ = io.WriteString(w, `[]`)
+			if m.timeline == nil {
+				_, _ = io.WriteString(w, `[]`)
+			} else {
+				_ = json.NewEncoder(w).Encode(m.timeline)
+			}
 		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/pulls/8/commits") || strings.HasSuffix(path, "/pulls/8/reviews")):
 			// No author activity: the contributor reads as offline.
 			_, _ = io.WriteString(w, `[]`)
@@ -371,7 +417,7 @@ func TestRepoItemDecisionApprovePRReleasesThePark(t *testing.T) {
 	if !ok || !req.IsApproval() || req.Actor != "writer" {
 		t.Fatalf("approval must stand against the head: %+v ok=%v", req, ok)
 	}
-	if strings.Join(mock.removed, ",") != "needs-human,sentinel-alert" {
+	if strings.Join(mock.removed, ",") != "needs-human,085-needs-decision,sentinel-alert" {
 		t.Fatalf("removed = %v", mock.removed)
 	}
 	if len(mock.comments) != 2 || len(mock.added)+len(mock.edits) != 0 {

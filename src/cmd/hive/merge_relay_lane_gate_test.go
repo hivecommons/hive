@@ -103,6 +103,24 @@ func TestClassifyMergeEligibility_ParkedRedPRStaysFailing(t *testing.T) {
 	}
 }
 
+// A parked CONFLICTING PR is still its fixer's to rebase: the conflict
+// classification sits before the park (hivecommons/hive#14822 sat 14h at
+// 085 behind v5 with no lane owning the rebase).
+func TestClassifyMergeEligibility_ParkedConflictingPRStaysConflict(t *testing.T) {
+	pr := github.PullRequest{
+		Number: 14822, Repo: "hive", Author: "thatguywob", CIStatus: "success",
+		Mergeable: github.MergeableNo, MergeableState: "dirty",
+		Labels: []string{github.PRNeedsDecisionStageLabel, "needs-rebase"},
+	}
+	bucket, verdict, _ := classifyMergeEligibility(pr, false, "hivecommons/hive", mergeGates{})
+	if bucket != mergeBucketConflict {
+		t.Fatalf("bucket = %d, want conflict (verdict %+v)", bucket, verdict)
+	}
+	if verdict.State != github.MergeVerdictBlocked {
+		t.Fatalf("state = %q, want blocked", verdict.State)
+	}
+}
+
 func TestNeedsDecisionParkLabel(t *testing.T) {
 	if got := needsDecisionParkLabel([]string{"stage/060-reviewed", " Stage/085-Needs-Decision "}); got != "stage/085-needs-decision" {
 		t.Fatalf("got %q", got)

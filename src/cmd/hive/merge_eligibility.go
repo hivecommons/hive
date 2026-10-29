@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -602,6 +603,15 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	if held {
 		return mergeBucketSkip, blockedOrOutstanding("label:hold"), ""
 	}
+	// The conflict classification sits BEFORE the needs-decision park for
+	// the same reason the red one sits before the hold (hivecommons/hive
+	// #14822 sat 14h at stage/085 behind v5 with nothing rebasing it): a
+	// parked CONFLICTING PR is still its fixer's to rebase, so the person
+	// deciding on it decides on a branch that can merge. The park still
+	// keeps it out of merge-eligible — the conflict bucket never merges.
+	if conflictMergeState(pr) {
+		return mergeBucketConflict, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr, "")}, ""
+	}
 	// A PR parked on a person's decision (stage/085-needs-decision, or the
 	// issue-side stage/045 spelling a hook may have left on it) is a
 	// human's to release, so it is never merge-eligible — the relay must
@@ -609,10 +619,6 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	// classification: a parked RED PR is still its author's to repair.
 	if parked := needsDecisionParkLabel(pr.Labels); parked != "" {
 		return mergeBucketSkip, blockedOrOutstanding("label:" + parked + " — parked on a human decision"), ""
-	}
-
-	if conflictMergeState(pr) {
-		return mergeBucketConflict, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr, "")}, ""
 	}
 	if sentinelMergeBlock {
 		return mergeBucketSkip, blockedOrOutstanding(blockLabelSentinel), ""
@@ -815,6 +821,37 @@ func hiveAuthoredPR(pr github.PullRequest) bool {
 	return strings.HasPrefix(author, "app/")
 }
 
+// rebaseAttempts is the conflict loop-guard ledger; tests swap it.
+var rebaseAttempts = rebasemerge.SharedAttempts
+
+// mergeTrainRebaseRequester is the RequestedBy the merge train writes on a
+// rebase episode it opens for a member it could not update-branch
+// (hivecommons/hive#15117 → #15104).
+const mergeTrainRebaseRequester = "merge-train"
+
+// trustedAuthorRebasePR: a PR by a trusted author (auto_merge.trusted_authors
+// would merge it unattended) whose head the hive can push to. Its rebase is
+// the hive's: the trusted-author lane never rebases, and the author is a
+// person who opened it through the hive and expects the hive to carry it.
+func trustedAuthorRebasePR(cfg *config.Config, fullRepo string, pr github.PullRequest) bool {
+	if cfg == nil || github.ReachableAction(pr) != github.ReachableActionPush {
+		return false
+	}
+	policy := trustedAuthorPolicyFunc(cfg)()
+	if !policy.Enabled {
+		return false
+	}
+	if len(policy.Repos) > 0 && !policy.Repos[strings.ToLower(strings.TrimSpace(fullRepo))] {
+		return false
+	}
+	for _, l := range pr.Labels {
+		if policy.ExcludeLabels[strings.ToLower(strings.TrimSpace(l))] {
+			return false
+		}
+	}
+	return trustedAuthorFunc(cfg)(pr.Author, policy.RequireRole).Allowed
+}
+
 func conflictMergeState(pr github.PullRequest) bool {
 	if hasLabel(pr.Labels, "needs-rebase") {
 		return true
@@ -1001,6 +1038,16 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// leave the label alone — a maintainer clears the alert before the
 		// merge. Only adopted rows reach the buckets with it set.
 		SentinelAlert bool `json:"sentinel_alert,omitempty"`
+		// RebaseAttempt / RebaseAttemptsMax are the conflict loop guard
+		// (hivecommons/hive#15103): attempt n of max for this conflict
+		// episode, where each fixer head still dirty is the next attempt.
+		// BaseRef names the branch to rebase onto. TrustedAuthor marks a
+		// trusted author's PR (not hive-authored, not adopted) the hive
+		// rebases on the author's behalf.
+		RebaseAttempt     int    `json:"rebase_attempt,omitempty"`
+		RebaseAttemptsMax int    `json:"rebase_attempts_max,omitempty"`
+		BaseRef           string `json:"base_ref,omitempty"`
+		TrustedAuthor     bool   `json:"trusted_author,omitempty"`
 		// DeferredIncident is the open [shared-ci] incident issue this red
 		// PR was already deferred to (github.PullRequest.SharedCIIncident,
 		// hivecommons/hive#10528); only red PRs carry one. It applies to a
@@ -1097,6 +1144,16 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		}
 
 		adopted := adoptedInPlace(fullRepo, pr.Number)
+		// An operator's "Rebase, then merge as maintainer" makes the rebase
+		// the hive's whoever authored the PR: route it like an in-place
+		// adoption so the fixer gets a push instruction (a fork that
+		// allows maintainer edits is push-reachable; the dashboard refuses
+		// to arm one that is not).
+		rebaseMergeArmed := rebasemerge.Shared().Armed(fullRepo, pr.Number)
+		if rebaseMergeArmed && !adopted {
+			adopted = true
+			logger.Info("rebase-then-merge armed; routing PR to fixer", "repo", fullRepo, "number", pr.Number, "mergeable_state", pr.MergeableState)
+		}
 		prGates.adopted = adopted
 		bucket, verdict, intentReason := classifyMergeEligibility(pr, held, fullRepo, prGates)
 		if bucket == mergeBucketEligible {
@@ -1140,6 +1197,10 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		if adopted {
 			row.ReachableAction = github.ReachableActionPush
 		}
+		if bucket != mergeBucketConflict {
+			// Not conflicting any more: the rebase episode is over.
+			rebaseAttempts().Clear(fullRepo, pr.Number)
+		}
 		if bucket != mergeBucketFailing && row.Escalated && !holdDriftPRs[key] {
 			row.Mergeable = mergeableJSON(pr.Mergeable)
 			row.CIStatus = pr.CIStatus
@@ -1149,13 +1210,40 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		case mergeBucketSkip:
 			continue
 		case mergeBucketConflict:
-			if !hiveAuthoredPR(pr) && !adopted {
+			// Whose rebase is it? The hive's own PR, an adopted one, or —
+			// hivecommons/hive#15103 — a trusted author's (the operator's
+			// own identity opening PRs through session agents): the
+			// trusted-author lane skips those on label:needs-rebase and
+			// nothing else ever rebased them. Any PR the hive can push to
+			// and would merge unattended is the hive's to keep mergeable.
+			trustedRebase := !hiveAuthoredPR(pr) && !adopted && trustedAuthorRebasePR(cfg, fullRepo, pr)
+			// An operator's approve / merge-now from the dashboard on a
+			// conflicting PR asks for the rebase outright (the episode
+			// carries RequestedBy); that admits any PR the hive can push.
+			requested := false
+			if prior, ok := rebaseAttempts().Get(fullRepo, pr.Number); ok && prior.RequestedBy != "" && github.ReachableAction(pr) == github.ReachableActionPush {
+				requested = !hiveAuthoredPR(pr) && !adopted && !trustedRebase
+			}
+			if !hiveAuthoredPR(pr) && !adopted && !trustedRebase && !requested {
+				continue
+			}
+			// Loop guard: attempt n of MaxRebaseAttempts per conflict
+			// episode; a fixer's pushed head that is still dirty is the
+			// next attempt, and past the cap the hive stops re-kicking.
+			attempt := rebaseAttempts().Observe(fullRepo, pr.Number, pr.HeadSHA, time.Now())
+			row.RebaseAttempt = attempt.Count()
+			row.RebaseAttemptsMax = rebasemerge.MaxRebaseAttempts
+			row.BaseRef = pr.BaseRef
+			row.TrustedAuthor = trustedRebase
+			if attempt.Exhausted() {
+				logger.Warn("rebase attempts exhausted; leaving the conflict to a person", "repo", fullRepo, "number", pr.Number, "head", pr.HeadSHA, "attempts", attempt.Count()-1, "max", rebasemerge.MaxRebaseAttempts, "mergeable_state", pr.MergeableState)
 				continue
 			}
 			agent := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)])
-			if adopted {
-				// A contributor's branch name is not a lane; the
-				// fallback fixer owns adopted PRs.
+			if adopted || trustedRebase || requested {
+				// A contributor's (or the owner's) branch name is not a
+				// lane; the fallback fixer owns adopted, trusted-author
+				// and operator-requested rebases.
 				agent = ""
 			}
 			reroutedFrom := ""
@@ -1165,8 +1253,11 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			row.Conflict = true
 			row.ReroutedFrom = reroutedFrom
 			row.DeferredIncident = pr.SharedCIIncident
-			if adopted {
-				logger.Info("adopted PR routed to fixer", "repo", fullRepo, "number", pr.Number, "work", "rebase", "mergeable_state", pr.MergeableState, "fixer", agent, "sentinel_alert", row.SentinelAlert)
+			if trustedRebase || requested {
+				row.ReachableAction = github.ReachableActionPush
+			}
+			if adopted || trustedRebase || requested {
+				logger.Info("PR routed to fixer for rebase", "repo", fullRepo, "number", pr.Number, "work", "rebase", "adopted", adopted, "trusted_author", trustedRebase, "requested_by", attempt.RequestedBy, "attempt", attempt.Count(), "max", rebasemerge.MaxRebaseAttempts, "mergeable_state", pr.MergeableState, "fixer", agent, "sentinel_alert", row.SentinelAlert)
 			}
 			failing = append(failing, row)
 			continue

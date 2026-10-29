@@ -436,6 +436,13 @@ type AgentProcess struct {
 	// kick_logs.go). Set after every kick delivery; cleared when the
 	// scrollback is archived (next kick, restart, shutdown). Guarded by m.mu.
 	kickLogPending bool
+	// kickLogArchivedKick / kickLogArchivedPath identify the archive most
+	// recently written for this agent: the LastKick it covers and the file it
+	// went to. archiveKickLogBytesLocked uses them to supersede a turn-end
+	// snapshot with the final rotation-point snapshot of the same kick
+	// instead of leaving two files for one run. Guarded by m.mu.
+	kickLogArchivedKick time.Time
+	kickLogArchivedPath string
 	// TurnLoss accumulates what teardowns have discarded from this agent's
 	// in-flight turns (#4002 open question 3): RestartCount says how many
 	// restarts happened, this says what they cost. Guarded by m.mu, persisted

@@ -68,8 +68,24 @@ func deriveIssue(f Facts) Decision {
 		// label as found and the next sweep re-judges it from the restarted
 		// clock.
 		Stalled: f.Issue.Stalled && stage != stagelabels.None,
-		Clear:   issueTriageClear(f, stage),
+		Clear:   append(issueTriageClear(f, stage), issueParkClear(f, stage)...),
 	}
+}
+
+// issueParkClear reconciles `needs-human` against `approved-direction`,
+// which cannot both stand (hivecommons/hive#15099). The un-park that
+// applies the ack removes `needs-human` in the same write, so a
+// `needs-human` found next to the ack was applied after it — the later
+// signal (DecisionLiftsNeedsHuman's own rule), whether an agent parked the
+// issue on a blocker or a person asked again. The ack is the stale one:
+// the issue stays 045 and the writer clears `approved-direction`.
+func issueParkClear(f Facts, stage stagelabels.Stage) []string {
+	is := f.Issue
+	label := strings.TrimSpace(is.ApprovedDirectionLabel)
+	if !f.Park.NeedsHuman || label == "" || stage != stagelabels.IssueNeedsDecision {
+		return nil
+	}
+	return []string{label}
 }
 
 // issueTriageClear names the reporter-trust awaiting label the issue still
@@ -111,6 +127,18 @@ func issueStage(f Facts) (stage stagelabels.Stage, covered bool, reason string) 
 		return stagelabels.None, false, is.BlockedReason
 	}
 	if f.Park.NeedsHuman {
+		// A structured blocker names what would actually unblock the issue
+		// (a permission the App lacks, a CLA): it is parked on a person for
+		// that, and `approved-direction` next to it is the contradiction
+		// hivecommons/hive#14976 wore — the direction did not take, so the
+		// reason says why and the writer clears the ack (#15099).
+		if is.Blocker != "" {
+			short := strings.TrimSpace(is.BlockerShort)
+			if short == "" {
+				short = is.Blocker
+			}
+			return stagelabels.IssueNeedsDecision, false, "blocked: " + short
+		}
 		return stagelabels.IssueNeedsDecision, false, "held for a person: " + is.NeedsHumanLabel
 	}
 	// The prior-art gate's park is its own stage, 017, not 045: nothing is

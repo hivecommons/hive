@@ -12,6 +12,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Close-first supersession (hivecommons/hive#15135).
@@ -33,6 +34,13 @@ import (
 // stagelabels.LaneReasonAdoptionCopyFailed. One reopen per original per
 // stagelabels.AdoptionReopenWindow: a copy that keeps failing after that
 // leaves the original closed with a note rather than flipping it.
+//
+// Closing, labelling and reopening a contributor's original are unsolicited
+// writes on a PR the hive did not author, so every one asks the write-back
+// gate (writeback.KindContributorAdopt) first. A refused close-first leaves
+// the original open on the keep-open path; a refused reopen leaves the
+// record due its next poll, so the reopen lands once the gate allows it
+// (e.g. when an operator lifts a repo pause).
 
 // AdoptionCopyFailedMarker opens the note posted when the hive reopens (or,
 // past the reopen guard, declines to reopen) a close-first original.
@@ -110,18 +118,23 @@ func AdoptionCopyFailedHeldComment(copy int, head, why string, redHeads int, reo
 // A close GitHub refuses leaves the original open with the note (as the
 // merge-time close does); any other close failure leaves the record on
 // the keep-open path, where settleSuperseder closes it when the copy merges.
+// A write-back gate refusal writes nothing and leaves it on that path too.
 func (c *Engine) closeSupersededOriginalFirst(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, superseding int, reason, fence string, now time.Time) (int, error) {
 	owner, repo, number := obs.Owner, obs.Repo, obs.Number
 	logArgs := []any{"repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "reason", reason}
 	body := AdoptionCloseFirstComment(obs, policy.HiveID, superseding, reason) + adoptionFenceNote(fence)
-	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+	if d := c.writebackAllowed(obs.Display, writebackItemForObservation(obs), writeback.KindContributorAdopt, body); !d.Allowed {
+		c.info("stage labels: close-first adoption suppressed by the write-back gate; original left open on the keep-open path", append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)...)
+		return 0, nil
+	}
+	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil { // writeback:gated
 		c.warn("stage labels: close-first adoption note failed; original left open on the keep-open path", append(logArgs, "error", err)...)
 		return 0, err
 	}
-	if _, _, err := c.gh.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{hgithub.SupersededLabel}); err != nil {
+	if _, _, err := c.gh.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{hgithub.SupersededLabel}); err != nil { // writeback:gated
 		c.warn("stage labels: close-first adoption label failed", append(logArgs, "label", hgithub.SupersededLabel, "error", err)...)
 	}
-	if _, _, err := c.gh.PullRequests.Edit(ctx, owner, repo, number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil {
+	if _, _, err := c.gh.PullRequests.Edit(ctx, owner, repo, number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil { // writeback:gated
 		if isGitHubStatus(err, http.StatusForbidden) || isGitHubStatus(err, http.StatusNotFound) {
 			store.MarkSupersededClosedFirst(key, superseding, true, now)
 			c.warn("stage labels: cannot close superseded original (permission); left open with the note", append(logArgs, "error", err)...)
@@ -242,22 +255,42 @@ func (c *Engine) settleCloseFirstCopy(ctx context.Context, store *stagelabels.St
 // reopenSupersededOriginal gives a close-first original back to a person:
 // reopen, one note, `hive/superseded` off, parked at 085 with
 // LaneReasonAdoptionCopyFailed. Within stagelabels.AdoptionReopenWindow of
-// the last reopen the original stays closed and the note says so.
+// the last reopen the original stays closed and the note says so. A
+// write-back gate refusal writes nothing and settles nothing: the record
+// stays due its next poll. A pause is logged at info (it lifts); any other
+// refusal means the policy moved under a PR the hive closed, and is warned.
 func (c *Engine) reopenSupersededOriginal(ctx context.Context, store *stagelabels.Store, cand closeFirstRecord, why string, redHeads int, now time.Time) (int, error) {
 	rec, copy := cand.rec, cand.rec.AdoptedBy
 	owner, repo, number := cand.owner, cand.repo, cand.number
 	logArgs := []any{"repo", owner + "/" + repo, "pr", number, "head", rec.AdoptedHead, "superseded_by", copy, "why", why, "red_heads", redHeads}
-	if rec.AdoptionReopenedWithin(now, stagelabels.AdoptionReopenWindow) {
+	held := rec.AdoptionReopenedWithin(now, stagelabels.AdoptionReopenWindow)
+	preview := AdoptionCopyFailedComment(number, copy, rec.AdoptedHead, why, redHeads)
+	if held {
+		preview = AdoptionCopyFailedHeldComment(copy, rec.AdoptedHead, why, redHeads, rec.AdoptReopenedAt, now)
+	}
+	if d := c.writebackAllowed(owner+"/"+repo, c.closeFirstOriginalItem(ctx, cand), writeback.KindContributorAdopt, preview); !d.Allowed {
+		gateArgs := append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)
+		if d.Reason == writeback.ReasonRepoPaused {
+			c.info("stage labels: close-first original reopen suppressed by the write-back gate; retried at the next poll", gateArgs...)
+			return 0, nil
+		}
+		// Not a pause: the contributor_adopt policy changed after the hive
+		// closed this PR, so the reopen that would undo that close no
+		// longer clears the gate. The PR stays closed until the policy
+		// allows it again or a person reopens it; say so loudly.
+		c.warn("stage labels: close-first original reopen refused by the write-back gate; hive-closed PR stays closed until the contributor_adopt policy allows the reopen or a person reopens it", gateArgs...)
+		return 0, nil
+	}
+	if held {
 		store.MarkCloseFirstSettled(cand.key)
 		c.warn("stage labels: close-first copy failed again within the reopen window; original stays closed", append(logArgs, "reopened_at", rec.AdoptReopenedAt)...)
-		body := AdoptionCopyFailedHeldComment(copy, rec.AdoptedHead, why, redHeads, rec.AdoptReopenedAt, now)
-		if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(preview)}); err != nil { // writeback:gated
 			c.warn("stage labels: close-first held note failed", append(logArgs, "error", err)...)
 			return 0, err
 		}
 		return 1, nil
 	}
-	if _, _, err := c.gh.PullRequests.Edit(ctx, owner, repo, number, &gh.PullRequest{State: gh.Ptr("open")}); err != nil {
+	if _, _, err := c.gh.PullRequests.Edit(ctx, owner, repo, number, &gh.PullRequest{State: gh.Ptr("open")}); err != nil { // writeback:gated
 		c.warn("stage labels: reopening superseded original failed", append(logArgs, "error", err)...)
 		return 0, err
 	}
@@ -268,18 +301,39 @@ func (c *Engine) reopenSupersededOriginal(ctx context.Context, store *stagelabel
 	c.warn("stage labels: hive's copy failed; original reopened for a person", logArgs...)
 	comments := 0
 	var firstErr error
-	body := AdoptionCopyFailedComment(number, copy, rec.AdoptedHead, why, redHeads)
-	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(preview)}); err != nil { // writeback:gated
 		c.warn("stage labels: reopen note failed", append(logArgs, "error", err)...)
 		firstErr = err
 	} else {
 		comments++
 	}
-	if _, err := c.gh.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(hgithub.SupersededLabel)); err != nil && !isGitHubStatus(err, http.StatusNotFound) {
+	if _, err := c.gh.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(hgithub.SupersededLabel)); err != nil && !isGitHubStatus(err, http.StatusNotFound) { // writeback:gated
 		c.warn("stage labels: removing superseded label failed", append(logArgs, "label", hgithub.SupersededLabel, "error", err)...)
 		if firstErr == nil {
 			firstErr = err
 		}
 	}
 	return comments, firstErr
+}
+
+// closeFirstOriginalItem is the gate's view of a closed original. No lane
+// lists a closed PR, so with a gate installed it is read once here (the
+// labels decide the opt-in); without one, or when the read fails, the bare
+// number stands in, which the gate treats as carrying no opt-in label.
+func (c *Engine) closeFirstOriginalItem(ctx context.Context, cand closeFirstRecord) writeback.Item {
+	item := writeback.Item{Number: cand.number, IsPR: true}
+	if c.writebackGate() == nil {
+		return item
+	}
+	pr, _, err := c.gh.PullRequests.Get(ctx, cand.owner, cand.repo, cand.number)
+	if err != nil || pr == nil {
+		c.warn("stage labels: close-first original lookup for the write-back gate failed", "repo", cand.owner+"/"+cand.repo, "pr", cand.number, "error", err)
+		return item
+	}
+	item.Author = pr.GetUser().GetLogin()
+	for _, l := range pr.Labels {
+		item.Labels = append(item.Labels, l.GetName())
+	}
+	item.CreatedAt = pr.GetCreatedAt().Time
+	return item
 }

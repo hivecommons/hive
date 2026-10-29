@@ -249,6 +249,11 @@ const (
 	// adoption.
 	LaneReasonReviewerQuestion = "reviewer-verdict:requires_human"
 	laneReasonCheckFailing     = "check-failing:"
+	// LaneReasonSupersededByMerge is the ledger reason when the hive closes
+	// its own PR because a merged PR superseded it (the issue it was for is
+	// closed, or the merged PR declares it) instead of parking it at 085 on
+	// a reviewer's requires_human (hivecommons/hive#15208).
+	LaneReasonSupersededByMerge = "superseded-by-merge"
 	// LaneReasonAdoptionStalledPrefix opens the 085 reason for an adopted
 	// PR (074) whose head sat past the stage dwell with nothing the hive
 	// could push; the suffix is the lane reason it was stuck on

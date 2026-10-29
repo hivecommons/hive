@@ -34,6 +34,7 @@ type trustedSweepFixture struct {
 	comments        int
 	updates         int
 	updateStatus    int
+	labels          []string
 }
 
 func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server {
@@ -61,7 +62,7 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 				"user":            map[string]string{"login": author},
 				"head":            map[string]any{"sha": sha, "repo": map[string]string{"full_name": headRepo}},
 				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
-				"labels":          []map[string]string{},
+				"labels":          prLabelObjects(fx.labels),
 			}
 		}
 		switch {
@@ -191,6 +192,20 @@ func TestTrySweepTrustedAuthorPRFailClosedBranches(t *testing.T) {
 			fx:          trustedSweepFixture{mergeableState: "behind"},
 			wantReason:  "check-pending",
 			wantUpdates: 1,
+		},
+		{
+			// hivecommons/hive#15103: prow's needs-rebase label lags; when
+			// GitHub says "behind" the label must not stop the UpdateBranch
+			// that clears it.
+			name:        "stale needs-rebase label with behind still updates branch",
+			fx:          trustedSweepFixture{mergeableState: "behind", labels: []string{"needs-rebase"}},
+			wantReason:  "check-pending",
+			wantUpdates: 1,
+		},
+		{
+			name:       "needs-rebase label with dirty is left to the fixer",
+			fx:         trustedSweepFixture{mergeableState: "dirty", labels: []string{"needs-rebase"}},
+			wantReason: "label:needs-rebase",
 		},
 		{
 			name:        "required checks expected updates branch",
@@ -506,4 +521,12 @@ func TestTrustedAuthorSweepRunsReviewGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func prLabelObjects(names []string) []map[string]string {
+	out := make([]map[string]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, map[string]string{"name": n})
+	}
+	return out
 }

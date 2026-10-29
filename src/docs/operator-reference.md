@@ -431,7 +431,7 @@ advanced into the merge path.
 | `auto_merge.human_merge_paths` | unset | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge, e.g. `Danathar/goodreads-mcp: [".claude/settings.json", ".claude/hooks/**"]`. Every App merge path honors it: the automerge sweep lanes (App self-merge, trusted-author, label-queued) and the agent merge-request relay refuse a PR that touches a listed path, add `hold`, and post one `<!-- hive-human-merge-path -->` comment naming the path(s); a person must merge it. If the changed-file list cannot be fetched completely for a configured repo, the merge is withheld (#11038, #11039). |
 | `auto_merge.require_current_base` | unset (off) | Repo list (`owner/repo`) whose App self-merge, trusted-author and contributor lanes only merge a head that contains the current base tip. A green head tested against an older base is updated with GitHub update-branch (a merge commit; no author commit is rewritten) and merges once CI is green on the new head, so a semantic conflict with work merged since turns that PR red instead of breaking the base (#13634). Costs one compare call per merge candidate. |
 | `auto_merge.merge_forward_trusted_human` | unset (off) | Repo list (`owner/repo`) where a `role/trusted` + `author/human` PR on a same-repo branch that GitHub reports as conflicting (`dirty`) gets the base merged into its head as one App-authored, signed-off merge commit via the GitHub merges API (no human commit is rewritten), then merges once CI is green on the new head. A real conflict pushes nothing and posts one `<!-- hive:merge-forward-conflict head=… -->` note naming the files both sides changed. Fork heads are never written. Attempted once per head (#13636). |
-| `auto_merge.merge_train.enabled` | `true` | Conflict-aware merge train in every automerge lane (hive, trusted-author, contributor) ([#15117](https://github.com/hivecommons/hive/issues/15117)). Each sweep groups the open approved / mergeable-pending PRs of one repo+base by overlapping changed files (`GET /pulls/{n}/files`, cached per head SHA) and lets ONE front per group merge — the clean-mergeable PR approved earliest — while the others wait at stage/080 with lane reason `merge-train:queued-behind#<front>:<pos>/<size>:…` (tracker pill "In merge train · 3rd of 4", never a human stage, never `needs-rebase` as a human flag). The moment the front merges, every sibling whose branch is merely `behind` gets `PUT /pulls/{n}/update-branch`; a `dirty` one is handed to the rebase-resolve hook (the #15104 task; until it lands the dirty PR falls through to the plain `conflicting` path, logged once). A head the lane last saw blocked on its own (red required check, terminal hold, permanent merge refusal) never fronts, and a group whose best member is blocked imposes no ordering (fail-open) — nobody waits behind a PR that is not moving. One INFO line `merge train` per order change, not per cycle. `false` restores independent per-PR evaluation. |
+| `auto_merge.merge_train.enabled` | `true` | Conflict-aware merge train in every automerge lane (hive, trusted-author, contributor) ([#15117](https://github.com/hivecommons/hive/issues/15117)). Each sweep groups the open approved / mergeable-pending PRs of one repo+base by overlapping changed files (`GET /pulls/{n}/files`, cached per head SHA) and lets ONE front per group merge — the clean-mergeable PR approved earliest — while the others wait at stage/080 with lane reason `merge-train:queued-behind#<front>:<pos>/<size>:…` (tracker pill "In merge train · 3rd of 4", never a human stage, never `needs-rebase` as a human flag). The moment the front merges, every sibling whose branch is merely `behind` gets `PUT /pulls/{n}/update-branch`; a `dirty` one is handed to the fixer's rebase-resolve episode (`requested_by: merge-train`, the shared two-attempt guard of [#15104](https://github.com/hivecommons/hive/pull/15104); the fixer router still requires a head the hive can push to, so a fork without maintainer edits stays on the plain `conflicting` path for a person). A head the lane last saw blocked on its own (red required check, terminal hold, permanent merge refusal) never fronts, and a group whose best member is blocked imposes no ordering (fail-open) — nobody waits behind a PR that is not moving. One INFO line `merge train` per order change, not per cycle. `false` restores independent per-PR evaluation. |
 | `auto_merge.merge_train.max_rebase_attempts` | `2` | Loop guard: how many rebase-resolve requests the train makes for one PR behind one front. Past it the PR moves to stage/085 with the pill "Needs human decision · rebase failed twice" and the decision option "Rebase, then merge as maintainer". |
 | `auto_merge.squash_only` | unset (no repo) | Repo list (`owner/repo`) whose branch policy forbids merge commits. Elsewhere, a `role/trusted` PR whose head mixes the contributor's commits with App-linked, App-signed ones (the hive's own in-place adoption fixes), every commit self-signed, is labelled `merge-method/merge` and merged with a merge commit instead of parking at `stage/085` as `adoption-stalled:hive-signoff-attribution`; a listed repo keeps squash-only policy and re-homes an in-place adoption to an App-authored superseder instead (#13975). |
 | `auto_merge.credit_issue_authors` | `true` | Append `Co-authored-by: <login> <id+login@users.noreply.github.com>` for the human authors of the issues a PR closes (`Fixes|Closes|Resolves #N`) to the squash (or merge) commit message on every hive-performed merge, so reporters land on the contributor graph when an external clanker fixed their issue. Bots, the PR author and logins already credited on the branch are skipped; the logins are recorded as `issue_authors=` on the merge audit entry and in review evidence. One cached `GET /issues/{n}` per newly referenced issue. `false` leaves GitHub's default squash message untouched (#14581). |
@@ -472,6 +472,7 @@ verified owner or an authorized user with the `merger` role:
 | Decision | What it does | Audit / ledger |
 |---|---|---|
 | `merge-now` — *Approve & merge as maintainer* | Comments on the PR that @you merged it from the dashboard, then merges it at once through the hive's GitHub App (`MergePRVia`, audit path `dashboard`). Refused when the PR is merged or closed, or when you are its author. | `repo_item_decision_merge`; `last_operator_action.action: merge-now`; toast *merged*. |
+| `merge-now` on a PR whose `mergeable_state` is `dirty` or `behind` — *Rebase, then merge as maintainer* | Never a GitHub 405. Records your approval first (/lgtm + /approve naming you), arms a rebase-then-merge follow-through (`/data/rebase-merge-followups.json`), kicks the rebase (update-branch on the hive's own PR when only behind; otherwise the fixer lane, which owns a parked PR with an armed follow-through), and answers `202 rebase-queued`. A 2-minute ticker then reads the PR: `mergeable_state: clean` on the rebased head → merges it with your approval attributed; still `dirty` after 2 h, CI red, or no rebase within the deadline → `failed` with the conflicting files and the options *Adopt into fresh branch* / *Close as superseded* (also left as a note on the PR). Refused on a fork whose author has not allowed maintainer edits (`head-not-pushable`). The approval is bound to the head you read: a new head on a contributor's PR counts as the rebase only when GitHub says the hive committed it (the fixer's rebase or update-branch under the App); a head anyone else pushes after your click settles the follow-through as `failed` (`foreign-head`) with nothing merged, a note on the PR, and *Approve the new head & merge* / *Close as superseded* as the ways out. | `repo_item_decision_merge` with `status: rebase-queued`; `last_operator_action.action: merge-now`, outcome `pending` → `applied` / `failed`, `followed[]` steps `approval-recorded`, `rebase-kicked`, `rebased`, `ci-green`, `merged` / `failed`; row `rebase_merge.state`; toast *rebase queued, merge to follow*. |
 | `queue-merge` — *Approve — let hive merge* | Leaves an `APPROVED` review in your name with a note, adds the automerge label, and leaves the merge to the App self-merge sweep, which merges on its next pass once CI is green and the head has soaked. Refused on your own PR. | `repo_item_decision_queue_merge`; `last_operator_action.action: queue-merge`; toast *queued for merge*. |
 
 **Approve is the trust override for that head
@@ -514,7 +515,61 @@ A sentinel alert, your own PR, a writer without the `merger` role on a good
 head, adoption turned off, or any other 090 reason keep the plain-words
 no-effect answer with the two merge buttons.
 
-Neither merge action widens who the lanes trust: to stop a contributor's PRs parking at 090
+
+Two related repairs ride with the rebase-then-merge action
+([#14822](https://github.com/hivecommons/hive/issues/14822)). The fixer
+router now classifies a conflicting (`mergeable_state: dirty`) PR *before*
+skipping rows parked at 085 *Needs human decision*, and a PR with an armed
+follow-through is routed as pushable (like an in-place adoption), so a
+parked PR that falls behind its base is no longer owned by no lane. And on
+each unpark sweep the hive dismisses, with an Info log line
+`dismissed self-inflicted changes_requested: source comment is hive's own /hive decision`,
+any recorded changes-requested whose source comment is the hive's own
+delegated `/hive decision` — the self-inflicted verdict the guard in
+[#15063](https://github.com/hivecommons/hive/pull/15063) now prevents but
+which older records still carried.
+
+**Autonomous rebase-resolve** ([#15103](https://github.com/hivecommons/hive/issues/15103)).
+No merge lane ever rebased a conflicting PR: the self and trusted-author
+lanes stopped at `label:needs-rebase` before reaching the update-branch call,
+and the fixer router only listed hive-authored or adopted PRs as rebase
+work — so a PR the operator opened under their own identity through a
+session agent sat `dirty` with nobody kicked to fix it. Now:
+
+- **`behind` (clean update):** prow's `needs-rebase` label no longer blocks
+  the self or trusted-author lane when GitHub says `mergeable_state: behind`
+  — the lane's update-branch runs and clears the label.
+- **`dirty` (real conflict):** the fixer router lists a trusted author's PR
+  (`auto_merge.trusted_authors` enabled, repo allowed, author at the required
+  role, head pushable, no exclude label) as rebase work alongside the hive's
+  own and adopted PRs. The kick says
+  *rebase-resolve (attempt n/2): `gh pr checkout`, `git rebase origin/<base>`,
+  resolve, re-run build and tests, `git push --force-with-lease` to the PR's
+  OWN branch; do not open a new PR*. Loop guard: `/data/rebase-attempts.json`
+  counts distinct dirty heads per PR — the first dirty head is attempt 1, a
+  fixer push that is still dirty is attempt 2, a third dirty head is
+  exhausted: the router stops listing the PR (Warn log
+  `rebase attempts exhausted; leaving the conflict to a person`) and the row's
+  gate pill reads **Rebase failed · 2/2 — needs a person**. While it runs the
+  pill reads **Rebasing · attempt n/2** with the working cue; the episode
+  clears as soon as the PR is no longer conflicting. The row payload carries
+  `rebase: {attempt, max, exhausted, head, text}`.
+- **Approve on a PR that is behind or conflicting** no longer promises that
+  "the merge gate takes it from here" (the gate skips `conflicting` for
+  good). The approval is recorded, the rebase episode opens in your name
+  (`requested_by`, which admits the PR to the fixer router whoever opened it,
+  as long as the hive can push to it; a hive-authored PR that is merely
+  `behind` gets update-branch on the spot), the toast reads *Approved — #N
+  conflicts with base; hive will rebase it next pass (attempt 1/2)* with a
+  **Rebase, then merge as maintainer** button, the response carries
+  `rebase: {attempt, max, …}`, and the row's *Approving…* cue clears as soon
+  as the decision records.
+- **Rebase, then merge as maintainer** uses the same task: a rebased head that
+  is still dirty goes back to *Rebasing* (step `still-conflicting`, the 2 h
+  rebase clock restarting) while attempts remain, and settles *failed* with
+  the conflicting files once the guard is exhausted.
+
+Neither widens who the lanes trust: to stop a contributor's PRs parking at 090
 give them the `trusted` / `merger` tier under 👥 Contributors
 (`auto_merge.contributor_lane.require_tiers`), add them as a repository
 collaborator, or list them under `dashboard.authorized_users` with the
@@ -718,7 +773,7 @@ the hub reports no presence). `hold`/`do-not-merge` blocks adoption. The
 author's repository role does not: clanker PRs are adoptable on disconnect
 regardless of the owner's repo role
 (`governor.labels.stage.adoption.maintainer_policy`, default `adopt`; owner
-decision on hivecommons/hive#14524 — the PR a contributor's hive opened is the
+decision on hivecommons/hive#14524 — the PR a contributor's clanker opened is the
 hive's to stand in for when that hive disconnects, maintainer or not).
 `ask` holds a maintainer's PR for an owner: the activity monitor row says
 "waiting on @author (maintainer, offline 26h) — adopt?" and offers **Adopt**
@@ -741,7 +796,18 @@ audit entry; with no clanker online the Reroute item is disabled ("no
 clankers online — use Adopt now"). Both are also options in the
 Needs-human popover once the nudge grace has elapsed, and "Let hive decide"
 picks Adopt now then (hivecommons/hive#15038;
-[dashboard-sections.md](dashboard-sections.md#hive-activity-monitor)). When the
+[dashboard-sections.md](dashboard-sections.md#hive-activity-monitor)). While
+the row waits at 071 / 072 its waiting-on pill also says whether the rework
+has been picked up — `· no response`, `· queued` (on the clanker's fix queue,
+N ahead), `· acknowledged` (activity on the PR after the request),
+`· working` (the clanker relay took the `fix-pr` task), `· re-review pending`
+(a new head, routed back to 050 on the next sweep) — from the stage record,
+the PR list and the fix queue the tracker already holds, with no extra
+GitHub calls (hivecommons/hive#15280). Push detection needs the head saved
+by a nudge: a never-nudged 071 row has only a stage-entry time, so a push
+cannot produce `· re-review pending` and may appear as `· acknowledged`
+from PR activity instead. The stage engine still routes the new head to
+050 on its next sweep (hivecommons/hive#15286). When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
 `ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR
@@ -768,7 +834,14 @@ labelled `hive/superseded`, so one issue never shows two active PRs
 hivecommons/hive#15135). If the copy is closed unmerged or its required
 checks are red at two heads, the hive reopens the original, removes
 `hive/superseded`, and parks it at `stage/085` with `adoption-copy-failed`
-("needs a person"); at most one reopen per original per 24h. `close_first:
+("needs a person"); at most one reopen per original per 24h. The note,
+label, close and reopen are unsolicited writes on a contributor's PR, so each
+first asks the write-back gate as kind `contributor_adopt` (L6 + opt-in label
+by default; see [the write-back table](#what-hive-writes-to-github-and-when)):
+refused, the original is not closed and stays open on the keep-open path
+until the copy merges, and a due reopen waits for the next poll (a pause
+lifting lands it; a policy change after the close is warned in the log and
+leaves the PR closed until a person reopens it). `close_first:
 false` keeps the earlier behaviour: the original moves to 074 and closes
 only once the superseder merges. Whether that rework reaches each agent is visible per row
 on Operations → Connected contributor agents: the relay's parallel capacity
@@ -925,7 +998,11 @@ on — passes through one gate, `writeback.Allowed(repo, item, kind)` in
 `pkg/writeback`, before it reaches the GitHub client. The gate never blocks
 hive's own PRs and issues, replies to explicit `/hive …` commands, work the
 operator started from the dashboard, or agent kicks on items already
-labelled for hive. Below the gate the sweeps still *scan*: sentinel findings
+labelled for hive — with one exception: a repo under an operator pause
+([repo-pause.md](repo-pause.md)) refuses **every** kind, own items included,
+with reason `repo-paused`. The pause also silences the advisory digest
+(`advisory digest skipped: repo paused`, once per update interval), which is
+not a gate kind but a write all the same. Below the gate the sweeps still *scan*: sentinel findings
 appear in **Security → Suspicious Activity → Sentinel findings** and
 `/api/sentinel`, hold-gate mergeability notices become dashboard-only, and
 PR stage tracking continues from internal state with no `stage/*` label on
@@ -949,6 +1026,7 @@ that level, the power the write-back exists to govern?
 | PR↔issue linker (`pr_issue_link.go`, `pr_contributor_link.go`, `linked_prs.go`) | PR watcher | "covered by PR" label on the issue, link comments | issues referenced by any PR | `covered_by_pr_label` → L5 + label |
 | Verdict / decision labels (`pr_decision_operator.go`, `human_decision_label.go`, `legacy_decision_labels.go`, `contribute_verdict_settle.go`) | review verdicts, dashboard decisions | `hive:verdict-*`, decision labels | reviewed PRs | `verdict_label` → L3 + label; dashboard-triggered decisions are solicited |
 | Contributor adopt / nudge / bot takeover (`automerge/automerge_contributor_*.go`, `automerge_bot_takeover.go`) | auto-merge sweep | adopt comment, update-branch push, workflow approval, nudge comments | contributor PRs in the contributor lane | `contributor_adopt` → L6 + label |
+| Adoption close-first (`automerge/automerge_adoption_close_first.go`) | auto-merge sweep, when a supersede adoption opens the hive's copy; close-first poll | close-first note, `hive/superseded` label and close on the original; reopen, copy-failed note and label removal when the copy fails | the contributor's original PR | `contributor_adopt` → L6 + label; refused: the original stays open until the copy merges, and a due reopen waits for the next poll |
 | Claims (`prclaims.go`, `claimed_by_label.go`, `cmd/hive/claimswire.go`, `claimescalation.go`) | claim ledger changes | `claimed-by:*` labels, claim/escalation comments | claimed issues | `claim_comment` → L4 + label (hive-claimed issues are own items) |
 | Issue close / task-list / decomposed parents (`issue_close.go`, `task_list_sweep.go`, `decomposed_parents.go`, `close_on_merge.go`, `tracking_issue.go`) | merges, sweeps | close, body edits (checkbox ticks), `Refs` rewrites | issues linked from hive PRs | `issue_close`, `parent_issue_edit` → L5 + label; hive-filed issues are own items |
 | Gate comments (`pkg/scheduler/clarity_gate.go`, `prior_art_gate.go`, `triage.go`, `issue_blocked.go`, `issue_recheck_soak.go`) | scheduler intake | clarity/prior-art/triage questions, `blocked` labels | issues admitted by the issue filter | `gate_comment` → L5 + label; items carrying the intake label are opted in |
@@ -1530,6 +1608,31 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   `review_requested` deliveries also queue an early review dispatch when
   `review.event_driven` is on; see
   [Event-driven dispatch](review-swarm.md#event-driven-dispatch).
+- **A failed check reacts within seconds, not at the next sweep.** A
+  `check_run` (`completed`, conclusion `failure`/`timed_out`), `check_suite`
+  (`failure`/`timed_out`) or `status` (`failure`/`error`) delivery is
+  resolved to the open PR(s) at that head from the PR detail cache — one
+  cached lookup, no extra `GET /pulls` fan-out; a head no cached PR matches
+  is counted under `/api/status.ci_failure_signals.unmatched` and left to
+  the sweep's dirty mark. Each match becomes a **CI failure signal**
+  `{repo, number, head, check, details_url, at}`, deduplicated per head +
+  check and kept for two hours. A **hive-authored** PR is attributed to the
+  agent whose relay opened it (`agent_pr_created` in the audit log; scanner
+  when unattributed) and that agent is kicked at once with its
+  FIX-BEFORE-NEW section naming the check and the log URL — the same
+  section every regular kick carries, into which the signal is also folded
+  until `ci-failing.json` catches up, so nothing is lost if the kick is
+  gated. A **contributor** PR nudges the automerge lanes for a targeted pass
+  over that PR now (the contributor lane / `stage/072` path), with or
+  without the ForgeState cache. Guards, in this order: `governor.ci_failure_webhook_kick`
+  (default `true`; `false` records signals only), the repo pause
+  (`project.paused_repos`), the agent's config/runtime pause (the fleet
+  breaker pauses every agent), governor kick eligibility, and one
+  webhook-triggered kick or nudge per PR head per
+  `governor.ci_failure_kick_cooldown_s` (default `600`). The activity log
+  records `ci_failure_kick` — "CI failed on #N (check) — kicked agent X" /
+  "nudged contributor lane". **Agents never watch or poll CI themselves**:
+  detection is out-of-band via this webhook path, or the sweep as fallback.
 - **A recorded review verdict also wakes the governor loop.** When the
   relay records a verdict bound to a review dispatch, the head that wrote it
   is free and the PR may be ready for its next head or its decision kick, so
@@ -1775,6 +1878,36 @@ installation instead of broadening the PAT. A `repo-moved` GitHub App verdict
 means the App/key/installation are healthy, but the hive still names the old
 repository owner after an org transfer; update the configured project org rather
 than trying to add the moved repository back to the old installation.
+
+### GitHub App permissions the hive needs, and what each one unblocks
+
+The App's repository permissions decide which steps the hive can take itself.
+A step the App cannot take is not a question for a person to *decide*; it is
+a **capability gap** the hive records as a structured blocker
+(`<!-- hive:blocker kind=capability:… -->`, see
+[labels-and-control-signals.md](labels-and-control-signals.md#blockers-hiveblocker-marker)),
+parks the item on, and surfaces at ⚙ → Security as *GitHub App permissions:
+missing `<permission>` · N items blocked* ([#15099](https://github.com/hivecommons/hive/issues/15099)).
+
+| Permission | Level | Without it the hive cannot… | Blocker kind |
+|---|---|---|---|
+| Contents | read/write | push branches, read files | `capability:repo-write` |
+| Pull requests | read/write | open, approve, merge PRs | — (nothing starts) |
+| Issues | read/write | comment, label, file issues | — (nothing starts) |
+| Workflows | write | push any change under `.github/workflows/*` (GitHub refuses the push with *refusing to allow a GitHub App to create or update workflow*) | `capability:workflows-permission` |
+| Actions | write | approve workflow runs from forks (the 085 *Awaiting human: approve workflow runs* pill) | — (`hive:unauthorized`) |
+| Checks / Commit statuses | read | gate merges on CI | — |
+| Administration | read | verify branch protection before a merge request | `capability:branch-protection` when a rule the App cannot satisfy stands |
+| Metadata | read | anything (required by GitHub) | — |
+
+Granting a permission on an existing installation needs the installation
+owner to accept the new permission request in the App settings page the
+dashboard links to (`githubAppInstallURL`). The hive re-checks on its own on
+the next stage pass; *Re-check permissions* on a blocked row
+(`POST /api/repos/{owner}/{repo}/items/{number}/blocker/recheck`) probes the
+installation now and releases every item blocked on that permission when it is
+there. `GET /api/status` carries the same picture as
+`capabilities: {missing: ["workflows"], blocked_items: N, by_permission: {workflows: N}}`.
 
 ## Runtime diagnostics (`debug`, `GOMEMLIMIT`, `mem:` log line)
 

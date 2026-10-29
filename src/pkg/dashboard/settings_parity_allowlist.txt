@@ -194,6 +194,8 @@ governor.budget.coins.<key>.budget # TODO #11854
 governor.budget.coins.<key>.label # TODO #11854
 governor.budget.coins.<key>.tokens_per_coin # TODO #11854
 governor.budget.coins.<key>.usd_per_coin # TODO #11854
+governor.ci_failure_kick_cooldown_s # webhook CI-failure kick cooldown (#15291); yaml-only
+governor.ci_failure_webhook_kick # webhook CI-failure kick flag (#15291); yaml-only
 governor.claims.contributor_flap_threshold # contributor flap cool-off (#13579); yaml-only
 governor.claims.contributor_flap_window_s # contributor flap cool-off (#13579); yaml-only
 governor.claims.contributor_flap_cooloff_s # contributor flap cool-off (#13579); yaml-only

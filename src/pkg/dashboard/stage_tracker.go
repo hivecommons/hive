@@ -349,6 +349,14 @@ type StageTrackerItem struct {
 	// window, at 060/080/095: when it started, when it ends, the window
 	// and the head it was measured on. The SPA counts it down in place.
 	Soak *StageTrackerSoak `json:"soak,omitempty"`
+	// RebaseMerge is set while an operator's "Rebase, then merge as
+	// maintainer" follow-through runs on the PR (or just settled): its
+	// state and the row caption to show in place of the lane's.
+	RebaseMerge *StageTrackerRebaseMerge `json:"rebase_merge,omitempty"`
+	// Rebase is set on a conflicting PR the fixer is rebasing on the hive's
+	// behalf: which attempt of the loop guard this is, or that the hive
+	// ran out and a person must resolve it.
+	Rebase *StageTrackerRebase `json:"rebase,omitempty"`
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head
@@ -407,6 +415,12 @@ type StageTrackerItem struct {
 	// advance it, under the row context menu's action ids. See
 	// stage_tracker_decision.go.
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
+	// Blocker is the structured blocker recorded on a parked issue — what
+	// the hive cannot do itself (a missing App permission, a CLA) — from
+	// pkg/blocker's ledger. The pill reads "Blocked · <short>" instead of
+	// "Needs human decision" and "Let hive decide" is disabled with the
+	// reason (hivecommons/hive#15099).
+	Blocker *StageTrackerBlocker `json:"blocker,omitempty"`
 	// StaleLabels are control labels the row still wears that its stage
 	// has outrun, so they are not read as modifiers: `needs-triage` on an
 	// issue at 020 or later (015 is not a gate; the reconciler removes the
@@ -456,6 +470,11 @@ type StageTrackerItem struct {
 	// hive's likely next move (wait or adopt, with the adopt-at time), so
 	// the waiting-on pill can carry an indicator (hivecommons/hive#15051).
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
+	// Rework is, on a PR row returned to its author (071 / 072), whether
+	// the rework request has been picked up: requested, acknowledged,
+	// in_progress or pushed, with the evidence (hivecommons/hive#15280,
+	// stage_tracker_rework.go).
+	Rework *StageTrackerRework `json:"rework,omitempty"`
 	// Takeover is, on a 072 / 071 clanker PR, the operator's Adopt now /
 	// Reroute offer and any pending reroute or forced adoption
 	// (hivecommons/hive#15038, stage_tracker_takeover.go).
@@ -502,8 +521,16 @@ type StageTrackerItem struct {
 	// item (approve, give-direction, hold, let-hive-decide, …) with what
 	// became of it, and OperatorActionCount how many were recorded; the
 	// row's ✓ badge and its hover read these (operator_actions.go).
-	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
-	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
+	LastOperatorAction *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
+	// Decided is the post-decision state machine (hivecommons/hive#15126):
+	// set once the newest recorded operator action is a decision (let hive
+	// decide with a verdict, approve, queue-merge, merge-now). While its
+	// effect is pending the row is projected onto the decided stage.
+	Decided *StageTrackerDecided `json:"decided,omitempty"`
+	// AdoptedFrom is set on the hive's copy of an adopted PR: the original
+	// and the decision that led to the adoption.
+	AdoptedFrom         *StageTrackerAdoptedFrom `json:"adopted_from,omitempty"`
+	OperatorActionCount int                      `json:"operator_action_count,omitempty"`
 	// New is set on a 000-new item — open, unplaced, nothing holding it —
 	// with who moves it next and the gates ahead; the Open column renders
 	// it as "New · waiting for …" (hivecommons/hive#15094).
@@ -586,6 +613,20 @@ type StageTrackerLinkedPR struct {
 	// row fields so its sub-row wears the ✓ badge too.
 	LastOperatorAction  *StageTrackerOperatorAction `json:"last_operator_action,omitempty"`
 	OperatorActionCount int                         `json:"operator_action_count,omitempty"`
+	// Decided / AdoptedBy / AdoptedByState / AdoptedFrom mirror the nested
+	// PR's own row fields (hivecommons/hive#15126): the sub-row reads the
+	// decided state and its adoption pairing.
+	Decided        *StageTrackerDecided     `json:"decided,omitempty"`
+	AdoptedBy      int                      `json:"adopted_by,omitempty"`
+	AdoptedByState string                   `json:"adopted_by_state,omitempty"`
+	AdoptedFrom    *StageTrackerAdoptedFrom `json:"adopted_from,omitempty"`
+	// State is "closed" for an adopted original the hive (or a person)
+	// closed once its copy existed (hivecommons/hive#15126): the sub-row
+	// is one dimmed line "#N <title> · closed · superseded by #M" with no
+	// chevron track. SupersededBy is the copy; Title is cached from the
+	// copy (same commits, same title), never fetched live.
+	State        string `json:"state,omitempty"`
+	SupersededBy int    `json:"superseded_by,omitempty"`
 	// Hold mirrors the nested PR's own row field (hivecommons/hive#15020).
 	Hold *StageTrackerHold `json:"hold,omitempty"`
 	// StageActor mirrors the nested PR's own row field so the sub-row's
@@ -600,6 +641,8 @@ type StageTrackerLinkedPR struct {
 	DrawnUnder int `json:"drawn_under,omitempty"`
 	// Presence mirrors the nested PR's own row field (hivecommons/hive#15051).
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
+	// Rework mirrors the nested PR's own row field (hivecommons/hive#15280).
+	Rework *StageTrackerRework `json:"rework,omitempty"`
 	// Takeover mirrors the nested PR's own row field (hivecommons/hive#15038).
 	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
 	// Supersedes mirrors the nested PR's own row field.
@@ -725,9 +768,9 @@ const (
 )
 
 // stageTrackerBranchFrom says which main segment a detour stage hangs off.
-// The PR strip collapses 050 and 060 into one "CI / Review" chevron (lit during
-// 050, ticked from 060 on), so review-side detours hang off 050; 060 itself
-// lights the "Merge admission" chevron.
+// The PR strip collapses 050 and 060 into one "CI / Review" chevron (060 is
+// pre-admission: approved, CI still pending or red), so review-side detours
+// hang off 050; see stageTrackerColumn for the full stage → column table.
 func stageTrackerBranchFrom(number int) int {
 	switch number {
 	case trackerNumberFixing, trackerNumberNeedsAuthor, trackerNumberReturned, trackerNumberAdopted:
@@ -758,7 +801,7 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.ReviewPending:
 		return "CI / Review"
 	case stagelabels.Reviewed:
-		return "Reviewed"
+		return "Review passed"
 	case stagelabels.Fixing:
 		return "Fixing"
 	case stagelabels.NeedsAuthor:
@@ -1256,6 +1299,9 @@ func humanizeStageReason(reason string) string {
 	if stageengine.ReasonIsPartialCover(r) {
 		return "the PR references it without closing it (partial)"
 	}
+	if clause, ok := humanizeCoverReason(r); ok {
+		return clause
+	}
 	switch lower {
 	case stagelabels.LaneReasonAdoptionChildClosedTwice:
 		return "the hive's copies of this PR were closed without merging twice within an hour"
@@ -1347,7 +1393,7 @@ func humanizeStageReason(reason string) string {
 	if rest, ok := strings.CutPrefix(lower, "contributor-lane:"); ok {
 		return strings.ReplaceAll(strings.ReplaceAll(rest, "-", " "), "_", " ")
 	}
-	return strings.NewReplacer("-", " ", "_", " ", ":", ": ").Replace(r)
+	return stageTrackerPlainStages(strings.NewReplacer("-", " ", "_", " ", ":", ": ").Replace(stageTrackerPlainStages(r)))
 }
 
 // unauthorizedStepWords renders an `unauthorized:<step>` step as words.
@@ -1611,7 +1657,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.ReviewPending:
 		return joinClause("Review swarm requested; waiting for a verdict on the current head", clause), "review swarm"
 	case stagelabels.Reviewed:
-		return joinClause("Review swarm approved; a gate is still pending", clause), "CI"
+		return joinClause("Review passed; waiting for merge admission", clause), "CI"
 	case stagelabels.Fixing:
 		return joinClause("Red or changes requested; a hive agent is fixing it", clause), "hive"
 	case stagelabels.NeedsAuthor:
@@ -1882,6 +1928,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		dispatchState = st
 	}
 	sentinelLabel := s.sentinelLabel()
+	bctx := s.blockerOptionsContext()
 	lookup := func(repo string, number int) (stagelabels.Record, bool) {
 		if store == nil {
 			return stagelabels.Record{}, false
@@ -1889,6 +1936,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		return store.Get(stagelabels.Key(repo, number))
 	}
 	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
+	fixWork := s.stageTrackerFixWorkLookup()
 	sweep := s.stageTrackerSweepState()
 	soakWindow := s.stageTrackerSoakWindow()
 	attempts := s.stageTrackerMergeAttempts()
@@ -1988,6 +2036,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		if login := stageTrackerWaitingOn(*it, stage); login != "" {
 			it.Presence = stageTrackerPresenceFor(*it, login, stage, rec, hasRec, presence, adoptionClock, now)
+			it.Rework = stageTrackerReworkFor(*it, login, stage, rec, hasRec, fixWork, now)
 		}
 		if it.Takeover = stageTrackerTakeover(*it, rec, hasRec, presence, rerouteCandidates, adoptionEnabled, takeoverGrace, now); it.Takeover != nil {
 			it.Caption = stageTrackerTakeoverCaption(it.Caption, it.Takeover)
@@ -2097,7 +2146,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
 			}
 		}
-		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, nil, sentinelLabel, now)
+		if slices.Contains(it.Modifiers, modNeedsHuman) || it.Stage == stagelabels.IssueNeedsDecision.Number() {
+			it.Blocker = stageTrackerBlockerFor(repoName, issue.Number)
+		}
+		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, nil, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
 		add(it)
 	}
@@ -2175,7 +2227,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.Caption = joinClause(it.Caption, clause)
 			}
 		}
-		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, agg, sentinelLabel, now)
+		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, agg, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
 		add(it)
 	}
@@ -2207,6 +2259,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	stageTrackerMergeTrainPostPass(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
+	s.applyDecidedProjection(resp.Items, now)
+	applyRebaseAttempts(resp.Items)
+	s.applyRebaseMergeFollowThrough(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
@@ -2947,6 +3002,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
 				lp.Adoption = pr.Adoption
 				lp.Presence = pr.Presence
+				lp.Rework = pr.Rework
 				lp.Takeover = pr.Takeover
 				lp.Supersedes = pr.Supersedes
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
@@ -2958,6 +3014,8 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.MergeTrain = pr.MergeTrain
 				lp.Soak = pr.Soak
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
+				lp.Decided, lp.AdoptedFrom = pr.Decided, pr.AdoptedFrom
+				lp.AdoptedBy, lp.AdoptedByState = pr.AdoptedBy, pr.AdoptedByState
 				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
@@ -2990,7 +3048,9 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 			out = nil
 		}
 		it.LinkedPRs = out
+		stageTrackerLinkedPRProgress(it)
 	}
+
 	// NestedUnder is final only once every issue has been read; name it on
 	// each listing so the SPA draws the PR's strip under one parent only.
 	for i := range items {
@@ -3009,6 +3069,34 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 			items[i].ClosedIssue = stageTrackerClosedIssueAnchor(items[i])
 		}
 	}
+}
+
+// Link evidence arrives after the issue's stage/new narration, including
+// reverse closing references from PRs. Do not narrate a completed intake
+// step as work the scanner still needs to do.
+func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
+	if it.Kind != "issue" || len(it.LinkedPRs) == 0 || (it.Stage > trackerNumberCoveredByPR && !it.Mirrored) ||
+		it.Hold != nil || len(it.BlockedOn) > 0 || it.BlockedOnPR != nil {
+		return
+	}
+	it.New = nil
+	if it.StageSlug == StageTrackerNewSlug {
+		it.StageSlug = ""
+	}
+	progress := make([]string, 0, len(it.LinkedPRs))
+	for _, pr := range it.LinkedPRs {
+		text := fmt.Sprintf("PR #%d", pr.Number)
+		if pr.Caption != "" {
+			text += " — " + pr.Caption
+		}
+		progress = append(progress, text)
+	}
+	prefix := "Covered by "
+	if stageengine.ReasonIsPartialCover(it.Reason) {
+		prefix = "Partially covered by "
+	}
+	it.Caption = prefix + strings.Join(progress, "; ")
+	it.Actor = "its PR"
 }
 
 // stageTrackerClosedIssueAnchor returns the closed issue a standalone PR

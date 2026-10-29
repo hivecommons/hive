@@ -1,0 +1,1 @@
+- Activity Monitor: the bottom-right "merged" toast shows the PR number again ("#15122 merged" instead of a bare "# merged") — the number was a Number and the page's HTML escaper drops non-strings (the "All merges" list had the same blank numbers and counts); it now also falls back to the nested pr record or the GitHub URL and never renders a bare "#".

@@ -1,0 +1,1 @@
+- Activity Monitor issue messages now follow covering PR progress instead of stale New/scanner captions, including links discovered from the PR side.

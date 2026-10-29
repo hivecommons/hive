@@ -11,9 +11,11 @@ import (
 )
 
 // Merge-gate states (StageTrackerMergeGate.State), in pipeline order. The
-// Activity Monitor's Merge gate column lights one chevron for 060, 080,
-// 095 and 100; the state names which, in words a row can show without a
-// hover (hivecommons/hive#15073).
+// state names where a PR stands on its way to merge, in words a row can
+// show without a hover (hivecommons/hive#15073). 060 (gate-pending) is
+// pre-admission and is drawn in the CI / Review column as "Review passed ·
+// <lane reason>" (CI in progress / checks unreadable / soak Nm remaining);
+// the Merge gate column lights for 080, 095 and 100 (stageTrackerColumn).
 const (
 	// MergeGateStatePending: 060 reviewed — the review swarm approved but
 	// the admission gate still holds (CI pending or red, soak on an

@@ -158,7 +158,10 @@ func (g *PostGate) Due(advCfg config.AdvisoryConfig, repo string, now time.Time,
 // RecordSuccess advances the update-interval gate for repo after a successful
 // digest write. Skip-if-unchanged cycles count too: pkg/github returns nil for
 // them by design so freshness advances (#4818/#4821), and an unchanged digest
-// is exactly the case the throttle exists to quiet.
+// is exactly the case the throttle exists to quiet. A repo-paused skip
+// (#6203) advances it as well, so the "skipped: repo paused" log line lands
+// once per interval; the pause is re-read on the next due cycle, so lifting
+// it posts within one interval.
 func (g *PostGate) RecordSuccess(repo string, now time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

@@ -72,8 +72,7 @@ type SandboxKickSpec struct {
 	Timeout      time.Duration
 	// PublishVerify are the deterministic preflight commands run in the
 	// sandbox before the run's commits are pushed (config
-	// sandbox.publish.verify or a `<!-- hive:publish.verify -->` block in the
-	// kick template). Any non-zero exit withholds the push and the PR.
+	// sandbox.publish.verify). Any non-zero exit withholds the push and the PR.
 	PublishVerify []string
 	// VerifyTimeout bounds each PublishVerify command; zero uses the default.
 	VerifyTimeout time.Duration

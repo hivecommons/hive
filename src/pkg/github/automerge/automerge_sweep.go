@@ -62,6 +62,10 @@ type supersededCloserTransport interface {
 // self-authored PR the lane closed as superseded.
 const autoMergeReasonClosedSuperseded = "closed-superseded"
 
+// autoMergeReasonLabelNeedsRebase is labelBlockReason's answer for the
+// needs-rebase label.
+const autoMergeReasonLabelNeedsRebase = "label:needs-rebase"
+
 // Options carries policy dependencies owned by the caller.
 type Options struct {
 	Logger           *slog.Logger
@@ -377,7 +381,12 @@ func New(transport Transport, opts Options) *Engine {
 	if e.headFirstSeen == nil {
 		e.headFirstSeen = sharedHeadFirstSeen
 	}
-	if e.sweepTrigger == nil && e.openPRs != nil {
+	if e.sweepTrigger == nil {
+		// Always present: with the forgestate cache the event-driven loop
+		// drains it; without, the legacy ticker loop still selects on it so
+		// a webhook CI-failure nudge (SweepNudge) runs a targeted pass now
+		// instead of on the next tick. A nil source only disables
+		// NotifyHead's SHA lookup.
 		e.sweepTrigger = NewSweepTrigger(e.openPRs)
 	}
 
@@ -1225,6 +1234,15 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 
 // prMergeableStateConflicting reads GitHub's conflict flag off a single-PR
 // GET payload.
+// staleNeedsRebaseLabel: prow's needs-rebase label lags GitHub's
+// mergeable_state. When GitHub says the branch is merely "behind" (clean
+// update), the label must not block the lane — the lane's UpdateBranch is
+// exactly what clears it, and before hivecommons/hive#15103 no lane ever
+// reached that call under the label.
+func staleNeedsRebaseLabel(blocked string, pr *gh.PullRequest) bool {
+	return blocked == "label:needs-rebase" && strings.EqualFold(strings.TrimSpace(pr.GetMergeableState()), "behind")
+}
+
 func prMergeableStateConflicting(pr *gh.PullRequest) bool {
 	state := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
 	return state == "dirty" || state == "conflicting"
@@ -1518,6 +1536,11 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			select {
 			case <-ctx.Done():
 				return
+			case <-c.sweepTrigger.C():
+				// A webhook nudge (CI failure on a PR, operator row action)
+				// names the PRs; evaluate only those now. A full request
+				// (nil targets) is a regular pass brought forward.
+				c.sweepPass(ctx, maxMerges, acmmAllowed, c.sweepTrigger.take(), "event")
 			case <-t.C:
 				gate := c.sweepTickGate(interval, cautionTick, hgithub.ShedLowPriorityTick)
 				if gate.reset {
@@ -1721,22 +1744,29 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "not-app-authored", nil
 	}
 	selfLabels := labelNames(pr.Labels)
-	if blocked := c.labelBlockReason(selfLabels, true); blocked != "" {
-		return AutoMergeSweepEvent{}, blocked, nil
-	}
-	if c.transport.IsExemptLabels(selfLabels) {
-		return AutoMergeSweepEvent{}, "exempt-label", nil
-	}
-	if lane == "self-authored" && prMergeableStateConflicting(pr) {
+	blocked := c.labelBlockReason(selfLabels, true)
+	// A conflicting head — GitHub's mergeable_state or the needs-rebase
+	// label a lane already put on it — is asked the superseded question
+	// before the label block returns: a PR whose issue another merged PR
+	// closed is closed, not left to wear needs-rebase (hivecommons/hive#15208).
+	if lane == "self-authored" && (prMergeableStateConflicting(pr) || blocked == autoMergeReasonLabelNeedsRebase) {
 		if closer, ok := c.transport.(supersededCloserTransport); ok {
 			res, err := closer.CloseSupersededHivePRIfEligible(ctx, owner+"/"+repo, pr)
 			if err != nil {
 				c.warn("self-authored sweep: superseded check failed", "repo", displayRepo, "pr", number, "error", err)
 			} else if res.Closed {
-				c.info("self-authored sweep: conflicting PR closed as superseded", "repo", displayRepo, "pr", number, "closer", res.CloserPR, "issue", res.Issue)
+				c.info("self-authored sweep: conflicting PR closed as superseded", "repo", displayRepo, "pr", number, "closer", res.CloserPR, "issue", res.Issue, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason)
 				return AutoMergeSweepEvent{}, autoMergeReasonClosedSuperseded, nil
 			}
 		}
+	}
+	// A needs-rebase label left on a head GitHub now reports merely behind
+	// is stale: the gate still sees a mergeable PR (hivecommons/hive#15103).
+	if blocked != "" && !staleNeedsRebaseLabel(blocked, pr) {
+		return AutoMergeSweepEvent{}, blocked, nil
+	}
+	if c.transport.IsExemptLabels(selfLabels) {
+		return AutoMergeSweepEvent{}, "exempt-label", nil
 	}
 
 	evaluatedHeadSHA := ""
@@ -2054,7 +2084,7 @@ func (c *Engine) labelBlockReason(labels []string, trusted bool) string {
 				return "sentinel"
 			}
 		case lower == "needs-rebase":
-			return "label:needs-rebase"
+			return autoMergeReasonLabelNeedsRebase
 		case lower == "needs-human":
 			return "label:needs-human"
 		case lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/"):
@@ -2121,7 +2151,7 @@ func (c *Engine) prefilterTrustedAuthorPR(pr *gh.PullRequest, policy TrustedAuth
 		return "draft"
 	}
 	labels := labelNames(pr.Labels)
-	if blocked := c.labelBlockReason(labels, true); blocked != "" {
+	if blocked := c.labelBlockReason(labels, true); blocked != "" && !staleNeedsRebaseLabel(blocked, pr) {
 		return blocked
 	}
 	if excluded := policy.excludedLabel(labels); excluded != "" {

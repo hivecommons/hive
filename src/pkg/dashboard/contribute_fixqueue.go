@@ -659,6 +659,34 @@ func (h *ContributeWSHub) FixQueueItems(username string) []fixqueue.Item {
 	return h.fixQueue().Queued(username)
 }
 
+// FixWorkFor reports where the fix work for repo#number stands in
+// username's fix queue: waiting behind other fixes (Queued, with how many
+// are ahead) or handed to their relay as a fix-pr task (InFlight, with when
+// and in which mode). The stage tracker reads it as the rework-pickup
+// signal on a waiting-on row (hivecommons/hive#15280). ok is false when the
+// PR is in neither.
+func (h *ContributeWSHub) FixWorkFor(username, repo string, number int) (StageTrackerFixWork, bool) {
+	username = strings.TrimSpace(username)
+	if h == nil || username == "" || repo == "" || number <= 0 {
+		return StageTrackerFixWork{}, false
+	}
+	key := fixqueue.Key(repo, number)
+	sched := h.fixQueue()
+	for _, d := range sched.InFlight(username) {
+		for _, it := range d.Items {
+			if it.Key() == key {
+				return StageTrackerFixWork{InFlight: true, DispatchedAt: d.At, Mode: string(d.Mode)}, true
+			}
+		}
+	}
+	for i, it := range sched.Queued(username) {
+		if it.Key() == key {
+			return StageTrackerFixWork{Queued: true, QueuedAt: it.EnqueuedAt, Ahead: i}, true
+		}
+	}
+	return StageTrackerFixWork{}, false
+}
+
 // ContributorFixQueue is the profile-API view of a contributor's fix budget.
 type ContributorFixQueue struct {
 	fixqueue.Status

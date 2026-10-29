@@ -141,6 +141,10 @@ type advisoryPublishDeps struct {
 	// recordWriteForbidden pauses further post attempts for repo after a
 	// non-transient 403, so the same refusal is not re-sent every eval cycle.
 	recordWriteForbidden func(repo string)
+	// recordRepoPaused advances the pacing gate after a repo-paused skip, so
+	// the skip is logged once per update interval rather than every cycle.
+	// It deliberately does NOT record a post: nothing reached GitHub.
+	recordRepoPaused func(repo string)
 }
 
 // advisoryPublishOutcome names how a cycle's digest publish ended, so the
@@ -246,6 +250,16 @@ func publishAdvisoryDigest(
 		return advisoryPublishSkipped
 	}
 	err := deps.postGitHub(ctx, route.primaryRepo, route.issueNum, md)
+	var paused *github.RepoPausedError
+	if errors.As(err, &paused) {
+		// Operator pause (#6203): the poster wrote nothing and logged why.
+		// Not an error (the quiet is deliberate), not a post (nothing
+		// landed) — a skip that still paces the next attempt.
+		if deps.recordRepoPaused != nil {
+			deps.recordRepoPaused(route.primaryRepo)
+		}
+		return advisoryPublishSkipped
+	}
 	if err == nil {
 		logger.Info("posted advisory digest", "repo", route.primaryRepo, "issue", route.issueNum, "findings", digest.TotalCount, "via", "app")
 		recordPosted(digest.TotalCount, digest.OverflowCount)

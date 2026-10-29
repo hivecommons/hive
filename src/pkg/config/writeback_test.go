@@ -72,3 +72,21 @@ func TestWritebackDefaultsWhenAbsent(t *testing.T) {
 		t.Fatalf("defaults: %+v", cfg.Writeback)
 	}
 }
+
+func TestWritebackRepoPause_CarriesProvenance(t *testing.T) {
+	c := &Config{}
+	c.Project.Org = "acme"
+	c.Project.Repos = []string{"widget", "gadget"}
+	c.Project.PausedRepos = []RepoPause{{Repo: "widget", By: "clubanderson", Reason: "freeze"}}
+	deps := c.WritebackGateDeps()
+	if deps.RepoPause == nil {
+		t.Fatal("WritebackGateDeps must wire RepoPause")
+	}
+	info, paused := deps.RepoPause("acme/Widget")
+	if !paused || info.By != "clubanderson" || info.Reason != "freeze" {
+		t.Fatalf("paused repo: %+v,%v", info, paused)
+	}
+	if _, paused := deps.RepoPause("gadget"); paused {
+		t.Fatal("unpaused repo reported paused")
+	}
+}

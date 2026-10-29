@@ -62,7 +62,7 @@ type StageTrackerNew struct {
 // bucket that means "not placed yet" rather than "placed outside the
 // actionable set" (filtered, hive_advisory, claimed, …).
 func stageTrackerIsNew(it StageTrackerItem, hasRec bool) bool {
-	if it.Stage != 0 || hasRec || it.Hold != nil || len(it.BlockedOn) > 0 || it.BlockedOnPR != nil {
+	if it.Stage != 0 || hasRec || it.Hold != nil || len(it.BlockedOn) > 0 || it.BlockedOnPR != nil || it.LinkedPR > 0 || len(it.LinkedPRs) > 0 {
 		return false
 	}
 	for _, m := range it.Modifiers {

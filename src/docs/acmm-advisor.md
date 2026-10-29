@@ -70,7 +70,7 @@ A recommendation (`Recommendation` struct, `src/pkg/acmmadvisor/acmmadvisor.go:1
 
 ## The API endpoint
 
-`GET /api/acmm-recommendation` returns the JSON-encoded `Recommendation` computed from the hive's live signals. See the full request/response contract in the [API reference](api-reference.md#packs-and-acmm).
+`GET /api/acmm-recommendation` returns the JSON-encoded `Recommendation` computed from the hive's live signals. See the full request/response contract in the [API reference](api-reference/packs-and-acmm.md).
 
 ## Open questions
 

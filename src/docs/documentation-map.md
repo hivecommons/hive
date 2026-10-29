@@ -61,6 +61,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Dashboard sections explained](dashboard-sections.md) — plain-language operator help for every dashboard section: what it shows, how its numbers are worked out, what to do about them, when it appears, and which settings change it. The **?** mark on each section title opens its entry.
 - [Dashboard settings explained](settings.md) — one entry per Settings tab: what it controls and which guide explains it. The **?** mark next to each setting opens its guide or this page.
 - [Dashboard feedback](feedback.md) — reporting bugs and requesting features from the spoke dashboard, including diagnostics, screenshot handling, hub relay, user-auth, and fallback issue paths.
+- [Dashboard source layout](dashboard-source-layout.md) — `static/index.html` is generated from per-area CSS/JS/HTML sources in `static-src/` via `make dashboard-gen`; how to edit, add an area, and resolve merge conflicts.
 - [Dashboard design system](dashboard-design-system.md) — shared token catalogue, component variants, migration rules, ratchet plan, and #8536 theme override contract for spoke, contributor, and hub dashboard surfaces.
 - [Dashboard glossary and sidebar IA](dashboard-glossary.md) — the operator-facing names used by the dashboard and the ADR-0018 sidebar information architecture.
 - [The `auto-update` Compose profile](auto-update-profile.md) — what unattended Watchtower updates cost you, what the Docker socket proxy does and does **not** fix, and why Kubernetes should not use this profile at all.
@@ -127,7 +128,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Hub disaster recovery](../../docs/HUB_DISASTER_RECOVERY.md) — the hub-level runbook that goes beyond per-hive backup: hub backup and key escrow, spoke fleet recovery, Slack blast, and the full rebuild-from-zero procedure after a catastrophic loss.
 - [Deployment helper scripts](deployment-scripts.md) — the all-in-one LXC setup, Proxmox LXC, and blue-green Compose helpers. All are Docker-only; the page states each script's runtime scope and where a Podman operator should go instead.
 - [`bin/` pipeline script index](../../bin/README.md) — map of the deterministic pipeline and operational scripts, grouped by function.
-- [Dashboard API reference](api-reference.md) — pragmatic route index for dashboard and hub endpoints.
+- [Dashboard API reference](api-reference.md) — pragmatic route index for dashboard and hub endpoints; one page per area under `api-reference/` (health, auth, configuration, agents, ACMM, cost, knowledge, contribute, nous, inception, beads, misc, hub SaaS, hub server).
 - [Dashboard OpenAPI spec](../../dashboard/openapi.json) — machine-readable REST API reference for integrations.
 - [ioscan status](ioscan.md) — the untrusted-input scanner/canary feature (live and default-on in v4).
 - [Deployment scripts](../deploy/README.md) — inventory of deployment helpers, including dashboard TTY panes and `hive-panes`.

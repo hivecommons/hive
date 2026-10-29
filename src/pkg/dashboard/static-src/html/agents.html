@@ -1,0 +1,14 @@
+  <div id="oc-gov-strip-outer" class="oc-gov-strip"></div>
+  <div id="oc-agent-detail" class="oc-agent-detail"></div>
+  <div id="agents-section" data-dashboard-section="agents-section">
+    <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-4)">
+      <button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agents section" aria-pressed="false">⠿</button><h2 style="margin:var(--sp-0); cursor:pointer" class="section-label section-header-toggle" data-action="toggleSection" data-arg0="agents-section"><span class="section-chevron">▼</span> Agents</h2>
+      <button class="hv-btn btn-secondary btn-sm" id="agents-add-btn" data-action="openAddAgentDialog" data-stop="1" title="Add a new agent from a template or from scratch">＋ Add agent</button>
+      <button class="hv-btn btn-danger btn-sm" id="agents-compact-all-btn" data-action="toggleAllAgentsCompact" data-stop="1" title="Toggle all agent cards between compact and expanded view"></button>
+      <button class="hv-btn btn-secondary btn-sm" id="agents-reset-layout-btn" data-action="resetAgentCardLayout" data-stop="1" title="Reset agent card order and sizes to the default layout (this browser only)" hidden>↔️ Reset layout</button>
+    </div>
+    <div class="section-body">
+      <div class="agents" id="agents"></div>
+    </div>
+  </div>
+

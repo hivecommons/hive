@@ -70,6 +70,7 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
+	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
@@ -1480,6 +1481,7 @@ func (b *boot) wireBootClosures() {
 			WebhookDelivery:         b.webhookDeliveryFunc(),
 			EvalLoop:                b.evalLoopStatusFunc(),
 			SentinelPREvent:         b.sentinelPREventFunc(),
+			CIFailureKick:           b.ciFailureKickFunc(),
 			ProjectsV2ItemEvent:     b.projectsV2ItemEventFunc(),
 			GHAppAuth:               b.appAuth,
 			GHTokenScopes:           b.ghAuth.TokenScopes,
@@ -2571,9 +2573,15 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
 	}
-	// Merge train (#15117): read live so a reload applies. RebaseResolver
-	// stays nil until the rebase-then-merge follow-through (#15104) lands
-	// and is wired here; a conflicting front then keeps its conflicting path.
+	// Merge train (#15117): read live so a reload applies. A member the
+	// train could not update-branch is handed to the fixer's rebase-resolve
+	// episode (#15104): the request admits the PR to the fixer router —
+	// which still requires a head the hive can push to — under the shared
+	// two-attempt guard, and the lane merges the clean head on its next pass.
+	autoMergeOpts.RebaseResolver = automerge.RebaseResolverFunc(func(_ context.Context, req automerge.RebaseRequest) error {
+		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, mergeTrainRebaseRequester, time.Now())
+		return nil
+	})
 	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
 		if b.cfg == nil {
 			return automerge.DefaultMergeTrainPolicy
@@ -8102,6 +8110,9 @@ func runEvalCycle(
 					dashSrv.SetGitHubAppState(github.AppStateRepoMoved.String())
 					logger.Warn("GitHub App write failed — repository transferred to another owner",
 						"configured", moved.Configured, "current", moved.Current)
+				},
+				recordRepoPaused: func(repo string) {
+					recordAdvisoryPostSuccess(repo, time.Now())
 				},
 				recordWriteForbidden: func(repo string) {
 					backoff := advCfg.PostRetryBackoff()

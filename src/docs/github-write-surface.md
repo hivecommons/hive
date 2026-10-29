@@ -118,9 +118,12 @@ A rework push uses `--force-with-lease`; there is deliberately no plain
 The hive also writes to GitHub on its own schedule, with no agent request
 behind the write. These writes are not subject to the lane allowlist, but
 every one that lands on an item hive did not open passes the write-back
-containment gate (`pkg/writeback`: per-kind ACMM floor + review opt-in
-label + backfill guard + per-repo mode; see
+containment gate (`pkg/writeback`: repo pause first, then per-kind ACMM
+floor + review opt-in label + backfill guard + per-repo mode; see
 [operator-reference.md](operator-reference.md#what-hive-writes-to-github-and-when)).
+An operator [repo pause](repo-pause.md) refuses every kind on that repo,
+own items included, and also stops the advisory digest comment, which is
+written outside the gate.
 A ratchet test (`pkg/writeback/ratchet_test.go`) fails on any new direct
 GitHub write call outside that package. Every
 one of them is audited with typed `repo` and `target` fields and redacted

@@ -315,3 +315,65 @@ func TestRecentAndSnapshot(t *testing.T) {
 		t.Fatal("firstLine truncation")
 	}
 }
+
+// A repo pause (#6203) refuses EVERY kind, own items and mode=full
+// included, and is checked before any other rule; lifting it restores the
+// ordinary decision.
+func TestRepoPausedRefusesEveryKind(t *testing.T) {
+	paused := map[string]RepoPauseInfo{"org/repo": {By: "clubanderson", Reason: "release freeze"}}
+	g := New(Config{PerRepo: map[string]RepoOverride{"org/full": {Mode: RepoModeFull}}}, Deps{
+		LevelFor: func(string) int { return 6 },
+		RepoPause: func(repo string) (RepoPauseInfo, bool) {
+			info, ok := paused[repo]
+			return info, ok
+		},
+		Now: func() time.Time { return t0 },
+	}, "")
+	cases := []struct {
+		name string
+		repo string
+		item Item
+		kind Kind
+	}{
+		{"own item", "org/repo", ownPR, KindHoldGateNotice},
+		{"foreign L6 sentinel", "org/repo", humanPR, KindSentinel},
+		{"issue file", "org/repo", Item{}, KindIssueFile},
+		{"stage label opted", "org/repo", optedPR, KindStageLabel},
+		{"case-insensitive repo", "org/repo", ownPR, KindClaimComment},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := g.AllowedPreview(tc.repo, tc.item, tc.kind, "preview")
+			if d.Allowed || d.Reason != ReasonRepoPaused {
+				t.Fatalf("got %+v, want refused with %s", d, ReasonRepoPaused)
+			}
+			for _, want := range []string{"clubanderson", "release freeze", "paused"} {
+				if !strings.Contains(d.Detail, want) {
+					t.Errorf("detail %q lacks %q", d.Detail, want)
+				}
+			}
+		})
+	}
+	if n := len(g.Recent()); n != len(cases) {
+		t.Fatalf("suppressions recorded = %d, want %d", n, len(cases))
+	}
+	// Unpaused repos are untouched: own items and mode=full still pass.
+	if d := g.Allowed("org/other", ownPR, KindSentinel); !d.Allowed || d.Reason != ReasonOwnItem {
+		t.Fatalf("unpaused own item: %+v", d)
+	}
+	if d := g.Allowed("org/full", humanPR, KindSentinel); !d.Allowed || d.Reason != ReasonRepoFull {
+		t.Fatalf("unpaused full repo: %+v", d)
+	}
+	// Lifted → back to the normal decision.
+	delete(paused, "org/repo")
+	if d := g.Allowed("org/repo", ownPR, KindHoldGateNotice); !d.Allowed || d.Reason != ReasonOwnItem {
+		t.Fatalf("after unpause: %+v", d)
+	}
+	if info, ok := g.RepoPaused("org/repo"); ok || info.By != "" {
+		t.Fatalf("RepoPaused after unpause = %+v,%v", info, ok)
+	}
+	var nilGate *Gate
+	if _, ok := nilGate.RepoPaused("org/repo"); ok {
+		t.Fatal("nil gate must never report paused")
+	}
+}

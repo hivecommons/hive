@@ -132,6 +132,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerPage"),
 		jsFunc(t, html, "stageTrackerLabelFacets"),
 		jsFunc(t, html, "stageTrackerCountsText"),
+		jsFunc(t, html, "stageTrackerRowBreakdown"),
 		jsFunc(t, html, "stageTrackerIcon"),
 		jsFunc(t, html, "stageTrackerPRRef"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTOR_NONE"),
@@ -488,9 +489,9 @@ assert.strictEqual(chips(row), 1, 'author kind is an icon, not a chip');
 assert.ok(row.includes('ham-mod-needs-human">needs human +1</span>'), row);
 assert.ok(tooltip(row).includes('Flags: needs-rebase, needs-human') && tooltip(row).includes('Trail: CI / Review → Reviewed → Returned to contributor'), tooltip(row));
 
-// PR reviewed (060): Review done, Merge gate lit, no detour.
+// PR reviewed (060): pre-admission (CI pending or soak), so CI / Review stays lit; the merge gate starts at 080.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 60 }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active', T, 'todo cap'], '060 reviewed lights CI / Review, not the merge gate: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 80, caption: 'soak 20m left' }, stages, ctx);
 assert.ok(row.includes('<span class="ham-seg-t">Ready for auto merge</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left · Next move: hive"'), 'chevron tooltip carries 080: ' + row);
 
@@ -736,7 +737,7 @@ assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 // is what the chevron says, the actor is whose move it is. The active
 // chevron now leads with its stage icon, so the regex skips that svg.
 const prWords = {};
-for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Awaiting merge gate', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
+for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Review passed', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Merging', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
   const m = /aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
   assert.ok(m, 'stage ' + st + ' has no active word + actor: ' + r);
@@ -747,7 +748,7 @@ for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Awaiting mer
 // and the next mover for the strip's active segment; it stays empty when no
 // active segment is in range.
 assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages), '<p class="ham-current-stage">CI / Review · Fixing · Next move: clanker</p>');
-assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 560, kind: 'pr', stage: 60 }, stages), '<p class="ham-current-stage">Awaiting merge gate · Next move: hive</p>', 'no detour → column word only');
+assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 560, kind: 'pr', stage: 60 }, stages), '<p class="ham-current-stage">Review passed · Next move: hive</p>', 'no detour → column word only');
 assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages, { from: 500 }), '', 'no caption when the active segment is out of range');
 assert.strictEqual(STAGE_TRACKER_ACTOR[70], 'author', '070 fixing is the author\'s move');
 // Filters.
@@ -912,6 +913,7 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsFunc(t, html, "stageTrackerPage"),
 		jsFunc(t, html, "stageTrackerLabelFacets"),
 		jsFunc(t, html, "stageTrackerCountsText"),
+		jsFunc(t, html, "stageTrackerRowBreakdown"),
 	}, "\n") + `
 const assert = require('assert');
 const now = Date.parse('2026-01-01T12:00:00Z');
@@ -1019,17 +1021,34 @@ let c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })),
 assert.strictEqual(c.showing, 'showing 51–100 of 120 (30 filtered out)');
 assert.strictEqual(c.header, '120 of 150 rows · 7 need attention');
 assert.strictEqual(c.badge, 150, 'the pill is the default view\'s row count, filters notwithstanding');
-assert.strictEqual(c.badgeTitle, '150 rows open · 7 need attention');
+assert.strictEqual(c.badgeTitle, '150 rows · 7 need attention');
 // Owner: rows are canonical. Open-item totals only footnote PRs that share
 // their issue's row; they never become a second total or change the pill.
 c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })), 150, 7, { issues: 100, prs: 52 }, 9);
-assert.strictEqual(c.header, '120 of 150 rows · 7 need attention');
+assert.strictEqual(c.header, "120 of 150 rows (100 issues + 50 PRs on their own row) · 7 need attention · 2 PRs shown on their issue's row", 'header spells out how the default view\'s rows are made');
 assert.strictEqual(c.badge, 150);
 assert.strictEqual(c.note, "2 PRs shown on their issue's row");
-assert.strictEqual(c.badgeTitle, "150 rows open · 9 need attention · 2 PRs shown on their issue's row", 'pill tooltip counts attention over every item and footnotes shared rows');
+assert.strictEqual(c.breakdown, '100 issues + 50 PRs on their own row');
+assert.strictEqual(c.badgeTitle, "150 rows (100 issues + 50 PRs on their own row) · 9 need attention · 2 PRs shown on their issue's row", 'pill tooltip counts attention over every item, names the row make-up and footnotes shared rows');
 assert.strictEqual(c.showing, 'showing 51–100 of 120 (30 filtered out)', 'the showing line never prints an items total');
 c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })), 150, 7, { issues: 100, prs: 50 }, 9);
 assert.strictEqual(c.note, '', 'rows = items → no footnote');
+assert.strictEqual(c.breakdown, '100 issues + 50 PRs on their own row');
+// Owner (2026-10-29): Overview 33/13 beside activity monitor 37 — rows are
+// 33 issues + 4 PRs that have no listed issue; 9 PRs sit on their issue's row.
+c = stageTrackerCountsText(stageTrackerPage(many.slice(0, 37), F({ size: 50 })), 37, 3, { issues: 33, prs: 13 }, 3);
+assert.strictEqual(c.header, "37 rows (33 issues + 4 PRs on their own row) · 3 need attention · 9 PRs shown on their issue's row");
+assert.strictEqual(c.badgeTitle, "37 rows (33 issues + 4 PRs on their own row) · 3 need attention · 9 PRs shown on their issue's row");
+assert.deepStrictEqual(stageTrackerRowBreakdown(37, { issues: 33, prs: 13 }), { known: true, rows: 37, issues: 33, prs: 13, standalonePRs: 4, shared: 9 });
+assert.deepStrictEqual(stageTrackerRowBreakdown(34, { issues: 33, prs: 1 }), { known: true, rows: 34, issues: 33, prs: 1, standalonePRs: 1, shared: 0 });
+assert.strictEqual(stageTrackerCountsText(stageTrackerPage(many.slice(0, 34), F({ size: 50 })), 34, 0, { issues: 33, prs: 1 }).breakdown, '33 issues + 1 PR on its own row', 'singular PR');
+assert.strictEqual(stageTrackerRowBreakdown(40, { issues: 33, prs: 5 }).standalonePRs, 5, 'standalone PRs never exceed open PRs');
+assert.strictEqual(stageTrackerRowBreakdown(10, null).known, false);
+assert.strictEqual(stageTrackerCountsText(stageTrackerPage(many.slice(0, 10), F({ size: 50 })), 10, 0).breakdown, '', 'no totals → no breakdown, header unchanged');
+c = stageTrackerCountsText({ total: 1, from: 1, to: 1 }, 1, 0, { issues: 0, prs: 1 });
+assert.strictEqual(c.header, '1 row (0 issues + 1 PR on its own row) · nothing needs attention');
+c = stageTrackerCountsText({ total: 0, from: 0, to: 0 }, 0, 0, { issues: 0, prs: 0 });
+assert.strictEqual(c.badgeTitle, '0 rows (0 issues + 0 PRs on their own row) · nothing needs attention');
 c = stageTrackerCountsText(stageTrackerPage(many.slice(0, 1), F()), 1, 1);
 assert.strictEqual(c.showing, 'showing 1–1 of 1');
 assert.strictEqual(c.header, '1 row · 1 needs attention');

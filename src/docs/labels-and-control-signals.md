@@ -45,7 +45,7 @@ Hive-authored labels answer different questions. Read them as independent axes, 
 | **Agent** | `agent/<lane>` | Which agent works it and, for agent-filed issues, which lane filed it? | Routing + ownership + lane provenance | The suffix is always the lane name from `HIVE_AGENT`. The classifier routes on it, PR ownership compares against it, and `authorkind` treats it as this hive's author stamp. Agent-filed issues carry exactly one lane/provenance label: `agent/<lane>`. |
 | **Origin** | `origin/<source>` | Which non-lane hive component created this item? | Provenance only, never a gate | Reserved for hive filers that have no `agent/<lane>` equivalent: `origin/selfreport`, `origin/governor`, `origin/dashboard`, `origin/forge`, and `origin/convergence`. Agent lanes do not use `origin/<lane>`; the startup reconciler (`Client.MigrateOriginLabels`, `src/pkg/github/origin_labels.go`) removes redundant lane-origin and bare-lane labels while ensuring `agent/<lane>`. `origin/reviewer`, `origin/review`, and `from-review` are retired reviewer-lane spellings and map to `agent/reviewer`. |
 | **Role** | `role/<tier>` | How far does the hive trust the author's login? | Control (auto-merge) | Was `author/<tier>` before #12581; the reconciler rewrites the old spelling. See [`role/*`](#role--would-the-hive-auto-merge-this). |
-| **Author** | `author/<kind>` | Who wrote it — a person, a contributor's hive, or this repo's hive? | Informational (gates the 072 nudge/adoption) | `author/human`, `author/clanker`, `author/hive`; names configurable under `governor.labels.author`. See [`author/*`](#author--who-wrote-this-pr). |
+| **Author** | `author/<kind>` | Who wrote it — a person, a contributor's clanker, or this repo's hive? | Informational (gates the 072 nudge/adoption) | `author/human`, `author/clanker`, `author/hive`; names configurable under `governor.labels.author`. See [`author/*`](#author--who-wrote-this-pr). |
 | **Modifiers** | `blocked`, `hold`, `needs-*`, `hive-pause/<hive-id>` | What is stopping it right now? | Hold / suppress | See the reference table; these are the hard gates. |
 
 ### Origin sources
@@ -1444,7 +1444,7 @@ stage but written only on change:
 
 **Renamed from `author/<tier>`** ([#12581](https://github.com/hivecommons/hive/issues/12581)).
 The old prefix conflated trust with authorship: `author/trusted` sat on PRs a
-maintainer pushed by hand and on PRs a contributor's hive opened under that
+maintainer pushed by hand and on PRs a contributor's clanker opened under that
 contributor's login. Trust is now `role/*`; `author/*` says who wrote it (next
 section). Migration is automatic: every reconcile that writes a PR removes a
 retired `author/trusted|contributor|newcomer|untrusted` and adds the `role/*`
@@ -1521,7 +1521,7 @@ revert-rate-by-author-kind drill-down (#12428) reads it.
 | Label | Meaning | Example |
 |---|---|---|
 | `author/human` | a person pushed the PR themselves | a maintainer's hand-written PR |
-| `author/clanker` | a **contributor's own hive** (relay) authored the PR under that contributor's GitHub login — "clanker" is the project's word for a contributor's hive | mendezr's or Karibhou's relay-opened PRs: human login, `— hive:` trailer |
+| `author/clanker` | a **contributor's own agent** (relay) authored the PR under that contributor's GitHub login — "clanker" is the project's word for a contributor's agent (it is their clanker, not a hive) | mendezr's or Karibhou's relay-opened PRs: human login, `— hive:` trailer |
 | `author/hive` | **this repository's own hive** — the App or one of its agent lanes — authored the PR | `app/hivecommons-hive` PRs, anything stamped `agent/<lane>` |
 
 Detection rules, first match wins (`authorkind.Explain` returns the rule
@@ -1565,7 +1565,7 @@ the label, and with it the tracker word and whether the hive has anyone to
 | Kind | Stage | Tracker word | Contributor nudge (`<!-- hive:contributor-nudge -->` + relay interrupt) | Offline adoption (074) |
 |---|---|---|---|---|
 | `author/human` | `stage/071-needs-author` | Needs author | no — plain wait on the person; they push or comment (a `role/trusted` human still gets one `<!-- hive:human-071-note head=… -->` comment per head naming the reason, always on and not gated on `ContributorNudge`, [#13636](https://github.com/hivecommons/hive/issues/13636)) | no |
-| `author/clanker` | `stage/072-returned-to-contributor` | Returned to contributor | yes — the contributor's hive is poked to fix its own PR | yes — after the grace, the hive adopts |
+| `author/clanker` | `stage/072-returned-to-contributor` | Returned to contributor | yes — the contributor's clanker is poked to fix its own PR | yes — after the grace, the hive adopts |
 | `author/hive` (and any self-authored PR) | `stage/070-fixing` | Fixing | n/a — the hive's own lanes rework the head | n/a |
 
 The split also covers a head whose commits GitHub links to the hive App while
@@ -1803,7 +1803,7 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
    owner decision 2026-10-28 on hivecommons/hive#14524, where a
    maintainer's own `author/clanker` PR sat at 072 for 26h with its hive
    gone while every sweep logged "author maintains the repository; not
-   adopting"): a PR a contributor's hive opened is the hive's to stand in
+   adopting"): a PR a contributor's clanker opened is the hive's to stand in
    for when that hive goes away, whoever owns the account. `ask` holds a
    maintainer's PR for an owner's decision instead — the stage record
    notes `author-is-maintainer`, the activity monitor row reads
@@ -2035,7 +2035,13 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      copy exists: the stage record is superseded (no row, no chevron, no
      needs-human) and the copy is the one PR for the issue. A close GitHub
      refuses (403/404) leaves the original open with the note, superseded
-     all the same. `close_first: false` restores the keep-open behaviour
+     all the same. The note, label and close are unsolicited writes on a
+     contributor's PR, so the pass first asks the write-back gate as kind
+     `contributor_adopt` (default L6 + opt-in label; see the write-back
+     table in
+     [operator-reference.md](operator-reference.md#what-hive-writes-to-github-and-when)):
+     refused, nothing is written and the original stays open on the
+     keep-open path below until the copy merges. `close_first: false` restores the keep-open behaviour
      below: the note has no `close_first` field, the original moves to
      `stage/074-adopted-by-hive` (its linked issue mirrors the stage) and
      closes only when the copy merges. The hub drops the PR from the
@@ -2054,7 +2060,12 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      `adoption/supersede` request re-runs the takeover from the same head).
      **Ping-pong guard:** one reopen per original per 24h — a second failed
      copy inside the window leaves the original closed with a `held=true`
-     note saying so. The orphan recovery below never runs for a close-first
+     note saying so. The reopen, its note and the label removal also go
+     through the `contributor_adopt` write-back gate: refused, nothing is
+     written and the record stays due its next poll, so a lifted repo pause
+     lands the reopen; a policy change after the close is warned in the log
+     and leaves the hive-closed original shut until a person reopens it.
+     The orphan recovery below never runs for a close-first
      original (its copy being closed is a failure, not an orphan); the
      `hive:adoption-copy-failed` note is a settled marker, so the marker scan
      never re-adopts a reopened original on its own.
@@ -2344,9 +2355,10 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 
 | Token | Plain words | Detail |
 |---|---|---|
+| `already-fixed` | the issue was already fixed by a merged PR; closed as superseded | The issue this PR fixes is already closed and a merged PR closed it (or a merged PR declares it supersedes this one), so nothing is left to deliver. The hive closes the PR as superseded with a note naming the merging PR; it never adopts it. |
 | `capability-gap` | the GitHub App lacks a permission; deciding cannot clear it | The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change. |
 | `ci-ratchet` | a CI hygiene gate, landed as a ratchet | A new CI hygiene gate lands as a ratchet: it records today's baseline and fails only on increases, so existing work is never blocked. |
-| `contributor-offline` | the author's hive hasn't been connected since the nudge | The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting. |
+| `contributor-offline` | the author hasn't been reachable since the nudge | The PR's author (or their clanker or hive) has been offline since the hive nudged them, so the hive takes the work over instead of waiting. The decision itself names which: the author's clanker, a connected hive, or the author. |
 | `dedupe` | an older issue already tracks this | An older issue already tracks the same work; one thread keeps it moving. |
 | `default-approve` | no special rule applies; the hive took its own recommendation | No owner rule singles this issue out, so the hive went with its own recommendation — the reversible choice that keeps work moving. |
 | `default-release` | no special rule applies; a green branch is approved | No owner rule holds this PR back; its branch is green and a merge is reversible, so it is approved. |
@@ -2355,10 +2367,13 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `flaky-test` | a flaky test, quarantined with a retry | The failure is a flaky test: it is quarantined with a retry and a separate deflake task is filed, so it blocks nothing. |
 | `hive-policy` | this changes the hive's own rules | This changes the hive's own settings, governance or security posture; the hive only recommends and the owner confirms. |
 | `llm-delegate` | decided by the hive's model under the owner's rules | No mechanical rule applied, so the hive's model decided under the owner's standing rules; the same safety rails applied. |
+| `mergeable-as-is` | mergeable and green as it is; handed to the merge gate | The head is mergeable with green CI, so no adoption is needed: the hive approves it and the merge gate takes it as it is. |
 | `owner-only`, `owner_only` | only the hive owner can do this | This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you. |
 | `prefer-contributor` | a contributor's PR and a hive PR do the same work | A contributor's PR and a hive-authored PR cover the same work; the hive prefers the contributor's when it is mergeable and current. |
 | `rail-hold` | the item is on hold | The item carries the hold label; the hive never acts on a held item until a person releases the hold. |
+| `rebase-then-merge` | only conflicts block it; a rebase then merge | Conflicts are the only blocker. The unattended rebase-then-merge path lands with hivecommons/hive#15104; until then the ladder records this rung and moves on. |
 | `reporter-trust` | the hold on an unknown reporter is cleared because the fix is sound | The PR was held until the reporter's trust was known; its fix is green and mergeable, so the hold is cleared. |
+| `return-to-contributor` | the author's clanker or hive is connected; returned to them with the fix list | The author's clanker or hive is connected (or has picked the rework up), so the hive hands the PR back to them with the exact fix list instead of adopting it. |
 | `review-backlog` | the PR closed without merging, so the issue stays open | The fixing PR closed unmerged; the issue stays open and is re-triaged rather than auto-closed. |
 | `sentinel-trusted` | security-sensitive files changed, but the author is trusted | Security-sensitive files changed; because the author is trusted the hive approved, but a person must still remove the sentinel label before it merges. |
 | `sentinel-untrusted` | security-sensitive files changed; a maintainer must approve | Security-sensitive files changed in a PR from an author without write access; a maintainer must review and approve it. |
@@ -2393,7 +2408,8 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `adoption-stalled:contributor-lane:workflow-path`, `capability:workflows-permission`, `contributor-lane:workflow-path`, `workflow-path` | the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it | The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded. |
 | `adoption-undone` | the hive's copy was closed without merging and the adoption was undone | The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub. |
 | `author-association`, `contributor-lane:author-association`, `human-merge`, `ready-for-human-merge`, `untrusted-author` | no merge lane vouches for this PR's author; a maintainer merges | The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors. |
-| `author-online` | the author's hive is connected, so hive won't take the PR over | Adoption is for authors whose hive has gone offline; this author's hive is connected, so the hive leaves the PR with them. |
+| `author-online` | the author's clanker or hive is connected, so hive won't take the PR over | Adoption is for authors whose clanker or hive has gone offline; this author's is connected, so the hive leaves the PR with them. |
+| `blocker`, `capability`, `human-only` | the hive can't do this itself | The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099). |
 | `behind` | the branch is behind the base branch | The branch is behind the base branch and must be updated before it can merge. |
 | `changes-requested`, `changes_requested`, `contributor-lane:changes-requested`, `human-changes-requested`, `request_changes`, `reviewer-verdict:request_changes` | a reviewer asked for changes; inspect whether the objection is from the swarm or a human | A new commit can address the objection. A trusted human's GitHub APPROVED review on the exact head can override any non-approved **swarm** outcome at the merge review gate, including `changes_requested`/`reject`; for swarm-review purposes, `/hive decision approve` only answers `requires_human`. This does not bypass an independent human change request or any other merge gate. |
 | `checks-failing`, `ci-failing`, `ci-red`, `red` | CI is failing on this branch | Required checks are failing on this branch; nothing merges until they are green. |
@@ -2411,6 +2427,36 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `still-parked` | the item is still waiting on a person | The item is still parked for a person's decision; the recorded decision did not move it. |
 
 A `/hive decision …` comment the hive itself wrote as the owner's delegate (it carries the delegated-decision marker) is never read as a maintainer's command: not as a change request on the PR, not as an approval. [#14822](https://github.com/hivecommons/hive/pull/14822) fixes the parse of `/hive decision approve <rationale>`; the marker guard covers every other decision text the delegate can post, whichever login it was posted under.
+
+## Blockers (`hive:blocker` marker)
+
+`needs-human` says *a person is needed*; it does not say *what for*. When the reason is a **capability gap** — the GitHub App cannot do the next step at all — a direction decision answers a question nobody asked, and "Let hive decide" would un-park the issue only for the next sweep to re-park it with the same text (hivecommons/hive#14976 → #15099). So an agent that parks an item because the hive *cannot* act records a structured blocker next to the label:
+
+```
+<!-- hive:blocker kind=capability:workflows-permission -->
+```
+
+| Kind | Meaning | Clears when |
+|---|---|---|
+| `capability:workflows-permission` | the App token cannot push `.github/workflows/*` (no `workflows: write`) | the permission is granted and re-checked |
+| `capability:repo-write` | the App has no `contents: write` on the repo | the permission is granted and re-checked |
+| `capability:branch-protection` | a protection rule the App cannot satisfy or bypass | a person changes the rule |
+| `capability:secret` | a secret or token only the owner holds | a person sets it |
+| `human-only:cla` | a CLA / legal sign-off only a person can give | a person signs |
+| `human-only:re-asked` | the same needs-human reason came back after a delegated un-park (loop guard) | the reason text changes |
+
+Where it comes from:
+
+- **Agents** put the marker in the body of the needs-human report (the task-list sweep copies a merged PR's remainder into its progress comment and adds the marker when the prose names a capability). `bin/gh-wrapper.sh` adds the marker itself when a needs-human comment says "the App cannot … (no `workflows` permission)" and no marker is present, so a report written in plain prose still lands structured.
+- **The hive** reads it at every comment path — the `issue_comment` webhook, the task-list sweep, the stage pass — into `pkg/blocker`'s ledger (`/data/item-blockers.json`), inferring the kind from the prose when the marker is missing.
+
+What it changes:
+
+- The issue stays 045 with the reason `blocked: App lacks workflows permission`; the tracker pill reads **Blocked · App lacks workflows permission** and its popover says in plain words what the hive cannot do and lists the ways out (grant the permission, re-check, prepare the patch for a person where an identity exists, mark partially addressed and close, keep waiting).
+- **"Let hive decide" returns `no-effect`** (reason `blocker`) instead of applying `approved-direction`; it is shown disabled with that sentence, not greyed silently.
+- **Loop guard**: a delegated un-park records the reason it cleared. If the same reason is re-applied afterwards, the item is parked with a blocker (`human-only:re-asked` when no capability is named) and "Let hive decide" stays disabled on it until the reason changes.
+- **Label consistency**: `stage/045-needs-decision` and `approved-direction` cannot coexist. `needs-human` is always the newer signal next to `approved-direction` (the un-park removes `needs-human` when it applies the ack), so the stage pass keeps 045 and clears `approved-direction` — a person or sweep that re-parked after a delegated decision is never silently un-parked again.
+- `/api/status.capabilities` lists the missing permissions and the count of items blocked on them; ⚙ → Security shows the same line with a link to the App settings page. **Re-check permissions** on a row probes the installation and clears the blocker when the permission is there.
 
 ## How labels reach agents
 

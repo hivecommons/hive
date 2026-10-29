@@ -295,7 +295,7 @@ const col = (kind, stage) => stageTrackerColIndex({ kind, stage }, stages);
 // Column index follows the drawn anchor: shared columns and detours collapse.
 assert.strictEqual(col('issue', 0), 0); assert.strictEqual(col('issue', 10), 1); assert.strictEqual(col('issue', 15), 1);
 assert.strictEqual(col('issue', 20), 2); assert.strictEqual(col('pr', 30), 3); assert.strictEqual(col('pr', 40), 3);
-assert.strictEqual(col('pr', 50), 4); assert.strictEqual(col('pr', 60), 5); assert.strictEqual(col('pr', 70), 4); assert.strictEqual(col('pr', 71), 4);
+assert.strictEqual(col('pr', 50), 4); assert.strictEqual(col('pr', 60), 4, '060 reviewed is pre-admission: CI / Review, not the merge gate'); assert.strictEqual(col('pr', 70), 4); assert.strictEqual(col('pr', 71), 4);
 assert.strictEqual(col('pr', 80), 5); assert.strictEqual(col('pr', 85), 5); assert.strictEqual(col('pr', 90), 5); assert.strictEqual(col('pr', 95), 5); assert.strictEqual(col('pr', 100), 5);
 assert.strictEqual(col('issue', 45), 1, 'an issue parked on a person lights Actionable');
 assert.strictEqual(col('issue', 110), STAGE_TRACKER_CAP_COLUMN, 'merged is the cap column');

@@ -84,6 +84,36 @@ func (c *Client) writebackSweepSummary(repo string) {
 	c.WritebackGate().SweepSummary(repo)
 }
 
+// RepoPausedError is returned by a periodic writer that fell silent because
+// its target repo is operator-paused (#6203). Callers treat it as a healthy
+// skip, not a failure: the quiet is deliberate.
+type RepoPausedError struct {
+	Repo   string
+	By     string
+	Reason string
+}
+
+func (e *RepoPausedError) Error() string {
+	return "writeback: " + writeback.RepoPausedDetail(e.Repo, writeback.RepoPauseInfo{By: e.By, Reason: e.Reason})
+}
+
+// repoPausedError combines the two pause sources a client may carry: the
+// gate's provenance-bearing lookup (config.RepoPauseFor) and the bare
+// SetRepoPausedFunc predicate. Either one pausing the repo pauses it; the
+// provenance is filled in when the gate knows it.
+func (c *Client) repoPausedError(repo string) (*RepoPausedError, bool) {
+	if c == nil {
+		return nil, false
+	}
+	if info, paused := c.WritebackGate().RepoPaused(repo); paused {
+		return &RepoPausedError{Repo: repo, By: info.By, Reason: info.Reason}, true
+	}
+	if c.RepoIsPaused(repo) {
+		return &RepoPausedError{Repo: repo}, true
+	}
+	return nil, false
+}
+
 // WritebackSuppressedSince returns gate suppressions newer than since for
 // the dashboard drill-down (nil gate → nil).
 func (c *Client) WritebackSuppressedSince(since time.Time) []writeback.Suppressed {

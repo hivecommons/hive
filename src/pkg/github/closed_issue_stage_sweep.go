@@ -74,7 +74,8 @@ func (c *Client) SweepClosedIssueStageLabels(ctx context.Context, opts ClosedIss
 		since = time.Now().Add(-DefaultClosedIssueStageSweepWindow)
 	}
 	result := &ClosedIssueStageSweepResult{}
-	for _, repo := range c.getRepos() {
+	// activeRepos, not getRepos: a paused repo keeps its labels untouched (#6203).
+	for _, repo := range c.activeRepos() {
 		if len(result.Cleaned) >= maxActions {
 			break
 		}

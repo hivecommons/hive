@@ -113,6 +113,8 @@ These are the acceptance criteria of #13373 and the tests that hold them.
 | `governor.eval_interval_max_s` | `1800` | cap on either tick after the API-budget stretch |
 | `governor.webhook_wake_debounce_s` | `10` | a delivery and its check fan-out coalesce into one wake cycle |
 | `governor.webhook_wake_min_gap_s` | `30` | minimum spacing between webhook-triggered cycles, and between the cycles recorded review verdicts trigger |
+| `governor.ci_failure_webhook_kick` | `true` | a failed `check_run`/`check_suite`/`status` delivery kicks the owning agent (hive-authored PR) or runs a targeted contributor-lane pass (contributor PR) at once; `false` records the signal for the sweep only |
+| `governor.ci_failure_kick_cooldown_s` | `600` | at most one webhook-triggered CI-failure kick or nudge per PR head in this window |
 | `forgestate.reconcile_interval_s` | `900` | ForgeState's own full-list interval per repo, shortened while drift is high |
 | `forgestate.freshness_bound_s` | `60` | maximum item age before merge/close/claim/kick re-reads it |
 | `forgestate.drift_threshold` | `0.05` | fraction of items a reconcile may find wrong before the interval shortens |

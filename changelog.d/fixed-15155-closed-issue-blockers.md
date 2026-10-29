@@ -1,0 +1,1 @@
+- Clear blockers when issues close through GitHub or the hive, so closed issues no longer inflate the capabilities blocked-item count ([#15155](https://github.com/hivecommons/hive/issues/15155)).

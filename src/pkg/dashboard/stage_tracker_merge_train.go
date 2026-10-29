@@ -193,9 +193,8 @@ func stageTrackerMergeTrainCaption(reason string) string {
 
 // decisionForMergeTrain: the train gave up rebasing this PR after the loop
 // guard (hivecommons/hive#15117). The lead option is the rebase-then-merge
-// follow-through; until that follow-through (hivecommons/hive#15104) is
-// wired the option is offered disabled with the honest reason, and the
-// row menu's usual decision options remain.
+// follow-through (hivecommons/hive#15104): the click records the approval,
+// re-opens the rebase episode in the operator's name and merges on green.
 func decisionForMergeTrain(it StageTrackerItem, held bool) *StageTrackerDecision {
 	mt := it.MergeTrain
 	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByLane, BlockerReason: it.Reason}
@@ -208,25 +207,12 @@ func decisionForMergeTrain(it StageTrackerItem, held bool) *StageTrackerDecision
 	if held {
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
-	mergeWhy := decisionWhyMergeNowUnwired
-	if held {
-		mergeWhy = decisionWhyHeld
-	}
+	mergeNow := decisionOption(decisionActionMergeNow, rebaseMergeFollowThroughLabel, !held, decisionWhyHeld)
+	mergeNow.Consequence = rebaseMergeFollowThroughConsequence(it.Number, strings.TrimSpace(it.BaseRef))
 	d.Options = []StageTrackerDecisionOption{
-		decisionOption(decisionActionMergeNow, rebaseMergeFollowThroughLabel, mergeNowWired && !held, mergeWhy),
+		mergeNow,
 		decisionOption(decisionActionCloseSuperseded, "Close as superseded", !held, decisionWhyHeld),
 		decisionHoldOption(held),
 	}
 	return d
 }
-
-// rebaseMergeFollowThroughLabel is the option's wording.
-const rebaseMergeFollowThroughLabel = "Rebase, then merge as maintainer"
-
-// mergeNowWired flips true once decide:merge-now rebases a conflicting head
-// before merging (hivecommons/hive#15104). The #15087 handler merges a
-// mergeable head only, so on a rebase-exhausted (dirty) PR the option is
-// offered disabled with the honest reason.
-var mergeNowWired = false
-
-const decisionWhyMergeNowUnwired = "Rebase-then-merge is not wired in this hive yet (#15104); rebase the branch on GitHub, then approve & merge as maintainer"

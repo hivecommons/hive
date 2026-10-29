@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 )
 
 // DefaultWebhookHealthWindow is the "healthy" window used until the governor
@@ -44,6 +46,9 @@ type WebhookEventResult struct {
 	DirtyIssues []int `json:"dirty_issues,omitempty"`
 	// ReopenedIssue is the issue an `issues` reopened event named, if any.
 	ReopenedIssue int `json:"reopened_issue,omitempty"`
+	// BlockerKind is the structured blocker an issue_comment delivery
+	// recorded on the issue, if any (hivecommons/hive#15099).
+	BlockerKind string `json:"blocker_kind,omitempty"`
 	// TouchedIssues lists the non-PR issues an `issues` or `issue_comment`
 	// event named, whatever the action: the stage tracker re-reads them.
 	TouchedIssues []int `json:"touched_issues,omitempty"`
@@ -69,6 +74,10 @@ type WebhookEventResult struct {
 	// so a stage tracker whose confirming GET is refused or lost cannot keep
 	// showing a closed item as open (hivecommons/hive#14159, #14064).
 	Item *WebhookItemHint `json:"item,omitempty"`
+	// CIFailure is set when a check_run, check_suite or status delivery
+	// reported a failed check (failure / timed_out / error) on a head SHA,
+	// with the open PRs that head resolved to.
+	CIFailure *WebhookCIFailure `json:"ci_failure,omitempty"`
 }
 
 // WebhookItemHint is the state a webhook payload reports for the item it
@@ -438,16 +447,35 @@ type webhookEventPayload struct {
 		UpdatedAt   *time.Time       `json:"updated_at"`
 		PullRequest *json.RawMessage `json:"pull_request"`
 	} `json:"issue"`
+	Comment *struct {
+		Body      string     `json:"body"`
+		CreatedAt *time.Time `json:"created_at"`
+		User      *struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	} `json:"comment"`
 	CheckSuite *struct {
 		HeadSHA      string         `json:"head_sha"`
+		Conclusion   string         `json:"conclusion"`
+		URL          string         `json:"url"`
 		PullRequests []webhookPRRef `json:"pull_requests"`
+		App          struct {
+			Name string `json:"name"`
+		} `json:"app"`
 	} `json:"check_suite"`
 	CheckRun *struct {
 		HeadSHA      string         `json:"head_sha"`
+		Name         string         `json:"name"`
+		Conclusion   string         `json:"conclusion"`
+		DetailsURL   string         `json:"details_url"`
+		HTMLURL      string         `json:"html_url"`
 		PullRequests []webhookPRRef `json:"pull_requests"`
 	} `json:"check_run"`
-	SHA      string `json:"sha"`
-	Branches []struct {
+	SHA       string `json:"sha"`
+	State     string `json:"state"`
+	Context   string `json:"context"`
+	TargetURL string `json:"target_url"`
+	Branches  []struct {
 		Name string `json:"name"`
 	} `json:"branches"`
 	Ref string `json:"ref"`
@@ -478,10 +506,30 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 	aliases := webhookRepoAliases(configured, p.Repository.FullName)
 	sharedWebhookTracker.recordEvent(aliases)
 
+	res.Item = webhookItemHint(event, p)
 	if n, ok := webhookTouchedIssue(event, p); ok {
 		res.TouchedIssues = []int{n}
+		if res.Item.Closed() {
+			// Closed issues no longer contribute to blocked_items. Comments
+			// delivered after closure must not recreate their blocker.
+			l := itemblocker.Shared()
+			l.Clear(configured, n)
+			// Comment webhooks use the configured name; sweep reports use
+			// owner/repo. Clear both when configuration uses a short name.
+			owner, repo := c.splitRepo(configured)
+			if full := owner + "/" + repo; full != configured {
+				l.Clear(full, n)
+			}
+		} else if body, at, ok := webhookIssueCommentBody(event, p); ok {
+			// A needs-human report that names a capability the App lacks
+			// becomes a structured blocker the moment it lands, so the
+			// tracker and "Let hive decide" read it before the next
+			// enumeration (hivecommons/hive#15099).
+			if e, changed := itemblocker.Shared().Observe(configured, n, body, at); changed && e.Blocks() {
+				res.BlockerKind = string(e.Blocker.Kind)
+			}
+		}
 	}
-	res.Item = webhookItemHint(event, p)
 	if reviewRequestWakeEvent(event, p) {
 		c.reviewWake.wake()
 		res.WokeReviewWatcher = true
@@ -515,6 +563,10 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 	}
 	res.HeadSHA = webhookHeadSHA(event, p)
 	numbers := webhookInvalidationTargets(event, p, aliases)
+	// Capture the failed-check identity and the PRs it resolved to BEFORE
+	// invalidation drops their cache entries: the receiver reacts to a red
+	// check on the event rather than on the next sweep.
+	res.CIFailure = c.webhookCIFailureResult(event, p, aliases, numbers)
 	for _, n := range numbers {
 		c.invalidateWebhookPR(aliases, n)
 	}
@@ -597,6 +649,19 @@ func webhookTouchedIssue(event string, p webhookEventPayload) (int, bool) {
 		return 0, false
 	}
 	return p.Issue.Number, true
+}
+
+// webhookIssueCommentBody returns the body and time of a created or edited
+// issue_comment delivery on a non-PR issue.
+func webhookIssueCommentBody(event string, p webhookEventPayload) (string, time.Time, bool) {
+	if event != "issue_comment" || p.Comment == nil || (p.Action != "created" && p.Action != "edited") {
+		return "", time.Time{}, false
+	}
+	at := sharedWebhookTracker.now()
+	if p.Comment.CreatedAt != nil && !p.Comment.CreatedAt.IsZero() {
+		at = *p.Comment.CreatedAt
+	}
+	return p.Comment.Body, at, true
 }
 
 // webhookIssueReopenedTarget returns the issue number of an `issues` event
@@ -719,4 +784,42 @@ func (c *Client) invalidateWebhookPR(aliases []string, number int) {
 		c.invalidateGraphQLPRBatchPR(repo, number)
 	}
 	sharedWebhookTracker.markDirty(aliases, number)
+}
+
+// webhookCIFailureResult pairs a failed-check delivery with the PRs it
+// resolved to, read from the detail cache before the delivery invalidates
+// them. A PR the cache does not hold is reported by number only.
+func (c *Client) webhookCIFailureResult(event string, p webhookEventPayload, aliases []string, numbers []int) *WebhookCIFailure {
+	f := webhookCIFailure(event, p)
+	if f == nil || f.HeadSHA == "" {
+		return nil
+	}
+	for _, n := range numbers {
+		ref := CIFailurePR{Number: n}
+		for _, repo := range aliases {
+			pr, headSHA, ok := sharedPRDetailCache.peek(repo, n)
+			if !ok {
+				continue
+			}
+			if pr.GetState() != "" && pr.GetState() != "open" {
+				ref.Number = 0
+				break
+			}
+			if headSHA != "" && !strings.EqualFold(headSHA, f.HeadSHA) {
+				// The cache knows a newer head: this failure is stale.
+				ref.Number = 0
+				break
+			}
+			ref.Author = pr.GetUser().GetLogin()
+			ref.Title = pr.GetTitle()
+			ref.URL = pr.GetHTMLURL()
+			ref.BaseRef = pr.GetBase().GetRef()
+			ref.HiveAuthored = c.IsHiveAuthorLogin(ref.Author)
+			break
+		}
+		if ref.Number > 0 {
+			f.PRs = append(f.PRs, ref)
+		}
+	}
+	return f
 }

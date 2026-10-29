@@ -15,7 +15,7 @@ Usage: src/scripts/check-docs-citations.py [--fix] [docs-dir]
 Generic docs citations verify existence/range, plus a lightweight content
 anchor when the citing line names a backticked symbol near the citation.
 
---fix first delegates api-reference.md to check-api-reference-citations.sh
+--fix first delegates api-reference.md and api-reference/*.md to check-api-reference-citations.sh
 --fix (route-registration aware), then re-anchors drifted generic citations by
 Go declaration (#14713). A drifted citation is rewritten only when all of these
 hold, otherwise it is left untouched and still reported as DRIFT:
@@ -278,10 +278,14 @@ def apply_spec_rewrites(rewrites: list[tuple[Citation, str]]) -> None:
 
 def run_api_reference_fix(script_dir: Path, docs_dir: Path) -> int:
     api_doc = docs_dir / "api-reference.md"
+    api_dir = docs_dir / "api-reference"
     checker = script_dir / "check-api-reference-citations.sh"
     if not api_doc.is_file() or not checker.is_file():
         return 0
-    return subprocess.call(["bash", str(checker), "--fix", str(api_doc)])
+    args = ["bash", str(checker), "--fix", str(api_doc)]
+    if api_dir.is_dir():
+        args.append(str(api_dir))
+    return subprocess.call(args)
 
 
 def verify_citations(

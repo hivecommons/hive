@@ -23,6 +23,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_MENU_FAIL_LINES"),
 		jsConstBlock(t, html, "STAGE_TRACKER_DECISION_GLOSSARY"),
 		jsFunc(t, html, "stageTrackerPlainWords"),
+		jsFunc(t, html, "stageTrackerShortAgo"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTION_LABELS"),
 		jsConstLine(t, html, "STAGE_TRACKER_WHY_WRITE"),
 		jsConstLine(t, html, "STAGE_TRACKER_WHY_ROLE"),
@@ -88,6 +89,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerAdoptNowConfirm"),
 		jsFunc(t, html, "stageTrackerRerouteConfirm"),
 		jsFunc(t, html, "stageTrackerRerouteTargetValid"),
+		jsConstLine(t, html, "STAGE_TRACKER_BLOCKER_ACTIONS"),
+		jsFunc(t, html, "stageTrackerBlockerActions"),
 		jsFunc(t, html, "stageTrackerRowActions"),
 		jsFunc(t, html, "stageTrackerMenuTextHtml"),
 		jsFunc(t, html, "stageTrackerFlatActions"),
@@ -113,6 +116,10 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_RESULT_TOAST_MAX"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTING_MAX_MS"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTING_CAPTIONS"),
+		jsConstLine(t, html, "STAGE_TRACKER_REBASE_MERGE_LABEL"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTION_REBASE_QUEUED"),
+		jsFunc(t, html, "stageTrackerNeedsRebase"),
+		jsFunc(t, html, "stageTrackerRebaseMergeLive"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTION_WORDS"),
 		"var _stageTrackerResultToasts = []; var _stageTrackerPending = [];",
 		jsFunc(t, html, "stageTrackerActingCaption"),
@@ -121,6 +128,11 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerResultOf"),
 		jsFunc(t, html, "stageTrackerErrorResult"),
 		jsFunc(t, html, "stageTrackerResultWarn"),
+		jsConstLine(t, html, "STAGE_TRACKER_RFC3339_RE"),
+		// Local clock words are tested in stage_tracker_decided_ui_test.go;
+		// here they are marked so the sentence shape can be asserted.
+		"function agentNowClockTime(ms, nowMs) { return new Date(ms).toISOString().slice(11, 16); } function formatDashboardDate(v) { return new Date(v).toISOString().slice(0, 10); }",
+		jsFunc(t, html, "stageTrackerLocalStamps"),
 		jsFunc(t, html, "stageTrackerResultText"),
 		jsFunc(t, html, "stageTrackerResultToast"),
 		jsFunc(t, html, "stageTrackerResultToastStale"),
@@ -591,7 +603,7 @@ func TestStageTrackerPRScopedRowActions(t *testing.T) {
 		`.ham-sub.ham-selected {`,
 		`const sub = btn && btn.closest ? btn.closest('[data-ham-sub-key]') : null;`,
 		`'decide:delegate-all': 'Let hive decide — all PRs'`,
-		`'decide:delegate-all': 'Hive is deciding each PR…'`,
+		`'decide:delegate-all': 'Hive deciding each PR…'`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)
@@ -726,7 +738,7 @@ function stageTrackerAfterActions() {}
   assert.deepStrictEqual(res.toasts.map(x => x.key), ['hivecommons/hive/issue#15009', 'hivecommons/hive/pr#15017', 'hivecommons/hive/pr#15020']);
   assert.ok(res.toasts[0].text.head.includes('decided per PR'), res.toasts[0].text.head);
   assert.ok(res.toasts[0].text.outcome.includes('#15017 approved') && res.toasts[0].text.outcome.includes('#15020 no change'));
-  assert.ok(res.toasts[1].text.head.includes('hivecommons/hive#15017') && res.toasts[1].text.head.includes('approved'));
+  assert.ok(res.toasts[1].text.outcome.includes('hivecommons/hive#15017') && res.toasts[1].text.outcome.includes('approved'), res.toasts[1].text.outcome);
   assert.strictEqual(res.toasts[2].text.type, 'info', 'the no-op PR reads as no change');
   assert.strictEqual(dialogs.length, 1, 'one confirm for the batch'); assert.ok(dialogs[0].cfg.message.includes('hivecommons/hive#15017, hivecommons/hive#15020'), dialogs[0].cfg.message);
   // A PR row never runs the all-PRs action.
@@ -743,12 +755,19 @@ function stageTrackerAfterActions() {}
   for (const selected of [[issue], [issue, a, b], [b, issue, a]]) {
     calls.length = 0; dialogs.length = 0;
     await runRowAction('decide:delegate', selected);
-    assert.deepStrictEqual(calls.map(c => c.url).sort(), [
+    // Let hive decide previews first: one plan call per PR, then one
+    // decide call per PR after the operator picks (#15126).
+    assert.deepStrictEqual(calls.filter(c => c.url.endsWith('/plan')).map(c => c.url).sort(), [
+      '/api/repos/hivecommons/hive/items/15017/decide-delegated/plan',
+      '/api/repos/hivecommons/hive/items/15020/decide-delegated/plan',
+    ]);
+    assert.deepStrictEqual(calls.filter(c => !c.url.endsWith('/plan')).map(c => c.url).sort(), [
       '/api/repos/hivecommons/hive/items/15017/decide-delegated',
       '/api/repos/hivecommons/hive/items/15020/decide-delegated',
     ]);
     assert.ok(calls.every(c => c.body.type === 'pr'), 'never delegate the ambiguous issue itself');
-    assert.strictEqual(dialogs.length, 1);
+    assert.ok(calls.filter(c => !c.url.endsWith('/plan')).every(c => /^Let hive do that · previewed /.test(c.body.chosen)), 'the pressed button rides the request');
+    assert.strictEqual(dialogs.length, 1); assert.strictEqual(dialogs[0].kind, 'plan');
     for (const number of [15017, 15020]) {
       assert.strictEqual(dialogs[0].cfg.message.split('hivecommons/hive#' + number).length - 1, 1, 'confirm each PR exactly once');
     }
@@ -760,7 +779,7 @@ function stageTrackerAfterActions() {}
   for (const selected of [oneParked, [oneParked], [oneParked, b]]) {
     calls.length = 0; dialogs.length = 0;
     await runRowAction('decide:delegate', selected);
-    assert.deepStrictEqual(calls.map(c => c.url), ['/api/repos/hivecommons/hive/items/15020/decide-delegated']);
+    assert.deepStrictEqual(calls.filter(c => !c.url.endsWith('/plan')).map(c => c.url), ['/api/repos/hivecommons/hive/items/15020/decide-delegated']);
     assert.strictEqual(dialogs.length, 1);
     assert.ok(!dialogs[0].cfg.message.includes('hivecommons/hive#15017'), dialogs[0].cfg.message);
   }
@@ -791,8 +810,17 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerAsk"),
 		jsFunc(t, html, "stageTrackerDelegateConfirm"),
 		jsFunc(t, html, "stageTrackerDCOCaveat"),
+		jsFunc(t, html, "stageTrackerDelegatePlanText"),
+		jsFunc(t, html, "stageTrackerDelegatePlanMergeable"),
+		jsFunc(t, html, "stageTrackerDelegatePlanMergeReason"),
+		jsFunc(t, html, "stageTrackerFetchDelegatePlan"),
+		jsFunc(t, html, "stageTrackerDelegatePreview"),
 		jsFunc(t, html, "stageTrackerActionPayload"),
 		jsFunc(t, html, "stageTrackerDirectionCarrier"),
+		// The preview dialog is recorded like the confirms; its answer is
+		// the "Let hive do that" button unless a test sets planAnswer.
+		`let planAnswer = null;
+function stageTrackerDelegatePlanDialog(plans, sentinel) { dialogs.push({ kind: 'plan', cfg: { title: 'Let hive decide — preview', message: (sentinel ? sentinel + '\n\n' : '') + stageTrackerDelegatePlanText(plans), plans } }); return Promise.resolve(planAnswer === null ? { chosen: 'Let hive do that · previewed ' + plans.map(p => p.would || '?').join('/') } : planAnswer); }`,
 		`const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
 global.window = { _hiveUser: 'clubanderson' };
 const dialogs = []; let dialogAnswer = true;
@@ -846,14 +874,20 @@ const plain = { repo: 'o/r', kind: 'pr', number: 4, url: 'u4', stage: 85, modifi
   assert.ok(text.warn.startsWith('⚠ o/crux#30 — Sentinel flagged security-relevant changes at 40a959b'), 'the skipped dialog\'s warning reaches the toast: ' + text.warn);
   const toast = stageTrackerResultToast({ action: 'approved', target: { repo: 'o/crux', kind: 'pr', number: 30, url: 'u30' }, outcome: '/lgtm + /approve posted.', next: '' }, flagged, { id: 'decide:approve' });
   assert.ok(toast.el.children.some(c => c.className === 'ham-result-warn' && c.textContent.includes('Sentinel flagged')), 'toast carries the ⚠ line');
-  // Let hive decide: the explanation paragraph asks once, then is skipped.
-  dialogAnswer = { checked: true };
-  assert.deepStrictEqual(await stageTrackerActionPayload([plain], 'decide:delegate'), {});
-  assert.strictEqual(dialogs[0].cfg.title, 'Let hive decide');
-  assert.ok(dialogs[0].cfg.message.includes('Rails: it never merges'));
-  dialogs.length = 0;
-  assert.deepStrictEqual(await stageTrackerActionPayload([plain], 'decide:delegate'), {});
-  assert.strictEqual(dialogs.length, 0);
+  // Let hive decide always previews what hive would do (#15126): the
+  // plan dialog has no opt-out, and nothing is written until a button is
+  // pressed. The delegate-all confirm keeps the opt-out key.
+  const planCalls = []; global.fetch = async (url, init) => { planCalls.push(url); return { ok: true, status: 200, json: async () => ({ would: 'adopt-supersede', summary: 're-author o/r#4 as a hive PR with the same commits and merge it; o/r#4 will be closed as superseded', why: 'Author @k is untrusted and their clanker is offline.', consequences: ['o/r#4 is closed as superseded'], alternatives: [{ action: 'decide:merge-now', label: 'Approve & merge as-is', enabled: false, reason_if_disabled: 'Needs merge rights' }] }) }; };
+  assert.deepStrictEqual(await stageTrackerActionPayload([plain], 'decide:delegate'), { chosen: 'Let hive do that · previewed adopt-supersede' });
+  assert.deepStrictEqual(planCalls, ['/api/repos/o/r/items/4/decide-delegated/plan'], 'the preview is the plan route, never the decide route');
+  assert.strictEqual(dialogs[0].kind, 'plan'); assert.strictEqual(dialogs[0].cfg.title, 'Let hive decide — preview');
+  assert.ok(dialogs[0].cfg.message.includes('o/r#4 — Hive would: re-author o/r#4 as a hive PR') && dialogs[0].cfg.message.includes('Why: Author @k is untrusted and their clanker is offline.'), dialogs[0].cfg.message);
+  assert.strictEqual(stageTrackerDelegatePlanMergeable(dialogs[0].cfg.plans), false); assert.strictEqual(stageTrackerDelegatePlanMergeReason(dialogs[0].cfg.plans), 'Needs merge rights');
+  // Cancel: no payload, so runRowAction never sends the decide request.
+  planAnswer = null; dialogs.length = 0;
+  const cancelled = await (async () => { planAnswer = undefined; const r = await stageTrackerActionPayload([plain], 'decide:delegate'); planAnswer = null; return r; })();
+  assert.strictEqual(cancelled, null, 'Cancel runs nothing');
+  stageTrackerSetConfirmSkip('decide:delegate', true); dialogs.length = 0;
   // Optional-comment prompts skip to an empty comment; required ones never carry the box.
   dialogAnswer = { value: 'because', checked: true };
   assert.deepStrictEqual(await stageTrackerActionPayload([plain], 'decide:close-wontfix'), { comment: 'because' });
@@ -986,8 +1020,11 @@ assert.strictEqual(stageTrackerTargetKey(null), '');
 const target = { repo: 'o/r', kind: 'pr', number: 14947, url: 'u947' };
 const decided = { action: 'adopted', rule: 'contributor-offline', target, outcome: 'Adopted o/r#14947 in supersede mode as o/r#14977.', next: 'The hive rebases and merges it unattended.' };
 let text = stageTrackerResultText(decided, issue, { id: 'decide:delegate', rowRef: 'o/r#14938' });
-assert.strictEqual(text.head, "Hive decided on o/r#14938 → PR #14947: adopted (the author's hive hasn't been connected since the nudge)", 'the rule in plain words, never the bare slug');
-assert.strictEqual(text.outcome, decided.outcome); assert.strictEqual(text.next, decided.next); assert.strictEqual(text.type, 'success');
+// The decision toast leads with the outcome; the rule in plain words
+// (never the bare slug) is the second line (#15126).
+assert.strictEqual(text.head, 'Adopted o/r#14947 in supersede mode as o/r#14977.', 'the outcome leads');
+assert.strictEqual(text.outcome, "Hive decided on o/r#14938 → PR #14947: adopted (the author hasn't been reachable since the nudge)", 'the rule in plain words, never the bare slug');
+assert.strictEqual(text.next, decided.next); assert.strictEqual(text.type, 'success');
 assert.strictEqual(text.url, 'u947'); assert.strictEqual(text.linkText, 'Open PR #14947');
 text = stageTrackerResultText({ action: 'held', target: { repo: 'o/r', kind: 'issue', number: 7, url: 'u7' }, outcome: 'hold applied.', next: '' }, held, { id: 'hold' });
 assert.strictEqual(text.head, 'Hold on o/r#7: held', 'the target is not repeated when it is the clicked row');
@@ -997,20 +1034,40 @@ assert.ok(text.outcome.startsWith('No change — hive already recorded this deci
 // hivecommons/hive#14822: a recorded decision that never took effect is a
 // warning that says why in plain words and carries the next actions.
 const stuck = { action: 'no-effect', rule: 'contributor-offline', why: 'self-decision-read-as-changes', target, applied_at: '2026-10-28T13:01:29Z',
-  outcome: "Hive decided close this PR and open a fresh hive-authored PR with the same commits at 2026-10-28T13:01:29Z, but it hasn't taken effect: hive's own decision comment was read as a reviewer asking for changes.",
-  next: 'Options: Merge as maintainer (on GitHub) · Re-run decision · Close as superseded · Send back for a new commit.',
-  options: [{ action: 'open:github', label: 'Merge as maintainer (on GitHub)', enabled: true }, { action: 'decide:delegate:rerun', label: 'Re-run decision', enabled: true }, { action: 'decide:close-superseded', label: 'Close as superseded', enabled: false, reason_if_disabled: 'write required' }, { action: 'decide:direction', label: 'Send back for a new commit', enabled: true }, { label: 'no action' }] };
-text = stageTrackerResultText(stuck, issue, { id: 'decide:delegate' });
-assert.strictEqual(text.head, "Hive decided on o/r#14938 → PR #14947: decided, but it hasn't taken effect (the author's hive hasn't been connected since the nudge)");
+  outcome: "Close this PR and open a fresh hive-authored PR with the same commits at 2026-10-28T13:01:29Z, but it hasn't taken effect: hive's own decision comment was read as a reviewer asking for changes.",
+  next: 'Options: Merge as maintainer · Re-run decision · Close as superseded · Send back for a new commit.',
+  options: [{ action: 'decide:merge-now', label: 'Merge as maintainer', enabled: true }, { action: 'decide:delegate:rerun', label: 'Re-run decision', enabled: true }, { action: 'decide:close-superseded', label: 'Close as superseded', enabled: false, reason_if_disabled: 'write required' }, { action: 'decide:direction', label: 'Send back for a new commit', enabled: true }, { label: 'no action' }] };
+const stuckNow = Date.parse('2026-10-28T15:01:29Z');
+text = stageTrackerResultText(stuck, issue, { id: 'decide:delegate', nowMs: stuckNow });
+assert.strictEqual(text.head, "Hive decided on o/r#14938 → PR #14947: no effect yet (the author hasn't been reachable since the nudge)", 'the headline does not say "decided" twice');
 assert.strictEqual(text.type, 'warning'); assert.strictEqual(text.options.length, 4, 'options without an action are dropped');
+// The raw RFC3339 stamp never reaches the operator (#15126).
+assert.ok(!/2026-10-28T13:01:29Z/.test(text.outcome) && / at 13:01( today)?, but/.test(text.outcome), text.outcome);
 assert.ok(text.why.startsWith('The merge gate read the hive'), text.why);
 assert.ok(!/contributor-offline|self-decision/.test(text.head + text.outcome + text.why), 'no bare slug reaches the operator');
+// hivecommons/hive#15021: an ISSUE's approve is never "approved for merge",
+// and a stuck 045 park label is named with the lift as the first option.
+const issueTarget = { repo: 'o/r', kind: 'issue', number: 15021, url: 'u15021' };
+const stuckIssue = { action: 'no-effect', rule: 'default-approve', why: 'park-label-stuck', target: issueTarget, applied_at: '2026-10-28T13:01:29Z',
+  outcome: "Approved to proceed — an agent may claim it at 2026-10-28T13:01:29Z, but it hasn't taken effect: stage/045-needs-decision is still on the issue; the scanner skips it until that label clears.",
+  next: 'Expected: the issue leaves Needs decision and an agent picks it up. Options: Lift the park (remove stage/045-needs-decision) · Re-evaluate now · Re-run decision · Give direction.',
+  options: [{ action: 'decide:approve', label: 'Lift the park (remove stage/045-needs-decision)', enabled: true }, { action: 'retry', label: 'Re-evaluate now', enabled: true }, { action: 'decide:delegate:rerun', label: 'Re-run decision', enabled: true }, { action: 'decide:direction', label: 'Give direction', enabled: true }] };
+text = stageTrackerResultText(stuckIssue, Object.assign({}, issue, { kind: 'issue', number: 15021 }), { id: 'decide:delegate', rowRef: 'o/r#15021', nowMs: stuckNow });
+assert.strictEqual(text.head, 'Hive decided on o/r#15021: no effect yet (no special rule applies; the hive took its own recommendation)');
+assert.ok(text.outcome.indexOf('approved for merge') < 0, text.outcome);
+assert.ok(text.why.startsWith('The hive approved the issue and applied approved-direction'), text.why);
+assert.strictEqual(text.options[0].action, 'decide:approve', 'the lift is the first option');
+assert.strictEqual(stageTrackerPlainWords('approve', false, 'issue'), 'approved to proceed — an agent may claim it');
+assert.strictEqual(stageTrackerPlainWords('approve', false, 'pr'), 'approved for merge');
+assert.strictEqual(stageTrackerPlainWords('approve'), 'approved for merge', 'no kind reads as a PR');
+assert.strictEqual(stageTrackerPlainWords('close-superseded', true, 'issue'), 'Closed because another issue already tracks the same work; the discussion continues there.');
+assert.strictEqual(stageTrackerPlainWords('close-duplicate', false, 'issue'), 'closed as a duplicate', 'an entry without issue words keeps its plain words');
 assert.strictEqual(stageTrackerPlainWords('supersede'), 'close this PR and open a fresh hive-authored PR with the same commits');
-assert.strictEqual(stageTrackerPlainWords('adoption-stalled:contributor-offline'), "the author's hive hasn't been connected since the nudge");
+assert.strictEqual(stageTrackerPlainWords('adoption-stalled:contributor-offline'), "the author hasn't been reachable since the nudge");
 assert.strictEqual(stageTrackerPlainWords('contributor-lane:changes-requested'), stageTrackerPlainWords('changes_requested'));
 assert.strictEqual(stageTrackerPlainWords('some-new-rule'), 'some new rule', 'unknown slugs are humanised, never raw');
 assert.strictEqual(stageTrackerPlainWords(''), '');
-assert.strictEqual(stageTrackerResultOf('decide:delegate', issue, { decision: { verdict: 'supersede', rule: 'contributor-offline' } }).outcome, "close this PR and open a fresh hive-authored PR with the same commits (the author's hive hasn't been connected since the nudge)");
+assert.strictEqual(stageTrackerResultOf('decide:delegate', issue, { decision: { verdict: 'supersede', rule: 'contributor-offline' } }).outcome, "close this PR and open a fresh hive-authored PR with the same commits (the author hasn't been reachable since the nudge)");
 text = stageTrackerResultText(stageTrackerErrorResult('hold', held, 'write permission required'), held, { id: 'hold' });
 assert.strictEqual(text.head, 'Hold failed on o/r#7'); assert.strictEqual(text.outcome, 'write permission required'); assert.strictEqual(text.type, 'error');
 // Legacy answers (no result) still describe what happened.
@@ -1048,7 +1105,7 @@ assert.strictEqual(gone.el.parentNode, null, 'target gone from the tracker → d
   assert.ok(st.el.className.includes('toast warning ham-result-toast'), st.el.className);
   const opts = st.el.children.find(c => c.className === 'ham-result-options');
   assert.ok(opts, 'options row rendered'); assert.strictEqual(opts.children.length, 4);
-  assert.deepStrictEqual(opts.children.map(b => b.textContent), ['Merge as maintainer (on GitHub)', 'Re-run decision', 'Close as superseded', 'Send back for a new commit']);
+  assert.deepStrictEqual(opts.children.map(b => b.textContent), ['Merge as maintainer', 'Re-run decision', 'Close as superseded', 'Send back for a new commit']);
   assert.strictEqual(opts.children[2].getAttribute('aria-disabled'), 'true'); assert.strictEqual(opts.children[2].title, 'write required');
   opts.children[2]._listeners.click({ stopPropagation() {} });
   assert.strictEqual(ran.length, 0, 'a disabled option does nothing');
@@ -1115,9 +1172,17 @@ assert.ok(!acting('o/r/issue#7'), 'a no-op or an error clears at once');
   global.fetch = async (url, init) => ({ ok: true, status: 200, json: async () => ({ status: 'done', result: decided }) });
   stageTrackerSetConfirmSkip('decide:delegate', true);
   const del = await runRowAction('decide:delegate', issue);
-  assert.strictEqual(del.toast.text.head, "Hive decided on o/r#14947: adopted (the author's hive hasn't been connected since the nudge)", del.toast.text.head);
+  assert.strictEqual(del.toast.text.outcome, "Hive decided on o/r#14947: adopted (the author hasn't been reachable since the nudge)", del.toast.text.outcome);
   assert.deepStrictEqual(del.pending[0].keys, ['o/r/pr#14947', 'o/r/issue#14938']);
   assert.ok(acting('o/r/issue#14938') && acting('o/r/pr#14947'));
+  // An approval is recorded when the server answers: "Approving…" clears
+  // at once instead of lingering beside the ✓ (hivecommons/hive#15103).
+  stageTrackerClearPending(del.pending[0]);
+  global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ result: { action: 'approved', target: { repo: 'o/r', kind: 'pr', number: 14947, url: 'u947' }, outcome: 'Approved — #14947 conflicts with v5; hive will rebase it next pass (attempt 1/2).', next: 'n', options: [{ action: 'decide:merge-now', label: 'Rebase, then merge as maintainer', enabled: true }] } }) });
+  stageTrackerSetConfirmSkip('decide:approve', true);
+  const ap = await runRowAction('decide:approve', Object.assign({ repo: 'o/r', kind: 'pr' }, nested));
+  assert.ok(!acting('o/r/pr#14947'), 'approved: the acting caption clears once the decision records');
+  assert.strictEqual(ap.toast.text.options.length, 1, 'the approve toast carries the rebase-then-merge button');
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }
@@ -1343,5 +1408,104 @@ assert.strictEqual(stageTrackerDCOCaveat([]), '');
   await stageTrackerActionPayload([{ ...pr317, dco_unsigned: 0 }], 'decide:merge-now');
   assert.ok(!dialogs[0].cfg.message.includes('Signed-off-by'), dialogs[0].cfg.message);
 })().catch(e => { console.error(e); process.exit(1); });
+`)
+}
+
+// TestStageTrackerRebaseThenMergeRow: a PR that needs a rebase offers
+// "Rebase, then merge as maintainer" in place of (090) or next to (085)
+// the plain maintainer merge; the acting caption, the 202 rebase-queued
+// toast, the cue-working glow while the follow-through runs, and the
+// ledger trail's step lines all read as the operator was promised
+// (hivecommons/hive#14822).
+func TestStageTrackerRebaseThenMergeRow(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+"\n"+stageTrackerCuesJS(t, html)+jsConstBlock(t, html, "STAGE_TRACKER_ICONS")+"\n"+stageTrackerActedJS(t, html)+"\n"+jsFunc(t, html, "agentNowClockTime")+`
+global.window = { _hiveUser: 'clubanderson' };
+const ids = as => as.map(a => a.id);
+const merger = { user: true, canHold: true, canHuman: true };
+const rebaseOpt = { action: 'decide:merge-now', label: STAGE_TRACKER_REBASE_MERGE_LABEL, enabled: true,
+  consequence: "hive rebases #14822 onto v5, waits for CI, then merges it with your approval on record; you'll get a toast when it lands or if the rebase conflicts" };
+const pr = { repo: 'hivecommons/hive', kind: 'pr', number: 14822, title: 'fix: preserve owner intent through PR decision paths', url: 'u', author: 'thatguywob', author_kind: 'clanker', base_ref: 'v5',
+  stage: 85, caption: 'Needs human decision', modifiers: ['needs-decision', 'needs-rebase'],
+  decision_needed: { question: 'q', options: [
+    { action: 'decide:delegate', label: 'Let hive decide', enabled: true },
+    { action: 'decide:approve', label: 'Approve', enabled: true },
+    rebaseOpt,
+    { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true },
+    { action: 'hold', label: 'Hold', enabled: true } ] } };
+
+assert.strictEqual(stageTrackerNeedsRebase(pr), true);
+assert.strictEqual(stageTrackerNeedsRebase({ ...pr, modifiers: ['needs-decision'] }), false);
+assert.strictEqual(stageTrackerNeedsRebase({ ...pr, modifiers: [], labels: ['Needs-Rebase'] }), true, 'the label counts too');
+assert.strictEqual(stageTrackerNeedsRebase({ ...pr, modifiers: [], rebase_merge: { state: 'rebasing' } }), true, 'a live follow-through counts');
+assert.strictEqual(stageTrackerNeedsRebase({ ...pr, modifiers: [], rebase_merge: { state: 'merged' } }), false);
+
+// 085 menu: the relabelled merge leads; the 085 menu without needs-rebase is untouched.
+let as = stageTrackerRowActions(pr, merger);
+assert.strictEqual(as[0].id, 'decide:merge-now'); assert.strictEqual(as[0].label, STAGE_TRACKER_REBASE_MERGE_LABEL);
+assert.ok(as[0].hint.startsWith('hive rebases #14822 onto v5'), 'consequence rides as the hint: ' + as[0].hint);
+assert.ok(as[0].enabled && as[0].lead);
+const menu = stageTrackerMenuHtml(as, 'hivecommons/hive#14822');
+assert.ok(menu.includes('Rebase, then merge as maintainer'), menu);
+assert.ok(menu.indexOf('data-ham-act="decide:merge-now"') < menu.indexOf('data-ham-act="decide"'), 'the rebase-merge leads the Decide… group');
+const req = stageTrackerActionRequest(pr, 'decide:merge-now', {});
+assert.strictEqual(req.url, '/api/repos/hivecommons/hive/items/14822/decision');
+assert.deepStrictEqual(req.body, { decision: 'merge-now', comment: '', type: 'pr' }, 'the same decision wire: the server folds the rebase in');
+
+// Acting caption and the action word for the 202.
+assert.strictEqual(stageTrackerActingCaption('decide:merge-now', pr), 'Rebasing, then merging…');
+assert.strictEqual(stageTrackerActingCaption('decide:merge-now', { ...pr, modifiers: [] }), 'Merging…');
+assert.strictEqual(STAGE_TRACKER_ACTION_WORDS[STAGE_TRACKER_ACTION_REBASE_QUEUED], 'rebase queued, merge to follow');
+
+// The toast for the 202 names the rebase-merge, not a plain merge.
+const result = { action: STAGE_TRACKER_ACTION_REBASE_QUEUED, target: { repo: 'hivecommons/hive', kind: 'pr', number: 14822, url: 'u' },
+  outcome: 'Your approval is on record; the hive is rebasing #14822 onto v5.', next: 'Once CI is green on the rebased head the hive merges it with your approval attributed; you\'ll get a toast when it lands or if the rebase conflicts.' };
+const text = stageTrackerResultText(result, pr, { id: 'decide:merge-now' });
+const flat = typeof text === 'string' ? text : JSON.stringify(text);
+assert.ok(flat.includes('Rebase, then merge as maintainer on hivecommons/hive#14822'), flat);
+assert.ok(flat.includes('rebasing #14822 onto v5'), flat);
+
+// A refused follow-through (conflict) carries its two ways out.
+const failed = { action: 'refused', why: 'rebase-conflict', target: result.target, outcome: 'Rebase conflicts in .github/workflows/v2-ci.yml.',
+  options: [{ action: 'decide:adopt', label: 'Adopt into fresh branch', enabled: true }, { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true }] };
+const failedText = stageTrackerResultText(failed, pr, { id: 'decide:merge-now' });
+const failedFlat = typeof failedText === 'string' ? failedText : JSON.stringify(failedText);
+assert.ok(failedFlat.includes('v2-ci.yml'), failedFlat);
+
+// The row while it runs: cue-working, caption from the server, state
+// signature changes with the follow-through state.
+const running = { ...pr, caption: 'Rebasing → merge queued (approved by @clubanderson)', rebase_merge: { state: 'rebasing', actor: 'clubanderson', base: 'v5', text: 'Rebasing → merge queued (approved by @clubanderson)' } };
+assert.strictEqual(stageTrackerRebaseMergeLive(running), true);
+assert.strictEqual(stageTrackerRebaseMergeLive(pr), false);
+assert.ok(stageTrackerCueClasses(running, { workers: {} }).includes('cue-working'), 'the working cue while the hive rebases');
+assert.ok(!stageTrackerCueClasses(pr, { workers: {} }).includes('cue-working'));
+assert.notStrictEqual(stageTrackerItemState(running), stageTrackerItemState({ ...running, rebase_merge: { state: 'ci-pending' } }), 'the acting row sees the state move');
+
+// The ledger trail: step hops without a stage number read as plain steps.
+const now = Date.parse('2026-10-29T10:00:00Z');
+const at = m => new Date(now - m * 60000).toISOString();
+const acted = { ...running, last_operator_action: { action: 'merge-now', actor: 'clubanderson', at: at(5), outcome: 'pending', detail: 'rebase-queued', stage_at: 85,
+  followed: [{ number: 0, slug: 'approval-recorded', at: at(5) }, { number: 0, slug: 'rebase-kicked', at: at(4), reason: 'fixer' }] } };
+const tip = stageTrackerActedTip(acted, now);
+assert.ok(tip.includes('rebasing, then merging…'), tip);
+assert.ok(tip.includes('Then the hive recorded your approval'), tip);
+assert.ok(tip.includes('Then the hive started the rebase — fixer'), tip);
+
+// Approve on a dirty PR (hivecommons/hive#15103): the toast tells the
+// truth (the gate skips a conflicting PR), carries the one-click upgrade
+// to rebase-then-merge, and the row's state signature moves with the
+// fixer's attempt so "Approving…" does not wait on the gate.
+const approvedDirty = { action: 'approved', target: result.target,
+  outcome: 'Approved — #14822 conflicts with v5; hive will rebase it next pass (attempt 1/2).',
+  next: 'The merge gate skips a conflicting PR, so your approval alone would not land it. Once the rebased head is green the gate takes it — or have hive merge it for you right after the rebase:',
+  options: [{ action: 'decide:merge-now', label: STAGE_TRACKER_REBASE_MERGE_LABEL, enabled: true, consequence: 'hive rebases #14822 onto v5, waits for CI, then merges it with your approval on record' }] };
+const apText = stageTrackerResultText(approvedDirty, pr, { id: 'decide:approve' });
+assert.strictEqual(apText.type, 'success');
+assert.ok(apText.outcome.includes('hive will rebase it next pass (attempt 1/2)'), apText.outcome);
+assert.strictEqual(apText.options.length, 1, 'the approve toast offers the rebase-then-merge button');
+assert.strictEqual(apText.options[0].label, 'Rebase, then merge as maintainer');
+const plainApproved = stageTrackerResultText({ action: 'approved', target: result.target, outcome: '/lgtm + /approve posted.', next: 'The merge gate takes it from here; the dashboard merges nothing.' }, pr, { id: 'decide:approve' });
+assert.strictEqual(plainApproved.options.length, 0, 'a plain approval has no buttons');
+assert.notStrictEqual(stageTrackerItemState(pr), stageTrackerItemState({ ...pr, rebase: { attempt: 1, max: 2, text: 'Rebasing · attempt 1/2' } }), 'the fixer attempt moves the row state');
 `)
 }

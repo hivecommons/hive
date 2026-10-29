@@ -46,5 +46,17 @@ func (c *Config) WritebackGateDeps() writeback.Deps {
 		LevelFor:    c.EffectiveACMMLevelForRepo,
 		OptInLabels: c.WritebackOptInLabels,
 		RepoListed:  c.WritebackRepoListed,
+		RepoPause:   c.WritebackRepoPause,
 	}
+}
+
+// WritebackRepoPause adapts RepoPauseFor to the gate's pause lookup, so a
+// pause taken in the dashboard refuses every gated write on the very next
+// decision (#6203).
+func (c *Config) WritebackRepoPause(repo string) (writeback.RepoPauseInfo, bool) {
+	rp, paused := c.RepoPauseFor(repo)
+	if !paused {
+		return writeback.RepoPauseInfo{}, false
+	}
+	return writeback.RepoPauseInfo{By: rp.By, Reason: rp.Reason}, true
 }

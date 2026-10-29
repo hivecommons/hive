@@ -196,6 +196,9 @@ type PullRequestDecisionEvent struct {
 	// was carried to their hive rather than the hive's own author agent (a
 	// clanker-authored PR, hivecommons/hive#15159); "" for the hive's PRs.
 	ToContributor string
+	// ParkLabelsLifted counts the park labels (needs-human, the 085 stage
+	// label) the decision took off in the same write.
+	ParkLabelsLifted int
 }
 
 // IssueLabelApprovalEvent records one acceptance the sweep acted on, for the
@@ -275,6 +278,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 		maxActions = DefaultIssueUnparkSweepMaxActions
 	}
 	result := &IssueUnparkSweepResult{}
+	if opts.HumanChangeRequests != nil {
+		c.ReconcileSelfDecisionChangeRequests(opts.HumanChangeRequests)
+	}
 	cutoff := time.Now().Add(-unparkCommandScanWindow)
 
 	for _, repo := range c.getRepos() {

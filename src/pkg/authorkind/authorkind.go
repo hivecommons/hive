@@ -29,7 +29,7 @@ const (
 	Human Kind = "human"
 	// Clanker: a contributor's own hive (relay) authored the PR under that
 	// contributor's GitHub login. "Clanker" is the project's word for a
-	// contributor's hive, as opposed to the repo's own.
+	// contributor's own agent (clanker), as opposed to the repo's own hive.
 	Clanker Kind = "clanker"
 	// Hive: this repository's own hive — the App or one of its agent
 	// lanes — authored the PR.

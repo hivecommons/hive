@@ -141,6 +141,34 @@ func isHiveSelfDecisionComment(body string) bool {
 	return delegatedecision.IsDelegatedComment(body)
 }
 
+// ReconcileSelfDecisionChangeRequests is the reconcile pass behind the
+// guard above (run at the start of every un-park sweep; idempotent, so
+// after the first pass it finds nothing): a changes_requested recorded from a `/hive decision`
+// comment the hive itself posted (the delegate's marker in the body, or
+// the hive's own login as actor) predates the guard and still blocks the
+// head it was meant to advance. It is dismissed with a log line naming the
+// PR and head; a store without Dismiss is left alone. Returns what came
+// off.
+func (c *Client) ReconcileSelfDecisionChangeRequests(store review.HumanChangeRequestStore) []review.HumanChangeRequest {
+	d, ok := store.(review.HumanChangeRequestDismisser)
+	if !ok || d == nil {
+		return nil
+	}
+	removed := d.Dismiss(func(r review.HumanChangeRequest) bool {
+		if r.Source != review.HumanChangeRequestSourceDecision || r.Kind == review.HumanChangeRequestKindApprove {
+			return false
+		}
+		return isHiveSelfDecisionComment(r.Body) || (c != nil && c.IsHiveAuthorLogin(r.Actor))
+	})
+	if c != nil && c.logger != nil {
+		for _, r := range removed {
+			c.logger.Info("dismissed self-inflicted changes_requested: source comment is hive's own /hive decision",
+				"repo", r.Repo, "number", r.Number, "head", r.HeadSHA, "actor", r.Actor, "comment_id", r.SourceID)
+		}
+	}
+	return removed
+}
+
 // prDecisionMode is what a `/hive decision` on a PR asks for.
 type prDecisionMode string
 

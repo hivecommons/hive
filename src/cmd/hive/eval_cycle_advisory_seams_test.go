@@ -156,6 +156,7 @@ type publishRecorder struct {
 	linear    []string
 	githubErr error
 	linearErr error
+	pausedFor []string
 }
 
 func (r *publishRecorder) deps() advisoryPublishDeps {
@@ -177,6 +178,7 @@ func (r *publishRecorder) deps() advisoryPublishDeps {
 			r.moved = append(r.moved, m)
 		},
 		recordWriteForbidden: func(repo string) { r.backoffs = append(r.backoffs, repo) },
+		recordRepoPaused:     func(repo string) { r.pausedFor = append(r.pausedFor, repo) },
 	}
 }
 

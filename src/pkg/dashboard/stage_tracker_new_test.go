@@ -183,6 +183,8 @@ func TestStageTrackerNewState(t *testing.T) {
 
 	notNew := map[string]StageTrackerItem{
 		"stage":    {Kind: "issue", Stage: 10},
+		"linked":   {Kind: "issue", LinkedPR: 15223},
+		"links":    {Kind: "issue", LinkedPRs: []StageTrackerLinkedPR{{Number: 15223}}},
 		"hold":     {Kind: "issue", Stage: 0, Hold: &StageTrackerHold{By: "pat"}, Modifiers: []string{modHold}},
 		"blocked":  {Kind: "issue", Stage: 0, BlockedOn: []string{"#1"}, Modifiers: []string{modBlocked}},
 		"draft":    {Kind: "pr", Stage: 0, Modifiers: []string{modDraft}},

@@ -60,7 +60,19 @@ const (
 	ReasonBackfill      = "backfill-off"
 	ReasonLevelUnknown  = "level-unknown"
 	ReasonRepoNotListed = "repo-not-in-project"
+	// ReasonRepoPaused refuses EVERY kind on an operator-paused repo
+	// (#6203), own items included: a pause means the hive is deliberately
+	// quiet on the repo, and the advisory digest edit that kept landing on
+	// a paused torch-spyre showed that "unsolicited only" was not enough.
+	ReasonRepoPaused = "repo-paused"
 )
+
+// RepoPauseInfo is the provenance of an operator pause, as config records
+// it. Both fields may be empty for a pause written by hand into the config.
+type RepoPauseInfo struct {
+	By     string
+	Reason string
+}
 
 // ErrSuppressed is returned by writers that surface a refusal as an error.
 var ErrSuppressed = errors.New("writeback: unsolicited write suppressed")
@@ -137,6 +149,10 @@ type Deps struct {
 	// RepoListed reports whether repo is in project.repos. nil means every
 	// repo is listed.
 	RepoListed func(repo string) bool
+	// RepoPause reports whether repo is under an operator pause and who
+	// paused it. nil means no repo is ever paused. Checked before anything
+	// else: a paused repo refuses every kind, own items included.
+	RepoPause func(repo string) (RepoPauseInfo, bool)
 	// Config, when set, is read on every decision instead of the Config
 	// passed to New, so a dashboard edit of the writeback block is live
 	// without re-wiring (cmd/hive passes a closure over the shared config).
@@ -335,6 +351,9 @@ func (g *Gate) AllowedPreview(repo string, item Item, kind Kind, preview string)
 }
 
 func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
+	if info, paused := g.repoPauseLocked(repo); paused {
+		return Decision{Reason: ReasonRepoPaused, Detail: RepoPausedDetail(repo, info)}
+	}
 	cfg := g.cfgLocked()
 	mode := cfg.RepoModeFor(repo)
 	if mode == RepoModeOff {
@@ -401,6 +420,41 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 		return Decision{Reason: ReasonNeedsLabel, Detail: fmt.Sprintf("#%d carries none of %s; %s needs the label at L%d or L%d without it (%s is at L%d)", item.Number, strings.Join(labels, ","), kind, p.MinLevel, p.UnlabeledMinLevel, repo, level)}
 	}
 	return Decision{Reason: ReasonNeedsLabel, Detail: fmt.Sprintf("#%d carries none of %s; %s needs the label at L%d (%s is at L%d)", item.Number, strings.Join(labels, ","), kind, p.MinLevel, repo, level)}
+}
+
+// repoPauseLocked asks the configured pause predicate, if any.
+func (g *Gate) repoPauseLocked(repo string) (RepoPauseInfo, bool) {
+	if g.deps.RepoPause == nil {
+		return RepoPauseInfo{}, false
+	}
+	return g.deps.RepoPause(repo)
+}
+
+// RepoPaused reports whether repo is operator-paused, with the pause's
+// provenance, for writers that are not a gate Kind (the advisory digest)
+// but must still fall silent on a paused repo. A nil gate never pauses.
+func (g *Gate) RepoPaused(repo string) (RepoPauseInfo, bool) {
+	if g == nil {
+		return RepoPauseInfo{}, false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.repoPauseLocked(repo)
+}
+
+// RepoPausedDetail is the drill-down/log text for a repo-paused refusal.
+func RepoPausedDetail(repo string, info RepoPauseInfo) string {
+	d := repo + " is paused by the operator"
+	if info.By != "" {
+		d += " (by " + info.By
+		if info.Reason != "" {
+			d += ": " + info.Reason
+		}
+		d += ")"
+	} else if info.Reason != "" {
+		d += " (" + info.Reason + ")"
+	}
+	return d + "; resume the repo to allow hive writes again"
 }
 
 // levelCheckLocked applies the kind's min level to an issue-file decision.
