@@ -127,7 +127,7 @@ title is `[selfreport] <class>: <short message>`.
 
 | Class | Fires when | Severity |
 |---|---|---|
-| `restart_storm` | the restart-storm breaker pauses an agent | high |
+| `restart_storm` | the restart-storm breaker pauses an agent. Message carries the pause reason (`restart-storm: <cause>`); diagnostics add the restart count inside the breaker window against the pause threshold, the recent restart reasons with their counts (at most five, remainder summarised), and the agent's last error when it differs from the cause. Everything is bounded and scrubbed before storage | high |
 | `kick_failed_repeatedly` | ≥3 consecutive undeliverable kicks for one agent *after* the busy-no-activity stall restart has been attempted (or that restart itself errored) — i.e. the recovery did not bring the session back; kicks that fail before the restart are a dashboard/log warning only | medium |
 | `panic_recovered` | a dashboard handler recovered from a panic | high |
 | `model_discovery_degraded` | model discovery has been failing for >1h (excluded, audit-log only: copilot serving the HTTP catalog because the SDK helper is absent (#11868), and copilot `Not authenticated` because the operator has not completed the dashboard Copilot Login (#12947), and copilot `not licensed to use Copilot` 403s, a seat problem on the reporting hive (#13206)) | medium |

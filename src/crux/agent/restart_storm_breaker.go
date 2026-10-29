@@ -207,7 +207,11 @@ func restartStormDiagnostics(pauseReason string, agent *AgentProcess, now time.T
 		}
 		fmt.Fprintf(&b, "\n- %s x%d", r, counts[r])
 	}
-	if last := strings.TrimSpace(agent.LastError); last != "" && last != pauseReason {
+	// The pause reason already carries the sanitized cause, which callers often
+	// derive from LastError itself; compare against that cause so the same text
+	// is not repeated as "last error:".
+	cause := strings.TrimPrefix(pauseReason, "restart-storm: ")
+	if last := strings.TrimSpace(agent.LastError); last != "" && sanitizeRestartReason(last) != cause {
 		fmt.Fprintf(&b, "\nlast error: %s", last)
 	}
 	return b.String()
