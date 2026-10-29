@@ -38,7 +38,7 @@ func jsFunc(t *testing.T, html, name string) string {
 		declStart -= len("async ")
 	}
 	depth := 0
-	for i := strings.Index(html[start:], "{") + start; i < len(html); i++ {
+	for i := jsBodyStart(html, start); i < len(html); i++ {
 		switch html[i] {
 		case '{':
 			depth++
@@ -61,6 +61,52 @@ function formatNumber(value, locale, options) { try { return new Intl.NumberForm
 	}
 	t.Fatalf("unbalanced braces extracting %s() from index.html", name)
 	return ""
+}
+
+// jsBodyStart returns the index of the opening brace of the function body
+// whose signature starts at sig. It skips the parameter list first, so a
+// default parameter such as `opts = {}` is not mistaken for the body: brace-
+// matching from the first `{` after the signature would otherwise return the
+// truncated `function f(a, opts = {}` and break every node harness that pulls
+// such a function into its closure. Parentheses, brackets and braces inside
+// the parameter list are balanced; string literals in defaults are skipped.
+// Falls back to the first `{` when no parameter list closes, so a signature
+// this scanner does not understand degrades to the previous behaviour rather
+// than failing.
+func jsBodyStart(html string, sig int) int {
+	open := strings.IndexByte(html[sig:], '(')
+	if open < 0 {
+		return strings.IndexByte(html[sig:], '{') + sig
+	}
+	depth := 0
+	var quote byte
+	for i := sig + open; i < len(html); i++ {
+		c := html[i]
+		if quote != 0 {
+			if c == '\\' {
+				i++
+			} else if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"', '`':
+			quote = c
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+			if depth == 0 {
+				body := strings.IndexByte(html[i:], '{')
+				if body < 0 {
+					return len(html)
+				}
+				return i + body
+			}
+		}
+	}
+	return strings.IndexByte(html[sig:], '{') + sig
 }
 
 // TestACMMRepoRankingOrdersWeakestFirst runs the panel's own ranking helpers
