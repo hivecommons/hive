@@ -441,6 +441,11 @@ type StageTrackerItem struct {
 	// "copy-failed" — a close-first copy failed and the original was
 	// reopened for a person (hivecommons/hive#15135).
 	AdoptedByState string `json:"adopted_by_state,omitempty"`
+	// Supersedes names the closed original this PR replaced (the hive's
+	// close-first supersession, hivecommons/hive#15135). The original is
+	// closed, unmerged, and never a tracker row; this is the only trace of
+	// it the tracker draws — a small chip on the live PR.
+	Supersedes *StageTrackerSupersedes `json:"supersedes,omitempty"`
 	// Adoption is, on a nudged PR at stage/072, whether adoption is due,
 	// what holds it, and the author's live presence, with the plain-words
 	// line the row shows instead of a bare "Returned to contributor"
@@ -597,6 +602,19 @@ type StageTrackerLinkedPR struct {
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
 	// Takeover mirrors the nested PR's own row field (hivecommons/hive#15038).
 	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
+	// Supersedes mirrors the nested PR's own row field.
+	Supersedes *StageTrackerSupersedes `json:"supersedes,omitempty"`
+}
+
+// StageTrackerSupersedes is the closed original a live PR replaced
+// (StageTrackerItem.Supersedes). ClosedAt is when the hive recorded the
+// supersession; Open is true when the original could not be closed (a
+// fork PR the App may not close) and was left open with the note.
+type StageTrackerSupersedes struct {
+	Number   int        `json:"number"`
+	URL      string     `json:"url,omitempty"`
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
+	Open     bool       `json:"open,omitempty"`
 }
 
 // StageTrackerHold is the row's hold provenance (stagelabels.HoldProvenance
@@ -1953,6 +1971,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		resp.Items = append(resp.Items, it)
 	}
 	prState := s.stageTrackerPRStateResolver(status, resp.RecentlyMerged)
+	prOpen := func(repo string, number int) bool { return prState(repo, number) == blockedOnPRStateOpen }
+	supersedes := stageTrackerSupersedesIndex(store, status.GitHubBaseURL)
 	issueFilter := s.issueFilterConfig()
 	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren) {
 		// A closed issue has no stage; a stage label it closed wearing is
@@ -2009,7 +2029,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
 		}
 		for _, lp := range issue.LinkedPRs {
-			if lp.Number > 0 && !lp.Merged && !strings.EqualFold(lp.State, "closed") {
+			// The claims index may still say "open" for a PR the hive closed
+			// since (close-first supersession, hivecommons/hive#15135); the
+			// snapshot and caches are asked before a closed PR becomes a
+			// sub-row.
+			if lp.Number > 0 && !lp.Merged && !strings.EqualFold(lp.State, "closed") && !stageTrackerLinkedPRFinished(prState(nonEmpty(lp.Repo, repoName), lp.Number)) {
 				it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
 			}
 		}
@@ -2054,6 +2078,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.DeferredModifiers = append([]string{modSentinel}, it.DeferredModifiers...)
 		}
 		it.LinkedIssues = stageTrackerPRLinkedIssues(pr, repoName, status.GitHubBaseURL)
+		if sup, ok := supersedes[stagelabels.Key(repoName, pr.Number)]; ok {
+			it.Supersedes = &sup
+		}
 		info, found := superseded[github.ReviewQueueKey(qualifyRepo(repoName), pr.Number)]
 		if !found {
 			info, found = superseded[github.ReviewQueueKey(repoName, pr.Number)]
@@ -2114,7 +2141,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	stageTrackerMergeTrainPostPass(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
-	stageTrackerResolveLinkedPRs(resp.Items)
+	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
@@ -2789,7 +2816,14 @@ func stageTrackerPruneSoftLinks(pr *StageTrackerItem, prs, issues map[string]*St
 // side is read too: a PR whose closing references name an open issue in
 // the response is nested under that issue even when the issue's own claim
 // evidence has not caught up with it, so the pair draws as one row.
-func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
+//
+// A linked PR with no PR row in the response is not an open PR of this
+// snapshot — closed (the hive's close-first supersession, hivecommons/
+// hive#15135, or the claims index lagging a close) or finished — and is
+// dropped rather than drawn as a bare sub-row with an empty ladder. open,
+// when non-nil, may vouch for one the snapshot lacks (a cross-repository
+// PR another repo's open set lists); it is then kept as the bare link.
+func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo string, number int) bool) {
 	prs := map[string]*StageTrackerItem{}
 	issues := map[string]*StageTrackerItem{}
 	for i := range items {
@@ -2836,13 +2870,18 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				return
 			}
 			seen[lp.Number] = true
-			if pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]; pr != nil {
+			pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]
+			if pr == nil && (open == nil || !open(it.Repo, lp.Number)) {
+				return
+			}
+			if pr != nil {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
 				lp.Adoption = pr.Adoption
 				lp.Presence = pr.Presence
 				lp.Takeover = pr.Takeover
+				lp.Supersedes = pr.Supersedes
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.AdmittedBy, lp.DCOUnsigned, lp.DCOTotal = pr.AdmittedBy, pr.DCOUnsigned, pr.DCOTotal

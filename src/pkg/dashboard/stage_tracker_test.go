@@ -658,7 +658,7 @@ func TestStageTrackerIssueFeedPRsAreNotIssues(t *testing.T) {
 		{Repo: "acme/console", Number: 9, Kind: "issue", LinkedPR: 9, LinkedPRs: []StageTrackerLinkedPR{{Number: 9}, {Number: 10}}},
 		{Repo: "acme/console", Number: 10, Kind: "pr", Title: "Real PR"},
 	}
-	stageTrackerResolveLinkedPRs(items)
+	stageTrackerResolveLinkedPRs(items, nil)
 	if len(items[0].LinkedPRs) != 1 || items[0].LinkedPRs[0].Number != 10 || items[0].LinkedPRs[0].Title != "Real PR" {
 		t.Fatalf("self-link not dropped: %+v", items[0].LinkedPRs)
 	}

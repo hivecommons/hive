@@ -128,7 +128,12 @@ func TestGatherDelegatedRealPRContext(t *testing.T) {
 			s := newFullServer(t)
 			s.deps.GHClient = github.NewClient("token", "org", nil, slog.Default(), server.URL)
 			s.deps.GHClient.SetAppBotLogin("hive[bot]")
-			s.status = &StatusPayload{Repos: []FrontendRepo{{Full: "org/repo", ActionableIssues: []any{github.Issue{Number: 7, LinkedPRs: []github.IssueLinkedPR{{Number: 8, State: "open"}, {Number: 9, State: "open"}}}}}}}
+			// Both PRs are open items of the snapshot: a linked PR the
+			// snapshot does not list is not drawn or counted (closed-first
+			// supersession left closed originals as bare sub-rows).
+			s.status = &StatusPayload{Repos: []FrontendRepo{{Full: "org/repo",
+				ActionableIssues: []any{github.Issue{Number: 7, LinkedPRs: []github.IssueLinkedPR{{Number: 8, State: "open"}, {Number: 9, State: "open"}}}},
+				OpenPrs:          []any{FrontendPR{PullRequest: github.PullRequest{Number: 8, Author: "hive[bot]"}}, FrontendPR{PullRequest: github.PullRequest{Number: 9, Author: "alice"}}}}}}
 			in, err := s.gatherDelegatedInput(context.Background(), "org/repo", 8, "pr", delegatedDecisionRequest{})
 			if err != nil {
 				t.Fatal(err)

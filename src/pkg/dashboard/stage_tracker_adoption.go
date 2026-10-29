@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -213,4 +214,46 @@ func stageTrackerAdoptionCaption(caption string, a *StageTrackerAdoption) string
 		head = caption[:i]
 	}
 	return head + " — " + a.Text
+}
+
+// stageTrackerSupersedesIndex maps each superseding PR's store key to the
+// closed original it replaced (hivecommons/hive#15135). The original's
+// record carries SupersededBy; the tracker never renders that record as a
+// row (addPR drops it, and a closed PR has no open item), so the live
+// PR's chip is the one trace the tracker keeps. When several originals
+// name the same superseder the lowest-numbered one is kept.
+func stageTrackerSupersedesIndex(store *stagelabels.Store, baseURL string) map[string]StageTrackerSupersedes {
+	out := map[string]StageTrackerSupersedes{}
+	if store == nil {
+		return out
+	}
+	for _, key := range store.Keys() {
+		rec, ok := store.Get(key)
+		if !ok || !rec.Superseded() {
+			continue
+		}
+		repo, numText, found := strings.Cut(key, "#")
+		number, err := strconv.Atoi(numText)
+		if !found || err != nil || number <= 0 || repo == "" {
+			continue
+		}
+		by := stagelabels.Key(repo, rec.SupersededBy)
+		if prev, dup := out[by]; dup && prev.Number <= number {
+			continue
+		}
+		sup := StageTrackerSupersedes{Number: number, URL: overviewItemURL("", repo, number, "pr", baseURL), Open: rec.SupersededOpen}
+		if !rec.SupersededAt.IsZero() {
+			t := rec.SupersededAt
+			sup.ClosedAt = &t
+		}
+		out[by] = sup
+	}
+	return out
+}
+
+// stageTrackerLinkedPRFinished reports whether a PR state the caches
+// resolved (stageTrackerPRStateResolver) means the PR is no longer open
+// work: closed unmerged or merged. Unknown ("") is not finished.
+func stageTrackerLinkedPRFinished(state string) bool {
+	return state == blockedOnPRStateClosed || state == blockedOnPRStateMerged
 }

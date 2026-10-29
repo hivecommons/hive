@@ -40,7 +40,9 @@ func delegatedCompetingNumbers(items []StageTrackerItem, repo string, pr *gh.Pul
 	if !found {
 		items = append(items, live)
 	}
-	stageTrackerResolveLinkedPRs(items)
+	// The items are a tracker response already filtered to open PRs; a
+	// link the response kept is kept here too.
+	stageTrackerResolveLinkedPRs(items, func(string, int) bool { return true })
 	seen := map[int]bool{}
 	for _, issue := range items {
 		if issue.Repo != repo || issue.Kind != "issue" {
