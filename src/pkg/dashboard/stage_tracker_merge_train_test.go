@@ -236,6 +236,9 @@ func TestStageTrackerMergeTrainSPA(t *testing.T) {
 		jsFunc(t, html, "stageTrackerOrdinal"),
 		jsFunc(t, html, "stageTrackerShortLeft"),
 		jsFunc(t, html, "stageTrackerTrainPlace"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STALLED_LEAD"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_HEAD_STALL_WORD"),
+		jsFunc(t, html, "stageTrackerTrainStallWhy"),
 		jsFunc(t, html, "stageTrackerTrainStalledWord"),
 		jsFunc(t, html, "stageTrackerTrainWord"),
 		jsFunc(t, html, "stageTrackerTrainEtaAt"),
@@ -303,7 +306,7 @@ const thirdQ = mk(15374, 80, { state: 'queued-behind', position: 3, ahead: [1531
 assert.strictEqual(stageTrackerTrainWord(thirdQ), 'Merge queued · 3rd');
 assert.strictEqual(stageTrackerTrainQueueTip(thirdQ.merge_train), '3rd of 3 in the merge queue · behind #15315 (waiting for a maintainer (untrusted author)) · no estimate until #15315 moves. Hive merges one at a time, in order.');
 const stalledQ = mk(15374, 80, { state: 'queued-behind', position: 3, ahead: [15315, 15319], length: 3, head_number: 15315, head_state: 'ci', head_reason: 'waiting for CI', stalled: true, stalled_s: 3 * 3600 });
-assert.strictEqual(stageTrackerTrainWord(stalledQ), 'Merge queue stalled · head #15315 waiting for CI 3h');
+assert.strictEqual(stageTrackerTrainWord(stalledQ), 'Merge queue · stalled — waiting on #15315 (waiting for CI) · 3h');
 assert.ok(stageTrackerTrainQueueTip(stalledQ.merge_train).includes('#15315 has not moved for 3h'), stageTrackerTrainQueueTip(stalledQ.merge_train));
 // Neither slug nor the word "front" reaches a person: chevron word, hover,
 // tooltip lines, header chip and the ⛓-era header text (owner: "i dont

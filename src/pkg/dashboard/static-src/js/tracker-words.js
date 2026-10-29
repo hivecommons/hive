@@ -197,21 +197,43 @@
     function stageTrackerTrainPlace(mt) {
       return { head: Number(mt.head_number || mt.front) || 0, len: Number(mt.length || mt.size) || 0, pos: Number(mt.position) || 0 };
     }
-    // Pure: "Merge queue stalled · head #15253 waiting for CI 3h" for a
-    // train whose head has sat past governor.merge_train_stall_warn_s; ''
-    // otherwise. The server decides stalled; the words are the head's
-    // plain-word reason plus how long.
+    // The stalled chip's lead — "Merge queue · stalled — …". The popover
+    // and the queue header strip it down to "stalled: …".
+    const STAGE_TRACKER_TRAIN_STALLED_LEAD = 'Merge queue · stalled — ';
+    // Why a stalled train's head is not moving, by merge_train.head_state
+    // (mergeTrainHead* in Go) — short enough for a chevron. A head on a
+    // person says what the person has to do (the owner's ask: "waiting on
+    // #15425 (needs maintainer merge)"), not "waiting for a maintainer".
+    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for a merge sweep', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
+    // Pure: the short reason a stalled head is stuck — the head_state
+    // table, a human-decision head told apart by its reason, else the
+    // head's own plain-word reason cut at its first clause.
+    function stageTrackerTrainStallWhy(mt) {
+      const reason = String(mt.head_reason || '').replace(/[.;].*$/, '').trim();
+      const state = String(mt.head_state || '');
+      if (state === 'needs-human' && /decision/i.test(reason)) return 'needs a human decision';
+      return STAGE_TRACKER_TRAIN_HEAD_STALL_WORD[state] || reason;
+    }
+    // Pure: "Merge queue · stalled — waiting on #15425 (needs maintainer
+    // merge) · 1h 20m" for a member behind a head that has sat past
+    // governor.merge_train_stall_warn_s; the head's own row reads "Merge
+    // queue · stalled — needs maintainer merge · 1h 20m"; '' when not
+    // stalled. The server decides stalled; the words say why and how long.
     function stageTrackerTrainStalledWord(mt) {
       if (!mt || !mt.stalled) return '';
       const p = stageTrackerTrainPlace(mt);
-      const why = String(mt.head_reason || '').replace(/[.;].*$/, '').trim();
+      const why = stageTrackerTrainStallWhy(mt);
       const dur = stageTrackerShortLeft((Number(mt.stalled_s) || 0) * 1000);
-      return 'Merge queue stalled · head #' + p.head + (why ? ' ' + why : '') + (dur ? ' ' + dur : '');
+      const isHead = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || p.pos === 1;
+      const what = isHead ? (why || 'the head has not moved') : 'waiting on #' + p.head + (why ? ' (' + why + ')' : '');
+      return STAGE_TRACKER_TRAIN_STALLED_LEAD + what + (dur ? ' · ' + dur : '');
     }
     // The chevron word for a train member ('' for a row not in a train).
     // The queued word is the place only — "Merge queued · 2nd" — so it
     // reads the same with the merge sweep on or off (#15395); never the
-    // state slug, never "front" or "queued-behind".
+    // state slug, never "front" or "queued-behind", and never '' for a
+    // state this table does not know: an unmapped slug reads spelled out
+    // with the row's place ("Waiting for front · 3rd").
     function stageTrackerTrainWord(item) {
       const mt = stageTrackerTrain(item);
       if (!mt) return '';
@@ -224,7 +246,8 @@
         case STAGE_TRACKER_TRAIN_STATE_REBASING: return 'Rebasing · attempt ' + (Number(mt.attempt) || 0) + '/' + (Number(mt.max_attempts) || 0);
         case STAGE_TRACKER_TRAIN_STATE_EXHAUSTED: return 'Needs human decision · rebase failed ' + (Number(mt.attempt) === 2 ? 'twice' : (Number(mt.attempt) || 0) + ' times');
       }
-      return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] || stageTrackerMergeGateStateWord(mt.state);
+      const word = STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] || stageTrackerMergeGateStateWord(mt.state) || STAGE_TRACKER_TRAIN_STATE_WORD[STAGE_TRACKER_TRAIN_STATE_QUEUED];
+      return p.pos > 0 ? word + ' · ' + stageTrackerOrdinal(p.pos) : word;
     }
     // Pure: the member's countdown target in ms (eta_at, else now+eta_s);
     // 0 with no estimate.
