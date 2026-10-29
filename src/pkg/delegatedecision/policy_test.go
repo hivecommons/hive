@@ -28,6 +28,8 @@ func sameKinds(a, b []ActionKind) bool {
 func TestCapabilityGapSharedInference(t *testing.T) {
 	for _, report := range []string{
 		"The App cannot push changes to workflow files.",
+		"The App cannot push workflows.",
+		"The App cannot edit the workflow.",
 		"The App cannot push to the upstream repository.",
 		"The App cannot update the protected branch.",
 		"The App cannot set the repository secret.",
