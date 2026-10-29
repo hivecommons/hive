@@ -31,6 +31,12 @@ func TestCapabilityGapSharedInference(t *testing.T) {
 		"The App cannot push to the upstream repository.",
 		"The App cannot update the protected branch.",
 		"The App cannot set the repository secret.",
+		"The GitHub App lacks the `issues: write` permission.",
+		"App lacks the `administration` permission to edit rulesets",
+		"The installation lacks the required permissions; needs a human.",
+		"The App token is missing the `checks: write` permission.",
+		"The installation has no permission to manage checks.",
+		"The App is without the required permission.",
 	} {
 		t.Run(report, func(t *testing.T) {
 			for _, in := range []Input{
@@ -38,6 +44,7 @@ func TestCapabilityGapSharedInference(t *testing.T) {
 				{Kind: KindIssue, Question: report},
 				{Kind: KindIssue, Reasons: []string{report}},
 				{Kind: KindIssue, Body: report},
+				{Kind: KindIssue, Body: strings.Repeat("context\n", 11) + report},
 			} {
 				d := Run(in)
 				if !CapabilityGap(in) || d.Rule != RuleCapabilityGap || d.Verdict != VerdictRecommendOnly || !d.KeepsPark || !sameKinds(kinds(d), []ActionKind{ActionRecommendOnly}) {
@@ -49,6 +56,10 @@ func TestCapabilityGapSharedInference(t *testing.T) {
 	for _, in := range []Input{
 		{Kind: KindIssue, Title: "The contributor must sign the CLA."},
 		{Kind: KindIssue, Title: "Which workflow retry strategy should we use?"},
+		{Kind: KindIssue, Title: "Which permissions should the GitHub App request?"},
+		{Kind: KindIssue, Title: "The GitHub App has the required permissions."},
+		{Kind: KindIssue, Body: strings.Repeat("context\n", 12) + "The GitHub App lacks the `issues: write` permission."},
+		{Kind: KindPR, Body: "The GitHub App lacks the `issues: write` permission."},
 		{Kind: KindIssue, Body: strings.Repeat("context\n", 12) + "The App cannot push to the repository."},
 		{Kind: KindPR, Body: "The App cannot push to the repository."},
 	} {

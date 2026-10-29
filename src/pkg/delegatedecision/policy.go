@@ -244,13 +244,16 @@ func IsDelegatedComment(body string) bool {
 }
 
 var (
-	secretsRE     = regexp.MustCompile(`(?i)\b(secrets?|PATs?|personal access tokens?|org(?:anization)? (?:membership|permissions?|admin|owner)|token scopes?|GITHUB_TOKEN|credentials?|app installation|billing)\b`)
-	flakyRE       = regexp.MustCompile(`(?i)\b(flak(?:y|e|iness)|intermittent(?:ly)? fail\w*|non-?deterministic test)\b`)
-	ratchetRE     = regexp.MustCompile(`(?i)\b(actionlint|ratchet|duplication (?:gate|threshold|check)|link[- ]?checker|allow-?list|lint gate|hygiene gate|shellcheck|yamllint|markdownlint)\b`)
-	proposalRE    = regexp.MustCompile(`(?i)\bacceptance criteria\b`)
-	hivePolicyRE  = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
-	duplicateOfRE = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
-	blockedOnPRRE = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
+	secretsRE    = regexp.MustCompile(`(?i)\b(secrets?|PATs?|personal access tokens?|org(?:anization)? (?:membership|permissions?|admin|owner)|token scopes?|GITHUB_TOKEN|credentials?|app installation|billing)\b`)
+	flakyRE      = regexp.MustCompile(`(?i)\b(flak(?:y|e|iness)|intermittent(?:ly)? fail\w*|non-?deterministic test)\b`)
+	ratchetRE    = regexp.MustCompile(`(?i)\b(actionlint|ratchet|duplication (?:gate|threshold|check)|link[- ]?checker|allow-?list|lint gate|hygiene gate|shellcheck|yamllint|markdownlint)\b`)
+	proposalRE   = regexp.MustCompile(`(?i)\bacceptance criteria\b`)
+	hivePolicyRE = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
+	// appPermissionRE preserves the park for App permissions that have no
+	// specific capability kind in the blocker ledger.
+	appPermissionRE = regexp.MustCompile(`(?i)\b(?:app(?: token)?|installation|github app)\b[^\n]{0,80}\b(?:lacks?|missing|without|no)\b[^\n]{0,60}\bpermissions?\b`)
+	duplicateOfRE   = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
+	blockedOnPRRE   = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
 )
 
 // Classifier labels.
@@ -321,12 +324,13 @@ func HivePolicyChange(in Input) bool {
 }
 
 // CapabilityGap reports a needs-human whose blocker is a missing GitHub App
-// capability rather than an open question. The ledger and this fallback use
-// the same inference rules; human-only blockers are handled by the ledger.
+// capability rather than an open question. Shared ledger inference handles
+// known capability kinds; a generic App-permission guard keeps other missing
+// permissions parked. Human-only blockers are handled by the ledger.
 func CapabilityGap(in Input) bool {
 	isCapability := func(text string) bool {
 		k, ok := blocker.Infer(text)
-		return ok && k.IsCapability()
+		return ok && k.IsCapability() || appPermissionRE.MatchString(text)
 	}
 	return isCapability(in.headline()) ||
 		in.Kind == KindIssue && isCapability(firstLines(in.Body, 12))
