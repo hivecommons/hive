@@ -32,6 +32,7 @@ const (
 	AutoMergeReasonMergeRefusedMethod      = "merge-refused:method-not-allowed"
 	AutoMergeReasonMergeRefusedReview      = "merge-refused:review-required"
 	AutoMergeReasonNativeQueuePrefix       = "native-merge-queue"
+	AutoMergeReasonNativeQueueMethod       = "native-merge-queue-method"
 	AutoMergeReasonNativeQueued            = "native-merge-queued"
 	AutoMergeReasonNoAppBotLogin           = "no-app-bot-login"
 	AutoMergeReasonReviewGatePrefix        = "review-gate:"
@@ -152,7 +153,7 @@ func HumanMergeReason(reason string) string {
 		return HumanMergeReasonBreakingChange
 	case base == AutoMergeReasonMergeRefusedReview, strings.HasPrefix(base, AutoMergeReasonReviewGatePrefix):
 		return HumanMergeReasonBranchProtection
-	case base == AutoMergeReasonMergeRefusedMethod:
+	case base == AutoMergeReasonMergeRefusedMethod, base == AutoMergeReasonNativeQueueMethod:
 		return HumanMergeReasonMergeMethod
 	case base == "repo-auto-merge-disabled", base == StageLaneContributor+":disabled", base == "disabled":
 		return HumanMergeReasonAutoMergeOff

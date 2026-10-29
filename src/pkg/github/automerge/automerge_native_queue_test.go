@@ -16,7 +16,9 @@ type nativeQueueFake struct {
 	Transport
 	state               hgithub.NativeMergeQueueState
 	readErr, enqueueErr error
+	methodErr           error
 	enqueues, dequeues  int
+	methodReads         int
 	expectedHead        string
 }
 
@@ -244,7 +246,28 @@ func TestNativeQueuePauseWithdrawsOwnEntry(t *testing.T) {
 }
 
 func (f *nativeQueueFake) NativeMergeQueueMethod(context.Context, string, string) (string, error) {
+	f.methodReads++
+	if f.methodErr != nil {
+		return "", f.methodErr
+	}
 	return "SQUASH", nil
+}
+
+// A failure to read the queue's merge method is a read failure, not a
+// merge-method refusal: it must keep the PR at stage/100 and must not be
+// remembered as a refusal for the head.
+func TestNativeQueueMethodReadFailureIsReadReason(t *testing.T) {
+	c, f, pr, claim := nativeQueueEngine()
+	claim.Inputs["method_reason"] = mergeMethodReasonMixedAuthorship
+	f.methodErr = errors.New("graphql: timeout")
+	reason, err := c.tryNativeQueue(context.Background(), pr, claim)
+	if reason != nativeQueueReasonRead || err == nil || f.enqueues != 0 {
+		t.Fatalf("reason=%q error=%v enqueues=%d, want %q with error", reason, err, f.enqueues, nativeQueueReasonRead)
+	}
+	f.methodErr = nil
+	if reason, _ := c.tryNativeQueue(context.Background(), pr, claim); reason != nativeQueueReasonMethod || f.methodReads != 2 {
+		t.Fatalf("after read failure: reason=%q method reads=%d, want a re-read reporting %q", reason, f.methodReads, nativeQueueReasonMethod)
+	}
 }
 
 func TestNativeQueuePreservesMixedAuthorshipGate(t *testing.T) {
@@ -253,6 +276,38 @@ func TestNativeQueuePreservesMixedAuthorshipGate(t *testing.T) {
 	reason, err := c.tryNativeQueue(context.Background(), pr, claim)
 	if reason != "native-merge-queue-method" || err == nil || f.enqueues != 0 {
 		t.Fatalf("reason=%q error=%v enqueues=%d", reason, err, f.enqueues)
+	}
+}
+
+// A SQUASH queue's refusal of a mixed-authorship PR is remembered like a
+// merge-method 405: the next sweep at the same head reports the same reason
+// without re-reading the queue's method, and a new head or the recheck
+// window re-reads it.
+func TestNativeQueueMethodRefusalIsRemembered(t *testing.T) {
+	c, f, pr, claim := nativeQueueEngine()
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	c.now = func() time.Time { return now }
+	claim.Inputs["method_reason"] = mergeMethodReasonMixedAuthorship
+	sweep := func() (string, error) { return c.tryNativeQueue(context.Background(), pr, claim) }
+	if reason, err := sweep(); reason != "native-merge-queue-method" || err == nil {
+		t.Fatalf("first sweep: reason=%q error=%v", reason, err)
+	}
+	if reason, err := sweep(); reason != "native-merge-queue-method" || err != nil {
+		t.Fatalf("second sweep: reason=%q error=%v", reason, err)
+	}
+	if f.methodReads != 1 || f.enqueues != 0 {
+		t.Fatalf("two sweeps at one head: method reads=%d enqueues=%d, want 1 and 0", f.methodReads, f.enqueues)
+	}
+
+	f.state.HeadRefOid = "sha8"
+	claim.Inputs["expect_sha"] = "sha8"
+	if reason, _ := sweep(); reason != "native-merge-queue-method" || f.methodReads != 2 {
+		t.Fatalf("new head: reason=%q method reads=%d, want a re-read", reason, f.methodReads)
+	}
+
+	now = now.Add(mergeRefusalRecheck)
+	if reason, _ := sweep(); reason != "native-merge-queue-method" || f.methodReads != 3 {
+		t.Fatalf("after recheck: reason=%q method reads=%d, want a re-read", reason, f.methodReads)
 	}
 }
 
