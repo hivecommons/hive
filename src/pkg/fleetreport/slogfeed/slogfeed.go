@@ -101,7 +101,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -158,6 +158,23 @@ func rateLimitedError(r slog.Record) bool {
 		return true
 	})
 	return limited
+}
+
+// upstreamUnavailableError reports whether the record's error attribute is a
+// GitHub 502/503/504 (fleetreport.IsGitHubUpstreamUnavailable). Callers such
+// as the self-authored automerge sweep ("fetch-pr") log a per-site message and
+// retry on their next tick, so a GitHub-side blip is not a hive defect
+// (hivecommons/hive#15365). The WARN stays in local logs.
+func upstreamUnavailableError(r slog.Record) bool {
+	unavailable := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" && fleetreport.IsGitHubUpstreamUnavailable(a.Value.String()) {
+			unavailable = true
+			return false
+		}
+		return true
+	})
+	return unavailable
 }
 
 // Classifier errors stay in local logs only: transport errors can expose the

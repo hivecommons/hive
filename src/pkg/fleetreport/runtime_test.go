@@ -795,6 +795,27 @@ func TestIsGitHubRateLimited(t *testing.T) {
 	}
 }
 
+func TestIsGitHubUpstreamUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"GET https://api.github.com/repos/o/r/pulls/1: 502 Bad Gateway []", true},
+		{"GET https://api.github.com/repos/o/r/pulls/1336: 503  []", true},
+		{"GET https://api.github.com/repos/o/r/pulls/1: 504 Gateway Timeout []", true},
+		{"upstream: Service Unavailable", true},
+		{"GET https://api.github.com/repos/o/r: 500 Internal Server Error", false},
+		{"GET https://api.github.com/repos/o/r: 404 Not Found", false},
+		{"GET https://api.github.com/repos/o/r/pulls/503: 404 Not Found", false},
+		{"GET https://api.github.com/repos/o/r/pulls?page=503", false},
+		{"", false},
+	} {
+		if got := IsGitHubUpstreamUnavailable(tc.in); got != tc.want {
+			t.Errorf("IsGitHubUpstreamUnavailable(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestIsBenignMessageReviewPendingExpiry(t *testing.T) {
 	for _, msg := range []string{"review pending expired", "  REVIEW PENDING EXPIRED  "} {
 		if !IsBenignMessage(msg) {

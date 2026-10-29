@@ -822,6 +822,34 @@ func IsGitHubRateLimited(s string) bool {
 	return false
 }
 
+// upstreamUnavailableSubstrings are lower-case fragments that mark a GitHub
+// gateway-class transient failure (see IsGitHubUpstreamUnavailable). The
+// status codes are anchored to go-github's "<METHOD> <url>: 503 ..." shape so
+// a PR number or page=503 cannot match; 500 is deliberately absent.
+var upstreamUnavailableSubstrings = []string{
+	": 502 ",
+	": 503 ",
+	": 504 ",
+	"bad gateway",
+	"service unavailable",
+	"gateway timeout",
+	"gateway time-out",
+}
+
+// IsGitHubUpstreamUnavailable reports whether s (a log message or an error
+// string) is a GitHub 502/503/504 gateway-class failure. The caller retries
+// on its next tick, so the generic repeated-error feed treats such lines as
+// benign (hivecommons/hive#15365); the WARN stays in local logs.
+func IsGitHubUpstreamUnavailable(s string) bool {
+	m := strings.ToLower(s) + " "
+	for _, sub := range upstreamUnavailableSubstrings {
+		if strings.Contains(m, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsBenignMessage reports whether a raw log message is noise the generic
 // repeated-error feed must not report: the read/keepalive i/o timeout rule
 // above applied to the whole line, GitHub rate-limit and pacing refusals

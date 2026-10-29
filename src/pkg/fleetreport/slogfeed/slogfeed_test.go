@@ -565,6 +565,37 @@ func TestGitHubRateLimitStormLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #15365: a GitHub 502/503/504 on a fetch is transient and retried next tick.
+func TestGitHubUpstreamUnavailableLogsWithoutFleetReport(t *testing.T) {
+	cases := []struct {
+		msg  string
+		args []any
+	}{
+		{"self-authored automerge sweep skipped PR", []any{"repo", "kubestellar-mcp", "pr", 1336, "reason", "fetch-pr", "error", "GET https://api.github.com/repos/o/r/pulls/1336: 503  []"}},
+		{"failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 502 Bad Gateway []"}},
+		{"failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 504 Gateway Timeout []"}},
+	}
+	for _, tc := range cases {
+		logger, seen, out := newFeed(t)
+		for i := 0; i < 8; i++ {
+			logger.Warn(tc.msg, tc.args...)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("%q: upstream-unavailable WARN produced observations: %+v", tc.msg, *seen)
+		}
+		if n := strings.Count(out.String(), "\n"); n != 8 {
+			t.Errorf("%q: wrapped handler saw %d records, want 8", tc.msg, n)
+		}
+	}
+
+	logger, seen, _ := newFeed(t)
+	logger.Warn("self-authored automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1336: 500 Internal Server Error []")
+	logger.Warn("self-authored automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1336: 403 Resource not accessible by integration")
+	if len(*seen) != 2 {
+		t.Fatalf("non-gateway failures must remain reportable: %+v", *seen)
+	}
+}
+
 // #15333: keep repeated translator identity refusals visible under their own
 // gateway class, without treating them as backend credential failures.
 func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
