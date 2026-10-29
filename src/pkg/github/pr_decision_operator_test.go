@@ -250,10 +250,11 @@ func TestRecordOperatorPullRequestApprovalWithoutOptionsStaysCommentsOnly(t *tes
 // decision without posting them again and says so on the event; a Prow
 // reply to someone else's comment, or no reply at all, changes nothing.
 func TestRecordOperatorPullRequestApprovalSkipsCommandsProwRejected(t *testing.T) {
-	ownLGTM := unparkWireComment{ID: 501, Body: renderPRApprovalCommandComment("/lgtm", "clubanderson", liveDecisionHead), User: wireUser{Login: "hive[bot]"}}
-	ownApprove := unparkWireComment{ID: 502, Body: renderPRApprovalCommandComment("/approve", "clubanderson", liveDecisionHead), User: wireUser{Login: "hive[bot]"}}
+	at := time.Date(2026, 10, 29, 0, 32, 0, 0, time.UTC).Format(time.RFC3339)
+	ownLGTM := unparkWireComment{ID: 501, Body: renderPRApprovalCommandComment("/lgtm", "clubanderson", liveDecisionHead), User: wireUser{Login: "hive[bot]"}, CreatedAt: at, UpdatedAt: at}
+	ownApprove := unparkWireComment{ID: 502, Body: renderPRApprovalCommandComment("/approve", "clubanderson", liveDecisionHead), User: wireUser{Login: "hive[bot]"}, CreatedAt: at, UpdatedAt: at}
 	prowReply := func(id int64, text string) unparkWireComment {
-		return unparkWireComment{ID: 600 + id, Body: text + "\n\n<details>\n\nIn response to [this](https://github.com/org/repo/pull/1#issuecomment-" + strconv.FormatInt(id, 10) + "):\n\n>/lgtm\n</details>", User: wireUser{Login: "kubestellar-prow[bot]"}}
+		return unparkWireComment{ID: 600 + id, Body: text + "\n\n<details>\n\nIn response to [this](https://github.com/org/repo/pull/1#issuecomment-" + strconv.FormatInt(id, 10) + "):\n\n>/lgtm\n</details>", User: wireUser{Login: "kubestellar-prow[bot]"}, CreatedAt: at, UpdatedAt: at}
 	}
 	for _, tc := range []struct {
 		name     string
@@ -263,7 +264,7 @@ func TestRecordOperatorPullRequestApprovalSkipsCommandsProwRejected(t *testing.T
 		{"lgtm restricted", []unparkWireComment{ownLGTM, prowReply(501, "@hive[bot]: changing LGTM is restricted to collaborators")}, PRApprovalCommandsSkippedProw},
 		{"approve not approved", []unparkWireComment{ownApprove, prowReply(502, "[APPROVALNOTIFIER] This PR is **NOT APPROVED**")}, PRApprovalCommandsSkippedProw},
 		{"prow answered someone else", []unparkWireComment{ownLGTM, prowReply(77, "@eve: changing LGTM is restricted to collaborators")}, ""},
-		{"human quoting the phrase", []unparkWireComment{ownLGTM, {ID: 700, Body: "NOT APPROVED, see #issuecomment-501)", User: wireUser{Login: "eve"}}}, ""},
+		{"human quoting the phrase", []unparkWireComment{ownLGTM, {ID: 700, Body: "NOT APPROVED, see #issuecomment-501)", User: wireUser{Login: "eve"}, CreatedAt: at, UpdatedAt: at}}, ""},
 		{"no prior commands", nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
