@@ -249,7 +249,7 @@ func TestDecidePRRules(t *testing.T) {
 		{
 			name:    "grace-elapsed workflow-path PR gets capability-gap, not adopt-now",
 			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionGraceElapsed: true, ContributorOnline: true, CIGreen: true, ChangedFiles: []string{".github/workflows/ci.yml"}},
-			verdict: VerdictRecommendOnly, rule: "capability-gap",
+			verdict: VerdictRecommendOnly, rule: "capability-gap", keepsPark: true,
 		},
 		{
 			name:    "non-workflow offline PR still adopts",
