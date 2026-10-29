@@ -8527,7 +8527,7 @@ func (a AutoMergeConfig) HumanMergeTitlePrefixesEffective() []string {
 	if a.HumanMergeTitlePrefixes == nil {
 		return append([]string(nil), prstage.DefaultHumanMergeTitlePrefixes...)
 	}
-	return append([]string(nil), a.HumanMergeTitlePrefixes...)
+	return append(make([]string, 0, len(a.HumanMergeTitlePrefixes)), a.HumanMergeTitlePrefixes...)
 }
 
 // HumanMergeLabelsEffective returns auto_merge.human_merge_labels with the
@@ -8537,7 +8537,7 @@ func (a AutoMergeConfig) HumanMergeLabelsEffective() []string {
 	if a.HumanMergeLabels == nil {
 		return append([]string(nil), prstage.DefaultHumanMergeLabels...)
 	}
-	return append([]string(nil), a.HumanMergeLabels...)
+	return append(make([]string, 0, len(a.HumanMergeLabels)), a.HumanMergeLabels...)
 }
 
 // HumanMergeRule is the configured human-merge rule the automerge lanes
