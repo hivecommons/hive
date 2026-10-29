@@ -769,7 +769,7 @@ Side stages share a column rather than adding columns:
 | 070 Fixing / 071 Needs author / 072 Returned to contributor | CI / Review: Hive repairs its own PR at 070; a human author acts at 071; a contributor agent gets its PR back at 072. `needs-rebase` explains a repair here, not at 050. |
 | 074 Adopted by hive | CI / Review while the Hive repairs adopted work; pending, green or red pushes remain 074 until the merge gate takes it. |
 | 085 Needs human decision / 090 Ready for human merge | Merge queue on a PR. Read the decision or merge reason rather than assuming Hive will merge it. |
-| 060 / 080 / 095 / 100 | Separate gate states; use the [merge-gate reference](#merge-gate-pills--legend) below for exact words and countdowns. |
+| 060 / 080 / 095 / 100 | Separate gate states; use the [merge-gate reference](#merge-queue-pills--legend) below for exact words and countdowns. |
 
 The author legend is a blue Hive hexagon, purple contributor-agent robot or teal human silhouette. The kind is `author/*`, inferred from the snapshot if its label is absent; the link tooltip names the login. On Claimed, the actor is the claim holder; on PR in progress and Returned to contributor it is the author. Hive owns review, adoption and auto-merge work; a human owns a human decision or manual merge. The payload's `stage_actor` is the authoritative actor (see [Who is on it](#who-is-on-it-actor-icons)).
 
