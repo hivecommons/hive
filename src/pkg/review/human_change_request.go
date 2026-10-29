@@ -277,6 +277,41 @@ func (s *HumanChangeRequests) Lookup(repo string, number int, source string, sou
 	return HumanChangeRequest{}, false
 }
 
+// Dismiss removes every request match reports true for and returns the
+// removed entries (nil when none). It is the one-time reconcile's lever:
+// a changes_requested whose source is the hive's own `/hive decision`
+// comment (recorded before the self-decision guard existed,
+// hivecommons/hive#14822) comes off the head it was blocking.
+func (s *HumanChangeRequests) Dismiss(match func(HumanChangeRequest) bool) []HumanChangeRequest {
+	if s == nil || match == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	var removed []HumanChangeRequest
+	kept := s.items[:0]
+	for _, item := range s.items {
+		if match(item) {
+			removed = append(removed, item)
+			continue
+		}
+		kept = append(kept, item)
+	}
+	if len(removed) == 0 {
+		return nil
+	}
+	s.items = kept
+	_ = s.persist()
+	return removed
+}
+
+// HumanChangeRequestDismisser is the optional store capability the
+// self-decision reconcile needs.
+type HumanChangeRequestDismisser interface {
+	Dismiss(match func(HumanChangeRequest) bool) []HumanChangeRequest
+}
+
 // Len is the number of recorded requests across all PRs and heads.
 func (s *HumanChangeRequests) Len() int {
 	if s == nil {

@@ -113,6 +113,10 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_RESULT_TOAST_MAX"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTING_MAX_MS"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTING_CAPTIONS"),
+		jsConstLine(t, html, "STAGE_TRACKER_REBASE_MERGE_LABEL"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTION_REBASE_QUEUED"),
+		jsFunc(t, html, "stageTrackerNeedsRebase"),
+		jsFunc(t, html, "stageTrackerRebaseMergeLive"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTION_WORDS"),
 		"var _stageTrackerResultToasts = []; var _stageTrackerPending = [];",
 		jsFunc(t, html, "stageTrackerActingCaption"),
@@ -1150,6 +1154,14 @@ assert.ok(!acting('o/r/issue#7'), 'a no-op or an error clears at once');
   assert.strictEqual(del.toast.text.outcome, "Hive decided on o/r#14947: adopted (the author's clanker hasn't been connected since the nudge)", del.toast.text.outcome);
   assert.deepStrictEqual(del.pending[0].keys, ['o/r/pr#14947', 'o/r/issue#14938']);
   assert.ok(acting('o/r/issue#14938') && acting('o/r/pr#14947'));
+  // An approval is recorded when the server answers: "Approving…" clears
+  // at once instead of lingering beside the ✓ (hivecommons/hive#15103).
+  stageTrackerClearPending(del.pending[0]);
+  global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ result: { action: 'approved', target: { repo: 'o/r', kind: 'pr', number: 14947, url: 'u947' }, outcome: 'Approved — #14947 conflicts with v5; hive will rebase it next pass (attempt 1/2).', next: 'n', options: [{ action: 'decide:merge-now', label: 'Rebase, then merge as maintainer', enabled: true }] } }) });
+  stageTrackerSetConfirmSkip('decide:approve', true);
+  const ap = await runRowAction('decide:approve', Object.assign({ repo: 'o/r', kind: 'pr' }, nested));
+  assert.ok(!acting('o/r/pr#14947'), 'approved: the acting caption clears once the decision records');
+  assert.strictEqual(ap.toast.text.options.length, 1, 'the approve toast carries the rebase-then-merge button');
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }
@@ -1375,5 +1387,104 @@ assert.strictEqual(stageTrackerDCOCaveat([]), '');
   await stageTrackerActionPayload([{ ...pr317, dco_unsigned: 0 }], 'decide:merge-now');
   assert.ok(!dialogs[0].cfg.message.includes('Signed-off-by'), dialogs[0].cfg.message);
 })().catch(e => { console.error(e); process.exit(1); });
+`)
+}
+
+// TestStageTrackerRebaseThenMergeRow: a PR that needs a rebase offers
+// "Rebase, then merge as maintainer" in place of (090) or next to (085)
+// the plain maintainer merge; the acting caption, the 202 rebase-queued
+// toast, the cue-working glow while the follow-through runs, and the
+// ledger trail's step lines all read as the operator was promised
+// (hivecommons/hive#14822).
+func TestStageTrackerRebaseThenMergeRow(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+"\n"+stageTrackerCuesJS(t, html)+jsConstBlock(t, html, "STAGE_TRACKER_ICONS")+"\n"+stageTrackerActedJS(t, html)+"\n"+jsFunc(t, html, "agentNowClockTime")+`
+global.window = { _hiveUser: 'clubanderson' };
+const ids = as => as.map(a => a.id);
+const merger = { user: true, canHold: true, canHuman: true };
+const rebaseOpt = { action: 'decide:merge-now', label: STAGE_TRACKER_REBASE_MERGE_LABEL, enabled: true,
+  consequence: "hive rebases #14822 onto v5, waits for CI, then merges it with your approval on record; you'll get a toast when it lands or if the rebase conflicts" };
+const pr = { repo: 'hivecommons/hive', kind: 'pr', number: 14822, title: 'fix: preserve owner intent through PR decision paths', url: 'u', author: 'thatguywob', author_kind: 'clanker', base_ref: 'v5',
+  stage: 85, caption: 'Needs human decision', modifiers: ['needs-decision', 'needs-rebase'],
+  decision_needed: { question: 'q', options: [
+    { action: 'decide:delegate', label: 'Let hive decide', enabled: true },
+    { action: 'decide:approve', label: 'Approve', enabled: true },
+    rebaseOpt,
+    { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true },
+    { action: 'hold', label: 'Hold', enabled: true } ] } };
+
+assert.strictEqual(stageTrackerNeedsRebase(pr), true);
+assert.strictEqual(stageTrackerNeedsRebase({ ...pr, modifiers: ['needs-decision'] }), false);
+assert.strictEqual(stageTrackerNeedsRebase({ ...pr, modifiers: [], labels: ['Needs-Rebase'] }), true, 'the label counts too');
+assert.strictEqual(stageTrackerNeedsRebase({ ...pr, modifiers: [], rebase_merge: { state: 'rebasing' } }), true, 'a live follow-through counts');
+assert.strictEqual(stageTrackerNeedsRebase({ ...pr, modifiers: [], rebase_merge: { state: 'merged' } }), false);
+
+// 085 menu: the relabelled merge leads; the 085 menu without needs-rebase is untouched.
+let as = stageTrackerRowActions(pr, merger);
+assert.strictEqual(as[0].id, 'decide:merge-now'); assert.strictEqual(as[0].label, STAGE_TRACKER_REBASE_MERGE_LABEL);
+assert.ok(as[0].hint.startsWith('hive rebases #14822 onto v5'), 'consequence rides as the hint: ' + as[0].hint);
+assert.ok(as[0].enabled && as[0].lead);
+const menu = stageTrackerMenuHtml(as, 'hivecommons/hive#14822');
+assert.ok(menu.includes('Rebase, then merge as maintainer'), menu);
+assert.ok(menu.indexOf('data-ham-act="decide:merge-now"') < menu.indexOf('data-ham-act="decide"'), 'the rebase-merge leads the Decide… group');
+const req = stageTrackerActionRequest(pr, 'decide:merge-now', {});
+assert.strictEqual(req.url, '/api/repos/hivecommons/hive/items/14822/decision');
+assert.deepStrictEqual(req.body, { decision: 'merge-now', comment: '', type: 'pr' }, 'the same decision wire: the server folds the rebase in');
+
+// Acting caption and the action word for the 202.
+assert.strictEqual(stageTrackerActingCaption('decide:merge-now', pr), 'Rebasing, then merging…');
+assert.strictEqual(stageTrackerActingCaption('decide:merge-now', { ...pr, modifiers: [] }), 'Merging…');
+assert.strictEqual(STAGE_TRACKER_ACTION_WORDS[STAGE_TRACKER_ACTION_REBASE_QUEUED], 'rebase queued, merge to follow');
+
+// The toast for the 202 names the rebase-merge, not a plain merge.
+const result = { action: STAGE_TRACKER_ACTION_REBASE_QUEUED, target: { repo: 'hivecommons/hive', kind: 'pr', number: 14822, url: 'u' },
+  outcome: 'Your approval is on record; the hive is rebasing #14822 onto v5.', next: 'Once CI is green on the rebased head the hive merges it with your approval attributed; you\'ll get a toast when it lands or if the rebase conflicts.' };
+const text = stageTrackerResultText(result, pr, { id: 'decide:merge-now' });
+const flat = typeof text === 'string' ? text : JSON.stringify(text);
+assert.ok(flat.includes('Rebase, then merge as maintainer on hivecommons/hive#14822'), flat);
+assert.ok(flat.includes('rebasing #14822 onto v5'), flat);
+
+// A refused follow-through (conflict) carries its two ways out.
+const failed = { action: 'refused', why: 'rebase-conflict', target: result.target, outcome: 'Rebase conflicts in .github/workflows/v2-ci.yml.',
+  options: [{ action: 'decide:adopt', label: 'Adopt into fresh branch', enabled: true }, { action: 'decide:close-superseded', label: 'Close as superseded', enabled: true }] };
+const failedText = stageTrackerResultText(failed, pr, { id: 'decide:merge-now' });
+const failedFlat = typeof failedText === 'string' ? failedText : JSON.stringify(failedText);
+assert.ok(failedFlat.includes('v2-ci.yml'), failedFlat);
+
+// The row while it runs: cue-working, caption from the server, state
+// signature changes with the follow-through state.
+const running = { ...pr, caption: 'Rebasing → merge queued (approved by @clubanderson)', rebase_merge: { state: 'rebasing', actor: 'clubanderson', base: 'v5', text: 'Rebasing → merge queued (approved by @clubanderson)' } };
+assert.strictEqual(stageTrackerRebaseMergeLive(running), true);
+assert.strictEqual(stageTrackerRebaseMergeLive(pr), false);
+assert.ok(stageTrackerCueClasses(running, { workers: {} }).includes('cue-working'), 'the working cue while the hive rebases');
+assert.ok(!stageTrackerCueClasses(pr, { workers: {} }).includes('cue-working'));
+assert.notStrictEqual(stageTrackerItemState(running), stageTrackerItemState({ ...running, rebase_merge: { state: 'ci-pending' } }), 'the acting row sees the state move');
+
+// The ledger trail: step hops without a stage number read as plain steps.
+const now = Date.parse('2026-10-29T10:00:00Z');
+const at = m => new Date(now - m * 60000).toISOString();
+const acted = { ...running, last_operator_action: { action: 'merge-now', actor: 'clubanderson', at: at(5), outcome: 'pending', detail: 'rebase-queued', stage_at: 85,
+  followed: [{ number: 0, slug: 'approval-recorded', at: at(5) }, { number: 0, slug: 'rebase-kicked', at: at(4), reason: 'fixer' }] } };
+const tip = stageTrackerActedTip(acted, now);
+assert.ok(tip.includes('rebasing, then merging…'), tip);
+assert.ok(tip.includes('Then the hive recorded your approval'), tip);
+assert.ok(tip.includes('Then the hive started the rebase — fixer'), tip);
+
+// Approve on a dirty PR (hivecommons/hive#15103): the toast tells the
+// truth (the gate skips a conflicting PR), carries the one-click upgrade
+// to rebase-then-merge, and the row's state signature moves with the
+// fixer's attempt so "Approving…" does not wait on the gate.
+const approvedDirty = { action: 'approved', target: result.target,
+  outcome: 'Approved — #14822 conflicts with v5; hive will rebase it next pass (attempt 1/2).',
+  next: 'The merge gate skips a conflicting PR, so your approval alone would not land it. Once the rebased head is green the gate takes it — or have hive merge it for you right after the rebase:',
+  options: [{ action: 'decide:merge-now', label: STAGE_TRACKER_REBASE_MERGE_LABEL, enabled: true, consequence: 'hive rebases #14822 onto v5, waits for CI, then merges it with your approval on record' }] };
+const apText = stageTrackerResultText(approvedDirty, pr, { id: 'decide:approve' });
+assert.strictEqual(apText.type, 'success');
+assert.ok(apText.outcome.includes('hive will rebase it next pass (attempt 1/2)'), apText.outcome);
+assert.strictEqual(apText.options.length, 1, 'the approve toast offers the rebase-then-merge button');
+assert.strictEqual(apText.options[0].label, 'Rebase, then merge as maintainer');
+const plainApproved = stageTrackerResultText({ action: 'approved', target: result.target, outcome: '/lgtm + /approve posted.', next: 'The merge gate takes it from here; the dashboard merges nothing.' }, pr, { id: 'decide:approve' });
+assert.strictEqual(plainApproved.options.length, 0, 'a plain approval has no buttons');
+assert.notStrictEqual(stageTrackerItemState(pr), stageTrackerItemState({ ...pr, rebase: { attempt: 1, max: 2, text: 'Rebasing · attempt 1/2' } }), 'the fixer attempt moves the row state');
 `)
 }

@@ -250,10 +250,6 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 		word = "policy"
 	}
 	ref := "#" + strconv.Itoa(it.Number)
-	into := strings.TrimSpace(it.BaseRef)
-	if into == "" {
-		into = "its base branch"
-	}
 	why := stageTrackerUntrustedAuthorWhy(base, it.Author)
 	if why == "" {
 		why = decisionPlainReason(base)
@@ -280,8 +276,7 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 	if held {
 		d.Blocker += " " + decisionHeldBlocker(it.Hold)
 	}
-	mergeNow := decisionOption(decisionActionMergeNow, "Approve & merge as maintainer", !held, "Release the hold first")
-	mergeNow.Consequence = "merges " + ref + " into " + into + " now via hive's identity, attributed to you"
+	mergeNow := decisionMergeNowOption(it, held)
 	queue := decisionOption(decisionActionQueueMerge, "Approve — let hive merge", !held, "Release the hold first")
 	queue.Consequence = "records your approval as the trust override for this head; the hive's merge sweep merges " + ref + " as-is on its next pass once CI is green and the head has soaked, and does not adopt it"
 	if admitter != "" && !held {
@@ -351,6 +346,40 @@ func decisionReauthorOption(it StageTrackerItem, ref string, held bool) StageTra
 	}
 	o.Consequence = "the hive re-homes " + ref + "'s commits on a hive-owned, signed-off branch and opens a superseding PR; " + ref + " is closed when that one merges; nothing is merged as-is"
 	return o
+}
+
+// decisionMergeNowOption is "Approve & merge as maintainer", or — when the
+// row wears needs-rebase, so a plain merge would be a GitHub 405 — "Rebase,
+// then merge as maintainer": the same click records the approval, has the
+// hive rebase the PR, and merges it on green (hivecommons/hive#14822).
+func decisionMergeNowOption(it StageTrackerItem, held bool) StageTrackerDecisionOption {
+	ref := "#" + strconv.Itoa(it.Number)
+	into := strings.TrimSpace(it.BaseRef)
+	if into == "" {
+		into = "its base branch"
+	}
+	if stageTrackerNeedsRebase(it) {
+		opt := decisionOption(decisionActionMergeNow, rebaseMergeFollowThroughLabel, !held, "Release the hold first")
+		opt.Consequence = rebaseMergeFollowThroughConsequence(it.Number, strings.TrimSpace(it.BaseRef))
+		return opt
+	}
+	opt := decisionOption(decisionActionMergeNow, "Approve & merge as maintainer", !held, "Release the hold first")
+	opt.Consequence = "merges " + ref + " into " + into + " now via hive's identity, attributed to you"
+	return opt
+}
+
+// stageTrackerNeedsRebase: the row wears needs-rebase (modifier or label),
+// or a rebase-then-merge follow-through is already running on it.
+func stageTrackerNeedsRebase(it StageTrackerItem) bool {
+	if slices.Contains(it.Modifiers, modNeedsRebase) {
+		return true
+	}
+	for _, l := range it.Labels {
+		if strings.EqualFold(strings.TrimSpace(l), "needs-rebase") {
+			return true
+		}
+	}
+	return it.RebaseMerge != nil && it.RebaseMerge.State != "" && it.RebaseMerge.State != "merged" && it.RebaseMerge.State != "failed"
 }
 
 // decisionForUnauthorized: a row wearing hive:unauthorized outside 085 —
@@ -681,6 +710,12 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		decisionOption(decisionActionCloseSuperseded, "Close as superseded", true, ""),
 		decisionOption(decisionActionCloseWontfix, "Close as won't fix", true, ""),
 		decisionHoldOption(held),
+	}
+	// A PR parked here that also needs a rebase has no lane rebasing it
+	// until a person speaks (hivecommons/hive#14822): offer the maintainer
+	// merge with the rebase folded in, right after Approve.
+	if stageTrackerNeedsRebase(it) && !sentinel {
+		d.Options = slices.Insert(d.Options, 2, decisionMergeNowOption(it, held))
 	}
 	if selfHold != nil {
 		// Release leads: it is the one action that answers the question.

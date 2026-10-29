@@ -1697,6 +1697,11 @@ func (s *Server) Start() error {
 	costTicker := time.NewTicker(costHistoryMinIntervalMs * time.Millisecond)
 	defer costTicker.Stop()
 	go s.runCostSampler(costTicker.C)
+	// The operator's "Rebase, then merge as maintainer" follow-throughs
+	// (rebase_merge_followthrough.go) poll from here.
+	followCtx, cancelFollow := context.WithCancel(context.Background())
+	defer cancelFollow()
+	s.StartRebaseMergeFollowThrough(followCtx)
 	return srv.Serve(ln)
 }
 

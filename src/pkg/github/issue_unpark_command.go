@@ -278,6 +278,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 		maxActions = DefaultIssueUnparkSweepMaxActions
 	}
 	result := &IssueUnparkSweepResult{}
+	if opts.HumanChangeRequests != nil {
+		c.ReconcileSelfDecisionChangeRequests(opts.HumanChangeRequests)
+	}
 	cutoff := time.Now().Add(-unparkCommandScanWindow)
 
 	for _, repo := range c.getRepos() {

@@ -14628,6 +14628,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     //   cue    — 'running' (sweep on it now) | 'waiting' | 'soaking' | 'merging' | ''
     //   until  — ms epoch the detail counts down to (0 when none)
     function stageTrackerMergeGateInfo(item, nowMs) {
+      const rb = item && item.rebase;
+      if (rb && rb.text && !(item.rebase_merge && item.rebase_merge.state && item.rebase_merge.state !== 'failed' && item.rebase_merge.state !== 'merged')) {
+        // The fixer's autonomous rebase-resolve loop guard: "Rebasing ·
+        // attempt 1/2" spins; past the cap the row asks for a person.
+        const tip = rb.exhausted
+          ? 'hive rebased this PR ' + rb.max + ' times and GitHub still reports conflicts' + (rb.head ? ' on ' + rb.head : '') + '. A person has to resolve it (or Adopt into fresh branch / Close as superseded from the row menu).'
+          : "hive's fixer is rebasing this PR onto its base branch and resolving conflicts (attempt " + rb.attempt + ' of ' + rb.max + '). A pushed head that is still conflicting is the next attempt.';
+        return { state: rb.exhausted ? 'rebase-failed' : 'rebasing', word: rb.text, detail: '', tip, cue: rb.exhausted ? 'waiting' : 'running', until: 0 };
+      }
       const cover = stageTrackerCoveringPR(item);
       const src = cover && cover.merge_gate && cover.merge_gate.state ? cover : item;
       const state = stageTrackerMergeGateStateOf(src);
@@ -15737,6 +15746,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'merge-now': 'Approve & merge as maintainer', 'queue-merge': 'Approve — let hive merge',
       adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',
     };
+    // "Rebase, then merge as maintainer" is merge-now on a row that needs a
+    // rebase (hivecommons/hive#14822): the server relabels the option and
+    // answers 202 rebase-queued; the follow-through's steps come back in
+    // last_operator_action.followed[] as hops without a stage number.
+    const STAGE_TRACKER_REBASE_MERGE_LABEL = 'Rebase, then merge as maintainer';
+    const STAGE_TRACKER_ACTION_REBASE_QUEUED = 'rebase-queued';
+    function stageTrackerNeedsRebase(item) {
+      if (!item) return false;
+      if ((Array.isArray(item.modifiers) ? item.modifiers : []).indexOf('needs-rebase') >= 0) return true;
+      if ((Array.isArray(item.labels) ? item.labels : []).some(l => String(l).toLowerCase() === 'needs-rebase')) return true;
+      const rm = item.rebase_merge;
+      return !!(rm && rm.state && rm.state !== 'merged' && rm.state !== 'failed');
+    }
+    function stageTrackerRebaseMergeLive(item) {
+      const rm = item && item.rebase_merge;
+      return !!(rm && (rm.state === 'approved' || rm.state === 'rebasing' || rm.state === 'ci-pending'));
+    }
     const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed', 'executing', 'blocked'];
     const STAGE_TRACKER_ACTED_FILTERS = ['any', 'awaiting', 'acted', 'stuck'];
     const STAGE_TRACKER_ACTED_STUCK_DEFAULT_S = 30 * 60;
@@ -15784,7 +15810,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'applied': return 'done' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'no-op': return 'nothing changed' + (action.detail ? ': ' + stageTrackerActedPlain(action.detail) : '');
         case 'failed': return 'failed' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
-        case 'pending': return 'the hive is deciding…';
+        case 'pending': return action.action === 'merge-now' ? 'rebasing, then merging…' : 'the hive is deciding…';
         case 'executing': return (action.detail ? stageTrackerActedPlain(action.detail) : 'decided — the hive is carrying it out…');
         case 'no-effect': return "hasn't taken effect" + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'blocked': return 'blocked' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
@@ -15814,6 +15840,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       held: 'put on hold',
       released: 'hold released',
       'already accepted': 'it was already accepted',
+      'approval-recorded': 'recorded your approval', 'rebase-kicked': 'started the rebase', rebased: 'rebased it onto the base branch', 'ci-green': 'saw CI go green', merged: 'merged it',
+      'rebase-conflict': 'the rebase conflicts', 'ci-red': 'CI went red on the rebased head', 'rebase-timeout': 'the rebase did not land in time', 'head-not-pushable': 'the hive cannot push to this fork', 'foreign-head': 'the head moved after your approval, pushed by someone other than the hive',
     };
     function stageTrackerActedPlain(text) {
       const t = String(text || '').trim();
@@ -15874,7 +15902,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const followed = Array.isArray(a.followed) ? a.followed : [];
       followed.slice(-3).forEach(h => {
         const hopMs = Date.parse(h.at || '') || nowMs;
-        lines.push('Then the hive ' + (h.regressed ? 'sent it back to ' : 'moved it to ') + stageTrackerActedStageName(h.number) + (h.reason ? ' — ' + stageTrackerActedPlain(h.reason) : '') + ' · ' + stageTrackerActedAgo(nowMs - hopMs) + '.');
+        if (!(Number(h.number) > 0) && h.slug) lines.push('Then the hive ' + stageTrackerActedPlain(h.slug) + (h.reason ? ' — ' + h.reason : '') + ' · ' + stageTrackerActedAgo(nowMs - hopMs) + '.');
+        else lines.push('Then the hive ' + (h.regressed ? 'sent it back to ' : 'moved it to ') + stageTrackerActedStageName(h.number) + (h.reason ? ' — ' + stageTrackerActedPlain(h.reason) : '') + ' · ' + stageTrackerActedAgo(nowMs - hopMs) + '.');
       });
       if (src.count > 1) lines.push((src.count - 1) + ' earlier action' + (src.count > 2 ? 's' : '') + ' on this item.');
       return lines.join('\n');
@@ -16357,7 +16386,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // setback while it has fallen back.
     function stageTrackerCueClasses(item, ctx) {
       const out = [];
-      if (stageTrackerWorkingOn(item, ctx && ctx.workers)) out.push('cue-working');
+      if (stageTrackerWorkingOn(item, ctx && ctx.workers) || stageTrackerRebaseMergeLive(item)) out.push('cue-working');
       const mods = Array.isArray(item && item.modifiers) ? item.modifiers : [];
       if (mods.indexOf('regressed') >= 0) out.push('cue-setback');
       // cue-merged is set by celebrateRow for the moment a merge lands, not
@@ -18759,7 +18788,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // The clicked row and the item acted on (a nested PR for an issue
         // row's decision) both read "acting…" from the first byte sent.
         const keys = stageTrackerPendingKeys(it, rows);
-        const pend = stageTrackerSetPending(keys, stageTrackerActingCaption(id));
+        const pend = stageTrackerSetPending(keys, stageTrackerActingCaption(id, it));
         pending.push(pend);
         try {
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
@@ -18780,7 +18809,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           results.push({ item: it, ok: true, data, result });
           // No change → nothing to wait for; otherwise the row keeps
           // acting until the tracker reports the target's new state.
-          if (result.action === STAGE_TRACKER_ACTION_NOOP || result.action === STAGE_TRACKER_ACTION_NO_EFFECT) stageTrackerClearPending(pend);
+          // An approval is recorded the moment the server answers; the
+          // row's next state (the gate, or "Rebasing · attempt n/2") is
+          // the tracker's to show, so "Approving…" must not linger beside
+          // the ✓ waiting for it (#15103).
+          if (result.action === STAGE_TRACKER_ACTION_NOOP || result.action === STAGE_TRACKER_ACTION_NO_EFFECT || result.action === 'refused' || result.action === 'approved') stageTrackerClearPending(pend);
           else { if (typeof stageTrackerDecidePending === 'function') stageTrackerDecidePending(pend, result, stageTrackerItemByKey(_stageTracker, stageTrackerTargetKey(result.target))); stageTrackerArmPending(pend, result.target); }
           if (result.action !== STAGE_TRACKER_ACTION_NOOP && result.action !== STAGE_TRACKER_ACTION_NO_EFFECT && typeof stageTrackerNoteOwnerEvent === 'function') stageTrackerNoteOwnerEvent(stageTrackerTargetKey(result.target) || stageTrackerItemKey(it), STAGE_TRACKER_ACTION_WORDS[result.action] || stageTrackerActionLabel(id));
           if (items.length <= STAGE_TRACKER_RESULT_TOAST_MAX) toasts.push(stageTrackerResultToast(result, it, { id, rowRef: stageTrackerRefOf(it) }));
@@ -19019,6 +19052,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         case 'decide:merge-now': {
           const base = items.map(it => it.base_ref || '').filter(Boolean)[0] || 'its base branch';
+          if (items.some(stageTrackerNeedsRebase)) {
+            return (await stageTrackerAsk(id, 'confirm', { title: STAGE_TRACKER_REBASE_MERGE_LABEL, message: preface + refs + ' is behind ' + base + ' (needs a rebase), so GitHub would refuse a plain merge. Record your approval as ' + who + ' and have the hive rebase it onto ' + base + ', wait for CI, then merge it with your approval on record? You get a toast when it lands or if the rebase conflicts.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & rebase-merge', danger: true })) ? {} : null;
+          }
           return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now via hive\'s identity, attributed to ' + who + '? The merge gate parked it for a human because its author is not a trusted merger on this repo; this is you taking that call. The head you see is the head that merges — a push in between makes GitHub refuse.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
         }
         case 'decide:queue-merge':
@@ -19097,15 +19133,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     };
     const STAGE_TRACKER_ACTION_WORDS = {
       adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
-      merged: 'merged', 'queued-for-merge': 'queued for merge',
+      merged: 'merged', 'queued-for-merge': 'queued for merge', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
       held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: "decided, but it hasn't taken effect",
     };
-    function stageTrackerActingCaption(id) { return STAGE_TRACKER_ACTING_CAPTIONS[stageTrackerActionBase(id)] || 'acting…'; }
+    function stageTrackerActingCaption(id, item) {
+      if (id === 'decide:merge-now' && item && stageTrackerNeedsRebase(item)) return 'Rebasing, then merging…';
+      return STAGE_TRACKER_ACTING_CAPTIONS[stageTrackerActionBase(id)] || 'acting…';
+    }
     // Pure: the state signature a toast / acting row waits to see change.
     function stageTrackerItemState(it) {
       if (!it) return '';
-      return String(Number(it.stage) || 0) + '|' + (it.stage_slug || '') + '|' + (it.caption || '') + '|' + (Array.isArray(it.modifiers) ? it.modifiers.slice().sort().join(',') : '');
+      return String(Number(it.stage) || 0) + '|' + (it.stage_slug || '') + '|' + (it.caption || '') + '|' + (Array.isArray(it.modifiers) ? it.modifiers.slice().sort().join(',') : '') + (it.rebase_merge && it.rebase_merge.state ? '|rm:' + it.rebase_merge.state : '') + (it.rebase && it.rebase.text ? '|rb:' + it.rebase.text : '');
     }
     function stageTrackerTargetKey(target) {
       return target && target.number ? stageTrackerItemKey({ repo: target.repo, kind: target.kind === 'pr' ? 'pr' : 'issue', number: target.number }) : '';
@@ -19144,6 +19183,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const hiveDecided = !error && (result.rule || result.action === 'recommended' || (result.action === 'adopted' && ctx.id !== 'decide:adopt-now'));
       if (error) head = stageTrackerActionLabel(ctx.id || '') + ' failed on ' + rowRef + toward;
       else if (hiveDecided) head = 'Hive decided on ' + rowRef + toward;
+      else if (result.action === STAGE_TRACKER_ACTION_REBASE_QUEUED || (ctx.id === 'decide:merge-now' && stageTrackerNeedsRebase(item))) head = STAGE_TRACKER_REBASE_MERGE_LABEL + ' on ' + rowRef + toward;
       else head = stageTrackerActionLabel(ctx.id || '') + ' on ' + rowRef + toward;
       const word = error ? '' : (STAGE_TRACKER_ACTION_WORDS[result.action] || result.action || '');
       // The rule in plain words from the glossary, never the bare slug.
@@ -19157,8 +19197,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (hiveDecided && !noop && !noEffect && outcome) { const lead = outcome; outcome = head; head = lead; }
       const warn = stageTrackerResultWarn(result, item);
       const posted = Array.isArray(result.posted) ? result.posted.filter(p => typeof p === 'string' && p.trim()).map(p => p.replace(/`/g, '')) : [];
-      const options = noEffect && Array.isArray(result.options) ? result.options.filter(o => o && o.action && o.label) : [];
-      return { head, outcome, next: local(result.next || ''), warn, posted: posted.length ? 'Posted: ' + posted.join(' · ') : '', options, why: noEffect ? stageTrackerPlainWords(result.why || 'no-effect', true) : '', type: error ? 'error' : (noEffect ? 'warning' : (noop ? 'info' : 'success')), url: t.url || item.url || '', linkText: 'Open ' + (t.kind === 'pr' ? 'PR' : 'issue') + ' #' + (t.number || item.number) };
+      const refused = result.action === 'refused';
+      // Options ride a no-effect / refused result, and an approval on a PR
+      // that needs a rebase ("Rebase, then merge as maintainer").
+      const options = (noEffect || refused || result.action === 'approved') && Array.isArray(result.options) ? result.options.filter(o => o && o.action && o.label) : [];
+      return { head, outcome, next: local(result.next || ''), warn, posted: posted.length ? 'Posted: ' + posted.join(' · ') : '', options, why: noEffect ? stageTrackerPlainWords(result.why || 'no-effect', true) : '', type: error ? 'error' : (noEffect || refused ? 'warning' : (noop ? 'info' : 'success')), url: t.url || item.url || '', linkText: 'Open ' + (t.kind === 'pr' ? 'PR' : 'issue') + ' #' + (t.number || item.number) };
     }
     // Pure: the ⚠ sentinel paragraph a result toast carries. The row's
     // alert is what the action started from, so it is repeated only while

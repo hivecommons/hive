@@ -349,6 +349,14 @@ type StageTrackerItem struct {
 	// window, at 060/080/095: when it started, when it ends, the window
 	// and the head it was measured on. The SPA counts it down in place.
 	Soak *StageTrackerSoak `json:"soak,omitempty"`
+	// RebaseMerge is set while an operator's "Rebase, then merge as
+	// maintainer" follow-through runs on the PR (or just settled): its
+	// state and the row caption to show in place of the lane's.
+	RebaseMerge *StageTrackerRebaseMerge `json:"rebase_merge,omitempty"`
+	// Rebase is set on a conflicting PR the fixer is rebasing on the hive's
+	// behalf: which attempt of the loop guard this is, or that the hive
+	// ran out and a person must resolve it.
+	Rebase *StageTrackerRebase `json:"rebase,omitempty"`
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head
@@ -2242,6 +2250,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	stageTrackerMergeTrainPostPass(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
 	s.applyDecidedProjection(resp.Items, now)
+	applyRebaseAttempts(resp.Items)
+	s.applyRebaseMergeFollowThrough(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)

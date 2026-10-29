@@ -95,8 +95,8 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 	if d == nil || len(d.Options) == 0 || d.Options[0].Action != decisionActionMergeNow || d.Options[0].Label != rebaseMergeFollowThroughLabel {
 		t.Fatalf("exhausted decision = %+v", d)
 	}
-	if d.Options[0].Enabled || d.Options[0].ReasonIfDisabled != decisionWhyMergeNowUnwired {
-		t.Fatalf("merge-now must be offered disabled with the honest reason until #15104 lands: %+v", d.Options[0])
+	if !d.Options[0].Enabled || d.Options[0].Consequence != rebaseMergeFollowThroughConsequence(15097, "v5") {
+		t.Fatalf("merge-now leads as the rebase-then-merge follow-through: %+v", d.Options[0])
 	}
 	if !strings.Contains(d.Question, "could not rebase this PR onto the merged front #15074 after 2 attempts") {
 		t.Fatalf("question = %q", d.Question)
@@ -157,9 +157,6 @@ func TestStageTrackerMergeTrainCaptions(t *testing.T) {
 	var nilItem *StageTrackerItem
 	stageTrackerApplyMergeTrain(nilItem)
 	stageTrackerApplyMergeTrain(&StageTrackerItem{Kind: "issue", Reason: cases[0].reason})
-	if mergeNowWired {
-		t.Fatal("merge-now is not wired until hivecommons/hive#15104 lands")
-	}
 }
 
 // TestStageTrackerMergeTrainSPA runs the SPA's train helpers under node:

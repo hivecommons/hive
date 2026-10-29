@@ -234,3 +234,23 @@ func TestFormatRedPRFixData_AdoptedPRListedNonAdoptedForkIsNot(t *testing.T) {
 		t.Errorf("non-adopted fork PR listed as push work:\n%s", out)
 	}
 }
+
+// hivecommons/hive#15103: the conflict kick tells the fixer how to
+// rebase-resolve, which attempt this is, and when the hive stops.
+func TestRebaseResolveInstructions(t *testing.T) {
+	first := rebaseResolveInstructions("v5", 1, 2, false)
+	for _, want := range []string{"attempt 1/2", "git rebase origin/v5", "--force-with-lease", "OWN branch", "Do not open a new PR"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("first attempt missing %q: %s", want, first)
+		}
+	}
+	if strings.Contains(first, "Last attempt") || strings.Contains(first, "trusted author") {
+		t.Fatalf("first attempt over-explains: %s", first)
+	}
+	last := rebaseResolveInstructions("", 2, 2, true)
+	for _, want := range []string{"attempt 2/2", "git rebase the base branch", "Last attempt", "trusted author's PR"} {
+		if !strings.Contains(last, want) {
+			t.Fatalf("last attempt missing %q: %s", want, last)
+		}
+	}
+}

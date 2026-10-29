@@ -581,3 +581,56 @@ func TestDecisionApprovalFirstWord(t *testing.T) {
 		}
 	}
 }
+
+// A changes_requested recorded from the hive's own `/hive decision` comment
+// (before the self-decision guard existed) is dismissed on the next sweep;
+// a reviewer's real decision and an approval are left standing
+// (hivecommons/hive#14822).
+func TestReconcileSelfDecisionChangeRequestsDismissesHiveOwnDecisions(t *testing.T) {
+	c, _ := newUnparkPRClient(t, nil, nil)
+	store := review.NewHumanChangeRequests("")
+	self := review.HumanChangeRequest{Repo: "org/repo", Number: 14822, HeadSHA: liveDecisionHead, Source: review.HumanChangeRequestSourceDecision, SourceID: 1,
+		Actor: "clubanderson", Body: delegatedecision.MarkerPrefix + " rule=contributor-offline -->\n/hive decision supersede now", Kind: review.HumanChangeRequestKindChanges}
+	byBot := review.HumanChangeRequest{Repo: "org/repo", Number: 2, HeadSHA: "aaaa", Source: review.HumanChangeRequestSourceDecision, SourceID: 2, Actor: "hive[bot]", Body: "/hive decision rework", Kind: review.HumanChangeRequestKindChanges}
+	human := review.HumanChangeRequest{Repo: "org/repo", Number: 3, HeadSHA: "bbbb", Source: review.HumanChangeRequestSourceDecision, SourceID: 3, Actor: "clubanderson", Body: "/hive decision split the PR", Kind: review.HumanChangeRequestKindChanges}
+	reviewReq := review.HumanChangeRequest{Repo: "org/repo", Number: 4, HeadSHA: "cccc", Source: review.HumanChangeRequestSourceReview, SourceID: 4, Actor: "hive[bot]", Body: delegatedecision.MarkerPrefix + " -->", Kind: review.HumanChangeRequestKindChanges}
+	approve := review.HumanChangeRequest{Repo: "org/repo", Number: 5, HeadSHA: "dddd", Source: review.HumanChangeRequestSourceDecision, SourceID: 5, Actor: "hive[bot]", Body: "/hive approve", Kind: review.HumanChangeRequestKindApprove}
+	for _, r := range []review.HumanChangeRequest{self, byBot, human, reviewReq, approve} {
+		if err := store.Record(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed := c.ReconcileSelfDecisionChangeRequests(store)
+	if len(removed) != 2 {
+		t.Fatalf("removed %d, want 2: %+v", len(removed), removed)
+	}
+	if _, ok := store.For("org/repo", 14822, liveDecisionHead); ok {
+		t.Fatal("self-inflicted decision still recorded")
+	}
+	if _, ok := store.For("org/repo", 2, "aaaa"); ok {
+		t.Fatal("hive-login decision still recorded")
+	}
+	for _, keep := range []review.HumanChangeRequest{human, reviewReq, approve} {
+		if _, ok := store.For(keep.Repo, keep.Number, keep.HeadSHA); !ok {
+			t.Fatalf("%s#%d dismissed, want kept", keep.Repo, keep.Number)
+		}
+	}
+	// Idempotent: the second pass finds nothing.
+	if again := c.ReconcileSelfDecisionChangeRequests(store); len(again) != 0 {
+		t.Fatalf("second pass removed %+v", again)
+	}
+	if got := c.ReconcileSelfDecisionChangeRequests(reviewOnlyStore{inner: store}); got != nil {
+		t.Fatalf("store without Dismiss: %+v", got)
+	}
+}
+
+// reviewOnlyStore hides Dismiss.
+type reviewOnlyStore struct{ inner *review.HumanChangeRequests }
+
+func (s reviewOnlyStore) Record(r review.HumanChangeRequest) error { return s.inner.Record(r) }
+func (s reviewOnlyStore) For(repo string, n int, head string) (review.HumanChangeRequest, bool) {
+	return s.inner.For(repo, n, head)
+}
+func (s reviewOnlyStore) Forget(repo string, n int, source string, sourceID int64) error {
+	return s.inner.Forget(repo, n, source, sourceID)
+}
