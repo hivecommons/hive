@@ -288,3 +288,10 @@ func TestNativeQueueNewCycleAfterRemoval(t *testing.T) {
 		t.Fatalf("enqueues=%d claims=%+v", f.enqueues, b.claims)
 	}
 }
+
+func TestInactiveQueueReconcileIsThrottled(t *testing.T) {
+	c := &Engine{now: time.Now}
+	if !c.inactiveQueueDue("o/r") || c.inactiveQueueDue("o/r") || !c.inactiveQueueDue("o/other") {
+		t.Fatal("expected first call due, immediate repeat throttled, other repo due")
+	}
+}

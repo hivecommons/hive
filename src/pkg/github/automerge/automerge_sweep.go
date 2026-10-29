@@ -239,6 +239,9 @@ type Engine struct {
 	gh        *gh.Client
 	logger    *slog.Logger
 
+	inactiveQueueMu   sync.Mutex
+	inactiveQueueLast map[string]time.Time
+
 	selfSkipWarnedMu sync.Mutex
 	selfSkipWarned   map[string]struct{}
 
