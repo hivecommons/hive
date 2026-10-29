@@ -1720,8 +1720,11 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.AdoptedByHive:
 		c := adoptedWorkCaption(reason)
 		if hasRec && rec.AdoptedBy > 0 {
-			if stageTrackerAdoptedByState(rec) == stageTrackerAdoptedClosed {
+			switch stageTrackerAdoptedByState(rec) {
+			case stageTrackerAdoptedClosed:
 				return joinClause("The hive's copy #"+strconv.Itoa(rec.AdoptedBy)+" was closed without merging; the hive is opening a fresh copy from the same head", clause), "hive"
+			case stageTrackerAdoptedResolving:
+				return joinClause("Adopting: the hive's copy #"+strconv.Itoa(rec.AdoptedBy)+" conflicts with the base and the fixer is resolving the conflicts on it", clause), "hive"
 			}
 			c += " (superseded by #" + strconv.Itoa(rec.AdoptedBy) + ")"
 		}
@@ -1737,6 +1740,11 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 			return stageTrackerAdoptionLoopCaption(rec), "maintainer"
 		case stageTrackerAdoptedCopyFailed:
 			return "The hive's copy #" + strconv.Itoa(rec.AdoptedBy) + " failed; this PR was reopened and needs a person", "maintainer"
+		case stageTrackerAdoptedResolving:
+			return "Rebase failed twice: the hive's copy #" + strconv.Itoa(rec.AdoptedBy) + " still conflicts with the base after two fixer attempts; a person decides", "maintainer"
+		}
+		if strings.TrimSpace(strings.ToLower(reason)) == stagelabels.LaneReasonRebaseFailedTwice {
+			return "Rebase failed twice: the fixer could not resolve the conflicts with the base; a person decides", "maintainer"
 		}
 		if step, _ := stageTrackerUnauthorized(reason); step != "" {
 			// hivecommons/hive#14589: not a decision but a step only a
@@ -1866,6 +1874,10 @@ const (
 	// stageTrackerAdoptedCopyFailed: a close-first supersession whose copy
 	// failed; the original was reopened for a person (hivecommons/hive#15135).
 	stageTrackerAdoptedCopyFailed = "copy-failed"
+	// stageTrackerAdoptedResolving: the copy opened conflicting with its
+	// base and the hive's fixer is on its rebase-resolve episode
+	// (hivecommons/hive#15307).
+	stageTrackerAdoptedResolving = "resolving-conflicts"
 )
 
 // stageTrackerAdoptedByState reads the copy's state from the record
@@ -1881,6 +1893,8 @@ func stageTrackerAdoptedByState(rec stagelabels.Record) string {
 		return stageTrackerAdoptedCopyFailed
 	case rec.AdoptOrphanedBy == rec.AdoptedBy:
 		return stageTrackerAdoptedClosed
+	case rec.AdoptCopyConflicting:
+		return stageTrackerAdoptedResolving
 	}
 	return ""
 }
