@@ -87,7 +87,7 @@ func TestCurrentBaseGate(t *testing.T) {
 	}
 }
 
-// TestCurrentBaseGateUpdateUnavailableFallback pins the default-on guard
+// TestCurrentBaseGateUpdateUnavailableFallback pins the inherited-default guard
 // (hivecommons/hive#15335): when the App cannot update a behind head — a fork
 // without maintainer edits, or a same-repo 403 from branch protection — a
 // repo gated only by the default merges the head as tested and WARNs once

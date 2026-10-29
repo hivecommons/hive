@@ -2678,6 +2678,7 @@
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-swarm-btn:hover { opacity: 1; border-color: var(--amber); }
     .repo-swarm-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
+    .repo-current-base-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); cursor: help; }
     .repo-swarm-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent); background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); }
     .swarm-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, 20rem); gap: var(--sp-5); align-items: start; margin: var(--sp-0) var(--sp-0) var(--sp-5); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-lg); background: color-mix(in srgb, var(--amber) 5%, var(--surface)); }
     .swarm-title { font-weight: 800; color: var(--amber); margin-bottom: var(--sp-2); }
@@ -28277,6 +28278,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const autoMergeLevelOK = Number((status && status.acmmLevel) || 0) >= 6;
         const swarming = activeSwarmRepo && activeSwarmRepo.toLowerCase() === cardRepo.toLowerCase();
         const swarmPill = swarming ? `<span class="repo-swarm-pill" title="${esc('This repository is being prioritized by the active swarm')}">🐝 swarm</span>` : '';
+        // #15335: the effective current-base merge gate for this repo
+        // (Features default or the repo's own override on the Repos tab).
+        const currentBasePill = r.requireCurrentBase ? `<span class="repo-current-base-pill" title="${esc('Merge only on current base: a green PR whose base has moved is updated and re-tested before Hive merges it (Settings → Features, per-repo override on the Repos tab).')}">current-base</span>` : '';
         const canPauseRepo = canToggleHold;
         // Asymmetric gate (#9070): repo-write users may switch auto-merge OFF,
         // but only a verified owner may switch it back ON — mirror the server.
@@ -28315,7 +28319,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${cardForge.kind === 'github'
             ? `<div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>`
             : `<div class="repo-provider-label" data-forge="${esc(cardForge.kind)}" style="color:var(--indigo)" title="This repo lives on ${esc(cardForge.name)} at ${esc(cardForge.host)}">${cardForge.icon} ${esc(cardForge.name)} · ${esc(cardForge.host)}</div>`}
-          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${forkPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${currentBasePill}${forkPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.issuesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
@@ -52747,6 +52751,11 @@ function burnAreaChart() {
       const rtHoldEnvLocked = !!_configState.data.reporterTrustHoldEnvLocked;
       const repoRtHold = _configState.data.repoReporterTrustHold || {};
       const rtGateOn = !!((_configState.data.reporterTrust || {}).enabled);
+      // #15335 current-base merge gate: hive-wide default lives on the
+      // Features tab ("Merge only on current base"); each repo row carries
+      // the inherit / on / off override.
+      const cbDefault = !!_configState.data.currentBaseDefault;
+      const repoCurrentBase = _configState.data.repoCurrentBase || {};
       // #11313 label-driven approval: per-repo opt-in plus project-wide trust.
       const repoLabelDriven = _configState.data.repoLabelDriven || {};
       const ldApproval = _configState.data.labelDrivenApproval || {};
@@ -52817,6 +52826,16 @@ function burnAreaChart() {
           ? '<button class="remove-item" data-action="clearRepoReporterTrustHoldOverride" data-arg0="' + esc(r) + '" data-arg-types="s" title="Clear this repo override and inherit the all-repos default">inherit</button>'
           : '<span class="rt-inherit">inherits</span>';
         const rtRow = '<label title="' + rtTitle + '" class="rt-check"><input type="checkbox" ' + (rtEffective ? 'checked' : '') + ' ' + (rtHoldEnvLocked ? 'disabled' : '') + ' data-change-action="toggleRepoReporterTrustHold" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Hold PRs for untrusted reporters (#9665)</label>' + rtInherit;
+        const cbPolicy = repoCurrentBase[r] || {};
+        const cbHasOverride = Object.prototype.hasOwnProperty.call(cbPolicy, 'value');
+        const cbEffective = cbHasOverride ? !!cbPolicy.value : (Object.prototype.hasOwnProperty.call(cbPolicy, 'effective') ? !!cbPolicy.effective : cbDefault);
+        const cbTitle = cbHasOverride
+          ? 'This repo has an explicit "merge only on current base" override (auto_merge.' + (cbPolicy.value ? 'require_current_base' : 'skip_current_base') + ').'
+          : 'Inherits the Features tab\'s "Merge only on current base" default (currently ' + (cbDefault ? 'on' : 'off') + ').';
+        const cbInherit = cbHasOverride
+          ? '<button class="remove-item" data-action="clearRepoCurrentBaseOverride" data-arg0="' + esc(r) + '" data-arg-types="s" title="Clear this repo override and inherit the Features default">inherit</button>'
+          : '<span class="rt-inherit">inherits</span>';
+        const cbRow = '<label title="' + cbTitle + '" class="rt-check"><input type="checkbox" ' + (cbEffective ? 'checked' : '') + ' data-change-action="toggleRepoCurrentBase" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Merge only on current base</label>' + cbInherit;
         // #11313 label-driven approvals (Prow-style): opt-in per repo, with the
         // sub-row (approval labels + help) only while the toggle is on.
         const ld = repoLabelDriven[r] || {};
@@ -52828,7 +52847,7 @@ function burnAreaChart() {
           </div>`;
         // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
         const displayName = ghHost + '/' + r;
-        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub;
+        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub;
       }).join('');
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
@@ -52977,6 +52996,29 @@ function burnAreaChart() {
       const payload = repoReporterTrustHoldPayload();
       payload[repo] = null;
       markDirty('repos', 'repoReporterTrustHold', payload);
+      renderConfigTab('Repos');
+    }
+
+    // #15335 current-base gate per-repo override (Repos tab): true writes the
+    // repo into auto_merge.require_current_base, false into
+    // auto_merge.skip_current_base, null clears it from both.
+    function repoCurrentBasePayload() {
+      return Object.fromEntries(Object.entries(_configState.data.repoCurrentBase || {}).map(([k, v]) => [k, Object.prototype.hasOwnProperty.call(v, 'value') ? v.value : null]));
+    }
+
+    function toggleRepoCurrentBase(repo, checked) {
+      if (!_configState.data.repoCurrentBase) _configState.data.repoCurrentBase = {};
+      _configState.data.repoCurrentBase[repo] = { value: !!checked, effective: !!checked };
+      markDirty('repos', 'repoCurrentBase', repoCurrentBasePayload());
+      renderConfigTab('Repos');
+    }
+
+    function clearRepoCurrentBaseOverride(repo) {
+      if (!_configState.data.repoCurrentBase) _configState.data.repoCurrentBase = {};
+      _configState.data.repoCurrentBase[repo] = { effective: !!_configState.data.currentBaseDefault };
+      const payload = repoCurrentBasePayload();
+      payload[repo] = null;
+      markDirty('repos', 'repoCurrentBase', payload);
       renderConfigTab('Repos');
     }
 
@@ -55300,6 +55342,10 @@ function burnAreaChart() {
           <div class="config-toggle">
             <div class="config-toggle-switch ${rv.contributor_prs && rv.contributor_prs.base_sync ? 'on' : ''}" data-action="toggleContributorPRBaseSync"></div>
             <span class="config-toggle-label">Sync lane-authored contributor fork PRs with base ${settingHelpMark('review-swarm', 'configuration', 'Sync lane-authored contributor fork PRs with base', `OFF by default. Owner gate for review.contributor_prs.base_sync. When a Hive-authored lane PR lives on a contributor fork, is behind or dirty, and has &quot;allow edits by maintainers&quot; enabled, Hive may call GitHub&apos;s update-branch API. Clean BEHIND PRs get a GitHub-authored merge commit; DIRTY PRs fall back to the base-moved repair note and kick. Requires the agent mode that permits update-branch (ISSUES_PRS_MERGE).`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${am.require_current_base_default ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="require_current_base_default"></div>
+            <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
           </div>
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${rv.post_comments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="post_comments"></div>
