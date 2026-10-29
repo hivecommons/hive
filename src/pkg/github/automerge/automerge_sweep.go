@@ -203,6 +203,11 @@ type Options struct {
 	// RebaseResolver receives the train's rebase-resolve requests for a
 	// conflicting PR; nil leaves a dirty front on its conflicting path.
 	RebaseResolver RebaseResolver
+	// RebaseEpisode reads the fixer's rebase-resolve episode for a PR (the
+	// pkg/rebasemerge attempts ledger through cmd/hive): the adoption lane
+	// parks a copy whose episode is exhausted at 085 instead of leaving it
+	// on its fixing stage (hivecommons/hive#15307). nil reads as no episode.
+	RebaseEpisode func(repo string, number int) (RebaseEpisode, bool)
 	// HotspotRecorder receives the merge train's PR file lists and the
 	// conflicts it asks the resolver to repair, so the merge-hotspot
 	// advisor (pkg/hotspot) derives its evidence without polling GitHub
@@ -334,6 +339,7 @@ type Engine struct {
 
 	mergeTrainPolicy func() MergeTrainPolicy
 	rebaseResolver   RebaseResolver
+	rebaseEpisode    func(repo string, number int) (RebaseEpisode, bool)
 	hotspotRecorder  HotspotRecorder
 	mergeTrainState
 }
@@ -388,6 +394,7 @@ func New(transport Transport, opts Options) *Engine {
 		sweepTrigger:                      opts.SweepTrigger,
 		mergeTrainPolicy:                  mergeTrainPolicyOption(opts),
 		rebaseResolver:                    opts.RebaseResolver,
+		rebaseEpisode:                     opts.RebaseEpisode,
 		hotspotRecorder:                   opts.HotspotRecorder,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
