@@ -26,7 +26,20 @@ const (
 	maxKeyBytes = 200
 	// maxDiagnosticsBytes bounds the attribute excerpt attached to the
 	// observation; the tracker scrubs and bounds again on storage.
-	maxDiagnosticsBytes = 512
+	//
+	// Sized to outlive agent.manager's "pane content at timeout" WARN
+	// (src/crux/agent/manager.go), whose head_500/tail_500 attrs are each up
+	// to 500 runes and can run ~1500 bytes apiece when the pane is full of
+	// multi-byte box-drawing characters (❯, ╰─, ...). diagnostics below
+	// writes attrs in record order and stops at the first one that would
+	// cross this cap, so a value too small for head_500 alone drops tail_500
+	// — the pane's CURRENT state, and the only field useful for diagnosing a
+	// stuck CLI — every single time. That is exactly what happened at 512
+	// bytes: hivecommons/hive#14586 and #15311 both self-reported this WARN
+	// with no usable excerpt attached. 4096 comfortably fits both fields plus
+	// the preceding flags with room to spare, while staying well under the
+	// tracker's own 8KiB storage bound.
+	maxDiagnosticsBytes = 4096
 	// minLevel is the lowest level the feed observes.
 	minLevel = slog.LevelWarn
 )

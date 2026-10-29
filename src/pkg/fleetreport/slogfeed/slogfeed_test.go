@@ -76,6 +76,48 @@ func TestHandlerWithAttrsCarriesBoundAttrsIntoDiagnostics(t *testing.T) {
 	}
 }
 
+// TestDiagnosticsKeepsBothPaneTimeoutExcerpts regression-tests
+// hivecommons/hive#14586 and #15311: the "pane content at timeout" WARN
+// (src/crux/agent/manager.go) logs head_500 before tail_500, each up to 500
+// runes. At the old 512-byte cap, head_500 alone (worse with multi-byte
+// box-drawing characters) filled the budget and diagnostics() dropped
+// tail_500 — the pane's current state and the only field useful for
+// diagnosing a stuck CLI — before it was ever written.
+func TestDiagnosticsKeepsBothPaneTimeoutExcerpts(t *testing.T) {
+	logger, seen, _ := newFeed(t)
+	head := strings.Repeat("❯", 500) // worst case: 500 runes, 3 bytes each
+	tail := strings.Repeat("z", 480) + "TAIL-MARKER-PRESENT"
+	logger.Warn("pane content at timeout",
+		"agent", "quality",
+		"len", 28517,
+		"has_goose_ready", false,
+		"has_enter", false,
+		"has_arrow", true,
+		"has_question_form", false,
+		"has_bob_placeholder", false,
+		"has_codex_ready", false,
+		"head_500", head,
+		"tail_500", tail,
+	)
+	if len(*seen) != 1 {
+		t.Fatalf("observed = %+v, want exactly one", *seen)
+	}
+	got := (*seen)[0]
+	if got.class != fleetreport.ClassAgentPaneTimeout {
+		t.Fatalf("class = %q, want %q", got.class, fleetreport.ClassAgentPaneTimeout)
+	}
+	d := got.diagnostics
+	if !strings.Contains(d, "has_codex_ready=false") {
+		t.Fatalf("diagnostics dropped a flag before head_500: %q", d)
+	}
+	if !strings.Contains(d, "head_500=") {
+		t.Fatalf("diagnostics missing head_500 entirely: %q", d)
+	}
+	if !strings.Contains(d, "TAIL-MARKER-PRESENT") {
+		t.Fatalf("diagnostics dropped tail_500 (the pane's current state): %q", d)
+	}
+}
+
 func TestKeyBoundsAndNormalises(t *testing.T) {
 	a := Key("request failed for owner/repo-1 after 3 attempts (id 0123456789abcdef)")
 	b := Key("request failed for owner/other-9 after 17 attempts (id fedcba9876543210)")
