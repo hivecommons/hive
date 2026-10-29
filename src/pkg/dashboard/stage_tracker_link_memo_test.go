@@ -12,14 +12,15 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 )
 
-func TestStageTrackerLinkMemoSeparatesExcludedPRs(t *testing.T) {
-	var closerReads atomic.Int32
+func TestStageTrackerLinkMemoSharesLookupAndExcludesCarryingPR(t *testing.T) {
+	var gets, closerReads atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql") {
 			closerReads.Add(1)
 			fmt.Fprint(w, `{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[{"number":70,"merged":true,"mergedAt":"2026-10-27T12:00:00Z"}]}}}}}`)
 			return
 		}
+		gets.Add(1)
 		fmt.Fprint(w, `{"number":76,"title":"Delivered issue","state":"closed","state_reason":"completed"}`)
 	}))
 	defer ts.Close()
@@ -32,7 +33,7 @@ func TestStageTrackerLinkMemoSeparatesExcludedPRs(t *testing.T) {
 	// future inclusion cannot let a row's exclusion poison its sibling's memo.
 	for _, order := range [][]int{{70, 90}, {90, 70}} {
 		s.stageTrackerLinks = stageTrackerLinkMemo{}
-		before := closerReads.Load()
+		beforeGets, before := gets.Load(), closerReads.Load()
 		for rebuild := 0; rebuild < 2; rebuild++ {
 			var items []StageTrackerItem
 			for _, number := range order {
@@ -49,8 +50,11 @@ func TestStageTrackerLinkMemoSeparatesExcludedPRs(t *testing.T) {
 				}
 			}
 		}
-		if got := closerReads.Load() - before; got != 2 {
-			t.Fatalf("order %v: closer reads = %d, want 2 with rebuild memoised", order, got)
+		if got := gets.Load() - beforeGets; got != 1 {
+			t.Fatalf("order %v: issues GETs = %d, want 1 shared across siblings and rebuilds", order, got)
+		}
+		if got := closerReads.Load() - before; got != 1 {
+			t.Fatalf("order %v: closer reads = %d, want 1 shared across siblings and rebuilds", order, got)
 		}
 	}
 }

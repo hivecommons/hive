@@ -1114,8 +1114,8 @@ func TestStageTrackerEnrichSoftLinks(t *testing.T) {
 	if got := items[1].LinkedIssues[0]; got.Title != "Runner stalls" || got.State != "closed" || got.ClosedBy != 14570 {
 		t.Fatalf("second PR's refs link = %+v, want closed by #14570 (never the open #14590)", got)
 	}
-	if n := closerReads.Load(); n != 2 {
-		t.Fatalf("closer reads = %d, want 2 (one per excluded carrying PR)", n)
+	if n := closerReads.Load(); n != 1 {
+		t.Fatalf("closer reads = %d, want 1 (closed issues only, memoised)", n)
 	}
 	if got := links[1]; got.Number != 14578 || got.Title != "" || got.State != "" {
 		t.Fatalf("failed lookup = %+v, want untouched", got)
@@ -1123,23 +1123,23 @@ func TestStageTrackerEnrichSoftLinks(t *testing.T) {
 	if got := links[2]; got.Number != 14567 || got.Title != "Titled" || got.State != "closed" {
 		t.Fatalf("closing link = %+v, want unchanged", got)
 	}
-	if n := gets.Load(); n != 5 {
-		t.Fatalf("issues GETs = %d, want 5 (one per distinct number and excluded PR)", n)
+	if n := gets.Load(); n != 4 {
+		t.Fatalf("issues GETs = %d, want 4 (one per distinct number)", n)
 	}
 
 	// A rebuild after a status publish reuses the memo, the failed lookup
 	// included, until its retry window lapses.
 	items = build()
 	s.stageTrackerEnrichSoftLinks(items, qualify, now.Add(time.Minute))
-	if n := gets.Load(); n != 5 || len(items[0].LinkedIssues) != 3 || items[0].LinkedIssues[0].Title != "Runner stalls" {
+	if n := gets.Load(); n != 4 || len(items[0].LinkedIssues) != 3 || items[0].LinkedIssues[0].Title != "Runner stalls" {
 		t.Fatalf("rebuild: GETs = %d, links = %+v, want memoised", n, items[0].LinkedIssues)
 	}
 	s.stageTrackerEnrichSoftLinks(build(), qualify, now.Add(stageTrackerLinkRetry))
-	if n := gets.Load(); n != 6 {
+	if n := gets.Load(); n != 5 {
 		t.Fatalf("issues GETs = %d, want only the failed lookup retried", n)
 	}
 	s.stageTrackerEnrichSoftLinks(build(), qualify, now.Add(stageTrackerLinkTTL))
-	if n := gets.Load(); n != 11 {
+	if n := gets.Load(); n != 9 {
 		t.Fatalf("issues GETs = %d, want every lookup refreshed after the TTL", n)
 	}
 
