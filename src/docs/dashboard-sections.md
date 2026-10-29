@@ -929,7 +929,7 @@ The tooltip lists the PRs ahead and the overlapping files. Waiting siblings are 
 
 Before the merge gate, the tracker defers general `sentinel`, `needs human` and `unauthorized` pills so they do not distract from work still in motion. **Exception:** `unauthorized:approve-workflow-runs` appears immediately, because a person must approve the held run before CI can start.
 
-The server splits markers by `ActionableNow` (`stageTrackerModifiers` in `stage_tracker.go`). The payload puts drawn pills in `modifiers` and held-back pills in `deferred_modifiers`.
+The server splits markers by `ActionableNow` (`stageTrackerModifiers` in `stage_tracker_caption.go`). The payload puts drawn pills in `modifiers` and held-back pills in `deferred_modifiers`.
 
 A deferred pill is simply absent — no chip, no breathing chevron, no **Needs attention** count — until the PR's stage reaches the merge-gate band (`stage/080` and later: 080, 085, 090, 095, 100, the same boundary adoption yields at), when it renders exactly as before and counts; the row tooltip alone says "Pending at merge gate: sentinel, needs-human". The merge-gate cell's own words ("Sentinel alert · needs human", "Awaiting human: …") are unchanged — they only appear at the gate anyway.
 
