@@ -266,6 +266,10 @@ func TestTopLevelMutationFields(t *testing.T) {
 		{"not a mutation", `query { viewer { login } }`, nil},
 		{"two operations", `mutation A { addComment(input: {}) { id } } mutation B { x(input: {}) { id } }`, nil},
 		{"unterminated", `mutation { addComment(input: {}) { id }`, nil},
+		{"block string with lone quote in arguments", `mutation{addComment(input:{body:"""a"b"""}) issueUpdate(input:{id:"x"}) addComment(input:{body:"""c"d"""}) }`, []string{"addComment", "issueUpdate", "addComment"}},
+		{"block string then non-converse field", `mutation { addComment(input: {body: """a"b"""}) { id } mergePullRequest(input: {}) { id } }`, []string{"addComment", "mergePullRequest"}},
+		{"comment with quote in arguments", "mutation { addComment(input: {\n # a \" quote\n body: \"x\"}) { id } issueUpdate(input: {}) { id } }", []string{"addComment", "issueUpdate"}},
+		{"unterminated block string in arguments", `mutation { addComment(input: {body: """abc}) { id } }`, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -52,6 +52,7 @@ func TestStageTrackerMergeFailedColumnNode(t *testing.T) {
 		jsFunc(t, html, "stageTrackerMergeGateWordHtml")+"\n"+
 		jsFunc(t, html, "stageTrackerStageName")+"\n"+
 		jsFunc(t, html, "stageTrackerStageFell")+"\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_EVENT_COVERED_BY_PR")+"\n"+
 		jsFunc(t, html, "stageTrackerEventText")+"\n"+`
 const assert = require('assert');
 const now = Date.parse('2026-10-29T15:04:00Z');

@@ -2377,10 +2377,12 @@ func TestAdoptionSupersederMergedCloseRefusedMarksSupersededOpen(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#14471: a `Refs #N` line travels into the superseder body.
+// hivecommons/hive#14471: a `Refs #N` line travels into the superseder body;
+// hivecommons/hive#15499: an annotated `Refs #N — partial` travels as the
+// bare reference, so the copy keeps the issue link its original had.
 func TestAdoptionClosesCarriesRefs(t *testing.T) {
-	got := adoptionCloses("Refs #14389 — addresses root cause 2\nRefs #5\nCloses #12\n")
-	if len(got) != 2 || got[0] != "Refs #5" || got[1] != "Closes #12" {
+	got := adoptionCloses("Refs #14389 — addresses root cause 2\nRefs #5\nCloses #12\nRefs #15395 - partial\nRefs #5 — again\n")
+	if len(got) != 4 || got[0] != "Refs #5" || got[1] != "Closes #12" || got[2] != "Refs #14389" || got[3] != "Refs #15395" {
 		t.Fatalf("adoptionCloses: %v", got)
 	}
 }
