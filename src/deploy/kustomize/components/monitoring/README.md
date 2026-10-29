@@ -112,7 +112,7 @@ stuck in an unexpected stage.
 
 `promtool` reads plain rule files, not the `PrometheusRule` resource.
 `src/scripts/check-prometheusrule.sh` extracts `spec.groups`, runs
-`promtool check rules`, and runs the unit tests in `tests/` that force each
+`promtool check rules` (the script needs `promtool` and `yq` on PATH), and runs the unit tests in `tests/` that force each
 alert to fire. CI runs it through `.github/workflows/prometheusrule-check.yml`.
 
 To see each alert fire on a kind cluster: scale the Deployment to 0 for
