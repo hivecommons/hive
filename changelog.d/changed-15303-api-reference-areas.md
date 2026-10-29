@@ -1,0 +1,1 @@
+- The API reference is organized into focused area documents, with existing index headings and anchors preserved as links. Citation checks cover every area and repair drift only in affected files, reducing unrelated documentation conflicts ([#15303](https://github.com/hivecommons/hive/pull/15303)).
