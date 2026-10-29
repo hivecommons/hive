@@ -1456,6 +1456,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 
 | Token | Plain words | Detail |
 |---|---|---|
+| `capability-gap` | the GitHub App lacks a permission; deciding cannot clear it | The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change. |
 | `ci-ratchet` | a CI hygiene gate, landed as a ratchet | A new CI hygiene gate lands as a ratchet: it records today's baseline and fails only on increases, so existing work is never blocked. |
 | `contributor-offline` | the author's hive hasn't been connected since the nudge | The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting. |
 | `dedupe` | an older issue already tracks this | An older issue already tracks the same work; one thread keeps it moving. |
@@ -1509,6 +1510,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `dco`, `dco-missing` | a commit is missing its sign-off | A commit on the branch is missing its Developer Certificate of Origin sign-off; the author must sign it off. |
 | `effect-unknown` | the hive did not say why | The hive could not tell from the lane reason why the decision has not taken effect. |
 | `hold` | on hold; the hive does nothing until it is released | The item is on hold. The hive does nothing with it until a person releases the hold. |
+| `human-merge` | no merge lane vouches for this PR's author; a maintainer merges | The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors. |
 | `label:needs-human`, `needs-human`, `requires_human` | marked needs-human; a person must remove the label | The item is marked needs-human: automated fixes ran out or a person flagged it. The hive waits until the label is removed. |
 | `no-effect` | the decision hasn't taken effect | The hive recorded this decision, but what it was supposed to cause has not happened within the expected time. |
 | `no-new-commit` | no new commit has been pushed | The hive gave direction, but no new commit has been pushed yet. |
