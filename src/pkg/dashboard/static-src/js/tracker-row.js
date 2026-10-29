@@ -188,7 +188,7 @@
     // since, source} (hivecommons/hive#15422). The chevron gets one short
     // token after the stage word; the hover gets one "Held by:" line.
     const STAGE_TRACKER_HIVE_PREFIXES = ['hosted-ibm-', 'hosted-'];
-    const STAGE_TRACKER_CLAIMANT_SOURCE = { 'claim-comment': 'claim comment', assignee: 'assignee', 'kick-history': 'kick history', author: 'PR author' };
+    const STAGE_TRACKER_CLAIMANT_SOURCE = { 'claim-ledger': 'claim ledger', 'claim-comment': 'claim comment', assignee: 'assignee', 'kick-history': 'kick history', author: 'PR author' };
     function stageTrackerShortHive(hive) {
       const h = String(hive || '');
       const p = STAGE_TRACKER_HIVE_PREFIXES.find(x => h.startsWith(x));

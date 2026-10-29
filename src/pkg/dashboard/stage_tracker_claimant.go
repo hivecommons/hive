@@ -32,6 +32,7 @@ const (
 	claimantKindClanker   = "clanker"
 	claimantKindPerson    = "person"
 
+	claimantSourceClaimLedger  = "claim-ledger"
 	claimantSourceClaimComment = "claim-comment"
 	claimantSourceAssignee     = "assignee"
 	claimantSourceKickHistory  = "kick-history"
@@ -69,7 +70,7 @@ type stageTrackerClaimInputs struct {
 // when nothing names anyone.
 func stageTrackerIssueClaimant(in stageTrackerClaimInputs) *StageTrackerClaimant {
 	if c := in.Ledger; c != nil && c.Holder != "" {
-		out := &StageTrackerClaimant{Source: claimantSourceClaimComment, Since: in.Since}
+		out := &StageTrackerClaimant{Source: claimantSourceClaimLedger, Since: in.Since}
 		if !c.ClaimedAt.IsZero() {
 			out.Since = timePtr(c.ClaimedAt)
 		}

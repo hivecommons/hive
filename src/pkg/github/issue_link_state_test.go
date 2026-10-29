@@ -85,3 +85,30 @@ func TestIssueLinkStateCloserLookupBestEffort(t *testing.T) {
 		t.Fatalf("got %+v, want title/state kept and ClosedBy 0", got)
 	}
 }
+
+// closedByPullRequestsReferences can include a merged PR from another
+// repository; its number must never be reported as a same-repo closer.
+func TestIssueLinkStateIgnoresCrossRepoCloser(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql") {
+			fmt.Fprint(w, `{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[`+
+				`{"number":55,"url":"https://github.com/other/repo/pull/55","merged":true,"mergedAt":"2026-10-29T16:38:39Z"},`+
+				`{"number":99,"url":"https://github.com/O/R/pull/99","merged":true,"mergedAt":"2026-10-29T16:38:39Z"}]}}}}}`)
+			return
+		}
+		if r.URL.Path == "/repos/o/r/issues/7" {
+			fmt.Fprint(w, `{"number":7,"title":"Closed one","state":"closed","state_reason":"completed"}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+	c := NewClientForTest(ts.URL, "o", []string{"r"}, slog.Default())
+	got, err := c.IssueLinkState(context.Background(), "o", "r", 7, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ClosedBy != 99 {
+		t.Fatalf("ClosedBy = %d, want 99 (cross-repo #55 ignored)", got.ClosedBy)
+	}
+}

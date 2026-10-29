@@ -33,6 +33,7 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 			continue
 		}
 		kept := make([]string, 0, len(msg.IssueRefs))
+		allDeferred := true
 		for _, raw := range msg.IssueRefs {
 			ref, ok := worksource.ParseKey(raw)
 			if !ok || !ref.IsGitHubIssue() {
@@ -42,12 +43,25 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 			key := ref.Key()
 			_, isPR := prRefs[key]
 			if err := guard(ctx, ref.Repo, ref.Number, isPR); err != nil {
+				deferred := errors.Is(err, github.ErrAPIBudgetCritical) || errors.Is(err, github.ErrRateLimitCaution)
+				if !deferred {
+					allDeferred = false
+				}
 				if logger != nil {
 					reason := "re-read"
 					if errors.Is(err, github.ErrSnapshotStaleForDecision) {
 						reason = "stale snapshot"
 					}
-					logger.Warn("kick ref withheld: snapshot not fresh enough to act on",
+					// A refusal from the API budget or rate-limit caution
+					// window is the designed back-off: the next cycle retries.
+					// It is logged at INFO so it does not feed the generic
+					// unclassified-error self-report (#15465).
+					level := slog.LevelWarn
+					if deferred {
+						reason = "github read deferred"
+						level = slog.LevelInfo
+					}
+					logger.Log(ctx, level, "kick ref withheld: snapshot not fresh enough to act on",
 						slog.String("agent", msg.Agent), slog.String("ref", raw),
 						slog.String("reason", reason), slog.Any("error", err))
 				}
@@ -57,7 +71,11 @@ func freshenKickMessages(ctx context.Context, guard github.IrreversibleGuard, ac
 		}
 		if len(kept) == 0 {
 			if logger != nil {
-				logger.Warn("kick withheld: every ref failed the freshness check", slog.String("agent", msg.Agent))
+				level := slog.LevelWarn
+				if allDeferred {
+					level = slog.LevelInfo
+				}
+				logger.Log(ctx, level, "kick withheld: every ref failed the freshness check", slog.String("agent", msg.Agent))
 			}
 			continue
 		}
