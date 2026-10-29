@@ -78,7 +78,8 @@ func TestClaimHooksRemoveLabelAfterSecondClaimExpires(t *testing.T) {
 	cfg := &config.Config{}
 	no := false
 	cfg.Governor.Claims.Comment = &no
-	hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return c }, logger)
+	queue := &claimEffectQueue{}
+	hooks := githubClaimHooksOn(queue, context.Background(), cfg, func() *github.Client { return c }, logger)
 	l, err := claims.New(filepath.Join(dir, "claims.json"), claims.DefaultPolicy(), hooks)
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +119,13 @@ func TestClaimHooksRemoveLabelAfterSecondClaimExpires(t *testing.T) {
 		}
 		wait(cycle, cycle)
 	}
+	// The release hook keeps writing the stage and journal after the label
+	// counts settle; drain it so nothing touches dir once the test returns.
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		queue.mu.Lock()
+		defer queue.mu.Unlock()
+		return len(queue.pending) == 0
+	}, "claim effect queue did not drain")
 	mu.Lock()
 	defer mu.Unlock()
 	if labels[claims.LabelClaimed] {

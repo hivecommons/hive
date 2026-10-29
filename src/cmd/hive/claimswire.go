@@ -226,12 +226,17 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 // boot when App auth completes (see the ghClient swap in main); capturing the
 // boot-time pointer would leave the hooks silently inert on App-auth hives.
 func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *github.Client, logger *slog.Logger) claims.Hooks {
+	return githubClaimHooksOn(&claimEffectQueue{}, ctx, cfg, client, logger)
+}
+
+// githubClaimHooksOn is githubClaimHooks over a caller-owned effect queue, so
+// a test can observe when every scheduled side effect has returned.
+func githubClaimHooksOn(queue *claimEffectQueue, ctx context.Context, cfg *config.Config, client func() *github.Client, logger *slog.Logger) claims.Hooks {
 	if client == nil || cfg == nil {
 		return claims.Hooks{}
 	}
 	comment := cfg.Governor.Claims.CommentEnabled()
 	label := cfg.Governor.Claims.LabelEnabled()
-	queue := &claimEffectQueue{}
 	attempt := func(fn func(ctx context.Context, gh *github.Client) error, gh *github.Client) error {
 		cctx, cancel := context.WithTimeout(ctx, claimsGitHubTimeout)
 		defer cancel()
