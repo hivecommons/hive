@@ -646,9 +646,25 @@ func (m *Manager) RestartMissingSessionWithReason(ctx context.Context, name, rea
 // deliverKickAsync). It still invalidates every OTHER pending kick for the
 // agent, but it neither fails the caller's dispatch record nor arms the
 // restart/kick breaker: the caller captures the new kick epoch after this
-// returns and is the intended next delivery, not a replay (#7363).
+// returns and is the intended next delivery, not a replay (#7363). Recovery is
+// still automatic: use the shared storm budget rather than treating each kick
+// as an operator retry that can restart an unbootable CLI indefinitely.
 func (m *Manager) restartForKick(ctx context.Context, name string) error {
-	return m.restartWithReason(ctx, name, "operator", true)
+	const reason = "kick CLI recovery"
+	plan := m.planAutomaticRestart(name, reason, "CLI crashed or stuck on consent screen before kick", time.Now())
+	_, restarted, err := m.applyRestartStormPlan(name, reason, plan, func() error {
+		return m.restartWithReason(ctx, name, reason, true)
+	})
+	if err != nil {
+		return err
+	}
+	if !restarted {
+		if plan.backoff > 0 {
+			return fmt.Errorf("agent %s kick recovery suppressed by restart-storm breaker; retry in %v", name, plan.backoff.Round(time.Second))
+		}
+		return fmt.Errorf("agent %s kick recovery suppressed by restart-storm breaker", name)
+	}
+	return nil
 }
 
 // restartWithReason is RestartWithReason's body. kickInitiated marks a
