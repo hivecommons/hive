@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -28,20 +29,32 @@ type delegatedDecisionPlan struct {
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
 	Type   string `json:"type"`
+	// Title is the item's title, for the dialog's subject line.
+	Title string `json:"title,omitempty"`
 	// Would is the verdict the hive would record (adopt-supersede, approve,
 	// recommend-only, …); Rule the policy rule behind it; Word the pill /
 	// progress vocabulary for it ("Adopting · opening hive copy…").
 	Would  string `json:"would"`
 	Rule   string `json:"rule,omitempty"`
 	Acting string `json:"acting,omitempty"`
-	// Summary is one line: "Hive would: re-author #15029 as a hive PR with
-	// the same commits and merge it; #15029 will be closed as superseded."
+	// Summary is the one decision sentence, verb first and without a
+	// "Hive would:" prefix (the dialog's eyebrow says that): "Send #15332
+	// back to its author with one instruction: make CI green, nothing else."
 	Summary string `json:"summary"`
-	// Why is the plain reason: "author @Karibhou is untrusted and their
-	// clanker is offline."
+	// Why is the one plain reason: "Author @Karibhou is untrusted and
+	// their clanker is offline."
 	Why string `json:"why,omitempty"`
-	// Consequences lists what follows, one per line.
+	// Consequences lists what follows — at most two short items.
 	Consequences []string `json:"consequences"`
+	// Ladder is the contributor-PR rung the decision landed on, its reason
+	// and the rungs ruled out above it (hivecommons/hive#15289); the
+	// dialog shows it under Details.
+	Ladder *delegatedecision.Ladder `json:"ladder,omitempty"`
+	// MergeableAsIs is true when "Approve & merge as-is" is an honest
+	// alternative: the ladder said mergeable-as-is, or (no ladder) the head
+	// is green, conflict-free and signed off. When false the merge-now
+	// alternative is left out so the dialog cannot contradict itself.
+	MergeableAsIs bool `json:"mergeable_as_is"`
 	// Alternatives are the other buttons, in the popover's option shape;
 	// the SPA adds Cancel itself.
 	Alternatives []StageTrackerDecisionOption `json:"alternatives"`
@@ -106,7 +119,7 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 	if err != nil {
 		return nil, err
 	}
-	plan := &delegatedDecisionPlan{Repo: repoFull, Number: number, Type: itemType}
+	plan := &delegatedDecisionPlan{Repo: repoFull, Number: number, Type: itemType, Title: strings.TrimSpace(in.Title)}
 	var d delegatedecision.Decision
 	if out, ok := s.delegatedHumanMergeOutcome(repoFull, number, itemType, "", mergerRole, in, req); ok {
 		// The 090 shortcut: the plan is the shortcut's own answer, with
@@ -135,19 +148,31 @@ func (s *Server) planDelegatedDecision(ctx context.Context, repoFull string, num
 	}
 	plan.Summary, plan.Consequences = delegatedPlanWording(in, d)
 	plan.Why = delegatedPlanWhy(in, d)
+	plan.Ladder = d.Ladder
+	plan.MergeableAsIs = delegatedPlanMergeableAsIs(in, d)
 	if plan.Alternatives == nil {
 		plan.Alternatives = delegatedPlanAlternatives(in, d, mergerRole)
 	}
-	for i := range plan.Alternatives {
-		if plan.Alternatives[i].Action == decisionActionMergeNow {
-			plan.Alternatives[i].Label = delegatedPlanAlternativeLabel
+	kept := plan.Alternatives[:0]
+	for _, alt := range plan.Alternatives {
+		if alt.Action == decisionActionMergeNow {
+			if !plan.MergeableAsIs {
+				continue
+			}
+			alt.Label = delegatedPlanAlternativeLabel
 		}
+		kept = append(kept, alt)
 	}
+	plan.Alternatives = kept
 	return plan, nil
 }
 
-// delegatedPlanWording is the summary line and the consequences for the
-// decision the hive would record.
+// delegatedPlanWording is the one decision sentence and the (at most
+// two) "then" items for the decision the hive would record. Operator
+// feedback on the preview (hivecommons/hive#15332's dialog: "this needs
+// to be exceedingly simple to understand and act on"): verb first, plain
+// words, no "Hive would:" prefix — the dialog's eyebrow says that once —
+// and nothing a reader has to know hive's vocabulary for.
 func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision) (string, []string) {
 	ref := "#" + strconv.Itoa(in.Number)
 	target := 0
@@ -158,54 +183,83 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 	}
 	switch {
 	case d.Verdict == delegatedecision.VerdictAdoptSupersede:
-		return "Hive would: re-author " + ref + " as a hive PR with the same commits and merge it; " + ref + " will be closed as superseded.",
+		return "Re-open " + ref + " as hive's own PR with the same commits and merge that; close " + ref + " as superseded.",
 			[]string{
-				"hive opens a hive-authored copy of " + ref + " with the same commits and sign-off",
-				"the copy rebases, soaks and merges unattended on the adoption pass",
-				ref + " is closed as superseded once the copy merges; the author keeps commit attribution",
+				"Hive opens its copy of " + ref + ", lets it soak, and merges it.",
+				ref + " is closed as superseded; the author keeps the credit.",
 			}
 	case d.Verdict == delegatedecision.VerdictApprove:
-		return "Hive would: approve " + ref + " at its current head and let the merge gate merge it.",
-			[]string{"hive records approve at the current head", "the merge sweep merges " + ref + " once CI is green and the head has soaked"}
+		return "Approve " + ref + " as it is and let the merge gate merge it.",
+			[]string{"Hive approves the current commit.", ref + " merges once CI is green and it has soaked."}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate && target > 0:
-		return "Hive would: close " + ref + " as a duplicate of #" + strconv.Itoa(target) + ".", []string{ref + " is closed with a comment pointing at #" + strconv.Itoa(target)}
+		return "Close " + ref + " as a duplicate of #" + strconv.Itoa(target) + ".", []string{ref + " is closed with a comment pointing at #" + strconv.Itoa(target) + "."}
 	case d.Verdict == delegatedecision.VerdictCloseSuperseded && target > 0:
-		return "Hive would: close " + ref + " as superseded by #" + strconv.Itoa(target) + ".", []string{ref + " is closed with a comment pointing at #" + strconv.Itoa(target)}
+		return "Close " + ref + " as superseded by #" + strconv.Itoa(target) + ".", []string{ref + " is closed with a comment pointing at #" + strconv.Itoa(target) + "."}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate, d.Verdict == delegatedecision.VerdictCloseSuperseded:
-		return "Hive would: close " + ref + ".", []string{ref + " is closed with a comment saying why"}
+		return "Close " + ref + ".", []string{ref + " is closed with a comment saying why."}
 	case d.Verdict == delegatedecision.VerdictDirection:
-		return "Hive would: send " + ref + " back with direction: " + strings.TrimSuffix(strings.TrimSpace(d.Text), ".") + ".",
-			[]string{"hive posts the direction on " + ref, "the author's clanker pushes a new commit; the row moves when it lands"}
+		return "Send " + ref + " back to its author with one instruction: " + delegatedPlanInstruction(in, d) + ".",
+			[]string{"Hive posts that instruction on " + ref + ".", "The author pushes a fix; the row updates when it lands."}
 	case d.Verdict == delegatedecision.VerdictRefused:
-		return "Hive would: refuse — " + strings.TrimSuffix(strings.TrimSpace(d.Rationale), ".") + ".", []string{"nothing changes; the item stays parked for you"}
+		return "Do nothing: " + delegatedPlanPlain(d.Rationale) + ".", []string{"Nothing changes; " + ref + " stays waiting for you."}
 	case d.Verdict == delegatedecision.VerdictOwnerOnly:
-		return "Hive would: leave this to the owner.", []string{"hive labels it needs-owner and holds it", "only the owner can grant this"}
+		return "Leave this to the owner.", []string{"Hive labels " + ref + " needs-owner and holds it.", "Only the owner can grant this."}
 	default:
-		text := strings.TrimSuffix(strings.TrimSpace(d.Text), ".")
+		text := delegatedPlanPlain(d.Text)
 		if text == "" {
 			text = delegatedecision.VerdictPlain(d.Verdict)
 		}
-		return "Hive would: recommend only — " + text + ".", []string{"nothing is written beyond a comment; the item stays parked until you decide"}
+		return "Recommend only: " + text + ".", []string{"Hive posts a comment and nothing else.", ref + " waits for you to decide."}
 	}
 }
 
-// delegatedPlanWhy is the plain reason behind the plan: "author @Karibhou
-// is untrusted and their clanker is offline."
+// delegatedPlanInstruction is the direction in the author's terms: the
+// fix list from the head's facts ("make CI green, nothing else"), or the
+// decision's own text when the direction is a reviewer's question.
+func delegatedPlanInstruction(in delegatedecision.Input, d delegatedecision.Decision) string {
+	var fix []string
+	if in.Conflicting {
+		fix = append(fix, "rebase onto the base branch")
+	}
+	if in.DCOMissing {
+		fix = append(fix, "add the sign-off")
+	}
+	if !in.CIGreen {
+		fix = append(fix, "make CI green")
+	}
+	if len(fix) == 0 || strings.TrimSpace(in.Question) != "" {
+		if text := delegatedPlanPlain(d.Text); text != "" {
+			return text
+		}
+	}
+	if len(fix) == 0 {
+		return "address the review"
+	}
+	return strings.Join(fix, ", ") + ", nothing else"
+}
+
+// delegatedPlanWhy is the one plain reason behind the decision, kept
+// short enough to read at a glance: the author's standing when that is
+// what decided it, otherwise the head's blockers, otherwise the first
+// clause of the rule's rationale with its issue references removed.
 func delegatedPlanWhy(in delegatedecision.Input, d delegatedecision.Decision) string {
 	var parts []string
-	if in.Kind == delegatedecision.KindPR && !in.TrustedAuthor && !in.HiveAuthored {
+	if in.Kind == delegatedecision.KindPR && !in.TrustedAuthor && !in.HiveAuthored && d.Verdict != delegatedecision.VerdictDirection {
 		who := "the author"
 		if a := strings.TrimSpace(in.Author); a != "" {
 			who = "author @" + a
 		}
 		parts = append(parts, who+" is untrusted")
 	}
-	if !in.ContributorOnline {
+	if !in.ContributorOnline && d.Verdict != delegatedecision.VerdictDirection && in.Kind == delegatedecision.KindPR {
 		parts = append(parts, "their clanker is offline")
 	}
 	why := strings.Join(parts, " and ")
+	if why == "" && d.Verdict == delegatedecision.VerdictDirection {
+		why = delegatedPlanBlockers(in)
+	}
 	if why == "" {
-		why = strings.TrimSuffix(strings.TrimSpace(d.Rationale), ".")
+		why = delegatedPlanPlain(d.Rationale)
 	}
 	if why == "" && d.Rule != "" {
 		why = delegatedecision.RulePlain(d.Rule)
@@ -214,6 +268,52 @@ func delegatedPlanWhy(in delegatedecision.Input, d delegatedecision.Decision) st
 		return ""
 	}
 	return strings.ToUpper(why[:1]) + why[1:] + "."
+}
+
+// delegatedPlanBlockers names what keeps a head from merging, in plain
+// words: "CI is red", "it conflicts with the base branch", "the sign-off
+// is missing".
+func delegatedPlanBlockers(in delegatedecision.Input) string {
+	var b []string
+	if !in.CIGreen {
+		b = append(b, "CI is red")
+	}
+	if in.Conflicting {
+		b = append(b, "it conflicts with the base branch")
+	}
+	if in.DCOMissing {
+		b = append(b, "the sign-off is missing")
+	}
+	return strings.Join(b, " and ")
+}
+
+// delegatedPlanIssueRef strips the "(hivecommons/hive#NNNN)" provenance
+// a rule's rationale carries for the log; the preview reads better
+// without it.
+var delegatedPlanIssueRef = regexp.MustCompile(`\s*\([^()]*#\d+\)`)
+
+// delegatedPlanPlain is a rationale or decision text reduced to its
+// first clause, without issue references or a trailing full stop.
+func delegatedPlanPlain(text string) string {
+	text = delegatedPlanIssueRef.ReplaceAllString(strings.TrimSpace(text), "")
+	if i := strings.Index(text, "; "); i > 0 {
+		text = text[:i]
+	}
+	return strings.TrimSuffix(strings.TrimSpace(text), ".")
+}
+
+// delegatedPlanMergeableAsIs says whether "Approve & merge as-is" is an
+// honest alternative: the ladder's own verdict when it ran, otherwise the
+// head's facts. A preview that says the head is not mergeable must not
+// offer to merge it (hivecommons/hive#15332's dialog).
+func delegatedPlanMergeableAsIs(in delegatedecision.Input, d delegatedecision.Decision) bool {
+	if in.Kind != delegatedecision.KindPR {
+		return false
+	}
+	if d.Ladder != nil {
+		return d.Ladder.Decision == delegatedecision.RuleMergeableAsIs
+	}
+	return !in.Conflicting && in.CIGreen && !in.DCOMissing
 }
 
 // delegatedPlanAlternatives are the other buttons: approve & merge as-is

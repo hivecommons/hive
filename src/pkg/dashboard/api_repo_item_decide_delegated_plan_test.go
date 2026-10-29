@@ -46,7 +46,7 @@ func TestDelegatedDecisionPlanPreviewsAdoptWithoutWrites(t *testing.T) {
 	if plan.Would != string(delegatedecision.VerdictAdoptSupersede) || plan.Writes {
 		t.Fatalf("plan = %+v", plan)
 	}
-	if plan.Summary != "Hive would: re-author #8 as a hive PR with the same commits and merge it; #8 will be closed as superseded." {
+	if plan.Summary != "Re-open #8 as hive's own PR with the same commits and merge that; close #8 as superseded." {
 		t.Fatalf("summary %q", plan.Summary)
 	}
 	// The mock grants @someone write, so only the offline half applies here.
@@ -60,8 +60,16 @@ func TestDelegatedDecisionPlanPreviewsAdoptWithoutWrites(t *testing.T) {
 	if plan.Acting != "Adopting · opening hive copy…" || len(plan.Consequences) < 2 {
 		t.Fatalf("acting %q consequences %v", plan.Acting, plan.Consequences)
 	}
-	if len(plan.Alternatives) == 0 || plan.Alternatives[0].Action != decisionActionMergeNow || plan.Alternatives[0].Label != delegatedPlanAlternativeLabel || !plan.Alternatives[0].Enabled {
-		t.Fatalf("alternatives = %+v", plan.Alternatives)
+	// The ladder landed on contributor-offline, not mergeable-as-is, so
+	// the preview must not offer to merge it as it is (#15332's dialog
+	// said "not mergeable" and offered the merge anyway).
+	if plan.Ladder == nil || plan.Ladder.Decision != delegatedecision.RuleContributorOffline || plan.MergeableAsIs {
+		t.Fatalf("ladder=%+v mergeable_as_is=%v", plan.Ladder, plan.MergeableAsIs)
+	}
+	for _, alt := range plan.Alternatives {
+		if alt.Action == decisionActionMergeNow {
+			t.Fatalf("merge-now offered on a head the ladder ruled not mergeable: %+v", plan.Alternatives)
+		}
 	}
 	if len(mock.comments) != 0 || len(mock.edits) != 0 || len(mock.added) != 0 || len(mock.removed) != 0 || len(mock.reviews) != 0 || len(mock.merges) != 0 {
 		t.Fatalf("a plan may not write: comments=%v edits=%v added=%v removed=%v reviews=%v merges=%v", mock.comments, mock.edits, mock.added, mock.removed, mock.reviews, mock.merges)
@@ -74,7 +82,32 @@ func TestDelegatedDecisionPlanPreviewsAdoptWithoutWrites(t *testing.T) {
 			t.Fatalf("a plan must not reach the ledger: %+v", acts)
 		}
 	}
+}
 
+// The mergeable-as-is rung: a green, conflict-free contributor head is
+// approved as it is, and "Approve & merge as-is" is offered — greyed with
+// the reason when the operator lacks merge rights.
+func TestDelegatedDecisionPlanMergeableAsIsOffersMerge(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	srv := newDelegatedServer(t, mock)
+	body := `{"type":"pr","reason":"needs-decision","caption":"needs a decision"}`
+	w := postDelegatedPlan(t, srv, 8, "writer", body, map[string]string{"X-Hive-Role": "merger"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	var plan delegatedDecisionPlan
+	if err := json.Unmarshal(w.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Would != string(delegatedecision.VerdictApprove) || plan.Ladder == nil || plan.Ladder.Decision != delegatedecision.RuleMergeableAsIs || !plan.MergeableAsIs {
+		t.Fatalf("plan = %+v ladder=%+v", plan, plan.Ladder)
+	}
+	if plan.Summary != "Approve #8 as it is and let the merge gate merge it." || strings.Contains(plan.Summary, "Hive would") {
+		t.Fatalf("summary %q", plan.Summary)
+	}
+	if len(plan.Alternatives) == 0 || plan.Alternatives[0].Action != decisionActionMergeNow || plan.Alternatives[0].Label != delegatedPlanAlternativeLabel || !plan.Alternatives[0].Enabled {
+		t.Fatalf("alternatives = %+v", plan.Alternatives)
+	}
 	// Without the merger role the as-is merge is greyed with the reason.
 	w = postDelegatedPlan(t, srv, 8, "writer", body, nil)
 	if err := json.Unmarshal(w.Body.Bytes(), &plan); err != nil {
@@ -82,6 +115,54 @@ func TestDelegatedDecisionPlanPreviewsAdoptWithoutWrites(t *testing.T) {
 	}
 	if plan.Alternatives[0].Enabled || plan.Alternatives[0].ReasonIfDisabled != decisionWhyMergerRole {
 		t.Fatalf("alternatives = %+v", plan.Alternatives)
+	}
+}
+
+// hivecommons/hive#15332's preview, as the operator saw it: a direction
+// on a red head. The sentence is verb first with no "Hive would:" prefix
+// (the dialog composed it twice), the why is one short line, there are at
+// most two "then" items and nothing visible uses hive's vocabulary.
+func TestDelegatedPlanWordingDirectionIsOneSentence(t *testing.T) {
+	in := delegatedecision.Input{Kind: delegatedecision.KindPR, Number: 15332, Author: "clubanderson", OwnerAuthor: true, TrustedAuthor: true, CIGreen: false}
+	d := delegatedecision.Decide(in)
+	if d.Verdict != delegatedecision.VerdictDirection {
+		t.Fatalf("verdict %s rule %s", d.Verdict, d.Rule)
+	}
+	summary, next := delegatedPlanWording(in, d)
+	if summary != "Send #15332 back to its author with one instruction: make CI green, nothing else." {
+		t.Fatalf("summary %q", summary)
+	}
+	why := delegatedPlanWhy(in, d)
+	if why != "CI is red." {
+		t.Fatalf("why %q", why)
+	}
+	if n := len(strings.Fields(why)); n > 12 {
+		t.Fatalf("why is %d words: %q", n, why)
+	}
+	if len(next) != 2 {
+		t.Fatalf("then items %v", next)
+	}
+	for _, text := range append([]string{summary, why}, next...) {
+		for _, jargon := range []string{"Hive would", "park", "audit marker", "stage", "ladder", "/hive decision"} {
+			if strings.Contains(strings.ToLower(text), strings.ToLower(jargon)) {
+				t.Errorf("%q leaks %q", text, jargon)
+			}
+		}
+	}
+	if delegatedPlanMergeableAsIs(in, d) {
+		t.Fatal("a red head is not mergeable as it is")
+	}
+	// Conflicts and a missing sign-off join the one instruction.
+	in.Conflicting, in.DCOMissing = true, true
+	if s, _ := delegatedPlanWording(in, delegatedecision.Decide(in)); s != "Send #15332 back to its author with one instruction: rebase onto the base branch, add the sign-off, make CI green, nothing else." {
+		t.Fatalf("summary %q", s)
+	}
+	// Every verdict's then-list fits the two-item budget.
+	for _, v := range []delegatedecision.Verdict{delegatedecision.VerdictAdoptSupersede, delegatedecision.VerdictApprove, delegatedecision.VerdictCloseSuperseded, delegatedecision.VerdictRefused, delegatedecision.VerdictOwnerOnly, delegatedecision.VerdictRecommendOnly} {
+		s, n := delegatedPlanWording(in, delegatedecision.Decision{Verdict: v, Rationale: "because (hivecommons/hive#1); and more", Text: "do the thing (hivecommons/hive#2)"})
+		if len(n) > 2 || strings.Contains(s, "Hive would") || strings.Contains(s, "#1)") || strings.Contains(s, "#2)") {
+			t.Errorf("%s: summary %q then %v", v, s, n)
+		}
 	}
 }
 
@@ -97,7 +178,7 @@ func TestDelegatedDecisionPlanReadyForHumanMergeUsesShortcut(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &plan); err != nil {
 		t.Fatal(err)
 	}
-	if plan.Would != string(delegatedecision.VerdictRecommendOnly) || !strings.HasPrefix(plan.Summary, "Hive would: recommend only") {
+	if plan.Would != string(delegatedecision.VerdictRecommendOnly) || !strings.HasPrefix(plan.Summary, "Recommend only: ") {
 		t.Fatalf("plan = %+v", plan)
 	}
 	if plan.Alternatives[0].Action != decisionActionMergeNow || plan.Alternatives[0].Label != delegatedPlanAlternativeLabel {

@@ -1196,23 +1196,113 @@
       const sentinel = stageTrackerSentinelPreface(items);
       return { title: 'Let hive decide', message: (sentinel ? sentinel + '\n\n' : '') + 'Let the hive decide ' + refs + ' as the owner\'s delegate, under the owner-delegate policy? ' + STAGE_TRACKER_DELEGATE_EXPLANATION, confirmLabel: 'Let hive decide', danger: !!sentinel };
     }
-    // Pure: the preview dialog's text from the plan route's answers —
-    // "Hive would: … Why: …", one block per PR.
+    // The "Let hive decide" preview (hivecommons/hive#15126), redesigned on
+    // operator feedback from hive's own spoke (the dialog for
+    // hivecommons/hive#15332: "yikes - this is a mess … this needs to be
+    // exceedingly simple to understand and act on"). Budget: title + one
+    // subject line; ONE decision sentence; ONE why line; at most two
+    // "then" items; everything else — the sentinel finding, the rails, the
+    // rungs ruled out — behind a single collapsed Details. Two buttons,
+    // [Cancel] [Let hive do that]; "Approve & merge as-is" only when the
+    // plan says the head is mergeable as it is.
     const STAGE_TRACKER_PLAN_BUTTON_DELEGATE = 'Let hive do that';
     const STAGE_TRACKER_PLAN_BUTTON_MERGE = 'Approve & merge as-is';
-    function stageTrackerDelegatePlanText(plans) {
-      return (plans || []).map(pl => {
-        const ref = pl.ref || ('#' + pl.number);
-        const lines = [ref + ' — Hive would: ' + (pl.summary || pl.would || 'decide it')];
-        if (pl.why) lines.push('Why: ' + pl.why);
-        (pl.consequences || []).forEach(c => lines.push('• ' + c));
-        return lines.join('\n');
-      }).join('\n\n');
+    const STAGE_TRACKER_PLAN_TITLE = 'Let hive decide';
+    const STAGE_TRACKER_PLAN_EYEBROW = 'Hive would';
+    const STAGE_TRACKER_PLAN_NEXT_MAX = 2;
+    const STAGE_TRACKER_PLAN_TITLE_MAX = 48;
+    const STAGE_TRACKER_PLAN_RAILS = 'Rails: never merges, never touches held items, never grants secrets; the sentinel label stays with a person.';
+    const STAGE_TRACKER_PLAN_MERGE_WHY = 'Not mergeable as it is';
+    // Pure: the decision sentence without a stale "Hive would:" prefix —
+    // the eyebrow says it once (the duplicated prefix of #15332's dialog).
+    function stageTrackerPlanSentence(pl) {
+      let text = String(pl.summary || pl.would || 'decide it').trim().replace(/^(hive would:\s*)+/i, '');
+      if (!text) text = 'decide it';
+      text = text.charAt(0).toUpperCase() + text.slice(1);
+      return /[.!?]$/.test(text) ? text : text + '.';
     }
-    // Pure: can "Approve & merge as-is" run — every plan lists merge-now as
-    // an enabled alternative.
+    function stageTrackerPlanTruncate(text, max) {
+      text = String(text || '').trim();
+      return text.length > max ? text.slice(0, max - 1).replace(/\s+\S*$/, '') + '…' : text;
+    }
+    // Pure: one view model for every decision the preview can show — a
+    // PR or an issue; direction, adopt, close, approve, recommend-only.
+    //   { title, subject, finding, decisions: [{ ref, sentence, why, next[] }],
+    //     ruledOut[], rails, mergeable, mergeWhy, danger }
+    function stageTrackerDelegatePlanView(plans, sentinel) {
+      plans = plans || [];
+      // One item: "repo#N · title"; a batch names each item on its own
+      // block instead, so no reference is printed twice.
+      let subject = plans.length + ' items';
+      if (plans.length === 1) {
+        subject = plans[0].ref || ('#' + plans[0].number);
+        if (plans[0].title) subject += ' · ' + stageTrackerPlanTruncate(plans[0].title, STAGE_TRACKER_PLAN_TITLE_MAX);
+      }
+      const decisions = plans.map(pl => ({
+        ref: pl.ref || ('#' + pl.number),
+        sentence: stageTrackerPlanSentence(pl),
+        why: pl.why ? String(pl.why).trim() : '',
+        next: (pl.consequences || []).slice(0, STAGE_TRACKER_PLAN_NEXT_MAX).map(String),
+      }));
+      const ruledOut = [].concat(...plans.map(pl => (pl.ladder && pl.ladder.ruled_out) || []));
+      const mergeable = stageTrackerDelegatePlanMergeable(plans);
+      return {
+        title: STAGE_TRACKER_PLAN_TITLE,
+        subject,
+        finding: sentinel || '',
+        decisions,
+        ruledOut,
+        rails: STAGE_TRACKER_PLAN_RAILS,
+        mergeable,
+        mergeWhy: mergeable ? '' : (stageTrackerDelegatePlanMergeReason(plans) || STAGE_TRACKER_PLAN_MERGE_WHY),
+        showMerge: stageTrackerDelegatePlanOffersMerge(plans),
+        danger: !!sentinel,
+      };
+    }
+    // Pure: the dialog's inner HTML from the view model. The Details
+    // disclosure is the only place the finding, the rails and the ruled-out
+    // rungs appear; it is collapsed by default.
+    function stageTrackerDelegatePlanHtml(view) {
+      const esc = hiveDialogEscape;
+      const blocks = view.decisions.map(d => {
+        const multi = view.decisions.length > 1;
+        return '<div class="ham-plan-decision">'
+          + (multi ? '<div class="ham-plan-ref">' + esc(d.ref) + '</div>' : '')
+          + '<div class="ham-plan-eyebrow">' + esc(STAGE_TRACKER_PLAN_EYEBROW) + '</div>'
+          + '<p class="ham-plan-sentence">' + esc(d.sentence) + '</p>'
+          + (d.why ? '<p class="ham-plan-why"><span class="ham-plan-label">Why</span> ' + esc(d.why) + '</p>' : '')
+          + (d.next.length ? '<div class="ham-plan-label">Then</div><ol class="ham-plan-next">' + d.next.map(n => '<li>' + esc(n) + '</li>').join('') + '</ol>' : '')
+          + '</div>';
+      }).join('');
+      const details = []
+        .concat(view.finding ? ['<p class="ham-plan-finding">' + esc(view.finding) + '</p>'] : [])
+        .concat(view.ruledOut.length ? ['<div class="ham-plan-label">Why not the others</div><ul class="ham-plan-ruled-out">' + view.ruledOut.map(r => '<li>' + esc(r) + '</li>').join('') + '</ul>'] : [])
+        .concat(['<p class="ham-plan-rails">' + esc(view.rails) + '</p>']);
+      return '<div id="hive-dialog-title" class="hive-dialog-title">' + esc(view.title) + '</div>'
+        + '<div class="ham-plan-subject">' + esc(view.subject) + (view.finding ? ' <span class="ham-plan-chip" title="' + esc(view.finding) + '">⚠ Sentinel</span>' : '') + '</div>'
+        + '<div class="hive-dialog-body ham-plan-body">' + blocks + '</div>'
+        + '<details class="ham-plan-details"><summary>Details</summary>' + details.join('') + '</details>'
+        + '<div class="hive-dialog-buttons">'
+        + '<button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>'
+        + (view.showMerge ? '<button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-merge"' + (view.mergeable ? '' : ' aria-disabled="true" disabled title="' + esc(view.mergeWhy) + '"') + '>' + esc(STAGE_TRACKER_PLAN_BUTTON_MERGE) + '</button>' : '')
+        + '<button type="button" class="hv-btn ' + (view.danger ? 'btn-danger' : 'btn-primary') + ' hive-dialog-btn primary" data-initial-focus>' + esc(STAGE_TRACKER_PLAN_BUTTON_DELEGATE) + '</button>'
+        + '</div>';
+    }
+    // Pure: the preview's visible words — everything outside Details and
+    // the buttons. Kept for the three-second budget test.
+    function stageTrackerDelegatePlanVisibleText(html) {
+      return String(html).replace(/<details[\s\S]*?<\/details>/g, ' ').replace(/<div class="hive-dialog-buttons">[\s\S]*$/, ' ').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+    // Pure: does the dialog offer "Approve & merge as-is" at all — only
+    // when every plan says the head is mergeable as it is (the ladder's
+    // mergeable-as-is rung, or green and conflict-free without a ladder).
+    function stageTrackerDelegatePlanOffersMerge(plans) {
+      return (plans || []).length > 0 && plans.every(pl => pl.mergeable_as_is === true && (pl.alternatives || []).some(a => a.action === 'decide:merge-now'));
+    }
+    // Pure: can "Approve & merge as-is" run — offered, and every plan lists
+    // merge-now as an enabled alternative (merge rights).
     function stageTrackerDelegatePlanMergeable(plans) {
-      return (plans || []).length > 0 && plans.every(pl => (pl.alternatives || []).some(a => a.action === 'decide:merge-now' && a.enabled !== false));
+      return stageTrackerDelegatePlanOffersMerge(plans) && plans.every(pl => (pl.alternatives || []).some(a => a.action === 'decide:merge-now' && a.enabled !== false));
     }
     function stageTrackerDelegatePlanMergeReason(plans) {
       for (const pl of plans || []) for (const a of pl.alternatives || []) if (a.action === 'decide:merge-now' && a.enabled === false && a.reason_if_disabled) return a.reason_if_disabled;
@@ -1228,30 +1318,20 @@
         return Object.assign({ ref: stageTrackerRefOf(item) }, data);
       } catch (e) { return { ref: stageTrackerRefOf(item), number: item.number, error: String(e && e.message || e) }; }
     }
-    // The three-button preview: resolves { chosen } for Let hive do that,
-    // { chosen, mergeNow: true } for Approve & merge as-is, null on Cancel.
+    // The preview: resolves { chosen } for Let hive do that, { chosen,
+    // mergeNow: true } for Approve & merge as-is, null on Cancel.
     function stageTrackerDelegatePlanDialog(plans, sentinel) {
-      const text = (sentinel ? sentinel + '\n\n' : '') + stageTrackerDelegatePlanText(plans);
-      const mergeable = stageTrackerDelegatePlanMergeable(plans);
-      const mergeWhy = mergeable ? '' : (stageTrackerDelegatePlanMergeReason(plans) || 'Needs merge rights on this repo');
+      const view = stageTrackerDelegatePlanView(plans, sentinel);
       return new Promise(resolve => {
         const overlay = document.createElement('div');
         overlay.className = 'hive-dialog-overlay';
         hiveRememberModalOpen(overlay);
-        overlay.innerHTML = `<div class="hive-dialog ham-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
-          <div id="hive-dialog-title" class="hive-dialog-title">Let hive decide — preview</div>
-          <div class="hive-dialog-body ham-plan-body">${hiveDialogEscape(text)}</div>
-          <p class="ham-plan-note">${hiveDialogEscape(STAGE_TRACKER_DELEGATE_EXPLANATION)}</p>
-          <div class="hive-dialog-buttons">
-            <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>
-            <button type="button" class="hv-btn btn-secondary hive-dialog-btn ham-plan-merge"${mergeable ? '' : ' aria-disabled="true" disabled'}${mergeWhy ? ` title="${hiveDialogEscape(mergeWhy)}"` : ''}>${STAGE_TRACKER_PLAN_BUTTON_MERGE}</button>
-            <button type="button" class="hv-btn ${sentinel ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary" data-initial-focus>${STAGE_TRACKER_PLAN_BUTTON_DELEGATE}</button>
-          </div></div>`;
+        overlay.innerHTML = '<div class="hive-dialog ham-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">' + stageTrackerDelegatePlanHtml(view) + '</div>';
         document.body.appendChild(overlay);
         const would = plans.map(pl => pl.would || '?').filter((v, i, a) => a.indexOf(v) === i).join('/');
         hiveWireDialog(overlay, resolve, null, '.primary', '.cancel', close => close({ chosen: STAGE_TRACKER_PLAN_BUTTON_DELEGATE + ' · previewed ' + would }));
         const merge = overlay.querySelector('.ham-plan-merge');
-        if (merge && mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); resolve({ chosen: STAGE_TRACKER_PLAN_BUTTON_MERGE + ' · previewed ' + would, mergeNow: true }); });
+        if (merge && view.mergeable) merge.addEventListener('click', () => { overlay.hiveDialogClose = null; overlay.remove(); resolve({ chosen: STAGE_TRACKER_PLAN_BUTTON_MERGE + ' · previewed ' + would, mergeNow: true }); });
       });
     }
     // Let hive decide → plan → preview → act. Returns the delegate payload,
