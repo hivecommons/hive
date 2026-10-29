@@ -1907,6 +1907,15 @@
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
     .ham-decision-act.ham-decision-more { color: var(--text-muted); }
+    /* The row's inline lead action (the ⋯ menu's lead entry, in sight): a
+       small primary pill in the chip slot, the popover lead's recipe, the
+       row's cue colour; dashed and faint with its reason when the viewer
+       may not take it. */
+    .ham-lead-act { padding: 0 var(--sp-3); border: var(--line-width) solid var(--cue-state, var(--accent)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--cue-state, var(--accent)) 10%, transparent); color: var(--cue-state, var(--accent)); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.4; cursor: pointer; white-space: nowrap; }
+    .ham-lead-act:hover, .ham-lead-act:focus-visible { background: color-mix(in srgb, var(--cue-state, var(--accent)) 22%, transparent); outline: none; }
+    .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
+    .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+    .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
     /* The technical background folds behind one collapsed Details. */
     .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }
@@ -16473,6 +16482,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tip = 'Hive re-authored #' + af.number + (af.author ? ' (by @' + af.author + ')' : '') + ' as this PR with the same commits and sign-off' + (af.decided_by ? '; the decision on #' + af.number + ' was ' + (af.decided_action || 'yours') + ' by @' + af.decided_by : '') + '. #' + af.number + ' is closed as superseded when this merges.';
       return `<a class="ham-badge ham-adopted-from" href="${esc(af.url || '#')}" target="_blank" rel="noopener" title="${esc(tip)}">${esc(text)}</a>`;
     }
+    // The row's inline lead action (tracker-actions.js
+    // stageTrackerLeadActionHtml), computed against the viewer's own
+    // permissions on the item's repo; '' where the actions module or a
+    // viewer context is absent (the node harness lifts this file alone).
+    function stageTrackerLeadButtonHtml(item, nowMs) {
+      if (typeof stageTrackerLeadActionHtml !== 'function' || typeof stageTrackerActionCtx !== 'function' || !item) return '';
+      const ctx = stageTrackerActionCtx(item.repo);
+      if (!ctx) return '';
+      ctx.nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      return stageTrackerLeadActionHtml(item, ctx);
+    }
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = stageTrackerLinkedPRItem(issue, lp);
       const superseded = typeof stageTrackerLinkedSupersededText === 'function' ? stageTrackerLinkedSupersededText(lp, issue) : '';
@@ -16493,7 +16513,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : '')) + stageTrackerChipsHtml(pr))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : '')) + stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : ''))}
           </div>
           <div class="ham-strip-row">
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
@@ -16756,7 +16776,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown))}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs) : ''))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
@@ -18659,6 +18679,55 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
       return out;
     }
+    // Pure: the one action a row leads with, rendered inline on the row
+    // header so the ask the caption makes has its answer in sight
+    // (hivecommons/hive#15456: "waiting for a maintainer's triage" with
+    // Accept triage hidden behind ⋯). The ⋯ menu's `lead` entry first
+    // (Accept triage, the server's lead answer such as Merge now, Close
+    // (read)); else the first Decide… option (Let hive decide, carrying the
+    // decide target); else Adopt, Adopt now or Let hive decide — all N
+    // PRs. null when the row asks nothing of the viewer here. Disabled
+    // entries are returned as-is so the button can say why.
+    function stageTrackerLeadAction(item, ctx) {
+      if (!item) return null;
+      const actions = stageTrackerRowActions(item, ctx);
+      const lead = actions.find(a => a.lead);
+      if (lead) return lead;
+      const decide = actions.find(a => a.id === 'decide');
+      if (decide && Array.isArray(decide.submenu) && decide.submenu.length) {
+        const o = decide.submenu.find(x => x.enabled) || decide.submenu[0];
+        const enabled = !!decide.enabled && !!o.enabled;
+        return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
+      }
+      for (const id of ['decide:adopt', 'decide:adopt-now', 'decide:delegate-all']) {
+        const a = actions.find(x => x.id === id);
+        if (a && (a.enabled || id !== 'decide:adopt-now')) return a;
+      }
+      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
+      return null;
+    }
+    // Pure: whether the server says the next move is the maintainer's.
+    function stageTrackerMaintainerMoved(item) {
+      return !!item && (item.actor === 'maintainer' || !!(item.new && item.new.next_mover === 'maintainer'));
+    }
+    // A console warning on a development host only (localhost, 127.0.0.1).
+    function stageTrackerDevWarn(msg) {
+      const host = typeof window !== 'undefined' && window.location ? String(window.location.hostname || '') : '';
+      if ((host === 'localhost' || host === '127.0.0.1') && typeof console !== 'undefined' && console.warn) console.warn('[tracker] ' + msg);
+    }
+    // The inline lead button for a row: a real <button> carrying the same
+    // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
+    // '' when the row has no lead. Click handling is delegated in
+    // stageTrackerWireRowActions and runs runRowAction, the menu's path.
+    function stageTrackerLeadActionHtml(item, ctx) {
+      const a = stageTrackerLeadAction(item, ctx);
+      if (!a) return '';
+      const label = String(a.label || a.id);
+      const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
+      const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
+      const state = a.enabled ? (tip ? ` title="${esc(tip)}"` : '') : ` aria-disabled="true" title="${esc(tip)}"`;
+      return `<button type="button" class="ham-lead-act${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}"${state} aria-label="${esc(label + (ref ? ' — ' + ref : ''))}">${esc(label)}</button>`;
+    }
     // Pure: the actions for a row parked on a blocker (hivecommons/hive#15099):
     // the server lists them in decision_needed.options (a capability gap
     // offers the App settings link, a permission re-check and the disabled
@@ -18876,6 +18945,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           e.preventDefault();
           stageTrackerSelect(row.dataset.hamKey, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey });
         }
+      });
+      // The row's inline lead button runs the same path as its ⋯ entry.
+      el.addEventListener('click', e => {
+        const b = e.target.closest ? e.target.closest('.ham-lead-act[data-ham-act]') : null;
+        if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        if (b.getAttribute('aria-disabled') === 'true') return;
+        // The one row (or nested PR) the button sits on, never the selection.
+        const sub = b.closest('[data-ham-sub-key]');
+        const row = b.closest('.ham-row[data-ham-key]');
+        const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+        const item = key ? stageTrackerItemByKey(_stageTracker, key) : null;
+        if (!item) return;
+        stageTrackerDecisionRun(item, b.dataset.hamAct);
       });
       // Cmd/Ctrl- or Shift-click anywhere on a row (not on its links or
       // buttons) selects it too.

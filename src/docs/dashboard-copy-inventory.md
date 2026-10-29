@@ -62,6 +62,7 @@ The new hover, verbatim (title line omitted):
 | Confirm: Approve & merge as maintainer | dialog | 76 | 53 | same |
 | Confirm: Approve — let hive merge | dialog | 62 | 49 | same |
 | ⋯ menu hints (`stageTrackerLeadActions` → `ham-menu-hint`) | ⋯ menu | server consequences (11–31 each) | server consequences (≤ 12 each) | Go budget test |
+| `stageTrackerLeadActionHtml` (`tracker-actions.js`) | the row header's inline lead button (chip slot) | — (the lead sat in the ⋯ menu only) | the menu entry's label (1–4), its hint as the hover | `TestStageTrackerLeadActionInline`, `TestStageTrackerMaintainerRowsHaveLeadAction` |
 | Toasts (`STAGE_TRACKER_ACTING_CAPTIONS`, acted labels) | toast | 2–4 each | unchanged | — |
 
 ## Totals
