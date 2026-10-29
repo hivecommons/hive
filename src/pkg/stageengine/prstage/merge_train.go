@@ -38,7 +38,10 @@ const (
 	// another open PR the train admitted; it is held out of the train
 	// behind that PR (Front) until a person or the delegate picks one
 	// (hivecommons/hive#15395). Position / Size carry the issue number
-	// as Position and 0 as Size.
+	// as Position and 0 as Size. The stage engine parks it with its
+	// author (070/071/072 by author kind), never on the merge gate, so
+	// the tracker reads "returned" with the gate pill "Duplicate of #N"
+	// rather than "Approved; waiting its turn" (hivecommons/hive#15469).
 	MergeTrainStateDuplicateOf = "duplicate-of"
 	MergeTrainReasonMaxFiles   = 4
 )
@@ -193,7 +196,7 @@ func (m MergeTrain) Sentence() string {
 		if m.Position > 0 {
 			issue = " for issue #" + strconv.Itoa(m.Position)
 		}
-		return "duplicate of #" + strconv.Itoa(m.Front) + issue + "; the merge queue carries one PR per issue — a person or the delegate picks one"
+		return "duplicate of #" + strconv.Itoa(m.Front) + issue + "; superseded by #" + strconv.Itoa(m.Front) + " — the merge queue carries one PR per issue; close it or let the delegate decide"
 	}
 	return "behind #" + strconv.Itoa(m.Front) + " in merge train (" + slot + files + ")"
 }

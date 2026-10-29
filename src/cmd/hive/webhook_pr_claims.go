@@ -20,7 +20,12 @@ import (
 // the snapshot step. onMerged, when non-nil, runs after a MERGED delivery
 // whose claims the ledger recorded, so the PR's issues close on the event
 // (closeOnMergeForDelivery) rather than on the next reconcile pass.
-func prClaimsHookFor(ledger func() *github.ClaimLedger, patch *snapshotPatcher, logger *slog.Logger, onMerged func(github.PRClaimDelivery)) github.PRClaimsHook {
+// onCovered, when non-nil, runs for every OPEN delivery that covers an
+// issue (PRClaimDelivery.CoveringClaims), before the ledger's rank rule
+// decides whether the claim is recorded: a contributor task in flight on
+// that issue is preempted whether or not this PR became the ledger's
+// holder (preemptCoveredIssueTasks).
+func prClaimsHookFor(ledger func() *github.ClaimLedger, patch *snapshotPatcher, logger *slog.Logger, onMerged, onCovered func(github.PRClaimDelivery)) github.PRClaimsHook {
 	return func(d github.PRClaimDelivery) {
 		if ledger == nil {
 			return
@@ -28,6 +33,9 @@ func prClaimsHookFor(ledger func() *github.ClaimLedger, patch *snapshotPatcher, 
 		l := ledger()
 		if l == nil {
 			return
+		}
+		if onCovered != nil && len(d.CoveringClaims()) > 0 {
+			onCovered(d)
 		}
 		recorded, released := l.ApplyPRDelivery(d)
 		if recorded == 0 && released == 0 {
@@ -146,5 +154,29 @@ func (b *boot) prClaimCoverLookup() func(repo string, number int) (github.IssueC
 			}
 		}
 		return claim, true
+	}
+}
+
+// preemptCoveredIssueTasks is the onCovered hook: an OPEN `pull_request`
+// delivery that declares `Fixes #N` releases every relay contributor still
+// dispatched on #N (other than the PR's own author) so the hive does not
+// finish a second PR for an issue a person — or another agent — already
+// covered (hivecommons/hive#15469: the owner's #15470 landed 45 s after
+// the hive dispatched its fixer, which then opened #15473). The dashboard
+// server owns the hub; before it boots there is nothing to preempt.
+func (b *boot) preemptCoveredIssueTasks(d github.PRClaimDelivery) {
+	if b == nil || b.dashSrv == nil {
+		return
+	}
+	hub := b.dashSrv.ContributeHub()
+	if hub == nil {
+		return
+	}
+	for _, c := range d.CoveringClaims() {
+		released := hub.PreemptIssueCoveredByPR(c.Repo, c.Issue, d.Number, c.PRAuthor)
+		if released > 0 && b.logger != nil {
+			b.logger.Info("webhook PR claims: contributor task preempted, an open PR now covers its issue",
+				"repo", d.Repo, "issue", c.Issue, "pr", d.Number, "pr_author", c.PRAuthor, "released", released, "source", "webhook")
+		}
 	}
 }

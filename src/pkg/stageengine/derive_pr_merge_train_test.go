@@ -3,6 +3,7 @@ package stageengine
 import (
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -28,6 +29,28 @@ func TestClassifyStageMergeTrainReasons(t *testing.T) {
 			if v.Stage != tc.want || v.Rank != stageRankOwned || v.Human != tc.human || v.Terminal {
 				t.Fatalf("%s/%s classified as %+v, want stage %v human %v", lane, tc.name, v, tc.want, tc.human)
 			}
+		}
+	}
+}
+
+// hivecommons/hive#15469: a PR the queue holds because another open PR
+// fixes the same issue is not "waiting its turn" — it goes back to its
+// author by kind (072 relay contributor, 071 person, 070 the App's own).
+func TestClassifyStageMergeTrainDuplicateParksWithAuthor(t *testing.T) {
+	reason := prstage.MergeTrain{State: prstage.MergeTrainStateDuplicateOf, Front: 15470, Position: 15469}.Reason()
+	for _, tc := range []struct {
+		name string
+		lane string
+		kind authorkind.Kind
+		want stagelabels.Stage
+	}{
+		{"contributor clanker", stageLaneContributor, authorkind.Clanker, stagelabels.ReturnedToContributor},
+		{"trusted human", stageLaneTrusted, authorkind.Human, stagelabels.NeedsAuthor},
+		{"self", stageLaneSelf, authorkind.Hive, stagelabels.Fixing},
+	} {
+		v := ClassifyStage(stageObservation{Lane: tc.lane, AuthorKind: tc.kind, Reason: reason, HeadSHA: goldenHead})
+		if v.Stage != tc.want || v.Rank != stageRankOwned || v.Human || v.Terminal {
+			t.Fatalf("%s classified as %+v, want stage %v", tc.name, v, tc.want)
 		}
 	}
 }
