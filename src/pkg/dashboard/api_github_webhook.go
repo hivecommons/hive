@@ -42,7 +42,9 @@ func (s *Server) registerGitHubWebhookRoutes() {
 // duplicate-PR claim ledger on the event (hivecommons/hive#14814), so the
 // contribute lane stops offering them without waiting for the reconcile
 // pass; opened/synchronize/reopened also hands the PR to the sentinel
-// (#13379), and the
+// (#13379). A failed check_run, check_suite or status records a CI failure
+// signal per open PR its head resolves to and hands each new one to the
+// governor (hivecommons/hive#15291), and the
 // organization-scoped `projects_v2_item` delivery patches the GitHub
 // Projects work source cache. Deliveries for repositories this hive does not
 // manage are ignored.
@@ -121,6 +123,14 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if moved := s.noteForgeOutcome(event, body); moved {
 		resp["outcome_counted"] = true
+	}
+	if len(res.CIFailures) > 0 {
+		resp["ci_failures"] = len(res.CIFailures)
+		if s.deps.CIFailure != nil {
+			for _, sig := range res.CIFailures {
+				s.deps.CIFailure(sig)
+			}
+		}
 	}
 	if reason, ok := webhookWakeReason(event, res); ok && s.deps.WebhookWake != nil {
 		s.deps.WebhookWake(reason)

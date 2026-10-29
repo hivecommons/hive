@@ -279,6 +279,9 @@ type boot struct {
 	// sentinelEvents serializes the per-PR sentinel evaluations that
 	// `pull_request` webhooks request (#13379).
 	sentinelEvents *sentinelEventQueue
+	// ciFailures reacts to the CI failure signals failed check webhooks
+	// record (hivecommons/hive#15291).
+	ciFailures *ciFailureReactor
 	// forgeView is the owner/name view over forgeState the automerge lanes
 	// read and sweepTrigger their webhook trigger over it (#13377).
 	forgeView    *github.ForgeStateView

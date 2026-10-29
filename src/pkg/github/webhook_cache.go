@@ -31,6 +31,9 @@ type WebhookHealth struct {
 	// WebhookModeStatus is the reconcile cadence the health drives:
 	// `mode` webhook|polling and `since` (hivecommons/hive#13381).
 	WebhookModeStatus
+	// CIFailures is the CI failure signal store's count and newest signal
+	// (hivecommons/hive#15291).
+	CIFailures CIFailureStatus `json:"ci_failures"`
 }
 
 // WebhookEventResult reports what one delivered GitHub webhook did.
@@ -61,6 +64,11 @@ type WebhookEventResult struct {
 	// (closing keyword, branch name or reference) in its own repository,
 	// as recorded into the claim ledger on the event (hivecommons/hive#14814).
 	ClaimedIssues []int `json:"claimed_issues,omitempty"`
+	// CIFailures lists the CI failure signals a failed check_run,
+	// check_suite or status delivery newly recorded, one per open PR the
+	// head resolves to; a repeat of an already recorded head + check adds
+	// none (hivecommons/hive#15291).
+	CIFailures []CIFailureSignal `json:"ci_failures,omitempty"`
 	// Item is the payload's own view of the issue or pull request the
 	// delivery named (every `issues`, `issue_comment` and `pull_request*`
 	// payload embeds the full object with its state), nil for deliveries
@@ -109,6 +117,8 @@ type webhookTracker struct {
 	lastActivity time.Time
 	lastFailure  time.Time
 	mode         webhookModeMachine
+	// ciFailures is the CI failure signal store (webhook_ci_failure.go).
+	ciFailures ciFailureStore
 }
 
 func newWebhookTracker() *webhookTracker {
@@ -349,7 +359,7 @@ func (t *webhookTracker) snapshot() WebhookHealth {
 	healthy, latest := t.healthyLocked(now)
 	out := WebhookHealth{Healthy: healthy, Events1h: len(t.events), Invalidations1h: len(t.invalidations),
 		TargetedRefreshes1h: len(t.refreshes), TrackerInvalidations1h: len(t.trackerDrops),
-		WebhookModeStatus: t.mode.status(t.window, now)}
+		WebhookModeStatus: t.mode.status(t.window, now), CIFailures: t.ciFailures.statusLocked(now)}
 	if !latest.IsZero() {
 		at := latest.UTC()
 		out.LastEventAt = &at
@@ -441,13 +451,26 @@ type webhookEventPayload struct {
 	CheckSuite *struct {
 		HeadSHA      string         `json:"head_sha"`
 		PullRequests []webhookPRRef `json:"pull_requests"`
+		Conclusion   string         `json:"conclusion"`
+		App          *struct {
+			Name string `json:"name"`
+		} `json:"app"`
 	} `json:"check_suite"`
 	CheckRun *struct {
 		HeadSHA      string         `json:"head_sha"`
 		PullRequests []webhookPRRef `json:"pull_requests"`
+		Name         string         `json:"name"`
+		Conclusion   string         `json:"conclusion"`
+		DetailsURL   string         `json:"details_url"`
+		HTMLURL      string         `json:"html_url"`
 	} `json:"check_run"`
-	SHA      string `json:"sha"`
-	Branches []struct {
+	SHA string `json:"sha"`
+	// State, Context and TargetURL are a `status` delivery's outcome, the
+	// status context and its log link.
+	State     string `json:"state"`
+	Context   string `json:"context"`
+	TargetURL string `json:"target_url"`
+	Branches  []struct {
 		Name string `json:"name"`
 	} `json:"branches"`
 	Ref string `json:"ref"`
@@ -514,6 +537,12 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		c.RecordReviewEvidenceRevert(merged)
 	}
 	res.HeadSHA = webhookHeadSHA(event, p)
+	if check, detailsURL, ok := webhookCIFailure(event, p); ok && res.HeadSHA != "" {
+		// Resolved before the invalidation below drops the cached entries
+		// the head SHA is matched against.
+		prs := webhookCIFailurePRs(event, p, aliases, res.HeadSHA)
+		res.CIFailures = sharedWebhookTracker.recordCIFailures(p.Repository.FullName, prs, res.HeadSHA, check, detailsURL)
+	}
 	numbers := webhookInvalidationTargets(event, p, aliases)
 	for _, n := range numbers {
 		c.invalidateWebhookPR(aliases, n)

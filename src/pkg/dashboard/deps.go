@@ -293,6 +293,12 @@ type Dependencies struct {
 	// named item and the automerge lanes schedule a pass for the affected
 	// PRs (hivecommons/hive#13377). nil installs no receiver.
 	WebhookDelivery func(event, deliveryID string, payload []byte, res ghpkg.WebhookEventResult)
+	// CIFailure receives each CI failure signal a verified failed
+	// check_run / check_suite / status delivery newly recorded
+	// (hivecommons/hive#15291), so the governor can kick the owning agent
+	// or schedule an automerge pass now. It must not block. nil installs
+	// no receiver; the signal still shows in /api/status.
+	CIFailure func(sig ghpkg.CIFailureSignal)
 	// EvalLoop reports the governor loop's live pacing (poll vs webhook mode
 	// and the last early wake) for /api/status. Nil omits the fields.
 	EvalLoop func() EvalLoopStatus

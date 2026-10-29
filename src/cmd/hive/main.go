@@ -1254,6 +1254,7 @@ func (b *boot) wireBootClosures() {
 	b.installReviewEvents()
 	b.installWebhookWake()
 	b.installSentinelEvents()
+	b.installCIFailureReactor()
 	b.heartbeatFleetStats = func() (*int, *int, *int, string) {
 		var prsMerged, prsRejected, cvesClosed *int
 		collectedAt := ""
@@ -1478,6 +1479,7 @@ func (b *boot) wireBootClosures() {
 			SweepNudge:              b.sweepNudgeFunc(),
 			ApplyWebhookItems:       b.applyWebhookItemsFunc(),
 			WebhookDelivery:         b.webhookDeliveryFunc(),
+			CIFailure:               b.ciFailureFunc(),
 			EvalLoop:                b.evalLoopStatusFunc(),
 			SentinelPREvent:         b.sentinelPREventFunc(),
 			ProjectsV2ItemEvent:     b.projectsV2ItemEventFunc(),

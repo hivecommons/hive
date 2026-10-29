@@ -20,3 +20,17 @@ func TestReviewerLaneForbidsCIPolling(t *testing.T) {
 		}
 	}
 }
+
+// Agents never watch CI: failures reach them out of band, from the webhook
+// (hivecommons/hive#15291) or the sweep. The reviewer lane keeps its
+// mandatory "Do Not Wait for CI" section, heading included.
+func TestReviewerLaneKeepsDoNotWaitForCISection(t *testing.T) {
+	data, err := DefaultPolicies.ReadFile("defaults/reviewer-lane.md")
+	if err != nil {
+		t.Fatalf("read embedded reviewer-lane policy: %v", err)
+	}
+	const heading = "## After You Push: Do Not Wait for CI (MANDATORY)"
+	if !strings.Contains(string(data), heading) {
+		t.Fatalf("reviewer-lane policy lacks %q (#15291)", heading)
+	}
+}

@@ -1563,10 +1563,18 @@ type GovernorConfig struct {
 	// cycle. WebhookWakeMinGapS is the minimum gap between two
 	// webhook-triggered cycles. Both default at Load; see
 	// docs/operator-reference.md "Webhook-driven PR cache invalidation".
-	WebhookWakeDebounceS       int `yaml:"webhook_wake_debounce_s,omitempty"`
-	WebhookWakeMinGapS         int `yaml:"webhook_wake_min_gap_s,omitempty"`
-	ConserveIntervalMultiplier int `yaml:"conserve_interval_multiplier,omitempty"`
-	OptionalSweepEveryNCycles  int `yaml:"optional_sweep_every_n_cycles,omitempty"`
+	WebhookWakeDebounceS int `yaml:"webhook_wake_debounce_s,omitempty"`
+	WebhookWakeMinGapS   int `yaml:"webhook_wake_min_gap_s,omitempty"`
+	// CIFailureWebhookKick turns on the immediate reaction to a failed
+	// check_run / check_suite / status webhook (hivecommons/hive#15291): a
+	// targeted fix kick to the owning agent of a hive-authored PR, an
+	// automerge pass for any other PR. nil (unset) means on.
+	// CIFailureKickCooldownS is the minimum gap between two such reactions
+	// for the same PR head (default DefaultCIFailureKickCooldownS).
+	CIFailureWebhookKick       *bool `yaml:"ci_failure_webhook_kick,omitempty" json:"ci_failure_webhook_kick,omitempty"`
+	CIFailureKickCooldownS     int   `yaml:"ci_failure_kick_cooldown_s,omitempty" json:"ci_failure_kick_cooldown_s,omitempty"`
+	ConserveIntervalMultiplier int   `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int   `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see
@@ -4895,6 +4903,23 @@ func (c *Config) WebhookWakeMinGap() time.Duration {
 	return DefaultWebhookWakeMinGapS * time.Second
 }
 
+// CIFailureWebhookKickEnabled reports governor.ci_failure_webhook_kick,
+// which defaults to on when unset.
+func (c *Config) CIFailureWebhookKickEnabled() bool {
+	if c == nil || c.Governor.CIFailureWebhookKick == nil {
+		return true
+	}
+	return *c.Governor.CIFailureWebhookKick
+}
+
+// CIFailureKickCooldown is the effective governor.ci_failure_kick_cooldown_s.
+func (c *Config) CIFailureKickCooldown() time.Duration {
+	if c != nil && c.Governor.CIFailureKickCooldownS > 0 {
+		return time.Duration(c.Governor.CIFailureKickCooldownS) * time.Second
+	}
+	return DefaultCIFailureKickCooldownS * time.Second
+}
+
 type DashboardIssueBandsConfig struct {
 	WaitingLabels []string `yaml:"waiting_labels,omitempty" json:"waiting_labels,omitempty"`
 	DoneLabels    []string `yaml:"done_labels,omitempty" json:"done_labels,omitempty"`
@@ -5822,6 +5847,7 @@ const (
 	DefaultEvalIntervalWebhookS       = 900
 	DefaultWebhookWakeDebounceS       = 10
 	DefaultWebhookWakeMinGapS         = 30
+	DefaultCIFailureKickCooldownS     = 600
 	DefaultConserveIntervalMultiplier = 2
 	DefaultOptionalSweepEveryNCycles  = 1
 )
