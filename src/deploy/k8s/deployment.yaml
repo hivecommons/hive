@@ -177,6 +177,18 @@ spec:
                   name: hive-secrets
                   key: dashboard-token
                   optional: true
+            - name: HIVE_METRICS_ENABLED
+              valueFrom:
+                secretKeyRef:
+                  name: hive-secrets
+                  key: HIVE_METRICS_ENABLED
+                  optional: true
+            - name: HIVE_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hive-secrets
+                  key: HIVE_METRICS_TOKEN
+                  optional: true
             - name: HIVE_LLMD_ENDPOINT
               value: "http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000"
             - name: HIVE_VLLM_MODELS

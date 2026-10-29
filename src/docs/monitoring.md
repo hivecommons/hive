@@ -4,17 +4,19 @@ This page is for operators who want to scrape a hive's Prometheus `/metrics` end
 
 ## Turning metrics on
 
-`/metrics` is off by default: the route is not registered, so scrapes return 404. Two settings turn it on (both listed in [env-vars.md](env-vars.md) and the [operator reference](operator-reference.md)):
+`/metrics` is off by default: the route is not registered, so scrapes return 404. Two settings turn it on; the base Deployment reads both from optional keys of the `hive-secrets` Secret (both listed in [env-vars.md](env-vars.md) and the [operator reference](operator-reference.md)):
 
 1. `HIVE_METRICS_ENABLED=1` (`1`, `true`, `yes` or `on`) registers `GET /metrics` on the dashboard port (3002).
-2. `HIVE_METRICS_TOKEN` holds the bearer token scrapers must present. Put it in the `hive-secrets` Secret next to the hive's other secrets, for example:
+2. `HIVE_METRICS_TOKEN` holds the bearer token scrapers must present.
+
+Put both in the `hive-secrets` Secret next to the hive's other secrets, for example:
 
    ```sh
    kubectl -n <namespace> patch secret hive-secrets --type merge \
-     -p "{\"stringData\":{\"HIVE_METRICS_TOKEN\":\"$(openssl rand -hex 32)\"}}"
+     -p "{\"stringData\":{\"HIVE_METRICS_ENABLED\":\"1\",\"HIVE_METRICS_TOKEN\":\"$(openssl rand -hex 32)\"}}"
    ```
 
-   Roll the hive pod afterwards so the environment is re-read.
+`src/deploy/k8s/deployment.yaml` maps those keys to environment variables (`secretKeyRef`, `optional: true`). Roll the hive pod afterwards (`kubectl -n <namespace> rollout restart deployment/hive`) so the environment is re-read. If you deploy from a custom manifest, add the same two `secretKeyRef` env entries yourself; files mounted at `/secrets` are not exported as environment variables.
 
 ### Why `/metrics` is fail-closed
 
@@ -64,7 +66,19 @@ No alert rules ship in the repository yet; alert rules ship with the monitoring 
 
 ### Alert reference
 
-Entries are added here as alerts land.
+Conditions are specified in [#15438](https://github.com/hivecommons/hive/issues/15438); the rule files land with the monitoring component.
+
+#### HiveMetricsDown
+
+Prometheus cannot scrape the hive's `/metrics`. Check the pod is running, then `curl` the endpoint with the bearer token: 404 means `HIVE_METRICS_ENABLED` is not set, 401 a wrong token, 403 a missing `HIVE_METRICS_TOKEN` (see the table above).
+
+#### HiveCostBurnHigh
+
+Estimated spend (`hive_estimated_cost_usd_total`) is rising faster than the configured threshold. Compare `hive_estimated_cost_usd_by_agent` and `hive_estimated_cost_usd` by model to find the driver, and pause or reduce that agent if the burn is unexpected.
+
+#### HiveStageTransitionAnomalies
+
+The stage engine is rejecting transitions (`hive_stage_transition_anomaly_total` is increasing). Check the hive log for the rejected transitions and the work items involved; a sustained increase suggests a writer is emitting invalid stage changes.
 
 ## Scraping without Prometheus Operator
 
