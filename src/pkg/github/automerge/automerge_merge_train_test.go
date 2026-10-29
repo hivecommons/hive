@@ -550,21 +550,76 @@ func TestMergeTrainBlockedHeadMemory(t *testing.T) {
 		}
 	}
 	c := &Engine{}
-	c.noteMergeTrainOutcome("acme", "widget", 7, "sha1", "not-mergeable")
-	if !c.mergeTrainHeadBlocked("acme", "widget", 7, "sha1") || c.mergeTrainHeadBlocked("acme", "widget", 7, "sha2") {
+	c.noteMergeTrainOutcome("self", "acme", "widget", 7, "sha1", "not-mergeable")
+	if !c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha1") || c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha2") {
 		t.Fatal("the exact head is blocked, a new head is not")
 	}
-	c.noteMergeTrainOutcome("acme", "widget", 7, "sha1", "")
-	if c.mergeTrainHeadBlocked("acme", "widget", 7, "sha1") {
+	if c.mergeTrainHeadBlocked("trusted", "acme", "widget", 7, "sha1") {
+		t.Fatal("one lane's verdict is not another lane's")
+	}
+	c.noteMergeTrainOutcome("self", "acme", "widget", 7, "sha1", "")
+	if c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha1") {
 		t.Fatal("a clean verdict clears the mark")
 	}
-	c.noteMergeTrainOutcome("acme", "widget", 7, "", "not-mergeable")
-	if c.mergeTrainHeadBlocked("acme", "widget", 7, "") {
+	c.noteMergeTrainOutcome("self", "acme", "widget", 7, "", "not-mergeable")
+	if c.mergeTrainHeadBlocked("self", "acme", "widget", 7, "") {
 		t.Fatal("no sha, no mark")
 	}
 	var nilEngine *Engine
-	nilEngine.noteMergeTrainOutcome("acme", "widget", 7, "sha1", "not-mergeable")
-	if nilEngine.mergeTrainHeadBlocked("acme", "widget", 7, "sha1") {
+	nilEngine.noteMergeTrainOutcome("self", "acme", "widget", 7, "sha1", "not-mergeable")
+	if nilEngine.mergeTrainHeadBlocked("self", "acme", "widget", 7, "sha1") {
 		t.Fatal("nil engine blocks nothing")
+	}
+}
+
+// TestMergeTrainHumanMergeNeverMember: a PR the lane leaves to a person
+// (untrusted author, no linked issue, the title/label human-merge rule,
+// a human-merge path) is not a train member at all — not a front, not a
+// sibling — so the PRs behind it form their own train with a head that can
+// merge. hive's #15425 (untrusted author, parked at 090) fronted a train of
+// three and the two behind it waited on a merge that was never coming.
+func TestMergeTrainHumanMergeNeverMember(t *testing.T) {
+	for reason, want := range map[string]bool{
+		"":                          false,
+		"soaking":                   false,
+		"check-pending":             false,
+		"not-mergeable":             false,
+		"untrusted-author-role":     true,
+		"author-permission-missing": true,
+		prstage.ContributorLaneReasonNoLinkedIssue: true,
+		prstage.ContributorLaneReasonClaimTier:     true,
+		prstage.AutoMergeReasonHumanMergeRequired:  true,
+		prstage.ContributorLaneReasonWorkflowPath:  true,
+		prstage.AutoMergeReasonMergeRefusedReview:  true,
+	} {
+		if got := mergeTrainHumanMergeReason(reason); got != want {
+			t.Fatalf("mergeTrainHumanMergeReason(%q) = %v, want %v", reason, got, want)
+		}
+	}
+	t0 := time.Now()
+	api := &mergeTrainAPI{files: map[int][]string{60: {"a.go"}, 61: {"a.go"}, 62: {"a.go"}}, state: map[int]string{60: "clean", 61: "clean", 62: "clean"}}
+	srv := newMergeTrainServer(t, api)
+	defer srv.Close()
+	c, _ := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, nil)
+	prs := []*gh.PullRequest{mtPR(60, t0, "clean"), mtPR(61, t0.Add(time.Minute), "clean"), mtPR(62, t0.Add(2*time.Minute), "clean")}
+	// The oldest, cleanest PR is an untrusted author's: the lane said so.
+	c.noteMergeTrainOutcome("self", "acme", "widget", 60, "sha60", prstage.ContributorLaneReasonNoLinkedIssue)
+	plan := plan0(c, prs)
+	if plan.isFront(60) || plan.isSibling(60) {
+		t.Fatalf("a human-merge PR rides no train: front=%v sibling=%v", plan.isFront(60), plan.isSibling(60))
+	}
+	if !plan.isFront(61) || !plan.isSibling(62) {
+		t.Fatalf("the PRs behind it form their own train: front61=%v sib62=%v groups=%d", plan.isFront(61), plan.isSibling(62), len(plan.groups))
+	}
+	// The same verdict from another lane does not touch this lane's train.
+	c2, _ := newMergeTrainEngine(t, srv.URL, DefaultMergeTrainPolicy, nil)
+	c2.noteMergeTrainOutcome("trusted", "acme", "widget", 60, "sha60", "untrusted-author-role")
+	if plan := plan0(c2, prs); !plan.isFront(60) {
+		t.Fatal("another lane's verdict must not evict the member from this lane's train")
+	}
+	// A new head starts clean: the lane re-judges it.
+	c.noteMergeTrainOutcome("self", "acme", "widget", 60, "sha60", "")
+	if plan := plan0(c, prs); !plan.isFront(60) {
+		t.Fatal("a clean verdict re-admits the PR")
 	}
 }
