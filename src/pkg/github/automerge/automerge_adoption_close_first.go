@@ -270,7 +270,7 @@ func (c *Engine) reopenSupersededOriginal(ctx context.Context, store *stagelabel
 	}
 	if d := c.writebackAllowed(owner+"/"+repo, c.closeFirstOriginalItem(ctx, cand), writeback.KindContributorAdopt, preview); !d.Allowed {
 		gateArgs := append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)
-		if d.Reason == writeback.ReasonRepoPaused {
+		if d.Reason == writeback.ReasonRepoPaused || writeback.IsContentReason(d.Reason) {
 			c.info("stage labels: close-first original reopen suppressed by the write-back gate; retried at the next poll", gateArgs...)
 			return 0, nil
 		}

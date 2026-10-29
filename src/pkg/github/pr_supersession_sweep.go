@@ -212,8 +212,10 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		// auto-close, park release) writes on a PR the hive did not open.
 		// Below the level supersession_notice needs, or without the opt-in
 		// label, the detection is audited and nothing else happens.
+		// This is a policy pre-check (no body yet): the content-aware
+		// check runs below, once the notice is rendered.
 		item := c.sentinelWritebackItem(pr)
-		if d := c.WritebackAllowed(prRepo, item, writeback.KindSupersessionNotice, supersessionDecisionNotice(prOwner, closer, "")); !d.Allowed {
+		if d := c.WritebackGate().Allowed(prRepo, item, writeback.KindSupersessionNotice); !d.Allowed {
 			if opts.Audit != nil {
 				event.Action = SupersessionActionSuppressedContributor
 				event.Reason = "write-back gate: " + d.Reason
@@ -289,6 +291,14 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	event.Action = SupersessionActionCommentedContributor
 	body := renderSupersessionComment(event, closer, notice)
+	if !ownPR {
+		// Content-aware gate on the real body: an identical notice already
+		// on this PR, or the same notice just sent to another PR, is held
+		// exactly like a notice that already stands.
+		if d := c.WritebackAllowed(prRepo, c.sentinelWritebackItem(pr), writeback.KindSupersessionNotice, body); !d.Allowed {
+			return c.releaseStaleSupersessionPark(ctx, prRepo, prOwner, prRepoName, pr)
+		}
+	}
 	changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
 	if err != nil {
 		return event, "", err
