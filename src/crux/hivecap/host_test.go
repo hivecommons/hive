@@ -122,11 +122,11 @@ func TestInferenceRoutesPushAndClear(t *testing.T) {
 				got, ok := h.route("a")
 				return ok && got == callback.InferenceRoute{Backend: "litellm", Model: "gpt"}
 			})
-			if n, err := r.Pending(); n != 0 || err != nil {
-				t.Fatalf("Pending = %d, %v", n, err)
-			}
+			// hive sees the route before the worker records the ack.
+			waitFor(t, "push acknowledged", func() bool { n, err := r.Pending(); return n == 0 && err == nil })
 			r.Clear("a")
 			waitFor(t, "route cleared", func() bool { _, ok := h.route("a"); return !ok })
+			waitFor(t, "clear acknowledged", func() bool { n, _ := r.Pending(); return n == 0 })
 			r.mu.Lock()
 			_, kept := r.desired["a"]
 			r.mu.Unlock()
