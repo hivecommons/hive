@@ -1663,6 +1663,11 @@ func mentionLogins(logins []string) string {
 	return strings.Join(out[:len(out)-1], ", ") + " and " + out[len(out)-1]
 }
 
+// stageTrackerTriageNeededCaption is the caption of every reporter-trust
+// held issue — 015 and a 000-new hold alike. The chevron already reads
+// "Triage needed", so the caption carries only the maintainer's two moves.
+const stageTrackerTriageNeededCaption = "Triage needed — accept or close"
+
 func joinClause(head, clause string) string {
 	if clause == "" {
 		return head
@@ -1695,7 +1700,9 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.Actionable:
 		return joinClause("Triaged and eligible; waiting for the scanner to pick it up", clause), "scanner"
 	case stagelabels.TriageNeeded:
-		return joinClause("Actionable, but no maintainer has looked at it yet; waiting for triage", clause), "maintainer"
+		// The lane reason ("triage needed: carries needs-triage") would say
+		// triage a third time after the chevron word; the caption is the ask.
+		return stageTrackerTriageNeededCaption, "maintainer"
 	case stagelabels.PossiblyExisting:
 		return joinClause("Prior art found; the author must confirm the gap (`/hive decision proceed — <gap>`) or close it (`/hive decision exists`)", clause), strings.TrimPrefix(who, "@")
 	case stagelabels.Claimed:

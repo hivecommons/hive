@@ -41,7 +41,7 @@ const labelOf = h => { const m = h.match(/>([^<]*)<\/button>/); return m ? m[1] 
 
 // The screenshot row: a 000-new issue the reporter-trust gate holds.
 const fresh = { repo: 'o/r', kind: 'issue', number: 15437, title: 'Monitoring component', url: 'https://github.com/o/r/issues/15437', stage: 0, stage_slug: '000-new', actor: 'maintainer', modifiers: [], bucket: 'reporter_triage',
-  caption: 'New · waiting for a maintainer\'s triage (add ' + BT + 'triage/accepted' + BT + '); the hive\'s next pass in 10m',
+  caption: 'Triage needed — accept or close',
   new: { next_mover: 'maintainer', next_pass_at: '2026-10-29T18:10:00Z', gates: [{ name: 'triage', state: 'next' }, { name: 'actionable', state: 'later' }, { name: 'claimed', state: 'later' }] } };
 let lead = stageTrackerLeadAction(fresh, ctx);
 assert.strictEqual(lead.id, 'accept-triage');
