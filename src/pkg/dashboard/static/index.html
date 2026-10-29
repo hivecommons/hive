@@ -2606,10 +2606,10 @@
     .repo-pause-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
     /* Per-repo write-back mode (writeback.per_repo): chip shows the effective
        mode, the select beside it edits the same map the Settings textarea does. */
-    .repo-writeback-chip { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); color: var(--muted); cursor: help; }
+    .repo-writeback-chip { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 600; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); color: var(--muted); cursor: help; }
     .repo-writeback-chip[data-mode="off"], .repo-writeback-chip[data-mode="issues-only"] { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 45%, transparent); }
     .repo-writeback-chip[data-mode="full"] { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 45%, transparent); }
-    .repo-writeback-select { flex: 0 0 auto; font-size: 0.66rem; line-height: 1; padding: 2px 4px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-1); color: var(--fg); opacity: 0.55; }
+    .repo-writeback-select { flex: 0 0 auto; font-size: var(--fs-xs); line-height: 1; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-1); color: var(--fg); opacity: 0.55; }
     .repo-card:hover .repo-writeback-select, .repo-writeback-select:focus { opacity: 1; }
     .repo-writeback-select[data-busy="1"] { opacity: 0.5; cursor: default; }
     .repo-automerge-switch[data-busy="1"] { opacity: 0.5; cursor: default; }
@@ -54810,7 +54810,7 @@ function burnAreaChart() {
         if (!data.enabled) { host.innerHTML = '<div class="qa-note">Gate not active in this process.</div>'; return; }
         if (items.length === 0) { host.innerHTML = '<div class="qa-note">Nothing suppressed in the last 24 hours.</div>'; return; }
         const rows = items.map(it => `<tr>
-            <td>${esc(it.at ? new Date(it.at).toLocaleString() : '')}</td>
+            <td>${esc(it.at ? formatDashboardDateTime(it.at) : '')}</td>
             <td>${esc(it.repo || '')}${it.is_pr ? '#' : ' issue #'}${esc(String(it.number || ''))}</td>
             <td><code>${esc(it.kind || '')}</code></td>
             <td>${esc(it.reason || '')}</td>
@@ -54832,7 +54832,7 @@ function burnAreaChart() {
         const items = (data.findings || []).slice(0, 100);
         if (items.length === 0) { host.innerHTML = '<div class="qa-note">No sentinel findings since this process started.</div>'; return; }
         const rows = items.map(it => `<tr>
-            <td>${esc(it.at ? new Date(it.at).toLocaleString() : '')}</td>
+            <td>${esc(it.at ? formatDashboardDateTime(it.at) : '')}</td>
             <td>${esc(it.repo || '')}#${esc(String(it.number || ''))}</td>
             <td>${esc(it.author || '')}</td>
             <td>${esc((it.rules || []).join(', '))}</td>

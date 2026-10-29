@@ -67,3 +67,4 @@ github.com/hivecommons/hive/pkg/tokens
 github.com/hivecommons/hive/pkg/turn
 github.com/hivecommons/hive/pkg/upstreamwatch
 github.com/hivecommons/hive/pkg/worksource
+github.com/hivecommons/hive/pkg/writeback
