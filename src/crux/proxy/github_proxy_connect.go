@@ -561,6 +561,11 @@ const timeoutWarnWindow = 5 * time.Minute
 // repeats within the window drop to Debug. Transient upstream timeouts are
 // expected and must not flood WARN consumers such as the fleet self-reporter.
 func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
+	// Non-timeout errors (EOF, reset) log nothing, so they must not consume
+	// the WARN window ahead of the next real timeout.
+	if !isTimeoutError(err) {
+		return
+	}
 	level := slog.LevelDebug
 	now := time.Now()
 	p.timeoutWarnMu.Lock()
