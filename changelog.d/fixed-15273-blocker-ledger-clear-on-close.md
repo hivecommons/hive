@@ -1,0 +1,1 @@
+- An `issues: closed` webhook now clears the closed issue's blocker ledger entry, so `capabilities.blocked_items` no longer counts closed issues ([#15273](https://github.com/hivecommons/hive/issues/15273)).
