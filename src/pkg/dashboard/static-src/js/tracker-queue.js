@@ -42,7 +42,7 @@
         const place = stageTrackerTrainPlace(t.mt);
         const stalled = stageTrackerTrainStalledWord(t.mt);
         const base = String(t.mt.id || '').split('#')[0] || 'base';
-        const title = `<div class="ham-queue-train${stalled ? ' ham-queue-stalled' : ''}">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(String(t.repo || ''))} → ${esc(base)} · ${esc(String(place.len))} PRs · head #${esc(String(place.head))}${stalled ? ' · ' + esc(stalled.replace(/^Merge queue stalled · /, 'stalled: ')) : ''}</div>`;
+        const title = `<div class="ham-queue-train${stalled ? ' ham-queue-stalled' : ''}">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(String(t.repo || ''))} → ${esc(base)} · ${esc(String(place.len))} PRs · head #${esc(String(place.head))}${stalled ? ' · ' + esc(stalled.replace(STAGE_TRACKER_TRAIN_STALLED_LEAD, 'stalled: ')) : ''}</div>`;
         const rows = t.members.map(it => {
           const mt = it.merge_train || {};
           const n = esc(String(it.number || ''));

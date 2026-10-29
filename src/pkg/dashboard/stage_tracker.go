@@ -2335,7 +2335,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			if w, ok := stageTrackerWorkerOn(workers, repoName, pr.Number); ok {
 				worker = &w
 			}
-			it.Claimant = stageTrackerPRClaimant(stageTrackerClaimInputs{Worker: worker, Since: it.StageSince, Labels: pr.Labels, Author: it.Author, AuthorKind: it.AuthorKind})
+			it.Claimant = stageTrackerPRClaimant(stageTrackerClaimInputs{Ledger: s.stageTrackerLedgerClaim(repoName, pr.Number), HiveID: status.HiveID,
+				Worker: worker, Since: it.StageSince, Labels: pr.Labels, Author: it.Author, AuthorKind: it.AuthorKind, HiveAgent: pr.HiveAgent})
 		}
 		add(it)
 	}

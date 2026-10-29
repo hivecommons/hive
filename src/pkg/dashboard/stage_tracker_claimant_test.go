@@ -72,6 +72,15 @@ func TestStageTrackerPRClaimant(t *testing.T) {
 		{"human PR", stageTrackerClaimInputs{Author: "alice", AuthorKind: authorKindHuman, Since: &since},
 			&StageTrackerClaimant{Kind: claimantKindPerson, Login: "alice", Since: &since, Source: claimantSourceAuthor}},
 		{"foreign bot", stageTrackerClaimInputs{Author: "dependabot[bot]", AuthorKind: "", Since: &since}, nil},
+		// PR in progress rows (hivecommons/hive#15541): the attribution
+		// trailer names the agent; a live ledger claim beats the author.
+		{"hive PR names its attribution trailer agent", stageTrackerClaimInputs{Author: "hive-bot[bot]", AuthorKind: authorKindHive, HiveAgent: "scanner", Labels: []string{"agent/quality"}, Since: &since},
+			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "scanner", Since: &since, Source: claimantSourceAuthor}},
+		{"ledger claim on the PR beats the author", stageTrackerClaimInputs{Ledger: &claims.Claim{Holder: "bob", Kind: claims.KindContributor, ClaimedAt: kickedAt}, Author: "hive-bot[bot]", AuthorKind: authorKindHive, HiveAgent: "scanner", Since: &since},
+			&StageTrackerClaimant{Kind: claimantKindClanker, Login: "bob", Since: &kickedAt, Source: claimantSourceClaimLedger}},
+		{"ledger agent from another hive on the PR", stageTrackerClaimInputs{Ledger: &claims.Claim{Holder: "fixer", Kind: claims.KindAgent, Hive: "hosted-ibm-alchemy", ClaimedAt: kickedAt}, HiveID: "hosted-ibm-main", Author: "alice", AuthorKind: authorKindHuman, Since: &since},
+			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "fixer", Hive: "hosted-ibm-alchemy", Since: &kickedAt, Source: claimantSourceClaimLedger}},
+		{"unknown author kind with no claim", stageTrackerClaimInputs{Author: "someone", Since: &since}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,7 +99,9 @@ func TestStageTrackerClaimantStage(t *testing.T) {
 	}{
 		{"issue", trackerNumberClaimed, true}, {"issue", trackerNumberPRInProgress, true}, {"issue", trackerNumberActionable, false}, {"issue", trackerNumberCoveredByPR, false},
 		{"pr", trackerNumberReviewPending, true}, {"pr", trackerNumberFixing, true}, {"pr", trackerNumberReturned, true}, {"pr", trackerNumberAdopted, true},
-		{"pr", trackerNumberAwaitingMerge, false}, {"pr", trackerNumberNeedsDecision, false}, {"pr", 0, false},
+		{"pr", trackerNumberAwaitingMerge, false}, {"pr", trackerNumberNeedsDecision, false},
+		// A PR before classification or at 030/040 lights "PR in progress" under its issue and names its holder (hivecommons/hive#15541).
+		{"pr", 0, true}, {"pr", trackerNumberPRInProgress, true}, {"pr", trackerNumberCoveredByPR, true},
 	} {
 		if got := stageTrackerClaimantStage(tc.kind, tc.stage); got != tc.want {
 			t.Errorf("%s stage %d: got %v, want %v", tc.kind, tc.stage, got, tc.want)
@@ -162,8 +173,33 @@ assert.ok(!/hive-agent|kick-history|claim-comment|unknown/i.test(text(row)), 'no
 
 // A returned-to-contributor PR names its author on the detour word.
 const pr = stageTrackerRowHtml({ repo: 'hivecommons/hive', number: 8, kind: 'pr', title: 'docs', url: 'https://x/8', stage: 72, stage_since: since, caption: 'Returned', author: 'bob', author_kind: 'clanker', stage_actor: { kind: 'clanker', login: 'bob', why: '@bob must act' }, claimant: { kind: 'clanker', login: 'bob', since, source: 'author' } }, stages, ctx);
-assert.ok(litWord(pr).endsWith("· @bob's clanker"), litWord(pr));
+assert.ok(litWord(pr).endsWith("@bob's clanker"), litWord(pr));
+assert.strictEqual((litWord(pr).match(/@bob's clanker/g) || []).length, 1, 'the detour word names the holder once: ' + litWord(pr));
 assert.ok(heldLine(pr).startsWith("Held by: @bob's clanker since 3h ago (PR author)"), litTitle(pr));
+
+// PR in progress (hivecommons/hive#15541): an unclassified PR under its
+// issue names who is working it, with the holder's own kind icon, exactly
+// like Claimed; nobody known keeps the bare word.
+const subRow = (prExtra) => stageTrackerRowHtml(issue(10, { stage: 40, caption: 'Covered by PR', stage_actor: { kind: 'none', why: 'its PR' }, linked_prs: [
+  Object.assign({ number: 101, url: 'https://x/101', title: 'fix', stage: 0, stage_since: since, caption: 'PR in progress', stage_actor: { kind: 'none', why: '' } }, prExtra),
+] }), stages, ctx);
+let sub = subRow({ author: 'hive-bot', author_kind: 'hive', claimant: { kind: 'hive-agent', agent: 'scanner', since, source: 'author' } });
+assert.strictEqual(litWord(sub), 'PR in progress · scanner', litWord(sub));
+assert.ok(heldLine(sub).startsWith('Held by: hive agent scanner since 3h ago (PR author)'), litTitle(sub));
+assert.ok(strip(sub).includes('class="ham-ico ham-actor-ico"'), 'the holder draws an icon when the next mover is nobody: ' + strip(sub));
+assert.ok(/ham-seg-t ham-has-holder/.test(strip(sub)), 'the word carries the one-line holder class: ' + strip(sub));
+const icoOf = (html) => { const m = /<li class="ham-seg active[^"]*"[^>]*>([\s\S]*?)<\/li>/.exec(strip(html)); return m ? m[1] : ''; };
+const clankerRow = subRow({ author: 'bob', author_kind: 'clanker', claimant: { kind: 'clanker', login: 'bob', since, source: 'author' } });
+const humanRow = subRow({ author: 'alice', author_kind: 'human', claimant: { kind: 'person', login: 'alice', since, source: 'author' } });
+assert.strictEqual(litWord(clankerRow), "PR in progress · @bob's clanker", litWord(clankerRow));
+assert.strictEqual(litWord(humanRow), 'PR in progress · @alice', litWord(humanRow));
+const icoOnly = (html) => icoOf(html).replace(/<span class="ham-seg-t[\s\S]*?<\/span>/, '');
+assert.ok(icoOnly(clankerRow).includes('ham-actor-ico') && icoOnly(humanRow).includes('ham-actor-ico'), 'all three holder kinds draw an icon');
+assert.ok(icoOnly(sub) !== icoOnly(clankerRow) && icoOnly(clankerRow) !== icoOnly(humanRow), 'hive, clanker and person icons differ');
+sub = subRow({ author: 'dependabot[bot]', author_kind: 'bot' });
+assert.strictEqual(litWord(sub), 'PR in progress', 'nobody known keeps the bare word: ' + litWord(sub));
+assert.ok(!strip(sub).includes('ham-actor-ico'), 'no icon without a holder');
+assert.ok(!strip(sub).includes('ham-has-holder'), 'no holder class without a holder');
 
 // The covering-PR sub-row carries its PR's holder.
 const covered = stageTrackerRowHtml(issue(9, { stage: 40, caption: 'Covered by PR', stage_actor: { kind: 'hive', why: 'its PR' }, linked_prs: [
