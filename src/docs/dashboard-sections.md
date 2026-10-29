@@ -296,6 +296,8 @@ How much text the AI models read and wrote for Hive recently, broken down by mod
 
 ## Cost
 
+What Hive's use of AI models would cost at public per-token list prices; an estimate, not a bill.
+
 Read this as a **list-price estimate, not a bill**. Copilot and Claude subscription seats and self-hosted inference are not billed per token, so actual spend can be much lower.
 
 ### Read the cost card
