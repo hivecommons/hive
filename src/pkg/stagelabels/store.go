@@ -100,6 +100,13 @@ type Record struct {
 	AdoptCopyRedHeads     []string  `json:"adopt_copy_red_heads,omitempty"`
 	AdoptReopenedAt       time.Time `json:"adopt_reopened_at,omitempty"`
 	AdoptReopenedFrom     int       `json:"adopt_reopened_from,omitempty"`
+	// AdoptCopyConflicting is set when the hive's copy (AdoptedBy) opened
+	// conflicting with its base because the contributor head could not be
+	// replayed onto it and the fixer's rebase-resolve episode owns the
+	// conflict (hivecommons/hive#15307); cleared when the copy reads
+	// mergeable again. The tracker row reads "Adopting · fixer resolving
+	// conflicts" while it is set.
+	AdoptCopyConflicting bool `json:"adopt_copy_conflicting,omitempty"`
 	// SupersederMergedNotedHead is the original's head for which the
 	// "superseder merged but this PR has moved on" note was posted, so a
 	// diverged original is told once per head rather than every poll.
@@ -1151,6 +1158,7 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, by, now, now
 	r.AdoptMode = AdoptModeSupersede
+	r.AdoptCopyConflicting = false
 	r.AdoptBlockedHead, r.AdoptBlockedBy, r.AdoptBlockedAt = "", "", time.Time{}
 	r.AdoptForcedBy, r.AdoptForcedAt = "", time.Time{}
 	r.RerouteTo, r.RerouteBy, r.RerouteAt, r.RerouteReason, r.RerouteHead = "", "", time.Time{}, "", ""
@@ -1533,6 +1541,22 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptOrphanedBy, r.AdoptOrphanedAt, r.AdoptOrphanCount = 0, time.Time{}, 0
 	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
 	r.SupersededClosedFirst, r.AdoptCopyRedHeads, r.AdoptReopenedFrom = false, nil, 0
+	r.AdoptCopyConflicting = false
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NoteAdoptCopyConflicting records whether the hive's copy of this
+// adoption is conflicting with its base and in the fixer's hands
+// (hivecommons/hive#15307). No-op when nothing changes.
+func (s *Store) NoteAdoptCopyConflicting(key string, conflicting bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptCopyConflicting == conflicting {
+		return
+	}
+	r.AdoptCopyConflicting = conflicting
 	s.items[key] = r
 	s.dirty = true
 }

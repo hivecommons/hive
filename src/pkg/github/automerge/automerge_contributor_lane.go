@@ -527,6 +527,9 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 	// marker or registry tier admits a FIRST_TIME_CONTRIBUTOR, and only
 	// admitContributor can tell. See trySweepContributorLanePR.
 	labels := labelNames(pr.Labels)
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), labels); reason != "" {
+		return reason
+	}
 	// trusted=false so the sentinel label blocks outright: a contributor PR
 	// gets the label, not the trusted-author courtesy comment.
 	if blocked := c.labelBlockReason(labels, false); blocked != "" {

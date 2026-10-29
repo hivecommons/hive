@@ -119,6 +119,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			GraceOffline:              stage.EffectiveContributorGraceOffline(),
 			AdoptAfterOffline:         stage.Adoption.EffectiveAfterOffline(),
 			AdoptAfterUnregistered:    stage.Adoption.EffectiveAfterUnregistered(),
+			AdoptOfflineGrace:         stage.Adoption.EffectiveOfflineGrace(),
 			AdoptInPlace:              stage.Adoption.InPlaceEnabled(),
 			AdoptionStrictAttribution: stage.Adoption.StrictAttributionEnabled(),
 			AdoptionAutoMerge:         stage.Adoption.AutoMergeEnabled(),
