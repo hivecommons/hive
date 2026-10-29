@@ -1614,8 +1614,13 @@
        compose. The colour tokens --cue-state / --cue-work / --cue-decision
        are declared once on .ham-row in the needs-human popover block
        below; this block only adds the motion and marks. */
-    .cue-working .ham-seg.active:not(.cap) .ham-active-ico, .cue-spin { animation: cue-spin 2.4s linear infinite; }
-    .cue-acting-spin { color: var(--cue-work); }
+    /* Owner (2026-10-28): "i dont like the status symbols rotating —
+       remove them from all chevrons". The working glyph and the gate's
+       sweep glyph stay as static icons (their tooltips still say what the
+       hive is doing); nothing on a chevron or pill rotates. The classes
+       stay so the sibling cue code and tests compose on them. */
+    .cue-working .ham-seg.active:not(.cap) .ham-active-ico, .cue-spin { animation: none; }
+    .cue-acting-spin { color: var(--cue-work); animation: none; border-color: currentColor; }
     .cue-acting > .ham-strip-row .ham-seg.active { background-image: repeating-linear-gradient(-45deg, transparent 0 6px, color-mix(in srgb, var(--surface-0) 28%, transparent) 6px 12px); background-size: 34px 100%; animation: cue-acting-stripes 1.1s linear infinite; }
     .cue-acting-cap { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
     .cue-acting-spin { width: 10px; height: 10px; margin-right: 0; }
@@ -1625,7 +1630,6 @@
     .cue-event.cue-event-fading { opacity: 0.55; }
     .cue-setback .cue-event-who { color: var(--status-error); }
     .cue-merged .cue-event-who { color: var(--green); }
-    @keyframes cue-spin { to { transform: rotate(360deg); } }
     @keyframes cue-acting-stripes { to { background-position: 34px 0; } }
     @keyframes cue-event-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
     /* Merged: the row is pinned for a moment, its ✓ cell glows, a small

@@ -39,13 +39,16 @@ func stageTrackerCuesJS(t *testing.T, html string) string {
 
 // TestStageTrackerCuesWiring: the shared cue vocabulary the three Activity
 // Monitor PRs compose on (owner, 2026-10-28) is in the page — class names,
-// the one spin keyframe, the merged counter chip — and the CSS is tokens
-// only, with the reduced-motion fallback stopping every animation.
+// the merged counter chip — and the CSS is tokens only, with the
+// reduced-motion fallback stopping every animation. No chevron glyph
+// rotates: the owner removed the spinning status symbols
+// (hivecommons/hive#15187).
 func TestStageTrackerCuesWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		`/* ---- tracker-cues: the Activity Monitor's shared cue vocabulary`,
-		`.cue-working .ham-seg.active:not(.cap) .ham-active-ico, .cue-spin { animation: cue-spin`,
+		`.cue-working .ham-seg.active:not(.cap) .ham-active-ico, .cue-spin { animation: none; }`,
+		`.cue-acting-spin { color: var(--cue-work); animation: none; border-color: currentColor; }`,
 		`.cue-acting > .ham-strip-row .ham-seg.active {`,
 		`.cue-event {`, `.cue-setback .cue-event-who {`, `.cue-merged .cue-event-who {`,
 		`.cue-merged .ham-seg.cap {`, `.cue-token {`, `.ham-merged-count {`, `.ham-merged-count.cue-tick {`,
