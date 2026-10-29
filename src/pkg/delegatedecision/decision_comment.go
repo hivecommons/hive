@@ -64,6 +64,9 @@ func ExpectedEffect(d Decision, kind Kind) Effect {
 // ActionPlain is the plain-words name of what d does ("close this PR and
 // open a fresh hive-authored PR with the same commits").
 func ActionPlain(d Decision) string {
+	if d.Rule == "return-to-author" {
+		return "told the author what to change"
+	}
 	switch d.Verdict {
 	case VerdictApprove, VerdictQuarantineFlaky, VerdictAcceptRatchet, VerdictAcceptProposal, VerdictDirection,
 		VerdictCloseDuplicate, VerdictCloseSuperseded, VerdictOwnerOnly, VerdictRecommendOnly, VerdictRefused:

@@ -159,7 +159,7 @@ func TestGatherDelegatedPresenceIgnoresParkCaption(t *testing.T) {
 				case strings.HasSuffix(r.URL.Path, "/issues/8"):
 					_, _ = w.Write([]byte(`{"number":8,"state":"open","pull_request":{},"user":{"login":"alice"}}`))
 				case strings.HasSuffix(r.URL.Path, "/pulls/8"):
-					_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "user": map[string]string{"login": "alice"}, "created_at": time.Now().Add(-time.Hour), "mergeable_state": "dirty"})
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "user": map[string]string{"login": "alice"}, "created_at": time.Now().Add(-time.Hour), "body": "— hive: backend=codex", "mergeable_state": "dirty"})
 				case strings.Contains(r.URL.Path, "/permission"):
 					_, _ = w.Write([]byte(`{"permission":"read"}`))
 				default:

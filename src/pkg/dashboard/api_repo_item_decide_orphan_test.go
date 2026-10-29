@@ -23,7 +23,7 @@ func orphanPriorDecision() string {
 // The recorded contributor-offline decision has a closed, unmerged copy
 // behind it: not "no change" but a fresh adoption request, said plainly.
 func TestDelegatedDecisionOrphanedAdoptionReadopts(t *testing.T) {
-	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", supersederState: "closed"}
+	mock := &repoItemDecisionMock{prForeign: true, prBody: "— hive: backend=codex", prRedCI: true, prMergeState: "blocked", supersederState: "closed"}
 	mock.priorComments = []string{orphanPriorDecision(), orphanAdoptedMarker}
 	srv := newDelegatedServer(t, mock)
 	w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"contributor-lane:decision-requested","caption":"Needs human decision"}`, nil)
@@ -62,7 +62,7 @@ func TestDelegatedDecisionAdoptionWithLiveCopyIsNoop(t *testing.T) {
 		merged bool
 	}{{"open", "open", false}, {"merged", "closed", true}} {
 		t.Run(tc.name, func(t *testing.T) {
-			mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", supersederState: tc.state, supersederMerged: tc.merged}
+			mock := &repoItemDecisionMock{prForeign: true, prBody: "— hive: backend=codex", prRedCI: true, prMergeState: "blocked", supersederState: tc.state, supersederMerged: tc.merged}
 			mock.priorComments = []string{orphanPriorDecision(), orphanAdoptedMarker}
 			srv := newDelegatedServer(t, mock)
 			w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"contributor-lane:decision-requested"}`, nil)
@@ -83,7 +83,7 @@ func TestDelegatedDecisionAdoptionWithLiveCopyIsNoop(t *testing.T) {
 // The store says the copies were closed twice within the hour: no third
 // copy; a recommendation names the loop and leaves the park.
 func TestDelegatedDecisionOrphanedAdoptionLoopedRecommends(t *testing.T) {
-	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", supersederState: "closed"}
+	mock := &repoItemDecisionMock{prForeign: true, prBody: "— hive: backend=codex", prRedCI: true, prMergeState: "blocked", supersederState: "closed"}
 	mock.priorComments = []string{orphanPriorDecision(), orphanAdoptedMarker}
 	srv := newDelegatedServer(t, mock)
 	store := stagelabels.NewStore("", nil)

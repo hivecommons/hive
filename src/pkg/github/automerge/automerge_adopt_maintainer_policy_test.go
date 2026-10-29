@@ -83,7 +83,7 @@ func TestMaintainerPolicyAdoptKeepsHumanRule(t *testing.T) {
 	h.clock.advance(3 * time.Hour)
 	h.observe(human("stage/071-needs-author", "role/contributor", "author/human"), "check-failing:unit")
 	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
-	if rec.AdoptedHead != "" || rec.NudgeCount != 0 || len(adoptionComments(h.api)) != 0 {
+	if rec.AdoptedHead != "" || rec.NudgeCount != 1 || rec.NudgeOnline || len(h.sink.nudges) != 0 || len(adoptionComments(h.api)) != 0 {
 		t.Fatalf("human-authored PR adopted: %+v", rec)
 	}
 }

@@ -16921,6 +16921,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // fails when they drift). Rule slugs are never shown bare: use
     // stageTrackerPlainWords(slug). hivecommons/hive#14822.
     const STAGE_TRACKER_DECISION_GLOSSARY = {
+      "rail-human-author": {"kind": "rule", "plain": "this author keeps their own PR", "detail": "Human and hive-owner PRs cannot be adopted or superseded, even when a delegate proposes adoption."},
+      "human-reviewed": {"kind": "rule", "plain": "the author's reviewed head is ready", "detail": "The review passed on this head, CI is green and the branch is mergeable, so the author's own PR is approved for admission."},
+      "mergeability-pending": {"kind": "rule", "plain": "GitHub has not confirmed mergeability", "detail": "The hive holds this PR until GitHub confirms that the current head can merge."},
+      "return-to-author": {"kind": "rule", "plain": "the human author needs to answer the review or fix the branch", "detail": "The PR stays with its human author at Needs author; the hive sends the reviewer's question and any needed fixes rather than adopting it."},
       "accept-proposal": {"kind": "action", "plain": "accepted the proposal as written", "detail": "The proposal is accepted as written with its stated defaults."},
       "accept-ratchet": {"kind": "action", "plain": "accepted as a ratchet", "detail": "Accepted as a ratchet: baseline recorded now, failures only on increases."},
       "adopt": {"kind": "action", "plain": "hive takes over finishing this PR", "detail": "Adopt means the hive takes over finishing this PR: it rebases, fixes CI and merges it, keeping the author's commits and sign-off."},

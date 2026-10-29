@@ -146,7 +146,9 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 	case d.Verdict == delegatedecision.VerdictDirection:
 		out.Action = rowActionDirected
 		out.Outcome = "Direction recorded" + ruleTag + ": " + strings.TrimSuffix(strings.TrimSpace(d.Text), ".") + "."
-		if in.Kind == delegatedecision.KindPR {
+		if d.Rule == "return-to-author" {
+			out.Next = "The author answers the reviewer or pushes a new head; the row moves when it lands."
+		} else if in.Kind == delegatedecision.KindPR {
 			out.Next = "The author agent pushes a new head; the row moves when it lands."
 		} else {
 			out.Next = "The hive carries on with that direction; nothing is merged."

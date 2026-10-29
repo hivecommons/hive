@@ -17,6 +17,8 @@ github.com/hivecommons/hive/crux/watchdog
 github.com/hivecommons/hive/pkg/acmmadvisor
 github.com/hivecommons/hive/pkg/advisory
 github.com/hivecommons/hive/pkg/agentaudit
+# Shared author classification keeps delegated adoption aligned with the stage engine.
+github.com/hivecommons/hive/pkg/authorkind
 github.com/hivecommons/hive/pkg/beads
 github.com/hivecommons/hive/pkg/celtrigger
 github.com/hivecommons/hive/pkg/claims

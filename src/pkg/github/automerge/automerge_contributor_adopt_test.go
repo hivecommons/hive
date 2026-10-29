@@ -1990,7 +1990,8 @@ func TestAlreadyAdoptedInPlaceDCORehomeCarriesDiffFence(t *testing.T) {
 
 // The 072 interrupt is for author/clanker only: a human's PR (no hive
 // trailer, no profile) sits at 071 needs-author and a hive-authored PR (the
-// App's own login) at 070 fixing, with neither nudge nor adoption.
+// App's own login) at 070 fixing, with neither relay nudge nor adoption.
+// The human receives one explanatory comment at 071.
 func TestAdoptionAndNudgeOnlyForClankers(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -2015,7 +2016,14 @@ func TestAdoptionAndNudgeOnlyForClankers(t *testing.T) {
 			if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, tc.stage) || strings.Contains(added, "stage/072-returned-to-contributor") {
 				t.Fatalf("%s: %v", tc.stage, h.api.added)
 			}
-			if len(h.api.comments) != 0 || len(h.sink.nudges) != 0 {
+			wantComments := 0
+			if tc.name == "human" {
+				wantComments = 1
+				if len(h.api.comments) != 1 || !strings.HasPrefix(h.api.comments[0], TrustedHuman071MarkerPrefix) {
+					t.Fatalf("missing human author note: %v", h.api.comments)
+				}
+			}
+			if len(h.api.comments) != wantComments || len(h.sink.nudges) != 0 {
 				t.Fatalf("interrupt fired for %s author: comments=%v nudges=%d", tc.name, h.api.comments, len(h.sink.nudges))
 			}
 			h.api.reset()
