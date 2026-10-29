@@ -17,7 +17,7 @@ func TestStageTrackerLinkMemoSharesLookupAndExcludesCarryingPR(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/graphql") {
 			closerReads.Add(1)
-			fmt.Fprint(w, `{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[{"number":70,"merged":true,"mergedAt":"2026-10-27T12:00:00Z"}]}}}}}`)
+			fmt.Fprint(w, `{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[{"number":70,"url":"https://github.com/hivecommons/hive/pull/70","merged":true,"mergedAt":"2026-10-27T12:00:00Z"}]}}}}}`)
 			return
 		}
 		gets.Add(1)
