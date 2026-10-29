@@ -519,7 +519,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if issue7.Stage != 95 || !issue7.Mirrored || issue7.LinkedPR != 102 || issue7.Lane != laneIssue || issue7.AuthorKind != authorKindHuman {
 		t.Fatalf("issue7 = %+v", issue7)
 	}
-	if issue7.Caption != "Covered by PR #102 — soaking on the PR side" {
+	if issue7.Caption != "Covered by PR #102 — "+pr102.Caption {
 		t.Fatalf("issue7 caption = %q", issue7.Caption)
 	}
 	// The covering PR is resolved onto the issue with what its sub-row

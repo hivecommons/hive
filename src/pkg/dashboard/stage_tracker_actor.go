@@ -340,7 +340,7 @@ func stageTrackerResolveActors(items []StageTrackerItem) {
 		if it.StageActor == nil || slices.Contains(it.Modifiers, modHold) {
 			continue
 		}
-		rides := it.Mirrored || it.Stage == trackerNumberPRInProgress || it.Stage == trackerNumberCoveredByPR
+		rides := it.Mirrored || it.Stage <= trackerNumberCoveredByPR
 		if !rides || len(it.LinkedPRs) == 0 {
 			continue
 		}
