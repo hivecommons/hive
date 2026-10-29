@@ -475,11 +475,15 @@ type StageTrackerItem struct {
 	// orphan (hivecommons/hive#13544).
 	LinkedIssues []StageTrackerLinkedIssue `json:"linked_issues,omitempty"`
 	// ClosedIssue is set on a PR that stands as its own row because every
-	// issue it closes is already closed: the row is anchored on the PR (its
-	// number and title lead, its stage drives the strip, its timestamps
-	// sort it) and the closed issue is a secondary `closes #N · closed`
-	// chip. StateReason "not_planned" adds an "issue closed (not planned)"
-	// chip so the reader can tell the PR may be moot (hivecommons/hive#14655).
+	// issue it closes is already closed: the PR's stage drives the strip
+	// and its timestamps sort it, and the row sinks to the bottom of its
+	// column (hivecommons/hive#14655). The closed issue still leads the
+	// row in the issue slot — struck through, with a `closed` chip, or
+	// `closed by #N` when ClosedBy names the merged PR that closed it
+	// (hivecommons/hive#15232) — exactly as a soft-linked closed issue
+	// does; the PR never takes the issue slot itself. StateReason
+	// "not_planned" adds an "issue closed (not planned)" chip so the reader
+	// can tell the PR may be moot.
 	ClosedIssue *StageTrackerLinkedIssue `json:"closed_issue,omitempty"`
 	// LastOperatorAction is the newest owner row action recorded for the
 	// item (approve, give-direction, hold, let-hive-decide, …) with what
@@ -504,6 +508,13 @@ type StageTrackerLinkedIssue struct {
 	// StateReason is GitHub's stateReason for a closed issue, lower-cased
 	// ("completed", "not_planned", "duplicate"); "" when unknown.
 	StateReason string `json:"state_reason,omitempty"`
+	// ClosedBy is, on a closed issue, the number of the merged pull request
+	// in the same repo that closed it when that PR is not the one carrying
+	// this link (the merged ledger's record of what it was nested under);
+	// 0 when unknown. The row's chip reads `closed by #N` so a PR still
+	// open against an issue another PR already delivered reads as the
+	// duplicate it is (hivecommons/hive#15232).
+	ClosedBy int `json:"closed_by,omitempty"`
 	// Listed is true when the issue has its own row in this response; the
 	// PR is then nested under it and never drawn as a top-level row.
 	Listed bool `json:"listed,omitempty"`
@@ -2040,6 +2051,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	s.applyOperatorActions(resp.Items, now)
 	resp.NeedsHuman, resp.OnHold = stageTrackerHumanCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
+	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
@@ -2831,10 +2843,12 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 // row re-anchors around, or nil. A PR nested under a listed issue, a PR
 // with an open closing link, and a PR whose links are all soft (`Refs #N`)
 // or of unknown state keep the issue slot as is; only a PR whose every
-// closing link names a closed issue is drawn as the row's own headline,
-// with the first closed issue as its secondary chip
-// (hivecommons/hive#14655). The PR's stage, modifiers and timestamps are
-// untouched: the issue closing is not a regression of the PR.
+// closing link names a closed issue is re-anchored: its own stage and
+// timestamps drive the row, which sinks in its column, and the first closed
+// issue is named in ClosedIssue (hivecommons/hive#14655). The closed issue
+// still leads the row in the issue slot (hivecommons/hive#15232). The PR's
+// stage, modifiers and timestamps are untouched: the issue closing is not a
+// regression of the PR.
 func stageTrackerClosedIssueAnchor(pr StageTrackerItem) *StageTrackerLinkedIssue {
 	if pr.Kind != "pr" || pr.NestedUnder != 0 {
 		return nil
@@ -2861,4 +2875,33 @@ func stageTrackerClosedIssueAnchor(pr StageTrackerItem) *StageTrackerLinkedIssue
 	}
 	out := *closed
 	return &out
+}
+
+// stageTrackerMarkClosedBy names, on every closed closing link a PR row
+// carries (and on its ClosedIssue), the merged pull request that closed
+// the issue when it is another PR: closedBy(repo, issue, exclude) is the
+// merged ledger's lookup (MergedLedger.ClosedBy), exclude the PR carrying
+// the link so a PR is never reported as closing its own issue. A link
+// whose closer is unknown, or whose issue is open, is left alone
+// (hivecommons/hive#15232).
+func stageTrackerMarkClosedBy(items []StageTrackerItem, closedBy func(repo string, issue, exclude int) int) {
+	if closedBy == nil {
+		return
+	}
+	for i := range items {
+		pr := &items[i]
+		if pr.Kind != "pr" {
+			continue
+		}
+		for j := range pr.LinkedIssues {
+			li := &pr.LinkedIssues[j]
+			if li.State != "closed" || li.ClosedBy != 0 {
+				continue
+			}
+			li.ClosedBy = closedBy(pr.Repo, li.Number, pr.Number)
+		}
+		if ci := pr.ClosedIssue; ci != nil && ci.State == "closed" && ci.ClosedBy == 0 {
+			ci.ClosedBy = closedBy(pr.Repo, ci.Number, pr.Number)
+		}
+	}
 }

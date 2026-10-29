@@ -194,6 +194,8 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerRowToolsHtml"),
 		jsFunc(t, html, "stageTrackerRowHtml"),
 		jsFunc(t, html, "stageTrackerPRIssueSlot"),
+		jsFunc(t, html, "stageTrackerClosedChipHtml"),
+		jsFunc(t, html, "stageTrackerItemURL"),
 		jsFunc(t, html, "stageTrackerItemKey"),
 		jsFunc(t, html, "stageTrackerMoveAttrs"),
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
@@ -629,6 +631,32 @@ assert.ok(!row.includes('ham-no-issue-t') && !/<a class="ham-ref"[^>]*title=/.te
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', url: 'https://x/13409' }] }, stages, ctx);
 assert.strictEqual(lead(row), '#13409 (closed issue) closed', lead(row));
 assert.ok(row.includes('<span class="ham-title ham-no-issue-t">(closed issue)</span> <span class="ham-badge ham-issue-closed-chip">closed</span>'), row);
+// hivecommons/hive#15232: a PR whose closing link names a closed issue
+// (closed_issue set by the server, hivecommons/hive#14655) still puts the
+// ISSUE in the left slot — struck through under its chip — and itself in the
+// PR column, exactly like the soft-linked case above; the PR never leads.
+// When the server names the merged PR that closed the issue, the chip reads
+// "closed by #N" and links to that PR.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 15191, kind: 'pr', title: 'Let hive decide', url: 'https://x/acme/console/pull/15191', stage: 90, author: 'clubanderson', author_kind: 'human',
+  linked_issues: [{ number: 15173, state: 'closed', state_reason: 'completed', title: 'Sweep merges approved PRs', url: 'https://x/acme/console/issues/15173', closed_by: 15181 }],
+  closed_issue: { number: 15173, state: 'closed', state_reason: 'completed', title: 'Sweep merges approved PRs', url: 'https://x/acme/console/issues/15173', closed_by: 15181 } }, stages, ctx);
+assert.strictEqual(lead(row), '#15173 Sweep merges approved PRs closed by #15181', 'closed issue leads the row, with its closer: ' + lead(row));
+assert.ok(/<div class="ham-head-main ham-issue-closed">/.test(row) && /<a class="ham-ref" href="https:\/\/x\/acme\/console\/issues\/15173"[^>]*>#15173<\/a>/.test(row), 'struck-through issue link in the slot: ' + row);
+assert.ok(/<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="https:\/\/x\/acme\/console\/pull\/15181"[^>]*>closed by #15181<\/a>/.test(row), 'closed-by chip links the merged PR: ' + row);
+assert.ok(!row.includes('ham-head-pr-anchor') && !row.includes('closes <s>'), 'the PR no longer takes the issue slot: ' + row);
+assert.ok(prCol(row).length === 1 && prCol(row)[0].includes('#15191') && prCol(row)[0].includes('Let hive decide'), 'PR sits in the PR column: ' + prCol(row));
+assert.ok(!row.includes('ham-closed-not-planned'), 'completed close: no moot chip');
+// Closer unknown: a plain "closed" chip; a not-planned close adds the moot chip.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 15191, kind: 'pr', title: 'Let hive decide', stage: 90,
+  linked_issues: [{ number: 15173, state: 'closed', state_reason: 'not_planned', title: 'Sweep', url: 'https://x/15173' }],
+  closed_issue: { number: 15173, state: 'closed', state_reason: 'not_planned', title: 'Sweep', url: 'https://x/15173' } }, stages, ctx);
+assert.strictEqual(lead(row), '#15173 Sweep closed issue closed (not planned)', lead(row));
+assert.ok(row.includes('<span class="ham-badge ham-issue-closed-chip">closed</span> <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned"'), row);
+// A closer equal to the row's own PR is not a duplicate: plain chip.
+assert.strictEqual(stageTrackerClosedChipHtml({ repo: 'acme/console', number: 500 }, { number: 496, closed_by: 500, title: 'T' }), '<span class="ham-badge ham-issue-closed-chip">closed</span>');
+assert.deepStrictEqual(stageTrackerPRIssueSlot({ number: 500, linked_issues: [{ number: 496, state: 'closed', title: 'C', url: 'u', closed_by: 501 }] }), { number: 496, title: 'C', url: 'u', closed: true, placeholder: '', closed_by: 501 }, 'closed_by rides the slot');
+assert.strictEqual(stageTrackerItemURL('acme/console', 501, 'pull', 'https://ghe.example/acme/console/pull/500'), 'https://ghe.example/acme/console/pull/501', 'closer URL follows the sibling host');
+assert.strictEqual(stageTrackerItemURL('acme/console', 501, 'pull', ''), 'https://github.com/acme/console/pull/501');
 // A linked issue of unknown state that is not listed still goes in the issue slot as a link, no chip; a missing title is said so.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 112, kind: 'pr', title: 'Fix', stage: 50, linked_issues: [{ number: 77, url: 'https://x/77' }] }, stages, ctx);
 assert.strictEqual(lead(row), '#77 (title unavailable)', lead(row));

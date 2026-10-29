@@ -347,6 +347,26 @@ func (l *MergedLedger) Summary(now time.Time, loc *time.Location) StageTrackerMe
 	return out
 }
 
+// ClosedBy returns the newest merged PR in repo recorded as nested under
+// issue, other than exclude (0 when none): the PR whose merge closed the
+// issue out from under an open PR that still names it (the tracker's
+// "closed by #N" chip, hivecommons/hive#15232).
+func (l *MergedLedger) ClosedBy(repo string, issue, exclude int) int {
+	if l == nil || issue <= 0 {
+		return 0
+	}
+	repo = strings.ToLower(strings.TrimSpace(repo))
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := len(l.entries) - 1; i >= 0; i-- {
+		e := l.entries[i]
+		if e.Issue == issue && e.Number != exclude && strings.EqualFold(e.Repo, repo) {
+			return e.Number
+		}
+	}
+	return 0
+}
+
 // Len is the number of listed (unpruned) entries.
 func (l *MergedLedger) Len() int {
 	l.mu.Lock()
