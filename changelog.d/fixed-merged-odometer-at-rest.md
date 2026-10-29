@@ -1,0 +1,1 @@
+- Dashboard: the Activity Monitor's Merged counter is a mechanical odometer at rest, always (a dark inset drum cell per digit, 18 px tabular digits; only the wheels that change roll), and the pill's hexagon bee is 28 px with the pill grown to fit — #15409 had sized only the flying glyph and drawn the roll as a transient overlay over plain text.
