@@ -1147,7 +1147,13 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      copy exists: the stage record is superseded (no row, no chevron, no
      needs-human) and the copy is the one PR for the issue. A close GitHub
      refuses (403/404) leaves the original open with the note, superseded
-     all the same. `close_first: false` restores the keep-open behaviour
+     all the same. The note, label and close are unsolicited writes on a
+     contributor's PR, so the pass first asks the write-back gate as kind
+     `contributor_adopt` (default L6 + opt-in label; see the write-back
+     table in
+     [operator-reference.md](operator-reference.md#what-hive-writes-to-github-and-when)):
+     refused, nothing is written and the original stays open on the
+     keep-open path below until the copy merges. `close_first: false` restores the keep-open behaviour
      below: the note has no `close_first` field, the original moves to
      `stage/074-adopted-by-hive` (its linked issue mirrors the stage) and
      closes only when the copy merges. The hub drops the PR from the
@@ -1166,7 +1172,12 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      `adoption/supersede` request re-runs the takeover from the same head).
      **Ping-pong guard:** one reopen per original per 24h — a second failed
      copy inside the window leaves the original closed with a `held=true`
-     note saying so. The orphan recovery below never runs for a close-first
+     note saying so. The reopen, its note and the label removal also go
+     through the `contributor_adopt` write-back gate: refused, nothing is
+     written and the record stays due its next poll, so a lifted repo pause
+     lands the reopen; a policy change after the close is warned in the log
+     and leaves the hive-closed original shut until a person reopens it.
+     The orphan recovery below never runs for a close-first
      original (its copy being closed is a failure, not an orphan); the
      `hive:adoption-copy-failed` note is a settled marker, so the marker scan
      never re-adopts a reopened original on its own.

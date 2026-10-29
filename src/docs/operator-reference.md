@@ -775,7 +775,14 @@ labelled `hive/superseded`, so one issue never shows two active PRs
 hivecommons/hive#15135). If the copy is closed unmerged or its required
 checks are red at two heads, the hive reopens the original, removes
 `hive/superseded`, and parks it at `stage/085` with `adoption-copy-failed`
-("needs a person"); at most one reopen per original per 24h. `close_first:
+("needs a person"); at most one reopen per original per 24h. The note,
+label, close and reopen are unsolicited writes on a contributor's PR, so each
+first asks the write-back gate as kind `contributor_adopt` (L6 + opt-in label
+by default; see [the write-back table](#what-hive-writes-to-github-and-when)):
+refused, the original is not closed and stays open on the keep-open path
+until the copy merges, and a due reopen waits for the next poll (a pause
+lifting lands it; a policy change after the close is warned in the log and
+leaves the PR closed until a person reopens it). `close_first:
 false` keeps the earlier behaviour: the original moves to 074 and closes
 only once the superseder merges. Whether that rework reaches each agent is visible per row
 on Operations → Connected contributor agents: the relay's parallel capacity

@@ -1,7 +1,9 @@
 package automerge
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -469,6 +471,39 @@ func TestAdoptionCloseFirstReopenWaitsForWritebackGate(t *testing.T) {
 	}
 	if notes := commentsWithPrefix(h.api, AdoptionCopyFailedMarker); len(notes) != 1 || res.Comments != 1 {
 		t.Fatalf("reopen note: %v res=%+v", h.api.comments, res)
+	}
+}
+
+// A policy refusal (not a pause) after the hive closed the original is
+// warned, not merely logged at info: the PR the hive shut stays closed
+// until the contributor_adopt policy allows the reopen or a person acts.
+func TestAdoptionCloseFirstReopenPolicyRefusalWarns(t *testing.T) {
+	h, done := newCloseFirstHarness(t, closeFirstPolicy())
+	defer done()
+	st := &closeFirstGateState{}
+	gate := h.installWritebackGate(st)
+	h.adoptCloseFirst()
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed: %v", h.adopt.prEdits)
+	}
+	h.adopt.setSuperseder(90, "closed", false)
+	st.adoptOff = true
+	var logs bytes.Buffer
+	h.e.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	res := h.sweep()
+	if len(h.adopt.prEdits) != 1 || res.Comments != 0 || len(commentsWithPrefix(h.api, AdoptionCopyFailedMarker)) != 0 {
+		t.Fatalf("wrote through a refusing gate: edits=%v comments=%v res=%+v", h.adopt.prEdits, h.api.comments, res)
+	}
+	if rec := h.record(); !rec.SupersededClosedFirst || rec.AdoptionCopyFailed() {
+		t.Fatalf("record settled through a refusing gate = %+v", rec)
+	}
+	if s := suppressedFor(gate, 7, writeback.KindContributorAdopt); len(s) != 1 || s[0].Reason != writeback.ReasonOwnOnly {
+		t.Fatalf("suppressed = %+v", gate.Recent())
+	}
+	if out := logs.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "hive-closed PR stays closed") || !strings.Contains(out, "writeback_reason="+writeback.ReasonOwnOnly) {
+		t.Fatalf("policy refusal not warned: %q", out)
 	}
 }
 

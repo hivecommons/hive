@@ -257,7 +257,8 @@ func (c *Engine) settleCloseFirstCopy(ctx context.Context, store *stagelabels.St
 // LaneReasonAdoptionCopyFailed. Within stagelabels.AdoptionReopenWindow of
 // the last reopen the original stays closed and the note says so. A
 // write-back gate refusal writes nothing and settles nothing: the record
-// stays due its next poll.
+// stays due its next poll. A pause is logged at info (it lifts); any other
+// refusal means the policy moved under a PR the hive closed, and is warned.
 func (c *Engine) reopenSupersededOriginal(ctx context.Context, store *stagelabels.Store, cand closeFirstRecord, why string, redHeads int, now time.Time) (int, error) {
 	rec, copy := cand.rec, cand.rec.AdoptedBy
 	owner, repo, number := cand.owner, cand.repo, cand.number
@@ -268,7 +269,16 @@ func (c *Engine) reopenSupersededOriginal(ctx context.Context, store *stagelabel
 		preview = AdoptionCopyFailedHeldComment(copy, rec.AdoptedHead, why, redHeads, rec.AdoptReopenedAt, now)
 	}
 	if d := c.writebackAllowed(owner+"/"+repo, c.closeFirstOriginalItem(ctx, cand), writeback.KindContributorAdopt, preview); !d.Allowed {
-		c.info("stage labels: close-first original reopen suppressed by the write-back gate; retried at the next poll", append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)...)
+		gateArgs := append(logArgs, "writeback_reason", d.Reason, "writeback_detail", d.Detail)
+		if d.Reason == writeback.ReasonRepoPaused {
+			c.info("stage labels: close-first original reopen suppressed by the write-back gate; retried at the next poll", gateArgs...)
+			return 0, nil
+		}
+		// Not a pause: the contributor_adopt policy changed after the hive
+		// closed this PR, so the reopen that would undo that close no
+		// longer clears the gate. The PR stays closed until the policy
+		// allows it again or a person reopens it; say so loudly.
+		c.warn("stage labels: close-first original reopen refused by the write-back gate; hive-closed PR stays closed until the contributor_adopt policy allows the reopen or a person reopens it", gateArgs...)
 		return 0, nil
 	}
 	if held {
