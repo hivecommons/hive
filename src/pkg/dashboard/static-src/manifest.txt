@@ -68,6 +68,9 @@ js/tracker-words-stage.js
 js/tracker-words-gate.js
 js/tracker-words.js
 js/tracker-row.js
+js/tracker-row-strip.js
+js/tracker-row-acted.js
+js/tracker-row-layout.js
 js/tracker-motion.js
 js/tracker-filter.js
 js/tracker-actions.js
