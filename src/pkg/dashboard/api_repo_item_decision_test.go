@@ -31,6 +31,9 @@ type repoItemDecisionMock struct {
 	// labels pulls/8 reports.
 	prForeign bool
 	prLabels  []string
+	// prFiles are the paths GET pulls/8/files (and pulls/9/files) list; a
+	// `.github/workflows/` path is a head the App cannot adopt.
+	prFiles []string
 	// prMergeState is PR #8's mergeable_state ("" = clean); prRedCI and
 	// prNoCI shape the head's combined status when the state alone does not
 	// settle CI (e.g. "blocked").
@@ -109,6 +112,12 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			_, _ = io.WriteString(w, `{"sha":"0ddba11","merged":true,"message":"Pull Request successfully merged"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/8/reviews"):
 			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/pulls/8/files") || strings.HasSuffix(path, "/pulls/9/files")):
+			files := make([]map[string]any, 0, len(m.prFiles))
+			for _, f := range m.prFiles {
+				files = append(files, map[string]any{"filename": f, "status": "modified", "additions": 1, "deletions": 0})
+			}
+			_ = json.NewEncoder(w).Encode(files)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/pulls/8/reviews"):
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)

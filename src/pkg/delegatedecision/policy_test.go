@@ -239,12 +239,12 @@ func TestDecidePRRules(t *testing.T) {
 		{
 			name:    "workflow-path PR gets capability-gap",
 			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionStalled: true, CIGreen: true, ChangedFiles: []string{"README.md", ".github/workflows/ci.yml"}},
-			verdict: VerdictRecommendOnly, rule: "capability-gap",
+			verdict: VerdictRecommendOnly, rule: "capability-gap", keepsPark: true,
 		},
 		{
 			name:    "row parked on workflow-path gets capability-gap",
 			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", CIGreen: true, Conflicting: true, Reasons: []string{"adoption-stalled:contributor-lane:workflow-path"}},
-			verdict: VerdictRecommendOnly, rule: "capability-gap",
+			verdict: VerdictRecommendOnly, rule: "capability-gap", keepsPark: true,
 		},
 		{
 			name:    "grace-elapsed workflow-path PR gets capability-gap, not adopt-now",
