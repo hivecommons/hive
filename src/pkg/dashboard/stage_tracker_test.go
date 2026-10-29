@@ -519,7 +519,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if issue7.Stage != 95 || !issue7.Mirrored || issue7.LinkedPR != 102 || issue7.Lane != laneIssue || issue7.AuthorKind != authorKindHuman {
 		t.Fatalf("issue7 = %+v", issue7)
 	}
-	if issue7.Caption != "Covered by PR #102 — soaking on the PR side" {
+	if issue7.Caption != "Covered by PR #102 — "+pr102.Caption {
 		t.Fatalf("issue7 caption = %q", issue7.Caption)
 	}
 	// The covering PR is resolved onto the issue with what its sub-row
@@ -533,7 +533,8 @@ func TestStageTrackerEndpoint(t *testing.T) {
 		t.Fatalf("nested_under: pr102=%d pr101=%d", pr102.NestedUnder, pr101.NestedUnder)
 	}
 	issue8 := trackerItem(t, resp, "issue", 8)
-	if issue8.Stage != 10 || issue8.Mirrored || issue8.Actor != "scanner" || issue8.AuthorKind != authorKindHive {
+	if issue8.Stage != 10 || issue8.Mirrored || issue8.Actor != "its PR" || issue8.AuthorKind != authorKindHive ||
+		issue8.Caption != "Covered by PR #103 — "+pr103.Caption {
 		t.Fatalf("issue8 = %+v", issue8)
 	}
 

@@ -3048,7 +3048,9 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 			out = nil
 		}
 		it.LinkedPRs = out
+		stageTrackerLinkedPRProgress(it)
 	}
+
 	// NestedUnder is final only once every issue has been read; name it on
 	// each listing so the SPA draws the PR's strip under one parent only.
 	for i := range items {
@@ -3067,6 +3069,34 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 			items[i].ClosedIssue = stageTrackerClosedIssueAnchor(items[i])
 		}
 	}
+}
+
+// Link evidence arrives after the issue's stage/new narration, including
+// reverse closing references from PRs. Do not narrate a completed intake
+// step as work the scanner still needs to do.
+func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
+	if it.Kind != "issue" || len(it.LinkedPRs) == 0 || (it.Stage > trackerNumberCoveredByPR && !it.Mirrored) ||
+		it.Hold != nil || len(it.BlockedOn) > 0 || it.BlockedOnPR != nil {
+		return
+	}
+	it.New = nil
+	if it.StageSlug == StageTrackerNewSlug {
+		it.StageSlug = ""
+	}
+	progress := make([]string, 0, len(it.LinkedPRs))
+	for _, pr := range it.LinkedPRs {
+		text := fmt.Sprintf("PR #%d", pr.Number)
+		if pr.Caption != "" {
+			text += " — " + pr.Caption
+		}
+		progress = append(progress, text)
+	}
+	prefix := "Covered by "
+	if stageengine.ReasonIsPartialCover(it.Reason) {
+		prefix = "Partially covered by "
+	}
+	it.Caption = prefix + strings.Join(progress, "; ")
+	it.Actor = "its PR"
 }
 
 // stageTrackerClosedIssueAnchor returns the closed issue a standalone PR

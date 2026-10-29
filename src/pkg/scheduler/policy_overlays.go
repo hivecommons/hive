@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/github"
@@ -186,15 +187,43 @@ func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
 	if message == "" || !s.isPRCapableAgent(agentName) {
 		return message
 	}
-	data, err := os.ReadFile(ciFailingPath)
-	if err != nil {
-		return message
-	}
-	section := formatRedPRFixData(data, s.cfg.BaseAgentName(agentName))
+	section := s.redPRFixSection(agentName)
 	if section == "" {
 		return message
 	}
 	return appendKickSection(message, section)
+}
+
+// redPRFixSection renders the agent's fix-before-new section from
+// ci-failing.json merged with the webhook CI-failure signals attributed to
+// it (github.CIFailureSignals), so a check that went red seconds ago is
+// listed — with its name and log pointer — before the next eval tick
+// rewrites the file. Empty when the agent has nothing to repair.
+func (s *Scheduler) redPRFixSection(agentName string) string {
+	base := s.cfg.BaseAgentName(agentName)
+	data, err := os.ReadFile(ciFailingPath)
+	if err != nil {
+		data = nil
+	}
+	return formatRedPRFixDataWithSignals(data, base, github.CIFailureSignals().ForAgent(base))
+}
+
+// CIFailureKickMessage is the targeted kick a webhook CI-failure signal
+// sends to the owning agent: the same fix-before-new section a regular kick
+// would carry, under a one-line header naming the trigger. Empty when the
+// agent is not PR-capable or has no red PR to repair (e.g. every failing
+// check is red on the base branch too).
+func (s *Scheduler) CIFailureKickMessage(agentName string, sig github.CIFailureSignal) string {
+	if s == nil || !s.isPRCapableAgent(agentName) {
+		return ""
+	}
+	section := s.redPRFixSection(agentName)
+	if section == "" {
+		return ""
+	}
+	header := fmt.Sprintf("CI failed on %s#%d (%s) — repair it now. Detection was out-of-band (webhook); do not watch or poll CI yourself.\n",
+		sig.Repo, sig.Number, sig.Check)
+	return header + section
 }
 
 // heldRedPRNote is appended to a held PR's entry in the fix-before-new
@@ -220,6 +249,30 @@ const heldRedPRExemptAgent = "outreach"
 // it is named in one line without repair instructions, and when every red PR
 // the agent owns is deferred there is no section — and no banner — at all.
 func formatRedPRFixData(data []byte, agent string) string {
+	return formatRedPRFixDataWithSignals(data, agent, nil)
+}
+
+// ciFailureSignalEvidence is the evidence line a webhook signal contributes:
+// the check name plus the log pointer, so the agent can open the run
+// without listing checks itself.
+func ciFailureSignalEvidence(sig github.CIFailureSignal) string {
+	line := "webhook: " + sig.Check + " failed"
+	if sig.Conclusion != "" && sig.Conclusion != "failure" {
+		line += " (" + sig.Conclusion + ")"
+	}
+	if sig.DetailsURL != "" {
+		line += " — log: " + sig.DetailsURL
+	}
+	return line
+}
+
+// formatRedPRFixDataWithSignals is formatRedPRFixData with the agent's
+// webhook CI-failure signals folded in: a signal for a PR the file already
+// lists adds its check and log pointer to that row; a signal for a PR the
+// file does not know yet (the file is rewritten per eval tick) becomes its
+// own row. A signal whose check the file reports red on the base branch is
+// dropped like any other base-red failure.
+func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.CIFailureSignal) string {
 	type ciFailingRow struct {
 		Number           int      `json:"number"`
 		Repo             string   `json:"repo"`
@@ -248,8 +301,46 @@ func formatRedPRFixData(data []byte, agent string) string {
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
 	}
-	if json.Unmarshal(data, &payload) != nil {
+	if len(data) > 0 && json.Unmarshal(data, &payload) != nil {
 		return ""
+	}
+	if len(signals) > 0 {
+		known := map[string]int{}
+		for i, r := range payload.Items {
+			known[fmt.Sprintf("%s#%d", strings.ToLower(r.Repo), r.Number)] = i
+		}
+		for _, sig := range signals {
+			key := fmt.Sprintf("%s#%d", strings.ToLower(sig.Repo), sig.Number)
+			if i, ok := known[key]; ok {
+				r := &payload.Items[i]
+				if slices.Contains(r.BaseRedChecks, sig.Check) {
+					continue
+				}
+				if r.BaseRed {
+					// The file says every failing check is base-red; a new
+					// check the file has not seen yet changes that.
+					r.BaseRed = false
+				}
+				if !slices.Contains(r.FailingChecks, sig.Check) {
+					r.FailingChecks = append(r.FailingChecks, sig.Check)
+				}
+				r.Excerpt = strings.TrimSpace(r.Excerpt + "\n" + ciFailureSignalEvidence(sig))
+				continue
+			}
+			row := ciFailingRow{
+				Number:        sig.Number,
+				Repo:          sig.Repo,
+				Title:         sig.Title,
+				Agent:         sig.Agent,
+				FailingChecks: []string{sig.Check},
+				Excerpt:       ciFailureSignalEvidence(sig),
+			}
+			if row.Title == "" {
+				row.Title = "(title pending)"
+			}
+			payload.Items = append(payload.Items, row)
+			known[key] = len(payload.Items) - 1
+		}
 	}
 	var mine, deferred, baseRed []ciFailingRow
 	forks := 0

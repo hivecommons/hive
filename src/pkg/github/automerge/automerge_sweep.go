@@ -381,7 +381,12 @@ func New(transport Transport, opts Options) *Engine {
 	if e.headFirstSeen == nil {
 		e.headFirstSeen = sharedHeadFirstSeen
 	}
-	if e.sweepTrigger == nil && e.openPRs != nil {
+	if e.sweepTrigger == nil {
+		// Always present: with the forgestate cache the event-driven loop
+		// drains it; without, the legacy ticker loop still selects on it so
+		// a webhook CI-failure nudge (SweepNudge) runs a targeted pass now
+		// instead of on the next tick. A nil source only disables
+		// NotifyHead's SHA lookup.
 		e.sweepTrigger = NewSweepTrigger(e.openPRs)
 	}
 
@@ -1531,6 +1536,11 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 			select {
 			case <-ctx.Done():
 				return
+			case <-c.sweepTrigger.C():
+				// A webhook nudge (CI failure on a PR, operator row action)
+				// names the PRs; evaluate only those now. A full request
+				// (nil targets) is a regular pass brought forward.
+				c.sweepPass(ctx, maxMerges, acmmAllowed, c.sweepTrigger.take(), "event")
 			case <-t.C:
 				gate := c.sweepTickGate(interval, cautionTick, hgithub.ShedLowPriorityTick)
 				if gate.reset {

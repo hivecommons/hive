@@ -834,7 +834,14 @@ labelled `hive/superseded`, so one issue never shows two active PRs
 hivecommons/hive#15135). If the copy is closed unmerged or its required
 checks are red at two heads, the hive reopens the original, removes
 `hive/superseded`, and parks it at `stage/085` with `adoption-copy-failed`
-("needs a person"); at most one reopen per original per 24h. `close_first:
+("needs a person"); at most one reopen per original per 24h. The note,
+label, close and reopen are unsolicited writes on a contributor's PR, so each
+first asks the write-back gate as kind `contributor_adopt` (L6 + opt-in label
+by default; see [the write-back table](#what-hive-writes-to-github-and-when)):
+refused, the original is not closed and stays open on the keep-open path
+until the copy merges, and a due reopen waits for the next poll (a pause
+lifting lands it; a policy change after the close is warned in the log and
+leaves the PR closed until a person reopens it). `close_first:
 false` keeps the earlier behaviour: the original moves to 074 and closes
 only once the superseder merges. Whether that rework reaches each agent is visible per row
 on Operations → Connected contributor agents: the relay's parallel capacity
@@ -1019,6 +1026,7 @@ that level, the power the write-back exists to govern?
 | PR↔issue linker (`pr_issue_link.go`, `pr_contributor_link.go`, `linked_prs.go`) | PR watcher | "covered by PR" label on the issue, link comments | issues referenced by any PR | `covered_by_pr_label` → L5 + label |
 | Verdict / decision labels (`pr_decision_operator.go`, `human_decision_label.go`, `legacy_decision_labels.go`, `contribute_verdict_settle.go`) | review verdicts, dashboard decisions | `hive:verdict-*`, decision labels | reviewed PRs | `verdict_label` → L3 + label; dashboard-triggered decisions are solicited |
 | Contributor adopt / nudge / bot takeover (`automerge/automerge_contributor_*.go`, `automerge_bot_takeover.go`) | auto-merge sweep | adopt comment, update-branch push, workflow approval, nudge comments | contributor PRs in the contributor lane | `contributor_adopt` → L6 + label |
+| Adoption close-first (`automerge/automerge_adoption_close_first.go`) | auto-merge sweep, when a supersede adoption opens the hive's copy; close-first poll | close-first note, `hive/superseded` label and close on the original; reopen, copy-failed note and label removal when the copy fails | the contributor's original PR | `contributor_adopt` → L6 + label; refused: the original stays open until the copy merges, and a due reopen waits for the next poll |
 | Claims (`prclaims.go`, `claimed_by_label.go`, `cmd/hive/claimswire.go`, `claimescalation.go`) | claim ledger changes | `claimed-by:*` labels, claim/escalation comments | claimed issues | `claim_comment` → L4 + label (hive-claimed issues are own items) |
 | Issue close / task-list / decomposed parents (`issue_close.go`, `task_list_sweep.go`, `decomposed_parents.go`, `close_on_merge.go`, `tracking_issue.go`) | merges, sweeps | close, body edits (checkbox ticks), `Refs` rewrites | issues linked from hive PRs | `issue_close`, `parent_issue_edit` → L5 + label; hive-filed issues are own items |
 | Gate comments (`pkg/scheduler/clarity_gate.go`, `prior_art_gate.go`, `triage.go`, `issue_blocked.go`, `issue_recheck_soak.go`) | scheduler intake | clarity/prior-art/triage questions, `blocked` labels | issues admitted by the issue filter | `gate_comment` → L5 + label; items carrying the intake label are opted in |
@@ -1600,6 +1608,31 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   `review_requested` deliveries also queue an early review dispatch when
   `review.event_driven` is on; see
   [Event-driven dispatch](review-swarm.md#event-driven-dispatch).
+- **A failed check reacts within seconds, not at the next sweep.** A
+  `check_run` (`completed`, conclusion `failure`/`timed_out`), `check_suite`
+  (`failure`/`timed_out`) or `status` (`failure`/`error`) delivery is
+  resolved to the open PR(s) at that head from the PR detail cache — one
+  cached lookup, no extra `GET /pulls` fan-out; a head no cached PR matches
+  is counted under `/api/status.ci_failure_signals.unmatched` and left to
+  the sweep's dirty mark. Each match becomes a **CI failure signal**
+  `{repo, number, head, check, details_url, at}`, deduplicated per head +
+  check and kept for two hours. A **hive-authored** PR is attributed to the
+  agent whose relay opened it (`agent_pr_created` in the audit log; scanner
+  when unattributed) and that agent is kicked at once with its
+  FIX-BEFORE-NEW section naming the check and the log URL — the same
+  section every regular kick carries, into which the signal is also folded
+  until `ci-failing.json` catches up, so nothing is lost if the kick is
+  gated. A **contributor** PR nudges the automerge lanes for a targeted pass
+  over that PR now (the contributor lane / `stage/072` path), with or
+  without the ForgeState cache. Guards, in this order: `governor.ci_failure_webhook_kick`
+  (default `true`; `false` records signals only), the repo pause
+  (`project.paused_repos`), the agent's config/runtime pause (the fleet
+  breaker pauses every agent), governor kick eligibility, and one
+  webhook-triggered kick or nudge per PR head per
+  `governor.ci_failure_kick_cooldown_s` (default `600`). The activity log
+  records `ci_failure_kick` — "CI failed on #N (check) — kicked agent X" /
+  "nudged contributor lane". **Agents never watch or poll CI themselves**:
+  detection is out-of-band via this webhook path, or the sweep as fallback.
 - **A recorded review verdict also wakes the governor loop.** When the
   relay records a verdict bound to a review dispatch, the head that wrote it
   is free and the PR may be ready for its next head or its decision kick, so

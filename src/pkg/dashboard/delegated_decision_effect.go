@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Stuck-decision detection for "Let hive decide" (hivecommons/hive#14822).
@@ -199,11 +200,33 @@ func (s *Server) delegatedStuckWhy(in delegatedecision.Input, d delegatedecision
 		return delegatedecision.GlossaryNotClosedYet
 	case d.Verdict == delegatedecision.VerdictDirection:
 		return delegatedecision.GlossaryNoNewCommit
+	case issueParkLabelStuck(in, d):
+		return delegatedecision.GlossaryParkLabelStuck
 	case in.Kind == delegatedecision.KindIssue:
 		return delegatedecision.GlossaryStillParked
 	default:
 		return delegatedecision.GlossaryNotMergedYet
 	}
+}
+
+// issueParkLabelStuck reports the case seen on hivecommons/hive#15021: the
+// hive approved an issue and `approved-direction` landed, but the
+// stage/045-needs-decision park label never came off, so the scanner keeps
+// skipping the issue. The toast names the label and offers the lift.
+func issueParkLabelStuck(in delegatedecision.Input, d delegatedecision.Decision) bool {
+	if in.Kind != delegatedecision.KindIssue || d.Verdict != delegatedecision.VerdictApprove {
+		return false
+	}
+	park, ack := false, false
+	for _, l := range in.Labels {
+		switch {
+		case strings.EqualFold(strings.TrimSpace(l), stagelabels.IssueNeedsDecision.Label()):
+			park = true
+		case strings.EqualFold(strings.TrimSpace(l), ghpkg.HumanAckLabel):
+			ack = true
+		}
+	}
+	return park && ack
 }
 
 // isApproveDecisionText reports a bare `/hive decision approve[d]`.
@@ -220,9 +243,17 @@ func isApproveDecisionText(line string) bool {
 // delegatedStuckOptions are the concrete next actions for a decision that
 // has not taken effect, in the popover's option shape so the SPA renders
 // them as buttons. Merging is the in-tracker merge-now action
-// (hivecommons/hive#15087) for a merger, not a link out.
-func delegatedStuckOptions(in delegatedecision.Input, d delegatedecision.Decision, mergerRole bool) []StageTrackerDecisionOption {
+// (hivecommons/hive#15087) for a merger, not a link out. When why is the stuck 045 park
+// label, the first option lifts it: `decide:approve` on an issue runs
+// RecordOperatorIssueDecision, the audited path that removes the park
+// label and tells the stage engine the park lifted.
+func delegatedStuckOptions(in delegatedecision.Input, d delegatedecision.Decision, mergerRole bool, why string) []StageTrackerDecisionOption {
 	var opts []StageTrackerDecisionOption
+	if why == delegatedecision.GlossaryParkLabelStuck {
+		opts = append(opts,
+			StageTrackerDecisionOption{Action: decisionActionApprove, Label: "Lift the park (remove " + stagelabels.IssueNeedsDecision.Label() + ")", Enabled: true},
+			StageTrackerDecisionOption{Action: decisionActionRetry, Label: "Re-evaluate now", Enabled: true})
+	}
 	if in.Kind == delegatedecision.KindPR && d.Verdict != delegatedecision.VerdictCloseDuplicate && d.Verdict != delegatedecision.VerdictCloseSuperseded {
 		o := decisionOption(decisionActionMergeNow, "Merge as maintainer", mergerRole, decisionWhyMergerRole)
 		o.Consequence = "merges #" + strconv.Itoa(in.Number) + " now via hive's identity, attributed to you"
@@ -255,7 +286,7 @@ func delegatedDecisionEffectResult(target RowActionTarget, in delegatedecision.I
 	eff := delegatedecision.ExpectedEffect(d, in.Kind)
 	at := prior.UTC().Truncate(time.Second)
 	stamp := at.Format(time.RFC3339)
-	plainAction := delegatedecision.ActionPlain(d)
+	plainAction := delegatedecision.ActionPlainOn(d, in.Kind)
 	out := RowActionResult{Target: target, Rule: d.Rule, AppliedAt: &at, Why: why}
 	if !eff.Waits {
 		out.Action = rowActionNoop
@@ -272,8 +303,11 @@ func delegatedDecisionEffectResult(target RowActionTarget, in delegatedecision.I
 	}
 	out.Action = rowActionNoEffect
 	out.Options = options
-	out.Outcome = "Hive decided " + plainAction + " at " + stamp + ", but it hasn't taken effect: " + delegatedecision.Plain(why) + "."
-	next := "Expected: " + eff.What + ". " + delegatedecision.Detail(why)
+	// The toast headline already says "Hive decided on <item>"; the body
+	// does not say "decided" again. The SPA rewrites the RFC3339 stamp into
+	// the operator's clock (stageTrackerStampWords).
+	out.Outcome = delegatedecision.CapitalizeFirst(plainAction) + " at " + stamp + ", but it hasn't taken effect: " + delegatedecision.PlainOn(why, in.Kind) + "."
+	next := "Expected: " + eff.What + ". " + delegatedecision.DetailOn(why, in.Kind)
 	if labels := optionLabels(options); len(labels) > 0 {
 		next += " Options: " + strings.Join(labels, " · ") + "."
 	}
