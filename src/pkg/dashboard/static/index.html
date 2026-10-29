@@ -478,10 +478,12 @@
     }
     /* Drawer toggle. Hidden on desktop; the ≤1024px block flips it to
        inline-flex. It lives with the project title so the center run-state
-       group remains visually anchored. */
+       group remains visually anchored. No negative margin: .oc-topbar-left
+       clips overflow, so anything pulled past its left edge is cut off —
+       on phones that showed up as a half-circle hamburger (#15476). */
     #oc-drawer-toggle {
       display: none;
-      margin-left: -10px;
+      flex: 0 0 auto;
     }
     #oc-drawer-backdrop { display: none; }
     .oc-topbar-center { container: navbar-center / inline-size; position: relative; z-index: 1; justify-self: stretch; display: flex; align-items: center; justify-content: center; gap: var(--nav-chip-gap, 8px); min-width: 0; max-width: 100%; overflow: hidden; }
@@ -6200,6 +6202,17 @@
         justify-content: center;
       }
     }
+    /* Narrowest phones (iPhone SE/mini class): the right strip's five icon
+       chips plus the ≡ and ACMM chips no longer fit one row, and the strip
+       clips overflow rather than wrapping, so the lowest-priority chips go.
+       Both stay reachable — Feedback from the drawer and the account menu,
+       Settings from the account menu (#15476). */
+    @media (max-width: 360px) {
+      #feedback-bug-btn,
+      #oc-settings-btn {
+        display: none;
+      }
+    }
 
     /* ══ Input system (Phase 2) ══
        One recipe for text inputs/selects/textareas (derived from the old
@@ -7108,6 +7121,7 @@
           <a href="#" id="oc-gh-menu-my-hives" class="avatar-menu-item" target="_blank" rel="noopener noreferrer" hidden>My hives ↗</a>
           <a href="/api/docs" target="_blank" class="avatar-menu-item">API Docs ↗</a>
           <button class="avatar-menu-item" type="button" data-action="openFeedbackModal" data-arg0="submit">Feedback</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-settings" data-action="openConfigDialog" data-arg0="governor">Settings</button>
           <div class="avatar-menu-divider"></div>
           <div id="oc-gh-menu-export-label" class="avatar-menu-label" hidden>Export</div>
           <button type="button" id="oc-gh-menu-widget" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/widget" data-arg1="hive-widget.json" data-arg-types="s,s" title="View Übersicht widget JSON">⬇ Widget</button>
