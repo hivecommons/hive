@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Activity-monitor row decisions (hivecommons/hive#13479 follow-up). The
@@ -303,6 +304,33 @@ func repoItemDecisionResultWith(repoFull string, number int, itemType, decision,
 	return out
 }
 
+// repoWritesPaused reports whether repoFull is operator-paused, with the
+// pause's provenance in words: the write-back gate's view when the gate is
+// installed, else the config's own record.
+func (s *Server) repoWritesPaused(repoFull string) (string, bool) {
+	if g := s.writebackGateRef(); g != nil {
+		if info, paused := g.RepoPaused(repoFull); paused {
+			return writeback.RepoPausedDetail(repoFull, info), true
+		}
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		return "", false
+	}
+	rp, paused := s.deps.Config.RepoPauseFor(repoFull)
+	if !paused {
+		return "", false
+	}
+	return writeback.RepoPausedDetail(repoFull, writeback.RepoPauseInfo{By: rp.By, Reason: rp.Reason}), true
+}
+
+// repoItemCloseRefusedResult is the row result for a close the hive would
+// not write: Outcome is the one line the toast and the badge show.
+func repoItemCloseRefusedResult(repoFull string, number int, itemType, detail string) *RowActionResult {
+	return &RowActionResult{Action: rowActionRefused, Target: rowActionTarget(repoFull, itemType, number),
+		Outcome: "Close refused: repo paused — " + detail + ".",
+		Next:    "Resume the repository to let the dashboard close it, or close it on GitHub yourself."}
+}
+
 func renderRepoItemDecisionCloseComment(verb, user, comment, supersededBy string) string {
 	by := "an operator"
 	if strings.TrimSpace(user) != "" {
@@ -417,6 +445,14 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			supersededBy = ref
+		}
+		// A paused repo takes no hive writes, operator-initiated or not
+		// (hivecommons/hive#15436): a 200 with a refused result, so the
+		// row's toast and history badge say why instead of "HTTP 409".
+		if detail, paused := s.repoWritesPaused(repoFull); paused {
+			jsonStatusResponse(w, http.StatusOK, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: rowActionRefused,
+				Result: repoItemCloseRefusedResult(repoFull, number, itemType, detail)})
+			return
 		}
 		if err := gh.CreateIssueComment(ctx, repoFull, number, renderRepoItemDecisionCloseComment(verb, user, comment, supersededBy)); err != nil {
 			jsonError(w, err.Error(), http.StatusBadGateway)

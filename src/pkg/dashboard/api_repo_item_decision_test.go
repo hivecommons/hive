@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -711,5 +712,55 @@ func TestRepoItemApproveResultWording(t *testing.T) {
 	// The legacy builder keeps the same shape for callers without facts.
 	if got := repoItemDecisionResult("o/r", 1, "pr", repoItemDecisionApprove, "", "", "", nil); got.Outcome != "Approved #1." {
 		t.Fatalf("legacy = %+v", got)
+	}
+}
+
+// The real hivecommons/hive#15381 shape (a dedupe-checklist advisory: the
+// triage/advisory label, a "Decision required: no" body, bot author) closes
+// as completed with the acknowledgement comment; on a paused repo the same
+// request is a 200 refused result whose Outcome says why, and nothing is
+// written (hivecommons/hive#15436).
+func TestRepoItemDecisionCloseReadAdvisoryFixtureAndPausedRefusal(t *testing.T) {
+	mock := &repoItemDecisionMock{
+		issueLabels: []string{"help wanted", "agent/dedupe", "triage/advisory"},
+		issueTitle:  "triage: duplicate and overlapping open issues/PRs to consolidate",
+		issueBody:   "<!-- hive:dedupe-checklist repo=hivecommons/hive -->\nDecision required: no\n\n## Summary\n\nTriage pass over the 28 open issues and 12 open PRs. Found 0 near-duplicate pairs.",
+	}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecision(t, srv, 7, "writer", `{"decision":"close-read","type":"issue"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("close-read: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != "closed" || resp.Result == nil || resp.Result.Action != rowActionClosed {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "Closed as read (advisory acknowledged) by @writer") {
+		t.Fatalf("comments = %v", mock.comments)
+	}
+	if len(mock.edits) != 1 || mock.edits[0]["state"] != "closed" || mock.edits[0]["state_reason"] != issueStateReasonCompleted {
+		t.Fatalf("edits = %v", mock.edits)
+	}
+
+	// Paused repo: refused with a reason, nothing posted.
+	mock.comments, mock.edits = nil, nil
+	srv.deps.Config.Project.PausedRepos = []config.RepoPause{{Repo: "testrepo", By: "clubanderson", Reason: "release freeze"}}
+	t.Cleanup(func() { srv.deps.Config.Project.PausedRepos = nil })
+	w = postRepoItemDecision(t, srv, 7, "writer", `{"decision":"close-read","type":"issue"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("paused close-read: code=%d body=%s", w.Code, w.Body.String())
+	}
+	resp = repoItemDecisionResponse{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != rowActionRefused || resp.Result == nil || resp.Result.Action != rowActionRefused {
+		t.Fatalf("paused resp = %+v", resp)
+	}
+	if !strings.HasPrefix(resp.Result.Outcome, "Close refused: repo paused") || !strings.Contains(resp.Result.Outcome, "release freeze") {
+		t.Fatalf("outcome = %q, want the pause and its reason", resp.Result.Outcome)
+	}
+	if len(mock.comments)+len(mock.edits) != 0 {
+		t.Fatalf("a refused close must write nothing: comments=%v edits=%v", mock.comments, mock.edits)
 	}
 }

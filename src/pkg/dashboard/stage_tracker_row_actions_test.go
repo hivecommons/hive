@@ -146,6 +146,16 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerPendingLive"),
 		jsFunc(t, html, "stageTrackerPendingExpire"),
 		jsFunc(t, html, "stageTrackerPendingSync"),
+		// Progress + failure surfacing for every mutating action (hivecommons/hive#15436).
+		jsConstBlock(t, html, "STAGE_TRACKER_TERMINAL_CAPTIONS"),
+		jsFunc(t, html, "stageTrackerTerminalCaption"),
+		jsConstBlock(t, html, "STAGE_TRACKER_ACTION_LEDGER_NAME"),
+		"var _stageTrackerActionFailures = {};",
+		jsFunc(t, html, "stageTrackerNoteActionFailure"),
+		jsFunc(t, html, "stageTrackerClearActionFailure"),
+		jsFunc(t, html, "stageTrackerActionFailureOf"),
+		jsFunc(t, html, "stageTrackerAdvisoryOf"),
+		jsFunc(t, html, "stageTrackerNothingToActOn"),
 		jsFunc(t, html, "runRowAction"),
 		jsFunc(t, html, "makeToastSticky"),
 		stageTrackerDomStubJS,
@@ -1632,5 +1642,128 @@ assert.strictEqual((visible.match(/o\/r#8/g) || []).length, 1, visible);
 assert.ok(visible.startsWith('Let hive decide 2 items'), visible);
 // Three "then" items are cut to two.
 assert.strictEqual(stageTrackerDelegatePlanView([Object.assign({}, green, { consequences: ['a', 'b', 'c'] })], '').decisions[0].next.length, 2);
+`)
+}
+
+// TestStageTrackerAdvisoryCloseReadProgress (hivecommons/hive#15436, owner:
+// "i clicked close and it still shows in list. I should see some progress
+// … until the item is closed and is out of the list"): Close (read) on an
+// advisory row acts on the row itself (it is not a decision park, so the
+// decision-target mapping used to come up empty and the click did
+// nothing), the chevron is busy with "Closing…" from the first byte sent,
+// reads "Closed · leaving list" once the server answers, and the pending
+// state lifts when the next tracker payload no longer lists the row. A
+// refused or failed close restores the chevron, toasts the reason and
+// puts it on the row's history badge; an empty target list is never silent.
+func TestStageTrackerAdvisoryCloseReadProgress(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+stageTrackerConfirmOptOutJS(t, html)+"\n"+jsConstBlock(t, html, "STAGE_TRACKER_ICONS")+"\n"+stageTrackerActedJS(t, html)+`
+const toasts = [];
+global.showToast = (msg, type) => { toasts.push(type + ':' + msg); return null; };
+global.dismissToast = () => {};
+global.setTimeout = fn => fn();
+function stageTrackerProgressToast() { return { update() {}, done(msg, type) { if (msg) toasts.push('summary:' + type + ':' + msg); } }; }
+function stageTrackerAfterActions() {}
+function stageTrackerDecidePending(pend) { pend.decided = true; }
+// hivecommons/hive#15381 as the tracker lists it: stage 0, no modifiers, advisory block.
+const adv = { repo: 'hivecommons/hive', kind: 'issue', number: 15381, url: 'u15381', title: 'triage: duplicate and overlapping open issues/PRs to consolidate', stage: 0, caption: 'Advisory for maintainers · nothing found · safe to close', modifiers: [], labels: ['help wanted', 'agent/dedupe', 'triage/advisory'],
+  advisory: { kind: 'advisory', source: 'label', empty: true, chip: 'Advisory · nothing found · safe to close', caption: 'Advisory for maintainers · nothing found · safe to close' } };
+const plain = { repo: 'hivecommons/hive', kind: 'issue', number: 2, url: 'u2', stage: 10, caption: 'Open', modifiers: [] };
+_stageTracker = { items: [adv, plain] };
+hamPanel.appendChild(hamStubRow('hivecommons/hive/issue#15381')); hamPanel.appendChild(hamStubRow('hivecommons/hive/issue#2'));
+const row = k => hamPanel.querySelectorAll('[data-ham-key], [data-ham-sub-key]').find(n => n.getAttribute('data-ham-key') === k);
+const acting = k => row(k).classList.contains('cue-acting');
+const caption = k => { const c = row(k).children[0].querySelector(':scope > .cue-acting-cap'); return c ? c.lastChild.nodeValue : ''; };
+const K = 'hivecommons/hive/issue#15381';
+
+assert.strictEqual(stageTrackerDecisionTarget(adv), null, 'an advisory is not a decision park');
+assert.deepStrictEqual(stageTrackerActionRequest(adv, 'decide:close-read', {}), { url: '/api/repos/hivecommons/hive/items/15381/decision', body: { decision: 'close-read', comment: '', type: 'issue' } });
+assert.strictEqual(stageTrackerTerminalCaption({ action: 'closed' }), 'Closed · leaving list');
+assert.strictEqual(stageTrackerTerminalCaption({ action: 'held' }), '');
+
+const calls = []; let answer = null; let seenBusy = '';
+global.fetch = async (url, init) => {
+  calls.push({ url, body: JSON.parse(init.body) });
+  seenBusy = acting(K) ? caption(K) : '';
+  if (answer instanceof Error) throw answer;
+  return { ok: answer.ok !== false, status: answer.status || 200, json: async () => answer.data };
+};
+(async () => {
+  // 1. Happy path: confirm → request → busy → terminal caption → gone on the next payload.
+  answer = { data: { ok: true, status: 'closed', decision: 'close-read', result: { action: 'closed', target: { repo: 'hivecommons/hive', kind: 'issue', number: 15381, url: 'u15381' }, outcome: 'Closed as read (advisory acknowledged).', next: 'Nothing further to do; the row leaves the tracker on its next refresh.' } } };
+  let out = await runRowAction('decide:close-read', [adv]);
+  assert.strictEqual(dialogs.length, 1, 'Close (read) asks once'); assert.strictEqual(dialogs[0].cfg.title, 'Close (read)');
+  assert.strictEqual(calls.length, 1, 'the request is sent'); assert.strictEqual(calls[0].url, '/api/repos/hivecommons/hive/items/15381/decision'); assert.strictEqual(calls[0].body.decision, 'close-read');
+  assert.strictEqual(seenBusy, 'Closing…', 'the chevron is busy with the verb from the first byte sent');
+  assert.strictEqual(out.results[0].ok, true);
+  assert.strictEqual(acting(K), true, 'still acting after the answer');
+  assert.strictEqual(caption(K), 'Closed · leaving list', 'the terminal caption until the row leaves');
+  assert.strictEqual(out.pending.length, 1); assert.strictEqual(out.pending[0].decided, true, 'the badge may show again');
+  assert.strictEqual(out.toasts.length, 1); assert.strictEqual(out.toasts[0].text.type, 'success');
+  // The same payload again (GitHub list lagging) keeps the terminal caption.
+  stageTrackerPendingExpire({ items: [adv, plain] }, Date.now());
+  assert.strictEqual(_stageTrackerPending.length, 1, 'the pending state survives an unchanged payload');
+  // The server filtered the closed row out: pending lifts.
+  stageTrackerPendingExpire({ items: [plain] }, Date.now());
+  assert.strictEqual(_stageTrackerPending.length, 0, 'pending lifts once the row is gone');
+  assert.strictEqual(stageTrackerActionFailureOf(adv), null, 'no failure noted on success');
+
+  // 2. Refused (paused repo): 200 with a refused result — chevron restored, toast + badge say why.
+  calls.length = 0; toasts.length = 0; dialogs.length = 0;
+  answer = { data: { ok: true, status: 'refused', decision: 'close-read', result: { action: 'refused', target: { repo: 'hivecommons/hive', kind: 'issue', number: 15381 }, outcome: 'Close refused: repo paused — hivecommons/hive is paused by the operator (by clubanderson: freeze).', next: 'Resume the repository to let the dashboard close it, or close it on GitHub yourself.' } } };
+  out = await runRowAction('decide:close-read', [adv]);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(acting(K), false, 'a refused close does not leave the chevron busy');
+  assert.strictEqual(out.toasts[0].text.type, 'warning');
+  assert.ok(out.toasts[0].text.outcome.startsWith('Close refused: repo paused'), out.toasts[0].text.outcome);
+  let f = stageTrackerActionFailureOf(adv);
+  assert.ok(f && f.state === 'failed' && f.action === 'close-read', JSON.stringify(f));
+  let src = stageTrackerActedSource(adv);
+  assert.strictEqual(src.action.detail, answer.data.result.outcome, 'the badge reads the client-noted failure');
+  let tip = stageTrackerActedTip(adv, Date.now());
+  assert.ok(tip.split('\n')[0].includes('Close refused: repo paused'), 'hover first line: ' + tip);
+  assert.ok(tip.includes('Closed (read)') && tip.includes('failed'), tip);
+
+  // 3. GitHub 403: the error toast names it; the badge too.
+  calls.length = 0; toasts.length = 0;
+  answer = { ok: false, status: 403, data: { error: 'GitHub 403 Resource not accessible by integration' } };
+  out = await runRowAction('decide:close-read', [adv]);
+  assert.strictEqual(acting(K), false);
+  assert.strictEqual(out.results[0].ok, false); assert.strictEqual(out.toasts[0].text.type, 'error');
+  assert.strictEqual(out.toasts[0].text.head, 'Close (read) failed on hivecommons/hive#15381');
+  assert.ok(out.toasts[0].text.outcome.includes('GitHub 403'), out.toasts[0].text.outcome);
+  tip = stageTrackerActedTip(adv, Date.now());
+  assert.ok(tip.split('\n')[0].includes('Close (read) failed: GitHub 403'), tip);
+  // A newer server record outranks the client note.
+  const later = { ...adv, last_operator_action: { action: 'close-read', actor: 'clubanderson', at: new Date(Date.now() + 1000).toISOString(), outcome: 'applied', detail: 'closed', state: 'addressed' } };
+  assert.strictEqual(stageTrackerActionFailureOf(later), null);
+  assert.strictEqual(stageTrackerActedSource(later).action.outcome, 'applied');
+
+  // 4. Network error.
+  calls.length = 0; toasts.length = 0;
+  answer = new Error('Failed to fetch');
+  out = await runRowAction('decide:close-read', [adv]);
+  assert.strictEqual(acting(K), false); assert.strictEqual(out.results[0].error, 'Failed to fetch');
+  assert.ok(stageTrackerActedTip(adv, Date.now()).includes('Failed to fetch'));
+
+  // 5. Not an advisory / no decision target: never silent.
+  calls.length = 0; toasts.length = 0; dialogs.length = 0;
+  out = await runRowAction('decide:close-read', [plain]);
+  assert.strictEqual(calls.length, 0); assert.strictEqual(dialogs.length, 0);
+  assert.strictEqual(toasts.length, 1); assert.ok(toasts[0].startsWith('warning:Close (read): nothing to act on'), toasts[0]);
+  toasts.length = 0;
+  out = await runRowAction('decide:approve', [plain]);
+  assert.strictEqual(calls.length, 0);
+  assert.ok(toasts[0].startsWith('warning:Approve: nothing to act on'), toasts[0]);
+
+  // 6. Generic: close-superseded on a parked PR gets the same terminal caption.
+  const pr = { repo: 'hivecommons/hive', kind: 'pr', number: 9, url: 'u9', stage: 85, caption: 'Needs human decision', modifiers: ['needs-decision'] };
+  _stageTracker = { items: [pr] }; hamPanel.appendChild(hamStubRow('hivecommons/hive/pr#9'));
+  calls.length = 0; dialogAnswer = '';
+  answer = { data: { ok: true, status: 'closed', result: { action: 'closed', target: { repo: 'hivecommons/hive', kind: 'pr', number: 9 }, outcome: 'Closed as superseded.', next: '' } } };
+  out = await runRowAction('decide:close-wontfix', [pr]);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(caption('hivecommons/hive/pr#9'), 'Closed · leaving list');
+})().catch(e => { console.error(e); process.exit(1); });
 `)
 }

@@ -649,6 +649,10 @@
     // row drawn over its single covering PR) that PR's; null when none.
     function stageTrackerActedSource(item) {
       if (!item) return null;
+      // A failure this client just saw outranks an older server record
+      // (hivecommons/hive#15436): the badge goes red at once.
+      const failed = typeof stageTrackerActionFailureOf === 'function' ? stageTrackerActionFailureOf(item) : null;
+      if (failed) return { item, action: failed, count: (Number(item.operator_action_count) || 0) + 1 };
       if (item.last_operator_action) return { item, action: item.last_operator_action, count: Number(item.operator_action_count) || 1 };
       const linked = Array.isArray(item.linked_prs) ? item.linked_prs : [];
       if (item.kind === 'issue' && linked.length === 1 && linked[0].last_operator_action) {

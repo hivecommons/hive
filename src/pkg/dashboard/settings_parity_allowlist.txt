@@ -161,7 +161,9 @@ auto_merge.merge_train.max_rebase_attempts # merge train rebase loop guard (#151
 auto_merge.no_ci_ok[] # TODO #11854
 auto_merge.repos.<key>.required_checks[] # TODO #11854
 auto_merge.require_current_base[] # TODO #11854
+auto_merge.require_current_base_default # current-base gate fleet default (#15335); yaml-only
 auto_merge.required_checks[] # TODO #11854
+auto_merge.skip_current_base[] # current-base gate per-repo opt-out (#15335); yaml-only
 auto_merge.squash_only[] # merge-method policy; yaml-only
 auto_merge.trusted_authors.exclude_labels[] # TODO #11854
 auto_merge.trusted_authors.repos[] # TODO #11854

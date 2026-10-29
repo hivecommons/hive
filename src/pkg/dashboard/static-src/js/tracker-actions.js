@@ -1094,6 +1094,7 @@
         const keys = stageTrackerPendingKeys(it, rows);
         const pend = stageTrackerSetPending(keys, stageTrackerActingCaption(id, it));
         pending.push(pend);
+        stageTrackerClearActionFailure(it);
         try {
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
           let data = await r.json().catch(() => ({}));
@@ -1117,8 +1118,16 @@
           // row's next state (the gate, or "Rebasing · attempt n/2") is
           // the tracker's to show, so "Approving…" must not linger beside
           // the ✓ waiting for it (#15103).
+          if (result.action === 'refused') stageTrackerNoteActionFailure(it, id, result.outcome || 'refused');
           if (result.action === STAGE_TRACKER_ACTION_NOOP || result.action === STAGE_TRACKER_ACTION_NO_EFFECT || result.action === 'refused' || result.action === 'approved') stageTrackerClearPending(pend);
-          else { if (typeof stageTrackerDecidePending === 'function') stageTrackerDecidePending(pend, result, stageTrackerItemByKey(_stageTracker, stageTrackerTargetKey(result.target))); stageTrackerArmPending(pend, result.target); }
+          else {
+            if (typeof stageTrackerDecidePending === 'function') stageTrackerDecidePending(pend, result, stageTrackerItemByKey(_stageTracker, stageTrackerTargetKey(result.target)));
+            // Closed / merged: the terminal caption stays on the chevron
+            // until the row leaves the list on the next tracker poll.
+            const terminal = stageTrackerTerminalCaption(result);
+            if (terminal) { pend.caption = terminal; pend.decided = true; }
+            stageTrackerArmPending(pend, result.target);
+          }
           if (result.action !== STAGE_TRACKER_ACTION_NOOP && result.action !== STAGE_TRACKER_ACTION_NO_EFFECT && typeof stageTrackerNoteOwnerEvent === 'function') stageTrackerNoteOwnerEvent(stageTrackerTargetKey(result.target) || stageTrackerItemKey(it), STAGE_TRACKER_ACTION_WORDS[result.action] || stageTrackerActionLabel(id));
           if (items.length <= STAGE_TRACKER_RESULT_TOAST_MAX) toasts.push(stageTrackerResultToast(result, it, { id, rowRef: stageTrackerRefOf(it) }));
           // An issue decided per PR: one toast per PR as well, each on its
@@ -1131,6 +1140,7 @@
           const error = e && e.message ? e.message : 'network error';
           results.push({ item: it, ok: false, error });
           stageTrackerClearPending(pend);
+          stageTrackerNoteActionFailure(it, id, stageTrackerActionLabel(id) + ' failed: ' + error);
           if (items.length <= STAGE_TRACKER_RESULT_TOAST_MAX) toasts.push(stageTrackerResultToast(stageTrackerErrorResult(id, it, error), it, { id, rowRef: stageTrackerRefOf(it) }));
         }
       }
@@ -1544,6 +1554,39 @@
       held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };
+    // Once the server has answered, a terminal action's caption says so
+    // until the tracker drops the row ("Closed · leaving list"); the row
+    // cannot come back meanwhile because the server filters an
+    // operator-closed item out of its next snapshots (hivecommons/hive#15436).
+    const STAGE_TRACKER_TERMINAL_CAPTIONS = { closed: 'Closed · leaving list', merged: 'Merged · leaving list' };
+    function stageTrackerTerminalCaption(result) {
+      return STAGE_TRACKER_TERMINAL_CAPTIONS[result && result.action] || '';
+    }
+    // The ledger name of a row action id (the inverse of the badge's
+    // STAGE_TRACKER_ACTED_OPTION_ID), for a failure noted on the client.
+    const STAGE_TRACKER_ACTION_LEDGER_NAME = { 'decide:delegate': 'let-hive-decide', 'decide:approve': 'approve', 'decide:direction': 'give-direction', 'decide:close-superseded': 'close-superseded', 'decide:close-wontfix': 'wontfix', 'decide:close-read': 'close-read', 'accept-triage': 'accept-triage', hold: 'hold', release: 'release', 'needs-human': 'mark-needs-human', 'decide:merge-now': 'merge-now', 'decide:queue-merge': 'queue-merge', 'decide:re-author': 're-author', 'decide:adopt': 'adopt', 'decide:adopt-now': 'adopt-now', 'decide:reroute': 'reroute' };
+    // A failed or refused action is noted on the row at once, so the
+    // history badge turns red and its hover's first line names the reason
+    // — the server's ledger only sees 5xx and refused answers, and a
+    // network error never reaches it (hivecommons/hive#15436). Keyed by
+    // item; the next action on the row, or a newer server record, replaces it.
+    var _stageTrackerActionFailures = {};
+    function stageTrackerNoteActionFailure(item, id, why, now) {
+      const key = stageTrackerItemKey(item);
+      const at = new Date(typeof now === 'number' ? now : Date.now()).toISOString();
+      _stageTrackerActionFailures[key] = { action: STAGE_TRACKER_ACTION_LEDGER_NAME[stageTrackerActionBase(id)] || stageTrackerActionBase(id), actor: (typeof window !== 'undefined' && window._hiveUser) || '', at, outcome: 'failed', detail: why, progress: why, state: 'failed' };
+      return _stageTrackerActionFailures[key];
+    }
+    function stageTrackerClearActionFailure(item) { delete _stageTrackerActionFailures[stageTrackerItemKey(item)]; }
+    // Pure: the client-noted failure for an item when it is newer than the
+    // server's record (or there is none); null otherwise.
+    function stageTrackerActionFailureOf(item) {
+      const f = item ? _stageTrackerActionFailures[stageTrackerItemKey(item)] : null;
+      if (!f) return null;
+      const srv = item.last_operator_action;
+      if (srv && (Date.parse(srv.at || '') || 0) >= (Date.parse(f.at) || 0)) return null;
+      return f;
+    }
     function stageTrackerActingCaption(id, item) {
       if (id === 'decide:merge-now' && item && stageTrackerNeedsRebase(item)) return 'Rebasing, then merging…';
       return STAGE_TRACKER_ACTING_CAPTIONS[stageTrackerActionBase(id)] || 'acting…';
@@ -1761,6 +1804,17 @@
         }
       }
     }
+    // Pure: the row's advisory block when it is one (tracker-row.js owns the
+    // detection for the chevron; here only the server's flag counts).
+    function stageTrackerAdvisoryOf(item) {
+      return item && item.kind !== 'pr' && item.advisory && typeof item.advisory === 'object' ? item.advisory : null;
+    }
+    // A row action whose target mapping came up empty says so instead of
+    // returning silently (hivecommons/hive#15436).
+    function stageTrackerNothingToActOn(id, rows) {
+      const refs = (rows || []).map(stageTrackerRefOf).filter(Boolean).join(', ');
+      if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (refs ? ' — ' + refs + ' is not waiting on that decision' : ''), 'warning');
+    }
     async function runRowAction(action, row) {
       let items = Array.isArray(row) ? row.slice() : (row ? [row] : []);
       const id = action;
@@ -1800,6 +1854,13 @@
         // Adopt now / Reroute act on the PR waiting on its contributor (072 / 071).
         items = items.map(stageTrackerTakeoverTarget).filter(Boolean);
         if (!items.length) return { toasts: [], pending: [] };
+      } else if (id === 'decide:close-read') {
+        // Close (read) acts on the advisory row itself: an advisory is not
+        // a decision park, so it has no decision target
+        // (hivecommons/hive#15436 — the click used to map to nothing and
+        // return without a request, a dialog or a toast).
+        items = items.filter(stageTrackerAdvisoryOf);
+        if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       } else if (id.indexOf('decide:') === 0) {
         // A row decides its parked PR when it has one (the issue's stage is
         // only mirrored from it); dedupe when the PR row is selected too.
@@ -1811,7 +1872,7 @@
         // deciding just that PR ("Decide PR #N › Let hive decide").
         items = [].concat(...items.map(it => id === 'decide:delegate' ? stageTrackerDelegateTargets(it) : [stageTrackerDecisionTarget(it)]))
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
-        if (!items.length) return { toasts: [], pending: [] };
+        if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       }
       const payload = await stageTrackerActionPayload(items, id);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
