@@ -96,7 +96,9 @@
       if (next.stage !== prev.stage) {
         if (next.stage >= STAGE_TRACKER_TERMINAL) return 'merged';
         const sg = (stages || []).find(x => Number(x.number) === next.stage);
-        const name = next.label || (sg && (sg.label || sg.short)) || ('stage ' + next.stage);
+        // Plain words, never a stage slug ("fell back to stage/060-reviewed").
+        const named = typeof stageTrackerStageName === 'function' ? stageTrackerStageName({ label: next.label, short: '' }) || stageTrackerStageName(sg) : '';
+        const name = named || next.label || (sg && (sg.label || sg.short)) || ('stage ' + next.stage);
         const back = stageTrackerStageFell(prev, next, stages);
         const why = (back || next.stage < prev.stage) && next.caption ? ' — ' + next.caption : '';
         return (back ? 'fell back to ' : 'moved to ') + name + why;
@@ -222,7 +224,7 @@
     // Pure: the strip column (0-based; STAGE_TRACKER_PATH.length = merged cap)
     // an item's stage lights, or -1 for an unknown stage.
     function stageTrackerColIndex(item, stages) {
-      const anchor = stageTrackerAnchor(item.stage, stages, item.via_pr ? 'pr' : item.kind);
+      const anchor = stageTrackerAnchor(item.stage, stages, item.via_pr ? 'pr' : item.kind, item);
       if (anchor >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_CAP_COLUMN;
       return STAGE_TRACKER_PATH.indexOf(anchor);
     }

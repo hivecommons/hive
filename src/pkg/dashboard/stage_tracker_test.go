@@ -115,32 +115,44 @@ func TestStageTrackerNeedsAuthorAndReturnedWords(t *testing.T) {
 		}
 	}
 	caption, actor := stageTrackerCaption(stagelabels.NeedsAuthor, "check-failing:unit", "sam", "pr", false, stagelabels.Record{}, false, 0, "")
-	if caption != "Needs @sam — CI is red (check-failing:unit) — @sam must act" || actor != "sam" {
+	if caption != "Needs @sam — CI failed: unit — @sam must act" || actor != "sam" {
 		t.Errorf("071 caption = %q actor = %q", caption, actor)
 	}
 }
 
 func TestHumanizeStageReason(t *testing.T) {
 	cases := map[string]string{
-		"actionable":                                    "",
-		"live agent claim":                              "",
-		"mirrors PR #12332":                             "mirrors PR #12332",
-		"label:needs-rebase":                            "needs a rebase",
-		"held":                                          "held by a hold label",
-		"contributor-lane:no-verdict":                   "no review verdict yet",
-		"required-check-pending:build-and-test":         "check build-and-test still running",
-		"required-check-failing:DCO":                    "check DCO failing",
-		"reviewer-verdict:changes_requested":            "review swarm requested changes",
-		"pending: head pushed 59s ago (< min_head_age)": "head pushed 59s ago; waiting for the minimum head age",
-		"contributor-lane:soaking:12m":                  "soaking",
-		"excluded-label:do-not-merge":                   "label do-not-merge excludes it",
-		"some-new-token":                                "some new token",
-		"base-branch-red:docker (hive),docker (hub)":    "waiting for the base branch's CI to recover (docker (hive), docker (hub)) — not this PR's fault",
-		"shared-ci-incident:13208":                      "deferred to shared-CI incident #13208 — not this PR's fault",
-		"fork-guard:Canary":                             "check Canary refuses fork PRs — a maintainer must push this branch to the repository",
-		"contributor-lane:workflow-path":                "workflow path",
-		"contributor-lane:tests-removed":                "tests removed",
-		"human-merge-path":                              "human-merge path",
+		"actionable":                            "",
+		"live agent claim":                      "",
+		"mirrors PR #12332":                     "mirrors PR #12332",
+		"label:needs-rebase":                    "needs a rebase",
+		"held":                                  "held by a hold label",
+		"contributor-lane:no-verdict":           "no review verdict yet",
+		"required-check-pending:build-and-test": "check build-and-test still running",
+		// Pending is not red (hivecommons/docs#512 read "CI is red (check-pending)").
+		"check-pending":                      "CI running",
+		"status-pending":                     "CI running",
+		"check-success":                      "CI green",
+		"status-success":                     "CI green",
+		"check-failure":                      "CI failed",
+		"status-error":                       "CI failed",
+		"check-timed_out":                    "CI failed (timed out)",
+		"check-failing:lint":                 "CI failed: lint",
+		"status-failing:tests":               "CI failed: tests",
+		"ci-red":                             "CI failed",
+		"check-runs":                         "CI checks could not be read",
+		"required-check-failing:DCO":         "check DCO failing",
+		"reviewer-verdict:changes_requested": "review swarm requested changes",
+		"pending: head pushed 59s ago (< min_head_age)":              "head pushed 59s ago; waiting for the minimum head age",
+		"contributor-lane:soaking:12m":                               "soaking",
+		"excluded-label:do-not-merge":                                "label do-not-merge excludes it",
+		"some-new-token":                                             "some new token",
+		"base-branch-red:docker (hive),docker (hub)":                 "waiting for the base branch's CI to recover (docker (hive), docker (hub)) — not this PR's fault",
+		"shared-ci-incident:13208":                                   "deferred to shared-CI incident #13208 — not this PR's fault",
+		"fork-guard:Canary":                                          "check Canary refuses fork PRs — a maintainer must push this branch to the repository",
+		"contributor-lane:workflow-path":                             "workflow path",
+		"contributor-lane:tests-removed":                             "tests removed",
+		"human-merge-path":                                           "human-merge path",
 		"contributor-lane:workflow-path:human-approved@clubanderson": "workflow path — approved by @clubanderson",
 		"reviewer-verdict:requires_human:human-approved@octocat":     "review verdict requires human — approved by @octocat",
 	}
@@ -731,7 +743,7 @@ func TestStageTrackerAdoptedCaptionNamesTheWork(t *testing.T) {
 	cases := map[string]string{
 		"conflicting":                        "Hive adopted this PR; hive is rebasing it onto the base branch — conflicting",
 		"label:needs-rebase":                 "Hive adopted this PR; hive is rebasing it onto the base branch — needs a rebase",
-		"check-failing:coverage":             "Hive adopted this PR; hive is fixing CI — CI is red (check-failing:coverage)",
+		"check-failing:coverage":             "Hive adopted this PR; hive is fixing CI — CI failed: coverage",
 		"required-check-failing:test":        "Hive adopted this PR; hive is fixing CI — check test failing",
 		"reviewer-verdict:changes_requested": "Hive adopted this PR; hive is addressing the review findings — review swarm requested changes",
 		"":                                   "Hive adopted this PR",

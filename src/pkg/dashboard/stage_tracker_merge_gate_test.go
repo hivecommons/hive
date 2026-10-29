@@ -193,7 +193,7 @@ for (const [n, k] of [[60, 'gate-pending'], [80, 'ready'], [95, 'soaking'], [100
 // Captured 15:11 ET: both rows at 060 reviewed, CI pending. #15042 had a
 // targeted sweep pass on it; #15054 was waiting for the next pass.
 const pr15042 = { repo: 'hivecommons/hive', number: 15042, kind: 'pr', base_ref: 'v6', author_kind: 'hive', stage: 60, stage_slug: 'reviewed', reason: 'check-pending',
-  caption: 'Review swarm approved; a gate is still pending — CI is red (check-pending)',
+  caption: 'Review swarm approved; a gate is still pending — CI running',
   merge_gate: { state: 'gate-pending', reason: 'check-pending', sweep_running: true, last_sweep_at: iso(now - 30000) } };
 const pr15054 = { repo: 'hivecommons/hive', number: 15054, kind: 'pr', base_ref: 'v5', author_kind: 'clanker', stage: 60, stage_slug: 'reviewed', reason: 'required-check-pending:build-and-test',
   caption: 'Review swarm approved; a gate is still pending — check build-and-test still running',
@@ -210,7 +210,7 @@ assert.strictEqual(a.cue, 'running'); assert.strictEqual(a.detail, 'CI in progre
 assert.strictEqual(a.tip, "Review passed, not yet admitted to auto merge — CI in progress; hive's merge sweep is running on this PR now.");
 // The pill uses the operator's wording; the tooltip keeps the lane's full reason.
 assert.strictEqual(b.cue, 'waiting'); assert.strictEqual(b.detail, 'CI in progress');
-assert.ok(b.tip.startsWith('Review passed, not yet admitted to auto merge — CI still running (build-and-test). hive re-checks the gate on its next sweep in 42s.'), b.tip);
+assert.ok(b.tip.startsWith('Review passed, not yet admitted to auto merge — CI running (build-and-test). hive re-checks the gate on its next sweep in 42s.'), b.tip);
 assert.ok(b.tip.includes('A GitHub event on the PR (check run, review, push) triggers a pass sooner.') && b.tip.endsWith('Last checked 2m ago.'), b.tip);
 
 // Every row on the gate gets the glyph; the sentence is its title AND aria-label.
@@ -245,8 +245,8 @@ assert.strictEqual(stageTrackerMergeGateInfo({ stage: 95, soak_remaining_seconds
 assert.strictEqual(stageTrackerSoakLeft({ merge_gate: { soak_remaining_seconds: 452 } }), ' — 8m left', 'the 095 chevron tooltip reads the mirrored field too');
 
 // Reason words.
-assert.strictEqual(stageTrackerGateReasonText('check-pending'), 'CI still running');
-assert.strictEqual(stageTrackerGateReasonText('required-check-failing:lint'), 'CI is red (lint)');
+assert.strictEqual(stageTrackerGateReasonText('check-pending'), 'CI running');
+assert.strictEqual(stageTrackerGateReasonText('required-check-failing:lint'), 'CI failed: lint');
 assert.strictEqual(stageTrackerGateReasonText('conflicting'), 'branch has conflicts');
 assert.strictEqual(stageTrackerGateReasonText('something-else'), 'something-else', 'unknown tokens pass through');
 assert.strictEqual(stageTrackerGateReasonText(''), '');
@@ -291,6 +291,9 @@ func stageTrackerMergeGateInfoJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_PATH_WORDS") + "\n" +
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_FAILED_SHORT_MAX") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeFailedShort") + "\n" +
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_REFUSAL_DETAIL") + "\n" +
+		jsFunc(t, html, "stageTrackerMergeRefusalFromRaw") + "\n" +
+		jsFunc(t, html, "stageTrackerMergeFailedInfo") + "\n" +
 		jsConstLine(t, html, "STAGE_TRACKER_STAGE_PHRASE") + "\n" +
 		jsFunc(t, html, "stageTrackerStagePhrase") + "\n" +
 		jsFunc(t, html, "stageTrackerCoverReasonText") + "\n" +
@@ -355,7 +358,7 @@ assert.ok(!leak.test(pill), 'pill label must not carry the cover reason: ' + pil
 const a = stageTrackerMergeGateInfo(issue15088, now), b = stageTrackerMergeGateInfo(pr15090, now);
 assert.deepStrictEqual([a.word, a.detail, a.cue, a.state], [b.word, b.detail, b.cue, b.state]);
 // The cover reason leads the tooltip — "· at <stage>", not "(PR at <stage>)".
-assert.ok(a.tip.startsWith('Open PR #15090 covers it · its PR is review passed · waiting for merge admission — Review passed, not yet admitted to auto merge — CI still running (build-and-test).'), a.tip);
+assert.ok(a.tip.startsWith('Open PR #15090 covers it · its PR is review passed · waiting for merge admission — Review passed, not yet admitted to auto merge — CI running (build-and-test).'), a.tip);
 assert.ok(!/\(PR at/.test(a.tip), a.tip);
 const glyph = stageTrackerGateCueHtml(issue15088, now);
 assert.ok(glyph.includes('title="' + esc(a.tip) + '"') && glyph.includes('aria-label="' + esc(a.tip) + '"'), glyph);

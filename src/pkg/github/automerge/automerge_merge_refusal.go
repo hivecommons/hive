@@ -94,6 +94,48 @@ func mergeRefusalReviewKey(a mergeAttempt) string {
 	return "review|" + strings.ToLower(a.owner+"/"+a.repo) + "#" + strconv.Itoa(a.number)
 }
 
+// mergeRefusalChecksKey remembers a "required status checks are expected"
+// 405 per PR: the head's required checks have not reported yet.
+func mergeRefusalChecksKey(a mergeAttempt) string {
+	return "checks|" + strings.ToLower(a.owner+"/"+a.repo) + "#" + strconv.Itoa(a.number)
+}
+
+// autoMergeReasonChecksExpected is the skip reason while GitHub has told the
+// sweep the head's required checks are still expected.
+const autoMergeReasonChecksExpected = "check-pending"
+
+// requiredChecksExpected reports whether err is GitHub's 405 "N of M
+// required status checks are expected" and, when it is, remembers the head
+// so knownMergeRefusal skips the merge call on the following passes while
+// GitHub still reports the PR blocked (hivecommons/docs#512: the sweep put
+// /merge on every pass, each refusal lighting "Merge failed" on the tracker
+// for a PR whose checks had simply not started). A check run completing
+// flips mergeable_state off "blocked", which re-arms the call.
+func (c *Engine) requiredChecksExpected(a mergeAttempt, err error) bool {
+	if !requiredChecksExpectedMergeError(err) {
+		return false
+	}
+	if c == nil {
+		return true
+	}
+	c.rememberMergeRefusal(mergeRefusalChecksKey(a), mergeRefusal{head: strings.TrimSpace(a.head), state: comparableMergeableState(a.state)})
+	return true
+}
+
+// checksExpectedKnown reports whether the head of a is remembered as
+// waiting on required checks and GitHub still reports it blocked.
+func (c *Engine) checksExpectedKnown(a mergeAttempt, now time.Time) bool {
+	r, ok := c.mergeRefusals[mergeRefusalChecksKey(a)]
+	if !ok {
+		return false
+	}
+	if now.Sub(r.at) >= mergeRefusalRecheck || !strings.EqualFold(r.head, strings.TrimSpace(a.head)) || comparableMergeableState(a.state) != "blocked" {
+		delete(c.mergeRefusals, mergeRefusalChecksKey(a))
+		return false
+	}
+	return true
+}
+
 func mergeRefusalMethodKey(a mergeAttempt) string {
 	return "method|" + strings.ToLower(a.owner+"/"+a.repo) + "|" + strings.ToLower(strings.TrimSpace(a.method))
 }
@@ -125,6 +167,9 @@ func (c *Engine) knownMergeRefusal(a mergeAttempt) string {
 	now := c.clock()
 	c.mergeRefusalsMu.Lock()
 	defer c.mergeRefusalsMu.Unlock()
+	if c.checksExpectedKnown(a, now) {
+		return autoMergeReasonChecksExpected
+	}
 	if key := mergeRefusalMethodKey(a); strings.TrimSpace(a.method) != "" {
 		if r, ok := c.mergeRefusals[key]; ok {
 			if now.Sub(r.at) < mergeRefusalRecheck {
@@ -159,7 +204,7 @@ func (c *Engine) refusedMerge(a mergeAttempt, err error) string {
 		return reason
 	}
 	var key string
-	r := mergeRefusal{at: c.clock()}
+	var r mergeRefusal
 	switch reason {
 	case autoMergeReasonMergeRefusedReview:
 		key, r.head, r.state = mergeRefusalReviewKey(a), strings.TrimSpace(a.head), comparableMergeableState(a.state)
@@ -169,6 +214,14 @@ func (c *Engine) refusedMerge(a mergeAttempt, err error) string {
 		}
 		key = mergeRefusalMethodKey(a)
 	}
+	c.rememberMergeRefusal(key, r)
+	return reason
+}
+
+// rememberMergeRefusal stores r under key, stamped now, pruning expired
+// entries once the map is large.
+func (c *Engine) rememberMergeRefusal(key string, r mergeRefusal) {
+	r.at = c.clock()
 	c.mergeRefusalsMu.Lock()
 	defer c.mergeRefusalsMu.Unlock()
 	if c.mergeRefusals == nil {
@@ -183,5 +236,4 @@ func (c *Engine) refusedMerge(a mergeAttempt, err error) string {
 		}
 	}
 	c.mergeRefusals[key] = r
-	return reason
 }

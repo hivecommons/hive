@@ -418,10 +418,11 @@
       if (m < 60) return m + 'm';
       return Math.floor(m / 60) + 'h' + (m % 60 ? String(m % 60).padStart(2, '0') + 'm' : '');
     }
-    // Pure: the gate's reason token in plain words — "CI still running
-    // (build-and-test)", "CI is red (lint)"; '' for none.
+    // Pure: the gate's reason token in plain words — "CI running
+    // (build-and-test)", "CI failed: lint"; '' for none. Pending is never
+    // "red" (hivecommons/docs#512 read "CI is red (check-pending)").
     const STAGE_TRACKER_GATE_REASON_WORDS = {
-      'check-pending': 'CI still running', 'required-check-pending': 'CI still running', 'check-failing': 'CI is red', 'required-check-failing': 'CI is red',
+      'check-pending': 'CI running', 'required-check-pending': 'CI running', 'check-failing': 'CI failed', 'required-check-failing': 'CI failed',
       'optional-check-failing': 'an optional check is red', conflicting: 'branch has conflicts', 'needs-rebase': 'needs a rebase', 'dco-missing': 'DCO sign-off missing',
     };
     // Pure: the 060 "Review passed" pill's detail from the lane's recorded
@@ -446,7 +447,8 @@
       const detail = i >= 0 ? raw.slice(i + 1).replace(/\(.*$/, '') : '';
       const words = STAGE_TRACKER_GATE_REASON_WORDS[slug];
       if (!words) return raw;
-      return words + (detail ? ' (' + detail + ')' : '');
+      if (!detail) return words;
+      return /failed$/.test(words) ? words + ': ' + detail : words + ' (' + detail + ')';
     }
     // Pure: "open PR #15090 covers it · at 060-reviewed" from an issue row's
     // lane reason ("open PR #15090 covers it (PR at 060-reviewed)"); '' for
@@ -457,6 +459,20 @@
     // (stage_tracker_vocabulary.go): every string the page renders names a
     // stage by its chevron's words, never by a code ("060 reviewed").
     const STAGE_TRACKER_STAGE_PHRASE = { 10: 'actionable', 15: 'waiting for triage', 17: 'waiting for the author to confirm the gap (prior art found)', 20: 'claimed', 30: 'a PR in progress', 40: 'covered by a PR', 45: 'waiting for a human decision', 50: 'in CI / review', 60: 'review passed · waiting for merge admission', 70: 'being fixed by hive', 71: 'waiting for its author', 72: 'returned to the contributor', 74: 'adopted by hive', 80: 'at the merge gate', 85: 'waiting for a human decision', 90: 'ready for human merge', 95: 'soaking before merge', 100: 'in the merge queue' };
+    // Pure: a stage's name in plain words for cues and tooltips — its short
+    // word when the stages table has one, else its label with the lane's
+    // "stage/060-" slug prefix dropped and the slug humanised ("Reviewed").
+    // Minimal local fix for "fell back to stage/060-reviewed"
+    // (hivecommons/docs#512); the copy sweep retires stage slugs globally.
+    function stageTrackerStageName(st) {
+      if (!st) return '';
+      if (st.short) return String(st.short);
+      const label = String(st.label || '').trim();
+      const m = /^(?:stage\/)?\d{3}-(.+)$/.exec(label);
+      if (!m) return label;
+      const words = m[1].replace(/[-_]+/g, ' ');
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    }
     // Pure: a stage code as the lane spells it ("060-reviewed", "stage/060-reviewed") → its phrase; the input when unknown.
     function stageTrackerStagePhrase(code) {
       const m = /^(?:stage\/)?(\d{3})(?:[- ][a-z-]+)?$/i.exec(String(code || '').trim());
@@ -599,6 +615,7 @@
       // stagelabels RouteHuman), in the CI / Review column; the spinning cue
       // says the sweep is on it now.
       const preWhy = state === 'gate-pending' ? (stageTrackerReviewPassedDetail(mg.reason || laneReason) || 'waiting for merge admission') : '';
+      if (state === 'merge-failed') return stageTrackerMergeFailedInfo(mg, nowMs, nextAt, lastSeen);
       if (mg.sweep_running) {
         return { state, word, detail: preWhy || 'merge sweep running', tip: (preWhy ? 'Review passed, not yet admitted to auto merge — ' + preWhy + '; ' : '') + "hive's merge sweep is running on this PR now.", cue: 'running', until: 0 };
       }
@@ -622,17 +639,56 @@
         if (since > 0) return { state, word, detail: 'merge call in flight', tip: 'hive is merging it now' + (who ? ' (' + who + ')' : '') + ' — the merge call has been in flight' + sinceWords + '.', cue: 'merging', until: 0 };
         return { state, word, detail: '', tip: 'Admitted and soaked; hive is merging it now (GitHub merge queue / merge window).' + lastSeen, cue: 'merging', until: 0 };
       }
-      if (state === 'merge-failed') {
-        const why = String(mg.merge_failed || '').trim();
-        const at = mg.merge_failed_at ? Date.parse(mg.merge_failed_at) : 0;
-        const who = STAGE_TRACKER_MERGE_PATH_WORDS[mg.merge_path] || '';
-        return { state, word, detail: stageTrackerMergeFailedShort(why), tip: 'hive tried to merge this' + (who ? ' (' + who + ')' : '') + (at > 0 ? ' ' + stageTrackerAgoText(at, nowMs) : '') + ' and GitHub refused' + (why ? ': ' + why : '') + '. The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'waiting', until: 0 };
-      }
       const why = stageTrackerGateReasonText(mg.reason || laneReason);
       return { state, word, detail: preWhy, tip: 'Review passed, not yet admitted to auto merge' + (why ? ' — ' + why : '') + '.' + (nextWords ? ' hive re-checks the gate on its ' + nextWords.replace(/^next /, 'next ') + '.' : '') + sooner + lastSeen, cue: 'waiting', until: 0 };
     }
+    // Refusal kind (merge_gate.merge_failed_kind, stageTrackerMergeRefusal in
+    // Go) → the chip's short detail. The chip never carries the raw error
+    // (hivecommons/docs#512 drew "PUT https://api.github.com/…" across the
+    // column); the plain sentence and the raw text ride the tooltip.
+    const STAGE_TRACKER_MERGE_REFUSAL_DETAIL = { protection: 'branch protection', review: 'review required', method: 'merge method off', 'merge-queue': 'merge queue only', 'head-moved': 'needs rebase', forbidden: 'not allowed', refused: 'GitHub refused' };
+    // Pure: an older payload's raw refusal → its kind and sentence (the Go
+    // helper's mapping, abridged); 'refused' when nothing matches.
+    function stageTrackerMergeRefusalFromRaw(why) {
+      const m = /(\d+) of (\d+) required status checks? (?:are|is) expected/i.exec(why);
+      if (m) return { kind: 'checks-pending', text: m[1] + ' required check' + (m[1] === '1' ? " hasn't" : "s haven't") + ' finished', checks: Number(m[1]) };
+      if (/required status check ["']([^"']+)["'] is expected/i.test(why)) return { kind: 'checks-pending', text: 'a required check hasn\'t finished', checks: 1 };
+      if (/\b409\b|branch was modified/i.test(why)) return { kind: 'head-moved', text: 'the branch moved under the merge call; it needs a rebase', checks: 0 };
+      if (/\b403\b|resource not accessible|forbidden/i.test(why)) return { kind: 'forbidden', text: "hive isn't allowed to merge here", checks: 0 };
+      if (/\b405\b|not mergeable|blocked|protected branch/i.test(why)) return { kind: 'protection', text: 'branch protection blocks it', checks: 0 };
+      return { kind: 'refused', text: 'GitHub refused the merge', checks: 0 };
+    }
+    // Pure: the merge-failed pill. A refusal because required checks have
+    // not reported is not a failure — the sweep called too early — so the
+    // chip reads "Waiting for CI · 4 checks"; a sweep retrying now reads
+    // "Merge failed · retrying"; otherwise "Merge failed · <short reason>".
+    // The chip is a fixed short phrase (≤ 5 words); the tooltip carries the
+    // plain sentence and GitHub's raw text after "Details:".
+    function stageTrackerMergeFailedInfo(mg, nowMs, nextAt, lastSeen) {
+      const state = 'merge-failed';
+      const why = String(mg.merge_failed || '').trim();
+      const fallback = why && !mg.merge_failed_kind ? stageTrackerMergeRefusalFromRaw(why) : null;
+      const kind = mg.merge_failed_kind || (fallback && fallback.kind) || '';
+      const text = mg.merge_failed_text || (fallback && fallback.text) || '';
+      const checks = Number(mg.merge_failed_checks) || (fallback && fallback.checks) || 0;
+      const at = mg.merge_failed_at ? Date.parse(mg.merge_failed_at) : 0;
+      const who = STAGE_TRACKER_MERGE_PATH_WORDS[mg.merge_path] || '';
+      const when = (who ? ' (' + who + ')' : '') + (at > 0 ? ' ' + stageTrackerAgoText(at, nowMs) : '');
+      const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
+      const details = why ? ' Details: ' + why : '';
+      if (kind === 'checks-pending') {
+        const tip = 'hive tried to merge this' + when + ' before its required checks had reported — ' + (text || "required checks haven't finished") + '. It merges once they pass' + (mg.sweep_running ? "; hive's merge sweep is on it now" : (nextWords ? ' (' + nextWords + ')' : '')) + '.' + lastSeen + details;
+        return { state, word: 'Waiting for CI', detail: checks > 0 ? checks + ' check' + (checks === 1 ? '' : 's') : '', tip, cue: mg.sweep_running ? 'running' : 'waiting', until: 0 };
+      }
+      const word = STAGE_TRACKER_MERGE_GATE_WORD[state];
+      const sentence = 'hive tried to merge this' + when + ' and GitHub refused' + (text ? ' — ' + text : '') + '.';
+      if (mg.sweep_running) {
+        return { state, word, detail: 'retrying', tip: sentence + " hive's merge sweep is retrying it now." + lastSeen + details, cue: 'running', until: 0 };
+      }
+      return { state, word, detail: STAGE_TRACKER_MERGE_REFUSAL_DETAIL[kind] || 'GitHub refused', tip: sentence + ' The lane re-evaluates it on its next pass' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen + details, cue: 'waiting', until: 0 };
+    }
     // Pure: a refusal's first line, cut to STAGE_TRACKER_MERGE_FAILED_SHORT_MAX
-    // for the pill detail; the full text rides the glyph tooltip.
+    // (tooltips and toasts; the pill detail comes from the refusal kind).
     function stageTrackerMergeFailedShort(why) {
       const line = String(why || '').split('\n')[0].replace(/^merging PR \S+ \([^)]*\): /, '').trim();
       if (!line) return 'GitHub refused the merge';

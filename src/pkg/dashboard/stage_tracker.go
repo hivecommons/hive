@@ -1319,8 +1319,13 @@ func humanizeStageReason(reason string) string {
 		return "no verified claim links this PR to an issue"
 	case "contributor-lane:claim-tier-untrusted":
 		return "author's claim tier is below the auto-merge tiers"
-	case "ci-red", "check-runs":
-		return "CI is red"
+	case "ci-red":
+		return "CI failed"
+	case "check-runs", "status-check":
+		return "CI checks could not be read"
+	}
+	if words, ok := stageTrackerCIStateWords(r); ok {
+		return words
 	}
 	if strings.HasPrefix(lower, "mirrors pr #") {
 		return "mirrors PR " + r[len("mirrors PR "):]
@@ -1378,9 +1383,6 @@ func humanizeStageReason(reason string) string {
 	}
 	if strings.HasPrefix(lower, "release-hold") {
 		return "release hold"
-	}
-	if strings.HasPrefix(lower, "status-") || strings.HasPrefix(lower, "check-") {
-		return "CI is red (" + r + ")"
 	}
 	switch lower {
 	case stageengineprstage.ContributorLaneReasonWorkflowPath:

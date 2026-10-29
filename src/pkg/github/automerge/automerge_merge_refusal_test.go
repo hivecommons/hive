@@ -214,3 +214,44 @@ func TestContributorLanePermanentMergeRefusalOneMergeCall(t *testing.T) {
 		})
 	}
 }
+
+// TestRequiredChecksExpectedRemembered: GitHub's 405 "N of M required status
+// checks are expected" (hivecommons/docs#512, 2026-10-29) is remembered per
+// head, and the next pass skips the merge call as check-pending while the
+// PR is still blocked — a new head, an unblocked state or the recheck
+// window re-arms it; other errors are not remembered.
+func TestRequiredChecksExpectedRemembered(t *testing.T) {
+	expected := &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusMethodNotAllowed}, Message: "4 of 4 required status checks are expected."}
+	base := mergeAttempt{owner: "hivecommons", repo: "docs", base: "main", number: 512, head: "sha512", state: "blocked", method: "squash"}
+	for _, tc := range []struct {
+		name    string
+		err     error
+		next    func(mergeAttempt) mergeAttempt
+		advance time.Duration
+		want    string
+	}{
+		{name: "same head still blocked", err: expected, want: autoMergeReasonChecksExpected},
+		{name: "new head re-arms", err: expected, next: func(a mergeAttempt) mergeAttempt { a.head = "sha513"; return a }},
+		{name: "checks reported re-arms", err: expected, next: func(a mergeAttempt) mergeAttempt { a.state = "clean"; return a }},
+		{name: "state not yet computed re-arms", err: expected, next: func(a mergeAttempt) mergeAttempt { a.state = "unknown"; return a }},
+		{name: "recheck re-arms", err: expected, advance: mergeRefusalRecheck},
+		{name: "per PR", err: expected, next: func(a mergeAttempt) mergeAttempt { a.number = 513; return a }},
+		{name: "other 405 is not remembered", err: &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusMethodNotAllowed}, Message: "Pull Request is not mergeable"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := time.Date(2026, 10, 29, 15, 4, 0, 0, time.UTC)
+			c := &Engine{now: func() time.Time { return clock }}
+			if got := c.requiredChecksExpected(base, tc.err); got != requiredChecksExpectedMergeError(tc.err) {
+				t.Fatalf("requiredChecksExpected = %v", got)
+			}
+			clock = clock.Add(tc.advance)
+			next := base
+			if tc.next != nil {
+				next = tc.next(base)
+			}
+			if got := c.knownMergeRefusal(next); got != tc.want {
+				t.Fatalf("knownMergeRefusal = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

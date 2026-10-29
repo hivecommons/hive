@@ -69,6 +69,14 @@ type StageTrackerMergeGate struct {
 	// state merge-failed.
 	MergeFailed   string     `json:"merge_failed,omitempty"`
 	MergeFailedAt *time.Time `json:"merge_failed_at,omitempty"`
+	// MergeFailedKind / MergeFailedText / MergeFailedChecks: the refusal
+	// translated (stageTrackerMergeRefusal) — a kind token the SPA maps to
+	// a short chip detail, the plain sentence for the tooltip, and for
+	// checks-pending how many required checks are still expected. The raw
+	// MergeFailed text is for the tooltip's Details line only.
+	MergeFailedKind   string `json:"merge_failed_kind,omitempty"`
+	MergeFailedText   string `json:"merge_failed_text,omitempty"`
+	MergeFailedChecks int    `json:"merge_failed_checks,omitempty"`
 }
 
 // stageTrackerMergeGateState maps a stage to its merge-gate state; "" off
@@ -174,6 +182,7 @@ func stageTrackerMergeGateAttempt(mg *StageTrackerMergeGate, a github.MergeAttem
 		mg.MergingSince = &since
 		mg.MergePath = a.Path
 		mg.MergeFailed = a.Error
+		mg.MergeFailedKind, mg.MergeFailedText, mg.MergeFailedChecks = stageTrackerMergeRefusal(a.Error)
 		at := a.EndedAt
 		mg.MergeFailedAt = &at
 	}

@@ -1155,7 +1155,10 @@ Every PR at the gate now carries `merge_gate: {state, reason, sweep_running, las
 | any of the above while a pass is evaluating this PR | the stage's word | *merge sweep running* | ⟳ (static) — *hive's merge sweep is running on this PR now.* |
 | 100 merge queue | **Merging** | — | ⟳ (static) — *Admitted and soaked; hive is merging it now (GitHub merge queue / merge window).* |
 | any stage while hive's merge call is in flight (`merge_gate.merging_since`, `merge_path`) | **Merging** | *merge call in flight*, then *merge landed* while the SPA holds the row | ⟳ (static) — *hive is merging it now (automerge sweep) — the merge call has been in flight since 3s ago.* |
-| any stage after GitHub refused hive's merge call (`merge_gate.state: merge-failed`, `merge_failed`, `merge_failed_at`) | **Merge failed** | the refusal's first line — *405 Pull Request is not mergeable* | 🕓 clock — *hive tried to merge this (maintainer merge from the dashboard) 9s ago and GitHub refused: …. The lane re-evaluates it on its next pass.* |
+| any stage after GitHub refused hive's merge call (`merge_gate.state: merge-failed`, `merge_failed`, `merge_failed_kind`, `merge_failed_text`, `merge_failed_at`) | **Merge failed** | the refusal translated to a short phrase — *branch protection*, *needs rebase*, *not allowed*, *review required*, or *retrying* while the sweep is on it; never GitHub's raw text | 🕓 clock — *hive tried to merge this (maintainer merge from the dashboard) 9s ago and GitHub refused — branch protection blocks it. The lane re-evaluates it on its next pass. Details: 405 Pull Request is not mergeable* |
+| any stage after the merge call drew *N of M required status checks are expected* (`merge_failed_kind: checks-pending`, `merge_failed_checks`) | **Waiting for CI** | *4 checks* | ⟳ while the sweep is on it, else 🕓 — *hive tried to merge this (automerge sweep) 1m ago before its required checks had reported — 4 required checks haven't finished. It merges once they pass.* |
+
+A merge outcome (**Merging**, **Merge failed**, **Waiting for CI**) always lights the **Merge gate** column, whatever numeric stage the lane fell back to (hivecommons/docs#512 drew "Merge failed" in CI / Review because the PR sat at 060).
 | 110 | **Merged** (the ✓ cap) | — | — |
 
 #### Merging is held for the toast's lifetime
