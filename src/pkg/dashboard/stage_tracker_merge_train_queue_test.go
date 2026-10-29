@@ -327,6 +327,7 @@ var mergeTrainStateSlugs = []string{
 	prstage.MergeTrainStateQueuedBehind,
 	prstage.MergeTrainStateRebasing,
 	prstage.MergeTrainStateRebaseExhausted,
+	prstage.MergeTrainStateDuplicateOf,
 }
 
 // TestStageTrackerMergeTrainStateSlugsNeverLeak renders every train state
@@ -366,10 +367,12 @@ const leaks = (s, state) => { s = String(s || ''); return s.trim() === state || 
 const soak = { soak_until: new Date(now + 9 * 60 * 1000).toISOString(), soak_started_at: new Date(now - 60 * 1000).toISOString() };
 for (const state of slugs) {
   for (const sweep of [true, false]) for (const clock of [null, soak]) {
+    // A held duplicate rides no train: the gate alone says "duplicate-of:<n>".
+    const dup = state === 'duplicate-of';
     const mt = { id: 'v5#15406', state, front: 15406, head_number: 15406, position: state === 'front' ? 1 : 2, size: 4, length: 4, attempt: 1, max_attempts: 2, ahead: state === 'front' ? [] : [15406] };
-    const item = { repo: 'hivecommons/hive', number: 15407, kind: 'pr', title: 't', stage: 80, modifiers: [], merge_train: mt,
-      merge_gate: Object.assign({ state, sweep_running: sweep }, clock || {}) };
-    const word = stageTrackerTrainWord(item);
+    const item = { repo: 'hivecommons/hive', number: 15407, kind: 'pr', title: 't', stage: 80, modifiers: [], merge_train: dup ? undefined : mt,
+      merge_gate: Object.assign({ state: dup ? state + ':15402' : state, sweep_running: sweep, duplicate_of: dup ? 15402 : 0, duplicate_issue: dup ? 15396 : 0 }, clock || {}) };
+    const word = dup ? stageTrackerMergeGateStateWord(item.merge_gate.state) : stageTrackerTrainWord(item);
     assert.ok(word && !leaks(word, state), state + ' train word: ' + JSON.stringify(word));
     const info = stageTrackerMergeGateInfo(item, now);
     assert.ok(info.word && !leaks(info.word, state) && !leaks(info.detail, state), state + ' chip: ' + JSON.stringify(info));
@@ -380,6 +383,15 @@ for (const state of slugs) {
 // The word table covers the slugs and an unmapped state still spells out.
 for (const state of slugs) assert.ok(STAGE_TRACKER_TRAIN_STATE_WORD[state], state);
 assert.strictEqual(stageTrackerMergeGateStateWord('front'), 'Next to merge');
+assert.strictEqual(stageTrackerMergeGateStateWord('duplicate-of:15402'), 'Duplicate of #15402');
+// The held duplicate's chip: "Duplicate of #15402 · needs a pick", the hover names the issue and the pick rule.
+const heldDup = { repo: 'hivecommons/hive', number: 15407, kind: 'pr', title: 't', stage: 80, modifiers: ['needs-decision'], merge_gate: { state: 'duplicate-of:15402', duplicate_of: 15402, duplicate_issue: 15396, sweep_running: true } };
+const hd = stageTrackerMergeGateInfo(heldDup, now);
+assert.strictEqual(hd.word, 'Duplicate of #15402'); assert.strictEqual(hd.detail, 'needs a pick'); assert.strictEqual(hd.until, 0); assert.strictEqual(hd.duplicateOf, 15402);
+assert.ok(hd.tip.startsWith('This PR and #15402 both fix #15396. Hive\'s merge queue carries one PR per issue and kept #15402'), hd.tip);
+assert.strictEqual(stageTrackerMergeGateWordHtml(heldDup, now).replace(/<[^>]+>/g, ''), 'Duplicate of #15402 · needs a pick');
+heldDup.merge_gate.sweep_running = false;
+assert.strictEqual(stageTrackerMergeGateInfo(heldDup, now).word + ' · ' + stageTrackerMergeGateInfo(heldDup, now).detail, 'Duplicate of #15402 · needs a pick', 'sweep-stable');
 assert.strictEqual(stageTrackerMergeGateStateWord('some-new-state'), 'Some new state');
 `)
 }

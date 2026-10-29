@@ -315,6 +315,8 @@ func stageTrackerTrainQueueJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_REBASING"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_EXHAUSTED"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_GATE_DUPLICATE_PREFIX"),
+		jsFunc(t, html, "stageTrackerGateDuplicateOf"),
 		jsFunc(t, html, "stageTrackerMergeGateStateWord"),
 		jsFunc(t, html, "stageTrackerTrain"),
 		jsFunc(t, html, "stageTrackerOrdinal"),

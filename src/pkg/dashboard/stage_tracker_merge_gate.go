@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -77,6 +78,22 @@ type StageTrackerMergeGate struct {
 	MergeFailedKind   string `json:"merge_failed_kind,omitempty"`
 	MergeFailedText   string `json:"merge_failed_text,omitempty"`
 	MergeFailedChecks int    `json:"merge_failed_checks,omitempty"`
+	// DuplicateOf / DuplicateIssue: for State "duplicate-of:<n>", the open
+	// PR the merge queue kept for the same issue and that issue
+	// (hivecommons/hive#15395); the row waits for a person or the
+	// delegate to pick one.
+	DuplicateOf    int `json:"duplicate_of,omitempty"`
+	DuplicateIssue int `json:"duplicate_issue,omitempty"`
+}
+
+// MergeGateStateDuplicateOfPrefix opens the gate state of a PR held out of
+// the merge queue because another open PR fixes the same issue:
+// "duplicate-of:15402".
+const MergeGateStateDuplicateOfPrefix = prstage.MergeTrainStateDuplicateOf + ":"
+
+// MergeGateStateDuplicateOf is the gate state for a PR yielding to n.
+func MergeGateStateDuplicateOf(n int) string {
+	return MergeGateStateDuplicateOfPrefix + strconv.Itoa(n)
 }
 
 // stageTrackerMergeGateState maps a stage to its merge-gate state; "" off

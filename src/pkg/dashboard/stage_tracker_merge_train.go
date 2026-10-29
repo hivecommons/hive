@@ -157,6 +157,10 @@ func stageTrackerApplyMergeTrain(it *StageTrackerItem) {
 	if mt == nil {
 		return
 	}
+	if mt.State == prstage.MergeTrainStateDuplicateOf {
+		stageTrackerApplyDuplicateHold(it, mt)
+		return
+	}
 	mt.ID = it.BaseRef + "#" + strconv.Itoa(mt.Front)
 	it.MergeTrain = mt
 	parsed, _ := prstage.ParseMergeTrain(it.Reason)
@@ -170,6 +174,26 @@ func stageTrackerApplyMergeTrain(it *StageTrackerItem) {
 		if !slices.Contains(it.StaleLabels, modNeedsRebase) {
 			it.StaleLabels = append(it.StaleLabels, modNeedsRebase)
 		}
+	}
+}
+
+// stageTrackerApplyDuplicateHold decorates a PR the sweep held out of the
+// merge queue because another open PR fixes the same issue
+// (hivecommons/hive#15395): the gate reads "duplicate-of:<winner>" with
+// the winner and the issue on the gate, the row rides no train, and it
+// wears needs-decision so "Let hive decide" offers the supersede path.
+func stageTrackerApplyDuplicateHold(it *StageTrackerItem, mt *StageTrackerMergeTrain) {
+	parsed, _ := prstage.ParseMergeTrain(it.Reason)
+	if it.MergeGate == nil {
+		it.MergeGate = &StageTrackerMergeGate{}
+	}
+	it.MergeGate.State = MergeGateStateDuplicateOf(mt.Front)
+	it.MergeGate.Reason = parsed.Sentence()
+	it.MergeGate.DuplicateOf = mt.Front
+	it.MergeGate.DuplicateIssue = mt.Position
+	it.MergeTrain = nil
+	if !slices.Contains(it.Modifiers, modNeedsDecision) {
+		it.Modifiers = append(it.Modifiers, modNeedsDecision)
 	}
 }
 

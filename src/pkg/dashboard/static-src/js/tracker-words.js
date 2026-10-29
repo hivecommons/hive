@@ -141,13 +141,25 @@
     // Every merge_train / merge_gate train state in words. A slug reaches a
     // chip only through this table (or stageTrackerTrainWord), never raw:
     // hive's own #15406 once read "front" (hivecommons/hive#15395).
-    const STAGE_TRACKER_TRAIN_STATE_WORD = { front: 'Next to merge', 'queued-behind': 'In merge queue', rebasing: 'Rebasing', 'rebase-exhausted': 'Needs human decision' };
+    const STAGE_TRACKER_TRAIN_STATE_WORD = { front: 'Next to merge', 'queued-behind': 'In merge queue', rebasing: 'Rebasing', 'rebase-exhausted': 'Needs human decision', 'duplicate-of': 'Duplicate of' };
+    // merge_gate.state of a PR the queue holds because another open PR
+    // fixes the same issue: "duplicate-of:15402" (merge_gate.duplicate_of
+    // / duplicate_issue carry the numbers).
+    const STAGE_TRACKER_GATE_DUPLICATE_PREFIX = 'duplicate-of:';
+    // Pure: the PR number a "duplicate-of:<n>" gate state yields to; 0 for
+    // any other state.
+    function stageTrackerGateDuplicateOf(state) {
+      state = String(state || '');
+      return state.indexOf(STAGE_TRACKER_GATE_DUPLICATE_PREFIX) === 0 ? Number(state.slice(STAGE_TRACKER_GATE_DUPLICATE_PREFIX.length)) || 0 : 0;
+    }
     // Pure: the pill word for any merge_gate.state — the gate table, then
     // the train table, then the slug spelled out ("merge-failed" → "Merge
     // failed") so an unmapped state still never shows as a slug.
     function stageTrackerMergeGateStateWord(state) {
       state = String(state || '');
       if (STAGE_TRACKER_MERGE_GATE_WORD[state]) return STAGE_TRACKER_MERGE_GATE_WORD[state];
+      const dup = stageTrackerGateDuplicateOf(state);
+      if (dup) return STAGE_TRACKER_TRAIN_STATE_WORD['duplicate-of'] + ' #' + dup;
       if (STAGE_TRACKER_TRAIN_STATE_WORD[state]) return STAGE_TRACKER_TRAIN_STATE_WORD[state];
       const plain = state.replace(/[-_]+/g, ' ').trim();
       return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : '';
@@ -679,6 +691,16 @@
       const nextAt = mg.next_sweep_at ? Date.parse(mg.next_sweep_at) : 0;
       const lastAt = mg.last_sweep_at ? Date.parse(mg.last_sweep_at) : 0;
       const lastSeen = lastAt > 0 ? ' Last checked ' + stageTrackerAgoText(lastAt, nowMs) + '.' : '';
+      // Two open PRs for one issue (hivecommons/hive#15395): the queue
+      // kept one and holds this one — "Duplicate of #15402 · needs a
+      // pick"; no clock, no train. Let hive decide on either row closes
+      // the held one as superseded.
+      const dupOf = stageTrackerGateDuplicateOf(state);
+      if (dupOf) {
+        const issue = Number(mg.duplicate_issue) || 0;
+        const tip = 'This PR and #' + dupOf + ' both fix' + (issue ? ' #' + issue : ' the same issue') + ". Hive's merge queue carries one PR per issue and kept #" + dupOf + ' (a green head first, then the earlier-opened); this one is held out of the queue. Let hive decide on either row closes this one as superseded with credit, or close it yourself.' + lastSeen;
+        return { state, word: word, detail: 'needs a pick', tip, cue: 'waiting', until: 0, duplicateOf: dupOf };
+      }
       // A merge-train member (hivecommons/hive#15395): the label is its
       // place in the queue and nothing else, so the chip does not flip
       // between "… · merge sweep running" and the bare form each sweep,

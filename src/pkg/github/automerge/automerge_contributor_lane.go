@@ -432,6 +432,11 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneContributor, displayRepo, owner, repoName, pr, reason, merged, err)
 			}
+			if _, held := train.duplicateOf(number); held {
+				result.Skipped++
+				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
+			}
 			if train.isSibling(number) {
 				result.Skipped++
 				stage(c.mergeTrainSkip(train, number), false, nil)

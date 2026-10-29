@@ -1090,6 +1090,13 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneSelf, repo, owner, repoName, pr, reason, merged, err)
 			}
+			if _, held := train.duplicateOf(number); held {
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[autoMergeReasonMergeTrainDuplicate]++
+				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
+			}
 			if train.isSibling(number) {
 				result.Skipped++
 				repoSkipped++
@@ -1318,6 +1325,11 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			result.Seen++
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneTrusted, displayRepo, owner, repoName, pr, reason, merged, err)
+			}
+			if _, held := train.duplicateOf(number); held {
+				result.Skipped++
+				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
 			}
 			if train.isSibling(number) {
 				result.Skipped++

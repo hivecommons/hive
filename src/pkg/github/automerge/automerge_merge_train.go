@@ -298,6 +298,9 @@ type mergeTrainPlan struct {
 	lane, displayRepo, owner, repo string
 	groups                         []mergeTrainGroup
 	byNumber                       map[int]*mergeTrainGroup
+	// duplicates are the PRs held out of every train this pass because
+	// another open PR fixes the same issue (one PR per issue).
+	duplicates map[int]mergeTrainDuplicateHold
 }
 
 // group returns the train number rides in, if any.
@@ -350,6 +353,7 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 	if !c.mergeTrainPolicyNow().Enabled || c == nil || c.gh == nil {
 		return plan
 	}
+	prs = c.planDuplicateHolds(plan, owner, repo, displayRepo, prs, prefilter)
 	perBase := map[string][]*gh.PullRequest{}
 	for _, pr := range prs {
 		if pr == nil || pr.GetNumber() <= 0 || pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {

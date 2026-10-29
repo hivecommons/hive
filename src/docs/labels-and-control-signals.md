@@ -2371,6 +2371,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `hive-policy` | this changes the hive's own rules | This changes the hive's own settings, governance or security posture; the hive only recommends and the owner confirms. |
 | `llm-delegate` | decided by the hive's model under the owner's rules | No mechanical rule applied, so the hive's model decided under the owner's standing rules; the same safety rails applied. |
 | `mergeable-as-is` | mergeable and green as it is; handed to the merge gate | The head is mergeable with green CI, so no adoption is needed: the hive approves it and the merge gate takes it as it is. |
+| `one-pr-per-issue` | two PRs fix the same issue; the merge queue keeps one | Two open PRs declare the same closing issue. The merge queue carries one PR per issue — a green head first, then the earlier-opened — and the other closes as superseded with credit. |
 | `owner-only`, `owner_only` | only the hive owner can do this | This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you. |
 | `prefer-contributor` | a contributor's PR and a hive PR do the same work | A contributor's PR and a hive-authored PR cover the same work; the hive prefers the contributor's when it is mergeable and current. |
 | `rail-hold` | the item is on hold | The item carries the hold label; the hive never acts on a held item until a person releases the hold. |

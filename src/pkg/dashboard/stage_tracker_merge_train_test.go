@@ -202,6 +202,8 @@ func TestStageTrackerMergeTrainSPA(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_REBASING"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_EXHAUSTED"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_GATE_DUPLICATE_PREFIX"),
+		jsFunc(t, html, "stageTrackerGateDuplicateOf"),
 		jsFunc(t, html, "stageTrackerMergeGateStateWord"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_GLYPH"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ICONS"),

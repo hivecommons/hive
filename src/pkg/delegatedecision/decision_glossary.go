@@ -105,6 +105,8 @@ var glossary = []GlossaryEntry{
 		Detail: "The PR was pushed by a person (author/human or one of this hive's owners), so the hive never adopts it. It told the author by name what to fix (rebase, sign-off, CI) and relayed the reviewer's question."},
 	{Slug: "owner-only", Kind: GlossaryRule, Plain: "only the hive owner can do this",
 		Detail: "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you.", Aliases: []string{"owner_only"}},
+	{Slug: RuleOnePRPerIssue, Kind: GlossaryRule, Plain: "two PRs fix the same issue; the merge queue keeps one",
+		Detail: "Two open PRs declare the same closing issue. The merge queue carries one PR per issue — a green head first, then the earlier-opened — and the other closes as superseded with credit."},
 	{Slug: "prefer-contributor", Kind: GlossaryRule, Plain: "a contributor's PR and a hive PR do the same work",
 		Detail: "A contributor's PR and a hive-authored PR cover the same work; the hive prefers the contributor's when it is mergeable and current."},
 	{Slug: "rail-hold", Kind: GlossaryRule, Plain: "the item is on hold",

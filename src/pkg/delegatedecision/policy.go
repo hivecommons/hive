@@ -158,6 +158,10 @@ type CompetingPR struct {
 	HiveAuthored bool
 	Mergeable    bool
 	Current      bool
+	// HeldDuplicate: the merge queue holds this competitor out of the
+	// train as a duplicate of the item (same `Fixes #N`,
+	// hivecommons/hive#15395); the item is the PR the queue kept.
+	HeldDuplicate bool
 }
 
 // Input is everything the delegate reads about one parked item.
@@ -205,6 +209,11 @@ type Input struct {
 	Overlaps []int
 	// Competing lists the other open PRs for the same work.
 	Competing []CompetingPR
+	// TrainDuplicateOf is the open PR the merge queue kept for the same
+	// issue when it held this one as a duplicate (0 = not held);
+	// TrainDuplicateIssue is that issue (hivecommons/hive#15395).
+	TrainDuplicateOf    int
+	TrainDuplicateIssue int
 	// ReporterTrustHold: the park is the reporter-trust gate on the fixing PR.
 	ReporterTrustHold bool
 	// AdoptionStalled: a contributor PR whose adoption parked at 085.
@@ -571,6 +580,12 @@ func decidePR(in Input) Decision {
 			Actions:   []Action{decisionComment(text), {Kind: ActionApproveReview}},
 		}
 	}
+	// Two open PRs for one issue (hivecommons/hive#15395): the merge
+	// queue already picked the survivor (green first, then earlier); the
+	// held one closes as superseded, the kept one is released.
+	if d, ok := decideTrainDuplicate(in, ref); ok {
+		return d
+	}
 	// A head parked on DCO or the reporter-trust gate must clear that gate
 	// before a competing-PR rule can release or supersede it.
 	if !in.DCOMissing && !in.ReporterTrustHold {
@@ -629,6 +644,55 @@ func decidePR(in Input) Decision {
 		return releasePR("small-low-risk", "approve "+ref+": small, necessary, low-risk change on a green head", "small low-risk changes (CI pins, read-only RBAC, warning text, workflow hygiene) are approved once checked")
 	}
 	return releasePR("default-release", "approve "+ref+": green head, reviewer question answered with the reversible default — proceed as implemented", "no owner rule holds this back; a merge is reversible and keeps work moving")
+}
+
+// RuleOnePRPerIssue: the merge queue carries one PR per issue; the one it
+// held as a duplicate closes as superseded by the one it kept.
+const RuleOnePRPerIssue = "one-pr-per-issue"
+
+// decideTrainDuplicate resolves a same-issue pair the merge queue split
+// (hivecommons/hive#15395). The queue's pick stands: a green head beats a
+// red one, the earlier-opened wins among equals. Deciding on the held PR
+// closes it as superseded by the kept one, with a comment; deciding on
+// the kept PR releases it and names the duplicate the queue holds. A
+// paused repo only gets the recommendation.
+func decideTrainDuplicate(in Input, ref string) (Decision, bool) {
+	if in.Kind != KindPR {
+		return Decision{}, false
+	}
+	issue := ""
+	if in.TrainDuplicateIssue > 0 {
+		issue = fmt.Sprintf(" for issue #%d", in.TrainDuplicateIssue)
+	}
+	if in.TrainDuplicateOf > 0 {
+		winner := fmt.Sprintf("#%d", in.TrainDuplicateOf)
+		text := fmt.Sprintf("superseded by %s: both PRs fix the same issue%s; the merge queue carries one PR per issue and kept %s (green first, then the earlier-opened)", winner, issue, winner)
+		rationale := fmt.Sprintf("%s and %s declare the same closing issue%s; the merge queue holds one PR per issue and kept %s, so %s closes as superseded with credit", ref, winner, issue, winner, ref)
+		if in.RepoPaused {
+			return recommendOnly(RuleOnePRPerIssue, rationale+"; the repo is paused, so the hive only recommends", "close "+ref+" as superseded by "+winner), true
+		}
+		note := fmt.Sprintf("Thank you for this PR. %s fixes the same issue%s and the merge queue carries one PR per issue; it kept %s (green first, then the earlier-opened), so the hive is closing this one as superseded. Your work is credited on the issue.", winner, issue, winner)
+		return Decision{
+			Verdict: VerdictCloseSuperseded, Rule: RuleOnePRPerIssue, Text: text,
+			Rationale: rationale,
+			Actions:   []Action{{Kind: ActionCloseDuplicate, Target: in.TrainDuplicateOf, Text: note}},
+		}, true
+	}
+	for _, other := range in.Competing {
+		if !other.HeldDuplicate {
+			continue
+		}
+		held := fmt.Sprintf("#%d", other.Number)
+		if in.Conflicting || !in.CIGreen || in.DCOMissing {
+			return recommendOnly(RuleOnePRPerIssue,
+				fmt.Sprintf("the merge queue kept %s over %s%s, but %s is not mergeable now (%s); the queue re-picks on its next pass", ref, held, issue, ref, mergeBlockers(in)),
+				"fix "+ref+" ("+mergeBlockers(in)+"), or decide on "+held+" to let it supersede this one"), true
+		}
+		return releasePR(RuleOnePRPerIssue,
+			fmt.Sprintf("approve %s: the merge queue carries one PR per issue%s and kept this one; %s is held as its duplicate and closes as superseded once this merges", ref, issue, held),
+			"one PR per issue in the merge queue; the kept PR merges, the held duplicate closes as superseded"), true
+	}
+	return Decision{}, false
 }
 
 // decideCompeting applies "prefer an adequate contributor PR over a hive

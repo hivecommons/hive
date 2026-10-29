@@ -12,6 +12,8 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // errDelegatedNoSnapshot fails a delegated PR decision closed when the
@@ -120,13 +122,34 @@ func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *
 			}
 			mergeable = len(summary.Red) == 0 && summary.Pending == 0 && summary.Green > 0
 		}
+		winner, _ := delegatedTrainDuplicate(s.stageStoreOrShared(), repo, number)
 		in.Competing = append(in.Competing, delegatedecision.CompetingPR{
 			Number: number, HiveAuthored: s.deps.GHClient.IsHiveAuthorLogin(other.GetUser().GetLogin()),
-			Mergeable: mergeable,
-			Current:   state != "behind" && state != "unknown" && state != "" && !other.GetDraft(),
+			Mergeable:     mergeable,
+			Current:       state != "behind" && state != "unknown" && state != "" && !other.GetDraft(),
+			HeldDuplicate: winner == pr.GetNumber(),
 		})
 	}
+	in.TrainDuplicateOf, in.TrainDuplicateIssue = delegatedTrainDuplicate(s.stageStoreOrShared(), repo, pr.GetNumber())
 	return nil
+}
+
+// delegatedTrainDuplicate reads the stage store for the one-PR-per-issue
+// hold the merge queue recorded on a PR (hivecommons/hive#15395): the PR
+// it yields to and the shared issue, 0 when it is not held.
+func delegatedTrainDuplicate(store *stagelabels.Store, repo string, number int) (winner, issue int) {
+	if store == nil {
+		return 0, 0
+	}
+	rec, ok := store.Get(stagelabels.Key(repo, number))
+	if !ok {
+		return 0, 0
+	}
+	mt, ok := prstage.ParseMergeTrain(rec.Reason)
+	if !ok || mt.State != prstage.MergeTrainStateDuplicateOf {
+		return 0, 0
+	}
+	return mt.Front, mt.Position
 }
 
 // delegatedActivity is one author-attributed event on a PR.
