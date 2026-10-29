@@ -1056,6 +1056,12 @@ writeback:
     torch-spyre/torch-spyre: { mode: issues-only }   # off | issues-only | labels-only | full
   kinds:
     sentinel: { min_level: 5, require_label: true, unlabeled_min_level: 6 }
+  dedupe:                 # content-aware suppression, see below
+    enabled: true
+    same_item_ttl: 24h
+    burst_items: 2
+    burst_window: 60s
+    hourly_cap: 60
 ```
 
 Everything is editable under **⚙ → Features → Autonomy & ACMM → Write-back
@@ -1073,6 +1079,35 @@ two are never written to unsolicited while `backfill: false`. The sweep logs
 one line — `writeback: skipped N pre-existing items on <repo> (backfill
 off)` — and the dashboard shows "hive can now write to `<repo>`; N existing
 PRs were left untouched — enable backfill to process them".
+
+### Duplicate-write suppression
+
+Policy decides whether a kind may write to an item; the content layer under
+`writeback.dedupe` decides whether *this* write is worth making. It applies
+only to comment kinds whose body the caller handed the gate as the preview
+(`sentinel`, `needs_decision_comment`, `supersession_notice`,
+`duplicate_fix_notice`, `reporter_trust_hold`, `contributor_adopt`,
+`claim_comment`, `gate_comment`, `welcome_comment`); `Allowed()` without a
+preview — labels, closes, hold-gate upkeep, task-list edits — stays
+policy-only. Three checks run after the policy gate allows a write:
+
+| Check | Key | Suppression reason | Default |
+|---|---|---|---|
+| Same item | `(repo, item, kind, hash)` of the body with `<!-- hive:… -->` marker arguments, SHAs, RFC 3339 timestamps, durations and whitespace normalised away | `duplicate` — "identical `<kind>` already written to #N at `<time>`" | `same_item_ttl: 24h` |
+| Burst across items | `(repo, kind, hash)` of the body additionally stripped of `#N` references, `@mentions` and digits | `burst` — "same `<kind>` already sent to #A within 60s; held to avoid a notification burst"; one WARN per burst | `burst_items: 2`, `burst_window: 60s` |
+| Hourly cap | `(repo, kind)` writes in the last hour | `rate-capped` | `hourly_cap: 60` (negative disables) |
+
+Holds are suppressions, not a queue: nothing is replayed later, the next
+sweep simply asks again. Merge-path kinds are exempt from the hourly cap
+(`hold_gate_notice`, `verdict_label`, `needs_decision_comment`,
+`contributor_adopt`, `ci_rerun`, `issue_close`, `supersession_close`,
+`issue_file` and every label kind; `writeback.RateCapExemptKinds`). The
+hash table is persisted beside the repo records in `writeback.json` so a
+restart does not re-fire a notice, pruned by TTL and bounded to 5000
+same-item entries. Suppressions appear in the drill-down with the reasons
+above, and `/api/status` → `writeback.dedupe` carries the settings plus the
+last-hour counters `dedupe_same_item`, `dedupe_burst` and `rate_capped`.
+`enabled: false` turns the layer off.
 
 ## Suspicious-activity alerts (`sentinel`)
 
