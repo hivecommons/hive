@@ -1,0 +1,1 @@
+- Delegated decisions now recommend a permission grant, instead of a doomed supersede, for contributor PRs that edit `.github/workflows/`

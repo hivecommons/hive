@@ -172,6 +172,8 @@ type Input struct {
 	// LowRiskPaths: every changed file is CI config, workflow, docs, text or
 	// read-only RBAC.
 	LowRiskPaths bool
+	// ChangedFiles are the PR's changed paths, when known.
+	ChangedFiles []string
 	// ContributorOnline: the author is reachable (relay heartbeat / recent
 	// activity); false for an external author who went quiet.
 	ContributorOnline bool
@@ -312,6 +314,25 @@ func CapabilityGap(in Input) bool {
 	return capabilityGapRE.MatchString(in.headline()) ||
 		in.Kind == KindIssue && capabilityGapRE.MatchString(firstLines(in.Body, 12))
 }
+
+// WorkflowPath reports a PR that edits `.github/workflows/` or whose adoption
+// parked on the workflow-path fence; the App cannot push such a head.
+func (in Input) WorkflowPath() bool {
+	for _, f := range in.ChangedFiles {
+		if strings.HasPrefix(strings.TrimPrefix(f, "./"), ".github/workflows/") {
+			return true
+		}
+	}
+	for _, r := range in.Reasons {
+		if strings.Contains(r, workflowPathParkSlug) {
+			return true
+		}
+	}
+	return false
+}
+
+// workflowPathParkSlug is the adoption fence reason for a workflow-path head.
+const workflowPathParkSlug = "adoption-stalled:contributor-lane:workflow-path"
 
 // OwnerOnly reports a secrets / PAT / org-permission item.
 func OwnerOnly(in Input) bool {
@@ -459,6 +480,10 @@ func decidePR(in Input) Decision {
 		if d, ok := decideCompeting(in, ref); ok {
 			return d
 		}
+	}
+	if !in.HiveAuthored && in.Kind == KindPR && in.WorkflowPath() && (in.AdoptionGraceElapsed || (!in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing))) {
+		return recommendOnly("capability-gap", "the head edits `.github/workflows/`, which the App has no `workflows` permission to push; adopting it would be refused before it is recorded, so the park stays until the permission changes",
+			"grant the App the `workflows` permission or have a human apply the workflow change, then re-check; hive cannot clear this by deciding")
 	}
 	if !in.HiveAuthored && in.Kind == KindPR && in.AdoptionGraceElapsed {
 		text := "adopt now: the offline grace on " + ref + " has already elapsed; adopt in supersede mode at once, preserving the author's commits and sign-off"

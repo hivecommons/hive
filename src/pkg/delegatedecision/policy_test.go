@@ -237,6 +237,26 @@ func TestDecidePRRules(t *testing.T) {
 			verdict: VerdictAdoptSupersede, rule: "contributor-offline", kinds: []ActionKind{ActionCommentDecision, ActionAdoptSupersede},
 		},
 		{
+			name:    "workflow-path PR gets capability-gap",
+			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionStalled: true, CIGreen: true, ChangedFiles: []string{"README.md", ".github/workflows/ci.yml"}},
+			verdict: VerdictRecommendOnly, rule: "capability-gap",
+		},
+		{
+			name:    "row parked on workflow-path gets capability-gap",
+			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", CIGreen: true, Conflicting: true, Reasons: []string{"adoption-stalled:contributor-lane:workflow-path"}},
+			verdict: VerdictRecommendOnly, rule: "capability-gap",
+		},
+		{
+			name:    "grace-elapsed workflow-path PR gets capability-gap, not adopt-now",
+			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionGraceElapsed: true, ContributorOnline: true, CIGreen: true, ChangedFiles: []string{".github/workflows/ci.yml"}},
+			verdict: VerdictRecommendOnly, rule: "capability-gap",
+		},
+		{
+			name:    "non-workflow offline PR still adopts",
+			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionStalled: true, CIGreen: true, ChangedFiles: []string{"src/main.go"}},
+			verdict: VerdictAdoptSupersede, rule: "contributor-offline",
+		},
+		{
 			name:    "offline contributor with red CI adopts",
 			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", DCOMissing: true, CIGreen: true},
 			verdict: VerdictAdoptSupersede, rule: "contributor-offline",
