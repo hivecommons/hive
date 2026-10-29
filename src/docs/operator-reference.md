@@ -2063,6 +2063,8 @@ curl -s 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=1' | head  # parked g
 
 ### Dashboard metrics
 
+See [Monitoring a hive with Prometheus and Grafana](monitoring.md) for setup, metric families and scraping.
+
 | Name | Purpose |
 |---|---|
 | `HIVE_METRICS_ENABLED` | Registers Prometheus `/metrics` when set to `1`, `true`, `yes`, or `on`; off by default (route not registered — scrapes 404) because it exposes estimated cost data. |

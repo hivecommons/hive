@@ -1766,15 +1766,22 @@ func (s *Store) Forget(key string) {
 
 // Prune drops records not seen for maxAge (closed items the sweep stopped
 // listing). Returns how many were dropped. Author-wide trust-promotion
-// records (TrustPromotionKey) are kept: they are per contributor, not per
-// item, and dropping one would re-announce a promotion already announced.
+// records (TrustPromotionKey) are per contributor, not per item, and
+// dropping one re-announces a promotion, so they outlive maxAge: they are
+// dropped only once unseen for trustPromotionRetention (or maxAge if longer).
 func (s *Store) Prune(maxAge time.Duration) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cutoff := s.now().Add(-maxAge)
+	now := s.now()
+	cutoff := now.Add(-maxAge)
+	trustCutoff := now.Add(-max(maxAge, trustPromotionRetention))
 	n := 0
 	for k, r := range s.items {
-		if r.LastSeen.Before(cutoff) && !strings.HasPrefix(k, trustPromotionKeyPrefix) {
+		c := cutoff
+		if strings.HasPrefix(k, trustPromotionKeyPrefix) {
+			c = trustCutoff
+		}
+		if r.LastSeen.Before(c) {
 			delete(s.items, k)
 			n++
 		}
@@ -1788,6 +1795,10 @@ func (s *Store) Prune(maxAge time.Duration) int {
 // trustPromotionKeyPrefix prefixes the per-author records that remember
 // whether the contributor lane announced an author's auto-promotion.
 const trustPromotionKeyPrefix = "trust-promoted:"
+
+// trustPromotionRetention bounds how long an unseen trust-promotion record
+// is kept before Prune drops it.
+const trustPromotionRetention = 180 * 24 * time.Hour
 
 // TrustPromotionKey is the store key for an author's auto-promotion
 // record. Promotion is a property of the author in the hive, not of a PR

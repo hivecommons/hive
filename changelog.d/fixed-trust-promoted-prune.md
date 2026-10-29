@@ -1,0 +1,1 @@
+- Trust-promotion announcement records in the stage-label store are no longer exempt from `Prune` forever: they are now dropped once unseen for 180 days (or the prune age if longer), so the store stops accumulating one record per contributor while an author is still not re-announced within that window (#15463).
