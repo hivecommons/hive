@@ -234,7 +234,7 @@ func stageTrackerMergeTrainPostPass(items []StageTrackerItem, opts mergeTrainQue
 				front.MergeGate.State = MergeGateStateTrainFront
 			}
 			if front.MergeGate.Reason == "" {
-				front.MergeGate.Reason = "front of merge train (1st of " + strconv.Itoa(sample.Size) + ", overlapping files: " + strings.Join(sample.OverlapFiles, ", ") + ")"
+				front.MergeGate.Reason = "1st in the merge queue; merges next (1st of " + strconv.Itoa(sample.Size) + ", overlapping files: " + strings.Join(sample.OverlapFiles, ", ") + ")"
 			}
 			if front.Stage == stagelabels.AwaitingMergeAdmission.Number() {
 				front.Caption = stageTrackerMergeTrainFrontCaption(sample)
@@ -380,7 +380,7 @@ func mergeTrainEtaBasis(aheadN int, headState string, headLeft, own, tick time.D
 	var parts []string
 	switch aheadN {
 	case 0:
-		parts = append(parts, "front")
+		parts = append(parts, "1st in queue")
 	case 1:
 		parts = append(parts, "1 ahead")
 	default:
@@ -588,7 +588,7 @@ func stageTrackerMergeTrainFrontCaption(mt *StageTrackerMergeTrain) string {
 	if len(mt.OverlapFiles) > 0 {
 		files = " (overlapping files: " + strings.Join(mt.OverlapFiles, ", ") + ")"
 	}
-	return "Front of a merge train of " + strconv.Itoa(mt.Size) + " PRs; merges first, then the lane updates or rebases the others" + files
+	return "1st in a merge queue of " + strconv.Itoa(mt.Size) + " PRs; merges next, then the lane updates or rebases the others" + files
 }
 
 // stageTrackerMergeTrainCaption is the caption for a sibling's train

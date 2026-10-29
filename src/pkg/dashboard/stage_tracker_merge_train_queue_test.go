@@ -216,7 +216,9 @@ func TestStageTrackerMergeQueueChipNode(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL")+"\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK")+"\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_GATE_WORD")+"\n"+
-		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_GLYPH")+"\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ICON_PATH")+"\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ICON_TITLE")+"\n"+
+		jsFunc(t, html, "stageTrackerTrainIconHtml")+"\n"+
 		jsConstBlock(t, html, "STAGE_TRACKER_GATE_REASON_WORDS")+"\n"+
 		jsConstBlock(t, html, "STAGE_TRACKER_ICONS")+"\n"+
 		jsFunc(t, html, "stageTrackerIcon")+"\n"+
@@ -240,22 +242,22 @@ const quiet = mk(15319, 'fleetreport: slog feed', Object.assign({ state: 'queued
 const busy = mk(15319, 'fleetreport: slog feed', Object.assign({ state: 'queued-behind', position: 2, ahead: [15315] }, headFacts), { sweep_running: true });
 const a = stageTrackerMergeGateInfo(quiet, now), b = stageTrackerMergeGateInfo(busy, now);
 // Stability: the sweep flag changes neither the word nor the detail.
-assert.strictEqual(a.word, 'In merge queue · 2 of 3');
+assert.strictEqual(a.word, 'Merge queued · 2nd');
 assert.strictEqual(b.word, a.word, 'sweep_running must not change the chip label');
 assert.strictEqual(a.detail, ''); assert.strictEqual(b.detail, '');
 assert.strictEqual(stageTrackerMergeGateWordHtml(quiet, now), stageTrackerMergeGateWordHtml(busy, now), 'identical chip markup');
-assert.ok(!/queued-behind|merge sweep running/.test(a.word + a.detail + b.word + b.detail), 'no slug, no sweep words in the label');
+assert.ok(!/queued-behind|front|merge sweep running/i.test(a.word + a.detail + b.word + b.detail), 'no slug, no "front", no sweep words in the label');
 // The sweep lives in the glyph and the tooltip.
 assert.strictEqual(a.cue, 'waiting'); assert.strictEqual(b.cue, 'running');
 assert.ok(b.tip.includes('Checking now…') && !a.tip.includes('Checking now…'), b.tip);
-assert.ok(a.tip.startsWith('Behind #15315 (waiting for a maintainer (untrusted author)). Hive merges one at a time, in order. Head #15315 is waiting for a maintainer (untrusted author); no estimate until it moves.'), a.tip);
+assert.ok(a.tip.startsWith('2nd of 3 in the merge queue · behind #15315 (waiting for a maintainer (untrusted author)) · no estimate until #15315 moves. Hive merges one at a time, in order.'), a.tip);
 assert.ok(a.tip.includes('Last checked'), a.tip);
 assert.ok(stageTrackerGateCueHtml(busy, now).includes('cue-spin') && !stageTrackerGateCueHtml(quiet, now).includes('cue-spin'));
 // A soaking head: the estimate is the head's soak plus one slot per PR ahead.
 const soakHead = mk(15374, 'tracker: queue', { state: 'queued-behind', position: 3, ahead: [15315, 15319], head_state: 'soaking', head_reason: 'soaking, 12m left', eta_s: 25 * 60 }, { sweep_running: true });
 const s = stageTrackerMergeGateInfo(soakHead, now);
-assert.strictEqual(s.word, 'In merge queue · 3 of 3');
-assert.ok(s.tip.startsWith('Behind #15315 (soaking, 12m left) and 1 more. Hive merges one at a time, in order. Estimated turn: ~25m. Checking now…'), s.tip);
+assert.strictEqual(s.word, 'Merge queued · 3rd');
+assert.ok(s.tip.startsWith('3rd of 3 in the merge queue · behind #15315 (soaking, 12m left) · ETA ~25m. Hive merges one at a time, in order. Checking now…'), s.tip);
 // Stalled: the chip says so, names the head and how long; the markup wears the stalled class.
 const stalled = mk(15374, 'tracker: queue', Object.assign({ state: 'queued-behind', position: 3, ahead: [15315, 15319], stalled: true, stalled_s: 3 * 3600 }, headFacts), { sweep_running: true });
 const st = stageTrackerMergeGateInfo(stalled, now);
@@ -264,28 +266,28 @@ assert.ok(stageTrackerMergeGateWordHtml(stalled, now).includes('class="ham-seg-t
 assert.strictEqual(stageTrackerMergeGateInfo(mk(15374, 't', Object.assign({ state: 'queued-behind', position: 3, stalled: true, stalled_s: 3 * 3600 }, headFacts), { sweep_running: false }), now).word, st.word, 'stalled label is sweep-stable too');
 // The front row reads its place too.
 const head = mk(15315, 'fleetreport: head', Object.assign({ state: 'front', position: 1, ahead: [] }, headFacts));
-assert.strictEqual(stageTrackerMergeGateInfo(head, now).word, 'Next to merge · 1 of 3');
-assert.ok(stageTrackerMergeGateInfo(head, now).tip.startsWith('Front of the merge queue (2 more behind it): waiting for a maintainer (untrusted author).'), stageTrackerMergeGateInfo(head, now).tip);
+assert.strictEqual(stageTrackerMergeGateInfo(head, now).word, 'Merge queued · 1st');
+assert.ok(stageTrackerMergeGateInfo(head, now).tip.startsWith('1st of 3 in the merge queue · merges next (waiting for a maintainer (untrusted author)). Hive merges one at a time, in order.'), stageTrackerMergeGateInfo(head, now).tip);
 // hive's own #15406 read the bare slug "front" while the front sat in its
 // soak (the mirrored soak clock returned the raw state). A front in soak
 // keeps its place word and its countdown (own soak left + next sweep).
 const frontSoak = mk(15406, 'in soak at the front', { state: 'front', position: 1, size: 4, length: 4, head_number: 15406, front: 15406, ahead: [], head_state: 'soaking', head_reason: 'soaking, 12m left', eta_s: 760, eta_at: new Date(now + 760 * 1000).toISOString(), eta_basis: 'own soak 12m · next sweep in 40s' },
   { state: 'front', soak_until: new Date(now + 12 * 60 * 1000).toISOString(), soak_started_at: new Date(now - 18 * 60 * 1000).toISOString(), sweep_running: true });
 const fs = stageTrackerMergeGateInfo(frontSoak, now);
-assert.strictEqual(fs.word, 'Next to merge · 1 of 4', fs.word); assert.strictEqual(fs.detail, '~13m');
+assert.strictEqual(fs.word, 'Merge queued · 1st', fs.word); assert.strictEqual(fs.detail, '~13m');
 assert.strictEqual(stageTrackerMergeGateInfo(Object.assign({}, frontSoak, { merge_gate: Object.assign({}, frontSoak.merge_gate, { sweep_running: false }) }), now).word, fs.word);
-assert.strictEqual(stageTrackerMergeGateWordHtml(frontSoak, now).replace(/<[^>]+>/g, ''), 'Next to merge · 1 of 4 · ~13m');
+assert.strictEqual(stageTrackerMergeGateWordHtml(frontSoak, now).replace(/<[^>]+>/g, ''), 'Merge queued · 1st · ~13m');
 // Countdown to auto-merge: eta_at drives "· ~4m" on the chip; the detail carries
 // the clock so the shared tick keeps counting and a re-render lands on the same
 // instant (no reset on poll).
 const etaAt = new Date(now + 4 * 60 * 1000).toISOString();
 const timed = mk(15319, 'fleetreport: slog feed', { state: 'queued-behind', position: 2, ahead: [15315], head_state: 'soaking', head_reason: 'soaking, 3m left', eta_s: 240, eta_at: etaAt, eta_basis: '1 ahead · head soaking 3m · next sweep in 40s' }, { sweep_running: false });
 const ti = stageTrackerMergeGateInfo(timed, now);
-assert.strictEqual(ti.word, 'In merge queue · 2 of 3'); assert.strictEqual(ti.detail, '~4m'); assert.strictEqual(ti.until, now + 4 * 60 * 1000);
-assert.ok(ti.tip.includes('Estimated turn: ~4m (1 ahead · head soaking 3m · next sweep in 40s).'), ti.tip);
+assert.strictEqual(ti.word, 'Merge queued · 2nd'); assert.strictEqual(ti.detail, '~4m'); assert.strictEqual(ti.until, now + 4 * 60 * 1000);
+assert.ok(ti.tip.includes('· ETA ~4m (1 ahead · head soaking 3m · next sweep in 40s).'), ti.tip);
 const chipHtml = stageTrackerMergeGateWordHtml(timed, now);
-assert.ok(chipHtml.includes('>In merge queue · 2 of 3 <span class="ham-gate-detail" data-ham-until="' + (now + 240000) + '" data-ham-until-kind="queued-behind">· ~4m</span>'), chipHtml);
-assert.strictEqual(chipHtml.replace(/<[^>]+>/g, ''), 'In merge queue · 2 of 3 · ~4m');
+assert.ok(chipHtml.includes('>Merge queued · 2nd <span class="ham-gate-detail" data-ham-until="' + (now + 240000) + '" data-ham-until-kind="queued-behind">· ~4m</span>'), chipHtml);
+assert.strictEqual(chipHtml.replace(/<[^>]+>/g, ''), 'Merge queued · 2nd · ~4m');
 // The same payload 90s later (a poll re-render) reads 2m30s, not 4m again.
 assert.strictEqual(stageTrackerMergeGateInfo(timed, now + 90 * 1000).detail, '~3m');
 assert.strictEqual(stageTrackerMergeGateInfo(timed, now + 150 * 1000).detail, '~2m');
@@ -346,7 +348,9 @@ func TestStageTrackerMergeTrainStateSlugsNeverLeak(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL")+"\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK")+"\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_GATE_WORD")+"\n"+
-		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_GLYPH")+"\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ICON_PATH")+"\n"+
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ICON_TITLE")+"\n"+
+		jsFunc(t, html, "stageTrackerTrainIconHtml")+"\n"+
 		jsConstBlock(t, html, "STAGE_TRACKER_GATE_REASON_WORDS")+"\n"+
 		jsConstBlock(t, html, "STAGE_TRACKER_ICONS")+"\n"+
 		jsFunc(t, html, "stageTrackerIcon")+"\n"+
@@ -364,6 +368,9 @@ const now = Date.parse('2026-10-29T15:06:00Z');
 // case-sensitive: slugs are lowercase, "Rebasing · attempt 1/2" is words)
 // or a hyphenated slug anywhere.
 const leaks = (s, state) => { s = String(s || ''); return s.trim() === state || s.split(/\s*·\s*/).some(seg => seg.trim() === state) || (state.includes('-') && s.includes(state)); };
+// Owner (hive #15400 / #15425 rows): neither "front" nor "queued-behind"
+// anywhere a person reads, whatever the state.
+const ownerBanned = s => /front|queued-behind/i.test(String(s || ''));
 const soak = { soak_until: new Date(now + 9 * 60 * 1000).toISOString(), soak_started_at: new Date(now - 60 * 1000).toISOString() };
 for (const state of slugs) {
   for (const sweep of [true, false]) for (const clock of [null, soak]) {
@@ -378,11 +385,12 @@ for (const state of slugs) {
     assert.ok(info.word && !leaks(info.word, state) && !leaks(info.detail, state), state + ' chip: ' + JSON.stringify(info));
     assert.ok(!leaks(stageTrackerMergeGateWordHtml(item, now).replace(/<[^>]+>/g, ''), state), state + ' html');
     assert.ok(!leaks(stageTrackerQueueMemberState(item, now), state), state + ' popover');
+    for (const [what, text] of [['word', word], ['chip', info.word + ' ' + info.detail], ['hover', info.tip], ['popover', stageTrackerQueueMemberState(item, now)]]) assert.ok(!ownerBanned(text), state + ' ' + what + ' says front/queued-behind: ' + JSON.stringify(text));
   }
 }
 // The word table covers the slugs and an unmapped state still spells out.
 for (const state of slugs) assert.ok(STAGE_TRACKER_TRAIN_STATE_WORD[state], state);
-assert.strictEqual(stageTrackerMergeGateStateWord('front'), 'Next to merge');
+assert.strictEqual(stageTrackerMergeGateStateWord('front'), 'Merge queued');
 assert.strictEqual(stageTrackerMergeGateStateWord('duplicate-of:15402'), 'Duplicate of #15402');
 // The held duplicate's chip: "Duplicate of #15402 · needs a pick", the hover names the issue and the pick rule.
 const heldDup = { repo: 'hivecommons/hive', number: 15407, kind: 'pr', title: 't', stage: 80, modifiers: ['needs-decision'], merge_gate: { state: 'duplicate-of:15402', duplicate_of: 15402, duplicate_issue: 15396, sweep_running: true } };

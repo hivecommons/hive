@@ -80,3 +80,26 @@ The new hover, verbatim (title line omitted):
 - The stage descriptions in `stagelabels.Table` are shared with the labels
   and the docs and were not shortened; the 090 chevron tip simply stopped
   appending them.
+
+## Merge queue (hivecommons/hive#15395)
+
+The owner read the train's slugs on the page — "front", "queued-behind" —
+and asked what they meant. Every place the train's position appears now
+uses the same words, and no user-facing train string carries either slug
+(`TestStageTrackerMergeTrainOrdinalWords` and the Go `Sentence` test fail
+on one). The column itself is **Merge queue** (was *Merge gate*; ids,
+classes and JSON keys — `merge_gate`, `trackerColumnMergeGate` — keep the
+old name).
+
+| Builder | Reaches | Before | After | Held by |
+|---|---|---|---|---|
+| `STAGE_TRACKER_TRAIN_STATE_WORD` (`tracker-words.js`) | chevron label, gate pill | `front` → *Next to merge*, `queued-behind` → *In merge queue* | both *Merge queued*; the place tells them apart | `TestStageTrackerMergeTrainStateSlugsNeverLeak` |
+| `stageTrackerTrainWord` | chevron label | *In merge queue · 2 of 6* / *front* (leaked) | *Merge queued · 1st* / *· 2nd* / *· 3rd* … + *· ~4m* countdown | `TestStageTrackerMergeTrainOrdinalWords` |
+| `stageTrackerOrdinal` | chevron, hover, popover | — | `1st 2nd 3rd 4th … 11th 12th 13th 21st 22nd 23rd` | same |
+| `stageTrackerTrainQueueTip` | chevron hover | *Behind #15253 … Estimated turn: ~25m.* / *Front of the merge queue* | *2nd of 6 in the merge queue · behind #15253 · ETA ~25m.* / *1st of 6 in the merge queue · merges next · ETA ~4m.*; *· merge sweep running* lives here only (one label per chevron, #15416) | same |
+| `stageTrackerTrainHeaderText` + `stageTrackerTrainIconHtml` | train header chip | `⛓ merge train · 2 PRs · front #15400` | 🚆 (inline-SVG railcar, hover *Merge queue*) `merge train · 2 PRs · 1st: #15400` | `TestStageTrackerMergeTrain` |
+| `stageTrackerQueueMemberState` (`tracker-queue.js`) | Merge queue popover | *front of the queue* | *merges next* | `TestStageTrackerMergeQueuePopover` |
+| `stageTrackerAnchor` (`tracker-row.js`) | which column lights | a 1st-in-train head at 050/070 lit **CI / Review** | every train state lights **Merge queue** | `TestStageTrackerMergeTrainStatesLightMergeColumn` |
+| `stageTrackerHeaderHtml` | column header | *Merge gate* | 🚆 *Merge queue* (same icon as the chip and the 080 chevron) | `TestStageTrackerHeader…` |
+| Go: `prstage.MergeTrain.Sentence`, `stageTrackerMergeTrainFrontCaption`, `eta_basis` | gate reason, caption, hover | *front of the merge train (1st of 3)*, *Front of a merge train of N PRs* | *1st in the merge queue; merges next (1st of 3)*, *1st in a merge queue of N PRs* | `TestParseMergeTrainRejectsMalformed` |
+| "merge gate" in decision copy (`delegatedecision` glossary, ladder, dashboard decided/new/vocabulary) | glossary, ⋯ hints, PR comments | *the merge gate merges it once every check passes* | *the merge queue merges it …* | `TestStageTrackerDecisionGlossaryMirrorsGo` |

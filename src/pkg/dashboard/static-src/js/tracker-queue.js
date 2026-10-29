@@ -26,7 +26,7 @@
     // Pure: one member's state in plain words — never the state slug.
     function stageTrackerQueueMemberState(it, nowMs) {
       const mt = it.merge_train || {};
-      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || (Number(mt.position) || 0) === 1) return String(mt.head_reason || '').trim() || 'front of the queue';
+      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || (Number(mt.position) || 0) === 1) return String(mt.head_reason || '').trim() || 'merges next';
       if (mt.state === STAGE_TRACKER_TRAIN_STATE_REBASING) return 'being rebased · attempt ' + (Number(mt.attempt) || 0) + '/' + (Number(mt.max_attempts) || 0);
       if (mt.state === STAGE_TRACKER_TRAIN_STATE_EXHAUSTED) return 'needs a human rebase';
       const mg = it.merge_gate || {};
@@ -42,7 +42,7 @@
         const place = stageTrackerTrainPlace(t.mt);
         const stalled = stageTrackerTrainStalledWord(t.mt);
         const base = String(t.mt.id || '').split('#')[0] || 'base';
-        const title = `<div class="ham-queue-train${stalled ? ' ham-queue-stalled' : ''}">${esc(STAGE_TRACKER_TRAIN_GLYPH)} ${esc(String(t.repo || ''))} → ${esc(base)} · ${esc(String(place.len))} PRs · head #${esc(String(place.head))}${stalled ? ' · ' + esc(stalled.replace(/^Merge queue stalled · /, 'stalled: ')) : ''}</div>`;
+        const title = `<div class="ham-queue-train${stalled ? ' ham-queue-stalled' : ''}">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(String(t.repo || ''))} → ${esc(base)} · ${esc(String(place.len))} PRs · head #${esc(String(place.head))}${stalled ? ' · ' + esc(stalled.replace(/^Merge queue stalled · /, 'stalled: ')) : ''}</div>`;
         const rows = t.members.map(it => {
           const mt = it.merge_train || {};
           const n = esc(String(it.number || ''));

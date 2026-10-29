@@ -830,7 +830,7 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.AdoptedByHive:
 		return "Adopted by hive"
 	case stagelabels.AwaitingMergeAdmission:
-		return "Merge gate"
+		return "Merge queue"
 	case stagelabels.NeedsDecision:
 		return "Needs human decision"
 	case stagelabels.ReadyForHumanMerge:

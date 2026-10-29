@@ -133,7 +133,7 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 		n.NextMoverText = "the stage-label pass (→ 050 review pending)"
 		n.Gates = []StageTrackerGate{
 			{Name: "review", State: StageTrackerGateNext, Text: "the stage-label pass places it at 050 review pending"},
-			{Name: "merge-gate", State: StageTrackerGateLater, Text: "reviews and checks admit it to the merge gate"},
+			{Name: "merge-gate", State: StageTrackerGateLater, Text: "reviews and checks admit it to the merge queue"},
 		}
 	default:
 		n.NextMover = StageTrackerMoverHive
