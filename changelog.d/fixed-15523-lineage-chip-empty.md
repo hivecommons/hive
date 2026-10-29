@@ -1,0 +1,1 @@
+- An issue row's linked-PR pill no longer leaves a stray trailing space when the PR has a lineage object but no chip text ([#15523](https://github.com/hivecommons/hive/issues/15523)).
