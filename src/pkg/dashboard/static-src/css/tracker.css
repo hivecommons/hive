@@ -373,6 +373,18 @@
     .ham-seg.active .cue-acting-cap { margin-left: var(--sp-2); }
     .cue-acting-cap { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
     .cue-acting-spin { width: 10px; height: 10px; margin-right: 0; }
+    /* Action in flight on a lit chevron (merge gate, decision, hold,
+       re-run — any step): the progress caption REPLACES the stage word.
+       Owner screenshot (dark theme): "Queuing for merge…" sat in muted grey
+       on top of the amber stripes, unreadable, while "Ready for human merge
+       · untrusted author" still showed beside it and wrapped to four lines.
+       Now the word, its glyphs and the gate detail hide for the duration;
+       what stays is one caption on an opaque plate (page surface under
+       page text: ≥ 15:1 in both themes, see the contrast test) above the
+       stripes and the pulse overlay, on one line with an ellipsis. */
+    .cue-acting > .ham-strip-row > .ham-strip > .ham-seg.active:not(.cap) > :not(.cue-acting-cap) { display: none; }
+    .ham-seg.active > .cue-acting-cap { display: inline-block; position: relative; z-index: 1; margin-left: 0; max-width: 100%; min-width: 0; box-sizing: border-box; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); background: var(--surface-0); color: var(--text); font-weight: var(--fw-medium); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ham-seg.active > .cue-acting-cap > .cue-acting-spin { vertical-align: -1px; margin-right: var(--sp-2); }
     .cue-event { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; padding-left: var(--sp-5); font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; animation: cue-event-in 0.4s ease-out; }
     .cue-event-who { font-weight: var(--fw-medium); color: var(--text); }
     .cue-event-age { color: var(--text-faint); white-space: nowrap; }
