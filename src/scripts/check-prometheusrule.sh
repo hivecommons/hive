@@ -17,3 +17,26 @@ yq '{"groups": .spec.groups}' "$dir/prometheusrule.yaml" > "$work/rules.yaml"
 promtool check rules "$work/rules.yaml"
 cp "$dir/tests/prometheusrule_test.yaml" "$work/"
 (cd "$work" && promtool test rules prometheusrule_test.yaml)
+
+# Grafana dashboard (#15439): valid JSON, a datasource variable, and every metric
+# it queries is one the dashboard package exports.
+python3 - "$dir/hive-metrics.json" "$root/src/pkg/dashboard" <<'PY'
+import glob, json, re, sys
+
+dash = json.load(open(sys.argv[1]))
+exported = set()
+for f in glob.glob(sys.argv[2] + "/metrics_*.go"):
+    if not f.endswith("_test.go"):
+        exported |= set(re.findall(r"\bhive_[a-z_]+\b", open(f).read()))
+
+assert any(v["type"] == "datasource" for v in dash["templating"]["list"]), "no datasource variable"
+used = set()
+for p in dash["panels"]:
+    for t in p.get("targets", []):
+        used |= set(re.findall(r"\bhive_[a-z_]+\b", t["expr"]))
+used -= {"hive_id"}
+missing = sorted(used - exported)
+if missing:
+    sys.exit("dashboard queries metrics Hive does not export: " + ", ".join(missing))
+print("dashboard OK: %d panels, %d metrics" % (len(dash["panels"]), len(used)))
+PY
