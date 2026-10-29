@@ -20,9 +20,13 @@ Already queued PRs are left in place. The sweep reason reports
 `stage/100-merge-queue`; enqueueing does not emit a completed-merge event or
 close an issue. The stage observation carries the reason to the dashboard.
 
-When a lane rejects an entry after a hold, withdrawn approval, changes request,
-or stale approval, Hive rechecks the entry's enqueuer and withdraws it only if
-it belongs to this App. Entries from a person or another App are preserved.
+When the owning lane rejects a PR for any reason other than its own
+native-queue outcomes or author-routing skips (for example a hold, withdrawn
+approval, changes request, stale approval, or a transient refusal such as
+`not-mergeable`, `required-checks-expected`, `behind`, soak or `release-hold*`),
+Hive rechecks the entry's enqueuer and withdraws it only if it belongs to this
+App. A transient refusal therefore dequeues the entry, and a later sweep
+re-enqueues it once the gates pass again. Entries from a person or another App are preserved.
 The queued sweep also withdraws this App's entries on paused repositories or
 repositories with automerge disabled. Every enqueue and dequeue uses the
 existing mutation boundary, including its write denials. Reconciliation is
@@ -31,6 +35,9 @@ periodic/event-driven, so a gate change can race GitHub's eventual merge.
 Queue rules choose the merge method. Where Hive elected a merge commit to
 preserve mixed authorship and DCO attribution, the queue must use `MERGE`;
 otherwise Hive reports a queue-method failure rather than enqueueing.
+This failure is permanent and is not routed to a human: the PR stays at
+`stage/100-merge-queue` until an operator changes the queue's merge method to
+`MERGE` (or the authorship no longer requires a merge commit).
 
 Required workflows must subscribe to `merge_group` in addition to their PR
 triggers. Workflow-trigger diagnosis is not automatic in this implementation.
