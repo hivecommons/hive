@@ -1410,6 +1410,8 @@ func humanizeStageReason(reason string) string {
 		return "tests removed"
 	case stageengineprstage.AutoMergeReasonHumanMergePath:
 		return "human-merge path"
+	case stageengineprstage.AutoMergeReasonHumanMergeRequired:
+		return "human merge"
 	}
 	if rest, ok := strings.CutPrefix(lower, "contributor-lane:"); ok {
 		return strings.ReplaceAll(strings.ReplaceAll(rest, "-", " "), "_", " ")
@@ -1453,7 +1455,8 @@ func stageTrackerUnauthorized(reason string) (step, tip string) {
 // on a maintainer's merge click rather than on /lgtm /approve.
 func stageTrackerManualMergeReason(reason string) bool {
 	switch strings.ToLower(strings.TrimSpace(reason)) {
-	case stageengineprstage.ContributorLaneReasonWorkflowPath, stageengineprstage.ContributorLaneReasonTestsRemoved, stageengineprstage.AutoMergeReasonHumanMergePath:
+	case stageengineprstage.ContributorLaneReasonWorkflowPath, stageengineprstage.ContributorLaneReasonTestsRemoved, stageengineprstage.AutoMergeReasonHumanMergePath,
+		stageengineprstage.AutoMergeReasonHumanMergeRequired:
 		return true
 	}
 	return false
@@ -1472,6 +1475,7 @@ var stageTrackerHumanMergeReasonWords = map[string][2]string{
 	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "Hive won't merge it alone — the author isn't a trusted author yet"},
 	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "GitHub does not let hive merge here; a person merges"},
 	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "A reviewer asked for a person to merge this one"},
+	stageengineprstage.HumanMergeReasonBreakingChange:    {"human merge", "Breaking change — owner merges; hive never merges a ⚠️-titled or needs-owner-merge PR"},
 }
 
 // stageTrackerHumanMergeReason derives, from a 090 stage reason, the
@@ -1757,6 +1761,15 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
 		if base, approver := stagelabels.HumanApprovedReason(reason); stageTrackerManualMergeReason(base) {
+			if strings.EqualFold(strings.TrimSpace(base), stageengineprstage.AutoMergeReasonHumanMergeRequired) {
+				// The breaking-change rule (hivecommons/hive#15442): no
+				// approval releases it; the owner's merge click does.
+				c := "Ready for human merge (" + stageengineprstage.CauseHumanMergeRequired + ")"
+				if approver != "" {
+					c += " — approved by @" + approver
+				}
+				return c, "maintainer"
+			}
 			c := "Ready to merge (" + humanizeStageReason(base) + ")"
 			if approver != "" {
 				c += " — approved by @" + approver
@@ -2117,8 +2130,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 					it.HumanMergeReasonText = "Hive won't merge it alone — " + why
 				}
 			}
-			// A person already took the trust call for this head (#15136).
-			if login := stagelabels.AdmissionLogin(it.AdmittedBy); login != "" {
+			// A person already took the trust call for this head (#15136) —
+			// unless the breaking-change rule holds, which no approval
+			// releases (hivecommons/hive#15442).
+			if login := stagelabels.AdmissionLogin(it.AdmittedBy); login != "" && it.HumanMergeReason != stageengineprstage.HumanMergeReasonBreakingChange {
 				it.HumanMergeReasonText = "@" + login + " approved it; hive merges it on its next pass"
 			}
 		}

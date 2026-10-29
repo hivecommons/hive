@@ -412,6 +412,18 @@ func RouteHuman(e Evidence) Route {
 		}
 		return route
 	}
+	if e.Cause == CauseTrust && e.ManualMergeRule && strings.TrimSpace(e.CauseReason) != "" {
+		// A manual-merge rule that owes no decision — the breaking-change
+		// title or the needs-owner-merge label (hivecommons/hive#15442):
+		// the head is green and reviewed, and the hive still never merges
+		// it; the owner's merge click is the one step left.
+		route := Route{Stage: ReadyForHumanMerge, ManualMerge: true, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict, HumanApprover: approver,
+			Reasons: []string{e.CauseReason}, LaneReason: strings.TrimSpace(e.LaneReason)}
+		if approver != "" && route.LaneReason != "" {
+			route.LaneReason += HumanApprovedReasonSuffix + approver
+		}
+		return route
+	}
 	return Route{Stage: ReadyForHumanMerge, Summary: summary, HumanApprover: approver}
 }
 

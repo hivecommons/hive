@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 // StageTrackerNewSlug is the pre-stage slug a brand-new open item wears in
@@ -31,6 +32,9 @@ const (
 	StageTrackerGateDone  = "done"
 	StageTrackerGateNext  = "next"
 	StageTrackerGateLater = "later"
+	// StageTrackerGateHumanMerge names the gate a breaking-titled or
+	// needs-owner-merge PR ends on: the owner's merge click.
+	StageTrackerGateHumanMerge = "human-merge"
 )
 
 // StageTrackerGate is one gate ahead of a 000-new item.
@@ -134,6 +138,13 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 		n.Gates = []StageTrackerGate{
 			{Name: "review", State: StageTrackerGateNext, Text: "the stage-label pass places it at 050 review pending"},
 			{Name: "merge-gate", State: StageTrackerGateLater, Text: "reviews and checks admit it to the merge queue"},
+		}
+		// A ⚠️-titled or needs-owner-merge PR ends at 090, not in the
+		// merge queue: the owner merges it (hivecommons/hive#15442). The
+		// row knows the default rule only; the lanes apply the configured one.
+		if ok, _ := (stageengineprstage.HumanMergeRule{}).RequiresHumanMerge(it.Title, it.Labels); ok {
+			n.Gates[1] = StageTrackerGate{Name: "merge-gate", State: StageTrackerGateLater, Text: "reviews and checks park it at 090 Ready for human merge"}
+			n.Gates = append(n.Gates, StageTrackerGate{Name: StageTrackerGateHumanMerge, State: StageTrackerGateLater, Text: stageengineprstage.CauseHumanMergeRequired})
 		}
 	default:
 		n.NextMover = StageTrackerMoverHive

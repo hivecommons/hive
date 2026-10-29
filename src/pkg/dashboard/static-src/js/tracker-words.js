@@ -6,7 +6,9 @@
     function stageTrackerManualMergeWord(item) {
       const approver = String((item && item.human_approver) || '').trim();
       const why = stageTrackerHumanMergeReasonWord(item);
-      return STAGE_TRACKER_MANUAL_MERGE_WORD + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
+      const code = String((item && item.human_merge_reason) || '').trim();
+      const lead = code === STAGE_TRACKER_BREAKING_CHANGE_CODE ? STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD : STAGE_TRACKER_MANUAL_MERGE_WORD;
+      return lead + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
     }
     // The plain 090 word (no manual-merge rule): the stage's short word
     // plus the reason, "Ready for human merge · untrusted author".

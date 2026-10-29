@@ -377,6 +377,12 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "no claim but needs-rebase", obs: stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Labels: []string{"needs-rebase"}}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
 		{name: "untrusted role weak", obs: stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, want: stagelabels.ReadyForHumanMerge, rank: stageRankRole},
 		{name: "human merge path", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		// A breaking-titled / needs-owner-merge PR owes no decision, only
+		// the owner's merge click: an OWNED 090 whatever the lane
+		// (hivecommons/hive#15442), fixing while it wears needs-rebase.
+		{name: "human merge required is owned 090", obs: stageObservation{Lane: stageLaneTrusted, Reason: autoMergeReasonHumanMergeRequired, Detail: approve}, want: stagelabels.ReadyForHumanMerge, rank: stageRankOwned},
+		{name: "human merge required self lane", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergeRequired}, want: stagelabels.ReadyForHumanMerge, rank: stageRankOwned},
+		{name: "human merge required needs-rebase", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergeRequired, Labels: []string{"needs-rebase"}}, want: stagelabels.Fixing, rank: stageRankOwned},
 		// A merge GitHub refuses for a missing approving review or a
 		// disabled merge method is not imminent: a person acts (085).
 		{name: "merge refused review required", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonMergeRefusedReview, Detail: approve}, want: stagelabels.NeedsDecision, rank: stageRankOwned},

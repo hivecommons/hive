@@ -35,6 +35,7 @@ type trustedSweepFixture struct {
 	updates         int
 	updateStatus    int
 	labels          []string
+	title           string
 }
 
 func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server {
@@ -56,6 +57,7 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 			}
 			return map[string]any{
 				"number":          7,
+				"title":           fx.title,
 				"state":           "open",
 				"mergeable_state": state,
 				"mergeable":       state == "clean",
