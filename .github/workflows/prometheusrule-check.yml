@@ -55,5 +55,5 @@ jobs:
             --strip-components=1 "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
           echo "${RUNNER_TEMP}/promtool" >> "$GITHUB_PATH"
 
-      - name: Check and unit-test the PrometheusRule
+      - name: Check and unit-test the PrometheusRule and dashboard
         run: bash src/scripts/check-prometheusrule.sh
