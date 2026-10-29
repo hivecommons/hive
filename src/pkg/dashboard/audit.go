@@ -104,6 +104,7 @@ var auditSensitiveActions = map[string]bool{
 	"config_governor_work_source":           true,
 	"config_review":                         true,
 	"config_write_surface":                  true,
+	"contributor-tier-changed":              true,
 	"copilot_auth_logout":                   true,
 	"copilot_auth_start":                    true,
 	"copilot_token_missing":                 true,

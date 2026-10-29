@@ -144,12 +144,18 @@ type ContributorProfile struct {
 	TokenRotationDue  bool      `json:"token_rotation_due,omitempty"`
 	TokenPlain        string    `json:"registration_token_plain,omitempty"`
 	TrustTier         string    `json:"trust_tier"`
-	PreferredRole     string    `json:"preferred_role,omitempty"`
-	CLIBackend        string    `json:"cli_backend,omitempty"`
-	Model             string    `json:"model,omitempty"`
-	ReasoningEffort   string    `json:"reasoning_effort,omitempty"`
-	KnowledgeLoaded   *bool     `json:"knowledge_loaded,omitempty"`
-	KnowledgeError    string    `json:"knowledge_error,omitempty"`
+	// TierHistory is the append-only provenance of TrustTier: one entry per
+	// real change (registration, operator set/revoke, auto-promotion) naming
+	// who moved the tier, when, from what and why. It is what answers "who
+	// changed this contributor to trusted?" — every writer goes through
+	// applyContributorTierChange, which also refuses to record a no-op.
+	TierHistory     []ContributorTierChange `json:"tier_history,omitempty"`
+	PreferredRole   string                  `json:"preferred_role,omitempty"`
+	CLIBackend      string                  `json:"cli_backend,omitempty"`
+	Model           string                  `json:"model,omitempty"`
+	ReasoningEffort string                  `json:"reasoning_effort,omitempty"`
+	KnowledgeLoaded *bool                   `json:"knowledge_loaded,omitempty"`
+	KnowledgeError  string                  `json:"knowledge_error,omitempty"`
 	// AdvisorModel / AdvisorEffort: the last-reported second model that
 	// reviewed this contributor's work (hivecommons/hive#7760). Display only.
 	AdvisorModel  string `json:"advisor_model,omitempty"`
@@ -401,20 +407,21 @@ func listContributorProfiles() []ContributorProfile {
 func createContributorProfile(username string, policies ...contributorTokenPolicy) (*ContributorProfile, string) {
 	cid := "c-" + randomHex(6)
 	token := randomHex(32)
+	now := time.Now().UTC()
 	p := &ContributorProfile{
 		GitHubUsername:    username,
 		ContributorID:     cid,
 		RegistrationToken: sha256Hex(token),
 		TokenPlain:        token,
-		TrustTier:         "newcomer",
-		RegisteredAt:      time.Now().UTC().Format(time.RFC3339),
+		RegisteredAt:      now.Format(time.RFC3339),
 		RateLimits: ContributorRateLimits{
 			MaxConcurrent: 1,
 			MaxPerHour:    3,
 			MaxPerDay:     10,
 		},
 	}
-	policyOrDefault(policies).issue(p, time.Now().UTC())
+	applyContributorTierChange(p, contributorTierNewcomer, tierChangeByRegistration, "self-registered", tierChangeSourceRegistration, now)
+	policyOrDefault(policies).issue(p, now)
 	_ = saveContributorProfile(p)
 	return p, token
 }
@@ -499,4 +506,101 @@ func reissueContributorToken(p *ContributorProfile, policies ...contributorToken
 		return ""
 	}
 	return newToken
+}
+
+// Trust tier names the registry stores. The admin handler validates against
+// this set; the lane and relay read the raw string.
+const (
+	contributorTierNewcomer    = "newcomer"
+	contributorTierContributor = "contributor"
+	contributorTierTrusted     = "trusted"
+	contributorTierMerger      = "merger"
+	contributorTierAdvisor     = "advisor"
+	contributorTierRevoked     = "revoked"
+)
+
+// Actors and sources recorded on a ContributorTierChange. By is an operator
+// login for operator changes; these constants cover the machine writers.
+const (
+	tierChangeByAutoPromotion = "hive:auto-promotion"
+	tierChangeByRegistration  = "hive:registration"
+
+	tierChangeSourceOperator      = "operator"
+	tierChangeSourceAutoPromotion = "auto-promotion"
+	tierChangeSourceRegistration  = "registration"
+
+	// contributorTierHistoryMax bounds the per-profile history; a tier is
+	// changed by hand a handful of times over a contributor's life, so the
+	// oldest entries are dropped only under pathological churn.
+	contributorTierHistoryMax = 50
+	// contributorTierReasonMax bounds the operator-supplied reason text.
+	contributorTierReasonMax = 240
+)
+
+// auditActionContributorTierChanged is the audit.jsonl action every tier
+// change writes, alongside the TierHistory entry on the profile.
+const auditActionContributorTierChanged = "contributor-tier-changed"
+
+// ContributorTierChange is one entry of ContributorProfile.TierHistory.
+type ContributorTierChange struct {
+	Tier   string `json:"tier"`
+	Prev   string `json:"prev,omitempty"`
+	At     string `json:"at"`
+	By     string `json:"by"`
+	Reason string `json:"reason,omitempty"`
+	Source string `json:"source"`
+}
+
+// applyContributorTierChange moves p to tier and records the change on
+// TierHistory. It returns the entry and true when the tier actually changed;
+// a write of the tier the profile already holds is a no-op that touches
+// neither TrustTier nor the history, so repeated saves never spam it.
+func applyContributorTierChange(p *ContributorProfile, tier, by, reason, source string, now time.Time) (ContributorTierChange, bool) {
+	if p == nil {
+		return ContributorTierChange{}, false
+	}
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	if tier == "" || tier == p.TrustTier {
+		return ContributorTierChange{}, false
+	}
+	reason = strings.TrimSpace(sanitizeString(reason))
+	if len(reason) > contributorTierReasonMax {
+		reason = reason[:contributorTierReasonMax]
+	}
+	ch := ContributorTierChange{
+		Tier:   tier,
+		Prev:   p.TrustTier,
+		At:     now.UTC().Format(time.RFC3339),
+		By:     strings.TrimSpace(by),
+		Reason: reason,
+		Source: source,
+	}
+	p.TrustTier = tier
+	p.TierHistory = append(p.TierHistory, ch)
+	if n := len(p.TierHistory); n > contributorTierHistoryMax {
+		p.TierHistory = append([]ContributorTierChange(nil), p.TierHistory[n-contributorTierHistoryMax:]...)
+	}
+	return ch, true
+}
+
+// currentTierChange is the history entry that set the tier the profile holds
+// now, or false when the tier predates history (legacy profile) or the
+// history was rewritten past it.
+func currentTierChange(p *ContributorProfile) (ContributorTierChange, bool) {
+	if p == nil {
+		return ContributorTierChange{}, false
+	}
+	for i := len(p.TierHistory) - 1; i >= 0; i-- {
+		if p.TierHistory[i].Tier == p.TrustTier {
+			return p.TierHistory[i], true
+		}
+	}
+	return ContributorTierChange{}, false
+}
+
+// tierChangeAuditDetail is the audit.jsonl detail for a tier change: the
+// same fields as the TierHistory entry, in the key=value form the rest of
+// the log uses.
+func tierChangeAuditDetail(username string, ch ContributorTierChange) string {
+	return auditDetail("username", username, "tier", ch.Tier, "prev", ch.Prev, "by", ch.By, "reason", ch.Reason, "source", ch.Source)
 }

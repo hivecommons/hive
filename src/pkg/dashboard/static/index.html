@@ -35697,6 +35697,26 @@ function burnAreaChart() {
       return `<span class="trust-badge" style="display:inline-block;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-sm);font-size:0.7rem;color:var(--muted);border:1px solid var(--line)">${esc(tier || 'unknown')}</span>`;
     }
 
+    // tierProvenance answers "who set this tier, when and why" from the
+    // contributor's tier_history (GET /api/contributors): the newest entry
+    // whose tier matches the current one. Empty when the registry predates
+    // tier history, so the chip stays plain rather than inventing a source.
+    function tierProvenance(c) {
+      const hist = Array.isArray(c && c.tier_history) ? c.tier_history : [];
+      const cur = String((c && c.trust_tier) || '').toLowerCase();
+      for (let i = hist.length - 1; i >= 0; i--) {
+        const h = hist[i];
+        if (!h || String(h.tier || '').toLowerCase() !== cur) continue;
+        const whenText = h.at ? formatDashboardDateTime(h.at, undefined, h.at) : '';
+        const parts = [`${cur} since ${whenText}`];
+        if (h.by) parts.push(`by ${h.by}`);
+        if (h.reason) parts.push(h.reason);
+        if (h.prev) parts.push(`(was ${h.prev})`);
+        return parts.join(' · ');
+      }
+      return '';
+    }
+
     /* ---- Clickable user avatars ---------------------------------------
        Every face on this dashboard links to that person's GitHub profile, so
        the avatar itself is the affordance rather than a separate glyph or a
@@ -36035,15 +36055,17 @@ function burnAreaChart() {
             ? '<span title="20+ PR tasks; use the tier dropdown to grant trusted" style="display:inline-block;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:var(--fs-xs);color:var(--yellow);border:1px solid color-mix(in srgb, var(--yellow) 45%, transparent);background:color-mix(in srgb, var(--yellow) 10%, transparent);flex-shrink:0">eligible for trusted</span>'
             : '';
           const login = c.github_username || '';
+          const tierProv = tierProvenance(c);
           const initialTint = contribTintReadCache(login) || contribTintFallback(login);
           return `<div class="contrib-card" data-contrib-login="${esc(login)}" data-contrib-avatar="${esc(c.avatar_url || '')}" style="--contrib-accent:${esc(initialTint.accent)};--contrib-accent-2:${esc(initialTint.accent2)}">
             <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-4);flex-wrap:wrap">
               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0" title="${dotTitle}"></span>
               ${avatarHtml}
               <span style="font-weight:600">@${esc(c.github_username)}</span>
-              <span class="contrib-role-pill" style="flex-shrink:0">${trustTierBadge(c.trust_tier)}</span>
+              <span class="contrib-role-pill" style="flex-shrink:0"${tierProv ? ` title="${esc(tierProv)}"` : ''}>${trustTierBadge(c.trust_tier)}</span>
               ${trustedEligibleBadge}
             </div>
+            ${tierProv ? `<div class="fs-sm text-muted mb-3 contrib-tier-provenance">${esc(tierProv)}</div>` : ''}
             ${cliLine ? `<div class="fs-sm text-muted mb-3">${cliLine}${roleLine ? ' · ' + roleLine : ''}</div>` : (roleLine ? `<div class="fs-sm text-muted mb-3">${roleLine}</div>` : '')}
             <div style="display:flex;gap:var(--sp-6);margin-bottom:var(--sp-3);font-size:0.8rem;color:var(--muted)">
               <span>Completed: <strong class="text-default">${c.total_tasks_completed || 0}</strong></span>
@@ -36168,7 +36190,7 @@ function burnAreaChart() {
         const res = await fetch(`/api/contributors/${contributorId}/trust`, {
           method: 'PUT',
           headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ tier: tier }),
+          body: JSON.stringify({ tier: tier, reason: 'operator set tier from the Contributors view' }),
         });
         if (!res.ok) { const err = await res.json().catch(() => ({})); await hiveAlert('Failed to change tier: ' + (err.error || res.statusText)); return; }
         fetchContributors();

@@ -547,6 +547,9 @@ func ResolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 	var best stageVerdict
 	var bestObs stageObservation
 	role := stagelabels.RoleNone
+	// weakLabelRole is the tier the PR already carries as seen by lanes
+	// with no owning opinion this pass.
+	weakLabelRole := stagelabels.RoleNone
 	for _, o := range list {
 		v := ClassifyStage(o)
 		if v.Rank > best.Rank {
@@ -556,12 +559,23 @@ func ResolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 			role = role.Merge(stagelabels.RoleTrusted)
 		}
 		if v.Rank < stageRankOwned {
-			role = role.Merge(stagelabels.RoleOf(o.Labels))
+			weakLabelRole = weakLabelRole.Merge(stagelabels.RoleOf(o.Labels))
 		}
 		// The most specific tier wins: the contributor lane knows
 		// registry/claim tiers the trusted-author lane cannot see, so a
 		// trusted-author "trusted" is kept but its absence is refined.
 		role = role.Merge(o.Detail.Role)
+	}
+	// A lane that merely cannot vouch for the author (untrusted: no profile,
+	// no claim) has nothing to say against the tier another lane wrote on
+	// the PR earlier — a maintainer stays role/trusted when only the
+	// contributor lane looked this pass. A KNOWN tier a lane read from the
+	// registry this pass is different evidence and is kept: it outranks the
+	// label a previous pass wrote, so a registry change (promotion or
+	// demotion) reaches the PR on the next sweep instead of the stale
+	// role/<tier> sticking (hivecommons/hive #14822 vs #14947).
+	if role == stagelabels.RoleNone || role == stagelabels.RoleUntrusted {
+		role = role.Merge(weakLabelRole)
 	}
 	// No lane reported a tier this pass (the contributor lane's deep
 	// evaluation does not run every cycle): keep the tier the PR already
