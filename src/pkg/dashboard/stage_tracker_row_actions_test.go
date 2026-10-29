@@ -63,6 +63,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDelegateTargets"),
 		jsFunc(t, html, "stageTrackerDecideOptions"),
 		jsFunc(t, html, "stageTrackerSupersederOptions"),
+		jsFunc(t, html, "stageTrackerSupersederDefault"),
 		jsFunc(t, html, "stageTrackerSupersederValid"),
 		jsFunc(t, html, "stageTrackerTriageNeeded"),
 		jsFunc(t, html, "stageTrackerTriageNewState"),
@@ -312,6 +313,13 @@ assert.strictEqual(stageTrackerSupersederValid('o/r#457', [tgt]), true);
 assert.strictEqual(stageTrackerSupersederValid('https://github.com/o/r/pull/457', [tgt]), true);
 assert.strictEqual(typeof stageTrackerSupersederValid('458', [tgt]), 'string', 'self-supersession is refused');
 assert.strictEqual(typeof stageTrackerSupersederValid('nope', [tgt]), 'string');
+// The prompt prefills the sweep's finding (hive's hive #15303 → #15304), the
+// lone sibling when there is no finding, and nothing otherwise.
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, superseded: { reason: 'superseded', closer_pr: 457, closer_repo: 'r' } }]), 'o/r#457');
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, superseded: { closer_pr: 457, closer_repo: 'o/other' } }]), 'o/other#457');
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, superseded: true, siblings: [457] }]), 'o/r#457');
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, siblings: [1, 2] }]), '');
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, superseded: { closer_pr: 457 } }, { repo: 'o/r', number: 459 }]), '', 'bulk selections are not prefilled');
 
 // A reader: hold/decide disabled with the reason; needs-human needs merger.
 as = stageTrackerRowActions(parked, { user: false, canHold: false, canHuman: false });

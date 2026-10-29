@@ -471,8 +471,8 @@ assert.strictEqual(stageTrackerAnchor(95, stages, 'pr'), STAGE_TRACKER_MERGE_COL
 // PR returned to contributor: detour badge rides Review; chip cap = author kind + first modifier (+N).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{number:50,slug:'review-pending'},{number:60,slug:'reviewed'},{number:72,slug:'returned-to-contributor',from:60}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
-// hivecommons/hive#15159: the chevron names the routing — the contributor's hive, for a clanker's PR.
-assert.ok(row.includes('<span class="ham-detour">Returned to @karibhou&#39;s hive</span>'), row);
+// hivecommons/hive#15159: the chevron names the routing — the contributor's clanker, for a clanker's PR.
+assert.ok(row.includes('<span class="ham-detour">Returned to @karibhou&#39;s clanker</span>'), row);
 // Invariant: a PR never occupies the issue slot. A PR with no linked issue
 // puts the muted "no linked issue" placeholder on the left and names itself
 // — author icon, #N, title — in the PR column, where a covering PR sits on

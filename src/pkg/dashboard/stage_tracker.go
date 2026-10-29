@@ -1598,11 +1598,12 @@ func adoptedWorkCaption(reason string) string {
 }
 
 // stageTrackerReturnedToHiveCaption rewrites a 072 caption for a
-// clanker-authored PR so it names whose hive the PR went back to and who
-// sent it: "Returned to @thatguywob's hive — @clubanderson requested
-// changes" (hivecommons/hive#15159). The human has already acted and
-// nothing is owed by a maintainer, so the "@x must act" tail goes; the
-// contributor's hive is the actor.
+// clanker-authored PR so it names whose clanker the PR went back to and
+// who sent it: "Returned to @thatguywob's clanker — @clubanderson
+// requested changes" (hivecommons/hive#15159). The human has already acted
+// and nothing is owed by a maintainer, so the "@x must act" tail goes; the
+// contributor's clanker is the actor. author is the person the clanker
+// acts for (the PR's GitHub author), never the hive App's bot login.
 func stageTrackerReturnedToHiveCaption(caption, author string, requesters []string) string {
 	who := strings.TrimSpace(author)
 	if who == "" {
@@ -1618,7 +1619,7 @@ func stageTrackerReturnedToHiveCaption(caption, author string, requesters []stri
 	if by := mentionLogins(requesters); by != "" {
 		rest = strings.Replace(rest, " — a maintainer requested changes", " — "+by+" requested changes", 1)
 	}
-	return head + "'s hive" + rest
+	return head + "'s clanker" + rest
 }
 
 // mentionLogins is "@a", "@a and @b" or "@a, @b and @c" for the given

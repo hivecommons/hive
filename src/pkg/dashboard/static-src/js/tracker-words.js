@@ -932,14 +932,14 @@
       return 'at ' + agentNowClockTime(at, nowMs) + ' (' + inWords + ')';
     }
     // The plain-words tooltip:
-    //   Waiting on @Danathar's hive (clanker · online, last seen 2 min ago) — hive is waiting for them
-    //   Waiting on @hanthor's hive (clanker · offline 26h) — hive will adopt at 15:10 (in 38m)
+    //   Waiting on @Danathar's clanker (online, last seen 2 min ago) — hive is waiting for them
+    //   Waiting on @hanthor's clanker (offline 26h) — hive will adopt at 15:10 (in 38m)
     //   Waiting on @zoe (human) — waiting for a human reply
     function stageTrackerPresenceTip(item, nowMs) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
       const now = Number(nowMs) || Date.now();
-      const hive = "Waiting on @" + p.login + "'s hive (clanker · ";
+      const hive = "Waiting on @" + p.login + "'s clanker (";
       const adopt = stageTrackerPresenceAdoptAt(p, now);
       let head, next;
       if (p.state === 'online') {
@@ -1145,15 +1145,40 @@
       const st = Number(item && item.stage) || 0;
       return !!(item && item.sentinel_alert) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
     }
+    // Pure: whose PR a 071/072 row waits on — the row's own author, or, for
+    // an issue row drawn through its one covering PR (via_pr), that PR's
+    // author. The issue's author is whoever filed it (on hive's hive the
+    // reviewer's bot, hivecommons-hive[bot]); naming them on the chevron
+    // read "Returned to @hivecommons-hive[bot]'s hive" for a clanker's PR.
+    function stageTrackerReturnedAuthor(item) {
+      let src = item || {};
+      if (src.via_pr && Array.isArray(src.linked_prs)) {
+        const here = src.linked_prs.filter(lp => lp && lp.author && (!Number(lp.drawn_under) || Number(lp.drawn_under) === (Number(src.number) || 0)));
+        if (here.length === 1) src = here[0];
+      }
+      return { author: String(src.author || '').replace(/^@/, ''), kind: String(src.author_kind || '') };
+    }
+    // "'s clanker" for a clanker's PR (the person's relay agent picks it
+    // up), "'s hive" for another hive's, nothing for a person's own.
+    function stageTrackerToolingSuffix(kind) {
+      if (kind === 'clanker') return "'s clanker";
+      if (kind === 'hive') return "'s hive";
+      return '';
+    }
     // The 071/072 chevron word names the routing: "Needs @author" at 071,
-    // "Returned to @author's hive" at 072 for a clanker-authored PR (the
+    // "Returned to @author's clanker" at 072 for a clanker-authored PR (the
     // contributor's agent picks it up), "Returned to @author" for a human's.
+    // A row already superseded by a merged PR says that instead — nothing
+    // is owed by the author; a maintainer closes it (hivecommons/hive#15303
+    // sat as "Returned to …" while its issue was closed by #15304).
     function stageTrackerReturnedWord(item, fallback) {
       const st = Number(item && item.stage) || 0;
-      const author = String((item && item.author) || '').replace(/^@/, '');
+      const sup = item && item.superseded && typeof item.superseded === 'object' ? Number(item.superseded.closer_pr) || 0 : 0;
+      const who = stageTrackerReturnedAuthor(item);
       let text = fallback;
-      if (author && st === 71) text = 'Needs @' + author;
-      else if (author && st === 72) text = 'Returned to @' + author + (item.author_kind === 'human' ? '' : "'s hive");
+      if (sup) text = 'Superseded by #' + sup + ' · decide';
+      else if (who.author && st === 71) text = 'Needs @' + who.author;
+      else if (who.author && st === 72) text = 'Returned to @' + who.author + stageTrackerToolingSuffix(who.kind);
       return text + (stageTrackerSentinelAsSuffix(item) ? ' · ' + STAGE_TRACKER_SENTINEL_CHIP : '');
     }
 
