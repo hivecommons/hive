@@ -228,7 +228,8 @@ async function main() {
   async function cleanup() {
     chrome.kill('SIGTERM');
     await new Promise((resolve) => chrome.once('exit', resolve));
-    fs.rmSync(PROFILE_DIR, { recursive: true, force: true });
+    // Chrome helpers can still finish profile writes after the browser exits.
+    fs.rmSync(PROFILE_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 
   const report = [];
