@@ -258,6 +258,21 @@ rewritten; their failures are resolved by maintainer disposition, not by you.
   blast radius — are documented in
   [`src/docs/v5-sync-policy.md`](src/docs/v5-sync-policy.md#inherited-dco-failures-from-v4).
 
+  One identity shape the post-merge check resolves on its own: GitHub's squash
+  writes the pull-request author's GitHub identity on the landing commit, so a
+  contributor with a private email lands as
+  `<id>+<login>@users.noreply.github.com` while the `Signed-off-by:` carried
+  over from the branch is their real address — the one the pre-merge DCO check
+  already accepted. The checker treats that as the same person **only when the
+  protected branch's own history shows the link**: another commit authored or
+  committed under the sign-off address by the same name, or a commit on which
+  that address and `<login>`'s noreply appear together. It makes no GitHub API
+  call for this, and it reports each acceptance as an informational
+  `same-person-noreply … evidence=<kind>:<sha>` line rather than hiding it. A
+  first-time contributor's squash has no such evidence yet and still needs a
+  per-SHA waiver, which becomes `STALE-WAIVER` once their next commit under
+  that address lands ([#15401](https://github.com/hivecommons/hive/issues/15401)).
+
 All four reuse the same trailer validation (`src/scripts/check-dco-trailers.sh`
 for the range-scanning gates), and the sign-off *identity* rules — noreply
 matching and author-login lookup — live in one shared library,
