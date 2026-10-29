@@ -85,11 +85,11 @@ h1{font-size:1.1rem}a{color:#58a6ff;text-decoration:none}a:hover{text-decoration
 table{border-collapse:collapse;margin-top:1rem}td,th{padding:.3rem .9rem;text-align:left;border-bottom:1px solid #21262d}
 .muted{color:#8b949e}
 </style></head><body><h1>🕘 %s — kick log history</h1>
-<p><a href="/api/agents/%s/log" target="_blank">📄 live log (current run)</a> <span class="muted">— the running session's scrollback; archived here when the next kick or a restart rotates it out</span></p>
+<p><a href="/api/agents/%s/log" target="_blank">📄 live log (current run)</a> <span class="muted">— the running session's scrollback; archived here as soon as the kick's turn ends, and again (final content) when the next kick or a restart rotates it out</span></p>
 `, esc, esc, esc)
 
 	if len(infos) == 0 {
-		_, _ = fmt.Fprint(w, `<p class="muted">No archived kick logs yet. Archives appear after the agent's next kick, restart, or a hive shutdown.</p>`)
+		_, _ = fmt.Fprint(w, `<p class="muted">No archived kick logs yet. Archives appear once a kick's turn ends, and after the agent's next kick, restart, or a hive shutdown.</p>`)
 	} else {
 		// #9580: the column is the archived kick's START time (KickLogInfo.
 		// Timestamp), not when the archive file was written — see kick_logs.go.
@@ -97,7 +97,7 @@ table{border-collapse:collapse;margin-top:1rem}td,th{padding:.3rem .9rem;text-al
 		// (transcript or scrollback), so a tester switching the kick log
 		// source can confirm what each archive was built from without
 		// opening it. Archives older than the header field show a dash.
-		_, _ = fmt.Fprint(w, `<table><tr><th>kick started (UTC)</th><th>trigger</th><th>source</th><th>size</th><th></th></tr>`)
+		_, _ = fmt.Fprint(w, `<table><tr><th>kick started (UTC)</th><th title="What wrote the archive: turn-end (the kick's turn was seen to finish), kick (rotated out by the next kick), restart, shutdown">trigger</th><th>source</th><th>size</th><th></th></tr>`)
 		for _, info := range infos {
 			id := html.EscapeString(info.ID)
 			source := `<span class="muted">—</span>`

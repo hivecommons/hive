@@ -101,13 +101,22 @@ func (m *Manager) noteTurnInterruptedLocked(agent *AgentProcess, reason string, 
 // the second answer to arm the restart/kick breaker (#7363): the accounting
 // here already knew each restart in the observed loop was destroying a
 // producing turn; now something acts on it.
+//
+// A turn whose end was already observed (KickOutcome settled for this kick,
+// which also archived it under "turn-end") is not interrupted: its output is
+// still snapshotted so the final scrollback supersedes the turn-end archive,
+// but nothing was lost, so no interruption is recorded and the breaker is not
+// armed.
 func (m *Manager) tearDownTurnLocked(agent *AgentProcess, reason string) (interrupted, producing bool) {
 	if !agent.kickLogPending {
 		return false, false
 	}
 	archived := m.archiveKickLogBytesLocked(agent, reason)
-	rec := m.noteTurnInterruptedLocked(agent, reason, archived)
 	agent.kickLogPending = false
+	if agent.KickOutcome.Settled(agent.LastKick) {
+		return false, false
+	}
+	rec := m.noteTurnInterruptedLocked(agent, reason, archived)
 	return true, rec.Producing
 }
 

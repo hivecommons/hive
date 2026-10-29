@@ -202,6 +202,10 @@ func (m *Manager) settleKickOutcomeLocked(agent *AgentProcess, visible string, n
 	default:
 		m.logger.Info("kick turn ended", attrs...)
 	}
+	// The turn is over: make its output durable now rather than waiting for
+	// the next kick, a restart or a graceful shutdown — a daily-cadence agent
+	// whose container is OOM-killed hours later would otherwise lose the run.
+	m.archiveKickLogOnTurnEndLocked(agent)
 	m.notifyKickOutcome(agent.Name, outcome)
 	return outcome, true
 }

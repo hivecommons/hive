@@ -174,6 +174,13 @@ func TestHandleAgentKickHistoryPage_EmptyHistory(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "No archived kick logs yet") {
 		t.Errorf("empty-history page missing placeholder:\n%s", rec.Body.String())
 	}
+	// The copy must tell an operator that a finished turn is archived at
+	// once, not only at the next kick/restart/shutdown rotation point.
+	for _, want := range []string{"once a kick's turn ends", "as soon as the kick's turn ends"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("history page copy missing %q:\n%s", want, rec.Body.String())
+		}
+	}
 	rec = doGet(s, "/agents/nonexistent/kicks")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown agent: status = %d, want 404", rec.Code)
