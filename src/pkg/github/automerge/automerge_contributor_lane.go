@@ -430,6 +430,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			}
 			result.Seen++
 			stage := func(reason string, merged bool, err error) {
+				c.reconcileNativeQueueGate(ctx, stageLaneContributor, owner, repoName, pr, reason)
 				c.recordStage(stageLaneContributor, displayRepo, owner, repoName, pr, reason, merged, err)
 			}
 			if train.isSibling(number) {
@@ -1418,6 +1419,10 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	author, headSHA, claim, verdict, method, mergeClaim := eval.author, eval.headSHA, eval.claim, eval.verdict, eval.method, eval.mergeClaim
 	fullRepo := owner + "/" + repo
+	if reason, err := c.tryNativeQueue(ctx, eval.pr, mergeClaim); reason != "" || err != nil {
+		return AutoMergeSweepEvent{}, reason, err
+	}
+
 	attempt := mergeAttempt{owner: owner, repo: repo, base: eval.pr.GetBase().GetRef(), number: number, head: headSHA, state: eval.pr.GetMergeableState(), method: method}
 	if refused := c.knownMergeRefusal(attempt); refused != "" {
 		return AutoMergeSweepEvent{}, refused, nil

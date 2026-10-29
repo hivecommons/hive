@@ -21,6 +21,7 @@ import (
 const testHiveAppBotLogin = "kubestellar-hive[bot]"
 
 type sweepPR struct {
+	nodeID          string
 	number          int
 	author          string
 	queuedBy        string
@@ -2881,10 +2882,11 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 					headRepo = "acme/widget"
 				}
 				pulls = append(pulls, map[string]any{
-					"number": pr.number,
-					"state":  "open",
-					"draft":  pr.draft,
-					"user":   map[string]string{"login": pr.author},
+					"node_id": pr.nodeID,
+					"number":  pr.number,
+					"state":   "open",
+					"draft":   pr.draft,
+					"user":    map[string]string{"login": pr.author},
 					"head": map[string]any{
 						"sha":  headSHA,
 						"repo": map[string]string{"full_name": headRepo},
@@ -2938,6 +2940,7 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				headRepo = "acme/widget"
 			}
 			json.NewEncoder(w).Encode(map[string]any{
+				"node_id":         pr.nodeID,
 				"number":          pr.number,
 				"state":           "open",
 				"draft":           pr.draft,

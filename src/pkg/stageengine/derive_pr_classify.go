@@ -468,7 +468,7 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		// 095, not 100 — the merge has not been attempted yet.
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.PreMergeSoak, Rank: stageRankOwned}, humanApprovalReason)
 	}
-	if stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
+	if stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "native-merge-queue") || strings.HasPrefix(reason, "release-hold") {
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if reason == contributorLaneReasonNoVerdict {
