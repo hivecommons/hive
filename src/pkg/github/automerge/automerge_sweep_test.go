@@ -3293,10 +3293,12 @@ func TestSweepSelfAuthoredNeedsRebaseLabelAsksSupersededCloser(t *testing.T) {
 	var merged []int
 	var updates int
 	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
-		number:         15208,
-		author:         testHiveAppBotLogin,
-		extraLabels:    []string{"needs-rebase"},
-		mergeableState: "behind",
+		number:      15208,
+		author:      testHiveAppBotLogin,
+		extraLabels: []string{"needs-rebase"},
+		// dirty, not behind: a needs-rebase label on a merely-behind head is
+		// stale and the lane updates the branch instead (hivecommons/hive#15103).
+		mergeableState: "dirty",
 		updateCount:    &updates,
 	}}, &merged)
 	defer api.Close()
