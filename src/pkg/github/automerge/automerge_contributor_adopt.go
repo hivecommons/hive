@@ -582,10 +582,24 @@ func shortSHA(sha string) string {
 // API never loops on the same PR.
 func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, presence ContributorPresence, hasPresence bool, now time.Time) (int, error) {
 	rec, ok := store.Get(key)
-	if !ok || obs.Lane == stageLaneSelf || obs.Author == "" || obs.BaseRef == "" {
+	if !ok || obs.Author == "" || obs.BaseRef == "" {
 		return 0, nil
 	}
 	requested := hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede)
+	if obs.Lane == stageLaneSelf {
+		// The self-authored sweep also carries trusted-bot PRs
+		// (github-actions and friends): a delegated supersede of one of
+		// those runs like any contributor PR. Only the App's own PR has no
+		// branch to re-home; that request is consumed with one note
+		// instead of a silent no-op every sweep (hivecommons/docs#500).
+		if !requested {
+			return 0, nil
+		}
+		if normalizeBotLogin(obs.Author) == normalizeBotLogin(c.transport.AppBotLogin()) {
+			return c.refuseSelfAuthoredSupersede(ctx, store, key, obs, rec, now)
+		}
+		c.info("stage labels: delegated supersede of a trusted-bot PR on the self-authored lane", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA)
+	}
 	due, reason := adoptionDue(rec, obs.HeadSHA, policy, now, presence, hasPresence)
 	if requested && obs.HeadSHA != "" && !(rec.Adopted(obs.HeadSHA) && rec.AdoptedBy > 0 && !rec.AdoptionCopyFailed()) {
 		// An explicit owner-delegate decision bypasses the nudge/grace and
@@ -678,6 +692,34 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	return c.supersedeAdoptedPR(ctx, store, key, obs, rec, policy, reason, grace, rec.NudgeOnline, dcoRehome, now)
 }
 
+// AdoptionSelfRefusedMarker stamps the note a delegated supersede of the
+// hive App's own PR gets: the request is consumed, nothing is re-homed.
+const AdoptionSelfRefusedMarker = "<!-- hive:adoption-self-refused"
+
+// AdoptionSelfRefusedComment renders that note.
+func AdoptionSelfRefusedComment(obs stageObservation) string {
+	return fmt.Sprintf("%s head=%s -->\n**Not superseding:** this PR is the hive's own (`%s`), so there is no contributor branch to re-home into a fresh hive PR. The `%s` request is cleared; push a fix to this branch or close it and open a new PR.\n",
+		AdoptionSelfRefusedMarker, obs.HeadSHA, obs.Author, delegatedecision.LabelAdoptSupersede)
+}
+
+// refuseSelfAuthoredSupersede consumes a delegated supersede request on the
+// App's own PR: one blocked note per head, logged, no adoption recorded.
+func (c *Engine) refuseSelfAuthoredSupersede(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, now time.Time) (int, error) {
+	if obs.HeadSHA == "" {
+		return 0, nil
+	}
+	if rec.AdoptionBlocked(obs.HeadSHA) == stagelabels.AdoptBlockedSelfAuthored {
+		return 0, nil
+	}
+	c.warn("stage labels: delegated supersede requested on the hive's own PR; refusing", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA)
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(AdoptionSelfRefusedComment(obs))}); err != nil {
+		c.warn("stage labels: self-authored supersede refusal note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return 0, err
+	}
+	store.NoteAdoptionBlocked(key, obs.HeadSHA, stagelabels.AdoptBlockedSelfAuthored, now)
+	return 1, nil
+}
+
 // delegatedAdoptionAttempted reports whether adoptContributorPR recorded an
 // attempt between the two snapshots: MarkAdopted stamps head/by/at before
 // any write, so a changed adoption record means this head was tried.
@@ -754,6 +796,15 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		c.warn("stage labels: adoption failed to push branch", "repo", obs.Display, "pr", number, "branch", branch, "error", err)
 		return 0, err
 	}
+	if supersedeHeadConflicts(obs) {
+		// The head is red on a conflict: opening the copy as-is would just
+		// move the conflict. Replay the base onto the hive branch first; a
+		// git conflict is terminal for this head (one note, 07x reason).
+		conflicted, n, err := c.replaySupersedeOntoBase(ctx, store, key, obs, branch, now)
+		if err != nil || conflicted {
+			return n, err
+		}
+	}
 
 	var created *gh.PullRequest
 	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
@@ -801,6 +852,81 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		}
 	}
 	return 1, nil
+}
+
+// supersedeHeadConflicts reports whether the head being superseded is red
+// on a merge conflict with its base (lane reason or needs-rebase label).
+func supersedeHeadConflicts(obs stageObservation) bool {
+	return humanConflictReasons[obs.Reason] || humanConflictReasons[obs.LaneReason] || hasLabelFold(obs.Labels, "needs-rebase")
+}
+
+// AdoptionSupersedeConflictMarker stamps the note posted when a delegated
+// supersede could not replay the head onto a fresh base.
+const AdoptionSupersedeConflictMarker = "<!-- hive:adoption-supersede-conflict"
+
+// AdoptionSupersedeConflictComment renders that note with the concrete
+// failure: the base, the head and the files both sides touched.
+func AdoptionSupersedeConflictComment(obs stageObservation, branch string, files []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s head=%s -->\n", AdoptionSupersedeConflictMarker, obs.HeadSHA)
+	fmt.Fprintf(&b, "**Supersede failed:** the hive could not open a fresh PR with these commits. Merging `%s` into the copy branch `%s` (at `%s`) stopped on a git conflict, so no superseding PR was opened and this PR stays open.\n\n", obs.BaseRef, branch, shortSHA(obs.HeadSHA))
+	if len(files) > 0 {
+		b.WriteString("Files changed on both sides:\n")
+		for _, f := range files {
+			fmt.Fprintf(&b, "- `%s`\n", f)
+		}
+		b.WriteString("\n")
+	}
+	fmt.Fprintf(&b, "Rebase this branch onto `%s` (or push a merge of it) and the lane re-evaluates the new head; a new `%s` label then retries the supersede. Reason: `%s`.\n", obs.BaseRef, delegatedecision.LabelAdoptSupersede, stagelabels.AdoptBlockedSupersedeConflict)
+	return b.String()
+}
+
+// replaySupersedeOntoBase merges the base into the freshly pushed hive
+// branch so the superseding PR opens mergeable. It returns conflicted=true
+// after a 409: the adoption is forgotten (no live copy exists), the head is
+// recorded as supersede-conflict so the request is consumed and the 07x
+// reason names it, and one note is posted. Other API failures return the
+// error with the attempt already recorded by the caller.
+func (c *Engine) replaySupersedeOntoBase(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, branch string, now time.Time) (conflicted bool, comments int, err error) {
+	owner, repo, number := obs.Owner, obs.Repo, obs.Number
+	var status int
+	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
+		Repo: owner + "/" + repo, Kind: effects.KindBranchPush, Target: branch, Actor: "stage_labels",
+		Inputs: map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "base": obs.BaseRef, "reason": "supersede-replay"},
+	}, func(ctx context.Context) (effects.Result, error) {
+		commit, resp, apiErr := c.gh.Repositories.Merge(ctx, owner, repo, &gh.RepositoryMergeRequest{
+			Base:          gh.Ptr(branch),
+			Head:          gh.Ptr(obs.BaseRef),
+			CommitMessage: gh.Ptr(fmt.Sprintf("Merge %s into %s (hive supersede of #%d)", obs.BaseRef, branch, number)),
+		})
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		if apiErr != nil {
+			return effects.Result{}, effects.NotApplied(apiErr)
+		}
+		return effects.Result{Provenance: commit.GetSHA()}, nil
+	})
+	switch {
+	case err == nil:
+		c.info("stage labels: supersede replayed the base onto the hive branch", "repo", obs.Display, "pr", number, "branch", branch, "base", obs.BaseRef, "status", status)
+		return false, 0, nil
+	case status != http.StatusConflict:
+		c.warn("stage labels: supersede replay onto the base failed", "repo", obs.Display, "pr", number, "branch", branch, "base", obs.BaseRef, "error", err)
+		return false, 0, err
+	}
+	files := c.mergeForwardConflictFiles(ctx, owner, repo, obs.BaseRef, obs.HeadSHA)
+	store.ClearAdoption(key)
+	store.NoteAdoptionBlocked(key, obs.HeadSHA, stagelabels.AdoptBlockedSupersedeConflict, now)
+	c.warn("stage labels: supersede replay conflicts with the base; not opening the copy", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "branch", branch, "base", obs.BaseRef, "files", files, "reason", stagelabels.AdoptBlockedSupersedeConflict)
+	if _, delErr := c.gh.Git.DeleteRef(ctx, owner, repo, "refs/heads/"+branch); delErr != nil && !isGitHubStatus(delErr, http.StatusNotFound) && !isGitHubStatus(delErr, http.StatusUnprocessableEntity) {
+		c.warn("stage labels: could not delete the conflicting hive branch", "repo", obs.Display, "pr", number, "branch", branch, "error", delErr)
+	}
+	if _, _, cErr := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(AdoptionSupersedeConflictComment(obs, branch, files))}); cErr != nil {
+		c.warn("stage labels: supersede conflict note failed", "repo", obs.Display, "pr", number, "error", cErr)
+		return true, 0, cErr
+	}
+	return true, 1, nil
 }
 
 // resignAdoptionCommits replays the PR's commits with the App's
@@ -1114,6 +1240,11 @@ func repoMaintainerLevel(permission, role string) bool {
 // evidence. The cache lock covers map access only, never the API call.
 func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, now time.Time) (bool, error) {
 	if c == nil || c.gh == nil || obs.Author == "" || obs.Owner == "" || obs.Repo == "" {
+		return false, nil
+	}
+	if strings.HasSuffix(strings.ToLower(obs.Author), "[bot]") {
+		// An App installation is never a collaborator: the permission
+		// read 404s forever and would defer adoption on every sweep.
 		return false, nil
 	}
 	key := strings.ToLower(obs.Owner + "/" + obs.Repo + "#" + obs.Author)

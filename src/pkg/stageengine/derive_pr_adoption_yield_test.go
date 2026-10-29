@@ -117,3 +117,28 @@ func TestDerivePR_AdoptionFactsAloneYield074(t *testing.T) {
 		t.Fatalf("needs-human label must keep its park (#14471): %+v", d)
 	}
 }
+
+// A delegated supersede whose replay onto the base conflicted leaves the
+// PR on its fixing stage with the refusal named as the reason; a stage
+// that is not the fixing stage keeps its own reason.
+func TestDerivePR_SupersedeConflictNamesFixingReason(t *testing.T) {
+	f := Facts{
+		Ref:    Ref{Owner: "o", Repo: "r", Number: 500, Kind: stagelabels.PRItem},
+		Open:   true,
+		Labels: []string{"stage/070-fixing", "needs-rebase"},
+		PR: &PRFacts{
+			HeadSHA: "74dc1ed74dc1ed74dc1ed74dc1ed74dc1ed74dc1",
+			Lanes:   []LaneFact{{Lane: stageLaneSelf, Reason: "conflicting", Role: stagelabels.RoleTrusted}},
+			Pass:    &PRPassFacts{AdoptionRefusedReason: stagelabels.AdoptBlockedSupersedeConflict},
+		},
+	}
+	d := DerivePR(f)
+	if d.Stage != stagelabels.Fixing || d.Reason != stagelabels.AdoptBlockedSupersedeConflict {
+		t.Fatalf("supersede conflict: %+v", d)
+	}
+	f.PR.Lanes[0].Reason = "check-pending"
+	d = DerivePR(f)
+	if d.Stage == stagelabels.Fixing || d.Reason == stagelabels.AdoptBlockedSupersedeConflict {
+		t.Fatalf("non-fixing stage took the refusal reason: %+v", d)
+	}
+}

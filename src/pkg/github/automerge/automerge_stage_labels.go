@@ -1034,6 +1034,12 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					pass.EscalationReason = esc.Reason
 				}
 			}
+			if hadPrev && !verdict.Terminal && prevRec.AdoptionBlocked(obs.HeadSHA) == stagelabels.AdoptBlockedSupersedeConflict && verdict.Stage == fixingStage(obs) {
+				// A delegated supersede that could not replay onto the base
+				// keeps the PR on its fixing stage with the failure named.
+				obs.Reason = stagelabels.AdoptBlockedSupersedeConflict
+				pass.AdoptionRefusedReason = stagelabels.AdoptBlockedSupersedeConflict
+			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			// hivecommons/hive#12502: remember the author so the dashboard can
 			// list "PRs returned to this contributor" from the store alone.
@@ -1180,8 +1186,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// label once an attempt was recorded for this head (success or
 			// failure) so a persistent write failure re-parks the PR at 085
 			// instead of retrying every sweep. A deferral (hold label, fence
-			// unreadable) records nothing and keeps the label for a retry.
-			if after, ok := store.Get(key); ok && (after.AdoptedBy > 0 || delegatedAdoptionAttempted(before, after)) {
+			// unreadable) records nothing and keeps the label for a retry. A
+			// terminal refusal that recorded no adoption (the App's own PR,
+			// a replay that conflicted) is consumed too (AdoptionRequestConsumed).
+			if after, ok := store.Get(key); ok && (after.AdoptedBy > 0 || delegatedAdoptionAttempted(before, after) || after.AdoptionRequestConsumed(obs.HeadSHA)) {
 				if err := c.removeNonStageLabel(ctx, obs.Owner, obs.Repo, obs.Number, delegatedecision.LabelAdoptSupersede); err != nil && firstErr == nil {
 					firstErr = err
 				}

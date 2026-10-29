@@ -1126,6 +1126,28 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 // adoption held under governor.labels.stage.adoption.maintainer_policy: ask.
 const AdoptBlockedAuthorMaintainer = "author-is-maintainer"
 
+// AdoptBlockedSelfAuthored is the AdoptBlockedBy reason for a delegated
+// supersede of the hive App's own PR: there is no contributor branch to
+// re-home, so the request is consumed with one note instead of looping.
+const AdoptBlockedSelfAuthored = "self-authored"
+
+// AdoptBlockedSupersedeConflict is the AdoptBlockedBy reason (and the 07x
+// lane reason) for a supersession whose head could not be replayed onto a
+// fresh base: the hive copy would open conflicting, so the attempt is
+// recorded, the original keeps its lane and one note names the failure.
+const AdoptBlockedSupersedeConflict = "supersede-conflict"
+
+// AdoptionRequestConsumed reports whether a delegated adoption request at
+// head was settled by a terminal refusal that recorded no adoption: the
+// request label clears so the engine does not retry every sweep.
+func (r Record) AdoptionRequestConsumed(head string) bool {
+	switch r.AdoptionBlocked(head) {
+	case AdoptBlockedSelfAuthored, AdoptBlockedSupersedeConflict:
+		return true
+	}
+	return false
+}
+
 // NoteAdoptionBlocked records that adoption is due at head but held for
 // reason; the first sighting's time is kept while head and reason hold.
 func (s *Store) NoteAdoptionBlocked(key, head, reason string, now time.Time) {
