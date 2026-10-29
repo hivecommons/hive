@@ -254,6 +254,10 @@ type Client struct {
 	// to do for, keyed "owner/repo#n". Guarded by sharedCIRerunMu.
 	sharedCIRerunSeen map[string]sharedCIRerunSeen
 	sharedCIRerunMu   sync.Mutex
+	// sharedCIRerunForbidden records when the App was last refused a rerun in
+	// a repo (403 "Resource not accessible by integration"), keyed
+	// "owner/repo". Guarded by sharedCIRerunMu.
+	sharedCIRerunForbidden map[string]time.Time
 	// combinedPerspectivesFn / maxReviewsPerHeadFn feed the per-head review
 	// backstop (perHeadReviewRefusal); read live so a dashboard change applies
 	// without a client rebuild. maxReviewsPerHeadFn returning 0 means derive;
