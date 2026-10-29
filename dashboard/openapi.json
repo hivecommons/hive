@@ -34114,6 +34114,138 @@
           }
         }
       }
+    },
+    "/api/hotspots": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "List merge hotspots: files repeatedly touched by concurrent PRs",
+        "description": "The merge-hotspot advisor's cached report, derived from the merge train's PR file lists and the rebase follow-through's conflict records (no extra GitHub polling). A file is listed when at least governor.hotspot_min_prs distinct PRs touched it in the last governor.hotspot_window_days and at least governor.hotspot_min_overlaps pairs of them were open concurrently. Code files at or above governor.hotspot_min_lines with two or more top-level symbol groups get a split-code recommendation and one modularize issue for the ci-maintainer lane (labels agent/ci-maintainer, kind/cleanup) through the writeback gate; docs are reported and only recommended for a by-section split above 1500 lines; generated files point at their source; lock/data files are report-only. Filter with ?repo=owner/name.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one owner/name"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hotspots, highest score first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repo": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Files at or above the thresholds across all repos"
+                    },
+                    "actionable": {
+                      "type": "integer",
+                      "description": "Files with a split recommendation"
+                    },
+                    "filed": {
+                      "type": "integer",
+                      "description": "Files with a modularize issue filed"
+                    },
+                    "hotspots": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "file": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "code",
+                              "doc",
+                              "lock",
+                              "generated",
+                              "data"
+                            ]
+                          },
+                          "prs": {
+                            "type": "integer",
+                            "description": "Distinct PRs that touched the file in the window"
+                          },
+                          "pr_numbers": {
+                            "type": "array",
+                            "items": {
+                              "type": "integer"
+                            }
+                          },
+                          "overlaps": {
+                            "type": "integer",
+                            "description": "PR pairs open at the same time that both touched the file"
+                          },
+                          "conflicts": {
+                            "type": "integer",
+                            "description": "Rebase/merge conflicts attributed to the file"
+                          },
+                          "lines": {
+                            "type": "integer",
+                            "description": "Current line count (0 when unreadable)"
+                          },
+                          "score": {
+                            "type": "number",
+                            "description": "overlaps × size weight + 2 × conflicts"
+                          },
+                          "symbol_groups": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Top-level funcs/types (Go), declarations (JS/TS/py) or ## headings (md)"
+                          },
+                          "recommendation": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "split-code",
+                              "split-doc",
+                              "split-source",
+                              "report-only"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "generated_from": {
+                            "type": "string",
+                            "description": "Source tree for a generated file"
+                          },
+                          "issue_number": {
+                            "type": "integer"
+                          },
+                          "issue_url": {
+                            "type": "string"
+                          },
+                          "last_updated": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

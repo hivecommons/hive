@@ -76,11 +76,14 @@ const nowMs = Date.parse('2026-10-20T21:10:00Z');
 const pop = stageTrackerDecisionPopHtml(issue, opts, nowMs, 'Needs decision — tip');
 assert.ok(pop.indexOf('has no <code>workflows</code> permission') >= 0 || pop.indexOf('has no `+"`workflows`"+` permission') >= 0, pop);
 assert.ok(pop.indexOf('.github/workflows/*') >= 0, pop);
+// One primary action — the first the viewer may take, since "Let hive decide" cannot
+// grant a permission — and "More ⋯" for the rest (the disabled delegate keeps its
+// reason in the row menu).
 const buttons = pop.match(/<button[^>]*data-ham-act="[^"]+"[^>]*>[^<]*<\/button>/g) || [];
-const delBtn = buttons.find(b => b.indexOf('data-ham-act="decide:delegate"') >= 0);
-assert.ok(delBtn && /aria-disabled="true"/.test(delBtn) && /title="[^"]*cannot grant a permission/.test(delBtn), delBtn);
-assert.ok(buttons.some(b => b.indexOf('data-ham-act="blocker:recheck"') >= 0 && b.indexOf('>Re-check permissions<') >= 0), buttons.join('\n'));
-assert.ok(buttons.some(b => b.indexOf('data-ham-act="open:app-settings"') >= 0), buttons.join('\n'));
+assert.strictEqual(buttons.length, 1, buttons.join('\n'));
+const first = opts.find(o => o.enabled);
+assert.ok(buttons[0].indexOf('data-ham-act="' + first.id + '"') >= 0 && buttons[0].indexOf('ham-decision-lead') >= 0 && !/aria-disabled/.test(buttons[0]), buttons[0]);
+assert.ok(pop.indexOf('data-ham-more="1"') >= 0, pop);
 // No slugs reach the operator.
 for (const bad of ['capability:workflows-permission', 'requires_human']) assert.ok(pop.indexOf(bad) < 0, bad + ' in ' + pop);
 `)

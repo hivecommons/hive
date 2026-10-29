@@ -36,6 +36,7 @@ const (
 	operatorActionGiveDirection   = "give-direction"
 	operatorActionCloseSuperseded = "close-superseded"
 	operatorActionWontFix         = "wontfix"
+	operatorActionCloseRead       = "close-read"
 	operatorActionLetHiveDecide   = "let-hive-decide"
 	operatorActionHold            = "hold"
 	operatorActionRelease         = "release"
@@ -102,6 +103,15 @@ const (
 	// HIVE_OPERATOR_ACTION_STUCK_AFTER (Go duration) overrides how long a
 	// recorded action may sit at the same stage before the badge turns amber.
 	operatorActionStuckAfterEnv = "HIVE_OPERATOR_ACTION_STUCK_AFTER"
+	// operatorActionClosedDetail is the /decision status word a close
+	// answers with; an item whose newest action applied it leaves the
+	// tracker at once (stageTrackerDropOperatorClosed).
+	operatorActionClosedDetail       = "closed"
+	operatorActionClosedGraceDefault = 15 * time.Minute
+	// HIVE_OPERATOR_CLOSED_GRACE (Go duration) overrides how long a row the
+	// operator closed from the dashboard is kept off the tracker while
+	// GitHub's list catches up.
+	operatorActionClosedGraceEnv = "HIVE_OPERATOR_CLOSED_GRACE"
 )
 
 // operatorActionsPath is where the ledger persists; tests point it at a
@@ -326,6 +336,8 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			out.Target = strings.TrimSpace(raw.SupersededBy)
 		case repoItemDecisionCloseWontFix:
 			out.Action = operatorActionWontFix
+		case repoItemDecisionCloseRead:
+			out.Action = operatorActionCloseRead
 		case repoItemDecisionMergeNow:
 			out.Action = operatorActionMergeNow
 		case repoItemDecisionQueueMerge:
@@ -399,6 +411,17 @@ func operatorActionOutcome(status int, body []byte) (outcome, detail, head strin
 			return operatorActionOutcomeNoOp, "already accepted", head, true
 		}
 		detail = str("status")
+		// A 200 that refused the action (a paused repo, an unreachable
+		// head) is a failure on the ledger, with the result's one-line why
+		// as the detail (hivecommons/hive#15436).
+		if detail == rowActionRefused {
+			if res, ok := resp["result"].(map[string]any); ok {
+				if why, _ := res["outcome"].(string); strings.TrimSpace(why) != "" {
+					detail = strings.TrimSpace(why)
+				}
+			}
+			return operatorActionOutcomeFailed, detail, head, true
+		}
 		if detail == "" {
 			if released, ok := resp["released"].([]any); ok && len(released) > 0 {
 				parts := make([]string, 0, len(released))
@@ -872,6 +895,45 @@ func operatorActionVerdictFromDetail(detail string) (verdict, rule string) {
 		rule = strings.TrimSuffix(strings.TrimSpace(tail), ")")
 	}
 	return strings.TrimSpace(verdict), rule
+}
+
+func operatorActionClosedGrace() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv(operatorActionClosedGraceEnv)); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			return d
+		}
+	}
+	return operatorActionClosedGraceDefault
+}
+
+// operatorClosedActions are the row actions whose applied outcome is a
+// closed issue or PR.
+var operatorClosedActions = []string{operatorActionCloseSuperseded, operatorActionWontFix, operatorActionCloseRead}
+
+// operatorActionClosedItem reports whether the item's newest recorded
+// action closed it from the dashboard within grace of now: GitHub's list
+// (and the poller's snapshot of it) lags the close by up to a poll, and
+// the owner who just clicked Close must not see the row come back
+// (hivecommons/hive#15436). Past the grace a row still listed open is
+// real — reopened, or the close never landed — and shows again.
+func operatorActionClosedItem(it StageTrackerItem, now time.Time, grace time.Duration) bool {
+	a := it.LastOperatorAction
+	if a == nil || a.Outcome != operatorActionOutcomeApplied || a.Detail != operatorActionClosedDetail || !slices.Contains(operatorClosedActions, a.Action) {
+		return false
+	}
+	return !a.At.IsZero() && now.Sub(a.At) < grace
+}
+
+// stageTrackerDropOperatorClosed removes the items operatorActionClosedItem
+// matches, keeping order. Run after applyOperatorActions.
+func stageTrackerDropOperatorClosed(items []StageTrackerItem, now time.Time, grace time.Duration) []StageTrackerItem {
+	out := items[:0]
+	for _, it := range items {
+		if !operatorActionClosedItem(it, now, grace) {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // applyOperatorActions stamps last_operator_action / operator_action_count

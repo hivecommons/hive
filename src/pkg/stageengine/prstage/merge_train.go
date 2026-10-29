@@ -33,8 +33,14 @@ const (
 	MergeTrainStateRebaseExhausted = "rebase-exhausted"
 	// MergeTrainStateFront is never written by the sweep: the dashboard
 	// synthesises it on the PR the siblings name as their front.
-	MergeTrainStateFront     = "front"
-	MergeTrainReasonMaxFiles = 4
+	MergeTrainStateFront = "front"
+	// MergeTrainStateDuplicateOf: the PR declares the same `Fixes #N` as
+	// another open PR the train admitted; it is held out of the train
+	// behind that PR (Front) until a person or the delegate picks one
+	// (hivecommons/hive#15395). Position / Size carry the issue number
+	// as Position and 0 as Size.
+	MergeTrainStateDuplicateOf = "duplicate-of"
+	MergeTrainReasonMaxFiles   = 4
 )
 
 // MergeTrain is the decoded form of a merge-train reason.
@@ -182,6 +188,12 @@ func (m MergeTrain) Sentence() string {
 		return "front of the merge train, still conflicting after " + strconv.Itoa(m.MaxAttempts) + " rebase attempts; a person decides (" + slot + files + ")"
 	case MergeTrainStateFront:
 		return "front of the merge train (" + slot + files + ")"
+	case MergeTrainStateDuplicateOf:
+		issue := ""
+		if m.Position > 0 {
+			issue = " for issue #" + strconv.Itoa(m.Position)
+		}
+		return "duplicate of #" + strconv.Itoa(m.Front) + issue + "; the merge queue carries one PR per issue — a person or the delegate picks one"
 	}
 	return "behind #" + strconv.Itoa(m.Front) + " in merge train (" + slot + files + ")"
 }

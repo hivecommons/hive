@@ -1,0 +1,1 @@
+- The queued auto-merge lane now remembers GitHub's "required status checks are expected" merge refusal per head, like the other lanes, instead of re-PUTting the merge every sweep pass and logging a false merge-failed ([#15419](https://github.com/hivecommons/hive/issues/15419)).

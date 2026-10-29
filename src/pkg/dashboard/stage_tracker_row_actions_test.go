@@ -63,6 +63,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDelegateTargets"),
 		jsFunc(t, html, "stageTrackerDecideOptions"),
 		jsFunc(t, html, "stageTrackerSupersederOptions"),
+		jsFunc(t, html, "stageTrackerSupersederDefault"),
 		jsFunc(t, html, "stageTrackerSupersederValid"),
 		jsFunc(t, html, "stageTrackerTriageNeeded"),
 		jsFunc(t, html, "stageTrackerTriageNewState"),
@@ -145,6 +146,16 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerPendingLive"),
 		jsFunc(t, html, "stageTrackerPendingExpire"),
 		jsFunc(t, html, "stageTrackerPendingSync"),
+		// Progress + failure surfacing for every mutating action (hivecommons/hive#15436).
+		jsConstBlock(t, html, "STAGE_TRACKER_TERMINAL_CAPTIONS"),
+		jsFunc(t, html, "stageTrackerTerminalCaption"),
+		jsConstBlock(t, html, "STAGE_TRACKER_ACTION_LEDGER_NAME"),
+		"var _stageTrackerActionFailures = {};",
+		jsFunc(t, html, "stageTrackerNoteActionFailure"),
+		jsFunc(t, html, "stageTrackerClearActionFailure"),
+		jsFunc(t, html, "stageTrackerActionFailureOf"),
+		jsFunc(t, html, "stageTrackerAdvisoryOf"),
+		jsFunc(t, html, "stageTrackerNothingToActOn"),
 		jsFunc(t, html, "runRowAction"),
 		jsFunc(t, html, "makeToastSticky"),
 		stageTrackerDomStubJS,
@@ -312,6 +323,13 @@ assert.strictEqual(stageTrackerSupersederValid('o/r#457', [tgt]), true);
 assert.strictEqual(stageTrackerSupersederValid('https://github.com/o/r/pull/457', [tgt]), true);
 assert.strictEqual(typeof stageTrackerSupersederValid('458', [tgt]), 'string', 'self-supersession is refused');
 assert.strictEqual(typeof stageTrackerSupersederValid('nope', [tgt]), 'string');
+// The prompt prefills the sweep's finding (hive's hive #15303 → #15304), the
+// lone sibling when there is no finding, and nothing otherwise.
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, superseded: { reason: 'superseded', closer_pr: 457, closer_repo: 'r' } }]), 'o/r#457');
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, superseded: { closer_pr: 457, closer_repo: 'o/other' } }]), 'o/other#457');
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, superseded: true, siblings: [457] }]), 'o/r#457');
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, siblings: [1, 2] }]), '');
+assert.strictEqual(stageTrackerSupersederDefault([{ repo: 'o/r', number: 458, superseded: { closer_pr: 457 } }, { repo: 'o/r', number: 459 }]), '', 'bulk selections are not prefilled');
 
 // A reader: hold/decide disabled with the reason; needs-human needs merger.
 as = stageTrackerRowActions(parked, { user: false, canHold: false, canHuman: false });
@@ -810,7 +828,21 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerAsk"),
 		jsFunc(t, html, "stageTrackerDelegateConfirm"),
 		jsFunc(t, html, "stageTrackerDCOCaveat"),
-		jsFunc(t, html, "stageTrackerDelegatePlanText"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_BUTTON_DELEGATE"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_BUTTON_MERGE"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_TITLE"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_EYEBROW"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_NEXT_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_TITLE_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_RAILS"),
+		jsConstLine(t, html, "STAGE_TRACKER_PLAN_MERGE_WHY"),
+		jsFunc(t, html, "hiveDialogEscape"),
+		jsFunc(t, html, "stageTrackerPlanSentence"),
+		jsFunc(t, html, "stageTrackerPlanTruncate"),
+		jsFunc(t, html, "stageTrackerDelegatePlanView"),
+		jsFunc(t, html, "stageTrackerDelegatePlanHtml"),
+		jsFunc(t, html, "stageTrackerDelegatePlanVisibleText"),
+		jsFunc(t, html, "stageTrackerDelegatePlanOffersMerge"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeable"),
 		jsFunc(t, html, "stageTrackerDelegatePlanMergeReason"),
 		jsFunc(t, html, "stageTrackerFetchDelegatePlan"),
@@ -820,7 +852,7 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		// The preview dialog is recorded like the confirms; its answer is
 		// the "Let hive do that" button unless a test sets planAnswer.
 		`let planAnswer = null;
-function stageTrackerDelegatePlanDialog(plans, sentinel) { dialogs.push({ kind: 'plan', cfg: { title: 'Let hive decide — preview', message: (sentinel ? sentinel + '\n\n' : '') + stageTrackerDelegatePlanText(plans), plans } }); return Promise.resolve(planAnswer === null ? { chosen: 'Let hive do that · previewed ' + plans.map(p => p.would || '?').join('/') } : planAnswer); }`,
+function stageTrackerDelegatePlanDialog(plans, sentinel) { const view = stageTrackerDelegatePlanView(plans, sentinel); const html = stageTrackerDelegatePlanHtml(view); dialogs.push({ kind: 'plan', cfg: { title: view.title, message: stageTrackerDelegatePlanVisibleText(html), html, view, plans } }); return Promise.resolve(planAnswer === null ? { chosen: 'Let hive do that · previewed ' + plans.map(p => p.would || '?').join('/') } : planAnswer); }`,
 		`const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
 global.window = { _hiveUser: 'clubanderson' };
 const dialogs = []; let dialogAnswer = true;
@@ -880,9 +912,10 @@ const plain = { repo: 'o/r', kind: 'pr', number: 4, url: 'u4', stage: 85, modifi
   const planCalls = []; global.fetch = async (url, init) => { planCalls.push(url); return { ok: true, status: 200, json: async () => ({ would: 'adopt-supersede', summary: 're-author o/r#4 as a hive PR with the same commits and merge it; o/r#4 will be closed as superseded', why: 'Author @k is untrusted and their clanker is offline.', consequences: ['o/r#4 is closed as superseded'], alternatives: [{ action: 'decide:merge-now', label: 'Approve & merge as-is', enabled: false, reason_if_disabled: 'Needs merge rights' }] }) }; };
   assert.deepStrictEqual(await stageTrackerActionPayload([plain], 'decide:delegate'), { chosen: 'Let hive do that · previewed adopt-supersede' });
   assert.deepStrictEqual(planCalls, ['/api/repos/o/r/items/4/decide-delegated/plan'], 'the preview is the plan route, never the decide route');
-  assert.strictEqual(dialogs[0].kind, 'plan'); assert.strictEqual(dialogs[0].cfg.title, 'Let hive decide — preview');
-  assert.ok(dialogs[0].cfg.message.includes('o/r#4 — Hive would: re-author o/r#4 as a hive PR') && dialogs[0].cfg.message.includes('Why: Author @k is untrusted and their clanker is offline.'), dialogs[0].cfg.message);
+  assert.strictEqual(dialogs[0].kind, 'plan'); assert.strictEqual(dialogs[0].cfg.title, 'Let hive decide');
+  assert.ok(dialogs[0].cfg.message.includes('Hive would Re-author o/r#4 as a hive PR') && dialogs[0].cfg.message.includes('Why Author @k is untrusted and their clanker is offline.'), dialogs[0].cfg.message);
   assert.strictEqual(stageTrackerDelegatePlanMergeable(dialogs[0].cfg.plans), false); assert.strictEqual(stageTrackerDelegatePlanMergeReason(dialogs[0].cfg.plans), 'Needs merge rights');
+  assert.ok(!dialogs[0].cfg.html.includes('ham-plan-merge'), 'no merge button when the plan does not say mergeable_as_is');
   // Cancel: no payload, so runRowAction never sends the decide request.
   planAnswer = null; dialogs.length = 0;
   const cancelled = await (async () => { planAnswer = undefined; const r = await stageTrackerActionPayload([plain], 'decide:delegate'); planAnswer = null; return r; })();
@@ -1330,7 +1363,9 @@ const pop = stageTrackerDecisionOptions(dec.item, merger);
 assert.deepStrictEqual(ids(pop).slice(0, 3), ['decide:merge-now', 'decide:queue-merge', 'decide:delegate'], 'popover order: ' + ids(pop));
 assert.ok(pop[0].enabled && pop[1].enabled && pop[2].enabled);
 const html = stageTrackerDecisionPopHtml(dec.item, pop, Date.now(), '');
-for (const id of ['decide:merge-now', 'decide:queue-merge', 'decide:delegate']) assert.ok(html.includes('data-ham-act="' + id + '"'), id + ' rendered in the popover');
+// The popover shows the one recommended action (merge now) and hands the rest to the row menu.
+assert.ok(html.includes('data-ham-act="decide:merge-now"') && html.includes('>Merge it<') && html.includes('data-ham-more="1"'), html);
+assert.ok(!html.includes('data-ham-act="decide:queue-merge"') && !html.includes('data-ham-act="decide:delegate"'), html);
 
 // A 085 popover still leads with Let hive decide.
 const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'],
@@ -1392,7 +1427,7 @@ assert.strictEqual(stageTrackerDCOCaveat([]), '');
   assert.ok(dialogs[0].cfg.message.includes('lack a Signed-off-by'), dialogs[0].cfg.message);
   await stageTrackerActionPayload([pr317], 'decide:queue-merge');
   assert.strictEqual(dialogs[1].cfg.title, 'Approve — let hive merge');
-  assert.ok(dialogs[1].cfg.message.includes('trust override for this head'), dialogs[1].cfg.message);
+  assert.ok(dialogs[1].cfg.message.includes("stands in for the author's trust on this version"), dialogs[1].cfg.message);
   assert.ok(dialogs[1].cfg.message.includes('will not adopt or re-author it'), dialogs[1].cfg.message);
   assert.ok(dialogs[1].cfg.message.includes('lack a Signed-off-by'), dialogs[1].cfg.message);
   // Re-author has its own confirm, danger-styled, with the don't-ask box.
@@ -1507,5 +1542,228 @@ assert.strictEqual(apText.options[0].label, 'Rebase, then merge as maintainer');
 const plainApproved = stageTrackerResultText({ action: 'approved', target: result.target, outcome: '/lgtm + /approve posted.', next: 'The merge gate takes it from here; the dashboard merges nothing.' }, pr, { id: 'decide:approve' });
 assert.strictEqual(plainApproved.options.length, 0, 'a plain approval has no buttons');
 assert.notStrictEqual(stageTrackerItemState(pr), stageTrackerItemState({ ...pr, rebase: { attempt: 1, max: 2, text: 'Rebasing · attempt 1/2' } }), 'the fixer attempt moves the row state');
+`)
+}
+
+// TestStageTrackerDelegatePlanDialogIsOneDecision (operator feedback on
+// hivecommons/hive#15332's "Let hive decide — preview": "yikes - this is a
+// mess … this needs to be exceedingly simple to understand and act on").
+// The renderer takes one view model for PR and issue decisions alike:
+// title + one subject line, ONE verb-first sentence (no doubled "Hive
+// would:"), ONE short why, at most two "then" items; the sentinel
+// finding, the rails and the ruled-out rungs sit under a collapsed
+// Details. The visible text for the #15332 case is ≤ 60 words and free of
+// hive vocabulary; "Approve & merge as-is" appears only when the plan says
+// the head is mergeable as it is.
+func TestStageTrackerDelegatePlanDialogIsOneDecision(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`.ham-plan-sentence {`, `.ham-plan-details {`, `.ham-plan-chip {`, `.ham-plan-eyebrow, .ham-plan-label {`,
+		`stageTrackerDelegatePlanHtml(view)`, `<details class="ham-plan-details"><summary>Details</summary>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing preview wiring %q", want)
+		}
+	}
+	if strings.Contains(html, "Let hive decide — preview") {
+		t.Error("the preview title still carries the “— preview” suffix")
+	}
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+stageTrackerConfirmOptOutJS(t, html)+`
+const JARGON = ['hive would:', 'park', 'audit marker', 'stage', 'ladder', '/hive decision', 'recommendation'];
+const words = text => text.split(/\s+/).filter(Boolean).length;
+const buttons = html => (html.match(/<button[^>]*>([^<]*)<\/button>/g) || []).map(b => b.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&'));
+const visibleOf = html => stageTrackerDelegatePlanVisibleText(html);
+const detailsOf = html => (html.match(/<details[\s\S]*?<\/details>/) || [''])[0];
+
+// 1. hivecommons/hive#15332 as the operator saw it: a direction on a red
+//    head, sentinel-flagged, head not mergeable.
+const pr15332 = { ref: 'hivecommons/hive#15332', number: 15332, type: 'pr', title: "ci: run crux's Go file-size ratchet against src/crux on hive PRs", would: 'direction', rule: 'fix-then-merge',
+  summary: 'Send #15332 back to its author with one instruction: make CI green, nothing else.', why: 'CI is red.',
+  consequences: ['Hive posts that instruction on #15332.', 'The author pushes a fix; the row updates when it lands.'],
+  ladder: { decision: 'return-to-contributor', reason: 'the author is connected; returned with the fix list', ruled_out: ['already-fixed: no merged PR has closed this PR\'s issue', 'mergeable-as-is: CI not green'] },
+  mergeable_as_is: false, alternatives: [] };
+const sentinel = '⚠ hivecommons/hive#15332 — Sentinel flagged security-relevant changes at 7af26e9: changes 1 sensitive path(s)';
+let view = stageTrackerDelegatePlanView([pr15332], sentinel);
+let html = stageTrackerDelegatePlanHtml(view);
+let visible = visibleOf(html);
+assert.strictEqual(view.title, 'Let hive decide');
+assert.strictEqual(view.subject, "hivecommons/hive#15332 · ci: run crux's Go file-size ratchet against…");
+assert.strictEqual((visible.match(/Hive would/g) || []).length, 1, 'the eyebrow says Hive would exactly once: ' + visible);
+assert.ok(!/Hive would:\s*Hive would:/i.test(html), 'no doubled prefix');
+assert.strictEqual((visible.match(/hivecommons\/hive#15332/g) || []).length, 1, 'repo#number appears once: ' + visible);
+assert.ok(visible.includes('Send #15332 back to its author with one instruction: make CI green, nothing else.'), visible);
+assert.ok(visible.includes('Why CI is red.'), visible);
+assert.ok(html.includes('<ol class="ham-plan-next"><li>Hive posts that instruction on #15332.</li><li>The author pushes a fix; the row updates when it lands.</li></ol>'), html);
+assert.ok(words(visible) <= 60, 'visible text is ' + words(visible) + ' words: ' + visible);
+for (const j of JARGON) assert.ok(!visible.toLowerCase().includes(j), 'visible text leaks ' + JSON.stringify(j) + ': ' + visible);
+const details = detailsOf(html);
+assert.ok(details.includes('Sentinel flagged security-relevant changes at 7af26e9') && details.includes('mergeable-as-is: CI not green') && details.includes('Rails: never merges'), 'finding, ruled-out rungs and rails live under Details: ' + details);
+assert.ok(!visible.includes('Rails'), 'the rails are not visible by default');
+assert.ok(html.includes('<span class="ham-plan-chip" title="' + hiveDialogEscape(sentinel) + '">⚠ Sentinel</span>'), 'a compact chip flags the sentinel finding');
+assert.deepStrictEqual(buttons(html), ['Cancel', 'Let hive do that'], 'exactly two buttons when the head is not mergeable');
+assert.ok(html.includes('btn-danger hive-dialog-btn primary" data-initial-focus'), 'the sentinel case keeps the danger primary');
+assert.ok(html.indexOf('hive-dialog-btn cancel') < html.indexOf('hive-dialog-btn primary'), 'Cancel first, primary last');
+
+// 2. A stale "Hive would:" prefix in the payload is still rendered once.
+view = stageTrackerDelegatePlanView([Object.assign({}, pr15332, { summary: 'Hive would: Hive would: send #15332 back' })], '');
+assert.strictEqual(view.decisions[0].sentence, 'Send #15332 back.');
+
+// 3. Mergeable as-is: the ladder's approve rung offers the merge button.
+const green = { ref: 'o/r#8', number: 8, type: 'pr', title: 'fix typo', would: 'approve', rule: 'mergeable-as-is',
+  summary: 'Approve #8 as it is and let the merge gate merge it.', why: 'Mergeable and green.', consequences: ['Hive approves the current commit.', '#8 merges once CI is green and it has soaked.'],
+  ladder: { decision: 'mergeable-as-is', reason: 'mergeable and green; handed to the merge gate', ruled_out: ['already-fixed: no merged PR has closed this PR\'s issue'] },
+  mergeable_as_is: true, alternatives: [{ action: 'decide:merge-now', label: 'Approve & merge as-is', enabled: true }] };
+html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([green], ''));
+assert.deepStrictEqual(buttons(html), ['Cancel', 'Approve & merge as-is', 'Let hive do that']);
+assert.ok(!html.includes('ham-plan-chip') && html.includes('btn-primary hive-dialog-btn primary'), 'no sentinel: plain primary, no chip');
+assert.ok(!html.includes('aria-disabled'), 'enabled with merge rights');
+// …greyed with the reason without merge rights…
+html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([Object.assign({}, green, { alternatives: [{ action: 'decide:merge-now', enabled: false, reason_if_disabled: 'Needs merge rights' }] })], ''));
+assert.ok(html.includes('ham-plan-merge" aria-disabled="true" disabled title="Needs merge rights"'), html);
+// …and absent when the plan says the head is not mergeable, whatever the alternatives list.
+html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([Object.assign({}, green, { mergeable_as_is: false })], ''));
+assert.deepStrictEqual(buttons(html), ['Cancel', 'Let hive do that']);
+
+// 4. An issue decision renders through the same model: no merge button,
+//    no ladder, the direction option is not a button.
+const issue = { ref: 'o/r#42', number: 42, type: 'issue', title: 'Flaky test in CI', would: 'recommend-only', summary: 'Recommend only: close #42 as already fixed.', why: 'The question is hive\'s own policy.', consequences: ['Hive posts a comment and nothing else.', '#42 waits for you to decide.'], alternatives: [{ action: 'decide:direction', label: 'Give direction', enabled: true }] };
+view = stageTrackerDelegatePlanView([issue], '');
+html = stageTrackerDelegatePlanHtml(view);
+visible = visibleOf(html);
+assert.strictEqual(view.subject, 'o/r#42 · Flaky test in CI');
+assert.deepStrictEqual(buttons(html), ['Cancel', 'Let hive do that']);
+assert.ok(visible.includes('Recommend only: close #42 as already fixed.') && !html.includes('ham-plan-ruled-out'), visible);
+assert.ok(words(visible) <= 60, visible);
+
+// 5. A batch names each item on its own block, once.
+html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([green, Object.assign({}, green, { ref: 'o/r#9', number: 9 })], ''));
+visible = visibleOf(html);
+assert.strictEqual((visible.match(/o\/r#8/g) || []).length, 1, visible);
+assert.ok(visible.startsWith('Let hive decide 2 items'), visible);
+// Three "then" items are cut to two.
+assert.strictEqual(stageTrackerDelegatePlanView([Object.assign({}, green, { consequences: ['a', 'b', 'c'] })], '').decisions[0].next.length, 2);
+`)
+}
+
+// TestStageTrackerAdvisoryCloseReadProgress (hivecommons/hive#15436, owner:
+// "i clicked close and it still shows in list. I should see some progress
+// … until the item is closed and is out of the list"): Close (read) on an
+// advisory row acts on the row itself (it is not a decision park, so the
+// decision-target mapping used to come up empty and the click did
+// nothing), the chevron is busy with "Closing…" from the first byte sent,
+// reads "Closed · leaving list" once the server answers, and the pending
+// state lifts when the next tracker payload no longer lists the row. A
+// refused or failed close restores the chevron, toasts the reason and
+// puts it on the row's history badge; an empty target list is never silent.
+func TestStageTrackerAdvisoryCloseReadProgress(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+stageTrackerConfirmOptOutJS(t, html)+"\n"+jsConstBlock(t, html, "STAGE_TRACKER_ICONS")+"\n"+stageTrackerActedJS(t, html)+`
+const toasts = [];
+global.showToast = (msg, type) => { toasts.push(type + ':' + msg); return null; };
+global.dismissToast = () => {};
+global.setTimeout = fn => fn();
+function stageTrackerProgressToast() { return { update() {}, done(msg, type) { if (msg) toasts.push('summary:' + type + ':' + msg); } }; }
+function stageTrackerAfterActions() {}
+function stageTrackerDecidePending(pend) { pend.decided = true; }
+// hivecommons/hive#15381 as the tracker lists it: stage 0, no modifiers, advisory block.
+const adv = { repo: 'hivecommons/hive', kind: 'issue', number: 15381, url: 'u15381', title: 'triage: duplicate and overlapping open issues/PRs to consolidate', stage: 0, caption: 'Advisory for maintainers · nothing found · safe to close', modifiers: [], labels: ['help wanted', 'agent/dedupe', 'triage/advisory'],
+  advisory: { kind: 'advisory', source: 'label', empty: true, chip: 'Advisory · nothing found · safe to close', caption: 'Advisory for maintainers · nothing found · safe to close' } };
+const plain = { repo: 'hivecommons/hive', kind: 'issue', number: 2, url: 'u2', stage: 10, caption: 'Open', modifiers: [] };
+_stageTracker = { items: [adv, plain] };
+hamPanel.appendChild(hamStubRow('hivecommons/hive/issue#15381')); hamPanel.appendChild(hamStubRow('hivecommons/hive/issue#2'));
+const row = k => hamPanel.querySelectorAll('[data-ham-key], [data-ham-sub-key]').find(n => n.getAttribute('data-ham-key') === k);
+const acting = k => row(k).classList.contains('cue-acting');
+const caption = k => { const c = row(k).children[0].querySelector(':scope > .cue-acting-cap'); return c ? c.lastChild.nodeValue : ''; };
+const K = 'hivecommons/hive/issue#15381';
+
+assert.strictEqual(stageTrackerDecisionTarget(adv), null, 'an advisory is not a decision park');
+assert.deepStrictEqual(stageTrackerActionRequest(adv, 'decide:close-read', {}), { url: '/api/repos/hivecommons/hive/items/15381/decision', body: { decision: 'close-read', comment: '', type: 'issue' } });
+assert.strictEqual(stageTrackerTerminalCaption({ action: 'closed' }), 'Closed · leaving list');
+assert.strictEqual(stageTrackerTerminalCaption({ action: 'held' }), '');
+
+const calls = []; let answer = null; let seenBusy = '';
+global.fetch = async (url, init) => {
+  calls.push({ url, body: JSON.parse(init.body) });
+  seenBusy = acting(K) ? caption(K) : '';
+  if (answer instanceof Error) throw answer;
+  return { ok: answer.ok !== false, status: answer.status || 200, json: async () => answer.data };
+};
+(async () => {
+  // 1. Happy path: confirm → request → busy → terminal caption → gone on the next payload.
+  answer = { data: { ok: true, status: 'closed', decision: 'close-read', result: { action: 'closed', target: { repo: 'hivecommons/hive', kind: 'issue', number: 15381, url: 'u15381' }, outcome: 'Closed as read (advisory acknowledged).', next: 'Nothing further to do; the row leaves the tracker on its next refresh.' } } };
+  let out = await runRowAction('decide:close-read', [adv]);
+  assert.strictEqual(dialogs.length, 1, 'Close (read) asks once'); assert.strictEqual(dialogs[0].cfg.title, 'Close (read)');
+  assert.strictEqual(calls.length, 1, 'the request is sent'); assert.strictEqual(calls[0].url, '/api/repos/hivecommons/hive/items/15381/decision'); assert.strictEqual(calls[0].body.decision, 'close-read');
+  assert.strictEqual(seenBusy, 'Closing…', 'the chevron is busy with the verb from the first byte sent');
+  assert.strictEqual(out.results[0].ok, true);
+  assert.strictEqual(acting(K), true, 'still acting after the answer');
+  assert.strictEqual(caption(K), 'Closed · leaving list', 'the terminal caption until the row leaves');
+  assert.strictEqual(out.pending.length, 1); assert.strictEqual(out.pending[0].decided, true, 'the badge may show again');
+  assert.strictEqual(out.toasts.length, 1); assert.strictEqual(out.toasts[0].text.type, 'success');
+  // The same payload again (GitHub list lagging) keeps the terminal caption.
+  stageTrackerPendingExpire({ items: [adv, plain] }, Date.now());
+  assert.strictEqual(_stageTrackerPending.length, 1, 'the pending state survives an unchanged payload');
+  // The server filtered the closed row out: pending lifts.
+  stageTrackerPendingExpire({ items: [plain] }, Date.now());
+  assert.strictEqual(_stageTrackerPending.length, 0, 'pending lifts once the row is gone');
+  assert.strictEqual(stageTrackerActionFailureOf(adv), null, 'no failure noted on success');
+
+  // 2. Refused (paused repo): 200 with a refused result — chevron restored, toast + badge say why.
+  calls.length = 0; toasts.length = 0; dialogs.length = 0;
+  answer = { data: { ok: true, status: 'refused', decision: 'close-read', result: { action: 'refused', target: { repo: 'hivecommons/hive', kind: 'issue', number: 15381 }, outcome: 'Close refused: repo paused — hivecommons/hive is paused by the operator (by clubanderson: freeze).', next: 'Resume the repository to let the dashboard close it, or close it on GitHub yourself.' } } };
+  out = await runRowAction('decide:close-read', [adv]);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(acting(K), false, 'a refused close does not leave the chevron busy');
+  assert.strictEqual(out.toasts[0].text.type, 'warning');
+  assert.ok(out.toasts[0].text.outcome.startsWith('Close refused: repo paused'), out.toasts[0].text.outcome);
+  let f = stageTrackerActionFailureOf(adv);
+  assert.ok(f && f.state === 'failed' && f.action === 'close-read', JSON.stringify(f));
+  let src = stageTrackerActedSource(adv);
+  assert.strictEqual(src.action.detail, answer.data.result.outcome, 'the badge reads the client-noted failure');
+  let tip = stageTrackerActedTip(adv, Date.now());
+  assert.ok(tip.split('\n')[0].includes('Close refused: repo paused'), 'hover first line: ' + tip);
+  assert.ok(tip.includes('Closed (read)') && tip.includes('failed'), tip);
+
+  // 3. GitHub 403: the error toast names it; the badge too.
+  calls.length = 0; toasts.length = 0;
+  answer = { ok: false, status: 403, data: { error: 'GitHub 403 Resource not accessible by integration' } };
+  out = await runRowAction('decide:close-read', [adv]);
+  assert.strictEqual(acting(K), false);
+  assert.strictEqual(out.results[0].ok, false); assert.strictEqual(out.toasts[0].text.type, 'error');
+  assert.strictEqual(out.toasts[0].text.head, 'Close (read) failed on hivecommons/hive#15381');
+  assert.ok(out.toasts[0].text.outcome.includes('GitHub 403'), out.toasts[0].text.outcome);
+  tip = stageTrackerActedTip(adv, Date.now());
+  assert.ok(tip.split('\n')[0].includes('Close (read) failed: GitHub 403'), tip);
+  // A newer server record outranks the client note.
+  const later = { ...adv, last_operator_action: { action: 'close-read', actor: 'clubanderson', at: new Date(Date.now() + 1000).toISOString(), outcome: 'applied', detail: 'closed', state: 'addressed' } };
+  assert.strictEqual(stageTrackerActionFailureOf(later), null);
+  assert.strictEqual(stageTrackerActedSource(later).action.outcome, 'applied');
+
+  // 4. Network error.
+  calls.length = 0; toasts.length = 0;
+  answer = new Error('Failed to fetch');
+  out = await runRowAction('decide:close-read', [adv]);
+  assert.strictEqual(acting(K), false); assert.strictEqual(out.results[0].error, 'Failed to fetch');
+  assert.ok(stageTrackerActedTip(adv, Date.now()).includes('Failed to fetch'));
+
+  // 5. Not an advisory / no decision target: never silent.
+  calls.length = 0; toasts.length = 0; dialogs.length = 0;
+  out = await runRowAction('decide:close-read', [plain]);
+  assert.strictEqual(calls.length, 0); assert.strictEqual(dialogs.length, 0);
+  assert.strictEqual(toasts.length, 1); assert.ok(toasts[0].startsWith('warning:Close (read): nothing to act on'), toasts[0]);
+  toasts.length = 0;
+  out = await runRowAction('decide:approve', [plain]);
+  assert.strictEqual(calls.length, 0);
+  assert.ok(toasts[0].startsWith('warning:Approve: nothing to act on'), toasts[0]);
+
+  // 6. Generic: close-superseded on a parked PR gets the same terminal caption.
+  const pr = { repo: 'hivecommons/hive', kind: 'pr', number: 9, url: 'u9', stage: 85, caption: 'Needs human decision', modifiers: ['needs-decision'] };
+  _stageTracker = { items: [pr] }; hamPanel.appendChild(hamStubRow('hivecommons/hive/pr#9'));
+  calls.length = 0; dialogAnswer = '';
+  answer = { data: { ok: true, status: 'closed', result: { action: 'closed', target: { repo: 'hivecommons/hive', kind: 'pr', number: 9 }, outcome: 'Closed as superseded.', next: '' } } };
+  out = await runRowAction('decide:close-wontfix', [pr]);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(caption('hivecommons/hive/pr#9'), 'Closed · leaving list');
+})().catch(e => { console.error(e); process.exit(1); });
 `)
 }

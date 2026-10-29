@@ -267,6 +267,15 @@
           ${fleetRunStatHtml()}
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           ${(() => {
+            // Merge hotspots tile (GET /api/hotspots): files concurrent PRs
+            // keep colliding on; present only when the advisor is wired.
+            const hs = data && data.hotspots;
+            if (!hs || typeof hs.count !== 'number') return '';
+            const tip = `MERGE HOTSPOTS — files concurrent PRs keep colliding on.&#10;&#10;WHAT: ${hs.count} file(s) above the hotspot thresholds in the window; ${hs.actionable || 0} warrant a split; ${hs.filed || 0} already have a modularize issue filed for the ci-maintainer.&#10;&#10;HOW: GET /api/hotspots (hivectl governor hotspots) lists each file with its PRs, concurrent pairs, conflicts, size, recommendation and issue.`;
+            const label = hs.filed > 0 ? `merge hotspots · ${hs.filed} filed` : 'merge hotspots';
+            return `<div class="gov-stat" title="${tip}"><div class="label">${label}</div><div class="val${hs.actionable > 0 ? ' starting' : ''}">${hs.count}</div></div>`;
+          })()}
+          ${(() => {
             // Planning tile: active plan-trees, with plans-awaiting-review highlighted
             // amber (human-action-required, like on-hold). Reads /api/status planning
             // block. Hidden entirely when planning is unavailable (ACMM < 5, where the

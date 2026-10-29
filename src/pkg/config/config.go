@@ -1571,10 +1571,16 @@ type GovernorConfig struct {
 	// CIFailureKickCooldownS (default 600) bounds webhook-triggered kicks
 	// to one per PR head in that window. See docs/operator-reference.md
 	// "Webhook-driven CI failure reaction".
-	CIFailureWebhookKick       *bool `yaml:"ci_failure_webhook_kick,omitempty"`
-	CIFailureKickCooldownS     int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
-	ConserveIntervalMultiplier int   `yaml:"conserve_interval_multiplier,omitempty"`
-	OptionalSweepEveryNCycles  int   `yaml:"optional_sweep_every_n_cycles,omitempty"`
+	CIFailureWebhookKick   *bool `yaml:"ci_failure_webhook_kick,omitempty"`
+	CIFailureKickCooldownS int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
+	// MergeTrainStallWarnS is how long, in seconds, a merge train's head
+	// may sit without progressing before the Activity Monitor marks the
+	// train stalled on the queued rows' chips and the dashboard writes one
+	// activity-log warning per hour (default DefaultMergeTrainStallWarnS,
+	// hivecommons/hive#15395).
+	MergeTrainStallWarnS       int `yaml:"merge_train_stall_warn_s,omitempty"`
+	ConserveIntervalMultiplier int `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see
@@ -1695,6 +1701,20 @@ type GovernorConfig struct {
 	// person's PR is never closed by this rule; it keeps the notice and
 	// the stage/085 decision park. Default on (hivecommons/hive#14965).
 	AutoCloseSuperseded *bool `yaml:"auto_close_superseded,omitempty" json:"auto_close_superseded,omitempty"`
+
+	// Hotspot* tune the merge-hotspot advisor, which scores files that
+	// concurrent PRs keep touching (from merge-train file lists and
+	// rebase-conflict records the hive already holds — no extra GitHub
+	// polling) and files one modularize issue per hotspot for the
+	// ci-maintainer lane through the writeback gate. Zero means the
+	// default; see Hotspot*() accessors. Set hotspot_enabled: false to
+	// keep GET /api/hotspots reporting but never file an issue.
+	HotspotEnabled     *bool `yaml:"hotspot_enabled,omitempty" json:"hotspot_enabled,omitempty"`
+	HotspotWindowDays  int   `yaml:"hotspot_window_days,omitempty" json:"hotspot_window_days,omitempty"`
+	HotspotMinPRs      int   `yaml:"hotspot_min_prs,omitempty" json:"hotspot_min_prs,omitempty"`
+	HotspotMinOverlaps int   `yaml:"hotspot_min_overlaps,omitempty" json:"hotspot_min_overlaps,omitempty"`
+	HotspotMinLines    int   `yaml:"hotspot_min_lines,omitempty" json:"hotspot_min_lines,omitempty"`
+	HotspotRefileDays  int   `yaml:"hotspot_refile_days,omitempty" json:"hotspot_refile_days,omitempty"`
 
 	// ProjectObservability configures what the telemetry and operations agents
 	// recommend for the MANAGED PROJECT. It is deliberately separate from
@@ -2193,6 +2213,52 @@ func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
 // with its default (on).
 func (g GovernorConfig) AutoCloseSupersededEnabled() bool {
 	return g.AutoCloseSuperseded == nil || *g.AutoCloseSuperseded
+}
+
+// Defaults for the merge-hotspot advisor (GovernorConfig.Hotspot*).
+const (
+	DefaultHotspotWindowDays  = 7
+	DefaultHotspotMinPRs      = 6
+	DefaultHotspotMinOverlaps = 3
+	DefaultHotspotMinLines    = 800
+	DefaultHotspotRefileDays  = 30
+)
+
+// HotspotIssuesEnabled resolves GovernorConfig.HotspotEnabled (default on).
+func (g GovernorConfig) HotspotIssuesEnabled() bool {
+	return g.HotspotEnabled == nil || *g.HotspotEnabled
+}
+
+func hotspotOrDefault(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	return v
+}
+
+// HotspotWindowDaysOrDefault resolves governor.hotspot_window_days.
+func (g GovernorConfig) HotspotWindowDaysOrDefault() int {
+	return hotspotOrDefault(g.HotspotWindowDays, DefaultHotspotWindowDays)
+}
+
+// HotspotMinPRsOrDefault resolves governor.hotspot_min_prs.
+func (g GovernorConfig) HotspotMinPRsOrDefault() int {
+	return hotspotOrDefault(g.HotspotMinPRs, DefaultHotspotMinPRs)
+}
+
+// HotspotMinOverlapsOrDefault resolves governor.hotspot_min_overlaps.
+func (g GovernorConfig) HotspotMinOverlapsOrDefault() int {
+	return hotspotOrDefault(g.HotspotMinOverlaps, DefaultHotspotMinOverlaps)
+}
+
+// HotspotMinLinesOrDefault resolves governor.hotspot_min_lines.
+func (g GovernorConfig) HotspotMinLinesOrDefault() int {
+	return hotspotOrDefault(g.HotspotMinLines, DefaultHotspotMinLines)
+}
+
+// HotspotRefileDaysOrDefault resolves governor.hotspot_refile_days.
+func (g GovernorConfig) HotspotRefileDaysOrDefault() int {
+	return hotspotOrDefault(g.HotspotRefileDays, DefaultHotspotRefileDays)
 }
 
 // Bounds for AdvisoryConfig.UpdateIntervalS. Exported because the dashboard
@@ -4921,6 +4987,15 @@ func (c *Config) CIFailureKickCooldown() time.Duration {
 	return DefaultCIFailureKickCooldownS * time.Second
 }
 
+// MergeTrainStallWarn is the effective governor.merge_train_stall_warn_s as
+// a duration (default one hour).
+func (c *Config) MergeTrainStallWarn() time.Duration {
+	if c != nil && c.Governor.MergeTrainStallWarnS > 0 {
+		return time.Duration(c.Governor.MergeTrainStallWarnS) * time.Second
+	}
+	return DefaultMergeTrainStallWarnS * time.Second
+}
+
 type DashboardIssueBandsConfig struct {
 	WaitingLabels []string `yaml:"waiting_labels,omitempty" json:"waiting_labels,omitempty"`
 	DoneLabels    []string `yaml:"done_labels,omitempty" json:"done_labels,omitempty"`
@@ -5849,6 +5924,7 @@ const (
 	DefaultWebhookWakeDebounceS       = 10
 	DefaultWebhookWakeMinGapS         = 30
 	DefaultCIFailureKickCooldownS     = 600
+	DefaultMergeTrainStallWarnS       = 3600
 	DefaultConserveIntervalMultiplier = 2
 	DefaultOptionalSweepEveryNCycles  = 1
 )
@@ -7961,9 +8037,27 @@ type AutoMergeConfig struct {
 	// A head that is green but was tested against an older base is updated
 	// (GitHub update-branch, a merge commit) and merged once CI is green on
 	// the new head, so a semantic conflict with anything merged since shows
-	// up as red CI instead of a broken base. Empty (the default) keeps the
-	// previous behavior: a green head merges even if the base has moved.
+	// up as red CI instead of a broken base.
+	//
+	// Since hivecommons/hive#15335 the gate is ON for every repo by default
+	// (RequireCurrentBaseDefault); this list is the STRICT form: a listed
+	// repo never falls back to merging an un-updated head, even when the App
+	// cannot update the branch (fork head without maintainer edits, branch
+	// protection or a missing contents:write). Repos covered only by the
+	// default merge the green head as tested in that case, with one WARN per
+	// PR, so a fork-heavy repo is not parked wholesale by the default.
 	RequireCurrentBase []string `yaml:"require_current_base,omitempty" json:"require_current_base,omitempty"`
+	// RequireCurrentBaseDefault is the fleet-wide default for the gate above
+	// on repos that appear in neither RequireCurrentBase nor
+	// SkipCurrentBase. nil/unset means true (hivecommons/hive#15335: a
+	// stale-green merge broke v5 for every open PR for 20 minutes because the
+	// repo was not listed). `false` restores the opt-in-only behaviour.
+	RequireCurrentBaseDefault *bool `yaml:"require_current_base_default,omitempty" json:"require_current_base_default,omitempty"`
+	// SkipCurrentBase lists owner/repo names opted OUT of the current-base
+	// gate: a green head there merges even if the base has moved (the
+	// pre-#15335 behaviour). An explicit RequireCurrentBase entry wins over
+	// this list.
+	SkipCurrentBase []string `yaml:"skip_current_base,omitempty" json:"skip_current_base,omitempty"`
 	// MergeForwardTrustedHuman lists owner/repo names where a role/trusted
 	// author/human PR that GitHub reports as conflicting ("dirty") gets the
 	// base merged into its same-repo head branch as a new App-authored,
@@ -8412,9 +8506,31 @@ func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
 	return nil
 }
 
-// RequireCurrentBaseFor reports whether repo (owner/repo, matched
-// case-insensitively) is listed in auto_merge.require_current_base.
+// RequireCurrentBaseFor reports whether the automerge lanes must see a head
+// that contains the current base tip before merging into repo (owner/repo,
+// matched case-insensitively). Resolution order: an explicit
+// auto_merge.require_current_base entry (on, strict), then
+// auto_merge.skip_current_base (off), then
+// auto_merge.require_current_base_default (unset means on).
 func (a AutoMergeConfig) RequireCurrentBaseFor(repo string) bool {
+	key := strings.ToLower(strings.TrimSpace(repo))
+	if key == "" {
+		return false
+	}
+	if repoListSet(a.RequireCurrentBase)[key] {
+		return true
+	}
+	if repoListSet(a.SkipCurrentBase)[key] {
+		return false
+	}
+	return a.RequireCurrentBaseDefault == nil || *a.RequireCurrentBaseDefault
+}
+
+// RequireCurrentBaseStrictFor reports whether repo is explicitly listed in
+// auto_merge.require_current_base. A strict repo never merges a head the App
+// could not bring up to date; a repo gated only by the default falls back to
+// merging the green head as tested when update-branch is unavailable.
+func (a AutoMergeConfig) RequireCurrentBaseStrictFor(repo string) bool {
 	return repoListSet(a.RequireCurrentBase)[strings.ToLower(strings.TrimSpace(repo))]
 }
 

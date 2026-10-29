@@ -1,11 +1,16 @@
 package dashboard
 
 import (
+	"log/slog"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -50,6 +55,71 @@ type StageTrackerMergeTrain struct {
 	OverlapFiles []string `json:"overlap_files,omitempty"`
 	// Ahead lists the PRs still to merge before this one, in order.
 	Ahead []int `json:"ahead,omitempty"`
+	// Queue facts for the chip (hivecommons/hive#15395): Length repeats
+	// Size and HeadNumber repeats Front under the names the SPA's queue
+	// wording uses; HeadState is what the head is doing now (one of the
+	// mergeTrainHead* values) and HeadReason says it in plain words;
+	// HeadSince is when the head entered its current stage; EtaS is the
+	// estimated seconds until this member's own merge attempt (0 when no
+	// estimate is possible — the head waits on a person or on CI), EtaAt
+	// the same as a wall-clock instant for a countdown that survives
+	// re-renders, EtaBasis its short reading ("2 ahead · next sweep in
+	// 40s") and Late true once the turn has overrun its first estimate
+	// twice over;
+	// Stalled is true once the head has sat longer than
+	// governor.merge_train_stall_warn_s, StalledS for how long.
+	Length     int        `json:"length,omitempty"`
+	HeadNumber int        `json:"head_number,omitempty"`
+	HeadState  string     `json:"head_state,omitempty"`
+	HeadReason string     `json:"head_reason,omitempty"`
+	HeadSince  *time.Time `json:"head_since,omitempty"`
+	EtaS       int64      `json:"eta_s,omitempty"`
+	EtaAt      *time.Time `json:"eta_at,omitempty"`
+	EtaBasis   string     `json:"eta_basis,omitempty"`
+	Late       bool       `json:"late,omitempty"`
+	Stalled    bool       `json:"stalled,omitempty"`
+	StalledS   int64      `json:"stalled_s,omitempty"`
+}
+
+// Head states a merge train reports on its members (HeadState). The SPA
+// words them; the API carries the token.
+const (
+	// mergeTrainHeadNeedsHuman: the head waits on a person (090 ready for
+	// a human merge, 085 needs decision, a hold).
+	mergeTrainHeadNeedsHuman = "needs-human"
+	// mergeTrainHeadCI: the head's checks are still running or red (060).
+	mergeTrainHeadCI = "ci"
+	// mergeTrainHeadSoaking: the head is admitted and soaking (095, or a
+	// soak clock at 080).
+	mergeTrainHeadSoaking = "soaking"
+	// mergeTrainHeadReady: approved and green, waiting for the next sweep.
+	mergeTrainHeadReady = "ready"
+	// mergeTrainHeadMerging: the merge call is in flight (100).
+	mergeTrainHeadMerging = "merging"
+	// mergeTrainHeadFixing: an agent is on the head (070/071/072).
+	mergeTrainHeadFixing = "fixing"
+	// mergeTrainHeadUnknown: the head is not in this payload (closed,
+	// filtered, another page); the sibling only knows its number.
+	mergeTrainHeadUnknown = "unknown"
+)
+
+// mergeTrainQueueOptions tunes the queue facts: Now for the clocks, Sweep
+// for one sweep's worth of wait per PR ahead with no soak clock of its
+// own (the lanes' floor cadence), NextSweepAt for the tick the estimate
+// ends on, StallWarn for how long a head may sit before the train reads
+// stalled.
+type mergeTrainQueueOptions struct {
+	Now         time.Time
+	Sweep       time.Duration
+	NextSweepAt time.Time
+	StallWarn   time.Duration
+}
+
+// mergeTrainQueueOptionsFrom reads the options from the config and the
+// lanes' live sweep clock: governor.merge_train_stall_warn_s is the stall
+// threshold, the sweep's floor cadence the unit per PR ahead.
+func mergeTrainQueueOptionsFrom(cfg *config.Config, sweep automerge.SweepState, now time.Time) mergeTrainQueueOptions {
+	return mergeTrainQueueOptions{Now: now, Sweep: sweep.FloorEvery, NextSweepAt: sweep.NextFloorAt, StallWarn: cfg.MergeTrainStallWarn()}
 }
 
 // stageTrackerMergedStage is the terminal strip number (the dashboard's
@@ -87,6 +157,10 @@ func stageTrackerApplyMergeTrain(it *StageTrackerItem) {
 	if mt == nil {
 		return
 	}
+	if mt.State == prstage.MergeTrainStateDuplicateOf {
+		stageTrackerApplyDuplicateHold(it, mt)
+		return
+	}
 	mt.ID = it.BaseRef + "#" + strconv.Itoa(mt.Front)
 	it.MergeTrain = mt
 	parsed, _ := prstage.ParseMergeTrain(it.Reason)
@@ -103,11 +177,31 @@ func stageTrackerApplyMergeTrain(it *StageTrackerItem) {
 	}
 }
 
+// stageTrackerApplyDuplicateHold decorates a PR the sweep held out of the
+// merge queue because another open PR fixes the same issue
+// (hivecommons/hive#15395): the gate reads "duplicate-of:<winner>" with
+// the winner and the issue on the gate, the row rides no train, and it
+// wears needs-decision so "Let hive decide" offers the supersede path.
+func stageTrackerApplyDuplicateHold(it *StageTrackerItem, mt *StageTrackerMergeTrain) {
+	parsed, _ := prstage.ParseMergeTrain(it.Reason)
+	if it.MergeGate == nil {
+		it.MergeGate = &StageTrackerMergeGate{}
+	}
+	it.MergeGate.State = MergeGateStateDuplicateOf(mt.Front)
+	it.MergeGate.Reason = parsed.Sentence()
+	it.MergeGate.DuplicateOf = mt.Front
+	it.MergeGate.DuplicateIssue = mt.Position
+	it.MergeTrain = nil
+	if !slices.Contains(it.Modifiers, modNeedsDecision) {
+		it.Modifiers = append(it.Modifiers, modNeedsDecision)
+	}
+}
+
 // stageTrackerMergeTrainPostPass runs over the finished items: the front
 // (which the lane evaluates on its normal path and so carries no train
 // reason) is marked from its siblings' records, and every member learns
 // the PRs ahead of it. Members are matched on repo and base.
-func stageTrackerMergeTrainPostPass(items []StageTrackerItem) {
+func stageTrackerMergeTrainPostPass(items []StageTrackerItem, opts mergeTrainQueueOptions, mem *mergeTrainMemory) {
 	type trainKey struct{ repo, id string }
 	members := map[trainKey][]int{}
 	for i := range items {
@@ -158,6 +252,333 @@ func stageTrackerMergeTrainPostPass(items []StageTrackerItem) {
 			}
 			items[i].MergeTrain.Ahead = ahead
 		}
+		var head *StageTrackerItem
+		if frontIdx >= 0 {
+			head = &items[frontIdx]
+		}
+		for n, i := range idx {
+			ahead := make([]*StageTrackerItem, 0, n)
+			for _, j := range idx[:n] {
+				ahead = append(ahead, &items[j])
+			}
+			stageTrackerMergeTrainQueueFacts(&items[i], ahead, head, opts, mem)
+		}
+	}
+}
+
+// stageTrackerMergeTrainQueueFacts fills the chip's queue facts on one
+// member: what the head is doing, how long it has sat there, the estimate
+// of this member's own turn and whether the train reads stalled. ahead is
+// every member before this one in merge order (the head first, when it is
+// in the view); mem remembers each member's first estimate so a turn that
+// has overrun it twice over reads "running late".
+func stageTrackerMergeTrainQueueFacts(self *StageTrackerItem, ahead []*StageTrackerItem, head *StageTrackerItem, opts mergeTrainQueueOptions, mem *mergeTrainMemory) {
+	if self == nil || self.MergeTrain == nil {
+		return
+	}
+	mt := self.MergeTrain
+	mt.Length = mt.Size
+	mt.HeadNumber = mt.Front
+	state, reason, headLeft, known := mergeTrainHeadState(head, opts.Now)
+	mt.HeadState, mt.HeadReason = state, reason
+	if head != nil && head.StageSince != nil && !head.StageSince.IsZero() {
+		since := *head.StageSince
+		mt.HeadSince = &since
+	}
+	mt.EtaS, mt.EtaAt, mt.EtaBasis, mt.Late = 0, nil, "", false
+	// Stalled: the head has sat in its stage past the warn window and is
+	// not actually merging. A soaking head is on its clock, not stalled,
+	// until that clock has itself overrun the window.
+	if opts.StallWarn > 0 && mt.HeadSince != nil && state != mergeTrainHeadMerging && state != mergeTrainHeadUnknown {
+		sat := opts.Now.Sub(*mt.HeadSince)
+		if sat > opts.StallWarn && !(state == mergeTrainHeadSoaking && headLeft > 0) {
+			mt.Stalled = true
+			mt.StalledS = int64(sat / time.Second)
+		}
+	}
+	// No estimate while the head (or this member) waits on a person or on
+	// CI: the blocker is the word, not a clock.
+	if !known || self.NeedsHuman || self.Hold != nil {
+		if mem != nil {
+			mem.forgetEta(self)
+		}
+		return
+	}
+	// The estimate (hivecommons/hive#15395): this member's own soak left,
+	// plus each PR ahead — its remaining soak, or one sweep when it has
+	// none — plus the wait for the next sweep tick.
+	sweep := opts.Sweep
+	if sweep <= 0 {
+		sweep = mergeTrainDefaultSweepEvery
+	}
+	var eta time.Duration
+	own := stageTrackerSoakLeftOf(self, opts.Now)
+	eta += own
+	for i, a := range ahead {
+		left := stageTrackerSoakLeftOf(a, opts.Now)
+		if i == 0 && a == head {
+			left = headLeft
+		}
+		if left <= 0 {
+			left = sweep
+		}
+		eta += left
+	}
+	tick := opts.NextSweepIn(self)
+	eta += tick
+	if eta < time.Second {
+		eta = time.Second
+	}
+	mt.EtaS = int64(eta / time.Second)
+	at := opts.Now.Add(eta)
+	mt.EtaBasis = mergeTrainEtaBasis(len(ahead), state, headLeft, own, tick, self.MergeGate != nil && self.MergeGate.SweepRunning)
+	if mem != nil {
+		at, mt.Late = mem.etaAnchor(self, mt, at, opts.Now, sweep)
+	}
+	mt.EtaAt = &at
+}
+
+// mergeTrainDefaultSweepEvery stands in for the lanes' floor cadence
+// before the sweep loop has armed it (automerge's floor interval).
+const mergeTrainDefaultSweepEvery = 5 * time.Minute
+
+// NextSweepIn is how long until the next sweep tick: the member's own
+// next_sweep_at when the gate carries one, else the lanes' floor; 0 while
+// a sweep runs or none is armed.
+func (o mergeTrainQueueOptions) NextSweepIn(self *StageTrackerItem) time.Duration {
+	if self != nil && self.MergeGate != nil {
+		if self.MergeGate.SweepRunning {
+			return 0
+		}
+		if self.MergeGate.NextSweepAt != nil && self.MergeGate.NextSweepAt.After(o.Now) {
+			return self.MergeGate.NextSweepAt.Sub(o.Now)
+		}
+	}
+	if !o.NextSweepAt.IsZero() && o.NextSweepAt.After(o.Now) {
+		return o.NextSweepAt.Sub(o.Now)
+	}
+	return 0
+}
+
+// stageTrackerSoakLeftOf is how much of an item's own soak clock remains.
+func stageTrackerSoakLeftOf(it *StageTrackerItem, now time.Time) time.Duration {
+	if it == nil {
+		return 0
+	}
+	if it.MergeGate != nil && it.MergeGate.SoakRemainingSeconds > 0 {
+		return time.Duration(it.MergeGate.SoakRemainingSeconds) * time.Second
+	}
+	if it.Soak != nil && it.Soak.Until.After(now) {
+		return it.Soak.Until.Sub(now)
+	}
+	return 0
+}
+
+// mergeTrainEtaBasis is the short plain-English reading of the estimate:
+// "2 ahead · head soaking 12m · next sweep in 40s".
+func mergeTrainEtaBasis(aheadN int, headState string, headLeft, own, tick time.Duration, sweeping bool) string {
+	var parts []string
+	switch aheadN {
+	case 0:
+		parts = append(parts, "front")
+	case 1:
+		parts = append(parts, "1 ahead")
+	default:
+		parts = append(parts, strconv.Itoa(aheadN)+" ahead")
+	}
+	if aheadN > 0 && headState == mergeTrainHeadSoaking && headLeft > 0 {
+		parts = append(parts, "head soaking "+shortDuration(headLeft))
+	} else if aheadN > 0 && headState == mergeTrainHeadMerging {
+		parts = append(parts, "head merging")
+	}
+	if own > 0 {
+		parts = append(parts, "own soak "+shortDuration(own))
+	}
+	if sweeping {
+		parts = append(parts, "sweep running")
+	} else if tick > 0 {
+		parts = append(parts, "next sweep in "+shortDuration(tick))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// mergeTrainHeadState reads the head's current state, its plain-word
+// reason, how long its own clock still runs (soak left, next sweep) and
+// whether that clock is known at all (false on a person or CI).
+func mergeTrainHeadState(head *StageTrackerItem, now time.Time) (state, reason string, remaining time.Duration, known bool) {
+	if head == nil {
+		return mergeTrainHeadUnknown, "the head of the train is not in this view", 0, false
+	}
+	mg := head.MergeGate
+	if mg != nil && mg.State == MergeGateStateMerging {
+		return mergeTrainHeadMerging, "merging now", 0, true
+	}
+	if mg != nil && mg.State == MergeGateStateMergeFailed {
+		return mergeTrainHeadReady, "GitHub refused the last merge; hive retries on its next sweep", 0, false
+	}
+	switch head.Stage {
+	case trackerNumberReadyForHuman:
+		why := "waiting for a maintainer"
+		if head.HumanMergeReason != "" {
+			why += " (" + strings.ReplaceAll(head.HumanMergeReason, "-", " ") + ")"
+		}
+		return mergeTrainHeadNeedsHuman, why, 0, false
+	case trackerNumberNeedsDecision, trackerNumberIssueDecision:
+		return mergeTrainHeadNeedsHuman, "waiting for a human decision", 0, false
+	case stagelabels.MergeQueue.Number():
+		return mergeTrainHeadMerging, "merging now", 0, true
+	case trackerNumberPreMergeSoak:
+		left := time.Duration(0)
+		if mg != nil && mg.SoakRemainingSeconds > 0 {
+			left = time.Duration(mg.SoakRemainingSeconds) * time.Second
+		}
+		if left <= 0 && head.Soak != nil && head.Soak.Until.After(now) {
+			left = head.Soak.Until.Sub(now)
+		}
+		if left > 0 {
+			return mergeTrainHeadSoaking, "soaking, " + shortDuration(left) + " left", left, true
+		}
+		return mergeTrainHeadSoaking, "soaked; hive merges it on its next sweep", 0, true
+	case trackerNumberReviewed, trackerNumberReviewPending:
+		return mergeTrainHeadCI, "waiting for CI", 0, false
+	case trackerNumberFixing, trackerNumberReturned, trackerNumberNeedsAuthor:
+		return mergeTrainHeadFixing, "being fixed by its author", 0, false
+	}
+	if head.Hold != nil || head.NeedsHuman {
+		return mergeTrainHeadNeedsHuman, "waiting for a maintainer", 0, false
+	}
+	if head.Soak != nil && head.Soak.Until.After(now) {
+		left := head.Soak.Until.Sub(now)
+		return mergeTrainHeadSoaking, "soaking, " + shortDuration(left) + " left", left, true
+	}
+	var next time.Duration
+	if mg != nil && mg.NextSweepAt != nil && mg.NextSweepAt.After(now) {
+		next = mg.NextSweepAt.Sub(now)
+	}
+	return mergeTrainHeadReady, "approved and green; merges on hive's next sweep", next, true
+}
+
+// shortDuration is "12m" / "1h 05m" / "45s" for the chip's words.
+func shortDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return strconv.Itoa(int(d/time.Second)) + "s"
+	}
+	m := int(d / time.Minute)
+	if m < 60 {
+		return strconv.Itoa(m) + "m"
+	}
+	rem := m % 60
+	if rem == 0 {
+		return strconv.Itoa(m/60) + "h"
+	}
+	rest := strconv.Itoa(rem)
+	if rem < 10 {
+		rest = "0" + rest
+	}
+	return strconv.Itoa(m/60) + "h " + rest + "m"
+}
+
+// mergeTrainMemory is what the tracker keeps between builds for the
+// trains: the hour-stamp of each stalled train's activity-log line and
+// each member's first estimate (for "running late").
+type mergeTrainMemory struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+	eta  map[string]mergeTrainEtaMark
+}
+
+// mergeTrainEtaMark is a member's first estimate at a given position.
+type mergeTrainEtaMark struct {
+	At       time.Time
+	Eta      time.Duration
+	Position int
+}
+
+const mergeTrainStallLogEvery = time.Hour
+
+// mergeTrainLateFactor: a turn still pending this many times past its
+// first estimate reads "running late".
+const mergeTrainLateFactor = 2
+
+func mergeTrainMemberKey(it *StageTrackerItem) string {
+	return it.Repo + "|" + strconv.Itoa(it.Number)
+}
+
+// etaAnchor keeps a member's countdown steady across builds: the first
+// estimate at a position is the anchor the SPA counts down to, and a
+// re-estimate only moves it when it runs more than one sweep longer (the
+// head's clock grew) — otherwise every poll would push the end out by the
+// sweep it just waited. It also reports "running late": now past the
+// first estimate mergeTrainLateFactor times over.
+func (m *mergeTrainMemory) etaAnchor(self *StageTrackerItem, mt *StageTrackerMergeTrain, fresh, now time.Time, sweep time.Duration) (time.Time, bool) {
+	if m == nil || self == nil || mt == nil || mt.EtaS <= 0 {
+		return fresh, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.eta == nil {
+		m.eta = map[string]mergeTrainEtaMark{}
+	}
+	key := mergeTrainMemberKey(self)
+	mark, ok := m.eta[key]
+	if !ok || mark.Position != mt.Position || fresh.Sub(now) > mark.Eta+sweep {
+		m.eta[key] = mergeTrainEtaMark{At: now, Eta: time.Duration(mt.EtaS) * time.Second, Position: mt.Position}
+		return fresh, false
+	}
+	anchor := mark.At.Add(mark.Eta)
+	if anchor.Before(now) {
+		anchor = fresh
+	}
+	return anchor, now.Sub(mark.At) > mergeTrainLateFactor*mark.Eta
+}
+
+// forgetEta drops the member's mark: a blocked member starts a fresh
+// estimate once it is unblocked.
+func (m *mergeTrainMemory) forgetEta(self *StageTrackerItem) {
+	if m == nil || self == nil {
+		return
+	}
+	m.mu.Lock()
+	delete(m.eta, mergeTrainMemberKey(self))
+	m.mu.Unlock()
+}
+
+// warn logs the stalled train once per hour; it returns true when it logged.
+func (m *mergeTrainMemory) warn(repo string, mt *StageTrackerMergeTrain, now time.Time) bool {
+	if m == nil || mt == nil || !mt.Stalled {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.last == nil {
+		m.last = map[string]time.Time{}
+	}
+	key := repo + "|" + mt.ID
+	if at, ok := m.last[key]; ok && now.Sub(at) < mergeTrainStallLogEvery {
+		return false
+	}
+	m.last[key] = now
+	slog.Warn("merge train stalled: head has not progressed; "+strconv.Itoa(mt.Size-1)+" PR(s) wait behind it",
+		"repo", repo, "train", mt.ID, "head", mt.HeadNumber, "head_state", mt.HeadState, "head_reason", mt.HeadReason, "stalled_for", shortDuration(time.Duration(mt.StalledS)*time.Second), "size", mt.Size)
+	return true
+}
+
+// stageTrackerMergeTrainStallWarnings runs the hourly log over the items:
+// one line per stalled train, read from any member.
+func stageTrackerMergeTrainStallWarnings(mem *mergeTrainMemory, items []StageTrackerItem, now time.Time) {
+	seen := map[string]bool{}
+	for i := range items {
+		mt := items[i].MergeTrain
+		if mt == nil || !mt.Stalled {
+			continue
+		}
+		key := items[i].Repo + "|" + mt.ID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		mem.warn(items[i].Repo, mt, now)
 	}
 }
 

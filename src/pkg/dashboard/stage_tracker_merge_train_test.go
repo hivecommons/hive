@@ -107,7 +107,7 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`"merge_gate":{"state":"queued-behind","reason":"behind #15074 in merge train (2nd of 4, overlapping files: stage_tracker.go, index.html)"`,
-		`"merge_train":{"id":"v5#15074","state":"queued-behind","front":15074,"position":2,"size":4,"overlap_files":["stage_tracker.go","index.html"],"ahead":[15074]}`} {
+		`"merge_train":{"id":"v5#15074","state":"queued-behind","front":15074,"position":2,"size":4,"overlap_files":["stage_tracker.go","index.html"],"ahead":[15074],"length":4,"head_number":15074,"head_state":"ready","head_reason":"approved and green; merges on hive's next sweep","head_since":"2026-10-27T14:00:00Z","eta_s":300,"eta_at":"2026-10-27T14:05:00Z","eta_basis":"1 ahead"}`} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("payload lacks %s:\n%s", want, raw)
 		}
@@ -201,6 +201,10 @@ func TestStageTrackerMergeTrainSPA(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_QUEUED"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_REBASING"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_EXHAUSTED"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_GATE_DUPLICATE_PREFIX"),
+		jsFunc(t, html, "stageTrackerGateDuplicateOf"),
+		jsFunc(t, html, "stageTrackerMergeGateStateWord"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_GLYPH"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ICONS"),
 		stageTrackerManualMergeJS(t, html),
@@ -228,7 +232,14 @@ func TestStageTrackerMergeTrainSPA(t *testing.T) {
 		jsFunc(t, html, "stageTrackerHeadline"),
 		jsFunc(t, html, "stageTrackerTrain"),
 		jsFunc(t, html, "stageTrackerOrdinal"),
+		jsFunc(t, html, "stageTrackerShortLeft"),
+		jsFunc(t, html, "stageTrackerTrainPlace"),
+		jsFunc(t, html, "stageTrackerTrainStalledWord"),
 		jsFunc(t, html, "stageTrackerTrainWord"),
+		jsFunc(t, html, "stageTrackerTrainEtaAt"),
+		jsFunc(t, html, "stageTrackerTrainEtaWords"),
+		jsFunc(t, html, "stageTrackerTrainEtaDetail"),
+		jsFunc(t, html, "stageTrackerTrainQueueTip"),
 		jsFunc(t, html, "stageTrackerTrainLines"),
 		jsFunc(t, html, "stageTrackerTrainKey"),
 		jsFunc(t, html, "stageTrackerTrainContiguous"),
@@ -251,16 +262,16 @@ const fourth = mk(15097, 85, { state: 'rebase-exhausted', position: 4, attempt: 
 const other = { repo: 'hivecommons/hive', number: 15100, kind: 'pr', title: 'Docs', stage: 80, modifiers: [] };
 
 // Pill wording per state.
-assert.strictEqual(stageTrackerTrainWord(front), 'Merging · front of train');
-assert.strictEqual(stageTrackerTrainWord(second), 'In merge train · 2nd of 4');
+assert.strictEqual(stageTrackerTrainWord(front), 'Next to merge · 1 of 4');
+assert.strictEqual(stageTrackerTrainWord(second), 'In merge queue · 2 of 4');
 assert.strictEqual(stageTrackerTrainWord(third), 'Rebasing · attempt 1/2');
 assert.strictEqual(stageTrackerTrainWord(fourth), 'Needs human decision · rebase failed twice');
 assert.strictEqual(stageTrackerTrainWord(other), '');
 for (const [n, w] of [[1, '1st'], [2, '2nd'], [3, '3rd'], [4, '4th'], [11, '11th'], [12, '12th'], [13, '13th'], [21, '21st'], [22, '22nd'], [111, '111th']]) assert.strictEqual(stageTrackerOrdinal(n), w, 'ordinal ' + n);
 // The lit chevron carries the word: 080 for the members, the 085 detour for the exhausted one.
 const lit = it => stageTrackerSegments(it, stages, now).find(s => s.state === 'active');
-assert.strictEqual(lit(front).short, 'Merging · front of train');
-assert.strictEqual(lit(second).short, 'In merge train · 2nd of 4');
+assert.strictEqual(lit(front).short, 'Next to merge · 1 of 4');
+assert.strictEqual(lit(second).short, 'In merge queue · 2 of 4');
 assert.strictEqual(lit(third).short, 'Rebasing · attempt 1/2');
 assert.strictEqual(lit(fourth).detour.text, 'Needs human decision · rebase failed twice');
 assert.strictEqual(lit(other).short, 'Ready for auto merge');
@@ -278,6 +289,18 @@ assert.ok(!stageTrackerTooltip(other, now).includes('Merge train'));
 // Contiguity: a sorted list that interleaves the train is regrouped at the
 // first member's slot, in merge order; other rows keep their order.
 const sorted = [fourth, other, third, { repo: 'x/y', number: 1, kind: 'issue', stage: 50 }, front, second];
+// Queue facts (#15395): the chip is the position, never the slug; the
+// hover sentence names the head, what it waits on and the estimate.
+const queued = mk(15319, 80, { state: 'queued-behind', position: 2, ahead: [15315], length: 3, head_number: 15315, head_state: 'soaking', head_reason: 'soaking, 12m left', eta_s: 1500 });
+assert.strictEqual(stageTrackerTrainWord(queued), 'In merge queue · 2 of 3');
+assert.strictEqual(stageTrackerTrainQueueTip(queued.merge_train), 'Behind #15315 (soaking, 12m left). Hive merges one at a time, in order. Estimated turn: ~25m.');
+const thirdQ = mk(15374, 80, { state: 'queued-behind', position: 3, ahead: [15315, 15319], length: 3, head_number: 15315, head_state: 'needs-human', head_reason: 'waiting for a maintainer (untrusted author)', eta_s: 0 });
+assert.strictEqual(stageTrackerTrainWord(thirdQ), 'In merge queue · 3 of 3');
+assert.strictEqual(stageTrackerTrainQueueTip(thirdQ.merge_train), 'Behind #15315 (waiting for a maintainer (untrusted author)) and 1 more. Hive merges one at a time, in order. Head #15315 is waiting for a maintainer (untrusted author); no estimate until it moves.');
+const stalledQ = mk(15374, 80, { state: 'queued-behind', position: 3, ahead: [15315, 15319], length: 3, head_number: 15315, head_state: 'ci', head_reason: 'waiting for CI', stalled: true, stalled_s: 3 * 3600 });
+assert.strictEqual(stageTrackerTrainWord(stalledQ), 'Merge queue stalled · head #15315 waiting for CI 3h');
+assert.ok(stageTrackerTrainQueueTip(stalledQ.merge_train).includes('head #15315 has not moved for 3h'), stageTrackerTrainQueueTip(stalledQ.merge_train));
+for (const it of [queued, thirdQ, stalledQ, front, second]) assert.ok(!/queued-behind|rebase-exhausted/.test(stageTrackerTrainWord(it) + stageTrackerTrainQueueTip(it.merge_train)), 'no slug: ' + it.number);
 const grouped = stageTrackerTrainContiguous(sorted).map(it => it.number);
 assert.deepStrictEqual(grouped, [15074, 15085, 15087, 15097, 15100, 1]);
 // Header line before the run, once; rail classes on members, last closes it.

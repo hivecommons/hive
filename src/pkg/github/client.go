@@ -795,6 +795,9 @@ type Issue struct {
 	// stage/030-pr-in-progress from stage/020-claimed; the claim's kind
 	// alone never does (hivecommons/hive#13069).
 	ClaimPRStarted bool `json:"claim_pr_started,omitempty"`
+	// ClaimHive is the marker's hive= — the hive that recorded the live
+	// claim — when the claim came from a `hive:claim` marker; empty otherwise.
+	ClaimHive string `json:"claim_hive,omitempty"`
 	// ClaimAdvisory is set when the issue carries a live contributor claim
 	// the live-claim filter chose NOT to honour — the issue is in contributor
 	// cool-off, or contributor claims have kept hive agents off it past the
@@ -4612,6 +4615,7 @@ type RepoWorkIssue struct {
 	ClaimKind      string `json:"claim_kind,omitempty"`
 	ClaimedBy      string `json:"claimed_by,omitempty"`
 	ClaimPRStarted bool   `json:"claim_pr_started,omitempty"`
+	ClaimHive      string `json:"claim_hive,omitempty"`
 	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
 	// duplicate-PR guard suppressed into the claimed_by_pr bucket
 	// (hivecommons/hive#12144), so the repo card can render the same
@@ -4633,6 +4637,10 @@ type RepoWorkIssue struct {
 	// RecheckDone is set once the soak triage has stamped
 	// `<!-- hive:recheck-done -->` into the body (hivecommons/hive#13311).
 	RecheckDone bool `json:"recheck_done,omitempty"`
+	// Advisory is the body-derived advisory classification (dedupe
+	// checklist marker, "Decision required: no"), read here because the
+	// body itself is not carried (hivecommons/hive#15381).
+	Advisory *IssueAdvisory `json:"advisory,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
@@ -4652,11 +4660,13 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		ClaimKind:       issue.ClaimKind,
 		ClaimedBy:       issue.ClaimedBy,
 		ClaimPRStarted:  issue.ClaimPRStarted,
+		ClaimHive:       issue.ClaimHive,
 		LinkedPRs:       append([]IssueLinkedPR(nil), issue.LinkedPRs...),
 		ClaimContext:    issue.ClaimContext,
 		Children:        issue.Children,
 		TrackerProgress: progress,
 		IsTracker:       RendersAsTracker(issue.IsTracker, issue.Labels, progress),
+		Advisory:        IssueAdvisoryFromBody(issue.Body),
 	}
 }
 
@@ -4691,6 +4701,7 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 		TrackerProgress: progress,
 		Bucket:          bucket,
 		Reason:          reason,
+		Advisory:        IssueAdvisoryFromBody(issue.GetBody()),
 	}
 }
 

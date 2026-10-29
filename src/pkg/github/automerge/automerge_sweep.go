@@ -91,9 +91,16 @@ type Options struct {
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
 	HumanMergePaths func(repo string) []string
-	// RequireCurrentBase returns the live auto_merge.require_current_base
-	// switch for an owner/repo (hivecommons/hive#13634). nil means off.
+	// RequireCurrentBase returns the live current-base gate switch for an
+	// owner/repo (hivecommons/hive#13634, default on since #15335 via
+	// config.AutoMergeConfig.RequireCurrentBaseFor). nil means off.
 	RequireCurrentBase func(repo string) bool
+	// RequireCurrentBaseStrict reports whether owner/repo is explicitly
+	// listed in auto_merge.require_current_base. A strict repo parks a head
+	// the App cannot update; a repo gated only by the default merges the
+	// green head as tested in that case, with one WARN per PR. nil means no
+	// repo is strict.
+	RequireCurrentBaseStrict func(repo string) bool
 	// MergeForwardTrustedHuman returns the live
 	// auto_merge.merge_forward_trusted_human membership for owner/repo
 	// (hivecommons/hive#13636); nil means off.
@@ -195,6 +202,11 @@ type Options struct {
 	// RebaseResolver receives the train's rebase-resolve requests for a
 	// conflicting PR; nil leaves a dirty front on its conflicting path.
 	RebaseResolver RebaseResolver
+	// HotspotRecorder receives the merge train's PR file lists and the
+	// conflicts it asks the resolver to repair, so the merge-hotspot
+	// advisor (pkg/hotspot) derives its evidence without polling GitHub
+	// again; nil records nothing.
+	HotspotRecorder HotspotRecorder
 }
 
 // Engine owns the automerge sweep policy state.
@@ -238,7 +250,11 @@ type Engine struct {
 	humanMergePaths   func(repo string) []string
 
 	requireCurrentBase       func(repo string) bool
+	requireCurrentBaseStrict func(repo string) bool
 	mergeForwardTrustedHuman func(repo string) bool
+
+	currentBaseFallbackWarnedMu sync.Mutex
+	currentBaseFallbackWarned   map[string]struct{}
 
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
@@ -317,6 +333,7 @@ type Engine struct {
 
 	mergeTrainPolicy func() MergeTrainPolicy
 	rebaseResolver   RebaseResolver
+	hotspotRecorder  HotspotRecorder
 	mergeTrainState
 }
 
@@ -341,6 +358,7 @@ func New(transport Transport, opts Options) *Engine {
 		humanChangeRequests:               opts.HumanChangeRequests,
 		humanMergePaths:                   opts.HumanMergePaths,
 		requireCurrentBase:                opts.RequireCurrentBase,
+		requireCurrentBaseStrict:          opts.RequireCurrentBaseStrict,
 		mergeForwardTrustedHuman:          opts.MergeForwardTrustedHuman,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
@@ -369,6 +387,7 @@ func New(transport Transport, opts Options) *Engine {
 		sweepTrigger:                      opts.SweepTrigger,
 		mergeTrainPolicy:                  mergeTrainPolicyOption(opts),
 		rebaseResolver:                    opts.RebaseResolver,
+		hotspotRecorder:                   opts.HotspotRecorder,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}
@@ -1083,6 +1102,13 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneSelf, repo, owner, repoName, pr, reason, merged, err)
 			}
+			if _, held := train.duplicateOf(number); held {
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[autoMergeReasonMergeTrainDuplicate]++
+				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
+			}
 			if train.isSibling(number) {
 				result.Skipped++
 				repoSkipped++
@@ -1312,6 +1338,11 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneTrusted, displayRepo, owner, repoName, pr, reason, merged, err)
 			}
+			if _, held := train.duplicateOf(number); held {
+				result.Skipped++
+				stage(c.mergeTrainDuplicateSkip(train, number), false, nil)
+				continue
+			}
 			if train.isSibling(number) {
 				result.Skipped++
 				stage(c.mergeTrainSkip(train, number), false, nil)
@@ -1528,7 +1559,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 		defer close(done)
 		t := time.NewTicker(interval)
 		defer t.Stop()
-		c.sweepClock.armFloor(c.now().Add(interval))
+		c.sweepClock.armFloorEvery(c.now(), interval)
 		// cautionTick is non-zero while the ticker is running at the caution
 		// floor instead of the adaptive interval.
 		var cautionTick time.Duration
@@ -1551,7 +1582,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 				if cautionTick != 0 {
 					tick = cautionTick
 				}
-				c.sweepClock.armFloor(c.now().Add(tick))
+				c.sweepClock.armFloorEvery(c.now(), tick)
 				if gate.skip {
 					continue
 				}
@@ -1561,7 +1592,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 				}
 				if next, changed := nextSelfAuthoredSweepInterval(repos, interval, result); changed {
 					t.Reset(next)
-					c.sweepClock.armFloor(c.now().Add(next))
+					c.sweepClock.armFloorEvery(c.now(), next)
 					c.info("self-authored automerge sweep interval adjusted",
 						"previous_interval", interval,
 						"next_interval", next,
@@ -1948,9 +1979,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
-		if requiredChecksExpectedMergeError(err) {
+		if c.requiredChecksExpected(attempt, err) {
 			if !branchUpdateAllowed {
-				return AutoMergeSweepEvent{}, "check-pending", nil
+				return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
 			}
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "required-checks-expected", c.isForkPR(pr))
 		}
@@ -2343,7 +2374,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
-		if requiredChecksExpectedMergeError(err) {
+		if c.requiredChecksExpected(attempt, err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(pr))
 		}
 		if refused := c.refusedMerge(attempt, err); refused != "" {
@@ -2694,6 +2725,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
+		if c.requiredChecksExpected(attempt, err) {
+			return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
+		}
 		if refused := c.refusedMerge(attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil
 		}

@@ -2570,6 +2570,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
+	autoMergeOpts.RequireCurrentBaseStrict = func(repo string) bool {
+		return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseStrictFor(repo)
+	}
 	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
 	}
@@ -2588,6 +2591,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		}
 		return automerge.MergeTrainPolicy{Enabled: b.cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: b.cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
 	}
+	// Merge-hotspot advisor intake (hotspot_advisor.go): the train's file
+	// lists and sibling conflicts are the advisor's only evidence.
+	autoMergeOpts.HotspotRecorder = hotspotRecorder{store: hotspotStore()}
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
 		laneGate := relayLanePolicyGate(autoMergeOpts)(client)
 		setMergeEligibleLaneGate(laneGate)
@@ -2781,6 +2787,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetWritebackGate(b.writebackGate())
+	b.dashSrv.SetHotspotSource(hotspotDashSource{store: hotspotStore()})
 	b.dashSrv.SetMutationStats(func() interface{} {
 		if b.mutationStats == nil {
 			return nil
@@ -7388,6 +7395,15 @@ func runEvalCycle(
 	// issues only, never PRs; the watermark and dedupe index live on the PVC.
 	runUpstreamWatch(ctx, cfg, ghClient, logger)
 
+	// Merge-hotspot advisor: at most hourly, score the files concurrent
+	// PRs keep colliding on (from the merge train's own records) and file
+	// one modularize issue per hotspot for the ci-maintainer lane through
+	// the writeback gate. Skipped with the other optional sweeps when the
+	// GitHub budget is tight.
+	if !budgetDecision.SkipOptional {
+		runHotspotAdvisor(ctx, cfg, ghClient, actionable, logger)
+	}
+
 	if !budgetDecision.SkipUnstick {
 		shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 			PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -9439,6 +9455,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.RepoOnGitHub = func(repo string) bool { return cfg.RepoOnGitHub(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
+		opts.RequireCurrentBaseStrict = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseStrictFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
 		opts.MergeTrain = func() automerge.MergeTrainPolicy {
 			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}

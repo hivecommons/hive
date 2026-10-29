@@ -13,6 +13,11 @@
        stack fell back to z-index:auto and the chat FAB (9000) covered the
        lowest toast's close × and text. Above the FAB and the modal chrome. */
     :root { --z-cue-flight: 10000; --z-merge-banner: 10001; }
+    /* The merge glyph's size (hivecommons/hive#15398: at --fs-lg the bee
+       was "so small i can't see what it is") and the halo that lifts an
+       emoji off either theme's panel: a soft shadow in the text colour, so
+       it is a light glow on dark and a dark shadow on light. */
+    :root { --cue-flight-size: var(--fs-3xl); --cue-flight-halo: drop-shadow(0 0 2px color-mix(in srgb, var(--text) 45%, transparent)) drop-shadow(0 1px 2px color-mix(in srgb, var(--surface-0) 40%, transparent)); }
     .ham-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
     .ham-toolbar label { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .ham-repo-filter { position: static; flex: 0 1 auto; gap: 0; min-width: 0; white-space: nowrap; }
@@ -271,6 +276,7 @@
     .ham-seg.active.merged { background: var(--green); color: var(--surface-0); animation: none; }
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
+    .ham-holder { font-weight: normal; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
@@ -299,6 +305,10 @@
        it a move but the next pass" (hivecommons/hive#15094). */
     .ham-seg.active.ham-open-new { background: var(--blue); color: var(--surface-0); }
     .ham-seg.active.ham-open-new .ham-seg-t::before { content: '✦'; margin-right: var(--sp-1); }
+    /* Advisory (hivecommons/hive#15381): a note for maintainers, not
+       work — muted, never stale-tinted, read then close. */
+    .ham-seg.active.ham-open-advisory { background: var(--surface-2); color: var(--muted); }
+    .ham-seg.active.ham-open-advisory .ham-seg-t::before { content: 'ⓘ'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
@@ -311,7 +321,10 @@
        after the word ("next sweep in 42s", "7m left") is muted. */
     .ham-gate-ico { display: inline-flex; align-items: center; margin-right: var(--sp-1); cursor: help; }
     .ham-gate-ico .ham-ico { width: 12px; height: 12px; }
-    .ham-gate-detail { font-weight: normal; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    /* The detail is a fixed short phrase; should a long one ever reach it
+       (hivecommons/docs#512 drew a raw GitHub URL across the column) it is
+       clipped with an ellipsis rather than overflowing the chip. */
+    .ham-gate-detail { font-weight: normal; opacity: 0.85; white-space: nowrap; font-variant-numeric: tabular-nums; display: inline-block; vertical-align: bottom; max-width: 12em; overflow: hidden; text-overflow: ellipsis; }
     @keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
     /* ---- tracker-cues: the Activity Monitor's shared cue vocabulary ------
        Owner request: a viewer must always read where an item stands,
@@ -346,11 +359,49 @@
     .ham-sub-superseded .ham-row-head { min-height: 0; }
     .ham-superseded-note { color: var(--muted); font-size: var(--fs-xs); }
     .ham-adopted-from { color: var(--muted); text-decoration: none; }
+    /* The Let hive decide preview. One decision, readable in three seconds
+       (operator feedback on the dialog, issue 15397): subject line,
+       eyebrow, one bold sentence, one muted why, a short "then" list; the
+       rest lives under a collapsed Details. */
+    .ham-plan-dialog .hive-dialog-title { margin-bottom: var(--sp-2); }
+    .ham-plan-subject { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-bottom: var(--sp-6); }
+    .ham-plan-chip { display: inline-flex; align-items: center; padding: var(--sp-1) var(--sp-4); border: var(--line-width) solid color-mix(in srgb, var(--status-error) 45%, transparent); border-radius: var(--r-pill); background: color-mix(in srgb, var(--status-error) 12%, transparent); color: var(--status-error); font-size: var(--fs-xs); font-weight: var(--fw-semibold); white-space: nowrap; }
+    .ham-plan-body { white-space: normal; font-size: var(--fs-base); color: var(--text); margin-bottom: var(--sp-5); }
+    .ham-plan-decision + .ham-plan-decision { margin-top: var(--sp-6); padding-top: var(--sp-5); border-top: var(--line-width) solid var(--line-subtle); }
+    .ham-plan-ref { color: var(--muted); font-size: var(--fs-sm); margin-bottom: var(--sp-2); }
+    .ham-plan-eyebrow, .ham-plan-label { color: var(--text-faint); font-size: var(--fs-xs); font-weight: var(--fw-semibold); letter-spacing: .04em; text-transform: uppercase; }
+    .ham-plan-sentence { margin: var(--sp-1) 0 var(--sp-4); font-size: var(--fs-md); font-weight: var(--fw-semibold); line-height: 1.4; color: var(--text); }
+    .ham-plan-why { margin: 0 0 var(--sp-4); color: var(--muted); }
+    .ham-plan-why .ham-plan-label { margin-right: var(--sp-2); }
+    .ham-plan-next { margin: var(--sp-1) 0 0; padding-left: 1.4em; color: var(--muted); }
+    .ham-plan-next li + li { margin-top: var(--sp-1); }
+    .ham-plan-details { margin-bottom: var(--sp-6); font-size: var(--fs-sm); color: var(--muted); }
+    .ham-plan-details > summary { cursor: pointer; color: var(--text-faint); font-size: var(--fs-sm); }
+    .ham-plan-details > summary:hover { color: var(--text); }
+    .ham-plan-details > :not(summary) { margin: var(--sp-3) 0 0; }
+    .ham-plan-details .ham-plan-label { margin-top: var(--sp-4); }
+    .ham-plan-finding { color: var(--status-error); }
+    .ham-plan-ruled-out { padding-left: 1.4em; }
+    .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-lineage { color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
+    .ham-lineage:hover { color: var(--text); }
     .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }
     .ham-plan-note { color: var(--muted); font-size: var(--fs-xs); }
     .ham-seg.active .cue-acting-cap { margin-left: var(--sp-2); }
     .cue-acting-cap { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
     .cue-acting-spin { width: 10px; height: 10px; margin-right: 0; }
+    /* Action in flight on a lit chevron (merge gate, decision, hold,
+       re-run — any step): the progress caption REPLACES the stage word.
+       Owner screenshot (dark theme): "Queuing for merge…" sat in muted grey
+       on top of the amber stripes, unreadable, while "Ready for human merge
+       · untrusted author" still showed beside it and wrapped to four lines.
+       Now the word, its glyphs and the gate detail hide for the duration;
+       what stays is one caption on an opaque plate (page surface under
+       page text: ≥ 15:1 in both themes, see the contrast test) above the
+       stripes and the pulse overlay, on one line with an ellipsis. */
+    .cue-acting > .ham-strip-row > .ham-strip > .ham-seg.active:not(.cap) > :not(.cue-acting-cap) { display: none; }
+    .ham-seg.active > .cue-acting-cap { display: inline-block; position: relative; z-index: 1; margin-left: 0; max-width: 100%; min-width: 0; box-sizing: border-box; padding: var(--sp-1) var(--sp-2); border-radius: var(--r-pill); background: var(--surface-0); color: var(--text); font-weight: var(--fw-medium); line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ham-seg.active > .cue-acting-cap > .cue-acting-spin { vertical-align: -1px; margin-right: var(--sp-2); }
     .cue-event { display: flex; align-items: baseline; gap: var(--sp-2); margin: 0; padding-left: var(--sp-5); font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; animation: cue-event-in 0.4s ease-out; }
     .cue-event-who { font-weight: var(--fw-medium); color: var(--text); }
     .cue-event-age { color: var(--text-faint); white-space: nowrap; }
@@ -377,10 +428,14 @@
        the overlay goes and the plain text shows. Static characters and
        digits that fell (the day rollover) just sit. The text underneath is
        the real width (tabular-nums), so the pill never jiggles; reduced
-       motion or the first draw sets the text outright. */
+       motion or the first draw sets the text outright.
+       Owner (2026-10-29, issue 15398): the glyph is drawn at
+       --cue-flight-size with --cue-flight-halo (see the tokens above), and
+       the rightmost wheel spins a full turn (a longer strip, same
+       transition) so a +1 reads as a roll, not a nudge. */
     .cue-merged .ham-seg.cap { color: var(--amber); animation: cue-cap-glow 1.6s ease-out both; }
     .cue-merged { background: color-mix(in srgb, var(--amber) 8%, transparent); transition: background 300ms ease; }
-    .cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--fs-lg); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); pointer-events: none; user-select: none; animation: cue-flight var(--cue-fly-ms, 2000ms) cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+    .cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--cue-flight-size); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); filter: var(--cue-flight-halo); pointer-events: none; user-select: none; animation: cue-flight var(--cue-fly-ms, 2000ms) cubic-bezier(0.22, 0.61, 0.36, 1) both; }
     .cue-flight.cue-flight-fade { animation: cue-flight-fade var(--cue-fly-ms, 2000ms) ease-out both; }
     .ham-sticky { position: sticky; top: var(--navbar-sticky-height); z-index: calc(var(--z-sticky) + 1); display: flex; justify-content: flex-end; align-items: center; min-height: var(--ham-sticky-bar-h); box-sizing: border-box; padding: var(--sp-1) var(--sp-2); background: var(--panel); }
     .ham-sticky-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -388,13 +443,16 @@
     .ham-merged-count:hover { border-color: var(--line-strong); }
     .ham-merged-count .ham-merged-ico { width: 12px; height: 12px; color: var(--amber); }
     .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
-    .ham-merged-count .ham-merged-sub { color: var(--text-faint); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
+    .ham-merged-count .ham-merged-sub { color: var(--text-faint, var(--muted)); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-merged-count.cue-tick { animation: cue-count-pop 320ms ease-out; }
     .ham-merged-count .ham-merged-n, .ham-merged-count .ham-merged-sub { position: relative; }
     .ham-merged-count .ham-odo-rolling { color: transparent; }
     .ham-odo { position: absolute; inset: 0; display: flex; align-items: center; overflow: hidden; white-space: pre; pointer-events: none; }
     .ham-merged-count .ham-merged-n .ham-odo { color: var(--text); }
-    .ham-merged-count .ham-merged-sub .ham-odo { left: var(--sp-2); color: var(--text-faint); }
+    /* The dark theme's token sheet has no --text-faint (only body.light-mode
+       sets it), so without a fallback the overlay inherited the rolling
+       line's transparent colour and the day/week counts vanished mid-roll. */
+    .ham-merged-count .ham-merged-sub .ham-odo { left: var(--sp-2); color: var(--text-faint, var(--muted)); }
     .ham-odo-static, .ham-odo-col, .ham-odo-d { display: block; height: 1.25em; line-height: 1.25; }
     .ham-odo-col { overflow: hidden; }
     .ham-odo-strip { display: block; transform: translateY(0); transition: transform var(--odo-ms, 900ms) cubic-bezier(0.22, 0.61, 0.36, 1); }
@@ -409,6 +467,11 @@
     .ham-merged-list .ham-merged-meta { color: var(--text-faint); white-space: nowrap; font-size: var(--fs-xs); }
     .ham-merged-pop .ham-empty { padding: var(--sp-2) 0; }
     .ham-merged-pop-foot { margin-top: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); }
+    /* Merge queue chip + popover (hivecommons/hive issue 15395): the train in merge order. */
+    .ham-queue-chip .ham-queue-n { margin-left: var(--sp-1); font-variant-numeric: tabular-nums; }
+    .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
+    .ham-queue-train:first-of-type { margin-top: 0; }
+    .ham-queue-stalled { color: var(--yellow); }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
     .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
@@ -509,7 +572,7 @@
     .ham-decision-q { font-weight: var(--fw-semibold); color: var(--text); }
     .ham-decision-blocker { font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-capability-gap { color: var(--amber); }
-    .ham-decision-meta, .ham-decision-stage { font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-decision-meta { font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-decision-acts { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-2); }
     .ham-decision-act { padding: var(--sp-1) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-pill); background: transparent; color: var(--text); font: inherit; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; }
     .ham-decision-act:hover, .ham-decision-act:focus-visible { background: var(--panel-strong); outline: none; border-color: var(--line-strong); }
@@ -517,9 +580,12 @@
     .ham-decision-act.ham-menu-danger { color: var(--red); }
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
-    .ham-decision-consequences { margin: 0 0 var(--sp-1); padding-left: var(--sp-4); font-size: var(--fs-xs); color: var(--text-muted); }
-    .ham-decision-consequences li { margin: 0; overflow-wrap: anywhere; }
-    .ham-decision-consequences b { font-weight: var(--fw-semibold); color: var(--text); }
+    .ham-decision-act.ham-decision-more { color: var(--text-muted); }
+    /* The technical background folds behind one collapsed Details. */
+    .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
+    .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }
+    .ham-decision-details > summary:focus-visible { outline: var(--line-width) solid var(--accent); outline-offset: var(--sp-1); border-radius: var(--r-sm); }
+    .ham-decision-details[open] > summary { color: var(--text-muted); }
     .ham-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-2); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid color-mix(in srgb, var(--accent) 45%, var(--line-subtle)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: var(--fs-xs); }
     .ham-selbar[hidden] { display: none; }
     .ham-selbar .ham-sel-count { font-weight: var(--fw-semibold); color: var(--text); margin-right: var(--sp-2); }

@@ -739,7 +739,7 @@ func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T
 	}
 	res := job.Result
 	t.Logf("outcome: %s\nnext: %s\nwhy: %s", res.Outcome, res.Next, res.Why)
-	for _, want := range []string{"I can't merge this: author @someone is untrusted on testrepo", "not a collaborator", "trusted or merger tier", "👥 Contributors"} {
+	for _, want := range []string{"I can't merge this: author @someone is untrusted on testrepo", "isn't a trusted author yet", "trusted tier under 👥 Contributors"} {
 		if !strings.Contains(res.Outcome, want) {
 			t.Errorf("outcome %q missing %q", res.Outcome, want)
 		}
@@ -1001,5 +1001,114 @@ func TestDelegatedOfflineClankerAdoptsWithClankerWording(t *testing.T) {
 	}
 	if strings.Contains(d.Rationale, "author's hive") || job.Result == nil || !strings.HasSuffix(job.Result.Outcome, " Why: the author's clanker hasn't been connected since the nudge.") {
 		t.Fatalf("wording: rationale=%q result=%+v", d.Rationale, job.Result)
+	}
+}
+
+// Owner-style judgment of parked issues (hivecommons/hive#15021 and the
+// proposal rules): the fixture bodies are the real issues, trimmed.
+const delegatedSelfreportBody = "<!-- hive:selfreport fp=929efbb7d686368f1108570c hive=hosted-ibm-alchemy-logg-ptoo -->\n\n" +
+	"A hive hit an unusual runtime error (class `agent_login_required`) and is reporting it.\n\n" +
+	"| Field | Value |\n|---|---|\n| hive | hosted-ibm-alchemy-logg-ptoo |\n" +
+	"| spoke | [hosted-ibm-alchemy-logg-ptoo](https://hosted-ibm-alchemy-logg-ptoo.example) |\n| owner(s) | @clubanderson |\n"
+
+const delegatedEvidenceFreeProposalBody = "## Finding\n\nThis is now the third time a freshly-landed shell-checker change shipped with arms no self-test pins (#248, #257, #295).\n\n## Recommendation\n\nAdd a mutation gate for the shell checkers.\n"
+
+// A selfreport whose remedy is the spoke operator's: the hive posts the
+// direction to the spoke owner, adds needs-owner, and writes nothing that
+// would make the issue actionable — no `/hive decision` line, no
+// approved-direction, the 045 park kept.
+func TestDelegatedSelfreportOperatorAction(t *testing.T) {
+	mock := &repoItemDecisionMock{issueLabels: []string{"triage/accepted", "stage/045-needs-decision"},
+		issueTitle: "[selfreport] agent_login_required: login required detected", issueBody: delegatedSelfreportBody}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictOperatorAction || job.Decision.Rule != "selfreport-operator-action" {
+		t.Fatalf("decision = %+v (error %q)", job.Decision, job.Error)
+	}
+	if len(mock.comments) != 1 || strings.Contains(mock.comments[0], "/hive decision") || !strings.Contains(mock.comments[0], "@clubanderson: re-authenticate the agent provider") || !strings.Contains(mock.comments[0], "`stage/045-needs-decision` stays") {
+		t.Fatalf("comments = %q", mock.comments)
+	}
+	added := strings.Join(mock.added, ",")
+	if !strings.Contains(added, delegatedecision.LabelNeedsOwner) || strings.Contains(added, github.HumanAckLabel) || strings.Contains(added, delegatedecision.LabelHold) {
+		t.Fatalf("labels added = %v: needs-owner only, never approved-direction or hold", mock.added)
+	}
+	if len(mock.removed) != 0 || len(mock.edits) != 0 {
+		t.Fatalf("park must stay and nothing edited: removed=%v edits=%v", mock.removed, mock.edits)
+	}
+	if job.Result == nil || job.Result.Action != rowActionRecommended || !strings.Contains(job.Result.Outcome, "Operator action") || !strings.Contains(job.Result.Next, "waiting on the spoke owner") {
+		t.Fatalf("result = %+v", job.Result)
+	}
+}
+
+// The #15021 loop: the same selfreport decided again, still parked, with a
+// label event after the first decision (the park was never lifted, so it is
+// not a new ask). The hive writes nothing and answers "already decided;
+// waiting on <who>" — never "it hasn't taken effect".
+func TestDelegatedSelfreportRedecideIsNoopNotLoop(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T20:00:00Z")
+	mock := &repoItemDecisionMock{issueLabels: []string{"needs-owner", "stage/045-needs-decision"},
+		issueTitle: "[selfreport] agent_login_required: login required detected", issueBody: delegatedSelfreportBody}
+	in := delegatedecision.Input{Kind: delegatedecision.KindIssue, Number: 7, Title: mock.issueTitle, Body: mock.issueBody, Author: "hive[bot]"}
+	prior := delegatedecision.Run(in)
+	mock.priorComments = []string{delegatedecision.CommentBodyWith(prior, "h1", "writer", delegatedecision.CommentOptions{Kind: delegatedecision.KindIssue})}
+	mock.timeline = []map[string]any{
+		{"event": "labeled", "label": map[string]any{"name": "stage/045-needs-decision"}, "created_at": "2026-10-28T13:16:00Z"},
+	}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action != rowActionNoop {
+		t.Fatalf("result = %+v", job.Result)
+	}
+	if !strings.HasPrefix(job.Result.Outcome, "No change — hive already recorded this decision at 2026-10-28T12:01:00Z") || strings.Contains(job.Result.Outcome, "hasn't taken effect") {
+		t.Fatalf("outcome = %q", job.Result.Outcome)
+	}
+	if !strings.Contains(job.Result.Next, "Waiting on the spoke owner: @clubanderson") {
+		t.Fatalf("next = %q", job.Result.Next)
+	}
+	if len(mock.comments) != 0 || len(mock.added) != 0 || len(mock.removed) != 0 {
+		t.Fatalf("a repeat must write nothing: comments=%v added=%v removed=%v", mock.comments, mock.added, mock.removed)
+	}
+}
+
+// A hive-filed proposal without an incident or recurrence is declined for
+// now: the reason is posted and the issue is closed as not planned; no
+// approval, no approved-direction.
+func TestDelegatedProposalNotNowClosesAsNotPlanned(t *testing.T) {
+	mock := &repoItemDecisionMock{issueLabels: []string{"testing", "stage/045-needs-decision"},
+		issueTitle: "[quality] Gate proposal: shell-checker arms that survive mutation", issueBody: delegatedEvidenceFreeProposalBody}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"requires_human"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictNotNow || job.Decision.Rule != "proposal-not-now" {
+		t.Fatalf("decision = %+v (error %q)", job.Decision, job.Error)
+	}
+	if len(mock.comments) != 1 || strings.Contains(mock.comments[0], "/hive decision") || !strings.Contains(mock.comments[0], "no incident or recurrence justifies the cost") {
+		t.Fatalf("comments = %q", mock.comments)
+	}
+	closed := false
+	for _, e := range mock.edits {
+		if e["state"] == "closed" && e["state_reason"] == issueStateReasonNotPlanned {
+			closed = true
+		}
+	}
+	if !closed {
+		t.Fatalf("issue not closed as not planned: edits=%v", mock.edits)
+	}
+	if strings.Contains(strings.Join(mock.added, ","), github.HumanAckLabel) {
+		t.Fatalf("a declined proposal must not get approved-direction: %v", mock.added)
+	}
+	if job.Result == nil || job.Result.Action != rowActionClosed || !strings.Contains(job.Result.Outcome, "Declined for now") {
+		t.Fatalf("result = %+v", job.Result)
 	}
 }

@@ -1,0 +1,1 @@
+- The crux callback API now records `crux.callback.request.duration` and `crux.callback.requests` metrics and a span per request, labelled by capability, status class and refusal code only; nothing is exported unless an OTel exporter is configured.

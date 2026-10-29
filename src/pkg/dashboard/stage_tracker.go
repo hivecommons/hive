@@ -310,6 +310,11 @@ type StageTrackerItem struct {
 	// does not count them until the PR reaches stage/080 or later. The
 	// labels themselves are untouched; this is presentation only.
 	DeferredModifiers []string `json:"deferred_modifiers,omitempty"`
+	// Advisory is set on an issue that is a note for maintainers, not work
+	// (triage/advisory label, dedupe checklist, "Decision required: no"):
+	// read it, then close it (hivecommons/hive#15381). Its Chip is the
+	// Open chevron's word; the row never counts as stalled or attention.
+	Advisory *StageTrackerAdvisory `json:"advisory,omitempty"`
 	// NeedsHuman is true when a person's decision or action is the ONLY
 	// thing that advances the item (stageTrackerNeedsHuman): stages 015
 	// triage-needed, 045/085 needs-decision, 071/072 needs-author /
@@ -460,6 +465,11 @@ type StageTrackerItem struct {
 	// closed, unmerged, and never a tracker row; this is the only trace of
 	// it the tracker draws — a small chip on the live PR.
 	Supersedes *StageTrackerSupersedes `json:"supersedes,omitempty"`
+	// Lineage is, on the hive's copy of an adopted PR, where it came from
+	// (adopted from @x's #N, when, why) and, on a still-open original,
+	// which copy superseded it (stage_tracker_lineage.go). Optional; a
+	// row with no adoption history carries none.
+	Lineage *StageTrackerLineage `json:"lineage,omitempty"`
 	// Adoption is, on a nudged PR at stage/072, whether adoption is due,
 	// what holds it, and the author's live presence, with the plain-words
 	// line the row shows instead of a bare "Returned to contributor"
@@ -482,6 +492,10 @@ type StageTrackerItem struct {
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
+	// Claimant names who holds the row — the agent, clanker owner or person
+	// — for the chevron suffix and the "Held by:" hover line
+	// (stage_tracker_claimant.go).
+	Claimant *StageTrackerClaimant `json:"claimant,omitempty"`
 	// StageActor is who holds the next move on this row — hive, clanker,
 	// human, a foreign bot, or nobody — with the plain-words why. The SPA
 	// draws the stage pill's actor icon from StageActor.Kind only
@@ -598,6 +612,9 @@ type StageTrackerLinkedPR struct {
 	DCOUnsigned int    `json:"dco_unsigned,omitempty"`
 	DCOTotal    int    `json:"dco_total,omitempty"`
 	Head        string `json:"head,omitempty"`
+	// Claimant mirrors the nested PR's holder so the sub-row's chevron
+	// names them too.
+	Claimant *StageTrackerClaimant `json:"claimant,omitempty"`
 	// DecisionNeeded mirrors the nested PR's own row field so the issue's
 	// sub-row can open the same "Needs human" popover.
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
@@ -620,6 +637,8 @@ type StageTrackerLinkedPR struct {
 	AdoptedBy      int                      `json:"adopted_by,omitempty"`
 	AdoptedByState string                   `json:"adopted_by_state,omitempty"`
 	AdoptedFrom    *StageTrackerAdoptedFrom `json:"adopted_from,omitempty"`
+	// Lineage mirrors the nested PR's own row field.
+	Lineage *StageTrackerLineage `json:"lineage,omitempty"`
 	// State is "closed" for an adopted original the hive (or a person)
 	// closed once its copy existed (hivecommons/hive#15126): the sub-row
 	// is one dimmed line "#N <title> · closed · superseded by #M" with no
@@ -1319,8 +1338,13 @@ func humanizeStageReason(reason string) string {
 		return "no verified claim links this PR to an issue"
 	case "contributor-lane:claim-tier-untrusted":
 		return "author's claim tier is below the auto-merge tiers"
-	case "ci-red", "check-runs":
-		return "CI is red"
+	case "ci-red":
+		return "CI failed"
+	case "check-runs", "status-check":
+		return "CI checks could not be read"
+	}
+	if words, ok := stageTrackerCIStateWords(r); ok {
+		return words
 	}
 	if strings.HasPrefix(lower, "mirrors pr #") {
 		return "mirrors PR " + r[len("mirrors PR "):]
@@ -1378,9 +1402,6 @@ func humanizeStageReason(reason string) string {
 	}
 	if strings.HasPrefix(lower, "release-hold") {
 		return "release hold"
-	}
-	if strings.HasPrefix(lower, "status-") || strings.HasPrefix(lower, "check-") {
-		return "CI is red (" + r + ")"
 	}
 	switch lower {
 	case stageengineprstage.ContributorLaneReasonWorkflowPath:
@@ -1440,16 +1461,17 @@ func stageTrackerManualMergeReason(reason string) bool {
 
 // Gate-cell words and tooltips per prstage.HumanMergeReason* code: why a
 // person, not the hive, merges a PR parked at 090 (hivecommons/hive#14658).
+// Plain words, one short sentence each, no config keys (hivecommons/hive#15394).
 var stageTrackerHumanMergeReasonWords = map[string][2]string{
-	stageengineprstage.HumanMergeReasonWorkflowFiles:     {"workflow files", "Changes .github/workflows/** (or action files) — the hive never merges workflow changes and its GitHub App lacks the workflows permission; click Merge on GitHub"},
-	stageengineprstage.HumanMergeReasonTestsRemoved:      {"tests removed", "Deletes tests — the hive never merges a PR that removes tests unattended; a maintainer reviews the deletion and clicks Merge"},
-	stageengineprstage.HumanMergeReasonManualMergePolicy: {"manual-merge policy", "Touches a path listed in auto_merge.human_merge_paths — the hive never merges it unattended; click Merge on GitHub"},
-	stageengineprstage.HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection or a ruleset requires an approving review the hive's GitHub App cannot give; approve on GitHub (or let the App bypass) and the hive merges, or click Merge"},
-	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repository disallows the merge method this PR needs (a forward merge or merge-commit PR is never squashed); merge by hand with an allowed method or allow it in the repository settings"},
-	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is switched off for this repository or lane, so every merge is a person's; click Merge on GitHub"},
-	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "No lane can vouch for the author (trust tier below require_tiers, no verified claim, or no trusted role), so the hive does not merge; a maintainer's /lgtm + /approve (or Merge) lands it"},
-	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "The hive's GitHub App is not permitted to take the merge step (GitHub answered 403); a maintainer merges by hand — see the hive:unauthorized note on the PR"},
-	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "The reviewer swarm returned requires_human on this head and a trusted merger approved it; the hive leaves the merge itself to a person"},
+	stageengineprstage.HumanMergeReasonWorkflowFiles:     {"workflow files", "It changes GitHub workflow files, which hive never merges on its own"},
+	stageengineprstage.HumanMergeReasonTestsRemoved:      {"tests removed", "It removes tests, which hive never merges on its own"},
+	stageengineprstage.HumanMergeReasonManualMergePolicy: {"manual-merge policy", "It touches files this repo reserves for a person to merge"},
+	stageengineprstage.HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection wants a review hive cannot give; approve on GitHub or merge it"},
+	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repo does not allow the merge method this PR needs"},
+	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is off for this repo, so a person merges"},
+	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "Hive won't merge it alone — the author isn't a trusted author yet"},
+	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "GitHub does not let hive merge here; a person merges"},
+	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "A reviewer asked for a person to merge this one"},
 }
 
 // stageTrackerHumanMergeReason derives, from a 090 stage reason, the
@@ -1465,47 +1487,73 @@ func stageTrackerHumanMergeReason(reason string) (code, word, tip string) {
 		return code, w[0], w[1]
 	}
 	base, _ := stagelabels.HumanApprovedReason(reason)
-	return stageengineprstage.HumanMergeReasonPolicy, "policy", "The merge lane will not merge this unattended (lane reason `" + strings.TrimSpace(base) + "`); a maintainer merges by hand"
+	return stageengineprstage.HumanMergeReasonPolicy, "policy", "Hive's merge rules leave this one to a person (`" + strings.TrimSpace(base) + "`)"
 }
 
 // Where an operator makes an author trusted, in the words the ⚙ and 👥
-// sections use, for the untrusted-author tooltip.
+// sections use. One line each, no config keys: the keys live on those
+// pages (hivecommons/hive#15394).
 const (
-	stageTrackerTrustFixTier   = "give them the trusted or merger tier under 👥 Contributors (auto_merge.contributor_lane.require_tiers)"
-	stageTrackerTrustFixRole   = "add them under Authorized users on ⚙ Security with the merger role (dashboard.authorized_users, auto_merge.trusted_authors.require_role)"
-	stageTrackerTrustFixCollab = "add them as a collaborator of the repository on GitHub"
+	stageTrackerTrustFixTier   = "give them the trusted tier under 👥 Contributors"
+	stageTrackerTrustFixRole   = "add them as a merger under ⚙ Security → Authorized users"
+	stageTrackerTrustFixCollab = "make them a collaborator on GitHub"
 )
 
-// stageTrackerUntrustedAuthorWhy says, in plain words, why the hive will
-// not vouch for the PR's author under a trust-family 090 reason and what
-// would make them trusted — the config key and where in the dashboard it
-// is set (hivecommons/hive#15078). "" for any other reason.
+// stageTrackerUntrustedAuthorWhy says, in one short plain sentence, why
+// the hive will not merge the PR's author's work under a trust-family 090
+// reason (hivecommons/hive#15078, #15394). "" for any other reason. The
+// how-to-fix line is stageTrackerUntrustedAuthorFix.
 func stageTrackerUntrustedAuthorWhy(base, author string) string {
 	who := "the author"
 	if a := strings.TrimSpace(author); a != "" {
 		who = "@" + a
 	}
 	switch strings.ToLower(strings.TrimSpace(base)) {
-	case stageengineprstage.ContributorLaneReasonAuthorAssociation:
-		return who + " is not a collaborator of this repository on GitHub (no owner, member or collaborator association) and holds no trusted or merger tier in this hive's contributor registry, so the hive will not merge their PR unattended. To trust them: " + stageTrackerTrustFixTier + ", or " + stageTrackerTrustFixCollab
-	case "untrusted-author-role":
-		return who + " does not hold the merger role under this hive's Authorized users, so the trusted-authors merge lane does not vouch for them. To trust them: " + stageTrackerTrustFixRole
+	case stageengineprstage.ContributorLaneReasonAuthorAssociation, "untrusted-author-role", stageengineprstage.ContributorLaneReasonClaimTier,
+		stageengineprstage.ContributorLaneReasonNoClaim, stageengineprstage.ContributorLaneReasonNoLinkedIssue:
+		return who + " isn't a trusted author yet"
 	case "author-permission-missing":
-		return "GitHub reports no push, maintain or admin permission for " + who + " on this repository, which the trusted-authors lane requires (auto_merge.trusted_authors.require_github_permission). To trust them: grant them write access on GitHub, or turn that check off"
+		return who + " has no write access to this repo"
 	case "fork-non-member":
-		return "this PR comes from a fork and " + who + " is not a member of the organization, so the hive will not merge it unattended. To trust them: " + stageTrackerTrustFixCollab
+		return "it comes from a fork and " + who + " isn't a member of the org"
 	case "untrusted-merger":
-		return "the person who queued this PR for auto-merge does not hold the merger role under this hive's Authorized users (dashboard.authorized_users). A merger or owner queues or merges it"
-	case stageengineprstage.ContributorLaneReasonClaimTier:
-		return who + "'s contributor tier is below the tiers the contributor lane merges for (auto_merge.contributor_lane.require_tiers, default trusted and merger). To trust them: " + stageTrackerTrustFixTier
-	case stageengineprstage.ContributorLaneReasonNoClaim, stageengineprstage.ContributorLaneReasonNoLinkedIssue:
-		return "no hive claim links this PR to an issue the hive handed out, and " + who + " holds no trusted or merger tier in the contributor registry, so no lane vouches for it. To trust them: " + stageTrackerTrustFixTier
+		return "the person who queued it isn't a merger"
 	case stageengineprstage.ContributorLaneReasonClaimUnverified:
-		return who + "'s GitHub login is not verified against their contributor profile, so the contributor lane cannot vouch for them. They verify it on the hub (Contributors → Verify GitHub), or " + stageTrackerTrustFixTier
+		return who + " hasn't verified their GitHub login yet"
 	case stageengineprstage.ContributorLaneReasonClaimAuthor:
-		return "the hive's claim on the linked issue names a different contributor than " + who + ", so the contributor lane does not vouch for this PR. A maintainer merges, or " + stageTrackerTrustFixTier
+		return "the linked issue was claimed by someone other than " + who
 	case stageengineprstage.ContributorLaneReasonClaimOtherHive:
-		return "the linked issue is claimed by another hive, so this hive's contributor lane does not vouch for " + who + ". The owning hive merges it, or a maintainer merges here"
+		return "another hive owns the linked issue"
+	}
+	return ""
+}
+
+// stageTrackerUntrustedAuthorFix is the one-line "how to trust them" for
+// the Details fold under a trust-family 090 reason; "" when none applies.
+func stageTrackerUntrustedAuthorFix(base, author string) string {
+	who := "the author"
+	if a := strings.TrimSpace(author); a != "" {
+		who = "@" + a
+	}
+	switch strings.ToLower(strings.TrimSpace(base)) {
+	case stageengineprstage.ContributorLaneReasonAuthorAssociation:
+		return "To trust " + who + ": " + stageTrackerTrustFixTier + ", or " + stageTrackerTrustFixCollab + "."
+	case "untrusted-author-role":
+		return "To trust " + who + ": " + stageTrackerTrustFixRole + "."
+	case "author-permission-missing":
+		return "To trust " + who + ": grant them write access on GitHub."
+	case "fork-non-member":
+		return "To trust " + who + ": " + stageTrackerTrustFixCollab + "."
+	case "untrusted-merger":
+		return "A merger or owner queues or merges it."
+	case stageengineprstage.ContributorLaneReasonClaimTier, stageengineprstage.ContributorLaneReasonNoClaim, stageengineprstage.ContributorLaneReasonNoLinkedIssue:
+		return "To trust " + who + ": " + stageTrackerTrustFixTier + "."
+	case stageengineprstage.ContributorLaneReasonClaimUnverified:
+		return "They verify it under Contributors → Verify GitHub, or " + stageTrackerTrustFixTier + "."
+	case stageengineprstage.ContributorLaneReasonClaimAuthor:
+		return "A maintainer merges, or " + stageTrackerTrustFixTier + "."
+	case stageengineprstage.ContributorLaneReasonClaimOtherHive:
+		return "The owning hive merges it, or a maintainer merges here."
 	}
 	return ""
 }
@@ -1569,11 +1617,12 @@ func adoptedWorkCaption(reason string) string {
 }
 
 // stageTrackerReturnedToHiveCaption rewrites a 072 caption for a
-// clanker-authored PR so it names whose hive the PR went back to and who
-// sent it: "Returned to @thatguywob's hive — @clubanderson requested
-// changes" (hivecommons/hive#15159). The human has already acted and
-// nothing is owed by a maintainer, so the "@x must act" tail goes; the
-// contributor's hive is the actor.
+// clanker-authored PR so it names whose clanker the PR went back to and
+// who sent it: "Returned to @thatguywob's clanker — @clubanderson
+// requested changes" (hivecommons/hive#15159). The human has already acted
+// and nothing is owed by a maintainer, so the "@x must act" tail goes; the
+// contributor's clanker is the actor. author is the person the clanker
+// acts for (the PR's GitHub author), never the hive App's bot login.
 func stageTrackerReturnedToHiveCaption(caption, author string, requesters []string) string {
 	who := strings.TrimSpace(author)
 	if who == "" {
@@ -1589,7 +1638,7 @@ func stageTrackerReturnedToHiveCaption(caption, author string, requesters []stri
 	if by := mentionLogins(requesters); by != "" {
 		rest = strings.Replace(rest, " — a maintainer requested changes", " — "+by+" requested changes", 1)
 	}
-	return head + "'s hive" + rest
+	return head + "'s clanker" + rest
 }
 
 // mentionLogins is "@a", "@a and @b" or "@a, @b and @c" for the given
@@ -1700,13 +1749,13 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
 		if base, approver := stagelabels.HumanApprovedReason(reason); stageTrackerManualMergeReason(base) {
-			c := "Awaiting human merge (" + humanizeStageReason(base) + ")"
+			c := "Ready to merge (" + humanizeStageReason(base) + ")"
 			if approver != "" {
 				c += " — approved by @" + approver
 			}
-			return c + "; the hive never merges this itself: click Merge (or /lgtm + /approve for tide)", "maintainer"
+			return c + " — a person merges it", "maintainer"
 		}
-		return joinClause("Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself", clause), "maintainer"
+		return joinClause("Ready to merge — a maintainer merges it", clause), "maintainer"
 	case stagelabels.PreMergeSoak:
 		return joinClause("Admitted by the automerge lane; the pre-merge soak window is running", clause), "automerge lane"
 	case stagelabels.MergeQueue:
@@ -1941,6 +1990,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	soakWindow := s.stageTrackerSoakWindow()
 	attempts := s.stageTrackerMergeAttempts()
 	workers := stageTrackerWorkersFromStatus(status)
+	isClankerOwner := stageTrackerIsClankerOwner()
 	adoptionClock := s.stageTrackerAdoptionClock()
 	rerouteCandidates, adoptionEnabled, takeoverGrace := s.stageTrackerRerouteCandidates(), s.stageAdoptionEnabled(), s.takeoverGrace()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
@@ -2050,12 +2100,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			// instead of the generic trust sentence (hivecommons/hive#15078).
 			if it.HumanMergeReason == stageengineprstage.HumanMergeReasonUntrustedAuthor {
 				if why := stageTrackerUntrustedAuthorWhy(base, it.Author); why != "" {
-					it.HumanMergeReasonText = "Untrusted author: " + why + ". Until then a maintainer merges — Approve & merge as maintainer, or Approve — let hive merge, from the row's ⋯ menu."
+					it.HumanMergeReasonText = "Hive won't merge it alone — " + why
 				}
 			}
 			// A person already took the trust call for this head (#15136).
 			if login := stagelabels.AdmissionLogin(it.AdmittedBy); login != "" {
-				it.HumanMergeReasonText = "Approved by @" + login + " as the owner decision (" + it.AdmittedBy + "): the hive merges this head as-is on its next pass once CI is green and the head has soaked, and does not adopt or re-author it. " + it.HumanMergeReasonText
+				it.HumanMergeReasonText = "@" + login + " approved it; hive merges it on its next pass"
 			}
 		}
 		if slices.Contains(it.Modifiers, modUnauthorized) || slices.Contains(it.DeferredModifiers, modUnauthorized) {
@@ -2082,8 +2132,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	prState := s.stageTrackerPRStateResolver(status, resp.RecentlyMerged)
 	prOpen := func(repo string, number int) bool { return prState(repo, number) == blockedOnPRStateOpen }
 	supersedes := stageTrackerSupersedesIndex(store, status.GitHubBaseURL)
+	lineage := stageTrackerLineageIndex(store, status.GitHubBaseURL)
 	issueFilter := s.issueFilterConfig()
-	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren) {
+	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren, advisoryHint *github.IssueAdvisory) {
 		// A closed issue has no stage; a stage label it closed wearing is
 		// the closed-issue sweep's to remove, not a row to render
 		// (hivecommons/homebrew-hive#127).
@@ -2133,9 +2184,21 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		finish(&it, issue.Labels, stage, rec, ok, false)
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
 		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL, prState)
-		applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
+		advisory := stageTrackerAdvisoryFor(issue.Labels, issue.Body, advisoryHint)
+		if advisory == nil {
+			applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
+		}
 		if it.Stage == trackerNumberClaimed {
 			it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
+		}
+		if stageTrackerClaimantStage(it.Kind, it.Stage) {
+			var worker *stageTrackerWorker
+			if w, ok := stageTrackerWorkerOn(workers, repoName, issue.Number); ok {
+				worker = &w
+			}
+			it.Claimant = stageTrackerIssueClaimant(stageTrackerClaimInputs{Ledger: s.stageTrackerLedgerClaim(repoName, issue.Number),
+				MarkerKind: issue.ClaimKind, MarkerHolder: issue.ClaimedBy, MarkerHive: issue.ClaimHive, Assignees: issue.Assignees,
+				Worker: worker, Since: it.StageSince, HiveID: status.HiveID, IsClankerOwner: isClankerOwner})
 		}
 		for _, lp := range issue.LinkedPRs {
 			// The claims index may still say "open" for a PR the hive closed
@@ -2151,6 +2214,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, nil, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
+		applyStageTrackerAdvisory(&it, advisory)
 		add(it)
 	}
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
@@ -2200,6 +2264,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if sup, ok := supersedes[stagelabels.Key(repoName, pr.Number)]; ok {
 			it.Supersedes = &sup
 		}
+		it.Lineage = stageTrackerLineageFor(lineage, repoName, pr.Number, pr.HeadRef, status.GitHubBaseURL)
 		info, found := superseded[github.ReviewQueueKey(qualifyRepo(repoName), pr.Number)]
 		if !found {
 			info, found = superseded[github.ReviewQueueKey(repoName, pr.Number)]
@@ -2229,6 +2294,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, agg, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
+		if stageTrackerClaimantStage(it.Kind, it.Stage) {
+			var worker *stageTrackerWorker
+			if w, ok := stageTrackerWorkerOn(workers, repoName, pr.Number); ok {
+				worker = &w
+			}
+			it.Claimant = stageTrackerPRClaimant(stageTrackerClaimInputs{Worker: worker, Since: it.StageSince, Labels: pr.Labels, Author: it.Author, AuthorKind: it.AuthorKind})
+		}
 		add(it)
 	}
 	for _, repo := range status.Repos {
@@ -2240,7 +2312,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		for _, it := range repoOpenItems(repo) {
 			switch {
 			case it.Kind == "issue" && !it.Sidelined:
-				addIssue(repoName, it.Issue, "", "", nil)
+				addIssue(repoName, it.Issue, "", "", nil, nil)
 			case it.Kind == "pr" && !it.Sidelined:
 				addPR(repoName, it.PR.pr, it.PR.verdict, "", "")
 			case it.Kind == "issue":
@@ -2248,7 +2320,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				// bucket, the open items the first tracker never showed.
 				w := it.WorkIssue
 				addIssue(repoName, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Assignees: w.Assignees,
-					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext, IsTracker: w.IsTracker, Children: w.Children}, w.Bucket, w.Reason, w.TrackerProgress)
+					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, ClaimHive: w.ClaimHive, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext, IsTracker: w.IsTracker, Children: w.Children}, w.Bucket, w.Reason, w.TrackerProgress, w.Advisory)
 			default:
 				w := it.WorkPR
 				addPR(repoName, github.PullRequest{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Draft: w.Draft,
@@ -2257,8 +2329,14 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
-	stageTrackerMergeTrainPostPass(resp.Items)
+	stageTrackerMergeTrainPostPass(resp.Items, mergeTrainQueueOptionsFrom(cfg, sweep, now), &s.mergeTrains)
+	stageTrackerMergeTrainStallWarnings(&s.mergeTrains, resp.Items, now)
+	stageTrackerLineageFillAuthors(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
+	// A row the operator just closed from the dashboard leaves at once,
+	// before GitHub's list catches up (hivecommons/hive#15436).
+	resp.Items = stageTrackerDropOperatorClosed(resp.Items, now, operatorActionClosedGrace())
+	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	s.applyDecidedProjection(resp.Items, now)
 	applyRebaseAttempts(resp.Items)
 	s.applyRebaseMergeFollowThrough(resp.Items, now)
@@ -2311,7 +2389,9 @@ var stageTrackerNeedsHumanMods = []string{modNeedsHuman, modNeedsDecision, modUn
 // action is the only thing that advances the item. A hold wins: a held
 // item is paused, not waiting on a person (hivecommons/hive#15008).
 func stageTrackerNeedsHuman(it StageTrackerItem) bool {
-	if stageTrackerOnHold(it) {
+	// An advisory waits on nobody: reading and closing it is a courtesy,
+	// not a decision the pipeline is parked on (hivecommons/hive#15381).
+	if stageTrackerOnHold(it) || it.Advisory != nil {
 		return false
 	}
 	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerNeedsHumanMods, m) }) {
@@ -2368,7 +2448,7 @@ func stageTrackerRegressionHandled(it StageTrackerItem) bool {
 // parked on a person. Only the shown Modifiers count, so a merge-gate pill
 // held back until the gate never promotes a row.
 func stageTrackerNeedsAttention(it StageTrackerItem) bool {
-	if stageTrackerRegressionHandled(it) {
+	if it.Advisory != nil || stageTrackerRegressionHandled(it) {
 		return false
 	}
 	return len(it.Modifiers) > 0 || slices.Contains(stageTrackerAttentionStages, it.Stage)
@@ -3000,11 +3080,13 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
+				lp.Claimant = pr.Claimant
 				lp.Adoption = pr.Adoption
 				lp.Presence = pr.Presence
 				lp.Rework = pr.Rework
 				lp.Takeover = pr.Takeover
 				lp.Supersedes = pr.Supersedes
+				lp.Lineage = pr.Lineage
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.AdmittedBy, lp.DCOUnsigned, lp.DCOTotal = pr.AdmittedBy, pr.DCOUnsigned, pr.DCOTotal
