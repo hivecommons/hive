@@ -1,0 +1,1 @@
+- Activity Monitor: a PR nested under its issue now draws its header on one line — connector, author icon, number, title, lineage chip and base-branch pill side by side with the title ellipsizing (full title on hover) — instead of stacking the connector, the title and the pill on three lines; issue titles and the top-level PR header ellipsize the same way.
