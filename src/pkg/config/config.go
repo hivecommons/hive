@@ -2893,6 +2893,14 @@ type StageAdoptionConfig struct {
 	// profile on this hive (another hive posted it; default 15m — no
 	// presence reads as offline).
 	AfterUnregistered string `yaml:"after_unregistered,omitempty"`
+	// OfflineGrace is the stage-stalled escape for an adoption attempt that
+	// opened nothing (the supersede's replay onto the base failed) while
+	// the author's clanker is still offline or unregistered: once the head
+	// has sat that long since the attempt (or the clanker's last heartbeat,
+	// whichever is later) it re-enters adoption instead of staying at
+	// 072/085 for a contributor who cannot act (default 30m;
+	// hivecommons/hive#15307).
+	OfflineGrace string `yaml:"offline_grace,omitempty"`
 	// InPlace lets the hive adopt by pushing to the PR's own branch when
 	// GitHub allows it (same-repo head or maintainer_can_modify) instead of
 	// opening a superseding App PR. nil = true.
@@ -2987,7 +2995,13 @@ func (c StageAdoptionConfig) StrictAttributionEnabled() bool {
 const (
 	DefaultAdoptAfterOffline      = 15 * time.Minute
 	DefaultAdoptAfterUnregistered = 15 * time.Minute
+	DefaultAdoptOfflineGrace      = 30 * time.Minute
 )
+
+// EffectiveOfflineGrace parses OfflineGrace (default 30m).
+func (c StageAdoptionConfig) EffectiveOfflineGrace() time.Duration {
+	return parseDurationOr(c.OfflineGrace, DefaultAdoptOfflineGrace)
+}
 
 // EffectiveAfterOffline parses AfterOffline (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
