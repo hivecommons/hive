@@ -38,8 +38,10 @@ func TestKickRecoveryHonorsRestartStormBackoff(t *testing.T) {
 			if agent.RestartCount != 0 || agent.kickEpoch != 0 {
 				t.Fatal("backed-off kick must not restart or invalidate the session")
 			}
+			// The fake tmux creates its log lazily; a missing log means the
+			// breaker short-circuited before any tmux call, which is fine.
 			log, readErr := os.ReadFile(fake.logPath)
-			if readErr != nil {
+			if readErr != nil && !os.IsNotExist(readErr) {
 				t.Fatal(readErr)
 			}
 			if strings.Contains(string(log), "kill-session") {
