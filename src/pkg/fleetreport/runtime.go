@@ -77,6 +77,7 @@ const (
 	ClassSelfReportClearedFailed    = "selfreport_cleared_comment_failed"
 	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
 	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
+	ClassProxyPlainForwardRefused   = "proxy_plain_forward_refused"
 	ClassInferenceUpstreamError     = "inference_upstream_error"
 	ClassInferenceCallerUnknown     = "inference_caller_unidentified"
 	ClassSHAPollCommitMsgUnavail    = "sha_poll_commit_message_unavailable"
@@ -191,6 +192,7 @@ var Classes = map[string]ClassSpec{
 	ClassSelfReportClearedFailed:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"fleet report: cleared comment failed"}},
 	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed"}},
+	ClassProxyPlainForwardRefused:   {Component: "github-proxy", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward refused"}},
 	ClassInferenceCallerUnknown:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference request from unidentified caller refused"}},
 	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
 	ClassSHAPollCommitMsgUnavail:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
