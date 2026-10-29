@@ -1,0 +1,1 @@
+- Dashboard: the Merged pill's odometer now rolls only after the celebration bee lands — the day/week line, a total the server had already raised, and merges over the flight cap no longer move the drum while a glyph is in the air; several merges in one flight are a single roll to the final value after the last landing, reduced motion sets both at once (#15568).
