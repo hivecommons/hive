@@ -1529,18 +1529,24 @@
     .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     /* Waiting-on pill without an adoption clock (071, 072 before the nudge, a human's PR): muted, hive PR 15051. */
     .ham-badge-waiting { color: var(--text-faint); border-color: var(--line-subtle); }
-    /* Presence indicator on a waiting-on pill (hive PR 15051): the person's
-       clanker is online (filled dot, --cue-decision: the hive waits), offline
-       (filled square, --status-error: adoption is the likely next move) or not
-       registered (hollow ring, faint). Shape carries the state, not colour
-       alone; the aria-label says it in words. Online breathes softly; nothing
+    /* Presence indicator on a waiting-on pill (hive PR 15051): who the row
+       waits on, drawn as the same glyphs the stage chevrons use — a person
+       for a human (nothing more: a human has no presence to report) or the
+       clanker's robot head with a small state dot beside it: online (filled
+       dot, --cue-decision: the hive waits), offline (filled square,
+       --status-error: adoption is the likely next move) or not registered
+       here (hollow ring, faint). Shape carries the state, not colour alone;
+       the aria-label says it in words. Online breathes softly; nothing
        moves under prefers-reduced-motion. */
-    .ham-presence { display: inline-block; width: 8px; height: 8px; margin-right: var(--sp-1); vertical-align: middle; box-sizing: border-box; flex: none; }
-    .ham-presence-online { border-radius: var(--r-pill); background: var(--cue-decision); animation: ham-presence-breathe 2.4s ease-in-out infinite; }
-    .ham-presence-offline { background: var(--status-error); }
-    .ham-presence-unknown { border-radius: var(--r-pill); border: var(--line-width) solid var(--text-faint); background: transparent; }
+    .ham-presence { display: inline-flex; align-items: center; gap: 2px; margin-right: var(--sp-1); vertical-align: middle; flex: none; }
+    .ham-presence-ico { stroke-width: 2; }
+    .ham-presence-dot { display: inline-block; width: 6px; height: 6px; box-sizing: border-box; flex: none; background: var(--ham-presence-color); }
+    .ham-presence-online { --ham-presence-color: var(--cue-decision); }
+    .ham-presence-online .ham-presence-dot { border-radius: var(--r-pill); animation: ham-presence-breathe 2.4s ease-in-out infinite; }
+    .ham-presence-offline { --ham-presence-color: var(--status-error); }
+    .ham-presence-unknown .ham-presence-dot { border-radius: var(--r-pill); border: var(--line-width) solid var(--text-faint); background: transparent; }
     @keyframes ham-presence-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
-    @media (prefers-reduced-motion: reduce) { .ham-presence-online { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .ham-presence-online .ham-presence-dot { animation: none; } }
     .ham-decision-presence { font-size: var(--fs-xs); color: var(--muted); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
@@ -14521,29 +14527,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return 'at ' + agentNowClockTime(at, nowMs) + ' (' + inWords + ')';
     }
     // The plain-words tooltip:
-    //   @Danathar's clanker: online, last seen 2 min ago — hive is waiting for them
-    //   @hanthor's clanker: offline 26h — hive will adopt at 15:10 (in 38m)
-    //   @zoe: no clanker registered — waiting for a human reply
+    //   Waiting on @Danathar's hive (clanker · online, last seen 2 min ago) — hive is waiting for them
+    //   Waiting on @hanthor's hive (clanker · offline 26h) — hive will adopt at 15:10 (in 38m)
+    //   Waiting on @zoe (human) — waiting for a human reply
     function stageTrackerPresenceTip(item, nowMs) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
       const now = Number(nowMs) || Date.now();
-      const who = '@' + p.login;
+      const hive = "Waiting on @" + p.login + "'s hive (clanker · ";
       const adopt = stageTrackerPresenceAdoptAt(p, now);
       let head, next;
       if (p.state === 'online') {
         const seenMs = Date.parse(p.last_seen || '');
-        head = who + "'s clanker: online" + (seenMs ? ', last seen ' + agentNowAgo(now - seenMs) : '');
+        head = hive + 'online' + (seenMs ? ', last seen ' + agentNowAgo(now - seenMs) : '') + ')';
         next = 'hive is waiting for them' + (adopt ? '; adopts ' + adopt + ' if nothing moves' : '');
       } else if (p.state === 'offline') {
         const gone = stageTrackerPresenceGone(p, now);
-        head = who + "'s clanker: offline" + (gone ? ' ' + gone : '');
+        head = hive + 'offline' + (gone ? ' ' + gone : '') + ')';
         next = p.next === 'adopt' && adopt ? 'hive will adopt ' + adopt : 'hive is waiting for them';
       } else if (p.kind === 'human') {
-        head = who + ': no clanker registered';
+        head = 'Waiting on @' + p.login + ' (human)';
         next = 'waiting for a human reply' + (adopt ? '; adoption ' + adopt : '');
       } else {
-        head = who + ': no clanker registered here';
+        head = hive + 'not registered here)';
         next = p.next === 'adopt' && adopt ? 'hive will adopt ' + adopt : 'hive is waiting for them';
       }
       return head + ' — ' + next;
@@ -14552,16 +14558,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerPresenceAria(item, nowMs) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
-      const word = p.kind === 'human' && p.state === 'unknown' ? 'human, no clanker' : STAGE_TRACKER_PRESENCE_WORDS[p.state];
+      const word = p.kind === 'human' ? 'human' : STAGE_TRACKER_PRESENCE_WORDS[p.state];
       return '@' + p.login + ': ' + word + ' — ' + stageTrackerPresenceTip(item, nowMs).split(' — ').slice(1).join(' — ');
     }
+    // The indicator: the chevrons' person glyph for a human (no dot — a
+    // human has no presence to report), the clanker's robot head with the
+    // online / offline / unknown dot beside it for a contributor's hive.
     function stageTrackerPresenceDotHtml(item, nowMs) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
-      return `<span class="ham-presence ham-presence-${p.state}" role="img" aria-label="${esc(stageTrackerPresenceAria(item, nowMs))}" data-ham-presence="${p.state}"></span>`;
+      const ico = stageTrackerIcon(p.kind, 'ham-ico ham-presence-ico', '');
+      const dot = p.kind === 'human' ? '' : '<i class="ham-presence-dot"></i>';
+      return `<span class="ham-presence ham-presence-${p.state} ham-presence-${p.kind}" role="img" aria-label="${esc(stageTrackerPresenceAria(item, nowMs))}" data-ham-presence="${p.state}" data-ham-presence-kind="${p.kind}">${ico}${dot}</span>`;
     }
     // Pill text with the indicator placed just before the @login (or
-    // leading, when the text names nobody): "waiting on ● @hanthor".
+    // leading, when the text names nobody): "waiting on [robot ●] @hanthor".
     function stageTrackerPresenceInPillHtml(item, text) {
       const dot = stageTrackerPresenceDotHtml(item, Date.now());
       const t = String(text || '');
@@ -14572,17 +14583,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // The waiting-on pill for a row with presence but no adoption line (071
     // Needs author, 072 before the first nudge, a human's PR): "waiting on
-    // ◯ @zoe (human · no clanker)".
+    // [person] @zoe" — the glyph says who, the title says the rest.
     function stageTrackerPresenceChipText(item) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
-      return 'waiting on @' + p.login + (p.kind === 'human' && p.state === 'unknown' ? ' (human · no clanker)' : '');
+      return 'waiting on @' + p.login;
     }
     function stageTrackerPresenceChipHtml(item) {
       const p = stageTrackerPresenceOf(item);
       if (!p || stageTrackerAdoptionTip(item)) return '';
       const tip = stageTrackerPresenceTip(item, Date.now());
-      return `<span class="ham-badge ham-badge-waiting" title="${esc(tip)}" aria-label="${esc('Waiting on — ' + tip)}">${stageTrackerPresenceInPillHtml(item, stageTrackerPresenceChipText(item))}</span>`;
+      return `<span class="ham-badge ham-badge-waiting" title="${esc(tip)}" aria-label="${esc(tip)}">${stageTrackerPresenceInPillHtml(item, stageTrackerPresenceChipText(item))}</span>`;
     }
 
     // "Sentinel flagged security-relevant changes at <head short sha>:
