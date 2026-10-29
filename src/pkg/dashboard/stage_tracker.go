@@ -1554,6 +1554,39 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	return joinClause("No stage recorded yet", clause), ""
 }
 
+// stageTrackerReviewWaitClause explains a review-pending head the swarm has
+// not finished: how many perspectives have reported, and, when the planner
+// has been passing the head over for lack of a reviewer, for how many
+// cycles and since when (hivecommons/hive#15229). "" when neither is known.
+func stageTrackerReviewWaitClause(agg *review.Aggregate, state review.DispatchState, fullRepo, repo string, number int, head string, now time.Time) string {
+	var parts []string
+	if agg != nil && agg.Verdict == review.VerdictIncomplete {
+		coverage := fmt.Sprintf("%s reported so far", plural(len(agg.Perspectives), "perspective"))
+		for _, r := range agg.Reasons {
+			if strings.HasPrefix(r, "review coverage incomplete") {
+				coverage = r
+				break
+			}
+		}
+		parts = append(parts, coverage)
+	}
+	wait, ok := state.WaitFor(fullRepo, number, head)
+	if !ok && fullRepo != repo {
+		wait, ok = state.WaitFor(repo, number, head)
+	}
+	if ok {
+		w := fmt.Sprintf("waiting for a free reviewer for %s", plural(wait.Cycles, "cycle"))
+		if !wait.FirstAt.IsZero() {
+			w += " since " + wait.FirstAt.UTC().Format("15:04") + " UTC"
+		}
+		if wait.Cycles >= review.ReviewWaitStarvationCycles {
+			w += "; promoted ahead of the queue"
+		}
+		parts = append(parts, w)
+	}
+	return strings.Join(parts, "; ")
+}
+
 // stageTrackerRegression fills the item's regression narration from the
 // record: the hop that opened the regression when History still has it,
 // else the record's fall time and current stage.
@@ -1724,6 +1757,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		verdictArtifact = &art
 	}
 	verdictFor := stageTrackerVerdictLookup(verdictArtifact)
+	// The planner's wait records (review.DispatchState.Waits): a review-
+	// pending head the swarm keeps passing over for lack of a reviewer
+	// says so in its caption instead of a bare "stalled" pill
+	// (hivecommons/hive#15229). Unreadable state just leaves the caption
+	// as it was.
+	var dispatchState review.DispatchState
+	if st, err := review.LoadDispatchState(""); err == nil {
+		dispatchState = st
+	}
 	sentinelLabel := s.sentinelLabel()
 	lookup := func(repo string, number int) (stagelabels.Record, bool) {
 		if store == nil {
@@ -1974,6 +2016,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		var agg *review.Aggregate
 		if a, ok := verdictFor(repoName, pr.Number, pr.HeadSHA); ok {
 			agg = &a
+		}
+		if it.Stage == trackerNumberReviewPending && it.Superseded == nil {
+			if clause := stageTrackerReviewWaitClause(agg, dispatchState, qualifyRepo(repoName), repoName, pr.Number, pr.HeadSHA, now); clause != "" {
+				it.Caption = joinClause(it.Caption, clause)
+			}
 		}
 		it.DecisionNeeded = stageTrackerDecisionNeededAt(it, agg, sentinelLabel, now)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
