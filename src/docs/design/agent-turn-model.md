@@ -275,18 +275,18 @@ apply.
 
 ## 3. What a restart actually does to a turn
 
-`Restart` (`src/crux/agent/manager_restart.go:722`) does not resume anything. In order:
+`Restart` (`src/crux/agent/manager_restart.go:572`) does not resume anything. In order:
 
 1. `C-c` into the pane and cancel the launch context
-   (`src/crux/agent/manager_restart.go:838-843`).
+   (`src/crux/agent/manager_restart.go:696-701`).
 2. Archive the scrollback *before* it is destroyed —
    `tearDownTurnLocked(agent, "restart")`
-   (`src/crux/agent/manager_restart.go:849`), with the comment that `kill-session`
+   (`src/crux/agent/manager_restart.go:707`), with the comment that `kill-session`
    destroys the only record of the previous run
-   (`src/crux/agent/manager_restart.go:845-848`).
+   (`src/crux/agent/manager_restart.go:703-706`).
 3. Reap the CLI process and any UID-owned helpers
-   (`src/crux/agent/manager_restart.go:866-876`).
-4. `tmux kill-session` (`src/crux/agent/manager_restart.go:878`).
+   (`src/crux/agent/manager_restart.go:724-734`).
+4. `tmux kill-session` (`src/crux/agent/manager_restart.go:736`).
 
 The replacement CLI starts with **no prompt at all** in the default case.
 `buildBootstrapPrompt` (`src/crux/agent/manager_env.go:19`) unconditionally returns `""`
