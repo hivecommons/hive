@@ -9,7 +9,6 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
@@ -138,13 +137,32 @@ type delegatedActivity struct {
 // reviews must not keep an absent contributor online. Read every page before
 // declaring absence; API failures abort gathering rather than authorizing adoption.
 // delegatedHumanAuthor reads the author-kind label (author/human by default,
-// renamed via governor.labels.author) from the PR's labels.
+// renamed via governor.labels.author) from the PR's labels. hive beats
+// clanker beats human when labels disagree, as in pkg/authorkind.
 func (s *Server) delegatedHumanAuthor(labels []string) bool {
-	names := authorkind.DefaultNames
+	human, clanker, hive := authorKindLabelPfx+authorKindHuman, authorKindLabelPfx+authorKindClanker, authorKindLabelPfx+authorKindHive
 	if s != nil && s.deps != nil && s.deps.Config != nil {
-		names = s.deps.Config.Governor.Labels.Author.Names()
+		a := s.deps.Config.Governor.Labels.Author
+		if strings.TrimSpace(a.Human) != "" {
+			human = a.Human
+		}
+		if strings.TrimSpace(a.Clanker) != "" {
+			clanker = a.Clanker
+		}
+		if strings.TrimSpace(a.Hive) != "" {
+			hive = a.Hive
+		}
 	}
-	return authorkind.FromLabels(labels, names) == authorkind.Human
+	isHuman := false
+	for _, l := range labels {
+		switch l = strings.TrimSpace(l); {
+		case strings.EqualFold(l, hive), strings.EqualFold(l, clanker):
+			return false
+		case strings.EqualFold(l, human):
+			isHuman = true
+		}
+	}
+	return isHuman
 }
 
 // isAuthorizedUserLogin: login is one of this hive's dashboard.authorized_users.
