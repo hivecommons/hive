@@ -148,7 +148,7 @@ func TestStageTrackerMergeGateNode(t *testing.T) {
 		`const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Review passed', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };`,
 		`60: 'Review passed', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging'`,
 		`const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs) : '';`,
-		`else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;`,
+		`else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + (actorIco || holderIco);`,
 		`if (gateInfo) tip = sg.label + ' — ' + gateInfo.tip;`,
 		`if (typeof stageTrackerGateCountdownSync === 'function') stageTrackerGateCountdownSync(el, nowMs);`,
 		`.ham-gate-ico { display: inline-flex;`, `.ham-gate-detail {`,

@@ -291,6 +291,11 @@
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
     .ham-holder { font-weight: normal; }
+    /* A word with a holder ("PR in progress · @bob's clanker") stays on one
+       line: the stage word keeps its width and the name gives way with an
+       ellipsis before anything wraps (hivecommons/hive#15541). */
+    .ham-seg-t.ham-has-holder, .ham-detour.ham-has-holder { display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%; white-space: nowrap; }
+    .ham-has-holder > .ham-holder { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }

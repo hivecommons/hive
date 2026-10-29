@@ -144,6 +144,8 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_CLAIMANT_SOURCE"),
 		jsFunc(t, html, "stageTrackerShortHive"),
 		jsFunc(t, html, "stageTrackerClaimant"),
+		jsConstLine(t, html, "STAGE_TRACKER_CLAIMANT_ICON"),
+		jsFunc(t, html, "stageTrackerClaimantIconKind"),
 		jsFunc(t, html, "stageTrackerClaimantShort"),
 		jsFunc(t, html, "stageTrackerClaimantLine"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_STATIC"),
