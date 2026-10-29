@@ -106,7 +106,7 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 						"state":       "OPEN",
 						"baseRefName": base,
 						"body":        s.prBodies[pr],
-						"url":         "https://x/pr/" + strconv.Itoa(pr),
+						"url":         "https://github.com/acme/widgets/pull/" + strconv.Itoa(pr),
 						"author":      map[string]any{"login": author},
 					},
 				}}})
@@ -117,7 +117,7 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 			s.mu.Unlock()
 			nodes := []map[string]any{}
 			if pr > 0 {
-				nodes = append(nodes, map[string]any{"number": pr, "url": "https://x/pr/" + strconv.Itoa(pr), "merged": true})
+				nodes = append(nodes, map[string]any{"number": pr, "url": "https://github.com/acme/widgets/pull/" + strconv.Itoa(pr), "merged": true})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": nodes}}}}})
 			return
