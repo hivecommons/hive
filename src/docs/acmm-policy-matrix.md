@@ -9,9 +9,21 @@ catch mistakes are put in place. Hive enforces each level in code: the level
 decides which agents run, in which policy mode, with which GitHub permissions.
 Background: [the ACMM paper](https://arxiv.org/abs/2604.09388).
 
+**Terms used in the tables:** a **PR** is a pull request proposing a code
+change; **CI** is continuous integration (automated checks); **GH Auth** means
+GitHub credentials. **Beads** are internal work-ledger entries, not GitHub
+issues. The **KB** is the knowledge base of reusable facts; an **RFC** is a
+request for comments on a proposed design. For a first deployment's trust
+choices, start with [Securing your hive](securing-your-hive.md).
+
 ## Policy Modes
 
-Each agent runs in one of four modes, controlling what actions it can take on GitHub.
+The four policy tiers below describe the main autonomy ladder. The roster also
+uses `issues-only` for measured/`ISSUES_ONLY` and `issues+prs` for
+`ISSUES_AND_PRS` (PR creation without merge authority). `converse` is an
+orthogonal comments/reviews capability, not a fifth autonomy level: the reviewer
+remains advisory but can authenticate to post reviews. Always read the role's
+level-specific qualifications, not just its template's `full` suffix.
 
 | Mode | Suffix | Beads | Issues | PRs | Merge | GH Auth |
 |------|--------|-------|--------|-----|-------|---------|
@@ -82,7 +94,22 @@ Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vu
 
 ### L5 — Semi-Autonomous (Semi-Automated) (14 agents)
 
-Agents open issues AND pull requests. Agent PRs get literal `hold` from the level gate — humans batch-review and approve. The dashboard `hive-pause/<hive-id>` label is a separate manual hold, and `hive/<hive-id>` is provenance only. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes, and adjudicator works escalated (`needs-human`) hive PRs through the reviewer lane every 30 minutes (recommend-close only; closing is operator-only below L6). Dedupe runs once a day, reads every open issue and PR, and posts one consolidation checklist issue per repository (near-duplicates, same-root-cause clusters, unlinked PR/issue pairs, already-resolved items), parked with `--needs-decision`; it never closes or edits anyone else's items. The system proposes; it does not merge autonomously.
+**Permission boundary:** agents open issues and PRs, but do not merge
+autonomously. Agent PRs get literal `hold` from the level gate for human
+batch-review and release. The dashboard `hive-pause/<hive-id>` is a separate
+manual hold; `hive/<hive-id>` records provenance only.
+
+**Specialist lanes:**
+
+- Architect produces RFCs; strategist coordinates across agents.
+- Reviewer works the hold-gated PR queue every 30 minutes.
+- Adjudicator works escalated (`needs-human`) Hive PRs through the reviewer
+  lane every 30 minutes. It may recommend closure, but below L6 only an operator
+  closes them.
+- Dedupe runs daily, reads all open issues/PRs, and posts one consolidation
+  checklist per repository (near-duplicates, common root causes, unlinked
+  PR/issue pairs and already-resolved items), parked with `--needs-decision`.
+  It never closes or edits anyone else's items.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -103,7 +130,56 @@ Agents open issues AND pull requests. Agent PRs get literal `hold` from the leve
 
 ### L6 — Autonomous (15 agents)
 
-Existing autonomous lanes can open issues, create PRs, and auto-merge on green CI. Auto-merge is off below L6; switching to L6 turns it on for every active repository, after which owners can toggle repositories individually. L6 PRs do not get the level hold, except outreach PRs into a repository the hive does not manage, which are still held for human review; outreach PRs into the hive's own repos auto-merge like any other lane's. Contributor PRs can merge through the contributor lane when the author has an operator-trusted tier or the conservative `auto_merge.contributor_tier.auto_promote_after_merged` clean-history ratchet admits them; reviewer verdict, CI, diff fences, soak and branch protection still apply. Hive never needs App Actions write for `action_required` workflow runs: when trusted same-repo bot/App/registry-trusted clanker PRs hit the workflow-approval banner, Hive posts `/ok-to-test` once per head and the repository's self-contained `hive-ok-to-test` workflow approves those runs with its `GITHUB_TOKEN`; if the workflow is absent or a `sentinel-alert` is present, Hive surfaces `workflow-approval-required:<ctx>` / stage 085 for a human decision. Outreach handles community engagement. Reviewer stays advisory unless the self-authored review gate is enforcing: `review.require_approval: true` (or `governor.review_gate.mode: enforce`) makes the App self-authored sweep require same-head aggregate approval, while `requires_human`/incomplete verdicts can be cleared by a trusted human's normal GitHub Approve review on that exact head. For Hive-authored PRs, `review.self_authored_decision_policy: resolve` (the default) lets the reviewer resolve every decision question itself except those in a named risk class (permissions/credentials, security, sensitive paths, data loss/irreversible, merge/trust policy, external side effects, licensing/legal, unverifiable) or marked `hive-decision-risk: high`; set `escalate` to park every decision question at 085. Swarm `changes_requested`/`reject` still requires a fix or direct human merge. Use actual holds or GitHub branch rules for a universal merge stop. Adjudicator is the reviewer lane: it repairs, de-escalates, or recommends closing (and may close) escalated `needs-human` hive PRs, and never merges. Dedupe posts the same daily consolidation checklist as at L5 and stays recommendation-only. Telemetry and operations remain paused and use `ISSUES_AND_PRS`, so they never merge their own PRs.
+**Permission boundary:** autonomous delivery lanes can open issues/PRs and
+eligible PRs can merge on green CI. Auto-merge is off below L6. Switching to
+L6 enables it for every active repository; owners can then toggle repositories
+individually. L6 does not remove other merge gates or grant every role merge
+authority.
+
+#### Destination and author exceptions
+
+- **Outreach:** no level hold for PRs into a repository managed by this hive.
+  Outreach PRs into another repository remain held for human review at every
+  level, including L6.
+- **Contributors:** the contributor lane admits operator-trusted authors or
+  those admitted by the conservative
+  `auto_merge.contributor_tier.auto_promote_after_merged` clean-history ratchet.
+  Review, CI, diff fences, soak and branch protection still apply.
+- **Nonmerging roles:** reviewer never merges. Adjudicator repairs,
+  de-escalates, recommends closure and may close escalated `needs-human` Hive
+  PRs at L6, but never merges. Dedupe stays recommendation-only. Telemetry and
+  operations stay paused and use `ISSUES_AND_PRS`, despite their `full`
+  template names; they never merge their own PRs.
+
+#### Review and decision gates
+
+The reviewer role remains advisory. Its verdict becomes an enforced merge gate
+when `review.require_approval: true` or `governor.review_gate.mode: enforce`
+is set. The App sweep checks current-head aggregate approval on self-authored,
+trusted-bot and trusted-author paths; it is not scanner-only.
+A trusted human merger's GitHub **Approve** review on that exact head can
+override any swarm outcome, including `changes_requested`/`reject`; the audit
+records who overrode which verdict. Other holds, CI, author admission, path
+fences and GitHub rules still bind. A head-bound `/hive decision approve`
+on an eligible Hive-authored PR can also answer `requires_human`; bare
+`/hive approve` cannot. See [the L6 gate contract](running-at-level-6.md#does-the-hive-reviewer-stop-a-merge).
+
+For Hive-authored PRs, `review.self_authored_decision_policy: resolve`
+(default) lets the reviewer resolve non-risk decision questions. The exceptions
+are permissions/credentials, security, sensitive paths, data loss/irreversible
+actions, merge/trust policy, external side effects, licensing/legal,
+unverifiable claims, or `hive-decision-risk: high`. Set `escalate` to park
+every decision question at PR stage 085. Use actual holds or GitHub branch
+rules for a universal merge stop.
+
+#### Workflow approval, not App Actions-write permission
+
+For trusted same-repo bot/App/registry-trusted clanker PRs with
+`action_required` workflow runs, Hive posts `/ok-to-test` once per head.
+The repository's self-contained `hive-ok-to-test` workflow approves the runs
+using its own `GITHUB_TOKEN`; the App needs no Actions-write grant. If that
+workflow is missing or `sentinel-alert` is present, Hive surfaces
+`workflow-approval-required:<ctx>` / PR stage 085 for human action.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -168,7 +244,16 @@ predate hive's first sight of, or write access to, the repo.
 4. **Mode escalation is per-agent.** At L4, some agents are measured (issues only) while others are holdgated (issues + PRs). The level defines the mix.
 5. **Knowledge priming works at all levels.** The `${KNOWLEDGE}` template variable injects relevant facts from git sources and wiki layers regardless of the agent's mode.
 6. **Brainstorm is always advisory.** It produces KB facts and beads, never GitHub issues or PRs. Its role evolves from inception (L1) to ongoing ideation (L2+), but its mode stays advisory at all levels.
-7. **Reviewer is in every pack from L2 up and never merges.** It joined the L5 and L6 rosters in [#8023](https://github.com/hivecommons/hive/issues/8023) and the L2, L3 and L4 rosters in [#13574](https://github.com/hivecommons/hive/issues/13574) (community vote 2026-10-22: review-first entry point at L2 and every level above), at a 30-minute cadence in every governor mode. At L2 it is COMMENT-only; at L3 and L4 it reviews the `hold`-gated queue with exactly the authority those levels already grant — comment and route to a human, no lgtm/approve/merge. Only L1 (observe-only) omits it, so an operator who wants repo-grounded PR review there creates it by hand and a pack apply leaves that agent's mode, model, backend, and pause state alone. Its mode stays `ADVISORY` at every level, including L6: it reads the queue, comments, and returns a verdict. `requires_human` or `reject` stops scanner eligibility only when `review.require_approval: true` requires same-head approval; the App auto-merge sweep does not read those verdicts. Use a hold or GitHub branch rule when merging must stop. See [Running at Level 6](running-at-level-6.md#does-the-hive-reviewer-stop-a-merge).
+7. **Reviewer is in every pack from L2 up and never merges.** It runs every
+   30 minutes in every governor mode. At L2 it is COMMENT-only; at L3/L4 it
+   comments on the held queue and routes to a human, with no lgtm/approve/merge
+   authority. L1 omits it; a manually created L1 reviewer's mode, model,
+   backend and pause state survive pack apply. Its mode remains `ADVISORY`,
+   including at L6. This role restriction is separate from the enforcing
+   review gate described above, which **does** read verdicts on the App sweep.
+   Use a hold or GitHub branch rule for a universal stop.
+   Roster history: [#8023](https://github.com/hivecommons/hive/issues/8023)
+   and [#13574](https://github.com/hivecommons/hive/issues/13574).
 8. **Telemetry and operations are L5/L6-only opt-in agents.** Below L5 they are absent from the pack roster and dashboard, do not spawn panes, and cannot be kicked. At L5–L6 they use a paused cadence in every governor mode until an operator opts in; they may open issues and PRs but never merge.
 
 ## ioscan hardening defaults per level
@@ -182,8 +267,8 @@ the pack only supplies the default when the hive leaves the key unset.
 | `ioscan.canaries` | **on** | **on** | Plants a per-kick `HIVE-CANARY-*` marker and scans agent egress for it. Default flipped on ([#7083](https://github.com/hivecommons/hive/issues/7083)) now that the egress scan is encoding-aware ([#6701](https://github.com/hivecommons/hive/issues/6701), [#6720](https://github.com/hivecommons/hive/issues/6720)). | `ioscan.canaries: false` |
 | `ioscan.fail_mode` | `open` | **`closed`** (set by the L5/L6 packs' `governor.ioscan_fail_mode`) | `open` redacts a Critical injection finding and continues the kick; `closed` blocks the kick and records an `ioscan_fail_closed` audit entry. | `ioscan.fail_mode: open` (or `closed` to opt in below L5) |
 
-`fail_mode: closed` is the default only at L5–L6 because those are the levels
-where agents can merge, so a Critical finding that slips through has the highest
+`fail_mode: closed` is the default only at L5–L6, where agent PR creation is
+broadest and L6 also permits merges, so a Critical finding that slips through has the highest
 blast radius. **The tradeoff is real and worth stating plainly: under `closed`,
 every Critical false-positive becomes a stalled queue item that an operator must
 clear by hand.** A hive that cannot absorb that operational load should set

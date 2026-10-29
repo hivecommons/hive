@@ -1,31 +1,21 @@
 # ClankeR contributor relay
 
-ClankeR lets a contributor lend their local AI CLI subscription to a hive. A contributor runs a small relay process on their machine; the hive assigns it real work — issues from the project's queue — and the contributor's agent executes each task locally with the CLI and model of their choice, reporting completion/PR metadata back over a WebSocket.
+ClankeR lets you lend your AI coding tool to a hive. A **CLI** is a command-line program; its **backend** is the tool selected for the relay to drive. A **hive** assigns tasks from a project's work queue. The **relay** runs on your machine, receives a task, drives your chosen tool/model, and reports the result, including any **PR** (pull request), over a WebSocket connection. Your **registration token** identifies you to that hive; it is separate from your coding-provider login and the task's GitHub credential.
 
 For labels that make work eligible or ineligible for contributors, see [Hive Labels and Control Signals](labels-and-control-signals.md). For help getting to your first PR, [Join our Discord](https://hivecommons.dev/discord).
 
-The relay turns a hive from a fixed set of resident agents into an elastic swarm: the admin curates *what* is offered (which repos, which labels, which models are acceptable), and contributors decide *how* it gets done (their CLI, their model, their compute, their tokens). The relay connects to `/api/contribute/ws`, receives one task at a time, runs the selected CLI in the contributor's environment, and reports the result back.
+The hive operator chooses eligible repositories, labels, and models. You choose the coding tool, model, and machine. Your provider credentials stay local; Hive supplies short-lived GitHub access for each assigned task.
 
-## How it fits together
+## Pick your route
 
-```mermaid
-sequenceDiagram
-    participant H as Hive<br/>(Governor Config → Hub tab<br/>curates the work queue)
-    participant R as Contributor machine<br/>(contributor relay + your CLI/model,<br/>tmux session)
+| You want to… | Read |
+| --- | --- |
+| Complete your first contributed task | [Basic setup](#basic-setup) → [Choosing a model](#choosing-a-model) → [Check your quota protection](#check-your-quota-protection) → [What happens on a task](#what-happens-on-a-task) |
+| Configure or troubleshoot a running contributor | [Operator reference](#operator-reference), [CLI backends](#choosing-a-cli-backend), or [repository scope](#contributor-repository-scope) |
+| Decide what a hive offers contributors | [Admin: configuring the queue](#admin-configuring-the-queue-governor-config--hub) and [claim behavior](#how-the-hub-picks-work-for-contributors) |
+| Implement or debug a relay | [Protocol and implementation reference](#protocol-and-implementation-reference), [DECLARE](#capability-declaration-declare), and [compatibility](#protocol-compatibility) |
 
-    R->>H: connect wss://<hive>/api/contribute/ws<br/>(registration token, CLI backend, model)
-    H-->>R: accept — or reject if the model<br/>fails the Model Filter
-    H->>R: task assign (queued issue + short-lived GitHub token)
-    loop while task runs
-        R->>H: progress (every 2 min) + heartbeat (30 s)
-    end
-    R->>H: result (PR opened / success / failure)
-```
-
-- The **work queue** is built from the hive's monitored repos: open candidate issues that pass every contributor admission gate (including disabled repositories, holds, cooldowns, in-flight work, dependencies, assignments, and the admin's title/author/label filters). `GET /api/contribute/status` reports that offerable total as `actionable_items`; its additive `candidate_items` field is the raw pre-admission scanner population. `GET /api/contribute/queue` returns the bounded ordered rows plus the uncapped offerable `queue_total` and separately visible `held_total`.
-- The **relay** authenticates with a registration token, receives one task at a time, drives the local CLI inside a tmux session, injects a short-lived GitHub token for the PR, and reports the result. It heartbeats every 30 s and reconnects with exponential backoff; a task is abandoned if the relay observes no forward progress for 30 minutes, or if it crosses an absolute 4-hour backstop. The GitHub token is valid for 55 minutes and is re-minted by the hub before it expires, so a task may outlive any single token ([below](#the-github-token-outlives-the-task-because-the-hub-re-mints-it)).
-- Every contributor has a **trust tier** with per-tier rate limits. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
-- Hives **advertise a few open issues** to newcomers: issues that score as small and well-specified get GitHub's `good first issue` + `help wanted` labels and a welcome comment that deep-links this page for that issue (`/contribute?issue=<owner>/<repo>%23<n>`) with the claim → DCO-signed PR → `Fixes #n` steps. The label is not a reservation — if a hive agent starts the issue first the label comes off — so claim first. See [Hive-curated good first issues](good-first-issue.md).
+You do not need the operator or wire-protocol sections to start one relay. In those sections, a **lease** is temporary task ownership; a **claim** reserves an issue; a **fence** rejects stale results from an old assignment; **mint** means issue a short-lived token; and **admission** means checking whether work is allowed. A runtime **incarnation** identifies one lifetime of a process. “Pane chrome” means terminal status decorations, not task output. Stage `072` means returning an existing PR to its contributor for repair, not starting a new issue.
 
 ## Basic setup
 
@@ -36,10 +26,27 @@ requires no host GitHub or provider CLI installation.
 
 ### From source
 
-From a checkout of this repository:
+Use this route to run the relay from a **`hivecommons/hive` checkout**, not from the documentation-site repository. The `justfile` is at the Hive repository root.
+
+Before registering, have:
+
+- Git and [`just`](https://just.systems/) installed, plus GitHub CLI (`gh`) and a GitHub account you can sign in to.
+- Your selected [coding backend](#choosing-a-cli-backend) and its provider authentication ready. The host preflight checks the host CLI/login; container mode runs the image's copy, so also check that the image supports that backend.
+- A running Docker or Podman for the recommended container route. Native `local` mode instead needs host tools including Node and tmux and the backend-specific confinement/consent requirements below; it is not equivalent to a container.
+- A hive chosen from the [Hive Hub](https://hive.hivecommons.dev). Open **that hive's `/contribute` page** for its current address and backend-specific setup instructions.
+
+If you do not already have a Hive checkout:
+
+```bash
+git clone --branch v5 https://github.com/hivecommons/hive.git
+cd hive
+```
+
+From that checkout's root, replace `hive.example.com` with the host from the chosen hive's `/contribute` page. It is only a placeholder. This example uses Claude; choose your backend before running setup:
 
 ```bash
 export HIVE_HUB=wss://hive.example.com/contribute
+just contribute-check claude
 just contribute-setup claude
 just contribute-hive
 ```
@@ -47,15 +54,6 @@ just contribute-hive
 `compose-contributor.yaml`, `Dockerfile.contributor`, and the `just contribute-hive` recipe are the reference container path. Native mode is available through `just contribute-hive <backend> local` when a container runtime is not desired.
 
 `contribute-setup` is one-time per hive: it registers you (your GitHub identity plus a registration token stored in `${HOME}/.config/hive/contributor.env`), authenticates `gh`, and verifies the CLI backend you chose. Every hive also serves a landing page at **`https://<hive-dashboard>/contribute`** with live queue stats and copy-paste setup commands tailored to the CLI you pick.
-
-Operators can publish a short **Help & community** link list with
-`contribute.help_links` (also editable from Governor → Hub and `/contribute`
-Management). The dashboard shows those links on Onboarding and Operations, and
-the hub includes them in `auth_ok` so the relay prints them once when it
-connects. Use it for contributor docs, Discord/Slack invites, or a maintainer
-issue queue. Discord `https://discord.com/channels/<server>/<channel>` URLs only
-work for people already in that server; use `https://hivecommons.dev/discord` if
-new contributors need to join the Hive Commons Discord.
 
 `contribute-hive` starts the relay in one of two modes:
 
@@ -82,14 +80,6 @@ the corresponding cgroup controller.
 
 These overrides affect the `just contribute-hive` container only; Kubernetes
 keeps the resource requests and limits rendered in its generated manifest.
-
-Run-stage work uses per-stage git worktrees instead of sharing a dirty checkout
-between concurrent stages. The hub keeps a shared source clone and creates
-worktrees under the workspace root as `runs/<run-key>/<stage>-<generation>`,
-starting each from the target branch. The default live-worktree cap is eight
-(`runs.max_worktrees`); a ninth concurrent run-stage kick is refused and audited
-rather than reusing another stage's tree. Reclaiming or completing a stage
-removes its worktree.
 
 Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.
 
@@ -156,7 +146,64 @@ Start the relay from the directory you want to use as its workspace:
 hive-contribute
 ```
 
+## Choosing a model
+
+Set the model before starting the relay:
+
+```bash
+export AGENT_MODEL=claude-sonnet-4-6   # or gpt-4o, gemini-2.5-pro, …
+just contribute-hive
+```
+
+(`GOOSE_MODEL` is honored for goose.) The model is declared to the hive when the relay connects. If the hive's Model Filter rejects it, the relay prints the hive's accepted patterns and exits — switch models and reconnect:
+
+```text
+This hive accepts the following models:
+  - claude-opus*
+  - claude-sonnet*
+Set your model: export AGENT_MODEL=<model>
+```
+
+For model detection and OMP advisor details, see [Model reporting details](#model-reporting-details).
+
+## Check your quota protection
+
+The quota guard checks your provider's remaining allowance **before accepting new work**. Its default reserve is 20%; it is not a guarantee that a task cannot exhaust a window or spend paid credits. Protection requires a usable reading for the correct provider/account.
+
+| Backend/source | Protection you can rely on |
+| --- | --- |
+| Automatic-reader candidates `claude`, `codex`, `agy`, `gemini`, `kiro` | A working publisher, installed provider CLI, matching credentials/account, and usable reading are required. This is the guard's reader set, **not** a promise that every candidate is a contributor backend (Gemini, for example, has no relay launch wiring). |
+| `pi` | **No built-in compatible reader**, including `openai-codex`, `openrouter`, and `anthropic` models. Supply an explicit reading for the selected Pi provider/account; Claude/Codex credential stores are not substitutes. |
+| Other backend or custom reader | Supply `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` or `_JSON` as documented in [Provider adapter sources](#provider-adapter-sources). A provider adapter existing elsewhere does not mean the relay automatically reads it. |
+
+Read the relay's startup/hold diagnostics, not only its connected status:
+
+- `unprovisioned` means there is no usable route to a reading: **work is admitted without quota protection**, with a warning.
+- A configured reading that is missing, malformed, `unknown`, or `stale` **holds** work. A fresh publisher marker can also make a missing automatic reading hold.
+- A low reading names the window/reserve; a held relay retries automatically. An explicit contributor pause still wins when headroom returns.
+
+With an explicitly configured shared pool, `just contribute-quota status` inspects its scoped controls; use the **same pool/account/backend configuration** as the running relay. It is not proof of provider headroom by itself. Do not select `continue-*` or turn the guard `off` just to make setup look successful. See [shared-pool setup](#sharing-one-quota-reserve-across-those-relays), [guard policy](#the-contributor-quota-guard-holds-before-the-provider-refuses), and [publisher mechanics](#how-the-reading-reaches-the-guard-kubestellarhive6967) for reserves, consent, markers, and mixed-version rules.
+
+## What happens on a task
+
+1. A successful connection logs `Connected to …`, followed by `Authenticated with … as … (tier: …)`. Authentication is not yet a task assignment.
+2. The hive assigns an issue that fits your trust tier and its filters. If it says `No task assigned … reason: no_matching_work`, the relay is connected and waiting; it retries. Other reasons may require the hive operator, not another registration.
+3. The relay prepares the checkout, injects a short-lived GitHub token, and drives your coding CLI. In interactive mode, use the **attach command printed by your launch** to watch the tmux session. Container mode prints the Docker/Podman form; native mode prints `tmux attach`. Headless backends have no interactive pane.
+4. Progress is reported every 2 minutes; completion/PR metadata is reported when the CLI finishes. Check the linked PR and its checks, not just a local “success” line. PRs retain the task's base branch, required hold gates, and DCO sign-off (`git commit -s`).
+5. To stop your foreground relay, press **Ctrl-C** in the terminal running it; detaching from tmux is not stopping the relay. The relay cleans up its connection. If work is in flight, it is not thereby completed: inspect the PR/worktree and the hive's recorded task state before deleting local work or starting another relay.
+
+Completed tasks that open a PR count toward automatic trust-tier promotion and the public `/leaderboard`. Contributors receive short-lived task credentials, not long-lived repository credentials. [Task execution reference](#task-execution-reference) explains checkout, base-branch, and recovery safeguards.
+
+## Operator reference
+
+The first-task route ends above. The following sections cover custom launch settings, multiple sessions/hives, queue administration, and failure recovery; the wire protocol is separated below.
+
+Operators can publish a short **Help & community** list with `contribute.help_links` (Governor → Hub and `/contribute` Management). Onboarding and Operations show it, and `auth_ok` sends it for the relay to print once. Use joinable community links: Discord `https://discord.com/channels/<server>/<channel>` URLs require existing server membership; `https://hivecommons.dev/discord` lets newcomers join.
+
 ## Docker Compose workflow
+
+<details>
+<summary>Direct Compose, environment variables, and launch-boundary reference</summary>
 
 The containerized path is `src/compose-contributor.yaml` plus `src/Dockerfile.contributor`; the `just contribute-hive` recipe wraps it. From the repository root you can also run Compose directly after `just contribute-setup` has written `${HOME}/.config/hive/contributor.env`:
 
@@ -202,7 +249,7 @@ Important environment variables:
 | `HIVE_SESSION` | backend name (`AGENT_BACKEND`) | Optional session label for running multiple relays under one GitHub account (see [Running multiple backends under one account](#running-multiple-backends-under-one-account)). Relays with distinct labels get independent session-scoped identities (`ContributorID#session`) on the hub, so their task leases, assignment cooldowns, failure streaks, and ownership fences do not collide. Auth, trust tier, model admission, and rate-limit accounting stay per-account. Sanitized on the hub: only `[A-Za-z0-9._-]` survive, capped at 32 bytes; a label that sanitizes to empty counts as unset. Set it to the **empty string** to opt out — the relay then declares no session and keeps the bare per-account identity (the historical single-session behavior). |
 | `HIVE_CONTRIBUTOR_TEAM_METADATA` | unset | Opt in to the lightweight team-structure metadata used by `/api/leaderboard/teams` and the Leaderboard tab's team leagues. When set to `1`, `true`, `yes`, or `on`, the relay sends only distro/OS family (`/etc/os-release` ID, NAME, VERSION_ID, ID_LIKE on Linux), kernel release (`uname -r`), and agent backend. It never sends hostnames, local usernames, IPs, or hardware IDs. |
 | `HIVE_TEAM_OS_FAMILY` / `HIVE_TEAM_OS_ID` / `HIVE_TEAM_OS_NAME` / `HIVE_TEAM_OS_VERSION_ID` / `HIVE_TEAM_OS_ID_LIKE` / `HIVE_TEAM_KERNEL_RELEASE` / `HIVE_TEAM_AGENT_BACKEND` | auto-detected when team metadata is enabled | Optional overrides for the opt-in team declaration. Use these when a container should represent the host distro, a WSL relay should declare Windows/WSL, or an operator wants to join a cultural team without exposing exact release text. |
-| `HIVE_CONTRIBUTOR_QUOTA_GUARD` | `ask` | Contributor-local subscription quota guard mode. `ask` and `pause` hold new work when a normalized quota window is at or below the configured reserve; `off` is the explicit launch-time opt-out for this relay session. Headless/no-response sessions wait safely rather than spending the last quota headroom. The guard can only act when a reading source is available — either `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` / `HIVE_CONTRIBUTOR_QUOTA_READING_JSON`, or, for a **supported subscription backend** (`claude`, `pi`, `codex`, `agy`, `gemini`), the reading the Go rotation probers publish — into `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` when that is set, otherwise the per-install derived pool directory, so publishing is default-on (kubestellar/hive#6967, kubestellar/hive#6987). The publisher no longer requires provider rotation to be enabled: when `governor.rotation.enabled` is false (the default), the spoke runs a publish-only prober loop that publishes readings without rotating anything, so any host running `hive` gets a publisher. A host running **only** the relay (no local `hive` process) gets its publisher from the standalone contributor launch paths instead (`hive-quota-publisher`, hivecommons/hive#10299, below); with that opted out or unavailable it stays on this guard's no-source behaviour. With none of those it has nothing to read, logs that it is not guarding anything, and admits work. |
+| `HIVE_CONTRIBUTOR_QUOTA_GUARD` | `ask` | `ask` and `pause` hold new work at or below the effective reserve **when a reading source exists**. `off` is explicit session opt-out, not protection. No-source `unprovisioned` admits with a warning. See the [reader support table](#check-your-quota-protection) and [publisher mechanics](#how-the-reading-reaches-the-guard-kubestellarhive6967); Pi needs an explicit reading. |
 | `HIVE_CONTRIBUTOR_QUOTA_MIN_REMAINING_PCT` | `20` | Default remaining-percentage reserve for every quota window, **including kinds this build does not recognize** — an exhausted unfamiliar window holds work rather than being skipped, because providers add window kinds over time (`weekly_scoped` was one). A *healthy* unrecognized window still admits. Valid range is `0`–`100`; invalid values fail relay startup with a message naming the bad variable. The reserve reduces the chance of consuming paid/extra usage but cannot guarantee a task will finish within a provider window. |
 | `HIVE_CONTRIBUTOR_QUOTA_SHORT_MIN_REMAINING_PCT` | unset | Optional short-window reserve override for normalized `session`/`five_hour` quota windows; inherits `HIVE_CONTRIBUTOR_QUOTA_MIN_REMAINING_PCT` when unset. |
 | `HIVE_CONTRIBUTOR_QUOTA_WEEKLY_MIN_REMAINING_PCT` | unset | Optional weekly reserve override for normalized `weekly` and `weekly_scoped` quota windows; inherits `HIVE_CONTRIBUTOR_QUOTA_MIN_REMAINING_PCT` when unset. |
@@ -339,6 +386,8 @@ To change hubs for direct Compose, run `hivectl hives use <name>` (see [Named pr
 
 Backend credentials stay local to the contributor container. For example, `AGENT_BACKEND=bob` needs `BOBSHELL_API_KEY` in the container environment, while LiteLLM-style backends need their endpoint/key variables (`HIVE_LITELLM_ENDPOINT`, `HIVE_LITELLM_API_KEY` — exported locally, never sent to the hive).
 
+</details>
+
 ## Choosing a CLI backend
 
 The relay speaks to whatever backend you set up — pass it to `contribute-setup` and (in host mode) to `contribute-hive`:
@@ -409,7 +458,7 @@ Relays that resolve to the same opaque pool key then share one guard state throu
 
 ### How the reading reaches the guard (kubestellar/hive#6967)
 
-The guard evaluates a reading; something has to produce it. The Go rotation probers already normalize each provider's usage into windows (`kind`, `pct_remaining`, `resets_at`). The hive process publishes that normalized reading into the pool directory as `<poolKey>.reading.json`, written atomically (temp file + rename). A **supported** subscription backend (`claude`, `pi`, `codex`, `agy`, `gemini`) with no explicit `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` / `_JSON` then reads its guard reading from that pool-keyed path automatically — the same pool key on both sides, so a relay always finds the file written for its own pool.
+The guard evaluates a reading; something has to produce it. The Go rotation probers normalize provider usage into windows (`kind`, `pct_remaining`, `resets_at`). The hive process publishes readings into the pool directory as `<poolKey>.reading.json`, written atomically (temporary file + rename). The relay's automatic-reader set is `claude`, `codex`, `agy`, `gemini`, and `kiro`; with no explicit `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` / `_JSON`, those candidates use the pool-keyed path. A reader candidate is not necessarily a launchable relay backend. **Pi is excluded**: it needs an explicit source for its actual provider/account, as described in [Provider adapter sources](#provider-adapter-sources).
 
 **Publishing is default-on for supported backends (kubestellar/hive#6987, satisfying #6967 criterion 1).** The pool directory no longer has to be hand-configured. When `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` is unset, both the Go publisher (`rotation.DefaultContributorPoolDir`) and the JS relay (`defaultContributorPoolDir`) derive the same per-install directory: `$XDG_CONFIG_HOME` (honoured explicitly first, exactly as the hivectl session cache does, because Go's `os.UserConfigDir` ignores it on darwin) or the platform user-config dir, joined with `hive/contributor-quota`. The two derivations must stay byte-for-byte identical or the publisher writes where the relay never reads — the same parity the shared pool-key vectors pin (`TestDefaultContributorPoolDir_XDGParity` on the Go side, `#6987 defaultContributorPoolDir matches Go under XDG_CONFIG_HOME` on the JS side). An explicit `HIVE_CONTRIBUTOR_QUOTA_POOL_DIR` still overrides the location.
 
@@ -426,7 +475,7 @@ The publisher **starts and stops with the contributor**, so a stopped contributo
 - `HIVE_CONTRIBUTOR_QUOTA_PUBLISH` is `0`/`false`/`off`/`no`: the explicit opt-out. Anything else (including unset) publishes.
 - `HIVE_CONTRIBUTOR_QUOTA_GUARD=off`: nothing would read the reading, so nothing is probed.
 - `HIVE_CONTRIBUTOR_QUOTA_READING_FILE` or `_JSON` is set: the operator has declared where readings come from, and a second publisher would compete with it for the same pool.
-- The backend is not one of the guard-supported subscription backends (`claude`, `pi`, `codex`, `agy`, `gemini`, `kiro`): it is named as unsupported at startup rather than left waiting for a reading that can never be produced.
+- The backend is not one of the guard-supported automatic-reader candidates (`claude`, `codex`, `agy`, `gemini`, `kiro`): it is named as unsupported at startup rather than left waiting for a reading that can never be produced. This includes Pi.
 
 In local mode a host with neither an installed binary nor a Go toolchain keeps the previous no-publisher behaviour and prints a note pointing here; nothing about the guard's own semantics changes in that case.
 
@@ -453,34 +502,13 @@ just contribute-quota status                 # show the relay's current hold and
 
 Every override is narrowly scoped and expires mechanically, so none silently becomes a standing authorization to spend: `continue-once` is consumed after exactly one admitted assignment; `continue-until-reset` and `pause-until-reset` expire the moment that exact window reports a new reset epoch; `disable-session` expires when the session process exits. An override only ever authorizes spending below *your own* configured reserve — it never bypasses an unknown/unreadable quota (that still holds), and it never enables paid credits or changes any provider billing setting. `pause` mode holds the same way but offers no override path; `off` disables the guard for the session.
 
-## Choosing a model
-
-Set the model before starting the relay:
-
-```bash
-export AGENT_MODEL=claude-sonnet-4-6   # or gpt-4o, gemini-2.5-pro, …
-just contribute-hive
-```
-
-(`GOOSE_MODEL` is honored for goose.) The model is declared to the hive when the relay connects. If the hive's Model Filter rejects it, the relay prints the hive's accepted patterns and exits — switch models and reconnect:
-
-```text
-This hive accepts the following models:
-  - claude-opus*
-  - claude-sonnet*
-Set your model: export AGENT_MODEL=<model>
-```
+### Model reporting details
 
 When `AGENT_MODEL` is unset, the relay reports the model the CLI is actually running where the CLI records one locally — claude, copilot and bob from their session transcripts ([#4117](https://github.com/hivecommons/hive/issues/4117)), and omp from its own config and session records ([#7760](https://github.com/hivecommons/hive/issues/7760)). omp chooses its models in `~/.omp/agent/config.yml` rather than from a flag, so an omp contributor rarely sets `AGENT_MODEL` at all; the relay reads `modelRoles.default` (and the newest session's `model_change` record, so a mid-task `/model` switch is reflected on the next progress tick), splits the `:level` suffix off into the reasoning effort, and reports the primary as `provider/model`. When omp's `--advisor` is on — `advisor.enabled: true`, or an `__advisor.jsonl` sidecar beside the session — the advisor's `modelRoles.advisor` selection is reported too, as `advisor_model` / `advisor_reasoning_effort`, so a contributor whose work is done by one model and reviewed by another shows both: `openai-codex/gpt-5.6-terra (medium) + advisor anthropic/claude-opus-5 (high)` in the fleet view, the activity rail, the run rows, and the `— hive:` trailer on the PRs it opens (`… model=openai-codex/gpt-5.6-terra effort=medium advisor=anthropic/claude-opus-5 advisor_effort=high`). `AGENT_MODEL` / `AGENT_REASONING_EFFORT` still win for the primary when set; the advisor has no env var and is always what omp records. A bare omp with no advisor, or any other single-model backend, reports exactly what it did before — the advisor fields are omitted, not empty. One caveat ([#7922](https://github.com/hivecommons/hive/issues/7922)): omp writes no session until its first turn, so until then `modelRoles.default` is the only source, and it says what omp is *set* to run, not what it resolved — an omp whose stored credential for that provider has been disabled (a revoked OAuth refresh token) quietly resolves some other provider's model instead. The relay therefore checks the credential store omp runs against: when the configured provider's credential is disabled, no model is reported and the relay withholds `ready` (logging the cause omp recorded and the fix — sign in again on the host and restart) rather than advertise `claude-sonnet-5` for a container that would work tasks on a local fallback model. A mid-task `Error: No API key found for <provider>. Use /login …` in the pane is classified as blocked on a human, the same as claude's `Please run /login`.
 
-## What happens on a task
+## Task execution reference
 
-1. The hive assigns an issue that fits your trust tier's rate limits and passes the admin's filters.
-2. The relay writes the task context, injects a short-lived GitHub token, and drives your CLI in a tmux session (attach to it to watch — or intervene).
-3. Progress is reported back every 2 minutes; the result (PR opened, success/failure) is reported when the CLI finishes.
-4. Completed tasks that open a PR count toward automatic tier promotion — and toward the hive's public `/leaderboard`.
-
-Contributors never hold long-lived repo credentials: the relay receives short-lived GitHub tokens per task, and API keys for the contributor's own model provider never leave their machine.
+Run-stage work uses per-stage git worktrees instead of sharing a dirty checkout between concurrent stages. The hub keeps a shared source clone and creates worktrees under the workspace root as `runs/<run-key>/<stage>-<generation>`, starting each from the target branch. The default live-worktree cap is eight (`runs.max_worktrees`); a ninth concurrent run-stage kick is refused and audited rather than reusing another stage's tree. Reclaiming or completing a stage removes its worktree.
 
 ### The checkout path reaches the agent as a literal, not as `$HIVE_WORKSPACE_DIR`
 
@@ -984,21 +1012,76 @@ The generated Secret contains the registration token and `GH_TOKEN` as Kubernete
 
 Owners and read-write operators can use the Operations page's **Message** action on a contributor card (or after a run-history lookup) to send a short note to exactly that contributor ([#8461](https://github.com/hivecommons/hive/issues/8461)). The hub stores the note on the recipient's contributor profile until the contributor acknowledges it, shows it as a banner on their signed-in `/contribute` Operations/Profile pages, and pushes it to every live relay connection for that same contributor identity. The relay prints the note as "Message from the hive operator" (reverse video on a TTY unless `NO_COLOR` is set) and strips terminal control characters before output; the text is never passed to the agent CLI as input. Acknowledgement, and an optional short reply, are recorded back on the profile so operators can see whether the message was delivered and read.
 
+## Protocol and implementation reference
+
+This section is for operators diagnosing admission and authors maintaining a compatible relay. It is not a second setup procedure. Practical [repository selection](#contributor-repository-scope) is above; the later [repository-scope wire reference](#contributor-repository-scope-1) describes messages and compatibility.
+
+## How it fits together
+
+```mermaid
+sequenceDiagram
+    participant H as Hive<br/>(Governor Config → Hub tab<br/>curates the work queue)
+    participant R as Contributor machine<br/>(contributor relay + your CLI/model,<br/>tmux session)
+
+    R->>H: connect wss://<hive>/api/contribute/ws<br/>(registration token, CLI backend, model)
+    H-->>R: accept — or reject if the model<br/>fails the Model Filter
+    H->>R: task assign (queued issue + short-lived GitHub token)
+    loop while task runs
+        R->>H: progress (every 2 min) + heartbeat (30 s)
+    end
+    R->>H: result (PR opened / success / failure)
+```
+
+- The **work queue** includes monitored-repository candidates that pass disabled-repository, hold, cooldown, in-flight, dependency, assignment, and title/author/label gates. `GET /api/contribute/status` reports the offerable total as `actionable_items` and the raw scanner population as `candidate_items`. `GET /api/contribute/queue` returns bounded ordered rows, uncapped `queue_total`, and separate `held_total`.
+- The **relay** authenticates with its registration token and renews heartbeats every 30 s, reconnecting with exponential backoff. No forward progress for 30 minutes abandons a task; an absolute 4-hour backstop also applies. A task GitHub token lasts 55 minutes and is re-minted before expiry, so the task may outlive one token; see [token renewal](#the-github-token-outlives-the-task-because-the-hub-re-mints-it).
+- A **trust tier** controls per-tier rate limits; see [trust tiers and delegated roles](contributor-trust-and-roles.md).
+- Hives advertise small, well-specified issues with `good first issue` and `help wanted` labels and a welcome link (`/contribute?issue=<owner>/<repo>%23<n>`). A label is not a reservation: claim before starting, sign the PR with DCO, and use `Fixes #n`. See [Hive-curated good first issues](good-first-issue.md).
+
 ## How the hub picks work for contributors
 
-Two admission behaviors are worth knowing when your relay seems idle:
+A claim means Hive has evidence that an issue is already being worked on or may already be fixed. **PR-evidence claims** and **worker ownership claims** are separate ledgers, with different lifetimes.
+
+### Current PR-evidence behavior (v5)
+
+The contributor queue and resident-agent enumeration use the evidence differently. Do not treat “visible to a resident agent for verification” as “available to a contributor for another implementation.”
+
+| Evidence class | Contributor queue | Resident-agent enumeration | End/recovery |
+| --- | --- | --- | --- |
+| Open hive-authored closing PR | Withheld while the ledger reports coverage | Suppressed unless the required-check red+stale release applies | An authoritative scan removes a PR that closes unmerged; a maintainer should inspect the linked PR rather than start another fix. |
+| Open external PR | Withheld while the ledger reports coverage; the live open-PR-link guard can also catch links newer than the ledger | Suppressed unless red+stale | A still-open PR refreshed by scans is **not guaranteed to release after 72h**. Resolve the linked PR or ask a maintainer what remains. |
+| Open hive-authored non-closing reference (`Refs #N`) | A retained ledger record still withholds the contributor item | Kept visible with linked-PR context for verification | It is not a trusted assertion that the whole issue is finished. Closing/removing the live evidence lets authoritative reconciliation drop it. |
+| Strong merged claim or verified `no_work_needed` settlement | Retained and withheld while the issue keeps being enumerated open; after 7 days the reason is `merged_claim_stale` | Merged evidence stays visible as verification context rather than a blanket suppression | Ask a maintainer to close the issue or identify remaining work. Retention is 30 days **since last seen open**, not 72h since merge. A reopen after the merge voids that merged claim. |
+| Weak merged claim (reference-only or external-author evidence) | Withheld while its ledger record remains | Kept visible with context | No indefinite settled-claim carry-forward: the recent-merge scan covers 72h, and ordinary unrefreshed ledger records have a 72h TTL. This is a scan/record bound, not a promise of an exact release instant during scan failures. |
+
+“Strong” here means the ledger's settled predicate: a merged claim that is neither reference-only nor external-author, or a verified verdict settlement. Text alone never establishes a verified settlement.
+
+**Why older 72h guidance differs:** the current contributor hook is `ClaimLedger.Lookup`; it does not apply the historical weak-deferral timer. The current `FilterClaimedIssues` path also distinguishes merged evidence and weak hive references from suppressed open coverage. The legacy `weakDeferExpired` helper is not called by either dispatch path. Do not bypass these gates by assuming a timer elapsed. This is a description of the current implementation, not a new policy or behavior change.
+
+### Worker ownership and other admission gates
+
+Worker claims instead expire on their configured per-kind TTL, renew with task ownership, and release on completion, abandonment, revocation, or lease expiry. They are described below with ranking and fencing. Other gates (holds, dependencies, repository access, churn, scope, trust, and model limits) still apply after PR evidence clears.
+
+<details>
+<summary>PR-claim migration history and evidence-validation details</summary>
+
+The notes below record the evolution of claim scanning, verified verdicts, prose parsing, and settled retention. Their earlier “72h deferral/expiry” descriptions are historical, **not the current dispatch rules**; use the table above for today's operator decision.
 
 - **Issues already claimed by an open PR — or settled by a recently-merged one — are skipped.** The hub's claim ledger records every open PR that references an issue with a closing keyword (`fixes #N`, `closes owner/repo#N`, …) — including PRs from external authors, not just hive agents ([#3792](https://github.com/hivecommons/hive/pull/3792)). Since [#6867](https://github.com/hivecommons/hive/issues/6867) the same scan also covers **recently-merged** PRs: a fix that merged *without* a closing keyword leaves its issue open, and its claim used to vanish the moment the PR left the open set, so the settled issue went straight back to contributors (and agent dispatch) whose only possible verdict was "already resolved on `main`" — measured downstream at ~34% of contributor sessions. Merged claims are graded by the same evidence tiers as open ones and suppress identically; across tiers, evidence wins, so a merged `Fixes #N` outranks an open `Refs #N`. A claimed issue is silently dropped from the contribute candidate set; if nothing else is admissible the relay receives `task_unavailable` with reason `no_matching_work` (there is no per-issue "claimed by PR #N" message). External claims — like the weaker non-closing `Refs #N` references — now DEFER the hive's own agents for a bounded 72h window, then release the issue even while the PR stays open ([#4929](https://github.com/hivecommons/hive/issues/4929)). They previously never suppressed agent work at all, which let an agent that cannot check for existing PRs re-implement an issue a live PR already covered. Nothing is frozen: the window is a bound — anchored at first observation for an open claim, and at the **merge** for a merged one, so a merged `Refs #N` still releases an epic's remainder — and a red+stale claiming PR defers nothing.
 - **A `no_work_needed` verdict's citation becomes a verified claim.** The merged-PR scan above only sees PRs that *reference* the issue; a fix that landed without mentioning it is invisible, and on one hosted spoke 5 of 7 tasks on a contributor ended `no_work_needed` re-discovering settlements the previous agent had already found ([#7871](https://github.com/hivecommons/hive/issues/7871)). The agent does name what settled the issue in its `verdict_reason` ("already merged via #532", "covered by merged PR #867", "already in upstream/main (e6d3de3)"), so the hub now parses that reason for `#N`, `owner/repo#N`, pull URLs and 7–40 hex SHAs (the task's own issue number excluded, at most six candidates), checks each against GitHub, and records the **first that holds up** in the same claim ledger, exactly as the scan would have: a PR merged into the task repo *before the task was dispatched* — or a commit reachable from the default branch — is a strong merged claim; an open PR in the task repo by someone else is a weak external claim — *someone else* is enforced: the hub compares the PR's author to the reporting contributor's GitHub login (case-insensitively) and drops a self-authored open PR, so the least-trusted write path cannot defer an issue by citing its own unrelated PR ([#7890](https://github.com/hivecommons/hive/issues/7890)); a merged PR is a fact whoever authored it. The text alone is never trusted: a reference the API cannot confirm (wrong repo, closed-unmerged, not on `main`, merged after dispatch, or simply fabricated) records nothing and today's cooldown applies. What the API check does *not* establish is relevance — a real but unrelated ref passes, since a settling PR by definition never referenced the issue; that residual is bounded by the claim TTL and voided by newer activity on the issue. Verdict-recovered claims carry `source: "verdict"` and survive the authoritative scan that cannot see their PR, until the ordinary 72h TTL retires them or stronger live evidence for the issue replaces them. The check runs off the contributor's read loop and requires a wired claim ledger and GitHub client; a hive without either behaves as before.
 - **A closing keyword written as prose counts.** The claim parser used to require GitHub's own trailer shape, `keyword #N` (optionally with a colon), so a merged PR whose body read *"Resolves architect issue #1232 (first incremental step)"* produced **no claim at all** ([#7995](https://github.com/hivecommons/hive/issues/7995)). Since that issue the closing tier accepts the same bounded run of prose the non-closing reference tier already did — at most 40 characters, no `.`, newline or `#` — so `Resolves architect issue #1232` and `Fixes the bug in #12` are closing claims. GitHub will still not auto-close on those, and hive does not pretend it will: a claim here is about whether the **work landed**, and a merged PR that says it resolves an issue is the strongest evidence the hub gets, so it suppresses rather than being released for re-verification after every merge. The prose gap must begin with a space or tab, which is what keeps a Conventional Commits type prefix (`fix:`, `fix(scope):`) from claiming the first issue number in a title. The closing tier remains single-issue, matching GitHub's one-keyword-per-number rule; only the reference tier reads lists.
 - **A merged fix does not expire on a clock.** A strong claim from a merged PR — or a verified `no_work_needed` verdict — used to leave the ledger 72 hours after the merge, because the settle scan looks back 72h and the ledger TTL matched it. The PR was still merged; only the clock had moved. So the issue went straight back into the offer pool, an agent re-verified "already fixed on main", and the verdict claim it left sat on the same 72h clock — one wasted task cycle every three days for as long as nobody closed the issue ([#8003](https://github.com/hivecommons/hive/issues/8003): projectbluefin/chairlift#55, fixed by #133, re-offered three times with two "please close" agent comments on it). Settled claims are now carried forward across scans for as long as the issue stays open — the 30-day retention bound counts from the last enumeration pass that listed the issue as open, not from the merge, so it only prunes claims whose issue has since closed ([#11580](https://github.com/hivecommons/hive/issues/11580)); a merged *weak* claim (a `Refs #N`, or an external author's PR) is not — it never asserted it finished the issue, and is still released with context as before. And because the hold has by then outlasted every automatic bound, after **7 days** the contribute queue stops describing it as "an open pull request already claims this issue" and withholds it under `merged_claim_stale`, whose prose is the question a maintainer has to answer: *Fixed by merged PR #133 4 days ago; the issue is still open — close it or say what remains.*
+
+</details>
+
 - **An issue that keeps consuming pull requests is withheld for a maintainer.** The claim ledger answers "is somebody on this right now?"; it could not answer "has this issue already cost seven pull requests?" ([#7995](https://github.com/hivecommons/hive/issues/7995)). projectbluefin/documentation#1232 — an incremental architecture issue — went three merged and four closed PRs deep and was still NEXT UP: every cycle an agent found remaining work, shipped the next slice, and the issue came back after the merge, because only a human can decide that an incremental issue is *done*. So the same two PR listings the claim scan already pages through now also feed a cumulative **churn history**: which pull requests have been observed against each issue, and how each one ended. A closed-without-merge PR still claims nothing — the issue stays released for work — it only counts. Once an issue reaches **2 merged** or **2 closed-unmerged** pull requests, the contribute queue stops offering it and withholds it with reason `issue_churn`, on the same operator-visible Withheld surface as an open-PR claim, carrying the counts and the PR numbers a maintainer needs in order to answer the question. Nothing is closed, commented on, or relabelled by the guard. It lapses on its own: records age out 14 days after a pull request was last seen (deliberately longer than the 72h settle scan, because the pattern plays out over a week or more), and a maintainer who has triaged the issue can clear the guard immediately by adding the label `hive: churn-triaged`.
 - **An issue somebody has *claimed* is not offered — and a clanker already on it is pulled off when a higher rank claims it.** The PR-claim ledger above only knows about work that has reached a pull request. Since [#8380](https://github.com/hivecommons/hive/issues/8380) the hub also keeps a **worker-claim ledger**: who is on an issue *right now*, ranked **human > agent > contributor > external**. A person claims from the terminal (`hivectl claim owner/repo#N`) or the API (`POST /api/claims/{owner}/{repo}/{number}`); a governor kick *lists* each issue it hands one of the hive's own agents — no GitHub comment, no claim, just a 30-minute hold that keeps your session and other agents off it while the kick is live — and the hub records the **agent** claim on the agent's first start signal on that issue (its own comment, label or claim request through `hive-open-issue`, or a `hive-open-pr` request naming it; [#10527](https://github.com/hivecommons/hive/issues/10527) — a comment that is an explicit *deferral* (see the [recognized forms](hive-open-issue.md#comment)) is posted but records no claim, so a parked issue is not shown in progress for two hours after its blocker lands; [#12387](https://github.com/hivecommons/hive/issues/12387)); and the relay records a **contributor** claim for your session the moment it leases you a task, releasing it when the task completes, is abandoned, is yanked or its lease expires. `selectTask` excludes every issue another holder claims exactly as it excludes leased items, and the scheduler withholds them from kicks under *In Flight*. Precedence is enforced on write: a higher rank **takes over** and the displaced holder is told to stop — for a relay session that means the hub yanks that one task (`task_revoke`, generation bumped so a late completion is fenced) and hands the session its next admissible item in the same call, leaving your other sessions alone; for an agent or an external bot it means a `🔁` comment addressed to it plus a `preempted:<login>` label on the issue. Same rank warns unless forced; a lower rank is refused. Claims lapse on a per-kind TTL (`claims.human_ttl_s` 4h, `agent_ttl_s` 2h, `contributor_ttl_s` 30m — the relay lease length — capped by `max_ttl_s` 24h) and `claims.enabled: false` turns the whole mechanism off. Every transition is mirrored onto the issue as a comment carrying a `<!-- hive:claim who=… kind=… until=… -->` marker (or `<!-- hive:preempt target=… by=… -->` on takeover) and a `claimed` label, so a relay that only reads GitHub can still see it was preempted.
-- **Claims expire.** Ledger entries live 72 hours — refreshed while the PR stays open, or anchored at the merge for a merged claim, so a settled issue is suppressed for 72h after its fix lands and nothing is stranded forever. An **open** claiming PR that goes red on a required check and stale releases the issue back to the queue; merged claims never take that valve — a fix already on `main` cannot go red.
+- **Do not use one expiry rule for all claims.** The current table distinguishes PR evidence, settled retention, and worker TTLs. The resident-agent red+stale valve applies to open PRs, never merged ones; it is not an unconditional contributor-queue override.
 - **A repository the App cannot mint a token for is excluded, not fatal.** Since C4 the `task_assign` token is scoped to the chosen item's repository, so GitHub's `422 There is at least one repository that does not exist or is not accessible to the parent installation` means *that repo* — renamed, deleted, or removed from the installation — and nothing about the tier or the App key. It used to fail the whole selection with `token_mint_failed`, and because selection is deterministic the same doomed item was chosen on every 30 s retry: one stale entry in the project repo list (a renamed repo) wedged a hive for every contributor while `actionable_items` sat at 19 ([#7869](https://github.com/hivecommons/hive/issues/7869)). Now the claim is rolled back, the repo is excluded from selection for `mintFailureRepoCooldown` (10 min, so the fleet is not re-discovering it every retry, but the operator's fix takes effect without a restart), and the *same* call selects again from the remaining candidates (bounded at three such skips). If nothing else is admissible the reason is `repo_unmintable` rather than `no_matching_work` or `token_mint_failed`, and the hub log names the repo with a pointer at the repo list. Non-repo mint failures (5xx, bad key, an unaccepted permission) keep the `token_mint_failed` contract and exclude nothing — they would recur for any candidate.
 - **An App with no installation says so.** When `github.installation_id` is `0` — the App is not installed on the hive's org, or discovery never found it — no token can be minted for any repository. The hub answers `task_unavailable` with reason `app_not_installed` and a `message` naming the org and the App install link, without calling GitHub and without excluding any repo ([#14002](https://github.com/hivecommons/hive/issues/14002)). Before this, GitHub's 404 for installation `0` was read as a repo-scope failure and contributors saw `repo_unmintable`, which points at the repo list rather than the missing installation. The relay prints the message under the reason line; the fix is the operator's (install the App on the org), never the contributor's.
 
 ## Contributor repository scope
+
+**Wire protocol reference for relay implementers.** For choosing repositories as a contributor, use the earlier [repository-scope setup](#contributor-repository-scope); the frames below are not commands to paste into a shell.
 
 A contributor can narrow which of a hive's repositories it is offered work from ([#12805](https://github.com/hivecommons/hive/issues/12805), part of RFC [#12570](https://github.com/hivecommons/hive/issues/12570) §4). The scope can only **narrow**: disabled repos, holds, cooldowns, claims, trust tiers, model filters, quotas and task-token scoping all still run unchanged, so eligible work is the intersection of operator admission and the contributor's scope.
 
@@ -1988,12 +2071,17 @@ new hubs treat an absent field as not reported rather than false.
 
 ## Priority PR-fix scheduling groundwork (#12436)
 
-The hub accepts optional `capabilities.parallel_sessions` on `auth_response`.
-It counts **all** sessions, including the primary: omitted/zero or one means
+**Design history, not an availability warning.** The scheduling-primitive notes below describe the earlier #12436 groundwork. Current v5 has stage reconciliation, task delivery, relay parallel/preempt handling, and capability advertisement; use [fix-pr tasks](#fix-pr-tasks) for the shipped contract and [operator visibility](#what-the-operator-sees-operations--connected-contributor-agents) to verify delivery. A relay that does not advertise `fix_pr_interrupt_v1` still does not receive mid-task interrupts.
+
+<details>
+<summary>Original groundwork contract and implementation checklist</summary>
+
+The groundwork accepted optional `capabilities.parallel_sessions` on `auth_response`.
+That proposal counted **all** sessions, including the primary: omitted/zero or one meant
 single-session; three means one primary plus at most two parallel fixes.
 Declarations are advisory, bounded to 0–64, and do not override server-side
 concurrency limits or credential/acceptance gates. This field alone does **not**
-opt a relay into interrupts. No `fix-pr` server capability is advertised yet.
+opt a relay into interrupts. No `fix-pr` server capability was advertised at that stage; current capability negotiation is described in [fix-pr tasks](#fix-pr-tasks).
 
 `pkg/contributefix` supplies the scheduling primitive for the stage-072 adapter:
 
@@ -2025,15 +2113,11 @@ opt a relay into interrupts. No `fix-pr` server capability is advertised yet.
   cover multiple PRs). Every new-work claim boundary must consult `canClaimNew`;
   pending, in-flight, or not-yet-resumed work prevents taking new issues.
 
-This is groundwork, not end-to-end delivery: the queue is in memory and is not
-wired into stage reconciliation or task selection yet. Before enabling it, the
-adapter must persist/recover reservations, apply presence and grace settings,
-log enqueue/dequeue, publish profile/dashboard counts, send idempotent GitHub
-nudges, and adopt expired work through the gated takeover path. The in-repository
-relay (`bin/contributor-relay.js`) still needs parallel launch/park/resume handling
-and heartbeat capability updates. Stage mirrors, legacy writer retirement, and
-Settings/config parity also remain tracked by #12436. Do not advertise interrupt
-support or suppress fresh claims until that integration is complete.
+At the groundwork stage the queue was in memory and not wired into stage reconciliation or task selection. Its implementation checklist covered persistence/recovery, presence/grace settings, enqueue/dequeue logs, profile/dashboard counts, idempotent GitHub nudges, gated takeover, relay parallel launch/park/resume, heartbeat capabilities, stage mirrors, legacy-writer retirement, and Settings/config parity (#12436).
+
+That checklist is design history, not a statement that today's relay lacks delivery. The current binding in `pkg/dashboard/contribute_fixqueue.go` and relay handlers in `bin/contributor-relay.js` implement the shipped dispatch modes above. Verify the deployed peer's advertised capabilities and Operations view rather than inferring delivery from this old proposal.
+
+</details>
 
 ## Custom stylesheets
 

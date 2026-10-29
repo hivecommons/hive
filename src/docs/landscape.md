@@ -1,14 +1,37 @@
 # Hive landscape and positioning
 
+Last reviewed: 2026-10-28
+
 > **Conducted: 2026-10-23. This document will rot.** Tools for AI coding
 > agents change fast. Treat every product detail here as time-sensitive and
 > update it by pull request when public docs change.
 
-Hive is an operations plane for fleets of AI agents. One operator-controlled
-system runs many coding and review agents, applies fixed rules before and
-after the model's judgment, and shows status, cost and hub/spoke health on
-one dashboard. Each claim below names the public page checked on the date
-above.
+Hive helps an operator run a group of coding and review agents. For example,
+the operator can check costs, pause a worker, review its proposed fix, and
+decide which checks must pass before it merges. This live management layer is
+the **operations plane**. A **fleet** is the group being managed; a **hub**
+registers and observes running hives (**spokes**).
+
+Each comparison below names the public page checked on the conducted date
+above. This is evaluation reference, not a setup guide.
+
+## Choose a starting point
+
+- For one bounded job in a repository already using GitHub Actions, a workflow-based tool may be simpler.
+- For a vendor-run agent with little infrastructure to operate, consider a hosted service.
+- For ongoing workers, shared budgets, varied agent backends, and operator-controlled permissions, consider Hive. Start with [hosted or self-hosted access](README.md#get-started).
+- Use [When to choose what](#when-to-choose-what) for the full decision list, then read the comparisons you need.
+
+### Terms used in the comparisons
+
+**Control plane** means the component that configures and coordinates work.
+A **harness** launches and supervises an agent; a **sandbox** limits its access.
+**OIDC** is OpenID Connect, used here to prove a workflow's identity without a
+stored long-lived secret. A **shim workflow** is a small workflow that calls
+another one. **Queue-depth cadence** changes run frequency with the amount of
+pending work. **Forge-neutral adapters** translate common operations for
+different code hosts; an adapter alone does not mean a full deployment is
+supported on that host.
 
 ## Agentic AI Foundation (AAIF) and Goose
 
@@ -23,10 +46,15 @@ Review material: [OpenSSF Best Practices badge](https://www.bestpractices.dev/pr
 [Apache-2.0 license](../../LICENSE), [security self-assessment](security-self-assessment.md)
 and [CNCF reference architecture](cncf-reference-architecture.md).
 
+<details>
+<summary>Contribution-process history: why the unattended Goose guide is local</summary>
+
 The [unattended Goose guide](../../docs/goose-at-scale.md) lives here for now.
 Goose's [contribution workflow](https://github.com/aaif-goose/goose/blob/main/CONTRIBUTING.md#from-issue-to-pull-request)
 still requires a human-written **Ready** issue before any outside docs PR.
 None is open, so the guide is not upstream.
+
+</details>
 
 ## Fullsend
 

@@ -2,6 +2,15 @@
 
 Status: Accepted (retroactive)
 
+**MITM** means **man-in-the-middle**: a local proxy inspects agent requests to
+GitHub and blocks writes outside the agent's allowed mode. Here it is an
+intentional enforcement point, not an external attacker.
+
+**Prerequisites:** [ACMM](../acmm-policy-matrix.md) is the autonomy-level model.
+**Egress** means outgoing traffic; a local **CA** (certificate authority)
+lets the proxy inspect HTTPS, and **iptables** supplies the Linux traffic
+redirect. Installing a proxy alone does not force traffic through it.
+
 ## Context
 
 Hive agents can run powerful coding CLIs in tmux sessions. A malicious prompt or
@@ -13,6 +22,9 @@ The deterministic pipeline and merge gate produce the list of PRs that may merge
 ([architecture §4](../architecture.md#4-the-deterministic-pipeline)).
 
 ## Decision
+
+Enforce GitHub write permissions outside the model: route agent API traffic
+through a deny-by-default proxy, and reserve PR creation/merge for Hive's relays.
 
 Keep a local MITM proxy in the agent egress path for `api.github.com`. The proxy
 classifies REST and GraphQL requests by method/path/body and requires the

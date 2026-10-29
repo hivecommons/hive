@@ -17,6 +17,26 @@ Companion pages: [security-threat-model.md](security-threat-model.md)
 (attacker view), [security.md](security.md) (log scrubbing),
 [securing-your-hive.md](securing-your-hive.md) (first-time operator guide).
 
+## Choose a reading path
+
+- **First-time operator:** use the guide above for trust choices and who can
+  merge. This page is a technical inventory, not a deployment checklist.
+- **Check a running hive:** start with [Human in the loop](#10-human-in-the-loop)
+  and the inventory's “How to check” column. Dashboard owners can inspect
+  effective settings; file, kernel and network checks need deployment-admin
+  access. Hosted owners should ask their hub operator for those checks.
+- **Audit the implementation:** use the control sections and
+  [verification procedure](#12-how-to-audit-a-running-hive). Do not change production state
+  or print secrets to prove a check.
+
+**Terms used below:** a **UID** is a Unix user ID. A **cgroup** tracks and
+limits a process group's resources. **Egress** means outgoing network traffic.
+**MITM** means man-in-the-middle: Hive's local inspecting proxy. A **PAT** is
+a personal access token. A **JWT** is a JSON Web Token; its **TTL** is its
+time to live. **CSP** is Content Security Policy, a browser restriction on
+page resources and scripts. These names describe mechanisms, not proof they
+are enabled on a given hive.
+
 ## 1. Threats
 
 * **Prompt injection.** Issue and pull-request text, labels, comments,
@@ -240,9 +260,18 @@ do not.
   by two contributors at once. The lease protocol is formally modelled.
 * **Author kind, not author claim.** Pull-request authors are classified
   from GitHub identity (Hive App, trusted bot, human, unknown bot).
-* **Slash commands.** `/hive approve` and `/hive decision` are honoured only
-  from a human with write access or higher. On pull requests they are
-  acknowledged but never consumed; release needs a GitHub Approve review.
+* **Issue commands (045).** A human with repo write/maintain/admin access
+  can use `/hive approve` or `/hive decision <direction>` to release decision
+  parking. The command lifts `needs-human`, whoever applied it, but never
+  `hold`. Label-driven repos use their configured acceptance labels instead.
+* **PR commands (085/070).** Bare `/hive approve` is acknowledged only.
+  On an eligible Hive-authored PR, `/hive decision <instruction>` routes
+  the full text to the author/fixer. `/hive decision approve <rationale>`
+  records approval for the current head and can release `requires_human`.
+  This requires repo write access or higher **and** configured merger trust.
+  Other authors use GitHub reviews/manual merging. Commands do not waive
+  CI, holds, author admission or path fences. See
+  [the exact gate contract](running-at-level-6.md#does-the-hive-reviewer-stop-a-merge).
 * **Owner self-nomination** is a sentinel rule: a pull request adding its
   author to `OWNERS`, `CODEOWNERS` or `MAINTAINERS` is flagged and blocked.
 
@@ -340,16 +369,24 @@ until code-owner review is required in branch protection.
 * **ACMM** is the autonomy dial. Merge permission is not minted below L6.
   L5 adds a `hold` label on every agent pull request. See
   [acmm-policy-matrix.md](acmm-policy-matrix.md).
-* **Parking.** An agent that needs a decision labels the item `needs-human`
-  and stops. A person with write access answers with `/hive approve` or
-  `/hive decision <text>`.
-* **Pull-request release is a GitHub review.** A `requires_human` verdict is
-  cleared only by a trusted merger's Approve review on the current head.
+* **Issue decision parking is 045.** A person with repository write access or
+  higher answers with `/hive approve` or `/hive decision <text>`, unless the
+  repo uses label-driven acceptance. This releases decision parking and
+  `needs-human`, not `hold`.
+* **PR decision parking is 085.** A trusted merger's GitHub **Approve**
+  review must name the current head to clear the enforcing sweep gate.
+  It can override any swarm outcome, including a request for changes;
+  the audit records who overrode what. On eligible Hive-authored PRs,
+  `/hive decision approve` can answer `requires_human`, while other decision
+  text sends work to the fixer. Bare `/hive approve` never releases a PR.
+  The detailed [command boundaries](#7-contributor-trust) above still apply.
 * **Owner-only security settings.** Changes to `ioscan`, intent enforcement,
   review requirements and the agent sandbox require the `owner` role.
-* **Emergency stops**, cheapest first: pause one agent, pause one repo,
-  disable automerge per repo, freeze the watchdog fleet-wide, drop the ACMM
-  level.
+* **Emergency stops are not interchangeable.** To stop merging, disable
+  automerge per repo, apply an item hold, or drop below L6. Pausing an agent
+  or freezing the watchdog does not stop the App from merging existing PRs.
+  Use the [L6 emergency-stop table](running-at-level-6.md#stops-smallest-to-largest)
+  to choose the right boundary.
 * **Hooks** run only vetted actions from a fixed set ([hooks.md](hooks.md)).
 * **Advisory digests** are pinned to one analysed commit; findings whose
   file no longer exists are dropped.

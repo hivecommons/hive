@@ -2,11 +2,33 @@
 
 Status: Accepted
 
-Implementation plan: [stage-engine-plan.md](../stage-engine-plan.md).
-Interfaces in this ADR are the contract parallel implementation PRs build
-against; change them here first, then in code.
+## Current state and reading route
+
+One engine derives the stage from observed issue/PR facts; one writer applies
+`stage/*` labels. Unexpected transitions are recorded, not rejected. This
+engine describes lifecycle state; it does not grant merge authority.
+The [scope section](#scope-and-extension-points) also records the later,
+scheduler-owned `stage/017-possible-existing` exception; do not infer that
+the original single-writer decision removed that separate prior-art gate.
+
+- **Normal operation:** `governor.labels.stage.engine.mode: enforce` (default).
+- **Pause engine label writes:** use `shadow`; derivation and observation
+  continue. It does not reactivate legacy writers, stop merges, or disable
+  the separate scheduler-owned prior-art gate.
+- **Not a rollback option:** `off` and the legacy derivation paths were retired.
+  To revert code, use the deployment's normal release rollback procedure.
+- **Implementers:** [Decision](#decision) and [Design](#design) contain the
+  contract; [Review-state fold](#review-state-fold-resolved) describes the
+  resolved review-state rule.
+
+The [implementation plan](../stage-engine-plan.md) and Context below preserve
+the rollout rationale. They are not a list of remaining operator actions.
 
 ## Context
+
+**Original rollout context, with later implementation annotations.** The
+half-centralized design and gaps below motivated the migration; do not read
+the old writers as supported fallback paths.
 
 The owner's intent: *labels applied from a central facility so that managing
 them via a state machine is easier.* Hive is half-way there.
@@ -100,7 +122,7 @@ is computed from `Detail.Verdict`, `HumanApprover`/`HumanApprovalHead`,
    terminal, origin, review); `IssueFacts` / `PRFacts` carry the rest.
    `DeriveIssue` and `DerivePR` are two `Deriver` implementations behind one
    interface — not one function.
-5. **Behaviour first, semantics later.** The automerge lane precedence is
+5. **Rollout invariant: behaviour first, semantics later.** The automerge lane precedence is
    merge-critical. Golden fixtures are captured from the *current* derivation
    before any code moves; the new derivers must reproduce them byte-for-byte
    under `mode: shadow` (compute, diff, log, no writes) with a 0 % mismatch
@@ -427,7 +449,7 @@ Leaving 017 for 010 or closed is never a regression.
 | Rate-limit cost of re-reads | Writer re-reads only when the hint implies a write (today's `Enforce` rule); facts are assembled from list payloads the sweeps already fetch; shadow mode makes zero extra calls. |
 | In-flight labels during migration | Enforce mode's first pass is a plain reconcile: whatever the legacy writers left is replaced by the derived stage; no label migration script is needed. Legacy spellings keep healing through `Renames`. |
 | Anomaly noise after a Table change | Anomalies are counted and logged once per item per from→to, never block, and the expected-pair table is regenerated from the diagram in the same PR as the Table change. |
-| Rollback | `mode: off` restores the legacy derivation paths until PR-6 deletes them (two releases later); `mode: shadow` is a one-line config change. |
+| Pause writes after rollout | Set `governor.labels.stage.engine.mode: shadow` to derive and observe without writes. `off` no longer restores legacy derivation; those paths were deleted. A code rollback is a separate deployment action. |
 
 ## Alternatives rejected
 
