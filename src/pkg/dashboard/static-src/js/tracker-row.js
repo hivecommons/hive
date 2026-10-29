@@ -920,7 +920,7 @@
     // parent issue's. `parent` names the issue; `siblings` the other open
     // PRs under it (the superseded-by prompt pre-fills the one sibling).
     function stageTrackerLinkedPRItem(issue, lp) {
-      const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x)) : [];
+      const open = Array.isArray(issue.linked_prs) ? issue.linked_prs.filter(x => x && x.number !== lp.number && stageTrackerLinkedPROpen(x, issue)) : [];
       return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
@@ -928,14 +928,25 @@
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
-    // Pure: whether a linked PR is still open (not merged / closed / superseded).
-    function stageTrackerLinkedPROpen(lp) {
-      return !!lp && !lp.superseded && String(lp.state || '') !== 'closed' && (Number(lp.stage) || 0) < STAGE_TRACKER_TERMINAL && (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('merged') < 0;
+    // Pure: whether a linked PR is still open (not merged / closed /
+    // superseded). With `issue`, an adopted original whose hive copy is
+    // listed under the same issue counts as superseded even while GitHub
+    // still has it open (the write-back gate kept it at 072): the pair
+    // {original, copy} is one logical PR, so #15495 never reads as "2
+    // PRs" needing a human to pick (hivecommons/hive#15495).
+    function stageTrackerLinkedPROpen(lp, issue) {
+      if (!lp || lp.superseded || String(lp.state || '') === 'closed' || (Number(lp.stage) || 0) >= STAGE_TRACKER_TERMINAL || (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('merged') >= 0) return false;
+      const by = Number(lp.superseded_by || lp.adopted_by) || 0;
+      if (by > 0 && issue && lp.adopted_by_state !== 'closed' && lp.adopted_by_state !== 'closed-twice' && lp.adopted_by_state !== 'copy-failed') {
+        const linked = Array.isArray(issue.linked_prs) ? issue.linked_prs : [];
+        if (linked.some(x => x && Number(x.number) === by && String(x.state || '') !== 'closed')) return false;
+      }
+      return true;
     }
     // Pure: an issue's open nested PRs as row items.
     function stageTrackerNestedOpenPRs(issue) {
       if (!issue || issue.kind === 'pr') return [];
-      return (Array.isArray(issue.linked_prs) ? issue.linked_prs : []).filter(stageTrackerLinkedPROpen).map(lp => stageTrackerLinkedPRItem(issue, lp));
+      return (Array.isArray(issue.linked_prs) ? issue.linked_prs : []).filter(lp => stageTrackerLinkedPROpen(lp, issue)).map(lp => stageTrackerLinkedPRItem(issue, lp));
     }
     // Lineage: where an adopted PR came from (`lineage`: {kind, from_number,
     // from_url, from_author, from_author_kind, to_number, to_url, at,

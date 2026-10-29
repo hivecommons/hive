@@ -63,6 +63,12 @@ var adoptClosesPattern = regexp.MustCompile(`(?im)^\s*(?:fixes|closes|resolves|r
 
 var adoptHiveRunPattern = regexp.MustCompile(`(?im)^\s*Hive-Run\s*:\s*(?:[\w.-]+/[\w.-]+)?#(\d+)\s*$`)
 
+// adoptRefsNotePattern matches a soft `Refs #N — partial` line: the
+// reference carries into the copy as a bare `Refs #N` so the issue keeps
+// its "covered by" link (hivecommons/hive#15499 read "no linked issue"
+// because its original #15400 only had an annotated Refs line).
+var adoptRefsNotePattern = regexp.MustCompile(`(?im)^\s*refs\s+((?:[\w.-]+/[\w.-]+)?#\d+)\s*[—–-]\s*\S.*$`)
+
 // adoptionGrace returns the grace that applies to the record's first nudge.
 func adoptionGrace(rec stagelabels.Record, policy StageLabelPolicy) time.Duration {
 	if rec.NudgeOnline {
@@ -331,6 +337,11 @@ func adoptionCloses(body string) []string {
 	}
 	for _, m := range adoptClosesPattern.FindAllString(body, -1) {
 		add(m)
+	}
+	for _, m := range adoptRefsNotePattern.FindAllStringSubmatch(body, -1) {
+		if len(m) == 2 {
+			add("Refs " + m[1])
+		}
 	}
 	for _, m := range adoptHiveRunPattern.FindAllStringSubmatch(body, -1) {
 		if len(m) == 2 {
