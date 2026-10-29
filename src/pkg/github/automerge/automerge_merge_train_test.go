@@ -444,6 +444,8 @@ func TestMergeTrainPolicyOptionLegacySwitch(t *testing.T) {
 	off = true
 	if p := got(); !p.Enabled {
 		t.Fatalf("legacy on: %+v", p)
+	}
+}
 
 func blocked(m mergeTrainMember) mergeTrainMember {
 	m.Blocked = true
