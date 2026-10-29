@@ -561,6 +561,7 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 			"verdict", string(d.Verdict), "rule", d.Rule, "actions", "", "noop", noop, "policy", delegatedecision.PolicyName, "decision", d.Text), "", repoFull, number)
 		return delegatedOutcome{Decision: &d, Notes: notes, Result: &res}
 	}
+	s.logDelegatedLadder(repoFull, number, d)
 	notes, execErr := s.executeDelegatedDecision(ctx, in, d, user, mergerRole)
 	notes = append(deciderNotes, notes...)
 	result := delegatedRowActionResult(in, d, notes)
@@ -630,6 +631,9 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		in.HiveAuthored = client.IsHiveAuthorLogin(author)
 		in.TrustedAuthor = in.HiveAuthored
 		if err := s.gatherDelegatedPRContext(ctx, repoFull, pr, &in); err != nil {
+			return in, err
+		}
+		if err := s.gatherDelegatedLadderInput(ctx, repoFull, pr, &in); err != nil {
 			return in, err
 		}
 		state := strings.ToLower(pr.GetMergeableState())

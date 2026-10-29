@@ -264,14 +264,22 @@ func (c *Client) openPullRequestHeadLabels(ctx context.Context, owner, name stri
 
 // prDecisionTarget is what one open-PR read tells a dashboard decision:
 // the head, whether the hive opened the PR, and — when it did not —
-// whether a contributor's hive did (author/clanker, the origin marker, the
-// attribution trailer), so a direction has a hive to carry it to.
+// whether a contributor's hive did (author/clanker), so a direction has a
+// hive to carry it to.
 type prDecisionTarget struct {
 	head         string
 	selfAuthored bool
 	clanker      bool
 	author       string
 	labels       []string
+}
+
+// SetAuthorKindLabels installs the live governor.labels.author resolver.
+// Nil uses the default names, matching the stage reconciler.
+func (c *Client) SetAuthorKindLabels(fn func() authorkind.Names) {
+	if c != nil {
+		c.authorKindLabels = fn
+	}
 }
 
 func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name string, number int) (prDecisionTarget, error) {
@@ -290,12 +298,17 @@ func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name 
 		t.head = strings.TrimSpace(pr.GetHead().GetSHA())
 	}
 	t.labels = issueLabelNames(pr.Labels)
-	t.selfAuthored = c.isHiveAccount(pr.GetUser()) || labelPresent(t.labels, authorkind.Hive.Label())
+	names := authorkind.Names{}
+	if c.authorKindLabels != nil {
+		names = c.authorKindLabels()
+	}
+	kind := authorkind.FromLabels(t.labels, names)
+	t.selfAuthored = c.isHiveAccount(pr.GetUser()) || kind == authorkind.Hive
 	if !t.selfAuthored {
-		// The author/clanker stamp is the hive's own earlier reading of the
-		// body; honour it alongside the markers in case the body was edited.
-		t.clanker = labelPresent(t.labels, authorkind.Clanker.Label()) ||
-			authorkind.Detect(authorkind.Input{Author: t.author, AppLogin: c.AppBotLogin(), Labels: t.labels, Body: pr.GetBody()}) == authorkind.Clanker
+		// Require the repository's classification stamp here. PR-body
+		// markers are author-controlled hints for the sweep, not sufficient
+		// evidence to accept a dashboard direction on a person's PR.
+		t.clanker = kind == authorkind.Clanker
 	}
 	return t, nil
 }
@@ -438,8 +451,8 @@ func (c *Client) warnOperatorApproval(what, repo string, number int, head string
 // answering it: the text is stored against the head as a human change
 // request and one reply naming the actor is posted. On a PR the hive
 // opened the review planner kicks the hive's own author agent with the
-// text verbatim. On a contributor's clanker PR (author/clanker, a foreign
-// origin marker) the direction is carried to that contributor's hive
+// text verbatim. On a contributor's clanker PR (author/clanker) the
+// direction is carried to that contributor's hive
 // instead: it stands as a changes-requested review on the head, the PR
 // goes to 072 returned-to-contributor and the contributor nudge delivers
 // the text (hivecommons/hive#15159). A PR a person opened has no hive to

@@ -55,6 +55,12 @@ type repoItemDecisionMock struct {
 	// commitBy maps a head SHA to the login GET /commits/{sha} reports as
 	// its committer; an unlisted SHA reads as a person's push.
 	commitBy map[string]string
+	// prBody is PR #8's body; fixedIssueClosedBy > 0 makes GET /issues/42
+	// a closed issue whose closedByPullRequestsReferences names that merged
+	// PR (GET /pulls/<n> answers merged with a merge_commit_sha): the
+	// already-fixed rung of hivecommons/hive#15289.
+	prBody             string
+	fixedIssueClosedBy int
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -83,6 +89,20 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				n = 9
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": []any{}, "pull_request": map[string]any{"url": "x"}, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/issues/42"):
+			state := "open"
+			if m.fixedIssueClosedBy > 0 {
+				state = "closed"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 42, "state": state, "labels": []any{}, "user": map[string]any{"login": "someone", "type": "User"}})
+		case r.Method == http.MethodPost && strings.HasSuffix(path, "/graphql"):
+			if m.fixedIssueClosedBy == 0 {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": []map[string]any{{"number": m.fixedIssueClosedBy, "url": "https://example.test/pr/" + strconv.Itoa(m.fixedIssueClosedBy), "merged": true, "mergedAt": "2026-10-28T11:00:00Z"}}}}}}})
+		case r.Method == http.MethodGet && m.fixedIssueClosedBy > 0 && strings.HasSuffix(path, "/pulls/"+strconv.Itoa(m.fixedIssueClosedBy)):
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": m.fixedIssueClosedBy, "state": "closed", "merged": true, "merged_at": "2026-10-28T11:00:00Z", "merge_commit_sha": "25de3ba24fa0c0ffee0000000000000000000000", "user": map[string]any{"login": "hive[bot]", "type": "Bot"}, "head": map[string]any{"sha": "cafecafecafecafecafecafecafecafecafecafe"}, "base": map[string]any{"ref": "main"}})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/90"):
 			if m.supersederState == "" {
 				http.NotFound(w, r)
@@ -108,7 +128,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			for _, label := range m.prLabels {
 				prLabels = append(prLabels, map[string]string{"name": label})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": prLabels, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}, "base": map[string]any{"ref": "main"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": m.prBody, "labels": prLabels, "user": author, "mergeable": mergeState != "dirty", "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}, "base": map[string]any{"ref": "main"}})
 		case r.Method == http.MethodPut && strings.HasSuffix(path, "/pulls/8/update-branch"):
 			m.updates++
 			w.WriteHeader(http.StatusAccepted)

@@ -9,6 +9,7 @@ import (
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -92,6 +93,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	if client == nil || b.cfg == nil {
 		return
 	}
+	// Use the same live author-kind names as the PR stage reconciler, also
+	// after an App client rebuild or config reload.
+	client.SetAuthorKindLabels(func() authorkind.Names { return b.cfg.Governor.Labels.Author.Names() })
 	client.SetLinearScopeTeams(b.cfg.Governor.WorkSource.Linear.Teams)
 	client.SetHoldLabels(b.githubHoldLabels())
 	// Umbrella issues no automated claim may take and no claim stages

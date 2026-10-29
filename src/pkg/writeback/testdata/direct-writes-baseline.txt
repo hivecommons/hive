@@ -4,7 +4,6 @@ raw pkg/dashboard/delegated_decision_effect.go 1
 raw pkg/github/advisory.go 6
 raw pkg/github/advisory_forgestate.go 1
 raw pkg/github/attribution.go 1
-raw pkg/github/automerge/automerge_adoption_close_first.go 7
 raw pkg/github/automerge/automerge_adoption_orphan.go 3
 raw pkg/github/automerge/automerge_bot_takeover.go 2
 raw pkg/github/automerge/automerge_contributor_adopt.go 15

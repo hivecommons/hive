@@ -1021,15 +1021,15 @@ let c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })),
 assert.strictEqual(c.showing, 'showing 51–100 of 120 (30 filtered out)');
 assert.strictEqual(c.header, '120 of 150 rows · 7 need attention');
 assert.strictEqual(c.badge, 150, 'the pill is the default view\'s row count, filters notwithstanding');
-assert.strictEqual(c.badgeTitle, '150 rows open · 7 need attention');
+assert.strictEqual(c.badgeTitle, '150 rows · 7 need attention');
 // Owner: rows are canonical. Open-item totals only footnote PRs that share
 // their issue's row; they never become a second total or change the pill.
 c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })), 150, 7, { issues: 100, prs: 52 }, 9);
-assert.strictEqual(c.header, '120 of 150 rows (100 issues + 50 PRs on their own row) · 7 need attention', 'header spells out how the default view\'s rows are made');
+assert.strictEqual(c.header, "120 of 150 rows (100 issues + 50 PRs on their own row) · 7 need attention · 2 PRs shown on their issue's row", 'header spells out how the default view\'s rows are made');
 assert.strictEqual(c.badge, 150);
 assert.strictEqual(c.note, "2 PRs shown on their issue's row");
 assert.strictEqual(c.breakdown, '100 issues + 50 PRs on their own row');
-assert.strictEqual(c.badgeTitle, "150 rows open: 100 issues + 50 PRs on their own row · 9 need attention · 2 PRs shown on their issue's row", 'pill tooltip counts attention over every item, names the row make-up and footnotes shared rows');
+assert.strictEqual(c.badgeTitle, "150 rows (100 issues + 50 PRs on their own row) · 9 need attention · 2 PRs shown on their issue's row", 'pill tooltip counts attention over every item, names the row make-up and footnotes shared rows');
 assert.strictEqual(c.showing, 'showing 51–100 of 120 (30 filtered out)', 'the showing line never prints an items total');
 c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })), 150, 7, { issues: 100, prs: 50 }, 9);
 assert.strictEqual(c.note, '', 'rows = items → no footnote');
@@ -1037,14 +1037,18 @@ assert.strictEqual(c.breakdown, '100 issues + 50 PRs on their own row');
 // Owner (2026-10-29): Overview 33/13 beside activity monitor 37 — rows are
 // 33 issues + 4 PRs that have no listed issue; 9 PRs sit on their issue's row.
 c = stageTrackerCountsText(stageTrackerPage(many.slice(0, 37), F({ size: 50 })), 37, 3, { issues: 33, prs: 13 }, 3);
-assert.strictEqual(c.header, '37 rows (33 issues + 4 PRs on their own row) · 3 need attention');
-assert.strictEqual(c.badgeTitle, "37 rows open: 33 issues + 4 PRs on their own row · 3 need attention · 9 PRs shown on their issue's row");
+assert.strictEqual(c.header, "37 rows (33 issues + 4 PRs on their own row) · 3 need attention · 9 PRs shown on their issue's row");
+assert.strictEqual(c.badgeTitle, "37 rows (33 issues + 4 PRs on their own row) · 3 need attention · 9 PRs shown on their issue's row");
 assert.deepStrictEqual(stageTrackerRowBreakdown(37, { issues: 33, prs: 13 }), { known: true, rows: 37, issues: 33, prs: 13, standalonePRs: 4, shared: 9 });
 assert.deepStrictEqual(stageTrackerRowBreakdown(34, { issues: 33, prs: 1 }), { known: true, rows: 34, issues: 33, prs: 1, standalonePRs: 1, shared: 0 });
 assert.strictEqual(stageTrackerCountsText(stageTrackerPage(many.slice(0, 34), F({ size: 50 })), 34, 0, { issues: 33, prs: 1 }).breakdown, '33 issues + 1 PR on its own row', 'singular PR');
 assert.strictEqual(stageTrackerRowBreakdown(40, { issues: 33, prs: 5 }).standalonePRs, 5, 'standalone PRs never exceed open PRs');
 assert.strictEqual(stageTrackerRowBreakdown(10, null).known, false);
 assert.strictEqual(stageTrackerCountsText(stageTrackerPage(many.slice(0, 10), F({ size: 50 })), 10, 0).breakdown, '', 'no totals → no breakdown, header unchanged');
+c = stageTrackerCountsText({ total: 1, from: 1, to: 1 }, 1, 0, { issues: 0, prs: 1 });
+assert.strictEqual(c.header, '1 row (0 issues + 1 PR on its own row) · nothing needs attention');
+c = stageTrackerCountsText({ total: 0, from: 0, to: 0 }, 0, 0, { issues: 0, prs: 0 });
+assert.strictEqual(c.badgeTitle, '0 rows (0 issues + 0 PRs on their own row) · nothing needs attention');
 c = stageTrackerCountsText(stageTrackerPage(many.slice(0, 1), F()), 1, 1);
 assert.strictEqual(c.showing, 'showing 1–1 of 1');
 assert.strictEqual(c.header, '1 row · 1 needs attention');

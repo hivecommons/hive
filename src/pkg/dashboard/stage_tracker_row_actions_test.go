@@ -1023,7 +1023,7 @@ let text = stageTrackerResultText(decided, issue, { id: 'decide:delegate', rowRe
 // The decision toast leads with the outcome; the rule in plain words
 // (never the bare slug) is the second line (#15126).
 assert.strictEqual(text.head, 'Adopted o/r#14947 in supersede mode as o/r#14977.', 'the outcome leads');
-assert.strictEqual(text.outcome, "Hive decided on o/r#14938 → PR #14947: adopted (the author's clanker hasn't been connected since the nudge)", 'the rule in plain words, never the bare slug');
+assert.strictEqual(text.outcome, "Hive decided on o/r#14938 → PR #14947: adopted (the author hasn't been reachable since the nudge)", 'the rule in plain words, never the bare slug');
 assert.strictEqual(text.next, decided.next); assert.strictEqual(text.type, 'success');
 assert.strictEqual(text.url, 'u947'); assert.strictEqual(text.linkText, 'Open PR #14947');
 text = stageTrackerResultText({ action: 'held', target: { repo: 'o/r', kind: 'issue', number: 7, url: 'u7' }, outcome: 'hold applied.', next: '' }, held, { id: 'hold' });
@@ -1039,7 +1039,7 @@ const stuck = { action: 'no-effect', rule: 'contributor-offline', why: 'self-dec
   options: [{ action: 'decide:merge-now', label: 'Merge as maintainer', enabled: true }, { action: 'decide:delegate:rerun', label: 'Re-run decision', enabled: true }, { action: 'decide:close-superseded', label: 'Close as superseded', enabled: false, reason_if_disabled: 'write required' }, { action: 'decide:direction', label: 'Send back for a new commit', enabled: true }, { label: 'no action' }] };
 const stuckNow = Date.parse('2026-10-28T15:01:29Z');
 text = stageTrackerResultText(stuck, issue, { id: 'decide:delegate', nowMs: stuckNow });
-assert.strictEqual(text.head, "Hive decided on o/r#14938 → PR #14947: no effect yet (the author's clanker hasn't been connected since the nudge)", 'the headline does not say "decided" twice');
+assert.strictEqual(text.head, "Hive decided on o/r#14938 → PR #14947: no effect yet (the author hasn't been reachable since the nudge)", 'the headline does not say "decided" twice');
 assert.strictEqual(text.type, 'warning'); assert.strictEqual(text.options.length, 4, 'options without an action are dropped');
 // The raw RFC3339 stamp never reaches the operator (#15126).
 assert.ok(!/2026-10-28T13:01:29Z/.test(text.outcome) && / at 13:01( today)?, but/.test(text.outcome), text.outcome);
@@ -1063,11 +1063,11 @@ assert.strictEqual(stageTrackerPlainWords('approve'), 'approved for merge', 'no 
 assert.strictEqual(stageTrackerPlainWords('close-superseded', true, 'issue'), 'Closed because another issue already tracks the same work; the discussion continues there.');
 assert.strictEqual(stageTrackerPlainWords('close-duplicate', false, 'issue'), 'closed as a duplicate', 'an entry without issue words keeps its plain words');
 assert.strictEqual(stageTrackerPlainWords('supersede'), 'close this PR and open a fresh hive-authored PR with the same commits');
-assert.strictEqual(stageTrackerPlainWords('adoption-stalled:contributor-offline'), "the author's clanker hasn't been connected since the nudge");
+assert.strictEqual(stageTrackerPlainWords('adoption-stalled:contributor-offline'), "the author hasn't been reachable since the nudge");
 assert.strictEqual(stageTrackerPlainWords('contributor-lane:changes-requested'), stageTrackerPlainWords('changes_requested'));
 assert.strictEqual(stageTrackerPlainWords('some-new-rule'), 'some new rule', 'unknown slugs are humanised, never raw');
 assert.strictEqual(stageTrackerPlainWords(''), '');
-assert.strictEqual(stageTrackerResultOf('decide:delegate', issue, { decision: { verdict: 'supersede', rule: 'contributor-offline' } }).outcome, "close this PR and open a fresh hive-authored PR with the same commits (the author's clanker hasn't been connected since the nudge)");
+assert.strictEqual(stageTrackerResultOf('decide:delegate', issue, { decision: { verdict: 'supersede', rule: 'contributor-offline' } }).outcome, "close this PR and open a fresh hive-authored PR with the same commits (the author hasn't been reachable since the nudge)");
 text = stageTrackerResultText(stageTrackerErrorResult('hold', held, 'write permission required'), held, { id: 'hold' });
 assert.strictEqual(text.head, 'Hold failed on o/r#7'); assert.strictEqual(text.outcome, 'write permission required'); assert.strictEqual(text.type, 'error');
 // Legacy answers (no result) still describe what happened.
@@ -1172,7 +1172,7 @@ assert.ok(!acting('o/r/issue#7'), 'a no-op or an error clears at once');
   global.fetch = async (url, init) => ({ ok: true, status: 200, json: async () => ({ status: 'done', result: decided }) });
   stageTrackerSetConfirmSkip('decide:delegate', true);
   const del = await runRowAction('decide:delegate', issue);
-  assert.strictEqual(del.toast.text.outcome, "Hive decided on o/r#14947: adopted (the author's clanker hasn't been connected since the nudge)", del.toast.text.outcome);
+  assert.strictEqual(del.toast.text.outcome, "Hive decided on o/r#14947: adopted (the author hasn't been reachable since the nudge)", del.toast.text.outcome);
   assert.deepStrictEqual(del.pending[0].keys, ['o/r/pr#14947', 'o/r/issue#14938']);
   assert.ok(acting('o/r/issue#14938') && acting('o/r/pr#14947'));
   // An approval is recorded when the server answers: "Approving…" clears
