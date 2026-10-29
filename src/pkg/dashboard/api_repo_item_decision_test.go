@@ -103,7 +103,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				http.NotFound(w, r)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": []map[string]any{{"number": m.fixedIssueClosedBy, "url": "https://example.test/pr/" + strconv.Itoa(m.fixedIssueClosedBy), "merged": true, "mergedAt": "2026-10-28T11:00:00Z"}}}}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": []map[string]any{{"number": m.fixedIssueClosedBy, "url": "https://github.com/testorg/testrepo/pull/" + strconv.Itoa(m.fixedIssueClosedBy), "merged": true, "mergedAt": "2026-10-28T11:00:00Z"}}}}}}})
 		case r.Method == http.MethodGet && m.fixedIssueClosedBy > 0 && strings.HasSuffix(path, "/pulls/"+strconv.Itoa(m.fixedIssueClosedBy)):
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": m.fixedIssueClosedBy, "state": "closed", "merged": true, "merged_at": "2026-10-28T11:00:00Z", "merge_commit_sha": "25de3ba24fa0c0ffee0000000000000000000000", "user": map[string]any{"login": "hive[bot]", "type": "Bot"}, "head": map[string]any{"sha": "cafecafecafecafecafecafecafecafecafecafe"}, "base": map[string]any{"ref": "main"}})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/90"):
