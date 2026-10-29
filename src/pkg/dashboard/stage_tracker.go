@@ -492,6 +492,10 @@ type StageTrackerItem struct {
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
+	// Claimant names who holds the row — the agent, clanker owner or person
+	// — for the chevron suffix and the "Held by:" hover line
+	// (stage_tracker_claimant.go).
+	Claimant *StageTrackerClaimant `json:"claimant,omitempty"`
 	// StageActor is who holds the next move on this row — hive, clanker,
 	// human, a foreign bot, or nobody — with the plain-words why. The SPA
 	// draws the stage pill's actor icon from StageActor.Kind only
@@ -608,6 +612,9 @@ type StageTrackerLinkedPR struct {
 	DCOUnsigned int    `json:"dco_unsigned,omitempty"`
 	DCOTotal    int    `json:"dco_total,omitempty"`
 	Head        string `json:"head,omitempty"`
+	// Claimant mirrors the nested PR's holder so the sub-row's chevron
+	// names them too.
+	Claimant *StageTrackerClaimant `json:"claimant,omitempty"`
 	// DecisionNeeded mirrors the nested PR's own row field so the issue's
 	// sub-row can open the same "Needs human" popover.
 	DecisionNeeded *StageTrackerDecision `json:"decision_needed,omitempty"`
@@ -1982,6 +1989,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	soakWindow := s.stageTrackerSoakWindow()
 	attempts := s.stageTrackerMergeAttempts()
 	workers := stageTrackerWorkersFromStatus(status)
+	isClankerOwner := stageTrackerIsClankerOwner()
 	adoptionClock := s.stageTrackerAdoptionClock()
 	rerouteCandidates, adoptionEnabled, takeoverGrace := s.stageTrackerRerouteCandidates(), s.stageAdoptionEnabled(), s.takeoverGrace()
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
@@ -2182,6 +2190,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if it.Stage == trackerNumberClaimed {
 			it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
 		}
+		if stageTrackerClaimantStage(it.Kind, it.Stage) {
+			var worker *stageTrackerWorker
+			if w, ok := stageTrackerWorkerOn(workers, repoName, issue.Number); ok {
+				worker = &w
+			}
+			it.Claimant = stageTrackerIssueClaimant(stageTrackerClaimInputs{Ledger: s.stageTrackerLedgerClaim(repoName, issue.Number),
+				MarkerKind: issue.ClaimKind, MarkerHolder: issue.ClaimedBy, MarkerHive: issue.ClaimHive, Assignees: issue.Assignees,
+				Worker: worker, Since: it.StageSince, HiveID: status.HiveID, IsClankerOwner: isClankerOwner})
+		}
 		for _, lp := range issue.LinkedPRs {
 			// The claims index may still say "open" for a PR the hive closed
 			// since (close-first supersession, hivecommons/hive#15135); the
@@ -2276,6 +2293,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, agg, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
+		if stageTrackerClaimantStage(it.Kind, it.Stage) {
+			var worker *stageTrackerWorker
+			if w, ok := stageTrackerWorkerOn(workers, repoName, pr.Number); ok {
+				worker = &w
+			}
+			it.Claimant = stageTrackerPRClaimant(stageTrackerClaimInputs{Worker: worker, Since: it.StageSince, Labels: pr.Labels, Author: it.Author, AuthorKind: it.AuthorKind})
+		}
 		add(it)
 	}
 	for _, repo := range status.Repos {
@@ -2295,7 +2319,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				// bucket, the open items the first tracker never showed.
 				w := it.WorkIssue
 				addIssue(repoName, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Assignees: w.Assignees,
-					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext, IsTracker: w.IsTracker, Children: w.Children}, w.Bucket, w.Reason, w.TrackerProgress, w.Advisory)
+					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, ClaimHive: w.ClaimHive, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext, IsTracker: w.IsTracker, Children: w.Children}, w.Bucket, w.Reason, w.TrackerProgress, w.Advisory)
 			default:
 				w := it.WorkPR
 				addPR(repoName, github.PullRequest{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Draft: w.Draft,
@@ -3050,6 +3074,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
+				lp.Claimant = pr.Claimant
 				lp.Adoption = pr.Adoption
 				lp.Presence = pr.Presence
 				lp.Rework = pr.Rework

@@ -1109,6 +1109,10 @@ The small icon after the lit pill's words names whose move the row is, and it co
 
 Issues riding one covering PR take that PR's actor; nested PR sub-rows carry their own.
 
+#### Who holds it (claimant)
+
+The icon says what kind of actor holds the row; the `claimant` says *who*. On a claimed or in-progress issue and on a PR from review through its author's rework and adoption (050–074), the payload carries `claimant: {kind, login, agent, hive, since, source}` and the lit chevron appends one short token after its word: a hive lane name (**Claimed · quality**), the lane and a short hive name when the claim came from another hive (**Claimed · quality@alchemy**, the `hosted-ibm-` prefix dropped), a contributor's connected hive (**Claimed · @bob's clanker**) or a person (**Claimed · @alice**). `kind` is `hive-agent` (`agent` is the lane; `hive` is set only when it is not this hive), `clanker` (`login` is the contributor the hive acts for — a registered contributor with a connected hive) or `person`; `source` says where the identity was read: `claim-comment` (the worker-claim ledger or the `hive:claim` marker, which carries the hive fingerprint), `assignee`, `kick-history` (the agent the status payload says is on it) or `author` (a PR's author or adopting agent). The chevron hover adds one line — *Held by: hive agent quality@hosted-ibm-alchemy since 3h ago (claim comment)*. When nothing names a holder the field is absent and nothing is added. Nested covering-PR sub-rows carry their PR's `claimant`.
+
 #### One row per PR
 
 A pull request that closes several open issues (`Closes #A` and `Closes #B`) is drawn once, under the issue the server names in each linked entry's `drawn_under` (its `nested_under`, the lowest-numbered open issue it closes). The other issues keep their own strip and show a compact **↳ #N · under #M** chip beside the title (tooltip: *PR #N covers this issue too; its row is drawn under #M*) instead of a second identical sub-row, so hivecommons/hive#14921 appears once under #14910 and #14911 points at it.

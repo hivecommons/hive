@@ -1599,6 +1599,7 @@
     .ham-seg.active.merged { background: var(--green); color: var(--surface-0); animation: none; }
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
+    .ham-holder { font-weight: normal; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
@@ -15487,6 +15488,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (sa.kind === STAGE_TRACKER_ACTOR_NONE) return sa.why ? ' · ' + STAGE_TRACKER_NOBODY_LEAD + ' — ' + sa.why : '';
       return ' · Next move: ' + sa.kind + (sa.login ? ' @' + sa.login : '') + (sa.why ? ' — ' + sa.why : '');
     }
+    // Who holds the row: the payload's claimant {kind, login, agent, hive,
+    // since, source} (hivecommons/hive#15422). The chevron gets one short
+    // token after the stage word; the hover gets one "Held by:" line.
+    const STAGE_TRACKER_HIVE_PREFIXES = ['hosted-ibm-', 'hosted-'];
+    const STAGE_TRACKER_CLAIMANT_SOURCE = { 'claim-comment': 'claim comment', assignee: 'assignee', 'kick-history': 'kick history', author: 'PR author' };
+    function stageTrackerShortHive(hive) {
+      const h = String(hive || '');
+      const p = STAGE_TRACKER_HIVE_PREFIXES.find(x => h.startsWith(x));
+      return p ? h.slice(p.length) : h;
+    }
+    function stageTrackerClaimant(item) {
+      const c = item && item.claimant;
+      return c && typeof c === 'object' && c.kind && (c.login || c.agent) ? c : null;
+    }
+    // "quality", "quality@alchemy", "@alice" or "@bob's clanker"; '' when unknown.
+    function stageTrackerClaimantShort(c) {
+      if (!c) return '';
+      if (c.kind === 'hive-agent') return c.agent ? c.agent + (c.hive ? '@' + stageTrackerShortHive(c.hive) : '') : (c.login ? '@' + c.login : '');
+      if (!c.login) return '';
+      return '@' + c.login + (c.kind === 'clanker' ? "'s clanker" : '');
+    }
+    // "Held by: hive agent quality@hosted-ibm-alchemy since 3h ago (claim comment)".
+    function stageTrackerClaimantLine(c, nowMs) {
+      if (!c) return '';
+      let who;
+      if (c.kind === 'hive-agent') who = 'hive agent ' + (c.agent || '@' + c.login) + (c.hive ? '@' + c.hive : '');
+      else who = '@' + c.login + (c.kind === 'clanker' ? "'s clanker" : '');
+      const sinceMs = Date.parse(c.since || '');
+      let since = '';
+      if (sinceMs && nowMs) { const ago = stageTrackerShortAgo(nowMs - sinceMs); since = ago === 'now' ? ' since just now' : ' since ' + ago + ' ago'; }
+      const src = STAGE_TRACKER_CLAIMANT_SOURCE[c.source] || c.source || '';
+      return 'Held by: ' + who + since + (src ? ' (' + src + ')' : '');
+    }
     // The Fixing column word when nobody is fixing: a bot-authored PR the
     // hive does not touch, or an unowned red PR, reads as its state in
     // plain words instead of an active "Fixing" (hivecommons/docs#500).
@@ -15582,6 +15616,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actorKind = stageTrackerActorKind(item);
       const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       const actorTip = stageTrackerActorTip(item);
+      const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
+      const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
+      const holderHtml = holderShort ? `<span class="ham-holder"> · ${esc(holderShort)}</span>` : '';
       // Static chevrons carry no data-motion: the CSS only animates the two
       // moving buckets. The hive-acting pulse needs an agent actually on
       // the item (tracker-cues: working); a hive stage with nobody on it is
@@ -15618,6 +15655,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // The reason is the whole story; the stage description would only repeat it (hivecommons/hive#15394).
           else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim();
           if (actorTip && !sg.cap) tip += actorTip;
+          if (claimant && !sg.cap) tip += ' · ' + stageTrackerClaimantLine(claimant, nowMs);
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.
           if (sentinel) tip = stageTrackerSentinelTip(item) + ' — ' + tip;
@@ -15634,7 +15672,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // On the merge gate the word carries its live detail and the
         // leading glyph says in words what hive is doing (#15073).
         const gateWord = active && !sg.cap && !sg.detour && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
-        const word = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : (gateWord || `<span class="ham-seg-t">${esc(sg.short)}</span>`);
+        const word = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}${holderHtml}</span>` : (gateWord || `<span class="ham-seg-t">${esc(sg.short)}${holderHtml}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
@@ -16158,7 +16196,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null,
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed / superseded).
@@ -16471,7 +16509,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '') + (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? ' ' + stageTrackerLineageChipHtml(lp, nowMs) : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.

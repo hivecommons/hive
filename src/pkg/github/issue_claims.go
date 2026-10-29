@@ -145,6 +145,7 @@ func (c *Client) annotateIssueClaims(ctx context.Context, owner, repo string, is
 		issue.ClaimSource = claim.Source
 		issue.ClaimKind = claim.Kind
 		issue.ClaimPRStarted = claim.PRStarted
+		issue.ClaimHive = claim.Hive
 	}
 }
 

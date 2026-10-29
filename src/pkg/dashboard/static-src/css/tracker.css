@@ -276,6 +276,7 @@
     .ham-seg.active.merged { background: var(--green); color: var(--surface-0); animation: none; }
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
+    .ham-holder { font-weight: normal; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
