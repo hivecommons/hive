@@ -2333,6 +2333,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	stageTrackerMergeTrainStallWarnings(&s.mergeTrains, resp.Items, now)
 	stageTrackerLineageFillAuthors(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
+	// A row the operator just closed from the dashboard leaves at once,
+	// before GitHub's list catches up (hivecommons/hive#15436).
+	resp.Items = stageTrackerDropOperatorClosed(resp.Items, now, operatorActionClosedGrace())
+	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	s.applyDecidedProjection(resp.Items, now)
 	applyRebaseAttempts(resp.Items)
 	s.applyRebaseMergeFollowThrough(resp.Items, now)

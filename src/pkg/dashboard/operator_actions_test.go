@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,8 @@ func TestOperatorActionOutcome(t *testing.T) {
 		{202, `{"status":"running"}`, operatorActionOutcomePending, "running", "", true, "delegated async"},
 		{409, `{"error":"not parked"}`, operatorActionOutcomeNoOp, "not parked", "", true, "conflict"},
 		{502, `{"error":"github down"}`, operatorActionOutcomeFailed, "github down", "", true, "upstream"},
+		{200, `{"ok":true,"status":"refused","result":{"action":"refused","outcome":"Close refused: repo paused — o/r is paused by the operator."}}`, operatorActionOutcomeFailed, "Close refused: repo paused — o/r is paused by the operator.", "", true, "refused close (#15436)"},
+		{200, `{"ok":true,"status":"closed","result":{"action":"closed"}}`, operatorActionOutcomeApplied, "closed", "", true, "closed"},
 		{400, `{"error":"bad"}`, "", "", "", false, "rejected input"},
 		{403, ``, "", "", "", false, "forbidden"},
 	}
@@ -458,5 +461,33 @@ func TestOperatorActionExecutionForReadsRecord(t *testing.T) {
 	}
 	if got := operatorActionExecutionFor(StageTrackerItem{Head: "bbb"}, rec, true); got.Refused != "" {
 		t.Fatalf("escalation for another head leaked: %+v", got)
+	}
+}
+
+// An item the operator just closed from the dashboard leaves the tracker
+// at once (hivecommons/hive#15436), for the grace window only, and only
+// when the close actually applied.
+func TestStageTrackerDropOperatorClosed(t *testing.T) {
+	now := time.Date(2026, 10, 29, 17, 20, 0, 0, time.UTC)
+	grace := 15 * time.Minute
+	act := func(action, outcome, detail string, ago time.Duration) *StageTrackerOperatorAction {
+		return &StageTrackerOperatorAction{Action: action, Outcome: outcome, Detail: detail, At: now.Add(-ago)}
+	}
+	items := []StageTrackerItem{
+		{Repo: "o/r", Number: 1, Kind: "issue"},
+		{Repo: "o/r", Number: 2, Kind: "issue", LastOperatorAction: act(operatorActionCloseRead, operatorActionOutcomeApplied, operatorActionClosedDetail, time.Minute)},
+		{Repo: "o/r", Number: 3, Kind: "pr", LastOperatorAction: act(operatorActionCloseSuperseded, operatorActionOutcomeApplied, operatorActionClosedDetail, 2*time.Minute)},
+		{Repo: "o/r", Number: 4, Kind: "issue", LastOperatorAction: act(operatorActionWontFix, operatorActionOutcomeApplied, operatorActionClosedDetail, grace+time.Second)},
+		{Repo: "o/r", Number: 5, Kind: "issue", LastOperatorAction: act(operatorActionCloseRead, operatorActionOutcomeFailed, "Close refused: repo paused", time.Minute)},
+		{Repo: "o/r", Number: 6, Kind: "issue", LastOperatorAction: act(operatorActionApprove, operatorActionOutcomeApplied, "unparked", time.Minute)},
+	}
+	got := stageTrackerDropOperatorClosed(items, now, grace)
+	var nums []int
+	for _, it := range got {
+		nums = append(nums, it.Number)
+	}
+	want := []int{1, 4, 5, 6}
+	if !slices.Equal(nums, want) {
+		t.Fatalf("kept %v, want %v (just-closed rows 2 and 3 must leave; a refused close, an old close and a non-close stay)", nums, want)
 	}
 }
