@@ -274,6 +274,14 @@ type prDecisionTarget struct {
 	labels       []string
 }
 
+// SetAuthorKindLabels installs the live governor.labels.author resolver.
+// Nil uses the default names, matching the stage reconciler.
+func (c *Client) SetAuthorKindLabels(fn func() authorkind.Names) {
+	if c != nil {
+		c.authorKindLabels = fn
+	}
+}
+
 func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name string, number int) (prDecisionTarget, error) {
 	pr, resp, err := c.client.PullRequests.Get(ctx, owner, name, number)
 	if err != nil {
@@ -290,12 +298,17 @@ func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name 
 		t.head = strings.TrimSpace(pr.GetHead().GetSHA())
 	}
 	t.labels = issueLabelNames(pr.Labels)
-	t.selfAuthored = c.isHiveAccount(pr.GetUser()) || labelPresent(t.labels, authorkind.Hive.Label())
+	names := authorkind.Names{}
+	if c.authorKindLabels != nil {
+		names = c.authorKindLabels()
+	}
+	kind := authorkind.FromLabels(t.labels, names)
+	t.selfAuthored = c.isHiveAccount(pr.GetUser()) || kind == authorkind.Hive
 	if !t.selfAuthored {
 		// Require the repository's classification stamp here. PR-body
 		// markers are author-controlled hints for the sweep, not sufficient
 		// evidence to accept a dashboard direction on a person's PR.
-		t.clanker = labelPresent(t.labels, authorkind.Clanker.Label())
+		t.clanker = kind == authorkind.Clanker
 	}
 	return t, nil
 }

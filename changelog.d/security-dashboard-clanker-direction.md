@@ -1,1 +1,1 @@
-- Dashboard directions require the repository's `author/clanker` classification for contributor PRs; author-controlled body markers alone no longer enable the contributor direction lane ([#15268](https://github.com/hivecommons/hive/issues/15268)).
+- Dashboard directions for contributor PRs now require the sweep's classification label, honoring `governor.labels.author` names, instead of falling back directly to PR-body markers; the sweep's body-marker classification remains unchanged ([#15268](https://github.com/hivecommons/hive/issues/15268)).
