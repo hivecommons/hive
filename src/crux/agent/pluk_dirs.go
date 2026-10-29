@@ -127,3 +127,14 @@ func plukPipePaneCmd(plukPath, session, backend, logFile string) string {
 		shellQuote(logFile),
 	)
 }
+
+// plukCLIForBackend maps a hive backend to a --cli value pluk ships a pattern
+// set for. Pluk has none for codex and warns "no pluk pattern set for cli=codex"
+// on every watch start, which trips the fleet unclassified_error_repeated
+// selfreport (#15389). raw_output is still recorded under the claude set.
+func plukCLIForBackend(backend string) string {
+	if backend == "codex" {
+		return "claude"
+	}
+	return backend
+}
