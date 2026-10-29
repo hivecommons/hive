@@ -1638,6 +1638,17 @@ func selectFixerAgent(pr PullRequest, opts DispatchOptions) string {
 	return ""
 }
 
+// ConfirmDeliveredInProgress is ConfirmDelivered for a kick pass that is still
+// delivering: it records the kicks delivered so far and drops nothing for the
+// planned kicks not yet delivered. A kick still being sent may already have
+// reached its agent, and the verdict relay binds that agent's verdict to the
+// pending rows on disk; dropping them at an intermediate persist bound a
+// decision verdict as advisory (hivecommons/hive#15559). The end-of-pass
+// persist uses ConfirmDelivered to release the kicks that never landed.
+func ConfirmDeliveredInProgress(state DispatchState, delivered []DispatchKick) DispatchState {
+	return ConfirmDelivered(state, delivered, delivered)
+}
+
 func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) DispatchState {
 	now := time.Now().UTC()
 	deliveredSet := map[string]bool{}
