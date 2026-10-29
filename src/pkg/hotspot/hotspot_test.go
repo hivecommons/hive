@@ -465,8 +465,8 @@ func TestGeneratedWithSplitSourceIsReportOnly(t *testing.T) {
 			if !strings.Contains(h.Reason, "already split into 120 files") {
 				t.Errorf("reason=%q", h.Reason)
 			}
-			if b := Body(h, opts, DefaultWindow); strings.Contains(b, "## Split proposal") {
-				t.Errorf("body has split proposal:\n%s", b)
+			if h.Actionable() {
+				t.Errorf("n=%d: report-only hotspot is actionable", c.n)
 			}
 		}
 	}
