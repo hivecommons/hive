@@ -708,6 +708,56 @@ tick(STAGE_TRACKER_ODOMETER_MS + 100); assert.strictEqual(n2.children.length, 0)
 `)
 }
 
+// TestStageTrackerMergedOdometerAtRest: the all-time count looks like a
+// mechanical odometer when nothing is rolling, and the bee in the pill is
+// big enough to read (hivecommons/hive#15469: the roll animation alone left
+// a 12 px hexagon and plain 12 px bold text between merges).
+func TestStageTrackerMergedOdometerAtRest(t *testing.T) {
+	html := indexHTML(t)
+	rule := func(sel string) string {
+		i := strings.Index(html, sel+" {")
+		if i < 0 {
+			t.Fatalf("index.html has no %q rule", sel)
+		}
+		j := strings.Index(html[i:], "}")
+		return html[i : i+j]
+	}
+	n := rule(".ham-merged-count .ham-merged-n")
+	for _, want := range []string{
+		"font-family: var(--font-mono)", "font-variant-numeric: tabular-nums", "font-size: var(--fs-xl)",
+		"repeating-linear-gradient(90deg", "inset 0 3px 4px", "inset 0 -3px 4px", "var(--surface-3)",
+	} {
+		if !strings.Contains(n, want) {
+			t.Errorf("at-rest odometer drum missing %q in: %s", want, n)
+		}
+	}
+	if strings.Contains(n, "font-size: var(--fs-sm)") {
+		t.Errorf("odometer digits must be at least 18 px, not --fs-sm: %s", n)
+	}
+	for _, want := range []string{
+		".ham-merged-count .ham-merged-n::after { content: \"\"; position: absolute; inset: 0;",
+		"body.light-mode .ham-merged-count .ham-merged-n {",
+		"body.light-mode .ham-merged-count .ham-merged-n::after {",
+		".ham-merged-count .ham-merged-n .ham-odo { color: var(--text); text-indent: 0;",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing odometer rule %q", want)
+		}
+	}
+	if ico := rule(".ham-merged-count .ham-merged-ico"); !strings.Contains(ico, "width: 28px; height: 28px") {
+		t.Errorf("the pill's bee must be at least 28 px: %s", ico)
+	}
+	if !strings.Contains(html, "#activity-monitor-section { --ham-sticky-bar-h: 40px; }") {
+		t.Error("the sticky bar height must grow with the bee so the column header sticks below it")
+	}
+	if strings.Contains(html, "--ham-sticky-bar-h: 34px") {
+		t.Error("stale 34 px sticky bar height")
+	}
+	if sub := rule(".ham-merged-count .ham-merged-sub"); strings.Contains(sub, "font-size") {
+		t.Errorf("the day/week line keeps its current size: %s", sub)
+	}
+}
+
 // TestStageTrackerFlightTargetNode: the operator's spec for the flight —
 // from the ✓ cell to the Merged chip when the chip is inside the viewport,
 // otherwise up and out through the top edge; the glyph is configurable;

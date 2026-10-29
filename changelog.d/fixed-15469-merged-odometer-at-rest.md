@@ -1,0 +1,1 @@
+- The Activity Monitor Merged counter is now a mechanical odometer at rest (dark inset drum cells with dividers, monospace digits at 1.25rem, a roller gradient, and a light-mode variant) and its hexagon bee is 28 px, with the sticky bar grown to fit ([#15469](https://github.com/hivecommons/hive/issues/15469)).

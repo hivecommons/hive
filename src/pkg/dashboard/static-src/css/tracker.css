@@ -5,8 +5,8 @@
        Review, 085/090 on Merge gate) light the chevron they branch from in
        their own words, so every strip is the same width. An issue parked on
        a person (045) lights Actionable with the decision word. */
-    /* The sticky chip bar's height (the header strip sticks beneath it). */
-    #activity-monitor-section { --ham-sticky-bar-h: 34px; }
+    /* The sticky chip bar's height (the header strip sticks beneath it): the 28 px bee plus the chip's padding and border plus the bar's own padding. */
+    #activity-monitor-section { --ham-sticky-bar-h: 40px; }
     /* Layers for the merge flight glyph and the merged-toast stack. Both are
        appended to document.body, not to #activity-monitor-section, so these must be
        :root-scoped — scoped to the section they resolved to nothing, the
@@ -444,14 +444,18 @@
     .ham-sticky-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
     .ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text); cursor: pointer; }
     .ham-merged-count:hover { border-color: var(--line-strong); }
-    .ham-merged-count .ham-merged-ico { width: 12px; height: 12px; color: var(--amber); }
-    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
+    .ham-merged-count .ham-merged-ico { width: 28px; height: 28px; flex: 0 0 auto; color: var(--amber); }
+    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--fs-xl); font-family: var(--font-mono); line-height: 1.25; letter-spacing: 0.3em; text-indent: 0.15em; border-radius: var(--r-sm); background-color: color-mix(in srgb, var(--surface-3) 60%, #000); background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(1ch + 0.3em - 1px), color-mix(in srgb, var(--text) 24%, transparent) calc(1ch + 0.3em - 1px), color-mix(in srgb, var(--text) 24%, transparent) calc(1ch + 0.3em)); box-shadow: inset 0 3px 4px -1px rgba(0, 0, 0, 0.7), inset 0 -3px 4px -1px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--line-subtle); }
+    /* At rest the all-time count is a mechanical odometer (hivecommons/hive#15469): a monospace digit per drum cell, the thin dividers drawn at every cell width (1ch + the letter spacing), and a roller gradient (dark at the top and bottom edge, lit across the middle) laid over the digits. All of it is paint on the plain text, so the text stays the real value for width, tests and screen readers. */
+    .ham-merged-count .ham-merged-n::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(180deg, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0.12) 28%, rgba(255, 255, 255, 0.08) 50%, rgba(0, 0, 0, 0.12) 72%, rgba(0, 0, 0, 0.55) 100%); }
+    body.light-mode .ham-merged-count .ham-merged-n { background-color: color-mix(in srgb, var(--surface-3) 86%, #64748b); box-shadow: inset 0 3px 4px -1px rgba(15, 23, 42, 0.35), inset 0 -3px 4px -1px rgba(15, 23, 42, 0.25), 0 0 0 1px var(--line-subtle); }
+    body.light-mode .ham-merged-count .ham-merged-n::after { background: linear-gradient(180deg, rgba(15, 23, 42, 0.28) 0%, rgba(15, 23, 42, 0.05) 28%, rgba(255, 255, 255, 0.35) 50%, rgba(15, 23, 42, 0.05) 72%, rgba(15, 23, 42, 0.28) 100%); }
     .ham-merged-count .ham-merged-sub { color: var(--text-faint, var(--muted)); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-merged-count.cue-tick { animation: cue-count-pop 320ms ease-out; }
     .ham-merged-count .ham-merged-n, .ham-merged-count .ham-merged-sub { position: relative; }
     .ham-merged-count .ham-odo-rolling { color: transparent; }
     .ham-odo { position: absolute; inset: 0; display: flex; align-items: center; overflow: hidden; white-space: pre; pointer-events: none; }
-    .ham-merged-count .ham-merged-n .ham-odo { color: var(--text); }
+    .ham-merged-count .ham-merged-n .ham-odo { color: var(--text); text-indent: 0; padding-left: 0.15em; }
     /* The dark theme's token sheet has no --text-faint (only body.light-mode
        sets it), so without a fallback the overlay inherited the rolling
        line's transparent colour and the day/week counts vanished mid-roll. */
