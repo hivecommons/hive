@@ -1907,6 +1907,15 @@
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
     .ham-decision-act.ham-decision-more { color: var(--text-muted); }
+    /* The row's inline lead action (the ⋯ menu's lead entry, in sight): a
+       small primary pill in the chip slot, the popover lead's recipe, the
+       row's cue colour; dashed and faint with its reason when the viewer
+       may not take it. */
+    .ham-lead-act { padding: 0 var(--sp-3); border: var(--line-width) solid var(--cue-state, var(--accent)); border-radius: var(--r-pill); background: color-mix(in srgb, var(--cue-state, var(--accent)) 10%, transparent); color: var(--cue-state, var(--accent)); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.4; cursor: pointer; white-space: nowrap; }
+    .ham-lead-act:hover, .ham-lead-act:focus-visible { background: color-mix(in srgb, var(--cue-state, var(--accent)) 22%, transparent); outline: none; }
+    .ham-lead-act:focus-visible { box-shadow: 0 0 0 var(--line-width) var(--accent); }
+    .ham-lead-act.ham-menu-danger { color: var(--red); border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+    .ham-lead-act[aria-disabled="true"] { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; background: transparent; cursor: default; opacity: 0.7; }
     /* The technical background folds behind one collapsed Details. */
     .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }
@@ -2678,6 +2687,7 @@
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-swarm-btn:hover { opacity: 1; border-color: var(--amber); }
     .repo-swarm-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
+    .repo-current-base-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); cursor: help; }
     .repo-swarm-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent); background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); }
     .swarm-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, 20rem); gap: var(--sp-5); align-items: start; margin: var(--sp-0) var(--sp-0) var(--sp-5); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-lg); background: color-mix(in srgb, var(--amber) 5%, var(--surface)); }
     .swarm-title { font-weight: 800; color: var(--amber); margin-bottom: var(--sp-2); }
@@ -16473,6 +16483,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tip = 'Hive re-authored #' + af.number + (af.author ? ' (by @' + af.author + ')' : '') + ' as this PR with the same commits and sign-off' + (af.decided_by ? '; the decision on #' + af.number + ' was ' + (af.decided_action || 'yours') + ' by @' + af.decided_by : '') + '. #' + af.number + ' is closed as superseded when this merges.';
       return `<a class="ham-badge ham-adopted-from" href="${esc(af.url || '#')}" target="_blank" rel="noopener" title="${esc(tip)}">${esc(text)}</a>`;
     }
+    // The row's inline lead action (tracker-actions.js
+    // stageTrackerLeadActionHtml), computed against the viewer's own
+    // permissions on the item's repo; '' where the actions module or a
+    // viewer context is absent (the node harness lifts this file alone).
+    function stageTrackerLeadButtonHtml(item, nowMs) {
+      if (typeof stageTrackerLeadActionHtml !== 'function' || typeof stageTrackerActionCtx !== 'function' || !item) return '';
+      const ctx = stageTrackerActionCtx(item.repo);
+      if (!ctx) return '';
+      ctx.nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      return stageTrackerLeadActionHtml(item, ctx);
+    }
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = stageTrackerLinkedPRItem(issue, lp);
       const superseded = typeof stageTrackerLinkedSupersededText === 'function' ? stageTrackerLinkedSupersededText(lp, issue) : '';
@@ -16493,7 +16514,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : '')) + stageTrackerChipsHtml(pr))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : '')) + stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : ''))}
           </div>
           <div class="ham-strip-row">
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
@@ -16756,7 +16777,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown))}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs) : ''))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>
@@ -18659,6 +18680,55 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
       return out;
     }
+    // Pure: the one action a row leads with, rendered inline on the row
+    // header so the ask the caption makes has its answer in sight
+    // (hivecommons/hive#15456: "waiting for a maintainer's triage" with
+    // Accept triage hidden behind ⋯). The ⋯ menu's `lead` entry first
+    // (Accept triage, the server's lead answer such as Merge now, Close
+    // (read)); else the first Decide… option (Let hive decide, carrying the
+    // decide target); else Adopt, Adopt now or Let hive decide — all N
+    // PRs. null when the row asks nothing of the viewer here. Disabled
+    // entries are returned as-is so the button can say why.
+    function stageTrackerLeadAction(item, ctx) {
+      if (!item) return null;
+      const actions = stageTrackerRowActions(item, ctx);
+      const lead = actions.find(a => a.lead);
+      if (lead) return lead;
+      const decide = actions.find(a => a.id === 'decide');
+      if (decide && Array.isArray(decide.submenu) && decide.submenu.length) {
+        const o = decide.submenu.find(x => x.enabled) || decide.submenu[0];
+        const enabled = !!decide.enabled && !!o.enabled;
+        return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
+      }
+      for (const id of ['decide:adopt', 'decide:adopt-now', 'decide:delegate-all']) {
+        const a = actions.find(x => x.id === id);
+        if (a && (a.enabled || id !== 'decide:adopt-now')) return a;
+      }
+      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
+      return null;
+    }
+    // Pure: whether the server says the next move is the maintainer's.
+    function stageTrackerMaintainerMoved(item) {
+      return !!item && (item.actor === 'maintainer' || !!(item.new && item.new.next_mover === 'maintainer'));
+    }
+    // A console warning on a development host only (localhost, 127.0.0.1).
+    function stageTrackerDevWarn(msg) {
+      const host = typeof window !== 'undefined' && window.location ? String(window.location.hostname || '') : '';
+      if ((host === 'localhost' || host === '127.0.0.1') && typeof console !== 'undefined' && console.warn) console.warn('[tracker] ' + msg);
+    }
+    // The inline lead button for a row: a real <button> carrying the same
+    // id, hint and enable/disable reason as the ⋯ menu entry it mirrors;
+    // '' when the row has no lead. Click handling is delegated in
+    // stageTrackerWireRowActions and runs runRowAction, the menu's path.
+    function stageTrackerLeadActionHtml(item, ctx) {
+      const a = stageTrackerLeadAction(item, ctx);
+      if (!a) return '';
+      const label = String(a.label || a.id);
+      const tip = a.enabled ? String(a.hint || a.note || a.consequence || '') : String(a.why || '');
+      const ref = typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(item) : '';
+      const state = a.enabled ? (tip ? ` title="${esc(tip)}"` : '') : ` aria-disabled="true" title="${esc(tip)}"`;
+      return `<button type="button" class="ham-lead-act${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}"${state} aria-label="${esc(label + (ref ? ' — ' + ref : ''))}">${esc(label)}</button>`;
+    }
     // Pure: the actions for a row parked on a blocker (hivecommons/hive#15099):
     // the server lists them in decision_needed.options (a capability gap
     // offers the App settings link, a permission re-check and the disabled
@@ -18876,6 +18946,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           e.preventDefault();
           stageTrackerSelect(row.dataset.hamKey, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey });
         }
+      });
+      // The row's inline lead button runs the same path as its ⋯ entry.
+      el.addEventListener('click', e => {
+        const b = e.target.closest ? e.target.closest('.ham-lead-act[data-ham-act]') : null;
+        if (!b) return;
+        e.preventDefault(); e.stopPropagation();
+        if (b.getAttribute('aria-disabled') === 'true') return;
+        // The one row (or nested PR) the button sits on, never the selection.
+        const sub = b.closest('[data-ham-sub-key]');
+        const row = b.closest('.ham-row[data-ham-key]');
+        const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+        const item = key ? stageTrackerItemByKey(_stageTracker, key) : null;
+        if (!item) return;
+        stageTrackerDecisionRun(item, b.dataset.hamAct);
       });
       // Cmd/Ctrl- or Shift-click anywhere on a row (not on its links or
       // buttons) selects it too.
@@ -28277,6 +28361,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const autoMergeLevelOK = Number((status && status.acmmLevel) || 0) >= 6;
         const swarming = activeSwarmRepo && activeSwarmRepo.toLowerCase() === cardRepo.toLowerCase();
         const swarmPill = swarming ? `<span class="repo-swarm-pill" title="${esc('This repository is being prioritized by the active swarm')}">🐝 swarm</span>` : '';
+        // #15335: the effective current-base merge gate for this repo
+        // (Features default or the repo's own override on the Repos tab).
+        const currentBasePill = r.requireCurrentBase ? `<span class="repo-current-base-pill" title="${esc('Merge only on current base: a green PR whose base has moved is updated and re-tested before Hive merges it (Settings → Features, per-repo override on the Repos tab).')}">current-base</span>` : '';
         const canPauseRepo = canToggleHold;
         // Asymmetric gate (#9070): repo-write users may switch auto-merge OFF,
         // but only a verified owner may switch it back ON — mirror the server.
@@ -28315,7 +28402,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${cardForge.kind === 'github'
             ? `<div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>`
             : `<div class="repo-provider-label" data-forge="${esc(cardForge.kind)}" style="color:var(--indigo)" title="This repo lives on ${esc(cardForge.name)} at ${esc(cardForge.host)}">${cardForge.icon} ${esc(cardForge.name)} · ${esc(cardForge.host)}</div>`}
-          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${forkPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${currentBasePill}${forkPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.issuesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
@@ -52747,6 +52834,11 @@ function burnAreaChart() {
       const rtHoldEnvLocked = !!_configState.data.reporterTrustHoldEnvLocked;
       const repoRtHold = _configState.data.repoReporterTrustHold || {};
       const rtGateOn = !!((_configState.data.reporterTrust || {}).enabled);
+      // #15335 current-base merge gate: hive-wide default lives on the
+      // Features tab ("Merge only on current base"); each repo row carries
+      // the inherit / on / off override.
+      const cbDefault = !!_configState.data.currentBaseDefault;
+      const repoCurrentBase = _configState.data.repoCurrentBase || {};
       // #11313 label-driven approval: per-repo opt-in plus project-wide trust.
       const repoLabelDriven = _configState.data.repoLabelDriven || {};
       const ldApproval = _configState.data.labelDrivenApproval || {};
@@ -52817,6 +52909,16 @@ function burnAreaChart() {
           ? '<button class="remove-item" data-action="clearRepoReporterTrustHoldOverride" data-arg0="' + esc(r) + '" data-arg-types="s" title="Clear this repo override and inherit the all-repos default">inherit</button>'
           : '<span class="rt-inherit">inherits</span>';
         const rtRow = '<label title="' + rtTitle + '" class="rt-check"><input type="checkbox" ' + (rtEffective ? 'checked' : '') + ' ' + (rtHoldEnvLocked ? 'disabled' : '') + ' data-change-action="toggleRepoReporterTrustHold" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Hold PRs for untrusted reporters (#9665)</label>' + rtInherit;
+        const cbPolicy = repoCurrentBase[r] || {};
+        const cbHasOverride = Object.prototype.hasOwnProperty.call(cbPolicy, 'value');
+        const cbEffective = cbHasOverride ? !!cbPolicy.value : (Object.prototype.hasOwnProperty.call(cbPolicy, 'effective') ? !!cbPolicy.effective : cbDefault);
+        const cbTitle = cbHasOverride
+          ? 'This repo has an explicit "merge only on current base" override (auto_merge.' + (cbPolicy.value ? 'require_current_base' : 'skip_current_base') + ').'
+          : 'Inherits the Features tab\'s "Merge only on current base" default (currently ' + (cbDefault ? 'on' : 'off') + ').';
+        const cbInherit = cbHasOverride
+          ? '<button class="remove-item" data-action="clearRepoCurrentBaseOverride" data-arg0="' + esc(r) + '" data-arg-types="s" title="Clear this repo override and inherit the Features default">inherit</button>'
+          : '<span class="rt-inherit">inherits</span>';
+        const cbRow = '<label title="' + cbTitle + '" class="rt-check"><input type="checkbox" ' + (cbEffective ? 'checked' : '') + ' data-change-action="toggleRepoCurrentBase" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Merge only on current base</label>' + cbInherit;
         // #11313 label-driven approvals (Prow-style): opt-in per repo, with the
         // sub-row (approval labels + help) only while the toggle is on.
         const ld = repoLabelDriven[r] || {};
@@ -52828,7 +52930,7 @@ function burnAreaChart() {
           </div>`;
         // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
         const displayName = ghHost + '/' + r;
-        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub;
+        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub;
       }).join('');
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
@@ -52977,6 +53079,29 @@ function burnAreaChart() {
       const payload = repoReporterTrustHoldPayload();
       payload[repo] = null;
       markDirty('repos', 'repoReporterTrustHold', payload);
+      renderConfigTab('Repos');
+    }
+
+    // #15335 current-base gate per-repo override (Repos tab): true writes the
+    // repo into auto_merge.require_current_base, false into
+    // auto_merge.skip_current_base, null clears it from both.
+    function repoCurrentBasePayload() {
+      return Object.fromEntries(Object.entries(_configState.data.repoCurrentBase || {}).map(([k, v]) => [k, Object.prototype.hasOwnProperty.call(v, 'value') ? v.value : null]));
+    }
+
+    function toggleRepoCurrentBase(repo, checked) {
+      if (!_configState.data.repoCurrentBase) _configState.data.repoCurrentBase = {};
+      _configState.data.repoCurrentBase[repo] = { value: !!checked, effective: !!checked };
+      markDirty('repos', 'repoCurrentBase', repoCurrentBasePayload());
+      renderConfigTab('Repos');
+    }
+
+    function clearRepoCurrentBaseOverride(repo) {
+      if (!_configState.data.repoCurrentBase) _configState.data.repoCurrentBase = {};
+      _configState.data.repoCurrentBase[repo] = { effective: !!_configState.data.currentBaseDefault };
+      const payload = repoCurrentBasePayload();
+      payload[repo] = null;
+      markDirty('repos', 'repoCurrentBase', payload);
       renderConfigTab('Repos');
     }
 
@@ -55300,6 +55425,10 @@ function burnAreaChart() {
           <div class="config-toggle">
             <div class="config-toggle-switch ${rv.contributor_prs && rv.contributor_prs.base_sync ? 'on' : ''}" data-action="toggleContributorPRBaseSync"></div>
             <span class="config-toggle-label">Sync lane-authored contributor fork PRs with base ${settingHelpMark('review-swarm', 'configuration', 'Sync lane-authored contributor fork PRs with base', `OFF by default. Owner gate for review.contributor_prs.base_sync. When a Hive-authored lane PR lives on a contributor fork, is behind or dirty, and has &quot;allow edits by maintainers&quot; enabled, Hive may call GitHub&apos;s update-branch API. Clean BEHIND PRs get a GitHub-authored merge commit; DIRTY PRs fall back to the base-moved repair note and kick. Requires the agent mode that permits update-branch (ISSUES_PRS_MERGE).`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${am.require_current_base_default ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="require_current_base_default"></div>
+            <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
           </div>
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${rv.post_comments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="post_comments"></div>
