@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -12,6 +13,10 @@ import (
 )
 
 const nativeQueueReason = "native-merge-queued"
+
+// inactiveQueueInterval bounds how often a paused repo's open PRs are re-read;
+// each read costs GraphQL points per PR.
+const inactiveQueueInterval = 10 * time.Minute
 
 type nativeQueueTransport interface {
 	NativeMergeQueueAvailable() bool
@@ -172,6 +177,9 @@ func (c *Engine) reconcileInactiveNativeQueues(ctx context.Context) {
 		if (active[display] && c.repoAutoMergeAllowed(display)) || (c.repoOnGitHub != nil && !c.repoOnGitHub(display)) {
 			continue
 		}
+		if !c.inactiveQueueDue(display) {
+			continue
+		}
 		owner, repo := c.transport.SplitRepo(display)
 		opts := &gh.PullRequestListOptions{State: "open", ListOptions: gh.ListOptions{PerPage: 100}}
 		for {
@@ -189,4 +197,18 @@ func (c *Engine) reconcileInactiveNativeQueues(ctx context.Context) {
 			opts.Page = resp.NextPage
 		}
 	}
+}
+
+func (c *Engine) inactiveQueueDue(repo string) bool {
+	c.inactiveQueueMu.Lock()
+	defer c.inactiveQueueMu.Unlock()
+	now := c.now()
+	if last, ok := c.inactiveQueueLast[repo]; ok && now.Sub(last) < inactiveQueueInterval {
+		return false
+	}
+	if c.inactiveQueueLast == nil {
+		c.inactiveQueueLast = map[string]time.Time{}
+	}
+	c.inactiveQueueLast[repo] = now
+	return true
 }
