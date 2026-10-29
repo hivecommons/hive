@@ -40,3 +40,12 @@ func TestEnsurePlukRunDirsUsesGroupOnlySetgidMode(t *testing.T) {
 		}
 	}
 }
+
+func TestPlukCLIForBackend_CodexFallsBackToSupportedSet(t *testing.T) {
+	cases := map[string]string{"codex": "claude", "claude": "claude", "copilot": "copilot", "gemini": "gemini"}
+	for in, want := range cases {
+		if got := plukCLIForBackend(in); got != want {
+			t.Errorf("plukCLIForBackend(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

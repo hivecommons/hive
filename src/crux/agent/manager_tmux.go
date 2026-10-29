@@ -384,6 +384,7 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		if backend == "" || m.routableBackend(backend) {
 			backend = "claude"
 		}
+		backend = plukCLIForBackend(backend)
 		logFile, err := ensurePlukLogFile(plukRunDir, agent.tmuxSession)
 		if err != nil {
 			// Non-fatal, and deliberately not a reason to skip the attach: the
