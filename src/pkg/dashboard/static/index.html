@@ -17156,6 +17156,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // issue's row rather than its own, so rows can sit below the payload's
     // open items; `open` ({issues, prs}) lets the line footnote that gap
     // ("2 PRs shown on their issue's row") instead of printing two totals.
+    // Because the sidebar Overview pill prints the same open set as
+    // issues/PRs (33/13) while this pill prints rows (37), `breakdown`
+    // spells out how the row count is made ("33 issues + 4 PRs on their
+    // own row") in the header and the pill tooltip, so the two pills read
+    // as different views of one population rather than a disagreement.
     function stageTrackerCountsText(page, allCount, attention, open, attentionAll) {
       const filteredOut = Math.max(0, allCount - page.total);
       const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
@@ -17163,18 +17168,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const attn = attnText(attention);
       const attnAll = attnText(Number.isFinite(Number(attentionAll)) ? Number(attentionAll) : attention);
       const rowsWord = n => n === 1 ? 'row' : 'rows';
-      let note = '';
-      if (open && Number.isFinite(Number(open.issues)) && Number.isFinite(Number(open.prs))) {
-        const shared = Math.max(0, Number(open.issues) + Number(open.prs) - allCount);
-        if (shared) note = `${shared} ${shared === 1 ? 'PR' : 'PRs'} shown on ${shared === 1 ? 'its' : 'their'} issue's row`;
-      }
+      const parts = stageTrackerRowBreakdown(allCount, open);
+      const note = parts.shared ? `${parts.shared} ${parts.shared === 1 ? 'PR' : 'PRs'} shown on ${parts.shared === 1 ? 'its' : 'their'} issue's row` : '';
+      const breakdown = parts.known ? `${parts.issues} ${parts.issues === 1 ? 'issue' : 'issues'} + ${parts.standalonePRs} ${parts.standalonePRs === 1 ? 'PR' : 'PRs'} on ${parts.standalonePRs === 1 ? 'its' : 'their'} own row` : '';
       return {
         showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
-        header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${rowsWord(page.total)} · ${attn}`,
+        header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${rowsWord(page.total)}${breakdown ? ` (${breakdown})` : ''} · ${attn}`,
         badge: allCount,
-        badgeTitle: `${allCount} ${rowsWord(allCount)} open · ${attnAll}` + (note ? ` · ${note}` : ''),
+        badgeTitle: `${allCount} ${rowsWord(allCount)} open` + (breakdown ? `: ${breakdown}` : '') + ` · ${attnAll}` + (note ? ` · ${note}` : ''),
         note,
+        breakdown,
       };
+    }
+
+    // Pure: how the default view's row count decomposes against the open
+    // item totals. Every open issue is a row; a PR is a row only when it is
+    // not drawn under a listed issue, so standalonePRs = rows − issues and
+    // shared = (issues + PRs) − rows. `known` is false without totals.
+    function stageTrackerRowBreakdown(rowCount, open) {
+      const rows = Math.max(0, Number(rowCount) || 0);
+      if (!open || !Number.isFinite(Number(open.issues)) || !Number.isFinite(Number(open.prs))) return { known: false, rows, issues: 0, prs: 0, standalonePRs: 0, shared: 0 };
+      const issues = Math.max(0, Number(open.issues)), prs = Math.max(0, Number(open.prs));
+      const standalonePRs = Math.min(prs, Math.max(0, rows - issues));
+      return { known: true, rows, issues, prs, standalonePRs, shared: Math.max(0, issues + prs - rows) };
     }
 
     // The tracker's open issue / PR counts: the payload's open_issues/open_prs
@@ -26002,16 +26018,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        "Total open PRs" tiles exactly; the title carries the tile equation
        and the last-good "stale" note. overview_sidebar_pill_test.go runs
        it under node. */
+    // Pure: the sidebar Overview pill. The text is the open-item totals the
+    // tiles print (issues/PRs); the tooltip names each half and says that
+    // the Hive activity monitor pill counts rows of the same set — every
+    // issue plus each PR not drawn under a listed issue — so 33/13 beside
+    // Overview and 37 beside the activity monitor are one population, not
+    // two disagreeing counts (overviewSidebarPillLead).
     function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted) {
       const issues = Number(openIssues) || 0;
       const prs = Number(openPRs) || 0;
-      let title = equationLabel || `${issues} total open issues + ${prs} total open PRs`;
+      let title = overviewSidebarPillLead(issues, prs) + ' · ' + (equationLabel || `${issues} total open issues + ${prs} total open PRs`);
       if (staleSince) title += ` (${overviewStaleBadgeText(staleSince, overviewRestartRefresh()).text})`;
       const syncing = overviewSyncingNote(unlisted);
       if (syncing) title += ` · ${syncing}`;
       const note = overviewUnlistedNote(unlisted);
       if (note) title += ` · ${note}`;
       return { issues, prs, title };
+    }
+    function overviewSidebarPillLead(issues, prs) {
+      const i = Number(issues) || 0, p = Number(prs) || 0;
+      return `${i} open ${i === 1 ? 'issue' : 'issues'} / ${p} open ${p === 1 ? 'PR' : 'PRs'} — the Hive activity monitor pill counts rows of this same set (every issue, plus each PR not shown under a listed issue), so it can read differently`;
     }
 
     /* Pure: open items the enumeration or forgestate cache reported in its
