@@ -1,0 +1,1 @@
+- Merge train: a PR GitHub reports conflicting on its own, or one at 072 returned-to-contributor (label or stage record), is no longer admitted to or counted in a merge train and draws no train idle comment — hive's own conflicting #15307 read `queued-behind#15424:4/6`; a conflicting PR rides only while the train itself is repairing it (#15395).

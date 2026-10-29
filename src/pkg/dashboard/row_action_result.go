@@ -144,7 +144,7 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 			out.Next = "The hive's copy rebases, soaks and merges unattended; " + ref + " closes when it lands."
 		} else {
 			out.Outcome = "Adopted — hive will re-author " + ref + " as a hive PR with the same commits and merge it next pass; " + ref + " will be closed as superseded."
-			out.Next = "Until the copy opens the row reads Adopted at the merge gate; the copy then carries the chevron and " + ref + " is listed under it as superseded."
+			out.Next = "Until the copy opens the row reads Adopted at the merge queue; the copy then carries the chevron and " + ref + " is listed under it as superseded."
 		}
 		if hasLadderOutcome {
 			out.Outcome += " " + ladderOutcome

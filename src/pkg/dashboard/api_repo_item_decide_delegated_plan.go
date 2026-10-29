@@ -189,7 +189,7 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 				ref + " is closed as superseded; the author keeps the credit.",
 			}
 	case d.Verdict == delegatedecision.VerdictApprove:
-		return "Approve " + ref + " as it is and let the merge gate merge it.",
+		return "Approve " + ref + " as it is and let the merge queue merge it.",
 			[]string{"Hive approves the current commit.", ref + " merges once CI is green and it has soaked."}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate && target > 0:
 		return "Close " + ref + " as a duplicate of #" + strconv.Itoa(target) + ".", []string{ref + " is closed with a comment pointing at #" + strconv.Itoa(target) + "."}
