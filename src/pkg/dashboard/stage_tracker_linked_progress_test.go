@@ -92,13 +92,13 @@ func TestStageTrackerLinkedPRProgressRowsAndEvents(t *testing.T) {
 		{Repo: "acme/console", Number: 15223, Kind: "pr", Stage: trackerNumberNeedsAuthor, Caption: "Needs @pat to fix CI",
 			LinkedIssues: []StageTrackerLinkedIssue{{Number: 15218}}},
 	}
-	stageTrackerResolveLinkedPRs(items)
+	stageTrackerResolveLinkedPRs(items, nil)
 	before, err := json.Marshal(items)
 	if err != nil {
 		t.Fatal(err)
 	}
 	items[1].Caption = "Needs @pat to rebase"
-	stageTrackerResolveLinkedPRs(items)
+	stageTrackerResolveLinkedPRs(items, nil)
 	after, err := json.Marshal(items)
 	if err != nil {
 		t.Fatal(err)
