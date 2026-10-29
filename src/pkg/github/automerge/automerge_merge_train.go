@@ -137,7 +137,8 @@ type mergeTrainMember struct {
 	// (red required check, terminal hold, permanent merge refusal): it
 	// does not front a train, and a group whose best member is blocked
 	// imposes no ordering at all (fail-open), so nobody waits behind a PR
-	// that is not moving.
+	// that is not moving. A head the lane leaves to a person's merge
+	// (mergeTrainHumanMergeReason) is not even a member.
 	Blocked bool
 }
 
@@ -372,7 +373,7 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 	if !c.mergeTrainPolicyNow().Enabled || c == nil || c.gh == nil {
 		return plan
 	}
-	prs = c.planDuplicateHolds(plan, owner, repo, displayRepo, prs, prefilter)
+	prs = c.planDuplicateHolds(plan, lane, owner, repo, displayRepo, prs, prefilter)
 	perBase := map[string][]*gh.PullRequest{}
 	for _, pr := range prs {
 		if pr == nil || pr.GetNumber() <= 0 || pr.GetHead() == nil || pr.GetHead().GetSHA() == "" {
@@ -383,6 +384,10 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 		}
 		if c.mergeTrainReturnedToContributor(owner, repo, pr) {
 			c.mergeTrainSkipLogged(owner, repo, displayRepo, pr.GetNumber(), pr.GetHead().GetSHA(), "returned-to-contributor")
+			continue
+		}
+		if c.mergeTrainHeadHumanMerge(lane, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()) {
+			c.mergeTrainSkipLogged(owner, repo, displayRepo, pr.GetNumber(), pr.GetHead().GetSHA(), "human-merge")
 			continue
 		}
 		base := pr.GetBase().GetRef()
@@ -411,7 +416,7 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 				CreatedAt:      pr.GetCreatedAt().Time,
 				MergeableState: pr.GetMergeableState(),
 				Fork:           c.isForkPR(pr),
-				Blocked:        c.mergeTrainHeadBlocked(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
+				Blocked:        c.mergeTrainHeadBlocked(lane, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
 			})
 		}
 	}
@@ -799,7 +804,16 @@ type mergeTrainState struct {
 	mergeTrainAttemptCount map[string]int
 	mergeTrainMerged       map[string]int
 	mergeTrainLogged       map[string]string
-	mergeTrainBlocked      map[string]string
+	// mergeTrainVerdicts remembers, per lane and PR, the last head whose
+	// verdict keeps it from fronting (or riding) a train.
+	mergeTrainVerdicts map[string]mergeTrainVerdict
+}
+
+// mergeTrainVerdict is the remembered lane verdict for one head: Blocked
+// heads never front; HumanMerge heads are not train members at all.
+type mergeTrainVerdict struct {
+	sha        string
+	humanMerge bool
 }
 
 // mergeTrainBlockingReason reports whether a lane's verdict means the head
@@ -813,33 +827,70 @@ func mergeTrainBlockingReason(reason string) bool {
 	return isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) || classifyCIReason(reason) == ciReasonRed
 }
 
-// noteMergeTrainOutcome remembers, per head, whether the lane's verdict
-// blocks it from fronting a train; a non-blocking verdict clears the mark.
-func (c *Engine) noteMergeTrainOutcome(owner, repo string, number int, sha, reason string) {
+// mergeTrainHumanMergeReason reports whether a lane's verdict means a
+// person, not the hive, merges this PR: the author is below the trust the
+// lane needs (untrusted-author-role, contributor-lane:no-linked-issue, …),
+// the title/label human-merge rule, a human-merge path, a merge GitHub
+// refused for a person's review, and the other prstage.HumanMergeReason*
+// codes. Such a PR is never a train member: hive's #15425 (untrusted
+// author, parked at 090) fronted a train of three and the two PRs behind
+// it waited on a merge that was never going to happen. Every code but the
+// catch-all HumanMergeReasonPolicy counts — the catch-all is what any
+// ordinary skip (soaking, CI pending) maps to.
+func mergeTrainHumanMergeReason(reason string) bool {
+	code := prstage.HumanMergeReason(reason)
+	return code != "" && code != prstage.HumanMergeReasonPolicy
+}
+
+func mergeTrainVerdictKey(lane, owner, repo string, number int) string {
+	return lane + "|" + owner + "/" + repo + "#" + strconv.Itoa(number)
+}
+
+// noteMergeTrainOutcome remembers, per lane and head, whether the lane's
+// verdict blocks it from fronting a train or excludes it altogether; any
+// other verdict clears the mark. Keyed by lane so the trusted-author lane's
+// "untrusted-author-role" for a PR the contributor lane admits never
+// touches the contributor lane's train.
+func (c *Engine) noteMergeTrainOutcome(lane, owner, repo string, number int, sha, reason string) {
 	if c == nil || number <= 0 {
 		return
 	}
-	key := owner + "/" + repo + "#" + strconv.Itoa(number)
+	key := mergeTrainVerdictKey(lane, owner, repo, number)
+	human := mergeTrainHumanMergeReason(reason)
 	c.mergeTrainMu.Lock()
 	defer c.mergeTrainMu.Unlock()
-	if !mergeTrainBlockingReason(reason) || strings.TrimSpace(sha) == "" {
-		delete(c.mergeTrainBlocked, key)
+	if (!human && !mergeTrainBlockingReason(reason)) || strings.TrimSpace(sha) == "" {
+		delete(c.mergeTrainVerdicts, key)
 		return
 	}
-	if c.mergeTrainBlocked == nil {
-		c.mergeTrainBlocked = map[string]string{}
+	if c.mergeTrainVerdicts == nil {
+		c.mergeTrainVerdicts = map[string]mergeTrainVerdict{}
 	}
-	c.mergeTrainBlocked[key] = sha
+	c.mergeTrainVerdicts[key] = mergeTrainVerdict{sha: sha, humanMerge: human}
 }
 
-// mergeTrainHeadBlocked reports whether this exact head was last seen blocked.
-func (c *Engine) mergeTrainHeadBlocked(owner, repo string, number int, sha string) bool {
+func (c *Engine) mergeTrainVerdictFor(lane, owner, repo string, number int, sha string) (mergeTrainVerdict, bool) {
 	if c == nil || sha == "" {
-		return false
+		return mergeTrainVerdict{}, false
 	}
 	c.mergeTrainMu.Lock()
 	defer c.mergeTrainMu.Unlock()
-	return c.mergeTrainBlocked[owner+"/"+repo+"#"+strconv.Itoa(number)] == sha
+	v, ok := c.mergeTrainVerdicts[mergeTrainVerdictKey(lane, owner, repo, number)]
+	return v, ok && v.sha == sha
+}
+
+// mergeTrainHeadBlocked reports whether this exact head was last seen by
+// the lane unable to merge on its own: it does not front a train.
+func (c *Engine) mergeTrainHeadBlocked(lane, owner, repo string, number int, sha string) bool {
+	_, ok := c.mergeTrainVerdictFor(lane, owner, repo, number, sha)
+	return ok
+}
+
+// mergeTrainHeadHumanMerge reports whether this exact head was last seen
+// by the lane as a person's merge: it rides no train at all.
+func (c *Engine) mergeTrainHeadHumanMerge(lane, owner, repo string, number int, sha string) bool {
+	v, ok := c.mergeTrainVerdictFor(lane, owner, repo, number, sha)
+	return ok && v.humanMerge
 }
 
 // String renders a request for logs.

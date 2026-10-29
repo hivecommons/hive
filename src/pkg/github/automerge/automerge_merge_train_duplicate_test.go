@@ -86,7 +86,7 @@ func TestPlanDuplicateHoldsFiltersCandidates(t *testing.T) {
 		pr(15411, "Fixes #15397", t0, "clean"),
 	}
 	plan := &mergeTrainPlan{lane: "self", displayRepo: "o/r"}
-	kept := c.planDuplicateHolds(plan, "o", "r", "o/r", prs, func(*gh.PullRequest) string { return "" })
+	kept := c.planDuplicateHolds(plan, stageLaneSelf, "o", "r", "o/r", prs, func(*gh.PullRequest) string { return "" })
 	if len(kept) != 3 || kept[0].GetNumber() != 15407 {
 		t.Fatalf("kept = %v", kept)
 	}
@@ -102,7 +102,7 @@ func TestPlanDuplicateHoldsFiltersCandidates(t *testing.T) {
 	}
 	// A prefilter refusal keeps the PR out of the rule entirely.
 	plan2 := &mergeTrainPlan{}
-	kept = c.planDuplicateHolds(plan2, "o", "r", "o/r", prs, func(p *gh.PullRequest) string {
+	kept = c.planDuplicateHolds(plan2, stageLaneSelf, "o", "r", "o/r", prs, func(p *gh.PullRequest) string {
 		if p.GetNumber() == 15407 {
 			return "label:hold"
 		}

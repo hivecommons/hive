@@ -59,6 +59,9 @@ type stageTrackerClaimInputs struct {
 	Labels     []string
 	Author     string
 	AuthorKind string
+	// HiveAgent is the agent named by a hive PR's `— hive:` attribution
+	// trailer (github.PullRequest.HiveAgent), when the enumeration kept it.
+	HiveAgent string
 	// IsClankerOwner reports whether a GitHub login belongs to a registered
 	// contributor with a connected hive (a clanker owner). Nil means unknown.
 	IsClankerOwner func(login string) bool
@@ -117,12 +120,17 @@ func stageTrackerIssueClaimant(in stageTrackerClaimInputs) *StageTrackerClaimant
 	return nil
 }
 
-// stageTrackerPRClaimant derives who holds a PR row: the author, by the
-// author kind the row already resolved. A hive PR names the agent on it
-// (the status payload's busy agent, else the agent/<lane> label) and the
-// adopting agent counts the same way. Nil for a foreign bot or an unknown
-// author kind.
+// stageTrackerPRClaimant derives who holds a PR row: a live worker-ledger
+// claim on the PR first (source claim-ledger), else the author, by the author kind the row
+// already resolved. A hive PR names the agent on it (the status payload's
+// busy agent, else the attribution trailer's agent, else the agent/<lane>
+// label) and the adopting agent counts the same way. Nil for a foreign bot
+// or an unknown author kind (hivecommons/hive#15422; PR in progress rows
+// too, hivecommons/hive#15541).
 func stageTrackerPRClaimant(in stageTrackerClaimInputs) *StageTrackerClaimant {
+	if c := in.Ledger; c != nil && c.Holder != "" {
+		return stageTrackerIssueClaimant(stageTrackerClaimInputs{Ledger: c, Since: in.Since, HiveID: in.HiveID})
+	}
 	switch in.AuthorKind {
 	case authorKindHive:
 		out := &StageTrackerClaimant{Kind: claimantKindHiveAgent, Since: in.Since, Source: claimantSourceAuthor}
@@ -133,7 +141,10 @@ func stageTrackerPRClaimant(in stageTrackerClaimInputs) *StageTrackerClaimant {
 			}
 			return out
 		}
-		out.Agent = stageTrackerAgentLane(in.Labels)
+		out.Agent = strings.TrimSpace(in.HiveAgent)
+		if out.Agent == "" {
+			out.Agent = stageTrackerAgentLane(in.Labels)
+		}
 		if out.Agent == "" {
 			out.Login = in.Author
 		}
@@ -184,12 +195,14 @@ func stageTrackerForeignHive(hive, local string) string {
 }
 
 // stageTrackerClaimantStage says whether a row at this stage shows its
-// holder: issues while claimed or with a PR under way; PRs from review
-// through the author's rework and adoption, before the merge gate (where
-// the gate word carries its own live detail).
+// holder: issues while claimed or with a PR under way; PRs from the moment
+// they exist (an unclassified or in-progress PR lights "PR in progress"
+// under its issue, hivecommons/hive#15541) through review, the author's
+// rework and adoption, before the merge gate (where the gate word carries
+// its own live detail).
 func stageTrackerClaimantStage(kind string, stage int) bool {
 	if kind == "pr" {
-		return stage >= trackerNumberReviewPending && stage < trackerNumberAwaitingMerge
+		return stage < trackerNumberAwaitingMerge
 	}
 	return stage == trackerNumberClaimed || stage == trackerNumberPRInProgress
 }

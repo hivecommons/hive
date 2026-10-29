@@ -197,21 +197,43 @@
     function stageTrackerTrainPlace(mt) {
       return { head: Number(mt.head_number || mt.front) || 0, len: Number(mt.length || mt.size) || 0, pos: Number(mt.position) || 0 };
     }
-    // Pure: "Merge queue stalled · head #15253 waiting for CI 3h" for a
-    // train whose head has sat past governor.merge_train_stall_warn_s; ''
-    // otherwise. The server decides stalled; the words are the head's
-    // plain-word reason plus how long.
+    // The stalled chip's lead — "Merge queue · stalled — …". The popover
+    // and the queue header strip it down to "stalled: …".
+    const STAGE_TRACKER_TRAIN_STALLED_LEAD = 'Merge queue · stalled — ';
+    // Why a stalled train's head is not moving, by merge_train.head_state
+    // (mergeTrainHead* in Go) — short enough for a chevron. A head on a
+    // person says what the person has to do (the owner's ask: "waiting on
+    // #15425 (needs maintainer merge)"), not "waiting for a maintainer".
+    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for a merge sweep', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
+    // Pure: the short reason a stalled head is stuck — the head_state
+    // table, a human-decision head told apart by its reason, else the
+    // head's own plain-word reason cut at its first clause.
+    function stageTrackerTrainStallWhy(mt) {
+      const reason = String(mt.head_reason || '').replace(/[.;].*$/, '').trim();
+      const state = String(mt.head_state || '');
+      if (state === 'needs-human' && /decision/i.test(reason)) return 'needs a human decision';
+      return STAGE_TRACKER_TRAIN_HEAD_STALL_WORD[state] || reason;
+    }
+    // Pure: "Merge queue · stalled — waiting on #15425 (needs maintainer
+    // merge) · 1h 20m" for a member behind a head that has sat past
+    // governor.merge_train_stall_warn_s; the head's own row reads "Merge
+    // queue · stalled — needs maintainer merge · 1h 20m"; '' when not
+    // stalled. The server decides stalled; the words say why and how long.
     function stageTrackerTrainStalledWord(mt) {
       if (!mt || !mt.stalled) return '';
       const p = stageTrackerTrainPlace(mt);
-      const why = String(mt.head_reason || '').replace(/[.;].*$/, '').trim();
+      const why = stageTrackerTrainStallWhy(mt);
       const dur = stageTrackerShortLeft((Number(mt.stalled_s) || 0) * 1000);
-      return 'Merge queue stalled · head #' + p.head + (why ? ' ' + why : '') + (dur ? ' ' + dur : '');
+      const isHead = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || p.pos === 1;
+      const what = isHead ? (why || 'the head has not moved') : 'waiting on #' + p.head + (why ? ' (' + why + ')' : '');
+      return STAGE_TRACKER_TRAIN_STALLED_LEAD + what + (dur ? ' · ' + dur : '');
     }
     // The chevron word for a train member ('' for a row not in a train).
     // The queued word is the place only — "Merge queued · 2nd" — so it
     // reads the same with the merge sweep on or off (#15395); never the
-    // state slug, never "front" or "queued-behind".
+    // state slug, never "front" or "queued-behind", and never '' for a
+    // state this table does not know: an unmapped slug reads spelled out
+    // with the row's place ("Waiting for front · 3rd").
     function stageTrackerTrainWord(item) {
       const mt = stageTrackerTrain(item);
       if (!mt) return '';
@@ -224,7 +246,8 @@
         case STAGE_TRACKER_TRAIN_STATE_REBASING: return 'Rebasing · attempt ' + (Number(mt.attempt) || 0) + '/' + (Number(mt.max_attempts) || 0);
         case STAGE_TRACKER_TRAIN_STATE_EXHAUSTED: return 'Needs human decision · rebase failed ' + (Number(mt.attempt) === 2 ? 'twice' : (Number(mt.attempt) || 0) + ' times');
       }
-      return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] || stageTrackerMergeGateStateWord(mt.state);
+      const word = STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] || stageTrackerMergeGateStateWord(mt.state) || STAGE_TRACKER_TRAIN_STATE_WORD[STAGE_TRACKER_TRAIN_STATE_QUEUED];
+      return p.pos > 0 ? word + ' · ' + stageTrackerOrdinal(p.pos) : word;
     }
     // Pure: the member's countdown target in ms (eta_at, else now+eta_s);
     // 0 with no estimate.
@@ -286,12 +309,36 @@
       if (files.length) lines.push('Overlapping files: ' + files.join(', '));
       return lines;
     }
+    // Pure: the train a row rides — a PR's own merge_train, or, for an
+    // issue row, the merge_train of its open linked PR (the PR drawn as the
+    // issue's sub-row, nested_under). Returns { mt, pr } or null. The train
+    // header must sit over every member that is on the page: hive's
+    // v5#15425 read "3 PRs" over one row because #15529 and #15530 were
+    // drawn under their issues #15493 and #15523 and the header only
+    // counted PR rows.
+    function stageTrackerRowTrain(item) {
+      if (!item) return null;
+      const own = stageTrackerTrain(item);
+      if (own) return { mt: own, pr: Number(item.number) || 0 };
+      if (item.kind === 'pr') return null;
+      const prs = Array.isArray(item.linked_prs) ? item.linked_prs : [];
+      const open = prs.filter(lp => lp && stageTrackerTrain(lp) && !lp.superseded && String(lp.state || '') !== 'closed' && (Number(lp.stage) || 0) < STAGE_TRACKER_TERMINAL && (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('merged') < 0);
+      if (!open.length) return null;
+      open.sort((a, b) => (Number(a.merge_train.position) || 0) - (Number(b.merge_train.position) || 0) || ((Number(a.number) || 0) - (Number(b.number) || 0)));
+      return { mt: stageTrackerTrain(open[0]), pr: Number(open[0].number) || 0 };
+    }
     function stageTrackerTrainKey(item) {
-      const mt = stageTrackerTrain(item);
-      return mt ? (item.repo || '') + '|' + (mt.id || ('#' + mt.front)) : '';
+      const rt = stageTrackerRowTrain(item);
+      return rt ? (item.repo || '') + '|' + (rt.mt.id || ('#' + rt.mt.front)) : '';
+    }
+    // Pure: the member's merge order on its row (position, then PR number).
+    function stageTrackerTrainOrder(item) {
+      const rt = stageTrackerRowTrain(item);
+      return rt ? [Number(rt.mt.position) || 0, rt.pr] : [0, 0];
     }
     // Pure: re-orders a sorted row list so each train's members sit together
-    // at the first member's slot, in merge order (front first).
+    // at the first member's slot, in merge order (front first). An issue
+    // row whose nested PR is a member is a member row.
     function stageTrackerTrainContiguous(rows) {
       rows = Array.isArray(rows) ? rows : [];
       const byTrain = {};
@@ -303,22 +350,53 @@
         if (!k) { out.push(it); return; }
         if (emitted[k]) return;
         emitted[k] = true;
-        byTrain[k].slice().sort((a, b) => (Number(a.merge_train.position) || 0) - (Number(b.merge_train.position) || 0) || ((a.number || 0) - (b.number || 0))).forEach(m => out.push(m));
+        byTrain[k].slice().sort((a, b) => { const x = stageTrackerTrainOrder(a), y = stageTrackerTrainOrder(b); return (x[0] - y[0]) || (x[1] - y[1]); }).forEach(m => out.push(m));
       });
       return out;
     }
-    // Header line over a train's rows: "merge train · 4 PRs · 1st: #15074"
-    // (the train icon sits in front of it in the HTML).
-    function stageTrackerTrainHeaderText(mt) {
-      return 'merge train · ' + (Number(mt.size) || 0) + ' PRs · 1st: #' + (Number(mt.front) || 0);
+    // Pure: the member numbers of a train the page does not show, given the
+    // train's record (ahead + size on the last member tells the whole
+    // queue when the view carries it) and the numbers shown under the
+    // header. shown is the PR numbers rendered in this run.
+    function stageTrackerTrainMissing(mt, shown) {
+      const known = {};
+      (Array.isArray(mt.members) ? mt.members : []).forEach(n => { if (Number(n) > 0) known[Number(n)] = true; });
+      if (Number(mt.front) > 0) known[Number(mt.front)] = true;
+      (Array.isArray(mt.ahead) ? mt.ahead : []).forEach(n => { if (Number(n) > 0) known[Number(n)] = true; });
+      const here = {};
+      (shown || []).forEach(n => { here[Number(n)] = true; });
+      return Object.keys(known).map(Number).filter(n => !here[n]).sort((a, b) => a - b);
     }
-    function stageTrackerTrainHeaderHtml(item) {
-      const mt = stageTrackerTrain(item);
-      if (!mt) return '';
+    // Header line over a train's rows: "merge train · 4 PRs · 1st: #15074".
+    // The count is the rows drawn under the header, never the server's
+    // size alone: with shown (the PR numbers rendered in this run) a
+    // train the view only partly carries reads "merge train · 1 of 3 PRs
+    // here · 1st: #15425 · not in this view: #15529, #15530" so the header
+    // never claims rows that are not there (the train icon sits in front
+    // of it in the HTML).
+    function stageTrackerTrainHeaderText(mt, shown) {
+      const size = Number(mt.size) || 0;
+      const front = Number(mt.front) || 0;
+      if (!Array.isArray(shown)) return 'merge train · ' + size + ' PRs · 1st: #' + front;
+      const here = shown.length;
+      let text = 'merge train · ' + (here < size ? here + ' of ' + size + ' PRs here' : here + (here === 1 ? ' PR' : ' PRs')) + ' · 1st: #' + front;
+      if (here < size) {
+        const missing = stageTrackerTrainMissing(mt, shown);
+        const named = missing.map(n => '#' + n);
+        const unnamed = size - here - missing.length;
+        if (unnamed > 0) named.push(unnamed + ' more');
+        text += ' · not in this view: ' + (named.length ? named.join(', ') : (size - here) + ' PRs');
+      }
+      return text;
+    }
+    function stageTrackerTrainHeaderHtml(item, shown) {
+      const rt = stageTrackerRowTrain(item);
+      if (!rt) return '';
+      const mt = rt.mt;
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
-      const tip = stageTrackerTrainLines(item).join('\n');
+      const tip = stageTrackerTrainLines(item.kind === 'pr' ? item : { merge_train: mt }).join('\n');
       return `<div class="ham-train-head" data-ham-train="${esc(stageTrackerTrainKey(item))}" role="row" title="${esc(tip)}">
-        <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
+        <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt, shown))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
       </div>`;
     }
     // Row classes for a train member: the rail, and whether it leads / ends
@@ -326,22 +404,33 @@
     function stageTrackerTrainRowClass(item, prev, next) {
       const k = stageTrackerTrainKey(item);
       if (!k) return '';
-      const mt = stageTrackerTrain(item);
+      const rt = stageTrackerRowTrain(item);
       let cls = ' ham-train';
-      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) cls += ' ham-train-front';
+      if (rt.mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) cls += ' ham-train-front';
       if (!next || stageTrackerTrainKey(next) !== k) cls += ' ham-train-last';
       return cls;
     }
     // Inserts a train header entry before the first row of each train run.
-    // Entries are {key, html}; items are the page's row items in order.
+    // Entries are {key, html}; items are the page's row items in order. The
+    // header counts the run it heads — the rows actually drawn under it.
     function stageTrackerTrainRows(items, rowOf) {
       const out = [];
       let prevKey = '';
-      (items || []).forEach((e, i) => {
+      const list = items || [];
+      const itemOf = e => (e && e.item ? e.item : (e && e.group ? null : e));
+      list.forEach((e, i) => {
         // Entries are items, or the grouped view's {item} / {group} wrappers.
-        const it = e && e.item ? e.item : (e && e.group ? null : e);
+        const it = itemOf(e);
         const k = it ? stageTrackerTrainKey(it) : '';
-        if (k && k !== prevKey) out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it) });
+        if (k && k !== prevKey) {
+          const shown = [];
+          for (let j = i; j < list.length; j++) {
+            const m = itemOf(list[j]);
+            if (!m || stageTrackerTrainKey(m) !== k) break;
+            shown.push(stageTrackerRowTrain(m).pr);
+          }
+          out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it, shown) });
+        }
         prevKey = k;
         out.push(rowOf(e, i));
       });
