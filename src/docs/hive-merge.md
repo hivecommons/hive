@@ -786,6 +786,21 @@ mess before taking on new stuff"). Code:
 `src/pkg/github/automerge/automerge_contributor_nudge.go`, `src/pkg/fixqueue`
 and `src/pkg/dashboard/contribute_fixqueue.go`.
 
+One exception: a PR the merge train holds because **another open PR already
+fixes the same issue** (lane reason `merge-train:duplicate-of#<winner>:…`)
+is parked with its author — 072 for a relay contributor, 071 for a person,
+070 for the App's own — as *superseded*, not at the merge gate as "Approved;
+waiting its turn", and the 07x pass neither nudges nor adopts it: there is
+nothing to fix, and adopting it would land the issue twice. Its one notice
+is the duplicate-fix sweep's gated `<!-- hive:duplicate-fix -->` comment;
+the tracker pill reads *Duplicate of #winner · needs a pick*, and *Let hive
+decide* on either row closes it as superseded
+([#15469](https://github.com/hivecommons/hive/issues/15469)). Upstream of
+the train, an open PR's webhook that covers an issue also releases any
+contributor task already dispatched on it (see
+[operator-reference.md § Open-PR dispatch guard](operator-reference.md#open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner)),
+so the hive does not open the second PR in the first place.
+
 ## Usage
 
 ```sh
