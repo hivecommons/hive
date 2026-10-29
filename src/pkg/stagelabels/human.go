@@ -269,6 +269,21 @@ func RouteHuman(e Evidence) Route {
 	if e.Conflict {
 		note("merge conflict with the base branch", LaneReasonConflicting)
 	}
+	if !e.SelfAuthored && e.AuthorKind == authorkind.Human &&
+		(e.Verdict == VerdictChangesRequested || e.Verdict == VerdictRequiresHuman && strings.TrimSpace(e.HumanApprover) == "") {
+		if e.Verdict == VerdictRequiresHuman {
+			note("the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head), "contributor-lane:decision-requested")
+		}
+		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
+			fix = append(fix, "reviewer question: "+q)
+		} else {
+			for _, summary := range e.HumanSummaries {
+				if s := strings.TrimSpace(summary); s != "" {
+					fix = append(fix, "reviewer summary: "+s)
+				}
+			}
+		}
+	}
 	if len(fix) > 0 {
 		return Route{Stage: fixing, Reasons: fix, LaneReason: laneReason, Summary: summary}
 	}

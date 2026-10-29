@@ -129,6 +129,17 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 	if verdictBlocks(d) && r != contributorLaneReasonChangesRequested && r != stagelabels.LaneReasonChangesRequested {
 		asks = append(asks, "the review swarm requested changes")
 	}
+	if verdictBlocks(d) || verdictNeedsHuman(d) {
+		if q := strings.TrimSpace(d.Verdict.DecisionQuestion); q != "" {
+			asks = append(asks, "reviewer question: "+q)
+		} else {
+			for _, summary := range d.Verdict.HumanSummaries {
+				if s := strings.TrimSpace(summary); s != "" {
+					asks = append(asks, "reviewer summary: "+s)
+				}
+			}
+		}
+	}
 	if d.DCO == stagelabels.DCONo && r != stagelabels.LaneReasonDCOMissing {
 		asks = append(asks, dcoAsk(d))
 	}
@@ -170,6 +181,11 @@ func nudgeDiagnosisRouted(reason string, d stageDetail, route *stagelabels.Route
 			if a := dcoAsk(d); !seenAsk[a] {
 				seenAsk[a] = true
 				asks = append(asks, a)
+			}
+		case strings.HasPrefix(r, "reviewer question:"), strings.HasPrefix(r, "reviewer summary:"):
+			if !seenAsk[r] {
+				seenAsk[r] = true
+				asks = append(asks, r)
 			}
 		case strings.HasPrefix(r, "merge conflict"):
 			if a := "the branch conflicts with the base and needs a rebase"; !seenAsk[a] {

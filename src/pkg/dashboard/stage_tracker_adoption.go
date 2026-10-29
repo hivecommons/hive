@@ -93,10 +93,12 @@ func (s *Server) stageTrackerMaintainerPolicy() string {
 // when the row was never nudged at its current head (nothing to adopt
 // yet) or is already adopted.
 func stageTrackerAdoption(it StageTrackerItem, rec stagelabels.Record, hasRec bool, presence func(login string) (automerge.ContributorPresence, bool), policy string, now time.Time) *StageTrackerAdoption {
-	if it.Kind != "pr" || !hasRec || rec.NudgeCount == 0 || rec.NudgeStart().IsZero() {
+	blocked := rec.AdoptionBlocked(it.Head)
+	protected := protectedAuthorAdoptionBlocked(blocked)
+	if it.Kind != "pr" || !hasRec || !protected && (rec.NudgeCount == 0 || rec.NudgeStart().IsZero()) {
 		return nil
 	}
-	if it.Head != "" && rec.NudgeHead != "" && rec.NudgeHead != it.Head {
+	if !protected && it.Head != "" && rec.NudgeHead != "" && rec.NudgeHead != it.Head {
 		// The head moved since the nudge: the 072 clock restarts on the
 		// next sweep; nothing to say about adoption yet.
 		return nil
@@ -139,6 +141,9 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 	who := "the author"
 	if author != "" {
 		who = "@" + author
+	}
+	if protectedAuthorAdoptionBlocked(a.BlockedBy) {
+		return "waiting on " + who + " — not adopted: " + a.BlockedBy
 	}
 	var facts []string
 	if a.AuthorMaintainer {
@@ -205,4 +210,8 @@ func stageTrackerAdoptionCaption(caption string, a *StageTrackerAdoption) string
 		head = caption[:i]
 	}
 	return head + " — " + a.Text
+}
+
+func protectedAuthorAdoptionBlocked(reason string) bool {
+	return reason == stagelabels.AdoptBlockedHumanAuthor || reason == stagelabels.AdoptBlockedOwnerAuthor
 }

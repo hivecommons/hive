@@ -478,7 +478,7 @@ func pinDelegatedClock(t *testing.T, at string) {
 func TestDelegatedDecisionStuckReportsNoEffect(t *testing.T) {
 	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
 	prior := delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede, Rule: "contributor-offline", Text: "supersede now: adopt #8 in supersede mode", Rationale: "offline"}
-	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	mock := &repoItemDecisionMock{prForeign: true, prBody: "— hive: backend=codex", prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}}
 	mock.priorComments = []string{delegatedecision.CommentBody(prior, "h1", "writer")}
 	srv := newDelegatedServer(t, mock)
 	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
@@ -602,7 +602,7 @@ func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {
 // The head conflicts and adoption is off on this hive, so the hive can
 // neither approve nor adopt it (hivecommons/hive#15173).
 func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T) {
-	mock := &repoItemDecisionMock{prForeign: true, prMergeState: "dirty", prLabels: []string{"stage/090-ready-for-human-merge", "role/newcomer"}}
+	mock := &repoItemDecisionMock{prForeign: true, prBody: "— hive: backend=codex", prMergeState: "dirty", prLabels: []string{"stage/090-ready-for-human-merge", "role/newcomer"}}
 	srv := newDelegatedServer(t, mock)
 	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(false)
 	body := `{"type":"pr","reason":"contributor-lane:author-association","caption":"Ready for human merge · untrusted author"}`
@@ -681,6 +681,42 @@ func TestDelegatedAsyncFanOutSettlesOperatorAction(t *testing.T) {
 		case <-deadline:
 			t.Fatalf("async action never settled: %+v", got)
 		case <-tick.C:
+		}
+	}
+}
+
+func TestLetHiveDecideReturnsHumanAndOwnerPRs(t *testing.T) {
+	for _, author := range []string{"human", "owner clanker", "merger clanker"} {
+		for _, stage := range []string{"stage/085-needs-decision", "stage/090-ready-for-human-merge"} {
+			t.Run(author+"/"+stage, func(t *testing.T) {
+				mock := &repoItemDecisionMock{prForeign: true, prMergeState: "dirty", prLabels: []string{stage}}
+				srv := newDelegatedServer(t, mock)
+				if author == "human" {
+					mock.prLabels = append(mock.prLabels, "author/human")
+				} else {
+					mock.prBody = "— hive: backend=codex"
+					role := "owner"
+					if author == "merger clanker" {
+						role = "merger"
+					}
+					srv.deps.Config.Dashboard.AuthorizedUsers = []string{"someone:" + role}
+				}
+				w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"contributor-lane:author-association"}`, map[string]string{"X-Hive-Role": "merger"})
+				if w.Code != http.StatusOK {
+					t.Fatalf("status %d: %s", w.Code, w.Body.String())
+				}
+				job := decodeDelegatedJob(t, w)
+				if job.Status != delegatedJobStatusDone || job.Decision == nil || job.Decision.Rule != "return-to-author" {
+					t.Fatalf("job: %+v", job)
+				}
+				added := strings.Join(mock.added, ",")
+				if strings.Contains(added, delegatedecision.LabelAdoptSupersede) || !strings.Contains(added, "stage/071-needs-author") || len(mock.reviews) != 0 || len(mock.edits) != 0 || len(mock.merges) != 0 {
+					t.Fatalf("unexpected writes: added=%v reviews=%v edits=%v", mock.added, mock.reviews, mock.edits)
+				}
+				if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "needs rebase by @someone") || strings.Contains(mock.comments[0], "author agent") {
+					t.Fatalf("author direction: %v", mock.comments)
+				}
+			})
 		}
 	}
 }

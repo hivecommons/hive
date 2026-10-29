@@ -358,7 +358,7 @@ func TestTrustedHuman071NoteOncePerHeadAndReArms(t *testing.T) {
 	}
 }
 
-func TestTrustedHuman071NoteNotForClankerOrUntrusted(t *testing.T) {
+func TestHuman071NoteIncludesUntrustedAndSkipsClanker(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{}}
 	srv := newStageAPI(t, api)
 	defer srv.Close()
@@ -377,8 +377,8 @@ func TestTrustedHuman071NoteNotForClankerOrUntrusted(t *testing.T) {
 	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := humanNoteComments(api); len(got) != 0 {
-		t.Fatalf("note posted for clanker/untrusted: %q", got)
+	if got := humanNoteComments(api); len(got) != 1 || !strings.Contains(got[0], "@mallory") || !strings.Contains(got[0], "head=sha") {
+		t.Fatalf("want one human note for outsider, none for clanker: %q", got)
 	}
 }
 

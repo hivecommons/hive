@@ -1803,9 +1803,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
-		// Adoption is clanker-only (a human's PR is never adopted), so a
-		// human-authored 072 row keeps its plain caption.
-		if stage == stagelabels.ReturnedToContributor && it.Kind == "pr" && it.AuthorKind != authorKindHuman {
+		// Adoption is clanker-only. Protected authors show any recorded
+		// refusal on their own stage so the tracker explains why adoption stopped.
+		if it.Kind == "pr" && (stage == stagelabels.ReturnedToContributor && it.AuthorKind != authorKindHuman || protectedAuthorAdoptionBlocked(rec.AdoptionBlocked(it.Head))) {
 			if it.Adoption = stageTrackerAdoption(*it, rec, hasRec, presence, maintainerPolicy, now); it.Adoption != nil {
 				it.Caption = stageTrackerAdoptionCaption(it.Caption, it.Adoption)
 			}

@@ -44,7 +44,8 @@ const PolicyText = `Owner-delegate policy (how the owner decides; the hive appli
 
 - Be decisive; except for the safety rails below, never ask the owner a question back. Pick the option that keeps work moving and is reversible.
 - PRs: prefer an adequate human/contributor PR over a hive duplicate — if both exist and the contributor's is mergeable and current, recommend a human comparison of issue coverage, checks and review approval; keep the hive PR open and parked until adequacy is confirmed, and never close it solely on an issue reference. Otherwise supersede the contributor's with the hive's and close theirs with credit. Approve small, necessary, low-risk changes (CI pins, RBAC read-only adds, warning text, workflow hygiene) once the sentinel finding is checked and explained as intended. Sensitive-path sentinel alerts on trusted-author PRs: approve with a one-line "reviewed, intended" rationale. Clear reporter-trust holds when the fixing PR is sound.
-- Contributors offline: adopt now in supersede mode — do not wait for a deadline (hivecommons/hive#13975).
+- Human or hive-owner PRs: never adopt or supersede; return reviewer questions and fixes to the author. Approve only a reviewed, green, mergeable head.
+- Contributors offline (clanker / registered relay authors only): adopt now in supersede mode — do not wait for a deadline (hivecommons/hive#13975).
 - Issues: dedupe aggressively (close the newer duplicate with "Duplicate of #N", cross-link overlaps); secrets / PAT / org-permission items are owner-only → label needs-owner + hold with one comment stating the exact owner action, and stop opening more failure issues for that root cause; flaky tests → quarantine with retry + a deflake task rather than block; CI hygiene gate proposals (actionlint, duplication ratchets, link-checker allowlists) → approve as ratchets (baseline, fail only on increases; warning-only briefly, then enforce); design proposals with concrete acceptance criteria → accept as proposed with explicit defaults; "review backlog items blocked on their PR" → never auto-close when the PR closes unmerged (drop the relation, comment, re-triage).
 - Record the decision as a "/hive decision <text>" comment on the item (and the auto-merge queue approval on the PR head when the decision is to release a PR), remove stage/085-needs-decision, add triage/accepted where applicable, and stamp the delegated-decision marker so it is auditable.
 - Safety rails: never merge a PR (the auto-merge engine does that per repo settings); never act on an item carrying hold; never grant org membership, secrets or permissions (always the owner); leave an item untouched when the question is a policy or scope change to the hive itself (settings, governance docs, security posture) — post "hive recommends: …; owner to confirm" instead and keep 085.`
@@ -158,6 +159,13 @@ type Input struct {
 	Author string
 	// HiveAuthored: the hive opened the PR / filed the issue.
 	HiveAuthored bool
+	// HumanAuthor / OwnerAuthor exclude hand-authored and hive owner/merger PRs from adoption.
+	HumanAuthor bool
+	OwnerAuthor bool
+	// ReviewApproved is a current-head reviewer approval.
+	ReviewApproved bool
+	// Mergeable is GitHub's positive mergeability result, required for protected-author admission.
+	Mergeable bool
 	// TrustedAuthor: the author is the hive or holds write on the repo.
 	TrustedAuthor bool
 	// SentinelAlert: the sentinel label is on; SentinelReason says why.
@@ -421,6 +429,39 @@ func ownerAction(in Input) string {
 	}
 }
 
+// ProtectedAuthor reports authors whose PRs must be returned rather than adopted.
+func (in Input) ProtectedAuthor() bool {
+	return in.HumanAuthor || in.OwnerAuthor || hasLabel(in.Labels, "author/human")
+}
+
+func returnToAuthor(in Input) Decision {
+	who := "the author"
+	if in.Author != "" {
+		who = "@" + in.Author
+	}
+	var asks []string
+	if in.Conflicting {
+		asks = append(asks, "needs rebase by "+who)
+	}
+	if in.DCOMissing {
+		asks = append(asks, "add the DCO sign-off")
+	}
+	if !in.CIGreen {
+		asks = append(asks, "make CI green")
+	}
+	if q := strings.TrimSpace(in.Question); q != "" {
+		asks = append(asks, "reviewer question: "+q)
+	}
+	if !in.ReviewApproved && len(asks) == 0 {
+		asks = append(asks, "address the review and obtain approval on this head")
+	}
+	text := who + ": " + strings.Join(asks, "; ")
+	return Decision{Verdict: VerdictDirection, Rule: "return-to-author", Text: text,
+		Rationale: "human and hive-owner PRs stay with their author; relay absence is not permission to adopt",
+		Actions:   []Action{decisionComment(text), {Kind: ActionLabelsRemove, Labels: []string{LabelNeedsDecision, "stage/090-ready-for-human-merge"}}, {Kind: ActionLabelsAdd, Labels: []string{"stage/071-needs-author"}}},
+	}
+}
+
 func decidePR(in Input) Decision {
 	ref := "#" + strconv.Itoa(in.Number)
 	if HivePolicyChange(in) {
@@ -428,6 +469,12 @@ func decidePR(in Input) Decision {
 	}
 	if OwnerOnly(in) {
 		return ownerOnlyDecision(in, "secrets, PATs and org permissions are the owner's alone")
+	}
+	if in.ProtectedAuthor() && (in.Conflicting || in.DCOMissing || !in.CIGreen || !in.ReviewApproved) {
+		return returnToAuthor(in)
+	}
+	if in.ProtectedAuthor() && !in.Mergeable {
+		return recommendOnly("mergeability-pending", "GitHub has not confirmed that this head is mergeable", "wait for GitHub to establish mergeability, then re-check this PR")
 	}
 	if in.SentinelAlert {
 		if !in.TrustedAuthor {
@@ -444,6 +491,9 @@ func decidePR(in Input) Decision {
 			Actions:   []Action{decisionComment(text), {Kind: ActionApproveReview}},
 		}
 	}
+	if in.ProtectedAuthor() {
+		return releasePR("human-reviewed", "approve "+ref+": reviewed, CI green and mergeable", "the author retains the PR and the reviewed head is ready for admission")
+	}
 	// A head parked on DCO or the reporter-trust gate must clear that gate
 	// before a competing-PR rule can release or supersede it.
 	if !in.DCOMissing && !in.ReporterTrustHold {
@@ -451,7 +501,7 @@ func decidePR(in Input) Decision {
 			return d
 		}
 	}
-	if !in.HiveAuthored && !in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing) {
+	if !in.HiveAuthored && !in.ProtectedAuthor() && !in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing) {
 		text := "supersede now: adopt " + ref + " in supersede mode, preserving the author's commits and sign-off; do not wait for the grace deadline"
 		return Decision{
 			Verdict: VerdictAdoptSupersede, Rule: "contributor-offline", Text: text,
@@ -529,6 +579,8 @@ func sortedInts(in []int) []int {
 type Rails struct {
 	// Held: the item carries a hold label. The delegate never acts on it.
 	Held bool
+	// ProtectedAuthor prevents adoption even when proposed by the LLM.
+	ProtectedAuthor bool
 	// AllowedActions overrides the allowed set (nil = AllowedActions).
 	AllowedActions []ActionKind
 }
@@ -543,6 +595,14 @@ func ApplyRails(d Decision, r Rails) Decision {
 			Verdict: VerdictRefused, Rule: "rail-hold",
 			Rationale: "the item carries `hold`; the delegate does not act on held items",
 			KeepsPark: true, Refusals: []string{"held: all actions refused"},
+		}
+	}
+	if r.ProtectedAuthor {
+		for _, a := range d.Actions {
+			if a.Kind == ActionAdoptSupersede || a.Kind == ActionLabelsAdd && hasLabel(a.Labels, LabelAdoptSupersede) {
+				return Decision{Verdict: VerdictRefused, Rule: "rail-human-author", KeepsPark: true,
+					Rationale: "human and hive-owner PRs cannot be adopted", Refusals: []string{"adopt-supersede: protected author"}}
+			}
 		}
 	}
 	allowed := r.AllowedActions
@@ -576,7 +636,7 @@ func ApplyRails(d Decision, r Rails) Decision {
 
 // Run is Decide followed by ApplyRails with the hold rail read from the labels.
 func Run(in Input) Decision {
-	return ApplyRails(Decide(in), Rails{Held: hasLabel(in.Labels, LabelHold)})
+	return ApplyRails(Decide(in), Rails{Held: hasLabel(in.Labels, LabelHold), ProtectedAuthor: in.ProtectedAuthor()})
 }
 
 // CommentBody renders the comment the delegate posts for a decision: the

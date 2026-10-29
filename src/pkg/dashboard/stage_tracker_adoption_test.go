@@ -338,3 +338,26 @@ func TestStageTrackerAdoptionEndpointShape(t *testing.T) {
 		t.Fatalf("endpoint body lacks adoption: %s", rr.Body.String())
 	}
 }
+
+func TestProtectedAdoptionBlockedHoverWithoutNudge(t *testing.T) {
+	now := time.Now().UTC()
+	for _, reason := range []string{stagelabels.AdoptBlockedHumanAuthor, stagelabels.AdoptBlockedOwnerAuthor} {
+		rec := stagelabels.Record{AdoptBlockedHead: "aaa", AdoptBlockedBy: reason, AdoptBlockedAt: now}
+		a := stageTrackerAdoption(StageTrackerItem{Kind: "pr", Author: "alice", Head: "aaa"}, rec, true, nil, "ask", now)
+		if a == nil || !a.Due || a.Action != "" || !strings.Contains(a.Text, reason) || strings.Contains(a.Text, "offline") {
+			t.Fatalf("blocked hover: %+v", a)
+		}
+	}
+}
+
+func TestProtectedAdoptionBlockShownOutside072(t *testing.T) {
+	now := time.Now().UTC()
+	s, store, status := adoptionFixture(t, now, config.AdoptionMaintainerPolicyAsk, nil)
+	key := stagelabels.Key("hivecommons/hive", 14524)
+	store.Observe(key, stagelabels.NeedsAuthor, "contributor-lane:decision-requested")
+	store.NoteAdoptionBlocked(key, "feed", stagelabels.AdoptBlockedHumanAuthor, now)
+	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 14524)
+	if it.Adoption == nil || it.Adoption.BlockedBy != stagelabels.AdoptBlockedHumanAuthor || !strings.Contains(it.Caption, "not adopted") {
+		t.Fatalf("071 hides adoption refusal: %+v", it)
+	}
+}

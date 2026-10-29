@@ -573,3 +573,30 @@ func TestRouteHumanForkGuard(t *testing.T) {
 		t.Fatalf("no fork-guard evidence route = %+v", r)
 	}
 }
+
+func TestHumanReviewerQuestionReturnsToAuthor(t *testing.T) {
+	for _, verdict := range []VerdictState{VerdictRequiresHuman, VerdictChangesRequested} {
+		for _, conflict := range []bool{false, true} {
+			e := readyEvidence()
+			e.AuthorKind = authorkind.Human
+			e.Verdict = verdict
+			e.Conflict = conflict
+			e.DecisionQuestion = "Should we keep this retry limit?"
+			r := RouteHuman(e)
+			if r.Stage != NeedsAuthor || !strings.Contains(strings.Join(r.Reasons, "\n"), e.DecisionQuestion) {
+				t.Fatalf("route: %+v", r)
+			}
+		}
+	}
+	e := readyEvidence()
+	e.AuthorKind = authorkind.Human
+	e.Verdict = VerdictRequiresHuman
+	e.HumanSummaries = []string{"Please explain the retry policy"}
+	if r := RouteHuman(e); r.Stage != NeedsAuthor || !strings.Contains(strings.Join(r.Reasons, "\n"), e.HumanSummaries[0]) {
+		t.Fatalf("summary route: %+v", r)
+	}
+	e.HumanApprover = "maintainer"
+	if r := RouteHuman(e); r.Stage != ReadyForHumanMerge {
+		t.Fatalf("approved head still returned: %+v", r)
+	}
+}

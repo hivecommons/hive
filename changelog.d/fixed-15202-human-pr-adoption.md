@@ -1,0 +1,1 @@
+- Keep human-authored and hive owner/merger PRs with their authors: reviewer questions return to Needs author, and Let hive decide cannot adopt or supersede them, even when adoption was explicitly requested ([#15202](https://github.com/hivecommons/hive/issues/15202)).

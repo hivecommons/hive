@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -574,6 +575,24 @@ func shortSHA(sha string) string {
 	return sha
 }
 
+// refuseProtectedAuthorAdoption is shared by initial adoption and every re-home path.
+// Explicit Adopt requests cannot override human authorship or hive ownership.
+func (c *Engine) refuseProtectedAuthorAdoption(store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) bool {
+	reason := ""
+	if obs.AuthorKind == authorkind.Human || hasLabelFold(obs.Labels, "author/human") || hasLabelFold(obs.Labels, policy.AuthorKindLabels.Normalize().Human) {
+		reason = stagelabels.AdoptBlockedHumanAuthor
+	}
+	if policy.OwnerAuthor != nil && policy.OwnerAuthor(obs.Author) {
+		reason = stagelabels.AdoptBlockedOwnerAuthor
+	}
+	if reason == "" {
+		return false
+	}
+	store.NoteAdoptionBlocked(key, obs.HeadSHA, reason, now)
+	c.info("stage labels: adoption refused for protected author", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "reason", reason)
+	return true
+}
+
 // adoptContributorPR runs the stage-074 check for one clanker PR in stage
 // 072 and, when adoption is due, performs it: in place (the hive's fix lane
 // pushes to the PR's own branch) when GitHub permits and the policy allows,
@@ -583,6 +602,9 @@ func shortSHA(sha string) string {
 func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, presence ContributorPresence, hasPresence bool, now time.Time) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || obs.Author == "" || obs.BaseRef == "" {
+		return 0, nil
+	}
+	if c.refuseProtectedAuthorAdoption(store, key, obs, policy, now) {
 		return 0, nil
 	}
 	requested := hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede)
@@ -731,6 +753,9 @@ func delegatedAdoptionAttempted(before, after stagelabels.Record) bool {
 }
 
 func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, grace time.Duration, online bool, dcoRehome bool, now time.Time) (int, error) {
+	if c.refuseProtectedAuthorAdoption(store, key, obs, policy, now) {
+		return 0, nil
+	}
 	if maintainer, deferred := c.maintainerReleasesAdoption(ctx, obs, policy, now); deferred {
 		return 0, nil
 	} else if maintainer {

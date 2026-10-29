@@ -125,11 +125,15 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			HiveID:                    cfg.HiveID,
 			AuthorKindLabels:          cfg.Governor.Labels.Author.Names(),
 			RelayKnown:                contributorRelayKnown,
-			SharedCIIncident:          stageSharedCIIncident,
-			BaseBranchRed:             stageBaseBranchRed,
-			ForkGuard:                 stageForkGuard,
-			DCORequired:               stage.DCO.RequiredFor,
-			SquashOnly:                cfg.AutoMerge.SquashOnlyFor,
+			OwnerAuthor: func(login string) bool {
+				role, ok := cfg.Dashboard.AuthorizedRole(login)
+				return ok && config.RoleAtLeast(role, config.RoleMerger)
+			},
+			SharedCIIncident: stageSharedCIIncident,
+			BaseBranchRed:    stageBaseBranchRed,
+			ForkGuard:        stageForkGuard,
+			DCORequired:      stage.DCO.RequiredFor,
+			SquashOnly:       cfg.AutoMerge.SquashOnlyFor,
 		}
 	}
 }

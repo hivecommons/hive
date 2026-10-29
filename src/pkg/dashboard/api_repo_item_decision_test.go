@@ -29,6 +29,7 @@ type repoItemDecisionMock struct {
 	edits       []map[string]any
 	// prForeign makes PR #8 look like a human opened it; prLabels are the
 	// labels pulls/8 reports.
+	prBody    string
 	prForeign bool
 	prLabels  []string
 	// prMergeState is PR #8's mergeable_state ("" = clean); prRedCI and
@@ -101,7 +102,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			for _, label := range m.prLabels {
 				prLabels = append(prLabels, map[string]string{"name": label})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": prLabels, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}, "base": map[string]any{"ref": "main"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": prLabels, "body": m.prBody, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}, "base": map[string]any{"ref": "main"}})
 		case r.Method == http.MethodPut && strings.HasSuffix(path, "/pulls/8/merge"):
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)

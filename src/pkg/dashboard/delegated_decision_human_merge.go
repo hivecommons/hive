@@ -172,6 +172,9 @@ func (s *Server) delegatedHumanMergeDecision(in delegatedecision.Input, req dele
 	if in.HiveAuthored || in.SentinelAlert || strings.EqualFold(strings.TrimSpace(in.Author), strings.TrimSpace(user)) {
 		return delegatedecision.Decision{}, nil, false
 	}
+	if in.ProtectedAuthor() {
+		return delegatedecision.Run(in), nil, true
+	}
 	ref := "#" + strconv.Itoa(in.Number)
 	adopt := func(rule, why string) (delegatedecision.Decision, []string, bool) {
 		if !s.stageAdoptionEnabled() {

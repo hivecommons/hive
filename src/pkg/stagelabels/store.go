@@ -1126,6 +1126,12 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 // adoption held under governor.labels.stage.adoption.maintainer_policy: ask.
 const AdoptBlockedAuthorMaintainer = "author-is-maintainer"
 
+// Protected authors cannot be adopted, including by an explicit request.
+const (
+	AdoptBlockedHumanAuthor = "human-authored PR; return to author"
+	AdoptBlockedOwnerAuthor = "hive owner/merger PR; return to author"
+)
+
 // AdoptBlockedSelfAuthored is the AdoptBlockedBy reason for a delegated
 // supersede of the hive App's own PR: there is no contributor branch to
 // re-home, so the request is consumed with one note instead of looping.
@@ -1142,7 +1148,7 @@ const AdoptBlockedSupersedeConflict = "supersede-conflict"
 // request label clears so the engine does not retry every sweep.
 func (r Record) AdoptionRequestConsumed(head string) bool {
 	switch r.AdoptionBlocked(head) {
-	case AdoptBlockedSelfAuthored, AdoptBlockedSupersedeConflict:
+	case AdoptBlockedSelfAuthored, AdoptBlockedSupersedeConflict, AdoptBlockedHumanAuthor, AdoptBlockedOwnerAuthor:
 		return true
 	}
 	return false

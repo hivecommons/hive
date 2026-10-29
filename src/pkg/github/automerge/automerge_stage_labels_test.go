@@ -1226,7 +1226,7 @@ func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
 	ctx := context.Background()
 	key := stageKey("acme", "widget", 12417)
 	observe := func(labels []string, reason string, verdict *ContributorLaneVerdict, comments int) {
-		pr := stagePR(12417, labels...)
+		pr := reviewRelayPR(12417, labels...)
 		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, reason, false, nil)
 		e.noteStageRole("acme", "widget", 12417, stagelabels.RoleTrusted)
 		pr.Comments = gh.Ptr(comments)
@@ -1238,10 +1238,10 @@ func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	at050 := []string{"stage/050-review-pending", "role/trusted", "author/human"}
+	at050 := []string{"stage/050-review-pending", "role/trusted", "author/clanker"}
 
 	observe(nil, contributorLaneReasonNoVerdict, nil, 0)
-	if !reflect.DeepEqual(api.added, [][]string{{"author/human", "role/trusted", "stage/050-review-pending"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"author/clanker", "role/trusted", "stage/050-review-pending"}}) {
 		t.Fatalf("added=%v", api.added)
 	}
 	// Six hours, CI green, still no verdict: not stalled, not a comment.
@@ -1251,7 +1251,7 @@ func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		api.reset()
 		clock.advance(time.Hour)
-		pr := stagePR(12417, at050...)
+		pr := reviewRelayPR(12417, at050...)
 		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 		e.noteStageRole("acme", "widget", 12417, stagelabels.RoleTrusted)
 		e.noteStagePR("acme", "widget", 12417, pr)
@@ -1303,7 +1303,7 @@ func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
 	// A human comment is activity: stalled clears immediately.
 	api.reset()
 	clock.advance(time.Minute)
-	observe([]string{"stage/050-review-pending", "stage/stalled", "role/trusted", "author/human"}, contributorLaneReasonNoVerdict, &human, 1)
+	observe([]string{"stage/050-review-pending", "stage/stalled", "role/trusted", "author/clanker"}, contributorLaneReasonNoVerdict, &human, 1)
 	if !reflect.DeepEqual(api.removed, []string{"stage/stalled"}) || len(api.added) != 0 {
 		t.Fatalf("comment must clear stalled: added=%v removed=%v", api.added, api.removed)
 	}
@@ -1320,7 +1320,7 @@ func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
 	}
 	api.reset()
 	clock.advance(48 * time.Hour)
-	observe([]string{"stage/085-needs-decision", "role/trusted", "author/human"}, contributorLaneReasonNoVerdict, &requiresHuman, 1)
+	observe([]string{"stage/085-needs-decision", "role/trusted", "author/clanker"}, contributorLaneReasonNoVerdict, &requiresHuman, 1)
 	if api.writes() != 0 {
 		t.Fatalf("085 has no dwell and never stalls: added=%v", api.added)
 	}
@@ -1349,7 +1349,7 @@ func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
 	}
 	ctx := context.Background()
 	observe := func(labels []string) {
-		pr := stagePR(336, labels...)
+		pr := reviewRelayPR(336, labels...)
 		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "untrusted-author-role", false, nil)
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonAuthorAssociation, false, nil)
 		e.noteStageRole("acme", "widget", 336, stagelabels.RoleContributor)
@@ -1360,7 +1360,7 @@ func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	observe([]string{"stage/050-review-pending", "role/contributor", "author/human"})
+	observe([]string{"stage/050-review-pending", "role/contributor", "author/clanker"})
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) {
 		t.Fatalf("requires_human must hand off to 085: added=%v", api.added)
 	}
@@ -1369,7 +1369,7 @@ func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
 	}
 	api.reset()
 	clock.advance(48 * time.Hour)
-	observe([]string{"stage/085-needs-decision", "role/contributor", "author/human"})
+	observe([]string{"stage/085-needs-decision", "role/contributor", "author/clanker"})
 	if api.writes() != 0 {
 		t.Fatalf("085 has no dwell and never stalls: added=%v", api.added)
 	}

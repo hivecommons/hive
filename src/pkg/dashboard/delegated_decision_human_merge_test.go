@@ -38,6 +38,7 @@ func TestDelegatedDecisionUntrustedReadyForHumanMergeDecides(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mock := tc.mock
 			mock.prForeign = true
+			mock.prBody = "— hive: backend=codex"
 			mock.prLabels = []string{"stage/090-ready-for-human-merge", "role/newcomer"}
 			srv := newDelegatedServer(t, mock)
 			srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)

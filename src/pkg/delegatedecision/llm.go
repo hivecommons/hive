@@ -138,6 +138,7 @@ func DeciderUserPrompt(in Input, c LLMContext) string {
 		fmt.Fprintf(&b, "Reviewer question: %s\n", q)
 	}
 	fmt.Fprintf(&b, "Hive-authored: %t\nTrusted author (hive or write access): %t\n", in.HiveAuthored, in.TrustedAuthor)
+	fmt.Fprintf(&b, "Human author: %t\nHive owner/merger author: %t\n", in.HumanAuthor, in.OwnerAuthor)
 	if a := strings.TrimSpace(c.AuthorAssociation); a != "" {
 		fmt.Fprintf(&b, "Author association: %s\n", a)
 	}
@@ -375,7 +376,7 @@ func validateLLMAction(in Input, verdict Verdict, a Action, keepsPark bool) erro
 			return errors.New("approve-review applies to pull requests only")
 		}
 	case ActionAdoptSupersede:
-		if in.Kind != KindPR || in.HiveAuthored {
+		if in.Kind != KindPR || in.HiveAuthored || in.ProtectedAuthor() {
 			return errors.New("adopt-supersede applies to contributor pull requests only")
 		}
 	}
@@ -413,7 +414,7 @@ const (
 // goes through ApplyRails. A runner or validation error falls back to the
 // rules' reversible default and is returned for the caller to note.
 func RunWithLLM(ctx context.Context, in Input, c LLMContext, runner TurnRunner) (Decision, LLMOutcome, error) {
-	rails := Rails{Held: hasLabel(in.Labels, LabelHold)}
+	rails := Rails{Held: hasLabel(in.Labels, LabelHold), ProtectedAuthor: in.ProtectedAuthor()}
 	rules := Decide(in)
 	if runner == nil || rails.Held || !IsReversibleDefault(rules) {
 		return ApplyRails(rules, rails), LLMNotConsulted, nil

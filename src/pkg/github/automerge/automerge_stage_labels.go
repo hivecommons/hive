@@ -121,6 +121,8 @@ type StageLabelPolicy struct {
 	// hive (runs a relay that targets it) — authorkind's weakest signal for
 	// author/clanker. nil = unknown.
 	RelayKnown func(login string) bool
+	// OwnerAuthor reports a configured hive owner or merger, whose PR cannot be adopted.
+	OwnerAuthor func(login string) bool
 	// SharedCIIncident returns the open [shared-ci] incident the PR
 	// (repo "owner/name", number, head SHA) is deferred to, or 0. A red PR
 	// deferred to one is kept out of 070/072 and never nudged
@@ -1171,7 +1173,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 		}
 		// Explicit delegated adoption also applies to a PR parked at 085,
-		// regardless of author kind or whether a nudge was ever sent.
+		// subject to author safety guards, even before a nudge was sent.
 		if policy.Adoption && !obs.Merged && hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) {
 			before, _ := store.Get(key)
 			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, ContributorPresence{}, false, now)
@@ -1208,6 +1210,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				kind = c.stageAuthorKind(obs, policy, true)
 			}
 			if kind == authorkind.Clanker {
+				obs.AuthorKind = kind
 				if policy.ContributorNudge {
 					n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
 					result.Comments += n
@@ -1237,8 +1240,8 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				c.info("stage labels: 07x without interrupt (author kind)", "stage", want.Stage.String(), "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", string(kind))
 			}
 		}
-		if want.Stage == stagelabels.NeedsAuthor && role == stagelabels.RoleTrusted && obs.AuthorKind != authorkind.Clanker && obs.Reason != stagelabels.LaneReasonHiveSignoffAttribution {
-			// Silence is the worst outcome for a trusted person
+		if want.Stage == stagelabels.NeedsAuthor && (role == stagelabels.RoleTrusted || obs.AuthorKind == authorkind.Human) && obs.AuthorKind != authorkind.Clanker && obs.Reason != stagelabels.LaneReasonHiveSignoffAttribution {
+			// Silence is the worst outcome for a human author
 			// (hivecommons/hive#13636): always on, not gated on policy.
 			n, err := c.noteTrustedHuman071(ctx, store, key, obs, now)
 			result.Comments += n

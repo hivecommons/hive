@@ -71,7 +71,7 @@ func delegatedCompetingNumbers(items []StageTrackerItem, repo string, pr *gh.Pul
 func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *gh.PullRequest, in *delegatedecision.Input) error {
 	owner, name, _ := strings.Cut(repo, "/")
 	now := time.Now().UTC()
-	if !in.HiveAuthored {
+	if !in.HiveAuthored && !in.ProtectedAuthor() {
 		window := config.DefaultPresenceWindow
 		if s.deps.Config != nil {
 			window = s.deps.Config.Governor.Labels.Stage.EffectivePresenceWindow()

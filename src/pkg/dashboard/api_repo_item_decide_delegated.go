@@ -15,9 +15,11 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -597,10 +599,33 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		in.Author = author
 		in.HiveAuthored = client.IsHiveAuthorLogin(author)
 		in.TrustedAuthor = in.HiveAuthored
+		var names authorkind.Names
+		if s.deps.Config != nil {
+			names = s.deps.Config.Governor.Labels.Author.Names()
+			role, ok := s.deps.Config.Dashboard.AuthorizedRole(author)
+			in.OwnerAuthor = ok && config.RoleAtLeast(role, config.RoleMerger)
+		}
+		relayKnown := false
+		if presence := s.stageTrackerPresence(); presence != nil {
+			p, ok := presence(author)
+			relayKnown = ok && p.Registered
+		}
+		in.HumanAuthor = !in.HiveAuthored && (authorkind.FromLabels(in.Labels, names) == authorkind.Human ||
+			authorkind.Detect(authorkind.Input{Author: author, AppLogin: client.AppBotLogin(), Labels: in.Labels, Body: pr.GetBody(), RelayKnown: relayKnown}) == authorkind.Human)
+		if artifact, err := review.LoadArtifact(""); err == nil {
+			if verdict, ok := stageTrackerVerdictLookup(&artifact)(repoFull, number, pr.GetHead().GetSHA()); ok {
+				in.Question = strings.TrimSpace(verdict.DecisionQuestion)
+				in.ReviewApproved = verdict.Verdict == review.VerdictApprove && verdict.MergeEligible && !verdict.DecisionRequested
+				if in.Question == "" && !in.ReviewApproved {
+					in.Question = strings.Join(verdict.HumanSummaries, "; ")
+				}
+			}
+		}
 		if err := s.gatherDelegatedPRContext(ctx, repoFull, pr, &in); err != nil {
 			return in, err
 		}
 		state := strings.ToLower(pr.GetMergeableState())
+		in.Mergeable = pr.GetMergeable()
 		in.Conflicting = state == "dirty" || (pr.Mergeable != nil && !pr.GetMergeable())
 		green, err := delegatedHeadCIGreen(ctx, api, owner, repoName, pr, in.Conflicting, state)
 		if err != nil {
@@ -776,7 +801,7 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			}
 			notes = append(notes, fmt.Sprintf("cross-linked #%d", a.Target))
 		case delegatedecision.ActionAdoptSupersede:
-			if in.Kind != delegatedecision.KindPR || in.HiveAuthored {
+			if in.Kind != delegatedecision.KindPR || in.HiveAuthored || in.ProtectedAuthor() {
 				return notes, fmt.Errorf("supersede adoption requires a contributor PR")
 			}
 			if !s.stageAdoptionEnabled() {

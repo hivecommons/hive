@@ -46,6 +46,9 @@ func ExpectedEffect(d Decision, kind Kind) Effect {
 			IfNot: "A maintainer can merge this PR by hand, re-run the decision, close it as superseded, or send it back for a new commit."}
 	case d.Verdict == VerdictCloseDuplicate, d.Verdict == VerdictCloseSuperseded:
 		return Effect{Waits: true, What: "this item is closed", IfNot: "Close it by hand on GitHub."}
+	case d.Rule == "return-to-author":
+		return Effect{Waits: true, What: "the PR waits at Needs author for the author to answer the reviewer or push a fix",
+			IfNot: "Contact the author on the PR; the hive will not adopt their branch."}
 	case d.Verdict == VerdictDirection:
 		return Effect{Waits: true, What: "the author agent pushes a new commit with that change",
 			IfNot: "Re-run the decision, give different direction, or close it."}

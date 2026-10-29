@@ -41,7 +41,7 @@ type orphanedAdoption struct {
 // marker naming a copy that is closed without merging. Read failures read
 // as "not orphaned": the ordinary delegate path then runs.
 func (s *Server) delegatedOrphanedAdoption(ctx context.Context, repoFull string, number int, in delegatedecision.Input, now time.Time) (orphanedAdoption, bool) {
-	if in.Kind != delegatedecision.KindPR || in.HiveAuthored || s.deps == nil || s.deps.GHClient == nil || s.deps.GHClient.GoGitHub() == nil {
+	if in.Kind != delegatedecision.KindPR || in.HiveAuthored || in.ProtectedAuthor() || s.deps == nil || s.deps.GHClient == nil || s.deps.GHClient.GoGitHub() == nil {
 		return orphanedAdoption{}, false
 	}
 	owner, repoName, _ := strings.Cut(repoFull, "/")

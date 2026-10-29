@@ -73,6 +73,14 @@ const (
 
 var glossary = []GlossaryEntry{
 	// Rules — why the delegate chose what it chose.
+	{Slug: "return-to-author", Kind: GlossaryRule, Plain: "the human author needs to answer the review or fix the branch",
+		Detail: "The PR stays with its human author at Needs author; the hive sends the reviewer's question and any needed fixes rather than adopting it."},
+	{Slug: "mergeability-pending", Kind: GlossaryRule, Plain: "GitHub has not confirmed mergeability",
+		Detail: "The hive holds this PR until GitHub confirms that the current head can merge."},
+	{Slug: "human-reviewed", Kind: GlossaryRule, Plain: "the author's reviewed head is ready",
+		Detail: "The review passed on this head, CI is green and the branch is mergeable, so the author's own PR is approved for admission."},
+	{Slug: "rail-human-author", Kind: GlossaryRule, Plain: "this author keeps their own PR",
+		Detail: "Human and hive-owner PRs cannot be adopted or superseded, even when a delegate proposes adoption."},
 	{Slug: "contributor-offline", Kind: GlossaryRule, Plain: "the author's hive hasn't been connected since the nudge",
 		Detail: "The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting."},
 	{Slug: "dedupe", Kind: GlossaryRule, Plain: "an older issue already tracks this",

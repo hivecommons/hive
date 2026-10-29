@@ -313,7 +313,7 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 	sweep := func(labels ...string) {
 		t.Helper()
 		api.reset()
-		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(13, labels...), contributorLaneReasonNoVerdict, false, nil)
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", reviewRelayPR(13, labels...), contributorLaneReasonNoVerdict, false, nil)
 		e.noteStageVerdict("acme", "widget", 13, *verdict)
 		e.noteStageRole("acme", "widget", 13, stagelabels.RoleContributor)
 		if _, err := e.ApplyStageLabels(ctx); err != nil {
@@ -328,7 +328,7 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 		t.Fatal("verdict reason must not be rendered twice in the 085 comment")
 	}
 
-	sweep("role/contributor", "author/human", "stage/050-review-pending")
+	sweep("role/contributor", "author/clanker", "stage/050-review-pending")
 	if got := stageOf(t, store, 13); got != stagelabels.NeedsDecision {
 		t.Fatalf("stage=%v want 085", got)
 	}
@@ -346,7 +346,7 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 	}
 
 	// Same state again: no second entry comment, no writes.
-	sweep("role/contributor", "author/human", "stage/085-needs-decision")
+	sweep("role/contributor", "author/clanker", "stage/085-needs-decision")
 	if len(api.comments) != 0 || api.writes() != 0 {
 		t.Fatalf("085 dedupe: comments=%q writes=%d", api.comments, api.writes())
 	}
@@ -364,7 +364,7 @@ func TestEntryCommentOncePerStageAndHead(t *testing.T) {
 	sweep := func(head string, labels ...string) {
 		t.Helper()
 		api.reset()
-		pr := stagePR(13, labels...)
+		pr := reviewRelayPR(13, labels...)
 		pr.Head.SHA = gh.Ptr(head)
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 		e.noteStageVerdict("acme", "widget", 13, *verdict)
@@ -375,12 +375,12 @@ func TestEntryCommentOncePerStageAndHead(t *testing.T) {
 	}
 	key := stageKey("acme", "widget", 13)
 
-	sweep("sha", "role/contributor", "author/human", "stage/050-review-pending")
+	sweep("sha", "role/contributor", "author/clanker", "stage/050-review-pending")
 	if len(api.comments) != 1 {
 		t.Fatalf("first entry comments = %q", api.comments)
 	}
 	store.Observe(key, stagelabels.ReviewPending, "review-requested")
-	sweep("sha", "role/contributor", "author/human", "stage/050-review-pending")
+	sweep("sha", "role/contributor", "author/clanker", "stage/050-review-pending")
 	if got := stageOf(t, store, 13); got != stagelabels.NeedsDecision {
 		t.Fatalf("stage=%v want 085", got)
 	}
@@ -392,7 +392,7 @@ func TestEntryCommentOncePerStageAndHead(t *testing.T) {
 	}
 
 	store.Observe(key, stagelabels.ReviewPending, "review-requested")
-	sweep("sha2", "role/contributor", "author/human", "stage/050-review-pending")
+	sweep("sha2", "role/contributor", "author/clanker", "stage/050-review-pending")
 	if len(api.comments) != 1 {
 		t.Fatalf("new head comments = %q", api.comments)
 	}
@@ -411,7 +411,7 @@ func TestDecisionRequestedLandsAt085WithQuestion(t *testing.T) {
 	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
 	ctx := context.Background()
 
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(17, "role/contributor", "author/human", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", reviewRelayPR(17, "role/contributor", "author/clanker", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageVerdict("acme", "widget", 17, *verdict)
 	e.noteStageRole("acme", "widget", 17, stagelabels.RoleContributor)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
@@ -441,7 +441,7 @@ func TestRequiresHumanLandsAt085WithSummary(t *testing.T) {
 	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
 	ctx := context.Background()
 
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(17, "author/contributor", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", reviewRelayPR(17, "author/clanker", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageVerdict("acme", "widget", 17, *verdict)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
@@ -595,4 +595,11 @@ func TestHumanHandoffAdmissionSkipPendingChecksWaitOnHive(t *testing.T) {
 			}
 		})
 	}
+}
+
+// reviewRelayPR makes the author/clanker evidence explicit for 085 routing tests.
+func reviewRelayPR(number int, labels ...string) *gh.PullRequest {
+	pr := stagePR(number, labels...)
+	pr.Body = gh.Ptr("— hive: backend=codex")
+	return pr
 }
