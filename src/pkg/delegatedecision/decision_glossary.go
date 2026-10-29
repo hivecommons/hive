@@ -48,27 +48,32 @@ type GlossaryEntry struct {
 // rules in policy.go / llm.go; these are the action and reason slugs the
 // stuck-decision path coins.
 const (
-	GlossarySupersede       = "supersede"
-	GlossaryAdopt           = "adopt"
-	GlossaryChangesRequest  = "changes_requested"
-	GlossarySentinel        = "sentinel"
-	GlossaryConflicting     = "conflicting"
-	GlossaryCIRed           = "ci-red"
-	GlossaryAuthorOnline    = "author-online"
-	GlossaryHold            = "hold"
-	GlossaryDCO             = "dco"
-	GlossaryNeedsHuman      = "needs-human"
-	GlossaryNoEffect        = "no-effect"
-	GlossaryAdoptionOff     = "adoption-disabled"
-	GlossaryStillParked     = "still-parked"
-	GlossaryBehind          = "behind"
-	GlossaryNotMergedYet    = "not-merged-yet"
-	GlossaryNotClosedYet    = "not-closed-yet"
-	GlossaryNoNewCommit     = "no-new-commit"
-	GlossarySelfDecision    = "self-decision-read-as-changes"
-	GlossaryEffectUnknown   = "effect-unknown"
-	GlossaryHumanMerge      = "human-merge" // 090: no lane vouches for the author (hivecommons/hive#15078)
-	glossaryFallbackUnknown = "the hive did not say why"
+	GlossarySupersede      = "supersede"
+	GlossaryAdopt          = "adopt"
+	GlossaryChangesRequest = "changes_requested"
+	GlossarySentinel       = "sentinel"
+	GlossaryConflicting    = "conflicting"
+	GlossaryCIRed          = "ci-red"
+	GlossaryAuthorOnline   = "author-online"
+	GlossaryHold           = "hold"
+	GlossaryDCO            = "dco"
+	GlossaryNeedsHuman     = "needs-human"
+	GlossaryNoEffect       = "no-effect"
+	GlossaryAdoptionOff    = "adoption-disabled"
+	GlossaryStillParked    = "still-parked"
+	GlossaryBehind         = "behind"
+	GlossaryNotMergedYet   = "not-merged-yet"
+	GlossaryNotClosedYet   = "not-closed-yet"
+	GlossaryNoNewCommit    = "no-new-commit"
+	GlossarySelfDecision   = "self-decision-read-as-changes"
+	GlossaryEffectUnknown  = "effect-unknown"
+	GlossaryHumanMerge     = "human-merge" // 090: no lane vouches for the author (hivecommons/hive#15078)
+	// Adoption-execution reasons (hivecommons/hive#15188): what the
+	// adoption engine did with a recorded adopt-supersede.
+	GlossaryWorkflowPath      = "workflow-path"
+	GlossaryAdoptionExecuting = "adoption-executing"
+	GlossaryAdoptionUndone    = "adoption-undone"
+	glossaryFallbackUnknown   = "the hive did not say why"
 )
 
 var glossary = []GlossaryEntry{
@@ -166,6 +171,13 @@ var glossary = []GlossaryEntry{
 	{Slug: GlossaryNeedsHuman, Kind: GlossaryReason, Plain: "marked needs-human; a person must remove the label",
 		Detail:  "The item is marked needs-human: automated fixes ran out or a person flagged it. The hive waits until the label is removed.",
 		Aliases: []string{"label:needs-human", "requires_human"}},
+	{Slug: GlossaryWorkflowPath, Kind: GlossaryReason, Plain: "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it",
+		Detail:  "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded.",
+		Aliases: []string{"contributor-lane:workflow-path", "adoption-stalled:contributor-lane:workflow-path", "capability:workflows-permission"}},
+	{Slug: GlossaryAdoptionExecuting, Kind: GlossaryReason, Plain: "the adoption engine is carrying it out",
+		Detail: "The decision is recorded and the adoption engine picks it up on its next stage pass (a few minutes): it pushes the commits to a hive branch and opens the hive's copy. Nothing to do yet."},
+	{Slug: GlossaryAdoptionUndone, Kind: GlossaryReason, Plain: "the hive's copy was closed without merging and the adoption was undone",
+		Detail: "The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub."},
 	{Slug: GlossaryAdoptionOff, Kind: GlossaryReason, Plain: "adoption is switched off on this hive",
 		Detail: "Stage adoption is disabled on this hive (governor.labels.stage.adoption), so a request to take a PR over is never carried out."},
 	{Slug: GlossaryStillParked, Kind: GlossaryReason, Plain: "the item is still waiting on a person",

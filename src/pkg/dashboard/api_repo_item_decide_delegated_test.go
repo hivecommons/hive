@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func newDelegatedServer(t *testing.T, mock *repoItemDecisionMock) *Server {
@@ -682,5 +683,97 @@ func TestDelegatedAsyncFanOutSettlesOperatorAction(t *testing.T) {
 			t.Fatalf("async action never settled: %+v", got)
 		case <-tick.C:
 		}
+	}
+}
+
+// hivecommons/hive#15188: a delegated adopt-supersede is not "done" when
+// the request label lands. The ledger reads `executing` until the adoption
+// engine records a copy, then "adopted as #N"; a workflow-path PR is a
+// capability gap and routes to the workflows blocker instead of a bare
+// Needs human decision.
+func TestDelegatedAdoptSupersedeReportsExecutingUntilAdopted(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	now := time.Date(2026, 10, 28, 14, 23, 0, 0, time.UTC)
+	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	srv.operatorActionStore = newOperatorActionStore("")
+	srv.stageStore = stagelabels.NewStore("", func() time.Time { return now })
+	key := stagelabels.Key("testorg/testrepo", 8)
+	srv.stageStore.Observe(key, stagelabels.NeedsDecision, "adoption-stalled:contributor-lane:ci-red")
+
+	w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"adoption-stalled:contributor-lane:ci-red","caption":"adoption stalled"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictAdoptSupersede {
+		t.Fatalf("decision = %+v err=%s", job.Decision, job.Error)
+	}
+	if !strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label not queued: %v", mock.added)
+	}
+	acts := srv.operatorActions().List("testorg/testrepo", 8)
+	if len(acts) != 1 || acts[0].Outcome != operatorActionOutcomeExecuting || !strings.Contains(acts[0].Detail, "executing") {
+		t.Fatalf("ledger after decision = %+v", acts)
+	}
+
+	// Before the engine runs: the row says the hive is carrying it out.
+	items := []StageTrackerItem{{Repo: "testorg/testrepo", Number: 8, Stage: 85, Head: "aaa"}}
+	srv.applyOperatorActions(items, now.Add(time.Minute))
+	last := items[0].LastOperatorAction
+	if last == nil || last.State != operatorActionStateExecuting || last.Progress == "" || last.Human != "" {
+		t.Fatalf("row before adoption = %+v", last)
+	}
+
+	// The adoption engine opened the copy: the same record now reads
+	// "adopted as #91" and is addressed, whatever stage the row sits at.
+	srv.stageStore.MarkAdopted(key, "aaa", 91, now.Add(2*time.Minute))
+	srv.invalidateStageTrackerCache()
+	items = []StageTrackerItem{{Repo: "testorg/testrepo", Number: 8, Stage: 85, Head: "aaa"}}
+	srv.applyOperatorActions(items, now.Add(3*time.Minute))
+	last = items[0].LastOperatorAction
+	if last == nil || last.State != operatorActionStateAddressed || last.Outcome != operatorActionOutcomeApplied || !strings.Contains(last.Progress, "adopted as #91") {
+		t.Fatalf("row after adoption = %+v", last)
+	}
+
+	// The engine refused the head instead (workflow path): blocked on the
+	// workflows capability, with what a person can do.
+	srv.stageStore.ClearAdoption(key)
+	srv.stageStore.MarkAdoptionEscalated(key, "aaa", "adoption-stalled:contributor-lane:workflow-path")
+	srv.invalidateStageTrackerCache()
+	items = []StageTrackerItem{{Repo: "testorg/testrepo", Number: 8, Stage: 85, Head: "aaa"}}
+	srv.applyOperatorActions(items, now.Add(3*time.Minute))
+	last = items[0].LastOperatorAction
+	if last == nil || last.State != operatorActionStateBlocked || last.Blocker != operatorActionBlockerWorkflows || last.Human == "" || !strings.Contains(last.Progress, "could not adopt") {
+		t.Fatalf("row after refusal = %+v", last)
+	}
+}
+
+// A PR that edits .github/workflows gets a capability-gap recommendation,
+// not an adopt-supersede the engine would refuse; the ledger is `blocked`.
+func TestDelegatedWorkflowPathIsCapabilityGap(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	srv.operatorActionStore = newOperatorActionStore("")
+	w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"adoption-stalled:contributor-lane:workflow-path","caption":"adoption stalled: contributor lane: workflow path"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Decision == nil || job.Decision.Rule != delegatedecision.RuleCapabilityGap || !job.Decision.KeepsPark {
+		t.Fatalf("decision = %+v err=%s", job.Decision, job.Error)
+	}
+	if strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("adoption queued despite the capability gap: %v", mock.added)
+	}
+	acts := srv.operatorActions().List("testorg/testrepo", 8)
+	if len(acts) != 1 || acts[0].Outcome != operatorActionOutcomeBlocked {
+		t.Fatalf("ledger = %+v", acts)
+	}
+	if got := srv.delegatedStuckWhy(delegatedecision.Input{Kind: delegatedecision.KindPR, WorkflowPath: true}, delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede}, delegatedDecisionRequest{}, delegatedPriorState{Found: true}); got != delegatedecision.GlossaryWorkflowPath {
+		t.Fatalf("stuck why = %q", got)
 	}
 }

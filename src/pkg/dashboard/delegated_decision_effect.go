@@ -104,6 +104,9 @@ func (s *Server) delegatedStuckWhy(in delegatedecision.Input, d delegatedecision
 		return false
 	}
 	if d.Verdict == delegatedecision.VerdictAdoptSupersede {
+		if in.WorkflowPath {
+			return delegatedecision.GlossaryWorkflowPath
+		}
 		if in.ContributorOnline {
 			return delegatedecision.GlossaryAuthorOnline
 		}

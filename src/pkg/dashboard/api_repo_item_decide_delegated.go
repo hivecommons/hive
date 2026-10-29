@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -612,7 +613,9 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 			for _, f := range files {
 				if !delegatedLowRiskPath(f.GetFilename()) {
 					in.LowRiskPaths = false
-					break
+				}
+				if delegatedWorkflowPath(f.GetFilename()) {
+					in.WorkflowPath = true
 				}
 			}
 		}
@@ -636,6 +639,9 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	in.AdoptionStalled = strings.HasPrefix(lowerReason, stagelabels.LaneReasonAdoptionStalledPrefix)
 	if in.Kind == delegatedecision.KindPR && !in.HiveAuthored {
 		in.AdoptionGraceElapsed = s.delegatedAdoptionGraceElapsed(repoFull, number)
+	}
+	if strings.Contains(lowerReason, stageengineprstage.ContributorLaneReasonWorkflowPath) {
+		in.WorkflowPath = true
 	}
 	in.ReporterTrustHold = strings.Contains(lowerReason, "reporter-trust") || strings.Contains(lowerReason, "reporter trust")
 	in.DCOMissing = strings.Contains(lowerReason, "dco")
@@ -677,6 +683,14 @@ func delegatedHeadCIGreen(ctx context.Context, api *gh.Client, owner, repoName s
 		return false, err
 	}
 	return len(summary.Red) == 0 && summary.Pending == 0 && summary.Green > 0, nil
+}
+
+// delegatedWorkflowPath reports a file under .github/workflows: the adoption
+// fence refuses to publish such edits from the App (no `workflows`
+// permission), so an adopt-supersede on the PR cannot execute
+// (hivecommons/hive#15188).
+func delegatedWorkflowPath(path string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(path)), ".github/workflows/")
 }
 
 // delegatedLowRiskPath reports a file whose change the policy calls low-risk:

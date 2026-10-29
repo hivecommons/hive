@@ -242,6 +242,14 @@ func TestDecidePRRules(t *testing.T) {
 			verdict: VerdictAdoptSupersede, rule: "contributor-offline",
 		},
 		{
+			// hivecommons/hive#15188: the App cannot publish .github/workflows
+			// edits, so adopt-supersede would be refused by the lane; the
+			// policy must say so instead of promising an adoption.
+			name:    "offline contributor on a workflow path is a capability gap",
+			in:      Input{Kind: KindPR, Number: 54, Title: "CI fix", AdoptionStalled: true, WorkflowPath: true, CIGreen: true},
+			verdict: VerdictRecommendOnly, rule: RuleCapabilityGap, kinds: []ActionKind{ActionRecommendOnly}, keepsPark: true,
+		},
+		{
 			name:    "reporter trust hold cleared when PR sound",
 			in:      Input{Kind: KindPR, Number: 55, Title: "Fix", ReporterTrustHold: true, CIGreen: true, ContributorOnline: true},
 			verdict: VerdictApprove, rule: "reporter-trust", kinds: []ActionKind{ActionCommentDecision, ActionApproveReview, ActionLabelsAdd},

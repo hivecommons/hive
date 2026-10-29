@@ -1540,6 +1540,11 @@
     .config-info.ham-acted.ham-acted-failed { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: color-mix(in srgb, var(--red) 55%, transparent); color: var(--red); }
     .config-info.ham-acted.ham-acted-failed:hover, .config-info.ham-acted.ham-acted-failed:focus-visible { background: var(--red); border-color: var(--red); color: var(--bg); }
     .config-info.ham-acted.ham-acted-pending { border-style: dotted; color: var(--text-muted); background: transparent; }
+    /* executing: decided, the worker is carrying it out (hivecommons/hive#15188) — dotted
+       green; blocked: a capability gap holds it — dashed amber. */
+    .config-info.ham-acted.ham-acted-executing { border-style: dotted; }
+    .config-info.ham-acted.ham-acted-blocked { border-style: dashed; background: color-mix(in srgb, var(--yellow) 16%, transparent); border-color: color-mix(in srgb, var(--yellow) 60%, transparent); color: var(--yellow); }
+    .config-info.ham-acted.ham-acted-blocked:hover, .config-info.ham-acted.ham-acted-blocked:focus-visible { background: var(--yellow); border-color: var(--yellow); color: var(--bg); }
     .ham-acted-tip { white-space: normal; text-align: left; font-weight: 400; }
     /* Sentinel-flagged PR, #13535 follow-up: the chip beside needs rebase /
        regressed, and the human-decision chevron itself when its word
@@ -15357,14 +15362,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'merge-now': 'Approve & merge as maintainer', 'queue-merge': 'Approve — let hive merge',
       adopt: 'Adopt', 'adopt-now': 'Adopt now', reroute: 'Reroute to another clanker',
     };
-    const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed'];
+    const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed', 'executing', 'blocked'];
     const STAGE_TRACKER_ACTED_FILTERS = ['any', 'awaiting', 'acted', 'stuck'];
     const STAGE_TRACKER_ACTED_STUCK_DEFAULT_S = 30 * 60;
     // Every state wears the same history mark (the clock-and-arrow the
     // column header uses): the badge is an audit affordance, never a "done"
     // tick. Colour and border carry the state; the aria-label says it in words.
     const STAGE_TRACKER_HISTORY_ICON = '<svg class="ham-ico ham-history-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + STAGE_TRACKER_ICONS.history + '</svg>';
-    const STAGE_TRACKER_ACTED_GLYPH = { waiting: STAGE_TRACKER_HISTORY_ICON, addressed: STAGE_TRACKER_HISTORY_ICON, stuck: STAGE_TRACKER_HISTORY_ICON, pending: STAGE_TRACKER_HISTORY_ICON, failed: STAGE_TRACKER_HISTORY_ICON };
+    const STAGE_TRACKER_ACTED_GLYPH = { waiting: STAGE_TRACKER_HISTORY_ICON, addressed: STAGE_TRACKER_HISTORY_ICON, stuck: STAGE_TRACKER_HISTORY_ICON, pending: STAGE_TRACKER_HISTORY_ICON, failed: STAGE_TRACKER_HISTORY_ICON, executing: STAGE_TRACKER_HISTORY_ICON, blocked: STAGE_TRACKER_HISTORY_ICON };
     function stageTrackerActedLabel(action) { return STAGE_TRACKER_ACTED_LABELS[action] || String(action || '').replace(/-/g, ' '); }
     // Pure: the record a row's badge reads — the item's own, else (an issue
     // row drawn over its single covering PR) that PR's; null when none.
@@ -15405,6 +15410,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'no-op': return 'nothing changed' + (action.detail ? ': ' + stageTrackerActedPlain(action.detail) : '');
         case 'failed': return 'failed' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'pending': return 'the hive is deciding…';
+        case 'executing': return (action.detail ? stageTrackerActedPlain(action.detail) : 'decided — the hive is carrying it out…');
+        case 'no-effect': return "hasn't taken effect" + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
+        case 'blocked': return 'blocked' + (action.detail ? ' — ' + stageTrackerActedPlain(action.detail) : '');
         case 'superseded-by-state-change': return 'the item moved on by itself';
       }
       return action.outcome || '';
@@ -15437,6 +15445,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!t) return '';
       if (STAGE_TRACKER_ACTED_PLAIN[t]) return STAGE_TRACKER_ACTED_PLAIN[t];
       if (/^hive decided: /.test(t)) return t.replace(/^hive decided: /, 'the hive decided: ').replace(/ \(([^)]+)\)/, (m, r) => ' (rule: ' + r.replace(/[-_:]/g, ' ') + ')');
+      if (/^decided: /.test(t)) return t.replace(/^decided: /, 'the hive decided: ').replace(/ \(([^)]+)\)/, (m, r) => ' (rule: ' + r.replace(/[-_:]/g, ' ') + ')');
       if (/^[a-z0-9]+([-_:][a-z0-9]+)+$/.test(t)) return t.replace(/[-_:]/g, ' ');
       // Slugs inside a sentence ("… — contributor-lane:changes-requested blocks it").
       return t.replace(/\b[a-z0-9]+(?:[-_:][a-z0-9]+)+\b/g, m => STAGE_TRACKER_ACTED_PLAIN[m] || (/[a-z]/.test(m) ? m.replace(/[-_:]/g, ' ') : m));
@@ -15448,7 +15457,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // (no-op) or the item has not moved (stuck): the enabled options from
     // the row's decision_needed payload, minus the one just taken.
     function stageTrackerActedOptions(item, action, state) {
-      if (!(action.outcome === 'no-op' || state === 'stuck' || state === 'failed')) return '';
+      if (!(action.outcome === 'no-op' || state === 'stuck' || state === 'failed' || state === 'blocked')) return '';
       const dn = item && item.decision_needed;
       const opts = dn && Array.isArray(dn.options) ? dn.options : [];
       const taken = STAGE_TRACKER_ACTED_OPTION_ID[action.action] || '';
@@ -15474,9 +15483,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (state === 'addressed') lines.push('Addressed — now at ' + stageNow + '.');
       else if (state === 'stuck') lines.push('Still at ' + stageNow + ' ' + ago.replace(/ ago$/, '') + ' after you asked' + (waitingOn ? ' — hive says: ' + waitingOn : '') + '.');
       else if (state === 'pending') lines.push('At ' + stageNow + ' while the hive decides.');
-      else if (state === 'failed') lines.push('Still at ' + stageNow + ' — try again, or act on GitHub.');
+      else if (state === 'failed') lines.push('Still at ' + stageNow + (a.progress ? ' — ' + stageTrackerActedPlain(a.progress) : ' — try again, or act on GitHub') + '.');
+      else if (state === 'executing') lines.push('At ' + stageNow + ' — the hive is carrying it out' + (a.progress ? ': ' + stageTrackerActedPlain(a.progress) : '') + '.');
+      else if (state === 'blocked') lines.push('Blocked at ' + stageNow + (a.progress ? ' — ' + stageTrackerActedPlain(a.progress) : ' — the hive lacks a permission it needs') + '.');
       else lines.push('At ' + stageNow + (waitingOn ? ' — ' + waitingOn : '') + '.');
       lines.push(who + ' chose ' + label + ' · ' + agentNowClockTime(atMs, nowMs) + ' (' + ago + ') · ' + stageTrackerActedOutcomeWords(a) + '.');
+      if (a.progress && state !== 'executing' && state !== 'blocked' && state !== 'failed') lines.push('Hive now: ' + stageTrackerActedPlain(a.progress) + '.');
+      if (a.human) lines.push('You can: ' + a.human);
+      else if (state === 'executing') lines.push('Nothing for you to do — the badge updates when the adoption lands.');
       if (a.note) lines.push('Your note: ' + a.note);
       const options = stageTrackerActedOptions(src.item, a, state);
       if (options) lines.push('Options: ' + options + '.');
@@ -17192,6 +17206,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "adopt-supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "adopted": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "adoption-disabled": {"kind": "reason", "plain": "adoption is switched off on this hive", "detail": "Stage adoption is disabled on this hive (governor.labels.stage.adoption), so a request to take a PR over is never carried out."},
+      "adoption-executing": {"kind": "reason", "plain": "the adoption engine is carrying it out", "detail": "The decision is recorded and the adoption engine picks it up on its next stage pass (a few minutes): it pushes the commits to a hive branch and opens the hive's copy. Nothing to do yet."},
+      "adoption-stalled:contributor-lane:workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
+      "adoption-undone": {"kind": "reason", "plain": "the hive's copy was closed without merging and the adoption was undone", "detail": "The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub."},
       "adoption/supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes."},
       "approve-review": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes."},
@@ -17200,6 +17217,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "author-online": {"kind": "reason", "plain": "the author's hive is connected, so hive won't take the PR over", "detail": "Adoption is for authors whose hive has gone offline; this author's hive is connected, so the hive leaves the PR with them."},
       "behind": {"kind": "reason", "plain": "the branch is behind the base branch", "detail": "The branch is behind the base branch and must be updated before it can merge."},
       "capability-gap": {"kind": "rule", "plain": "the GitHub App lacks a permission; deciding cannot clear it", "detail": "The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change."},
+      "capability:workflows-permission": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
       "changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
       "changes_requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
       "checks-failing": {"kind": "reason", "plain": "CI is failing on this branch", "detail": "Required checks are failing on this branch; nothing merges until they are green."},
@@ -17216,6 +17234,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "contributor-lane:author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "contributor-lane:changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
       "contributor-lane:sentinel-blocked": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},
+      "contributor-lane:workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
       "contributor-offline": {"kind": "rule", "plain": "the author's hive hasn't been connected since the nudge", "detail": "The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting."},
       "dco": {"kind": "reason", "plain": "a commit is missing its sign-off", "detail": "A commit on the branch is missing its Developer Certificate of Origin sign-off; the author must sign it off."},
       "dco-missing": {"kind": "reason", "plain": "a commit is missing its sign-off", "detail": "A commit on the branch is missing its Developer Certificate of Origin sign-off; the author must sign it off."},
@@ -17270,6 +17289,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "supersede-now": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there."},
       "untrusted-author": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
     };
     // Pure: plain words for a glossary slug ("supersede" → "close this PR and
     // open a fresh hive-authored PR with the same commits"). Strips a lane

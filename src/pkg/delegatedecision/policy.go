@@ -127,6 +127,9 @@ const (
 const (
 	// LabelAdoptSupersede is the durable request consumed by the adoption engine.
 	LabelAdoptSupersede = "adoption/supersede"
+	// RuleCapabilityGap is the recommend-only rule for a blocker no decision
+	// can clear: the GitHub App lacks a permission (hivecommons/hive#15099).
+	RuleCapabilityGap   = "capability-gap"
 	LabelNeedsOwner     = "needs-owner"
 	LabelHold           = "hold"
 	LabelTriageAccepted = "triage/accepted"
@@ -190,6 +193,12 @@ type Input struct {
 	// or nothing moved). The delegate picks Adopt now
 	// (RuleAdoptNow) rather than wait any longer (hivecommons/hive#15038).
 	AdoptionGraceElapsed bool
+	// WorkflowPath: the PR edits `.github/workflows/*` (read from its file
+	// list or from an `adoption-stalled:…workflow-path` park reason). The
+	// hive's App has no `workflows` permission, so supersede-adoption is
+	// refused by the adoption fence: deciding to adopt cannot take effect
+	// (hivecommons/hive#15188).
+	WorkflowPath bool
 	// BlockedOnPRClosed: a review-backlog item whose PR closed unmerged.
 	BlockedOnPRClosed bool
 }
@@ -357,7 +366,7 @@ func decideIssue(in Input) Decision {
 		return recommendOnly("hive-policy", "this changes the hive's own policy or scope (settings, governance, security posture); the owner confirms those", "accept the proposal as written with its stated defaults, or close it as won't-fix if it widens the hive's write scope")
 	}
 	if CapabilityGap(in) {
-		return recommendOnly("capability-gap", "the blocker is a missing GitHub App permission; approving a direction would un-park the item only for the same needs-human to be re-applied, so the park stays until the permission changes",
+		return recommendOnly(RuleCapabilityGap, "the blocker is a missing GitHub App permission; approving a direction would un-park the item only for the same needs-human to be re-applied, so the park stays until the permission changes",
 			"grant the App the missing permission (for example `workflows`) or have a human apply the change, then re-check; hive cannot clear this by deciding")
 	}
 	if OwnerOnly(in) {
@@ -459,6 +468,15 @@ func decidePR(in Input) Decision {
 		if d, ok := decideCompeting(in, ref); ok {
 			return d
 		}
+	}
+	if !in.HiveAuthored && !in.ContributorOnline && in.WorkflowPath && (in.AdoptionStalled || in.AdoptionGraceElapsed || in.Conflicting || !in.CIGreen || in.DCOMissing) {
+		// The adoption engine refuses to publish a contributor's workflow
+		// edits from the App (contributor-lane:workflow-path), so an
+		// adopt-supersede here is decided and never executed
+		// (hivecommons/hive#15188). Same rule as the issue-side gap
+		// (#15127) so the tracker routes it to the capability blocker.
+		return recommendOnly(RuleCapabilityGap, "the PR edits .github/workflows and the hive's GitHub App lacks the `workflows` permission, so the adoption fence refuses to supersede it; deciding to adopt cannot take effect",
+			"grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge "+ref+" on GitHub, or close it as superseded")
 	}
 	if !in.HiveAuthored && in.Kind == KindPR && in.AdoptionGraceElapsed {
 		text := "adopt now: the offline grace on " + ref + " has already elapsed; adopt in supersede mode at once, preserving the author's commits and sign-off"
