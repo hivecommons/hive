@@ -1651,11 +1651,21 @@
        flight is positioned by custom properties the JS measures
        (--cue-dx/--cue-dy: its travel). A banner at the bottom right says
        what merged and stays until dismissed (or 30 s). Reduced motion:
-       the glyph fades in place, the count still pops. */
+       the glyph fades in place, the count still pops.
+       Owner (2026-10-28): the glyph rose too fast — it now takes
+       STAGE_TRACKER_CELEBRATE_FLY_MS (2 s, was 0.9 s) on an ease-out, and
+       the numbers roll like a mileage odometer instead of swapping: an
+       aria-hidden overlay of digit columns (.ham-odo) covers the real text
+       while each digit that rose slides up through the digits it passes
+       (.ham-odo-strip, --odo-shift) for STAGE_TRACKER_ODOMETER_MS, then
+       the overlay goes and the plain text shows. Static characters and
+       digits that fell (the day rollover) just sit. The text underneath is
+       the real width (tabular-nums), so the pill never jiggles; reduced
+       motion or the first draw sets the text outright. */
     .cue-merged .ham-seg.cap { color: var(--amber); animation: cue-cap-glow 1.6s ease-out both; }
     .cue-merged { background: color-mix(in srgb, var(--amber) 8%, transparent); transition: background 300ms ease; }
-    .cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--fs-lg); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); pointer-events: none; user-select: none; animation: cue-flight var(--cue-fly-ms, 900ms) cubic-bezier(0.25, 0.6, 0.3, 1) both; }
-    .cue-flight.cue-flight-fade { animation: cue-flight-fade var(--cue-fly-ms, 900ms) ease-out both; }
+    .cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--fs-lg); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); pointer-events: none; user-select: none; animation: cue-flight var(--cue-fly-ms, 2000ms) cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+    .cue-flight.cue-flight-fade { animation: cue-flight-fade var(--cue-fly-ms, 2000ms) ease-out both; }
     .ham-sticky { position: sticky; top: var(--navbar-sticky-height); z-index: calc(var(--z-sticky) + 1); display: flex; justify-content: flex-end; align-items: center; min-height: var(--ham-sticky-bar-h); box-sizing: border-box; padding: var(--sp-1) var(--sp-2); background: var(--panel); }
     .ham-sticky-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
     .ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--text); cursor: pointer; }
@@ -1664,6 +1674,15 @@
     .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
     .ham-merged-count .ham-merged-sub { color: var(--text-faint); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-merged-count.cue-tick { animation: cue-count-pop 320ms ease-out; }
+    .ham-merged-count .ham-merged-n, .ham-merged-count .ham-merged-sub { position: relative; }
+    .ham-merged-count .ham-odo-rolling { color: transparent; }
+    .ham-odo { position: absolute; inset: 0; display: flex; align-items: center; overflow: hidden; white-space: pre; pointer-events: none; }
+    .ham-merged-count .ham-merged-n .ham-odo { color: var(--text); }
+    .ham-merged-count .ham-merged-sub .ham-odo { left: var(--sp-2); color: var(--text-faint); }
+    .ham-odo-static, .ham-odo-col, .ham-odo-d { display: block; height: 1.25em; line-height: 1.25; }
+    .ham-odo-col { overflow: hidden; }
+    .ham-odo-strip { display: block; transform: translateY(0); transition: transform var(--odo-ms, 900ms) cubic-bezier(0.22, 0.61, 0.36, 1); }
+    .ham-odo-run .ham-odo-strip { transform: translateY(var(--odo-shift, 0%)); }
     .ham-merged-pop { position: absolute; right: var(--sp-2); top: calc(var(--full-size) - var(--sp-1)); min-width: 22rem; max-width: 34rem; max-height: 60vh; overflow: auto; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-radius: var(--r-lg); background: var(--panel-strong); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); color: var(--text); z-index: var(--z-cue-flight); }
     .ham-merged-pop-head { display: flex; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-3); font-weight: var(--fw-semibold); }
     .ham-merged-pop-head .ham-merged-pop-sum { color: var(--text-faint); font-weight: var(--fw-medium); }
@@ -1692,7 +1711,7 @@
     @keyframes cue-flight { 0% { opacity: 0; transform: translate(0, 0) scale(0.9); } 12% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.08), calc(var(--cue-dy, 0px) * 0.1)) scale(1.1); } 55% { opacity: 1; transform: translate(calc(var(--cue-dx, 0px) * 0.45 + 10px), calc(var(--cue-dy, 0px) * 0.62)) scale(1.05); } 100% { opacity: var(--cue-end-opacity, 0.25); transform: translate(var(--cue-dx, 0px), var(--cue-dy, 0px)) scale(0.7); } }
     @keyframes cue-flight-fade { 0% { opacity: 0; } 25% { opacity: 1; } 100% { opacity: 0; } }
     @keyframes cue-count-pop { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
-    @media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; } .ham-merged-count.cue-tick { animation: none; } .cue-merged .ham-seg.cap { animation-duration: 0.01ms; } .merge-banner, .merge-banner.merge-banner-out { animation: none; } }
+    @media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; } .ham-merged-count.cue-tick { animation: none; } .ham-odo-strip { transition: none; } .cue-merged .ham-seg.cap { animation-duration: 0.01ms; } .merge-banner, .merge-banner.merge-banner-out { animation: none; } }
     .ham-rm-preview .cue-flight { animation-name: cue-flight-fade; }
     @media (prefers-reduced-motion: reduce) { .cue-working .ham-seg.active .ham-active-ico, .cue-spin, .cue-acting .ham-seg.active, .cue-event { animation: none; } }
     @keyframes ham-breathe-human { 0%, 100% { opacity: 0; } 50% { opacity: 0.55; } }
@@ -18801,14 +18820,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        tab just watched is added on top until the server's recent list
        carries it; while its glyph is in flight the count holds back by one
        so the landing is the moment it bumps. The shown number never goes
-       down within a tab. */
+       down within a tab.
+       Owner (2026-10-28): the flight takes 2 s (was 0.9 s) on an ease-out
+       — the pin grew to 3.5 s so the row outlasts the landing — and the
+       chip's numbers roll like a mileage odometer when they rise
+       (stageTrackerOdometerSet): per digit, a strip of the digits it passes
+       slides up for STAGE_TRACKER_ODOMETER_MS. The first draw, a fall
+       (today → 0 at midnight), reduced motion and text that does not line
+       up just set the value. */
     const STAGE_TRACKER_CELEBRATE_KEY = 'hive.tracker.celebrate';
     const STAGE_TRACKER_CELEBRATE_GLYPH_KEY = 'hive.tracker.celebrate_glyph';
     const STAGE_TRACKER_CELEBRATE_GLYPHS = { bee: '🐝', plus1: '+1' };
     const STAGE_TRACKER_CELEBRATE_GLYPH_DEFAULT = 'bee';
-    const STAGE_TRACKER_CELEBRATE_PIN_MS = 2500;
+    const STAGE_TRACKER_CELEBRATE_PIN_MS = 3500;
     const STAGE_TRACKER_CELEBRATE_STAGGER_MS = 200;
-    const STAGE_TRACKER_CELEBRATE_FLY_MS = 900;
+    const STAGE_TRACKER_CELEBRATE_FLY_MS = 2000;
+    const STAGE_TRACKER_ODOMETER_MS = 900;
     const STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS = 3;
     const STAGE_TRACKER_CELEBRATE_EXIT_PAD = 40;
     const STAGE_TRACKER_MERGED_TIP_MAX = 5;
@@ -18959,6 +18986,83 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const key of Object.keys(pending || {})) { const i = key.indexOf('/pr#'); if (i > 0 && known[stageTrackerMergedIdent(key.slice(0, i), key.slice(i + 4))]) n++; }
       return n;
     }
+    // Pure: the odometer columns for a change of text from `from` to `to`,
+    // or null when nothing should roll — the texts split into different
+    // static runs ("201 today · 730 this week" keeps its words), no number
+    // rose, or every rise is a fall elsewhere. A column is { text } (sits
+    // still: static runs, unchanged digits, numbers that fell or held) or
+    // { steps: ['9', '0'] } — the digits the column passes, old to new,
+    // wrapping past 9 the way a carry does; a number that grew a digit rolls
+    // its new leading column in from a blank.
+    function stageTrackerOdometerPlan(from, to) {
+      const a = String(from == null ? '' : from).match(/\d+|\D+/g) || [];
+      const b = String(to == null ? '' : to).match(/\d+|\D+/g) || [];
+      if (!b.length || a.length !== b.length) return null;
+      const cols = [];
+      let rose = false;
+      for (let i = 0; i < b.length; i++) {
+        const num = /^\d+$/.test(b[i]);
+        if (num !== /^\d+$/.test(a[i])) return null;
+        if (!num) { if (a[i] !== b[i]) return null; cols.push({ text: b[i] }); continue; }
+        if (Number(b[i]) <= Number(a[i]) || a[i].length > b[i].length) { cols.push({ text: b[i] }); continue; }
+        rose = true;
+        const old = a[i].padStart(b[i].length, ' ');
+        for (let j = 0; j < b[i].length; j++) {
+          const o = old[j], nw = b[i][j];
+          if (o === nw) { cols.push({ text: nw }); continue; }
+          const steps = [o];
+          if (o === ' ') steps.push(nw);
+          else { let d = Number(o); do { d = (d + 1) % 10; steps.push(String(d)); } while (d !== Number(nw)); }
+          cols.push({ steps });
+        }
+      }
+      return rose ? cols : null;
+    }
+    // Stateful: write `text` into el, rolling the digits that rose like an
+    // odometer. The element's own text is always the plain value (it sets
+    // the width, and it is what a screen reader and a test read); the roll
+    // is an aria-hidden overlay of digit columns appended over it for
+    // STAGE_TRACKER_ODOMETER_MS, during which the plain text is transparent
+    // (.ham-odo-rolling). The value last written is kept on data-odo-value
+    // so a redraw mid-roll compares against it, not the overlay's digits.
+    // Instant (no overlay) on the first write, under reduced motion, and
+    // when stageTrackerOdometerPlan says nothing rolls. Returns whether a
+    // roll started.
+    function stageTrackerOdometerSet(el, text) {
+      if (!el) return false;
+      text = String(text);
+      const prev = el.getAttribute('data-odo-value');
+      if (prev === text) return false;
+      el.setAttribute('data-odo-value', text);
+      if (el._odoTimer) { clearTimeout(el._odoTimer); el._odoTimer = 0; }
+      if (el._odoWrap) { el._odoWrap.remove(); el._odoWrap = null; }
+      el.textContent = text;
+      el.classList.remove('ham-odo-rolling');
+      const plan = prev == null || stageTrackerReducedMotion() ? null : stageTrackerOdometerPlan(prev, text);
+      if (!plan) return false;
+      const wrap = document.createElement('span');
+      wrap.className = 'ham-odo';
+      wrap.setAttribute('aria-hidden', 'true');
+      for (const c of plan) {
+        const col = document.createElement('span');
+        if (!c.steps) { col.className = 'ham-odo-static'; col.textContent = c.text; wrap.appendChild(col); continue; }
+        col.className = 'ham-odo-col';
+        const strip = document.createElement('span');
+        strip.className = 'ham-odo-strip';
+        for (const d of c.steps) { const cell = document.createElement('span'); cell.className = 'ham-odo-d'; cell.textContent = d; strip.appendChild(cell); }
+        strip.style.setProperty('--odo-shift', (-(c.steps.length - 1) * 100 / c.steps.length).toFixed(3) + '%');
+        col.appendChild(strip);
+        wrap.appendChild(col);
+      }
+      wrap.style.setProperty('--odo-ms', STAGE_TRACKER_ODOMETER_MS + 'ms');
+      el.appendChild(wrap);
+      el._odoWrap = wrap;
+      el.classList.add('ham-odo-rolling');
+      void el.offsetWidth;
+      wrap.classList.add('ham-odo-run');
+      el._odoTimer = setTimeout(() => { el._odoTimer = 0; el._odoWrap = null; el.classList.remove('ham-odo-rolling'); wrap.remove(); }, STAGE_TRACKER_ODOMETER_MS + 80);
+      return true;
+    }
     function stageTrackerMergedCountDraw(tick) {
       const chip = stageTrackerMergedChip();
       const now = Date.now();
@@ -18968,10 +19072,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (txt.count > _stageTrackerMergedShown || tick) _stageTrackerMergedShown = Math.max(_stageTrackerMergedShown, txt.count);
       const shown = _stageTrackerMergedShown;
       if (!chip) return;
-      const n = chip.querySelector('.ham-merged-n');
-      if (n && n.textContent !== String(shown)) n.textContent = String(shown);
-      const sub = chip.querySelector('.ham-merged-sub');
-      if (sub && sub.textContent !== txt.sub) sub.textContent = txt.sub;
+      stageTrackerOdometerSet(chip.querySelector('.ham-merged-n'), shown);
+      stageTrackerOdometerSet(chip.querySelector('.ham-merged-sub'), txt.sub);
       const title = txt.title.replace(/^Merged: \d+ all time/, `Merged: ${shown} all time`);
       if (chip.title !== title) chip.title = title;
       if (tick) {
@@ -19653,7 +19755,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const opts = Object.keys(STAGE_TRACKER_CELEBRATE_GLYPHS).map(id => `<option value="${esc(id)}"${id === glyphId ? ' selected' : ''}>${esc(STAGE_TRACKER_CELEBRATE_GLYPHS[id])}${id === STAGE_TRACKER_CELEBRATE_GLYPH_DEFAULT ? ' (default)' : ''}</option>`).join('');
       return `<section class="overview-settings-section" id="sts-celebrate" aria-labelledby="sts-celebrate-title">
           <div class="overview-settings-card-title" id="sts-celebrate-title">Merges</div>
-          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a small glyph rises from it towards the top of the window — landing on the "Merged" chip when it is in view, otherwise leaving through the top edge — the count bumps, and a banner at the bottom right names the merge until dismissed (or 30 s). Under reduced motion the glyph fades in place. The chip's number is the hive's all-time count (kept on the server, so it survives a reload); click it for the recent merges.</p>
+          <p class="sts-hint">When a pull request merges its row stays for a moment, its ✓ cell glows and a small glyph rises from it towards the top of the window — landing on the "Merged" chip when it is in view, otherwise leaving through the top edge — the count rolls up like an odometer, and a banner at the bottom right names the merge until dismissed (or 30 s). Under reduced motion the glyph fades in place. The chip's number is the hive's all-time count (kept on the server, so it survives a reload); click it for the recent merges.</p>
           <div class="sts-row"><label class="overview-settings-row"><input type="checkbox" id="sts-celebrate-on" data-change-action="stageTrackerCelebrateChange" data-arg-types="c"${on ? ' checked' : ''}>Celebrate merges <span class="text-muted">(default on)</span></label><label class="overview-settings-field">Glyph <select class="ham-select" id="sts-celebrate-glyph" data-change-action="stageTrackerCelebrateGlyphChange" data-arg-types="v" aria-label="Celebration glyph">${opts}</select></label><button type="button" class="hv-btn btn-sm" data-action="stageTrackerTestCelebration" data-stop="1" title="Close this dialog and play one celebration on a row in view — the count does not change">Test celebration</button></div>
         </section>`;
     }
