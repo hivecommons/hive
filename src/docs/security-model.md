@@ -69,7 +69,7 @@ are enabled on a given hive.
 | Work ledger and knowledge store instead of memory | injection persistence | `src/pkg/beads`, `src/pkg/knowledge` | `bd` CLI |
 | `ioscan` scanning and canaries (default on) | prompt injection, secret leakage | `src/pkg/ioscan` | `ioscanEnabled`, `ioscanFailMode` in `GET /api/config/governor` |
 | Trajectory review (default on) | goal drift | `src/pkg/trajectory` | `governor.trajectory.enabled` |
-| Policy proxy and repo allowlist | credential theft, out-of-scope writes | `src/pkg/proxy/rules.go` | `403` with `X-Hive-Proxy-Blocked` |
+| Policy proxy and repo allowlist | credential theft, out-of-scope writes | `src/crux/proxy/rules.go` | `403` with `X-Hive-Proxy-Blocked` |
 | Forced egress through the proxy (iptables) | proxy bypass | `src/deploy/entrypoint.sh` | boot log; no `HIVE_PROXY_ADVISORY_OK` |
 | Tiered GitHub tokens per agent mode | blast radius of a leaked token | `src/pkg/agentmode`, `src/pkg/agent/manager_tokens.go` | token tier on the agent card |
 | Proxy-side credential injection (opt-in) | token theft | `HIVE_PROXY_INJECT_GH_AUTH` | `security.credentialInjection` in governor config |

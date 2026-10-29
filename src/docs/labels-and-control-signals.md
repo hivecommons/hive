@@ -694,7 +694,7 @@ Below L6 this resolves off for every repo; at L6, PRs can still be opened, revie
 
 **Release or override.** Dashboard repo-card switch or config edit sets `auto_merge: true`/removes the override at L6; enabling is rejected below L6
 
-**Configuration and implementation.** `project.repo_policies[].auto_merge` (`src/pkg/config/repo_policy.go`, `src/pkg/agent/manager_modes.go`, `src/pkg/github/automerge/automerge_sweep.go`, `src/pkg/proxy/rules.go`)
+**Configuration and implementation.** `project.repo_policies[].auto_merge` (`src/pkg/config/repo_policy.go`, `src/crux/agent/manager_modes.go`, `src/pkg/github/automerge/automerge_sweep.go`, `src/crux/proxy/rules.go`)
 
 #### `do-not-merge` and `do-not-merge*`
 
