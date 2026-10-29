@@ -57904,6 +57904,7 @@ function burnAreaChart() {
     const CHAT_POLL_OPEN_MS = 2000;
     const CHAT_POLL_IDLE_MS = 10000;
     const CHAT_POLL_MAX_BACKOFF_MS = 60000;
+    const CHAT_POLL_TIMEOUT_MS = 10000;
     const CHAT_WELCOME = 'Welcome to **Hive Chat**. Type `/help` for commands, press `Tab` to complete slash commands, `↑/↓` for command history, and `⌘/Ctrl+K` to focus this terminal-grade dialog.';
 
     const chatFab = document.getElementById('hiveChatFab');
@@ -58533,18 +58534,28 @@ function burnAreaChart() {
     // tab is hidden, and with exponential backoff up to 60 s after any
     // non-2xx or network failure (hivecommons/hive#9135).
     let chatPollInFlight = false;
+    let chatPollQueued = false;
     async function chatPollMessages(retried) {
       // The timer, FAB open, visibilitychange and a /api/chat completion can
       // all call this; overlapping polls could resolve out of order across a
-      // restart and flip the epoch back and forth. One poll at a time.
-      if (chatPollInFlight) return;
+      // restart and flip the epoch back and forth. One poll at a time — but a
+      // call that lands mid-flight queues one follow-up, because the request
+      // in flight may predate the reply that caller is waiting for.
+      if (chatPollInFlight) { chatPollQueued = true; return; }
       chatPollInFlight = true;
+      chatPollQueued = false;
       clearTimeout(chatPollTimer);
       chatPollTimer = null;
       let again = false;
+      // No timer is armed while a poll is in flight, so a stalled request
+      // (proxy, browser connection pool) used to silence the channel until it
+      // resolved — 99 s in hivecommons/hive#15137. Bound it.
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), CHAT_POLL_TIMEOUT_MS);
       try {
         const resp = await fetch('/api/chat/messages?since=' + encodeURIComponent(chatLastSeq), {
           headers: _inceptionAuthHeaders(),
+          signal: controller.signal,
         });
         if (!resp.ok) { chatNotePollFailure(); return; }
         const data = await resp.json();
@@ -58553,8 +58564,10 @@ function burnAreaChart() {
       } catch (_) {
         chatNotePollFailure();
       } finally {
+        clearTimeout(abortTimer);
         chatPollInFlight = false;
         if (again) await chatPollMessages(true);
+        else if (chatPollQueued) await chatPollMessages();
         else chatSchedulePoll();
       }
     }
