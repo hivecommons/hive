@@ -75,6 +75,10 @@ var glossary = []GlossaryEntry{
 	// Rules — why the delegate chose what it chose.
 	{Slug: "contributor-offline", Kind: GlossaryRule, Plain: "the author's hive hasn't been connected since the nudge",
 		Detail: "The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting."},
+	{Slug: RuleHumanMergeApprove, Kind: GlossaryRule, Plain: "review passed, CI green, mergeable — the hive merges it under its own number",
+		Detail: "The PR was ready for a human merge only because nobody vouches for its author. Review, CI and mergeability are good, so the person's delegation is the approval: the head is admitted and the merge sweep merges the PR as it is after soak, not copied into a hive-owned PR."},
+	{Slug: RuleHumanMergeAdopt, Kind: GlossaryRule, Plain: "the head can't merge as it is, so the hive takes the work over",
+		Detail: "The review is not good, CI is red, the PR conflicts with its base or a sign-off is missing, so approving would only queue a merge GitHub refuses. The hive re-homes the commits on its own branch, fixes what blocks the merge and opens a superseding PR."},
 	{Slug: "dedupe", Kind: GlossaryRule, Plain: "an older issue already tracks this",
 		Detail: "An older issue already tracks the same work; one thread keeps it moving."},
 	{Slug: "fix-then-merge", Kind: GlossaryRule, Plain: "the branch isn't mergeable yet",

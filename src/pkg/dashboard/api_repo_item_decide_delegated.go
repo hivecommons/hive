@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -487,6 +488,9 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 		return out
 	}
 	d, deciderNotes := s.decideDelegated(ctx, in)
+	if hm, ok := s.delegatedHumanMergeDecision(in); ok {
+		d, deciderNotes = hm, []string{"ready for human merge: " + hm.Path}
+	}
 	// An adoption whose copy was closed unmerged (hivecommons/hive#15052)
 	// overrides the policy: the recorded decision no longer stands, so the
 	// answer is to re-adopt, not "already decided".
@@ -594,6 +598,7 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		if err := s.gatherDelegatedPRContext(ctx, repoFull, pr, &in); err != nil {
 			return in, err
 		}
+		in.HeadSHA = strings.TrimSpace(pr.GetHead().GetSHA())
 		state := strings.ToLower(pr.GetMergeableState())
 		in.Conflicting = state == "dirty" || (pr.Mergeable != nil && !pr.GetMergeable())
 		green, err := delegatedHeadCIGreen(ctx, api, owner, repoName, pr, in.Conflicting, state)
@@ -630,7 +635,39 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	in.AdoptionStalled = strings.HasPrefix(lowerReason, stagelabels.LaneReasonAdoptionStalledPrefix)
 	in.ReporterTrustHold = strings.Contains(lowerReason, "reporter-trust") || strings.Contains(lowerReason, "reporter trust")
 	in.DCOMissing = strings.Contains(lowerReason, "dco")
+	s.gatherDelegatedHumanMergeInput(&in)
 	return in, nil
+}
+
+// gatherDelegatedHumanMergeInput fills what DecideHumanMerge reads for a
+// PR at 090 (hivecommons/hive#15173): the reviewer's verdict for the head
+// from the review artifact, and the stage record's sign-off check. Both
+// are local reads; a missing artifact or record leaves the fields unknown.
+func (s *Server) gatherDelegatedHumanMergeInput(in *delegatedecision.Input) {
+	if in.Kind != delegatedecision.KindPR || !slices.Contains(in.Labels, stagelabels.ReadyForHumanMerge.Label()) {
+		return
+	}
+	in.ReadyForHumanMerge = true
+	if art, err := review.LoadArtifact(""); err == nil {
+		if agg, ok := stageTrackerVerdictLookup(&art)(in.Repo, in.Number, in.HeadSHA); ok {
+			in.ReviewKnown = true
+			in.ReviewGood = delegatedReviewGood(agg)
+		}
+	}
+	if rec, ok := s.stageStoreOrShared().Get(stagelabels.Key(in.Repo, in.Number)); ok {
+		if _, unsigned, ok := rec.DCOFor(in.HeadSHA); ok && unsigned > 0 {
+			in.DCOMissing = true
+		}
+	}
+}
+
+// delegatedReviewGood: the reviewer approved the head, or found it
+// merge-eligible with nothing for a person and no close recommendation.
+func delegatedReviewGood(agg review.Aggregate) bool {
+	if agg.RequiresHuman || agg.CloseRecommended {
+		return false
+	}
+	return agg.Verdict == review.VerdictApprove || agg.MergeEligible
 }
 
 // delegatedHeadCIGreen decides Input.CIGreen for the PR under decision.
@@ -727,6 +764,16 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 					return notes, fmt.Errorf("approving PR: %w", err)
 				}
 				notes = append(notes, "`/lgtm` + `/approve` recorded; the merge gate takes it from here")
+			}
+			// The delegated approval of an untrusted author's PR is the
+			// person's trust override for this head (hivecommons/hive#15136,
+			// #15173): the contributor lane merges it as it is instead of
+			// adopting it. A PR at 090 is untrusted by the lane's own
+			// judgement, whatever the author's repo permission says.
+			if !in.HiveAuthored && (in.ReadyForHumanMerge || !in.TrustedAuthor) {
+				if by := s.admitPullRequestHead(repoFull, number, in.HeadSHA, user); by != "" {
+					notes = append(notes, "head admitted as "+by+"; the contributor lane merges it as it is, no adoption")
+				}
 			}
 		case delegatedecision.ActionLabelsAdd:
 			for _, l := range a.Labels {

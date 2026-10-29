@@ -498,6 +498,24 @@ re-authoring and is not refused.
 |---|---|---|
 | `re-author` — *Re-author as hive PR* | Offered as its own lead action on a 090 PR whose head cannot merge as-is — the stage record's commit check counted commits without a `Signed-off-by` (`dco_unsigned` / `dco_total` on the row). The popover and both Approve confirms say so **before** acting (*2 of 3 commits have no Signed-off-by, so a required DCO check refuses the merge*); approving never re-authors by itself. Re-author posts its own note and the `adoption/supersede` request label; the hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR. Disabled with the reason on a person's PR (the hive does not re-author a human's PR — ask them to `git commit -s --amend`). | `repo_item_decision_adopt` with `decision=re-author`; `last_operator_action.action: re-author`; toast *adopted*. |
 
+**Let hive decide on a 090 PR takes the approve path when it can
+([#15173](https://github.com/hivecommons/hive/issues/15173)).** Delegating a
+contributor PR at *Ready for human merge* runs `DecideHumanMerge`: with the
+reviewer's verdict for the head good (approve, or merge-eligible with
+nothing for a person; no recorded verdict counts as good — the lane found
+nothing wrong at 090), CI green, no conflict and no missing sign-off, the
+rule is `human-merge-approve` — the `queue-merge` path above (APPROVE
+review, automerge label, `admitted_by: operator-approval:<login>`), so the
+merge sweep merges the PR **under its own number** after soak, never a
+hive-owned copy. Otherwise the rule is `human-merge-adopt`: adopt in
+supersede mode, with the reasons in the decision (`review not good`, `CI
+red`, `conflicting, needs rebase`, `sign-off missing`). The decision's
+`path` is in the audit detail and the ledger line — *hive decided: approve ·
+review passed, CI green, mergeable (human-merge-approve)* — and the ✓ hover
+renders it in plain words. The hive hands back with *I can't merge this…*
+only for a hive-authored PR, or when the head cannot merge as-is and
+`governor.labels.stage.adoption` is off.
+
 Neither merge action widens who the lanes trust: to stop a contributor's PRs parking at 090
 give them the `trusted` / `merger` tier under 👥 Contributors
 (`auto_merge.contributor_lane.require_tiers`), add them as a repository

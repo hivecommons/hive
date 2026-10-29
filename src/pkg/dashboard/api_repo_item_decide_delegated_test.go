@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func newDelegatedServer(t *testing.T, mock *repoItemDecisionMock) *Server {
@@ -595,13 +596,109 @@ func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {
 	}
 }
 
-// "Let hive decide" on a PR at 090 Ready for human merge answers at once
-// (hivecommons/hive#15078): no policy run, no comment, a no-effect result
-// that says in plain words why the hive will not merge it and carries the
-// merge answers as buttons — enabled for a merger, greyed for a writer.
-func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T) {
+// "Let hive decide" on a contributor PR at 090 Ready for human merge
+// (hivecommons/hive#15173): when review, CI and mergeability are good the
+// hive approves and the merge sweep merges the PR under its own number —
+// the head is admitted (hivecommons/hive#15136) so the lane merges it as
+// it is and never adopts it; the ledger says the path in plain words.
+func TestDelegatedDecisionReadyForHumanMergeApprovesWhenGreen(t *testing.T) {
 	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge", "role/newcomer"}}
 	srv := newDelegatedServer(t, mock)
+	seedAdmissionRecord(t, srv, stagelabels.ReadyForHumanMerge)
+	srv.operatorActionStore = newOperatorActionStore("")
+	body := `{"type":"pr","reason":"contributor-lane:author-association","caption":"Ready for human merge · untrusted author"}`
+	w := postDelegated(t, srv, 8, "writer", body, map[string]string{"X-Hive-Role": "merger"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Status != delegatedJobStatusDone || job.Decision == nil || job.Result == nil {
+		t.Fatalf("job = %+v", job)
+	}
+	d := job.Decision
+	if d.Verdict != delegatedecision.VerdictApprove || d.Rule != delegatedecision.RuleHumanMergeApprove || d.KeepsPark {
+		t.Fatalf("decision = %+v", d)
+	}
+	if d.Path != "review: lane found nothing wrong, CI green, mergeable" {
+		t.Errorf("path = %q", d.Path)
+	}
+	if job.Result.Action == rowActionNoEffect || strings.Contains(job.Result.Outcome, "I can't merge this") {
+		t.Fatalf("the hive must decide, not hand back: %+v", job.Result)
+	}
+	if len(mock.reviews) != 1 || len(mock.merges) != 0 {
+		t.Fatalf("expected one Approve review and no merge: reviews=%v merges=%v", mock.reviews, mock.merges)
+	}
+	if strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("a green PR must not be adopted: %v", mock.added)
+	}
+	rec, ok := srv.stageStore.Get(stagelabels.Key("testorg/testrepo", 8))
+	if !ok || rec.Admission("feedfacefeedfacefeedfacefeedfacefeedface") != stagelabels.OperatorApprovalAdmission("writer") {
+		t.Fatalf("head not admitted: ok=%v rec=%+v", ok, rec)
+	}
+	notes := strings.Join(job.Notes, "\n")
+	for _, want := range []string{"ready for human merge: review: lane found nothing wrong, CI green, mergeable", "head admitted as operator-approval:writer"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes %q missing %q", notes, want)
+		}
+	}
+	got := srv.operatorActions().List("testorg/testrepo", 8)
+	if len(got) != 1 || got[0].Outcome != operatorActionOutcomeApplied {
+		t.Fatalf("ledger = %+v", got)
+	}
+	if want := "hive decided: approve · review: lane found nothing wrong, CI green, mergeable (human-merge-approve)"; got[0].Detail != want {
+		t.Errorf("ledger detail = %q, want %q", got[0].Detail, want)
+	}
+}
+
+// Red CI or a conflicting head at 090 cannot merge as it is: the hive adopts
+// in supersede mode (the fallback), and the path names why.
+func TestDelegatedDecisionReadyForHumanMergeAdoptsWhenNotMergeable(t *testing.T) {
+	cases := []struct {
+		name string
+		mock *repoItemDecisionMock
+		path string
+	}{
+		{"red CI", &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge"}, prMergeState: "blocked", prRedCI: true}, "CI red"},
+		{"conflicting", &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge"}, prMergeState: "dirty"}, "CI red, conflicting, needs rebase"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newDelegatedServer(t, tc.mock)
+			seedAdmissionRecord(t, srv, stagelabels.ReadyForHumanMerge)
+			srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+			w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"contributor-lane:author-association"}`, map[string]string{"X-Hive-Role": "merger"})
+			if w.Code != http.StatusOK {
+				t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+			}
+			job := decodeDelegatedJob(t, w)
+			if job.Decision == nil || job.Decision.Verdict != delegatedecision.VerdictAdoptSupersede || job.Decision.Rule != delegatedecision.RuleHumanMergeAdopt {
+				t.Fatalf("decision = %+v", job.Decision)
+			}
+			if job.Decision.Path != tc.path {
+				t.Errorf("path = %q, want %q", job.Decision.Path, tc.path)
+			}
+			if !strings.Contains(strings.Join(tc.mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+				t.Fatalf("adoption not queued: %v", tc.mock.added)
+			}
+			if len(tc.mock.reviews) != 0 || len(tc.mock.merges) != 0 {
+				t.Fatalf("nothing may be approved or merged: reviews=%v merges=%v", tc.mock.reviews, tc.mock.merges)
+			}
+			if rec, _ := srv.stageStore.Get(stagelabels.Key("testorg/testrepo", 8)); rec.AdmittedBy != "" {
+				t.Fatalf("an adopted head must not be admitted: %q", rec.AdmittedBy)
+			}
+		})
+	}
+}
+
+// When the head cannot merge as it is and adoption is off on this hive, the
+// hive has no way forward of its own: it answers at once, in plain words,
+// with the merge buttons (hivecommons/hive#15078) — enabled for a merger,
+// greyed for a writer — and writes nothing.
+func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge", "role/newcomer"}, prMergeState: "blocked", prRedCI: true}
+	srv := newDelegatedServer(t, mock)
+	off := false
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = &off
 	body := `{"type":"pr","reason":"contributor-lane:author-association","caption":"Ready for human merge · untrusted author"}`
 	w := postDelegated(t, srv, 8, "writer", body, map[string]string{"X-Hive-Role": "merger"})
 	if w.Code != http.StatusOK {
@@ -645,6 +742,18 @@ func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T
 	}
 	if o := job.Result.Options[0]; o.Enabled || o.ReasonIfDisabled != decisionWhyMergerRole {
 		t.Errorf("merge-now for a writer = %+v", o)
+	}
+}
+
+// The ledger line for a delegated decision carries the path in plain words
+// before the rule slug, so the ✓ hover reads "the hive decided: approve ·
+// review passed, CI green, mergeable (rule: human merge approve)".
+func TestOperatorActionDecidedDetail(t *testing.T) {
+	if got, want := operatorActionDecidedDetail("approve", "human-merge-approve", "review passed, CI green, mergeable"), "hive decided: approve · review passed, CI green, mergeable (human-merge-approve)"; got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+	if got, want := operatorActionDecidedDetail("approve", "default-release", ""), "hive decided: approve (default-release)"; got != want {
+		t.Errorf("got %q want %q", got, want)
 	}
 }
 

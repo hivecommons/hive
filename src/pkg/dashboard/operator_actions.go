@@ -364,10 +364,9 @@ func operatorActionOutcome(status int, body []byte) (outcome, detail, head strin
 		}
 		if d, ok := resp["decision"].(map[string]any); ok && status == http.StatusOK {
 			if v, _ := d["verdict"].(string); v != "" {
-				detail = "hive decided: " + v
-				if rule, _ := d["rule"].(string); rule != "" {
-					detail += " (" + rule + ")"
-				}
+				rule, _ := d["rule"].(string)
+				path, _ := d["path"].(string)
+				detail = operatorActionDecidedDetail(v, rule, path)
 			}
 			if st, _ := resp["status"].(string); st == delegatedJobStatusFailed {
 				return operatorActionOutcomeFailed, str("error"), head, true
@@ -465,6 +464,21 @@ func (s *Server) recordOperatorAction(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// operatorActionDecidedDetail is the ledger line for a delegated decision:
+// "hive decided: approve · review passed, CI green, mergeable (rule)". The
+// path, when the policy recorded one, says in plain words why that
+// verdict (hivecommons/hive#15173); the rule slug follows in parentheses.
+func operatorActionDecidedDetail(verdict, rule, path string) string {
+	detail := "hive decided: " + verdict
+	if p := strings.TrimSpace(path); p != "" {
+		detail += " · " + p
+	}
+	if r := strings.TrimSpace(rule); r != "" {
+		detail += " (" + r + ")"
+	}
+	return detail
+}
+
 // settleOperatorAction closes the pending let-hive-decide record once the
 // delegated job ends.
 func (s *Server) settleOperatorAction(repoFull string, number int, job *delegatedDecisionJob) {
@@ -473,10 +487,7 @@ func (s *Server) settleOperatorAction(repoFull string, number int, job *delegate
 	}
 	outcome, detail := operatorActionOutcomeApplied, ""
 	if job.Decision != nil {
-		detail = "hive decided: " + string(job.Decision.Verdict)
-		if job.Decision.Rule != "" {
-			detail += " (" + job.Decision.Rule + ")"
-		}
+		detail = operatorActionDecidedDetail(string(job.Decision.Verdict), job.Decision.Rule, job.Decision.Path)
 		if job.Decision.KeepsPark {
 			detail += " — kept for the owner"
 		}

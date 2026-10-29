@@ -56,10 +56,36 @@ func delegatedHumanMergeOptions(in delegatedecision.Input, number int, mergerRol
 // decisionWhyMergerRole is the plain reason a merge button is greyed.
 const decisionWhyMergerRole = "merger role required"
 
+// delegatedHumanMergeDecision is the policy's answer for a 090 PR
+// (hivecommons/hive#15173), or ok=false when the hive should instead say in
+// plain words that a person has to act: the PR is not a contributor PR the
+// lanes can take over, or the head cannot merge as it is and adoption —
+// the only other way forward — is off on this hive.
+func (s *Server) delegatedHumanMergeDecision(in delegatedecision.Input) (delegatedecision.Decision, bool) {
+	if in.HiveAuthored {
+		return delegatedecision.Decision{}, false
+	}
+	d, ok := delegatedecision.RunHumanMerge(in)
+	if !ok {
+		return delegatedecision.Decision{}, false
+	}
+	if d.Verdict == delegatedecision.VerdictAdoptSupersede && !s.stageAdoptionEnabled() {
+		return delegatedecision.Decision{}, false
+	}
+	return d, true
+}
+
 // delegatedHumanMergeOutcome answers "Let hive decide" on a PR wearing the
-// 090 label without running the policy. ok=false for anything else.
+// 090 label without running the owner-delegate policy. ok=false for
+// anything else — and for a contributor PR the hive can decide itself:
+// approve when review, CI and mergeability are good, adopt when the head
+// cannot merge as it is (hivecommons/hive#15173); those run through the
+// normal decide → execute path.
 func (s *Server) delegatedHumanMergeOutcome(repoFull string, number int, itemType, user string, mergerRole bool, in delegatedecision.Input, req delegatedDecisionRequest) (delegatedOutcome, bool) {
 	if in.Kind != delegatedecision.KindPR || !slices.Contains(in.Labels, stagelabels.ReadyForHumanMerge.Label()) {
+		return delegatedOutcome{}, false
+	}
+	if _, ok := s.delegatedHumanMergeDecision(in); ok {
 		return delegatedOutcome{}, false
 	}
 	reason := delegatedHumanMergeReason(in, req)

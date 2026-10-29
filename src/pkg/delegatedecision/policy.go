@@ -167,6 +167,15 @@ type Input struct {
 	CIGreen     bool
 	Conflicting bool
 	DCOMissing  bool
+	// HeadSHA is the PR head the decision is about (for per-head records).
+	HeadSHA string
+	// ReviewKnown: the reviewer recorded a verdict for HeadSHA; ReviewGood:
+	// that verdict approves (no blocking findings, no requires_human).
+	ReviewKnown bool
+	ReviewGood  bool
+	// ReadyForHumanMerge: the PR sits at stage/090 — the lanes found nothing
+	// wrong with it and only its author's trust keeps the hive from merging.
+	ReadyForHumanMerge bool
 	// Small: a size/XS or size/S PR (also read from the labels).
 	Small bool
 	// LowRiskPaths: every changed file is CI config, workflow, docs, text or
@@ -201,6 +210,9 @@ type Decision struct {
 	// KeepsPark is true when the item stays at 085/045 (recommend-only,
 	// owner-only, refused).
 	KeepsPark bool `json:"keeps_park"`
+	// Path is the chosen path in a few plain words ("review passed, CI
+	// green, mergeable"), for the ✓ hover and the audit line.
+	Path string `json:"path,omitempty"`
 }
 
 // Marker is the audit stamp every delegated comment carries.
