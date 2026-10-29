@@ -533,7 +533,8 @@ func TestStageTrackerEndpoint(t *testing.T) {
 		t.Fatalf("nested_under: pr102=%d pr101=%d", pr102.NestedUnder, pr101.NestedUnder)
 	}
 	issue8 := trackerItem(t, resp, "issue", 8)
-	if issue8.Stage != 10 || issue8.Mirrored || issue8.Actor != "scanner" || issue8.AuthorKind != authorKindHive {
+	if issue8.Stage != 10 || issue8.Mirrored || issue8.Actor != "its PR" || issue8.AuthorKind != authorKindHive ||
+		issue8.Caption != "Covered by PR #103 — "+pr103.Caption {
 		t.Fatalf("issue8 = %+v", issue8)
 	}
 
