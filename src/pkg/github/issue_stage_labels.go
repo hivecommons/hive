@@ -418,6 +418,13 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 	legacyCarriers := map[string]int{}
 	reposSeen := map[string]bool{}
 	var pending []issueStagePending
+	linkRateLimited := false
+	linkSkipped := 0
+	defer func() {
+		if linkRateLimited && logger != nil {
+			logger.Info("issue stage labels: PR issue-link safeguard paused for this sweep, GitHub rate limit exceeded; retrying next sweep", "skipped_pairs", linkSkipped)
+		}
+	}()
 	for _, in := range IssueStageInputs(result) {
 		if ctx.Err() != nil {
 			return res
@@ -490,7 +497,12 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			}
 		}
 		if stage == stagelabels.PRInProgress || stage == stagelabels.CoveredByPR {
-			edited, commented := ensureIssueStagePRLink(ctx, client, in, store, key, logger)
+			var edited, commented bool
+			if linkRateLimited {
+				linkSkipped++
+			} else {
+				edited, commented, linkRateLimited = ensureIssueStagePRLink(ctx, client, in, store, key, logger)
+			}
 			if edited {
 				res.PRBodiesEdited++
 				res.Writes++
@@ -701,15 +713,15 @@ func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStage
 	return true, commented
 }
 
-func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageInput, store *stagelabels.Store, key string, logger *slog.Logger) (edited, commented bool) {
+func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageInput, store *stagelabels.Store, key string, logger *slog.Logger) (edited, commented, rateLimited bool) {
 	if client == nil || client.client == nil || in.Claim == nil || in.Claim.PRNumber <= 0 {
-		return false, false
+		return false, false, false
 	}
 	// Older tests and payloads may carry only a PR number. Real claim rows
 	// include URL/repo/grade metadata; require at least one such field before
 	// spending a PR lookup.
 	if in.Claim.PRURL == "" && in.Claim.PRRepo == "" && in.Claim.PRAuthor == "" && !in.Claim.Closing && !in.Claim.Reference {
-		return false, false
+		return false, false, false
 	}
 	claim := in.Claim
 	if claim.Reference && (in.DelegatesWork || in.Children != nil && in.Children.Open() > 0 || issueHasLabel(in.Labels, PartiallyAddressedLabel)) {
@@ -721,23 +733,28 @@ func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageIn
 	}
 	link, err := client.EnsureIssueStagePRLink(ctx, in.Repo, in.Number, claim)
 	if err != nil {
+		if isSearchRateLimit(err) {
+			// The client short-circuits locally while limited; every
+			// further pair would fail identically. Stop for this sweep.
+			return false, false, true
+		}
 		if logger != nil {
 			logger.Warn("issue stage labels: PR issue-link safeguard failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 		}
-		return false, false
+		return false, false, false
 	}
 	if link.EditedBody {
 		if logger != nil {
 			logger.Info("issue stage labels: appended closing keyword to Hive-authored PR body for GitHub issue link", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "base", link.Base)
 		}
-		return true, false
+		return true, false, false
 	}
 	if strings.TrimSpace(link.StageComment) == "" {
-		return false, false
+		return false, false, false
 	}
 	rec, ok := store.Get(key)
 	if !ok || rec.EntryCommented {
-		return false, false
+		return false, false, false
 	}
 	if err := client.CreateIssueComment(ctx, in.Repo, in.Number, link.StageComment); err != nil {
 		owner, name := client.splitRepo(in.Repo)
@@ -745,15 +762,15 @@ func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageIn
 			if logger != nil {
 				logger.Debug("issue stage labels: repository is archived and read-only, skipping PR link stage comment", "repo", in.Repo, "issue", in.Number)
 			}
-			return false, false
+			return false, false, false
 		}
 		if logger != nil {
 			logger.Warn("issue stage labels: PR link stage comment failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 		}
-		return false, false
+		return false, false, false
 	}
 	store.MarkEntryCommented(key, "")
-	return false, true
+	return false, true, false
 }
 
 // ensureStageLabelFamily provisions (or recolours) the stage/author label

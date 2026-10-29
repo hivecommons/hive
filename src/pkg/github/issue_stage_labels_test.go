@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -59,6 +60,10 @@ type issueStageServer struct {
 	// closeFails makes PATCH state=closed answer 502 for the issue so a
 	// close that fails after its comment landed can be replayed.
 	closeFails map[int]bool
+	// prRateLimited answers PR link lookups with a secondary rate limit and
+	// counts them in prLookups (guarded by mu).
+	prRateLimited bool
+	prLookups     int
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
@@ -77,6 +82,15 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 			}
 			_ = json.NewDecoder(r.Body).Decode(&q)
 			if strings.Contains(q.Query, "pullRequest(number:$pr)") {
+				s.mu.Lock()
+				s.prLookups++
+				limited := s.prRateLimited
+				s.mu.Unlock()
+				if limited {
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`{"message":"You have exceeded a secondary rate limit."}`))
+					return
+				}
 				pr := q.Variables.PR
 				base := s.prBases[pr]
 				if base == "" {
@@ -830,6 +844,38 @@ func TestSyncIssueStageLabels_EditsHivePRBodyForDefaultBranchLink(t *testing.T) 
 	}
 	if fake.comments[4] != 0 {
 		t.Fatalf("comments = %d, want 0 when the PR body was fixed", fake.comments[4])
+	}
+}
+
+func TestSyncIssueStageLabels_PRLinkRateLimitPausesSweepWithOneLine(t *testing.T) {
+	fake := newIssueStageServer(t)
+	fake.prRateLimited = true
+	c := issueStageTestClient(t, fake.srv, true)
+	c.SetAppBotLogin("hive[bot]")
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	for n, pr := range map[int]int{4: 41, 5: 42, 6: 43} {
+		appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: n, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: pr, PRURL: "https://x/pr/" + strconv.Itoa(pr)}}, workBucketClaimedByPR, "open PR")
+	}
+	fake.seed(result)
+	ResetRateLimitPacingForTest()
+	resetRESTAccountingForTest(t, stageNow())
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	SyncIssueStageLabels(context.Background(), c, result, store, stageNow(), logger)
+
+	fake.mu.Lock()
+	lookups := fake.prLookups
+	fake.mu.Unlock()
+	if lookups != 1 {
+		t.Fatalf("PR link lookups = %d, want 1 (sweep must stop after the rate limit)", lookups)
+	}
+	out := buf.String()
+	if strings.Contains(out, "level=WARN") && strings.Contains(out, "safeguard failed") {
+		t.Fatalf("rate limit logged as WARN per pair:\n%s", out)
+	}
+	if n := strings.Count(out, "PR issue-link safeguard paused"); n != 1 {
+		t.Fatalf("summary lines = %d, want 1:\n%s", n, out)
 	}
 }
 
