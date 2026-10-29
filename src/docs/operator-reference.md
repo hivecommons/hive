@@ -498,6 +498,21 @@ re-authoring and is not refused.
 |---|---|---|
 | `re-author` — *Re-author as hive PR* | Offered as its own lead action on a 090 PR whose head cannot merge as-is — the stage record's commit check counted commits without a `Signed-off-by` (`dco_unsigned` / `dco_total` on the row). The popover and both Approve confirms say so **before** acting (*2 of 3 commits have no Signed-off-by, so a required DCO check refuses the merge*); approving never re-authors by itself. Re-author posts its own note and the `adoption/supersede` request label; the hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR. Disabled with the reason on a person's PR (the hive does not re-author a human's PR — ask them to `git commit -s --amend`). | `repo_item_decision_adopt` with `decision=re-author`; `last_operator_action.action: re-author`; toast *adopted*. |
 
+*Let hive decide* on a PR parked at 090 only for its author's trust takes the
+decision instead of answering that it cannot merge
+([#15173](https://github.com/hivecommons/hive/issues/15173)):
+
+| PR head | Hive decides | ✓ hover |
+|---|---|---|
+| review passed (no reviewing / changes-requested / requires-human `review.verdict_labels` label), CI green, mergeable | approve — the same path as *Approve — let hive merge* (needs the `merger` role): admits the head (`admitted_by: operator-approval:<you>`), approves it and adds the automerge label; no adoption, and the sweep merges the PR under its own number after soak | *hive decided: approve · review passed, CI green* |
+| CI red | adopt in supersede mode | *hive decided: adopt · CI red* |
+| conflicting | adopt in supersede mode to rebase | *hive decided: adopt · conflicting, needs rebase* |
+| review not passed | adopt in supersede mode | *hive decided: adopt · review not passed* |
+
+A sentinel alert, your own PR, a writer without the `merger` role on a good
+head, adoption turned off, or any other 090 reason keep the plain-words
+no-effect answer with the two merge buttons.
+
 Neither merge action widens who the lanes trust: to stop a contributor's PRs parking at 090
 give them the `trusted` / `merger` tier under 👥 Contributors
 (`auto_merge.contributor_lane.require_tiers`), add them as a repository
