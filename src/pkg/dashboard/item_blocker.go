@@ -363,15 +363,15 @@ func (s *Server) handleRepoItemBlockerClosePartial(w http.ResponseWriter, r *htt
 		ctx = s.deps.Ctx
 	}
 	gh := s.deps.GHClient
-	if err := gh.AddLabels(ctx, repoFull, number, []string{ghpkg.PartiallyAddressedLabel}); err != nil {
+	if err := gh.AddLabels(ctx, repoFull, number, []string{ghpkg.PartiallyAddressedLabel}); err != nil { // writeback:solicited operator chose "close as partially addressed" on the dashboard
 		jsonError(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	if err := gh.CreateIssueComment(ctx, repoFull, number, renderBlockerClosePartialComment(user, *b)); err != nil {
+	if err := gh.CreateIssueComment(ctx, repoFull, number, renderBlockerClosePartialComment(user, *b)); err != nil { // writeback:solicited operator-authored closing comment
 		jsonError(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	err := gh.CloseIssue(ctx, repoFull, number, ghpkg.IssueCloseOptions{
+	err := gh.CloseIssue(ctx, repoFull, number, ghpkg.IssueCloseOptions{ // writeback:solicited operator closed the item from the dashboard
 		OverrideReason:          "closed as partially addressed by @" + user + " from the Hive dashboard",
 		SuppressOverrideComment: true,
 		StateReason:             ghpkg.IssueStateReasonCompleted,
