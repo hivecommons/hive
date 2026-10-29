@@ -106,6 +106,40 @@ func TestRecordOperatorPullRequestDecisionRecordsChangeRequestAndReplies(t *test
 	}
 }
 
+func TestRecordOperatorPullRequestDecisionRefusesBodyOnlyClankerEvidence(t *testing.T) {
+	for _, marker := range []struct{ name, body string }{
+		{"origin", "<!-- hive:origin hive=contributors-hive -->"},
+		{"attribution", "— hive: backend=codex"},
+		{"identity", "🐝 **Hive Agent**"},
+	} {
+		for _, humanLabel := range []bool{false, true} {
+			t.Run(marker.name+"/human-label="+strconv.FormatBool(humanLabel), func(t *testing.T) {
+				labels := []string{PRNeedsDecisionStageLabel, issueNeedsHumanLabel}
+				if humanLabel {
+					labels = append(labels, "author/human")
+				}
+				pr := parkedPR(77, "someone", labels)
+				pr.Body += "\n\n" + marker.body
+				c, rec := newUnparkPRClient(t, []unparkWireIssue{pr}, nil)
+				store := review.NewHumanChangeRequests("")
+
+				if _, err := c.RecordOperatorPullRequestDecision(context.Background(), "org/repo", 77, "maintainer", "drop the workflow change", store); !errors.Is(err, ErrPullRequestNotHiveAuthored) {
+					t.Fatalf("body marker alone: err = %v, want ErrPullRequestNotHiveAuthored", err)
+				}
+				if store.Len() != 0 {
+					t.Fatal("refused direction must not be stored")
+				}
+				if len(rec.posted[77])+len(rec.added[77])+len(rec.removed[77]) != 0 {
+					t.Fatalf("refused direction must not write to GitHub: comments=%v added=%v removed=%v", rec.posted[77], rec.added[77], rec.removed[77])
+				}
+				if facts := prDecisionFacts(t, c); len(facts) != 0 {
+					t.Fatalf("refused direction must not submit a stage decision: %+v", facts)
+				}
+			})
+		}
+	}
+}
+
 func TestRecordOperatorPullRequestDecisionRefusesForeignEmptyAndUnstored(t *testing.T) {
 	foreign := parkedPR(77, "someone", []string{PRNeedsDecisionStageLabel})
 	c, rec := newUnparkPRClient(t, []unparkWireIssue{hiveParkedPR(), foreign}, nil)

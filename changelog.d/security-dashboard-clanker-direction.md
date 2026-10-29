@@ -1,0 +1,1 @@
+- Dashboard directions require the repository's `author/clanker` classification for contributor PRs; author-controlled body markers alone no longer enable the contributor direction lane ([#15268](https://github.com/hivecommons/hive/issues/15268)).
