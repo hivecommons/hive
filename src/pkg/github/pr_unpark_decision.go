@@ -412,6 +412,22 @@ func renderPRDecisionRecordedReply(actor, head string) string {
 		prDecisionHeadMarkerLine(head, prDecisionChangesRequested), actor, prHeadRef(head))
 }
 
+// renderPRDecisionToContributorHiveReply is the reply for a direction
+// recorded on a contributor's clanker PR: the fix is the contributor's
+// hive's to push, not the hive's own author agent's (hivecommons/hive#15159).
+func renderPRDecisionToContributorHiveReply(actor, head, author, decision string) string {
+	who := "the contributor's hive"
+	if a := strings.TrimPrefix(strings.TrimSpace(author), "@"); a != "" {
+		who = "@" + a + "'s hive"
+	}
+	body := fmt.Sprintf("%s\nDirection recorded by @%s for %s. This PR was opened by %s, so the hive treats it as a *changes requested* review on that head: the PR is returned to the contributor and %s is nudged with the instruction below verbatim. When a new head is pushed the review swarm re-reviews it; if it approves, the PR comes back for your merge approval.",
+		prDecisionHeadMarkerLine(head, prDecisionChangesRequested), actor, prHeadRef(head), who, who)
+	if d := strings.TrimSpace(decision); d != "" {
+		body += "\n\n> " + strings.ReplaceAll(d, "\n", "\n> ")
+	}
+	return body
+}
+
 func renderPRDecisionApprovedReply(actor, head string) string {
 	return fmt.Sprintf("%s\nApproval recorded by @%s for %s. The hive is treating it as your answer to the review swarm's question: nothing is sent back to the author, and the PR follows the merge path on the next pass (merged when the merge gates pass, or handed to you at the ready-for-merge stage where a person has to press the button).",
 		prDecisionHeadMarkerLine(head, prDecisionApprove), actor, prHeadRef(head))

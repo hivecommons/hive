@@ -242,32 +242,50 @@ func ParsePRApprovalCommandComment(body string) (command, actor, head string, ok
 	return command, actor, head, true
 }
 
-// openPullRequestHead returns the PR's head SHA and whether the hive opened
-// it, or ErrPullRequestClosed / a not-found error.
-func (c *Client) openPullRequestHead(ctx context.Context, owner, name string, number int) (head string, selfAuthored bool, err error) {
-	head, selfAuthored, _, err = c.openPullRequestHeadLabels(ctx, owner, name, number)
-	return head, selfAuthored, err
+// openPullRequestHeadLabels returns the PR's head SHA, whether the hive
+// opened it, and its labels as read in the same fetch, or
+// ErrPullRequestClosed / a not-found error.
+func (c *Client) openPullRequestHeadLabels(ctx context.Context, owner, name string, number int) (head string, selfAuthored bool, labels []string, err error) {
+	t, err := c.openPullRequestDecisionTarget(ctx, owner, name, number)
+	return t.head, t.selfAuthored, t.labels, err
 }
 
-// openPullRequestHeadLabels is openPullRequestHead plus the PR's labels as
-// read in the same fetch.
-func (c *Client) openPullRequestHeadLabels(ctx context.Context, owner, name string, number int) (head string, selfAuthored bool, labels []string, err error) {
+// prDecisionTarget is what one open-PR read tells a dashboard decision:
+// the head, whether the hive opened the PR, and — when it did not —
+// whether a contributor's hive did (author/clanker, the origin marker, the
+// attribution trailer), so a direction has a hive to carry it to.
+type prDecisionTarget struct {
+	head         string
+	selfAuthored bool
+	clanker      bool
+	author       string
+	labels       []string
+}
+
+func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name string, number int) (prDecisionTarget, error) {
 	pr, resp, err := c.client.PullRequests.Get(ctx, owner, name, number)
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return "", false, nil, fmt.Errorf("pull request %s/%s#%d: %w", owner, name, number, ErrPullRequestNotFound)
+			return prDecisionTarget{}, fmt.Errorf("pull request %s/%s#%d: %w", owner, name, number, ErrPullRequestNotFound)
 		}
-		return "", false, nil, fmt.Errorf("fetching pull request %s/%s#%d: %w", owner, name, number, err)
+		return prDecisionTarget{}, fmt.Errorf("fetching pull request %s/%s#%d: %w", owner, name, number, err)
 	}
 	if strings.EqualFold(pr.GetState(), "closed") {
-		return "", false, nil, ErrPullRequestClosed
+		return prDecisionTarget{}, ErrPullRequestClosed
 	}
+	t := prDecisionTarget{author: strings.TrimSpace(safeGetLogin(pr.GetUser()))}
 	if pr.GetHead() != nil {
-		head = strings.TrimSpace(pr.GetHead().GetSHA())
+		t.head = strings.TrimSpace(pr.GetHead().GetSHA())
 	}
-	labels = issueLabelNames(pr.Labels)
-	selfAuthored = c.isHiveAccount(pr.GetUser()) || labelPresent(labels, authorkind.Hive.Label())
-	return head, selfAuthored, labels, nil
+	t.labels = issueLabelNames(pr.Labels)
+	t.selfAuthored = c.isHiveAccount(pr.GetUser()) || labelPresent(t.labels, authorkind.Hive.Label())
+	if !t.selfAuthored {
+		// The author/clanker stamp is the hive's own earlier reading of the
+		// body; honour it alongside the markers in case the body was edited.
+		t.clanker = labelPresent(t.labels, authorkind.Clanker.Label()) ||
+			authorkind.Detect(authorkind.Input{Author: t.author, AppLogin: c.AppBotLogin(), Labels: t.labels, Body: pr.GetBody()}) == authorkind.Clanker
+	}
+	return t, nil
 }
 
 func (c *Client) operatorPRTarget(repo string, number int, actor, what string) (owner, name string, err error) {
@@ -406,13 +424,19 @@ func (c *Client) warnOperatorApproval(what, repo string, number int, head string
 	}
 }
 
-// RecordOperatorPullRequestDecision records a maintainer's direction on a
-// hive-authored open pull request made through the dashboard — the same
-// effect as that maintainer commenting `/hive decision <text>` and the
-// un-park sweep answering it: the text is stored against the head as a
-// human change request (the review planner kicks the author agent with it
-// verbatim) and one reply naming the actor is posted. The caller is
-// responsible for having verified actor's write access.
+// RecordOperatorPullRequestDecision records a maintainer's direction on an
+// open pull request made through the dashboard — the same effect as that
+// maintainer commenting `/hive decision <text>` and the un-park sweep
+// answering it: the text is stored against the head as a human change
+// request and one reply naming the actor is posted. On a PR the hive
+// opened the review planner kicks the hive's own author agent with the
+// text verbatim. On a contributor's clanker PR (author/clanker, a foreign
+// origin marker) the direction is carried to that contributor's hive
+// instead: it stands as a changes-requested review on the head, the PR
+// goes to 072 returned-to-contributor and the contributor nudge delivers
+// the text (hivecommons/hive#15159). A PR a person opened has no hive to
+// carry it: ErrPullRequestNotHiveAuthored, leave a review instead. The
+// caller is responsible for having verified actor's write access.
 func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo string, number int, actor, decision string, store review.HumanChangeRequestStore) (PullRequestDecisionEvent, error) {
 	owner, name, err := c.operatorPRTarget(repo, number, actor, "RecordOperatorPullRequestDecision")
 	if err != nil {
@@ -426,17 +450,23 @@ func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo str
 	if store == nil {
 		return PullRequestDecisionEvent{}, fmt.Errorf("RecordOperatorPullRequestDecision: no human change request store")
 	}
-	head, selfAuthored, err := c.openPullRequestHead(ctx, owner, name, number)
+	target, err := c.openPullRequestDecisionTarget(ctx, owner, name, number)
 	if err != nil {
 		return PullRequestDecisionEvent{}, err
 	}
-	if !selfAuthored {
+	head, selfAuthored := target.head, target.selfAuthored
+	if !selfAuthored && !target.clanker {
 		return PullRequestDecisionEvent{}, ErrPullRequestNotHiveAuthored
 	}
 	if head == "" {
 		return PullRequestDecisionEvent{}, ErrPullRequestHeadUnknown
 	}
 	mode := prDecisionModeFor(unparkCommand{Kind: unparkCommandDecision, Decision: decision, Text: decision})
+	if !selfAuthored && mode == prDecisionApprove {
+		// A bare "approve" is not a direction a contributor's hive can act
+		// on; the dashboard's Approve action is the release for that.
+		return PullRequestDecisionEvent{}, ErrPullRequestNotHiveAuthored
+	}
 	req := review.HumanChangeRequest{
 		Repo:     owner + "/" + name,
 		Number:   number,
@@ -453,11 +483,18 @@ func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo str
 		return PullRequestDecisionEvent{}, fmt.Errorf("recording dashboard decision on %s/%s#%d: %w", owner, name, number, err)
 	}
 	stage := c.applyPRDecisionStage(ctx, owner, name, number, head, actor, mode, selfAuthored)
-	body := renderPRDecisionReply(actor, head, mode) + "\n\n_Recorded from the hive dashboard._"
+	reply := renderPRDecisionReply(actor, head, mode)
+	if !selfAuthored {
+		reply = renderPRDecisionToContributorHiveReply(actor, head, target.author, decision)
+	}
+	body := reply + "\n\n_Recorded from the hive dashboard._"
 	if err := c.postUnparkReply(ctx, owner, name, number, operatorDecisionMarkerID, body); err != nil {
 		return PullRequestDecisionEvent{}, err
 	}
-	event := PullRequestDecisionEvent{Repo: owner + "/" + name, Number: number, HeadSHA: head, Actor: actor, Decision: decision, Mode: string(mode)}
+	event := PullRequestDecisionEvent{Repo: owner + "/" + name, Number: number, HeadSHA: head, Actor: actor, Decision: decision, Mode: string(mode), ToContributor: target.author}
+	if selfAuthored {
+		event.ToContributor = ""
+	}
 	c.logPRDecision(event.Repo, number, head, actor, mode, stage, false)
 	return event, nil
 }

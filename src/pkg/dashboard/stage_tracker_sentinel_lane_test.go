@@ -29,6 +29,9 @@ func stageTrackerSentinelJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDeferredMods"),
 		jsFunc(t, html, "stageTrackerSentinelTip"),
 		jsFunc(t, html, "stageTrackerSentinelInLane"),
+		jsFunc(t, html, "stageTrackerSentinelAsSuffix"),
+		jsFunc(t, html, "stageTrackerReturnedWord"),
+		jsFunc(t, html, "stageTrackerDirectionCarrier"),
 		jsFunc(t, html, "stageTrackerSentinelChipHtml"),
 	}, "\n")
 }
@@ -271,7 +274,7 @@ func TestStageTrackerSentinelLaneWiring(t *testing.T) {
 		`function stageTrackerSentinelInLane(item)`,
 		`function stageTrackerSentinelChipHtml(item)`,
 		`function stageTrackerSentinelPreface(items)`,
-		`sentinel ? 'ham-sentinel' : ''`,
+		`sentinel || sentinelSuffix ? 'ham-sentinel' : ''`,
 		`.ham-badge-sentinel { color: var(--status-error);`,
 		`.ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }`,
 		`const sentinel = id.indexOf('decide:') === 0 ? stageTrackerSentinelPreface(items) : '';`,
@@ -371,7 +374,38 @@ assert.ok(!review.includes('ham-sentinel"'), 'the chevron is not tinted off the 
 const noMods = stageTrackerRowHtml(P('o/r', 110, 50, flagged), stages, ctx);
 assert.ok(noMods.includes('ham-badge-sentinel') && !noMods.includes('ham-badge-mod'), 'chip alone when there are no modifiers');
 const generic = stageTrackerRowHtml(P('o/r', 110, 71, { sentinel_alert: true }), stages, ctx);
-assert.ok(generic.includes('title="Sentinel flagged security-relevant changes: ' + esc(STAGE_TRACKER_SENTINEL_TIP_FALLBACK) + '"'), 'generic tooltip without a reason: ' + generic);
+assert.ok(generic.includes('Sentinel flagged security-relevant changes: ' + esc(STAGE_TRACKER_SENTINEL_TIP_FALLBACK)), 'generic tooltip without a reason: ' + generic);
+
+// 071/072 + sentinel (hivecommons/hive#15159): the chevron keeps the
+// routing word — the human already acted — with the alert as a suffix,
+// never "needs human"; the chip is folded into the word.
+assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }, 'Returned to contributor'), "Returned to @thatguywob's hive");
+assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr', author: 'sam', author_kind: 'human' }, 'Returned to contributor'), 'Returned to @sam');
+assert.strictEqual(stageTrackerReturnedWord({ stage: 71, kind: 'pr', author: 'sam' }, 'Needs author'), 'Needs @sam');
+assert.strictEqual(stageTrackerReturnedWord({ stage: 72, kind: 'pr' }, 'Returned to contributor'), 'Returned to contributor', 'no author → stage word');
+assert.strictEqual(stageTrackerReturnedWord(Object.assign({ stage: 72, kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }, flagged), 'x'), "Returned to @thatguywob's hive · sentinel");
+assert.ok(stageTrackerSentinelAsSuffix(P('o/r', 1, 72, flagged)) && stageTrackerSentinelAsSuffix(P('o/r', 1, 71, flagged)));
+assert.ok(!stageTrackerSentinelAsSuffix(P('o/r', 1, 85, flagged)) && !stageTrackerSentinelAsSuffix(I('o/r', 1, 72, flagged)));
+const returned = stageTrackerRowHtml(P('o/r', 15159, 72, Object.assign({ author: 'thatguywob', author_kind: 'clanker' }, flagged)), stages, ctx);
+const retLit = /<li class="ham-seg active detoured ham-sentinel"([^>]*)>([\s\S]*?)<\/li>/.exec(returned);
+assert.ok(retLit, 'the lit 072 chevron is tinted: ' + returned);
+assert.ok(retLit[2].includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s hive · sentinel</span>"), 'routing word with sentinel suffix: ' + retLit[2]);
+assert.ok(!returned.includes('needs human') && !returned.includes('Needs human'), 'no needs-human wording at 072: ' + returned);
+assert.ok(retLit[1].includes("aria-label=\"Returned to @thatguywob&#39;s hive · sentinel — " + TIP + '"'), 'aria names the routing: ' + retLit[1]);
+assert.ok(retLit[1].includes(' — ' + TIP), 'the tooltip carries the reason: ' + retLit[1]);
+assert.ok(!returned.includes('ham-badge-sentinel'), 'no chip when the word carries the suffix');
+const needsAuthor = stageTrackerRowHtml(P('o/r', 15160, 71, Object.assign({ author: 'sam', author_kind: 'human' }, flagged)), stages, ctx);
+assert.ok(needsAuthor.includes('<span class="ham-detour">Needs @sam · sentinel</span>') && !needsAuthor.includes('needs human'), needsAuthor);
+const returnedClean = stageTrackerRowHtml(P('o/r', 15161, 72, { author: 'thatguywob', author_kind: 'clanker' }), stages, ctx);
+assert.ok(returnedClean.includes("<span class=\"ham-detour\">Returned to @thatguywob&#39;s hive</span>") && !returnedClean.includes('ham-sentinel') && !returnedClean.includes('entinel'), returnedClean);
+// 085 still says it in full.
+assert.ok(stageTrackerRowHtml(P('o/r', 15162, 85, flagged), stages, ctx).includes('<span class="ham-detour">Sentinel alert · needs human</span>'));
+// Give direction on a clanker PR is carried to the contributor's hive, not
+// to the hive's own fixer.
+assert.strictEqual(stageTrackerDirectionCarrier([{ kind: 'pr', author: 'thatguywob', author_kind: 'clanker' }]), "@thatguywob's hive");
+assert.strictEqual(stageTrackerDirectionCarrier([{ kind: 'pr', author: '@a', author_kind: 'clanker' }, { kind: 'pr', author: 'b', author_kind: 'clanker' }]), "the contributor's hive");
+assert.strictEqual(stageTrackerDirectionCarrier([{ kind: 'pr', author: 'x', author_kind: 'clanker' }, { kind: 'pr', author: 'hive[bot]', author_kind: 'hive' }]), 'the author agent');
+assert.strictEqual(stageTrackerDirectionCarrier([]), 'the author agent');
 
 // Clean rows carry none of it.
 const clean = stageTrackerRowHtml(P('o/r', 104, 85), stages, ctx);

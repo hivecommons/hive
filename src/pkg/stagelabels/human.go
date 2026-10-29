@@ -139,6 +139,15 @@ type Evidence struct {
 	// requires_human verdict and on a manual-merge lane rule: the person
 	// read the reviewer's objection and ruled the head lands as-is.
 	HumanApprover string
+	// HumanChangeRequester is the trusted maintainer whose CHANGES_REQUESTED
+	// review (or `/hive decision <text>`) stands on exactly Head ("" when
+	// none). A person has reviewed this head and asked for a fix: that
+	// answers every "needs a human" park on it — the sentinel alert, a
+	// workflow-path fence, a hold — so the PR is the author's to act on
+	// (071 / 072 / 070), not 085 (hivecommons/hive#15159: a clanker PR
+	// with the owner's changes-requested review kept re-deriving
+	// "Sentinel alert · needs human" over the operator's 072).
+	HumanChangeRequester string
 	// ManualMergeRule is true when CauseReason names a lane rule no
 	// approval can override — the hive never merges the head unattended
 	// (CI workflow / action edits, removed tests, a human-merge path). With
@@ -225,7 +234,11 @@ type Route struct {
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
 const (
-	LaneReasonChangesRequested       = "reviewer-verdict:changes_requested"
+	LaneReasonChangesRequested = "reviewer-verdict:changes_requested"
+	// LaneReasonHumanChangesRequested is a trusted maintainer's standing
+	// change request on the head (prstage.AutoMergeReasonHumanChangesRequested
+	// spells the same token; prstage imports this package).
+	LaneReasonHumanChangesRequested  = "human-changes-requested"
 	LaneReasonDCOMissing             = "dco-missing"
 	LaneReasonHiveSignoffAttribution = "hive-signoff-attribution"
 	LaneReasonConflicting            = "conflicting"
@@ -254,6 +267,12 @@ func RouteHuman(e Evidence) Route {
 		if laneReason == "" {
 			laneReason = lane
 		}
+	}
+	if requester := strings.TrimPrefix(strings.TrimSpace(e.HumanChangeRequester), "@"); requester != "" {
+		// A person reviewed this head and asked for changes: the sentinel's
+		// or the lane rule's "needs a human" is answered for it, and the
+		// author acts next (hivecommons/hive#15159). A new head re-asks.
+		note("@"+requester+" requested changes @"+ShortSHA(e.Head), LaneReasonHumanChangesRequested)
 	}
 	if e.Verdict == VerdictChangesRequested {
 		note("verdict changes_requested @"+ShortSHA(e.Head), LaneReasonChangesRequested)
@@ -422,6 +441,9 @@ func summarize(e Evidence) string {
 	}
 	if approver := strings.TrimSpace(e.HumanApprover); approver != "" {
 		parts = append(parts, "approved by @"+approver)
+	}
+	if requester := strings.TrimPrefix(strings.TrimSpace(e.HumanChangeRequester), "@"); requester != "" {
+		parts = append(parts, "changes requested by @"+requester)
 	}
 	switch {
 	case !e.Checks.Known:

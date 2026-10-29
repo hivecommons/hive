@@ -166,3 +166,27 @@ func (c *Engine) reconcileReviewBackedApproval(ctx context.Context, owner, repo 
 	}
 	return c.humanChangeRequests.For(key, number, head)
 }
+
+// sentinelBlockedUnlessHumanChangesRequested refines the contributor lane's
+// sentinel-blocked prefilter skip: a sentinel alert parks the PR on a person
+// (085), and a trusted maintainer's CHANGES_REQUESTED review on the current
+// head IS that person's answer — the author acts next, so the lane reason
+// becomes human-changes-requested and the stage pass derives the fixing
+// stage (072 for a clanker's PR) instead of re-asserting 085 over it every
+// sweep (hivecommons/hive#15159). The review is read only for a sentinel-
+// blocked PR, and the standing request is noted on the stage detail and
+// recorded for the nudge like the self lane's. Any other reason is returned
+// unchanged; a new head without a review on it is blocked again.
+func (c *Engine) sentinelBlockedUnlessHumanChangesRequested(ctx context.Context, owner, repo string, pr *gh.PullRequest, reason string) string {
+	if reason != contributorLaneReasonSentinelBlocked || pr == nil || pr.GetHead() == nil {
+		return reason
+	}
+	head := strings.TrimSpace(pr.GetHead().GetSHA())
+	if head == "" {
+		return reason
+	}
+	if c.humanChangesRequestedForHead(ctx, owner, repo, pr.GetNumber(), head) {
+		return autoMergeReasonHumanChangesRequested
+	}
+	return reason
+}

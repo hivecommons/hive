@@ -470,7 +470,8 @@ assert.strictEqual(stageTrackerAnchor(95, stages, 'pr'), STAGE_TRACKER_MERGE_COL
 // PR returned to contributor: detour badge rides Review; chip cap = author kind + first modifier (+N).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{number:50,slug:'review-pending'},{number:60,slug:'reviewed'},{number:72,slug:'returned-to-contributor',from:60}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
-assert.ok(row.includes('<span class="ham-detour">Returned to contributor</span>'));
+// hivecommons/hive#15159: the chevron names the routing — the contributor's hive, for a clanker's PR.
+assert.ok(row.includes('<span class="ham-detour">Returned to @karibhou&#39;s hive</span>'), row);
 // Invariant: a PR never occupies the issue slot. A PR with no linked issue
 // puts the muted "no linked issue" placeholder on the left and names itself
 // — author icon, #N, title — in the PR column, where a covering PR sits on
@@ -564,7 +565,7 @@ assert.ok(row.includes('aria-label="Next move: clanker"') && row.includes('<span
 // detour, the person as the mover.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 71, author: 'sam', author_kind: 'human', history: [{number:50,slug:'review-pending'},{number:71,slug:'needs-author',from:50}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
-assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-detour">Needs author</span><svg class="ham-ico ham-actor-ico"'), row);
+assert.ok(row.includes('aria-label="Next move: human"') && row.includes('<span class="ham-detour">Needs @sam</span><svg class="ham-ico ham-actor-ico"'), row);
 assert.ok(tooltip(row).includes('Trail: CI / Review → Needs author'), tooltip(row));
 // The trail names hops from the payload's {number, slug} entries (#14787
 // showed "undefined → undefined → …" when it read a field the server never

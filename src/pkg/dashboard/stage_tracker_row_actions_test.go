@@ -792,6 +792,7 @@ func stageTrackerConfirmOptOutJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDelegateConfirm"),
 		jsFunc(t, html, "stageTrackerDCOCaveat"),
 		jsFunc(t, html, "stageTrackerActionPayload"),
+		jsFunc(t, html, "stageTrackerDirectionCarrier"),
 		`const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
 global.window = { _hiveUser: 'clubanderson' };
 const dialogs = []; let dialogAnswer = true;

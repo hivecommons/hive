@@ -14983,6 +14983,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSentinelInLane(item) {
       return !!(item && item.sentinel_alert) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
     }
+    // A returned PR (071/072) keeps its routing word — the human already
+    // acted, nothing is owed by the maintainer — and carries the alert as
+    // a " · sentinel" suffix instead (hivecommons/hive#15159); the chip
+    // then adds nothing.
+    function stageTrackerSentinelAsSuffix(item) {
+      const st = Number(item && item.stage) || 0;
+      return !!(item && item.sentinel_alert) && (st === 71 || st === 72) && (item.kind === 'pr' || !!item.via_pr);
+    }
+    // The 071/072 chevron word names the routing: "Needs @author" at 071,
+    // "Returned to @author's hive" at 072 for a clanker-authored PR (the
+    // contributor's agent picks it up), "Returned to @author" for a human's.
+    function stageTrackerReturnedWord(item, fallback) {
+      const st = Number(item && item.stage) || 0;
+      const author = String((item && item.author) || '').replace(/^@/, '');
+      let text = fallback;
+      if (author && st === 71) text = 'Needs @' + author;
+      else if (author && st === 72) text = 'Returned to @' + author + (item.author_kind === 'human' ? '' : "'s hive");
+      return text + (stageTrackerSentinelAsSuffix(item) ? ' · ' + STAGE_TRACKER_SENTINEL_CHIP : '');
+    }
 
     // Which strip segment a stage lights: main stages light themselves,
     // 040 shares the PR in progress column with 030, 060, 095 and 100 share
@@ -15017,6 +15036,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
+      if (detour && (cur === 71 || cur === 72) && typeof stageTrackerReturnedWord === 'function') {
+        detour.text = stageTrackerReturnedWord(item, detour.text);
+        detour.sentinelSuffix = stageTrackerSentinelAsSuffix(item);
+      }
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
@@ -15242,7 +15265,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const sentinel = !!(sg.detour && sg.detour.sentinel);
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
+        const sentinelSuffix = !!(sg.detour && sg.detour.sentinelSuffix);
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', sentinel || sentinelSuffix ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         if (active) {
@@ -15265,6 +15289,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.
           if (sentinel) tip = stageTrackerSentinelTip(item) + ' — ' + tip;
+          else if (sentinelSuffix) tip = tip + ' — ' + stageTrackerSentinelTip(item);
           // Working or waiting leads: what happens now, or what it waits on.
           if (!sg.cap && typeof stageTrackerCueLead === 'function') tip = stageTrackerCueLead(item, worker, nowMs) + tip;
         }
@@ -15288,7 +15313,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
         else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : ''}>${inner}</li>`;
+        return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
     }
 
@@ -15438,7 +15463,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<span ${attrs}>${esc(text)}</span>`;
     }
     function stageTrackerSentinelChipHtml(item) {
-      if (!item || !item.sentinel_alert || stageTrackerSentinelInLane(item) || stageTrackerDeferredMods(item).indexOf(STAGE_TRACKER_SENTINEL_CHIP) >= 0) return '';
+      if (!item || !item.sentinel_alert || stageTrackerSentinelInLane(item) || stageTrackerSentinelAsSuffix(item) || stageTrackerDeferredMods(item).indexOf(STAGE_TRACKER_SENTINEL_CHIP) >= 0) return '';
       return `<span class="ham-badge ham-badge-sentinel" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc('Sentinel alert — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
     }
 
@@ -17698,6 +17723,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nested = stageTrackerNestedOpenPRs(item);
       return nested.length >= STAGE_TRACKER_DELEGATE_ALL_MIN ? nested : [];
     }
+    // Pure: who carries a direction on these PRs — the hive's own author
+    // agent, or (a clanker-authored PR, hivecommons/hive#15159) the owning
+    // contributor's hive, which is nudged with the text.
+    function stageTrackerDirectionCarrier(items) {
+      const list = (items || []).filter(it => it && it.kind === 'pr');
+      if (!list.length || !list.every(it => it.author_kind === 'clanker')) return 'the author agent';
+      const authors = Array.from(new Set(list.map(it => String(it.author || '').replace(/^@/, '')).filter(Boolean)));
+      if (authors.length === 1) return "@" + authors[0] + "'s hive";
+      return "the contributor's hive";
+    }
     // Pure: the decision choices for one decision target. On an issue
     // parked at 045 the verbs are /hive approve and /hive decision. On a PR
     // parked at 085, Approve posts the /lgtm + /approve commands as the
@@ -18661,7 +18696,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'decide:direction': {
           // The direction is required, so this prompt is never skipped.
           const v = await hivePrompt(prs
-            ? { title: 'Give direction', label: preface + 'What should the hive change on ' + refs + '? (recorded as "/hive decision …"; the author agent pushes a new head)', placeholder: 'e.g. drop the retry loop and keep the flag', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' }
+            ? { title: 'Give direction', label: preface + 'What should the hive change on ' + refs + '? (recorded as "/hive decision …"; ' + stageTrackerDirectionCarrier(items) + ' pushes a new head)', placeholder: 'e.g. drop the retry loop and keep the flag', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' }
             : { title: 'Send back to the hive', label: 'Direction for the hive on ' + refs + ' (recorded as "/hive decision …")', placeholder: 'e.g. take option B and keep the API as is', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' });
           return v == null ? null : { comment: v };
         }
