@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -83,6 +84,13 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 	if got := rebasing.MergeTrain.Ahead; len(got) != 2 || got[0] != 15074 || got[1] != 15085 {
 		t.Fatalf("rebasing ahead = %v", got)
 	}
+	// Every member carries the whole roster in merge order, so a view that
+	// draws only some of them can name the rest in the train header.
+	for _, it := range []StageTrackerItem{front, sib, rebasing} {
+		if got := it.MergeTrain.Members; fmt.Sprint(got) != fmt.Sprint([]int{15074, 15085, 15087, 15097}) {
+			t.Fatalf("#%d members = %v", it.Number, got)
+		}
+	}
 
 	exhausted := trackerItem(t, resp, "pr", 15097)
 	if exhausted.Stage != 85 || exhausted.MergeTrain.State != MergeGateStateRebaseExhausted || !hasMod(exhausted, modNeedsRebase) {
@@ -107,7 +115,7 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`"merge_gate":{"state":"queued-behind","reason":"behind #15074 in merge train (2nd of 4, overlapping files: stage_tracker.go, index.html)"`,
-		`"merge_train":{"id":"v5#15074","state":"queued-behind","front":15074,"position":2,"size":4,"overlap_files":["stage_tracker.go","index.html"],"ahead":[15074],"length":4,"head_number":15074,"head_state":"ready","head_reason":"approved and green; merges on hive's next sweep","head_since":"2026-10-27T14:00:00Z","eta_s":300,"eta_at":"2026-10-27T14:05:00Z","eta_basis":"1 ahead"}`} {
+		`"merge_train":{"id":"v5#15074","state":"queued-behind","front":15074,"position":2,"size":4,"overlap_files":["stage_tracker.go","index.html"],"ahead":[15074],"members":[15074,15085,15087,15097],"length":4,"head_number":15074,"head_state":"ready","head_reason":"approved and green; merges on hive's next sweep","head_since":"2026-10-27T14:00:00Z","eta_s":300,"eta_at":"2026-10-27T14:05:00Z","eta_basis":"1 ahead"}`} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("payload lacks %s:\n%s", want, raw)
 		}
@@ -236,6 +244,9 @@ func TestStageTrackerMergeTrainSPA(t *testing.T) {
 		jsFunc(t, html, "stageTrackerOrdinal"),
 		jsFunc(t, html, "stageTrackerShortLeft"),
 		jsFunc(t, html, "stageTrackerTrainPlace"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STALLED_LEAD"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_HEAD_STALL_WORD"),
+		jsFunc(t, html, "stageTrackerTrainStallWhy"),
 		jsFunc(t, html, "stageTrackerTrainStalledWord"),
 		jsFunc(t, html, "stageTrackerTrainWord"),
 		jsFunc(t, html, "stageTrackerTrainEtaAt"),
@@ -243,8 +254,11 @@ func TestStageTrackerMergeTrainSPA(t *testing.T) {
 		jsFunc(t, html, "stageTrackerTrainEtaDetail"),
 		jsFunc(t, html, "stageTrackerTrainQueueTip"),
 		jsFunc(t, html, "stageTrackerTrainLines"),
+		jsFunc(t, html, "stageTrackerRowTrain"),
 		jsFunc(t, html, "stageTrackerTrainKey"),
+		jsFunc(t, html, "stageTrackerTrainOrder"),
 		jsFunc(t, html, "stageTrackerTrainContiguous"),
+		jsFunc(t, html, "stageTrackerTrainMissing"),
 		jsFunc(t, html, "stageTrackerTrainHeaderText"),
 		jsFunc(t, html, "stageTrackerTrainHeaderHtml"),
 		jsFunc(t, html, "stageTrackerTrainRowClass"),
@@ -303,7 +317,7 @@ const thirdQ = mk(15374, 80, { state: 'queued-behind', position: 3, ahead: [1531
 assert.strictEqual(stageTrackerTrainWord(thirdQ), 'Merge queued · 3rd');
 assert.strictEqual(stageTrackerTrainQueueTip(thirdQ.merge_train), '3rd of 3 in the merge queue · behind #15315 (waiting for a maintainer (untrusted author)) · no estimate until #15315 moves. Hive merges one at a time, in order.');
 const stalledQ = mk(15374, 80, { state: 'queued-behind', position: 3, ahead: [15315, 15319], length: 3, head_number: 15315, head_state: 'ci', head_reason: 'waiting for CI', stalled: true, stalled_s: 3 * 3600 });
-assert.strictEqual(stageTrackerTrainWord(stalledQ), 'Merge queue stalled · head #15315 waiting for CI 3h');
+assert.strictEqual(stageTrackerTrainWord(stalledQ), 'Merge queue · stalled — waiting on #15315 (waiting for CI) · 3h');
 assert.ok(stageTrackerTrainQueueTip(stalledQ.merge_train).includes('#15315 has not moved for 3h'), stageTrackerTrainQueueTip(stalledQ.merge_train));
 // Neither slug nor the word "front" reaches a person: chevron word, hover,
 // tooltip lines, header chip and the ⛓-era header text (owner: "i dont
@@ -345,6 +359,43 @@ assert.strictEqual(stageTrackerTrainRowClass(other, fourth, null), '');
 // The grouped view's {group}/{item} wrappers are read through.
 const wrapped = stageTrackerTrainRows([{ group: { key: 'g' } }, { group: { key: 'g' }, item: front }, { group: { key: 'g' }, item: second }], (e) => ({ key: e.item ? String(e.item.number) : e.group.key, html: '' }));
 assert.deepStrictEqual(wrapped.map(r => r.key), ['g', 'train:hivecommons/hive|v5#15074', '15074', '15085']);
+
+// Header count == rows drawn under it (owner, hive v5#15425: "this says
+// there are 3 PRs in the merge train but only 1 is shown"). The members
+// #15529 / #15530 were drawn under their issues #15493 / #15523; an issue
+// row whose open linked PR is a member now rides the train run, in the
+// PR's merge order, and the header counts the run.
+const tmk = (n, pos, extra) => Object.assign({ id: 'v5#15425', front: 15425, size: 3, members: [15425, 15529, 15530], overlap_files: ['tracker-row.js', 'index.html'], state: pos === 1 ? 'front' : 'queued-behind', position: pos, ahead: [15425, 15529].slice(0, pos - 1) }, extra || {});
+const t1 = mk(15425, 80, tmk(15425, 1));
+const lp2 = { number: 15529, kind: 'pr', stage: 80, state: 'open', modifiers: [], merge_train: tmk(15529, 2) };
+const lp3 = { number: 15530, kind: 'pr', stage: 80, state: 'open', modifiers: [], merge_train: tmk(15530, 3) };
+const issue2 = { repo: 'hivecommons/hive', number: 15493, kind: 'issue', stage: 80, modifiers: [], linked_prs: [lp2] };
+const issue3 = { repo: 'hivecommons/hive', number: 15523, kind: 'issue', stage: 80, modifiers: [], linked_prs: [lp3] };
+const mergedIssue = { repo: 'hivecommons/hive', number: 15000, kind: 'issue', stage: 80, modifiers: [], linked_prs: [{ number: 14999, stage: 110, state: 'open', modifiers: ['merged'], merge_train: tmk(14999, 2) }] };
+const plainIssue = { repo: 'hivecommons/hive', number: 15499, kind: 'issue', stage: 85, modifiers: [] };
+assert.strictEqual(stageTrackerTrainKey(issue2), 'hivecommons/hive|v5#15425', 'an issue row rides its nested PR\'s train');
+assert.strictEqual(stageTrackerTrainKey(mergedIssue), '', 'a merged nested PR is no train');
+assert.strictEqual(stageTrackerTrainKey(plainIssue), '');
+const run = stageTrackerTrainContiguous([plainIssue, issue3, t1, mergedIssue, issue2]).map(it => it.number);
+assert.deepStrictEqual(run, [15499, 15425, 15493, 15523, 15000], 'issue rows join the run in the PR\'s merge order');
+const fullRows = stageTrackerTrainRows(stageTrackerTrainContiguous([issue3, t1, issue2, plainIssue]), (it) => ({ key: String(it.number), html: '' }));
+assert.deepStrictEqual(fullRows.map(r => r.key), ['train:hivecommons/hive|v5#15425', '15425', '15493', '15523', '15499']);
+assert.ok(fullRows[0].html.includes('</svg> merge train · 3 PRs · 1st: #15425'), fullRows[0].html);
+assert.strictEqual(stageTrackerTrainRowClass(issue2, t1, issue3), ' ham-train');
+assert.strictEqual(stageTrackerTrainRowClass(issue3, issue2, plainIssue), ' ham-train ham-train-last');
+// A view that carries only the head (a filter hid the other two) says so
+// and names them — never "3 PRs" over one row.
+const partRows = stageTrackerTrainRows([t1, plainIssue], (it) => ({ key: String(it.number), html: '' }));
+assert.deepStrictEqual(partRows.map(r => r.key), ['train:hivecommons/hive|v5#15425', '15425', '15499']);
+assert.ok(partRows[0].html.includes('</svg> merge train · 1 of 3 PRs here · 1st: #15425 · not in this view: #15529, #15530'), partRows[0].html);
+assert.ok(!partRows[0].html.includes('3 PRs ·'), partRows[0].html);
+assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train, [15425, 15530]), 'merge train · 2 of 3 PRs here · 1st: #15425 · not in this view: #15529');
+// Without a member list the header still counts honestly.
+assert.strictEqual(stageTrackerTrainHeaderText({ id: 'v5#1', front: 1, size: 3 }, [1]), 'merge train · 1 of 3 PRs here · 1st: #1 · not in this view: 2 more');
+assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train, [15425, 15529, 15530]), 'merge train · 3 PRs · 1st: #15425');
+assert.strictEqual(stageTrackerTrainHeaderText(t1.merge_train), 'merge train · 3 PRs · 1st: #15425');
+// No members on the page, no header.
+assert.deepStrictEqual(stageTrackerTrainRows([plainIssue, mergedIssue], (it) => ({ key: String(it.number), html: '' })).map(r => r.key), ['15499', '15000']);
 `
 	out, err := exec.Command(node, "-e", script).CombinedOutput()
 	if err != nil {
