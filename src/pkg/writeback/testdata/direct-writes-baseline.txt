@@ -66,6 +66,7 @@ wrap pkg/dashboard/api_repo_hold.go 2
 wrap pkg/dashboard/api_repo_item_accept_triage.go 2
 wrap pkg/dashboard/api_repo_item_decide_delegated.go 8
 wrap pkg/dashboard/api_repo_item_decision.go 5
+wrap pkg/dashboard/api_repo_item_decision_reroute.go 5
 wrap pkg/dashboard/api_review_pipeline.go 2
 wrap pkg/dashboard/api_review_queue_superseded.go 1
 wrap pkg/dashboard/contribute_blocked_tooling.go 2
