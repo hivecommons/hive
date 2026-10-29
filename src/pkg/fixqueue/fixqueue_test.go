@@ -401,3 +401,20 @@ func TestCapacityHelpers(t *testing.T) {
 		t.Fatal("item key")
 	}
 }
+
+// A dispatch remembers when it left the queue (hivecommons/hive#15280: the
+// stage tracker says "clanker picked up the rework 5 min ago" from it).
+func TestDispatchAt(t *testing.T) {
+	c := newClock()
+	s := newSched(c)
+	s.Enqueue("ida", red(1, time.Hour, c))
+	c.advance(7 * time.Minute)
+	d := s.Dispatch("ida", Capacity{Max: 1})
+	if d == nil || !d.At.Equal(c.at) {
+		t.Fatalf("dispatch=%+v, want At=%v", d, c.at)
+	}
+	c.advance(time.Minute)
+	if got := s.InFlight("ida"); len(got) != 1 || !got[0].At.Equal(c.at.Add(-time.Minute)) {
+		t.Fatalf("inflight=%+v", got)
+	}
+}

@@ -456,6 +456,11 @@ type StageTrackerItem struct {
 	// hive's likely next move (wait or adopt, with the adopt-at time), so
 	// the waiting-on pill can carry an indicator (hivecommons/hive#15051).
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
+	// Rework is, on a PR row returned to its author (071 / 072), whether
+	// the rework request has been picked up: requested, acknowledged,
+	// in_progress or pushed, with the evidence (hivecommons/hive#15280,
+	// stage_tracker_rework.go).
+	Rework *StageTrackerRework `json:"rework,omitempty"`
 	// Takeover is, on a 072 / 071 clanker PR, the operator's Adopt now /
 	// Reroute offer and any pending reroute or forced adoption
 	// (hivecommons/hive#15038, stage_tracker_takeover.go).
@@ -600,6 +605,8 @@ type StageTrackerLinkedPR struct {
 	DrawnUnder int `json:"drawn_under,omitempty"`
 	// Presence mirrors the nested PR's own row field (hivecommons/hive#15051).
 	Presence *StageTrackerPresence `json:"presence,omitempty"`
+	// Rework mirrors the nested PR's own row field (hivecommons/hive#15280).
+	Rework *StageTrackerRework `json:"rework,omitempty"`
 	// Takeover mirrors the nested PR's own row field (hivecommons/hive#15038).
 	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
 	// Supersedes mirrors the nested PR's own row field.
@@ -1844,6 +1851,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		return store.Get(stagelabels.Key(repo, number))
 	}
 	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
+	fixWork := s.stageTrackerFixWorkLookup()
 	sweep := s.stageTrackerSweepState()
 	soakWindow := s.stageTrackerSoakWindow()
 	attempts := s.stageTrackerMergeAttempts()
@@ -1943,6 +1951,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		if login := stageTrackerWaitingOn(*it, stage); login != "" {
 			it.Presence = stageTrackerPresenceFor(*it, login, stage, rec, hasRec, presence, adoptionClock, now)
+			it.Rework = stageTrackerReworkFor(*it, login, stage, rec, hasRec, fixWork, now)
 		}
 		if it.Takeover = stageTrackerTakeover(*it, rec, hasRec, presence, rerouteCandidates, adoptionEnabled, takeoverGrace, now); it.Takeover != nil {
 			it.Caption = stageTrackerTakeoverCaption(it.Caption, it.Takeover)
@@ -2895,6 +2904,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
 				lp.Adoption = pr.Adoption
 				lp.Presence = pr.Presence
+				lp.Rework = pr.Rework
 				lp.Takeover = pr.Takeover
 				lp.Supersedes = pr.Supersedes
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge

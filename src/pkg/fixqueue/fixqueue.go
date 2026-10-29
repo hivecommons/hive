@@ -139,6 +139,9 @@ type Dispatch struct {
 	ID    string
 	Mode  Mode
 	Items []Item
+	// At is when the dispatch was handed out (the contributor's relay took
+	// the fix task); the stage tracker reads it as when the rework began.
+	At time.Time
 }
 
 // Status is the per-contributor view exposed on the profile API.
@@ -168,6 +171,7 @@ type dispatch struct {
 	id    string
 	mode  Mode
 	items map[string]Item
+	at    time.Time
 }
 
 type contributor struct {
@@ -426,7 +430,7 @@ func (s *Scheduler) DispatchAtBoundary(user string, cap Capacity) *Dispatch {
 // pop takes the queue head plus every queued item sharing its cause.
 func (s *Scheduler) pop(user string, c *contributor, mode Mode) *Dispatch {
 	head := c.queue[0]
-	d := &dispatch{mode: mode, items: map[string]Item{head.Key(): head}}
+	d := &dispatch{mode: mode, items: map[string]Item{head.Key(): head}, at: s.opts.Now()}
 	rest := c.queue[:0:0]
 	for _, q := range c.queue[1:] {
 		// A rerouted PR (another author's) never shares a task with the
@@ -455,7 +459,7 @@ func (d *dispatch) public() Dispatch {
 		items = append(items, it)
 	}
 	sortQueue(items)
-	return Dispatch{ID: d.id, Mode: d.mode, Items: items}
+	return Dispatch{ID: d.id, Mode: d.mode, Items: items, At: d.at}
 }
 
 // Overflow removes and returns user's queued items that have waited longer

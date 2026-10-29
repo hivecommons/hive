@@ -14786,7 +14786,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const a = item && item.adoption;
       if (!a) return '';
       if (stageTrackerAdoptOffered(item)) return 'adopt?';
-      return a.blocked_by ? 'not adopted' : ('waiting on ' + (a.author ? '@' + a.author : 'author'));
+      if (a.blocked_by) return 'not adopted';
+      // Guarded: the test harnesses load helpers by name.
+      const text = 'waiting on ' + (a.author ? '@' + a.author : 'author');
+      return typeof stageTrackerReworkSuffix === 'function' ? stageTrackerReworkSuffix(text, item) : text;
     }
     function stageTrackerAdoptionChipHtml(item) {
       const tip = stageTrackerAdoptionTip(item);
@@ -14797,7 +14800,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // (hivecommons/hive#15051); its line joins the tooltip.
       const ptip = stageTrackerPresenceTip(item, Date.now());
       const inner = stageTrackerPresenceInPillHtml(item, stageTrackerAdoptionChipText(item));
-      const full = ptip ? tip + ' · ' + ptip : tip;
+      const joined = ptip ? tip + ' · ' + ptip : tip;
+      const full = typeof stageTrackerReworkJoinTip === 'function' ? stageTrackerReworkJoinTip(joined, item, Date.now()) : joined;
       // "adopt?" opens the Needs-human popover (its decision_needed carries
       // the Adopt option) when the popover helpers are present.
       const decision = offered && typeof stageTrackerDecisionOf === 'function' && item.decision_needed ? stageTrackerDecisionOf(item) : null;
@@ -14897,13 +14901,72 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerPresenceChipText(item) {
       const p = stageTrackerPresenceOf(item);
       if (!p) return '';
-      return 'waiting on @' + p.login;
+      const text = 'waiting on @' + p.login;
+      // Guarded: the test harnesses load helpers by name.
+      return typeof stageTrackerReworkSuffix === 'function' ? stageTrackerReworkSuffix(text, item) : text;
     }
     function stageTrackerPresenceChipHtml(item) {
       const p = stageTrackerPresenceOf(item);
       if (!p || stageTrackerAdoptionTip(item)) return '';
-      const tip = stageTrackerPresenceTip(item, Date.now());
+      const ptip = stageTrackerPresenceTip(item, Date.now());
+      const tip = typeof stageTrackerReworkJoinTip === 'function' ? stageTrackerReworkJoinTip(ptip, item, Date.now()) : ptip;
       return `<span class="ham-badge ham-badge-waiting" title="${esc(tip)}" aria-label="${esc(tip)}">${stageTrackerPresenceInPillHtml(item, stageTrackerPresenceChipText(item))}</span>`;
+    }
+
+    // Rework pickup on a returned PR (`rework`: {state, actor, requested_at,
+    // since, evidence, mode, ahead, head} — hivecommons/hive#15280). The
+    // waiting-on pill says who, this says whether they have picked it up:
+    //   requested    — the request went out; nothing has moved on the PR
+    //                  since (evidence "queued": the fix sits in the clanker's
+    //                  hub queue, `ahead` fixes before it).
+    //   acknowledged — the PR saw activity after the request (a comment or
+    //                  a push the sweep has not routed yet).
+    //   in_progress  — the clanker's relay took the fix task (claim).
+    //   pushed       — the head moved since the request; 050 on the next sweep.
+    const STAGE_TRACKER_REWORK_WORDS = { requested: 'no response', acknowledged: 'acknowledged', in_progress: 'working', pushed: 're-review pending' };
+    function stageTrackerReworkOf(item) {
+      const r = item && item.rework;
+      if (!r || !STAGE_TRACKER_REWORK_WORDS[r.state]) return null;
+      return r;
+    }
+    function stageTrackerReworkWord(item) {
+      const r = stageTrackerReworkOf(item);
+      if (!r) return '';
+      if (r.state === 'requested' && r.evidence === 'queued') return 'queued';
+      return STAGE_TRACKER_REWORK_WORDS[r.state];
+    }
+    // "waiting on @x · acknowledged" — the pill text with the pickup word.
+    function stageTrackerReworkSuffix(text, item) {
+      const w = stageTrackerReworkWord(item);
+      return w ? text + ' · ' + w : text;
+    }
+    function stageTrackerReworkTip(item, nowMs) {
+      const r = stageTrackerReworkOf(item);
+      if (!r) return '';
+      const now = Number(nowMs) || Date.now();
+      const who = r.actor ? '@' + r.actor : 'the author';
+      const when = (iso) => {
+        const ms = Date.parse(iso || '');
+        return Number.isFinite(ms) ? agentNowAgo(now - ms) + ' (' + agentNowClockTime(ms, now) + ')' : '';
+      };
+      const req = when(r.requested_at);
+      const since = when(r.since);
+      switch (r.state) {
+        case 'pushed':
+          return who + ' pushed a new head' + (since ? ' ' + since : '') + ' · re-review pending';
+        case 'in_progress':
+          return who + "'s clanker picked up the rework" + (since ? ' ' + since : '') + (r.mode ? ' (' + r.mode + ')' : '');
+        case 'acknowledged':
+          return who + ' acknowledged · activity on the PR' + (since ? ' ' + since : '');
+        default:
+          if (r.evidence === 'queued') return 'rework queued for ' + who + "'s clanker" + (r.ahead ? ' · ' + r.ahead + ' ahead' : '') + (since ? ' · queued ' + since : '');
+          return 'rework requested' + (req ? ' ' + req : '') + ' · no response from ' + who + ' yet';
+      }
+    }
+    function stageTrackerReworkJoinTip(tip, item, nowMs) {
+      const rt = stageTrackerReworkTip(item, nowMs);
+      if (!rt) return tip || '';
+      return tip ? tip + ' · ' + rt : rt;
     }
     /* Takeover (hivecommons/hive#15038): a PR waiting on a contributor's
        clanker (072 returned-to-contributor / 071 needs-author) carries
@@ -15400,6 +15463,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (adoption) lines.push('Adoption: ' + adoption + (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item) ? ' (row menu → Adopt)' : ''));
       const presence = typeof stageTrackerPresenceTip === 'function' ? stageTrackerPresenceTip(item, nowMs) : '';
       if (presence) lines.push('Presence: ' + presence);
+      const rework = typeof stageTrackerReworkTip === 'function' ? stageTrackerReworkTip(item, nowMs) : '';
+      if (rework) lines.push('Rework: ' + rework);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       const stale = stageTrackerStaleLabelsText(item);
       if (stale) lines.push(stale);
@@ -15768,7 +15833,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, presence: lp.presence || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null };
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null };
     }
     // Pure: whether a linked PR is still open (not merged / closed / superseded).
     function stageTrackerLinkedPROpen(lp) {
@@ -16000,7 +16065,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, presence: lp.presence || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -16143,7 +16208,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Pure: key → the fields the event line watches.
     function stageTrackerStateMap(items) {
       const out = {};
-      const put = (key, it) => { out[key] = { stage: Number(it.stage) || 0, label: it.stage_label || '', caption: it.caption || '', mods: (Array.isArray(it.modifiers) ? it.modifiers : []).slice().sort() }; };
+      const put = (key, it) => { out[key] = { stage: Number(it.stage) || 0, label: it.stage_label || '', caption: it.caption || '', mods: (Array.isArray(it.modifiers) ? it.modifiers : []).slice().sort(), rework: it.rework && it.rework.state ? String(it.rework.state) : '', reworkActor: it.rework && it.rework.actor ? String(it.rework.actor) : '' }; };
       for (const it of (Array.isArray(items) ? items : [])) {
         if (!it || !it.kind || !(Number(it.number) > 0)) continue;
         put(stageTrackerItemKey(it), it);
@@ -16177,8 +16242,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       for (const m of next.mods) if (prev.mods.indexOf(m) < 0 && STAGE_TRACKER_EVENT_MOD_WORDS[m]) return STAGE_TRACKER_EVENT_MOD_WORDS[m][0];
       for (const m of prev.mods) if (next.mods.indexOf(m) < 0 && STAGE_TRACKER_EVENT_MOD_WORDS[m]) return STAGE_TRACKER_EVENT_MOD_WORDS[m][1];
+      // Guarded: the test harnesses load helpers by name.
+      const rework = typeof stageTrackerReworkEventText === 'function' ? stageTrackerReworkEventText(prev, next) : '';
+      if (rework) return rework;
       if (next.caption && next.caption !== prev.caption) return next.caption;
       return '';
+    }
+    // Rework pickup on a returned PR (hivecommons/hive#15280): the row stays
+    // at 071 / 072, so the stage diff is silent — say who moved instead.
+    const STAGE_TRACKER_REWORK_EVENT_WORDS = { acknowledged: 'acknowledged the rework request', in_progress: "'s clanker picked up the rework", pushed: 'pushed a new head — re-review pending' };
+    function stageTrackerReworkEventText(prev, next) {
+      const to = next && next.rework ? String(next.rework) : '';
+      if (!to || to === (prev && prev.rework ? String(prev.rework) : '')) return '';
+      const w = STAGE_TRACKER_REWORK_EVENT_WORDS[to];
+      if (!w) return '';
+      const who = next.reworkActor ? '@' + next.reworkActor : 'the author';
+      return w.charAt(0) === "'" ? who + w : who + ' ' + w;
     }
     let _stageTrackerStates = null;
     let _stageTrackerEvents = {};

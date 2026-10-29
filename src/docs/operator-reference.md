@@ -741,7 +741,14 @@ audit entry; with no clanker online the Reroute item is disabled ("no
 clankers online — use Adopt now"). Both are also options in the
 Needs-human popover once the nudge grace has elapsed, and "Let hive decide"
 picks Adopt now then (hivecommons/hive#15038;
-[dashboard-sections.md](dashboard-sections.md#hive-activity-monitor)). When the
+[dashboard-sections.md](dashboard-sections.md#hive-activity-monitor)). While
+the row waits at 071 / 072 its waiting-on pill also says whether the rework
+has been picked up — `· no response`, `· queued` (on the clanker's fix queue,
+N ahead), `· acknowledged` (activity on the PR after the request),
+`· working` (the clanker relay took the `fix-pr` task), `· re-review pending`
+(a new head, routed back to 050 on the next sweep) — from the stage record,
+the PR list and the fix queue the tracker already holds, with no extra
+GitHub calls (hivecommons/hive#15280). When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
 `ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR

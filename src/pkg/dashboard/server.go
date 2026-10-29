@@ -124,6 +124,9 @@ type Server struct {
 	// presenceLookup overrides the contribute hub as the tracker's author
 	// presence source for 072 rows (stage_tracker_adoption.go); tests only.
 	presenceLookup func(login string) (automerge.ContributorPresence, bool)
+	// fixWorkLookup overrides the contribute hub as the tracker's fix-queue
+	// source for the rework-pickup signal (stage_tracker_rework.go); tests only.
+	fixWorkLookup func(login, repo string, number int) (StageTrackerFixWork, bool)
 	// sweepState overrides the automerge lanes' live sweep state for the
 	// tracker's merge-gate rows (stage_tracker_merge_gate.go); tests only.
 	sweepState func() automerge.SweepState
