@@ -58,7 +58,10 @@ func TestSyncIssuePRClaimLabelsDefersRateLimitedLinks(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Retry-After", "60")
 				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"message":"You have exceeded a secondary rate limit."}`))
+				// go-github classifies secondary limits by documentation_url,
+				// not Retry-After or the message alone. Match GitHub's response
+				// so the sweep receives an AbuseRateLimitError, not a generic 403.
+				_, _ = w.Write([]byte(`{"message":"You have exceeded a secondary rate limit.","documentation_url":"https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits"}`))
 			}))
 			t.Cleanup(srv.Close)
 			var logs bytes.Buffer
