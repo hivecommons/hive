@@ -3,6 +3,8 @@ package github
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -470,9 +472,25 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 		if node.Number == currentPR || !node.Merged {
 			continue
 		}
+		if !sameRepoPullURL(node.URL, owner, repo, node.Number) {
+			continue
+		}
 		return supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL, MergedAt: node.MergedAt}, true
 	}
 	return supersessionCloser{}, false
+}
+
+// sameRepoPullURL reports whether a PR URL from closedByPullRequestsReferences
+// names pull request number in owner/repo. GitHub can list a merged PR from
+// another repository there, so only a same-repo PR may be named by number.
+// The host is ignored so GitHub Enterprise URLs compare the same way.
+func sameRepoPullURL(rawURL, owner, repo string, number int) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	want := "/" + owner + "/" + repo + "/pull/" + strconv.Itoa(number)
+	return strings.EqualFold(strings.TrimSuffix(u.Path, "/"), want)
 }
 
 func (c *Client) issueClosingCommit(ctx context.Context, owner, repo string, issue int) (string, error) {
