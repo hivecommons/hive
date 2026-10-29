@@ -46,6 +46,8 @@ func stageTrackerManualMergeJS(t *testing.T, html string) string {
 	return strings.Join([]string{
 		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE"),
 		jsConstLine(t, html, "STAGE_TRACKER_MANUAL_MERGE_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_BREAKING_CHANGE_CODE"),
+		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD"),
 		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MERGE_REASON_WORD"),
 		jsFunc(t, html, "stageTrackerHumanMergeReasonWord"),
 		jsFunc(t, html, "stageTrackerManualMergeWord"),
@@ -466,6 +468,11 @@ const whyPlain = stageTrackerRowHtml(P('o/r', 402, 90, { human_merge_reason: 'un
 assert.ok(whyPlain.includes('<span class="ham-detour">Ready for human merge · untrusted author</span>') && whyPlain.includes('title="Ready for human merge · untrusted author — No lane can vouch for the author'), 'plain 090 word carries the reason: ' + whyPlain);
 const whyNested = stageTrackerRowHtml(I('o/r', 400, 90, { linked_prs: [{ number: 401, stage: 90, title: 'Shard', manual_merge: true, human_approver: 'clubanderson', human_merge_reason: 'workflow-files', human_merge_reason_text: whyTip }] }), stages, ctx);
 assert.ok(whyNested.includes('Awaiting human merge · workflow files · approved by @clubanderson'), 'nested 090 PR carries the reason: ' + whyNested);
+// The breaking-change rule (hivecommons/hive#15442): the stage's own word
+// leads and the chip says "human merge"; an approval changes nothing.
+assert.strictEqual(stageTrackerManualMergeWord({ manual_merge: true, human_merge_reason: 'breaking-change' }), 'Ready for human merge · human merge');
+const breaking = stageTrackerRowHtml(P('o/r', 403, 90, { manual_merge: true, human_merge_reason: 'breaking-change', human_merge_reason_text: 'Breaking change — owner merges' }), stages, ctx);
+assert.ok(breaking.includes('<span class="ham-detour">Ready for human merge · human merge</span>') && !breaking.includes('Awaiting human merge'), 'breaking-change 090 word: ' + breaking);
 
 // Decide… preface: one line per flagged PR, nothing for clean ones.
 assert.strictEqual(stageTrackerSentinelPreface([P('o/r', 109, 85, flagged), P('o/r', 104, 85)]), '⚠ o/r#109 — ' + TIP);
