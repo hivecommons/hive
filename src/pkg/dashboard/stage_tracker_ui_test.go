@@ -641,14 +641,14 @@ assert.strictEqual(titles(row, 'Fix sort'), 1);
 // body still says Fixes #N): the issue slot keeps "#N title" as a link,
 // struck through under a "closed" chip, so the pairing reads at a glance.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', title: 'Usage on --help', url: 'https://x/13409' }] }, stages, ctx);
-assert.strictEqual(lead(row), '#13409 Usage on --help closed', lead(row));
+assert.strictEqual(lead(row), '#13409 Usage on --help closed · this PR unmerged', lead(row));
 assert.ok(/<div class="ham-head-main ham-issue-closed">/.test(row) && /<a class="ham-ref" href="https:\/\/x\/13409"[^>]*>#13409<\/a>/.test(row), 'closed issue stays a link in a struck-through slot: ' + row);
-assert.ok(row.includes('<span class="ham-title" title="Usage on --help">Usage on --help</span> <span class="ham-badge ham-issue-closed-chip">closed</span>'), 'title then closed chip: ' + row);
+assert.ok(/<span class="ham-title" title="Usage on --help">Usage on --help<\/span> <span class="ham-badge ham-issue-closed-chip" title="Issue #13409 is closed, but this PR is still open and unmerged[^"]*">closed · this PR unmerged<\/span>/.test(row), 'title then closed chip naming the unmerged PR: ' + row);
 assert.ok(!row.includes('ham-no-issue-t') && !/<a class="ham-ref"[^>]*title=/.test(row) && prCol(row).length === 1 && prCol(row)[0].includes('#111'), row);
 // The same with no title resolvable: a muted "(closed issue)" placeholder, never a blank.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', url: 'https://x/13409' }] }, stages, ctx);
-assert.strictEqual(lead(row), '#13409 (closed issue) closed', lead(row));
-assert.ok(row.includes('<span class="ham-title ham-no-issue-t">(closed issue)</span> <span class="ham-badge ham-issue-closed-chip">closed</span>'), row);
+assert.strictEqual(lead(row), '#13409 (closed issue) closed · this PR unmerged', lead(row));
+assert.ok(/<span class="ham-title ham-no-issue-t">\(closed issue\)<\/span> <span class="ham-badge ham-issue-closed-chip" title="[^"]*">closed · this PR unmerged<\/span>/.test(row), row);
 // hivecommons/hive#15232: a PR whose closing link names a closed issue
 // (closed_issue set by the server, hivecommons/hive#14655) still puts the
 // ISSUE in the left slot — struck through under its chip — and itself in the
@@ -664,14 +664,16 @@ assert.ok(/<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="h
 assert.ok(!row.includes('ham-head-pr-anchor') && !row.includes('closes <s>'), 'the PR no longer takes the issue slot: ' + row);
 assert.ok(prCol(row).length === 1 && prCol(row)[0].includes('#15191') && prCol(row)[0].includes('Let hive decide'), 'PR sits in the PR column: ' + prCol(row));
 assert.ok(!row.includes('ham-closed-not-planned'), 'completed close: no moot chip');
-// Closer unknown: a plain "closed" chip; a not-planned close adds the moot chip.
+// Closer unknown: the chip says the issue closed while this PR is unmerged
+// (never a bare "closed" that reads as closed-by-this-PR); a not-planned
+// close adds the moot chip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 15191, kind: 'pr', title: 'Let hive decide', stage: 90,
   linked_issues: [{ number: 15173, state: 'closed', state_reason: 'not_planned', title: 'Sweep', url: 'https://x/15173' }],
   closed_issue: { number: 15173, state: 'closed', state_reason: 'not_planned', title: 'Sweep', url: 'https://x/15173' } }, stages, ctx);
-assert.strictEqual(lead(row), '#15173 Sweep closed issue closed (not planned)', lead(row));
-assert.ok(row.includes('<span class="ham-badge ham-issue-closed-chip">closed</span> <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned"'), row);
-// A closer equal to the row's own PR is not a duplicate: plain chip.
-assert.strictEqual(stageTrackerClosedChipHtml({ repo: 'acme/console', number: 500 }, { number: 496, closed_by: 500, title: 'T' }), '<span class="ham-badge ham-issue-closed-chip">closed</span>');
+assert.strictEqual(lead(row), '#15173 Sweep closed · this PR unmerged issue closed (not planned)', lead(row));
+assert.ok(/<span class="ham-badge ham-issue-closed-chip" title="[^"]*">closed · this PR unmerged<\/span> <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned"/.test(row), row);
+// A closer equal to the row's own PR is not a duplicate: the unmerged chip.
+assert.ok(/^<span class="ham-badge ham-issue-closed-chip" title="Issue #496 is closed, but this PR is still open and unmerged[^"]*">closed · this PR unmerged<\/span>$/.test(stageTrackerClosedChipHtml({ repo: 'acme/console', number: 500 }, { number: 496, closed_by: 500, title: 'T' })));
 assert.deepStrictEqual(stageTrackerPRIssueSlot({ number: 500, linked_issues: [{ number: 496, state: 'closed', title: 'C', url: 'u', closed_by: 501 }] }), { number: 496, title: 'C', url: 'u', closed: true, placeholder: '', closed_by: 501 }, 'closed_by rides the slot');
 assert.strictEqual(stageTrackerItemURL('acme/console', 501, 'pull', 'https://ghe.example/acme/console/pull/500'), 'https://ghe.example/acme/console/pull/501', 'closer URL follows the sibling host');
 assert.strictEqual(stageTrackerItemURL('acme/console', 501, 'pull', ''), 'https://github.com/acme/console/pull/501');
