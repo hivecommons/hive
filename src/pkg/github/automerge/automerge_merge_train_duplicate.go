@@ -168,3 +168,15 @@ func (c *Engine) mergeTrainDuplicateSkip(plan *mergeTrainPlan, number int) strin
 	c.debug("automerge skip", "repo", plan.displayRepo, "pr", number, "reason", reason, "lane", plan.lane, "winner", strconv.Itoa(h.Winner))
 	return reason
 }
+
+// mergeTrainDuplicateOf reads a recorded lane reason back: the winning PR
+// number when reason is the one-PR-per-issue hold, 0 otherwise. The 07x
+// label pass uses it to leave a held duplicate alone — no nudge, no
+// adoption (hivecommons/hive#15469).
+func mergeTrainDuplicateOf(reason string) int {
+	train, ok := prstage.ParseMergeTrain(reason)
+	if !ok || train.State != prstage.MergeTrainStateDuplicateOf {
+		return 0
+	}
+	return train.Front
+}
