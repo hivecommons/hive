@@ -9,6 +9,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 	"github.com/hivecommons/hive/pkg/forgestate"
 )
 
@@ -127,6 +128,13 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 	}
 	if _, _, err := c.client.Issues.Edit(ctx, owner, repoName, number, req); err != nil {
 		return false, fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, err)
+	}
+	if !isPR {
+		l := itemblocker.Shared()
+		l.Clear(owner+"/"+repoName, number)
+		if repo != owner+"/"+repoName {
+			l.Clear(repo, number)
+		}
 	}
 	closedKind := forgestate.KindIssue
 	if isPR {
