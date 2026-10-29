@@ -8037,9 +8037,27 @@ type AutoMergeConfig struct {
 	// A head that is green but was tested against an older base is updated
 	// (GitHub update-branch, a merge commit) and merged once CI is green on
 	// the new head, so a semantic conflict with anything merged since shows
-	// up as red CI instead of a broken base. Empty (the default) keeps the
-	// previous behavior: a green head merges even if the base has moved.
+	// up as red CI instead of a broken base.
+	//
+	// Since hivecommons/hive#15335 the gate is ON for every repo by default
+	// (RequireCurrentBaseDefault); this list is the STRICT form: a listed
+	// repo never falls back to merging an un-updated head, even when the App
+	// cannot update the branch (fork head without maintainer edits, branch
+	// protection or a missing contents:write). Repos covered only by the
+	// default merge the green head as tested in that case, with one WARN per
+	// PR, so a fork-heavy repo is not parked wholesale by the default.
 	RequireCurrentBase []string `yaml:"require_current_base,omitempty" json:"require_current_base,omitempty"`
+	// RequireCurrentBaseDefault is the fleet-wide default for the gate above
+	// on repos that appear in neither RequireCurrentBase nor
+	// SkipCurrentBase. nil/unset means true (hivecommons/hive#15335: a
+	// stale-green merge broke v5 for every open PR for 20 minutes because the
+	// repo was not listed). `false` restores the opt-in-only behaviour.
+	RequireCurrentBaseDefault *bool `yaml:"require_current_base_default,omitempty" json:"require_current_base_default,omitempty"`
+	// SkipCurrentBase lists owner/repo names opted OUT of the current-base
+	// gate: a green head there merges even if the base has moved (the
+	// pre-#15335 behaviour). An explicit RequireCurrentBase entry wins over
+	// this list.
+	SkipCurrentBase []string `yaml:"skip_current_base,omitempty" json:"skip_current_base,omitempty"`
 	// MergeForwardTrustedHuman lists owner/repo names where a role/trusted
 	// author/human PR that GitHub reports as conflicting ("dirty") gets the
 	// base merged into its same-repo head branch as a new App-authored,
@@ -8488,9 +8506,31 @@ func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
 	return nil
 }
 
-// RequireCurrentBaseFor reports whether repo (owner/repo, matched
-// case-insensitively) is listed in auto_merge.require_current_base.
+// RequireCurrentBaseFor reports whether the automerge lanes must see a head
+// that contains the current base tip before merging into repo (owner/repo,
+// matched case-insensitively). Resolution order: an explicit
+// auto_merge.require_current_base entry (on, strict), then
+// auto_merge.skip_current_base (off), then
+// auto_merge.require_current_base_default (unset means on).
 func (a AutoMergeConfig) RequireCurrentBaseFor(repo string) bool {
+	key := strings.ToLower(strings.TrimSpace(repo))
+	if key == "" {
+		return false
+	}
+	if repoListSet(a.RequireCurrentBase)[key] {
+		return true
+	}
+	if repoListSet(a.SkipCurrentBase)[key] {
+		return false
+	}
+	return a.RequireCurrentBaseDefault == nil || *a.RequireCurrentBaseDefault
+}
+
+// RequireCurrentBaseStrictFor reports whether repo is explicitly listed in
+// auto_merge.require_current_base. A strict repo never merges a head the App
+// could not bring up to date; a repo gated only by the default falls back to
+// merging the green head as tested when update-branch is unavailable.
+func (a AutoMergeConfig) RequireCurrentBaseStrictFor(repo string) bool {
 	return repoListSet(a.RequireCurrentBase)[strings.ToLower(strings.TrimSpace(repo))]
 }
 
