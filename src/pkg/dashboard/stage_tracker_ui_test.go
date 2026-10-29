@@ -154,6 +154,9 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_HUMAN_MODS"),
 		jsFunc(t, html, "stageTrackerMotion"),
 		jsFunc(t, html, "stageTrackerHeaderHtml"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ICON_PATH"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_ICON_TITLE"),
+		jsFunc(t, html, "stageTrackerTrainIconHtml"),
 		jsFunc(t, html, "stageTrackerHoldLabels"),
 		jsFunc(t, html, "stageTrackerSoakLeft"),
 		jsFunc(t, html, "stageTrackerStripItems"),
@@ -172,6 +175,11 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
 		jsFunc(t, html, "stageTrackerSinceHtml"),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),
+		jsFunc(t, html, "stageTrackerAgoText"),
+		jsConstBlock(t, html, "STAGE_TRACKER_LINEAGE_REASON_TIP"),
+		jsFunc(t, html, "stageTrackerLineageText"),
+		jsFunc(t, html, "stageTrackerLineageTip"),
+		jsFunc(t, html, "stageTrackerLineageChipHtml"),
 		jsFunc(t, html, "stageTrackerLinkedPRItem"),
 		jsFunc(t, html, "stageTrackerLinkedPROpen"),
 		jsFunc(t, html, "stageTrackerNestedOpenPRs"),
@@ -224,7 +232,7 @@ const stages = [
   { number: 70, label: 'Fixing', short: 'Fixing', branch_from: 50 }, { number: 71, label: 'Needs author', short: 'Needs author', branch_from: 50 },
   { number: 72, label: 'Returned to contributor', short: 'Returned to contributor', branch_from: 50 },
   { number: 74, label: 'Adopted by hive', short: 'Adopted by hive', branch_from: 50 },
-  { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' },
+  { number: 80, label: 'Awaiting merge admission', short: 'Merge queue' },
   { number: 85, label: 'Needs human decision', short: 'Needs human decision', branch_from: 80 }, { number: 90, label: 'Ready for human merge', short: 'Ready for human merge', branch_from: 80 },
   { number: 95, label: 'Pre-merge soak', short: 'Soaking', description: 'Lane admitted; the pre-merge soak window is running before the merge is attempted' },
   { number: 100, label: 'Merge queue', short: 'Merge queue' }, { number: 110, label: 'Merged', short: 'Merged' },
@@ -633,14 +641,14 @@ assert.strictEqual(titles(row, 'Fix sort'), 1);
 // body still says Fixes #N): the issue slot keeps "#N title" as a link,
 // struck through under a "closed" chip, so the pairing reads at a glance.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', title: 'Usage on --help', url: 'https://x/13409' }] }, stages, ctx);
-assert.strictEqual(lead(row), '#13409 Usage on --help closed', lead(row));
+assert.strictEqual(lead(row), '#13409 Usage on --help closed · this PR unmerged', lead(row));
 assert.ok(/<div class="ham-head-main ham-issue-closed">/.test(row) && /<a class="ham-ref" href="https:\/\/x\/13409"[^>]*>#13409<\/a>/.test(row), 'closed issue stays a link in a struck-through slot: ' + row);
-assert.ok(row.includes('<span class="ham-title" title="Usage on --help">Usage on --help</span> <span class="ham-badge ham-issue-closed-chip">closed</span>'), 'title then closed chip: ' + row);
+assert.ok(/<span class="ham-title" title="Usage on --help">Usage on --help<\/span> <span class="ham-badge ham-issue-closed-chip" title="Issue #13409 is closed, but this PR is still open and unmerged[^"]*">closed · this PR unmerged<\/span>/.test(row), 'title then closed chip naming the unmerged PR: ' + row);
 assert.ok(!row.includes('ham-no-issue-t') && !/<a class="ham-ref"[^>]*title=/.test(row) && prCol(row).length === 1 && prCol(row)[0].includes('#111'), row);
 // The same with no title resolvable: a muted "(closed issue)" placeholder, never a blank.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', url: 'https://x/13409' }] }, stages, ctx);
-assert.strictEqual(lead(row), '#13409 (closed issue) closed', lead(row));
-assert.ok(row.includes('<span class="ham-title ham-no-issue-t">(closed issue)</span> <span class="ham-badge ham-issue-closed-chip">closed</span>'), row);
+assert.strictEqual(lead(row), '#13409 (closed issue) closed · this PR unmerged', lead(row));
+assert.ok(/<span class="ham-title ham-no-issue-t">\(closed issue\)<\/span> <span class="ham-badge ham-issue-closed-chip" title="[^"]*">closed · this PR unmerged<\/span>/.test(row), row);
 // hivecommons/hive#15232: a PR whose closing link names a closed issue
 // (closed_issue set by the server, hivecommons/hive#14655) still puts the
 // ISSUE in the left slot — struck through under its chip — and itself in the
@@ -656,14 +664,16 @@ assert.ok(/<a class="ham-badge ham-issue-closed-chip ham-closed-by-chip" href="h
 assert.ok(!row.includes('ham-head-pr-anchor') && !row.includes('closes <s>'), 'the PR no longer takes the issue slot: ' + row);
 assert.ok(prCol(row).length === 1 && prCol(row)[0].includes('#15191') && prCol(row)[0].includes('Let hive decide'), 'PR sits in the PR column: ' + prCol(row));
 assert.ok(!row.includes('ham-closed-not-planned'), 'completed close: no moot chip');
-// Closer unknown: a plain "closed" chip; a not-planned close adds the moot chip.
+// Closer unknown: the chip says the issue closed while this PR is unmerged
+// (never a bare "closed" that reads as closed-by-this-PR); a not-planned
+// close adds the moot chip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 15191, kind: 'pr', title: 'Let hive decide', stage: 90,
   linked_issues: [{ number: 15173, state: 'closed', state_reason: 'not_planned', title: 'Sweep', url: 'https://x/15173' }],
   closed_issue: { number: 15173, state: 'closed', state_reason: 'not_planned', title: 'Sweep', url: 'https://x/15173' } }, stages, ctx);
-assert.strictEqual(lead(row), '#15173 Sweep closed issue closed (not planned)', lead(row));
-assert.ok(row.includes('<span class="ham-badge ham-issue-closed-chip">closed</span> <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned"'), row);
-// A closer equal to the row's own PR is not a duplicate: plain chip.
-assert.strictEqual(stageTrackerClosedChipHtml({ repo: 'acme/console', number: 500 }, { number: 496, closed_by: 500, title: 'T' }), '<span class="ham-badge ham-issue-closed-chip">closed</span>');
+assert.strictEqual(lead(row), '#15173 Sweep closed · this PR unmerged issue closed (not planned)', lead(row));
+assert.ok(/<span class="ham-badge ham-issue-closed-chip" title="[^"]*">closed · this PR unmerged<\/span> <span class="ham-badge ham-issue-closed-chip ham-closed-not-planned"/.test(row), row);
+// A closer equal to the row's own PR is not a duplicate: the unmerged chip.
+assert.ok(/^<span class="ham-badge ham-issue-closed-chip" title="Issue #496 is closed, but this PR is still open and unmerged[^"]*">closed · this PR unmerged<\/span>$/.test(stageTrackerClosedChipHtml({ repo: 'acme/console', number: 500 }, { number: 496, closed_by: 500, title: 'T' })));
 assert.deepStrictEqual(stageTrackerPRIssueSlot({ number: 500, linked_issues: [{ number: 496, state: 'closed', title: 'C', url: 'u', closed_by: 501 }] }), { number: 496, title: 'C', url: 'u', closed: true, placeholder: '', closed_by: 501 }, 'closed_by rides the slot');
 assert.strictEqual(stageTrackerItemURL('acme/console', 501, 'pull', 'https://ghe.example/acme/console/pull/500'), 'https://ghe.example/acme/console/pull/501', 'closer URL follows the sibling host');
 assert.strictEqual(stageTrackerItemURL('acme/console', 501, 'pull', ''), 'https://github.com/acme/console/pull/501');
@@ -708,6 +718,34 @@ assert.ok(/^ data-ham-kind="pr" data-ham-stage="70" data-ham-sub-key="acme\/cons
 assert.ok(prCol(sr[1])[0].includes('ham-author-clanker') && prCol(sr[1])[0].includes('#103'));
 assert.deepStrictEqual(segStates(sr[1]), [B, B, B, 'active', T, T, 'todo cap'], 'a PR at 030 lights PR in progress on its own sub-row');
 assert.ok(!row.slice(0, row.indexOf('<div class="ham-sub"')).includes('ham-pr-ref'), 'the issue title line itself lists no PRs');
+// One-line sub-row header: connector, author icon + #N + title, lineage chip
+// and base pill are direct siblings inside the single flex-row PR cell — no
+// block wrapper or <br> between them — and the title carries its full text
+// as hover for the ellipsis.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Three PRs', stage: 40, linked_prs: [
+  { number: 15343, title: 'docs: remove duplicate README run routes', author_kind: 'hive', stage: 50, base_ref: 'v5', lineage: { kind: 'adopted', from_number: 15226, from_author: 'x', from_author_kind: 'clanker' } },
+  { number: 15344, title: 'other', stage: 30 },
+] }, stages, ctx);
+sr = subs(row);
+{
+  const head = sr[0].slice(0, sr[0].indexOf('aria-label="Pipeline progress"'));
+  const cell = (head.match(/<li class="ham-seg ham-head-pr">([\s\S]*?)<\/li>/) || [])[1] || '';
+  assert.ok(cell, 'sub-row header has one PR cell: ' + head);
+  assert.ok(!/<br|<div|<p\b/.test(cell), 'no block-level element inside the PR cell: ' + cell);
+  const order = [cell.indexOf('class="ham-linked-ico"'), cell.indexOf('<a class="ham-pr-ref"'), cell.indexOf('class="ham-badge ham-lineage"'), cell.lastIndexOf('<span class="ham-badge">v5</span>')];
+  assert.ok(order.every((i, k) => i >= 0 && (k === 0 || i > order[k - 1])), 'connector, PR link, lineage chip, base pill in that order as siblings: ' + cell);
+  assert.ok(cell.indexOf('<span class="ham-badge">v5</span>') > cell.indexOf('</a>', cell.indexOf('<a class="ham-pr-ref"')), 'the base pill is a sibling after the PR link, not inside it: ' + cell);
+  assert.ok(/<a class="ham-pr-ref"[^>]*title="docs: remove duplicate README run routes · /.test(cell), 'the PR link hover starts with the full title: ' + cell);
+  assert.ok(!head.includes('ham-lineage" title') || head.indexOf('ham-lineage') < head.indexOf('<li class="ham-seg cap">'), 'the lineage chip rides the PR cell, not the chip cap: ' + head);
+  assert.strictEqual((head.match(/ham-lineage/g) || []).length, 1, 'the lineage chip is drawn once');
+}
+// The same order on an issue row with a single covering PR: lineage chip
+// before the base pill, both after the PR link.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'One PR', stage: 40, linked_prs: [{ number: 15343, title: 'T', stage: 50, base_ref: 'v5', lineage: { kind: 'adopted', from_number: 15226 } }] }, stages, ctx);
+{
+  const cell = prCell(row);
+  assert.ok(cell.indexOf('<a class="ham-pr-ref"') < cell.indexOf('ham-lineage') && cell.indexOf('ham-lineage') < cell.indexOf('<span class="ham-badge">v5</span>'), 'PR link, lineage, base pill: ' + cell);
+}
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 10, kind: 'issue', stage: 30 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, 'active', T, T, 'todo cap'], 'kick running, no PR yet: the issue lights PR in progress and draws the steps ahead');
 assert.strictEqual(subs(row).length, 0, 'no PR yet');
@@ -732,7 +770,11 @@ assert.strictEqual(stageTrackerSortKey({ kind: 'pr', stage: 72 }, stages).anchor
 
 // Header: names once, aligned with the chevrons, plus the since column.
 const head = stageTrackerHeaderHtml(stages);
-assert.deepStrictEqual(Array.from(head.matchAll(/<span class="ham-seg-t">([^<]*)<\/span>/g)).map(m => m[1]), ['Open', 'Actionable', 'Claimed', 'PR in progress', 'CI / Review', 'Merge gate']);
+assert.deepStrictEqual(Array.from(head.matchAll(/<span class="ham-seg-t">(?:<svg[\s\S]*?<\/svg>)?([^<]*)<\/span>/g)).map(m => m[1]), ['Open', 'Actionable', 'Claimed', 'PR in progress', 'CI / Review', 'Merge queue']);
+// The Merge queue column wears the train icon (hover "Merge queue"), the
+// same railcar as the train header chip and the 080 chevron (#15395).
+assert.ok(head.includes('<span class="ham-seg-t">' + stageTrackerTrainIconHtml('ham-ico ham-train-icon ham-col-ico') + 'Merge queue</span>'), head);
+assert.strictEqual((head.match(/<title>Merge queue<\/title>/g) || []).length, 1);
 assert.ok(head.includes('<span class="ham-since">since</span>'));
 
 // Unknown / zero stage lights "Open".

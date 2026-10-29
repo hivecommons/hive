@@ -218,8 +218,9 @@ func TestContributorLanePermanentMergeRefusalOneMergeCall(t *testing.T) {
 // TestRequiredChecksExpectedRemembered: GitHub's 405 "N of M required status
 // checks are expected" (hivecommons/docs#512, 2026-10-29) is remembered per
 // head, and the next pass skips the merge call as check-pending while the
-// PR is still blocked — a new head, an unblocked state or the recheck
-// window re-arms it; other errors are not remembered.
+// PR still reports the mergeable_state it was refused in — a new head, a
+// changed state or the recheck window re-arms it; other errors are not
+// remembered.
 func TestRequiredChecksExpectedRemembered(t *testing.T) {
 	expected := &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusMethodNotAllowed}, Message: "4 of 4 required status checks are expected."}
 	base := mergeAttempt{owner: "hivecommons", repo: "docs", base: "main", number: 512, head: "sha512", state: "blocked", method: "squash"}

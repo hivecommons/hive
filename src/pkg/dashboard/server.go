@@ -1214,6 +1214,11 @@ type FrontendRepo struct {
 	PausedAt    string `json:"pausedAt,omitempty"`
 	PauseReason string `json:"pauseReason,omitempty"`
 	AutoMerge   bool   `json:"autoMerge"`
+	// RequireCurrentBase is the effective current-base gate for this repo
+	// (auto_merge.require_current_base / skip_current_base over the hive-wide
+	// default, hivecommons/hive#15335); the repo card shows a "current-base"
+	// chip when it is on.
+	RequireCurrentBase bool `json:"requireCurrentBase,omitempty"`
 	// Upstream is the upstream a fork repo follows (hivecommons/hive#11433):
 	// the repo's upstream_watch entry, resolved to the fork parent once the
 	// watch has run. Empty for a repo that is not in the watch. UpstreamWatchOn

@@ -28,7 +28,7 @@ func TestWebhookOpenedItemInsertedIntoTracker(t *testing.T) {
 	s.statusMu.Unlock()
 	opened := now.Add(-90 * time.Second)
 
-	triage := github.RepoWorkIssue{Repo: "acme/console", Number: 15092, Title: "Add a thing", Author: "kanrenibm", Labels: []string{"enhancement", "help wanted"}, CreatedAt: opened, UpdatedAt: opened, Bucket: "reporter_triage", Reason: "Awaiting maintainer triage label"}
+	triage := github.RepoWorkIssue{Repo: "acme/console", Number: 15092, Title: "Add a thing", Author: "kanrenibm", AuthorIsHuman: true, Labels: []string{"enhancement", "help wanted"}, CreatedAt: opened, UpdatedAt: opened, Bucket: "reporter_triage", Reason: "Awaiting maintainer triage label"}
 	n := s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{
 		// A contributor's issue the reporter gate has not admitted: the
 		// classifier offers the reporter_triage row.
@@ -57,6 +57,12 @@ func TestWebhookOpenedItemInsertedIntoTracker(t *testing.T) {
 	}
 	if it.New.NextMover != StageTrackerMoverMaintainer || !strings.Contains(it.Caption, "New · waiting for a maintainer's triage (add `triage/accepted`)") || it.Actor != StageTrackerMoverMaintainer {
 		t.Fatalf("#15092 caption %q actor %q new %+v, want the maintainer's triage as next mover", it.Caption, it.Actor, it.New)
+	}
+	// A sidelined row keeps the reporter's kind: the work-bucket copy of the
+	// issue carries AuthorIsHuman, so the row does not read as an unknown
+	// author just because the gate parked it.
+	if it.AuthorKind != authorKindHuman {
+		t.Fatalf("#15092 author_kind = %q, want %q on a reporter_triage row", it.AuthorKind, authorKindHuman)
 	}
 	if it.StageSince == nil || !it.StageSince.Equal(opened) {
 		t.Fatalf("#15092 since = %v, want the opened time %v", it.StageSince, opened)

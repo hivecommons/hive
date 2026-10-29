@@ -2570,6 +2570,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
+	autoMergeOpts.RequireCurrentBaseStrict = func(repo string) bool {
+		return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseStrictFor(repo)
+	}
 	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
 	}
@@ -9452,6 +9455,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.RepoOnGitHub = func(repo string) bool { return cfg.RepoOnGitHub(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
+		opts.RequireCurrentBaseStrict = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseStrictFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
 		opts.MergeTrain = func() automerge.MergeTrainPolicy {
 			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}

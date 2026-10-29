@@ -117,6 +117,9 @@ type Status struct {
 	// Banners lists repos that became writable with pre-existing items the
 	// hive left alone (one banner each).
 	Banners []Banner `json:"banners,omitempty"`
+	// Dedupe is the content layer: settings plus last-hour counters of
+	// duplicate, burst and rate-capped suppressions.
+	Dedupe DedupeCounters `json:"dedupe"`
 }
 
 // Banner is the "hive can now write to <repo>; N existing PRs were left
@@ -171,6 +174,8 @@ type Gate struct {
 	repos   map[string]*repoRecord
 	recent  []Suppressed
 	summary map[string]bool
+	// dedupe is the content layer's table (dedupe.go).
+	dedupe *dedupeState
 }
 
 // SuppressedRetention bounds the drill-down list (and the 24h counter).
@@ -182,7 +187,7 @@ const maxRecent = 2000
 // New builds a gate over cfg. path is the JSON file first_seen is persisted
 // to (empty = in-memory only); a missing or unreadable file starts empty.
 func New(cfg Config, deps Deps, path string) *Gate {
-	g := &Gate{cfg: cfg, deps: deps, path: path, repos: map[string]*repoRecord{}, summary: map[string]bool{}}
+	g := &Gate{cfg: cfg, deps: deps, path: path, repos: map[string]*repoRecord{}, summary: map[string]bool{}, dedupe: newDedupeState()}
 	if g.deps.Now == nil {
 		g.deps.Now = time.Now
 	}
@@ -232,6 +237,18 @@ func (g *Gate) load() {
 	if err != nil {
 		return
 	}
+	// Current shape: {"repos": {...}, "dedupe": {...}}. The pre-dedupe
+	// file was the bare repos map; its keys are owner/name so "repos"
+	// cannot collide with one.
+	var file stateFile
+	if err := json.Unmarshal(data, &file); err == nil && file.Repos != nil {
+		g.repos = file.Repos
+		if file.Dedupe != nil {
+			file.Dedupe.init()
+			g.dedupe = file.Dedupe
+		}
+		return
+	}
 	var repos map[string]*repoRecord
 	if err := json.Unmarshal(data, &repos); err != nil || repos == nil {
 		return
@@ -239,11 +256,21 @@ func (g *Gate) load() {
 	g.repos = repos
 }
 
+// stateFile is the on-disk shape of the gate's state.
+type stateFile struct {
+	Repos  map[string]*repoRecord `json:"repos"`
+	Dedupe *dedupeState           `json:"dedupe,omitempty"`
+}
+
 func (g *Gate) saveLocked() {
 	if g.path == "" {
 		return
 	}
-	data, err := json.MarshalIndent(g.repos, "", "  ")
+	file := stateFile{Repos: g.repos}
+	if g.dedupe != nil && !g.dedupe.empty() {
+		file.Dedupe = g.dedupe
+	}
+	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return
 	}
@@ -344,6 +371,11 @@ func (g *Gate) AllowedPreview(repo string, item Item, kind Kind, preview string)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	d := g.decideLocked(repo, item, kind)
+	if d.Allowed {
+		// Content dedupe (dedupe.go) runs only on comment kinds with a
+		// body: Allowed() without preview stays policy-only.
+		d = g.contentCheckLocked(repo, item, kind, preview, d)
+	}
 	if !d.Allowed {
 		g.suppressLocked(repo, item, kind, d, preview)
 	}
@@ -519,6 +551,7 @@ func (g *Gate) suppressLocked(repo string, item Item, kind Kind, d Decision, pre
 }
 
 func (g *Gate) pruneLocked(now time.Time) {
+	g.pruneDedupeLocked(now)
 	cut := now.Add(-SuppressedRetention)
 	i := 0
 	for i < len(g.recent) && g.recent[i].At.Before(cut) {
@@ -598,6 +631,7 @@ func (g *Gate) Snapshot() Status {
 		Suppressed24h: len(g.recent),
 		Repos:         map[string]RepoStatus{},
 		Kinds:         cfg.EffectiveKinds(),
+		Dedupe:        g.dedupeCountersLocked(now),
 	}
 	per := map[string]int{}
 	for _, s := range g.recent {

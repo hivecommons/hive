@@ -14,6 +14,11 @@
       if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
       const mg = item && item.merge_gate;
       if (mg && (mg.state === 'merging' || mg.state === 'merge-failed') && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
+      // A merge-train member is a Merge queue matter too, 1st included:
+      // the train's facts are mirrored onto its head while the head still
+      // sits at 050/070, and hive's own #15400 ("1st") lit CI / Review
+      // next to its 2nd-place sibling in Merge queue (hivecommons/hive#15395).
+      if (item && item.merge_train && item.merge_train.state && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
       if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
@@ -107,7 +112,9 @@
       30: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="5" r="1.5"/><path d="M4 4.5v7M12 6.5c0 3-8 1-8 4"/>',
       40: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="12" r="1.5"/><path d="M4 4.5v7M4 6c0 3 6 2 6.5 5"/>',
       50: '<path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>',
-      80: '<path d="M8 1l6 2v5c0 3.5-2.5 6-6 7-3.5-1-6-3.5-6-7V3z"/>',
+      // Merge queue: the same railcar as the column header and train chip
+      // (STAGE_TRACKER_TRAIN_ICON_PATH in tracker-words.js; a test keeps them equal).
+      80: '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>',
       100: '<path d="M3 5h10M3 8h10M3 11h10"/>',
       110: '<path d="M3 8l3 3 7-7"/>',
       history: '<path d="M2 8a6 6 0 1 0 6-6 6.5 6.5 0 0 0-4.5 1.83L2 5.33"/><path d="M2 2v3.33h3.33"/><path d="M8 4.67V8l2.67 1.33"/>',
@@ -283,7 +290,9 @@
       (stages || []).forEach(st => { byNum[st.number] = st; });
       const cols = STAGE_TRACKER_PATH.map(n => {
         const name = n === 0 ? 'Open' : ((byNum[n] || {}).short || (byNum[n] || {}).label || String(n));
-        return `<li class="ham-seg"><span class="ham-seg-t">${esc(name)}</span></li>`;
+        // The Merge queue column wears the same train as the train header chip.
+        const ico = n === 80 && typeof stageTrackerTrainIconHtml === 'function' ? stageTrackerTrainIconHtml('ham-ico ham-train-icon ham-col-ico') : '';
+        return `<li class="ham-seg"><span class="ham-seg-t">${ico}${esc(name)}</span></li>`;
       }).join('');
       return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap ham-history-head" title="History — decisions and actions on this item">${stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — decisions and actions on this item')}</li></ol><span class="ham-since">since</span></div></div>`;
     }
@@ -649,6 +658,10 @@
     // row drawn over its single covering PR) that PR's; null when none.
     function stageTrackerActedSource(item) {
       if (!item) return null;
+      // A failure this client just saw outranks an older server record
+      // (hivecommons/hive#15436): the badge goes red at once.
+      const failed = typeof stageTrackerActionFailureOf === 'function' ? stageTrackerActionFailureOf(item) : null;
+      if (failed) return { item, action: failed, count: (Number(item.operator_action_count) || 0) + 1 };
       if (item.last_operator_action) return { item, action: item.last_operator_action, count: Number(item.operator_action_count) || 1 };
       const linked = Array.isArray(item.linked_prs) ? item.linked_prs : [];
       if (item.kind === 'issue' && linked.length === 1 && linked[0].last_operator_action) {
@@ -963,13 +976,30 @@
       const tip = 'Hive re-authored #' + af.number + (af.author ? ' (by @' + af.author + ')' : '') + ' as this PR with the same commits and sign-off' + (af.decided_by ? '; the decision on #' + af.number + ' was ' + (af.decided_action || 'yours') + ' by @' + af.decided_by : '') + '. #' + af.number + ' is closed as superseded when this merges.';
       return `<a class="ham-badge ham-adopted-from" href="${esc(af.url || '#')}" target="_blank" rel="noopener" title="${esc(tip)}">${esc(text)}</a>`;
     }
+    // The row's inline lead action (tracker-actions.js
+    // stageTrackerLeadActionHtml), computed against the viewer's own
+    // permissions on the item's repo; '' where the actions module or a
+    // viewer context is absent (the node harness lifts this file alone).
+    function stageTrackerLeadButtonHtml(item, nowMs) {
+      if (typeof stageTrackerLeadActionHtml !== 'function' || typeof stageTrackerActionCtx !== 'function' || !item) return '';
+      const ctx = stageTrackerActionCtx(item.repo);
+      if (!ctx) return '';
+      ctx.nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      return stageTrackerLeadActionHtml(item, ctx);
+    }
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = stageTrackerLinkedPRItem(issue, lp);
       const superseded = typeof stageTrackerLinkedSupersededText === 'function' ? stageTrackerLinkedSupersededText(lp, issue) : '';
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + (superseded || stageTrackerTooltip(pr, nowMs)) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
-      if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
+      // One line (hivecommons/hive: "consolidate from 3 lines of text to
+      // 1"): connector, repo chip, author icon + #N + title, the lineage /
+      // adopted-from chip, then the base pill — all siblings of the flex-row
+      // PR cell; the title ellipsizes, the pills never shrink.
+      const lineage = superseded ? '' : ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : ''));
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
+      if (lineage) ref += ' ' + lineage;
+      if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
       ref = STAGE_TRACKER_LINKED_GLYPH + ref;
       if (superseded) {
         // The adopted original: one dimmed line, no chevron track, no row
@@ -983,7 +1013,7 @@
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : '')) + stageTrackerChipsHtml(pr))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : ''))}
           </div>
           <div class="ham-strip-row">
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
@@ -1192,7 +1222,7 @@
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '') + (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? ' ' + stageTrackerLineageChipHtml(lp, nowMs) : '')];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? ' ' + stageTrackerLineageChipHtml(lp, nowMs) : '') + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
@@ -1246,7 +1276,7 @@
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown))}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown) + (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs) : ''))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range, nowMs, ctx)}</ol>

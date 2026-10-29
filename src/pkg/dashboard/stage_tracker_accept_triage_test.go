@@ -122,7 +122,7 @@ let refreshed = 0; function stageTrackerAfterActions() { refreshed++; }
   assert.strictEqual(_stageTracker.items[1].stage, 15, 'the refused row is left as it was');
   assert.strictEqual(rendered, 1, 'one optimistic re-render for the success');
   assert.strictEqual(refreshed, 1, 'then the usual refetch');
-  assert.strictEqual(toasts[toasts.length - 1], 'done:error:Accept triage: 1/2 done. Failed: o/r#2 — write permission required', 'the failure is toasted, never a native dialog');
+  assert.strictEqual(toasts[toasts.length - 1], 'done:error:Accepted 1 of 2 issues. Failed: o/r#2 — write permission required', 'the failure is toasted, never a native dialog');
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }

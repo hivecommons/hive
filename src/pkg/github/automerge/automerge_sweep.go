@@ -91,9 +91,17 @@ type Options struct {
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
 	HumanMergePaths func(repo string) []string
-	// RequireCurrentBase returns the live auto_merge.require_current_base
-	// switch for an owner/repo (hivecommons/hive#13634). nil means off.
+	// RequireCurrentBase returns the live current-base gate switch for an
+	// owner/repo (hivecommons/hive#13634; since #15335 resolved from the
+	// hive-wide default plus per-repo overrides via
+	// config.AutoMergeConfig.RequireCurrentBaseFor). nil means off.
 	RequireCurrentBase func(repo string) bool
+	// RequireCurrentBaseStrict reports whether owner/repo is explicitly
+	// listed in auto_merge.require_current_base. A strict repo parks a head
+	// the App cannot update; a repo gated only by the default merges the
+	// green head as tested in that case, with one WARN per PR. nil means no
+	// repo is strict.
+	RequireCurrentBaseStrict func(repo string) bool
 	// MergeForwardTrustedHuman returns the live
 	// auto_merge.merge_forward_trusted_human membership for owner/repo
 	// (hivecommons/hive#13636); nil means off.
@@ -243,7 +251,11 @@ type Engine struct {
 	humanMergePaths   func(repo string) []string
 
 	requireCurrentBase       func(repo string) bool
+	requireCurrentBaseStrict func(repo string) bool
 	mergeForwardTrustedHuman func(repo string) bool
+
+	currentBaseFallbackWarnedMu sync.Mutex
+	currentBaseFallbackWarned   map[string]struct{}
 
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
@@ -347,6 +359,7 @@ func New(transport Transport, opts Options) *Engine {
 		humanChangeRequests:               opts.HumanChangeRequests,
 		humanMergePaths:                   opts.HumanMergePaths,
 		requireCurrentBase:                opts.RequireCurrentBase,
+		requireCurrentBaseStrict:          opts.RequireCurrentBaseStrict,
 		mergeForwardTrustedHuman:          opts.MergeForwardTrustedHuman,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
@@ -1969,7 +1982,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if err != nil {
 		if c.requiredChecksExpected(attempt, err) {
 			if !branchUpdateAllowed {
-				return AutoMergeSweepEvent{}, "check-pending", nil
+				return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
 			}
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "required-checks-expected", c.isForkPR(pr))
 		}
@@ -2713,6 +2726,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
+		if c.requiredChecksExpected(attempt, err) {
+			return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
+		}
 		if refused := c.refusedMerge(attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil
 		}

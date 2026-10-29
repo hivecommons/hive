@@ -234,7 +234,13 @@
        values last shown are kept in sessionStorage
        (STAGE_TRACKER_MERGED_LAST_KEY) so a reload rolls up from them. The
        glyph is drawn at --cue-flight-size (two type steps up) with a
-       theme-aware halo; STAGE_TRACKER_CELEBRATE_GLYPH_HALF centres it. */
+       theme-aware halo; STAGE_TRACKER_CELEBRATE_GLYPH_HALF centres it.
+       Owner (2026-10-29, again): "where is my odometer look and feel?" —
+       that PR sized the flying bee, not the pill's, and the roll was an
+       overlay that existed for 900 ms over plain text. The counter is
+       now a drum at rest, always (stageTrackerOdometerRest /
+       stageTrackerOdometerDraw): a wheel per digit, the day/week line the
+       same columns drawn plain; the pill's bee is --ham-merged-bee. */
     const STAGE_TRACKER_CELEBRATE_KEY = 'hive.tracker.celebrate';
     const STAGE_TRACKER_MERGED_LAST_KEY = 'hive.tracker.merged.last';
     const STAGE_TRACKER_CELEBRATE_GLYPH_KEY = 'hive.tracker.celebrate_glyph';
@@ -406,9 +412,11 @@
     // Pure: the odometer columns for a change of text from `from` to `to`,
     // or null when nothing should roll — the texts split into different
     // static runs ("201 today · 730 this week" keeps its words), no number
-    // rose, or every rise is a fall elsewhere. A column is { text } (sits
-    // still: static runs, unchanged digits, numbers that fell or held) or
-    // { steps: ['9', '0'] } — the digits the column passes, old to new. In
+    // rose, or every rise is a fall elsewhere. A column is { text } (a
+    // static run of non-digits), a wheel that sits still — { steps: ['4'] },
+    // an unchanged digit or one of a number that fell or held, drawn as a
+    // drum cell like the rest — or a wheel that rolls, { steps: ['9', '0']
+    // } — the digits the column passes, old to new. In
     // a number that rose, the first changed wheel rolls just the digits
     // between old and new (wrapping past 9 the way a carry does); every
     // wheel to its right — and the rightmost wheel always — spins through
@@ -426,7 +434,7 @@
         const num = /^\d+$/.test(b[i]);
         if (num !== /^\d+$/.test(a[i])) return null;
         if (!num) { if (a[i] !== b[i]) return null; cols.push({ text: b[i] }); continue; }
-        if (Number(b[i]) <= Number(a[i]) || a[i].length > b[i].length) { cols.push({ text: b[i] }); continue; }
+        if (Number(b[i]) <= Number(a[i]) || a[i].length > b[i].length) { for (const d of b[i]) cols.push({ steps: [d] }); continue; }
         rose = true;
         const old = a[i].padStart(b[i].length, ' ');
         const last = b[i].length - 1;
@@ -435,7 +443,7 @@
         for (let j = 0; j <= last; j++) {
           const o = old[j], nw = b[i][j];
           const spin = j > first || j === last;
-          if (o === nw && !spin) { cols.push({ text: nw }); continue; }
+          if (o === nw && !spin) { cols.push({ steps: [nw] }); continue; }
           const steps = [o];
           if (o === ' ') steps.push(nw);
           else { let d = Number(o); do { d = (d + 1) % 10; steps.push(String(d)); } while (d !== Number(nw) || (spin && steps.length <= STAGE_TRACKER_ODOMETER_TURN)); }
@@ -444,16 +452,34 @@
       }
       return rose ? cols : null;
     }
-    // Stateful: write `text` into el, rolling the digits that rose like an
-    // odometer. The element's own text is always the plain value (it sets
-    // the width, and it is what a screen reader and a test read); the roll
-    // is an aria-hidden overlay of digit columns appended over it for `ms`
-    // (STAGE_TRACKER_ODOMETER_MS unless given), during which the plain
-    // text is transparent (.ham-odo-rolling). The value last written is
-    // kept on data-odo-value so a redraw mid-roll compares against it, not
-    // the overlay's digits. Instant (no overlay) on the first write, under
-    // reduced motion, and when stageTrackerOdometerPlan says nothing rolls.
-    // Returns whether a roll started.
+    // Pure: the columns that draw `text` at rest — every digit its own
+    // { steps: [d] } wheel, every non-digit run a { text } plate — the
+    // shape stageTrackerOdometerPlan returns when something rolls, so one
+    // renderer draws both states.
+    function stageTrackerOdometerRest(text) {
+      const cols = [];
+      for (const run of (String(text == null ? '' : text).match(/\d+|\D+/g) || [])) {
+        if (/^\d+$/.test(run)) for (const d of run) cols.push({ steps: [d] });
+        else cols.push({ text: run });
+      }
+      return cols;
+    }
+    // Stateful: write `text` into el as an odometer. The element always
+    // holds one aria-hidden .ham-odo drum of columns: a .ham-odo-col wheel
+    // per digit (a .ham-odo-strip of .ham-odo-d cells; one cell at rest)
+    // and a .ham-odo-static plate per run of other characters, so the
+    // Merged counter looks like a mileage counter at rest, not only
+    // mid-roll (hivecommons/hive#15398 follow-up: the previous overlay
+    // existed for 900 ms and the resting value was plain text). The value
+    // is on data-odo-value (what a redraw mid-roll compares against, and
+    // what the node tests read) and aria-label (what a screen reader
+    // reads; the drum's cells are hidden from it). A rise (per
+    // stageTrackerOdometerPlan) gives each wheel that changes the digits it
+    // passes and the class ham-odo-roll; the strip slides for `ms`
+    // (STAGE_TRACKER_ODOMETER_MS unless given), then settles to its final
+    // cell. Instant (drawn at rest) on the first write, under reduced
+    // motion, and when the plan says nothing rolls. Returns whether a roll
+    // started.
     function stageTrackerOdometerSet(el, text, ms) {
       if (!el) return false;
       text = String(text);
@@ -461,19 +487,42 @@
       const prev = el.getAttribute('data-odo-value');
       if (prev === text) return false;
       el.setAttribute('data-odo-value', text);
+      el.setAttribute('role', 'img');
+      el.setAttribute('aria-label', text);
       if (el._odoTimer) { clearTimeout(el._odoTimer); el._odoTimer = 0; }
-      if (el._odoWrap) { el._odoWrap.remove(); el._odoWrap = null; }
-      el.textContent = text;
-      el.classList.remove('ham-odo-rolling');
       const plan = prev == null || stageTrackerReducedMotion() ? null : stageTrackerOdometerPlan(prev, text);
+      const wrap = stageTrackerOdometerDraw(el, plan || stageTrackerOdometerRest(text));
+      wrap.style.setProperty('--odo-ms', ms + 'ms');
+      el.classList.remove('ham-odo-rolling');
       if (!plan) return false;
-      const wrap = document.createElement('span');
-      wrap.className = 'ham-odo';
-      wrap.setAttribute('aria-hidden', 'true');
-      for (const c of plan) {
+      el.classList.add('ham-odo-rolling');
+      void el.offsetWidth;
+      wrap.classList.add('ham-odo-run');
+      el._odoTimer = setTimeout(() => {
+        el._odoTimer = 0;
+        el.classList.remove('ham-odo-rolling');
+        stageTrackerOdometerDraw(el, stageTrackerOdometerRest(el.getAttribute('data-odo-value')));
+      }, ms + 80);
+      return true;
+    }
+    // Stateful: (re)draw el's drum from columns; returns the .ham-odo wrap.
+    function stageTrackerOdometerDraw(el, cols) {
+      let wrap = el._odoWrap;
+      if (!wrap || wrap.parentNode !== el) {
+        // The markup's placeholder text ("0") goes; the drum is the content.
+        el.textContent = '';
+        wrap = document.createElement('span');
+        wrap.className = 'ham-odo';
+        wrap.setAttribute('aria-hidden', 'true');
+        el.appendChild(wrap);
+        el._odoWrap = wrap;
+      }
+      wrap.classList.remove('ham-odo-run');
+      while (wrap.children.length) wrap.children[0].remove();
+      for (const c of cols) {
         const col = document.createElement('span');
         if (!c.steps) { col.className = 'ham-odo-static'; col.textContent = c.text; wrap.appendChild(col); continue; }
-        col.className = 'ham-odo-col';
+        col.className = c.steps.length > 1 ? 'ham-odo-col ham-odo-roll' : 'ham-odo-col';
         const strip = document.createElement('span');
         strip.className = 'ham-odo-strip';
         for (const d of c.steps) { const cell = document.createElement('span'); cell.className = 'ham-odo-d'; cell.textContent = d; strip.appendChild(cell); }
@@ -481,14 +530,7 @@
         col.appendChild(strip);
         wrap.appendChild(col);
       }
-      wrap.style.setProperty('--odo-ms', ms + 'ms');
-      el.appendChild(wrap);
-      el._odoWrap = wrap;
-      el.classList.add('ham-odo-rolling');
-      void el.offsetWidth;
-      wrap.classList.add('ham-odo-run');
-      el._odoTimer = setTimeout(() => { el._odoTimer = 0; el._odoWrap = null; el.classList.remove('ham-odo-rolling'); wrap.remove(); }, ms + 80);
-      return true;
+      return wrap;
     }
     // Stateful: seed an element that has not been written yet with the
     // value it showed last time (so the first real write rolls up from
@@ -498,7 +540,9 @@
       if (!el || last == null || el.getAttribute('data-odo-value') != null) return false;
       if (!stageTrackerOdometerPlan(String(last), String(next))) return false;
       el.setAttribute('data-odo-value', String(last));
-      el.textContent = String(last);
+      el.setAttribute('role', 'img');
+      el.setAttribute('aria-label', String(last));
+      stageTrackerOdometerDraw(el, stageTrackerOdometerRest(String(last)));
       return true;
     }
     // Pure: the chip's remembered values ({ n, sub }) from a sessionStorage

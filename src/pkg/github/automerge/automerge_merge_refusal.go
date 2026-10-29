@@ -106,11 +106,14 @@ const autoMergeReasonChecksExpected = "check-pending"
 
 // requiredChecksExpected reports whether err is GitHub's 405 "N of M
 // required status checks are expected" and, when it is, remembers the head
-// so knownMergeRefusal skips the merge call on the following passes while
-// GitHub still reports the PR blocked (hivecommons/docs#512: the sweep put
-// /merge on every pass, each refusal lighting "Merge failed" on the tracker
-// for a PR whose checks had simply not started). A check run completing
-// flips mergeable_state off "blocked", which re-arms the call.
+// and the mergeable_state it was refused in so knownMergeRefusal skips the
+// merge call on the following passes while GitHub still reports that state
+// (hivecommons/docs#512: the sweep put /merge on every pass, each refusal
+// lighting "Merge failed" on the tracker for a PR whose checks had simply
+// not started). A check run reporting moves mergeable_state (blocked →
+// clean, or clean → unstable/blocked when GitHub had called the head clean
+// before its required checks were even created, hivecommons/hive#15419),
+// which re-arms the call, as does a new head or the recheck window.
 func (c *Engine) requiredChecksExpected(a mergeAttempt, err error) bool {
 	if !requiredChecksExpectedMergeError(err) {
 		return false
@@ -123,13 +126,17 @@ func (c *Engine) requiredChecksExpected(a mergeAttempt, err error) bool {
 }
 
 // checksExpectedKnown reports whether the head of a is remembered as
-// waiting on required checks and GitHub still reports it blocked.
+// waiting on required checks and GitHub still reports the mergeable_state
+// it was refused in. It does not require that state to be "blocked": the
+// queued lane only reaches the merge call for a head GitHub already calls
+// mergeable, so a "blocked"-only memory was never consulted there and the
+// merge was re-PUT every pass (hivecommons/hive#15419).
 func (c *Engine) checksExpectedKnown(a mergeAttempt, now time.Time) bool {
 	r, ok := c.mergeRefusals[mergeRefusalChecksKey(a)]
 	if !ok {
 		return false
 	}
-	if now.Sub(r.at) >= mergeRefusalRecheck || !strings.EqualFold(r.head, strings.TrimSpace(a.head)) || comparableMergeableState(a.state) != "blocked" {
+	if now.Sub(r.at) >= mergeRefusalRecheck || !strings.EqualFold(r.head, strings.TrimSpace(a.head)) || comparableMergeableState(a.state) != r.state {
 		delete(c.mergeRefusals, mergeRefusalChecksKey(a))
 		return false
 	}

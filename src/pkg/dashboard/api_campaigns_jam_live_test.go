@@ -26,15 +26,18 @@ func jamLiveDial(t *testing.T, srv *httptest.Server, user, role string) *websock
 
 func readJamLiveUntil(t *testing.T, conn *websocket.Conn, want string, match func(jamLiveMessage) bool) jamLiveMessage {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if err := conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond)); err != nil {
-			t.Fatalf("set read deadline: %v", err)
-		}
+	// One deadline for the whole wait: gorilla/websocket marks the connection
+	// permanently failed after any read error (a deadline timeout included), so
+	// retrying ReadJSON after a short timeout panics with "repeated read on
+	// failed websocket connection" instead of waiting for the next frame.
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	for {
 		var msg jamLiveMessage
 		if err := conn.ReadJSON(&msg); err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure) || strings.Contains(err.Error(), "i/o timeout") {
-				continue
+			if strings.Contains(err.Error(), "i/o timeout") {
+				t.Fatalf("timed out waiting for live message %s", want)
 			}
 			t.Fatalf("read live message %s: %v", want, err)
 		}
@@ -42,8 +45,37 @@ func readJamLiveUntil(t *testing.T, conn *websocket.Conn, want string, match fun
 			return msg
 		}
 	}
-	t.Fatalf("timed out waiting for live message %s", want)
-	return jamLiveMessage{}
+}
+
+// TestReadJamLiveUntilWaitsPastShortGaps guards the helper above: a frame that
+// arrives after a quiet gap longer than any per-read poll interval must still
+// be delivered rather than tripping gorilla's failed-connection panic.
+func TestReadJamLiveUntilWaitsPastShortGaps(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		// Simulate a slow producer: the frame lands well after the 250 ms
+		// per-read poll the helper used to apply.
+		<-time.After(600 * time.Millisecond)
+		_ = conn.WriteJSON(jamLiveMessage{Type: jamLiveSnapshot})
+		// Keep the socket open until the client is done reading.
+		_, _, _ = conn.ReadMessage()
+	}))
+	t.Cleanup(srv.Close)
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	if got := readJamLiveUntil(t, conn, jamLiveSnapshot, nil); got.Type != jamLiveSnapshot {
+		t.Fatalf("message type = %q, want %q", got.Type, jamLiveSnapshot)
+	}
 }
 
 func TestCampaignJamLiveRejectsCrossOriginHandshake(t *testing.T) {

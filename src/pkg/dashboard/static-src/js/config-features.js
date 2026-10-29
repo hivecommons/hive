@@ -408,7 +408,7 @@
         ${featuresSectionHtml('review', `
         <div class="settings-subsection">
           <div class="settings-subsection-title">Review Gate ${settingHelpMark('review-swarm', 'configuration', 'Review Gate', `The review swarm gate runs designated reviewer agents on each PR and blocks merge until they approve. Used at ACMM L4+.`)}</div>
-          <div class="config-subgroup">Merge gate</div>
+          <div class="config-subgroup">Merge queue</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rv.require_approval ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="require_approval"></div>
             <span class="config-toggle-label">Require review-swarm approval before merge ${settingHelpMark('review-swarm', 'configuration', 'Require review-swarm approval before merge', `When on, a PR is not merge-eligible until the reviewer agents record an aggregate approval. Off by default, which preserves the existing behaviour of not consulting review verdicts at all. Typically used at ACMM L4 and above.`)}</span>
@@ -472,9 +472,13 @@
             <div class="config-toggle-switch ${rv.contributor_prs && rv.contributor_prs.base_sync ? 'on' : ''}" data-action="toggleContributorPRBaseSync"></div>
             <span class="config-toggle-label">Sync lane-authored contributor fork PRs with base ${settingHelpMark('review-swarm', 'configuration', 'Sync lane-authored contributor fork PRs with base', `OFF by default. Owner gate for review.contributor_prs.base_sync. When a Hive-authored lane PR lives on a contributor fork, is behind or dirty, and has &quot;allow edits by maintainers&quot; enabled, Hive may call GitHub&apos;s update-branch API. Clean BEHIND PRs get a GitHub-authored merge commit; DIRTY PRs fall back to the base-moved repair note and kick. Requires the agent mode that permits update-branch (ISSUES_PRS_MERGE).`)}</span>
           </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${am.require_current_base_default ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="require_current_base_default"></div>
+            <span class="config-toggle-label">Merge only on current base ${yamlHint('auto_merge.require_current_base_default')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Merge only on current base', `OFF by default. Before auto-merging in any lane, require the PR head to contain the current base tip; a green head tested on an older base is updated with GitHub update-branch and merges once CI is green on the new head. Costs one compare call per merge candidate. Per-repo overrides live on the repo card.`)}</span>
+          </div>
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${rv.post_comments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="post_comments"></div>
-            <span class="config-toggle-label">Post review comments ${yamlHint('review.post_comments')} ${settingHelpMark('review-swarm', 'configuration', 'Post review comments', `OFF by default. Reviewers publish their verdict as a PR comment through the hive-review relay, in addition to returning it to the merge gate. Off, the verdict stays internal, which on a hive without auto-merge means nobody reads it. Turn this on so a review reaches the human who has to decide.`)}</span>
+            <span class="config-toggle-label">Post review comments ${yamlHint('review.post_comments')} ${settingHelpMark('review-swarm', 'configuration', 'Post review comments', `OFF by default. Reviewers publish their verdict as a PR comment through the hive-review relay, in addition to returning it to the merge queue. Off, the verdict stays internal, which on a hive without auto-merge means nobody reads it. Turn this on so a review reaches the human who has to decide.`)}</span>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.acknowledge_no_findings ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="acknowledge_no_findings"></div>

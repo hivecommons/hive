@@ -7,7 +7,7 @@ import (
 )
 
 // The decision glossary: every rule slug, verdict/action and blocker reason
-// the delegate (or the merge gate it hands off to) can name, in plain words
+// the delegate (or the merge queue it hands off to) can name, in plain words
 // an operator who has never read the hive's source can act on. This is the
 // ONE source for operator-facing text — the dashboard toast and popover,
 // the PR comment, the tooltip and the JS mirror in index.html
@@ -91,8 +91,8 @@ var glossary = []GlossaryEntry{
 		Detail: "The PR's author (or their clanker or hive) has been offline since the hive nudged them, so the hive takes the work over instead of waiting. The decision itself names which: the author's clanker, a connected hive, or the author."},
 	{Slug: RuleAlreadyFixed, Kind: GlossaryRule, Plain: "the issue was already fixed by a merged PR; closed as superseded",
 		Detail: "The issue this PR fixes is already closed and a merged PR closed it (or a merged PR declares it supersedes this one), so nothing is left to deliver. The hive closes the PR as superseded with a note naming the merging PR; it never adopts it."},
-	{Slug: RuleMergeableAsIs, Kind: GlossaryRule, Plain: "mergeable and green as it is; handed to the merge gate",
-		Detail: "The head is mergeable with green CI, so no adoption is needed: the hive approves it and the merge gate takes it as it is."},
+	{Slug: RuleMergeableAsIs, Kind: GlossaryRule, Plain: "mergeable and green as it is; handed to the merge queue",
+		Detail: "The head is mergeable with green CI, so no adoption is needed: the hive approves it and the merge queue takes it as it is."},
 	{Slug: RuleRebaseThenMerge, Kind: GlossaryRule, Plain: "only conflicts block it; a rebase then merge",
 		Detail: "Conflicts are the only blocker. The unattended rebase-then-merge path lands with hivecommons/hive#15104; until then the ladder records this rung and moves on."},
 	{Slug: RuleReturnToContributor, Kind: GlossaryRule, Plain: "the author's clanker or hive is connected; returned to them with the fix list",
@@ -151,7 +151,7 @@ var glossary = []GlossaryEntry{
 	{Slug: GlossaryAdopt, Kind: GlossaryAction, Plain: "hive takes over finishing this PR",
 		Detail: "Adopt means the hive takes over finishing this PR: it rebases, fixes CI and merges it, keeping the author's commits and sign-off."},
 	{Slug: string(VerdictApprove), Kind: GlossaryAction, Plain: "approved for merge",
-		Detail:      "The hive approved it; the merge gate merges it once every check passes.",
+		Detail:      "The hive approved it; the merge queue merges it once every check passes.",
 		IssuePlain:  "approved to proceed — an agent may claim it",
 		IssueDetail: "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged.",
 		Aliases:     []string{"approved", string(ActionApproveReview)}},
@@ -193,7 +193,7 @@ var glossary = []GlossaryEntry{
 		Detail:  "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it.",
 		Aliases: []string{"changes-requested", "contributor-lane:changes-requested", "human-changes-requested", "reviewer-verdict:request_changes", "request_changes"}},
 	{Slug: GlossarySelfDecision, Kind: GlossaryReason, Plain: "hive's own decision comment was read as a reviewer asking for changes",
-		Detail: "The merge gate read the hive's own `/hive decision` comment as a reviewer asking for changes, so the decision blocked the PR it meant to advance (hivecommons/hive#14822). A new commit or a maintainer merge clears it."},
+		Detail: "The merge queue read the hive's own `/hive decision` comment as a reviewer asking for changes, so the decision blocked the PR it meant to advance (hivecommons/hive#14822). A new commit or a maintainer merge clears it."},
 	{Slug: GlossarySentinel, Kind: GlossaryReason, Plain: "security-sensitive files changed; a maintainer must approve",
 		Detail:  "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label.",
 		Aliases: []string{"sentinel-alert", "contributor-lane:sentinel-blocked", "sentinel-blocked"}},
@@ -229,8 +229,8 @@ var glossary = []GlossaryEntry{
 		Detail: "The hive approved the issue and applied approved-direction, but the stage/045-needs-decision park label was never removed, so the scanner still skips the issue. Lift the park (it removes the label through the hive's audited label path) or re-evaluate the issue so the stage engine re-reads it."},
 	{Slug: GlossaryStillParked, Kind: GlossaryReason, Plain: "the item is still waiting on a person",
 		Detail: "The item is still parked for a person's decision; the recorded decision did not move it."},
-	{Slug: GlossaryNotMergedYet, Kind: GlossaryReason, Plain: "the merge gate hasn't merged it",
-		Detail: "The hive approved it but the merge gate has not merged it; its lane reason says what still blocks it."},
+	{Slug: GlossaryNotMergedYet, Kind: GlossaryReason, Plain: "the merge queue hasn't merged it",
+		Detail: "The hive approved it but the merge queue has not merged it; its lane reason says what still blocks it."},
 	{Slug: GlossaryNotClosedYet, Kind: GlossaryReason, Plain: "the close didn't land",
 		Detail: "The hive decided to close it, but it is still open; the close call did not land."},
 	{Slug: GlossaryNoNewCommit, Kind: GlossaryReason, Plain: "no new commit has been pushed",

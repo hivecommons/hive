@@ -299,6 +299,9 @@
         const autoMergeLevelOK = Number((status && status.acmmLevel) || 0) >= 6;
         const swarming = activeSwarmRepo && activeSwarmRepo.toLowerCase() === cardRepo.toLowerCase();
         const swarmPill = swarming ? `<span class="repo-swarm-pill" title="${esc('This repository is being prioritized by the active swarm')}">🐝 swarm</span>` : '';
+        // #15335: the effective current-base merge gate for this repo
+        // (Features default or the repo's own override on the Repos tab).
+        const currentBasePill = r.requireCurrentBase ? `<span class="repo-current-base-pill" title="${esc('Merge only on current base: a green PR whose base has moved is updated and re-tested before Hive merges it (Settings → Features, per-repo override on the Repos tab).')}">current-base</span>` : '';
         const canPauseRepo = canToggleHold;
         // Asymmetric gate (#9070): repo-write users may switch auto-merge OFF,
         // but only a verified owner may switch it back ON — mirror the server.
@@ -337,7 +340,7 @@
           ${cardForge.kind === 'github'
             ? `<div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>`
             : `<div class="repo-provider-label" data-forge="${esc(cardForge.kind)}" style="color:var(--indigo)" title="This repo lives on ${esc(cardForge.name)} at ${esc(cardForge.host)}">${cardForge.icon} ${esc(cardForge.name)} · ${esc(cardForge.host)}</div>`}
-          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${forkPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${currentBasePill}${forkPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.issuesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>

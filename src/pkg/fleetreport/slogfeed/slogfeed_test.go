@@ -613,6 +613,9 @@ func TestGitHubUpstreamUnavailableLogsWithoutFleetReport(t *testing.T) {
 		msg  string
 		args []any
 	}{
+		{"fetch failed: GET https://api.github.com/repos/o/r/pulls/1336: 503  []", nil},
+		{"fetch failed: GET https://api.github.com/repos/o/r: 502 Bad Gateway []", nil},
+		{"fetch failed: GET https://api.github.com/repos/o/r: 504 Gateway Timeout []", nil},
 		{"self-authored automerge sweep skipped PR", []any{"repo", "kubestellar-mcp", "pr", 1336, "reason", "fetch-pr", "error", "GET https://api.github.com/repos/o/r/pulls/1336: 503  []"}},
 		{"failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 502 Bad Gateway []"}},
 		{"failed to fetch check runs", []any{"error", "GET https://api.github.com/repos/o/r/commits/abc/check-runs: 504 Gateway Timeout []"}},
@@ -633,7 +636,9 @@ func TestGitHubUpstreamUnavailableLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, _ := newFeed(t)
 	logger.Warn("self-authored automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1336: 500 Internal Server Error []")
 	logger.Warn("self-authored automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1336: 403 Resource not accessible by integration")
-	if len(*seen) != 2 {
+	logger.Warn("fetch failed: GET https://api.github.com/repos/o/r/pulls/503: 404 Not Found")
+	logger.Warn("fetch failed: GET https://api.github.com/repos/o/r: 500 Internal Server Error")
+	if len(*seen) != 4 {
 		t.Fatalf("non-gateway failures must remain reportable: %+v", *seen)
 	}
 }
