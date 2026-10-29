@@ -1046,6 +1046,46 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 	}
 }
 
+func TestTrySweepQueuedPRRequiredChecksExpectedIsRemembered(t *testing.T) {
+	var merges int
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(map[string]any{
+				"number": 7, "state": "open", "mergeable_state": "clean", "mergeable": true,
+				"user":   map[string]string{"login": "alice"},
+				"head":   map[string]string{"sha": "sha7"},
+				"labels": []map[string]string{{"name": hgithub.AutoMergeQueuedLabel}},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+			json.NewEncoder(w).Encode([]map[string]any{{"state": "APPROVED", "body": "Approved by @bob for Hive auto-merge on green CI.", "commit_id": "sha7", "user": map[string]string{"login": testHiveAppBotLogin}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "check_runs": []map[string]string{{"name": "build", "status": "completed", "conclusion": "success"}}})
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
+			merges++
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"message": "4 of 4 required status checks are expected."})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
+	if err != nil || reason != autoMergeReasonChecksExpected {
+		t.Fatalf("trySweepQueuedPR reason=%q err=%v, want %q without error", reason, err, autoMergeReasonChecksExpected)
+	}
+	attempt := mergeAttempt{owner: "acme", repo: "widget", number: 7, head: "sha7", state: "blocked"}
+	if !c.checksExpectedKnown(attempt, c.clock()) {
+		t.Fatalf("required-checks-expected refusal was not remembered for the queued head")
+	}
+	if merges != 1 {
+		t.Fatalf("merges = %d, want 1", merges)
+	}
+}
+
 func TestLatestHiveQueueApprovalDoesNotTrustBodyWhenReviewerIsNotApp(t *testing.T) {
 	var logs bytes.Buffer
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
