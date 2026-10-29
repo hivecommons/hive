@@ -296,3 +296,32 @@ func TestInactiveQueueReconcileIsThrottled(t *testing.T) {
 		t.Fatal("expected first call due, immediate repeat throttled, other repo due")
 	}
 }
+
+func TestNativeQueueErrorReasonsPreserveOwnEntry(t *testing.T) {
+	for _, reason := range []string{nativeQueueReasonRead, nativeQueueReasonEnqueue, nativeQueueReasonMethod} {
+		t.Run(reason, func(t *testing.T) {
+			c, f, pr, _ := nativeQueueEngine()
+			f.state.IsInMergeQueue = true
+			f.state.MergeQueueEntry = queueEntry(testHiveAppBotLogin)
+			c.reconcileNativeQueueGate(context.Background(), stageLaneSelf, "acme", "widget", pr, reason)
+			if f.dequeues != 0 {
+				t.Fatalf("dequeues=%d, error reason must not withdraw own entry", f.dequeues)
+			}
+		})
+	}
+}
+
+func TestSelfAuthoredSweepReadErrorKeepsQueuedEntry(t *testing.T) {
+	var merged []int
+	api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: testHiveAppBotLogin, mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	f := &nativeQueueFake{Transport: c.transport, state: hgithub.NativeMergeQueueState{ID: "PR_7", HeadRefOid: "sha7", IsMergeQueueEnabled: true, IsInMergeQueue: true, MergeQueueEntry: queueEntry(testHiveAppBotLogin)}, readErr: errors.New("graphql 502")}
+	c.transport = f
+	if _, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.dequeues != 0 {
+		t.Fatalf("dequeues=%d, transient read error must not withdraw own entry", f.dequeues)
+	}
+}
