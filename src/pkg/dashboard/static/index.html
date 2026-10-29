@@ -1616,6 +1616,11 @@
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
     .ham-holder { font-weight: normal; }
+    /* A word with a holder ("PR in progress · @bob's clanker") stays on one
+       line: the stage word keeps its width and the name gives way with an
+       ellipsis before anything wraps (hivecommons/hive#15541). */
+    .ham-seg-t.ham-has-holder, .ham-detour.ham-has-holder { display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%; white-space: nowrap; }
+    .ham-has-holder > .ham-holder { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
@@ -1843,6 +1848,10 @@
     .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
     .ham-queue-train:first-of-type { margin-top: 0; }
     .ham-queue-stalled { color: var(--yellow); }
+    /* Inside a lit chevron the word keeps the chevron's ink: ochre on the
+       amber fill was invisible, so a stalled train's chevrons read empty
+       (just the ⟳ and the actor glyph). */
+    .ham-seg.active .ham-seg-t.ham-queue-stalled { color: inherit; }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
     .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
@@ -14435,21 +14444,43 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerTrainPlace(mt) {
       return { head: Number(mt.head_number || mt.front) || 0, len: Number(mt.length || mt.size) || 0, pos: Number(mt.position) || 0 };
     }
-    // Pure: "Merge queue stalled · head #15253 waiting for CI 3h" for a
-    // train whose head has sat past governor.merge_train_stall_warn_s; ''
-    // otherwise. The server decides stalled; the words are the head's
-    // plain-word reason plus how long.
+    // The stalled chip's lead — "Merge queue · stalled — …". The popover
+    // and the queue header strip it down to "stalled: …".
+    const STAGE_TRACKER_TRAIN_STALLED_LEAD = 'Merge queue · stalled — ';
+    // Why a stalled train's head is not moving, by merge_train.head_state
+    // (mergeTrainHead* in Go) — short enough for a chevron. A head on a
+    // person says what the person has to do (the owner's ask: "waiting on
+    // #15425 (needs maintainer merge)"), not "waiting for a maintainer".
+    const STAGE_TRACKER_TRAIN_HEAD_STALL_WORD = { 'needs-human': 'needs maintainer merge', ci: 'waiting for CI', soaking: 'soak overran', ready: 'waiting for a merge sweep', merging: 'merge call in flight', fixing: 'being fixed by its author', unknown: 'head not in this view' };
+    // Pure: the short reason a stalled head is stuck — the head_state
+    // table, a human-decision head told apart by its reason, else the
+    // head's own plain-word reason cut at its first clause.
+    function stageTrackerTrainStallWhy(mt) {
+      const reason = String(mt.head_reason || '').replace(/[.;].*$/, '').trim();
+      const state = String(mt.head_state || '');
+      if (state === 'needs-human' && /decision/i.test(reason)) return 'needs a human decision';
+      return STAGE_TRACKER_TRAIN_HEAD_STALL_WORD[state] || reason;
+    }
+    // Pure: "Merge queue · stalled — waiting on #15425 (needs maintainer
+    // merge) · 1h 20m" for a member behind a head that has sat past
+    // governor.merge_train_stall_warn_s; the head's own row reads "Merge
+    // queue · stalled — needs maintainer merge · 1h 20m"; '' when not
+    // stalled. The server decides stalled; the words say why and how long.
     function stageTrackerTrainStalledWord(mt) {
       if (!mt || !mt.stalled) return '';
       const p = stageTrackerTrainPlace(mt);
-      const why = String(mt.head_reason || '').replace(/[.;].*$/, '').trim();
+      const why = stageTrackerTrainStallWhy(mt);
       const dur = stageTrackerShortLeft((Number(mt.stalled_s) || 0) * 1000);
-      return 'Merge queue stalled · head #' + p.head + (why ? ' ' + why : '') + (dur ? ' ' + dur : '');
+      const isHead = mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || p.pos === 1;
+      const what = isHead ? (why || 'the head has not moved') : 'waiting on #' + p.head + (why ? ' (' + why + ')' : '');
+      return STAGE_TRACKER_TRAIN_STALLED_LEAD + what + (dur ? ' · ' + dur : '');
     }
     // The chevron word for a train member ('' for a row not in a train).
     // The queued word is the place only — "Merge queued · 2nd" — so it
     // reads the same with the merge sweep on or off (#15395); never the
-    // state slug, never "front" or "queued-behind".
+    // state slug, never "front" or "queued-behind", and never '' for a
+    // state this table does not know: an unmapped slug reads spelled out
+    // with the row's place ("Waiting for front · 3rd").
     function stageTrackerTrainWord(item) {
       const mt = stageTrackerTrain(item);
       if (!mt) return '';
@@ -14462,7 +14493,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case STAGE_TRACKER_TRAIN_STATE_REBASING: return 'Rebasing · attempt ' + (Number(mt.attempt) || 0) + '/' + (Number(mt.max_attempts) || 0);
         case STAGE_TRACKER_TRAIN_STATE_EXHAUSTED: return 'Needs human decision · rebase failed ' + (Number(mt.attempt) === 2 ? 'twice' : (Number(mt.attempt) || 0) + ' times');
       }
-      return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] || stageTrackerMergeGateStateWord(mt.state);
+      const word = STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] || stageTrackerMergeGateStateWord(mt.state) || STAGE_TRACKER_TRAIN_STATE_WORD[STAGE_TRACKER_TRAIN_STATE_QUEUED];
+      return p.pos > 0 ? word + ' · ' + stageTrackerOrdinal(p.pos) : word;
     }
     // Pure: the member's countdown target in ms (eta_at, else now+eta_s);
     // 0 with no estimate.
@@ -14524,12 +14556,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (files.length) lines.push('Overlapping files: ' + files.join(', '));
       return lines;
     }
+    // Pure: the train a row rides — a PR's own merge_train, or, for an
+    // issue row, the merge_train of its open linked PR (the PR drawn as the
+    // issue's sub-row, nested_under). Returns { mt, pr } or null. The train
+    // header must sit over every member that is on the page: hive's
+    // v5#15425 read "3 PRs" over one row because #15529 and #15530 were
+    // drawn under their issues #15493 and #15523 and the header only
+    // counted PR rows.
+    function stageTrackerRowTrain(item) {
+      if (!item) return null;
+      const own = stageTrackerTrain(item);
+      if (own) return { mt: own, pr: Number(item.number) || 0 };
+      if (item.kind === 'pr') return null;
+      const prs = Array.isArray(item.linked_prs) ? item.linked_prs : [];
+      const open = prs.filter(lp => lp && stageTrackerTrain(lp) && !lp.superseded && String(lp.state || '') !== 'closed' && (Number(lp.stage) || 0) < STAGE_TRACKER_TERMINAL && (Array.isArray(lp.modifiers) ? lp.modifiers : []).indexOf('merged') < 0);
+      if (!open.length) return null;
+      open.sort((a, b) => (Number(a.merge_train.position) || 0) - (Number(b.merge_train.position) || 0) || ((Number(a.number) || 0) - (Number(b.number) || 0)));
+      return { mt: stageTrackerTrain(open[0]), pr: Number(open[0].number) || 0 };
+    }
     function stageTrackerTrainKey(item) {
-      const mt = stageTrackerTrain(item);
-      return mt ? (item.repo || '') + '|' + (mt.id || ('#' + mt.front)) : '';
+      const rt = stageTrackerRowTrain(item);
+      return rt ? (item.repo || '') + '|' + (rt.mt.id || ('#' + rt.mt.front)) : '';
+    }
+    // Pure: the member's merge order on its row (position, then PR number).
+    function stageTrackerTrainOrder(item) {
+      const rt = stageTrackerRowTrain(item);
+      return rt ? [Number(rt.mt.position) || 0, rt.pr] : [0, 0];
     }
     // Pure: re-orders a sorted row list so each train's members sit together
-    // at the first member's slot, in merge order (front first).
+    // at the first member's slot, in merge order (front first). An issue
+    // row whose nested PR is a member is a member row.
     function stageTrackerTrainContiguous(rows) {
       rows = Array.isArray(rows) ? rows : [];
       const byTrain = {};
@@ -14541,22 +14597,53 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (!k) { out.push(it); return; }
         if (emitted[k]) return;
         emitted[k] = true;
-        byTrain[k].slice().sort((a, b) => (Number(a.merge_train.position) || 0) - (Number(b.merge_train.position) || 0) || ((a.number || 0) - (b.number || 0))).forEach(m => out.push(m));
+        byTrain[k].slice().sort((a, b) => { const x = stageTrackerTrainOrder(a), y = stageTrackerTrainOrder(b); return (x[0] - y[0]) || (x[1] - y[1]); }).forEach(m => out.push(m));
       });
       return out;
     }
-    // Header line over a train's rows: "merge train · 4 PRs · 1st: #15074"
-    // (the train icon sits in front of it in the HTML).
-    function stageTrackerTrainHeaderText(mt) {
-      return 'merge train · ' + (Number(mt.size) || 0) + ' PRs · 1st: #' + (Number(mt.front) || 0);
+    // Pure: the member numbers of a train the page does not show, given the
+    // train's record (ahead + size on the last member tells the whole
+    // queue when the view carries it) and the numbers shown under the
+    // header. shown is the PR numbers rendered in this run.
+    function stageTrackerTrainMissing(mt, shown) {
+      const known = {};
+      (Array.isArray(mt.members) ? mt.members : []).forEach(n => { if (Number(n) > 0) known[Number(n)] = true; });
+      if (Number(mt.front) > 0) known[Number(mt.front)] = true;
+      (Array.isArray(mt.ahead) ? mt.ahead : []).forEach(n => { if (Number(n) > 0) known[Number(n)] = true; });
+      const here = {};
+      (shown || []).forEach(n => { here[Number(n)] = true; });
+      return Object.keys(known).map(Number).filter(n => !here[n]).sort((a, b) => a - b);
     }
-    function stageTrackerTrainHeaderHtml(item) {
-      const mt = stageTrackerTrain(item);
-      if (!mt) return '';
+    // Header line over a train's rows: "merge train · 4 PRs · 1st: #15074".
+    // The count is the rows drawn under the header, never the server's
+    // size alone: with shown (the PR numbers rendered in this run) a
+    // train the view only partly carries reads "merge train · 1 of 3 PRs
+    // here · 1st: #15425 · not in this view: #15529, #15530" so the header
+    // never claims rows that are not there (the train icon sits in front
+    // of it in the HTML).
+    function stageTrackerTrainHeaderText(mt, shown) {
+      const size = Number(mt.size) || 0;
+      const front = Number(mt.front) || 0;
+      if (!Array.isArray(shown)) return 'merge train · ' + size + ' PRs · 1st: #' + front;
+      const here = shown.length;
+      let text = 'merge train · ' + (here < size ? here + ' of ' + size + ' PRs here' : here + (here === 1 ? ' PR' : ' PRs')) + ' · 1st: #' + front;
+      if (here < size) {
+        const missing = stageTrackerTrainMissing(mt, shown);
+        const named = missing.map(n => '#' + n);
+        const unnamed = size - here - missing.length;
+        if (unnamed > 0) named.push(unnamed + ' more');
+        text += ' · not in this view: ' + (named.length ? named.join(', ') : (size - here) + ' PRs');
+      }
+      return text;
+    }
+    function stageTrackerTrainHeaderHtml(item, shown) {
+      const rt = stageTrackerRowTrain(item);
+      if (!rt) return '';
+      const mt = rt.mt;
       const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
-      const tip = stageTrackerTrainLines(item).join('\n');
+      const tip = stageTrackerTrainLines(item.kind === 'pr' ? item : { merge_train: mt }).join('\n');
       return `<div class="ham-train-head" data-ham-train="${esc(stageTrackerTrainKey(item))}" role="row" title="${esc(tip)}">
-        <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
+        <span class="ham-train-chip">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(stageTrackerTrainHeaderText(mt, shown))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
       </div>`;
     }
     // Row classes for a train member: the rail, and whether it leads / ends
@@ -14564,22 +14651,33 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerTrainRowClass(item, prev, next) {
       const k = stageTrackerTrainKey(item);
       if (!k) return '';
-      const mt = stageTrackerTrain(item);
+      const rt = stageTrackerRowTrain(item);
       let cls = ' ham-train';
-      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) cls += ' ham-train-front';
+      if (rt.mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) cls += ' ham-train-front';
       if (!next || stageTrackerTrainKey(next) !== k) cls += ' ham-train-last';
       return cls;
     }
     // Inserts a train header entry before the first row of each train run.
-    // Entries are {key, html}; items are the page's row items in order.
+    // Entries are {key, html}; items are the page's row items in order. The
+    // header counts the run it heads — the rows actually drawn under it.
     function stageTrackerTrainRows(items, rowOf) {
       const out = [];
       let prevKey = '';
-      (items || []).forEach((e, i) => {
+      const list = items || [];
+      const itemOf = e => (e && e.item ? e.item : (e && e.group ? null : e));
+      list.forEach((e, i) => {
         // Entries are items, or the grouped view's {item} / {group} wrappers.
-        const it = e && e.item ? e.item : (e && e.group ? null : e);
+        const it = itemOf(e);
         const k = it ? stageTrackerTrainKey(it) : '';
-        if (k && k !== prevKey) out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it) });
+        if (k && k !== prevKey) {
+          const shown = [];
+          for (let j = i; j < list.length; j++) {
+            const m = itemOf(list[j]);
+            if (!m || stageTrackerTrainKey(m) !== k) break;
+            shown.push(stageTrackerRowTrain(m).pr);
+          }
+          out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it, shown) });
+        }
         prevKey = k;
         out.push(rowOf(e, i));
       });
@@ -15774,6 +15872,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const c = item && item.claimant;
       return c && typeof c === 'object' && c.kind && (c.login || c.agent) ? c : null;
     }
+    // The strip icon for a holder's kind: ⬡ hive agent, robot clanker, person.
+    const STAGE_TRACKER_CLAIMANT_ICON = { 'hive-agent': 'hive', clanker: 'clanker', person: 'human' };
+    function stageTrackerClaimantIconKind(c) {
+      return (c && STAGE_TRACKER_CLAIMANT_ICON[c.kind]) || 'human';
+    }
     // "quality", "quality@alchemy", "@alice" or "@bob's clanker"; '' when unknown.
     function stageTrackerClaimantShort(c) {
       if (!c) return '';
@@ -15907,6 +16010,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const claimant = typeof stageTrackerClaimant === 'function' ? stageTrackerClaimant(item) : null;
       const holderShort = claimant ? stageTrackerClaimantShort(claimant) : '';
       const holderHtml = holderShort ? `<span class="ham-holder"> · ${esc(holderShort)}</span>` : '';
+      // A row whose next mover is nobody (an unclassified PR under its
+      // issue reads "PR in progress") still shows WHO holds it: the
+      // holder's own kind icon stands where the actor icon would
+      // (hivecommons/hive#15541).
+      const holderIco = holderShort && !actorIco ? stageTrackerIcon(stageTrackerClaimantIconKind(claimant), 'ham-ico ham-actor-ico', stageTrackerClaimantLine(claimant, nowMs)) : '';
       // Static chevrons carry no data-motion: the CSS only animates the two
       // moving buckets. The hive-acting pulse needs an agent actually on
       // the item (tracker-cues: working); a hive stage with nobody on it is
@@ -15960,7 +16068,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // On the merge gate the word carries its live detail and the
         // leading glyph says in words what hive is doing (#15073).
         const gateWord = active && !sg.cap && !sg.detour && typeof stageTrackerMergeGateWordHtml === 'function' ? stageTrackerMergeGateWordHtml(item, nowMs) : '';
-        const word = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}${holderHtml}</span>` : (gateWord || `<span class="ham-seg-t">${esc(sg.short)}${holderHtml}</span>`);
+        // A detour word that already names the holder ("Returned to
+        // @bob's clanker") does not repeat them after the dot.
+        const detourHolder = sg.detour && holderShort && sg.detour.text.indexOf(holderShort) >= 0 ? '' : holderHtml;
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${esc(sg.detour.text)}${detourHolder}</span>` : (gateWord || `<span class="ham-seg-t${holderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${holderHtml}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
@@ -15969,7 +16080,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // The cap chevron is the ✓ only once the PR is merged; until then
         // the column is the row's history and wears the history mark.
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
-        else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;
+        else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + (actorIco || holderIco);
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : (sentinelSuffix ? ` aria-label="${esc(sg.detour.text + ' — ' + stageTrackerSentinelTip(item))}"` : '')}>${inner}</li>`;
       }).join('');
@@ -16819,7 +16930,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : null, lp.base_ref)];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRPillsHtml(stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)), lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? (stageTrackerLineageChipHtml(lp, nowMs) || null) : null, lp.base_ref)];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
@@ -21388,7 +21499,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const place = stageTrackerTrainPlace(t.mt);
         const stalled = stageTrackerTrainStalledWord(t.mt);
         const base = String(t.mt.id || '').split('#')[0] || 'base';
-        const title = `<div class="ham-queue-train${stalled ? ' ham-queue-stalled' : ''}">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(String(t.repo || ''))} → ${esc(base)} · ${esc(String(place.len))} PRs · head #${esc(String(place.head))}${stalled ? ' · ' + esc(stalled.replace(/^Merge queue stalled · /, 'stalled: ')) : ''}</div>`;
+        const title = `<div class="ham-queue-train${stalled ? ' ham-queue-stalled' : ''}">${stageTrackerTrainIconHtml('ham-train-icon')} ${esc(String(t.repo || ''))} → ${esc(base)} · ${esc(String(place.len))} PRs · head #${esc(String(place.head))}${stalled ? ' · ' + esc(stalled.replace(STAGE_TRACKER_TRAIN_STALLED_LEAD, 'stalled: ')) : ''}</div>`;
         const rows = t.members.map(it => {
           const mt = it.merge_train || {};
           const n = esc(String(it.number || ''));

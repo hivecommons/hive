@@ -291,6 +291,11 @@
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
     .ham-holder { font-weight: normal; }
+    /* A word with a holder ("PR in progress · @bob's clanker") stays on one
+       line: the stage word keeps its width and the name gives way with an
+       ellipsis before anything wraps (hivecommons/hive#15541). */
+    .ham-seg-t.ham-has-holder, .ham-detour.ham-has-holder { display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%; white-space: nowrap; }
+    .ham-has-holder > .ham-holder { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
@@ -518,6 +523,10 @@
     .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
     .ham-queue-train:first-of-type { margin-top: 0; }
     .ham-queue-stalled { color: var(--yellow); }
+    /* Inside a lit chevron the word keeps the chevron's ink: ochre on the
+       amber fill was invisible, so a stalled train's chevrons read empty
+       (just the ⟳ and the actor glyph). */
+    .ham-seg.active .ham-seg-t.ham-queue-stalled { color: inherit; }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
     .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }

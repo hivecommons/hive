@@ -55,6 +55,9 @@ type StageTrackerMergeTrain struct {
 	OverlapFiles []string `json:"overlap_files,omitempty"`
 	// Ahead lists the PRs still to merge before this one, in order.
 	Ahead []int `json:"ahead,omitempty"`
+	// Members lists every member of the train in merge order (the front
+	// first), so a view that carries only some of them can name the rest.
+	Members []int `json:"members,omitempty"`
 	// Queue facts for the chip (hivecommons/hive#15395): Length repeats
 	// Size and HeadNumber repeats Front under the names the SPA's queue
 	// wording uses; HeadState is what the head is doing now (one of the
@@ -245,12 +248,17 @@ func stageTrackerMergeTrainPostPass(items []StageTrackerItem, opts mergeTrainQue
 		sort.Slice(idx, func(a, b int) bool {
 			return items[idx[a]].MergeTrain.Position < items[idx[b]].MergeTrain.Position
 		})
+		members := make([]int, 0, len(idx))
+		for _, i := range idx {
+			members = append(members, items[i].Number)
+		}
 		for n, i := range idx {
 			var ahead []int
 			for _, j := range idx[:n] {
 				ahead = append(ahead, items[j].Number)
 			}
 			items[i].MergeTrain.Ahead = ahead
+			items[i].MergeTrain.Members = append([]int(nil), members...)
 		}
 		var head *StageTrackerItem
 		if frontIdx >= 0 {
