@@ -1,0 +1,1 @@
+- An opt-in Kustomize component `src/deploy/kustomize/components/monitoring/` adds a Prometheus Operator `ServiceMonitor` targeting `/metrics` and patches the Deployment for `HIVE_METRICS_ENABLED` and `HIVE_METRICS_TOKEN` ([#15437](https://github.com/hivecommons/hive/issues/15437)).
