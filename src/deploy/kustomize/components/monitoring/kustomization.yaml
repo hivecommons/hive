@@ -3,6 +3,7 @@ kind: Component
 
 resources:
   - servicemonitor.yaml
+  - prometheusrule.yaml
 
 patches:
   - path: patch-deployment.yaml
