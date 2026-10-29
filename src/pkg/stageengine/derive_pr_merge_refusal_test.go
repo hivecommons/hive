@@ -25,6 +25,8 @@ func TestClassifyStagePermanentMergeRefusals(t *testing.T) {
 		{name: "merge queue required", reason: autoMergeReasonMergeQueueRequired, want: stagelabels.MergeQueue},
 		{name: "native queued position", reason: "native-merge-queued: queued (position 2, AWAITING_CHECKS)", want: stagelabels.MergeQueue},
 		{name: "native enqueue failure", reason: "native-merge-queue-enqueue", want: stagelabels.MergeQueue},
+		{name: "native read failure", reason: "native-merge-queue-read", want: stagelabels.MergeQueue},
+		{name: "native queue method refused", reason: "native-merge-queue-method", want: stagelabels.NeedsDecision, wantHuman: true},
 		{name: "unclassified merge failure", reason: "merge-failed", want: stagelabels.MergeQueue},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

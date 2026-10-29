@@ -34,10 +34,14 @@ periodic/event-driven, so a gate change can race GitHub's eventual merge.
 
 Queue rules choose the merge method. Where Hive elected a merge commit to
 preserve mixed authorship and DCO attribution, the queue must use `MERGE`;
-otherwise Hive reports a queue-method failure rather than enqueueing.
-This failure is permanent and is not routed to a human: the PR stays at
-`stage/100-merge-queue` until an operator changes the queue's merge method to
-`MERGE` (or the authorship no longer requires a merge commit).
+otherwise Hive reports `native-merge-queue-method` rather than enqueueing.
+Like a direct merge GitHub refuses because the merge method is disabled, the
+PR parks at `stage/085-needs-decision` for a person, with the `merge-method`
+explanation: change the queue's merge method to `MERGE`, or merge it by hand.
+The refusal is remembered for 30 minutes per head, so the queue's method is
+not re-read every sweep; a new head or the recheck window reads it again.
+Read and enqueue failures (`native-merge-queue-read`, `-enqueue`) stay at
+`stage/100-merge-queue`.
 
 Required workflows must subscribe to `merge_group` in addition to their PR
 triggers. Workflow-trigger diagnosis is not automatic in this implementation.

@@ -17,7 +17,7 @@ const (
 	nativeQueueReason        = prstage.AutoMergeReasonNativeQueued
 	nativeQueueReasonRead    = prstage.AutoMergeReasonNativeQueuePrefix + "-read"
 	nativeQueueReasonEnqueue = prstage.AutoMergeReasonNativeQueuePrefix + "-enqueue"
-	nativeQueueReasonMethod  = prstage.AutoMergeReasonNativeQueuePrefix + "-method"
+	nativeQueueReasonMethod  = prstage.AutoMergeReasonNativeQueueMethod
 
 	// Lanes passed to reconcileNativeQueueGate by callers outside the three
 	// authoring lanes.
@@ -71,11 +71,15 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 	// A queue chooses its own merge method. Preserve the attribution gate
 	// that elected a merge commit to retain each author's signed commits.
 	if claim.Inputs["method_reason"] == mergeMethodReasonMixedAuthorship {
+		if c.knownNativeQueueMethodRefusal(claim, state.HeadRefOid) {
+			return nativeQueueReasonMethod, nil
+		}
 		method, err := t.NativeMergeQueueMethod(ctx, state.ID, pr.GetBase().GetRef())
 		if err != nil {
 			return nativeQueueReasonMethod, err
 		}
 		if !strings.EqualFold(method, "MERGE") {
+			c.noteNativeQueueMethodRefusal(claim, state.HeadRefOid)
 			return nativeQueueReasonMethod, fmt.Errorf("mixed authorship requires a merge commit; queue uses %s", method)
 		}
 	}
