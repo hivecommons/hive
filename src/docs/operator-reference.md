@@ -748,7 +748,11 @@ N ahead), `· acknowledged` (activity on the PR after the request),
 `· working` (the clanker relay took the `fix-pr` task), `· re-review pending`
 (a new head, routed back to 050 on the next sweep) — from the stage record,
 the PR list and the fix queue the tracker already holds, with no extra
-GitHub calls (hivecommons/hive#15280). When the
+GitHub calls (hivecommons/hive#15280). Push detection needs the head saved
+by a nudge: a never-nudged 071 row has only a stage-entry time, so a push
+cannot produce `· re-review pending` and may appear as `· acknowledged`
+from PR activity instead. The stage engine still routes the new head to
+050 on its next sweep (hivecommons/hive#15286). When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
 `ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR
