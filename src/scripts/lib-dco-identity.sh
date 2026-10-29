@@ -105,6 +105,34 @@ author_login_for_commit() {
   github_api_author_login "$sha_arg" || true
 }
 
+# Print the GitHub login encoded in a noreply address: both the plain
+# `login@users.noreply.github.com` and the numeric
+# `<id>+login@users.noreply.github.com` forms. Prints nothing and returns 1 for
+# any other address. The login is a STRUCTURAL fact of the address (GitHub
+# mints these itself), which is what lets a checker reason about it offline.
+github_noreply_login() {
+  email_lc=$(printf '%s' "$1" | lower)
+  suffix='@users.noreply.github.com'
+  case "$email_lc" in
+    *"$suffix") ;;
+    *) return 1 ;;
+  esac
+  local_part=${email_lc%"$suffix"}
+  [ -n "$local_part" ] || return 1
+  case "$local_part" in
+    *+*)
+      id_part=${local_part%%+*}
+      login_part=${local_part#*+}
+      case "$id_part" in
+        ''|*[!0-9]*) return 1 ;;
+      esac
+      [ -n "$login_part" ] || return 1
+      printf '%s' "$login_part"
+      ;;
+    *) printf '%s' "$local_part" ;;
+  esac
+}
+
 # Is $1 (a lower-cased email) the GitHub noreply address for login $2?
 # Accepts both `login@users.noreply.github.com` and the numeric
 # `<id>+login@users.noreply.github.com` form.
