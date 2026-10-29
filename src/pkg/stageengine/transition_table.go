@@ -47,6 +47,7 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.MergeQueue, stagelabels.Fixing}:                        true, // new head red (backward hop, commented)
 	{stagelabels.MergeQueue, stagelabels.ReturnedToContributor}:         true, // contributor head red (backward hop, commented)
 	{stagelabels.Fixing, stagelabels.ReviewPending}:                     true, // fixed head pushed
+	{stagelabels.Fixing, stagelabels.NeedsDecision}:                     true, // hive adoption copy still conflicting after two fixer rebase attempts (rebase-failed-twice)
 	{stagelabels.NeedsAuthor, stagelabels.ReviewPending}:                true, // author pushes a new head
 	{stagelabels.ReturnedToContributor, stagelabels.ReviewPending}:      true, // author pushes a new head
 	{stagelabels.ReturnedToContributor, stagelabels.AdoptedByHive}:      true, // clanker unavailable, adopted

@@ -1184,6 +1184,7 @@ stateDiagram-v2
     s100 --> s070: new head red (backward hop, commented)
     s100 --> s072: contributor head red (backward hop, commented)
     s070 --> s050: fixed head pushed
+    s070 --> s085: the hive's adoption copy (hive/adopt-N) still conflicts with the base after the fixer's two rebase-resolve attempts (rebase-failed-twice)
     s071 --> s050: author pushes a new head
     s072 --> s050: author pushes a new head
     s072 --> s074: contributor agent unavailable (offline / unregistered / grace), adopted in place or superseded
@@ -1192,6 +1193,7 @@ stateDiagram-v2
     s074 --> s100: lane admits the hive's head, soak complete
     s074 --> [*]: superseder merged (original closed); close_first (default) closes the original in the adopting pass instead
     s074 --> s085: close-first copy closed unmerged or red at two heads → original reopened, adoption-copy-failed
+    s074 --> s085: the superseding copy still conflicts with the base after the fixer's two rebase-resolve attempts (adoption-stalled:rebase-failed-twice; Adopt into fresh branch / Close as superseded)
     s074 --> s072: superseder closed unmerged, or contributor pushed over an in-place adoption (handed back; 050 if that head is green)
     s074 --> s085: adopted head unchanged past the dwell with CI idle and a real blocker the hive cannot push past (adoption-stalled:<reason>; a red optional check alone never counts), or the re-home failed
     s085 --> s074: the adoption-stalled reason cleared (CI re-ran, check green, verdict landed); escalation released
@@ -1991,7 +1993,9 @@ When a contributor-agent PR goes red the hive does not just relabel it (a human-
      `adoption-stalled:<lane reason>` (e.g.
      `adoption-stalled:reviewer-verdict:changes_requested`,
      `adoption-stalled:check-failing:unit`,
-     `adoption-stalled:supersede-failed:dco-rehome`) and ONE
+     `adoption-stalled:supersede-failed:dco-rehome`,
+     `adoption-stalled:rebase-failed-twice` when the hive's copy still
+     conflicts after the fixer's two rebase-resolve attempts) and ONE
      `<!-- hive:adoption-stalled head=<sha> reason=<r> -->` comment naming
      the exact blocker (the verdict and its summaries, the red check, or the
      failed re-home). The dwell is measured from the head, not the adoption:
