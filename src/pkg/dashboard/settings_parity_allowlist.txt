@@ -509,3 +509,5 @@ variables.security.http_timeout_s # TODO #11854
 write_surface.allowlist.<key> # TODO #11854
 write_surface.enforce[] # TODO #11854
 write_surface.neutralize_mentions[] # TODO #11854
+writeback.kinds.<key>.own_only # policy-file knob; the Settings matrix shows it read-only as the kind's scope
+writeback.kinds.<key>.unlabeled_min_level # policy-file knob; the Settings matrix shows it read-only in the kind's scope
