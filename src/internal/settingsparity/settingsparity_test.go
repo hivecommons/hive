@@ -206,19 +206,14 @@ type Config struct {
 	Mode string `+"`yaml:\"mode\"`"+`
 }
 `)
-	leaves, err := ConfigLeaves(root)
-	if err != nil {
-		t.Fatalf("ConfigLeaves: %v", err)
-	}
-	// Gate is not reachable from Config; walk it the way Config's fields are.
-	// Reuse the public entry point by pointing the fixture Config at Gate.
+	// Point the fixture Config at Gate so the walk reaches the qualified types.
 	writeFile(t, filepath.Join(root, "src", "pkg", "config", "config.go"), `package config
 
 type Config struct {
 	Gate Gate `+"`yaml:\"gate\"`"+`
 }
 `)
-	leaves, err = ConfigLeaves(root)
+	leaves, err := ConfigLeaves(root)
 	if err != nil {
 		t.Fatalf("ConfigLeaves: %v", err)
 	}
