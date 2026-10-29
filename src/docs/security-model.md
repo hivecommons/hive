@@ -61,17 +61,17 @@ are enabled on a given hive.
 
 | Control | Mitigates | Where it lives | How to check it is on |
 |---|---|---|---|
-| Fresh context per task (`clear_on_kick`) | injection persistence | `src/pkg/agent/manager_kick.go` | `hive.yaml` agent block |
-| Watchdog and crash-loop pause | stuck agents | `src/pkg/agent/watchdog_fleet.go` | `conditions[]` in `GET /api/agents` |
+| Fresh context per task (`clear_on_kick`) | injection persistence | `src/crux/agent/manager_kick.go` | `hive.yaml` agent block |
+| Watchdog and crash-loop pause | stuck agents | `src/crux/agent/watchdog_fleet.go` | `conditions[]` in `GET /api/agents` |
 | Per-agent Unix users, `su-exec` 4750 | cross-agent access, privilege escalation | `src/deploy/entrypoint.sh`, `src/Dockerfile` | `/var/run/hive/uid-map.json`; `suid-contract` CI job |
-| Per-agent tool denials; GitHub MCP writes denied | GitHub writes through tools | `src/pkg/agent/manager_launch.go` | agent launch command |
-| Credential-free sandbox and push broker (opt-in) | credential theft | `src/pkg/sandbox`, `src/pkg/pushbroker` | `agentSandboxEnabled` in `GET /api/config/governor` |
+| Per-agent tool denials; GitHub MCP writes denied | GitHub writes through tools | `src/crux/agent/manager_launch.go` | agent launch command |
+| Credential-free sandbox and push broker (opt-in) | credential theft | `src/crux/sandbox`, `src/crux/pushbroker` | `agentSandboxEnabled` in `GET /api/config/governor` |
 | Work ledger and knowledge store instead of memory | injection persistence | `src/pkg/beads`, `src/pkg/knowledge` | `bd` CLI |
 | `ioscan` scanning and canaries (default on) | prompt injection, secret leakage | `src/pkg/ioscan` | `ioscanEnabled`, `ioscanFailMode` in `GET /api/config/governor` |
-| Trajectory review (default on) | goal drift | `src/pkg/trajectory` | `governor.trajectory.enabled` |
+| Trajectory review (default on) | goal drift | `src/crux/trajectory` | `governor.trajectory.enabled` |
 | Policy proxy and repo allowlist | credential theft, out-of-scope writes | `src/crux/proxy/rules.go` | `403` with `X-Hive-Proxy-Blocked` |
 | Forced egress through the proxy (iptables) | proxy bypass | `src/deploy/entrypoint.sh` | boot log; no `HIVE_PROXY_ADVISORY_OK` |
-| Tiered GitHub tokens per agent mode | blast radius of a leaked token | `src/pkg/agentmode`, `src/pkg/agent/manager_tokens.go` | token tier on the agent card |
+| Tiered GitHub tokens per agent mode | blast radius of a leaked token | `src/crux/agentmode`, `src/crux/agent/manager_tokens.go` | token tier on the agent card |
 | Proxy-side credential injection (opt-in) | token theft | `HIVE_PROXY_INJECT_GH_AUTH` | `security.credentialInjection` in governor config |
 | Inference-key placeholder swap | provider key theft | `src/pkg/apiproxy` | agent env shows `sk-hive-<agent>` |
 | `gh` wrapper with per-agent restrictions | denied commands | `bin/gh-wrapper.sh` | `gh` resolves to `/usr/local/bin/gh` |
@@ -89,7 +89,7 @@ are enabled on a given hive.
 | Webhook signature check | forged events | `src/pkg/dashboard/api_github_webhook.go` | unsigned request rejected |
 | Hub auth (Ed25519 sessions, per-hive bearers) | platform compromise | `src/pkg/hub/saas_auth.go` | `GET /api/saas/admin/auth-rollout` |
 | Content Security Policy and headers | dashboard XSS | `src/pkg/dashboard/server.go` | response headers |
-| Log scrubbing | secrets in logs | `src/pkg/logscrub` | redacted patterns in logs |
+| Log scrubbing | secrets in logs | `src/crux/logscrub` | redacted patterns in logs |
 | Supply-chain guards | supply chain | `.github/workflows/*.yml`, `src/Dockerfile` | PR checks |
 | DCO on every commit | unattributed code | `src/scripts/check-dco-trailers.sh` | DCO check on PR |
 
