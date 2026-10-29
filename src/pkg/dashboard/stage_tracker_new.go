@@ -149,7 +149,9 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 		}
 	}
 	n.Text = "New · waiting for " + n.NextMoverText
-	if pass != "" && n.NextMover == StageTrackerMoverHive {
+	if triagePending {
+		n.Text = stageTrackerTriageNeededCaption
+	} else if pass != "" && n.NextMover == StageTrackerMoverHive {
 		n.Text += " (" + pass + ")"
 	} else if pass != "" {
 		n.Text += fmt.Sprintf("; the hive's %s", pass)

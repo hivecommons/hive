@@ -55,8 +55,8 @@ assert.ok(ids(stageTrackerRowActions({ ...triage, stage: 20, modifiers: ['needs-
 // (hivecommons/hive#15215) offers it too; its hint reads the configured
 // label and the row's own next pass. A 000-new issue the hive moves next
 // (reporter admitted) does not: nothing to accept.
-const fresh = { ...triage, stage: 0, stage_slug: '000-new', actor: 'maintainer', caption: 'New · waiting for a maintainer\'s triage (add ' + BT + 'triage/ok' + BT + '); the hive\'s next pass in 7m',
-  new: { next_mover: 'maintainer', next_mover_text: 'a maintainer\'s triage (add ' + BT + 'triage/ok' + BT + ')', next_pass_at: '2026-10-28T20:07:00Z', gates: [{ name: 'triage', state: 'next', text: 'a maintainer accepts triage (triage/ok)' }, { name: 'actionable', state: 'later', text: 'the stage-label pass marks it 010 actionable' }, { name: 'claimed', state: 'later', text: 'the scanner claims it (020)' }], text: 'New · waiting for a maintainer\'s triage (add ' + BT + 'triage/ok' + BT + '); the hive\'s next pass in 7m' } };
+const fresh = { ...triage, stage: 0, stage_slug: '000-new', actor: 'maintainer', caption: 'Triage needed — accept or close',
+  new: { next_mover: 'maintainer', next_mover_text: 'a maintainer\'s triage (add ' + BT + 'triage/ok' + BT + ')', next_pass_at: '2026-10-28T20:07:00Z', gates: [{ name: 'triage', state: 'next', text: 'a maintainer accepts triage (triage/ok)' }, { name: 'actionable', state: 'later', text: 'the stage-label pass marks it 010 actionable' }, { name: 'claimed', state: 'later', text: 'the scanner claims it (020)' }], text: 'Triage needed — accept or close' } };
 as = stageTrackerRowActions(fresh, ctx);
 assert.strictEqual(ids(as)[0], 'accept-triage', 'a 000-new reporter-trust hold leads with Accept triage');
 assert.strictEqual(as[0].hint, 'adds ' + BT + 'triage/ok' + BT + ' as @octo; the hive takes it on its next pass (≈7 min)');

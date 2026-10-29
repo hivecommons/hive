@@ -56,7 +56,7 @@ func TestWebhookOpenedItemInsertedIntoTracker(t *testing.T) {
 	if it.Stage != 0 || it.StageSlug != StageTrackerNewSlug || it.New == nil {
 		t.Fatalf("#15092 = stage %d slug %q new %+v, want 000-new", it.Stage, it.StageSlug, it.New)
 	}
-	if it.New.NextMover != StageTrackerMoverMaintainer || !strings.Contains(it.Caption, "New · waiting for a maintainer's triage (add `triage/accepted`)") || it.Actor != StageTrackerMoverMaintainer {
+	if it.New.NextMover != StageTrackerMoverMaintainer || it.Caption != stageTrackerTriageNeededCaption || it.Actor != StageTrackerMoverMaintainer {
 		t.Fatalf("#15092 caption %q actor %q new %+v, want the maintainer's triage as next mover", it.Caption, it.Actor, it.New)
 	}
 	// A sidelined row keeps the reporter's kind: the work-bucket copy of the
@@ -81,7 +81,7 @@ func TestWebhookOpenedItemInsertedIntoTracker(t *testing.T) {
 	if !it.New.TriagePending() {
 		t.Fatalf("#15092 new = %+v, want TriagePending", it.New)
 	}
-	if it.New.NextPassAt == nil || it.New.NextPassInSeconds != 7*60 || !strings.Contains(it.Caption, "next pass in 7m") {
+	if it.New.NextPassAt == nil || it.New.NextPassInSeconds != 7*60 {
 		t.Fatalf("#15092 next pass = %v / %ds caption %q, want the governor's kick in 7m", it.New.NextPassAt, it.New.NextPassInSeconds, it.Caption)
 	}
 
@@ -168,7 +168,7 @@ func TestStageTrackerNewState(t *testing.T) {
 	triage := base
 	triage.Bucket = "reporter_triage"
 	n = stageTrackerNewState(triage, false, filter, gov, now)
-	if n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != "New · waiting for a maintainer's triage (add `triage/accepted` or `kind/approved`); the hive's next pass in 5m" {
+	if n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != stageTrackerTriageNeededCaption || n.NextMoverText != "a maintainer's triage (add `triage/accepted` or `kind/approved`)" {
 		t.Fatalf("reporter_triage issue = %+v", n)
 	}
 	// The accept label already on (the row menu's Accept triage, before the
@@ -189,7 +189,7 @@ func TestStageTrackerNewState(t *testing.T) {
 	}
 	labelled := base
 	labelled.Modifiers = []string{modNeedsTriage}
-	if n = stageTrackerNewState(labelled, false, nil, FrontendGovernor{}, now); n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != "New · waiting for a maintainer's triage (add `triage/accepted`)" || n.NextPassAt != nil {
+	if n = stageTrackerNewState(labelled, false, nil, FrontendGovernor{}, now); n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != stageTrackerTriageNeededCaption || n.NextPassAt != nil {
 		t.Fatalf("needs-triage issue without a governor kick = %+v", n)
 	}
 	pr := StageTrackerItem{Kind: "pr", Stage: 0, CreatedAt: &opened}
@@ -301,10 +301,10 @@ const now = Date.parse('2026-10-20T12:00:00Z');
 const stages = [{ number: 10, label: 'Actionable', short: 'Actionable' }, { number: 20, label: 'Claimed', short: 'Claimed' }, { number: 30, label: 'PR in progress', short: 'PR in progress' }, { number: 50, label: 'Review pending', short: 'CI / Review' }, { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' }, { number: 100, label: 'Merge queue', short: 'Merge queue' }];
 const fresh = { repo: 'hivecommons/hive', number: 15092, kind: 'issue', title: 'Add a thing', author: 'kanrenibm', author_kind: 'human', stage: 0, stage_slug: '000-new',
   stage_since: '2026-10-20T11:52:00Z', created_at: '2026-10-20T11:52:00Z', labels: ['enhancement', 'help wanted'], bucket: 'reporter_triage',
-  caption: 'New · waiting for a maintainer\'s triage (add ` + "`triage/accepted`" + `); the hive\'s next pass in 7m',
+  caption: 'Triage needed — accept or close',
   new: { since: '2026-10-20T11:52:00Z', next_mover: 'maintainer', next_mover_text: 'a maintainer\'s triage (add ` + "`triage/accepted`" + `)', next_pass_at: '2026-10-20T12:07:00Z', next_pass_in_s: 420,
     gates: [{ name: 'triage', state: 'next', text: 'a maintainer accepts triage (triage/accepted)' }, { name: 'actionable', state: 'later', text: 'the stage-label pass marks it 010 actionable' }, { name: 'claimed', state: 'later', text: 'the scanner claims it (020)' }],
-    text: 'New · waiting for a maintainer\'s triage (add ` + "`triage/accepted`" + `); the hive\'s next pass in 7m' } };
+    text: 'Triage needed — accept or close' } };
 
 // A reporter-trust hold reads "Triage needed" in the Open column even
 // before the needs-triage label has landed (hivecommons/hive#15437: the row

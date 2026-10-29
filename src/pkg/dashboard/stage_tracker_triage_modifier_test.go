@@ -53,11 +53,11 @@ func TestStageTracker_TriageNeededStage(t *testing.T) {
 	if hasMod(issue21, modNeedsTriage) {
 		t.Fatalf("015 must drop the redundant needs-triage chip: %v", issue21.Modifiers)
 	}
-	if issue21.Actor != "maintainer" || !strings.HasPrefix(issue21.Caption, "Actionable, but no maintainer has looked at it yet; waiting for triage") {
+	if issue21.Actor != "maintainer" || issue21.Caption != stageTrackerTriageNeededCaption {
 		t.Fatalf("issue21 caption=%q actor=%q", issue21.Caption, issue21.Actor)
 	}
-	if !strings.Contains(issue21.Caption, "filed by the hive") {
-		t.Fatalf("caption %q must carry the derivation reason", issue21.Caption)
+	if !strings.Contains(issue21.Reason, "filed by the hive") {
+		t.Fatalf("reason %q must carry the derivation; the caption no longer repeats it", issue21.Reason)
 	}
 	issue22 := trackerItem(t, resp, "issue", 22)
 	if issue22.Stage != trackerNumberClaimed || hasMod(issue22, modNeedsTriage) {
@@ -151,7 +151,7 @@ func TestStageTracker_ReporterTrustHoldReadsTriageNeeded(t *testing.T) {
 	if !slices.Equal(it.Modifiers, []string{modNeedsTriage}) {
 		t.Fatalf("#15437 modifiers = %v, want [%s] without the label", it.Modifiers, modNeedsTriage)
 	}
-	if it.Actor != StageTrackerMoverMaintainer || !strings.HasPrefix(it.Caption, "New · waiting for a maintainer's triage (add `triage/accepted`)") || !strings.Contains(it.Caption, "next pass in 4m") {
-		t.Fatalf("#15437 caption %q actor %q, want the maintainer's triage with the next pass", it.Caption, it.Actor)
+	if it.Actor != StageTrackerMoverMaintainer || it.Caption != stageTrackerTriageNeededCaption || it.New == nil || it.New.NextPassInSeconds != 4*60 {
+		t.Fatalf("#15437 caption %q actor %q new %+v, want %q with the next pass on new", it.Caption, it.Actor, it.New, stageTrackerTriageNeededCaption)
 	}
 }
