@@ -54,13 +54,6 @@ func rebaseMergeFollowThroughConsequence(number int, base string) string {
 	return fmt.Sprintf("hive rebases #%d onto %s, waits for CI, then merges it with your approval on record; you'll get a toast when it lands or if the rebase conflicts", number, nonEmptyString(base, "its base branch"))
 }
 
-func nonEmptyString(s, fallback string) string {
-	if strings.TrimSpace(s) == "" {
-		return fallback
-	}
-	return s
-}
-
 // armRebaseThenMerge is the merge-now branch for a PR that needs a rebase.
 // Order matters: the approval is posted first (the durable record the
 // merge carries), then the follow-through is armed, then the rebase is

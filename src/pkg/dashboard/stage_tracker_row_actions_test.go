@@ -1398,7 +1398,7 @@ assert.strictEqual(stageTrackerDCOCaveat([]), '');
 // (hivecommons/hive#14822).
 func TestStageTrackerRebaseThenMergeRow(t *testing.T) {
 	html := indexHTML(t)
-	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+"\n"+stageTrackerCuesJS(t, html)+stageTrackerActedJS(t, html)+"\n"+jsFunc(t, html, "agentNowClockTime")+`
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+"\n"+stageTrackerCuesJS(t, html)+jsConstBlock(t, html, "STAGE_TRACKER_ICONS")+"\n"+stageTrackerActedJS(t, html)+"\n"+jsFunc(t, html, "agentNowClockTime")+`
 global.window = { _hiveUser: 'clubanderson' };
 const ids = as => as.map(a => a.id);
 const merger = { user: true, canHold: true, canHuman: true };
