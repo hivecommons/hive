@@ -37,6 +37,8 @@ func TestCapabilityGapSharedInference(t *testing.T) {
 		"The App token is missing the `checks: write` permission.",
 		"The installation has no permission to manage checks.",
 		"The App is without the required permission.",
+		"The App cannot obtain the required permission.",
+		"The App can't obtain the required permission.",
 	} {
 		t.Run(report, func(t *testing.T) {
 			for _, in := range []Input{

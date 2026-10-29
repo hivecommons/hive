@@ -251,7 +251,7 @@ var (
 	hivePolicyRE = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
 	// appPermissionRE preserves the park for App permissions that have no
 	// specific capability kind in the blocker ledger.
-	appPermissionRE = regexp.MustCompile(`(?i)\b(?:app(?: token)?|installation|github app)\b[^\n]{0,80}\b(?:lacks?|missing|without|no)\b[^\n]{0,60}\bpermissions?\b`)
+	appPermissionRE = regexp.MustCompile(`(?i)\b(?:app(?: token)?|installation|github app)\b[^\n]{0,80}\b(?:cannot|can't|lacks?|missing|without|no)\b[^\n]{0,60}\bpermissions?\b`)
 	duplicateOfRE   = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
 	blockedOnPRRE   = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
 )
