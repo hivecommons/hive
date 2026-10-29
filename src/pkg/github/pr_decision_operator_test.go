@@ -248,7 +248,8 @@ func TestRecordOperatorPullRequestApprovalWithoutOptionsStaysCommentsOnly(t *tes
 // "[APPROVALNOTIFIER] This PR is NOT APPROVED" (dibs#510). Once Prow has
 // answered the hive's own commands that way, a later Approve records the
 // decision without posting them again and says so on the event; a Prow
-// reply to someone else's comment, or no reply at all, changes nothing.
+// reply to someone else's comment, the same reply from a bot that is not
+// Prow, or no reply at all, changes nothing.
 func TestRecordOperatorPullRequestApprovalSkipsCommandsProwRejected(t *testing.T) {
 	at := time.Date(2026, 10, 29, 0, 32, 0, 0, time.UTC).Format(time.RFC3339)
 	ownLGTM := unparkWireComment{ID: 501, Body: renderPRApprovalCommandComment("/lgtm", "clubanderson", liveDecisionHead), User: wireUser{Login: "hive[bot]"}, CreatedAt: at, UpdatedAt: at}
@@ -265,6 +266,7 @@ func TestRecordOperatorPullRequestApprovalSkipsCommandsProwRejected(t *testing.T
 		{"approve not approved", []unparkWireComment{ownApprove, prowReply(502, "[APPROVALNOTIFIER] This PR is **NOT APPROVED**")}, PRApprovalCommandsSkippedProw},
 		{"prow answered someone else", []unparkWireComment{ownLGTM, prowReply(77, "@eve: changing LGTM is restricted to collaborators")}, ""},
 		{"human quoting the phrase", []unparkWireComment{ownLGTM, {ID: 700, Body: "NOT APPROVED, see #issuecomment-501)", User: wireUser{Login: "eve"}, CreatedAt: at, UpdatedAt: at}}, ""},
+		{"third-party bot quoting the phrase", []unparkWireComment{ownLGTM, {ID: 701, Body: "@hive[bot]: changing LGTM is restricted to collaborators\n\nIn response to [this](https://github.com/org/repo/pull/1#issuecomment-501):", User: wireUser{Login: "other-app[bot]"}, CreatedAt: at, UpdatedAt: at}}, ""},
 		{"no prior commands", nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

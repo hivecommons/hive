@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -95,13 +96,15 @@ const PRApprovalCommandsSkippedProw = "prow-rejects-bot-commands"
 // bot's `/lgtm` or `/approve` carries no weight on the repo.
 var prowCommandRejections = []string{"restricted to collaborators", "NOT APPROVED"}
 
-// prowRejectedHiveCommands reports whether a bot other than the hive has
-// replied to one of the hive's earlier dashboard approval commands on the
+// prowRejectedHiveCommands reports whether the Prow bot has replied to one of the hive's earlier dashboard approval commands on the
 // PR with a Prow rejection (dibs#510: `/lgtm` → "changing LGTM is
 // restricted to collaborators", `/approve` → "[APPROVALNOTIFIER] This PR is
 // NOT APPROVED"). Prow quotes the comment it answers as
 // "In response to [this](…#issuecomment-<id>)", so only replies bound to a
-// hive command comment count.
+// hive command comment count. Only the Prow instance hivecommons runs
+// (config.DefaultLabelDrivenTrustedBots) is believed: any other installed
+// bot could quote the phrase and suppress the commands
+// (hivecommons/hive#15263).
 func (c *Client) prowRejectedHiveCommands(ctx context.Context, owner, name string, number int) (bool, error) {
 	comments, err := c.listIssueComments(ctx, owner, name, number)
 	if err != nil {
@@ -123,8 +126,15 @@ func (c *Client) prowRejectedHiveCommands(ctx context.Context, owner, name strin
 		if comment == nil || c.isHiveAccount(comment.GetUser()) {
 			continue
 		}
-		login := strings.ToLower(comment.GetUser().GetLogin())
-		if !strings.EqualFold(comment.GetUser().GetType(), "Bot") && !strings.HasSuffix(login, "[bot]") {
+		login := strings.TrimSpace(comment.GetUser().GetLogin())
+		prow := false
+		for _, bot := range config.DefaultLabelDrivenTrustedBots {
+			if strings.EqualFold(bot, login) {
+				prow = true
+				break
+			}
+		}
+		if !prow {
 			continue
 		}
 		body := comment.GetBody()
