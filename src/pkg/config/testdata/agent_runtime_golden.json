@@ -173,6 +173,7 @@
     "WebhookWakeMinGapS": 30,
     "CIFailureWebhookKick": null,
     "CIFailureKickCooldownS": 0,
+    "MergeTrainStallWarnS": 0,
     "ConserveIntervalMultiplier": 2,
     "OptionalSweepEveryNCycles": 1,
     "ExplainMode": "",

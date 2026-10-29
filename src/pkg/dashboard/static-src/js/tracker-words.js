@@ -138,6 +138,20 @@
     const STAGE_TRACKER_TRAIN_STATE_REBASING = 'rebasing';
     const STAGE_TRACKER_TRAIN_STATE_EXHAUSTED = 'rebase-exhausted';
     const STAGE_TRACKER_TRAIN_GLYPH = '⛓';
+    // Every merge_train / merge_gate train state in words. A slug reaches a
+    // chip only through this table (or stageTrackerTrainWord), never raw:
+    // hive's own #15406 once read "front" (hivecommons/hive#15395).
+    const STAGE_TRACKER_TRAIN_STATE_WORD = { front: 'Next to merge', 'queued-behind': 'In merge queue', rebasing: 'Rebasing', 'rebase-exhausted': 'Needs human decision' };
+    // Pure: the pill word for any merge_gate.state — the gate table, then
+    // the train table, then the slug spelled out ("merge-failed" → "Merge
+    // failed") so an unmapped state still never shows as a slug.
+    function stageTrackerMergeGateStateWord(state) {
+      state = String(state || '');
+      if (STAGE_TRACKER_MERGE_GATE_WORD[state]) return STAGE_TRACKER_MERGE_GATE_WORD[state];
+      if (STAGE_TRACKER_TRAIN_STATE_WORD[state]) return STAGE_TRACKER_TRAIN_STATE_WORD[state];
+      const plain = state.replace(/[-_]+/g, ' ').trim();
+      return plain ? plain.charAt(0).toUpperCase() + plain.slice(1) : '';
+    }
     function stageTrackerTrain(item) {
       const mt = item && item.merge_train;
       return mt && typeof mt === 'object' && mt.state ? mt : null;
@@ -148,17 +162,82 @@
       if (r100 >= 11 && r100 <= 13) return n + 'th';
       return n + (r10 === 1 ? 'st' : r10 === 2 ? 'nd' : r10 === 3 ? 'rd' : 'th');
     }
+    // Pure: the train's head number / queue length / this row's position,
+    // read from the queue facts (#15395) with the older front/size as the
+    // fallback.
+    function stageTrackerTrainPlace(mt) {
+      return { head: Number(mt.head_number || mt.front) || 0, len: Number(mt.length || mt.size) || 0, pos: Number(mt.position) || 0 };
+    }
+    // Pure: "Merge queue stalled · head #15253 waiting for CI 3h" for a
+    // train whose head has sat past governor.merge_train_stall_warn_s; ''
+    // otherwise. The server decides stalled; the words are the head's
+    // plain-word reason plus how long.
+    function stageTrackerTrainStalledWord(mt) {
+      if (!mt || !mt.stalled) return '';
+      const p = stageTrackerTrainPlace(mt);
+      const why = String(mt.head_reason || '').replace(/[.;].*$/, '').trim();
+      const dur = stageTrackerShortLeft((Number(mt.stalled_s) || 0) * 1000);
+      return 'Merge queue stalled · head #' + p.head + (why ? ' ' + why : '') + (dur ? ' ' + dur : '');
+    }
     // The chevron word for a train member ('' for a row not in a train).
+    // The queued word is the position only — "In merge queue · 2 of 6" —
+    // so it reads the same with the merge sweep on or off (#15395); never
+    // the state slug.
     function stageTrackerTrainWord(item) {
       const mt = stageTrackerTrain(item);
       if (!mt) return '';
+      const stalled = stageTrackerTrainStalledWord(mt);
+      if (stalled && (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT || mt.state === STAGE_TRACKER_TRAIN_STATE_QUEUED)) return stalled;
+      const p = stageTrackerTrainPlace(mt);
       switch (mt.state) {
-        case STAGE_TRACKER_TRAIN_STATE_FRONT: return 'Merging · front of train';
-        case STAGE_TRACKER_TRAIN_STATE_QUEUED: return 'In merge train · ' + stageTrackerOrdinal(mt.position) + ' of ' + (Number(mt.size) || 0);
+        case STAGE_TRACKER_TRAIN_STATE_FRONT: return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] + ' · 1 of ' + p.len;
+        case STAGE_TRACKER_TRAIN_STATE_QUEUED: return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] + ' · ' + p.pos + ' of ' + p.len;
         case STAGE_TRACKER_TRAIN_STATE_REBASING: return 'Rebasing · attempt ' + (Number(mt.attempt) || 0) + '/' + (Number(mt.max_attempts) || 0);
         case STAGE_TRACKER_TRAIN_STATE_EXHAUSTED: return 'Needs human decision · rebase failed ' + (Number(mt.attempt) === 2 ? 'twice' : (Number(mt.attempt) || 0) + ' times');
       }
-      return '';
+      return STAGE_TRACKER_TRAIN_STATE_WORD[mt.state] || stageTrackerMergeGateStateWord(mt.state);
+    }
+    // Pure: the queued row's hover sentence — "Behind #15253 (soaking, 12m
+    // left) and 1 more. Hive merges one at a time, in order. Estimated
+    // turn: ~25m." A head on a person or CI has no estimate, so the
+    // sentence names what the head waits on instead.
+    // Pure: the member's countdown target in ms (eta_at, else now+eta_s);
+    // 0 with no estimate.
+    function stageTrackerTrainEtaAt(mt, nowMs) {
+      if (!mt) return 0;
+      const at = mt.eta_at ? Date.parse(mt.eta_at) : 0;
+      if (at > 0) return at;
+      const s = Number(mt.eta_s) || 0;
+      return s > 0 ? nowMs + s * 1000 : 0;
+    }
+    // Pure: the "Estimated turn" sentence — "~25m (2 ahead · next sweep in
+    // 40s)", "running late — estimated ~25m, still waiting", or '' with no
+    // estimate. Always a "~": an estimate, not a promise.
+    function stageTrackerTrainEtaWords(mt, nowMs) {
+      const at = stageTrackerTrainEtaAt(mt, nowMs);
+      if (!(at > 0)) return '';
+      const left = stageTrackerShortLeft(at - nowMs);
+      const basis = String(mt.eta_basis || '').trim();
+      if (mt.late) return 'Running late — estimated ~' + stageTrackerShortLeft((Number(mt.eta_s) || 0) * 1000) + ', still waiting' + (basis ? ' (' + basis + ')' : '') + '.';
+      return 'Estimated turn: ' + (left ? '~' + left : 'any sweep now') + (basis ? ' (' + basis + ')' : '') + '.';
+    }
+    function stageTrackerTrainQueueTip(mt, nowMs) {
+      if (!mt) return '';
+      nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
+      const p = stageTrackerTrainPlace(mt);
+      const why = String(mt.head_reason || '').trim();
+      const etaWords = stageTrackerTrainEtaWords(mt, nowMs);
+      const stalledFor = stageTrackerShortLeft((Number(mt.stalled_s) || 0) * 1000);
+      const order = 'Hive merges one at a time, in order.';
+      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) {
+        return 'Front of the merge queue' + (p.len > 1 ? ' (' + (p.len - 1) + ' more behind it)' : '') + (why ? ': ' + why : '') + '. ' + order + (mt.stalled ? ' Stalled: the head has not moved for ' + stalledFor + '.' : (etaWords ? ' ' + etaWords : ''));
+      }
+      const more = Math.max(0, p.pos - 2);
+      let tip = 'Behind #' + p.head + (why ? ' (' + why + ')' : '') + (more ? ' and ' + more + ' more' : '') + '. ' + order;
+      if (mt.stalled) tip += ' Merge queue stalled: head #' + p.head + ' has not moved for ' + stalledFor + (why ? ' — ' + why : '') + '. No estimate until the head moves.';
+      else if (etaWords) tip += ' ' + etaWords;
+      else if (why) tip += ' Head #' + p.head + ' is ' + why + '; no estimate until it moves.';
+      return tip;
     }
     // Tooltip lines: the queue ahead and the overlapping files.
     function stageTrackerTrainLines(item) {
@@ -596,10 +675,31 @@
       if (dec) return dec;
       const laneReason = item && item.kind !== 'issue' && !stageTrackerCoverReasonText(item) ? item.reason : '';
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
-      const word = STAGE_TRACKER_MERGE_GATE_WORD[state] || state;
+      const word = stageTrackerMergeGateStateWord(state);
       const nextAt = mg.next_sweep_at ? Date.parse(mg.next_sweep_at) : 0;
       const lastAt = mg.last_sweep_at ? Date.parse(mg.last_sweep_at) : 0;
       const lastSeen = lastAt > 0 ? ' Last checked ' + stageTrackerAgoText(lastAt, nowMs) + '.' : '';
+      // A merge-train member (hivecommons/hive#15395): the label is its
+      // place in the queue and nothing else, so the chip does not flip
+      // between "… · merge sweep running" and the bare form each sweep,
+      // and a front in its soak keeps its place word (never the slug) —
+      // its countdown already includes the soak left.
+      // The sweep is the spinning ⬡ and a "Checking now…" tooltip line.
+      const trainSrc = stageTrackerTrain(src) ? src : (stageTrackerTrain(item) ? item : null);
+      const mt = trainSrc ? stageTrackerTrain(trainSrc) : null;
+      if (mt && (state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED || state === STAGE_TRACKER_TRAIN_STATE_REBASING || state === STAGE_TRACKER_TRAIN_STATE_EXHAUSTED)) {
+        const trainWord = stageTrackerTrainWord(trainSrc) || 'In merge queue';
+        const queued = state === STAGE_TRACKER_TRAIN_STATE_FRONT || state === STAGE_TRACKER_TRAIN_STATE_QUEUED;
+        const queueTip = queued ? stageTrackerTrainQueueTip(mt, nowMs) : stageTrackerTrainLines(trainSrc).join('. ') + '.';
+        const checking = mg.sweep_running ? ' Checking now…' : '';
+        // The countdown to its turn ("· ~4m") ticks from eta_at like the
+        // soak clock, so a poll re-render does not reset it; a blocked
+        // head or a stalled train shows no clock; past twice the first
+        // estimate it reads "running late".
+        const etaAt = queued && !mt.stalled ? stageTrackerTrainEtaAt(mt, nowMs) : 0;
+        const detail = etaAt > 0 ? (mt.late ? 'running late' : stageTrackerTrainEtaDetail(etaAt, nowMs)) : '';
+        return { state, word: trainWord, detail, tip: queueTip + checking + lastSeen, cue: mg.sweep_running ? 'running' : 'waiting', until: etaAt > 0 && !mt.late ? etaAt : 0, train: mt, stalled: !!mt.stalled };
+      }
       // A soak clock (own or mirrored) outranks "merge sweep running": the
       // sweep reads the clock, it does not replace it. Any gate stage the
       // lane holds for the soak — 095 admitted, or 060/080 while trust
@@ -708,7 +808,7 @@
       const c = info.soakClock;
       const soakAttrs = c ? ` data-ham-soak="1" data-ham-until="${c.until}" data-ham-until-kind="soaking" data-ham-soak-window="${c.windowS}" data-ham-soak-head="${esc(c.head)}" data-ham-soak-restarted="${c.restarted ? 1 : 0}" data-ham-soak-prefix="${esc(c.prefix || '')}" data-ham-next="${c.nextAt || 0}" data-ham-sweeping="${c.sweepRunning ? 1 : 0}" data-ham-soak-tip="${esc(info.soak)}"` : '';
       const detail = info.detail ? ` <span class="ham-gate-detail"${soakAttrs || (info.until ? ` data-ham-until="${info.until}" data-ham-until-kind="${esc(info.state)}"` : '')}>· ${esc(info.detail)}</span>` : '';
-      return `<span class="ham-seg-t">${esc(info.word)}${detail}</span>`;
+      return `<span class="ham-seg-t${info.stalled ? ' ham-queue-stalled' : ''}">${esc(info.word)}${detail}</span>`;
     }
     /* ---- Soak clock ---------------------------------------------------------
        The payload's `soak` {started_at, until, window_s, head_sha} is the
@@ -782,6 +882,12 @@
       const spin = info.cue === 'running' || info.cue === 'merging';
       return `<span class="ham-gate-ico${spin ? ' cue-spin' : ''}" data-gate-cue="${esc(info.cue)}" role="img" title="${esc(info.tip)}" aria-label="${esc(info.tip)}">${stageTrackerIcon(spin ? 'sweep' : 'wait', 'ham-ico')}</span>`;
     }
+    // Pure: the queue chip's countdown words — "~4m" until the estimate,
+    // "any sweep now" once it has passed.
+    function stageTrackerTrainEtaDetail(etaAt, nowMs) {
+      const left = stageTrackerShortLeft(etaAt - nowMs);
+      return left ? '~' + left : 'any sweep now';
+    }
     // Pure: ticks every countdown in el from nowMs; "sweep due now" once a
     // ready row's next pass has come.
     function stageTrackerGateCountdownSync(el, nowMs) {
@@ -794,6 +900,7 @@
         const left = stageTrackerShortLeft(until - nowMs);
         let t = kind === 'soaking' ? (left ? '· ' + left + ' left' : '· soak window complete') : (left ? '· next sweep in ' + left : '· sweep due now');
         if (kind === 'decided') t = n.textContent.replace(/ · in [^·]*$|· in [^·]*$/, '') + (left ? ' · in ' + left : ' · due now');
+        if (kind === STAGE_TRACKER_TRAIN_STATE_QUEUED || kind === STAGE_TRACKER_TRAIN_STATE_FRONT) t = '· ' + stageTrackerTrainEtaDetail(until, nowMs);
         if (n.textContent !== t) n.textContent = t;
       }
     }

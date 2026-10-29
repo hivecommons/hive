@@ -1571,10 +1571,16 @@ type GovernorConfig struct {
 	// CIFailureKickCooldownS (default 600) bounds webhook-triggered kicks
 	// to one per PR head in that window. See docs/operator-reference.md
 	// "Webhook-driven CI failure reaction".
-	CIFailureWebhookKick       *bool `yaml:"ci_failure_webhook_kick,omitempty"`
-	CIFailureKickCooldownS     int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
-	ConserveIntervalMultiplier int   `yaml:"conserve_interval_multiplier,omitempty"`
-	OptionalSweepEveryNCycles  int   `yaml:"optional_sweep_every_n_cycles,omitempty"`
+	CIFailureWebhookKick   *bool `yaml:"ci_failure_webhook_kick,omitempty"`
+	CIFailureKickCooldownS int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
+	// MergeTrainStallWarnS is how long, in seconds, a merge train's head
+	// may sit without progressing before the Activity Monitor marks the
+	// train stalled on the queued rows' chips and the dashboard writes one
+	// activity-log warning per hour (default DefaultMergeTrainStallWarnS,
+	// hivecommons/hive#15395).
+	MergeTrainStallWarnS       int `yaml:"merge_train_stall_warn_s,omitempty"`
+	ConserveIntervalMultiplier int `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see
@@ -4981,6 +4987,15 @@ func (c *Config) CIFailureKickCooldown() time.Duration {
 	return DefaultCIFailureKickCooldownS * time.Second
 }
 
+// MergeTrainStallWarn is the effective governor.merge_train_stall_warn_s as
+// a duration (default one hour).
+func (c *Config) MergeTrainStallWarn() time.Duration {
+	if c != nil && c.Governor.MergeTrainStallWarnS > 0 {
+		return time.Duration(c.Governor.MergeTrainStallWarnS) * time.Second
+	}
+	return DefaultMergeTrainStallWarnS * time.Second
+}
+
 type DashboardIssueBandsConfig struct {
 	WaitingLabels []string `yaml:"waiting_labels,omitempty" json:"waiting_labels,omitempty"`
 	DoneLabels    []string `yaml:"done_labels,omitempty" json:"done_labels,omitempty"`
@@ -5909,6 +5924,7 @@ const (
 	DefaultWebhookWakeDebounceS       = 10
 	DefaultWebhookWakeMinGapS         = 30
 	DefaultCIFailureKickCooldownS     = 600
+	DefaultMergeTrainStallWarnS       = 3600
 	DefaultConserveIntervalMultiplier = 2
 	DefaultOptionalSweepEveryNCycles  = 1
 )

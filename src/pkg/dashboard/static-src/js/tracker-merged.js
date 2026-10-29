@@ -68,6 +68,7 @@
       const celebrate = fresh.length && typeof stageTrackerCelebrateSetting === 'function' && stageTrackerCelebrateSetting();
       if (celebrate) fresh.forEach(k => { _stageTrackerCelebratePending[k] = true; });
       if (typeof stageTrackerMergedSync === 'function') stageTrackerMergedSync(d, fresh, Date.now());
+      if (typeof stageTrackerQueueSync === 'function') stageTrackerQueueSync(d && d.items, Date.now());
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerZapped[k] = true; });
       if (celebrate) { stageTrackerCelebrateMerges(fresh); return; }

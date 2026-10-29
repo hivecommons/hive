@@ -104,6 +104,11 @@ type Server struct {
 
 	feedbackRefreshBackoff feedbackBackoff
 
+	// mergeTrains remembers the trains between tracker builds: the hourly
+	// "merge train stalled" activity-log line per train and each member's
+	// first estimate (stage_tracker_merge_train.go).
+	mergeTrains mergeTrainMemory
+
 	// chatGroundedInflight caps concurrent grounded chat turns
 	// (api_chat_grounded.go); created lazily by chatGroundedSlots.
 	chatGroundedOnce     sync.Once

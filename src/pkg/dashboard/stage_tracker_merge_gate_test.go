@@ -301,7 +301,33 @@ func stageTrackerMergeGateInfoJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerCoveringPR") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeGateInfo") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeGateInfoFor") + "\n" +
+		stageTrackerTrainQueueJS(t, html) + "\n" +
 		stageTrackerSoakClockJS(t, html)
+}
+
+// stageTrackerTrainQueueJS lifts the merge-queue words the gate pill reads
+// for a train member (hivecommons/hive#15395).
+func stageTrackerTrainQueueJS(t *testing.T, html string) string {
+	t.Helper()
+	return strings.Join([]string{
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_FRONT"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_QUEUED"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_REBASING"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_EXHAUSTED"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIN_STATE_WORD"),
+		jsFunc(t, html, "stageTrackerMergeGateStateWord"),
+		jsFunc(t, html, "stageTrackerTrain"),
+		jsFunc(t, html, "stageTrackerOrdinal"),
+		jsFunc(t, html, "stageTrackerShortLeft"),
+		jsFunc(t, html, "stageTrackerTrainPlace"),
+		jsFunc(t, html, "stageTrackerTrainStalledWord"),
+		jsFunc(t, html, "stageTrackerTrainWord"),
+		jsFunc(t, html, "stageTrackerTrainEtaAt"),
+		jsFunc(t, html, "stageTrackerTrainEtaWords"),
+		jsFunc(t, html, "stageTrackerTrainEtaDetail"),
+		jsFunc(t, html, "stageTrackerTrainQueueTip"),
+		jsFunc(t, html, "stageTrackerTrainLines"),
+	}, "\n")
 }
 
 // stageTrackerSoakClockJS lifts the soak-clock helpers the gate pill reads.

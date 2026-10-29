@@ -2329,7 +2329,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
-	stageTrackerMergeTrainPostPass(resp.Items)
+	stageTrackerMergeTrainPostPass(resp.Items, mergeTrainQueueOptionsFrom(cfg, sweep, now), &s.mergeTrains)
+	stageTrackerMergeTrainStallWarnings(&s.mergeTrains, resp.Items, now)
 	stageTrackerLineageFillAuthors(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
 	s.applyDecidedProjection(resp.Items, now)

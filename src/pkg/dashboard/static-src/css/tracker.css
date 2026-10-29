@@ -467,6 +467,11 @@
     .ham-merged-list .ham-merged-meta { color: var(--text-faint); white-space: nowrap; font-size: var(--fs-xs); }
     .ham-merged-pop .ham-empty { padding: var(--sp-2) 0; }
     .ham-merged-pop-foot { margin-top: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); }
+    /* Merge queue chip + popover (hivecommons/hive issue 15395): the train in merge order. */
+    .ham-queue-chip .ham-queue-n { margin-left: var(--sp-1); font-variant-numeric: tabular-nums; }
+    .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
+    .ham-queue-train:first-of-type { margin-top: 0; }
+    .ham-queue-stalled { color: var(--yellow); }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
     .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }
