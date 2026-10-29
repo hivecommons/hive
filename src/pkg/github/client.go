@@ -188,6 +188,10 @@ type Client struct {
 	// so the self-approval guard treats a base and its replicas as one
 	// author. nil compares exact lane names.
 	agentBase func(agent string) string
+	// relayKnown reports that a login has a contributor profile on this
+	// hive (runs a relay that targets it), so a PR under that login is an
+	// agent's, not a person's — see SetRelayKnownFunc.
+	relayKnown func(login string) bool
 	// priorArtFiling* enforce the prior-art filing verdict on relayed issue
 	// creates (issue_request_prior_art.go, hivecommons/hive#13879).
 	priorArtFilingGate   func() config.PriorArtGateConfig
@@ -634,6 +638,29 @@ func (c *Client) SetAgentBaseFunc(fn func(agent string) string) {
 		return
 	}
 	c.agentBase = fn
+}
+
+// SetRelayKnownFunc tells the client which logins are relay contributors
+// registered on this hive. The duplicate-fix sweep uses it to tell the
+// hive's own contributor agent (closable, writes allowed as a hive item)
+// from a person who happens to have no author/* label yet
+// (hivecommons/hive#15469: a relay's duplicate PR read as a person's, so
+// the gate refused the notice and the pair rode the merge train together).
+func (c *Client) SetRelayKnownFunc(fn func(login string) bool) {
+	if c == nil {
+		return
+	}
+	c.relayKnown = fn
+}
+
+// IsRelayContributorLogin reports whether login runs a registered relay on
+// this hive; false when no registry is installed.
+func (c *Client) IsRelayContributorLogin(login string) bool {
+	login = strings.TrimSpace(login)
+	if c == nil || c.relayKnown == nil || login == "" {
+		return false
+	}
+	return c.relayKnown(login)
 }
 
 func (c *Client) agentBaseName(agent string) string {
