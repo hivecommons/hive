@@ -25,6 +25,39 @@ func sameKinds(a, b []ActionKind) bool {
 	return true
 }
 
+func TestCapabilityGapSharedInference(t *testing.T) {
+	for _, report := range []string{
+		"The App cannot push changes to workflow files.",
+		"The App cannot push to the upstream repository.",
+		"The App cannot update the protected branch.",
+		"The App cannot set the repository secret.",
+	} {
+		t.Run(report, func(t *testing.T) {
+			for _, in := range []Input{
+				{Kind: KindIssue, Title: report},
+				{Kind: KindIssue, Question: report},
+				{Kind: KindIssue, Reasons: []string{report}},
+				{Kind: KindIssue, Body: report},
+			} {
+				d := Run(in)
+				if !CapabilityGap(in) || d.Rule != RuleCapabilityGap || d.Verdict != VerdictRecommendOnly || !d.KeepsPark || !sameKinds(kinds(d), []ActionKind{ActionRecommendOnly}) {
+					t.Fatalf("capability report must keep the park: input=%+v decision=%+v", in, d)
+				}
+			}
+		})
+	}
+	for _, in := range []Input{
+		{Kind: KindIssue, Title: "The contributor must sign the CLA."},
+		{Kind: KindIssue, Title: "Which workflow retry strategy should we use?"},
+		{Kind: KindIssue, Body: strings.Repeat("context\n", 12) + "The App cannot push to the repository."},
+		{Kind: KindPR, Body: "The App cannot push to the repository."},
+	} {
+		if CapabilityGap(in) {
+			t.Errorf("unexpected capability gap: %+v", in)
+		}
+	}
+}
+
 func TestDecideIssueRules(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

@@ -1,0 +1,1 @@
+- Delegated issue decisions now use the blocker ledger's shared capability inference, keeping repository-write, branch-protection, secret, and workflow permission gaps parked instead of approving ineffective directions (#15217).

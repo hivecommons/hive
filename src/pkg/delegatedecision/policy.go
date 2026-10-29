@@ -27,6 +27,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/blocker"
 )
 
 // PolicyName is the policy identifier the audit marker carries.
@@ -242,16 +244,13 @@ func IsDelegatedComment(body string) bool {
 }
 
 var (
-	secretsRE    = regexp.MustCompile(`(?i)\b(secrets?|PATs?|personal access tokens?|org(?:anization)? (?:membership|permissions?|admin|owner)|token scopes?|GITHUB_TOKEN|credentials?|app installation|billing)\b`)
-	flakyRE      = regexp.MustCompile(`(?i)\b(flak(?:y|e|iness)|intermittent(?:ly)? fail\w*|non-?deterministic test)\b`)
-	ratchetRE    = regexp.MustCompile(`(?i)\b(actionlint|ratchet|duplication (?:gate|threshold|check)|link[- ]?checker|allow-?list|lint gate|hygiene gate|shellcheck|yamllint|markdownlint)\b`)
-	proposalRE   = regexp.MustCompile(`(?i)\bacceptance criteria\b`)
-	hivePolicyRE = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
-	// capabilityGapRE matches a blocker no direction decision can clear: the
-	// GitHub App lacks a permission (for example `workflows`).
-	capabilityGapRE = regexp.MustCompile(`(?i)\b(?:app(?: token)?|installation|github app)\b[^\n]{0,80}\b(?:cannot|can't|lacks?|no|without|missing)\b[^\n]{0,60}\b(?:workflows?|permissions?)\b|\bno [\x60]?workflows[\x60]? permission\b`)
-	duplicateOfRE   = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
-	blockedOnPRRE   = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
+	secretsRE     = regexp.MustCompile(`(?i)\b(secrets?|PATs?|personal access tokens?|org(?:anization)? (?:membership|permissions?|admin|owner)|token scopes?|GITHUB_TOKEN|credentials?|app installation|billing)\b`)
+	flakyRE       = regexp.MustCompile(`(?i)\b(flak(?:y|e|iness)|intermittent(?:ly)? fail\w*|non-?deterministic test)\b`)
+	ratchetRE     = regexp.MustCompile(`(?i)\b(actionlint|ratchet|duplication (?:gate|threshold|check)|link[- ]?checker|allow-?list|lint gate|hygiene gate|shellcheck|yamllint|markdownlint)\b`)
+	proposalRE    = regexp.MustCompile(`(?i)\bacceptance criteria\b`)
+	hivePolicyRE  = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
+	duplicateOfRE = regexp.MustCompile(`(?i)\bduplicate of #(\d+)`)
+	blockedOnPRRE = regexp.MustCompile(`(?i)\b(review backlog|blocked on (?:its|their|the) PR)\b`)
 )
 
 // Classifier labels.
@@ -322,10 +321,15 @@ func HivePolicyChange(in Input) bool {
 }
 
 // CapabilityGap reports a needs-human whose blocker is a missing GitHub App
-// capability rather than an open question.
+// capability rather than an open question. The ledger and this fallback use
+// the same inference rules; human-only blockers are handled by the ledger.
 func CapabilityGap(in Input) bool {
-	return capabilityGapRE.MatchString(in.headline()) ||
-		in.Kind == KindIssue && capabilityGapRE.MatchString(firstLines(in.Body, 12))
+	isCapability := func(text string) bool {
+		k, ok := blocker.Infer(text)
+		return ok && k.IsCapability()
+	}
+	return isCapability(in.headline()) ||
+		in.Kind == KindIssue && isCapability(firstLines(in.Body, 12))
 }
 
 // OwnerOnly reports a secrets / PAT / org-permission item.
