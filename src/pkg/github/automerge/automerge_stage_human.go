@@ -21,6 +21,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // humanChecksTTL bounds how often one head's checks are re-read. A new head
@@ -241,7 +242,7 @@ func manualMergeRuleReasonFor(reason string, workflowManual bool) bool {
 	switch reason {
 	case contributorLaneReasonWorkflowPath:
 		return workflowManual
-	case contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath:
+	case contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath, autoMergeReasonHumanMergeRequired:
 		return true
 	}
 	return false
@@ -391,6 +392,8 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 		return prstage.CauseReporterTrustHold
 	case reason == autoMergeReasonHumanMergePath, reason == autoMergeReasonHumanMergePathEvidence:
 		return prstage.CauseHumanMergePath
+	case reason == autoMergeReasonHumanMergeRequired:
+		return prstage.CauseHumanMergeRequired
 	case reason == autoMergeReasonIntentUnauthorized, reason == autoMergeReasonIntentEvidence:
 		return prstage.CauseIntentUnauthorized
 	case strings.HasPrefix(reason, workflowApprovalUntrustedPrefix):
@@ -447,6 +450,17 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 		body = stagelabels.DecisionComment(route) + c.workflowApprovalSnippet(obs.Reason)
 	default:
 		return 0, nil
+	}
+	if obs.Reason == autoMergeReasonHumanMergeRequired {
+		// The "waiting for a person" note on a breaking-titled or
+		// owner-flagged PR is an unsolicited write (hivecommons/hive#15442):
+		// it goes through the write-back gate like every other hive
+		// comment, and a refusal leaves the record unmarked so the next
+		// pass asks again.
+		if d := c.writebackAllowed(obs.Display, writebackItemForObservation(obs), writeback.KindNeedsDecisionComment, body); !d.Allowed {
+			c.info("stage labels: entry comment withheld by the write-back gate", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reason", d.Reason)
+			return 0, nil
+		}
 	}
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn("stage labels: entry comment failed", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "error", err)

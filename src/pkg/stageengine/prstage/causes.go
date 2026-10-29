@@ -10,9 +10,12 @@ const WorkflowApprovalCommand = "/ok-to-test"
 // human-only lane reason. The automerge sweep renders them and the stage
 // goldens expect them, so the wording lives here once (hivecommons/hive#15384).
 const (
-	CauseTestsRemoved         = "the PR removes tests, which the lane never merges unattended"
-	CauseReporterTrustHold    = "the reporter-trust hold is in place"
-	CauseHumanMergePath       = "the PR touches a human-merge path (auto_merge.human_merge_paths)"
+	CauseTestsRemoved      = "the PR removes tests, which the lane never merges unattended"
+	CauseReporterTrustHold = "the reporter-trust hold is in place"
+	CauseHumanMergePath    = "the PR touches a human-merge path (auto_merge.human_merge_paths)"
+	// CauseHumanMergeRequired: the breaking-change title or the
+	// needs-owner-merge label; the words the 090 chip and gate reuse.
+	CauseHumanMergeRequired   = "breaking change — owner merges"
 	CauseIntentUnauthorized   = "the merge intent could not be authorized"
 	CauseApprovalDeskWithheld = "the approval desk withheld this merge"
 	// CauseWorkflowPathManual is the workflow-path fence read as a rule a

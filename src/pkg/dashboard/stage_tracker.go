@@ -1410,6 +1410,8 @@ func humanizeStageReason(reason string) string {
 		return "tests removed"
 	case stageengineprstage.AutoMergeReasonHumanMergePath:
 		return "human-merge path"
+	case stageengineprstage.AutoMergeReasonHumanMergeRequired:
+		return "human merge"
 	}
 	if rest, ok := strings.CutPrefix(lower, "contributor-lane:"); ok {
 		return strings.ReplaceAll(strings.ReplaceAll(rest, "-", " "), "_", " ")
@@ -1453,7 +1455,8 @@ func stageTrackerUnauthorized(reason string) (step, tip string) {
 // on a maintainer's merge click rather than on /lgtm /approve.
 func stageTrackerManualMergeReason(reason string) bool {
 	switch strings.ToLower(strings.TrimSpace(reason)) {
-	case stageengineprstage.ContributorLaneReasonWorkflowPath, stageengineprstage.ContributorLaneReasonTestsRemoved, stageengineprstage.AutoMergeReasonHumanMergePath:
+	case stageengineprstage.ContributorLaneReasonWorkflowPath, stageengineprstage.ContributorLaneReasonTestsRemoved, stageengineprstage.AutoMergeReasonHumanMergePath,
+		stageengineprstage.AutoMergeReasonHumanMergeRequired:
 		return true
 	}
 	return false
@@ -1472,6 +1475,7 @@ var stageTrackerHumanMergeReasonWords = map[string][2]string{
 	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "Hive won't merge it alone — the author isn't a trusted author yet"},
 	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "GitHub does not let hive merge here; a person merges"},
 	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "A reviewer asked for a person to merge this one"},
+	stageengineprstage.HumanMergeReasonBreakingChange:    {"human merge", "Breaking change — owner merges; hive never merges a ⚠️-titled or needs-owner-merge PR"},
 }
 
 // stageTrackerHumanMergeReason derives, from a 090 stage reason, the
@@ -1659,6 +1663,11 @@ func mentionLogins(logins []string) string {
 	return strings.Join(out[:len(out)-1], ", ") + " and " + out[len(out)-1]
 }
 
+// stageTrackerTriageNeededCaption is the caption of every reporter-trust
+// held issue — 015 and a 000-new hold alike. The chevron already reads
+// "Triage needed", so the caption carries only the maintainer's two moves.
+const stageTrackerTriageNeededCaption = "Triage needed — accept or close"
+
 func joinClause(head, clause string) string {
 	if clause == "" {
 		return head
@@ -1691,7 +1700,9 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.Actionable:
 		return joinClause("Triaged and eligible; waiting for the scanner to pick it up", clause), "scanner"
 	case stagelabels.TriageNeeded:
-		return joinClause("Actionable, but no maintainer has looked at it yet; waiting for triage", clause), "maintainer"
+		// The lane reason ("triage needed: carries needs-triage") would say
+		// triage a third time after the chevron word; the caption is the ask.
+		return stageTrackerTriageNeededCaption, "maintainer"
 	case stagelabels.PossiblyExisting:
 		return joinClause("Prior art found; the author must confirm the gap (`/hive decision proceed — <gap>`) or close it (`/hive decision exists`)", clause), strings.TrimPrefix(who, "@")
 	case stagelabels.Claimed:
@@ -1720,8 +1731,11 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.AdoptedByHive:
 		c := adoptedWorkCaption(reason)
 		if hasRec && rec.AdoptedBy > 0 {
-			if stageTrackerAdoptedByState(rec) == stageTrackerAdoptedClosed {
+			switch stageTrackerAdoptedByState(rec) {
+			case stageTrackerAdoptedClosed:
 				return joinClause("The hive's copy #"+strconv.Itoa(rec.AdoptedBy)+" was closed without merging; the hive is opening a fresh copy from the same head", clause), "hive"
+			case stageTrackerAdoptedResolving:
+				return joinClause("Adopting: the hive's copy #"+strconv.Itoa(rec.AdoptedBy)+" conflicts with the base and the fixer is resolving the conflicts on it", clause), "hive"
 			}
 			c += " (superseded by #" + strconv.Itoa(rec.AdoptedBy) + ")"
 		}
@@ -1737,6 +1751,11 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 			return stageTrackerAdoptionLoopCaption(rec), "maintainer"
 		case stageTrackerAdoptedCopyFailed:
 			return "The hive's copy #" + strconv.Itoa(rec.AdoptedBy) + " failed; this PR was reopened and needs a person", "maintainer"
+		case stageTrackerAdoptedResolving:
+			return "Rebase failed twice: the hive's copy #" + strconv.Itoa(rec.AdoptedBy) + " still conflicts with the base after two fixer attempts; a person decides", "maintainer"
+		}
+		if strings.TrimSpace(strings.ToLower(reason)) == stagelabels.LaneReasonRebaseFailedTwice {
+			return "Rebase failed twice: the fixer could not resolve the conflicts with the base; a person decides", "maintainer"
 		}
 		if step, _ := stageTrackerUnauthorized(reason); step != "" {
 			// hivecommons/hive#14589: not a decision but a step only a
@@ -1749,6 +1768,15 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
 		if base, approver := stagelabels.HumanApprovedReason(reason); stageTrackerManualMergeReason(base) {
+			if strings.EqualFold(strings.TrimSpace(base), stageengineprstage.AutoMergeReasonHumanMergeRequired) {
+				// The breaking-change rule (hivecommons/hive#15442): no
+				// approval releases it; the owner's merge click does.
+				c := "Ready for human merge (" + stageengineprstage.CauseHumanMergeRequired + ")"
+				if approver != "" {
+					c += " — approved by @" + approver
+				}
+				return c, "maintainer"
+			}
 			c := "Ready to merge (" + humanizeStageReason(base) + ")"
 			if approver != "" {
 				c += " — approved by @" + approver
@@ -1866,6 +1894,10 @@ const (
 	// stageTrackerAdoptedCopyFailed: a close-first supersession whose copy
 	// failed; the original was reopened for a person (hivecommons/hive#15135).
 	stageTrackerAdoptedCopyFailed = "copy-failed"
+	// stageTrackerAdoptedResolving: the copy opened conflicting with its
+	// base and the hive's fixer is on its rebase-resolve episode
+	// (hivecommons/hive#15307).
+	stageTrackerAdoptedResolving = "resolving-conflicts"
 )
 
 // stageTrackerAdoptedByState reads the copy's state from the record
@@ -1881,6 +1913,8 @@ func stageTrackerAdoptedByState(rec stagelabels.Record) string {
 		return stageTrackerAdoptedCopyFailed
 	case rec.AdoptOrphanedBy == rec.AdoptedBy:
 		return stageTrackerAdoptedClosed
+	case rec.AdoptCopyConflicting:
+		return stageTrackerAdoptedResolving
 	}
 	return ""
 }
@@ -2103,8 +2137,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 					it.HumanMergeReasonText = "Hive won't merge it alone — " + why
 				}
 			}
-			// A person already took the trust call for this head (#15136).
-			if login := stagelabels.AdmissionLogin(it.AdmittedBy); login != "" {
+			// A person already took the trust call for this head (#15136) —
+			// unless the breaking-change rule holds, which no approval
+			// releases (hivecommons/hive#15442).
+			if login := stagelabels.AdmissionLogin(it.AdmittedBy); login != "" && it.HumanMergeReason != stageengineprstage.HumanMergeReasonBreakingChange {
 				it.HumanMergeReasonText = "@" + login + " approved it; hive merges it on its next pass"
 			}
 		}
