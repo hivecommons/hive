@@ -149,3 +149,29 @@ func TestCompactPaneTailRedactsSecrets(t *testing.T) {
 		t.Fatalf("compactPaneTail dropped non-secret lines: %q", tail)
 	}
 }
+
+func TestRestartStormPauseDiagnosticsCarryWindowSummary(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, slog.Default(), ProjectContext{})
+	now := time.Now()
+	var events []RestartEvent
+	for i := 0; i < restartStormPauseAfter; i++ {
+		events = append(events, RestartEvent{At: now.Add(-time.Duration(i) * time.Minute), Reason: "crashed agent recovery"})
+	}
+	events = append(events, RestartEvent{At: now.Add(-3 * time.Hour), Reason: "too old"})
+	m.SeedRestartTelemetry("scanner", len(events), events, "crashed agent recovery")
+	m.mu.Lock()
+	m.agents["scanner"].LastError = "bare shell prompt"
+	m.mu.Unlock()
+
+	plan := m.planAutomaticRestart("scanner", "crashed agent recovery", "agent CLI crashed or tmux session disappeared", now)
+	if plan.pauseReason == "" {
+		t.Fatalf("plan = %+v, want pause", plan)
+	}
+	want := "restart-storm: agent CLI crashed or tmux session disappeared\n" +
+		"10 restarts in the last 1h0m0s (pause at 10)\n" +
+		"- crashed agent recovery x10\n" +
+		"last error: bare shell prompt"
+	if plan.pauseDiagnostics != want {
+		t.Fatalf("pauseDiagnostics = %q, want %q", plan.pauseDiagnostics, want)
+	}
+}
