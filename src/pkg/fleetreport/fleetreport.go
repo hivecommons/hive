@@ -787,6 +787,14 @@ var benignSubstrings = []string{
 	// is a per-hive operational signal, not a runtime error
 	// (hivecommons/hive#15009).
 	"stage labels: pr waits on the hive past the stage dwell",
+	// The kick-undeliverable WARN (src/crux/agent/busy_visibility.go) says in
+	// its own message that it is not self-reporting: until busyNoActivityStall
+	// has restarted the pane the condition is a dashboard warning and a log
+	// line only (decision B on hivecommons/hive#12787). The WARN repeats on
+	// every refused kick, so the generic feed filed it as a repeated runtime
+	// defect anyway (hivecommons/hive#15313). Kicks that keep failing after
+	// the restart are reported under kick_failed_repeatedly instead.
+	"busy-no-activity restart not yet attempted, not self-reporting",
 }
 
 // rateLimitSubstrings are lower-case fragments that mark a GitHub rate-limit

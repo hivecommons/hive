@@ -1,0 +1,1 @@
+- The repeated-error feed no longer files the "kick undeliverable; busy-no-activity restart not yet attempted, not self-reporting" warning as a fleet issue; kicks that keep failing after the stall restart are still reported ([#15313](https://github.com/hivecommons/hive/issues/15313)).

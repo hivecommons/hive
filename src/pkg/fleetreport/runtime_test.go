@@ -837,6 +837,25 @@ func TestIsBenignMessageForwardMergeGuard(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#15313: the kick-undeliverable WARN that says it is not
+// self-reporting must not be filed as a repeated runtime defect, while the
+// post-restart kick_failed_repeatedly report and the WARNs that do report
+// stay reportable.
+func TestIsBenignMessageKickUndeliverableBeforeRestart(t *testing.T) {
+	if !IsBenignMessage("kick undeliverable; busy-no-activity restart not yet attempted, not self-reporting") {
+		t.Error("pre-restart kick-undeliverable warning not benign")
+	}
+	for _, m := range []string{
+		"kick undeliverable 4 times in a row after busy-no-activity restart did not recover the session (CLI did not reach input prompt; restarted 1m0s ago at 2026-10-29T05:00:00Z, 1 restart(s) this episode)",
+		"kick undeliverable: TUI menu did not close after Escape",
+		"re-engagement kick undeliverable; budget not charged",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("%q wrongly benign", m)
+		}
+	}
+}
+
 func TestIsBenignMessageStageHiveHeld(t *testing.T) {
 	if !IsBenignMessage("stage labels: PR waits on the hive past the stage dwell — reviewer lane needs attention") {
 		t.Error("hive-held stage dwell warning not benign")
