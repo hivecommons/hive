@@ -240,7 +240,8 @@ console.log('ok');
 func stageTrackerCelebrateJS(t *testing.T, html string) string {
 	t.Helper()
 	return strings.Join([]string{
-		"function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }",
+		// Mirrors the page's esc: a non-string renders as '' (hivecommons/hive: a numeric PR number once drew a bare "#").
+		"function esc(s) { if (typeof s !== 'string') return ''; return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }",
 		jsConstLine(t, html, "STAGE_TRACKER_EVENT_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGED_TIP_MAX"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGED_LIST_MAX"),
@@ -285,6 +286,7 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerRectInView"),
 		jsFunc(t, html, "stageTrackerFlightTarget"),
 		jsFunc(t, html, "celebrateRow"),
+		jsFunc(t, html, "stageTrackerMergeBannerNumber"),
 		jsFunc(t, html, "stageTrackerMergeBannerText"),
 		jsFunc(t, html, "stageTrackerMergeBanner"),
 		jsFunc(t, html, "stageTrackerMergeBannerDismiss"),
@@ -559,6 +561,17 @@ assert.strictEqual(n.textContent, '33', 'held back while the glyph flies');
 tick(0); assert.strictEqual(flights().length, 1);
 assert.ok(banners.children[0].innerHTML.includes('feat: one (hive, by hive, '), 'the banner carries the ledger title and merger: ' + banners.children[0].innerHTML);
 assert.ok(banners.children[0].innerHTML.includes('href="https://github.com/o/r/pull/1"'), 'and the link');
+assert.ok(banners.children[0].innerHTML.includes('<span class="merge-banner-num">#1</span> merged'), 'the head carries the number although esc drops non-strings: ' + banners.children[0].innerHTML);
+// The number may live only in a nested pr record or the GitHub URL (an issue-headed ledger row): the head still reads "#15122 merged", never a bare "#".
+for (const b of [{ key: 'o/r/pr#15122', repo: 'o/r', pr: { number: 15122 }, at: 0 }, { key: '', repo: 'o/r', url: 'https://github.com/o/r/pull/15122', at: 0 }, { key: 'o/r/pr#15122', repo: 'o/r', number: '', at: 0 }]) {
+  assert.strictEqual(stageTrackerMergeBannerText(b, 0).head, '#15122 merged', JSON.stringify(b));
+  const be = stageTrackerMergeBanner(b);
+  assert.ok(be.innerHTML.includes('<span class="merge-banner-num">#15122</span> merged'), be.innerHTML);
+  assert.ok(be.innerHTML.includes('href="https://github.com/o/r/pull/15122"'), 'links the same PR: ' + be.innerHTML);
+  be.remove();
+}
+assert.strictEqual(stageTrackerMergeBannerText({ repo: 'o/r', at: 0 }, 0).head, 'merged', 'no number anywhere: no bare "#"');
+assert.ok(!stageTrackerMergeBanner({ repo: 'o/r', at: 0 }).innerHTML.includes('>#<'), 'never a bare "#"'); banners.children[banners.children.length - 1].remove();
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
 assert.strictEqual(n.textContent, '34', 'bumps on landing'); assert.ok(chip.classList.contains('cue-tick'));
 stageTrackerNoteMerges({ items: [], merged: merged(34, [rec(1, 'hive', 'feat: one'), rec(31, 'clubanderson'), rec(30)]) });
