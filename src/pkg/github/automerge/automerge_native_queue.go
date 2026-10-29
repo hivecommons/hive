@@ -121,7 +121,7 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 // including cheap prefilter holds. Never withdraw another actor's entry.
 func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo string, pr *gh.PullRequest, reason string) {
 	t := c.nativeQueue()
-	if t == nil || pr == nil || pr.GetNodeID() == "" || reason == "" || strings.HasPrefix(reason, nativeQueueReason) {
+	if t == nil || pr == nil || pr.GetNodeID() == "" || reason == "" || strings.HasPrefix(reason, prstage.AutoMergeReasonNativeQueuePrefix) {
 		return
 	}
 	// Routing observations are not eligibility decisions by the owning lane.
