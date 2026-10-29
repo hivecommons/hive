@@ -113,7 +113,7 @@ func mergeTrainDuplicateReason(h mergeTrainDuplicateHold) string {
 // planDuplicateHolds runs the one-PR-per-issue rule over the lane's
 // candidates before the trains are grouped: the held PRs leave the
 // candidate list and the plan remembers who each one yields to.
-func (c *Engine) planDuplicateHolds(plan *mergeTrainPlan, owner, repo, displayRepo string, prs []*gh.PullRequest, prefilter func(*gh.PullRequest) string) []*gh.PullRequest {
+func (c *Engine) planDuplicateHolds(plan *mergeTrainPlan, lane, owner, repo, displayRepo string, prs []*gh.PullRequest, prefilter func(*gh.PullRequest) string) []*gh.PullRequest {
 	byIssue := map[int][]mergeTrainDuplicateCandidate{}
 	for _, pr := range prs {
 		if pr == nil || pr.GetNumber() <= 0 || !mergeTrainCandidate(prefilter(pr)) {
@@ -126,7 +126,7 @@ func (c *Engine) planDuplicateHolds(plan *mergeTrainPlan, owner, repo, displayRe
 		cand := mergeTrainDuplicateCandidate{
 			Number:    pr.GetNumber(),
 			CreatedAt: pr.GetCreatedAt().Time,
-			Green:     !mergeTrainDirty(pr.GetMergeableState()) && !c.mergeTrainHeadBlocked(owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
+			Green:     !mergeTrainDirty(pr.GetMergeableState()) && !c.mergeTrainHeadBlocked(lane, owner, repo, pr.GetNumber(), pr.GetHead().GetSHA()),
 		}
 		for _, issue := range issues {
 			byIssue[issue] = append(byIssue[issue], cand)
