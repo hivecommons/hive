@@ -76,6 +76,7 @@ wrap pkg/dashboard/contribute_verdict_settle.go 4
 wrap pkg/dashboard/contribute_wrong_base.go 1
 wrap pkg/dashboard/plan_handlers.go 2
 wrap pkg/dashboard/plan_mirror.go 1
+wrap pkg/dashboard/rebase_merge_followthrough.go 2
 wrap pkg/forge/gitea_forge.go 2
 wrap pkg/forge/github_forge.go 3
 wrap pkg/forge/gitlab_forge.go 2

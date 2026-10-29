@@ -91,6 +91,8 @@ func (s *Server) armRebaseThenMerge(ctx context.Context, w http.ResponseWriter, 
 		jsonError(w, "arming the rebase-then-merge follow-through: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Solicited: the operator asked for this from the dashboard, so the
+	// write-back gate does not apply (pkg/writeback doc; ratchet baseline).
 	if err := gh.CreateIssueComment(ctx, repoFull, number, renderRebaseThenMergeComment(user, comment, number, st.BaseRef)); err != nil && s.logger != nil {
 		s.logger.Warn("rebase-then-merge: posting note failed", "repo", repoFull, "number", number, "error", err)
 	}
@@ -274,6 +276,7 @@ func (s *Server) settleRebaseMergeLedger(ctx context.Context, f rebasemerge.Foll
 		_, _ = s.operatorActions().Settle(f.Repo, f.Number, operatorActionMergeNow, operatorActionOutcomeApplied, "merged "+rebaseMergeShortSHA(f.MergeSHA)+" after rebase")
 	case rebasemerge.StateFailed:
 		_, _ = s.operatorActions().Settle(f.Repo, f.Number, operatorActionMergeNow, operatorActionOutcomeFailed, f.FailureText())
+		// The outcome note of that same operator request: solicited, ungated.
 		if f.FailReason != rebasemerge.FailClosed && s.deps != nil && s.deps.GHClient != nil {
 			if err := s.deps.GHClient.CreateIssueComment(ctx, f.Repo, f.Number, renderRebaseThenMergeFailedComment(f)); err != nil && s.logger != nil {
 				s.logger.Warn("rebase-then-merge: posting failure note failed", "repo", f.Repo, "number", f.Number, "error", err)
