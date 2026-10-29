@@ -209,10 +209,12 @@ func (s *Server) delegatedStuckWhy(in delegatedecision.Input, d delegatedecision
 	}
 }
 
-// issueParkLabelStuck reports the case seen on hivecommons/hive#15021: the
-// hive approved an issue and `approved-direction` landed, but the
-// stage/045-needs-decision park label never came off, so the scanner keeps
-// skipping the issue. The toast names the label and offers the lift.
+// issueParkLabelStuck reports an approved issue that still carries both
+// approved-direction and stage/045-needs-decision. The labels alone do not
+// show whether the park was never lifted or was added again. The caller
+// handles later re-parks first (hivecommons/hive#15021: approve lifted 045,
+// then the scanner re-parked), so those become a new ask rather than a
+// stuck-label diagnosis. The toast names the label and offers the lift.
 func issueParkLabelStuck(in delegatedecision.Input, d delegatedecision.Decision) bool {
 	if in.Kind != delegatedecision.KindIssue || d.Verdict != delegatedecision.VerdictApprove {
 		return false
