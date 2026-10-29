@@ -466,9 +466,18 @@ A PR merges through this tier only when all of the following hold:
     walked first; only when it is short does one `search/issues` query
     (`is:pr is:merged author:<login> repo:… repo:…`) find which other hive
     repos hold the author's merges, and only those are walked for revert
-    evidence — a revert or sentinel hit in any repository blocks. The sweep
-    posts a `<!-- hive:contributor-auto-promoted author=… merged=N scope=hive
-    repos=hive:4,docs:1 -->` audit comment once per PR and logs
+    evidence — a revert or sentinel hit in any repository blocks. Promotion
+    is a property of the author in the hive, not of a PR, so the sweep
+    announces it **once per (hive, author)**: the first PR that earns it
+    gets a `<!-- hive:trust-promoted login=… merged=N scope=hive
+    repos=hive:4,docs:1 -->` comment ("@login is now trusted for
+    contributor-lane merging in this hive … Applies to their open and
+    future PRs here"), and the author's other open PRs, later PRs and PRs
+    after a restart post nothing — the "announced" fact lives in the stage
+    store (`trust-promoted:<login>`), with the PR's own marker as a
+    fallback when the store was rebuilt. Revert or sentinel evidence that
+    withdraws the promotion forgets the announcement, so regaining it is
+    announced once more (#15443). Every admission still logs
     `contributor-lane admitted reason=contributor-lane:auto-promoted
     merged_prs=5 scope=hive repos=hive:4,docs:1`. `auto_promotion_scope:
     repo` restores the per-repository count.
