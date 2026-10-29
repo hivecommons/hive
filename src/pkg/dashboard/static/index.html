@@ -1331,7 +1331,7 @@
     /* The sticky chip bar's height (the header strip sticks beneath it). */
     #activity-monitor-section { --ham-sticky-bar-h: 34px; }
     /* Layers for the merge flight glyph and the merged-toast stack. Both are
-       appended to <body>, not to #activity-monitor-section, so these must be
+       appended to document.body, not to #activity-monitor-section, so these must be
        :root-scoped — scoped to the section they resolved to nothing, the
        stack fell back to z-index:auto and the chat FAB (9000) covered the
        lowest toast's close × and text. Above the FAB and the modal chrome. */

@@ -724,7 +724,7 @@ console.log('ok');
 
 // TestStageTrackerMergeBannersAboveChatFab guards the merged-toast layer
 // against the chat FAB: #merge-banners and the .cue-flight glyph are appended
-// to <body>, so their z-index tokens must resolve at :root. Scoped to
+// to document.body, so their z-index tokens must resolve at :root. Scoped to
 // #activity-monitor-section they resolved to nothing, the stack fell back to
 // z-index:auto and the FAB (z-index 9000) covered the lowest toast's close ×
 // and truncated its text. The toast stack must also stay pointer-transparent
@@ -736,7 +736,7 @@ func TestStageTrackerMergeBannersAboveChatFab(t *testing.T) {
 		t.Fatalf("merge-banner layer tokens must be :root-scoped, want %q", root)
 	}
 	if strings.Contains(cssRule(t, html, "#activity-monitor-section"), "--z-merge-banner") {
-		t.Fatalf("--z-merge-banner must not be scoped to #activity-monitor-section (banners mount on <body>)")
+		t.Fatalf("--z-merge-banner must not be scoped to #activity-monitor-section (banners mount on document.body)")
 	}
 	if !strings.Contains(html, "box.id = 'merge-banners'; box.className = 'merge-banners'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box);") {
 		t.Fatalf("merge-banners container must mount on document.body")
