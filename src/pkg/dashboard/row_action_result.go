@@ -127,6 +127,8 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 	if in.Kind == delegatedecision.KindIssue {
 		parkedAt = "045"
 	}
+	// The ladder's own outcome line names the facts (hivecommons/hive#15289).
+	ladderOutcome, hasLadderOutcome := delegatedLadderOutcome(in, d)
 	switch {
 	case d.Verdict == delegatedecision.VerdictRefused:
 		out.Action = rowActionRefused
@@ -144,11 +146,17 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 			out.Outcome = "Adopted — hive will re-author " + ref + " as a hive PR with the same commits and merge it next pass; " + ref + " will be closed as superseded."
 			out.Next = "Until the copy opens the row reads Adopted at the merge gate; the copy then carries the chevron and " + ref + " is listed under it as superseded."
 		}
+		if hasLadderOutcome {
+			out.Outcome += " " + ladderOutcome
+		}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate || d.Verdict == delegatedecision.VerdictCloseSuperseded:
 		out.Action = rowActionClosed
-		if actionTarget > 0 {
+		switch {
+		case hasLadderOutcome:
+			out.Outcome = ladderOutcome
+		case actionTarget > 0:
 			out.Outcome = fmt.Sprintf("Closed in favour of #%d%s.", actionTarget, ruleTag)
-		} else {
+		default:
 			out.Outcome = "Closed" + ruleTag + "."
 		}
 		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."

@@ -935,3 +935,70 @@ func TestDelegatedDecisionLiftsStaleNeedsHuman(t *testing.T) {
 		t.Fatalf("recommend-only lifted labels: %v", mock.removed)
 	}
 }
+
+// hivecommons/hive#15289: the #15219 scenario end to end. A conflicting,
+// offline clanker PR whose issue a merged PR already closed is closed as
+// superseded with a note naming that PR — not adopted — and the job
+// exposes the ladder.
+func TestDelegatedAlreadyFixedClosesInsteadOfAdopting(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	mock := &repoItemDecisionMock{prForeign: true, prMergeState: "dirty", prBody: "Fixes #42", fixedIssueClosedBy: 43,
+		prLabels: []string{"author/clanker", "adoption/supersede", "stage/085-needs-decision", "needs-rebase"}}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"adoption-stalled:contributor-offline","caption":"adoption stalled"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	d := job.Decision
+	if d == nil || d.Verdict != delegatedecision.VerdictCloseSuperseded || d.Rule != delegatedecision.RuleAlreadyFixed {
+		t.Fatalf("decision = %+v err=%s notes=%v", d, job.Error, job.Notes)
+	}
+	if d.Ladder == nil || d.Ladder.Decision != delegatedecision.RuleAlreadyFixed || len(d.Ladder.RuledOut) != 0 || !strings.Contains(d.Ladder.Reason, "#42 was already fixed by merged PR #43 (25de3ba)") {
+		t.Fatalf("ladder = %+v", d.Ladder)
+	}
+	if strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("adoption queued for an already-fixed PR: %v", mock.added)
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "#42 was already fixed by merged PR #43 (25de3ba)") || !strings.Contains(mock.comments[0], "Thank you") {
+		t.Fatalf("close note = %v", mock.comments)
+	}
+	closed := false
+	for _, e := range mock.edits {
+		if e["state"] == "closed" {
+			closed = true
+		}
+	}
+	if !closed || !strings.Contains(strings.Join(mock.added, ","), github.SupersededLabel) {
+		t.Fatalf("PR not closed as superseded: edits=%v added=%v", mock.edits, mock.added)
+	}
+	if job.Result == nil || job.Result.Action != rowActionClosed || job.Result.Outcome != "Closed as superseded: #42 already fixed by #43 (25de3ba)." {
+		t.Fatalf("result = %+v", job.Result)
+	}
+}
+
+// Without a merged closer the same PR falls to the last rung — and the
+// decision names the author's clanker, not a hive.
+func TestDelegatedOfflineClankerAdoptsWithClankerWording(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	mock := &repoItemDecisionMock{prForeign: true, prMergeState: "dirty", prBody: "Fixes #42",
+		prLabels: []string{"author/clanker", "stage/085-needs-decision"}}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	w := postDelegated(t, srv, 8, "writer", `{"type":"pr","reason":"adoption-stalled:contributor-offline","caption":"adoption stalled"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	d := job.Decision
+	if d == nil || d.Verdict != delegatedecision.VerdictAdoptSupersede || d.Rule != delegatedecision.RuleContributorOffline {
+		t.Fatalf("decision = %+v err=%s", d, job.Error)
+	}
+	if d.Ladder == nil || len(d.Ladder.RuledOut) != 4 || !strings.Contains(strings.Join(d.Ladder.RuledOut, "\n"), "return-to-contributor: the author's clanker hasn't been connected since the nudge") {
+		t.Fatalf("ladder = %+v", d.Ladder)
+	}
+	if strings.Contains(d.Rationale, "author's hive") || job.Result == nil || !strings.HasSuffix(job.Result.Outcome, " Why: the author's clanker hasn't been connected since the nudge.") {
+		t.Fatalf("wording: rationale=%q result=%+v", d.Rationale, job.Result)
+	}
+}

@@ -207,6 +207,20 @@ type Input struct {
 	WorkflowPath bool
 	// BlockedOnPRClosed: a review-backlog item whose PR closed unmerged.
 	BlockedOnPRClosed bool
+	// SupersededBy names the merged PR that already delivered this PR's
+	// work (its issue is closed by that merge, or that PR declares
+	// `Supersedes #N`); nil when none is known (hivecommons/hive#15289).
+	SupersededBy *MergedCloser
+	// AuthorTooling: what the author drives (hive / clanker / person);
+	// picks the words a decision uses for them (AuthorWord).
+	AuthorTooling AuthorTooling
+	// ReworkPickedUp: the author's relay has acknowledged, claimed or
+	// pushed the requested rework (hivecommons/hive#15280's signal), so
+	// they are responsive even without recent activity.
+	ReworkPickedUp bool
+	// RepoPaused: the repo is under an operator pause; a decision that
+	// would write (close) is recommend-only instead.
+	RepoPaused bool
 }
 
 // RuleAdoptNow is the rule name of the grace-elapsed Adopt now decision;
@@ -225,6 +239,9 @@ type Decision struct {
 	// KeepsPark is true when the item stays at 085/045 (recommend-only,
 	// owner-only, refused).
 	KeepsPark bool `json:"keeps_park"`
+	// Ladder is the contributor-PR rung the decision landed on and why
+	// the rungs above it did not apply (hivecommons/hive#15289).
+	Ladder *Ladder `json:"ladder,omitempty"`
 }
 
 // Marker is the audit stamp every delegated comment carries.
@@ -475,6 +492,14 @@ func decidePR(in Input) Decision {
 			return d
 		}
 	}
+	// The contributor-PR ladder (hivecommons/hive#15289): already fixed →
+	// mergeable as-is → rebase-then-merge → return to contributor →
+	// adopt-supersede, in that order, so a PR whose issue a merged PR
+	// already closed is closed as superseded rather than adopted. A
+	// person's PR leaves the ladder after the already-fixed rung.
+	if d, ok := decideLadder(in, ref); ok {
+		return d
+	}
 	// A person pushed this PR themselves (an owner, or author/human):
 	// it is theirs to fix, never the hive's to adopt (hivecommons/hive#15202).
 	if in.PersonAuthored() {
@@ -490,22 +515,6 @@ func decidePR(in Input) Decision {
 		// (#15127) so the tracker routes it to the capability blocker.
 		return recommendOnly(RuleCapabilityGap, "the PR edits .github/workflows and the hive's GitHub App lacks the `workflows` permission, so the adoption fence refuses to supersede it; deciding to adopt cannot take effect",
 			"grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge "+ref+" on GitHub, or close it as superseded")
-	}
-	if !in.HiveAuthored && !in.PersonAuthored() && in.Kind == KindPR && in.AdoptionGraceElapsed {
-		text := "adopt now: the offline grace on " + ref + " has already elapsed; adopt in supersede mode at once, preserving the author's commits and sign-off"
-		return Decision{
-			Verdict: VerdictAdoptSupersede, Rule: RuleAdoptNow, Text: text,
-			Rationale: "the contributor's grace window has run out and nothing moved; waiting longer helps no one (hivecommons/hive#15038)",
-			Actions:   []Action{decisionComment(text), {Kind: ActionAdoptSupersede}},
-		}
-	}
-	if !in.HiveAuthored && !in.PersonAuthored() && !in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing) {
-		text := "supersede now: adopt " + ref + " in supersede mode, preserving the author's commits and sign-off; do not wait for the grace deadline"
-		return Decision{
-			Verdict: VerdictAdoptSupersede, Rule: "contributor-offline", Text: text,
-			Rationale: "the contributor is offline; adoption in supersede mode keeps the work moving (hivecommons/hive#13975)",
-			Actions:   []Action{decisionComment(text), {Kind: ActionAdoptSupersede}},
-		}
 	}
 	if in.ReporterTrustHold && in.CIGreen && !in.Conflicting && !in.DCOMissing {
 		d := releasePR("reporter-trust", "approve "+ref+": the fixing PR is sound, so the reporter-trust hold is cleared", "a reporter-trust hold is cleared when the fixing PR is sound")

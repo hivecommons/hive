@@ -32,8 +32,8 @@ const (
 )
 
 // GlossaryEntry is one slug in plain words. Plain is a short phrase that
-// fits a toast headline in parentheses ("adopted (the author's clanker hasn't
-// been connected since the nudge)"); Detail is one full sentence for a
+// fits a toast headline in parentheses ("adopted (the author hasn't been
+// reachable since the nudge)"); Detail is one full sentence for a
 // popover, tooltip or PR comment. Aliases are other spellings of the same
 // slug (lane tokens, label names) that resolve to this entry.
 type GlossaryEntry struct {
@@ -87,8 +87,16 @@ const (
 
 var glossary = []GlossaryEntry{
 	// Rules — why the delegate chose what it chose.
-	{Slug: "contributor-offline", Kind: GlossaryRule, Plain: "the author's clanker hasn't been connected since the nudge",
-		Detail: "The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting."},
+	{Slug: RuleContributorOffline, Kind: GlossaryRule, Plain: "the author hasn't been reachable since the nudge",
+		Detail: "The PR's author (or their clanker or hive) has been offline since the hive nudged them, so the hive takes the work over instead of waiting. The decision itself names which: the author's clanker, a connected hive, or the author."},
+	{Slug: RuleAlreadyFixed, Kind: GlossaryRule, Plain: "the issue was already fixed by a merged PR; closed as superseded",
+		Detail: "The issue this PR fixes is already closed and a merged PR closed it (or a merged PR declares it supersedes this one), so nothing is left to deliver. The hive closes the PR as superseded with a note naming the merging PR; it never adopts it."},
+	{Slug: RuleMergeableAsIs, Kind: GlossaryRule, Plain: "mergeable and green as it is; handed to the merge gate",
+		Detail: "The head is mergeable with green CI, so no adoption is needed: the hive approves it and the merge gate takes it as it is."},
+	{Slug: RuleRebaseThenMerge, Kind: GlossaryRule, Plain: "only conflicts block it; a rebase then merge",
+		Detail: "Conflicts are the only blocker. The unattended rebase-then-merge path lands with hivecommons/hive#15104; until then the ladder records this rung and moves on."},
+	{Slug: RuleReturnToContributor, Kind: GlossaryRule, Plain: "the author's clanker or hive is connected; returned to them with the fix list",
+		Detail: "The author's clanker or hive is connected (or has picked the rework up), so the hive hands the PR back to them with the exact fix list instead of adopting it."},
 	{Slug: "dedupe", Kind: GlossaryRule, Plain: "an older issue already tracks this",
 		Detail: "An older issue already tracks the same work; one thread keeps it moving."},
 	{Slug: "fix-then-merge", Kind: GlossaryRule, Plain: "the branch isn't mergeable yet",
@@ -182,8 +190,8 @@ var glossary = []GlossaryEntry{
 		Detail: "Required checks are failing on this branch; nothing merges until they are green.", Aliases: []string{"ci-failing", "checks-failing", "red"}},
 	{Slug: GlossaryBehind, Kind: GlossaryReason, Plain: "the branch is behind the base branch",
 		Detail: "The branch is behind the base branch and must be updated before it can merge."},
-	{Slug: GlossaryAuthorOnline, Kind: GlossaryReason, Plain: "the author's clanker is connected, so hive won't take the PR over",
-		Detail: "Adoption is for authors whose clanker has gone offline; this author's clanker is connected, so the hive leaves the PR with them."},
+	{Slug: GlossaryAuthorOnline, Kind: GlossaryReason, Plain: "the author's clanker or hive is connected, so hive won't take the PR over",
+		Detail: "Adoption is for authors whose clanker or hive has gone offline; this author's is connected, so the hive leaves the PR with them."},
 	{Slug: GlossaryHold, Kind: GlossaryReason, Plain: "on hold; the hive does nothing until it is released",
 		Detail:      "The PR is on hold. The hive does nothing with it until a person releases the hold.",
 		IssueDetail: "The issue is on hold. No agent claims it until a person releases the hold."},
