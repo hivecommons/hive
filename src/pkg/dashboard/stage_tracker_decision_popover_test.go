@@ -21,6 +21,7 @@ func stageTrackerDecisionPopPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "agentNowAgo"),
 		jsFunc(t, html, "stageTrackerDecisionTriggerHtml"),
 		jsFunc(t, html, "stageTrackerDecisionOptions"),
+		jsFunc(t, html, "stageTrackerSayOnce"),
 		jsFunc(t, html, "stageTrackerDecisionPopHtml"),
 		jsFunc(t, html, "stageTrackerDecisionRun"),
 	}, "\n")
@@ -90,23 +91,38 @@ assert.ok(trig.indexOf(' title=') < 0, trig);
 assert.ok(trig.indexOf('data-ham-tip="Merge gate — tip"') >= 0, trig);
 assert.ok(trig.indexOf('Needs human decision') >= 0, trig);
 
-// Popover: dialog role, question → blocker → actions → who/when → stage line, in that order.
+// Popover (hivecommons/hive#15394): dialog role, question → one primary action
+// + "More ⋯" → who/when → a collapsed Details holding the blocker and the stage line.
 const nowMs = Date.parse('2026-10-27T12:30:00Z');
 const pop = stageTrackerDecisionPopHtml(pr, stageTrackerDecisionOptions(pr, ctx), nowMs, 'Merge gate — tip');
 assert.ok(pop.indexOf('role="dialog"') >= 0 && pop.indexOf('aria-label="Decision needed on o/r#7"') >= 0, pop);
 assert.ok(pop.indexOf('o/r#7 · Raise retries') >= 0, pop);
 const at = s => { const i = pop.indexOf(s); assert.ok(i >= 0, 'missing ' + s + ' in ' + pop); return i; };
-const iQ = at('Should the retry budget go to 5?'), iB = at('needs a new commit'), iA = at('ham-decision-acts'), iM = at('Asked by a reviewer · 2 hours ago'), iS = at('Merge gate — tip');
-assert.ok(iQ < iB && iB < iA && iA < iM && iM < iS, [iQ, iB, iA, iM, iS].join(','));
-// Buttons: delegate first and marked lead; disabled approve greyed with its reason; one verb each.
-const buttons = pop.match(/<button[^>]*data-ham-act="[^"]+"[^>]*>[^<]*<\/button>/g);
+const iQ = at('Should the retry budget go to 5?'), iA = at('ham-decision-acts'), iM = at('Asked by a reviewer · 2 hours ago'), iD = at('<details class="ham-decision-details"><summary>Details</summary>'), iB = at('needs a new commit'), iS = at('Merge gate — tip');
+assert.ok(iQ < iA && iA < iM && iM < iD && iD < iB && iB < iS, [iQ, iA, iM, iD, iB, iS].join(','));
+// Buttons: exactly one action — the first the viewer may take, marked lead — plus "More ⋯" for the row menu.
+const buttons = pop.match(/<button[^>]*>[^<]*<\/button>/g);
+assert.strictEqual(buttons.length, 2, buttons.join('\n'));
 assert.ok(/data-ham-act="decide:delegate"/.test(buttons[0]) && buttons[0].indexOf('ham-decision-lead') >= 0, buttons[0]);
 assert.ok(buttons[0].indexOf('>Let hive decide<') >= 0, buttons[0]);
-assert.ok(/aria-disabled="true"/.test(buttons[1]) && /title="A reviewer requested changes/.test(buttons[1]), buttons[1]);
-assert.ok(buttons.some(b => b.indexOf('ham-menu-danger') >= 0 && b.indexOf('Close as superseded') >= 0), buttons.join('\n'));
-assert.ok(buttons.every(b => b.indexOf('…') < 0 && b.indexOf('/lgtm') < 0), buttons.join('\n'));
-// Plain words only: no reason slugs, stage codes or verdict enums reach the operator.
-for (const bad of ['contributor-lane', 'requires_human', ' 085', 'sentinel']) assert.ok(pop.indexOf(bad) < 0, bad + ' in ' + pop);
+assert.ok(/data-ham-more="1"/.test(buttons[1]) && buttons[1].indexOf('ham-decision-more') >= 0 && buttons[1].indexOf('>More ⋯<') >= 0, buttons[1]);
+assert.ok(pop.indexOf('ham-decision-consequences') < 0 && pop.indexOf('/lgtm') < 0, pop);
+// Nothing the viewer may take: the lead option shows greyed with its reason.
+const held = Object.assign({}, pr, { modifiers: ['needs-decision', 'hold'], decision_needed: Object.assign({}, decision, { options: decision.options.slice(0, 1) }) });
+const heldPop = stageTrackerDecisionPopHtml(held, stageTrackerDecisionOptions(held, ctx), nowMs, '');
+assert.ok(/aria-disabled="true"[^>]*title="A reviewer requested changes/.test(heldPop), heldPop);
+assert.ok(heldPop.indexOf('data-ham-more') < 0, heldPop);
+// Say it once: a sentence the question already said does not come back in Details.
+const echo = Object.assign({}, pr, { decision_needed: Object.assign({}, decision, { question: 'Ready to merge. Hive won\'t merge it alone — @x isn\'t a trusted author yet.', blocker: '', detail: 'To trust @x: give them the trusted tier under 👥 Contributors.' }) });
+const echoPop = stageTrackerDecisionPopHtml(echo, stageTrackerDecisionOptions(echo, ctx), nowMs, 'Ready for human merge — Hive won\'t merge it alone — @x isn\'t a trusted author yet · Next move: human — a maintainer merges it');
+assert.strictEqual((echoPop.match(/isn&#39;t a trusted author yet|isn't a trusted author yet/g) || []).length, 1, echoPop);
+assert.ok(echoPop.indexOf('To trust @x') >= 0 && echoPop.indexOf('a maintainer merges it') >= 0, echoPop);
+// The visible first read (everything outside Details) is at most 40 words.
+const visible = echoPop.replace(/<details[\s\S]*<\/details>/, '').replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/g, "'").trim().split(/\s+/).filter(Boolean);
+assert.ok(visible.length <= 40, visible.length + ' words: ' + visible.join(' '));
+// Plain words only: no reason slugs, stage codes, verdict enums, internal nouns or config keys reach the operator.
+for (const bad of ['contributor-lane', 'requires_human', ' 085', 'sentinel', 'sweep', 'soak', 'audit marker', 'trust override']) assert.ok(pop.indexOf(bad) < 0 && echoPop.indexOf(bad) < 0, bad + ' in ' + pop);
+assert.ok(!/\b[a-z_]+\.[a-z_]+\.[a-z_]+\b/.test(echoPop.replace(/https?:\/\/\S+/g, '')), echoPop);
 // Escaped: a question with markup is text, not HTML.
 const hostile = Object.assign({}, pr, { decision_needed: Object.assign({}, decision, { question: '<img src=x onerror=alert(1)>' }) });
 assert.ok(stageTrackerDecisionPopHtml(hostile, [], nowMs, '').indexOf('<img') < 0);

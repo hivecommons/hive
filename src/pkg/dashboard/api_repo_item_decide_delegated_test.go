@@ -739,7 +739,7 @@ func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T
 	}
 	res := job.Result
 	t.Logf("outcome: %s\nnext: %s\nwhy: %s", res.Outcome, res.Next, res.Why)
-	for _, want := range []string{"I can't merge this: author @someone is untrusted on testrepo", "not a collaborator", "trusted or merger tier", "👥 Contributors"} {
+	for _, want := range []string{"I can't merge this: author @someone is untrusted on testrepo", "isn't a trusted author yet", "trusted tier under 👥 Contributors"} {
 		if !strings.Contains(res.Outcome, want) {
 			t.Errorf("outcome %q missing %q", res.Outcome, want)
 		}

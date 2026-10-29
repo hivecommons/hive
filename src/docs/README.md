@@ -58,6 +58,7 @@ A terminal agent is a power tool: you hold it, aim it, and it stops when you sto
 - [Operator reference](operator-reference.md)
 - [GitHub webhooks: cadence, patch and reconcile](webhooks.md) — polling fallback, webhook patch and reconcile, and the state-accuracy guarantees.
 - [Dashboard sections explained](dashboard-sections.md) — what each dashboard section shows and what to do about it.
+- [Activity monitor copy inventory](dashboard-copy-inventory.md) — every operator-visible string builder in the activity monitor, with before/after word counts and the hover budget.
 - [Hive on your iPhone Home Screen](ios-widget.md) — a Home Screen widget with issue/PR counts and sparklines (Scriptable, no server change).
 - [Dashboard settings explained](settings.md) — what each Settings tab controls and where each setting is documented.
 - [Maintainer commands](maintainer-commands.md) — slash commands for un-parking

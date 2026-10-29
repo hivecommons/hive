@@ -509,7 +509,7 @@
     .ham-decision-q { font-weight: var(--fw-semibold); color: var(--text); }
     .ham-decision-blocker { font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-capability-gap { color: var(--amber); }
-    .ham-decision-meta, .ham-decision-stage { font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-decision-meta { font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-decision-acts { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-2); }
     .ham-decision-act { padding: var(--sp-1) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-pill); background: transparent; color: var(--text); font: inherit; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; }
     .ham-decision-act:hover, .ham-decision-act:focus-visible { background: var(--panel-strong); outline: none; border-color: var(--line-strong); }
@@ -517,9 +517,12 @@
     .ham-decision-act.ham-menu-danger { color: var(--red); }
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
-    .ham-decision-consequences { margin: 0 0 var(--sp-1); padding-left: var(--sp-4); font-size: var(--fs-xs); color: var(--text-muted); }
-    .ham-decision-consequences li { margin: 0; overflow-wrap: anywhere; }
-    .ham-decision-consequences b { font-weight: var(--fw-semibold); color: var(--text); }
+    .ham-decision-act.ham-decision-more { color: var(--text-muted); }
+    /* The technical background folds behind one collapsed Details. */
+    .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
+    .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }
+    .ham-decision-details > summary:focus-visible { outline: var(--line-width) solid var(--accent); outline-offset: var(--sp-1); border-radius: var(--r-sm); }
+    .ham-decision-details[open] > summary { color: var(--text-muted); }
     .ham-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-2); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid color-mix(in srgb, var(--accent) 45%, var(--line-subtle)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: var(--fs-xs); }
     .ham-selbar[hidden] { display: none; }
     .ham-selbar .ham-sel-count { font-weight: var(--fw-semibold); color: var(--text); margin-right: var(--sp-2); }

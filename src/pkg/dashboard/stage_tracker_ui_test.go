@@ -268,7 +268,7 @@ assert.deepStrictEqual(segStates(row), [D, D, 'active', T, T, T, 'todo cap'], 'a
 assert.ok(row.includes('aria-current="step"') && subs(row).length === 0);
 assert.ok(row.includes('Fix &lt;login&gt;'), 'title escaped');
 assert.strictEqual(prCol(row).length, 0, 'issue without a PR has an empty PR column');
-assert.ok(tooltip(row).includes('(author/human'), 'author kind stays in the tooltip');
+assert.ok(tooltip(row).includes('(person'), 'author kind stays in the tooltip, in plain words');
 assert.ok(row.includes('<span class="ham-since">30m</span>'), row);
 // The age and the chip belong to the strip they describe, not to a title line
 // that may wrap: the since text closes the strip row (an empty spacer keeps
@@ -826,12 +826,12 @@ assert.ok(!/<li class="ham-seg active" data-motion=[^>]*title="Claimed"/.test(st
 row = stageTrackerRowHtml(g[3], stages, ctx);
 expectTitles(row.split('<div class="ham-sub"')[0], ['a.ham-ref', 'span.ham-title'], 'two-PR issue line');
 for (const s of subs(row)) expectTitles(s, ['a.ham-pr-ref', 'li.ham-seg'], 'sub-row');
-assert.ok(/<a class="ham-pr-ref"[^>]*title="First PR · Back with the contributor[^"]*@bo \(author\/clanker\)[^"]*"/.test(subs(row)[1]), 'sub-row PR link: PR title, then the PR tooltip: ' + subs(row)[1]);
+assert.ok(/<a class="ham-pr-ref"[^>]*title="First PR · Back with the contributor[^"]*@bo \(agent\)[^"]*"/.test(subs(row)[1]), 'sub-row PR link: PR title, then the PR tooltip: ' + subs(row)[1]);
 // Standalone PR: the PR link (its title, then the row tooltip) and the active
 // chevron; the placeholder issue slot carries none.
 row = stageTrackerRowHtml(g[6], stages, ctx);
 expectTitles(row, ['a.ham-pr-ref', 'li.ham-seg'], 'standalone PR');
-assert.ok(/<a class="ham-pr-ref"[^>]*title="Standalone PR · Not yet admitted to auto merge[^"]*@cy \(author\/human\)/.test(row), 'PR link: title, then the row tooltip: ' + row);
+assert.ok(/<a class="ham-pr-ref"[^>]*title="Standalone PR · Not yet admitted to auto merge[^"]*@cy \(person\)/.test(row), 'PR link: title, then the row tooltip: ' + row);
 assert.ok(row.includes('aria-label="human · @cy"') && !row.includes('<title>'), 'author icon label is aria-only: ' + row);
 // Since cells are untouched: plain text, no title.
 assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/ham-since[^>]*title=/.test(golden), 'since cells unchanged');

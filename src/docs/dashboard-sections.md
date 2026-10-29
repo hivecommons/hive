@@ -31,6 +31,16 @@ These words have a special meaning in Hive. Each entry explains them again the f
 - **Needs-human:** waiting on a person, for example for a decision or a review. It is also the name of a label.
 - **Merge-eligible:** a pull request that passed every check Hive uses before it may merge it.
 
+**Who is who in the activity monitor** ([#15394](https://github.com/hivecommons/hive/issues/15394)). Every hover, menu and caption uses these five nouns and no others:
+
+- **Agent:** any automated worker — one of Hive's own agents or a contributor's connected agent. Hover text says *the author's agent* for the latter; the product noun **clanker** appears only where it names the contributor relay itself (the Contributors page, presence chips).
+- **Contributor:** a person outside the maintainer team whose issue or pull request Hive is tracking.
+- **Author:** whoever opened the pull request — a person, an agent or Hive. A **trusted author** is one Hive may merge for without asking.
+- **Reviewer:** a person or agent that reviews a pull request; Hive's own review swarm is *the reviewer*.
+- **Merge:** the one word for landing a pull request. *Merge it* is you merging now; *Let hive merge it* is you approving so Hive merges on its next pass.
+
+Hover text follows one budget: one sentence of state in plain words, at most 40 visible words, one recommended action, and everything technical (config keys, stage numbers, how to change a setting) behind a single collapsed **Details**. The same sentence is never shown twice on one surface. The per-builder word counts live in [dashboard-copy-inventory.md](dashboard-copy-inventory.md).
+
 **Dialogs on a phone.** Any dialog with a long body — the **What changed** release notes after an upgrade, alerts, the export viewer, the Level 6 auto-merge notice, settings bodies — fills the whole screen on a phone: title and a ✕ at the top, the text scrolls in the middle, and the buttons stay fixed at the bottom. A soft fade at the bottom edge means there is more to read; it disappears when you reach the end. Esc, the ✕, the buttons and tapping the backdrop close it. On a desktop the same dialogs keep their usual size and only gain the fade and a thin scrollbar. See [Long-content modals](dashboard-design-system.md#long-content-modals-modal-scroll-and-the-mobile-sheet) for the convention.
 
 ## Overview

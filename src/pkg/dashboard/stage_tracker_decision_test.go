@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -267,16 +268,27 @@ func TestStageTrackerDecisionForHumanMerge(t *testing.T) {
 		t.Fatalf("lead options = %v, want merge-now then queue-merge", got)
 	}
 	merge := d.Options[0]
-	if !merge.Enabled || merge.Label != "Approve & merge as maintainer" || merge.Consequence != "merges #317 into main now via hive's identity, attributed to you" {
+	if !merge.Enabled || merge.Label != "Approve & merge as maintainer" || merge.Consequence != "Merges #317 into main now, credited to you" {
 		t.Fatalf("merge-now = %+v", merge)
 	}
 	queue := d.Options[1]
-	if !queue.Enabled || queue.Label != "Approve — let hive merge" || !strings.Contains(queue.Consequence, "merge sweep merges #317") || !strings.Contains(queue.Consequence, "soaked") {
+	if !queue.Enabled || queue.Label != "Approve — let hive merge" || queue.Consequence != "Hive merges #317 on its next pass" {
 		t.Fatalf("queue-merge = %+v", queue)
 	}
-	for _, want := range []string{"untrusted author", "@Karibhou is not a collaborator", "👥 Contributors", "auto_merge.contributor_lane.require_tiers"} {
-		if !strings.Contains(d.Question, want) {
-			t.Errorf("question lacks %q: %q", want, d.Question)
+	// hivecommons/hive#15394: the first read is one plain sentence of
+	// state and one of why; the how-to-trust line sits behind Details.
+	if d.Question != "Ready to merge. Hive won't merge it alone — @Karibhou isn't a trusted author yet." {
+		t.Errorf("question = %q", d.Question)
+	}
+	if !strings.Contains(d.Detail, "To trust @Karibhou: give them the trusted tier under 👥 Contributors") || strings.Contains(d.Detail, "auto_merge.") {
+		t.Errorf("detail = %q", d.Detail)
+	}
+	if d.Blocker != "" {
+		t.Errorf("blocker should be empty on the first read: %q", d.Blocker)
+	}
+	for _, o := range d.Options {
+		if n := len(strings.Fields(o.Consequence)); n > 12 {
+			t.Errorf("%s consequence is %d words: %q", o.Action, n, o.Consequence)
 		}
 	}
 	dir := decisionOptionByAction(t, d, decisionActionDirection)
@@ -321,8 +333,8 @@ func TestStageTrackerDecisionForHumanMerge(t *testing.T) {
 		agent := it
 		agent.Author, agent.AuthorKind, agent.DCOUnsigned, agent.DCOTotal = "hive[bot]", "hive", 2, 3
 		d := stageTrackerDecisionNeeded(agent, nil, "")
-		if !strings.Contains(d.Blocker, "2 of 3 commits have no Signed-off-by") || !strings.Contains(d.Blocker, "Re-author as hive PR is the separate choice") {
-			t.Fatalf("blocker lacks the DCO warning: %q", d.Blocker)
+		if !strings.Contains(d.Detail, "2 of 3 commits have no Signed-off-by") || !strings.Contains(d.Detail, "Re-author as hive PR is the separate choice") {
+			t.Fatalf("details lack the DCO warning: %q", d.Detail)
 		}
 		if got := []string{d.Options[0].Action, d.Options[1].Action, d.Options[2].Action}; got[2] != decisionActionReauthor || got[0] != decisionActionMergeNow || got[1] != decisionActionQueueMerge {
 			t.Fatalf("options = %v, want merge-now, queue-merge, re-author", got)
@@ -351,8 +363,8 @@ func TestStageTrackerDecisionForHumanMerge(t *testing.T) {
 		admitted := it
 		admitted.AdmittedBy = stagelabels.OperatorApprovalAdmission("octo")
 		d := stageTrackerDecisionNeeded(admitted, nil, "")
-		if !strings.Contains(d.Blocker, "Admitted by @octo (operator-approval:octo)") {
-			t.Fatalf("blocker = %q", d.Blocker)
+		if !strings.Contains(d.Detail, "Admitted by @octo (operator-approval:octo)") || !strings.HasPrefix(d.Question, "@octo approved it.") {
+			t.Fatalf("question = %q detail = %q", d.Question, d.Detail)
 		}
 		if o := decisionOptionByAction(t, d, decisionActionQueueMerge); o.Enabled || !strings.Contains(o.ReasonIfDisabled, "@octo already approved") {
 			t.Fatalf("queue-merge after admission = %+v", o)
@@ -451,3 +463,56 @@ func TestStageTrackerNeedsHumanStatesCarryAnAction(t *testing.T) {
 		})
 	}
 }
+
+// TestStageTrackerHumanMergeSaysItOnce (hivecommons/hive#15394): the 090
+// hover is built from the question, the folded details, the gate word's
+// tip and the next-move line. No sentence may appear twice across them,
+// the next-move line must not echo the reason text, and none of the
+// operator-visible strings may carry a config key or internal jargon.
+func TestStageTrackerHumanMergeSaysItOnce(t *testing.T) {
+	since := time.Date(2026, 10, 28, 15, 0, 0, 0, time.UTC)
+	for _, reason := range []string{
+		stageengineprstage.ContributorLaneReasonAuthorAssociation, "untrusted-author-role", "author-permission-missing", "fork-non-member",
+		stageengineprstage.ContributorLaneReasonClaimTier, stageengineprstage.ContributorLaneReasonClaimUnverified, stageengineprstage.ContributorLaneReasonNoClaim,
+		"contributor-lane:workflow-files", "contributor-lane:tests-removed", "repo-auto-merge-disabled", "something-brand-new",
+	} {
+		it := StageTrackerItem{Repo: "hivecommons/hive", Number: 15315, Kind: "pr", Author: "odttlnt", AuthorKind: authorKindHuman, BaseRef: "v5",
+			Stage: stagelabels.ReadyForHumanMerge.Number(), StageSince: &since, Reason: reason}
+		base, _ := stagelabels.HumanApprovedReason(reason)
+		if why := stageTrackerUntrustedAuthorWhy(base, it.Author); why != "" {
+			it.HumanMergeReasonText = "Hive won't merge it alone — " + why
+		}
+		it.HumanMergeReason, _, _ = stageTrackerHumanMergeReason(reason)
+		d := stageTrackerDecisionNeeded(it, nil, "")
+		actor := stageTrackerStageActor(it, nil, since)
+		if n := len(strings.Fields(d.Question)); n > 25 {
+			t.Errorf("%s: question is %d words: %q", reason, n, d.Question)
+		}
+		seen := map[string]string{}
+		for _, part := range []struct{ name, text string }{{"question", d.Question}, {"blocker", d.Blocker}, {"detail", d.Detail}, {"next-move", actor.Why}} {
+			for _, sent := range stageTrackerSentences(part.text) {
+				if prev, dup := seen[sent]; dup {
+					t.Errorf("%s: %q appears in both %s and %s", reason, sent, prev, part.name)
+				}
+				seen[sent] = part.name
+			}
+		}
+		if it.HumanMergeReasonText != "" && strings.Contains(actor.Why, it.HumanMergeReasonText) {
+			t.Errorf("%s: next-move echoes the reason text: %q", reason, actor.Why)
+		}
+		all := strings.Join([]string{d.Question, d.Blocker, d.Detail, actor.Why, it.HumanMergeReasonText}, " ")
+		if m := configKeyRE.FindString(all); m != "" {
+			t.Errorf("%s: config key %q in hover text: %q", reason, m, all)
+		}
+		for _, word := range []string{"sweep", "soak", "sentinel", "audit marker", "trust override", " lane", "requires_human", " 085", " 090"} {
+			if strings.Contains(strings.ToLower(all), word) {
+				t.Errorf("%s: jargon %q in hover text: %q", reason, word, all)
+			}
+		}
+	}
+	if got := stageTrackerSayOnce("Ready to merge. Hive won't merge it alone — @x isn't trusted.", "hive won't merge it alone — @x isn't trusted. To trust @x: do this.", "To trust @x: do this. Rails apply."); got != "To trust @x: do this. Rails apply." {
+		t.Errorf("stageTrackerSayOnce = %q", got)
+	}
+}
+
+var configKeyRE = regexp.MustCompile(`\b[a-z_]+\.[a-z_]+\.[a-z_]+\b`)

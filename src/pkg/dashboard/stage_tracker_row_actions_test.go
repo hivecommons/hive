@@ -1330,7 +1330,9 @@ const pop = stageTrackerDecisionOptions(dec.item, merger);
 assert.deepStrictEqual(ids(pop).slice(0, 3), ['decide:merge-now', 'decide:queue-merge', 'decide:delegate'], 'popover order: ' + ids(pop));
 assert.ok(pop[0].enabled && pop[1].enabled && pop[2].enabled);
 const html = stageTrackerDecisionPopHtml(dec.item, pop, Date.now(), '');
-for (const id of ['decide:merge-now', 'decide:queue-merge', 'decide:delegate']) assert.ok(html.includes('data-ham-act="' + id + '"'), id + ' rendered in the popover');
+// The popover shows the one recommended action (merge now) and hands the rest to the row menu.
+assert.ok(html.includes('data-ham-act="decide:merge-now"') && html.includes('>Merge it<') && html.includes('data-ham-more="1"'), html);
+assert.ok(!html.includes('data-ham-act="decide:queue-merge"') && !html.includes('data-ham-act="decide:delegate"'), html);
 
 // A 085 popover still leads with Let hive decide.
 const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'],
@@ -1392,7 +1394,7 @@ assert.strictEqual(stageTrackerDCOCaveat([]), '');
   assert.ok(dialogs[0].cfg.message.includes('lack a Signed-off-by'), dialogs[0].cfg.message);
   await stageTrackerActionPayload([pr317], 'decide:queue-merge');
   assert.strictEqual(dialogs[1].cfg.title, 'Approve — let hive merge');
-  assert.ok(dialogs[1].cfg.message.includes('trust override for this head'), dialogs[1].cfg.message);
+  assert.ok(dialogs[1].cfg.message.includes("stands in for the author's trust on this version"), dialogs[1].cfg.message);
   assert.ok(dialogs[1].cfg.message.includes('will not adopt or re-author it'), dialogs[1].cfg.message);
   assert.ok(dialogs[1].cfg.message.includes('lack a Signed-off-by'), dialogs[1].cfg.message);
   // Re-author has its own confirm, danger-styled, with the don't-ask box.

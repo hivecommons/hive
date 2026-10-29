@@ -170,21 +170,21 @@ func TestStageTrackerManualMergeApproved(t *testing.T) {
 	}{
 		{
 			name: "workflow path approved", stage: stagelabels.ReadyForHumanMerge, reason: "contributor-lane:workflow-path:human-approved@clubanderson",
-			wantCaption:  "Awaiting human merge (workflow path) — approved by @clubanderson; the hive never merges this itself: click Merge (or /lgtm + /approve for tide)",
+			wantCaption:  "Ready to merge (workflow path) — approved by @clubanderson — a person merges it",
 			wantApprover: "clubanderson", wantManual: true, wantActor: "maintainer",
 		},
 		{
 			name: "tests removed, approver unknown", stage: stagelabels.ReadyForHumanMerge, reason: "contributor-lane:tests-removed",
-			wantCaption: "Awaiting human merge (tests removed); the hive never merges this itself: click Merge (or /lgtm + /approve for tide)",
+			wantCaption: "Ready to merge (tests removed) — a person merges it",
 			wantManual:  true, wantActor: "maintainer",
 		},
 		{
 			name: "trust-blocked 090 unchanged", stage: stagelabels.ReadyForHumanMerge, reason: "untrusted-author-role",
-			wantCaption: "Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself — author's role is not trusted for unattended merge", wantActor: "maintainer",
+			wantCaption: "Ready to merge — a maintainer merges it — author's role is not trusted for unattended merge", wantActor: "maintainer",
 		},
 		{
 			name: "requires_human approved at 090", stage: stagelabels.ReadyForHumanMerge, reason: "reviewer-verdict:requires_human:human-approved@octocat",
-			wantCaption:  "Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself — review verdict requires human — approved by @octocat",
+			wantCaption:  "Ready to merge — a maintainer merges it — review verdict requires human — approved by @octocat",
 			wantApprover: "octocat", wantActor: "maintainer",
 		},
 		{
@@ -219,14 +219,14 @@ func TestStageTrackerManualMergeApproved(t *testing.T) {
 	s.statusMu.Unlock()
 	resp := s.buildStageTracker(s.status, store, now)
 	it := trackerItem(t, resp, "pr", 120)
-	if it.Stage != 90 || it.HumanApprover != "clubanderson" || !it.ManualMerge || !strings.HasPrefix(it.Caption, "Awaiting human merge (workflow path) — approved by @clubanderson") {
+	if it.Stage != 90 || it.HumanApprover != "clubanderson" || !it.ManualMerge || !strings.HasPrefix(it.Caption, "Ready to merge (workflow path) — approved by @clubanderson") {
 		t.Fatalf("row = stage %d approver %q manual %v caption %q", it.Stage, it.HumanApprover, it.ManualMerge, it.Caption)
 	}
 	raw, err := json.Marshal(it)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true,"human_merge_reason":"workflow-files","human_merge_reason_text":"Changes .github/workflows/**`) {
+	if !strings.Contains(string(raw), `"human_approver":"clubanderson","manual_merge":true,"human_merge_reason":"workflow-files","human_merge_reason_text":"It changes GitHub workflow files`) {
 		t.Fatalf("payload lacks the manual-merge / human-merge-reason fields: %s", raw)
 	}
 	if clean := trackerItem(t, resp, "pr", 101); clean.HumanApprover != "" || clean.ManualMerge || clean.HumanMergeReason != "" || clean.HumanMergeReasonText != "" {
@@ -244,14 +244,14 @@ func TestStageTrackerHumanMergeReason(t *testing.T) {
 	tests := []struct {
 		reason, wantCode, wantWord, wantTipPrefix string
 	}{
-		{"contributor-lane:workflow-path:human-approved@clubanderson", "workflow-files", "workflow files", "Changes .github/workflows/**"},
-		{"contributor-lane:tests-removed", "tests-removed", "tests removed", "Deletes tests"},
-		{"human-merge-path:human-approved@octocat", "manual-merge-policy", "manual-merge policy", "Touches a path listed in auto_merge.human_merge_paths"},
-		{"untrusted-author-role", "untrusted-author", "untrusted author", "No lane can vouch for the author"},
-		{"contributor-lane:claim-tier-untrusted", "untrusted-author", "untrusted author", "No lane can vouch"},
-		{"repo-auto-merge-disabled", "auto-merge-off", "auto-merge off", "Auto-merge is switched off"},
-		{"reviewer-verdict:requires_human:human-approved@octocat", "reviewer-deferred", "reviewer deferred", "The reviewer swarm returned requires_human"},
-		{"something-brand-new", "policy", "policy", "The merge lane will not merge this unattended (lane reason `something-brand-new`)"},
+		{"contributor-lane:workflow-path:human-approved@clubanderson", "workflow-files", "workflow files", "It changes GitHub workflow files"},
+		{"contributor-lane:tests-removed", "tests-removed", "tests removed", "It removes tests"},
+		{"human-merge-path:human-approved@octocat", "manual-merge-policy", "manual-merge policy", "It touches files this repo reserves"},
+		{"untrusted-author-role", "untrusted-author", "untrusted author", "Hive won't merge it alone"},
+		{"contributor-lane:claim-tier-untrusted", "untrusted-author", "untrusted author", "Hive won't merge it alone"},
+		{"repo-auto-merge-disabled", "auto-merge-off", "auto-merge off", "Auto-merge is off for this repo"},
+		{"reviewer-verdict:requires_human:human-approved@octocat", "reviewer-deferred", "reviewer deferred", "A reviewer asked for a person to merge"},
+		{"something-brand-new", "policy", "policy", "Hive's merge rules leave this one to a person (`something-brand-new`)"},
 		{"", "", "", ""},
 	}
 	for _, tt := range tests {
@@ -279,7 +279,7 @@ func TestStageTrackerHumanMergeReason(t *testing.T) {
 	resp := s.buildStageTracker(s.status, store, now)
 
 	pr401 := trackerItem(t, resp, "pr", 401)
-	if pr401.HumanMergeReason != "workflow-files" || !strings.HasPrefix(pr401.HumanMergeReasonText, "Changes .github/workflows/**") || pr401.NestedUnder != 400 {
+	if pr401.HumanMergeReason != "workflow-files" || !strings.HasPrefix(pr401.HumanMergeReasonText, "It changes GitHub workflow files") || pr401.NestedUnder != 400 {
 		t.Fatalf("PR 401 = reason %q text %q nested %d", pr401.HumanMergeReason, pr401.HumanMergeReasonText, pr401.NestedUnder)
 	}
 	issue400 := trackerItem(t, resp, "issue", 400)

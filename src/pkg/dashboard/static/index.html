@@ -1832,7 +1832,7 @@
     .ham-decision-q { font-weight: var(--fw-semibold); color: var(--text); }
     .ham-decision-blocker { font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-capability-gap { color: var(--amber); }
-    .ham-decision-meta, .ham-decision-stage { font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-decision-meta { font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-decision-acts { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0 var(--sp-2); }
     .ham-decision-act { padding: var(--sp-1) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-pill); background: transparent; color: var(--text); font: inherit; font-size: var(--fs-xs); cursor: pointer; white-space: nowrap; }
     .ham-decision-act:hover, .ham-decision-act:focus-visible { background: var(--panel-strong); outline: none; border-color: var(--line-strong); }
@@ -1840,9 +1840,12 @@
     .ham-decision-act.ham-menu-danger { color: var(--red); }
     .ham-decision-act[aria-disabled="true"] { color: var(--text-faint); border-style: dashed; cursor: default; opacity: 0.6; }
     .ham-decision-act[aria-disabled="true"]:hover { background: transparent; border-color: var(--line-subtle); }
-    .ham-decision-consequences { margin: 0 0 var(--sp-1); padding-left: var(--sp-4); font-size: var(--fs-xs); color: var(--text-muted); }
-    .ham-decision-consequences li { margin: 0; overflow-wrap: anywhere; }
-    .ham-decision-consequences b { font-weight: var(--fw-semibold); color: var(--text); }
+    .ham-decision-act.ham-decision-more { color: var(--text-muted); }
+    /* The technical background folds behind one collapsed Details. */
+    .ham-decision-details { margin: var(--sp-2) 0 0; font-size: var(--fs-xs); color: var(--text-muted); }
+    .ham-decision-details > summary { cursor: pointer; color: var(--text-faint); }
+    .ham-decision-details > summary:focus-visible { outline: var(--line-width) solid var(--accent); outline-offset: var(--sp-1); border-radius: var(--r-sm); }
+    .ham-decision-details[open] > summary { color: var(--text-muted); }
     .ham-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-2); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid color-mix(in srgb, var(--accent) 45%, var(--line-subtle)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: var(--fs-xs); }
     .ham-selbar[hidden] { display: none; }
     .ham-selbar .ham-sel-count { font-weight: var(--fw-semibold); color: var(--text); margin-right: var(--sp-2); }
@@ -15479,7 +15482,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
-          else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim() + (sg.description ? ' — ' + sg.description : '');
+          // The reason is the whole story; the stage description would only repeat it (hivecommons/hive#15394).
+          else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim();
           if (actorTip && !sg.cap) tip += actorTip;
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.
@@ -15598,6 +15602,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Row tooltip: headline, reason, repo, author, flags, since, recent hops.
     function stageTrackerTooltip(item, nowMs) {
       const ak = item.author_kind || '';
+      // Plain words for author_kind in hover text (hivecommons/hive#15394).
+      const akPlain = { human: 'person', clanker: 'agent', hive: 'hive', bot: 'bot' };
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const sinceMs = Date.parse(item.stage_since || '');
       const trail = stageTrackerTrailText(item);
@@ -15605,7 +15611,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const lines = openHeld
         ? [stageTrackerHeadline(item) + (item.caption || item.reason ? ' · ' + (item.caption || item.reason) : '') + (item.repo ? ' · ' + item.repo : '')]
         : [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
-      if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
+      if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (' + (akPlain[ak] || ak) + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr);
@@ -15634,7 +15640,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (mods.indexOf('hold') >= 0 && typeof stageTrackerHoldPill === 'function' && stageTrackerHoldPill(item)) lines.push(stageTrackerHoldPill(item));
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
-      return lines.filter(Boolean).join('\n');
+      // Say it once: a line the caption already said is not repeated (hivecommons/hive#15394).
+      return lines.filter((l, i) => l && lines.indexOf(l) === i).join('\n');
     }
 
     // The sentinel chip: drawn in the chip area (beside needs rebase /
@@ -17830,7 +17837,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const it = rows[0];
       const total = Number(it.dco_total) || 0;
       const of = total > 0 ? ' of ' + total + ' commit' + (total === 1 ? '' : 's') : ' commit' + (Number(it.dco_unsigned) === 1 ? '' : 's');
-      return ' Before you do: ' + Number(it.dco_unsigned) + of + ' on ' + (rows.length > 1 ? 'the first of these' : 'this head') + ' lack a Signed-off-by, so GitHub refuses the merge where DCO is required. "Re-author as hive PR" is the separate choice for that; approving never re-authors by itself.';
+      return ' Before you do: ' + Number(it.dco_unsigned) + of + ' on ' + (rows.length > 1 ? 'the first of these' : 'this head') + ' lack a Signed-off-by (DCO). "Re-author as hive PR" is the separate choice for that; approving does not re-author.';
     }
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
@@ -18497,26 +18504,49 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (lead > 0 && STAGE_TRACKER_MERGE_ACTIONS.indexOf(out[0].id) < 0) out.unshift(out.splice(lead, 1)[0]);
       return out;
     }
-    // Pure: the popover markup.
+    // Pure: drop any sentence already said earlier in the text, so a hover
+    // never repeats itself (hivecommons/hive#15394).
+    function stageTrackerSayOnce(parts) {
+      const seen = new Set();
+      const out = [];
+      for (const part of parts) {
+        const keep = [];
+        for (const raw of String(part || '').split(/(?<=[.?!])\s+|\s+—\s+(?=[A-Z@])|\s+·\s+/)) {
+          const key = raw.trim().replace(/[.?!]+$/, '').toLowerCase();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          keep.push(raw.trim());
+        }
+        if (keep.length) out.push(keep.join(' · '));
+      }
+      return out;
+    }
+    // Pure: the popover markup — one sentence of state, one primary action,
+    // "More ⋯" for the rest, who asked and when, and everything technical
+    // behind one collapsed Details (hivecommons/hive#15394).
     function stageTrackerDecisionPopHtml(item, options, nowMs, tip) {
       const d = item.decision_needed || {};
       const ref = stageTrackerRefOf(item);
       const sinceMs = Date.parse(d.since || item.stage_since || '');
       const meta = ['Asked by ' + (d.asked_by || 'the hive'), sinceMs ? agentNowAgo(nowMs - sinceMs) : ''].filter(Boolean).join(' · ');
-      const buttons = options.map(o => `<button type="button" class="ham-decision-act${o.danger ? ' ham-menu-danger' : ''}${o.id === 'decide:delegate' || (o.id === options[0].id && STAGE_TRACKER_MERGE_ACTIONS.indexOf(o.id) >= 0) ? ' ham-decision-lead' : ''}" data-ham-act="${esc(o.id)}"${o.enabled ? (o.consequence ? ` title="${esc(o.consequence)}"` : '') : ` aria-disabled="true" title="${esc(o.why)}"`}>${esc(o.label)}</button>`).join('');
-      // Each option's consequence in plain words, so the choice is made
-      // knowing what happens next (hivecommons/hive#15078).
-      const consequences = options.filter(o => o.consequence).map(o => `<li><b>${esc(o.label)}</b> — ${esc(o.consequence)}</li>`).join('');
-      // Order (owner): WHAT it is waiting on → WHAT you can do → WHO asked, when.
+      // The one recommended action: the first the viewer may take, else the
+      // lead option greyed with its reason. Short verbs here; the ⋯ menu
+      // keeps the full labels.
+      const shortLabel = { 'decide:merge-now': 'Merge it', 'decide:queue-merge': 'Let hive merge it', 'decide:direction': 'Send back' };
+      const primary = options.length ? (options.find(o => o.enabled) || options[0]) : null;
+      const lead = primary ? `<button type="button" class="ham-decision-act ham-decision-lead${primary.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(primary.id)}"${primary.enabled ? (primary.consequence ? ` title="${esc(primary.consequence)}"` : '') : ` aria-disabled="true" title="${esc(primary.why)}"`}>${esc(shortLabel[primary.id] || primary.label)}</button>` : '';
+      const more = options.length > 1 ? `<button type="button" class="ham-decision-act ham-decision-more" data-ham-more="1" title="All actions for this row">More ⋯</button>` : '';
+      const question = d.question || '';
+      const said = typeof stageTrackerSayOnce === 'function' ? stageTrackerSayOnce([question, d.blocker, d.detail, tip]) : [question, d.blocker, d.detail, tip].filter(Boolean);
+      const details = question ? said.slice(1) : said;
+      const fold = details.length ? `<details class="ham-decision-details"><summary>Details</summary>${details.map(x => `<p class="ham-decision-blocker">${esc(x)}</p>`).join('')}</details>` : '';
       return `<div class="ham-decision-pop" role="dialog" aria-label="${esc('Decision needed on ' + ref)}" tabindex="-1">
         <div class="ham-decision-head">${esc(ref)}${item.title ? ' · ' + esc(item.title) : ''}</div>
-        <p class="ham-decision-q">${esc(d.question || '')}</p>
+        <p class="ham-decision-q">${esc(question)}</p>
         ${typeof stageTrackerPresenceTip === 'function' && stageTrackerPresenceTip(item, nowMs) ? `<p class="ham-decision-presence">${stageTrackerPresenceDotHtml(item, nowMs)}${esc(stageTrackerPresenceTip(item, nowMs))}</p>` : ''}
-        ${d.blocker ? `<p class="ham-decision-blocker">${esc(d.blocker)}</p>` : ''}
-        ${buttons ? `<div class="ham-decision-acts">${buttons}</div>` : ''}
-        ${consequences ? `<ul class="ham-decision-consequences">${consequences}</ul>` : ''}
+        ${lead || more ? `<div class="ham-decision-acts">${lead}${more}</div>` : ''}
         <p class="ham-decision-meta">${esc(meta)}</p>
-        ${tip ? `<p class="ham-decision-stage">${esc(tip)}</p>` : ''}
+        ${fold}
       </div>`;
     }
     // Run a popover action down the row context menu's path.
@@ -18574,7 +18604,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       p.onKey = e => {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stageTrackerCloseDecisionPop(true); return; }
         if (e.key === 'Tab' && el.contains(e.target)) {
-          const acts = Array.from(el.querySelectorAll('.ham-decision-act'));
+          const acts = Array.from(el.querySelectorAll('.ham-decision-act, .ham-decision-details > summary'));
           const last = acts[acts.length - 1], first = acts[0];
           if ((!e.shiftKey && e.target === last) || (e.shiftKey && (e.target === first || e.target === el))) stageTrackerCloseDecisionPop(true);
         }
@@ -18583,6 +18613,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       el.addEventListener('pointerleave', () => stageTrackerDecisionPopLeave());
       el.addEventListener('focusin', () => { p.pinned = true; clearTimeout(p.timer); });
       el.addEventListener('click', e => {
+        const moreBtn = e.target.closest('[data-ham-more]');
+        if (moreBtn) {
+          // "More ⋯" hands over to the row's own menu, anchored on the trigger.
+          e.preventDefault(); e.stopPropagation();
+          const anchor = stageTrackerDecisionTrigger(key) || trigger;
+          stageTrackerCloseDecisionPop(false);
+          stageTrackerOpenMenu([p.item], { anchor, restore: anchor });
+          return;
+        }
         const b = e.target.closest('[data-ham-act]');
         if (!b || b.getAttribute('aria-disabled') === 'true') return;
         e.preventDefault(); e.stopPropagation();
@@ -19126,10 +19165,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (items.some(stageTrackerNeedsRebase)) {
             return (await stageTrackerAsk(id, 'confirm', { title: STAGE_TRACKER_REBASE_MERGE_LABEL, message: preface + refs + ' is behind ' + base + ' (needs a rebase), so GitHub would refuse a plain merge. Record your approval as ' + who + ' and have the hive rebase it onto ' + base + ', wait for CI, then merge it with your approval on record? You get a toast when it lands or if the rebase conflicts.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & rebase-merge', danger: true })) ? {} : null;
           }
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now via hive\'s identity, attributed to ' + who + '? The merge gate parked it for a human because its author is not a trusted merger on this repo; this is you taking that call. The head you see is the head that merges — a push in between makes GitHub refuse.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now, credited to ' + who + '? Hive left this merge to a person; this is you taking that call. The version you see is the one that merges.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
         }
         case 'decide:queue-merge':
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Record your approval on ' + refs + ' as the owner decision, as ' + who + '? This is the trust override for this head: hive\'s merge sweep merges it as-is on the next tick once CI is green, respecting soak, and will not adopt or re-author it. The dashboard merges nothing itself.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Approve ' + refs + ' as ' + who + '? Your approval stands in for the author\'s trust on this version: hive merges it as-is on its next pass once CI is green, and will not adopt or re-author it.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:re-author': {
           const caveat = stageTrackerDCOCaveat(items);
           return (await stageTrackerAsk(id, 'confirm', { title: 'Re-author as hive PR', message: preface + 'Have the hive re-author ' + refs + ' as ' + who + '?' + (caveat || ' Its head cannot merge as-is.') + ' The hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR; this one is closed when that merges. Nothing is merged as-is, and the author\'s commits stay attributed.', confirmLabel: 'Re-author', danger: true })) ? {} : null;

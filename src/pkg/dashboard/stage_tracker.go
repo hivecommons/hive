@@ -1440,16 +1440,17 @@ func stageTrackerManualMergeReason(reason string) bool {
 
 // Gate-cell words and tooltips per prstage.HumanMergeReason* code: why a
 // person, not the hive, merges a PR parked at 090 (hivecommons/hive#14658).
+// Plain words, one short sentence each, no config keys (hivecommons/hive#15394).
 var stageTrackerHumanMergeReasonWords = map[string][2]string{
-	stageengineprstage.HumanMergeReasonWorkflowFiles:     {"workflow files", "Changes .github/workflows/** (or action files) — the hive never merges workflow changes and its GitHub App lacks the workflows permission; click Merge on GitHub"},
-	stageengineprstage.HumanMergeReasonTestsRemoved:      {"tests removed", "Deletes tests — the hive never merges a PR that removes tests unattended; a maintainer reviews the deletion and clicks Merge"},
-	stageengineprstage.HumanMergeReasonManualMergePolicy: {"manual-merge policy", "Touches a path listed in auto_merge.human_merge_paths — the hive never merges it unattended; click Merge on GitHub"},
-	stageengineprstage.HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection or a ruleset requires an approving review the hive's GitHub App cannot give; approve on GitHub (or let the App bypass) and the hive merges, or click Merge"},
-	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repository disallows the merge method this PR needs (a forward merge or merge-commit PR is never squashed); merge by hand with an allowed method or allow it in the repository settings"},
-	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is switched off for this repository or lane, so every merge is a person's; click Merge on GitHub"},
-	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "No lane can vouch for the author (trust tier below require_tiers, no verified claim, or no trusted role), so the hive does not merge; a maintainer's /lgtm + /approve (or Merge) lands it"},
-	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "The hive's GitHub App is not permitted to take the merge step (GitHub answered 403); a maintainer merges by hand — see the hive:unauthorized note on the PR"},
-	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "The reviewer swarm returned requires_human on this head and a trusted merger approved it; the hive leaves the merge itself to a person"},
+	stageengineprstage.HumanMergeReasonWorkflowFiles:     {"workflow files", "It changes GitHub workflow files, which hive never merges on its own"},
+	stageengineprstage.HumanMergeReasonTestsRemoved:      {"tests removed", "It removes tests, which hive never merges on its own"},
+	stageengineprstage.HumanMergeReasonManualMergePolicy: {"manual-merge policy", "It touches files this repo reserves for a person to merge"},
+	stageengineprstage.HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection wants a review hive cannot give; approve on GitHub or merge it"},
+	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repo does not allow the merge method this PR needs"},
+	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is off for this repo, so a person merges"},
+	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "Hive won't merge it alone — the author isn't a trusted author yet"},
+	stageengineprstage.HumanMergeReasonUnauthorized:      {"unauthorized", "GitHub does not let hive merge here; a person merges"},
+	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "A reviewer asked for a person to merge this one"},
 }
 
 // stageTrackerHumanMergeReason derives, from a 090 stage reason, the
@@ -1465,47 +1466,73 @@ func stageTrackerHumanMergeReason(reason string) (code, word, tip string) {
 		return code, w[0], w[1]
 	}
 	base, _ := stagelabels.HumanApprovedReason(reason)
-	return stageengineprstage.HumanMergeReasonPolicy, "policy", "The merge lane will not merge this unattended (lane reason `" + strings.TrimSpace(base) + "`); a maintainer merges by hand"
+	return stageengineprstage.HumanMergeReasonPolicy, "policy", "Hive's merge rules leave this one to a person (`" + strings.TrimSpace(base) + "`)"
 }
 
 // Where an operator makes an author trusted, in the words the ⚙ and 👥
-// sections use, for the untrusted-author tooltip.
+// sections use. One line each, no config keys: the keys live on those
+// pages (hivecommons/hive#15394).
 const (
-	stageTrackerTrustFixTier   = "give them the trusted or merger tier under 👥 Contributors (auto_merge.contributor_lane.require_tiers)"
-	stageTrackerTrustFixRole   = "add them under Authorized users on ⚙ Security with the merger role (dashboard.authorized_users, auto_merge.trusted_authors.require_role)"
-	stageTrackerTrustFixCollab = "add them as a collaborator of the repository on GitHub"
+	stageTrackerTrustFixTier   = "give them the trusted tier under 👥 Contributors"
+	stageTrackerTrustFixRole   = "add them as a merger under ⚙ Security → Authorized users"
+	stageTrackerTrustFixCollab = "make them a collaborator on GitHub"
 )
 
-// stageTrackerUntrustedAuthorWhy says, in plain words, why the hive will
-// not vouch for the PR's author under a trust-family 090 reason and what
-// would make them trusted — the config key and where in the dashboard it
-// is set (hivecommons/hive#15078). "" for any other reason.
+// stageTrackerUntrustedAuthorWhy says, in one short plain sentence, why
+// the hive will not merge the PR's author's work under a trust-family 090
+// reason (hivecommons/hive#15078, #15394). "" for any other reason. The
+// how-to-fix line is stageTrackerUntrustedAuthorFix.
 func stageTrackerUntrustedAuthorWhy(base, author string) string {
 	who := "the author"
 	if a := strings.TrimSpace(author); a != "" {
 		who = "@" + a
 	}
 	switch strings.ToLower(strings.TrimSpace(base)) {
-	case stageengineprstage.ContributorLaneReasonAuthorAssociation:
-		return who + " is not a collaborator of this repository on GitHub (no owner, member or collaborator association) and holds no trusted or merger tier in this hive's contributor registry, so the hive will not merge their PR unattended. To trust them: " + stageTrackerTrustFixTier + ", or " + stageTrackerTrustFixCollab
-	case "untrusted-author-role":
-		return who + " does not hold the merger role under this hive's Authorized users, so the trusted-authors merge lane does not vouch for them. To trust them: " + stageTrackerTrustFixRole
+	case stageengineprstage.ContributorLaneReasonAuthorAssociation, "untrusted-author-role", stageengineprstage.ContributorLaneReasonClaimTier,
+		stageengineprstage.ContributorLaneReasonNoClaim, stageengineprstage.ContributorLaneReasonNoLinkedIssue:
+		return who + " isn't a trusted author yet"
 	case "author-permission-missing":
-		return "GitHub reports no push, maintain or admin permission for " + who + " on this repository, which the trusted-authors lane requires (auto_merge.trusted_authors.require_github_permission). To trust them: grant them write access on GitHub, or turn that check off"
+		return who + " has no write access to this repo"
 	case "fork-non-member":
-		return "this PR comes from a fork and " + who + " is not a member of the organization, so the hive will not merge it unattended. To trust them: " + stageTrackerTrustFixCollab
+		return "it comes from a fork and " + who + " isn't a member of the org"
 	case "untrusted-merger":
-		return "the person who queued this PR for auto-merge does not hold the merger role under this hive's Authorized users (dashboard.authorized_users). A merger or owner queues or merges it"
-	case stageengineprstage.ContributorLaneReasonClaimTier:
-		return who + "'s contributor tier is below the tiers the contributor lane merges for (auto_merge.contributor_lane.require_tiers, default trusted and merger). To trust them: " + stageTrackerTrustFixTier
-	case stageengineprstage.ContributorLaneReasonNoClaim, stageengineprstage.ContributorLaneReasonNoLinkedIssue:
-		return "no hive claim links this PR to an issue the hive handed out, and " + who + " holds no trusted or merger tier in the contributor registry, so no lane vouches for it. To trust them: " + stageTrackerTrustFixTier
+		return "the person who queued it isn't a merger"
 	case stageengineprstage.ContributorLaneReasonClaimUnverified:
-		return who + "'s GitHub login is not verified against their contributor profile, so the contributor lane cannot vouch for them. They verify it on the hub (Contributors → Verify GitHub), or " + stageTrackerTrustFixTier
+		return who + " hasn't verified their GitHub login yet"
 	case stageengineprstage.ContributorLaneReasonClaimAuthor:
-		return "the hive's claim on the linked issue names a different contributor than " + who + ", so the contributor lane does not vouch for this PR. A maintainer merges, or " + stageTrackerTrustFixTier
+		return "the linked issue was claimed by someone other than " + who
 	case stageengineprstage.ContributorLaneReasonClaimOtherHive:
-		return "the linked issue is claimed by another hive, so this hive's contributor lane does not vouch for " + who + ". The owning hive merges it, or a maintainer merges here"
+		return "another hive owns the linked issue"
+	}
+	return ""
+}
+
+// stageTrackerUntrustedAuthorFix is the one-line "how to trust them" for
+// the Details fold under a trust-family 090 reason; "" when none applies.
+func stageTrackerUntrustedAuthorFix(base, author string) string {
+	who := "the author"
+	if a := strings.TrimSpace(author); a != "" {
+		who = "@" + a
+	}
+	switch strings.ToLower(strings.TrimSpace(base)) {
+	case stageengineprstage.ContributorLaneReasonAuthorAssociation:
+		return "To trust " + who + ": " + stageTrackerTrustFixTier + ", or " + stageTrackerTrustFixCollab + "."
+	case "untrusted-author-role":
+		return "To trust " + who + ": " + stageTrackerTrustFixRole + "."
+	case "author-permission-missing":
+		return "To trust " + who + ": grant them write access on GitHub."
+	case "fork-non-member":
+		return "To trust " + who + ": " + stageTrackerTrustFixCollab + "."
+	case "untrusted-merger":
+		return "A merger or owner queues or merges it."
+	case stageengineprstage.ContributorLaneReasonClaimTier, stageengineprstage.ContributorLaneReasonNoClaim, stageengineprstage.ContributorLaneReasonNoLinkedIssue:
+		return "To trust " + who + ": " + stageTrackerTrustFixTier + "."
+	case stageengineprstage.ContributorLaneReasonClaimUnverified:
+		return "They verify it under Contributors → Verify GitHub, or " + stageTrackerTrustFixTier + "."
+	case stageengineprstage.ContributorLaneReasonClaimAuthor:
+		return "A maintainer merges, or " + stageTrackerTrustFixTier + "."
+	case stageengineprstage.ContributorLaneReasonClaimOtherHive:
+		return "The owning hive merges it, or a maintainer merges here."
 	}
 	return ""
 }
@@ -1700,13 +1727,13 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
 		if base, approver := stagelabels.HumanApprovedReason(reason); stageTrackerManualMergeReason(base) {
-			c := "Awaiting human merge (" + humanizeStageReason(base) + ")"
+			c := "Ready to merge (" + humanizeStageReason(base) + ")"
 			if approver != "" {
 				c += " — approved by @" + approver
 			}
-			return c + "; the hive never merges this itself: click Merge (or /lgtm + /approve for tide)", "maintainer"
+			return c + " — a person merges it", "maintainer"
 		}
-		return joinClause("Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself", clause), "maintainer"
+		return joinClause("Ready to merge — a maintainer merges it", clause), "maintainer"
 	case stagelabels.PreMergeSoak:
 		return joinClause("Admitted by the automerge lane; the pre-merge soak window is running", clause), "automerge lane"
 	case stagelabels.MergeQueue:
@@ -2050,12 +2077,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			// instead of the generic trust sentence (hivecommons/hive#15078).
 			if it.HumanMergeReason == stageengineprstage.HumanMergeReasonUntrustedAuthor {
 				if why := stageTrackerUntrustedAuthorWhy(base, it.Author); why != "" {
-					it.HumanMergeReasonText = "Untrusted author: " + why + ". Until then a maintainer merges — Approve & merge as maintainer, or Approve — let hive merge, from the row's ⋯ menu."
+					it.HumanMergeReasonText = "Hive won't merge it alone — " + why
 				}
 			}
 			// A person already took the trust call for this head (#15136).
 			if login := stagelabels.AdmissionLogin(it.AdmittedBy); login != "" {
-				it.HumanMergeReasonText = "Approved by @" + login + " as the owner decision (" + it.AdmittedBy + "): the hive merges this head as-is on its next pass once CI is green and the head has soaked, and does not adopt or re-author it. " + it.HumanMergeReasonText
+				it.HumanMergeReasonText = "@" + login + " approved it; hive merges it on its next pass"
 			}
 		}
 		if slices.Contains(it.Modifiers, modUnauthorized) || slices.Contains(it.DeferredModifiers, modUnauthorized) {

@@ -29,7 +29,7 @@
       const it = rows[0];
       const total = Number(it.dco_total) || 0;
       const of = total > 0 ? ' of ' + total + ' commit' + (total === 1 ? '' : 's') : ' commit' + (Number(it.dco_unsigned) === 1 ? '' : 's');
-      return ' Before you do: ' + Number(it.dco_unsigned) + of + ' on ' + (rows.length > 1 ? 'the first of these' : 'this head') + ' lack a Signed-off-by, so GitHub refuses the merge where DCO is required. "Re-author as hive PR" is the separate choice for that; approving never re-authors by itself.';
+      return ' Before you do: ' + Number(it.dco_unsigned) + of + ' on ' + (rows.length > 1 ? 'the first of these' : 'this head') + ' lack a Signed-off-by (DCO). "Re-author as hive PR" is the separate choice for that; approving does not re-author.';
     }
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:delegate': 'Let hive decide', 'decide:delegate-all': 'Let hive decide — all PRs', 'decide:delegate:rerun': 'Re-run decision', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
@@ -696,26 +696,49 @@
       if (lead > 0 && STAGE_TRACKER_MERGE_ACTIONS.indexOf(out[0].id) < 0) out.unshift(out.splice(lead, 1)[0]);
       return out;
     }
-    // Pure: the popover markup.
+    // Pure: drop any sentence already said earlier in the text, so a hover
+    // never repeats itself (hivecommons/hive#15394).
+    function stageTrackerSayOnce(parts) {
+      const seen = new Set();
+      const out = [];
+      for (const part of parts) {
+        const keep = [];
+        for (const raw of String(part || '').split(/(?<=[.?!])\s+|\s+—\s+(?=[A-Z@])|\s+·\s+/)) {
+          const key = raw.trim().replace(/[.?!]+$/, '').toLowerCase();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          keep.push(raw.trim());
+        }
+        if (keep.length) out.push(keep.join(' · '));
+      }
+      return out;
+    }
+    // Pure: the popover markup — one sentence of state, one primary action,
+    // "More ⋯" for the rest, who asked and when, and everything technical
+    // behind one collapsed Details (hivecommons/hive#15394).
     function stageTrackerDecisionPopHtml(item, options, nowMs, tip) {
       const d = item.decision_needed || {};
       const ref = stageTrackerRefOf(item);
       const sinceMs = Date.parse(d.since || item.stage_since || '');
       const meta = ['Asked by ' + (d.asked_by || 'the hive'), sinceMs ? agentNowAgo(nowMs - sinceMs) : ''].filter(Boolean).join(' · ');
-      const buttons = options.map(o => `<button type="button" class="ham-decision-act${o.danger ? ' ham-menu-danger' : ''}${o.id === 'decide:delegate' || (o.id === options[0].id && STAGE_TRACKER_MERGE_ACTIONS.indexOf(o.id) >= 0) ? ' ham-decision-lead' : ''}" data-ham-act="${esc(o.id)}"${o.enabled ? (o.consequence ? ` title="${esc(o.consequence)}"` : '') : ` aria-disabled="true" title="${esc(o.why)}"`}>${esc(o.label)}</button>`).join('');
-      // Each option's consequence in plain words, so the choice is made
-      // knowing what happens next (hivecommons/hive#15078).
-      const consequences = options.filter(o => o.consequence).map(o => `<li><b>${esc(o.label)}</b> — ${esc(o.consequence)}</li>`).join('');
-      // Order (owner): WHAT it is waiting on → WHAT you can do → WHO asked, when.
+      // The one recommended action: the first the viewer may take, else the
+      // lead option greyed with its reason. Short verbs here; the ⋯ menu
+      // keeps the full labels.
+      const shortLabel = { 'decide:merge-now': 'Merge it', 'decide:queue-merge': 'Let hive merge it', 'decide:direction': 'Send back' };
+      const primary = options.length ? (options.find(o => o.enabled) || options[0]) : null;
+      const lead = primary ? `<button type="button" class="ham-decision-act ham-decision-lead${primary.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(primary.id)}"${primary.enabled ? (primary.consequence ? ` title="${esc(primary.consequence)}"` : '') : ` aria-disabled="true" title="${esc(primary.why)}"`}>${esc(shortLabel[primary.id] || primary.label)}</button>` : '';
+      const more = options.length > 1 ? `<button type="button" class="ham-decision-act ham-decision-more" data-ham-more="1" title="All actions for this row">More ⋯</button>` : '';
+      const question = d.question || '';
+      const said = typeof stageTrackerSayOnce === 'function' ? stageTrackerSayOnce([question, d.blocker, d.detail, tip]) : [question, d.blocker, d.detail, tip].filter(Boolean);
+      const details = question ? said.slice(1) : said;
+      const fold = details.length ? `<details class="ham-decision-details"><summary>Details</summary>${details.map(x => `<p class="ham-decision-blocker">${esc(x)}</p>`).join('')}</details>` : '';
       return `<div class="ham-decision-pop" role="dialog" aria-label="${esc('Decision needed on ' + ref)}" tabindex="-1">
         <div class="ham-decision-head">${esc(ref)}${item.title ? ' · ' + esc(item.title) : ''}</div>
-        <p class="ham-decision-q">${esc(d.question || '')}</p>
+        <p class="ham-decision-q">${esc(question)}</p>
         ${typeof stageTrackerPresenceTip === 'function' && stageTrackerPresenceTip(item, nowMs) ? `<p class="ham-decision-presence">${stageTrackerPresenceDotHtml(item, nowMs)}${esc(stageTrackerPresenceTip(item, nowMs))}</p>` : ''}
-        ${d.blocker ? `<p class="ham-decision-blocker">${esc(d.blocker)}</p>` : ''}
-        ${buttons ? `<div class="ham-decision-acts">${buttons}</div>` : ''}
-        ${consequences ? `<ul class="ham-decision-consequences">${consequences}</ul>` : ''}
+        ${lead || more ? `<div class="ham-decision-acts">${lead}${more}</div>` : ''}
         <p class="ham-decision-meta">${esc(meta)}</p>
-        ${tip ? `<p class="ham-decision-stage">${esc(tip)}</p>` : ''}
+        ${fold}
       </div>`;
     }
     // Run a popover action down the row context menu's path.
@@ -773,7 +796,7 @@
       p.onKey = e => {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stageTrackerCloseDecisionPop(true); return; }
         if (e.key === 'Tab' && el.contains(e.target)) {
-          const acts = Array.from(el.querySelectorAll('.ham-decision-act'));
+          const acts = Array.from(el.querySelectorAll('.ham-decision-act, .ham-decision-details > summary'));
           const last = acts[acts.length - 1], first = acts[0];
           if ((!e.shiftKey && e.target === last) || (e.shiftKey && (e.target === first || e.target === el))) stageTrackerCloseDecisionPop(true);
         }
@@ -782,6 +805,15 @@
       el.addEventListener('pointerleave', () => stageTrackerDecisionPopLeave());
       el.addEventListener('focusin', () => { p.pinned = true; clearTimeout(p.timer); });
       el.addEventListener('click', e => {
+        const moreBtn = e.target.closest('[data-ham-more]');
+        if (moreBtn) {
+          // "More ⋯" hands over to the row's own menu, anchored on the trigger.
+          e.preventDefault(); e.stopPropagation();
+          const anchor = stageTrackerDecisionTrigger(key) || trigger;
+          stageTrackerCloseDecisionPop(false);
+          stageTrackerOpenMenu([p.item], { anchor, restore: anchor });
+          return;
+        }
         const b = e.target.closest('[data-ham-act]');
         if (!b || b.getAttribute('aria-disabled') === 'true') return;
         e.preventDefault(); e.stopPropagation();
@@ -1325,10 +1357,10 @@
           if (items.some(stageTrackerNeedsRebase)) {
             return (await stageTrackerAsk(id, 'confirm', { title: STAGE_TRACKER_REBASE_MERGE_LABEL, message: preface + refs + ' is behind ' + base + ' (needs a rebase), so GitHub would refuse a plain merge. Record your approval as ' + who + ' and have the hive rebase it onto ' + base + ', wait for CI, then merge it with your approval on record? You get a toast when it lands or if the rebase conflicts.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & rebase-merge', danger: true })) ? {} : null;
           }
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now via hive\'s identity, attributed to ' + who + '? The merge gate parked it for a human because its author is not a trusted merger on this repo; this is you taking that call. The head you see is the head that merges — a push in between makes GitHub refuse.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve & merge as maintainer', message: preface + 'Merge ' + refs + ' into ' + base + ' now, credited to ' + who + '? Hive left this merge to a person; this is you taking that call. The version you see is the one that merges.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve & merge', danger: true })) ? {} : null;
         }
         case 'decide:queue-merge':
-          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Record your approval on ' + refs + ' as the owner decision, as ' + who + '? This is the trust override for this head: hive\'s merge sweep merges it as-is on the next tick once CI is green, respecting soak, and will not adopt or re-author it. The dashboard merges nothing itself.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
+          return (await stageTrackerAsk(id, 'confirm', { title: 'Approve — let hive merge', message: preface + 'Approve ' + refs + ' as ' + who + '? Your approval stands in for the author\'s trust on this version: hive merges it as-is on its next pass once CI is green, and will not adopt or re-author it.' + stageTrackerDCOCaveat(items), confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:re-author': {
           const caveat = stageTrackerDCOCaveat(items);
           return (await stageTrackerAsk(id, 'confirm', { title: 'Re-author as hive PR', message: preface + 'Have the hive re-author ' + refs + ' as ' + who + '?' + (caveat || ' Its head cannot merge as-is.') + ' The hive re-homes the commits on a hive-owned, signed-off branch and opens a superseding PR; this one is closed when that merges. Nothing is merged as-is, and the author\'s commits stay attributed.', confirmLabel: 'Re-author', danger: true })) ? {} : null;

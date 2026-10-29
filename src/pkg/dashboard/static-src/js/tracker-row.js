@@ -283,7 +283,8 @@
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           // Why a person merges a 090 PR leads its tooltip (hivecommons/hive#14658).
-          else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim() + (sg.description ? ' — ' + sg.description : '');
+          // The reason is the whole story; the stage description would only repeat it (hivecommons/hive#15394).
+          else if (curStage === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.human_merge_reason_text) tip = ((sg.detour && sg.detour.text) || sg.label) + ' — ' + String(item.human_merge_reason_text).trim();
           if (actorTip && !sg.cap) tip += actorTip;
           // The sentinel's reason leads the lane tooltip so the security
           // implication is read before the stage mechanics.
@@ -402,6 +403,8 @@
     // Row tooltip: headline, reason, repo, author, flags, since, recent hops.
     function stageTrackerTooltip(item, nowMs) {
       const ak = item.author_kind || '';
+      // Plain words for author_kind in hover text (hivecommons/hive#15394).
+      const akPlain = { human: 'person', clanker: 'agent', hive: 'hive', bot: 'bot' };
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const sinceMs = Date.parse(item.stage_since || '');
       const trail = stageTrackerTrailText(item);
@@ -409,7 +412,7 @@
       const lines = openHeld
         ? [stageTrackerHeadline(item) + (item.caption || item.reason ? ' · ' + (item.caption || item.reason) : '') + (item.repo ? ' · ' + item.repo : '')]
         : [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
-      if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
+      if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (' + (akPlain[ak] || ak) + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr);
@@ -438,7 +441,8 @@
       if (mods.indexOf('hold') >= 0 && typeof stageTrackerHoldPill === 'function' && stageTrackerHoldPill(item)) lines.push(stageTrackerHoldPill(item));
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
-      return lines.filter(Boolean).join('\n');
+      // Say it once: a line the caption already said is not repeated (hivecommons/hive#15394).
+      return lines.filter((l, i) => l && lines.indexOf(l) === i).join('\n');
     }
 
     // The sentinel chip: drawn in the chip area (beside needs rebase /
