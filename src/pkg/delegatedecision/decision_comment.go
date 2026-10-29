@@ -38,8 +38,15 @@ type Effect struct {
 // ExpectedEffect says what d should cause on an item of kind.
 func ExpectedEffect(d Decision, kind Kind) Effect {
 	switch {
+	case d.Verdict == VerdictOperatorAction:
+		// Nothing the hive does moves this; the dedup answer reads "already
+		// decided <when>; waiting on <who>" from this line.
+		return Effect{IfNot: "Waiting on the spoke owner: " + strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(d.Text), "."), operatorActionPrefix) + ". The report clears itself once it stops recurring; `/fixed` closes it by hand."}
 	case d.Verdict == VerdictRefused, d.Verdict == VerdictOwnerOnly, d.Verdict == VerdictRecommendOnly, d.KeepsPark:
 		return Effect{IfNot: "The item stays parked until a person decides it: approve it, give direction, or close it from the Activity Monitor."}
+	case d.Verdict == VerdictNotNow:
+		return Effect{Waits: true, What: "this issue is closed as not planned; re-propose it with the incident or recurrence it would prevent",
+			IfNot: "Close it by hand on GitHub, or approve it yourself if you want it built anyway."}
 	case d.Verdict == VerdictAdoptSupersede:
 		return Effect{Waits: true,
 			What:  "the hive closes this PR and opens a fresh hive-authored PR with the same commits and sign-off, then finishes that one",
@@ -70,7 +77,8 @@ func ActionPlain(d Decision) string {
 func ActionPlainOn(d Decision, kind Kind) string {
 	switch d.Verdict {
 	case VerdictApprove, VerdictQuarantineFlaky, VerdictAcceptRatchet, VerdictAcceptProposal, VerdictDirection,
-		VerdictCloseDuplicate, VerdictCloseSuperseded, VerdictOwnerOnly, VerdictRecommendOnly, VerdictRefused:
+		VerdictCloseDuplicate, VerdictCloseSuperseded, VerdictOwnerOnly, VerdictRecommendOnly, VerdictRefused,
+		VerdictOperatorAction, VerdictNotNow:
 		return VerdictPlainOn(d.Verdict, kind)
 	case VerdictAdoptSupersede:
 		return PlainOn(GlossarySupersede, kind)
@@ -113,8 +121,16 @@ func CommentBodyWith(d Decision, hiveID, requester string, opts CommentOptions) 
 	switch {
 	case d.Verdict == VerdictRefused:
 		fmt.Fprintf(&b, "Hive (owner-delegate) did not decide this item: %s.", d.Rationale)
+	case d.Verdict == VerdictNotNow:
+		// Not a `/hive decision` line: the unpark sweep must not read a
+		// declined proposal as an approval.
+		fmt.Fprintf(&b, "%s\n\nRationale: %s. Closed as not planned.", CapitalizeFirst(d.Text), d.Rationale)
 	case d.KeepsPark:
-		fmt.Fprintf(&b, "%s\n\nRationale: %s. `%s` stays.", d.Text, d.Rationale, LabelNeedsDecision)
+		park := LabelNeedsDecision
+		if opts.Kind == KindIssue {
+			park = LabelIssueNeedsDecision
+		}
+		fmt.Fprintf(&b, "%s\n\nRationale: %s. `%s` stays.", d.Text, d.Rationale, park)
 	default:
 		fmt.Fprintf(&b, "/hive decision %s\n\nRationale: %s.", d.Text, d.Rationale)
 	}

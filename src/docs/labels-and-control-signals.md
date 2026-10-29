@@ -2360,6 +2360,9 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `ci-ratchet` | a CI hygiene gate, landed as a ratchet | A new CI hygiene gate lands as a ratchet: it records today's baseline and fails only on increases, so existing work is never blocked. |
 | `contributor-offline` | the author hasn't been reachable since the nudge | The PR's author (or their clanker or hive) has been offline since the hive nudged them, so the hive takes the work over instead of waiting. The decision itself names which: the author's clanker, a connected hive, or the author. |
 | `dedupe` | an older issue already tracks this | An older issue already tracks the same work; one thread keeps it moving. |
+| `proposal-approve-evidence` | a proposal backed by an incident or a repeated class; approved | The hive-filed proposal names an incident it would have prevented, or prior instances of the same class fixed one at a time, so its cost is justified and it is approved as proposed. |
+| `proposal-not-now` | a hive-filed proposal with no incident or recurrence behind it; declined for now | The proposal shows neither an incident it would have prevented nor a repeated class it would end, so its value is speculative. The hive declines it for now and closes it as not planned; re-propose with evidence. |
+| `selfreport-operator-action` | a spoke self-report only its operator can fix; not code work | The issue is a fleet self-report (expired login, credentials, disk, network, App setup) whose remedy is on the reporting spoke. The hive tells that spoke's owner what to do and keeps it out of the actionable set; no agent is sent to code. |
 | `default-approve` | no special rule applies; the hive took its own recommendation | No owner rule singles this issue out, so the hive went with its own recommendation — the reversible choice that keeps work moving. |
 | `default-release` | no special rule applies; a green branch is approved | No owner rule holds this PR back; its branch is green and a merge is reversible, so it is approved. |
 | `design-proposal` | a proposal with clear acceptance criteria, accepted as written | The proposal states concrete acceptance criteria, so it is accepted as written; anything not stated keeps today's behaviour. |
@@ -2395,6 +2398,8 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `labels-add` | added labels | The hive added labels to the item. |
 | `labels-remove` | removed labels | The hive removed labels from the item. |
 | `link` | cross-linked a related item | The hive left a comment linking a related issue or PR. |
+| `not-now`, `close-not-now` | declined for now; closed as not planned | The hive declined the proposal for now and closed it as not planned, with the reason and what evidence would reopen it. |
+| `operator-action` | told the spoke owner what to do; nothing for an agent here | The hive named the spoke owner and the one action they take (for example re-authenticate the provider). The item stays parked, gets no approved-direction, and clears when the report stops recurring. |
 | `quarantine-flaky` | quarantined the flaky test | The flaky test is quarantined with a retry and a deflake task is filed. |
 | `recommend-only`, `recommended` | recommended only; a person confirms | The hive only recommended; the item stays parked until a person confirms. |
 | `refused` | did not decide | The hive did not decide this item; its safety rails stopped it (for example, the item is on hold). |

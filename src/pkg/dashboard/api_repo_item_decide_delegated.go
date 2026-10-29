@@ -536,7 +536,11 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 		// approve at 20:41Z lifted 045; the scanner re-parked at 01:16Z
 		// with its own question; the dedup then called the fresh park
 		// "decided, but it hasn't taken effect" for hours).
-		if repark, ok := s.delegatedReparkedAfter(ctx, repoFull, number, prior.At); ok {
+		// A decision that kept the park never lifted the label, so a label
+		// event after it is not a new ask: re-deciding an operator-action
+		// self-report must not post the same direction again (the #15021
+		// loop); it answers "already decided; waiting on <who>".
+		if repark, ok := s.delegatedReparkedAfter(ctx, repoFull, number, prior.At); ok && !d.KeepsPark {
 			deciderNotes = append(deciderNotes, "parked again at "+repark.At.UTC().Truncate(time.Second).Format(time.RFC3339)+" ("+repark.Label+") after the decision recorded at "+prior.At.UTC().Truncate(time.Second).Format(time.RFC3339)+": a new ask, deciding anew")
 			prior = delegatedPriorState{}
 		}
@@ -876,7 +880,30 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			if err := client.CreateIssueComment(ctx, repoFull, number, comment); err != nil {
 				return notes, fmt.Errorf("posting recommendation: %w", err)
 			}
-			notes = append(notes, "recommendation posted; `"+delegatedecision.LabelNeedsDecision+"` kept for the owner")
+			park := delegatedecision.LabelNeedsDecision
+			if in.Kind == delegatedecision.KindIssue {
+				park = delegatedecision.LabelIssueNeedsDecision
+			}
+			if d.Verdict == delegatedecision.VerdictOperatorAction {
+				notes = append(notes, "operator direction posted; `"+park+"` kept, no approved-direction, no implementer")
+			} else {
+				notes = append(notes, "recommendation posted; `"+park+"` kept for the owner")
+			}
+		case delegatedecision.ActionCloseNotNow:
+			if in.Kind != delegatedecision.KindIssue {
+				return notes, fmt.Errorf("not-now closes issues only")
+			}
+			if err := client.CreateIssueComment(ctx, repoFull, number, comment); err != nil {
+				return notes, fmt.Errorf("posting not-now note: %w", err)
+			}
+			if err := client.CloseIssue(ctx, repoFull, number, ghpkg.IssueCloseOptions{
+				OverrideReason:          "declined for now by the hive delegate: no incident or recurrence justifies the cost yet",
+				SuppressOverrideComment: true,
+				StateReason:             issueStateReasonNotPlanned,
+			}); err != nil {
+				return notes, fmt.Errorf("closing as not planned: %w", err)
+			}
+			notes = append(notes, "closed as not planned (declined for now)")
 		}
 	}
 	if lifted := s.liftDelegatedParkLabels(ctx, in, d); len(lifted) > 0 {
@@ -901,7 +928,8 @@ func delegatedDecisionResolves(v delegatedecision.Verdict) bool {
 	switch v {
 	case delegatedecision.VerdictApprove, delegatedecision.VerdictDirection, delegatedecision.VerdictAdoptSupersede,
 		delegatedecision.VerdictCloseDuplicate, delegatedecision.VerdictCloseSuperseded,
-		delegatedecision.VerdictQuarantineFlaky, delegatedecision.VerdictAcceptRatchet, delegatedecision.VerdictAcceptProposal:
+		delegatedecision.VerdictQuarantineFlaky, delegatedecision.VerdictAcceptRatchet, delegatedecision.VerdictAcceptProposal,
+		delegatedecision.VerdictNotNow:
 		return true
 	}
 	return false

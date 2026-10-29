@@ -47,7 +47,7 @@ const PolicyText = `Owner-delegate policy (how the owner decides; the hive appli
 - Be decisive; except for the safety rails below, never ask the owner a question back. Pick the option that keeps work moving and is reversible.
 - PRs: prefer an adequate human/contributor PR over a hive duplicate — if both exist and the contributor's is mergeable and current, recommend a human comparison of issue coverage, checks and review approval; keep the hive PR open and parked until adequacy is confirmed, and never close it solely on an issue reference. Otherwise supersede the contributor's with the hive's and close theirs with credit. Approve small, necessary, low-risk changes (CI pins, RBAC read-only adds, warning text, workflow hygiene) once the sentinel finding is checked and explained as intended. Sensitive-path sentinel alerts on trusted-author PRs: approve with a one-line "reviewed, intended" rationale. Clear reporter-trust holds when the fixing PR is sound.
 - Contributors offline: adopt now in supersede mode — do not wait for a deadline (hivecommons/hive#13975).
-- Issues: dedupe aggressively (close the newer duplicate with "Duplicate of #N", cross-link overlaps); secrets / PAT / org-permission items are owner-only → label needs-owner + hold with one comment stating the exact owner action, and stop opening more failure issues for that root cause; flaky tests → quarantine with retry + a deflake task rather than block; CI hygiene gate proposals (actionlint, duplication ratchets, link-checker allowlists) → approve as ratchets (baseline, fail only on increases; warning-only briefly, then enforce); design proposals with concrete acceptance criteria → accept as proposed with explicit defaults; "review backlog items blocked on their PR" → never auto-close when the PR closes unmerged (drop the relation, comment, re-triage).
+- Issues: dedupe aggressively (close the newer duplicate with "Duplicate of #N", cross-link overlaps); secrets / PAT / org-permission items are owner-only → label needs-owner + hold with one comment stating the exact owner action, and stop opening more failure issues for that root cause; flaky tests → quarantine with retry + a deflake task rather than block; CI hygiene gate proposals (actionlint, duplication ratchets, link-checker allowlists) → approve as ratchets (baseline, fail only on increases; warning-only briefly, then enforce); design proposals with concrete acceptance criteria → accept as proposed with explicit defaults; "review backlog items blocked on their PR" → never auto-close when the PR closes unmerged (drop the relation, comment, re-triage); a fleet self-report whose remedy is the operator's (an expired provider login, credentials, disk, network, App setup on the reporting spoke) is not code work → tell that spoke's owner(s) exactly what to do, no approved-direction, no implementer, keep it out of the actionable set, and never post the same direction twice; a hive-filed proposal is paid for by evidence → approve it when it cites an incident it would have prevented or prior instances of the same class fixed one at a time, otherwise decline it for now (comment the reason, close as not planned; re-propose with evidence) — a person's proposal is never declined this way.
 - Record the decision as a "/hive decision <text>" comment on the item (and the auto-merge queue approval on the PR head when the decision is to release a PR), remove stage/085-needs-decision, add triage/accepted where applicable, and stamp the delegated-decision marker so it is auditable.
 - Safety rails: never merge a PR (the auto-merge engine does that per repo settings); never act on an item carrying hold; never grant org membership, secrets or permissions (always the owner); leave an item untouched when the question is a policy or scope change to the hive itself (settings, governance docs, security posture) — post "hive recommends: …; owner to confirm" instead and keep 085.`
 
@@ -91,12 +91,16 @@ const (
 	// ActionRecommendOnly posts "hive recommends: …; owner to confirm" and
 	// keeps the park.
 	ActionRecommendOnly ActionKind = "recommend-only"
+	// ActionCloseNotNow posts the "not now" reason and closes the issue as
+	// not planned: the established way a declined proposal leaves the
+	// tracker (the dashboard's Won't-fix path).
+	ActionCloseNotNow ActionKind = "close-not-now"
 )
 
 // AllowedActions is the allowed set in a fixed order.
 var AllowedActions = []ActionKind{
 	ActionCommentDecision, ActionApproveReview, ActionLabelsAdd, ActionLabelsRemove,
-	ActionCloseDuplicate, ActionLink, ActionAdoptSupersede, ActionRecommendOnly,
+	ActionCloseDuplicate, ActionLink, ActionAdoptSupersede, ActionRecommendOnly, ActionCloseNotNow,
 }
 
 // Action is one step of a decision.
@@ -123,6 +127,13 @@ const (
 	VerdictAdoptSupersede  Verdict = "adopt-supersede"
 	VerdictRecommendOnly   Verdict = "recommend-only"
 	VerdictRefused         Verdict = "refused"
+	// VerdictOperatorAction: not code work — the reporting spoke's owner
+	// acts (re-authenticates, grants, frees disk). The item keeps its park
+	// and never reaches an implementer lane.
+	VerdictOperatorAction Verdict = "operator-action"
+	// VerdictNotNow declines a hive-filed proposal for now: no incident or
+	// recurrence justifies its cost yet; closed as not planned.
+	VerdictNotNow Verdict = "not-now"
 )
 
 // Labels the delegate writes or reads.
@@ -137,6 +148,8 @@ const (
 	LabelTriageAccepted = "triage/accepted"
 	LabelFlakyTest      = "flaky-test"
 	LabelNeedsDecision  = "stage/085-needs-decision"
+	// LabelIssueNeedsDecision is the issue-side park (hivecommons/hive#15021).
+	LabelIssueNeedsDecision = "stage/045-needs-decision"
 )
 
 // CompetingPR is another open PR for the same work.
@@ -265,7 +278,7 @@ var (
 	flakyRE      = regexp.MustCompile(`(?i)\b(flak(?:y|e|iness)|intermittent(?:ly)? fail\w*|non-?deterministic test)\b`)
 	ratchetRE    = regexp.MustCompile(`(?i)\b(actionlint|ratchet|duplication (?:gate|threshold|check)|link[- ]?checker|allow-?list|lint gate|hygiene gate|shellcheck|yamllint|markdownlint)\b`)
 	proposalRE   = regexp.MustCompile(`(?i)\bacceptance criteria\b`)
-	hivePolicyRE = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level)\b`)
+	hivePolicyRE = regexp.MustCompile(`(?i)\b(hive\.ya?ml|governance|security posture|hive (?:settings?|config(?:uration)?|policy|policies)|branch protection|CODEOWNERS|required checks?|autonomy level|acmm level|issue[_ ]filter|hive-filed|unacknowledged proposals?)\b`)
 	// appPermissionRE preserves the park for App permissions that have no
 	// specific capability kind in the blocker ledger, and for free-text
 	// workflow headlines ("the App cannot push workflows") that name no
@@ -280,6 +293,7 @@ const (
 	labelKindProposal = "kind/proposal"
 	labelProposal     = "proposal"
 	labelRFC          = "rfc"
+	labelKindDesign   = "kind/design"
 	labelGovernance   = "governance"
 	labelFlaky        = "flaky"
 	labelSizeXS       = "size/xs"
@@ -395,8 +409,16 @@ func ownerOnlyDecision(in Input, rationale string) Decision {
 
 func decideIssue(in Input) Decision {
 	ref := "#" + strconv.Itoa(in.Number)
+	// A self-report whose remedy is the spoke operator's comes first: its
+	// body names tokens and credentials, which would otherwise read as an
+	// owner-only secrets item and hold it forever.
+	if sr, ok := ParseSelfReport(in.Title, in.Body); ok {
+		if remedy, ops := selfreportOpsClass(sr.Class); ops {
+			return operatorActionDecision(sr, remedy)
+		}
+	}
 	if HivePolicyChange(in) {
-		return recommendOnly("hive-policy", "this changes the hive's own policy or scope (settings, governance, security posture); the owner confirms those", "accept the proposal as written with its stated defaults, or close it as won't-fix if it widens the hive's write scope")
+		return recommendOnly("hive-policy", "this changes the hive's own policy or scope (settings, governance, security posture); the owner confirms those", hivePolicyRecommendation(in))
 	}
 	if CapabilityGap(in) {
 		return recommendOnly(RuleCapabilityGap, "the blocker is a missing GitHub App permission; approving a direction would un-park the item only for the same needs-human to be re-applied, so the park stays until the permission changes",
@@ -436,12 +458,66 @@ func decideIssue(in Input) Decision {
 		d.Verdict = VerdictAcceptProposal
 		return d
 	}
+	if IsProposal(in.Title, in.Labels) {
+		if kind, detail, ok := ProposalEvidence(in.Title, in.Body); ok {
+			return approveIssue("proposal-approve-evidence", "approve as proposed: "+detail+", so the cost of the gate is already paid for",
+				"the proposal carries "+kind+" evidence — "+detail+" — which is what justifies a new gate")
+		}
+		if hiveFiled(in) {
+			return notNowDecision(ref)
+		}
+	}
 	d := approveIssue("default-approve", "go with the recommendation; where options remain, take the one that keeps work moving and is reversible",
 		"no owner rule singles this out; the standing default is the hive's own recommendation")
 	for _, n := range sortedInts(in.Overlaps) {
 		d.Actions = append(d.Actions, Action{Kind: ActionLink, Target: n, Text: fmt.Sprintf("overlaps #%d", n)})
 	}
 	return d
+}
+
+// hivePolicyRecommendation is the sentence the owner reads on a hive-policy
+// item: a real recommendation, in the owner's terms, not "no rule applies".
+func hivePolicyRecommendation(in Input) string {
+	if in.Kind != KindIssue {
+		return "accept the proposal as written with its stated defaults, or close it as won't-fix if it widens the hive's write scope"
+	}
+	rec := "approve `" + strings.TrimSpace(in.Title) + "` as proposed"
+	lower := strings.ToLower(in.Body)
+	if strings.Contains(lower, "proposal") && (strings.Contains(lower, "acknowledg") || strings.Contains(lower, "approved-direction")) {
+		rec += " — proposals nobody has acknowledged should not be actionable"
+	}
+	if strings.Contains(lower, "opt-in") {
+		rec += "; make it default-on for the lanes it names rather than opt-in"
+	}
+	return rec
+}
+
+// operatorActionDecision answers a self-report whose fix is the spoke
+// owner's: one comment naming who does what, no approved-direction, no
+// implementer, the park kept so the actionable set never sees it.
+func operatorActionDecision(sr SelfReport, remedy string) Decision {
+	text := operatorActionPrefix + sr.OperatorInstruction(remedy)
+	return Decision{
+		Verdict: VerdictOperatorAction, Rule: "selfreport-operator-action", Text: text,
+		Rationale: "the `" + sr.Class + "` self-report is not code work: the remedy is on the reporting spoke, so handing it to an implementer agent only loops back here; it closes itself once the report stops recurring (or `/fixed`)",
+		KeepsPark: true,
+		Actions: []Action{
+			{Kind: ActionLabelsAdd, Labels: []string{LabelNeedsOwner}},
+			{Kind: ActionRecommendOnly, Text: text},
+		},
+	}
+}
+
+// notNowDecision declines a hive-filed proposal that shows neither an
+// incident nor a recurrence: the reason is posted and the issue is closed
+// as not planned, the way a declined proposal leaves the tracker.
+func notNowDecision(ref string) Decision {
+	text := "not now: no incident or recurrence justifies the cost of " + ref + " yet; re-propose with the incident or the repeated instances it would have prevented"
+	return Decision{
+		Verdict: VerdictNotNow, Rule: "proposal-not-now", Text: text,
+		Rationale: "a hive-filed proposal is paid for by evidence; without an incident it would have prevented or a class it would end, the cost is speculative",
+		Actions:   []Action{{Kind: ActionCloseNotNow, Text: text}},
+	}
 }
 
 func approveIssue(rule, text, rationale string) Decision {

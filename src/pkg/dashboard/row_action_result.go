@@ -149,6 +149,14 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 		if hasLadderOutcome {
 			out.Outcome += " " + ladderOutcome
 		}
+	case d.Verdict == delegatedecision.VerdictNotNow:
+		out.Action = rowActionClosed
+		out.Outcome = "Declined for now" + ruleTag + ": " + strings.TrimSuffix(strings.TrimSpace(d.Text), ".") + "."
+		out.Next = "Closed as not planned; re-propose it with the incident or recurrence it would prevent."
+	case d.Verdict == delegatedecision.VerdictOperatorAction:
+		out.Action = rowActionRecommended
+		out.Outcome = "Operator action" + ruleTag + ": " + strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(d.Text), "."), "operator action — ") + "."
+		out.Next = "Stays at " + parkedAt + " — waiting on the spoke owner; no agent is sent. Closes itself once the report stops recurring."
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate || d.Verdict == delegatedecision.VerdictCloseSuperseded:
 		out.Action = rowActionClosed
 		switch {

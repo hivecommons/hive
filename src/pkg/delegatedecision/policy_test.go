@@ -480,12 +480,12 @@ func TestMarkerAndComment(t *testing.T) {
 
 func TestPolicyTextCoversRules(t *testing.T) {
 	t.Parallel()
-	for _, want := range []string{"Be decisive", "Duplicate of #N", "needs-owner", "ratchets", "supersede mode", "never merge a PR", "owner to confirm", "keep the hive PR open and parked until adequacy is confirmed", "except for the safety rails"} {
+	for _, want := range []string{"Be decisive", "Duplicate of #N", "needs-owner", "ratchets", "supersede mode", "never merge a PR", "owner to confirm", "keep the hive PR open and parked until adequacy is confirmed", "except for the safety rails", "is not code work", "paid for by evidence"} {
 		if !strings.Contains(PolicyText, want) {
 			t.Errorf("PolicyText lacks %q", want)
 		}
 	}
-	if len(AllowedActions) != 8 {
+	if len(AllowedActions) != 9 {
 		t.Fatalf("allowed set size %d", len(AllowedActions))
 	}
 }

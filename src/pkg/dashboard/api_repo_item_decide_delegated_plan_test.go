@@ -158,7 +158,7 @@ func TestDelegatedPlanWordingDirectionIsOneSentence(t *testing.T) {
 		t.Fatalf("summary %q", s)
 	}
 	// Every verdict's then-list fits the two-item budget.
-	for _, v := range []delegatedecision.Verdict{delegatedecision.VerdictAdoptSupersede, delegatedecision.VerdictApprove, delegatedecision.VerdictCloseSuperseded, delegatedecision.VerdictRefused, delegatedecision.VerdictOwnerOnly, delegatedecision.VerdictRecommendOnly} {
+	for _, v := range []delegatedecision.Verdict{delegatedecision.VerdictAdoptSupersede, delegatedecision.VerdictApprove, delegatedecision.VerdictCloseSuperseded, delegatedecision.VerdictRefused, delegatedecision.VerdictOwnerOnly, delegatedecision.VerdictRecommendOnly, delegatedecision.VerdictOperatorAction, delegatedecision.VerdictNotNow} {
 		s, n := delegatedPlanWording(in, delegatedecision.Decision{Verdict: v, Rationale: "because (hivecommons/hive#1); and more", Text: "do the thing (hivecommons/hive#2)"})
 		if len(n) > 2 || strings.Contains(s, "Hive would") || strings.Contains(s, "#1)") || strings.Contains(s, "#2)") {
 			t.Errorf("%s: summary %q then %v", v, s, n)
