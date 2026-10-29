@@ -41,6 +41,8 @@ func Body(h Hotspot, opts Options, window time.Duration) string {
 		h.File, days, h.PRs, h.Overlaps, h.Conflicts, h.Lines)
 
 	switch h.Recommendation {
+	case RecommendReportOnly:
+		fmt.Fprintf(&b, "No split is proposed: %s.\n\n", strings.TrimSuffix(h.Reason, "."))
 	case RecommendSplitSource:
 		fmt.Fprintf(&b, "This file is **generated** — do not edit it by hand. The collisions come from its source under `%s`; split *there* so that unrelated changes stop regenerating the same output hunks, then regenerate once per PR.\n\n", h.GeneratedFrom)
 	case RecommendSplitDoc:
@@ -74,7 +76,7 @@ func Body(h Hotspot, opts Options, window time.Duration) string {
 		b.WriteString("\n")
 	}
 
-	if h.Recommendation != RecommendSplitSource {
+	if h.Recommendation != RecommendSplitSource && h.Recommendation != RecommendReportOnly {
 		b.WriteString("## Split proposal\n\n")
 		for i, bucket := range proposeBuckets(h, units) {
 			fmt.Fprintf(&b, "%d. `%s` — %s\n", i+1, bucket.file, bucket.desc)

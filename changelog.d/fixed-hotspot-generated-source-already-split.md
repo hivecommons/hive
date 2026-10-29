@@ -1,1 +1,0 @@
-The merge-hotspot advisor no longer files "split its source" issues for generated files whose source tree is already split into many files (e.g. the dashboard `static/index.html`); they are now report-only (#15460).
