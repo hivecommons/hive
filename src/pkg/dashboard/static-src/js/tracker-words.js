@@ -34,6 +34,8 @@
       if (state === 'closed') return 'Adopted → #' + by + ' (closed) · recovering';
       if (state === 'closed-twice') return 'Adopted → #' + by + ' (closed twice) · needs a person';
       if (state === 'copy-failed') return 'Adopted → #' + by + ' (copy failed) · reopened, needs a person';
+      // hivecommons/hive#15307: one label while the fixer works (#15416 rule).
+      if (state === 'resolving-conflicts') return 'Adopting · fixer resolving conflicts';
       return 'Adopted → #' + by;
     }
     const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Awaiting human';

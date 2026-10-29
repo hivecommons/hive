@@ -2581,10 +2581,24 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// episode (#15104): the request admits the PR to the fixer router —
 	// which still requires a head the hive can push to — under the shared
 	// two-attempt guard, and the lane merges the clean head on its next pass.
+	// The adoption lane opens the same episode on the hive's own copy of
+	// a contributor PR whose head would not replay onto the base
+	// (hivecommons/hive#15307), with RequestedBy naming it.
 	autoMergeOpts.RebaseResolver = automerge.RebaseResolverFunc(func(_ context.Context, req automerge.RebaseRequest) error {
-		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, mergeTrainRebaseRequester, time.Now())
+		requester := mergeTrainRebaseRequester
+		if req.RequestedBy != "" {
+			requester = req.RequestedBy
+		}
+		rebasemerge.SharedAttempts().Request(req.Repo, req.Number, req.HeadSHA, requester, time.Now())
 		return nil
 	})
+	autoMergeOpts.RebaseEpisode = func(repo string, number int) (automerge.RebaseEpisode, bool) {
+		a, ok := rebasemerge.SharedAttempts().Get(repo, number)
+		if !ok {
+			return automerge.RebaseEpisode{}, false
+		}
+		return automerge.RebaseEpisode{Attempt: a.Count(), MaxAttempts: rebasemerge.MaxRebaseAttempts, Exhausted: a.Exhausted(), RequestedBy: a.RequestedBy}, true
+	}
 	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
 		if b.cfg == nil {
 			return automerge.DefaultMergeTrainPolicy
