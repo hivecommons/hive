@@ -774,6 +774,18 @@ writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same
 ([#12436](https://github.com/hivecommons/hive/issues/12436)).
 
+An adoption pair is one logical PR everywhere a person might otherwise be
+asked to pick between PRs (hivecommons/hive#15495). When the write-back gate
+keeps the contributor's original open after supersession (`needs-opt-in-label`,
+a fork the hive cannot edit), it sits at 072 "superseded by #N" and the
+issue's caption, open-PR count, parked-PR check and "Let hive decide — all N
+PRs" fan-out all see only the hive's copy: the original's review verdict never
+gates the issue, and the copy's body carries every `Fixes #N` / `Refs #N` line
+of the original (an annotated `Refs #N — partial` travels as the bare
+reference, so the copy keeps the issue link). The original counts again only
+when the copy is closed without merging (`adopted_by_state` closed /
+closed-twice / copy-failed).
+
 A clanker PR entering `stage/072-returned-to-contributor` also triggers the
 contributor nudge: the sweep posts one `<!-- hive:contributor-nudge head=…
 -->` comment per head naming the failing checks / review asks (re-nudged

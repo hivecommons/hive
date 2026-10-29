@@ -757,22 +757,11 @@ body:
 				i++
 			}
 		case c == '"': // string literal (block strings start with the same quote)
-			if strings.HasPrefix(query[i:], `"""`) {
-				end := strings.Index(query[i+3:], `"""`)
-				if end < 0 {
-					return nil
-				}
-				i += 3 + end + 3
-			} else {
-				i++
-				for i < len(query) && query[i] != '"' {
-					if query[i] == '\\' {
-						i++
-					}
-					i++
-				}
-				i++
+			next, ok := skipGraphQLString(query, i)
+			if !ok {
+				return nil
 			}
+			i = next
 		case c == '{':
 			braces++
 			i++
@@ -788,20 +777,24 @@ body:
 			i++
 			i += len(graphQLIdentRe.FindString(query[i:]))
 		case c == '(':
-			// Argument list — skip it balanced. Strings inside may contain
-			// parens, so honour quoting here too.
+			// Argument list — skip it balanced. Strings and comments inside
+			// may contain parens or quotes, so read them as the outer loop does.
 			d := 1
 			i++
 			for i < len(query) && d > 0 {
 				switch query[i] {
 				case '"':
-					i++
-					for i < len(query) && query[i] != '"' {
-						if query[i] == '\\' {
-							i++
-						}
+					next, ok := skipGraphQLString(query, i)
+					if !ok {
+						return nil
+					}
+					i = next
+					continue
+				case '#':
+					for i < len(query) && query[i] != '\n' {
 						i++
 					}
+					continue
 				case '(':
 					d++
 				case ')':
