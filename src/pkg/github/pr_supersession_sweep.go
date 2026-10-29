@@ -466,8 +466,14 @@ func (c *Client) closedByPullRequestReference(ctx context.Context, owner, repo s
 		return supersessionCloser{}, false
 	}
 	displayRepo := owner + "/" + repo
+	// GitHub can list a merged PR from another repository; only a same-repo
+	// PR may be named by number.
+	prefix := strings.ToLower("https://github.com/"+displayRepo) + "/pull/"
 	for _, node := range resp.Data.Repository.Issue.ClosedByPullRequestsReferences.Nodes {
 		if node.Number == currentPR || !node.Merged {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(node.URL), prefix) {
 			continue
 		}
 		return supersessionCloser{Repo: displayRepo, Number: node.Number, URL: node.URL, MergedAt: node.MergedAt}, true
