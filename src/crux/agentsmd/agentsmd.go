@@ -163,25 +163,23 @@ func ParseNearest(repoRoot, relPath string, lg *slog.Logger) (*AgentsConfig, err
 
 	// Normalize and confine relPath to the repo. A path escaping the root falls
 	// back to the root file.
-	clean := filepath.Clean(relPath)
-	dir := filepath.Dir(filepath.Join(repoRoot, clean))
-
 	rootAbs, err := filepath.Abs(repoRoot)
 	if err != nil {
 		rootAbs = repoRoot
 	}
+	dir := filepath.Dir(filepath.Join(repoRoot, filepath.Clean(relPath)))
+	dirAbs, err := filepath.Abs(dir)
+	if err != nil || (dirAbs != rootAbs && !strings.HasPrefix(dirAbs, rootAbs+string(filepath.Separator))) {
+		return Parse(repoRoot, lg)
+	}
+	dir = dirAbs
 
 	for {
 		candidate := filepath.Join(dir, AgentsFileName)
 		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
 			return parseAt(dir, candidate, lg)
 		}
-
-		dirAbs, absErr := filepath.Abs(dir)
-		if absErr != nil {
-			break
-		}
-		if dirAbs == rootAbs || !strings.HasPrefix(dirAbs, rootAbs) {
+		if dir == rootAbs {
 			break
 		}
 		parent := filepath.Dir(dir)

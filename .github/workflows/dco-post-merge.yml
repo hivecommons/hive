@@ -289,6 +289,25 @@ env:
   # from clubanderson in #14064: the maintainer merging the PR that adds
   # this entry IS that disposition.
 
+  # 687c3cb006d7559135f5f2fb0db13476d1af2a43 — the squash of #15315 (fix: stop
+  # filing the pre-restart kick-undeliverable warning as a fleet issue), on
+  # v5, reported by the monitor in #15401. mismatched-signoff of a NEW shape:
+  # same person: author uses GitHub noreply (id 91499691, @odttlnt), sign-off
+  # uses verified work email; pre-merge DCO passed (#15315). GitHub's squash
+  # wrote the PR author's private-email identity, Sachin Naik
+  # <91499691+odttlnt@users.noreply.github.com>, over a branch commit
+  # (97a705ca) authored AND signed off as SACHIN NAIK <sachin.naik@ibm.com>;
+  # probot DCO and the squash-attribution gate both accepted it because the
+  # commits API resolves that address to @odttlnt. The checker now accepts
+  # this shape on its own (same-person-noreply, #15401) when v5 history
+  # carries local evidence of the link; for this first commit from the
+  # contributor there is none on v5 yet (the only prior commit under the work
+  # address is the PR branch commit itself), so it is waived. Protected v5
+  # history cannot be re-signed in place. Accepted by maintainer disposition
+  # in #15401: the maintainer merging the PR that adds this entry IS that
+  # disposition. Expect STALE-WAIVER once the contributor's next commit lands
+  # under the work address; remove the entry then.
+
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
   # Deep history carries further genuine mismatches — 8b536911 and, on v5
@@ -300,7 +319,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184 a0de3f920ded7e0cfc287bb5009d542e5a14f014 c6c78c3a26c33c6d1530996df20ead0a6b699dda a9200f3d278fcdbf6291f37f921845113814686e fb153585e6dab7b6f6808cb328e706d691f9be79 00070300002c88fda6850278edaea2498e8ca941 511027d8174be02b1dd77c25e9f8d5265f7fb7d4'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184 a0de3f920ded7e0cfc287bb5009d542e5a14f014 c6c78c3a26c33c6d1530996df20ead0a6b699dda a9200f3d278fcdbf6291f37f921845113814686e fb153585e6dab7b6f6808cb328e706d691f9be79 00070300002c88fda6850278edaea2498e8ca941 511027d8174be02b1dd77c25e9f8d5265f7fb7d4 687c3cb006d7559135f5f2fb0db13476d1af2a43'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
