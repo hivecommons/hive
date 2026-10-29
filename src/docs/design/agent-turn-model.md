@@ -283,10 +283,10 @@ apply.
    `tearDownTurnLocked(agent, "restart")`
    (`src/crux/agent/manager_restart.go:707`), with the comment that `kill-session`
    destroys the only record of the previous run
-   (`src/crux/agent/manager_restart.go:703-706`).
+   (`src/crux/agent/manager_restart.go:565-568`).
 3. Reap the CLI process and any UID-owned helpers
-   (`src/crux/agent/manager_restart.go:724-734`).
-4. `tmux kill-session` (`src/crux/agent/manager_restart.go:736`).
+   (`src/crux/agent/manager_restart.go:586-596`).
+4. `tmux kill-session` (`src/crux/agent/manager_restart.go:598`).
 
 The replacement CLI starts with **no prompt at all** in the default case.
 `buildBootstrapPrompt` (`src/crux/agent/manager_env.go:19`) unconditionally returns `""`
