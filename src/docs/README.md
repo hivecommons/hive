@@ -50,11 +50,6 @@ A terminal agent is a power tool: you hold it, aim it, and it stops when you sto
 3. Agents receive bounded kicks, work in their configured lanes, and use Hive relays for audited writes such as issues, pull requests, reviews, or merges.
 4. Dashboards, logs, fleet health, and hub heartbeats show what happened and what still needs human attention.
 
-## Ways to run Hive
-
-- **Hosted Hive Hub:** start at [`https://hive.hivecommons.dev`](https://hive.hivecommons.dev) and follow the [hosted onboarding guide](hosted-hub.md) for the no-cluster path.
-- **Self-hosted:** run your own spoke on [Kubernetes](kubernetes-deployment.md), [Docker Compose](quickstart-docker-compose.md), or [Podman](quickstart-podman.md), or operate a [self-hosted hub](hub-deployment.md) for a fleet.
-
 ## Where to go next
 
 - [Architecture](architecture.md)
