@@ -221,8 +221,21 @@
        (stageTrackerOdometerSet): per digit, a strip of the digits it passes
        slides up for STAGE_TRACKER_ODOMETER_MS. The first draw, a fall
        (today → 0 at midnight), reduced motion and text that does not line
-       up just set the value. */
+       up just set the value.
+       Operator (2026-10-29, hivecommons/hive#15398): "the bee … is so
+       small i can't see what it is" and "i dont see the mileage counter
+       animation" — the roll was there but a +1 moved one 12 px digit a
+       single cell, mostly inside the chip's 320 ms pop, and a reload never
+       rolled. Now the rightmost wheel, and every wheel right of the first
+       changed one, spins a full turn (STAGE_TRACKER_ODOMETER_TURN) before
+       settling, so even a +1 is a visible roll; the day/week line uses the
+       same mechanism, shorter (STAGE_TRACKER_ODOMETER_SUB_MS); and the
+       values last shown are kept in sessionStorage
+       (STAGE_TRACKER_MERGED_LAST_KEY) so a reload rolls up from them. The
+       glyph is drawn at --cue-flight-size (two type steps up) with a
+       theme-aware halo; STAGE_TRACKER_CELEBRATE_GLYPH_HALF centres it. */
     const STAGE_TRACKER_CELEBRATE_KEY = 'hive.tracker.celebrate';
+    const STAGE_TRACKER_MERGED_LAST_KEY = 'hive.tracker.merged.last';
     const STAGE_TRACKER_CELEBRATE_GLYPH_KEY = 'hive.tracker.celebrate_glyph';
     const STAGE_TRACKER_CELEBRATE_GLYPHS = { bee: '🐝', plus1: '+1' };
     const STAGE_TRACKER_CELEBRATE_GLYPH_DEFAULT = 'bee';
@@ -230,6 +243,11 @@
     const STAGE_TRACKER_CELEBRATE_STAGGER_MS = 200;
     const STAGE_TRACKER_CELEBRATE_FLY_MS = 2000;
     const STAGE_TRACKER_ODOMETER_MS = 900;
+    const STAGE_TRACKER_ODOMETER_SUB_MS = 600;
+    // Cells a spinning wheel passes before it may settle: one full turn.
+    const STAGE_TRACKER_ODOMETER_TURN = 10;
+    // Half the glyph's box (--cue-flight-size, 2rem) in px, to centre it on the ✓ cell.
+    const STAGE_TRACKER_CELEBRATE_GLYPH_HALF = 16;
     const STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS = 3;
     const STAGE_TRACKER_CELEBRATE_EXIT_PAD = 40;
     const STAGE_TRACKER_MERGED_TIP_MAX = 5;
@@ -389,9 +407,14 @@
     // static runs ("201 today · 730 this week" keeps its words), no number
     // rose, or every rise is a fall elsewhere. A column is { text } (sits
     // still: static runs, unchanged digits, numbers that fell or held) or
-    // { steps: ['9', '0'] } — the digits the column passes, old to new,
-    // wrapping past 9 the way a carry does; a number that grew a digit rolls
-    // its new leading column in from a blank.
+    // { steps: ['9', '0'] } — the digits the column passes, old to new. In
+    // a number that rose, the first changed wheel rolls just the digits
+    // between old and new (wrapping past 9 the way a carry does); every
+    // wheel to its right — and the rightmost wheel always — spins through
+    // at least one full turn (STAGE_TRACKER_ODOMETER_TURN cells) before it
+    // settles, so a +1 is a visible roll and a carry's zeros whirr past.
+    // A number that grew a digit rolls its new leading column in from a
+    // blank.
     function stageTrackerOdometerPlan(from, to) {
       const a = String(from == null ? '' : from).match(/\d+|\D+/g) || [];
       const b = String(to == null ? '' : to).match(/\d+|\D+/g) || [];
@@ -405,12 +428,16 @@
         if (Number(b[i]) <= Number(a[i]) || a[i].length > b[i].length) { cols.push({ text: b[i] }); continue; }
         rose = true;
         const old = a[i].padStart(b[i].length, ' ');
-        for (let j = 0; j < b[i].length; j++) {
+        const last = b[i].length - 1;
+        let first = -1;
+        for (let j = 0; j <= last; j++) if (old[j] !== b[i][j] && first < 0) first = j;
+        for (let j = 0; j <= last; j++) {
           const o = old[j], nw = b[i][j];
-          if (o === nw) { cols.push({ text: nw }); continue; }
+          const spin = j > first || j === last;
+          if (o === nw && !spin) { cols.push({ text: nw }); continue; }
           const steps = [o];
           if (o === ' ') steps.push(nw);
-          else { let d = Number(o); do { d = (d + 1) % 10; steps.push(String(d)); } while (d !== Number(nw)); }
+          else { let d = Number(o); do { d = (d + 1) % 10; steps.push(String(d)); } while (d !== Number(nw) || (spin && steps.length <= STAGE_TRACKER_ODOMETER_TURN)); }
           cols.push({ steps });
         }
       }
@@ -419,16 +446,17 @@
     // Stateful: write `text` into el, rolling the digits that rose like an
     // odometer. The element's own text is always the plain value (it sets
     // the width, and it is what a screen reader and a test read); the roll
-    // is an aria-hidden overlay of digit columns appended over it for
-    // STAGE_TRACKER_ODOMETER_MS, during which the plain text is transparent
-    // (.ham-odo-rolling). The value last written is kept on data-odo-value
-    // so a redraw mid-roll compares against it, not the overlay's digits.
-    // Instant (no overlay) on the first write, under reduced motion, and
-    // when stageTrackerOdometerPlan says nothing rolls. Returns whether a
-    // roll started.
-    function stageTrackerOdometerSet(el, text) {
+    // is an aria-hidden overlay of digit columns appended over it for `ms`
+    // (STAGE_TRACKER_ODOMETER_MS unless given), during which the plain
+    // text is transparent (.ham-odo-rolling). The value last written is
+    // kept on data-odo-value so a redraw mid-roll compares against it, not
+    // the overlay's digits. Instant (no overlay) on the first write, under
+    // reduced motion, and when stageTrackerOdometerPlan says nothing rolls.
+    // Returns whether a roll started.
+    function stageTrackerOdometerSet(el, text, ms) {
       if (!el) return false;
       text = String(text);
+      ms = Number(ms) > 0 ? Number(ms) : STAGE_TRACKER_ODOMETER_MS;
       const prev = el.getAttribute('data-odo-value');
       if (prev === text) return false;
       el.setAttribute('data-odo-value', text);
@@ -452,14 +480,38 @@
         col.appendChild(strip);
         wrap.appendChild(col);
       }
-      wrap.style.setProperty('--odo-ms', STAGE_TRACKER_ODOMETER_MS + 'ms');
+      wrap.style.setProperty('--odo-ms', ms + 'ms');
       el.appendChild(wrap);
       el._odoWrap = wrap;
       el.classList.add('ham-odo-rolling');
       void el.offsetWidth;
       wrap.classList.add('ham-odo-run');
-      el._odoTimer = setTimeout(() => { el._odoTimer = 0; el._odoWrap = null; el.classList.remove('ham-odo-rolling'); wrap.remove(); }, STAGE_TRACKER_ODOMETER_MS + 80);
+      el._odoTimer = setTimeout(() => { el._odoTimer = 0; el._odoWrap = null; el.classList.remove('ham-odo-rolling'); wrap.remove(); }, ms + 80);
       return true;
+    }
+    // Stateful: seed an element that has not been written yet with the
+    // value it showed last time (so the first real write rolls up from
+    // it). Only a value the new text would roll from is taken; anything
+    // else leaves the first write instant. Returns whether it seeded.
+    function stageTrackerOdometerSeed(el, last, next) {
+      if (!el || last == null || el.getAttribute('data-odo-value') != null) return false;
+      if (!stageTrackerOdometerPlan(String(last), String(next))) return false;
+      el.setAttribute('data-odo-value', String(last));
+      el.textContent = String(last);
+      return true;
+    }
+    // Pure: the chip's remembered values ({ n, sub }) from a sessionStorage
+    // string, or null when absent or malformed.
+    function stageTrackerMergedLastParse(raw) {
+      if (!raw) return null;
+      try { const v = JSON.parse(raw); if (v && typeof v === 'object' && /^\d+$/.test(String(v.n)) && typeof v.sub === 'string') return { n: String(v.n), sub: v.sub }; } catch {}
+      return null;
+    }
+    function stageTrackerMergedLastLoad() {
+      try { return stageTrackerMergedLastParse(sessionStorage.getItem(STAGE_TRACKER_MERGED_LAST_KEY)); } catch { return null; }
+    }
+    function stageTrackerMergedLastSave(n, sub) {
+      try { sessionStorage.setItem(STAGE_TRACKER_MERGED_LAST_KEY, JSON.stringify({ n: String(n), sub: String(sub) })); } catch {}
     }
     function stageTrackerMergedCountDraw(tick) {
       const chip = stageTrackerMergedChip();
@@ -470,8 +522,16 @@
       if (txt.count > _stageTrackerMergedShown || tick) _stageTrackerMergedShown = Math.max(_stageTrackerMergedShown, txt.count);
       const shown = _stageTrackerMergedShown;
       if (!chip) return;
-      stageTrackerOdometerSet(chip.querySelector('.ham-merged-n'), shown);
-      stageTrackerOdometerSet(chip.querySelector('.ham-merged-sub'), txt.sub);
+      const n = chip.querySelector('.ham-merged-n'), sub = chip.querySelector('.ham-merged-sub');
+      // First draw of this page: roll up from what the tab showed before
+      // the reload, when that is behind the number we have now.
+      if (n && n.getAttribute('data-odo-value') == null) {
+        const last = stageTrackerMergedLastLoad();
+        if (last) { stageTrackerOdometerSeed(n, last.n, shown); stageTrackerOdometerSeed(sub, last.sub, txt.sub); }
+      }
+      stageTrackerOdometerSet(n, shown);
+      stageTrackerOdometerSet(sub, txt.sub, STAGE_TRACKER_ODOMETER_SUB_MS);
+      if (shown > 0) stageTrackerMergedLastSave(shown, txt.sub);
       const title = txt.title.replace(/^Merged: \d+ all time/, `Merged: ${shown} all time`);
       if (chip.title !== title) chip.title = title;
       if (tick) {
@@ -660,8 +720,8 @@
       glyph.className = 'cue-flight' + (reduced ? ' cue-flight-fade' : '');
       glyph.setAttribute('aria-hidden', 'true');
       glyph.textContent = stageTrackerCelebrateGlyph();
-      glyph.style.setProperty('left', (from.left + from.width / 2 - 10) + 'px');
-      glyph.style.setProperty('top', (from.top + from.height / 2 - 10) + 'px');
+      glyph.style.setProperty('left', (from.left + from.width / 2 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF) + 'px');
+      glyph.style.setProperty('top', (from.top + from.height / 2 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF) + 'px');
       glyph.style.setProperty('--cue-dx', to.dx + 'px');
       glyph.style.setProperty('--cue-dy', to.dy + 'px');
       glyph.style.setProperty('--cue-end-opacity', to.lands ? '0.25' : '1');

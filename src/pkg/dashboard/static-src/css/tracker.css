@@ -13,6 +13,11 @@
        stack fell back to z-index:auto and the chat FAB (9000) covered the
        lowest toast's close × and text. Above the FAB and the modal chrome. */
     :root { --z-cue-flight: 10000; --z-merge-banner: 10001; }
+    /* The merge glyph's size (hivecommons/hive#15398: at --fs-lg the bee
+       was "so small i can't see what it is") and the halo that lifts an
+       emoji off either theme's panel: a soft shadow in the text colour, so
+       it is a light glow on dark and a dark shadow on light. */
+    :root { --cue-flight-size: var(--fs-3xl); --cue-flight-halo: drop-shadow(0 0 2px color-mix(in srgb, var(--text) 45%, transparent)) drop-shadow(0 1px 2px color-mix(in srgb, var(--surface-0) 40%, transparent)); }
     .ham-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
     .ham-toolbar label { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .ham-repo-filter { position: static; flex: 0 1 auto; gap: 0; min-width: 0; white-space: nowrap; }
@@ -377,10 +382,14 @@
        the overlay goes and the plain text shows. Static characters and
        digits that fell (the day rollover) just sit. The text underneath is
        the real width (tabular-nums), so the pill never jiggles; reduced
-       motion or the first draw sets the text outright. */
+       motion or the first draw sets the text outright.
+       Owner (2026-10-29, issue 15398): the glyph is drawn at
+       --cue-flight-size with --cue-flight-halo (see the tokens above), and
+       the rightmost wheel spins a full turn (a longer strip, same
+       transition) so a +1 reads as a roll, not a nudge. */
     .cue-merged .ham-seg.cap { color: var(--amber); animation: cue-cap-glow 1.6s ease-out both; }
     .cue-merged { background: color-mix(in srgb, var(--amber) 8%, transparent); transition: background 300ms ease; }
-    .cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--fs-lg); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); pointer-events: none; user-select: none; animation: cue-flight var(--cue-fly-ms, 2000ms) cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+    .cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--cue-flight-size); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); filter: var(--cue-flight-halo); pointer-events: none; user-select: none; animation: cue-flight var(--cue-fly-ms, 2000ms) cubic-bezier(0.22, 0.61, 0.36, 1) both; }
     .cue-flight.cue-flight-fade { animation: cue-flight-fade var(--cue-fly-ms, 2000ms) ease-out both; }
     .ham-sticky { position: sticky; top: var(--navbar-sticky-height); z-index: calc(var(--z-sticky) + 1); display: flex; justify-content: flex-end; align-items: center; min-height: var(--ham-sticky-bar-h); box-sizing: border-box; padding: var(--sp-1) var(--sp-2); background: var(--panel); }
     .ham-sticky-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -388,13 +397,16 @@
     .ham-merged-count:hover { border-color: var(--line-strong); }
     .ham-merged-count .ham-merged-ico { width: 12px; height: 12px; color: var(--amber); }
     .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--fs-sm); }
-    .ham-merged-count .ham-merged-sub { color: var(--text-faint); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
+    .ham-merged-count .ham-merged-sub { color: var(--text-faint, var(--muted)); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-merged-count.cue-tick { animation: cue-count-pop 320ms ease-out; }
     .ham-merged-count .ham-merged-n, .ham-merged-count .ham-merged-sub { position: relative; }
     .ham-merged-count .ham-odo-rolling { color: transparent; }
     .ham-odo { position: absolute; inset: 0; display: flex; align-items: center; overflow: hidden; white-space: pre; pointer-events: none; }
     .ham-merged-count .ham-merged-n .ham-odo { color: var(--text); }
-    .ham-merged-count .ham-merged-sub .ham-odo { left: var(--sp-2); color: var(--text-faint); }
+    /* The dark theme's token sheet has no --text-faint (only body.light-mode
+       sets it), so without a fallback the overlay inherited the rolling
+       line's transparent colour and the day/week counts vanished mid-roll. */
+    .ham-merged-count .ham-merged-sub .ham-odo { left: var(--sp-2); color: var(--text-faint, var(--muted)); }
     .ham-odo-static, .ham-odo-col, .ham-odo-d { display: block; height: 1.25em; line-height: 1.25; }
     .ham-odo-col { overflow: hidden; }
     .ham-odo-strip { display: block; transform: translateY(0); transition: transform var(--odo-ms, 900ms) cubic-bezier(0.22, 0.61, 0.36, 1); }

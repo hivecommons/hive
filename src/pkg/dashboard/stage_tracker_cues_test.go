@@ -63,6 +63,12 @@ func TestStageTrackerCuesWiring(t *testing.T) {
 		`@media (prefers-reduced-motion: reduce) { .cue-working .ham-seg.active .ham-active-ico, .cue-spin, .cue-acting .ham-seg.active, .cue-event { animation: none; } }`,
 		`@media (prefers-reduced-motion: reduce) { .cue-flight { animation-name: cue-flight-fade; }`,
 		`id="activity-monitor-merged"`, `class="ham-merged-n"`, `class="ham-merged-sub"`,
+		// The merge glyph is sized and haloed through tokens, not a literal
+		// (hivecommons/hive#15398: at --fs-lg the operator could not tell
+		// what the bee was).
+		`:root { --cue-flight-size: var(--fs-3xl); --cue-flight-halo: drop-shadow(`,
+		`.cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--cue-flight-size); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); filter: var(--cue-flight-halo);`,
+		`.ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums;`,
 		// The chip and the column header strip stick under the navbar
 		// while the list scrolls (hivecommons/hive#15096: the chip sat
 		// 2,300 px above the operator's viewport when the merge played).
@@ -254,6 +260,10 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_STAGGER_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_FLY_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_ODOMETER_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ODOMETER_SUB_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ODOMETER_TURN"),
+		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_GLYPH_HALF"),
+		jsConstLine(t, html, "STAGE_TRACKER_MERGED_LAST_KEY"),
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_MAX_FLIGHTS"),
 		jsConstLine(t, html, "STAGE_TRACKER_CELEBRATE_EXIT_PAD"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_BANNER_MS"),
@@ -276,6 +286,10 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerMergedHoldback"),
 		jsFunc(t, html, "stageTrackerOdometerPlan"),
 		jsFunc(t, html, "stageTrackerOdometerSet"),
+		jsFunc(t, html, "stageTrackerOdometerSeed"),
+		jsFunc(t, html, "stageTrackerMergedLastParse"),
+		jsFunc(t, html, "stageTrackerMergedLastLoad"),
+		jsFunc(t, html, "stageTrackerMergedLastSave"),
 		jsFunc(t, html, "stageTrackerMergedCountDraw"),
 		jsFunc(t, html, "stageTrackerMergedPopDraw"),
 		jsFunc(t, html, "hamMergedToggle"),
@@ -355,6 +369,7 @@ const pop = el('div', { id: 'activity-monitor-merged-pop' }); pop.hidden = true;
 const byId = { 'activity-monitor-panel': panel, 'activity-monitor-merged': chip, 'activity-monitor-merged-pop': pop, 'merge-banners': banners, 'activity-monitor-merged-live': live };
 global.document = { body, hidden: false, getElementById(id) { return byId[id] || null; }, createElement(tag) { if (tag === 'template') { const tpl = el('template'); Object.defineProperty(tpl, 'innerHTML', { set(v) { const c = el('p'); c.classList.add('cue-event'); c.attrs['data-cue-key'] = (v.match(/data-cue-key="([^"]*)"/) || [])[1]; c.textContent = v.replace(/<[^>]+>/g, ''); const age = el('span'); age.classList.add('cue-event-age'); age.attrs['data-at'] = (v.match(/data-at="(\d+)"/) || [])[1]; c.appendChild(age); tpl.content = { firstElementChild: c }; } }); return tpl; } return el(tag); } };
 const store = {}; global.localStorage = { getItem: k => (k in store ? store[k] : null), setItem(k, v) { store[k] = String(v); } };
+const session = {}; global.sessionStorage = { getItem: k => (k in session ? session[k] : null), setItem(k, v) { session[k] = String(v); } };
 let reduced = false; function stageTrackerReducedMotion() { return reduced; }
 let soundOn = true; function stageTrackerSoundGate() { return soundOn; }
 const zaps = []; function stageTrackerPlayZap(c) { zaps.push(c); }
@@ -611,12 +626,18 @@ console.log('ok');
 func TestStageTrackerOdometerNode(t *testing.T) {
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerCelebrateJS(t, html)+stageTrackerCelebrateFixture+`
-// The plan: only the digits that rose roll, carries wrap past 9, a new
-// leading digit comes in from a blank, falls and foreign text sit still.
-assert.deepStrictEqual(stageTrackerOdometerPlan('9127', '9128'), [{ text: '9' }, { text: '1' }, { text: '2' }, { steps: ['7', '8'] }]);
-assert.deepStrictEqual(stageTrackerOdometerPlan('199', '200'), [{ steps: ['1', '2'] }, { steps: ['9', '0'] }, { steps: ['9', '0'] }], 'a carry wraps');
-assert.deepStrictEqual(stageTrackerOdometerPlan('7', '12'), [{ steps: [' ', '1'] }, { steps: ['7', '8', '9', '0', '1', '2'] }], 'a grown number rolls its new column in from a blank');
-assert.deepStrictEqual(stageTrackerOdometerPlan('201 today · 730 this week', '0 today · 731 this week'), [{ text: '0' }, { text: ' today · ' }, { text: '7' }, { text: '3' }, { steps: ['0', '1'] }, { text: ' this week' }], 'the day rollover sets today and rolls the week');
+// The plan: only the digits that rose roll; the first changed wheel rolls
+// its own distance, every wheel right of it — and the rightmost wheel
+// always — spins a full turn first (hivecommons/hive#15398: a one-cell
+// nudge was invisible); carries wrap past 9, a new leading digit comes in
+// from a blank, falls and foreign text sit still.
+const turn = (from, to) => { const out = [from]; let d = Number(from); do { d = (d + 1) % 10; out.push(String(d)); } while (d !== Number(to) || out.length <= STAGE_TRACKER_ODOMETER_TURN); return out; };
+assert.deepStrictEqual(turn('7', '8'), ['7', '8', '9', '0', '1', '2', '3', '4', '5', '6', '7', '8'], 'a +1 on the last wheel is a full turn and one');
+assert.deepStrictEqual(stageTrackerOdometerPlan('9127', '9128'), [{ text: '9' }, { text: '1' }, { text: '2' }, { steps: turn('7', '8') }]);
+assert.deepStrictEqual(stageTrackerOdometerPlan('199', '200'), [{ steps: ['1', '2'] }, { steps: turn('9', '0') }, { steps: turn('9', '0') }], 'a carry: the first wheel steps once, the zeros whirr past');
+assert.deepStrictEqual(stageTrackerOdometerPlan('9471', '9481'), [{ text: '9' }, { text: '4' }, { steps: ['7', '8'] }, { steps: turn('1', '1') }], 'an unchanged wheel right of the change still spins round once');
+assert.deepStrictEqual(stageTrackerOdometerPlan('7', '12'), [{ steps: [' ', '1'] }, { steps: turn('7', '2') }], 'a grown number rolls its new column in from a blank');
+assert.deepStrictEqual(stageTrackerOdometerPlan('201 today · 730 this week', '0 today · 731 this week'), [{ text: '0' }, { text: ' today · ' }, { text: '7' }, { text: '3' }, { steps: turn('0', '1') }, { text: ' this week' }], 'the day rollover sets today and rolls the week');
 assert.strictEqual(stageTrackerOdometerPlan('5', '5'), null, 'no change, no roll');
 assert.strictEqual(stageTrackerOdometerPlan('5', '4'), null, 'a fall never rolls');
 assert.strictEqual(stageTrackerOdometerPlan('1 today', '2 this week'), null, 'different words: no roll');
@@ -634,20 +655,35 @@ assert.strictEqual(odo.children.length, 1); const wrap = odo.children[0];
 assert.strictEqual(wrap.className, 'ham-odo ham-odo-run'); assert.strictEqual(wrap.getAttribute('aria-hidden'), 'true');
 assert.deepStrictEqual(wrap.children.map(c => c.className), ['ham-odo-static', 'ham-odo-static', 'ham-odo-static', 'ham-odo-col']);
 const strip = wrap.children[3].children[0];
-assert.deepStrictEqual(strip.children.map(c => c.textContent), ['7', '8']); assert.strictEqual(strip.style.props['--odo-shift'], '-50.000%');
+assert.deepStrictEqual(strip.children.map(c => c.textContent), turn('7', '8')); assert.strictEqual(strip.style.props['--odo-shift'], (-(turn('7', '8').length - 1) * 100 / turn('7', '8').length).toFixed(3) + '%');
 assert.strictEqual(wrap.style.props['--odo-ms'], STAGE_TRACKER_ODOMETER_MS + 'ms');
+assert.strictEqual(odo.children.length, 1, 'the element itself is kept: only an overlay was added');
 tick(STAGE_TRACKER_ODOMETER_MS + 100);
 assert.strictEqual(odo.children.length, 0, 'the overlay is gone'); assert.ok(!odo.classList.contains('ham-odo-rolling')); assert.strictEqual(odo.textContent, '9128');
 // A second rise mid-roll restarts from the last value written.
 stageTrackerOdometerSet(odo, 9129); assert.strictEqual(odo.children.length, 1);
 stageTrackerOdometerSet(odo, 9131); assert.strictEqual(odo.children.length, 1, 'one overlay at a time');
 assert.deepStrictEqual(odo.children[0].children[2].children[0].children.map(c => c.textContent), ['2', '3'], 'tens: 2 → 3');
-assert.deepStrictEqual(odo.children[0].children[3].children[0].children.map(c => c.textContent), ['9', '0', '1'], 'units: from the 9 last written');
+assert.deepStrictEqual(odo.children[0].children[3].children[0].children.map(c => c.textContent), turn('9', '1'), 'units: from the 9 last written');
 tick(STAGE_TRACKER_ODOMETER_MS + 100); assert.strictEqual(odo.children.length, 0);
 assert.strictEqual(stageTrackerOdometerSet(odo, 3), false, 'a fall just sets'); assert.strictEqual(odo.textContent, '3'); assert.strictEqual(odo.children.length, 0);
 reduced = true;
 assert.strictEqual(stageTrackerOdometerSet(odo, 4), false, 'reduced motion: no roll'); assert.strictEqual(odo.textContent, '4'); assert.strictEqual(odo.children.length, 0);
 reduced = false;
+// A shorter roll for the day/week line: the duration is the caller's.
+const odo2 = el('span'); stageTrackerOdometerSet(odo2, '1 today'); stageTrackerOdometerSet(odo2, '2 today', STAGE_TRACKER_ODOMETER_SUB_MS);
+assert.strictEqual(odo2.children[0].style.props['--odo-ms'], STAGE_TRACKER_ODOMETER_SUB_MS + 'ms'); tick(STAGE_TRACKER_ODOMETER_SUB_MS + 100); assert.strictEqual(odo2.children.length, 0);
+// The session seed: an unwritten element takes the value it showed last
+// time only when the new value would roll from it.
+const odo3 = el('span');
+assert.strictEqual(stageTrackerOdometerSeed(odo3, '9471', 9472), true); assert.strictEqual(odo3.getAttribute('data-odo-value'), '9471');
+assert.strictEqual(stageTrackerOdometerSet(odo3, 9472), true, 'the first real write rolls up from the seed');
+assert.strictEqual(stageTrackerOdometerSeed(odo3, '1', 2), false, 'a written element is never re-seeded');
+const odo4 = el('span');
+assert.strictEqual(stageTrackerOdometerSeed(odo4, '9480', 9472), false, 'a seed ahead of the value is dropped'); assert.strictEqual(odo4.getAttribute('data-odo-value'), null);
+assert.strictEqual(stageTrackerOdometerSeed(odo4, null, 9472), false, 'no seed');
+assert.deepStrictEqual(stageTrackerMergedLastParse('{"n":"9471","sub":"73 today · 886 this week"}'), { n: '9471', sub: '73 today · 886 this week' });
+assert.strictEqual(stageTrackerMergedLastParse('{"n":"x"}'), null); assert.strictEqual(stageTrackerMergedLastParse('nope'), null); assert.strictEqual(stageTrackerMergedLastParse(''), null);
 // Through the chip: the landing rolls both numbers; a redraw with the same
 // values does not restart the roll.
 panel.appendChild(row('o/r/pr#1'));
@@ -660,6 +696,15 @@ stageTrackerMergedCountDraw(false);
 assert.strictEqual(n.children.length, 1, 'a redraw mid-roll keeps the overlay');
 tick(STAGE_TRACKER_ODOMETER_MS + 100);
 assert.strictEqual(n.children.length, 0); assert.strictEqual(sub.children.length, 0);
+assert.deepStrictEqual(stageTrackerMergedLastParse(session[STAGE_TRACKER_MERGED_LAST_KEY]), { n: '1', sub: '1 today · 1 this week' }, 'the values shown are remembered for the next load');
+// A fresh page (new chip, remembered values behind the server's) rolls up
+// from them on its first draw instead of just appearing.
+session[STAGE_TRACKER_MERGED_LAST_KEY] = JSON.stringify({ n: '0', sub: '0 today · 0 this week' });
+const chip2 = el('button', { id: 'activity-monitor-merged' }); const n2 = el('span'); n2.classList.add('ham-merged-n'); const sub2 = el('span'); sub2.classList.add('ham-merged-sub'); chip2.appendChild(n2); chip2.appendChild(sub2);
+chip.remove(); body.appendChild(chip2); byId['activity-monitor-merged'] = chip2; stageTrackerMergedChip.node = null;
+stageTrackerMergedCountDraw(false);
+assert.strictEqual(n2.textContent, '1'); assert.strictEqual(n2.children.length, 1, 'first draw rolls up from the remembered value'); assert.strictEqual(sub2.children.length, 1);
+tick(STAGE_TRACKER_ODOMETER_MS + 100); assert.strictEqual(n2.children.length, 0);
 `)
 }
 
@@ -693,7 +738,7 @@ tick(0);
 assert.strictEqual(flights().length, 1); const g = flights()[0];
 assert.strictEqual(g.textContent, '+1', 'the chosen glyph');
 assert.strictEqual(g.style.props['--cue-dx'], '0px'); assert.strictEqual(g.style.props['--cue-dy'], -(410 + STAGE_TRACKER_CELEBRATE_EXIT_PAD) + 'px'); assert.strictEqual(g.style.props['--cue-end-opacity'], '1');
-assert.strictEqual(g.style.props['left'], '300px'); assert.strictEqual(g.style.props['top'], '400px', 'spawned at the ✓ cell');
+assert.strictEqual(g.style.props['left'], (310 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF) + 'px'); assert.strictEqual(g.style.props['top'], (410 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF) + 'px', 'spawned centred on the ✓ cell');
 assert.strictEqual(g.attrs['aria-hidden'], 'true');
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
 assert.strictEqual(n.textContent, '1', 'the count bumps although the glyph left the screen');
@@ -708,7 +753,7 @@ const r = stageTrackerTestCelebration();
 assert.strictEqual(settingsClosed, 1, 'the dialog closes first');
 assert.deepStrictEqual(r, { flew: true, lands: true, faded: false }, JSON.stringify(toasts));
 assert.ok(inView.classList.contains('cue-merged') && !above.classList.contains('cue-merged'), 'the row in view is the one that glows');
-assert.strictEqual(flights().length, 1); assert.strictEqual(flights()[0].style.props['top'], (410 - 10) + 'px', 'from the visible row\'s ✓ cell');
+assert.strictEqual(flights().length, 1); assert.strictEqual(flights()[0].style.props['top'], (410 - STAGE_TRACKER_CELEBRATE_GLYPH_HALF) + 'px', 'from the visible row\'s ✓ cell');
 assert.strictEqual(banners.children.length, 1); assert.ok(banners.children[0].innerHTML.includes('(test)'), banners.children[0].innerHTML);
 tick(STAGE_TRACKER_CELEBRATE_FLY_MS * 1.5 + 1);
 assert.strictEqual(n.textContent, '1', 'the test does not count'); assert.ok(chip.classList.contains('cue-tick'), 'but pops'); assert.deepStrictEqual(zaps, [1], 'and zaps');
