@@ -819,23 +819,40 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 				}
 			}
 			notes = append(notes, "labels removed: "+strings.Join(a.Labels, ", "))
-		case delegatedecision.ActionCloseDuplicate:
+		case delegatedecision.ActionCloseDuplicate, delegatedecision.ActionCloseNotNow:
+			// Both share one comment-then-close path so the writeback
+			// ratchet (pkg/writeback/testdata) sees no new write sites.
+			notNow := a.Kind == delegatedecision.ActionCloseNotNow
 			body := fmt.Sprintf("%s\n\nRationale: %s.\n\n_Closed by the hive as the owner's delegate (rule `%s`)._\n%s", a.Text, d.Rationale, d.Rule, marker)
+			reason := "closed as duplicate of #" + strconv.Itoa(a.Target) + " by the hive delegate"
+			what := "duplicate"
+			if notNow {
+				if in.Kind != delegatedecision.KindIssue {
+					return notes, fmt.Errorf("not-now closes issues only")
+				}
+				body = comment
+				reason = "declined for now by the hive delegate: no incident or recurrence justifies the cost yet"
+				what = "not-now"
+			}
 			if err := client.CreateIssueComment(ctx, repoFull, number, body); err != nil {
-				return notes, fmt.Errorf("posting duplicate note: %w", err)
+				return notes, fmt.Errorf("posting %s note: %w", what, err)
 			}
 			if in.Kind == delegatedecision.KindPR {
 				if err := client.CloseSupersededPR(ctx, repoFull, number); err != nil {
 					return notes, fmt.Errorf("closing superseded PR: %w", err)
 				}
 			} else if err := client.CloseIssue(ctx, repoFull, number, ghpkg.IssueCloseOptions{
-				OverrideReason:          "closed as duplicate of #" + strconv.Itoa(a.Target) + " by the hive delegate",
+				OverrideReason:          reason,
 				SuppressOverrideComment: true,
 				StateReason:             issueStateReasonNotPlanned,
 			}); err != nil {
-				return notes, fmt.Errorf("closing duplicate: %w", err)
+				return notes, fmt.Errorf("closing %s: %w", what, err)
 			}
-			notes = append(notes, fmt.Sprintf("closed in favour of #%d", a.Target))
+			if notNow {
+				notes = append(notes, "closed as not planned (declined for now)")
+			} else {
+				notes = append(notes, fmt.Sprintf("closed in favour of #%d", a.Target))
+			}
 		case delegatedecision.ActionLink:
 			body := fmt.Sprintf("Cross-link: %s (#%d).\n%s", a.Text, a.Target, marker)
 			if err := client.CreateIssueComment(ctx, repoFull, number, body); err != nil {
@@ -889,21 +906,6 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			} else {
 				notes = append(notes, "recommendation posted; `"+park+"` kept for the owner")
 			}
-		case delegatedecision.ActionCloseNotNow:
-			if in.Kind != delegatedecision.KindIssue {
-				return notes, fmt.Errorf("not-now closes issues only")
-			}
-			if err := client.CreateIssueComment(ctx, repoFull, number, comment); err != nil {
-				return notes, fmt.Errorf("posting not-now note: %w", err)
-			}
-			if err := client.CloseIssue(ctx, repoFull, number, ghpkg.IssueCloseOptions{
-				OverrideReason:          "declined for now by the hive delegate: no incident or recurrence justifies the cost yet",
-				SuppressOverrideComment: true,
-				StateReason:             issueStateReasonNotPlanned,
-			}); err != nil {
-				return notes, fmt.Errorf("closing as not planned: %w", err)
-			}
-			notes = append(notes, "closed as not planned (declined for now)")
 		}
 	}
 	if lifted := s.liftDelegatedParkLabels(ctx, in, d); len(lifted) > 0 {
