@@ -1073,16 +1073,25 @@ func TestTrySweepQueuedPRRequiredChecksExpectedIsRemembered(t *testing.T) {
 	}))
 	defer api.Close()
 	c := newAutoMergeSweepClient(api.URL)
-	_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
-	if err != nil || reason != autoMergeReasonChecksExpected {
-		t.Fatalf("trySweepQueuedPR reason=%q err=%v, want %q without error", reason, err, autoMergeReasonChecksExpected)
-	}
-	attempt := mergeAttempt{owner: "acme", repo: "widget", number: 7, head: "sha7", state: "blocked"}
-	if !c.checksExpectedKnown(attempt, c.clock()) {
-		t.Fatalf("required-checks-expected refusal was not remembered for the queued head")
+	// Two passes against the same head: the first is refused and remembered,
+	// the second must skip the merge call on the memory alone.
+	for pass := 1; pass <= 2; pass++ {
+		_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
+		if err != nil || reason != autoMergeReasonChecksExpected {
+			t.Fatalf("pass %d: trySweepQueuedPR reason=%q err=%v, want %q without error", pass, reason, err, autoMergeReasonChecksExpected)
+		}
 	}
 	if merges != 1 {
-		t.Fatalf("merges = %d, want 1", merges)
+		t.Fatalf("merges = %d, want 1 (the remembered refusal must not be re-PUT)", merges)
+	}
+	attempt := mergeAttempt{owner: "acme", repo: "widget", number: 7, head: "sha7", state: "clean"}
+	if got := c.knownMergeRefusal(attempt); got != autoMergeReasonChecksExpected {
+		t.Fatalf("knownMergeRefusal = %q, want %q for the queued head", got, autoMergeReasonChecksExpected)
+	}
+	// A check reporting moves mergeable_state, which re-arms the merge call.
+	attempt.state = "unstable"
+	if got := c.knownMergeRefusal(attempt); got != "" {
+		t.Fatalf("knownMergeRefusal = %q after mergeable_state changed, want re-armed", got)
 	}
 }
 
