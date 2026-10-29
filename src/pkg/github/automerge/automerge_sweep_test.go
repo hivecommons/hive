@@ -1760,25 +1760,6 @@ type selfAuthoredPR struct {
 	// okToTestWorkflowStatus is the status GET /contents/.github/workflows/hive-ok-to-test.yml
 	// answers with (0 = 404).
 	okToTestWorkflowStatus int
-	// files is GET /pulls/{n}/files; unset is one file no other PR touches.
-	files []string
-	// createdAt, when set, is the PR's created_at (the merge train's age order).
-	createdAt string
-	// filesFetches, when set, counts GET /pulls/{n}/files calls.
-	filesFetches *int
-}
-
-// prFilesResponse renders a fake GET /pulls/{n}/files payload; no files means
-// one path unique to the PR, so the merge train never groups it.
-func prFilesResponse(number int, files []string) []map[string]any {
-	if len(files) == 0 {
-		files = []string{"pr" + strconv.Itoa(number) + ".go"}
-	}
-	out := make([]map[string]any, 0, len(files))
-	for _, f := range files {
-		out = append(out, map[string]any{"filename": f, "status": "modified"})
-	}
-	return out
 }
 
 func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]int, getCounts ...*map[int]int) *httptest.Server {
@@ -1796,18 +1777,14 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls":
 			var out []map[string]any
 			for _, pr := range prs {
-				item := map[string]any{
+				out = append(out, map[string]any{
 					"number": pr.number,
 					"state":  "open",
 					"draft":  pr.draft,
 					"user":   map[string]string{"login": pr.author},
 					"head":   map[string]string{"sha": "sha" + strconv.Itoa(pr.number)},
 					"labels": issueLabels("", pr.extraLabels),
-				}
-				if pr.createdAt != "" {
-					item["created_at"] = pr.createdAt
-				}
-				out = append(out, item)
+				})
 			}
 			json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/reviews"):
@@ -1815,12 +1792,9 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			// human's changes_requested (hivecommons/hive#13041).
 			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/files"):
-			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/files")
-			pr := byNumber[number]
-			if pr.filesFetches != nil {
-				(*pr.filesFetches)++
-			}
-			json.NewEncoder(w).Encode(prFilesResponse(number, pr.files))
+			// The merge train lists changed files to group overlapping PRs
+			// (hivecommons/hive#15117); disjoint here, so no train forms.
+			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "")
 			pr := byNumber[number]
@@ -2944,8 +2918,6 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 				"commit_id": reviewCommitID,
 				"user":      map[string]string{"login": reviewAuthor},
 			}})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/files"):
-			json.NewEncoder(w).Encode(prFilesResponse(pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/files"), nil))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "")
 			pr := byNumber[number]

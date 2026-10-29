@@ -1482,6 +1482,19 @@
        busiest column). */
     .ham-group { position: sticky; top: 0; z-index: var(--z-sticky); display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-2); margin-top: var(--sp-3); border-top: var(--line-width) solid var(--line-subtle); border-bottom: var(--line-width) solid var(--line-subtle); background: var(--panel); font-size: var(--fs-sm); color: var(--text); min-width: 0; }
     .ham-cols + .ham-group { margin-top: 0; border-top: 0; }
+    /* Merge train (hivecommons/hive issue 15117): members sit contiguous in merge
+       order under one header line, joined by a thin rail on the left. Muted,
+       hairline weights: the rail says "these move together", nothing more. */
+    .ham-train-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) 0 var(--sp-5); margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); min-width: 0; position: relative; }
+    .ham-train-head::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 50%; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
+    .ham-train-chip { display: inline-flex; align-items: center; gap: 0.4em; padding: 0 0.6em; border: var(--line-width) solid var(--line-strong); border-radius: var(--r-pill); line-height: 1.6; color: var(--text); font-size: var(--fs-xs); white-space: nowrap; }
+    .ham-train-files { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ham-row.ham-train { padding-left: var(--sp-5); position: relative; }
+    .ham-row.ham-train::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: 0; bottom: 0; border-left: var(--line-width) solid var(--line-strong); }
+    .ham-row.ham-train-last::before { bottom: 50%; }
+    .ham-row.ham-train::after { content: ''; position: absolute; left: calc(var(--sp-2) - 1px); top: calc(50% - 3px); width: 6px; height: 6px; border-radius: var(--r-pill); background: var(--line-strong); }
+    .ham-row.ham-train-front::after { background: var(--text); }
+    .ham-train-head + .ham-row.ham-train { border-top: 0; }
     .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
     .ham-group-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
     .ham-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--line-strong); outline-offset: 1px; }
@@ -3500,11 +3513,13 @@
     .toast-action { margin-left: 10px; vertical-align: middle; }
     /* Row-action result toast (runRowAction): sticky until the target row
        changes state in the tracker, or ×. Headline, outcome, what happens
-       next, a ⚠ sentinel line when the head was flagged, and a link to the
+       next, a muted "Posted:" line, a ⚠ sentinel line while the head is
+       still flagged after the action, and a link to the
        item acted on (which may be a nested PR, not the clicked row). */
     .ham-result-toast { display: grid; gap: var(--sp-2); }
     .ham-result-head { font-weight: var(--fw-medium); }
     .ham-result-next { color: var(--muted); }
+    .ham-result-posted { color: var(--text-faint); font-size: var(--fs-xs); }
     .ham-result-warn { color: var(--status-error); white-space: pre-line; }
     .ham-result-options { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
     .ham-result-link { color: var(--accent); text-decoration: none; justify-self: start; }
@@ -14107,6 +14122,114 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     };
     const STAGE_TRACKER_MOTION_AUTHOR_STAGES = [30, 40];
     const STAGE_TRACKER_MOTION_HUMAN_MODS = ['stalled', 'blocked', 'needs-human', 'needs-decision', 'needs-triage', 'unauthorized'];
+    /* ---- merge train (hivecommons/hive#15117) ------------------------------
+       Pure helpers; stage_tracker_merge_train_ui_test.go runs them under node.
+       A PR's merge_train names its train (id, state, front, position/size,
+       the PRs ahead, the overlapping files). The pill wording is the state's,
+       the rows of one train are drawn contiguous in merge order under one
+       header, and the tooltip lists the queue. */
+    const STAGE_TRACKER_TRAIN_STATE_FRONT = 'front';
+    const STAGE_TRACKER_TRAIN_STATE_QUEUED = 'queued-behind';
+    const STAGE_TRACKER_TRAIN_STATE_REBASING = 'rebasing';
+    const STAGE_TRACKER_TRAIN_STATE_EXHAUSTED = 'rebase-exhausted';
+    const STAGE_TRACKER_TRAIN_GLYPH = '⛓';
+    function stageTrackerTrain(item) {
+      const mt = item && item.merge_train;
+      return mt && typeof mt === 'object' && mt.state ? mt : null;
+    }
+    function stageTrackerOrdinal(n) {
+      n = Number(n) || 0;
+      const r100 = n % 100, r10 = n % 10;
+      if (r100 >= 11 && r100 <= 13) return n + 'th';
+      return n + (r10 === 1 ? 'st' : r10 === 2 ? 'nd' : r10 === 3 ? 'rd' : 'th');
+    }
+    // The chevron word for a train member ('' for a row not in a train).
+    function stageTrackerTrainWord(item) {
+      const mt = stageTrackerTrain(item);
+      if (!mt) return '';
+      switch (mt.state) {
+        case STAGE_TRACKER_TRAIN_STATE_FRONT: return 'Merging · front of train';
+        case STAGE_TRACKER_TRAIN_STATE_QUEUED: return 'In merge train · ' + stageTrackerOrdinal(mt.position) + ' of ' + (Number(mt.size) || 0);
+        case STAGE_TRACKER_TRAIN_STATE_REBASING: return 'Rebasing · attempt ' + (Number(mt.attempt) || 0) + '/' + (Number(mt.max_attempts) || 0);
+        case STAGE_TRACKER_TRAIN_STATE_EXHAUSTED: return 'Needs human decision · rebase failed ' + (Number(mt.attempt) === 2 ? 'twice' : (Number(mt.attempt) || 0) + ' times');
+      }
+      return '';
+    }
+    // Tooltip lines: the queue ahead and the overlapping files.
+    function stageTrackerTrainLines(item) {
+      const mt = stageTrackerTrain(item);
+      if (!mt) return [];
+      const ahead = Array.isArray(mt.ahead) ? mt.ahead.filter(n => Number(n) > 0) : [];
+      const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
+      const lines = ['Merge train: ' + (Number(mt.size) || 0) + ' PRs to ' + (String(mt.id || '').split('#')[0] || 'the same base') + ' touch the same files; they merge one at a time, front first' + (mt.front ? ' (front #' + mt.front + ')' : '')];
+      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) lines.push('Position: front — merges first; the lane then updates or rebases the others');
+      else lines.push('Position: ' + stageTrackerOrdinal(mt.position) + ' of ' + (Number(mt.size) || 0) + (ahead.length ? ' · ahead: ' + ahead.map(n => '#' + n).join(', ') : ''));
+      if (mt.state === STAGE_TRACKER_TRAIN_STATE_REBASING) lines.push('Front merged; rebase attempt ' + (Number(mt.attempt) || 0) + ' of ' + (Number(mt.max_attempts) || 0) + ' in progress');
+      if (mt.state === STAGE_TRACKER_TRAIN_STATE_EXHAUSTED) lines.push('Rebase failed ' + (Number(mt.attempt) || 0) + ' of ' + (Number(mt.max_attempts) || 0) + ' times — a maintainer rebases, then merges');
+      if (files.length) lines.push('Overlapping files: ' + files.join(', '));
+      return lines;
+    }
+    function stageTrackerTrainKey(item) {
+      const mt = stageTrackerTrain(item);
+      return mt ? (item.repo || '') + '|' + (mt.id || ('#' + mt.front)) : '';
+    }
+    // Pure: re-orders a sorted row list so each train's members sit together
+    // at the first member's slot, in merge order (front first).
+    function stageTrackerTrainContiguous(rows) {
+      rows = Array.isArray(rows) ? rows : [];
+      const byTrain = {};
+      rows.forEach(it => { const k = stageTrackerTrainKey(it); if (k) (byTrain[k] = byTrain[k] || []).push(it); });
+      const emitted = {};
+      const out = [];
+      rows.forEach(it => {
+        const k = stageTrackerTrainKey(it);
+        if (!k) { out.push(it); return; }
+        if (emitted[k]) return;
+        emitted[k] = true;
+        byTrain[k].slice().sort((a, b) => (Number(a.merge_train.position) || 0) - (Number(b.merge_train.position) || 0) || ((a.number || 0) - (b.number || 0))).forEach(m => out.push(m));
+      });
+      return out;
+    }
+    // Header line over a train's rows: "⛓ merge train · 4 PRs · front #15074".
+    function stageTrackerTrainHeaderText(mt) {
+      return STAGE_TRACKER_TRAIN_GLYPH + ' merge train · ' + (Number(mt.size) || 0) + ' PRs · front #' + (Number(mt.front) || 0);
+    }
+    function stageTrackerTrainHeaderHtml(item) {
+      const mt = stageTrackerTrain(item);
+      if (!mt) return '';
+      const files = Array.isArray(mt.overlap_files) ? mt.overlap_files.filter(Boolean) : [];
+      const tip = stageTrackerTrainLines(item).join('\n');
+      return `<div class="ham-train-head" data-ham-train="${esc(stageTrackerTrainKey(item))}" role="row" title="${esc(tip)}">
+        <span class="ham-train-chip">${esc(stageTrackerTrainHeaderText(mt))}</span>${files.length ? `<span class="ham-train-files">overlapping: ${esc(files.join(', '))}</span>` : ''}
+      </div>`;
+    }
+    // Row classes for a train member: the rail, and whether it leads / ends
+    // the run (prev/next are the neighbouring rows, or null).
+    function stageTrackerTrainRowClass(item, prev, next) {
+      const k = stageTrackerTrainKey(item);
+      if (!k) return '';
+      const mt = stageTrackerTrain(item);
+      let cls = ' ham-train';
+      if (mt.state === STAGE_TRACKER_TRAIN_STATE_FRONT) cls += ' ham-train-front';
+      if (!next || stageTrackerTrainKey(next) !== k) cls += ' ham-train-last';
+      return cls;
+    }
+    // Inserts a train header entry before the first row of each train run.
+    // Entries are {key, html}; items are the page's row items in order.
+    function stageTrackerTrainRows(items, rowOf) {
+      const out = [];
+      let prevKey = '';
+      (items || []).forEach((e, i) => {
+        // Entries are items, or the grouped view's {item} / {group} wrappers.
+        const it = e && e.item ? e.item : (e && e.group ? null : e);
+        const k = it ? stageTrackerTrainKey(it) : '';
+        if (k && k !== prevKey) out.push({ key: 'train:' + k, html: stageTrackerTrainHeaderHtml(it) });
+        prevKey = k;
+        out.push(rowOf(e, i));
+      });
+      return out;
+    }
+
     function stageTrackerMotion(item) {
       const mods = Array.isArray(item && item.modifiers) ? item.modifiers : [];
       if (mods.indexOf('hold') >= 0) return STAGE_TRACKER_MOTION_STATIC;
@@ -14632,7 +14755,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (cur === STAGE_TRACKER_HUMAN_GATED && typeof stageTrackerTrainWord === 'function' && stageTrackerTrainWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && item.manual_merge ? stageTrackerManualMergeWord(item) : (cur === STAGE_TRACKER_HUMAN_GATED && stageTrackerUnauthorizedWord(item)) || ((cur === STAGE_TRACKER_ADOPTED_BY_HIVE || (cur === STAGE_TRACKER_HUMAN_GATED && item.adopted_by_state)) && stageTrackerAdoptedWord(item)) || (cur === STAGE_TRACKER_READY_FOR_HUMAN_MERGE && stageTrackerReadyForHumanWord(item, STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))) || (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur))), sentinel: sentinelLane } : null;
       if (detour && cur === 70 && !detour.sentinel && typeof stageTrackerFixingWord === 'function') detour.text = stageTrackerFixingWord(item, detour.text);
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
@@ -14646,6 +14769,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // read as 080 with "Next move: human").
         const tipStage = (state === 'active' && curStage.label) ? curStage : st;
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
+        // A merge-train member's word is its place in the train (#15117).
+        if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item); if (tw) word = tw; }
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
         const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.
@@ -15002,6 +15127,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (typeof stageTrackerNewLines === 'function') lines.push(...stageTrackerNewLines(item, nowMs));
       const blockedPR = mods.indexOf('blocked') >= 0 ? stageTrackerBlockedOnPR(item) : null;
       if (blockedPR) lines.push(blockedPR.tip);
+      if (typeof stageTrackerTrainLines === 'function') lines.push(...stageTrackerTrainLines(item));
       // Guarded: the test harnesses load helpers by name, and this one is additive.
       const adoption = typeof stageTrackerAdoptionTip === 'function' ? stageTrackerAdoptionTip(item) : '';
       if (adoption) lines.push('Adoption: ' + adoption + (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item) ? ' (row menu → Adopt)' : ''));
@@ -15338,7 +15464,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, superseded: !!lp.superseded, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
-        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, presence: lp.presence || null };
+        last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, presence: lp.presence || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null };
     }
     // Pure: whether a linked PR is still open (not merged / closed / superseded).
     function stageTrackerLinkedPROpen(lp) {
@@ -15570,7 +15696,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
           prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, presence: lp.presence || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, presence: lp.presence || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -15631,7 +15757,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           </div>`;
       }
       const prs = typeof stageTrackerRowPRKeys === 'function' ? stageTrackerRowPRKeys(item) : '';
-      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}>
+      const trainKey = typeof stageTrackerTrainKey === 'function' ? stageTrackerTrainKey(item) : '';
+      return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null) : ''}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown))}
@@ -15734,15 +15861,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return out;
     }
     // Pure: plain words for what changed between two states; '' if nothing
-    // worth a line did. Order: where it went → what it now waits on.
+    // worth a line did. Order: where it went → what it now waits on. A
+    // lower stage number is "fell back to" only when the stage table says
+    // the hop is a regression (`falls_to`, from stagelabels.IsRegression):
+    // 015 → 010 is triage accepted, 085 → 080 a decision made, 072 → 070
+    // the author resuming — those read "moved to", with the caption kept
+    // so the line still says why. Without `falls_to` (an older payload)
+    // any lower number is a fall.
+    function stageTrackerStageFell(prev, next, stages) {
+      if (!(next.stage < prev.stage)) return false;
+      const from = (stages || []).find(x => Number(x.number) === prev.stage);
+      if (!from || !Array.isArray(from.falls_to)) return true;
+      return from.falls_to.indexOf(next.stage) >= 0;
+    }
     function stageTrackerEventText(prev, next, stages) {
       if (!prev || !next) return '';
       if (next.stage !== prev.stage) {
         if (next.stage >= STAGE_TRACKER_TERMINAL) return 'merged';
         const sg = (stages || []).find(x => Number(x.number) === next.stage);
         const name = next.label || (sg && (sg.label || sg.short)) || ('stage ' + next.stage);
-        const back = next.stage < prev.stage;
-        return (back ? 'fell back to ' : 'moved to ') + name + (back && next.caption ? ' — ' + next.caption : '');
+        const back = stageTrackerStageFell(prev, next, stages);
+        const why = (back || next.stage < prev.stage) && next.caption ? ' — ' + next.caption : '';
+        return (back ? 'fell back to ' : 'moved to ') + name + why;
       }
       for (const m of next.mods) if (prev.mods.indexOf(m) < 0 && STAGE_TRACKER_EVENT_MOD_WORDS[m]) return STAGE_TRACKER_EVENT_MOD_WORDS[m][0];
       for (const m of prev.mods) if (next.mods.indexOf(m) < 0 && STAGE_TRACKER_EVENT_MOD_WORDS[m]) return STAGE_TRACKER_EVENT_MOD_WORDS[m][1];
@@ -16756,7 +16896,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
-      const ordered = stageTrackerSort(visible, stages, f);
+      const ordered = stageTrackerTrainContiguous(stageTrackerSort(visible, stages, f));
       const grouping = _stageTrackerGroup === 'repo';
       const page = grouping
         ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
@@ -16808,11 +16948,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // unchanged, collapsed out with their last row).
       // A row celebrating its merge is pinned past the payload that
       // dropped it (stageTrackerPinnedRows) until its moment is over.
+      // A merge train's rows carry a header line and a rail (#15117); the
+      // row renderer sees its neighbours to close the rail on the last one.
       const pageItems = stageTrackerAdoptOrphanPRs(page.rows.map(e => grouping ? e.item : e));
+      const itemRow = (it, i) => {
+        const near = Object.assign({}, ctx, { prevRow: i > 0 && pageItems[i - 1] ? pageItems[i - 1] : null, nextRow: pageItems[i + 1] ? pageItems[i + 1] : null });
+        return { key: stageTrackerItemKey(it), html: stageTrackerRowHtml(it, stages, near) };
+      };
+      const rowOf = (e, i) => grouping && !e.item
+        ? { key: e.group.key, html: stageTrackerGroupHeaderHtml(e.group, stages, ctx) }
+        : itemRow(pageItems[i], i);
       const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }]
-        .concat(page.rows.map((e, i) => grouping && !e.item
-          ? { key: e.group.key, html: stageTrackerGroupHeaderHtml(e.group, stages, ctx) }
-          : { key: stageTrackerItemKey(pageItems[i]), html: stageTrackerRowHtml(pageItems[i], stages, ctx) })), nowMs);
+        .concat(stageTrackerTrainRows(page.rows, rowOf)), nowMs);
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Selection is keyed on the row, never baked into its HTML, so a kept
@@ -18208,9 +18355,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The rule in plain words from the glossary, never the bare slug.
       const rule = result.rule ? ' (' + stageTrackerPlainWords(result.rule) + ')' : '';
       if (word) head += ': ' + word + rule;
-      const warn = typeof stageTrackerSentinelPreface === 'function' ? stageTrackerSentinelPreface([item]) : '';
+      const warn = stageTrackerResultWarn(result, item);
+      const posted = Array.isArray(result.posted) ? result.posted.filter(p => typeof p === 'string' && p.trim()).map(p => p.replace(/`/g, '')) : [];
       const options = noEffect && Array.isArray(result.options) ? result.options.filter(o => o && o.action && o.label) : [];
-      return { head, outcome: result.outcome || '', next: result.next || '', warn, options, why: noEffect ? stageTrackerPlainWords(result.why || 'no-effect', true) : '', type: error ? 'error' : (noEffect ? 'warning' : (noop ? 'info' : 'success')), url: t.url || item.url || '', linkText: 'Open ' + (t.kind === 'pr' ? 'PR' : 'issue') + ' #' + (t.number || item.number) };
+      return { head, outcome: result.outcome || '', next: result.next || '', warn, posted: posted.length ? 'Posted: ' + posted.join(' · ') : '', options, why: noEffect ? stageTrackerPlainWords(result.why || 'no-effect', true) : '', type: error ? 'error' : (noEffect ? 'warning' : (noop ? 'info' : 'success')), url: t.url || item.url || '', linkText: 'Open ' + (t.kind === 'pr' ? 'PR' : 'issue') + ' #' + (t.number || item.number) };
+    }
+    // Pure: the ⚠ sentinel paragraph a result toast carries. The row's
+    // alert is what the action started from, so it is repeated only while
+    // the alert is still open: a result that says it cleared the alert
+    // (sentinel_cleared) drops the warning; one that says it is still on
+    // (sentinel_open) keeps it, with Next saying what the person must do.
+    function stageTrackerResultWarn(result, item) {
+      if (result && result.sentinel_cleared) return '';
+      return typeof stageTrackerSentinelPreface === 'function' ? stageTrackerSentinelPreface([item]) : '';
     }
     let _stageTrackerResultToasts = [];
     // Build and show the persistent result toast; it leaves on × or when
@@ -18225,6 +18382,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (text.outcome) { const o = document.createElement('div'); o.className = 'ham-result-outcome'; o.textContent = text.outcome; el.appendChild(o); }
       if (text.warn) { const w = document.createElement('div'); w.className = 'ham-result-warn'; w.textContent = text.warn; el.appendChild(w); }
       if (text.next) { const n = document.createElement('div'); n.className = 'ham-result-next'; n.textContent = text.next; el.appendChild(n); }
+      if (text.posted) { const p = document.createElement('div'); p.className = 'ham-result-posted'; p.textContent = text.posted; el.appendChild(p); }
       if (text.options && text.options.length) {
         // The stuck decision's next actions (#14822): each runs the row
         // action on the toast's target; "open:github" is a link.

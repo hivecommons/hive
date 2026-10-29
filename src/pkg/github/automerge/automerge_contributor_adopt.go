@@ -758,42 +758,62 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	}
 	branch := adoptBranchPrefix + strconv.Itoa(number)
 	fullRepo := owner + "/" + repo
+	// A re-adoption after the hive's copy was closed unmerged
+	// (recoverOrphanedAdoption) is a distinct effect from the adoption that
+	// opened the dead copy: without the dead number in the claim, the
+	// mutation journal replays the first claim as already applied, no copy
+	// opens and the adoption is reverted.
+	priorCopy := 0
+	if stored, ok := store.Get(key); ok && stored.AdoptedBy > 0 && stored.AdoptOrphanedBy == stored.AdoptedBy {
+		priorCopy = stored.AdoptedBy
+	}
+	claimInputs := func(prior int, inputs map[string]string) map[string]string {
+		if prior > 0 {
+			inputs["prior_copy"] = strconv.Itoa(prior)
+		}
+		return inputs
+	}
 	// resignedTip stays "" when the branch falls back to the unsigned
 	// contributor head; the body then keeps the manual DCO repair steps.
 	var resignedTip string
-	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
-		Repo: fullRepo, Kind: effects.KindBranchPush, Target: branch, Actor: "stage_labels",
-		Inputs: map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "adopt": "true"},
-	}, func(ctx context.Context) (effects.Result, error) {
-		tip := obs.HeadSHA
-		if dcoRehome {
-			if signed, signErr := c.resignAdoptionCommits(ctx, obs); signErr != nil {
-				c.warn("stage labels: re-signing adopted commits failed; branching from the unsigned head", "repo", obs.Display, "pr", number, "error", signErr)
-			} else if signed != "" {
-				tip = signed
-				resignedTip = signed
+	pushBranch := func(prior int) error {
+		_, err := effects.Execute(ctx, c.mutation, effects.Claim{
+			Repo: fullRepo, Kind: effects.KindBranchPush, Target: branch, Actor: "stage_labels",
+			Inputs: claimInputs(prior, map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "adopt": "true"}),
+		}, func(ctx context.Context) (effects.Result, error) {
+			tip := obs.HeadSHA
+			if dcoRehome {
+				if signed, signErr := c.resignAdoptionCommits(ctx, obs); signErr != nil {
+					c.warn("stage labels: re-signing adopted commits failed; branching from the unsigned head", "repo", obs.Display, "pr", number, "error", signErr)
+				} else if signed != "" {
+					tip = signed
+					resignedTip = signed
+				}
 			}
-		}
-		_, _, apiErr := c.gh.Git.CreateRef(ctx, owner, repo, &gh.Reference{
-			Ref:    gh.Ptr("refs/heads/" + branch),
-			Object: &gh.GitObject{SHA: gh.Ptr(tip)},
-		})
-		if apiErr != nil && isGitHubStatus(apiErr, http.StatusUnprocessableEntity) {
-			// The branch exists from an earlier attempt: point it at this head.
-			_, _, apiErr = c.gh.Git.UpdateRef(ctx, owner, repo, &gh.Reference{
+			_, _, apiErr := c.gh.Git.CreateRef(ctx, owner, repo, &gh.Reference{
 				Ref:    gh.Ptr("refs/heads/" + branch),
 				Object: &gh.GitObject{SHA: gh.Ptr(tip)},
-			}, true)
+			})
+			if apiErr != nil && isGitHubStatus(apiErr, http.StatusUnprocessableEntity) {
+				// The branch exists from an earlier attempt: point it at this head.
+				_, _, apiErr = c.gh.Git.UpdateRef(ctx, owner, repo, &gh.Reference{
+					Ref:    gh.Ptr("refs/heads/" + branch),
+					Object: &gh.GitObject{SHA: gh.Ptr(tip)},
+				}, true)
+			}
+			if apiErr != nil {
+				return effects.Result{}, effects.NotApplied(apiErr)
+			}
+			return effects.Result{Provenance: tip}, nil
+		})
+		if err != nil {
+			// Close-first (hivecommons/hive#15135) orders push → copy → close,
+			// so a failed push leaves the original open; nothing to reopen.
+			c.warn("stage labels: adoption failed to push branch", "repo", obs.Display, "pr", number, "branch", branch, "error", err)
 		}
-		if apiErr != nil {
-			return effects.Result{}, effects.NotApplied(apiErr)
-		}
-		return effects.Result{Provenance: tip}, nil
-	})
-	if err != nil {
-		// Close-first (hivecommons/hive#15135) orders push → copy → close,
-		// so a failed push leaves the original open; nothing to reopen.
-		c.warn("stage labels: adoption failed to push branch", "repo", obs.Display, "pr", number, "branch", branch, "error", err)
+		return err
+	}
+	if err := pushBranch(priorCopy); err != nil {
 		return 0, err
 	}
 	if supersedeHeadConflicts(obs) {
@@ -806,23 +826,48 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		}
 	}
 
-	var created *gh.PullRequest
-	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
-		Repo: fullRepo, Kind: effects.KindPullRequestCreate, Target: branch, Actor: "stage_labels",
-		Inputs: map[string]string{"base": obs.BaseRef, "supersedes": strconv.Itoa(number), "head_sha": obs.HeadSHA},
-	}, func(ctx context.Context) (effects.Result, error) {
-		var apiErr error
-		created, _, apiErr = c.gh.PullRequests.Create(ctx, owner, repo, &gh.NewPullRequest{
-			Title: gh.Ptr(nonEmpty(strings.TrimSpace(obs.Title), fmt.Sprintf("Adopt #%d", number))),
-			Head:  gh.Ptr(branch),
-			Base:  gh.Ptr(obs.BaseRef),
-			Body:  gh.Ptr(AdoptionPRBody(obs, rec, dcoRehome, resignedTip)),
+	// openCopy returns the PR it opened, or nil and the journal's recorded
+	// provenance when the claim was replayed and the effect did not run.
+	openCopy := func(prior int) (*gh.PullRequest, string, error) {
+		var created *gh.PullRequest
+		res, err := effects.Execute(ctx, c.mutation, effects.Claim{
+			Repo: fullRepo, Kind: effects.KindPullRequestCreate, Target: branch, Actor: "stage_labels",
+			Inputs: claimInputs(prior, map[string]string{"base": obs.BaseRef, "supersedes": strconv.Itoa(number), "head_sha": obs.HeadSHA}),
+		}, func(ctx context.Context) (effects.Result, error) {
+			var apiErr error
+			created, _, apiErr = c.gh.PullRequests.Create(ctx, owner, repo, &gh.NewPullRequest{
+				Title: gh.Ptr(nonEmpty(strings.TrimSpace(obs.Title), fmt.Sprintf("Adopt #%d", number))),
+				Head:  gh.Ptr(branch),
+				Base:  gh.Ptr(obs.BaseRef),
+				Body:  gh.Ptr(AdoptionPRBody(obs, rec, dcoRehome, resignedTip)),
+			})
+			if apiErr != nil {
+				return effects.Result{}, effects.NotApplied(apiErr)
+			}
+			return effects.Result{Provenance: created.GetHTMLURL()}, nil
 		})
-		if apiErr != nil {
-			return effects.Result{}, effects.NotApplied(apiErr)
+		return created, res.Provenance, err
+	}
+	created, provenance, err := openCopy(priorCopy)
+	if replayed := adoptionReplayedPRNumber(provenance); err == nil && created == nil && replayed > 0 && replayed != priorCopy {
+		// The journal replayed an earlier claim and named the PR it opened:
+		// an open one is this adoption's copy; a closed-unmerged one is dead,
+		// so the copy is claimed afresh rather than read as a failure.
+		pr, _, getErr := c.gh.PullRequests.Get(ctx, owner, repo, replayed)
+		switch {
+		case getErr != nil:
+			err = getErr
+		case strings.EqualFold(pr.GetState(), "open"):
+			c.info("stage labels: adoption claim replayed an open App PR; adopting it", "repo", obs.Display, "pr", number, "branch", branch, "replayed", replayed)
+			created = pr
+		case !pr.GetMerged():
+			c.info("stage labels: adoption claim replayed a closed App PR; opening a fresh copy", "repo", obs.Display, "pr", number, "branch", branch, "replayed", replayed)
+			if err = pushBranch(replayed); err != nil {
+				return 0, err
+			}
+			created, _, err = openCopy(replayed)
 		}
-		return effects.Result{Provenance: created.GetHTMLURL()}, nil
-	})
+	}
 	if err != nil || created == nil {
 		c.warn("stage labels: adoption failed to open App PR", "repo", obs.Display, "pr", number, "branch", branch, "error", err)
 		return 0, err
@@ -927,6 +972,20 @@ func (c *Engine) replaySupersedeOntoBase(ctx context.Context, store *stagelabels
 		return true, 0, cErr
 	}
 	return true, 1, nil
+}
+
+// adoptionReplayedPRNumber reads the PR number from a pull_request_create
+// provenance URL (…/pull/N); 0 when there is none.
+func adoptionReplayedPRNumber(provenance string) int {
+	_, tail, ok := strings.Cut(strings.TrimSpace(provenance), "/pull/")
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimRight(tail, "/"))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
 
 // resignAdoptionCommits replays the PR's commits with the App's
