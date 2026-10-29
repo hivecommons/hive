@@ -1,0 +1,342 @@
+    .oc-agent-detail { /* glass panel — same recipe as .agent-card */
+      display: none;
+      background: linear-gradient(
+        color-mix(in srgb, var(--panel-strong) 92%, transparent),
+        color-mix(in srgb, var(--bg-soft) 92%, transparent));
+      border: 2px solid color-mix(in srgb, var(--text) 10%, transparent);
+      border-radius: var(--radius-lg); padding: var(--sp-7); margin-bottom: var(--sp-6);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .oc-agent-detail.active { display: block; }
+    .oc-agent-detail.state-running, .oc-agent-detail[data-status="ok"] { border-color: var(--status-ok); }
+    .oc-agent-detail.state-idle { border-color: var(--status-ok); }
+    .oc-agent-detail.state-paused, .oc-agent-detail[data-status="warn"] { border-color: var(--status-warn); }
+    .oc-agent-detail.state-on-demand, .oc-agent-detail[data-status="info"] { border-color: var(--status-info); }
+    .oc-agent-detail.state-stopped, .oc-agent-detail[data-status="error"] { border-color: var(--status-error); }
+    .oc-agent-detail.state-needs-login, .oc-agent-detail[data-status="attention"] { border-color: var(--status-attention); }
+    .oc-agent-detail.state-off, .oc-agent-detail[data-status="neutral"] { border-color: var(--line); }
+    .oc-agent-detail-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: var(--sp-6);
+      padding-bottom: var(--sp-5); border-bottom: 1px solid var(--border);
+    }
+    .oc-agent-detail-header .agent-name-big {
+      font-size: var(--fs-xl); font-weight: 700; color: var(--text);
+      font-family: var(--font-ui);
+    }
+    .oc-agent-detail-header .status-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .oc-agent-detail-header .status-dot.running { background: var(--status-ok); animation: oc-pulse 1.5s ease-in-out infinite; }
+    .oc-agent-detail-header .status-dot.idle { background: var(--status-ok); }
+    .oc-agent-detail-header .status-dot.paused { background: var(--status-warn); }
+    .oc-agent-detail-header .status-dot.on-demand { background: var(--status-info); }
+    .oc-agent-detail-header .status-dot.stopped { background: var(--status-error); }
+    .oc-agent-detail-header .status-dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
+    /* needs-login is a HOLLOW attention ring — paused is a solid warning dot.
+       The two states were both rendered as near-identical solid amber/yellow
+       and operators could not tell "resting by choice" from "blocked on a
+       human logging in". Hollow reads as "waiting to be filled in". */
+    .oc-agent-detail-header .status-dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
+    /* off-healthy is a HOLLOW GREEN ring (same technique as needs-login, green
+       instead of amber). The agent process is healthy, but its governor cadence
+       for the CURRENT mode is pause/off — so the governor will never kick it.
+       A solid green dot read as "running/idle" and hid that the agent was
+       actually off (e.g. a hive stuck in SURGE where every cadence is pause).
+       Hollow green = alive but not being kicked. No pulse: it is not working. */
+    .oc-agent-detail-header .status-dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
+    .oc-agent-detail-header .status-dot.off { background: var(--status-neutral); }
+    .oc-detail-fields {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 24px; margin-bottom: var(--sp-6);
+    }
+    .oc-detail-field { font-size: var(--fs-base); }
+    .oc-detail-field .label { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.3px; }
+    .oc-detail-field .value { font-weight: 600; color: var(--text); margin-top: var(--sp-1); }
+    /* (oc-detail-summary defined below with monospace) */
+    .oc-detail-indicators { margin-bottom: var(--sp-6); }
+    .oc-gov-strip {
+      display: none; gap: var(--sp-7); align-items: center; padding: var(--sp-4) var(--sp-5);
+      background: var(--surface-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg);
+      margin-bottom: var(--sp-5); font-size: var(--fs-sm); flex-wrap: wrap;
+    }
+    /* Compact governor strip no longer needed: the full Governor section
+       remains visible while an agent is focused (see focus-mode rules). */
+    .oc-gov-strip .gov-metric { display: flex; flex-direction: column; gap: 1px; }
+    .oc-gov-strip .gov-metric .gm-label { font-size: var(--fs-2xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
+    .oc-gov-strip .gov-metric .gm-val { font-weight: 700; font-size: 0.8rem; }
+    .oc-gov-strip .gov-metric .gm-val.mode-idle { color: var(--green); }
+    .oc-gov-strip .gov-metric .gm-val.mode-quiet { color: var(--blue); }
+    .oc-gov-strip .gov-metric .gm-val.mode-busy { color: var(--yellow); }
+    .oc-gov-strip .gov-metric .gm-val.mode-surge { color: var(--red); }
+    /* gm-alert: human-action-required highlight (plans awaiting review), amber
+       to draw the eye like the "N Issues" / ON HOLD indicators. */
+    .oc-gov-strip .gov-metric .gm-val.gm-alert { color: var(--yellow); font-weight: 800; }
+    .oc-gov-gauge { flex-basis: 100%; margin-top: var(--sp-2); }
+    .oc-gov-gauge .temp-gauge-track { height: 14px; }
+    .oc-gov-gauge .temp-gauge-labels { font-size: var(--fs-2xs); }
+    .spark-row { display: flex; align-items: center; gap: var(--sp-3); }
+    .oc-chat-prompt {
+      display: flex; gap: var(--sp-4); align-items: flex-end;
+      padding-top: var(--sp-5); border-top: 1px solid var(--border);
+    }
+    /* .oc-chat-input — shared input recipe (end of style block) */
+    .oc-chat-input { flex: 1; resize: none; min-height: 40px; }
+    .oc-chat-send {
+      padding: 10px 18px; background: var(--red); color: var(--bg); border: none;
+      border-radius: 8px; font-size: var(--fs-base); font-weight: 600;
+      cursor: pointer; white-space: nowrap; font-family: inherit;
+    }
+    .oc-chat-send:hover { background: color-mix(in srgb, var(--red) 85%, #000); }
+    .oc-detail-actions {
+      display: flex; gap: var(--sp-4); margin-bottom: var(--sp-6); flex-wrap: wrap;
+    }
+
+    /* Sidebar agent tree */
+    .oc-tree-toggle {
+      /* .section-label convention */
+      display: flex; align-items: center; gap: var(--sp-4);
+      padding: 10px 20px 6px; font-size: var(--fs-xs); color: var(--amber);
+      cursor: pointer; user-select: none;
+      text-transform: uppercase; letter-spacing: 0.12em; font-weight: 800;
+    }
+    .oc-tree-toggle:hover { color: var(--text); }
+    .oc-tree-arrow { font-size: var(--fs-2xs); transition: transform 0.15s; }
+    .oc-tree-toggle.collapsed .oc-tree-arrow { transform: rotate(-90deg); }
+    .oc-tree-children { padding-left: var(--sp-2); }
+    .oc-tree-children.collapsed { display: none; }
+    .oc-nav-item .oc-agent-dot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    }
+    .oc-agent-dot.running { background: var(--status-ok); animation: oc-pulse 1.5s ease-in-out infinite; }
+    .oc-agent-dot.idle { background: var(--status-ok); }
+    .oc-agent-dot.paused { background: var(--status-warn); }
+    .oc-agent-dot.on-demand { background: var(--status-info); }
+    .oc-agent-dot.stopped { background: var(--status-error); }
+    .oc-agent-dot.starting { background: var(--status-info); animation: oc-pulse 1.5s ease-in-out infinite; }
+    .oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--status-attention); box-sizing: border-box; }
+    /* off-healthy: hollow GREEN ring — healthy agent whose governor cadence for
+       the current mode is pause/off, so it will not be kicked. Mirrors the
+       needs-login hollow technique (see detail-header rule above). No pulse. */
+    .oc-agent-dot.off-healthy { background: transparent; border: 2px solid var(--status-ok); box-sizing: border-box; }
+    .oc-agent-dot.off { background: var(--status-neutral); }
+    @keyframes oc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    /* Sidebar drag-and-drop */
+    .oc-nav-item[draggable="true"] { cursor: grab; }
+    .oc-nav-item.dragging { opacity: 0.4; }
+    .oc-sidebar-group { position: relative; }
+    .oc-sidebar-group-header {
+      /* .section-label convention */
+      display: flex; align-items: center; gap: var(--sp-3);
+      padding: 8px 14px 4px; font-size: var(--fs-xs); color: var(--amber);
+      text-transform: uppercase; letter-spacing: 0.12em; font-weight: 800;
+      cursor: pointer; user-select: none;
+    }
+    .oc-sidebar-group-header { cursor: grab; }
+    .oc-sidebar-group-header:hover { color: var(--text); }
+    .oc-sidebar-group-header .oc-group-arrow {
+      font-size: 0.5rem; transition: transform 0.15s;
+    }
+    .oc-sidebar-group-header.collapsed .oc-group-arrow { transform: rotate(-90deg); }
+    .oc-sidebar-group-children { padding-left: var(--sp-0); min-height: 28px; }
+    .oc-sidebar-group-children.collapsed { display: none; min-height: 0; }
+    .oc-sidebar-group.drag-over > .oc-sidebar-group-children {
+      outline: 2px dashed var(--amber); outline-offset: -2px;
+      border-radius: var(--r); background: color-mix(in srgb, var(--amber) 6%, transparent);
+    }
+    .oc-sidebar-group.dragging-group { opacity: 0.4; }
+    .oc-group-drop-indicator {
+      height: 2px; background: var(--amber); border-radius: 1px; margin: var(--sp-1) var(--sp-0);
+    }
+    .oc-sidebar-group-header .oc-group-actions {
+      margin-left: auto; display: none; gap: var(--sp-2);
+    }
+    .oc-sidebar-group-header:hover .oc-group-actions { display: flex; }
+    .oc-sidebar-group-header .oc-group-actions button {
+      background: none; border: none; font-size: var(--fs-2xs); cursor: pointer;
+      color: var(--muted); padding: var(--sp-0) var(--sp-1);
+    }
+    .oc-sidebar-group-header .oc-group-actions button:hover { color: var(--text); }
+    .oc-drop-indicator {
+      height: 2px; background: var(--amber); margin: 0 10px;
+      border-radius: 1px; pointer-events: none;
+    }
+    .oc-drop-indicator-group {
+      border: 2px dashed var(--amber); border-radius: 8px;
+      margin: 2px 10px; padding: var(--sp-2); opacity: 0.5;
+    }
+
+    /* Agent detail summary — monospace, respect newlines */
+    .oc-detail-summary-wrap { position: relative; margin-bottom: var(--sp-6); }
+    .oc-detail-summary {
+      color: var(--cyan); line-height: 1.3;
+      padding: 14px; background: var(--bg);
+      border-radius: 8px; border: 1px solid var(--line);
+      min-height: calc(1.3em * 20 + 28px); max-height: 70vh; overflow-y: auto;
+      resize: vertical;
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .sum-tool {
+      display: flex; align-items: center; gap: var(--sp-3);
+      padding: 6px 10px; margin: var(--sp-3) var(--sp-0) var(--sp-1); border-radius: var(--r);
+      background: rgba(99,102,241,0.12); border-left: 3px solid var(--indigo);
+      font-weight: 600; font-size: 0.65rem; color: var(--indigo);
+    }
+    .sum-tool .sum-tool-type {
+      font-size: 0.5rem; text-transform: uppercase; font-weight: 700;
+      background: var(--indigo); color: var(--bg); padding: 1px 5px; border-radius: 3px;
+    }
+    .sum-cmd {
+      font-family: var(--font-mono);
+      font-size: var(--fs-2xs); color: var(--muted); padding: 4px 10px 4px 14px;
+      border-left: 2px solid var(--line); margin: var(--sp-0); line-height: 1.4;
+      word-break: break-all;
+    }
+    .sum-tree {
+      font-family: var(--font-mono);
+      font-size: var(--fs-2xs); color: var(--muted); padding: 1px 10px 1px 20px;
+      font-style: italic;
+    }
+    .sum-text {
+      padding: 3px 0; font-size: 0.65rem; color: var(--text); line-height: 1.4;
+    }
+    .sum-table-wrap {
+      overflow-x: auto; margin: var(--sp-2) var(--sp-0);
+      border: 1px solid var(--line); border-radius: var(--r);
+      background: var(--bg-soft);
+    }
+    .sum-table {
+      width: 100%; border-collapse: collapse; font-size: 0.72rem;
+    }
+    .sum-table th {
+      text-align: left; padding: 5px 10px; background: rgba(99,102,241,0.12);
+      border-bottom: 2px solid var(--line); font-weight: 700; color: var(--indigo);
+      font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.3px;
+    }
+    .sum-table td {
+      padding: 5px 10px; border-bottom: 1px solid var(--line); color: var(--muted);
+    }
+    .sum-table tr:last-child td { border-bottom: none; }
+    .sum-table tr:hover td { background: rgba(99,102,241,0.08); }
+    /* icon-button (see button system): floating follow-scroll circle */
+    .oc-summary-follow-btn {
+      position: absolute; bottom: 10px; right: 10px;
+      width: 28px; height: 28px; border-radius: 50%;
+      background: rgba(0,0,0,0.6); color: #fff;
+      font-size: var(--fs-sm); display: none;
+      align-items: center; justify-content: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .oc-summary-follow-btn:hover { background: rgba(0,0,0,0.8); }
+    .oc-summary-follow-btn.visible { display: flex; }
+
+    /* Sections stay visible when an agent is focused so scrolling up from
+       the agent detail still reaches Governor, Token Usage, etc. (previously
+       these were display:none, forcing a click on the nav to get back). */
+    body.oc-agent-focused .agent-card.oc-hidden { display: none; }
+    .agent-card.oc-focused { border-color: color-mix(in srgb, var(--indigo) 55%, var(--line)); box-shadow: var(--shadow-raised); }
+
+    /* Light card overrides — surface/border/state come from the token
+       remap; only the light-specific shadow lives here. */
+    body.light-mode .agent-card {
+      box-shadow: var(--shadow-card);
+      transition: box-shadow var(--duration-fast), border-color var(--duration-fast);
+    }
+    body.light-mode .agent-card:hover { box-shadow: var(--shadow-raised); }
+
+    /* Light agent grid uses the same responsive columns and focused-agent collapse as dark mode. */
+    body.light-mode .agents { gap: 14px; }
+    body.light-mode.oc-agent-focused .agents { grid-template-columns: 1fr; }
+
+    /* Light surface panels — bg/border via token remap; radius/shadow only */
+    body.light-mode .token-panel,
+    body.light-mode .repo-card {
+      border-radius: var(--r-lg); box-shadow: var(--shadow-card);
+    }
+
+    /* Light typography now shares --font-ui with dark mode; .doing stays mono in both. */
+
+
+
+    /* Governor gauge is fully tokenized — no light overrides needed. */
+
+
+
+
+
+    /* ── Mobile: the sidebar becomes a slide-over drawer ──
+       It used to be `display: none !important`, which deleted the ONLY path to
+       agent selection, section nav, add-agent/group, the ACMM badge, and the
+       system gauges. We keep it in the layout and move it offscreen instead.
+
+       Why transform and not display: applyLayout() sets `sidebar.style.display
+       = 'flex'` inline (see the light/dark toggle), and an inline style beats a
+       media query — that is why the old rule needed !important. Driving the
+       drawer off `transform` leaves `display:flex` untouched, so applyLayout()
+       can keep doing its thing without reopening the drawer. */
+    @media (max-width: 1024px) {
+      .oc-sidebar {
+        width: min(var(--sidebar-w), 84vw);
+        transform: translateX(-100%);
+        visibility: hidden;
+        transition: transform .22s ease, visibility 0s linear .22s;
+        z-index: 150;
+        box-shadow: 2px 0 24px #0007;
+      }
+      .oc-sidebar.open {
+        transform: none;
+        visibility: visible;
+        transition: transform .22s ease, visibility 0s;
+      }
+      /* The 5px col-resize strip is fixed at left:calc(var(--sidebar-w) - 2px)
+         with a localStorage-persisted width. If the user ever dragged it below
+         ~180px it lands on top of content at z-index 101 and silently eats
+         taps. Drag-resize is meaningless on a drawer anyway. */
+      .oc-sidebar-resize { display: none; }
+      /* Same reasoning for the per-repo-card handle (#8000): one card per row
+         at phone widths, so there is no width to trade between cards, and an
+         8px strip on the card edge would only eat taps meant for the pills. */
+      .repo-card-resize { display: none; }
+      /* Per-agent and per-group actions are hover-reveal on desktop. Touch has
+         no hover, so without this the ⚙/✕ buttons are unreachable in the drawer. */
+      .oc-nav-item .oc-nav-actions,
+      .oc-sidebar-group-header .oc-group-actions { display: flex; }
+      #oc-drawer-toggle { display: inline-flex; }
+      #oc-drawer-backdrop {
+        display: block;
+        position: fixed; inset: 0; z-index: 149;
+        background: #000a; opacity: 0; pointer-events: none;
+        transition: opacity .22s ease;
+      }
+      #oc-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+      .oc-topbar { left: var(--sp-0); right: auto; width: 100%; max-width: 100%; margin-left: var(--sp-0); }
+      body { padding-left: var(--sp-6); }
+    }
+    @media (max-width: 1024px) and (prefers-reduced-motion: reduce) {
+      .oc-sidebar, .oc-sidebar.open, #oc-drawer-backdrop { transition: none; }
+    }
+    @media (max-width: 600px) {
+      /* The sticky topbar can't hold its content at phone widths —
+         wrapped buttons were painting over the page. Let it wrap and
+         grow, and drop low-value chrome. flex-shrink:0 makes the three
+         groups wrap to a new row instead of squishing their contents off
+         the right edge. */
+      .oc-topbar { --topbar-grid-columns: minmax(0, 1fr); height: auto; min-height: var(--navbar-sticky-height); padding: var(--sp-3) var(--sp-5); row-gap: var(--sp-2); }
+      /* center grows to fill row 1, so the health/right group always
+         drops to its own row instead of half-fitting at the edge */
+      .oc-topbar-left, .oc-topbar-center, .oc-topbar-right { justify-content: center; }
+      .oc-topbar-right { grid-column: auto; flex-wrap: wrap; }
+      .widget-dl { display: none; }
+      #oc-project-name { display: none; }
+      .oc-topbar .nav-chip--action .nav-chip__label,
+      .oc-topbar .nav-chip--primary .nav-chip__label { display: none; }
+      /* keep the pill one line so the right group wraps as a unit
+         instead of being clipped at the viewport edge */
+      .oc-health-badge { white-space: nowrap; }
+      /* the nowrap Install button was pushing the app banner past the
+         viewport — let the banner's items wrap instead */
+      .gh-app-install-banner { flex-wrap: wrap; }
+    }
+

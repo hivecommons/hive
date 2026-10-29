@@ -1,0 +1,96 @@
+    .agent-state { text-align: right; font-size: var(--fs-sm); font-weight: 600; margin-top: var(--sp-3); }
+    .agent-state.working { color: var(--green); }
+    .agent-state.idle { color: var(--muted); }
+    .agent-state.paused { color: var(--red); }
+    .agent-state.on-demand { color: var(--indigo); }
+    .agent-state.off { color: color-mix(in srgb, var(--muted) 60%, var(--bg)); }
+    .agent-state.disabled { color: color-mix(in srgb, var(--muted) 70%, var(--bg)); }
+    /* 0/1 power rocker for the agent `enabled` flag.
+
+       An agent can be dark for four independent reasons — it is disabled in
+       config, an operator paused it, the governor has no cadence for it in the
+       current mode, or its session is stopped. Rendering all four as words in
+       the same badge slot is what made them indistinguishable in practice: an
+       operator reading "off" could not tell which lever to pull, and the
+       enablement lever had no control at all outside a buried config tab.
+
+       A physical 1-over-0 rocker reads as master power and nothing else, so it
+       cannot be confused with the pause button beside it. The "off" position is
+       the DEFAULT (no class), and `.on` raises the lever, so the same markup
+       drives both the immediate card switch and the config dialog's dirty-bag
+       `toggleConfigSwitch`, which toggles exactly that class. */
+    .pwr-switch {
+      display: inline-flex; flex-direction: column; align-items: center;
+      justify-content: space-between; flex: none; position: relative;
+      width: 20px; height: 34px; padding: var(--sp-1) var(--sp-0);
+      border: 1px solid var(--border); border-radius: 3px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--fg) 8%, var(--bg)), var(--bg));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+      cursor: pointer; vertical-align: middle;
+    }
+    .pwr-switch.readonly { cursor: default; opacity: 0.55; }
+    .pwr-switch .pwr-mark {
+      font-size: 0.5rem; line-height: 1; font-weight: 700;
+      color: var(--muted); z-index: 1; pointer-events: none;
+    }
+    .pwr-switch .pwr-lever {
+      position: absolute; left: 2px; right: 2px; top: 16px; height: 14px;
+      border-radius: 2px; border: 1px solid rgba(0, 0, 0, 0.35);
+      background: linear-gradient(180deg, #dcdcdc, #9a9a9a);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+      transition: top 0.12s ease, background 0.12s ease;
+      pointer-events: none;
+    }
+    .pwr-switch.on { border-color: color-mix(in srgb, var(--green) 55%, var(--border)); }
+    .pwr-switch.on .pwr-lever {
+      top: 2px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--green) 55%, #fff), var(--green));
+    }
+    .pwr-switch.on .pwr-mark:first-child { color: var(--green); }
+    /* .status-badge — pill recipe; variants pick the color via --pill-c */
+    .status-badge { font-weight: 700; margin-left: var(--sp-3); text-transform: uppercase; letter-spacing: 0.5px; }
+    .status-badge.blocked { --component-status: var(--status-error); }
+    .status-badge.needs-context { --component-status: var(--status-warn); }
+    .status-badge.done-concerns { --component-status: var(--status-attention); }
+    .status-badge.done { --component-status: var(--status-ok); }
+    .status-badge.disabled { --pill-c: var(--muted); }
+    .status-badge.disabled { --component-status: var(--status-neutral); }
+    .agent-card.status-blocked { border-left-color: var(--red) !important; }
+    .agent-card.status-needs-context { border-left-color: var(--yellow) !important; }
+    /* Stale pulse: an opacity-only overlay on the left edge (compositor
+       thread) rather than animating border-left-color on the main thread. */
+    @keyframes pulse-amber {
+      0%,100% { opacity: 0.3; }
+      50% { opacity: 0.8; }
+    }
+    .agent-card.status-stale { border-left-color: transparent !important; }
+    .agent-card.status-stale::before { content: ''; position: absolute; top: calc(-1 * var(--line-width)); bottom: calc(-1 * var(--line-width)); left: calc(-1 * var(--focus-ring-width)); width: var(--focus-ring-width); border-radius: var(--r-lg) 0 0 var(--r-lg); background: var(--yellow); pointer-events: none; animation: pulse-amber 2s ease-in-out infinite; }
+    /* Last upstream/launch error — stacked below .agent-state, never under the
+       working-indicator dot, so a retry in progress cannot hide it (#3604). */
+    .agent-error { font-size: 0.72rem; color: var(--red); margin-top: var(--sp-2); text-align: right; word-break: break-word; }
+    /* "Now:" line (#10934): what the agent is on, under its state line. Not
+       aria-live — it changes every update and would flood screen readers. */
+    .oc-style-source { font-size: var(--fs-xs); color: var(--muted); border: var(--line-width) solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--sp-1); }
+    .oc-style-source[data-source="repo"] { color: var(--fg); border-color: var(--accent); }
+    .agent-now { text-align: right; font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-2); word-break: break-word; }
+    .agent-now .an-lead { font-weight: 600; color: var(--text); }
+    .agent-now.outdated { color: var(--yellow); }
+    .oc-agent-detail .agent-now { text-align: left; }
+    /* Live per-run line (#14576): $cost · tokens · elapsed · tests · files. */
+    .oc-run-line { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-1); font-variant-numeric: tabular-nums; }
+    .oc-run-line .rl-cost { font-weight: 600; color: var(--text); }
+    .oc-run-line .rl-tests.pass { color: var(--green); }
+    .oc-run-line .rl-tests.fail { color: var(--red); }
+    .oc-run-line .rl-sep { opacity: 0.5; }
+    .oc-agent-detail .oc-run-line { justify-content: flex-start; }
+    .oc-agent-detail-header .oc-run-line { margin-top: var(--sp-0); margin-left: auto; }
+    /* Agent activity section (#10935): one row per agent. */
+    .agent-activity-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
+    .agent-activity-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+    .agent-activity-table th { text-align: left; color: var(--muted); font-weight: 600; padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
+    .agent-activity-table td { padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); vertical-align: top; }
+    .agent-activity-table td.aa-name { font-weight: 600; white-space: nowrap; }
+    .agent-activity-table td.aa-state, .agent-activity-table td.aa-since { color: var(--muted); white-space: nowrap; }
+    .agent-activity-table td.aa-reserved { color: var(--muted); font-size: var(--fs-xs); }
+    .agent-activity-table .agent-now { text-align: left; margin-top: 0; }
+    .agent-activity-empty { color: var(--muted); font-size: var(--fs-sm); }
