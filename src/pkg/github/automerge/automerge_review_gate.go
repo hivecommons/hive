@@ -328,6 +328,9 @@ func (c *Engine) trustedHumanApprovalForRequiresHuman(ctx context.Context, owner
 	if login, ok := c.latestTrustedHumanApproval(ctx, owner, repo, number, head); ok {
 		return login, true
 	}
+	// No live trusted approval on head: a persisted review-backed approval
+	// is revoked, so drop it before reading the recorded decision.
+	c.reconcileReviewBackedApproval(ctx, owner, repo, number, head)
 	return c.recordedHumanApprovalForHead(owner, repo, number, head)
 }
 

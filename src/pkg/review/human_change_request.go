@@ -102,6 +102,10 @@ type HumanChangeRequestStore interface {
 	Record(req HumanChangeRequest) error
 	// For returns the newest request recorded against repo#number at head.
 	For(repo string, number int, head string) (HumanChangeRequest, bool)
+	// Forget drops the entry recorded from source/sourceID against
+	// repo#number, leaving every other entry (an older instruction on the
+	// same head included) standing. Unknown entries are a no-op.
+	Forget(repo string, number int, source string, sourceID int64) error
 }
 
 // HumanChangeRequests is the file-backed HumanChangeRequestStore. A zero
@@ -222,6 +226,31 @@ func (s *HumanChangeRequests) For(repo string, number int, head string) (HumanCh
 		}
 	}
 	return newest, found
+}
+
+// Forget implements HumanChangeRequestStore.
+func (s *HumanChangeRequests) Forget(repo string, number int, source string, sourceID int64) error {
+	if s == nil {
+		return errors.New("human change request store is nil")
+	}
+	repo = strings.TrimSpace(repo)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	kept := s.items[:0]
+	dropped := false
+	for _, item := range s.items {
+		if item.Number == number && strings.EqualFold(item.Repo, repo) && item.Source == source && item.SourceID == sourceID {
+			dropped = true
+			continue
+		}
+		kept = append(kept, item)
+	}
+	if !dropped {
+		return nil
+	}
+	s.items = kept
+	return s.persist()
 }
 
 // Lookup returns the request recorded from source/sourceID against

@@ -1,1 +1,0 @@
-- Preserve maintainer decision intent: approval commands retain rationale, edited non-closing issue references stay non-closing, same-head approvals release metadata-only fixes, and trusted contributor change requests return to the author.

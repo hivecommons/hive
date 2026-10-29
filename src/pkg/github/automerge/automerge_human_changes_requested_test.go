@@ -279,3 +279,76 @@ func TestTrustedHumanApprovalUsesLatestOpinion(t *testing.T) {
 		t.Fatalf("obsolete approval from %s accepted", login)
 	}
 }
+
+// A same-head APPROVED review persisted as an approval-kind decision must
+// not outlive the review: once it is dismissed (or the reviewer's latest
+// opinion on the head is no longer APPROVED), the record is dropped, the
+// earlier instruction stands again and requires_human is unanswered. A
+// comment-sourced approval is durable and is not revalidated.
+func TestReviewBackedApprovalRevokedOnDismissal(t *testing.T) {
+	for _, tc := range []struct {
+		name, revoke, wantBody string
+	}{
+		{"dismissed", "DISMISSED", "edit body"},
+		// The fresh change request is now the newest instruction.
+		{"changes requested again", "CHANGES_REQUESTED", "metadata fix checked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			approval := humanReview(2, "bob", "APPROVED", "sha7", "metadata fix checked")
+			approval["submitted_at"] = "2026-10-28T02:00:00Z"
+			api := newSelfSweepGuardAPI(t, selfSweepFixture{reviews: []map[string]any{approval}})
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			store := review.NewHumanChangeRequests("")
+			c.humanChangeRequests = store
+			at, err := time.Parse(time.RFC3339, "2026-10-28T01:00:00Z")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Record(review.HumanChangeRequest{Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Source: review.HumanChangeRequestSourceDecision, SourceID: 99, Actor: "bob", Body: "edit body", RecordedAt: at}); err != nil {
+				t.Fatal(err)
+			}
+			if c.humanChangesRequestedForHead(context.Background(), "acme", "widget", 7, "sha7") {
+				t.Fatal("approval on the same head did not release the request")
+			}
+			if login, ok := c.trustedHumanApprovalForRequiresHuman(context.Background(), "acme", "widget", 7, "sha7", ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}); !ok || login != "bob" {
+				t.Fatalf("approval not seen: %q %v", login, ok)
+			}
+
+			// The reviewer takes the approval back without a new head.
+			approval["state"] = tc.revoke
+			approval["submitted_at"] = "2026-10-28T03:00:00Z"
+			if login, ok := c.trustedHumanApprovalForRequiresHuman(context.Background(), "acme", "widget", 7, "sha7", ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}); ok {
+				t.Fatalf("revoked review approval still answers requires_human as %q", login)
+			}
+			if !c.humanChangesRequestedForHead(context.Background(), "acme", "widget", 7, "sha7") {
+				t.Fatal("instruction recorded before the revoked approval no longer holds the lane")
+			}
+			req := review.HumanChangeRequestFor(store, "acme/widget", 7, "sha7")
+			if req == nil || req.Body != tc.wantBody {
+				t.Fatalf("planner instruction = %+v, want %q", req, tc.wantBody)
+			}
+			if got, ok := store.Lookup("acme/widget", 7, review.HumanChangeRequestSourceReview, 2); ok && got.IsApproval() {
+				t.Fatal("revoked review approval still persisted")
+			}
+		})
+	}
+}
+
+func TestCommentApprovalSurvivesReviewDismissal(t *testing.T) {
+	dismissed := humanReview(2, "bob", "DISMISSED", "sha7", "")
+	api := newSelfSweepGuardAPI(t, selfSweepFixture{reviews: []map[string]any{dismissed}})
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	store := review.NewHumanChangeRequests("")
+	c.humanChangeRequests = store
+	if err := store.Record(review.HumanChangeRequest{Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Source: review.HumanChangeRequestSourceDecision, SourceID: 4242, Actor: "bob", Body: "approve", Kind: review.HumanChangeRequestKindApprove}); err != nil {
+		t.Fatal(err)
+	}
+	if login, ok := c.trustedHumanApprovalForRequiresHuman(context.Background(), "acme", "widget", 7, "sha7", ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}); !ok || login != "bob" {
+		t.Fatalf("durable /hive decision approve dropped: %q %v", login, ok)
+	}
+	if c.humanChangesRequestedForHead(context.Background(), "acme", "widget", 7, "sha7") {
+		t.Fatal("durable approval read as a change request")
+	}
+}

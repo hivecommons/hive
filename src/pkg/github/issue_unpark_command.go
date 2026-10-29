@@ -99,16 +99,22 @@ type unparkCommand struct {
 	Text string
 }
 
-// Approval reports whether the first word explicitly approves the head.
-// The remaining text is retained as the approval rationale.
+// Approval reports whether the decision explicitly approves the head: the
+// first word is `approve`, `approved` or `lgtm` (trailing punctuation
+// ignored) and the rest is retained as the approval rationale. A bare `yes`
+// approves too, but `yes, but …` is a conditional answer and stays an
+// instruction for the fix lane (hivecommons/hive#14816).
 func (c unparkCommand) Approval() bool {
-	words := strings.Fields(c.DecisionText())
+	text := strings.TrimSpace(c.DecisionText())
+	words := strings.Fields(text)
 	if len(words) == 0 {
 		return false
 	}
-	switch strings.ToLower(strings.TrimRight(words[0], ".:")) {
-	case "approve", "approved", "lgtm", "yes":
+	switch strings.ToLower(strings.TrimRight(words[0], ".:,;!")) {
+	case "approve", "approved", "lgtm":
 		return true
+	case "yes":
+		return len(words) == 1
 	}
 	return false
 }
