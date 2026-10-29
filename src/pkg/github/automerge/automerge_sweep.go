@@ -3060,7 +3060,25 @@ func mergeAPIErrorNotApplied(err error) error {
 	return err
 }
 
+// executeMergeEffect runs the merge call through the mutation boundary and
+// brackets it with a merge attempt (hivecommons/hive#15245) so the tracker
+// shows "Merging" for the call's duration and a refusal's reason after.
 func (c *Engine) executeMergeEffect(ctx context.Context, claim effects.Claim, owner, repo string, number int, merge func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	slug := owner + "/" + repo
+	hgithub.BeginMergeAttempt(slug, number, hgithub.PRAuditPathSweep)
+	out, err := c.executeMergeEffectOnce(ctx, claim, owner, repo, number, merge)
+	switch {
+	case err != nil:
+		hgithub.EndMergeAttempt(slug, number, false, err)
+	case out.Provenance == "":
+		hgithub.EndMergeAttempt(slug, number, false, errors.New("merge-not-applied"))
+	default:
+		hgithub.EndMergeAttempt(slug, number, true, nil)
+	}
+	return out, err
+}
+
+func (c *Engine) executeMergeEffectOnce(ctx context.Context, claim effects.Claim, owner, repo string, number int, merge func(context.Context) (effects.Result, error)) (effects.Result, error) {
 	out, err := effects.Execute(ctx, c.mutation, claim, merge)
 	if !errors.Is(err, effects.ErrNeedsReconciliation) {
 		return out, err

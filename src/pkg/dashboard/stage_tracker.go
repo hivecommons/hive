@@ -1828,6 +1828,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
 	sweep := s.stageTrackerSweepState()
 	soakWindow := s.stageTrackerSoakWindow()
+	attempts := s.stageTrackerMergeAttempts()
 	workers := stageTrackerWorkersFromStatus(status)
 	adoptionClock := s.stageTrackerAdoptionClock()
 	rerouteCandidates, adoptionEnabled, takeoverGrace := s.stageTrackerRerouteCandidates(), s.stageAdoptionEnabled(), s.takeoverGrace()
@@ -1868,11 +1869,19 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 		}
 		it.Hold = stageTrackerHoldFrom(rec, hasRec, labels)
+		var attempt github.MergeAttempt
+		var hasAttempt bool
+		if it.Kind == "pr" {
+			// A merge call in flight (or just back, merged) lights 100
+			// "Merging" whatever the record says (hivecommons/hive#15245).
+			attempt, hasAttempt = attempts[stageTrackerMergeAttemptKey(it.Repo, it.Number)]
+			stage = stageTrackerMergeAttemptStage(stage, attempt, hasAttempt)
+		}
 		it.Stage = stage.Number()
 		it.StageSlug = stage.Slug()
 		it.StageLabel = stage.Label()
 		if it.Kind == "pr" {
-			it.MergeGate = stageTrackerMergeGate(it.Repo, it.Number, stage, rec, hasRec, sweep, now)
+			it.MergeGate = stageTrackerMergeGateAttempt(stageTrackerMergeGate(it.Repo, it.Number, stage, rec, hasRec, sweep, now), attempt, hasAttempt)
 			it.Soak = stageTrackerSoakFrom(rec, hasRec, it.Head, soakWindow, now)
 		}
 		if m := trackerPRNumberRE.FindStringSubmatch(it.Reason); m != nil && it.Kind == "issue" {
@@ -1901,6 +1910,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		stageTrackerApplyMergeTrain(it)
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
+		if hasAttempt && (attempt.InFlight() || attempt.Merged) {
+			it.Caption, it.Actor = stageTrackerMergingCaption(attempt), StageActorHive
+		}
 		// Adoption is clanker-only (a human's PR is never adopted), so a
 		// human-authored 072 row keeps its plain caption.
 		if stage == stagelabels.ReturnedToContributor && it.Kind == "pr" && it.AuthorKind != authorKindHuman {

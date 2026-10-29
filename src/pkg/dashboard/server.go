@@ -134,6 +134,9 @@ type Server struct {
 	// rerouteCandidates overrides the contribute hub as the tracker's
 	// online-clanker source for the Reroute submenu; tests only.
 	rerouteCandidates func(author string) []RerouteCandidate
+	// mergeAttempts overrides the process-wide merge-attempt registry for
+	// the tracker's "Merging" rows (stage_tracker_merge_gate.go); tests only.
+	mergeAttempts func() []github.MergeAttempt
 	// stageTrackerCache is the last /api/stage-tracker payload built from
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache
@@ -1495,6 +1498,9 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		startedAt:        time.Now(),
 	}
 	s.registerCoreRoutes()
+	// A merge attempt beginning or ending is a tracker change the next poll
+	// must see (hivecommons/hive#15245).
+	github.DefaultMergeAttempts().SetOnChange(func() { s.invalidateStageTrackerCache() })
 	return s
 }
 

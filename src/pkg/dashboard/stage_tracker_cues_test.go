@@ -295,6 +295,7 @@ func stageTrackerCelebrateJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerAfter"),
 		jsFunc(t, html, "stageTrackerTransient"),
 		jsFunc(t, html, "stageTrackerNoteMerges"),
+		stageTrackerMergingHoldOffJS,
 		jsFunc(t, html, "stageTrackerPRKey"),
 		jsFunc(t, html, "stageTrackerMergeState"),
 		jsFunc(t, html, "stageTrackerCarryOpen"),

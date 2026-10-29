@@ -145,7 +145,7 @@ func TestStageTrackerMergeGateInPayload(t *testing.T) {
 func TestStageTrackerMergeGateNode(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		`const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Awaiting merge gate', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged' };`,
+		`const STAGE_TRACKER_MERGE_GATE_WORD = { 'gate-pending': 'Awaiting merge gate', ready: 'Ready for auto merge', soaking: 'Soaking', merging: 'Merging', merged: 'Merged', 'merge-failed': 'Merge failed' };`,
 		`60: 'Awaiting merge gate', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Merging'`,
 		`const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs) : '';`,
 		`else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;`,
@@ -269,6 +269,9 @@ console.log('merge-gate helpers ok');
 func stageTrackerMergeGateInfoJS(t *testing.T, html string) string {
 	t.Helper()
 	return jsConstLine(t, html, "STAGE_TRACKER_COVER_REASON_RE") + "\n" +
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_PATH_WORDS") + "\n" +
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_FAILED_SHORT_MAX") + "\n" +
+		jsFunc(t, html, "stageTrackerMergeFailedShort") + "\n" +
 		jsFunc(t, html, "stageTrackerCoverReasonText") + "\n" +
 		jsFunc(t, html, "stageTrackerCoveringPR") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeGateInfo") + "\n" +
