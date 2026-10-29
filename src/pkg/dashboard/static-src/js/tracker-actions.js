@@ -191,10 +191,12 @@
     function stageTrackerPRParked(it) {
       return !!it && (!!it.superseded || (Array.isArray(it.modifiers) ? it.modifiers : []).indexOf('needs-decision') >= 0 || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(it.stage) || 0) >= 0 || !!it.manual_merge || !!it.human_merge_reason);
     }
-    // Pure: the parked nested PRs of an issue row, as row items.
+    // Pure: the parked nested PRs of an issue row, as row items. An adopted
+    // original whose hive copy is listed under the issue is not parked —
+    // its "changes requested" belongs to the pair the copy now carries.
     function stageTrackerParkedNestedPRs(item) {
       if (!item || item.kind === 'pr') return [];
-      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && stageTrackerPRParked(lp)).map(lp => stageTrackerLinkedPRItem(item, lp));
+      return (Array.isArray(item.linked_prs) ? item.linked_prs : []).filter(lp => lp && stageTrackerPRParked(lp) && (!!lp.superseded || stageTrackerLinkedPROpen(lp, item))).map(lp => stageTrackerLinkedPRItem(item, lp));
     }
     function stageTrackerDecisionTarget(item) {
       if (!item) return null;
