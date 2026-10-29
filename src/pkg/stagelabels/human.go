@@ -237,7 +237,7 @@ const (
 	LaneReasonChangesRequested = "reviewer-verdict:changes_requested"
 	// LaneReasonHumanChangesRequested is a trusted maintainer's standing
 	// change request on the head (prstage.AutoMergeReasonHumanChangesRequested
-	// spells the same token; prstage imports this package).
+	// aliases this constant; prstage imports this package).
 	LaneReasonHumanChangesRequested  = "human-changes-requested"
 	LaneReasonDCOMissing             = "dco-missing"
 	LaneReasonHiveSignoffAttribution = "hive-signoff-attribution"

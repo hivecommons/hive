@@ -18,7 +18,7 @@ const (
 	ReviewGateOutcomeNoBundle              = "no-review-bundle"
 	AutoMergeReasonBehindBudgetExhausted   = "behind-update-budget-exhausted"
 	AutoMergeReasonForkNotEditable         = "fork-not-editable"
-	AutoMergeReasonHumanChangesRequested   = "human-changes-requested"
+	AutoMergeReasonHumanChangesRequested   = stagelabels.LaneReasonHumanChangesRequested
 	AutoMergeReasonHumanMergePath          = "human-merge-path"
 	AutoMergeReasonHumanMergePathEvidence  = "human-merge-path-evidence"
 	AutoMergeReasonIntentEvidence          = "intent-evidence"
