@@ -3496,7 +3496,21 @@
       border: 1px solid var(--line); border-left: 3px solid var(--muted);
       background: var(--panel);
       box-shadow: var(--shadow-raised); animation: toast-in 0.25s ease-out; max-width: 360px;
+      position: relative; overflow: hidden;
     }
+    /* Countdown bar: a timed toast's remaining life, drained along the bottom
+       edge over exactly its auto-dismiss window (animation-duration is set
+       inline by toastCountdownBar from the same ms the dismiss timer uses).
+       Absolutely positioned so it never shifts the toast's layout; clipped
+       to the toast radius by the parent's overflow. Sticky/persistent
+       toasts carry no bar. */
+    .toast-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; pointer-events: none; transform-origin: left center; background: var(--muted); opacity: 0.55; animation: toast-bar-drain linear forwards; }
+    .toast.success .toast-bar { background: var(--green); }
+    .toast.error .toast-bar { background: var(--red); }
+    .toast.info .toast-bar { background: var(--blue); }
+    .toast.warning .toast-bar { background: var(--status-warn); }
+    @keyframes toast-bar-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+    @media (prefers-reduced-motion: reduce) { .toast-bar { display: none; } }
     .toast.success { background: color-mix(in srgb, var(--green) 14%, var(--panel)); border-color: color-mix(in srgb, var(--green) 35%, var(--line)); border-left-color: var(--green); }
     .toast.error { background: color-mix(in srgb, var(--red) 14%, var(--panel)); border-color: color-mix(in srgb, var(--red) 35%, var(--line)); border-left-color: var(--red); }
     .toast.info { background: color-mix(in srgb, var(--blue) 14%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); border-left-color: var(--blue); }
@@ -39769,6 +39783,20 @@ function burnAreaChart() {
       el.appendChild(close);
       el.addEventListener('click', () => dismissToast(el, null, null, true));
     }
+    // toastCountdownBar arms a toast's auto-dismiss: one setTimeout that
+    // closes it after `ms`, and a .toast-bar whose drain animation runs for
+    // the same `ms`, so the bar hits zero as the toast leaves. Every timed
+    // toast path (success/info/warning, error-with-deadline, in-flight toast
+    // resolved by dismissToast) goes through here; sticky and persistent
+    // toasts never call it and so show no bar.
+    function toastCountdownBar(el, ms, onExpire) {
+      const bar = document.createElement('span');
+      bar.className = 'toast-bar';
+      bar.setAttribute('aria-hidden', 'true');
+      bar.style.animationDuration = ms + 'ms';
+      el.appendChild(bar);
+      setTimeout(() => { if (el.parentNode) onExpire(); }, ms);
+    }
     function showToast(msg, type = 'info', persistent = false, autoDismissMs = 0) {
       const opts = (persistent && typeof persistent === 'object') ? persistent : {};
       if (persistent && typeof persistent === 'object') persistent = !!opts.persistent;
@@ -39799,10 +39827,10 @@ function burnAreaChart() {
         /* autoDismissMs opts an error toast out of stick-forever: it keeps
            the × for early dismissal but self-clears after the deadline
            (forced — dismissToast ignores sticky toasts otherwise). */
-        if (autoDismissMs > 0) setTimeout(() => { if (el.parentNode) dismissToast(el, null, null, true); }, autoDismissMs);
+        if (autoDismissMs > 0) toastCountdownBar(el, autoDismissMs, () => dismissToast(el, null, null, true));
         return el;
       }
-      setTimeout(() => dismissToast(el), autoDismissMs > 0 ? autoDismissMs : TOAST_DURATION_MS);
+      toastCountdownBar(el, autoDismissMs > 0 ? autoDismissMs : TOAST_DURATION_MS, () => dismissToast(el));
       return el;
     }
     function handleGitHubSetupToast() {
@@ -39833,7 +39861,7 @@ function burnAreaChart() {
         // A resolved in-flight toast that resolved to an error stays put for
         // the same reason a direct error toast does.
         if (newType === 'error') { makeToastSticky(el); return; }
-        setTimeout(() => { el.style.animation = 'toast-out 0.3s ease-in forwards'; setTimeout(() => el.remove(), 300); }, TOAST_DURATION_MS);
+        toastCountdownBar(el, TOAST_DURATION_MS, () => { el.style.animation = 'toast-out 0.3s ease-in forwards'; setTimeout(() => el.remove(), 300); });
       } else {
         if (el._sticky && !force) return;
         el.style.animation = 'toast-out 0.3s ease-in forwards';
