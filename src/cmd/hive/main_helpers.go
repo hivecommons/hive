@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/holdguard"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -407,6 +408,16 @@ func humanMergePathsFor(cfg *config.Config, repo string) []string {
 		return nil
 	}
 	return cfg.AutoMerge.HumanMergePathsFor(repo)
+}
+
+// humanMergeRuleFor reads auto_merge.human_merge_title_prefixes /
+// human_merge_labels through cfg on every call so a reload applies
+// (hivecommons/hive#15442). A nil config means the defaults.
+func humanMergeRuleFor(cfg *config.Config) prstage.HumanMergeRule {
+	if cfg == nil {
+		return prstage.HumanMergeRule{}
+	}
+	return cfg.AutoMerge.HumanMergeRule()
 }
 
 // selfMergeIntentGate builds the intent-tier gate the App self-merge sweep

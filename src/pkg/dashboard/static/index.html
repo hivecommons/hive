@@ -14220,7 +14220,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // "workflow-files" / "untrusted-author" / "branch-protection", falling
     // back to "policy"); the tooltip carries the payload's one-sentence
     // human_merge_reason_text (hivecommons/hive#14658).
-    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'policy': 'policy' };
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'unauthorized', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'policy': 'policy' };
+    // 090 under the breaking-change rule (human_merge_reason
+    // "breaking-change": a ⚠️ title or needs-owner-merge label,
+    // hivecommons/hive#15442): no approval lets the hive merge it, so the
+    // word is the stage's own, "Ready for human merge", and the chip says
+    // "human merge".
+    const STAGE_TRACKER_BREAKING_CHANGE_CODE = 'breaking-change';
+    const STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD = 'Ready for human merge';
     function stageTrackerHumanMergeReasonWord(item) {
       const code = String((item && item.human_merge_reason) || '').trim();
       if (!code) return '';
@@ -14229,7 +14236,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerManualMergeWord(item) {
       const approver = String((item && item.human_approver) || '').trim();
       const why = stageTrackerHumanMergeReasonWord(item);
-      return STAGE_TRACKER_MANUAL_MERGE_WORD + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
+      const code = String((item && item.human_merge_reason) || '').trim();
+      const lead = code === STAGE_TRACKER_BREAKING_CHANGE_CODE ? STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD : STAGE_TRACKER_MANUAL_MERGE_WORD;
+      return lead + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
     }
     // The plain 090 word (no manual-merge rule): the stage's short word
     // plus the reason, "Ready for human merge · untrusted author".
@@ -14687,6 +14696,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
+      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed';
       if (n === 0 && typeof stageTrackerNewState === 'function' && stageTrackerNewState(item)) return 'New';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
@@ -15633,10 +15643,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // names who moves it next (hivecommons/hive#15094).
         const openNew = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && typeof stageTrackerNewState === 'function' && !!stageTrackerNewState(item);
         const advisory = n === 0 && state === 'active' && !openHold && !openBlocked && typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
+        // An issue waiting on a maintainer's triage says so in the column
+        // (hivecommons/hive#15437 read "New" while the caption held the ask).
+        const openTriage = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && !advisory && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item);
         if (openHold) word = 'Open · hold';
         else if (openBlocked) word = 'Open · blocked';
         else if (advisory) word = advisory.chip || 'Advisory · read & close';
         else if (openDraft) word = 'Draft';
+        else if (openTriage) word = 'Triage needed';
         else if (openNew) word = 'New';
         // A plain, blocked or draft Open step (no stage label, not held)
         // says how long it has sat there, from the same instant the since
@@ -15798,6 +15812,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!item || (Number(item.stage) || 0) !== 0 || !item.new || typeof item.new !== 'object') return null;
       return item.new;
     }
+    // Pure: an issue in the Open column that waits on a maintainer's triage
+    // — the needs-triage pill, or a 000-new reporter-trust hold whose next
+    // mover is the maintainer (triage gate next) before the awaiting label
+    // has landed. The chevron then says "Triage needed", not "New": the ask
+    // is in the column, not only in the caption.
+    function stageTrackerOpenTriageNeeded(item) {
+      if (!item || item.kind === 'pr' || (Number(item.stage) || 0) !== 0) return false;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (mods.indexOf('needs-triage') >= 0) return true;
+      const fresh = stageTrackerNewState(item);
+      if (!fresh || fresh.next_mover !== 'maintainer') return false;
+      const gates = Array.isArray(fresh.gates) ? fresh.gates : [];
+      return gates.some(g => g && g.name === 'triage' && g.state === 'next');
+    }
     // "Next: …" and "Gates ahead: triage ✓ → actionable → claimed" for the
     // row tooltip and the lit chevron. nowMs refreshes the next-pass countdown.
     function stageTrackerNewLines(item, nowMs) {
@@ -15892,7 +15920,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
-          if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = 'New — ' + stageTrackerNewLines(item, nowMs).join(' — ');
+          if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = (typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item) ? 'Triage needed — ' : 'New — ') + stageTrackerNewLines(item, nowMs).join(' — ');
           if (sg.advisory) tip = (item.advisory && item.advisory.caption) || 'Advisory for maintainers · read, then close';
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.

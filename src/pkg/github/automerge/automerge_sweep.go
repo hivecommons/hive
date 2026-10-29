@@ -91,6 +91,10 @@ type Options struct {
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
 	HumanMergePaths func(repo string) []string
+	// HumanMergeRule returns the live auto_merge.human_merge_title_prefixes /
+	// human_merge_labels rule (hivecommons/hive#15442). Every lane and the
+	// merge train skip a PR RequiresHumanMerge. nil means the defaults.
+	HumanMergeRule func() prstage.HumanMergeRule
 	// RequireCurrentBase returns the live current-base gate switch for an
 	// owner/repo (hivecommons/hive#13634; since #15335 resolved from the
 	// hive-wide default plus per-repo overrides via
@@ -255,6 +259,9 @@ type Engine struct {
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
+	humanMergeRuleMu sync.RWMutex
+	humanMergeRule   func() prstage.HumanMergeRule
+
 	requireCurrentBase       func(repo string) bool
 	requireCurrentBaseStrict func(repo string) bool
 	mergeForwardTrustedHuman func(repo string) bool
@@ -364,6 +371,7 @@ func New(transport Transport, opts Options) *Engine {
 		reviewGate:                        opts.ReviewGate,
 		humanChangeRequests:               opts.HumanChangeRequests,
 		humanMergePaths:                   opts.HumanMergePaths,
+		humanMergeRule:                    opts.HumanMergeRule,
 		requireCurrentBase:                opts.RequireCurrentBase,
 		requireCurrentBaseStrict:          opts.RequireCurrentBaseStrict,
 		mergeForwardTrustedHuman:          opts.MergeForwardTrustedHuman,
@@ -1783,6 +1791,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "not-app-authored", nil
 	}
 	selfLabels := labelNames(pr.Labels)
+	// The refetched PR is the one that merges: a title or label edited
+	// since listing re-applies the human-merge rule (hivecommons/hive#15442).
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), selfLabels); reason != "" {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
 	blocked := c.labelBlockReason(selfLabels, true)
 	// A conflicting head — GitHub's mergeable_state or the needs-rebase
 	// label a lane already put on it — is asked the superseded question
@@ -2150,6 +2163,9 @@ func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
 		return "not-app-authored"
 	}
 	labels := labelNames(pr.Labels)
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), labels); reason != "" {
+		return reason
+	}
 	if blocked := c.labelBlockReason(labels, true); blocked != "" {
 		return blocked
 	}
@@ -2169,6 +2185,9 @@ func (c *Engine) prefilterQueuedIssue(issue *gh.Issue, label string) string {
 	labels := labelNames(issue.Labels)
 	if !hasLabel(labels, label) {
 		return "label-removed"
+	}
+	if reason := c.humanMergeRequiredReason(issue.GetTitle(), labels); reason != "" {
+		return reason
 	}
 	if blocked := c.labelBlockReason(labels, false); blocked != "" {
 		return blocked
@@ -2190,6 +2209,9 @@ func (c *Engine) prefilterTrustedAuthorPR(pr *gh.PullRequest, policy TrustedAuth
 		return "draft"
 	}
 	labels := labelNames(pr.Labels)
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), labels); reason != "" {
+		return reason
+	}
 	if blocked := c.labelBlockReason(labels, true); blocked != "" && !staleNeedsRebaseLabel(blocked, pr) {
 		return blocked
 	}
@@ -2596,6 +2618,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	labels := hgithub.ExtractPRLabels(pr.Labels)
 	if !hasLabel(labels, label) {
 		return AutoMergeSweepEvent{}, "label-removed", nil
+	}
+	if reason := c.humanMergeRequiredReason(pr.GetTitle(), labels); reason != "" {
+		return AutoMergeSweepEvent{}, reason, nil
 	}
 	// Hold labels outrank the merger queue (#5589): a hold applied AFTER a
 	// merger queued the PR — including the hold guard re-applying one because

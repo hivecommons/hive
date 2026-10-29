@@ -28,6 +28,7 @@ import (
 	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/writeback"
 	"gopkg.in/yaml.v3"
 )
@@ -8046,6 +8047,16 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+	// HumanMergeTitlePrefixes lists title prefixes (matched after trimming
+	// the title) that mark a PR as one the owner merges by hand; no lane and
+	// no merge train merges it (hivecommons/hive#15442). Unset means the
+	// breaking-change sign, ["⚠️", "⚠"] (U+26A0 with and without VS16); an
+	// explicit empty list switches the title half of the rule off.
+	HumanMergeTitlePrefixes []string `yaml:"human_merge_title_prefixes,omitempty" json:"human_merge_title_prefixes,omitempty"`
+	// HumanMergeLabels lists labels (case-insensitive) with the same effect.
+	// Unset means ["needs-owner-merge"]; an explicit empty list switches the
+	// label half of the rule off.
+	HumanMergeLabels []string `yaml:"human_merge_labels,omitempty" json:"human_merge_labels,omitempty"`
 	// RequireCurrentBase lists owner/repo names whose automerge sweeps only
 	// merge a PR head that already contains the current base branch tip
 	// (hivecommons/hive#13634). A head that is green but was tested against
@@ -8521,6 +8532,32 @@ func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
 		}
 	}
 	return nil
+}
+
+// HumanMergeTitlePrefixesEffective returns auto_merge.human_merge_title_prefixes
+// with the default applied when the key is unset (nil). An explicit empty
+// list stays empty.
+func (a AutoMergeConfig) HumanMergeTitlePrefixesEffective() []string {
+	if a.HumanMergeTitlePrefixes == nil {
+		return append([]string(nil), prstage.DefaultHumanMergeTitlePrefixes...)
+	}
+	return append(make([]string, 0, len(a.HumanMergeTitlePrefixes)), a.HumanMergeTitlePrefixes...)
+}
+
+// HumanMergeLabelsEffective returns auto_merge.human_merge_labels with the
+// default applied when the key is unset (nil). An explicit empty list stays
+// empty.
+func (a AutoMergeConfig) HumanMergeLabelsEffective() []string {
+	if a.HumanMergeLabels == nil {
+		return append([]string(nil), prstage.DefaultHumanMergeLabels...)
+	}
+	return append(make([]string, 0, len(a.HumanMergeLabels)), a.HumanMergeLabels...)
+}
+
+// HumanMergeRule is the configured human-merge rule the automerge lanes
+// and the dashboard share.
+func (a AutoMergeConfig) HumanMergeRule() prstage.HumanMergeRule {
+	return prstage.HumanMergeRule{TitlePrefixes: a.HumanMergeTitlePrefixesEffective(), Labels: a.HumanMergeLabelsEffective()}
 }
 
 // RequireCurrentBaseFor reports whether the automerge lanes must see a head
