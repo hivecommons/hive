@@ -125,12 +125,31 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			HiveID:                    cfg.HiveID,
 			AuthorKindLabels:          cfg.Governor.Labels.Author.Names(),
 			RelayKnown:                contributorRelayKnown,
+			OwnerAuthor:               dashboardOwnerLogin(cfg),
 			SharedCIIncident:          stageSharedCIIncident,
 			BaseBranchRed:             stageBaseBranchRed,
 			ForkGuard:                 stageForkGuard,
 			DCORequired:               stage.DCO.RequiredFor,
 			SquashOnly:                cfg.AutoMerge.SquashOnlyFor,
 		}
+	}
+}
+
+// dashboardOwnerLogin answers StageLabelPolicy.OwnerAuthor from
+// dashboard.authorized_users: an owner's PR is a person's, never adopted
+// (hivecommons/hive#15202).
+func dashboardOwnerLogin(cfg *config.Config) func(login string) bool {
+	return func(login string) bool {
+		login = strings.TrimSpace(strings.TrimPrefix(login, "@"))
+		if login == "" || cfg == nil {
+			return false
+		}
+		for _, entry := range cfg.Dashboard.AuthorizedUsers {
+			if name, _ := dashboard.AuthorizedUserEntry(entry); strings.EqualFold(name, login) {
+				return true
+			}
+		}
+		return false
 	}
 }
 

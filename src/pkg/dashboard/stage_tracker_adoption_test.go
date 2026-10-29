@@ -338,3 +338,41 @@ func TestStageTrackerAdoptionEndpointShape(t *testing.T) {
 		t.Fatalf("endpoint body lacks adoption: %s", rr.Body.String())
 	}
 }
+
+// hivecommons/hive#15202: an owner's / author-human PR the engine refused to
+// adopt says so on its row, with no Adopt offer and no nudge clock needed.
+func TestStageTrackerAdoptionPersonAuthoredSaysNotAdopted(t *testing.T) {
+	now := time.Date(2026, 10, 28, 20, 30, 0, 0, time.UTC)
+	s := newTestServer()
+	store := stagelabels.NewStore("", func() time.Time { return now })
+	s.stageStore = store
+	s.deps = &Dependencies{Config: &config.Config{}}
+	key := stagelabels.Key("hivecommons/hive", 15157)
+	store.Observe(key, stagelabels.NeedsDecision, "contributor-lane:decision-requested")
+	store.NoteAdoptionBlocked(key, "cafe", stagelabels.AdoptBlockedAuthorPerson, now.Add(-2*time.Minute))
+	status := minimalPayload()
+	status.HiveID = "hive"
+	status.Repos = []FrontendRepo{{
+		Name: "hive", Full: "hivecommons/hive",
+		OpenPrs: []any{FrontendPR{PullRequest: github.PullRequest{Number: 15157, Title: "Owner change", Author: "clubanderson", HeadSHA: "cafe", Labels: []string{"stage/085-needs-decision", "author/human", "role/trusted"}}}},
+	}}
+	s.UpdateStatus(status)
+	it := trackerItem(t, s.buildStageTracker(status, store, now), "pr", 15157)
+	a := it.Adoption
+	if a == nil || !a.Due || a.BlockedBy != stagelabels.AdoptBlockedAuthorPerson || a.Action != "" {
+		t.Fatalf("adoption = %+v", a)
+	}
+	if a.Text != "@clubanderson pushed this PR themselves — not adopted: the hive asks them, not adopts" {
+		t.Fatalf("text = %q", a.Text)
+	}
+	if !strings.Contains(it.Caption, "not adopted") {
+		t.Fatalf("caption = %q", it.Caption)
+	}
+	if d := it.DecisionNeeded; d != nil {
+		for _, o := range d.Options {
+			if o.Action == decisionActionAdopt {
+				t.Fatalf("adopt offered on a person's PR: %+v", d)
+			}
+		}
+	}
+}

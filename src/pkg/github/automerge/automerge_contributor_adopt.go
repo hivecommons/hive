@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -640,6 +641,15 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
 	}
+	if personAuthored(obs, policy) {
+		// A person's own PR (hivecommons/hive#15202): no contributor hive
+		// can be offline for it, and neither an operator request nor a
+		// forced adoption changes who should fix it. Recorded so the
+		// tracker row says why.
+		store.NoteAdoptionBlocked(key, obs.HeadSHA, stagelabels.AdoptBlockedAuthorPerson, now)
+		c.info("stage labels: adoption refused, a person pushed this PR themselves; asking the author instead", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "author_kind", obs.AuthorKind.String(), "reason", reason, "requested", requested, "forced", forced)
+		return 0, nil
+	}
 	if forced {
 		c.info("stage labels: operator forced adoption; maintainer policy, admission and presence bypassed", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "by", forcedBy, "online", presence.Online, "policy", policy.maintainerPolicy())
 	} else if c.adoptionRefusedByAdmission(store, key, obs, requested, now) {
@@ -757,6 +767,11 @@ func (c *Engine) refuseSelfAuthoredSupersede(ctx context.Context, store *stagela
 // attempt between the two snapshots: MarkAdopted stamps head/by/at before
 // any write, so a changed adoption record means this head was tried.
 func delegatedAdoptionAttempted(before, after stagelabels.Record) bool {
+	// A person-authored refusal is terminal for the request, not a
+	// deferral: the label must not re-ask every sweep (hivecommons/hive#15202).
+	if after.AdoptBlockedBy == stagelabels.AdoptBlockedAuthorPerson && after.AdoptBlockedHead != "" {
+		return true
+	}
 	return after.AdoptedHead != before.AdoptedHead ||
 		after.AdoptedBy != before.AdoptedBy ||
 		!after.AdoptedAt.Equal(before.AdoptedAt) ||
@@ -1378,6 +1393,16 @@ func (c *Engine) authorMaintainsRepo(ctx context.Context, obs stageObservation, 
 	c.maintainerPerm[key] = maintainerPermEntry{maintainer: maintainer, at: now}
 	c.maintainerPermMu.Unlock()
 	return maintainer, nil
+}
+
+// personAuthored: the PR was pushed by a person — author/human, or one of
+// this hive's owners — rather than by a clanker or a registered contributor
+// relay. Such a PR is never adopted (hivecommons/hive#15202).
+func personAuthored(obs stageObservation, policy StageLabelPolicy) bool {
+	if obs.AuthorKind == authorkind.Human {
+		return true
+	}
+	return policy.OwnerAuthor != nil && obs.Author != "" && policy.OwnerAuthor(obs.Author)
 }
 
 // maintainerPolicy resolves the policy's maintainer rule ("" = adopt).

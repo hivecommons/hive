@@ -252,6 +252,7 @@ func runStageGoldenWithFacts(in stageGoldenInput) (stageGoldenWant, Facts) {
 	if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
 		verdict.Stage = FixingStage(obs)
 	}
+	obs.LaneReason = obs.Reason
 	if verdict.Reason != "" {
 		obs.Reason = verdict.Reason
 	}
@@ -326,7 +327,7 @@ func goldenHumanEvidence(obs stageObservation, stage stagelabels.Stage, r *stage
 	e := stagelabels.Evidence{
 		Head:             obs.HeadSHA,
 		Verdict:          humanVerdict(contributorVerdict),
-		Conflict:         humanConflictReasons[obs.Reason] || HasLabelFold(obs.Labels, "needs-rebase"),
+		Conflict:         humanConflict(obs),
 		Holds:            stagelabels.Holds(obs.Labels),
 		Cause:            cause,
 		CauseReason:      decisionCause(obs.Reason),
@@ -728,6 +729,7 @@ func generateStageGoldens() map[string][]stageGoldenCase {
 	}
 
 	// 8. Hand-picked regressions.
+	humanDecisionRequested := &stageGoldenVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "@clubanderson should this land before the freeze?"}
 	requiresHumanConcrete := &stageGoldenVerdict{Configured: true, Verdict: "requires_human", HumanSummaries: []string{goldenConcreteSummary}}
 	for _, c := range []stageGoldenCase{
 		{
@@ -809,6 +811,18 @@ func generateStageGoldens() map[string][]stageGoldenCase {
 			Note: "hivecommons/hive#12417/#12438: a requires_human verdict folded into no-verdict by the lane still hands the PR to a person.",
 			Input: stageGoldenInput{Observations: single(stageLaneTrusted, contributorLaneReasonNoVerdict, stageGoldenVerdicts[4].detail("")), AuthorKind: string(authorkind.Human),
 				Route: &stageGoldenRoute{Checks: green, Verdict: stageGoldenVerdicts[4].verdict}},
+		},
+		{
+			Name: "regression/15202-human-author-decision-requested-conflicting-is-071",
+			Note: "hivecommons/hive#15202 (seen on #15157): a decision-requested verdict on a conflicting head a person pushed themselves goes to 071 Needs author with the rebase, not to 085 and never to adoption.",
+			Input: stageGoldenInput{Observations: single(stageLaneContributor, "conflicting", stageGoldenDetail{Verdict: humanDecisionRequested, Role: "trusted"}), AuthorKind: string(authorkind.Human),
+				Route: &stageGoldenRoute{Checks: green, Verdict: humanDecisionRequested}},
+		},
+		{
+			Name: "regression/15202-human-author-decision-requested-green-is-071-with-question",
+			Note: "hivecommons/hive#15202: the same verdict on a green head routes the reviewer's question to the author (071), not to the decision queue (085).",
+			Input: stageGoldenInput{Observations: single(stageLaneContributor, contributorLaneReasonNoVerdict, stageGoldenDetail{Verdict: humanDecisionRequested, Role: "trusted"}), AuthorKind: string(authorkind.Human),
+				Route: &stageGoldenRoute{Checks: green, Verdict: humanDecisionRequested}},
 		},
 		{
 			Name:  "regression/concrete-requires-human-normalizes-to-changes-requested",
@@ -1093,6 +1107,14 @@ func decisionCause(reason string) string {
 }
 
 var humanConflictReasons = map[string]bool{"conflicting": true, "not-mergeable": true, "label:needs-rebase": true}
+
+// humanConflict mirrors automerge's: the lane's own conflict reason counts
+// for a person's PR even when a decision-requested verdict took the stage
+// reason (hivecommons/hive#15202).
+func humanConflict(obs stageObservation) bool {
+	return humanConflictReasons[obs.Reason] || HasLabelFold(obs.Labels, "needs-rebase") ||
+		obs.AuthorKind == authorkind.Human && humanConflictReasons[obs.LaneReason]
+}
 
 const defaultSentinelLabel = "sentinel-alert"
 

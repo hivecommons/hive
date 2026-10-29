@@ -178,6 +178,12 @@ type Input struct {
 	// ContributorOnline: the author is reachable (relay heartbeat / recent
 	// activity); false for an external author who went quiet.
 	ContributorOnline bool
+	// HumanAuthor: the PR carries the author/human label — a person pushed
+	// it themselves. OwnerAuthor: the author is one of this hive's owners
+	// (dashboard.authorized_users). Neither has a hive that can be "offline",
+	// and the delegate never adopts their work (hivecommons/hive#15202).
+	HumanAuthor bool
+	OwnerAuthor bool
 	// DuplicateOf is the older issue this one duplicates (0 = none known).
 	DuplicateOf int
 	// Overlaps lists issues that overlap without duplicating.
@@ -469,7 +475,14 @@ func decidePR(in Input) Decision {
 			return d
 		}
 	}
-	if !in.HiveAuthored && !in.ContributorOnline && in.WorkflowPath && (in.AdoptionStalled || in.AdoptionGraceElapsed || in.Conflicting || !in.CIGreen || in.DCOMissing) {
+	// A person pushed this PR themselves (an owner, or author/human):
+	// it is theirs to fix, never the hive's to adopt (hivecommons/hive#15202).
+	if in.PersonAuthored() {
+		if d, ok := decideReturnToAuthor(in, ref); ok {
+			return d
+		}
+	}
+	if !in.HiveAuthored && !in.PersonAuthored() && !in.ContributorOnline && in.WorkflowPath && (in.AdoptionStalled || in.AdoptionGraceElapsed || in.Conflicting || !in.CIGreen || in.DCOMissing) {
 		// The adoption engine refuses to publish a contributor's workflow
 		// edits from the App (contributor-lane:workflow-path), so an
 		// adopt-supersede here is decided and never executed
@@ -478,7 +491,7 @@ func decidePR(in Input) Decision {
 		return recommendOnly(RuleCapabilityGap, "the PR edits .github/workflows and the hive's GitHub App lacks the `workflows` permission, so the adoption fence refuses to supersede it; deciding to adopt cannot take effect",
 			"grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge "+ref+" on GitHub, or close it as superseded")
 	}
-	if !in.HiveAuthored && in.Kind == KindPR && in.AdoptionGraceElapsed {
+	if !in.HiveAuthored && !in.PersonAuthored() && in.Kind == KindPR && in.AdoptionGraceElapsed {
 		text := "adopt now: the offline grace on " + ref + " has already elapsed; adopt in supersede mode at once, preserving the author's commits and sign-off"
 		return Decision{
 			Verdict: VerdictAdoptSupersede, Rule: RuleAdoptNow, Text: text,
@@ -486,7 +499,7 @@ func decidePR(in Input) Decision {
 			Actions:   []Action{decisionComment(text), {Kind: ActionAdoptSupersede}},
 		}
 	}
-	if !in.HiveAuthored && !in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing) {
+	if !in.HiveAuthored && !in.PersonAuthored() && !in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing) {
 		text := "supersede now: adopt " + ref + " in supersede mode, preserving the author's commits and sign-off; do not wait for the grace deadline"
 		return Decision{
 			Verdict: VerdictAdoptSupersede, Rule: "contributor-offline", Text: text,
@@ -547,6 +560,60 @@ func decideCompeting(in Input, ref string) (Decision, bool) {
 	return Decision{}, false
 }
 
+// PersonAuthored: a human or one of this hive's owners pushed the PR
+// themselves. Such a PR is never a "contributor" with an expected connected
+// hive, so the contributor-offline rule and adoption do not apply to it.
+func (in Input) PersonAuthored() bool { return in.HumanAuthor || in.OwnerAuthor }
+
+// RuleReturnToAuthor hands a person's PR back to that person with the exact
+// fix list and the reviewer's question, instead of adopting it.
+const RuleReturnToAuthor = "return-to-author"
+
+// decideReturnToAuthor is the person-authored branch of decidePR: a head that
+// is not mergeable, or a reviewer question still open, goes back to the
+// author by name. A green, mergeable head with no open question falls
+// through to the ordinary approve rules.
+// ReturnToAuthor is decideReturnToAuthor for callers outside the policy
+// (the 090 human-merge decider): the person's PR goes back to them with
+// the fix list and the reviewer's question; ok=false when nothing is owed.
+func ReturnToAuthor(in Input) (Decision, bool) {
+	return decideReturnToAuthor(in, "#"+strconv.Itoa(in.Number))
+}
+
+func decideReturnToAuthor(in Input, ref string) (Decision, bool) {
+	var fix []string
+	if in.Conflicting {
+		fix = append(fix, "rebase onto the base branch")
+	}
+	if in.DCOMissing {
+		fix = append(fix, "add the DCO sign-off")
+	}
+	if !in.CIGreen {
+		fix = append(fix, "make CI green without widening scope")
+	}
+	question := strings.TrimSpace(in.Question)
+	if len(fix) == 0 && question == "" {
+		return Decision{}, false
+	}
+	who := "the author"
+	if a := strings.TrimSpace(in.Author); a != "" {
+		who = "@" + strings.TrimPrefix(a, "@")
+	}
+	var parts []string
+	if len(fix) > 0 {
+		parts = append(parts, who+": "+strings.Join(fix, ", ")+" on "+ref+"; then it merges")
+	}
+	if question != "" {
+		parts = append(parts, who+", the reviewer asked: "+question)
+	}
+	text := strings.Join(parts, " — ")
+	return Decision{
+		Verdict: VerdictDirection, Rule: RuleReturnToAuthor, Text: text,
+		Rationale: "a person pushed this PR themselves, so the hive asks that person instead of adopting the work (hivecommons/hive#15202)",
+		Actions:   []Action{decisionComment(text)},
+	}, true
+}
+
 func releasePR(rule, text, rationale string) Decision {
 	return Decision{
 		Verdict: VerdictApprove, Rule: rule, Text: text, Rationale: rationale,
@@ -566,7 +633,14 @@ type Rails struct {
 	Held bool
 	// AllowedActions overrides the allowed set (nil = AllowedActions).
 	AllowedActions []ActionKind
+	// PersonAuthored: a human or owner pushed the PR; adopt-supersede is
+	// refused whatever the rule chose (hivecommons/hive#15202).
+	PersonAuthored bool
 }
+
+// RefusalAdoptPersonAuthored is the refusal ApplyRails records when a rule
+// asked to adopt a person's PR.
+const RefusalAdoptPersonAuthored = "adopt-supersede: a person pushed this PR themselves; the hive asks the author instead of adopting it"
 
 // ApplyRails enforces the safety rails on a decision: a held item is refused
 // outright; actions outside the allowed set are dropped with a refusal; a
@@ -599,6 +673,10 @@ func ApplyRails(d Decision, r Rails) Decision {
 			out.Refusals = append(out.Refusals, "labels-remove hold: the delegate never lifts a hold")
 			continue
 		}
+		if a.Kind == ActionAdoptSupersede && r.PersonAuthored {
+			out.Refusals = append(out.Refusals, RefusalAdoptPersonAuthored)
+			continue
+		}
 		out.Actions = append(out.Actions, a)
 	}
 	if len(out.Actions) == 0 {
@@ -611,7 +689,7 @@ func ApplyRails(d Decision, r Rails) Decision {
 
 // Run is Decide followed by ApplyRails with the hold rail read from the labels.
 func Run(in Input) Decision {
-	return ApplyRails(Decide(in), Rails{Held: hasLabel(in.Labels, LabelHold)})
+	return ApplyRails(Decide(in), Rails{Held: hasLabel(in.Labels, LabelHold), PersonAuthored: in.PersonAuthored()})
 }
 
 // CommentBody renders the comment the delegate posts for a decision: the

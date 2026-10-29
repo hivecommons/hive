@@ -84,6 +84,8 @@ var glossary = []GlossaryEntry{
 		Detail: "An older issue already tracks the same work; one thread keeps it moving."},
 	{Slug: "fix-then-merge", Kind: GlossaryRule, Plain: "the branch isn't mergeable yet",
 		Detail: "The branch cannot merge as it is (conflicts, red CI or a missing sign-off); the hive told the author agent exactly what to fix."},
+	{Slug: RuleReturnToAuthor, Kind: GlossaryRule, Plain: "a person pushed this PR; the hive asked them, not adopted it",
+		Detail: "The PR was pushed by a person (author/human or one of this hive's owners), so the hive never adopts it. It told the author by name what to fix (rebase, sign-off, CI) and relayed the reviewer's question."},
 	{Slug: "owner-only", Kind: GlossaryRule, Plain: "only the hive owner can do this",
 		Detail: "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you.", Aliases: []string{"owner_only"}},
 	{Slug: "prefer-contributor", Kind: GlossaryRule, Plain: "a contributor's PR and a hive PR do the same work",

@@ -101,7 +101,21 @@ func (s *Server) stageTrackerMaintainerPolicy() string {
 // when the row was never nudged at its current head (nothing to adopt
 // yet) or is already adopted.
 func stageTrackerAdoption(it StageTrackerItem, rec stagelabels.Record, hasRec bool, presence func(login string) (automerge.ContributorPresence, bool), policy string, now time.Time) *StageTrackerAdoption {
-	if it.Kind != "pr" || !hasRec || rec.NudgeCount == 0 || rec.NudgeStart().IsZero() {
+	if it.Kind != "pr" || !hasRec {
+		return nil
+	}
+	if rec.AdoptionBlocked(it.Head) == stagelabels.AdoptBlockedAuthorPerson {
+		// A person's PR was asked to be adopted and refused: say so on the
+		// row even though no nudge clock ever ran (hivecommons/hive#15202).
+		out := &StageTrackerAdoption{Author: it.Author, Policy: policy, Due: true, BlockedBy: stagelabels.AdoptBlockedAuthorPerson}
+		if !rec.AdoptBlockedAt.IsZero() {
+			since := rec.AdoptBlockedAt
+			out.Since = &since
+		}
+		out.Text = stageTrackerAdoptionText(it.Author, *out, now)
+		return out
+	}
+	if rec.NudgeCount == 0 || rec.NudgeStart().IsZero() {
 		return nil
 	}
 	if it.Head != "" && rec.NudgeHead != "" && rec.NudgeHead != it.Head {
@@ -147,6 +161,9 @@ func stageTrackerAdoptionText(author string, a StageTrackerAdoption, now time.Ti
 	who := "the author"
 	if author != "" {
 		who = "@" + author
+	}
+	if a.BlockedBy == stagelabels.AdoptBlockedAuthorPerson {
+		return who + " pushed this PR themselves — not adopted: the hive asks them, not adopts"
 	}
 	var facts []string
 	if a.AuthorMaintainer {

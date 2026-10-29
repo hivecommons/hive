@@ -1274,6 +1274,12 @@ func (r Record) AdoptionBlocked(head string) string {
 // does not take the PR over (hivecommons/hive#15136).
 const AdoptBlockedOperatorAdmission = "operator-admission"
 
+// AdoptBlockedAuthorPerson is the AdoptBlockedBy reason for an adoption the
+// engine refused because a person pushed the PR themselves (author/human,
+// or one of this hive's owners): there is no contributor hive to be
+// offline, so the hive asks the author instead (hivecommons/hive#15202).
+const AdoptBlockedAuthorPerson = "author-is-person"
+
 // AdmittedByOperatorApprovalPrefix prefixes AdmittedBy when the admission
 // came from a person's Approve: "operator-approval:octocat".
 const AdmittedByOperatorApprovalPrefix = "operator-approval:"

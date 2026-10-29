@@ -2229,6 +2229,12 @@ func (s *Server) configuredOwnerUser() string {
 	return ""
 }
 
+// AuthorizedUserEntry splits a dashboard.authorized_users entry
+// ("login" or "login:role") into its login and role.
+func AuthorizedUserEntry(entry string) (name, role string) {
+	return dashboardAuthorizedUserEntry(entry)
+}
+
 func dashboardAuthorizedUserEntry(entry string) (name, role string) {
 	entry = strings.TrimSpace(entry)
 	if idx := strings.LastIndex(entry, ":"); idx >= 0 {

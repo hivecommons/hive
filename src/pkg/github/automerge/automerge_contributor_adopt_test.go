@@ -2719,3 +2719,44 @@ func TestAdoptionSupersedeConflictCommentListsFiles(t *testing.T) {
 		t.Fatal("empty file list rendered")
 	}
 }
+
+// hivecommons/hive#15202: an owner's / author-human PR parked at 085 with a
+// delegated `adoption/supersede` request is never adopted. The refusal is
+// recorded on the tracker row, the request label is consumed (one attempt,
+// not a standing order) and the PR never reaches 074.
+func TestDelegatedSupersedeRefusesPersonAuthoredPR(t *testing.T) {
+	cases := []struct {
+		name   string
+		labels []string
+		human  bool
+		owner  func(string) bool
+	}{
+		{name: "author/human label", labels: []string{"stage/085-needs-decision", "author/human", delegatedecision.LabelAdoptSupersede}, human: true},
+		{name: "hive owner whose hive opened the PR", labels: []string{"stage/085-needs-decision", delegatedecision.LabelAdoptSupersede},
+			owner: func(login string) bool { return login == "mallory" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := adoptPolicy()
+			policy.OwnerAuthor = tc.owner
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+			defer done()
+			pr := adoptPR(7, "aaa", tc.labels...)
+			if tc.human {
+				// No relay trailer: a person pushed it from their own machine.
+				pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\n")
+			}
+			h.observe(pr, contributorLaneReasonNoReviewer)
+			if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || strings.Contains(strings.Join(h.addedLabels(), " "), "stage/074") {
+				t.Fatalf("adopted a person's PR: pulls=%v refs=%v added=%v", h.adopt.pulls, h.adopt.refs, h.api.added)
+			}
+			rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+			if rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedAuthorPerson {
+				t.Fatalf("refusal not recorded for the tracker: %+v", rec)
+			}
+			if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+				t.Fatalf("request label kept after a terminal refusal: removed=%v", h.api.removed)
+			}
+		})
+	}
+}

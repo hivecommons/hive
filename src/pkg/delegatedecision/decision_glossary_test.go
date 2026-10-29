@@ -20,6 +20,7 @@ func TestGlossaryCoversEveryRuleSlug(t *testing.T) {
 		regexp.MustCompile(`\b(?:recommendOnly|approveIssue|releasePR)\("([a-z0-9-]+)"`),
 		regexp.MustCompile(`\bruleDefault[A-Za-z]+\s*=\s*"([a-z0-9-]+)"`),
 		regexp.MustCompile(`\bRuleLLM\s*=\s*"([a-z0-9-]+)"`),
+		regexp.MustCompile(`\bRuleReturnToAuthor\s*=\s*"([a-z0-9-]+)"`),
 	}
 	found := map[string]bool{}
 	for _, file := range []string{"policy.go", "llm.go"} {

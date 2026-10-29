@@ -806,6 +806,9 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			if in.Kind != delegatedecision.KindPR || in.HiveAuthored {
 				return notes, fmt.Errorf("supersede adoption requires a contributor PR")
 			}
+			if in.PersonAuthored() {
+				return notes, fmt.Errorf("a person pushed %s#%d themselves (@%s); the hive asks the author instead of adopting it", repoFull, number, in.Author)
+			}
 			if !s.stageAdoptionEnabled() {
 				// The engine only consumes the request label with adoption
 				// on; queuing it would be a silent no-op with a stale label.

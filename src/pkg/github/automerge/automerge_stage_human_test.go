@@ -313,7 +313,11 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 	sweep := func(labels ...string) {
 		t.Helper()
 		api.reset()
-		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(13, labels...), contributorLaneReasonNoVerdict, false, nil)
+		// A clanker PR (attribution trailer): a person's requires_human
+		// routes to 071 instead (hivecommons/hive#15202).
+		pr := stagePR(13, labels...)
+		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 		e.noteStageVerdict("acme", "widget", 13, *verdict)
 		e.noteStageRole("acme", "widget", 13, stagelabels.RoleContributor)
 		if _, err := e.ApplyStageLabels(ctx); err != nil {
@@ -328,7 +332,7 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 		t.Fatal("verdict reason must not be rendered twice in the 085 comment")
 	}
 
-	sweep("role/contributor", "author/human", "stage/050-review-pending")
+	sweep("role/contributor", "author/clanker", "stage/050-review-pending")
 	if got := stageOf(t, store, 13); got != stagelabels.NeedsDecision {
 		t.Fatalf("stage=%v want 085", got)
 	}
@@ -346,7 +350,7 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 	}
 
 	// Same state again: no second entry comment, no writes.
-	sweep("role/contributor", "author/human", "stage/085-needs-decision")
+	sweep("role/contributor", "author/clanker", "stage/085-needs-decision")
 	if len(api.comments) != 0 || api.writes() != 0 {
 		t.Fatalf("085 dedupe: comments=%q writes=%d", api.comments, api.writes())
 	}
@@ -366,6 +370,7 @@ func TestEntryCommentOncePerStageAndHead(t *testing.T) {
 		api.reset()
 		pr := stagePR(13, labels...)
 		pr.Head.SHA = gh.Ptr(head)
+		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 		e.noteStageVerdict("acme", "widget", 13, *verdict)
 		e.noteStageRole("acme", "widget", 13, stagelabels.RoleContributor)
@@ -411,7 +416,9 @@ func TestDecisionRequestedLandsAt085WithQuestion(t *testing.T) {
 	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
 	ctx := context.Background()
 
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(17, "role/contributor", "author/human", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	pr := stagePR(17, "role/contributor", "author/human", "stage/050-review-pending")
+	pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageVerdict("acme", "widget", 17, *verdict)
 	e.noteStageRole("acme", "widget", 17, stagelabels.RoleContributor)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
@@ -441,7 +448,9 @@ func TestRequiresHumanLandsAt085WithSummary(t *testing.T) {
 	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
 	ctx := context.Background()
 
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(17, "author/contributor", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	pr := stagePR(17, "author/contributor", "stage/050-review-pending")
+	pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageVerdict("acme", "widget", 17, *verdict)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
@@ -452,6 +461,77 @@ func TestRequiresHumanLandsAt085WithSummary(t *testing.T) {
 	}
 	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "reviewer summary: security requires human: Trust-surface file by location") {
 		t.Fatalf("085 entry comment = %q", api.comments)
+	}
+}
+
+// TestRequiresHumanOnPersonPRRoutesToAuthor: a requires_human verdict on a
+// PR a person pushed themselves is the author's question to answer, not a
+// maintainer's decision (hivecommons/hive#15202). It lands at 071, the
+// author is told what the reviewer asked whatever their role, and nothing
+// ever queues adoption. A hive-authored PR has nobody to ask and keeps 085.
+func TestRequiresHumanOnPersonPRRoutesToAuthor(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 20, 24, 0, 0, time.UTC)}
+	verdict := &ContributorLaneVerdict{
+		Configured:        true,
+		Verdict:           "requires_human",
+		DecisionRequested: true,
+		DecisionQuestion:  "should this groundwork land before its consumer?",
+	}
+	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
+	ctx := context.Background()
+	sweep := func(number int, role stagelabels.Role, labels ...string) {
+		t.Helper()
+		api.reset()
+		pr := stagePR(number, labels...)
+		pr.User = &gh.User{Login: gh.Ptr("clubanderson")}
+		if number == 23 {
+			pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+		}
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageVerdict("acme", "widget", number, *verdict)
+		e.noteStageRole("acme", "widget", number, role)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sweep(21, stagelabels.RoleContributor, "role/contributor", "author/human", "stage/050-review-pending")
+	if got := stageOf(t, store, 21); got != stagelabels.NeedsAuthor {
+		t.Fatalf("stage=%v want 071", got)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/071-needs-author"}}) {
+		t.Fatalf("added=%v", api.added)
+	}
+	if rec, _ := store.Get(stageKey("acme", "widget", 21)); rec.Reason != stagelabels.LaneReasonReviewerQuestion {
+		t.Fatalf("recorded reason = %q", rec.Reason)
+	}
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], "<!-- hive:human-071-note") ||
+		!strings.Contains(api.comments[0], "@clubanderson") ||
+		!strings.Contains(api.comments[0], "the reviewer asked you: should this groundwork land before its consumer?") ||
+		strings.Contains(api.comments[0], stagelabels.DecisionCommentMarker) {
+		t.Fatalf("071 note = %q", api.comments)
+	}
+	// Same head again: told once.
+	sweep(21, stagelabels.RoleContributor, "role/contributor", "author/human", "stage/071-needs-author")
+	if len(api.comments) != 0 || api.writes() != 0 {
+		t.Fatalf("071 dedupe: comments=%q writes=%d", api.comments, api.writes())
+	}
+
+	// An owner (trusted role) gets the same route and note.
+	sweep(22, stagelabels.RoleTrusted, "role/trusted", "author/human", "stage/050-review-pending")
+	if got := stageOf(t, store, 22); got != stagelabels.NeedsAuthor {
+		t.Fatalf("owner stage=%v want 071", got)
+	}
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "the reviewer asked you:") {
+		t.Fatalf("owner 071 note = %q", api.comments)
+	}
+
+	// A hive-authored PR has no person to ask: still a decision.
+	sweep(23, stagelabels.RoleTrusted, "role/trusted", "author/hive", "stage/050-review-pending")
+	if got := stageOf(t, store, 23); got != stagelabels.NeedsDecision {
+		t.Fatalf("hive-authored stage=%v want 085", got)
 	}
 }
 
@@ -507,7 +587,7 @@ func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
 		}
 	}
 
-	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/clanker", "stage/050-review-pending", "sentinel-alert")
+	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/human", "stage/050-review-pending", "sentinel-alert")
 	if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
 		t.Fatalf("sentinel: stage=%v", got)
 	}
@@ -515,12 +595,12 @@ func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
 		t.Fatalf("sentinel comment = %q", api.comments)
 	}
 	// Same cause again: no repost.
-	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/clanker", "stage/085-needs-decision", "sentinel-alert")
+	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/human", "stage/085-needs-decision", "sentinel-alert")
 	if len(api.comments) != 0 {
 		t.Fatalf("same cause reposted: %q", api.comments)
 	}
 	// Alert cleared, workflow-path fence now the blocker: still 085, new cause explained.
-	sweep(contributorLaneReasonWorkflowPath, "role/trusted", "author/clanker", "stage/085-needs-decision")
+	sweep(contributorLaneReasonWorkflowPath, "role/trusted", "author/human", "stage/085-needs-decision")
 	if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
 		t.Fatalf("workflow path: stage=%v", got)
 	}
@@ -533,8 +613,8 @@ func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
 		t.Fatalf("causes not recorded: %+v", rec)
 	}
 	// Flapping back to an already-explained cause stays quiet.
-	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/clanker", "stage/085-needs-decision", "sentinel-alert")
-	sweep(contributorLaneReasonWorkflowPath, "role/trusted", "author/clanker", "stage/085-needs-decision")
+	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/human", "stage/085-needs-decision", "sentinel-alert")
+	sweep(contributorLaneReasonWorkflowPath, "role/trusted", "author/human", "stage/085-needs-decision")
 	if len(api.comments) != 0 {
 		t.Fatalf("explained cause reposted: %q", api.comments)
 	}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -83,6 +84,16 @@ func humanVerdict(v ContributorLaneVerdict) stagelabels.VerdictState {
 // cleanly.
 var humanConflictReasons = map[string]bool{"conflicting": true, "not-mergeable": true, "label:needs-rebase": true}
 
+// humanConflict reports a head that does not merge cleanly. The stage reason
+// is what classifyStage chose; for a hive or clanker PR a decision-requested
+// verdict outranks the conflict (hivecommons/hive#14607). A person's own PR
+// is different: the conflict is theirs to fix, so the lane's own reason
+// (kept in LaneReason) still counts (hivecommons/hive#15202).
+func humanConflict(obs stageObservation) bool {
+	return humanConflictReasons[obs.Reason] || hasLabelFold(obs.Labels, "needs-rebase") ||
+		obs.AuthorKind == authorkind.Human && humanConflictReasons[obs.LaneReason]
+}
+
 // humanEvidence gathers the Evidence for one human-routed observation.
 func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, cause stagelabels.HumanCause, now time.Time) stagelabels.Evidence {
 	contributorVerdict := normalizeContributorLaneVerdict(c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA))
@@ -90,7 +101,7 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 	e := stagelabels.Evidence{
 		Head:             obs.HeadSHA,
 		Verdict:          humanVerdict(contributorVerdict),
-		Conflict:         humanConflictReasons[obs.Reason] || hasLabelFold(obs.Labels, "needs-rebase"),
+		Conflict:         humanConflict(obs),
 		Holds:            stagelabels.Holds(obs.Labels),
 		Hold:             obs.Hold,
 		Cause:            cause,

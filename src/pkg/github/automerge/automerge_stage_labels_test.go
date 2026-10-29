@@ -1350,6 +1350,9 @@ func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
 	ctx := context.Background()
 	observe := func(labels []string) {
 		pr := stagePR(336, labels...)
+		// A clanker PR: a person's requires_human routes to 071 instead
+		// (hivecommons/hive#15202).
+		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
 		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "untrusted-author-role", false, nil)
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonAuthorAssociation, false, nil)
 		e.noteStageRole("acme", "widget", 336, stagelabels.RoleContributor)
@@ -1360,7 +1363,7 @@ func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	observe([]string{"stage/050-review-pending", "role/contributor", "author/human"})
+	observe([]string{"stage/050-review-pending", "role/contributor", "author/clanker"})
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) {
 		t.Fatalf("requires_human must hand off to 085: added=%v", api.added)
 	}
@@ -1369,7 +1372,7 @@ func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
 	}
 	api.reset()
 	clock.advance(48 * time.Hour)
-	observe([]string{"stage/085-needs-decision", "role/contributor", "author/human"})
+	observe([]string{"stage/085-needs-decision", "role/contributor", "author/clanker"})
 	if api.writes() != 0 {
 		t.Fatalf("085 has no dwell and never stalls: added=%v", api.added)
 	}
