@@ -17709,10 +17709,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "adoption-stalled:contributor-lane:workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
       "adoption-undone": {"kind": "reason", "plain": "the hive's copy was closed without merging and the adoption was undone", "detail": "The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub."},
       "adoption/supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
-      "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes."},
-      "approve-review": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes."},
-      "approved": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes."},
-      "author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
+      "approve-review": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
+      "approved": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge gate merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
+      "author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "author-online": {"kind": "reason", "plain": "the author's clanker is connected, so hive won't take the PR over", "detail": "Adoption is for authors whose clanker has gone offline; this author's clanker is connected, so the hive leaves the PR with them."},
       "behind": {"kind": "reason", "plain": "the branch is behind the base branch", "detail": "The branch is behind the base branch and must be updated before it can merge."},
       "blocker": {"kind": "reason", "plain": "the hive can't do this itself", "detail": "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099)."},
@@ -17727,12 +17727,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "ci-red": {"kind": "reason", "plain": "CI is failing on this branch", "detail": "Required checks are failing on this branch; nothing merges until they are green."},
       "close-as-duplicate": {"kind": "action", "plain": "closed as a duplicate", "detail": "Closed because an older item already tracks the same work."},
       "close-duplicate": {"kind": "action", "plain": "closed as a duplicate", "detail": "Closed because an older item already tracks the same work."},
-      "close-superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there."},
-      "closed": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there."},
+      "close-superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there.", "issue_plain": "closed because another issue carries the work", "issue_detail": "Closed because another issue already tracks the same work; the discussion continues there."},
+      "closed": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there.", "issue_plain": "closed because another issue carries the work", "issue_detail": "Closed because another issue already tracks the same work; the discussion continues there."},
       "comment-decision": {"kind": "action", "plain": "recorded the decision on GitHub", "detail": "The hive posted the decision as a `/hive decision` comment, the way a maintainer would."},
       "conflict": {"kind": "reason", "plain": "the branch conflicts with the base branch", "detail": "The branch has merge conflicts with the base branch; it needs a rebase before anything can merge."},
       "conflicting": {"kind": "reason", "plain": "the branch conflicts with the base branch", "detail": "The branch has merge conflicts with the base branch; it needs a rebase before anything can merge."},
-      "contributor-lane:author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "contributor-lane:author-association": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "contributor-lane:changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
       "contributor-lane:sentinel-blocked": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},
       "contributor-lane:workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
@@ -17743,16 +17743,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "default-approve": {"kind": "rule", "plain": "no special rule applies; the hive took its own recommendation", "detail": "No owner rule singles this issue out, so the hive went with its own recommendation — the reversible choice that keeps work moving."},
       "default-release": {"kind": "rule", "plain": "no special rule applies; a green branch is approved", "detail": "No owner rule holds this PR back; its branch is green and a merge is reversible, so it is approved."},
       "design-proposal": {"kind": "rule", "plain": "a proposal with clear acceptance criteria, accepted as written", "detail": "The proposal states concrete acceptance criteria, so it is accepted as written; anything not stated keeps today's behaviour."},
-      "directed": {"kind": "action", "plain": "told the author agent what to change", "detail": "The hive recorded direction for the author agent, which pushes a new commit with that change."},
-      "direction": {"kind": "action", "plain": "told the author agent what to change", "detail": "The hive recorded direction for the author agent, which pushes a new commit with that change."},
+      "directed": {"kind": "action", "plain": "told the author agent what to change", "detail": "The hive recorded direction for the author agent, which pushes a new commit with that change.", "issue_plain": "gave direction on the issue", "issue_detail": "The hive recorded direction on the issue; the agent that claims it works from that direction."},
+      "direction": {"kind": "action", "plain": "told the author agent what to change", "detail": "The hive recorded direction for the author agent, which pushes a new commit with that change.", "issue_plain": "gave direction on the issue", "issue_detail": "The hive recorded direction on the issue; the agent that claims it works from that direction."},
       "dirty": {"kind": "reason", "plain": "the branch conflicts with the base branch", "detail": "The branch has merge conflicts with the base branch; it needs a rebase before anything can merge."},
       "effect-unknown": {"kind": "reason", "plain": "the hive did not say why", "detail": "The hive could not tell from the lane reason why the decision has not taken effect."},
       "fix-then-merge": {"kind": "rule", "plain": "the branch isn't mergeable yet", "detail": "The branch cannot merge as it is (conflicts, red CI or a missing sign-off); the hive told the author agent exactly what to fix."},
       "flaky-test": {"kind": "rule", "plain": "a flaky test, quarantined with a retry", "detail": "The failure is a flaky test: it is quarantined with a retry and a separate deflake task is filed, so it blocks nothing."},
       "hive-policy": {"kind": "rule", "plain": "this changes the hive's own rules", "detail": "This changes the hive's own settings, governance or security posture; the hive only recommends and the owner confirms."},
-      "hold": {"kind": "reason", "plain": "on hold; the hive does nothing until it is released", "detail": "The item is on hold. The hive does nothing with it until a person releases the hold."},
+      "hold": {"kind": "reason", "plain": "on hold; the hive does nothing until it is released", "detail": "The PR is on hold. The hive does nothing with it until a person releases the hold.", "issue_detail": "The issue is on hold. No agent claims it until a person releases the hold."},
       "human-changes-requested": {"kind": "reason", "plain": "a reviewer asked for changes; a new commit is needed", "detail": "A reviewer asked for changes on this branch. Approving cannot override that: only a new commit, or a maintainer merging by hand, moves it."},
-      "human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "human-only": {"kind": "reason", "plain": "the hive can't do this itself", "detail": "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099)."},
       "label:needs-human": {"kind": "reason", "plain": "marked needs-human; a person must remove the label", "detail": "The item is marked needs-human: automated fixes ran out or a person flagged it. The hive waits until the label is removed."},
       "labels-add": {"kind": "action", "plain": "added labels", "detail": "The hive added labels to the item."},
@@ -17766,10 +17766,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "not-merged-yet": {"kind": "reason", "plain": "the merge gate hasn't merged it", "detail": "The hive approved it but the merge gate has not merged it; its lane reason says what still blocks it."},
       "owner-only": {"kind": "rule", "plain": "only the hive owner can do this", "detail": "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you."},
       "owner_only": {"kind": "rule", "plain": "only the hive owner can do this", "detail": "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you."},
+      "park-label-stuck": {"kind": "reason", "plain": "stage/045-needs-decision is still on the issue; the scanner skips it until that label clears", "detail": "The hive approved the issue and applied approved-direction, but the stage/045-needs-decision park label was never removed, so the scanner still skips the issue. Lift the park (it removes the label through the hive's audited label path) or re-evaluate the issue so the stage engine re-reads it."},
       "prefer-contributor": {"kind": "rule", "plain": "a contributor's PR and a hive PR do the same work", "detail": "A contributor's PR and a hive-authored PR cover the same work; the hive prefers the contributor's when it is mergeable and current."},
       "quarantine-flaky": {"kind": "action", "plain": "quarantined the flaky test", "detail": "The flaky test is quarantined with a retry and a deflake task is filed."},
       "rail-hold": {"kind": "rule", "plain": "the item is on hold", "detail": "The item carries the hold label; the hive never acts on a held item until a person releases the hold."},
-      "ready-for-human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "ready-for-human-merge": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "recommend-only": {"kind": "action", "plain": "recommended only; a person confirms", "detail": "The hive only recommended; the item stays parked until a person confirms."},
       "recommended": {"kind": "action", "plain": "recommended only; a person confirms", "detail": "The hive only recommended; the item stays parked until a person confirms."},
       "red": {"kind": "reason", "plain": "CI is failing on this branch", "detail": "Required checks are failing on this branch; nothing merges until they are green."},
@@ -17790,22 +17791,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "still-parked": {"kind": "reason", "plain": "the item is still waiting on a person", "detail": "The item is still parked for a person's decision; the recorded decision did not move it."},
       "supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "supersede-now": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
-      "superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there."},
-      "untrusted-author": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve & merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
+      "superseded": {"kind": "action", "plain": "closed because another PR carries the work", "detail": "Closed because another PR carries the same work; the author is credited there.", "issue_plain": "closed because another issue carries the work", "issue_detail": "Closed because another issue already tracks the same work; the discussion continues there."},
+      "untrusted-author": {"kind": "reason", "plain": "no merge lane vouches for this PR's author; a maintainer merges", "detail": "The PR is ready, but its author is not a collaborator and holds no trusted or merger tier, so no merge lane vouches for them and the hive never merges it unattended. A maintainer merges it (Approve \u0026 merge as maintainer, or Approve — let hive merge), or trusts the author under 👥 Contributors."},
       "workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
     };
     // Pure: plain words for a glossary slug ("supersede" → "close this PR and
     // open a fresh hive-authored PR with the same commits"). Strips a lane
     // prefix ("adoption-stalled:", "contributor-lane:"); unknown slugs are
-    // humanised (dashes/underscores → spaces), never shown raw.
-    function stageTrackerPlainWords(slug, detail) {
+    // humanised (dashes/underscores → spaces), never shown raw. itemKind
+    // 'issue' takes the entry's issue words where it has them: an issue's
+    // approve is "approved to proceed — an agent may claim it", never
+    // "approved for merge" (#15021).
+    function stageTrackerPlainWords(slug, detail, itemKind) {
       let s = String(slug == null ? '' : slug).trim().toLowerCase();
       if (!s) return '';
       const hit = k => STAGE_TRACKER_DECISION_GLOSSARY[k] ? STAGE_TRACKER_DECISION_GLOSSARY[k] : null;
       let e = hit(s);
       if (!e && s.indexOf(':') > 0) { e = hit(s.slice(0, s.indexOf(':'))) || hit(s.slice(s.indexOf(':') + 1).trim()); }
       if (!e && s.indexOf('/') > 0) e = hit(s.slice(s.lastIndexOf('/') + 1));
-      if (e) return detail ? e.detail : e.plain;
+      if (e) {
+        const issue = itemKind === 'issue';
+        if (detail) return (issue && e.issue_detail) || e.detail;
+        return (issue && e.issue_plain) || e.plain;
+      }
       return s.replace(/^[a-z-]+:/, '').replace(/[-_]+/g, ' ').trim();
     }
     // Pure: the DCO caveat the merge confirmations print BEFORE acting
@@ -19195,7 +19203,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
       merged: 'merged', 'queued-for-merge': 'queued for merge', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
       held: 'held', released: 'hold released', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
-      [STAGE_TRACKER_ACTION_NO_EFFECT]: "decided, but it hasn't taken effect",
+      [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
     };
     function stageTrackerActingCaption(id, item) {
       if (id === 'decide:merge-now' && item && stageTrackerNeedsRebase(item)) return 'Rebasing, then merging…';
@@ -19222,7 +19230,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (data.status === 'debounced' || data.status === 'in-progress') return { action: STAGE_TRACKER_ACTION_NOOP, target, outcome: 'No change — a rescan ' + (data.status === 'debounced' ? 'finished moments ago' : 'is already running') + '.', next: '' };
       if (data.alreadyAccepted) return { action: STAGE_TRACKER_ACTION_NOOP, target, outcome: 'No change — triage was already accepted.', next: '' };
       const d = data.decision;
-      if (d && typeof d === 'object') return { action: d.verdict || 'recommended', rule: d.rule || '', target, outcome: stageTrackerPlainWords(d.verdict || '?') + (d.rule ? ' (' + stageTrackerPlainWords(d.rule) + ')' : '') + (d.keeps_park ? ' — kept for the owner' : ''), next: '' };
+      if (d && typeof d === 'object') return { action: d.verdict || 'recommended', rule: d.rule || '', target, outcome: stageTrackerPlainWords(d.verdict || '?', false, item.kind) + (d.rule ? ' (' + stageTrackerPlainWords(d.rule, false, item.kind) + ')' : '') + (d.keeps_park ? ' — kept for the owner' : ''), next: '' };
       return { action: id, target, outcome: stageTrackerActionLabel(id) + ' done.', next: '' };
     }
     function stageTrackerErrorResult(id, item, error) {
@@ -19247,9 +19255,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else head = stageTrackerActionLabel(ctx.id || '') + ' on ' + rowRef + toward;
       const word = error ? '' : (STAGE_TRACKER_ACTION_WORDS[result.action] || result.action || '');
       // The rule in plain words from the glossary, never the bare slug.
-      const rule = result.rule ? ' (' + stageTrackerPlainWords(result.rule) + ')' : '';
+      const tKind = t.kind === 'pr' || t.kind === 'issue' ? t.kind : item.kind;
+      const rule = result.rule ? ' (' + stageTrackerPlainWords(result.rule, false, tKind) + ')' : '';
       if (word) head += ': ' + word + rule;
-      const local = typeof stageTrackerLocalStamps === 'function' ? stageTrackerLocalStamps : (x => x);
+      const nowMs = ctx && typeof ctx.nowMs === 'number' ? ctx.nowMs : Date.now();
+      const local = typeof stageTrackerLocalStamps === 'function' ? (x => stageTrackerLocalStamps(x, nowMs)) : (x => x);
       let outcome = local(result.outcome || '');
       // A decision's toast leads with its outcome in one line ("Adopted:
       // hive opened #15123 …"); who decided what, and under which rule, is
@@ -19261,7 +19271,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Options ride a no-effect / refused result, and an approval on a PR
       // that needs a rebase ("Rebase, then merge as maintainer").
       const options = (noEffect || refused || result.action === 'approved') && Array.isArray(result.options) ? result.options.filter(o => o && o.action && o.label) : [];
-      return { head, outcome, next: local(result.next || ''), warn, posted: posted.length ? 'Posted: ' + posted.join(' · ') : '', options, why: noEffect ? stageTrackerPlainWords(result.why || 'no-effect', true) : '', type: error ? 'error' : (noEffect || refused ? 'warning' : (noop ? 'info' : 'success')), url: t.url || item.url || '', linkText: 'Open ' + (t.kind === 'pr' ? 'PR' : 'issue') + ' #' + (t.number || item.number) };
+      return { head, outcome, next: local(result.next || ''), warn, posted: posted.length ? 'Posted: ' + posted.join(' · ') : '', options, why: noEffect ? stageTrackerPlainWords(result.why || 'no-effect', true, tKind) : '', type: error ? 'error' : (noEffect || refused ? 'warning' : (noop ? 'info' : 'success')), url: t.url || item.url || '', linkText: 'Open ' + (t.kind === 'pr' ? 'PR' : 'issue') + ' #' + (t.number || item.number) };
     }
     // Pure: the ⚠ sentinel paragraph a result toast carries. The row's
     // alert is what the action started from, so it is repeated only while

@@ -37,11 +37,18 @@ const (
 // popover, tooltip or PR comment. Aliases are other spellings of the same
 // slug (lane tokens, label names) that resolve to this entry.
 type GlossaryEntry struct {
-	Slug    string       `json:"slug"`
-	Kind    GlossaryKind `json:"kind"`
-	Plain   string       `json:"plain"`
-	Detail  string       `json:"detail"`
-	Aliases []string     `json:"aliases,omitempty"`
+	Slug   string       `json:"slug"`
+	Kind   GlossaryKind `json:"kind"`
+	Plain  string       `json:"plain"`
+	Detail string       `json:"detail"`
+	// IssuePlain / IssueDetail are the words for the same slug when the
+	// item is an ISSUE; empty means Plain / Detail fit both kinds. A
+	// decision of `approve` on a PR is "approved for merge"; on an issue
+	// nothing merges — it is "approved to proceed — an agent may claim
+	// it" (hive's own spoke showed the PR words on issue #15021).
+	IssuePlain  string   `json:"issue_plain,omitempty"`
+	IssueDetail string   `json:"issue_detail,omitempty"`
+	Aliases     []string `json:"aliases,omitempty"`
 }
 
 // Slugs the glossary and its callers share. Rule slugs live beside the
@@ -74,6 +81,7 @@ const (
 	GlossaryAdoptionExecuting = "adoption-executing"
 	GlossaryAdoptionUndone    = "adoption-undone"
 	GlossaryBlocker           = "blocker"
+	GlossaryParkLabelStuck    = "park-label-stuck" // 045 park label outlived the approval it recorded (hivecommons/hive#15252)
 	glossaryFallbackUnknown   = "the hive did not say why"
 )
 
@@ -127,13 +135,22 @@ var glossary = []GlossaryEntry{
 	{Slug: GlossaryAdopt, Kind: GlossaryAction, Plain: "hive takes over finishing this PR",
 		Detail: "Adopt means the hive takes over finishing this PR: it rebases, fixes CI and merges it, keeping the author's commits and sign-off."},
 	{Slug: string(VerdictApprove), Kind: GlossaryAction, Plain: "approved for merge",
-		Detail: "The hive approved it; the merge gate merges it once every check passes.", Aliases: []string{"approved", string(ActionApproveReview)}},
+		Detail:      "The hive approved it; the merge gate merges it once every check passes.",
+		IssuePlain:  "approved to proceed — an agent may claim it",
+		IssueDetail: "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged.",
+		Aliases:     []string{"approved", string(ActionApproveReview)}},
 	{Slug: string(VerdictDirection), Kind: GlossaryAction, Plain: "told the author agent what to change",
-		Detail: "The hive recorded direction for the author agent, which pushes a new commit with that change.", Aliases: []string{"directed"}},
+		Detail:      "The hive recorded direction for the author agent, which pushes a new commit with that change.",
+		IssuePlain:  "gave direction on the issue",
+		IssueDetail: "The hive recorded direction on the issue; the agent that claims it works from that direction.",
+		Aliases:     []string{"directed"}},
 	{Slug: string(VerdictCloseDuplicate), Kind: GlossaryAction, Plain: "closed as a duplicate",
 		Detail: "Closed because an older item already tracks the same work.", Aliases: []string{string(ActionCloseDuplicate)}},
 	{Slug: string(VerdictCloseSuperseded), Kind: GlossaryAction, Plain: "closed because another PR carries the work",
-		Detail: "Closed because another PR carries the same work; the author is credited there.", Aliases: []string{"closed", "superseded"}},
+		Detail:      "Closed because another PR carries the same work; the author is credited there.",
+		IssuePlain:  "closed because another issue carries the work",
+		IssueDetail: "Closed because another issue already tracks the same work; the discussion continues there.",
+		Aliases:     []string{"closed", "superseded"}},
 	{Slug: string(VerdictQuarantineFlaky), Kind: GlossaryAction, Plain: "quarantined the flaky test",
 		Detail: "The flaky test is quarantined with a retry and a deflake task is filed."},
 	{Slug: string(VerdictAcceptRatchet), Kind: GlossaryAction, Plain: "accepted as a ratchet",
@@ -168,7 +185,8 @@ var glossary = []GlossaryEntry{
 	{Slug: GlossaryAuthorOnline, Kind: GlossaryReason, Plain: "the author's clanker is connected, so hive won't take the PR over",
 		Detail: "Adoption is for authors whose clanker has gone offline; this author's clanker is connected, so the hive leaves the PR with them."},
 	{Slug: GlossaryHold, Kind: GlossaryReason, Plain: "on hold; the hive does nothing until it is released",
-		Detail: "The item is on hold. The hive does nothing with it until a person releases the hold."},
+		Detail:      "The PR is on hold. The hive does nothing with it until a person releases the hold.",
+		IssueDetail: "The issue is on hold. No agent claims it until a person releases the hold."},
 	{Slug: GlossaryDCO, Kind: GlossaryReason, Plain: "a commit is missing its sign-off",
 		Detail: "A commit on the branch is missing its Developer Certificate of Origin sign-off; the author must sign it off.", Aliases: []string{"dco-missing"}},
 	{Slug: GlossaryNeedsHuman, Kind: GlossaryReason, Plain: "marked needs-human; a person must remove the label",
@@ -186,6 +204,8 @@ var glossary = []GlossaryEntry{
 	{Slug: GlossaryBlocker, Kind: GlossaryReason, Plain: "the hive can't do this itself",
 		Detail:  "The item is blocked on something the hive cannot do: a permission the GitHub App lacks, or a step only a person may take. No decision clears it; grant the permission (and re-check) or do the step by hand (hivecommons/hive#15099).",
 		Aliases: []string{"capability", "human-only"}},
+	{Slug: GlossaryParkLabelStuck, Kind: GlossaryReason, Plain: "stage/045-needs-decision is still on the issue; the scanner skips it until that label clears",
+		Detail: "The hive approved the issue and applied approved-direction, but the stage/045-needs-decision park label was never removed, so the scanner still skips the issue. Lift the park (it removes the label through the hive's audited label path) or re-evaluate the issue so the stage engine re-reads it."},
 	{Slug: GlossaryStillParked, Kind: GlossaryReason, Plain: "the item is still waiting on a person",
 		Detail: "The item is still parked for a person's decision; the recorded decision did not move it."},
 	{Slug: GlossaryNotMergedYet, Kind: GlossaryReason, Plain: "the merge gate hasn't merged it",
@@ -281,6 +301,29 @@ func Detail(slug string) string {
 	return humanizeSlug(slug)
 }
 
+// PlainOn is Plain for an item of kind: an issue takes the entry's
+// IssuePlain when it has one, a PR (or an unknown kind) the PR words.
+func PlainOn(slug string, kind Kind) string {
+	if e, ok := Explain(slug); ok {
+		if kind == KindIssue && e.IssuePlain != "" {
+			return e.IssuePlain
+		}
+		return e.Plain
+	}
+	return humanizeSlug(slug)
+}
+
+// DetailOn is Detail for an item of kind (see PlainOn).
+func DetailOn(slug string, kind Kind) string {
+	if e, ok := Explain(slug); ok {
+		if kind == KindIssue && e.IssueDetail != "" {
+			return e.IssueDetail
+		}
+		return e.Detail
+	}
+	return humanizeSlug(slug)
+}
+
 // RulePlain is Plain for a Decision.Rule; "" for an empty rule.
 func RulePlain(rule string) string {
 	if strings.TrimSpace(rule) == "" {
@@ -289,9 +332,14 @@ func RulePlain(rule string) string {
 	return Plain(rule)
 }
 
-// VerdictPlain is Plain for a verdict.
+// VerdictPlain is Plain for a verdict (PR words).
 func VerdictPlain(v Verdict) string {
 	return Plain(string(v))
+}
+
+// VerdictPlainOn is Plain for a verdict on an item of kind.
+func VerdictPlainOn(v Verdict, kind Kind) string {
+	return PlainOn(string(v), kind)
 }
 
 func humanizeSlug(slug string) string {
@@ -305,19 +353,23 @@ func humanizeSlug(slug string) string {
 
 // GlossaryJSON renders the glossary as the JSON object the SPA mirrors
 // (STAGE_TRACKER_DECISION_GLOSSARY in index.html): slug → {kind, plain,
-// detail}, with every alias as its own key pointing at the same words, so
-// the browser resolves a token exactly the way Explain does.
+// detail[, issue_plain, issue_detail]}, with every alias as its own key
+// pointing at the same words, so the browser resolves a token exactly the
+// way Explain / PlainOn do.
 func GlossaryJSON() string {
 	type entry struct {
-		Kind   GlossaryKind `json:"kind"`
-		Plain  string       `json:"plain"`
-		Detail string       `json:"detail"`
+		Kind        GlossaryKind `json:"kind"`
+		Plain       string       `json:"plain"`
+		Detail      string       `json:"detail"`
+		IssuePlain  string       `json:"issue_plain,omitempty"`
+		IssueDetail string       `json:"issue_detail,omitempty"`
 	}
 	m := map[string]entry{}
 	for _, e := range glossary {
-		m[e.Slug] = entry{Kind: e.Kind, Plain: e.Plain, Detail: e.Detail}
+		v := entry{Kind: e.Kind, Plain: e.Plain, Detail: e.Detail, IssuePlain: e.IssuePlain, IssueDetail: e.IssueDetail}
+		m[e.Slug] = v
 		for _, a := range e.Aliases {
-			m[a] = entry{Kind: e.Kind, Plain: e.Plain, Detail: e.Detail}
+			m[a] = v
 		}
 	}
 	b, err := json.MarshalIndent(m, "", "  ")

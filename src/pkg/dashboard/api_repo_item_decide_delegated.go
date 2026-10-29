@@ -549,7 +549,7 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 		now := delegatedDecisionNow()
 		timeout := s.delegatedEffectTimeout()
 		why := s.delegatedStuckWhy(in, d, req, prior)
-		options := delegatedStuckOptions(in, d, mergerRole)
+		options := delegatedStuckOptions(in, d, mergerRole, why)
 		res := delegatedDecisionEffectResult(rowActionTarget(repoFull, kind, number), in, d, prior.At, now, timeout, why, options)
 		notes := append(deciderNotes, "already applied; nothing written")
 		noop := "already-applied"

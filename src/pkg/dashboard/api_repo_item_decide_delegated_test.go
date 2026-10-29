@@ -494,7 +494,7 @@ func TestDelegatedDecisionStuckReportsNoEffect(t *testing.T) {
 	}
 	res := job.Result
 	t.Logf("outcome: %s\nnext: %s\nwhy: %s", res.Outcome, res.Next, res.Why)
-	for _, want := range []string{"Hive decided close this PR and open a fresh hive-authored PR with the same commits at 2026-10-28T12:01:00Z", "but it hasn't taken effect:"} {
+	for _, want := range []string{"Close this PR and open a fresh hive-authored PR with the same commits at 2026-10-28T12:01:00Z", "but it hasn't taken effect:"} {
 		if !strings.Contains(res.Outcome, want) {
 			t.Fatalf("outcome %q missing %q", res.Outcome, want)
 		}
@@ -619,6 +619,55 @@ func TestReparkFromEvents(t *testing.T) {
 	}
 }
 
+// TestDelegatedDecisionStuckIssueWording reproduces hivecommons/hive#15021:
+// the hive approved an ISSUE (`default-approve`), approved-direction landed
+// but stage/045-needs-decision never came off. Past the effect timeout the
+// toast must not say "approved for merge" (nothing merges on an issue),
+// must name the stuck label, and must offer the lift first.
+func TestDelegatedDecisionStuckIssueWording(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T22:00:00Z")
+	prior := delegatedecision.Decision{Verdict: delegatedecision.VerdictApprove, Rule: "default-approve", Text: "approve", Rationale: "default"}
+	mock := &repoItemDecisionMock{issueLabels: []string{"help wanted", "triage/accepted", "approved-direction", "stage/045-needs-decision"}}
+	mock.priorComments = []string{delegatedecision.CommentBodyWith(prior, "h1", "writer", delegatedecision.CommentOptions{Kind: delegatedecision.KindIssue})}
+	srv := newDelegatedServer(t, mock)
+	w := postDelegated(t, srv, 7, "writer", `{"type":"issue","reason":"needs-decision","caption":"Needs decision"}`, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action != rowActionNoEffect {
+		t.Fatalf("result = %+v notes=%v", job.Result, job.Notes)
+	}
+	res := job.Result
+	t.Logf("outcome: %s\nnext: %s\nwhy: %s", res.Outcome, res.Next, res.Why)
+	if res.Why != delegatedecision.GlossaryParkLabelStuck {
+		t.Fatalf("why = %q", res.Why)
+	}
+	for _, bad := range []string{"approved for merge", "merge gate", "Hive decided"} {
+		if strings.Contains(res.Outcome, bad) {
+			t.Fatalf("PR wording / repeated headline in issue outcome %q: %q", res.Outcome, bad)
+		}
+	}
+	for _, want := range []string{"Approved to proceed — an agent may claim it at 2026-10-28T", "stage/045-needs-decision is still on the issue"} {
+		if !strings.Contains(res.Outcome, want) {
+			t.Fatalf("outcome %q missing %q", res.Outcome, want)
+		}
+	}
+	if !strings.Contains(res.Next, "approved-direction") || !strings.Contains(res.Next, "Lift the park") {
+		t.Fatalf("next = %q", res.Next)
+	}
+	if len(res.Options) < 4 || res.Options[0].Action != decisionActionApprove || !res.Options[0].Enabled || res.Options[1].Action != decisionActionRetry {
+		t.Fatalf("options = %+v", res.Options)
+	}
+	if labels := strings.Join(optionLabels(res.Options), "|"); !strings.Contains(labels, "Re-run decision") || !strings.Contains(labels, "Give direction") || strings.Contains(labels, "Merge as maintainer") {
+		t.Fatalf("options = %q", labels)
+	}
+	// The follow-up comment carries the issue words too.
+	if len(mock.comments) != 1 || strings.Contains(mock.comments[0], "approved for merge") || !strings.Contains(mock.comments[0], "approved to proceed") {
+		t.Fatalf("comments = %v", mock.comments)
+	}
+}
+
 // TestDelegatedStuckWhyReadsTheLane covers the why derivation per lane
 // reason and verdict so every stuck decision gets a specific plain reason.
 func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {
@@ -647,6 +696,13 @@ func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {
 		{"hold", pr, approve, delegatedDecisionRequest{Reason: "hold"}, selfApprove, delegatedecision.GlossaryHold},
 		{"pr fallback", pr, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNotMergedYet},
 		{"issue fallback", issue, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryStillParked},
+		{"issue park label outlived the approval", delegatedecision.Input{Kind: delegatedecision.KindIssue, Labels: []string{"help wanted", "approved-direction", "stage/045-needs-decision"}}, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryParkLabelStuck},
+		{"issue park label without the ack is just parked", delegatedecision.Input{Kind: delegatedecision.KindIssue, Labels: []string{"stage/045-needs-decision"}}, approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryStillParked},
+		{"pr with both labels is not the issue case", func() delegatedecision.Input {
+			i := pr
+			i.Labels = []string{"approved-direction", "stage/045-needs-decision"}
+			return i
+		}(), approve, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNotMergedYet},
 		{"close fallback", pr, delegatedecision.Decision{Verdict: delegatedecision.VerdictCloseSuperseded}, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNotClosedYet},
 		{"direction fallback", pr, delegatedecision.Decision{Verdict: delegatedecision.VerdictDirection}, delegatedDecisionRequest{}, selfApprove, delegatedecision.GlossaryNoNewCommit},
 	}

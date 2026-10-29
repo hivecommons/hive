@@ -175,3 +175,49 @@ func TestStalledCommentBody(t *testing.T) {
 		t.Error("unknown why falls back to the effect-unknown entry")
 	}
 }
+
+// TestGlossaryWordsPerItemKind: an issue's `approve` is never "approved for
+// merge" (hivecommons/hive#15021); entries without issue words fall back
+// to their plain words; the JSON mirror carries the issue words.
+func TestGlossaryWordsPerItemKind(t *testing.T) {
+	approve := Decision{Verdict: VerdictApprove}
+	if got := ActionPlainOn(approve, KindIssue); got != "approved to proceed — an agent may claim it" {
+		t.Fatalf("issue approve = %q", got)
+	}
+	if got, want := ActionPlainOn(approve, KindPR), ActionPlain(approve); got != want || got != "approved for merge" {
+		t.Fatalf("pr approve = %q / %q", got, want)
+	}
+	if got := ActionPlainOn(Decision{Verdict: VerdictDirection}, KindIssue); strings.Contains(got, "author agent") {
+		t.Fatalf("issue direction = %q", got)
+	}
+	if got := ActionPlainOn(Decision{Verdict: VerdictCloseSuperseded}, KindIssue); strings.Contains(got, "PR") {
+		t.Fatalf("issue close-superseded = %q", got)
+	}
+	if got, want := PlainOn(string(VerdictCloseDuplicate), KindIssue), Plain(string(VerdictCloseDuplicate)); got != want {
+		t.Fatalf("fallback = %q, want %q", got, want)
+	}
+	if got := DetailOn(GlossaryHold, KindIssue); !strings.Contains(got, "issue") || DetailOn(GlossaryHold, KindPR) == got {
+		t.Fatalf("hold issue detail = %q", got)
+	}
+	if got := PlainOn("unknown-thing", KindIssue); got != "unknown thing" {
+		t.Fatalf("unknown = %q", got)
+	}
+	words := PlainWords(approve, CommentOptions{Kind: KindIssue})
+	if strings.Contains(words, "approved for merge") || !strings.Contains(words, "Approved to proceed") {
+		t.Fatalf("issue PlainWords = %q", words)
+	}
+	stalled := StalledCommentBody(approve, KindIssue, time.Date(2026, 10, 28, 20, 41, 22, 0, time.UTC), GlossaryParkLabelStuck, nil, "h1")
+	if strings.Contains(stalled, "approved for merge") || !strings.Contains(stalled, "stage/045-needs-decision park label was never removed") {
+		t.Fatalf("stalled = %q", stalled)
+	}
+	var m map[string]map[string]string
+	if err := json.Unmarshal([]byte(GlossaryJSON()), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["approve"]["issue_plain"] != "approved to proceed — an agent may claim it" || m["approved"]["issue_plain"] != m["approve"]["issue_plain"] {
+		t.Fatalf("mirror: %v", m["approve"])
+	}
+	if _, has := m["close-duplicate"]["issue_plain"]; has {
+		t.Fatalf("mirror carries an empty issue_plain: %v", m["close-duplicate"])
+	}
+}

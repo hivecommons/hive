@@ -58,15 +58,22 @@ func ExpectedEffect(d Decision, kind Kind) Effect {
 	}
 }
 
-// ActionPlain is the plain-words name of what d does ("close this PR and
-// open a fresh hive-authored PR with the same commits").
+// ActionPlain is the plain-words name of what d does on a PR ("close this
+// PR and open a fresh hive-authored PR with the same commits").
 func ActionPlain(d Decision) string {
+	return ActionPlainOn(d, KindPR)
+}
+
+// ActionPlainOn is ActionPlain for an item of kind: an issue's `approve`
+// is "approved to proceed — an agent may claim it", never "approved for
+// merge".
+func ActionPlainOn(d Decision, kind Kind) string {
 	switch d.Verdict {
 	case VerdictApprove, VerdictQuarantineFlaky, VerdictAcceptRatchet, VerdictAcceptProposal, VerdictDirection,
 		VerdictCloseDuplicate, VerdictCloseSuperseded, VerdictOwnerOnly, VerdictRecommendOnly, VerdictRefused:
-		return VerdictPlain(d.Verdict)
+		return VerdictPlainOn(d.Verdict, kind)
 	case VerdictAdoptSupersede:
-		return Plain(GlossarySupersede)
+		return PlainOn(GlossarySupersede, kind)
 	}
 	return humanizeSlug(string(d.Verdict))
 }
@@ -82,13 +89,13 @@ type CommentOptions struct {
 // PlainWords renders the four operator lines for d.
 func PlainWords(d Decision, opts CommentOptions) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "**Hive decided:** %s.", capitalizeFirst(ActionPlain(d)))
+	fmt.Fprintf(&b, "**Hive decided:** %s.", CapitalizeFirst(ActionPlainOn(d, opts.Kind)))
 	if why := RulePlain(d.Rule); why != "" {
-		fmt.Fprintf(&b, "\n**Why:** %s.", capitalizeFirst(why))
+		fmt.Fprintf(&b, "\n**Why:** %s.", CapitalizeFirst(why))
 	}
 	eff := ExpectedEffect(d, opts.Kind)
 	if eff.Waits {
-		fmt.Fprintf(&b, "\n**What happens next:** %s", capitalizeFirst(eff.What))
+		fmt.Fprintf(&b, "\n**What happens next:** %s", CapitalizeFirst(eff.What))
 		if opts.EffectTimeout > 0 {
 			fmt.Fprintf(&b, " — expected within %s", humanDuration(opts.EffectTimeout))
 		}
@@ -145,11 +152,11 @@ func IsStalledComment(body, rule string) bool {
 func StalledCommentBody(d Decision, kind Kind, decidedAt time.Time, whySlug string, options []string, hiveID string) string {
 	eff := ExpectedEffect(d, kind)
 	var b strings.Builder
-	fmt.Fprintf(&b, "**Hive decided %s at %s, but it hasn't taken effect.**", ActionPlain(d), decidedAt.UTC().Truncate(time.Second).Format(time.RFC3339))
+	fmt.Fprintf(&b, "**Hive decided %s at %s, but it hasn't taken effect.**", ActionPlainOn(d, kind), decidedAt.UTC().Truncate(time.Second).Format(time.RFC3339))
 	if eff.What != "" {
-		fmt.Fprintf(&b, "\n\n**What should have happened:** %s.", capitalizeFirst(eff.What))
+		fmt.Fprintf(&b, "\n\n**What should have happened:** %s.", CapitalizeFirst(eff.What))
 	}
-	why := Detail(whySlug)
+	why := DetailOn(whySlug, kind)
 	if strings.TrimSpace(whySlug) == "" {
 		why = Detail(GlossaryEffectUnknown)
 	}
@@ -163,7 +170,8 @@ func StalledCommentBody(d Decision, kind Kind, decidedAt time.Time, whySlug stri
 	return b.String()
 }
 
-func capitalizeFirst(s string) string {
+// CapitalizeFirst upper-cases the first byte of a trimmed phrase.
+func CapitalizeFirst(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return s
