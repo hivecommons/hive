@@ -160,7 +160,12 @@ func TestSharedPoolKickOutcomeEvictsSession(t *testing.T) {
 	testutil.EventuallyEvery(t, 2*time.Second, 10*time.Millisecond, func() bool {
 		m.mu.RLock()
 		defer m.mu.RUnlock()
-		return a.State == StateStopped && a.poolLeaseID == ""
+		if a.State != StateStopped || a.poolLeaseID != "" {
+			return false
+		}
+		pool.mu.Lock()
+		defer pool.mu.Unlock()
+		return len(pool.released) > 0
 	}, "session was not evicted after kick outcome")
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
