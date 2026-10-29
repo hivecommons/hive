@@ -186,6 +186,14 @@ WARN per agent in the same boot. That is an operator configuration condition —
 change the agents' model — not a repeated runtime defect
 (hivecommons/hive#14020).
 
+The re-engagement sweep logs `re-engagement kick undeliverable; budget not
+charged` at INFO rather than WARN when the cause is `shared session pool is
+busy` (`deliverReEngagement`, `src/cmd/hive/main.go`): a saturated shared CLI
+session pool refusing another session is backpressure. The kick can be retried
+on a later sweep and consumes no repair budget, so a burst across PRs is not a
+repeated runtime defect (hivecommons/hive#15350). Other undeliverable-kick
+causes stay at WARN and remain reportable.
+
 Deferred to follow-ups (defined, not yet wired): `upgrade_stalled`,
 `data_disk_pressure`, `github_app_token_mint_failed`,
 `unexpected_http_5xx_from_hub`.

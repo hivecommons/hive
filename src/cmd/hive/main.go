@@ -9008,7 +9008,7 @@ func deliverReEngagement(
 			// Pool contention is expected backpressure: retry on a later sweep.
 			// Keep it below WARN so slogfeed does not file a runtime defect
 			// for a healthy shared pool refusing another session (#15350).
-			if strings.Contains(err.Error(), "shared session pool is busy") {
+			if isSharedPoolBusyErr(err) {
 				level = slog.LevelInfo
 			}
 			logger.Log(context.Background(), level, "re-engagement kick undeliverable; budget not charged",
