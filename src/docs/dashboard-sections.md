@@ -1117,6 +1117,8 @@ The toast reads, in order, *what happened → on what → what happens next*: a 
 
 It does **not** auto-dismiss: it stays until the tracker reports the target row in a new stage, caption or chip set (or gone), and up to five such toasts stack for pending decisions. A no-op says so plainly — *No change — hive already recorded this decision at 12:01Z; still blocked by needs-human* — and clears the acting state at once; an error toast says what failed and why (*Hold failed on acme/console#7 — write permission required*) and is sticky but not tied to a row.
 
+Every *timed* toast elsewhere in the dashboard (success / info / warning notices, an error given an explicit deadline, an in-flight toast resolved into its result) carries a 2 px countdown bar along its bottom edge, in the toast's severity colour at 40%, that drains from right to left over the toast's real lifetime. Resting the pointer on the toast, or tabbing into it, holds both the bar and the dismiss timer where they are; leaving lets them run on for exactly what was left. Sticky toasts — errors, and the result toasts above — have no bar because they have no deadline. The bar is decorative to assistive tech (`aria-hidden`) and stays visible under reduced motion, since a countdown is information rather than flourish.
+
 Older hives that answer without `result` still get a toast built from the legacy fields.
 
 #### Confirmations and "Don't ask again"
