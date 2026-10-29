@@ -17,7 +17,9 @@
 //   <viewport>-<theme>-<state>.png   one screenshot per shot
 //   overflow-report.json             array of findings:
 //     { viewport, theme, state, selector, bbox:{x,y,width,height}, kind, detail }
-//   kind: scroll-overflow | past-viewport | clipped-text | ellipsis-free-space
+//   kind: scroll-overflow | past-viewport | clipped-text | ellipsis-free-space | clipped-by-strip
+//   clipped-by-strip: a topbar chip whose box pokes outside an overflow-clipping
+//   ancestor strip (how the ≡ drawer toggle lost its left edge on phones, #15476).
 //
 // This is a reporting tool, not a gate: it exits 0 even when findings exist and
 // exits 1 only when the harness itself errors. Chrome missing prints SKIP and exits 0.
@@ -183,6 +185,17 @@ const SCAN_EXPRESSION = `(() => {
     }
     if (r.right > vw + 1 || r.left < -1) {
       add(el, 'past-viewport', r, 'right ' + round(r.right) + ' / left ' + round(r.left) + ' vs viewport ' + vw);
+    }
+    if (el.matches('.oc-topbar .nav-chip')) {
+      for (let n = el.parentElement; n && !n.classList.contains('oc-topbar'); n = n.parentElement) {
+        const nox = getComputedStyle(n).overflowX;
+        if (nox !== 'hidden' && nox !== 'clip') continue;
+        const nr = n.getBoundingClientRect();
+        if (r.left < nr.left - 1 || r.right > nr.right + 1) {
+          add(el, 'clipped-by-strip', r, 'chip spans ' + round(r.left) + '..' + round(r.right) + ' but overflow:' + nox + ' ancestor ' + pathFor(n) + ' spans ' + round(nr.left) + '..' + round(nr.right));
+          break;
+        }
+      }
     }
     if (hasOwnText(el) && el.scrollWidth > el.clientWidth + 1 && el.clientWidth > 0) {
       if (cs.textOverflow === 'ellipsis' && ox === 'hidden') {
