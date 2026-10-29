@@ -23,13 +23,13 @@ func TestStageTrackerIssueClaimant(t *testing.T) {
 		want *StageTrackerClaimant
 	}{
 		{"ledger agent from another hive", stageTrackerClaimInputs{Ledger: &claims.Claim{Holder: "quality", Kind: claims.KindAgent, Hive: "hosted-ibm-alchemy", ClaimedAt: claimedAt}, HiveID: "hosted-ibm-main", Since: &since},
-			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "quality", Hive: "hosted-ibm-alchemy", Since: &claimedAt, Source: claimantSourceClaimComment}},
+			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "quality", Hive: "hosted-ibm-alchemy", Since: &claimedAt, Source: claimantSourceClaimLedger}},
 		{"ledger agent from this hive drops the hive", stageTrackerClaimInputs{Ledger: &claims.Claim{Holder: "quality", Kind: claims.KindAgent, Hive: "hosted-ibm-main", ClaimedAt: claimedAt}, HiveID: "hosted-ibm-main"},
-			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "quality", Since: &claimedAt, Source: claimantSourceClaimComment}},
+			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "quality", Since: &claimedAt, Source: claimantSourceClaimLedger}},
 		{"ledger contributor is a clanker", stageTrackerClaimInputs{Ledger: &claims.Claim{Holder: "bob", Kind: claims.KindContributor, ClaimedAt: claimedAt}},
-			&StageTrackerClaimant{Kind: claimantKindClanker, Login: "bob", Since: &claimedAt, Source: claimantSourceClaimComment}},
+			&StageTrackerClaimant{Kind: claimantKindClanker, Login: "bob", Since: &claimedAt, Source: claimantSourceClaimLedger}},
 		{"ledger human is a person", stageTrackerClaimInputs{Ledger: &claims.Claim{Holder: "alice", Kind: claims.KindHuman, ClaimedAt: claimedAt}},
-			&StageTrackerClaimant{Kind: claimantKindPerson, Login: "alice", Since: &claimedAt, Source: claimantSourceClaimComment}},
+			&StageTrackerClaimant{Kind: claimantKindPerson, Login: "alice", Since: &claimedAt, Source: claimantSourceClaimLedger}},
 		{"marker with fleet fingerprint", stageTrackerClaimInputs{MarkerKind: "agent", MarkerHolder: "fixer", MarkerHive: "hosted-ibm-alchemy", HiveID: "local", Since: &since},
 			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "fixer", Hive: "hosted-ibm-alchemy", Since: &since, Source: claimantSourceClaimComment}},
 		{"assignee who owns a clanker", stageTrackerClaimInputs{MarkerHolder: "Bob", Since: &since, IsClankerOwner: clankerOwners},
@@ -39,7 +39,7 @@ func TestStageTrackerIssueClaimant(t *testing.T) {
 		{"kick history fallback", stageTrackerClaimInputs{Worker: &stageTrackerWorker{Agent: "fixer", At: kickedAt}, Since: &since},
 			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "fixer", Since: &kickedAt, Source: claimantSourceKickHistory}},
 		{"ledger beats assignee", stageTrackerClaimInputs{Ledger: &claims.Claim{Holder: "quality", Kind: claims.KindAgent, ClaimedAt: claimedAt}, Assignees: []string{"alice"}},
-			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "quality", Since: &claimedAt, Source: claimantSourceClaimComment}},
+			&StageTrackerClaimant{Kind: claimantKindHiveAgent, Agent: "quality", Since: &claimedAt, Source: claimantSourceClaimLedger}},
 		{"nobody", stageTrackerClaimInputs{Since: &since}, nil},
 	}
 	for _, tc := range cases {
@@ -127,9 +127,9 @@ const since = new Date(now - 3 * 3600000).toISOString();
 const issue = (n, extra) => Object.assign({ repo: 'hivecommons/hive', number: n, kind: 'issue', title: 'fix it', url: 'https://x/' + n, stage: 20, stage_since: since, caption: 'Claimed', author: 'alice', stage_actor: { kind: 'hive', why: 'holds the live claim' } }, extra || {});
 
 // Hive agent from this hive: lane name only.
-let row = stageTrackerRowHtml(issue(1, { claimant: { kind: 'hive-agent', agent: 'quality', since, source: 'claim-comment' } }), stages, ctx);
+let row = stageTrackerRowHtml(issue(1, { claimant: { kind: 'hive-agent', agent: 'quality', since, source: 'claim-ledger' } }), stages, ctx);
 assert.strictEqual(litWord(row), 'Claimed · quality', litWord(row));
-assert.strictEqual(heldLine(row), 'Held by: hive agent quality since 3h ago (claim comment)', litTitle(row));
+assert.strictEqual(heldLine(row), 'Held by: hive agent quality since 3h ago (claim ledger)', litTitle(row));
 assert.ok(strip(row).includes('class="ham-ico ham-actor-ico"'), 'the actor icon stays');
 
 // Hive agent from another hive: lane@short-hive on the chevron, the full hive in the hover.
