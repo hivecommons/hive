@@ -6,9 +6,9 @@
        their own words, so every strip is the same width. An issue parked on
        a person (045) lights Actionable with the decision word. */
     /* The sticky chip bar's height (the header strip sticks beneath it):
-       the Merged pill (--ham-merged-bee + 2 × --sp-1 tall) plus the bar's
-       own vertical padding. */
-    #activity-monitor-section { --ham-sticky-bar-h: 42px; }
+       the Merged pill (--ham-merged-bee tall, no taller than its
+       neighbouring chips) plus the bar's own vertical padding. */
+    #activity-monitor-section { --ham-sticky-bar-h: 36px; }
     /* Layers for the merge flight glyph and the merged-toast stack. Both are
        appended to document.body, not to #activity-monitor-section, so these must be
        :root-scoped — scoped to the section they resolved to nothing, the
@@ -291,6 +291,11 @@
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { white-space: normal; overflow-wrap: anywhere; }
     .ham-holder { font-weight: normal; }
+    /* A word with a holder ("PR in progress · @bob's clanker") stays on one
+       line: the stage word keeps its width and the name gives way with an
+       ellipsis before anything wraps (hivecommons/hive#15541). */
+    .ham-seg-t.ham-has-holder, .ham-detour.ham-has-holder { display: inline-flex; align-items: baseline; min-width: 0; max-width: 100%; white-space: nowrap; }
+    .ham-has-holder > .ham-holder { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
@@ -454,24 +459,33 @@
     .ham-sticky { position: sticky; top: var(--navbar-sticky-height); z-index: calc(var(--z-sticky) + 1); display: flex; justify-content: flex-end; align-items: center; min-height: var(--ham-sticky-bar-h); box-sizing: border-box; padding: var(--sp-1) var(--sp-2); background: var(--panel); }
     .ham-sticky-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
     /* The Merged pill (hivecommons/hive issue 15398 follow-up — "where is my
-       odometer look and feel?"): PR 15409 only enlarged the *flying* bee
-       (.cue-flight) and the roll was a 900 ms overlay over plain text, so
-       at rest the pill was a 12 px hexagon and a bold number. Now the
-       hexagon-bee is --ham-merged-bee (28 px) and the pill grows to fit it,
-       and the all-time count is a drum of wheels at rest, always: each
-       digit in its own dark inset cell (.ham-merged-n .ham-odo-col) with
-       a roller gradient, a top/bottom inner shadow and a hairline between
-       cells, monospace tabular digits at --ham-odo-digit (≥ 18 px). The
-       day/week line keeps its size and rolls with the same columns, drawn
-       plain. A wheel that changes (.ham-odo-roll) slides its strip through
-       the digits it passes (--odo-shift) over --odo-ms; reduced motion
-       swaps instantly (no transition; the strip is drawn at its end). */
-    :root { --ham-merged-bee: 28px; --ham-odo-digit: 18px; }
-    .ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); min-height: calc(var(--ham-merged-bee) + 2 * var(--sp-1)); color: var(--text); cursor: pointer; }
+       odometer look and feel?"): the all-time count is a drum of wheels at
+       rest, always — a .ham-odo-col per digit — and a wheel that changes
+       (.ham-odo-roll) slides its strip through the digits it passes
+       (--odo-shift) over --odo-ms; reduced motion swaps instantly (no
+       transition; the strip is drawn at its end).
+       Owner (2026-10-29, issue 15543): "the odometer is too big of font.
+       the animation is perfect though." The first drum drew 18 px bold
+       monospace digits in per-digit near-black cells with bevels and inner
+       shadows, taller than every other chip in the bar. The roll is
+       untouched; the drum is now a quiet metric: digits at the chip's own
+       type size (--fs-xs), semibold, --text, tabular-nums, spaced by
+       letter-spacing, on ONE shallow inset track (a few per cent of black
+       over the panel, a --line-subtle hairline, --r corners) with faint
+       dividers; no glow, no bevel; the pill is the chips' height. The bee
+       keeps its 28 px hit area (--ham-merged-bee) but draws the dashboard's
+       bee glyph (the version card's oc-version-bee-* parts) at the chip's
+       icon weight instead of a filled hexagon. */
+    :root { --ham-merged-bee: 28px; --ham-odo-digit: var(--fs-xs); --ham-odo-track: color-mix(in srgb, var(--panel) 95%, black); --ham-odo-divider: color-mix(in srgb, var(--text) 10%, transparent); }
+    .ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); min-height: var(--ham-merged-bee); box-sizing: border-box; padding-top: 0; padding-bottom: 0; color: var(--text); cursor: pointer; }
     .ham-merged-count:hover { border-color: var(--line-strong); }
-    .ham-merged-count .ham-merged-ico { flex: 0 0 auto; width: var(--ham-merged-bee); height: var(--ham-merged-bee); color: var(--amber); filter: drop-shadow(0 1px 1px color-mix(in srgb, var(--surface-0) 50%, transparent)); }
-    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--ham-odo-digit); font-family: var(--font-mono); }
-    .ham-merged-count .ham-merged-sub { color: var(--text-faint, var(--muted)); font-variant-numeric: tabular-nums; padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
+    .ham-merged-count .ham-merged-ico { flex: 0 0 auto; width: var(--ham-merged-bee); height: calc(var(--ham-merged-bee) - 2 * var(--line-width)); padding: calc(var(--ham-merged-bee) / 6) calc(var(--ham-merged-bee) / 10); box-sizing: border-box; color: var(--accent); overflow: visible; }
+    .ham-merged-count .ham-merged-ico .oc-version-bee-body { fill: var(--accent); stroke: var(--panel); }
+    .ham-merged-count .ham-merged-ico .oc-version-bee-wing { fill: color-mix(in srgb, var(--text) 35%, transparent); stroke: var(--panel); }
+    .ham-merged-count .ham-merged-ico .oc-version-bee-stripe { stroke: var(--panel); }
+    .ham-merged-count .ham-merged-ico .oc-version-bee-head { fill: var(--text-muted); }
+    .ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); font-size: var(--ham-odo-digit); color: var(--text); }
+    .ham-merged-count .ham-merged-sub { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--fs-xs); padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
     .ham-merged-count.cue-tick { animation: cue-count-pop 320ms ease-out; }
     .ham-merged-count .ham-merged-n, .ham-merged-count .ham-merged-sub { position: relative; display: inline-flex; align-items: center; }
     /* The drum: one wrap of columns per counter, laid out inline (it is the
@@ -484,17 +498,16 @@
     .ham-odo-strip { display: block; transform: translateY(var(--odo-shift, 0%)); }
     .ham-odo-run .ham-odo-roll .ham-odo-strip { transition: transform var(--odo-ms, 900ms) cubic-bezier(0.22, 0.61, 0.36, 1); }
     .ham-odo:not(.ham-odo-run) .ham-odo-roll .ham-odo-strip { transform: translateY(0); }
-    /* The all-time count's wheels are drum cells: dark inset, a subtle
-       roller gradient (lighter band through the middle, darker at the lip
-       and the foot), an inner shadow at top and bottom, a hairline between
-       digits, the outer corners rounded. Light mode keeps the inset but on
-       a paler drum. */
-    .ham-merged-count .ham-merged-n .ham-odo { gap: 0; border-radius: var(--r-sm); overflow: hidden; border: var(--line-width) solid color-mix(in srgb, var(--surface-0) 70%, var(--line-strong)); box-shadow: 0 1px 0 color-mix(in srgb, var(--text) 10%, transparent); }
-    .ham-merged-count .ham-merged-n .ham-odo-col { position: relative; min-width: 0.78em; height: 1.35em; line-height: 1.35; padding: 0; color: var(--text); background: linear-gradient(to bottom, color-mix(in srgb, var(--surface-0) 92%, black) 0%, var(--surface-3) 42%, var(--surface-3) 58%, color-mix(in srgb, var(--surface-0) 92%, black) 100%); box-shadow: inset 0 5px 5px -4px color-mix(in srgb, black 75%, transparent), inset 0 -5px 5px -4px color-mix(in srgb, black 75%, transparent); }
-    .ham-merged-count .ham-merged-n .ham-odo-col + .ham-odo-col { border-left: var(--line-width) solid color-mix(in srgb, var(--surface-0) 80%, black); }
-    .ham-merged-count .ham-merged-n .ham-odo-col .ham-odo-d { height: 1.35em; line-height: 1.35; }
-    body.light-mode .ham-merged-count .ham-merged-n .ham-odo-col { color: var(--text); background: linear-gradient(to bottom, color-mix(in srgb, var(--surface-3) 80%, black) 0%, var(--surface-0) 42%, var(--surface-0) 58%, color-mix(in srgb, var(--surface-3) 80%, black) 100%); box-shadow: inset 0 5px 5px -4px color-mix(in srgb, black 35%, transparent), inset 0 -5px 5px -4px color-mix(in srgb, black 35%, transparent); }
-    body.light-mode .ham-merged-count .ham-merged-n .ham-odo-col + .ham-odo-col { border-left-color: color-mix(in srgb, var(--surface-3) 60%, black); }
+    /* The all-time count's track: one shallow inset behind every wheel,
+       a hairline round it, faint dividers between digits, the digits
+       spaced a little wider than the label's letters. Light mode is the
+       same rule — the track and divider tokens mix from the theme. */
+    .ham-merged-count .ham-merged-n .ham-odo { gap: 0; padding: 0 var(--sp-1); border-radius: var(--r); border: var(--line-width) solid var(--line-subtle); background: var(--ham-odo-track); }
+    .ham-merged-count .ham-merged-n .ham-odo-col { position: relative; min-width: 0.8em; height: 1.5em; line-height: 1.5; padding: 0 0.04em; letter-spacing: 0; color: var(--text); }
+    .ham-merged-count .ham-merged-n .ham-odo-col + .ham-odo-col { border-left: var(--line-width) solid var(--ham-odo-divider); }
+    .ham-merged-count .ham-merged-n .ham-odo-col .ham-odo-d { height: 1.5em; line-height: 1.5; }
+    body.light-mode .ham-merged-count .ham-merged-n .ham-odo-col { color: var(--text); }
+    body.light-mode .ham-merged-count .ham-merged-n .ham-odo { --ham-odo-track: color-mix(in srgb, var(--panel) 96%, black); }
     .ham-merged-pop { position: absolute; right: var(--sp-2); top: calc(var(--full-size) - var(--sp-1)); min-width: 22rem; max-width: 34rem; max-height: 60vh; overflow: auto; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-radius: var(--r-lg); background: var(--panel-strong); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); color: var(--text); z-index: var(--z-cue-flight); }
     .ham-merged-pop-head { display: flex; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-3); font-weight: var(--fw-semibold); }
     .ham-merged-pop-head .ham-merged-pop-sum { color: var(--text-faint); font-weight: var(--fw-medium); }
@@ -510,6 +523,10 @@
     .ham-queue-train { margin: var(--sp-3) 0 var(--sp-2); font-weight: var(--fw-semibold); }
     .ham-queue-train:first-of-type { margin-top: 0; }
     .ham-queue-stalled { color: var(--yellow); }
+    /* Inside a lit chevron the word keeps the chevron's ink: ochre on the
+       amber fill was invisible, so a stalled train's chevrons read empty
+       (just the ⟳ and the actor glyph). */
+    .ham-seg.active .ham-seg-t.ham-queue-stalled { color: inherit; }
     .merge-banners { position: fixed; right: var(--sp-6); bottom: var(--sp-6); z-index: var(--z-merge-banner); display: flex; flex-direction: column; gap: var(--sp-3); max-width: min(26rem, calc(100vw - 2 * var(--sp-6))); pointer-events: none; }
     .merge-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-4); align-items: start; padding: var(--sp-4) var(--sp-5); border: var(--line-width) solid var(--line); border-left: 3px solid var(--green); border-radius: var(--r); background: var(--panel-strong); color: var(--text); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); pointer-events: auto; animation: merge-banner-in 220ms ease-out both; }
     .merge-banner.merge-banner-out { animation: merge-banner-out 180ms ease-in both; }

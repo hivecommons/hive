@@ -69,14 +69,21 @@ func TestStageTrackerCuesWiring(t *testing.T) {
 		`:root { --cue-flight-size: var(--fs-3xl); --cue-flight-halo: drop-shadow(`,
 		`.cue-flight { position: fixed; z-index: var(--z-cue-flight); font-size: var(--cue-flight-size); line-height: 1; color: var(--amber); font-weight: var(--fw-semibold); filter: var(--cue-flight-halo);`,
 		`.ham-merged-count .ham-merged-n { font-variant-numeric: tabular-nums;`,
-		// The pill's own bee is 28 px and the count is a drum at rest
-		// (hivecommons/hive#15398 follow-up: #15409 sized only the flying
-		// glyph, and the roll was a 900 ms overlay over plain text).
-		`:root { --ham-merged-bee: 28px; --ham-odo-digit: 18px; }`,
-		`.ham-merged-count .ham-merged-ico { flex: 0 0 auto; width: var(--ham-merged-bee); height: var(--ham-merged-bee);`,
+		// The pill's own bee keeps a 28 px hit area and the count is a drum
+		// at rest (hivecommons/hive#15398 follow-up: #15409 sized only the
+		// flying glyph, and the roll was a 900 ms overlay over plain text),
+		// but the drum is the chip's own type size on one quiet inset track
+		// — no per-digit cells, bevels or 18 px digits (hivecommons/hive#15543:
+		// "the odometer is too big of font. the animation is perfect though").
+		`:root { --ham-merged-bee: 28px; --ham-odo-digit: var(--fs-xs); --ham-odo-track: color-mix(in srgb, var(--panel) 95%, black); --ham-odo-divider: color-mix(in srgb, var(--text) 10%, transparent); }`,
+		`.ham-merged-count { position: relative; display: inline-flex; align-items: center; gap: var(--sp-2); min-height: var(--ham-merged-bee); box-sizing: border-box; padding-top: 0; padding-bottom: 0;`,
+		`.ham-merged-count .ham-merged-ico { flex: 0 0 auto; width: var(--ham-merged-bee); height: calc(var(--ham-merged-bee) - 2 * var(--line-width));`,
+		`<svg class="ham-merged-ico" viewBox="0 0 18 12" focusable="false" aria-hidden="true"><ellipse class="oc-version-bee-wing"`,
+		`.ham-merged-count .ham-merged-n .ham-odo { gap: 0; padding: 0 var(--sp-1); border-radius: var(--r); border: var(--line-width) solid var(--line-subtle); background: var(--ham-odo-track); }`,
 		`.ham-merged-count .ham-merged-n .ham-odo-col { position: relative;`,
-		`.ham-merged-count .ham-merged-n .ham-odo-col + .ham-odo-col { border-left:`,
+		`.ham-merged-count .ham-merged-n .ham-odo-col + .ham-odo-col { border-left: var(--line-width) solid var(--ham-odo-divider); }`,
 		`body.light-mode .ham-merged-count .ham-merged-n .ham-odo-col {`,
+		`.ham-merged-count .ham-merged-sub { color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: var(--fs-xs);`,
 		`.ham-odo-run .ham-odo-roll .ham-odo-strip { transition: transform var(--odo-ms, 900ms)`,
 		`.ham-odo-strip { transition: none !important; }`,
 		// The chip and the column header strip stick under the navbar

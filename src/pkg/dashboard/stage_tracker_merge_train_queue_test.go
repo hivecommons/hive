@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The chip's queue facts (hivecommons/hive#15395): position / length, the
@@ -261,7 +264,7 @@ assert.ok(s.tip.startsWith('3rd of 3 in the merge queue · behind #15315 (soakin
 // Stalled: the chip says so, names the head and how long; the markup wears the stalled class.
 const stalled = mk(15374, 'tracker: queue', Object.assign({ state: 'queued-behind', position: 3, ahead: [15315, 15319], stalled: true, stalled_s: 3 * 3600 }, headFacts), { sweep_running: true });
 const st = stageTrackerMergeGateInfo(stalled, now);
-assert.strictEqual(st.word, 'Merge queue stalled · head #15315 waiting for a maintainer (untrusted author) 3h');
+assert.strictEqual(st.word, 'Merge queue · stalled — waiting on #15315 (needs maintainer merge) · 3h');
 assert.ok(stageTrackerMergeGateWordHtml(stalled, now).includes('class="ham-seg-t ham-queue-stalled"'));
 assert.strictEqual(stageTrackerMergeGateInfo(mk(15374, 't', Object.assign({ state: 'queued-behind', position: 3, stalled: true, stalled_s: 3 * 3600 }, headFacts), { sweep_running: false }), now).word, st.word, 'stalled label is sweep-stable too');
 // The front row reads its place too.
@@ -332,6 +335,59 @@ var mergeTrainStateSlugs = []string{
 	prstage.MergeTrainStateDuplicateOf,
 }
 
+// mergeTrainHeadStates is every head_state a merge train reports on its
+// members; STAGE_TRACKER_TRAIN_HEAD_STALL_WORD must word each one.
+var mergeTrainHeadStates = []string{
+	mergeTrainHeadNeedsHuman, mergeTrainHeadCI, mergeTrainHeadSoaking, mergeTrainHeadReady,
+	mergeTrainHeadMerging, mergeTrainHeadFixing, mergeTrainHeadUnknown,
+}
+
+// TestStageTrackerMergeTrainPayloadStates: every merge_train the tracker
+// emits carries a state from the documented set and, once the queue facts
+// are on it, a head_state from the documented set — the SPA's word tables
+// are keyed on exactly these (hivecommons/hive#15530's chevrons read empty).
+func TestStageTrackerMergeTrainPayloadStates(t *testing.T) {
+	now := time.Date(2026, 10, 29, 15, 6, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	overlap := []string{"tracker-row.js", "index.html"}
+	store.Observe(stagelabels.Key("acme/console", 15425), stagelabels.ReadyForHumanMerge, "")
+	for i, n := range []int{15529, 15530} {
+		store.Observe(stagelabels.Key("acme/console", n), stagelabels.AwaitingMergeAdmission,
+			prstage.MergeTrain{State: prstage.MergeTrainStateQueuedBehind, Front: 15425, Position: i + 2, Size: 3, OverlapFiles: overlap}.Reason())
+	}
+	s.statusMu.Lock()
+	for _, n := range []int{15425, 15529, 15530} {
+		stage := "stage/080-awaiting-merge-admission"
+		if n == 15425 {
+			stage = "stage/090-ready-for-human-merge"
+		}
+		s.status.Repos[0].OpenPrs = append(s.status.Repos[0].OpenPrs,
+			FrontendPR{PullRequest: github.PullRequest{Number: n, Title: "Tracker change", Author: "someone", BaseRef: "v5", Labels: []string{stage}}})
+	}
+	s.statusMu.Unlock()
+	resp := s.buildStageTracker(s.status, store, now)
+	seen := 0
+	for _, it := range resp.Items {
+		mt := it.MergeTrain
+		if mt == nil {
+			continue
+		}
+		seen++
+		if !slices.Contains(mergeTrainStateSlugs, mt.State) {
+			t.Errorf("#%d merge_train.state %q is not a documented train state %v", it.Number, mt.State, mergeTrainStateSlugs)
+		}
+		if mt.HeadState != "" && !slices.Contains(mergeTrainHeadStates, mt.HeadState) {
+			t.Errorf("#%d merge_train.head_state %q is not a documented head state %v", it.Number, mt.HeadState, mergeTrainHeadStates)
+		}
+		if mt.Position <= 0 || mt.Size <= 0 {
+			t.Errorf("#%d merge_train has no place: %+v", it.Number, mt)
+		}
+	}
+	if seen < 3 {
+		t.Fatalf("expected the head and both riders to carry merge_train, saw %d", seen)
+	}
+}
+
 // TestStageTrackerMergeTrainStateSlugsNeverLeak renders every train state
 // through the chip words (with and without a soak clock and a running
 // sweep) and fails if a slug shows up where a person reads.
@@ -344,6 +400,13 @@ func TestStageTrackerMergeTrainStateSlugsNeverLeak(t *testing.T) {
 		}
 	}
 	slugsJSON, _ := json.Marshal(mergeTrainStateSlugs)
+	headStatesJSON, _ := json.Marshal(mergeTrainHeadStates)
+	stallTable := jsConstLine(t, html, "STAGE_TRACKER_TRAIN_HEAD_STALL_WORD")
+	for _, hs := range mergeTrainHeadStates {
+		if !strings.Contains(stallTable, "'"+hs+"'") && !strings.Contains(stallTable, " "+hs+":") {
+			t.Errorf("STAGE_TRACKER_TRAIN_HEAD_STALL_WORD has no words for head_state %q: %s", hs, stallTable)
+		}
+	}
 	runStageTrackerRowActionsScript(t, "function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\"/g, '&quot;'); }\nconst assert = require('assert');\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL")+"\n"+
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK")+"\n"+
@@ -363,6 +426,7 @@ func TestStageTrackerMergeTrainStateSlugsNeverLeak(t *testing.T) {
 		jsFunc(t, html, "stageTrackerGateCueHtml")+"\n"+
 		jsFunc(t, html, "stageTrackerQueueMemberState")+"\n"+`
 const slugs = `+string(slugsJSON)+`;
+const headStates = `+string(headStatesJSON)+`;
 const now = Date.parse('2026-10-29T15:06:00Z');
 // A leak is the slug standing alone (the whole label or one " · " segment,
 // case-sensitive: slugs are lowercase, "Rebasing · attempt 1/2" is words)
@@ -390,6 +454,37 @@ for (const state of slugs) {
 }
 // The word table covers the slugs and an unmapped state still spells out.
 for (const state of slugs) assert.ok(STAGE_TRACKER_TRAIN_STATE_WORD[state], state);
+// Ratchet (hivecommons/hive#15530: two riders behind an untrusted-author
+// head drew amber chevrons with no words): every train state × stalled or
+// not × every head_state × with and without a position yields words on the
+// chevron — stageTrackerTrainWord, the gate chip and its markup stripped
+// of tags — never '' and never the slug.
+for (const state of slugs.filter(s => s !== 'duplicate-of')) for (const stalled of [false, true]) for (const hs of [...headStates, '']) for (const pos of [0, 1, 2, 3]) {
+  const mt = { id: 'v5#15425', state, front: 15425, head_number: 15425, size: 3, length: 3, attempt: 1, max_attempts: 2, head_state: hs, head_reason: hs === 'needs-human' ? 'waiting for a maintainer (untrusted author)' : '', stalled, stalled_s: stalled ? 4851 : 0 };
+  if (pos) mt.position = pos;
+  const item = { repo: 'hivecommons/hive', number: 15530, kind: 'pr', title: 't', stage: 80, modifiers: stalled ? ['stalled'] : [], merge_train: mt, merge_gate: { state, sweep_running: true, last_sweep_at: '2026-10-29T15:05:30Z' } };
+  const label = state + (stalled ? '/stalled' : '') + '/' + (hs || 'no-head') + '/pos' + pos;
+  const word = stageTrackerTrainWord(item);
+  assert.ok(word && word.trim() && !leaks(word, state), label + ' train word: ' + JSON.stringify(word));
+  const info = stageTrackerMergeGateInfo(item, now);
+  assert.ok(info && info.word && info.word.trim(), label + ' chip word: ' + JSON.stringify(info));
+  const text = stageTrackerMergeGateWordHtml(item, now).replace(/<[^>]+>/g, '').trim();
+  assert.ok(text && !leaks(text, state), label + ' chip html: ' + JSON.stringify(text));
+  if (stalled && (state === 'front' || state === 'queued-behind')) assert.ok(word.startsWith(STAGE_TRACKER_TRAIN_STALLED_LEAD) && word.includes('1h21m'), label + ': ' + word);
+}
+// The owner's two rows (#15529 2nd, #15530 3rd behind #15425, head needs
+// a maintainer): the chevron says what it waits on and why.
+const mk = (n, title, mt, gate) => ({ repo: 'hivecommons/hive', number: n, kind: 'pr', title, stage: 80, modifiers: mt.stalled ? ['stalled'] : [], merge_train: mt, merge_gate: Object.assign({ state: mt.state, sweep_running: true }, gate || {}) });
+const rider = mk(15530, 'issue-row linked PR', { state: 'queued-behind', position: 3, ahead: [15425, 15529], front: 15425, head_number: 15425, id: 'v5#15425', head_state: 'needs-human', head_reason: 'waiting for a maintainer (untrusted author)', stalled: true, stalled_s: 4851 }, { sweep_running: true });
+assert.strictEqual(stageTrackerTrainWord(rider), 'Merge queue · stalled — waiting on #15425 (needs maintainer merge) · 1h21m');
+assert.strictEqual(stageTrackerMergeGateWordHtml(rider, now).replace(/<[^>]+>/g, ''), 'Merge queue · stalled — waiting on #15425 (needs maintainer merge) · 1h21m');
+// The head's own row says what it needs, not "waiting on" itself.
+const headRow = mk(15425, 'head', { state: 'front', position: 1, ahead: [], front: 15425, head_number: 15425, id: 'v5#15425', head_state: 'needs-human', head_reason: 'waiting for a maintainer (untrusted author)', stalled: true, stalled_s: 4851 });
+assert.strictEqual(stageTrackerTrainWord(headRow), 'Merge queue · stalled — needs maintainer merge · 1h21m');
+// A head on a human decision reads the decision, not a merge.
+assert.strictEqual(stageTrackerTrainStallWhy({ head_state: 'needs-human', head_reason: 'waiting for a human decision' }), 'needs a human decision');
+// An unmapped head_state falls back to the head's plain-word reason.
+assert.strictEqual(stageTrackerTrainStallWhy({ head_state: 'something-new', head_reason: 'doing a thing; details' }), 'doing a thing');
 assert.strictEqual(stageTrackerMergeGateStateWord('front'), 'Merge queued');
 assert.strictEqual(stageTrackerMergeGateStateWord('duplicate-of:15402'), 'Duplicate of #15402');
 // The held duplicate's chip: "Duplicate of #15402 · needs a pick", the hover names the issue and the pick rule.
