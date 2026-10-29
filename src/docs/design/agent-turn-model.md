@@ -64,19 +64,19 @@ The composed command line is per-backend and is built as a string —
 (`src/crux/agent/manager_launch.go:859`), and so on.
 
 Nothing in the kick path ever spawns a process. `deliverKickLocked`
-(`src/crux/agent/manager_kick.go:242`) only manipulates the existing pane.
+(`src/crux/agent/manager_kick.go:267`) only manipulates the existing pane.
 
 ### 1.2 A turn starts with simulated keystrokes
 
 `SendKick` (`src/crux/agent/manager_kick.go:102`) is the entry point; it delegates to
-`deliverKickLocked` (`src/crux/agent/manager_kick.go:242`), which:
+`deliverKickLocked` (`src/crux/agent/manager_kick.go:267`), which:
 
 - clears stale input with `C-c` then `C-u` (Codex uses only `C-u`; Goose skips clearing)
-  (`src/crux/agent/manager_kick.go:285-296`),
+  (`src/crux/agent/manager_kick.go:318-330`),
 - types the prompt literally, chunked, via
-  `tmuxSendLiteralForAgent` (`src/crux/agent/manager_kick.go:332`, implementation at
+  `tmuxSendLiteralForAgent` (`src/crux/agent/manager_kick.go:365`, implementation at
   `src/crux/agent/manager_tmux.go:553` → `tmux send-keys -l`),
-- submits with `tmuxSendEntersForAgent` (`src/crux/agent/manager_kick.go:363`).
+- submits with `tmuxSendEntersForAgent` (`src/crux/agent/manager_kick.go:396`).
 
 Pane writes return errors to the kick caller. A failed clear, prompt chunk, or
 Enter stops delivery, increments the existing undeliverable counter, and leaves
@@ -100,7 +100,7 @@ text**, by two independent mechanisms:
 `waitForInputPromptForAgent` (`src/crux/agent/manager_tmux.go:496`) polls
 `captureTmuxPaneForAgent` and returns once `paneShowsInputPrompt`
 (`src/crux/agent/manager_pane_signals.go:413`) matches a per-backend marker string. `SendKick`
-calls it at `src/crux/agent/manager_kick.go:178`. This gate is the only thing that
+calls it at `src/crux/agent/manager_kick.go:203`. This gate is the only thing that
 stops hive typing a new prompt on top of an in-flight response.
 
 The gate is bounded by `inputPromptTimeout` (120s), which is why operator kicks
@@ -120,9 +120,9 @@ captured pane content to maintain `agent.LastPaneChange`
 authenticated CLI is actually doing something.
 
 Stall recovery is likewise textual: `nudgeIfKickStalled`
-(`src/crux/agent/manager_kick.go:907`) compares `paneContentHash(pane)` against
-`agent.lastInferKickPane` (`src/crux/agent/manager_kick.go:883`), and
-`paneShowsActiveWork` (`src/crux/agent/manager_kick.go:823`) matches a spinner or a
+(`src/crux/agent/manager_kick.go:977`) compares `paneContentHash(pane)` against
+`agent.lastInferKickPane` (`src/crux/agent/manager_kick.go:918`), and
+`paneShowsActiveWork` (`src/crux/agent/manager_kick.go:857`) matches a spinner or a
 token-counter marker.
 
 ### 1.4 Scheduling: one shared ticker, not a per-turn continuation
@@ -301,7 +301,7 @@ directly: `RestartWithBootstrap` (`src/crux/agent/manager_restart.go:419`) sets
 `BootstrapOverride`, and `RestartThenSendKick`
 (`src/crux/agent/manager_restart.go:505`) is documented as restarting "with a clean
 slate". Whichever path runs, delivery is gated on the new pane reaching its
-input marker (`deliverStartupKick`, `src/crux/agent/manager_kick.go:480`).
+input marker (`deliverStartupKick`, `src/crux/agent/manager_kick.go:514`).
 
 **Restart is a reset, not a resume.** Whatever the agent had established in its
 conversation — plan, working context, partial tool results — is gone, and the
@@ -423,7 +423,7 @@ rather than a new one to invent.
 
 This is the load-bearing constraint behind all of the above and is worth
 isolating. Turn completion (§1.3), liveness classification (§4), stall
-detection (`src/crux/agent/manager_kick.go:907`), auth failure
+detection (`src/crux/agent/manager_kick.go:977`), auth failure
 (`src/crux/watchdog/classify.go:99-104`), quota exhaustion
 (`src/crux/agent/manager.go:351`), and even whether a surviving CLI can be
 adopted (`src/crux/agent/manager_tmux.go:441`) are all decided by matching substrings
