@@ -1,0 +1,1 @@
+- Scope the dashboard tracker’s issue-link cache to the carrying PR so sibling rows cannot reuse a closer selected with a different PR excluded. This defensively preserves correct links if merged PR rows are included; current open-only tracker behavior is unchanged ([#15495](https://github.com/hivecommons/hive/issues/15495)).
