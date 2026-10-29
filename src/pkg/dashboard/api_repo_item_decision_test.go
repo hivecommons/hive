@@ -217,6 +217,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 	srv.deps.Config.HiveID = "h1"
 	srv.deps.GHClient = github.NewClient("token", "testorg", []string{"testrepo"}, slog.Default(), ghSrv.URL)
 	srv.deps.GHClient.SetAppBotLogin("hive[bot]")
+	// The PR-detail cache is process-global and keyed by repo+number, so a PR
+	// #8 cached by another test (with a different author or labels) would
+	// answer GetPRAuthor/GetPRState here instead of this mock. A zero TTL
+	// turns cache reads off for this client (hivecommons/hive#15461).
+	srv.deps.GHClient.SetPRDetailTTLFunc(func() time.Duration { return 0 })
 	store := review.NewHumanChangeRequests("")
 	prev := repoItemDecisionChangeRequests
 	repoItemDecisionChangeRequests = func() review.HumanChangeRequestStore { return store }
