@@ -14516,16 +14516,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nextAt = mg.next_sweep_at ? Date.parse(mg.next_sweep_at) : 0;
       const lastAt = mg.last_sweep_at ? Date.parse(mg.last_sweep_at) : 0;
       const lastSeen = lastAt > 0 ? ' Last checked ' + stageTrackerAgoText(lastAt, nowMs) + '.' : '';
+      // A soak clock (own or mirrored) outranks "merge sweep running": the
+      // sweep reads the clock, it does not replace it. Any gate stage the
+      // lane holds for the soak — 095 admitted, or 060/080 while trust
+      // still blocks the head — counts the same clock down.
+      const clock = stageTrackerSoakClock(src, item, nowMs);
+      if (clock && (state === 'soaking' || clock.fromSoak)) {
+        // At 060/080 the stage keeps its own word and the detail says
+        // "soak 12m left"; at 095 the soak is the stage.
+        clock.prefix = state === 'soaking' ? '' : 'soak ';
+        const soak = stageTrackerSoakWords(clock, nowMs, nextAt, !!mg.sweep_running);
+        return { state, word: clock.restarted || state === 'soaking' ? soak.word : word, detail: soak.detail, tip: soak.tip + lastSeen, cue: 'soaking', until: clock.restarted ? 0 : clock.until, soak: soak.tip, soakClock: clock };
+      }
       if (mg.sweep_running) {
         return { state, word, detail: 'merge sweep running', tip: "hive's merge sweep is running on this PR now.", cue: 'running', until: 0 };
       }
       const nextWords = nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : (nextAt > 0 ? 'sweep due now' : '');
       const sooner = ' A GitHub event on the PR (check run, review, push) triggers a pass sooner.';
       if (state === 'soaking') {
-        const soakSec = Number(mg.soak_remaining_seconds) || Number(src.soak_remaining_seconds) || Number(item.soak_remaining_seconds) || 0;
-        const until = mg.soak_until ? Date.parse(mg.soak_until) : (soakSec > 0 ? nowMs + soakSec * 1000 : 0);
-        const left = until > nowMs ? stageTrackerShortLeft(until - nowMs) : '';
-        return { state, word, detail: left ? left + ' left' : 'soak window complete', tip: left ? 'Admitted by the automerge lane; waiting for the soak window: ' + left + ' left. hive merges on its first sweep after that.' + lastSeen : 'Admitted; the soak window is complete — hive merges on its next sweep' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: left ? until : 0 };
+        return { state, word, detail: 'soak window complete', tip: 'Admitted; the soak window is complete — hive merges on its next sweep' + (nextWords ? ' (' + nextWords + ')' : '') + '.' + lastSeen, cue: 'soaking', until: 0 };
       }
       if (state === 'ready') {
         return { state, word, detail: nextWords, tip: "Approved and green; waiting for hive's merge sweep" + (nextWords ? ' — ' + nextWords + '.' : '.') + sooner + lastSeen, cue: 'waiting', until: nextAt > nowMs ? nextAt : 0 };
@@ -14542,8 +14551,76 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergeGateWordHtml(item, nowMs) {
       const info = stageTrackerMergeGateInfo(item, nowMs);
       if (!info) return '';
-      const detail = info.detail ? ` <span class="ham-gate-detail"${info.until ? ` data-ham-until="${info.until}" data-ham-until-kind="${esc(info.state)}"` : ''}>· ${esc(info.detail)}</span>` : '';
+      // A soak detail carries its clock so the tick can redo both the
+      // words and the hover sentence (data-ham-soak-tip is the sentence
+      // currently written into the row's titles; the tick swaps it out).
+      const c = info.soakClock;
+      const soakAttrs = c ? ` data-ham-soak="1" data-ham-until="${c.until}" data-ham-until-kind="soaking" data-ham-soak-window="${c.windowS}" data-ham-soak-head="${esc(c.head)}" data-ham-soak-restarted="${c.restarted ? 1 : 0}" data-ham-soak-prefix="${esc(c.prefix || '')}" data-ham-next="${c.nextAt || 0}" data-ham-sweeping="${c.sweepRunning ? 1 : 0}" data-ham-soak-tip="${esc(info.soak)}"` : '';
+      const detail = info.detail ? ` <span class="ham-gate-detail"${soakAttrs || (info.until ? ` data-ham-until="${info.until}" data-ham-until-kind="${esc(info.state)}"` : '')}>· ${esc(info.detail)}</span>` : '';
       return `<span class="ham-seg-t">${esc(info.word)}${detail}</span>`;
+    }
+    /* ---- Soak clock ---------------------------------------------------------
+       The payload's `soak` {started_at, until, window_s, head_sha} is the
+       lane's clock for the head: it must sit unchanged for window_s before
+       the hive merges it. One clock serves 095 (admitted, soaking) and a
+       trust-blocked head at 060/080 that sits through the same window.
+       Older payloads fall back to merge_gate.soak_until /
+       soak_remaining_seconds. Static text only — no spinner. */
+    // Pure: the clock for a row, or null when it is not soaking.
+    //   until / started / windowS / head — from the payload
+    //   restarted — the clock's head is not the row's head: a push
+    //               restarted the soak and the lane has not re-read it
+    //   fromSoak  — the clock came from the `soak` payload (so it shows
+    //               at 060/080 too), not the legacy 095-only fields
+    function stageTrackerSoakClock(src, item, nowMs) {
+      const soak = (src && src.soak) || (item && item.soak) || null;
+      const mg = (src && src.merge_gate) || {};
+      let until = 0, windowS = 0, head = '', started = 0, fromSoak = false;
+      if (soak && soak.until) {
+        until = Date.parse(soak.until); windowS = Number(soak.window_s) || 0; head = String(soak.head_sha || ''); started = soak.started_at ? Date.parse(soak.started_at) : 0; fromSoak = true;
+      } else {
+        const soakSec = Number(mg.soak_remaining_seconds) || Number(src && src.soak_remaining_seconds) || Number(item && item.soak_remaining_seconds) || 0;
+        until = mg.soak_until ? Date.parse(mg.soak_until) : (soakSec > 0 ? nowMs + soakSec * 1000 : 0);
+      }
+      if (!(until > 0)) return null;
+      const rowHead = String((src && src.head) || (item && item.head) || '');
+      return { until, started, windowS, head, restarted: !!(head && rowHead && head !== rowHead), fromSoak, nextAt: mg.next_sweep_at ? Date.parse(mg.next_sweep_at) : 0, sweepRunning: !!mg.sweep_running };
+    }
+    // Pure: "12m 30s" / "45s" / "1h 05m" for the hover; '' when none.
+    function stageTrackerSoakLeftText(ms) {
+      if (!(ms > 0)) return '';
+      const s = Math.ceil(ms / 1000);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60), r = s % 60;
+      if (m < 60) return m + 'm' + (r ? ' ' + r + 's' : '');
+      return Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm';
+    }
+    // Pure: "8:42 PM" for the soak's end, in the dashboard's time zone.
+    function stageTrackerClockText(ms) {
+      const opts = { hour: 'numeric', minute: '2-digit' };
+      if (typeof formatDashboardTime === 'function') return formatDashboardTime(ms, opts);
+      try { return new Intl.DateTimeFormat(undefined, opts).format(new Date(ms)); } catch (e) { return new Date(ms).toISOString(); }
+    }
+    // Pure: { word, detail, tip } for a soak clock at nowMs.
+    //   soaking   — "Soaking · 12m left"; the hover carries the rule, the
+    //               live time left and the end time
+    //   ready     — past until: "Soaking · ready — next sweep in 3m"
+    //   restarted — "Soak restarted · new head"
+    function stageTrackerSoakWords(clock, nowMs, nextAt, sweepRunning) {
+      const short = clock.head ? clock.head.slice(0, 7) : '';
+      const who = short ? 'Head ' + short : 'The head';
+      const mins = clock.windowS > 0 ? Math.round(clock.windowS / 60) : 0;
+      const window = mins > 0 ? mins + ' minute' + (mins === 1 ? '' : 's') : 'the soak window';
+      if (clock.restarted) {
+        return { word: 'Soak restarted', detail: 'new head', tip: who + ' was replaced by a new push, so the soak starts over on the new head: it must sit ' + window + ' without new commits before the hive merges it. hive re-reads it on its next sweep.' };
+      }
+      const prefix = clock.prefix || '';
+      const leftMs = clock.until - nowMs;
+      if (leftMs > 0) {
+        return { word: 'Soaking', detail: prefix + stageTrackerShortLeft(leftMs) + ' left', tip: who + ' must sit ' + window + ' without new commits before the hive merges it · ' + stageTrackerSoakLeftText(leftMs) + ' left · soak ends ' + stageTrackerClockText(clock.until) };
+      }
+      const next = sweepRunning ? 'merge sweep running' : (nextAt > nowMs ? 'next sweep in ' + stageTrackerShortLeft(nextAt - nowMs) : 'sweep due now');
+      return { word: 'Soaking', detail: (prefix ? 'soaked — ' : 'ready — ') + next, tip: who + ' sat ' + window + ' without new commits — soaked since ' + stageTrackerClockText(clock.until) + '; hive merges it on its next sweep (' + next + ').' };
     }
     // Pure: the leading glyph for a row on the gate — spinning while hive's
     // sweep is on it, a clock while it waits — with the sentence as title
@@ -14561,11 +14638,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       nowMs = typeof nowMs === 'number' ? nowMs : Date.now();
       for (const n of Array.from(el.querySelectorAll('.ham-gate-detail[data-ham-until]'))) {
         const until = Number(n.getAttribute('data-ham-until'));
-        const left = stageTrackerShortLeft(until - nowMs);
         const kind = n.getAttribute('data-ham-until-kind');
+        if (n.getAttribute('data-ham-soak') === '1') { stageTrackerSoakTick(n, nowMs); continue; }
+        const left = stageTrackerShortLeft(until - nowMs);
         const t = kind === 'soaking' ? (left ? '· ' + left + ' left' : '· soak window complete') : (left ? '· next sweep in ' + left : '· sweep due now');
         if (n.textContent !== t) n.textContent = t;
       }
+    }
+    // Pure over the node: redo a soak detail's words and swap the live
+    // hover sentence into the row's titles (the chevron and its glyph), so
+    // the time left reads right at hover time without a re-render.
+    function stageTrackerSoakTick(n, nowMs) {
+      const clock = { until: Number(n.getAttribute('data-ham-until')), windowS: Number(n.getAttribute('data-ham-soak-window')) || 0, head: n.getAttribute('data-ham-soak-head') || '', restarted: n.getAttribute('data-ham-soak-restarted') === '1', prefix: n.getAttribute('data-ham-soak-prefix') || '' };
+      const words = stageTrackerSoakWords(clock, nowMs, Number(n.getAttribute('data-ham-next')) || 0, n.getAttribute('data-ham-sweeping') === '1');
+      const t = '· ' + words.detail;
+      if (n.textContent !== t) n.textContent = t;
+      const prev = n.getAttribute('data-ham-soak-tip') || '';
+      if (!prev || prev === words.tip || typeof n.closest !== 'function') return;
+      const li = n.closest('li');
+      const targets = li ? [li].concat(Array.from(li.querySelectorAll('[title]'))) : [];
+      for (const t2 of targets) {
+        for (const attr of ['title', 'aria-label']) {
+          const v = t2.getAttribute(attr);
+          if (v && v.indexOf(prev) >= 0) t2.setAttribute(attr, v.split(prev).join(words.tip));
+        }
+      }
+      n.setAttribute('data-ham-soak-tip', words.tip);
     }
 
     function stageTrackerHoldLabels(item) {

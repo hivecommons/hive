@@ -193,6 +193,16 @@ type Record struct {
 	// for; it survives ClearAdoptionEscalation so a blocker that flaps on
 	// one head is noted once.
 	AdoptEscalationNotedHead string `json:"adopt_escalation_noted_head,omitempty"`
+	// SoakHead / SoakStartedAt / SoakWindowSeconds record the soak the lane
+	// is holding this PR for: the head that must sit unchanged, when it was
+	// first seen green, and the window it must sit for. Written by the pass
+	// whether the lane admitted the head (095) or trust still blocks it
+	// (060, RouteHuman's "soak Nm remaining"), so the dashboard counts the
+	// same clock down in both places and notices a head that moved on.
+	// Cleared when the head is not soaking.
+	SoakHead          string    `json:"soak_head,omitempty"`
+	SoakStartedAt     time.Time `json:"soak_started_at,omitempty"`
+	SoakWindowSeconds int64     `json:"soak_window_s,omitempty"`
 	// AdoptBlockedHead / AdoptBlockedBy / AdoptBlockedAt record that
 	// adoption came due at this head and the engine held it for a reason a
 	// person must settle (AdoptBlockedAuthorMaintainer: the author
@@ -1766,6 +1776,49 @@ func (s *Store) NoteAuthor(key, login string) {
 	r.Author = login
 	s.items[key] = r
 	s.dirty = true
+}
+
+// NoteSoak records the soak the lane holds an existing record's head for:
+// head must sit unchanged from startedAt for window. A head of "" or a
+// window of 0 clears the soak (the PR is not soaking).
+func (s *Store) NoteSoak(key, head string, startedAt time.Time, window time.Duration) {
+	head = strings.TrimSpace(head)
+	if head == "" || window <= 0 {
+		s.ClearSoak(key)
+		return
+	}
+	startedAt = startedAt.Truncate(time.Second)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.SoakHead == head && r.SoakStartedAt.Equal(startedAt) && r.SoakWindowSeconds == int64(window/time.Second)) {
+		return
+	}
+	r.SoakHead, r.SoakStartedAt, r.SoakWindowSeconds = head, startedAt, int64(window/time.Second)
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearSoak forgets a record's soak.
+func (s *Store) ClearSoak(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.SoakHead == "" && r.SoakStartedAt.IsZero() && r.SoakWindowSeconds == 0) {
+		return
+	}
+	r.SoakHead, r.SoakStartedAt, r.SoakWindowSeconds = "", time.Time{}, 0
+	s.items[key] = r
+	s.dirty = true
+}
+
+// Soak reports the recorded soak: the head, when it started, its window.
+// ok is false when none is recorded.
+func (r Record) Soak() (head string, startedAt time.Time, window time.Duration, ok bool) {
+	if r.SoakHead == "" || r.SoakStartedAt.IsZero() || r.SoakWindowSeconds <= 0 {
+		return "", time.Time{}, 0, false
+	}
+	return r.SoakHead, r.SoakStartedAt, time.Duration(r.SoakWindowSeconds) * time.Second, true
 }
 
 // NoteHold records the hold provenance on an existing record; a nil

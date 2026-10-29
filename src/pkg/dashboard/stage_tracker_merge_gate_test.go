@@ -224,12 +224,15 @@ assert.strictEqual(stageTrackerGateCueHtml({ repo: 'r', number: 1, kind: 'pr', s
 
 // The pill word with the live detail; the waiting row says what it waits for.
 assert.strictEqual(stageTrackerMergeGateWordHtml(ready, now), '<span class="ham-seg-t">Ready for auto merge <span class="ham-gate-detail" data-ham-until="' + (now + 42000) + '" data-ham-until-kind="ready">· next sweep in 42s</span></span>');
-assert.strictEqual(stageTrackerMergeGateWordHtml(pr15044, now), '<span class="ham-seg-t">Soaking <span class="ham-gate-detail" data-ham-until="' + (now + 452000) + '" data-ham-until-kind="soaking">· 8m left</span></span>');
+// The soak detail carries its clock (data-ham-soak…) so the tick redoes the words and the hover.
+const soakHtml = stageTrackerMergeGateWordHtml(pr15044, now);
+assert.ok(soakHtml.startsWith('<span class="ham-seg-t">Soaking <span class="ham-gate-detail" data-ham-soak="1" data-ham-until="' + (now + 452000) + '" data-ham-until-kind="soaking"'), soakHtml);
+assert.ok(soakHtml.endsWith('>· 8m left</span></span>'), soakHtml);
 assert.strictEqual(stageTrackerMergeGateWordHtml(pr15042, now), '<span class="ham-seg-t">Awaiting merge gate <span class="ham-gate-detail">· merge sweep running</span></span>');
 assert.strictEqual(stageTrackerMergeGateWordHtml(merging, now), '<span class="ham-seg-t">Merging</span>');
 assert.strictEqual(stageTrackerMergeGateWordHtml({ stage: 50 }, now), '');
 const soak = stageTrackerMergeGateInfo(pr15044, now);
-assert.strictEqual(soak.tip, 'Admitted by the automerge lane; waiting for the soak window: 8m left. hive merges on its first sweep after that. Last checked 1m ago.');
+assert.strictEqual(soak.tip, 'The head must sit the soak window without new commits before the hive merges it · 7m 32s left · soak ends ' + stageTrackerClockText(now + 452000) + ' Last checked 1m ago.');
 assert.strictEqual(stageTrackerMergeGateInfo(ready, now).tip, "Approved and green; waiting for hive's merge sweep — next sweep in 42s. A GitHub event on the PR (check run, review, push) triggers a pass sooner. Last checked 10s ago.");
 assert.strictEqual(stageTrackerMergeGateInfo(merging, now).tip, 'Admitted and soaked; hive is merging it now (GitHub merge queue / merge window). Last checked 1s ago.');
 
@@ -249,7 +252,7 @@ assert.strictEqual(stageTrackerGateReasonText(''), '');
 assert.deepStrictEqual([stageTrackerShortLeft(42000), stageTrackerShortLeft(170000), stageTrackerShortLeft(3900000), stageTrackerShortLeft(0)], ['42s', '3m', '1h05m', '']);
 
 // Countdowns tick in place and flip to the "due" words once past.
-const mk = (until, kind) => ({ attrs: { 'data-ham-until': String(until), 'data-ham-until-kind': kind }, textContent: '', getAttribute(n) { return this.attrs[n]; } });
+const mk = (until, kind) => ({ attrs: { 'data-ham-until': String(until), 'data-ham-until-kind': kind }, textContent: '', getAttribute(n) { return this.attrs[n] === undefined ? null : this.attrs[n]; } });
 const n1 = mk(now + 42000, 'ready'), n2 = mk(now + 452000, 'soaking');
 const el = { querySelectorAll: () => [n1, n2] };
 stageTrackerGateCountdownSync(el, now + 30000);
@@ -269,7 +272,18 @@ func stageTrackerMergeGateInfoJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerCoverReasonText") + "\n" +
 		jsFunc(t, html, "stageTrackerCoveringPR") + "\n" +
 		jsFunc(t, html, "stageTrackerMergeGateInfo") + "\n" +
-		jsFunc(t, html, "stageTrackerMergeGateInfoFor")
+		jsFunc(t, html, "stageTrackerMergeGateInfoFor") + "\n" +
+		stageTrackerSoakClockJS(t, html)
+}
+
+// stageTrackerSoakClockJS lifts the soak-clock helpers the gate pill reads.
+func stageTrackerSoakClockJS(t *testing.T, html string) string {
+	t.Helper()
+	return jsFunc(t, html, "stageTrackerSoakClock") + "\n" +
+		jsFunc(t, html, "stageTrackerSoakLeftText") + "\n" +
+		jsFunc(t, html, "stageTrackerClockText") + "\n" +
+		jsFunc(t, html, "stageTrackerSoakWords") + "\n" +
+		jsFunc(t, html, "stageTrackerSoakTick")
 }
 
 // TestStageTrackerMergeGateIssueRowPillNode: the regression #15084 shipped

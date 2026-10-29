@@ -345,6 +345,10 @@ type StageTrackerItem struct {
 	// 095 / 100): state, what holds it, whether hive's merge sweep is on
 	// it now, the next pass and the soak countdown (hivecommons/hive#15073).
 	MergeGate *StageTrackerMergeGate `json:"merge_gate,omitempty"`
+	// Soak is the soak clock while the lane holds this head for the soak
+	// window, at 060/080/095: when it started, when it ends, the window
+	// and the head it was measured on. The SPA counts it down in place.
+	Soak *StageTrackerSoak `json:"soak,omitempty"`
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head
@@ -559,6 +563,7 @@ type StageTrackerLinkedPR struct {
 	SoakRemainingSeconds int64                   `json:"soak_remaining_seconds,omitempty"`
 	MergeGate            *StageTrackerMergeGate  `json:"merge_gate,omitempty"`
 	MergeTrain           *StageTrackerMergeTrain `json:"merge_train,omitempty"`
+	Soak                 *StageTrackerSoak       `json:"soak,omitempty"`
 	// Adoption mirrors the nested PR's own row field (hivecommons/hive#14524).
 	Adoption *StageTrackerAdoption `json:"adoption,omitempty"`
 	// LastOperatorAction / OperatorActionCount mirror the nested PR's own
@@ -1769,6 +1774,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	presence, maintainerPolicy := s.stageTrackerPresence(), s.stageTrackerMaintainerPolicy()
 	sweep := s.stageTrackerSweepState()
+	soakWindow := s.stageTrackerSoakWindow()
 	workers := stageTrackerWorkersFromStatus(status)
 	adoptionClock := s.stageTrackerAdoptionClock()
 	rerouteCandidates, adoptionEnabled, takeoverGrace := s.stageTrackerRerouteCandidates(), s.stageAdoptionEnabled(), s.takeoverGrace()
@@ -1814,6 +1820,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.StageLabel = stage.Label()
 		if it.Kind == "pr" {
 			it.MergeGate = stageTrackerMergeGate(it.Repo, it.Number, stage, rec, hasRec, sweep, now)
+			it.Soak = stageTrackerSoakFrom(rec, hasRec, it.Head, soakWindow, now)
 		}
 		if m := trackerPRNumberRE.FindStringSubmatch(it.Reason); m != nil && it.Kind == "issue" {
 			it.LinkedPR, _ = strconv.Atoi(m[1])
@@ -2784,6 +2791,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.DecisionNeeded = pr.DecisionNeeded
 				lp.SoakRemainingSeconds, lp.MergeGate = pr.SoakRemainingSeconds, pr.MergeGate
 				lp.MergeTrain = pr.MergeTrain
+				lp.Soak = pr.Soak
 				lp.LastOperatorAction, lp.OperatorActionCount = pr.LastOperatorAction, pr.OperatorActionCount
 				lp.Hold = pr.Hold
 				if len(pr.Modifiers) > 0 {
