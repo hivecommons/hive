@@ -224,6 +224,12 @@ type StageTrackerStage struct {
 	// DwellSeconds is the expected dwell after which the item is stalled
 	// (0 = open-ended), after config overrides.
 	DwellSeconds int64 `json:"dwell_seconds"`
+	// FallsTo lists the lower stages (same item kind) a move from this
+	// stage to is a genuine regression (stagelabels.IsRegression), so the
+	// event line can say "fell back to" only for those. Lower stages not
+	// listed are forward or neutral: 015 → 010 is triage accepted, 085 →
+	// 080 a decision made, 072 → 070 the author resuming.
+	FallsTo []int `json:"falls_to,omitempty"`
 }
 
 // StageTrackerHop is one entry of an item's transition trail.
@@ -738,7 +744,20 @@ func stageTrackerStages(overrides map[string]time.Duration) []StageTrackerStage 
 			Number: d.Number, Slug: d.Slug, Label: d.Stage.Label(), Short: stageTrackerShort(d.Stage),
 			Description: d.Description, Issue: d.Issue, PR: d.PR, Main: branch == 0, BranchFrom: branch,
 			DwellSeconds: int64(stagelabels.Dwell(d.Stage, overrides) / time.Second),
+			FallsTo:      stageTrackerFallsTo(d),
 		})
+	}
+	return out
+}
+
+// stageTrackerFallsTo is the ordered list of lower same-kind stage numbers
+// that are a regression from d (stagelabels.IsRegression).
+func stageTrackerFallsTo(d stagelabels.Definition) []int {
+	var out []int
+	for _, to := range stagelabels.Table {
+		if (d.Issue && to.Issue || d.PR && to.PR) && stagelabels.IsRegression(d.Stage, to.Stage) {
+			out = append(out, to.Number)
+		}
 	}
 	return out
 }

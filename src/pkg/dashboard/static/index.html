@@ -15734,15 +15734,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return out;
     }
     // Pure: plain words for what changed between two states; '' if nothing
-    // worth a line did. Order: where it went → what it now waits on.
+    // worth a line did. Order: where it went → what it now waits on. A
+    // lower stage number is "fell back to" only when the stage table says
+    // the hop is a regression (`falls_to`, from stagelabels.IsRegression):
+    // 015 → 010 is triage accepted, 085 → 080 a decision made, 072 → 070
+    // the author resuming — those read "moved to", with the caption kept
+    // so the line still says why. Without `falls_to` (an older payload)
+    // any lower number is a fall.
+    function stageTrackerStageFell(prev, next, stages) {
+      if (!(next.stage < prev.stage)) return false;
+      const from = (stages || []).find(x => Number(x.number) === prev.stage);
+      if (!from || !Array.isArray(from.falls_to)) return true;
+      return from.falls_to.indexOf(next.stage) >= 0;
+    }
     function stageTrackerEventText(prev, next, stages) {
       if (!prev || !next) return '';
       if (next.stage !== prev.stage) {
         if (next.stage >= STAGE_TRACKER_TERMINAL) return 'merged';
         const sg = (stages || []).find(x => Number(x.number) === next.stage);
         const name = next.label || (sg && (sg.label || sg.short)) || ('stage ' + next.stage);
-        const back = next.stage < prev.stage;
-        return (back ? 'fell back to ' : 'moved to ') + name + (back && next.caption ? ' — ' + next.caption : '');
+        const back = stageTrackerStageFell(prev, next, stages);
+        const why = (back || next.stage < prev.stage) && next.caption ? ' — ' + next.caption : '';
+        return (back ? 'fell back to ' : 'moved to ') + name + why;
       }
       for (const m of next.mods) if (prev.mods.indexOf(m) < 0 && STAGE_TRACKER_EVENT_MOD_WORDS[m]) return STAGE_TRACKER_EVENT_MOD_WORDS[m][0];
       for (const m of prev.mods) if (next.mods.indexOf(m) < 0 && STAGE_TRACKER_EVENT_MOD_WORDS[m]) return STAGE_TRACKER_EVENT_MOD_WORDS[m][1];

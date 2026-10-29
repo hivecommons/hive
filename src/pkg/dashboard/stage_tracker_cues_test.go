@@ -26,6 +26,7 @@ func stageTrackerCuesJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerAgoText"),
 		jsFunc(t, html, "stageTrackerCueClasses"),
 		jsFunc(t, html, "stageTrackerStateMap"),
+		jsFunc(t, html, "stageTrackerStageFell"),
 		jsFunc(t, html, "stageTrackerEventText"),
 		jsFunc(t, html, "stageTrackerEventsNext"),
 		jsFunc(t, html, "stageTrackerNoteOwnerEvent"),
@@ -158,6 +159,21 @@ assert.strictEqual(stageTrackerEventText(st(50), st(50, ['needs-human']), stages
 assert.strictEqual(stageTrackerEventText(st(50, ['hold']), st(50), stages), 'hold released');
 assert.strictEqual(stageTrackerEventText(st(50, [], 'a'), st(50, [], 'CI running'), stages), 'CI running');
 assert.strictEqual(stageTrackerEventText(st(50), st(50), stages), '');
+// With the stage table's falls_to, a lower number is a fall only when the
+// table says so (hivecommons/hive#15198 read "fell back to Actionable" for
+// triage being accepted).
+const ladder = [
+  { number: 10, label: 'Actionable', falls_to: [] }, { number: 15, label: 'Triage needed', falls_to: [] }, { number: 40, label: 'Covered by PR', falls_to: [10, 15] },
+  { number: 50, label: 'CI / Review', falls_to: [] }, { number: 60, label: 'Reviewed', falls_to: [50] }, { number: 70, label: 'Fixing', falls_to: [] }, { number: 72, label: 'Returned to contributor', falls_to: [] },
+  { number: 80, label: 'Merge gate', falls_to: [50, 60, 70, 72] }, { number: 85, label: 'Needs decision', falls_to: [] },
+];
+assert.strictEqual(stageTrackerEventText(st(15), st(10, [], 'Triaged and eligible; waiting for the scanner to pick it up'), ladder), 'moved to Actionable — Triaged and eligible; waiting for the scanner to pick it up', 'triage accepted is forward');
+assert.strictEqual(stageTrackerEventText(st(85), st(80, [], 'Awaiting merge admission'), ladder), 'moved to Merge gate — Awaiting merge admission', 'a decision made is forward');
+assert.strictEqual(stageTrackerEventText(st(72), st(70), ladder), 'moved to Fixing', 'the author resuming is forward');
+assert.strictEqual(stageTrackerEventText(st(40), st(10, [], 'PR closed'), ladder), 'fell back to Actionable — PR closed', 'a covering PR closing is a fall');
+assert.strictEqual(stageTrackerEventText(st(60), st(50, [], 'a reviewer requested changes'), ladder), 'fell back to CI / Review — a reviewer requested changes');
+assert.strictEqual(stageTrackerEventText(st(80), st(70, [], 'CI red'), ladder), 'fell back to Fixing — CI red');
+assert.strictEqual(stageTrackerEventText(st(10), st(40), ladder), 'moved to Covered by PR');
 const prev = stageTrackerStateMap([issue]);
 const next = stageTrackerStateMap([Object.assign({}, issue, { linked_prs: [{ number: 14947, stage: 85, caption: 'Needs human decision' }] })]);
 let events = stageTrackerEventsNext({}, prev, next, stages, now);

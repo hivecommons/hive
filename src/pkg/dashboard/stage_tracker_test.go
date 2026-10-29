@@ -56,6 +56,41 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 	}
 }
 
+// TestStageTrackerStagesFallsTo: each stage row carries the lower same-kind
+// stages a move to which is a regression, so the SPA's event line says
+// "fell back to" only for those — not for triage accepted (015 → 010), a
+// decision made (085 → 080) or the author resuming (072 → 070)
+// (hivecommons/hive#15198).
+func TestStageTrackerStagesFallsTo(t *testing.T) {
+	byNum := map[int]StageTrackerStage{}
+	for _, st := range stageTrackerStages(nil) {
+		byNum[st.Number] = st
+	}
+	for _, tc := range []struct {
+		from, to int
+		fall     bool
+	}{
+		{trackerNumberTriageNeeded, trackerNumberActionable, false},
+		{trackerNumberPossiblyExists, trackerNumberActionable, false},
+		{trackerNumberIssueDecision, trackerNumberActionable, false},
+		{trackerNumberNeedsDecision, trackerNumberAwaitingMerge, false},
+		{trackerNumberReturned, trackerNumberFixing, false},
+		{trackerNumberFixing, trackerNumberReviewPending, false},
+		{trackerNumberCoveredByPR, trackerNumberActionable, true},
+		{trackerNumberCoveredByPR, trackerNumberTriageNeeded, true},
+		{trackerNumberReviewed, trackerNumberReviewPending, true},
+		{trackerNumberAwaitingMerge, trackerNumberFixing, true},
+		{trackerNumberReviewPending, trackerNumberCoveredByPR, false}, // PR stages never fall to issue stages
+	} {
+		if got := slices.Contains(byNum[tc.from].FallsTo, tc.to); got != tc.fall {
+			t.Errorf("%03d → %03d: falls_to lists it = %v, want %v (%v)", tc.from, tc.to, got, tc.fall, byNum[tc.from].FallsTo)
+		}
+	}
+	if len(byNum[trackerNumberActionable].FallsTo) != 0 {
+		t.Errorf("010 has nothing lower to fall to: %v", byNum[trackerNumberActionable].FallsTo)
+	}
+}
+
 // Stage 07x by author kind: 071 needs-author (human) and 072
 // returned-to-contributor (clanker) are both review-side detours with their
 // own chevron word and an author-must-act caption.
