@@ -1387,6 +1387,7 @@ assert.strictEqual(stageTrackerDCOCaveat([]), '');
   await stageTrackerActionPayload([{ ...pr317, dco_unsigned: 0 }], 'decide:merge-now');
   assert.ok(!dialogs[0].cfg.message.includes('Signed-off-by'), dialogs[0].cfg.message);
 })().catch(e => { console.error(e); process.exit(1); });
+`)
 }
 
 // TestStageTrackerRebaseThenMergeRow: a PR that needs a rebase offers

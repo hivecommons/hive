@@ -80,7 +80,7 @@ func TestRepoItemDecisionMergeNowOnDirtyPRArmsRebaseThenMerge(t *testing.T) {
 // fails with the files and the two options, and the PR gets the note.
 func TestDriveRebaseMergeGreenMergesAndConflictFails(t *testing.T) {
 	store := useRebaseMergeStore(t)
-	mock := &repoItemDecisionMock{prForeign: true}
+	mock := &repoItemDecisionMock{prForeign: true, commitBy: map[string]string{"0123456789abcdef0123456789abcdef01234567": "hive[bot]"}}
 	srv := newRepoItemDecisionServer(t, mock)
 	srv.operatorActionStore = newOperatorActionStore(filepath.Join(t.TempDir(), "ops.json"))
 	now := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
@@ -231,7 +231,7 @@ func TestRebaseAttemptsPillAndFollowThroughExhaustion(t *testing.T) {
 
 	// Follow-through on the same PR: still dirty after the fixer's first
 	// push → back to rebasing; exhausted → failed with the files.
-	mock := &repoItemDecisionMock{}
+	mock := &repoItemDecisionMock{commitBy: map[string]string{"bbb2222": "hive[bot]", "ccc3333": "hive[bot]"}}
 	srv := newRepoItemDecisionServer(t, mock)
 	srv.operatorActionStore = newOperatorActionStore(filepath.Join(t.TempDir(), "ops.json"))
 	attempts.Clear("hivecommons/hive", 15087)
@@ -323,5 +323,47 @@ func TestRepoItemDecisionApproveOnDirtyPRQueuesRebase(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if w.Code != http.StatusOK || resp.Rebase != nil || resp.Result == nil || len(resp.Result.Options) != 0 || !strings.Contains(resp.Result.Next, "takes it from here") {
 		t.Fatalf("clean approve: code=%d resp=%+v", w.Code, resp.Result)
+	}
+}
+
+// The approval is bound to the head the operator read. When a contributor
+// PR's head moves and GitHub says the hive did not commit it, the
+// follow-through fails closed — nothing merges, the ledger says why, the
+// note on the PR asks for a fresh approval — and the row's way out is to
+// approve the new head (hivecommons/hive#15104 security review).
+func TestDriveRebaseMergeForeignHeadFailsClosed(t *testing.T) {
+	store := useRebaseMergeStore(t)
+	mock := &repoItemDecisionMock{prForeign: true}
+	srv := newRepoItemDecisionServer(t, mock)
+	srv.operatorActionStore = newOperatorActionStore(filepath.Join(t.TempDir(), "ops.json"))
+	now := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
+	prevNow := rebaseMergeNow
+	rebaseMergeNow = func() time.Time { return now }
+	t.Cleanup(func() { rebaseMergeNow = prevNow })
+
+	f := rebasemerge.Arm("testorg/testrepo", 8, "writer", "main", "feedfacefeedfacefeedfacefeedfacefeedface", false, now)
+	f.Kicked(now, "fixer")
+	_ = store.Put(f)
+	_ = srv.operatorActions().Record("testorg/testrepo", 8, OperatorAction{Action: operatorActionMergeNow, Actor: "writer", At: now, Outcome: operatorActionOutcomePending, Detail: repoItemStatusRebaseQd, Stage: 85})
+
+	now = now.Add(5 * time.Minute)
+	srv.driveRebaseMerge(context.Background(), store, f, ghpkg.PRMergeState{State: "open", HeadSHA: "0123456789abcdef0123456789abcdef01234567", BaseRef: "main", MergeableState: "clean"})
+	f, _ = store.Get("testorg/testrepo", 8)
+	if f.State != rebasemerge.StateFailed || f.FailReason != rebasemerge.FailForeignHead || f.ForeignHead != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("foreign head: %+v", f)
+	}
+	if len(mock.merges) != 0 {
+		t.Fatalf("a head the hive did not produce must not merge: %v", mock.merges)
+	}
+	acts := srv.operatorActions().List("testorg/testrepo", 8)
+	if len(acts) != 1 || acts[0].Outcome != operatorActionOutcomeFailed || !strings.Contains(acts[0].Detail, "someone pushed 0123456") {
+		t.Fatalf("ledger = %+v", acts)
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "approve it again") || !strings.Contains(mock.comments[0], rebasemerge.OptionReapproveLabel) || strings.Contains(mock.comments[0], rebasemerge.OptionAdoptFreshLabel) {
+		t.Fatalf("failure note = %q", mock.comments)
+	}
+	res := rebaseMergeFailedResult(f)
+	if res.Action != rowActionRefused || res.Why != rebasemerge.FailForeignHead || len(res.Options) != 2 || res.Options[0].Action != decisionActionMergeNow || res.Options[1].Action != decisionActionCloseSuperseded {
+		t.Fatalf("failed result = %+v", res)
 	}
 }

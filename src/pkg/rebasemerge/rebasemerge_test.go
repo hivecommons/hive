@@ -3,6 +3,7 @@ package rebasemerge
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,7 +74,7 @@ func TestAdvanceConflictFailsWithFilesAndOptions(t *testing.T) {
 	// A rebased head that goes dirty again fails as a conflict once the
 	// fixer's attempts are exhausted.
 	g := Arm("o/r", 3, "op", "v5", "aaaa111", false, now)
-	Advance(&g, Observation{Now: now.Add(time.Minute), Head: "bbbb222", State: "open", MergeableState: "blocked"}, Deadlines{})
+	Advance(&g, Observation{Now: now.Add(time.Minute), Head: "bbbb222", State: "open", MergeableState: "blocked", HeadByHive: true}, Deadlines{})
 	if a := Advance(&g, Observation{Now: now.Add(2 * time.Minute), Head: "bbbb222", State: "open", MergeableState: "dirty", RebaseExhausted: true}, Deadlines{}); a != ActionFail || g.FailReason != FailConflict {
 		t.Fatalf("re-dirty: action=%q reason=%q", a, g.FailReason)
 	}
@@ -330,5 +331,40 @@ func TestStoreAndAttemptsPersistenceEdges(t *testing.T) {
 	}
 	if _, ok := NewAttempts(corrupt).Get("o/r", 1); ok {
 		t.Fatal("corrupt attempts loaded an episode")
+	}
+}
+
+// The approval is bound to the head the operator read. A new head on a
+// contributor's PR counts as the rebase only when the hive produced it; a
+// head somebody else pushed fails closed with "approve the new head" as
+// the way out, and nothing merges. The hive's own PR needs no such check.
+func TestAdvanceForeignHeadFailsClosed(t *testing.T) {
+	now := time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
+	f := Arm("o/r", 4, "op", "v5", "aaaa111", false, now)
+	f.Kicked(now, "fixer")
+	if a := Advance(&f, Observation{Now: now.Add(time.Minute), Head: "bbbb222", State: "open", MergeableState: "clean"}, Deadlines{}); a != ActionFail {
+		t.Fatalf("foreign head: action=%q", a)
+	}
+	if f.State != StateFailed || f.FailReason != FailForeignHead || f.ForeignHead != "bbbb222" || f.RebasedHead != "" {
+		t.Fatalf("failed: %+v", f)
+	}
+	if len(f.Options) != 2 || f.Options[0] != OptionReapprove || f.Options[1] != OptionCloseSuperseded {
+		t.Fatalf("options=%v", f.Options)
+	}
+	if got := f.FailureText(); !strings.Contains(got, "someone pushed bbbb222") || !strings.Contains(got, "approval was for aaaa111") || !strings.Contains(got, "nothing merged") {
+		t.Fatalf("text=%q", got)
+	}
+	if last := f.Steps[len(f.Steps)-1]; last.Step != StepFailed || !strings.Contains(last.Detail, "someone other than the hive") {
+		t.Fatalf("last step=%+v", last)
+	}
+	// The hive's rebase of the same PR is the expected path.
+	g := Arm("o/r", 5, "op", "v5", "aaaa111", false, now)
+	if a := Advance(&g, Observation{Now: now.Add(time.Minute), Head: "bbbb222", State: "open", MergeableState: "blocked", HeadByHive: true}, Deadlines{}); a != ActionNone || g.State != StateCIPending || g.RebasedHead != "bbbb222" {
+		t.Fatalf("hive head: action=%q state=%q head=%q", a, g.State, g.RebasedHead)
+	}
+	// A hive-authored PR: any new head is the hive's own lane at work.
+	h := Arm("o/r", 6, "op", "v5", "aaaa111", true, now)
+	if a := Advance(&h, Observation{Now: now.Add(time.Minute), Head: "bbbb222", State: "open", MergeableState: "blocked"}, Deadlines{}); a != ActionNone || h.State != StateCIPending {
+		t.Fatalf("hive-authored: action=%q state=%q", a, h.State)
 	}
 }

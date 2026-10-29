@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -85,6 +86,31 @@ func (c *Client) GetPRMergeState(ctx context.Context, repo string, number int) (
 		}
 	}
 	return st, nil
+}
+
+// CommitByHive reports whether the commit at sha is the hive's own work:
+// its author or committer resolves to the App bot (by login or noreply
+// address) or to an address in the pane identity domain — the fixer's
+// rebase or GitHub's update-branch under the App. A head a person pushed
+// after a rebase-then-merge approval is new content the approval never
+// covered, so the follow-through fails closed on it (hivecommons/hive#15104).
+func (c *Client) CommitByHive(ctx context.Context, repo, sha string) (bool, error) {
+	if c == nil || c.client == nil {
+		return false, ErrNoGitHubClient
+	}
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return false, errors.New("commit by hive: empty SHA")
+	}
+	owner, repoName := c.splitRepo(repo)
+	rc, _, err := c.client.Repositories.GetCommit(WithRESTCaller(ctx, "hive:rebase_merge_head_identity"), owner, repoName, sha, nil)
+	if err != nil {
+		return false, fmt.Errorf("reading %s/%s@%s: %w", owner, repoName, shortSHA(sha), err)
+	}
+	if c.hiveCommitIdentity(safeGetLogin(rc.GetCommitter()), rc.GetCommit().GetCommitter().GetEmail()) {
+		return true, nil
+	}
+	return c.hiveCommitIdentity(safeGetLogin(rc.GetAuthor()), rc.GetCommit().GetAuthor().GetEmail()), nil
 }
 
 // PRConflictCandidates names the files a PR changed that its base also

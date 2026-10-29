@@ -137,6 +137,9 @@ func rebaseMergeQueuedResult(f rebasemerge.FollowThrough, already bool) *RowActi
 func rebaseMergeFailedResult(f rebasemerge.FollowThrough) *RowActionResult {
 	out := &RowActionResult{Action: rowActionRefused, Target: rowActionTarget(f.Repo, rowActionTargetPR, f.Number), Outcome: f.FailureText(), Why: f.FailReason}
 	out.Next = "Pick a way out: adopt the commits into a fresh branch, or close it as superseded."
+	if f.FailReason == rebasemerge.FailForeignHead {
+		out.Next = "Read the new head; if it is what you meant to merge, approve it again — or close the PR as superseded."
+	}
 	out.Options = rebaseMergeFailureOptions(f)
 	return out
 }
@@ -149,6 +152,10 @@ func rebaseMergeFailureOptions(f rebasemerge.FollowThrough) []StageTrackerDecisi
 			out = append(out, decisionOption(decisionActionAdopt, rebasemerge.OptionAdoptFreshLabel, true, ""))
 		case rebasemerge.OptionCloseSuperseded:
 			out = append(out, decisionOption(decisionActionCloseSuperseded, rebasemerge.OptionCloseSupersLabel, true, ""))
+		case rebasemerge.OptionReapprove:
+			opt := decisionOption(decisionActionMergeNow, rebasemerge.OptionReapproveLabel, true, "")
+			opt.Consequence = "records your approval for the head as it is now and has the hive rebase and merge it"
+			out = append(out, opt)
 		}
 	}
 	return out
@@ -169,6 +176,10 @@ func renderRebaseThenMergeFailedComment(f rebasemerge.FollowThrough) string {
 		for _, file := range f.ConflictFiles {
 			body += "- `" + file + "`\n"
 		}
+	}
+	if f.FailReason == rebasemerge.FailForeignHead {
+		body += fmt.Sprintf("\n@%s: from the dashboard row, **%s** or **%s**.", f.Actor, rebasemerge.OptionReapproveLabel, rebasemerge.OptionCloseSupersLabel)
+		return body
 	}
 	body += fmt.Sprintf("\n@%s: from the dashboard row, **%s** or **%s**.", f.Actor, rebasemerge.OptionAdoptFreshLabel, rebasemerge.OptionCloseSupersLabel)
 	return body
@@ -215,6 +226,19 @@ func (s *Server) driveRebaseMerge(ctx context.Context, store *rebasemerge.Store,
 	gh := s.deps.GHClient
 	now := rebaseMergeNow()
 	obs := rebasemerge.Observation{Now: now, Head: st.HeadSHA, State: st.State, Merged: st.Merged, MergeableState: st.MergeableState, CIRed: st.CIRed}
+	if head := strings.TrimSpace(st.HeadSHA); head != "" && head != f.ApprovedHead && head != f.RebasedHead && !f.HiveAuthored && !st.Merged {
+		// The approval was bound to ApprovedHead. Before the new head can
+		// count as "the rebase", make sure the hive produced it; a read
+		// error leaves the decision to the next tick rather than guessing.
+		byHive, err := gh.CommitByHive(ctx, f.Repo, head)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Warn("rebase-then-merge: cannot tell who pushed the new head; waiting", "repo", f.Repo, "number", f.Number, "head", head, "error", err)
+			}
+			return
+		}
+		obs.HeadByHive = byHive
+	}
 	if st.Conflicting() {
 		if files, err := gh.PRConflictCandidates(ctx, f.Repo, st.BaseRef, st.HeadSHA); err == nil {
 			obs.ConflictFiles = files

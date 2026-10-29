@@ -64,14 +64,21 @@ const (
 	FailTimeout      = "rebase-timeout"
 	FailClosed       = "pr-closed"
 	FailNotReachable = "head-not-pushable"
+	// FailForeignHead: the head moved after the approval, but not by the
+	// hive — a person pushed new content. The approval was bound to the
+	// head the operator read, so the follow-through stops instead of
+	// merging content nobody approved.
+	FailForeignHead = "foreign-head"
 )
 
 // Options the failed outcome offers (decision action ids the SPA knows).
 const (
 	OptionAdoptFresh       = "decide:adopt"
 	OptionCloseSuperseded  = "decide:close-superseded"
+	OptionReapprove        = "decide:merge-now"
 	OptionAdoptFreshLabel  = "Adopt into fresh branch"
 	OptionCloseSupersLabel = "Close as superseded"
+	OptionReapproveLabel   = "Approve the new head & merge"
 )
 
 // Default timing. RebaseDeadline bounds how long a kicked rebase may sit
@@ -101,8 +108,11 @@ type FollowThrough struct {
 	// the rebase produced (set once observed). HiveAuthored says whether
 	// the PR is the hive's own (the self lane rebases) or a contributor's
 	// (push-reachable fixer).
-	ApprovedHead string    `json:"approved_head"`
-	RebasedHead  string    `json:"rebased_head,omitempty"`
+	ApprovedHead string `json:"approved_head"`
+	RebasedHead  string `json:"rebased_head,omitempty"`
+	// ForeignHead is the head a person (not the hive) pushed after the
+	// approval, when that is why the follow-through failed.
+	ForeignHead  string    `json:"foreign_head,omitempty"`
 	HiveAuthored bool      `json:"hive_authored,omitempty"`
 	State        string    `json:"state"`
 	ArmedAt      time.Time `json:"armed_at"`
@@ -122,9 +132,14 @@ func (f FollowThrough) Live() bool {
 
 // Observation is what one poll of GitHub saw.
 type Observation struct {
-	Now            time.Time
-	Head           string
-	State          string // open / closed
+	Now   time.Time
+	Head  string
+	State string // open / closed
+	// HeadByHive is true when Head (if it is not the approved head) was
+	// committed by the hive — the fixer's rebase or GitHub's update-branch
+	// under the App. A head somebody else pushed after the approval is new
+	// content, not a rebase, and the follow-through fails closed on it.
+	HeadByHive     bool
 	Merged         bool
 	MergeableState string // clean / unstable / blocked / dirty / behind / unknown
 	// CIRed is true when a required check on Head failed.
@@ -188,6 +203,9 @@ func (f *FollowThrough) fail(now time.Time, reason string, files []string) {
 	f.FailReason = reason
 	f.ConflictFiles = slices.Clone(files)
 	f.Options = []string{OptionAdoptFresh, OptionCloseSuperseded}
+	if reason == FailForeignHead {
+		f.Options = []string{OptionReapprove, OptionCloseSuperseded}
+	}
 	f.step(now, StepFailed, reason)
 }
 
@@ -234,6 +252,12 @@ func Advance(f *FollowThrough, obs Observation, d Deadlines) Action {
 	}
 	head := strings.TrimSpace(obs.Head)
 	if head != "" && head != f.ApprovedHead && head != f.RebasedHead {
+		if !f.HiveAuthored && !obs.HeadByHive {
+			f.ForeignHead = head
+			f.fail(now, FailForeignHead, nil)
+			f.Steps[len(f.Steps)-1].Detail = "head " + short(head) + " was pushed by someone other than the hive; the approval was for " + short(f.ApprovedHead)
+			return ActionFail
+		}
 		f.RebasedHead = head
 		f.State = StateCIPending
 		f.step(now, StepRebased, "new head "+short(head)+" onto "+f.Base)
@@ -314,6 +338,8 @@ func (f FollowThrough) FailureText() string {
 		return fmt.Sprintf("#%d was closed before the hive could merge it.", f.Number)
 	case FailNotReachable:
 		return fmt.Sprintf("The hive cannot push to #%d's head (fork without maintainer edits).", f.Number)
+	case FailForeignHead:
+		return fmt.Sprintf("#%d's head moved after your approval, and not by the hive's rebase: someone pushed %s. Your approval was for %s, so nothing merged; read the new head and approve it again.", f.Number, nonEmpty(short(f.ForeignHead), "a new head"), nonEmpty(short(f.ApprovedHead), "the head you saw"))
 	}
 	return fmt.Sprintf("Rebase-then-merge of #%d failed: %s.", f.Number, f.FailReason)
 }
