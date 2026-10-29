@@ -5,19 +5,22 @@ import (
 	"testing"
 )
 
-// The Version column in the My Hives table stacks its contents ONE ELEMENT PER
-// LINE. That constraint is the whole point of the layout and it is invisible to
-// the compiler: putting two controls back on one line would silently restore
-// the wide column these tests exist to prevent, because a column is as wide as
-// its widest line.
+// The Version column in the My Hives table is a WIDTH-BOUNDED, WRAPPING
+// two-line block: line 1 is the identity (channel pill, running SHA, behind
+// chip, drift count), line 2 the status badge plus every action and the
+// auto-upgrade select. Each line is a wrapping flex row inside a td whose
+// width is capped by CSS, so a long status folds onto a second visual row
+// instead of widening the column. Before this layout the column rendered its
+// pieces on unwrapped nowrap lines and measured ~1300px, pushing the Repos,
+// Maturity and later columns off a 1600px screen.
 //
-// The behavioural proof — that all four lines render and every control still
-// fires — is driven in jsdom against the real dashboardHTML. These tests guard
-// the structure that proof depends on, so a later edit cannot quietly undo it.
+// The compiler cannot see any of this: a later edit that drops the class, the
+// bound or the wrap would silently restore the wide column. These tests guard
+// the structure.
 
-// versionCellExpr isolates the expression that assembles the stacked Version
-// cell, so the assertions below cannot be satisfied by an unrelated part of the
-// 13k-line dashboard string.
+// versionCellExpr isolates the expression that assembles the Version cell, so
+// the assertions below cannot be satisfied by an unrelated part of the
+// dashboard string.
 func versionCellExpr(t *testing.T) string {
 	t.Helper()
 	const start = "var shaLine = "
@@ -33,48 +36,129 @@ func versionCellExpr(t *testing.T) string {
 	return dashboardHTML[i : i+j]
 }
 
-// Four separate lines, each wrapping exactly one thing. The upgrade affordance
-// and the auto-upgrade select must NOT share a line: that pairing is what made
-// #2200's three-line stack fail to narrow the column at all.
-func TestVersionCellPutsEachElementOnItsOwnLine(t *testing.T) {
+// The cell is two classed, wrapping lines: identity and status. The pieces
+// must land on the right line and no line may be an inline nowrap flex row
+// (STACKED_LINE_STYLE), which is what made the column as wide as its longest
+// status string.
+func TestVersionCellIsTwoWrappingLines(t *testing.T) {
 	expr := versionCellExpr(t)
-
-	// Each of the four must appear inside its own STACKED_LINE_STYLE wrapper.
 	for _, frag := range []string{
-		`'<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>'`,
-		`'<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>'`,
-		`'<div style="' + STACKED_LINE_STYLE + '">' + upgradeIcon + '</div>'`,
-		`'<div style="' + STACKED_LINE_STYLE + '">' + autoUpgradeCheck + '</div>'`,
+		`'<div class="version-stack">'`,
+		`'<div class="version-line version-line-id">' + branch + ' ' + shaLine + '</div>'`,
+		`'<div class="version-line version-line-status">' + statusLine + '</div>'`,
+		`var statusLine = (upgradeIcon || '') + (autoUpgradeCheck ? ' ' + autoUpgradeCheck : '');`,
 	} {
 		if !strings.Contains(expr, frag) {
-			t.Errorf("the Version cell does not wrap each element in its own line; missing:\n  %s", frag)
+			t.Errorf("the Version cell is not the two-line wrapping block; missing:\n  %s", frag)
 		}
 	}
+	if strings.Contains(expr, "STACKED_LINE_STYLE") {
+		t.Error("the Version cell still uses STACKED_LINE_STYLE (white-space:nowrap); " +
+			"a nowrap line makes the column as wide as its longest status string")
+	}
+}
 
-	// The regression guard proper: the two controls must never be concatenated
-	// into a single line variable again.
-	for _, bad := range []string{
-		"upgradeIcon + autoUpgradeCheck",
-		"autoUpgradeCheck + upgradeIcon",
-	} {
-		if strings.Contains(expr, bad) {
-			t.Errorf("the upgrade affordance and the auto-upgrade select share a line (%q); "+
-				"the column is then as wide as the PAIR and the stacking buys nothing", bad)
+// The status line is conditional: a read-only viewer has neither an action
+// nor a mode select and must get a one-line cell, not a blank second row.
+func TestVersionCellOmitsEmptyStatusLine(t *testing.T) {
+	expr := versionCellExpr(t)
+	if !strings.Contains(expr, "(statusLine ?") {
+		t.Error("the Version cell emits the status line unconditionally; a non-owner would get a blank line")
+	}
+}
+
+// The td carries the class the width bound hangs on, and the CSS actually
+// bounds and wraps it. Without the max-width the flex-wrap never triggers;
+// without white-space:normal the inherited nowrap wins.
+func TestVersionColumnIsWidthBoundedAndWraps(t *testing.T) {
+	html := dashboardHTML
+	if !strings.Contains(html, `'<td class="version-cell" style="font-size:0.7rem">' + versionCell + '</td>'`) {
+		t.Error("the Version <td> lost the version-cell class the width bound is keyed on")
+	}
+	css := cssRule(t, ".hive-table td.version-cell")
+	for _, want := range []string{"min-width:", "max-width:", "white-space: normal", "overflow-wrap: anywhere"} {
+		if !strings.Contains(css, want) {
+			t.Errorf(".hive-table td.version-cell is missing %q; the column can grow unbounded again", want)
+		}
+	}
+	line := cssRule(t, ".version-line")
+	for _, want := range []string{"flex-wrap: wrap", "white-space: normal"} {
+		if !strings.Contains(line, want) {
+			t.Errorf(".version-line is missing %q; a crowded status line widens the column instead of folding", want)
 		}
 	}
 }
 
-// Lines 3 and 4 are conditional. A read-only viewer has neither an upgrade
-// action nor a mode select, and must get a two-line cell — not a four-line cell
-// containing two empty rows, which would pad every non-owner row for nothing.
-func TestVersionCellOmitsEmptyLines(t *testing.T) {
-	expr := versionCellExpr(t)
-	for _, guard := range []string{"(upgradeIcon ?", "(autoUpgradeCheck ?"} {
-		if !strings.Contains(expr, guard) {
-			t.Errorf("the Version cell emits a line unconditionally (missing guard %q); "+
-				"a non-owner would get a blank line", guard)
+// The Repos cell had the same one-line problem ("as: <identity>" never
+// wrapped). It is bounded and wraps the same way.
+func TestReposColumnIsWidthBoundedAndWraps(t *testing.T) {
+	css := cssRule(t, ".hive-table td.repos-cell")
+	for _, want := range []string{"max-width:", "white-space: normal", "overflow-wrap: anywhere"} {
+		if !strings.Contains(css, want) {
+			t.Errorf(".hive-table td.repos-cell is missing %q", want)
 		}
 	}
+	body := funcBody(t, "var buildRow = function(")
+	if !strings.Contains(body, `'<td class="repos-cell" title="`) {
+		t.Error("the Repos <td> lost the repos-cell class the width bound is keyed on")
+	}
+	if !strings.Contains(body, `'<div class="repos-as" style="' + STACKED_LINE_STYLE + ';white-space:normal;overflow-wrap:anywhere;color:var(--muted)"`) {
+		t.Error("the Repos \"as:\" line no longer overrides the nowrap of STACKED_LINE_STYLE")
+	}
+}
+
+// Long explanations live in hover titles, not inline: the queued badge shows
+// only "behind by N · next check …" and the "why not now" sentence rides in
+// its title; the progress pill shows the state (and time left on a drain)
+// while the agents holding the drain and a missed window's reason go to the
+// title. Inline, those sentences were the widest things in the column.
+func TestVersionColumnLongExplanationsMoveToTitles(t *testing.T) {
+	body := funcBody(t, "var buildRow = function(")
+	if !strings.Contains(body, "var queuedLabel = behindLabel + ' · ' + nextCheck;") {
+		t.Error("the queued badge label is no longer the short state; keep it to behind/next-check")
+	}
+	if strings.Contains(body, "' · why not now: ' + whyNotNow") {
+		t.Error("the queued badge renders the 'why not now' sentence inline again")
+	}
+	for _, want := range []string{
+		"var whyNotNowNote = ' Why not now: ' + whyNotNow + '.';",
+		"'.' + whyNotNowNote;",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the queued badge title lost the 'why not now' explanation (%q); moving it off the badge must not delete it", want)
+		}
+	}
+	prog := funcBody(t, "function renderUpgradeProgress(")
+	for _, want := range []string{
+		"if (agents) tipExtra = '\\n' + agents;",
+		"tipExtra = '\\n' + st.reason;",
+		"var tip = (st.detail || label) + tipExtra;",
+	} {
+		if !strings.Contains(prog, want) {
+			t.Errorf("renderUpgradeProgress is missing %q; the agents/reason must survive in the pill title", want)
+		}
+	}
+	for _, bad := range []string{"(agents ? ' · ' + agents : '')", "extra = ' · ' + st.reason;"} {
+		if strings.Contains(prog, bad) {
+			t.Errorf("renderUpgradeProgress renders %q inline again; that sentence widens the column", bad)
+		}
+	}
+}
+
+// cssRule returns the declaration block of the first rule whose selector
+// list starts with sel.
+func cssRule(t *testing.T, sel string) string {
+	t.Helper()
+	i := strings.Index(dashboardHTML, "\n      "+sel+" {")
+	if i < 0 {
+		i = strings.Index(dashboardHTML, "\n    "+sel+" {")
+	}
+	if i < 0 {
+		t.Fatalf("CSS rule %q not found in dashboard.html", sel)
+	}
+	rest := dashboardHTML[i:]
+	j := strings.Index(rest, "}")
+	return rest[:j]
 }
 
 // The auto-upgrade control is icon-only, so the meaning MUST live in the
