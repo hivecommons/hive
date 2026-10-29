@@ -110,8 +110,8 @@
     .ham-head-cols .ham-seg.ham-head-lead { flex: 0 0 calc((100% - 4em - 6 * var(--sp-1)) / 2 + 2 * var(--sp-1)); padding: 0 var(--sp-6) 0 0; }
     .ham-head-cols .ham-seg.ham-head-lead.ham-head-wide { flex: 1 1 0; }
     /* The PR cell is one line: connector, author icon + #N + title, lineage
-       chip and base pill sit side by side; the title gives way first (then
-       the lineage chip), the pills and the connector never shrink
+       chip and base pill sit side by side; the lineage chip gives way first
+       (flex-shrink 2), then the title (1), the pills and the connector never shrink
        (hivecommons/hive "consolidate from 3 lines of text to 1"). */
     .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: var(--sp-2); min-width: 0; overflow: hidden; }
     .ham-head-cols .ham-seg.ham-head-pr > .ham-linked-ico, .ham-head-cols .ham-seg.ham-head-pr > .ham-badge { flex: 0 0 auto; }
