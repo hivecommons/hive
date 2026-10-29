@@ -263,6 +263,7 @@ hivectl governor budget-set --file budget.yaml
 hivectl governor repos-set --file repos.yaml
 hivectl governor agent-add ux-discovery --backend copilot --model claude-sonnet-4-6
 hivectl governor agent-remove ux-discovery --yes
+hivectl governor hotspots --repo hivecommons/hive   # merge hotspots: files concurrent PRs keep touching (GET /api/hotspots)
 ```
 
 ### claim / unclaim / claims — issue claims

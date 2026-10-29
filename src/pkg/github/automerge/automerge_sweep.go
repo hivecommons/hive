@@ -195,6 +195,11 @@ type Options struct {
 	// RebaseResolver receives the train's rebase-resolve requests for a
 	// conflicting PR; nil leaves a dirty front on its conflicting path.
 	RebaseResolver RebaseResolver
+	// HotspotRecorder receives the merge train's PR file lists and the
+	// conflicts it asks the resolver to repair, so the merge-hotspot
+	// advisor (pkg/hotspot) derives its evidence without polling GitHub
+	// again; nil records nothing.
+	HotspotRecorder HotspotRecorder
 }
 
 // Engine owns the automerge sweep policy state.
@@ -317,6 +322,7 @@ type Engine struct {
 
 	mergeTrainPolicy func() MergeTrainPolicy
 	rebaseResolver   RebaseResolver
+	hotspotRecorder  HotspotRecorder
 	mergeTrainState
 }
 
@@ -369,6 +375,7 @@ func New(transport Transport, opts Options) *Engine {
 		sweepTrigger:                      opts.SweepTrigger,
 		mergeTrainPolicy:                  mergeTrainPolicyOption(opts),
 		rebaseResolver:                    opts.RebaseResolver,
+		hotspotRecorder:                   opts.HotspotRecorder,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}

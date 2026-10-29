@@ -1307,6 +1307,25 @@ governor:
 
   Lower it to resume sooner after a reset at the cost of a rebuffed run per probe; raise it to waste less while noticing later.
 
+## Merge-hotspot advisor (`governor.hotspot_*`)
+
+The hive already predicts PR file overlap for the merge train. The advisor reuses that evidence — the train's per-PR file lists and the conflicts it hands to the rebase resolver, plus the rebase follow-through's conflict records — to find files that concurrent PRs keep colliding on, and files one modularize issue per hotspot for the ci-maintainer lane. It never lists PRs or files from GitHub itself; its only reads are the hotspot file's current content (size and top-level symbols) and the state of issues it filed earlier.
+
+- A file is a **hotspot** when, over the rolling window, at least `hotspot_min_prs` distinct PRs touched it and at least `hotspot_min_overlaps` pairs of them were open at the same time. Score = concurrent pairs × a size weight (1 / 1.25 / 1.5 / 2 at 800 / 1500 / 4000 lines) + 2 × attributed conflicts. Hunk-level "same region" weighting is not available from the train's records and is skipped.
+- **Don't splinter.** A split is only recommended for code when the file has at least `hotspot_min_lines` lines **and** two or more top-level symbol groups (Go: funcs and types via `go/ast`, methods grouped under their receiver; JS/TS/Python: top-level declarations; Markdown: `##` headings). The proposal targets at most 4 files of at least 150 lines, no behaviour change, exported API unchanged, tests move with the code.
+- **By kind.** Docs (`*.md`, `*.rst`, `*.txt`) are reported but only recommended for a by-section split above 1500 lines (the `docs/api-reference/<area>.md` pattern). Generated files (`// Code generated … DO NOT EDIT`, `*.pb.go`, the dashboard SPA under `pkg/dashboard/static/` → `static-src/`) point at their source. Lock and data files are report-only.
+- **One issue per file.** Title `refactor: <path> is a merge hotspot — split into <N> units`, labels `agent/ci-maintainer` + `kind/cleanup`, origin `governor`, body marker `<!-- hive:hotspot file=<path> -->`, evidence table, the top-level units, a concrete split proposal and the don't-splinter rule. While that issue is open no second one is filed; after it closes the file waits `hotspot_refile_days` before it can be filed again. Issues go through the writeback gate as `issue_file` (a paused repo or `writeback.per_repo[<repo>].mode: off` stops them) and are skipped when the GitHub budget governor is skipping optional sweeps.
+- **Where to look.** `GET /api/hotspots` (or `hivectl governor hotspots [--repo owner/name]`) lists every hotspot with its recommendation and issue; `/api/status` carries `hotspots: {count, actionable, filed}`. State lives in `/data/hotspots.json`; the analysis runs at most hourly in the eval cycle, the intake on every merge-train sweep. A PR the train has not seen for two hours has its interval closed at its last sighting.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `governor.hotspot_enabled` | `true` | Set `false` to keep the report and `/api/hotspots` but never file an issue. |
+| `governor.hotspot_window_days` | `7` | Rolling window of merged and open PRs considered. |
+| `governor.hotspot_min_prs` | `6` | Distinct PRs touching a file in the window before it is reported. |
+| `governor.hotspot_min_overlaps` | `3` | Concurrent PR pairs on the file before it is reported. |
+| `governor.hotspot_min_lines` | `800` | Smallest code file a split is recommended for. |
+| `governor.hotspot_refile_days` | `30` | Wait after a modularize issue closes before the same file may be filed again. |
+
 ## Delivery SLA
 
 The **Throughput** section of the dashboard carries a **Delivery SLA** block

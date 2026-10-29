@@ -1696,6 +1696,20 @@ type GovernorConfig struct {
 	// the stage/085 decision park. Default on (hivecommons/hive#14965).
 	AutoCloseSuperseded *bool `yaml:"auto_close_superseded,omitempty" json:"auto_close_superseded,omitempty"`
 
+	// Hotspot* tune the merge-hotspot advisor, which scores files that
+	// concurrent PRs keep touching (from merge-train file lists and
+	// rebase-conflict records the hive already holds — no extra GitHub
+	// polling) and files one modularize issue per hotspot for the
+	// ci-maintainer lane through the writeback gate. Zero means the
+	// default; see Hotspot*() accessors. Set hotspot_enabled: false to
+	// keep GET /api/hotspots reporting but never file an issue.
+	HotspotEnabled     *bool `yaml:"hotspot_enabled,omitempty" json:"hotspot_enabled,omitempty"`
+	HotspotWindowDays  int   `yaml:"hotspot_window_days,omitempty" json:"hotspot_window_days,omitempty"`
+	HotspotMinPRs      int   `yaml:"hotspot_min_prs,omitempty" json:"hotspot_min_prs,omitempty"`
+	HotspotMinOverlaps int   `yaml:"hotspot_min_overlaps,omitempty" json:"hotspot_min_overlaps,omitempty"`
+	HotspotMinLines    int   `yaml:"hotspot_min_lines,omitempty" json:"hotspot_min_lines,omitempty"`
+	HotspotRefileDays  int   `yaml:"hotspot_refile_days,omitempty" json:"hotspot_refile_days,omitempty"`
+
 	// ProjectObservability configures what the telemetry and operations agents
 	// recommend for the MANAGED PROJECT. It is deliberately separate from
 	// Config.OTel/Tracing, which export Hive's own telemetry.
@@ -2193,6 +2207,52 @@ func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
 // with its default (on).
 func (g GovernorConfig) AutoCloseSupersededEnabled() bool {
 	return g.AutoCloseSuperseded == nil || *g.AutoCloseSuperseded
+}
+
+// Defaults for the merge-hotspot advisor (GovernorConfig.Hotspot*).
+const (
+	DefaultHotspotWindowDays  = 7
+	DefaultHotspotMinPRs      = 6
+	DefaultHotspotMinOverlaps = 3
+	DefaultHotspotMinLines    = 800
+	DefaultHotspotRefileDays  = 30
+)
+
+// HotspotIssuesEnabled resolves GovernorConfig.HotspotEnabled (default on).
+func (g GovernorConfig) HotspotIssuesEnabled() bool {
+	return g.HotspotEnabled == nil || *g.HotspotEnabled
+}
+
+func hotspotOrDefault(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	return v
+}
+
+// HotspotWindowDaysOrDefault resolves governor.hotspot_window_days.
+func (g GovernorConfig) HotspotWindowDaysOrDefault() int {
+	return hotspotOrDefault(g.HotspotWindowDays, DefaultHotspotWindowDays)
+}
+
+// HotspotMinPRsOrDefault resolves governor.hotspot_min_prs.
+func (g GovernorConfig) HotspotMinPRsOrDefault() int {
+	return hotspotOrDefault(g.HotspotMinPRs, DefaultHotspotMinPRs)
+}
+
+// HotspotMinOverlapsOrDefault resolves governor.hotspot_min_overlaps.
+func (g GovernorConfig) HotspotMinOverlapsOrDefault() int {
+	return hotspotOrDefault(g.HotspotMinOverlaps, DefaultHotspotMinOverlaps)
+}
+
+// HotspotMinLinesOrDefault resolves governor.hotspot_min_lines.
+func (g GovernorConfig) HotspotMinLinesOrDefault() int {
+	return hotspotOrDefault(g.HotspotMinLines, DefaultHotspotMinLines)
+}
+
+// HotspotRefileDaysOrDefault resolves governor.hotspot_refile_days.
+func (g GovernorConfig) HotspotRefileDaysOrDefault() int {
+	return hotspotOrDefault(g.HotspotRefileDays, DefaultHotspotRefileDays)
 }
 
 // Bounds for AdvisoryConfig.UpdateIntervalS. Exported because the dashboard

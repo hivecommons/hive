@@ -244,7 +244,13 @@ func (s *Server) driveRebaseMerge(ctx context.Context, store *rebasemerge.Store,
 			}
 		}
 	}
+	wasFailed := f.State == rebasemerge.StateFailed
 	action := rebasemerge.Advance(&f, obs, rebasemerge.Deadlines{})
+	if !wasFailed && f.State == rebasemerge.StateFailed && f.FailReason == rebasemerge.FailConflict && len(f.ConflictFiles) > 0 {
+		if src := s.hotspotSourceRef(); src != nil {
+			src.ObserveConflict(f.Repo, f.Number, f.ConflictFiles)
+		}
+	}
 	switch action {
 	case rebasemerge.ActionMerge:
 		head := nonEmptyString(f.RebasedHead, f.ApprovedHead)

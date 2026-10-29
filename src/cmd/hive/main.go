@@ -2588,6 +2588,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		}
 		return automerge.MergeTrainPolicy{Enabled: b.cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: b.cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
 	}
+	// Merge-hotspot advisor intake (hotspot_advisor.go): the train's file
+	// lists and sibling conflicts are the advisor's only evidence.
+	autoMergeOpts.HotspotRecorder = hotspotRecorder{store: hotspotStore()}
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
 		laneGate := relayLanePolicyGate(autoMergeOpts)(client)
 		setMergeEligibleLaneGate(laneGate)
@@ -2781,6 +2784,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.dashSrv = deps.newServer(b.cfg.Dashboard.Port, b.cfg.Dashboard.AuthToken, b.logger)
 	worksource.SetRunStageAccessor(b.dashSrv.RunStageAccessor())
 	b.dashSrv.SetWritebackGate(b.writebackGate())
+	b.dashSrv.SetHotspotSource(hotspotDashSource{store: hotspotStore()})
 	b.dashSrv.SetMutationStats(func() interface{} {
 		if b.mutationStats == nil {
 			return nil
@@ -7387,6 +7391,15 @@ func runEvalCycle(
 	// upstream merged PR or release that still applies to the fork. Opens
 	// issues only, never PRs; the watermark and dedupe index live on the PVC.
 	runUpstreamWatch(ctx, cfg, ghClient, logger)
+
+	// Merge-hotspot advisor: at most hourly, score the files concurrent
+	// PRs keep colliding on (from the merge train's own records) and file
+	// one modularize issue per hotspot for the ci-maintainer lane through
+	// the writeback gate. Skipped with the other optional sweeps when the
+	// GitHub budget is tight.
+	if !budgetDecision.SkipOptional {
+		runHotspotAdvisor(ctx, cfg, ghClient, actionable, logger)
+	}
 
 	if !budgetDecision.SkipUnstick {
 		shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{

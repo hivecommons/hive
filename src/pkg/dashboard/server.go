@@ -503,6 +503,9 @@ type Server struct {
 	writebackMu      sync.RWMutex
 	writebackGate    *writeback.Gate
 	sentinelFindings sentinelFindings
+	// hotspotSource is the merge-hotspot advisor's store (api_hotspots.go).
+	hotspotMu     sync.RWMutex
+	hotspotSource HotspotSource
 
 	// forgeAppInventoryFn supplies the Forge App tab's key inventory from
 	// cmd/hive (resolved active key path + per-app-id PVC keys, fingerprints
@@ -3670,6 +3673,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	payload.UpgradeProgress = s.upgradeProgress(status, now)
 	payload.Writeback = s.WritebackStatus()
+	payload.Hotspots = s.HotspotStatusBlock()
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
@@ -3692,6 +3696,10 @@ type statusWithWebhooks struct {
 	// writes in the last 24h, per-repo first_seen / writable / mode, and the
 	// banners for repos the hive can now write to but left untouched.
 	Writeback *writeback.Status `json:"writeback,omitempty"`
+	// Hotspots is the merge-hotspot advisor's one-line summary: files hit by
+	// concurrent PRs in the window, how many warrant a split, how many have
+	// a modularize issue filed. Absent when the advisor is not wired.
+	Hotspots *HotspotStatus `json:"hotspots,omitempty"`
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {
