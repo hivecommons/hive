@@ -1,0 +1,1 @@
+- Automerge sweeps enqueue eligible PRs into GitHub's native merge queue with the validated head pinned, report queue position and state, and withdraw Hive-enqueued entries when their merge gates break while preserving entries queued by people.
