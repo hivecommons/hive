@@ -2895,7 +2895,8 @@ type stageTrackerLinkInfo struct {
 	at          time.Time
 }
 
-// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#number.
+// stageTrackerLinkMemo memoises link lookups keyed by owner/repo#issue@excludedPR.
+// The excluded carrying PR affects which merged closer the lookup returns.
 type stageTrackerLinkMemo struct {
 	mu sync.Mutex
 	m  map[string]stageTrackerLinkInfo
@@ -2938,7 +2939,8 @@ func (in stageTrackerLinkInfo) ttl() time.Duration {
 // stageTrackerEnrichSoftLinks gives the links no listed issue or closing
 // reference titled (soft refs / title / mention links, and closing keywords
 // hive read from the PR text) a title and state, from one issues GET per
-// distinct same-repo number, memoised across rebuilds (stageTrackerLinkMemo).
+// distinct same-repo number and excluded carrying PR, memoised across rebuilds
+// (stageTrackerLinkMemo).
 // A closed issue also gets its stateReason and the merged PR that closed it
 // (ClosedBy, from GitHub's closedByPullRequestsReferences), so a follow-up
 // PR opened against an issue an earlier merge already delivered reads
@@ -2967,7 +2969,7 @@ func (s *Server) stageTrackerEnrichSoftLinks(items []StageTrackerItem, qualify f
 		kept := pr.LinkedIssues[:0]
 		for _, li := range pr.LinkedIssues {
 			if !li.Listed && li.Title == "" && li.State == "" {
-				key := owner + "/" + name + "#" + strconv.Itoa(li.Number)
+				key := owner + "/" + name + "#" + strconv.Itoa(li.Number) + "@" + strconv.Itoa(pr.Number)
 				in, hit := s.stageTrackerLinks.get(key, now)
 				if !hit && lookups < stageTrackerLinkLookups && ctx.Err() == nil {
 					lookups++
