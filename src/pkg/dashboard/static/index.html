@@ -17055,6 +17055,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // (hivecommons/hive#14586). Never on a PR.
     const STAGE_TRACKER_TRIAGE_STAGE = 15;
     const STAGE_TRACKER_ACTIONABLE_STAGE = 10;
+    const STAGE_TRACKER_TRIAGE_LABEL = 'triage/accepted';
+    const STAGE_TRACKER_NEW_MOVER_MAINTAINER = 'maintainer';
+    const STAGE_TRACKER_NEW_MOVER_HIVE = 'hive';
+    const STAGE_TRACKER_MINUTE_MS = 60000;
     const STAGE_TRACKER_WHY_WRITE = 'Sign in with write access to this repo';
     const STAGE_TRACKER_WHY_ROLE = 'Needs the merger or owner role';
     const STAGE_TRACKER_DELEGATE_POLL_MS = 1500;
@@ -17171,7 +17175,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const user = !!window._hiveUser || owner;
       if (typeof ensureRepoHoldPermission === 'function') ensureRepoHoldPermission(repo);
       const canHold = owner || (typeof repoHoldPermissionKnown === 'function' && repoHoldPermissionKnown(repo)) ? true : (user ? null : false);
-      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger') };
+      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor: (window._lastStatus && window._lastStatus.governor) || null };
     }
     // Pure: the item a row's "Decide…" acts on. A PR parked at 085 (the
     // "Needs human decision" pill on the Merge gate column) decides itself;
@@ -17250,7 +17254,49 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerTriageNeeded(item) {
       if (!item || item.kind === 'pr') return false;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      return (Number(item.stage) || 0) === STAGE_TRACKER_TRIAGE_STAGE || mods.indexOf('needs-triage') >= 0;
+      if ((Number(item.stage) || 0) === STAGE_TRACKER_TRIAGE_STAGE || mods.indexOf('needs-triage') >= 0) return true;
+      // A label-less 000-new issue the reporter-trust gate holds for a
+      // maintainer (next_mover: maintainer) before the first stage pass
+      // has even placed it at 015 (hivecommons/hive#15215).
+      const fresh = stageTrackerTriageNewState(item);
+      return !!fresh && fresh.next_mover === STAGE_TRACKER_NEW_MOVER_MAINTAINER;
+    }
+    // Pure: the 000-new narration of a row, or null (stageTrackerNewState
+    // without the dependency, for the row-actions helpers).
+    function stageTrackerTriageNewState(item) {
+      return item && (Number(item.stage) || 0) === 0 && item.new && typeof item.new === 'object' ? item.new : null;
+    }
+    // Pure: the triage label Accept triage applies — the one the row's
+    // 000-new narration names in backticks, else the default.
+    function stageTrackerTriageLabel(item) {
+      const fresh = stageTrackerTriageNewState(item);
+      const m = fresh && typeof fresh.next_mover_text === 'string' ? fresh.next_mover_text.match(/`([^`]+)`/) : null;
+      return m ? m[1] : STAGE_TRACKER_TRIAGE_LABEL;
+    }
+    // Pure: milliseconds until the hive's next pass for a row — the 000-new
+    // narration's next_pass_at, else the governor's published next kick —
+    // or null when neither is known.
+    function stageTrackerNextPassLeftMs(item, nowMs, governor) {
+      const fresh = stageTrackerTriageNewState(item);
+      let at = Date.parse((fresh && fresh.next_pass_at) || '');
+      if (!at && governor) at = Date.parse(governor.nextKickAt || '');
+      return at ? at - nowMs : null;
+    }
+    // Pure: "≈13 min" / "due now" from a next-pass delta, '' when unknown.
+    function stageTrackerNextPassWord(leftMs) {
+      if (leftMs == null || !Number.isFinite(leftMs)) return '';
+      if (leftMs <= 0) return 'due now';
+      const min = Math.max(1, Math.round(leftMs / STAGE_TRACKER_MINUTE_MS));
+      return '≈' + min + ' min';
+    }
+    // Pure: the Accept triage hint — what the click writes, as whom, and
+    // when the hive takes it: "adds `triage/accepted` as @you; the hive
+    // takes it on its next pass (≈13 min)".
+    function stageTrackerTriageHint(item, ctx, nowMs, governor) {
+      ctx = ctx || {};
+      const who = ctx.login ? '@' + ctx.login : 'you';
+      const when = stageTrackerNextPassWord(stageTrackerNextPassLeftMs(item, nowMs || Date.now(), governor));
+      return 'adds `' + stageTrackerTriageLabel(item) + '` as ' + who + '; the hive takes it on its next pass' + (when ? ' (' + when + ')' : '');
     }
     // Pure: the item as it reads once triage is accepted — 010 Actionable,
     // the needs-triage pill and the 👤 next-move gone — for the optimistic
@@ -17263,6 +17309,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         next.stage_slug = 'actionable';
         next.stage_label = 'stage/010-actionable';
         next.caption = ''; next.actor = ''; next.reason = '';
+        return next;
+      }
+      // A 000-new row has no stage label to move yet: the triage gate reads
+      // done and the hive's stage-label pass is the next mover, exactly
+      // what the server narrates once the label is on.
+      const fresh = stageTrackerTriageNewState(item);
+      if (fresh && fresh.next_mover === STAGE_TRACKER_NEW_MOVER_MAINTAINER) {
+        const text = 'the stage-label pass (→ 010 actionable), then the scanner';
+        const gates = (Array.isArray(fresh.gates) ? fresh.gates : []).map(g => g && g.name === 'triage' ? Object.assign({}, g, { state: 'done', text: 'triage accepted (' + stageTrackerTriageLabel(item) + ')' }) : (g && g.name === 'actionable' ? Object.assign({}, g, { state: 'next' }) : g));
+        next.new = Object.assign({}, fresh, { next_mover: STAGE_TRACKER_NEW_MOVER_HIVE, next_mover_text: text, gates, text: 'New · waiting for ' + text });
+        next.caption = next.new.text; next.actor = STAGE_TRACKER_NEW_MOVER_HIVE;
       }
       return next;
     }
@@ -17316,19 +17373,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const taken = {};
       for (const o of submenu) taken[o.id] = true;
       const lead = stageTrackerLeadActions(item, ctx, taken);
+      // Accept triage heads the menu of an issue waiting on a maintainer's
+      // triage (015, the needs-triage pill, or a 000-new reporter-trust
+      // hold): the ask the row makes has its answer first.
+      const triage = stageTrackerTriageNeeded(item);
+      if (triage) out.push({ id: 'accept-triage', label: 'Accept triage', hint: stageTrackerTriageHint(item, ctx, ctx.nowMs, ctx.governor), enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, lead: true });
       for (const a of lead) out.push(a);
       if (target) {
         const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
-        out.push({ id: 'decide', label: 'Decide' + on + '…', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, submenu, target, sep: lead.length > 0 });
+        out.push({ id: 'decide', label: 'Decide' + on + '…', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, submenu, target, sep: lead.length > 0 || triage });
       }
       // A nudged contributor PR the engine would adopt but for the owner's
       // say-so (maintainer_policy: ask) offers Adopt (hivecommons/hive#14524).
       if (typeof stageTrackerAdoptOffered === 'function' && stageTrackerAdoptOffered(item)) out.push({ id: 'decide:adopt', label: STAGE_TRACKER_ACTION_LABELS['decide:adopt'] + '…', hint: 'adoption', enabled: write && !!ctx.user, why: write && ctx.user ? '' : STAGE_TRACKER_WHY_WRITE });
       out.push(has('hold')
-        ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
-        : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
+        ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target }
+        : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
-      if (stageTrackerTriageNeeded(item)) out.push({ id: 'accept-triage', label: 'Accept triage', hint: 'triage/accepted', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
       if (!has('needs-human')) out.push({ id: 'needs-human', label: 'Mark needs-human…', enabled: !!ctx.canHuman, why: ctx.canHuman ? '' : STAGE_TRACKER_WHY_ROLE });
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });

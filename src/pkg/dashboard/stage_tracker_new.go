@@ -93,7 +93,18 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 	if n.Since == nil {
 		n.Since = it.UpdatedAt
 	}
-	triagePending := it.Kind == "issue" && (it.Bucket == stageengineReporterTriageBucket || slices.Contains(it.Modifiers, modNeedsTriage))
+	triageLabels := []string{config.DefaultUntrustedRequireLabels[0]}
+	if filter != nil {
+		if l := filter.ReporterTrustRequiredLabelsForNotice(); len(l) > 0 {
+			triageLabels = l
+		}
+	}
+	// The labels are the newer fact: once a maintainer's triage label is on
+	// (the row menu's Accept triage, or applied by hand) the reporter-trust
+	// gate admits the issue on its next poll, so the row waits on the hive
+	// even while the bucket still says reporter_triage.
+	triageAccepted := it.Kind == "issue" && stageTrackerHasAnyLabel(it.Labels, triageLabels)
+	triagePending := it.Kind == "issue" && !triageAccepted && (it.Bucket == stageengineReporterTriageBucket || slices.Contains(it.Modifiers, modNeedsTriage))
 	if t, ok := parseGovernorNextKick(governor.NextKickAt); ok {
 		n.NextPassAt = &t
 		if left := t.Sub(now); left > 0 {
@@ -110,12 +121,7 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 	switch {
 	case triagePending:
 		n.NextMover = StageTrackerMoverMaintainer
-		labels := []string{"triage/accepted"}
-		if filter != nil {
-			if l := filter.ReporterTrustRequiredLabelsForNotice(); len(l) > 0 {
-				labels = l
-			}
-		}
+		labels := triageLabels
 		n.NextMoverText = "a maintainer's triage (add `" + strings.Join(labels, "` or `") + "`)"
 		n.Gates = []StageTrackerGate{
 			{Name: "triage", State: StageTrackerGateNext, Text: "a maintainer accepts triage (" + strings.Join(labels, " / ") + ")"},
@@ -132,8 +138,12 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 	default:
 		n.NextMover = StageTrackerMoverHive
 		n.NextMoverText = "the stage-label pass (→ 010 actionable), then the scanner"
+		triageGate := "reporter admitted; no triage label needed"
+		if triageAccepted {
+			triageGate = "triage accepted (" + strings.Join(stageTrackerLabelsOn(it.Labels, triageLabels), " / ") + ")"
+		}
 		n.Gates = []StageTrackerGate{
-			{Name: "triage", State: StageTrackerGateDone, Text: "reporter admitted; no triage label needed"},
+			{Name: "triage", State: StageTrackerGateDone, Text: triageGate},
 			{Name: "actionable", State: StageTrackerGateNext, Text: "the stage-label pass marks it 010 actionable"},
 			{Name: "claimed", State: StageTrackerGateLater, Text: "the scanner claims it (020)"},
 		}
@@ -145,6 +155,27 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 		n.Text += fmt.Sprintf("; the hive's %s", pass)
 	}
 	return n
+}
+
+// stageTrackerHasAnyLabel reports whether labels carries any of want
+// (case-insensitive, trimmed).
+func stageTrackerHasAnyLabel(labels, want []string) bool {
+	return len(stageTrackerLabelsOn(labels, want)) > 0
+}
+
+// stageTrackerLabelsOn returns the members of want that labels carries, in
+// want's order.
+func stageTrackerLabelsOn(labels, want []string) []string {
+	var on []string
+	for _, w := range want {
+		for _, l := range labels {
+			if strings.EqualFold(strings.TrimSpace(l), strings.TrimSpace(w)) {
+				on = append(on, strings.TrimSpace(w))
+				break
+			}
+		}
+	}
+	return on
 }
 
 // parseGovernorNextKick reads FrontendGovernor.NextKickAt (RFC3339).

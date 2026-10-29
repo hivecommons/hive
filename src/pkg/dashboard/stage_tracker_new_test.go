@@ -151,6 +151,22 @@ func TestStageTrackerNewState(t *testing.T) {
 	if n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != "New · waiting for a maintainer's triage (add `triage/accepted` or `kind/approved`); the hive's next pass in 5m" {
 		t.Fatalf("reporter_triage issue = %+v", n)
 	}
+	// The accept label already on (the row menu's Accept triage, before the
+	// gate's next poll moves the bucket): the hive is the next mover and the
+	// triage gate reads done (hivecommons/hive#15215).
+	accepted := triage
+	accepted.Labels = []string{"enhancement", "Kind/Approved"}
+	n = stageTrackerNewState(accepted, false, filter, gov, now)
+	if n == nil || n.NextMover != StageTrackerMoverHive || n.Text != "New · waiting for the stage-label pass (→ 010 actionable), then the scanner (next pass in 5m)" {
+		t.Fatalf("reporter_triage issue with the accept label = %+v", n)
+	}
+	if len(n.Gates) != 3 || n.Gates[0].State != StageTrackerGateDone || n.Gates[0].Text != "triage accepted (kind/approved)" || n.Gates[1].State != StageTrackerGateNext {
+		t.Fatalf("accepted gates = %+v", n.Gates)
+	}
+	accepted.Modifiers = []string{modNeedsTriage}
+	if n = stageTrackerNewState(accepted, false, filter, gov, now); n == nil || n.NextMover != StageTrackerMoverHive {
+		t.Fatalf("a stale needs-triage beside the accept label = %+v", n)
+	}
 	labelled := base
 	labelled.Modifiers = []string{modNeedsTriage}
 	if n = stageTrackerNewState(labelled, false, nil, FrontendGovernor{}, now); n == nil || n.NextMover != StageTrackerMoverMaintainer || n.Text != "New · waiting for a maintainer's triage (add `triage/accepted`)" || n.NextPassAt != nil {
