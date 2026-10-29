@@ -375,6 +375,10 @@
     .ham-plan-finding { color: var(--status-error); }
     .ham-plan-ruled-out { padding-left: 1.4em; }
     .ham-plan-rails { font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-lineage { color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; gap: var(--sp-1); }
+    .ham-lineage:hover { color: var(--text); }
+    .ham-plan-body, .ham-plan-note { white-space: pre-wrap; }
+    .ham-plan-note { color: var(--muted); font-size: var(--fs-xs); }
     .ham-seg.active .cue-acting-cap { margin-left: var(--sp-2); }
     .cue-acting-cap { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
     .cue-acting-spin { width: 10px; height: 10px; margin-right: 0; }

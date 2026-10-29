@@ -1315,7 +1315,7 @@
         const r = await fetch(req.url + '/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) return { ref: stageTrackerRefOf(item), number: item.number, error: data.error || ('HTTP ' + r.status) };
-        return Object.assign({ ref: stageTrackerRefOf(item) }, data);
+        return Object.assign({ ref: stageTrackerRefOf(item) + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : '') }, data);
       } catch (e) { return { ref: stageTrackerRefOf(item), number: item.number, error: String(e && e.message || e) }; }
     }
     // The preview: resolves { chosen } for Let hive do that, { chosen,

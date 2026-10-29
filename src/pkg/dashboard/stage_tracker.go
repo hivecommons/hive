@@ -460,6 +460,11 @@ type StageTrackerItem struct {
 	// closed, unmerged, and never a tracker row; this is the only trace of
 	// it the tracker draws — a small chip on the live PR.
 	Supersedes *StageTrackerSupersedes `json:"supersedes,omitempty"`
+	// Lineage is, on the hive's copy of an adopted PR, where it came from
+	// (adopted from @x's #N, when, why) and, on a still-open original,
+	// which copy superseded it (stage_tracker_lineage.go). Optional; a
+	// row with no adoption history carries none.
+	Lineage *StageTrackerLineage `json:"lineage,omitempty"`
 	// Adoption is, on a nudged PR at stage/072, whether adoption is due,
 	// what holds it, and the author's live presence, with the plain-words
 	// line the row shows instead of a bare "Returned to contributor"
@@ -620,6 +625,8 @@ type StageTrackerLinkedPR struct {
 	AdoptedBy      int                      `json:"adopted_by,omitempty"`
 	AdoptedByState string                   `json:"adopted_by_state,omitempty"`
 	AdoptedFrom    *StageTrackerAdoptedFrom `json:"adopted_from,omitempty"`
+	// Lineage mirrors the nested PR's own row field.
+	Lineage *StageTrackerLineage `json:"lineage,omitempty"`
 	// State is "closed" for an adopted original the hive (or a person)
 	// closed once its copy existed (hivecommons/hive#15126): the sub-row
 	// is one dimmed line "#N <title> · closed · superseded by #M" with no
@@ -2082,6 +2089,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	prState := s.stageTrackerPRStateResolver(status, resp.RecentlyMerged)
 	prOpen := func(repo string, number int) bool { return prState(repo, number) == blockedOnPRStateOpen }
 	supersedes := stageTrackerSupersedesIndex(store, status.GitHubBaseURL)
+	lineage := stageTrackerLineageIndex(store, status.GitHubBaseURL)
 	issueFilter := s.issueFilterConfig()
 	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren) {
 		// A closed issue has no stage; a stage label it closed wearing is
@@ -2200,6 +2208,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if sup, ok := supersedes[stagelabels.Key(repoName, pr.Number)]; ok {
 			it.Supersedes = &sup
 		}
+		it.Lineage = stageTrackerLineageFor(lineage, repoName, pr.Number, pr.HeadRef, status.GitHubBaseURL)
 		info, found := superseded[github.ReviewQueueKey(qualifyRepo(repoName), pr.Number)]
 		if !found {
 			info, found = superseded[github.ReviewQueueKey(repoName, pr.Number)]
@@ -2258,6 +2267,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	stageTrackerMergeTrainPostPass(resp.Items)
+	stageTrackerLineageFillAuthors(resp.Items)
 	s.applyOperatorActions(resp.Items, now)
 	s.applyDecidedProjection(resp.Items, now)
 	applyRebaseAttempts(resp.Items)
@@ -3005,6 +3015,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.Rework = pr.Rework
 				lp.Takeover = pr.Takeover
 				lp.Supersedes = pr.Supersedes
+				lp.Lineage = pr.Lineage
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.AdmittedBy, lp.DCOUnsigned, lp.DCOTotal = pr.AdmittedBy, pr.DCOUnsigned, pr.DCOTotal

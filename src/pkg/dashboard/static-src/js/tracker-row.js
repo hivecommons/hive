@@ -412,7 +412,7 @@
       if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
-      else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr);
+      else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr + (typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : ''));
       const actorLine = stageTrackerActorTip(item);
       if (actorLine) lines.push(actorLine.replace(/^ · /, ''));
       if (typeof stageTrackerNewLines === 'function') lines.push(...stageTrackerNewLines(item, nowMs));
@@ -823,7 +823,7 @@
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null,
-        decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
+        decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed / superseded).
     function stageTrackerLinkedPROpen(lp) {
@@ -833,6 +833,63 @@
     function stageTrackerNestedOpenPRs(issue) {
       if (!issue || issue.kind === 'pr') return [];
       return (Array.isArray(issue.linked_prs) ? issue.linked_prs : []).filter(stageTrackerLinkedPROpen).map(lp => stageTrackerLinkedPRItem(issue, lp));
+    }
+    // Lineage: where an adopted PR came from (`lineage`: {kind, from_number,
+    // from_url, from_author, from_author_kind, to_number, to_url, at,
+    // reason}; optional, nothing without it). #15198 showed the hive's copy
+    // #15308 "Fixing" with no trace of @thatguywob's #15226 it was adopted
+    // from, so sending the fix to a hive agent read as a mistake. The chip
+    // sits beside the PR number on every PR mention (top-level row, single
+    // covering PR, sub-row) and links to the other PR; the author's kind is
+    // the icon only, never a word.
+    const STAGE_TRACKER_LINEAGE_REASON_TIP = {
+      'ci-red-contributor-offline': "Hive took this PR over after CI went red and @AUTHOR's agent didn't respond. Original commits kept.",
+      'ci-red-contributor-unregistered': "Hive took this PR over after CI went red and @AUTHOR has no agent registered here. Original commits kept.",
+      'operator-asked': 'Hive took this PR over at a maintainer\'s request. Original commits kept.',
+      'dco-rehome': 'Hive re-homed this PR to repair its DCO sign-off. Original commits kept.',
+      'signoff-rehome': 'Hive re-homed this PR so its sign-off survives a squash. Original commits kept.',
+      'rebase-rehome': 'Hive re-homed this PR onto its own branch to finish the rebase. Original commits kept.',
+      'push-rehome': "Hive re-homed this PR because @AUTHOR's branch could no longer be pushed. Original commits kept.",
+      'in-place-stalled': 'Hive re-homed this PR after a review finding sat unaddressed. Original commits kept.'
+    };
+    // Pure: the chip's visible words — "adopted from @thatguywob's #15226 · 6h".
+    function stageTrackerLineageText(item, nowMs) {
+      const l = item && item.lineage;
+      if (!l || !l.kind) return '';
+      const ago = stageTrackerAgoText(Date.parse(l.at || ''), nowMs).replace(/ ago$/, '');
+      const tail = ago ? ' · ' + ago : '';
+      if (l.kind === 'superseded') return Number(l.to_number) > 0 ? 'superseded by #' + Number(l.to_number) + tail : '';
+      if (!(Number(l.from_number) > 0)) return '';
+      const whose = l.from_author ? '@' + l.from_author + "'s " : '';
+      return (l.kind === 'rebased-by-hive' ? 'rebased by hive from ' : 'adopted from ') + whose + '#' + Number(l.from_number) + tail;
+    }
+    // Pure: the hover — why the hive took it over, in plain words.
+    function stageTrackerLineageTip(item) {
+      const l = item && item.lineage;
+      if (!l || !l.kind) return '';
+      if (l.kind === 'superseded') return 'Hive took this PR over as #' + Number(l.to_number) + '; this original is closed when that merges.';
+      const who = l.from_author ? '@' + l.from_author : 'the contributor';
+      const tip = STAGE_TRACKER_LINEAGE_REASON_TIP[l.reason] || STAGE_TRACKER_LINEAGE_REASON_TIP['ci-red-contributor-offline'];
+      return tip.split('@AUTHOR').join(who);
+    }
+    function stageTrackerLineageChipHtml(item, nowMs) {
+      const text = stageTrackerLineageText(item, nowMs);
+      if (!text) return '';
+      const l = item.lineage;
+      const tip = stageTrackerLineageTip(item);
+      const icon = l.kind !== 'superseded' && l.from_author_kind ? stageTrackerIcon(l.from_author_kind, 'ham-author-ico ham-author-' + esc(l.from_author_kind), l.from_author_kind) : '';
+      const href = l.kind === 'superseded' ? l.to_url : l.from_url;
+      const attrs = `class="ham-badge ham-lineage" title="${esc(tip)}" aria-label="${esc(text + ' — ' + tip)}"`;
+      return href ? `<a ${attrs} href="${esc(href)}" target="_blank" rel="noopener">${icon}${esc(text)}</a>` : `<span ${attrs}>${icon}${esc(text)}</span>`;
+    }
+    // Pure: the one clause a caption or preview adds after the PR number —
+    // " (adopted from #15226)"; '' without lineage. An issue row reads its
+    // single covering PR's lineage.
+    function stageTrackerLineageClause(item) {
+      let l = item && item.lineage;
+      if (!l && item && item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length === 1) l = item.linked_prs[0].lineage;
+      if (!l || !(Number(l.from_number) > 0) || l.kind === 'superseded') return '';
+      return ' (adopted from #' + Number(l.from_number) + ')';
     }
     // Pure: the "↳ adopted from #N · you let hive decide 17:51" chip on the
     // hive's copy of an adopted PR (hivecommons/hive#15126).
@@ -867,7 +924,7 @@
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : '') + stageTrackerChipsHtml(pr))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + ((typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '') || (typeof stageTrackerAdoptedFromChipHtml === 'function' ? stageTrackerAdoptedFromChipHtml(pr, nowMs) : '')) + stageTrackerChipsHtml(pr))}
           </div>
           <div class="ham-strip-row">
             <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN }, nowMs, ctx)}</ol>
@@ -1076,7 +1133,7 @@
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '') + (lp.lineage && typeof stageTrackerLineageChipHtml === 'function' ? ' ' + stageTrackerLineageChipHtml(lp, nowMs) : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
@@ -1113,7 +1170,7 @@
           </div>`;
       } else {
         const li = stageTrackerPRIssueSlot(item);
-        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))];
+        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs)) + (item.lineage && typeof stageTrackerLineageChipHtml === 'function' ? ' ' + stageTrackerLineageChipHtml(item, nowMs) : '')];
         leadHtml = li.number
           ? `<div class="ham-head-main${li.closed ? ' ham-issue-closed' : ''}">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
