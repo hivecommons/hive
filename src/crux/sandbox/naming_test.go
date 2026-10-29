@@ -90,3 +90,41 @@ func TestTranscriptExitCode(t *testing.T) {
 		t.Fatal("empty transcript must report ok=false")
 	}
 }
+
+func TestLatestTranscriptSkipsDirectoriesAndBreaksModTimeTies(t *testing.T) {
+	root := t.TempDir()
+	mk := func(dir string) string {
+		p := filepath.Join(root, dir, filepath.FromSlash(TranscriptRelPath))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// A directory where the transcript file should be is not a transcript;
+	// when it is the only candidate the agent has no run yet.
+	if err := os.MkdirAll(mk("deps-1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := LatestTranscript(root, "deps"); ok {
+		t.Fatalf("directory must not count as a transcript, got %q", got)
+	}
+
+	// Two transcripts with identical modification times: the lexically
+	// greater path (the later unixnano suffix) wins deterministically.
+	mod := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	var paths []string
+	for _, dir := range []string{"deps-20", "deps-10"} {
+		p := mk(dir)
+		if err := os.WriteFile(p, []byte("run"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	got, ok := LatestTranscript(root, "deps")
+	if !ok || got != paths[0] {
+		t.Fatalf("LatestTranscript = %q, %v; want %q", got, ok, paths[0])
+	}
+}

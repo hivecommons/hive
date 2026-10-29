@@ -870,16 +870,16 @@ type FrontendAgent struct {
 	// from it (sandbox_health.go). Present only for sandboxed agents; the
 	// SPA reads health from here instead of State, which is "idle" between
 	// kicks for an agent that has no session to be down.
-	SandboxRun      *FrontendSandboxRun `json:"sandboxRun,omitempty"`
+	SandboxRun *FrontendSandboxRun `json:"sandboxRun,omitempty"`
 	// SandboxRuntime is the effective sandbox.runtime for a sandboxed agent
 	// ("podman" or "job"); the SPA routes "▶ terminal" to the Job pod log
 	// viewer for "job" (hivecommons/hive#14798). Empty when not sandboxed.
-	SandboxRuntime string `json:"sandboxRuntime,omitempty"`
-	LastError       string              `json:"lastError,omitempty"`
-	StallNudges     int                 `json:"stallNudges,omitempty"`
-	StallRecoveries int                 `json:"stallRecoveries,omitempty"`
-	ActionNudges    int                 `json:"actionNudges,omitempty"`
-	TransientNudges int                 `json:"transientNudges,omitempty"`
+	SandboxRuntime  string `json:"sandboxRuntime,omitempty"`
+	LastError       string `json:"lastError,omitempty"`
+	StallNudges     int    `json:"stallNudges,omitempty"`
+	StallRecoveries int    `json:"stallRecoveries,omitempty"`
+	ActionNudges    int    `json:"actionNudges,omitempty"`
+	TransientNudges int    `json:"transientNudges,omitempty"`
 	// SessionRssMb is the resident memory of the agent's CLI process tree
 	// (MiB) and SessionAge how long the current CLI session has been up,
 	// both sampled on the health tick (#14842). SessionRecycles counts
