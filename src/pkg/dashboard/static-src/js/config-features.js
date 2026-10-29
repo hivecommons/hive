@@ -408,7 +408,7 @@
         ${featuresSectionHtml('review', `
         <div class="settings-subsection">
           <div class="settings-subsection-title">Review Gate ${settingHelpMark('review-swarm', 'configuration', 'Review Gate', `The review swarm gate runs designated reviewer agents on each PR and blocks merge until they approve. Used at ACMM L4+.`)}</div>
-          <div class="config-subgroup">Merge gate</div>
+          <div class="config-subgroup">Merge queue</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rv.require_approval ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="require_approval"></div>
             <span class="config-toggle-label">Require review-swarm approval before merge ${settingHelpMark('review-swarm', 'configuration', 'Require review-swarm approval before merge', `When on, a PR is not merge-eligible until the reviewer agents record an aggregate approval. Off by default, which preserves the existing behaviour of not consulting review verdicts at all. Typically used at ACMM L4 and above.`)}</span>
@@ -474,7 +474,7 @@
           </div>
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${rv.post_comments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="post_comments"></div>
-            <span class="config-toggle-label">Post review comments ${yamlHint('review.post_comments')} ${settingHelpMark('review-swarm', 'configuration', 'Post review comments', `OFF by default. Reviewers publish their verdict as a PR comment through the hive-review relay, in addition to returning it to the merge gate. Off, the verdict stays internal, which on a hive without auto-merge means nobody reads it. Turn this on so a review reaches the human who has to decide.`)}</span>
+            <span class="config-toggle-label">Post review comments ${yamlHint('review.post_comments')} ${settingHelpMark('review-swarm', 'configuration', 'Post review comments', `OFF by default. Reviewers publish their verdict as a PR comment through the hive-review relay, in addition to returning it to the merge queue. Off, the verdict stays internal, which on a hive without auto-merge means nobody reads it. Turn this on so a review reaches the human who has to decide.`)}</span>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.acknowledge_no_findings ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="acknowledge_no_findings"></div>

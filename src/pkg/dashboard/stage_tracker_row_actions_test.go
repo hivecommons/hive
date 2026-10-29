@@ -1076,7 +1076,7 @@ assert.strictEqual(text.head, "Hive decided on o/r#14938 → PR #14947: no effec
 assert.strictEqual(text.type, 'warning'); assert.strictEqual(text.options.length, 4, 'options without an action are dropped');
 // The raw RFC3339 stamp never reaches the operator (#15126).
 assert.ok(!/2026-10-28T13:01:29Z/.test(text.outcome) && / at 13:01( today)?, but/.test(text.outcome), text.outcome);
-assert.ok(text.why.startsWith('The merge gate read the hive'), text.why);
+assert.ok(text.why.startsWith('The merge queue read the hive'), text.why);
 assert.ok(!/contributor-offline|self-decision/.test(text.head + text.outcome + text.why), 'no bare slug reaches the operator');
 // hivecommons/hive#15021: an ISSUE's approve is never "approved for merge",
 // and a stuck 045 park label is named with the lift as the first option.
@@ -1532,14 +1532,14 @@ assert.ok(tip.includes('Then the hive started the rebase — fixer'), tip);
 // fixer's attempt so "Approving…" does not wait on the gate.
 const approvedDirty = { action: 'approved', target: result.target,
   outcome: 'Approved — #14822 conflicts with v5; hive will rebase it next pass (attempt 1/2).',
-  next: 'The merge gate skips a conflicting PR, so your approval alone would not land it. Once the rebased head is green the gate takes it — or have hive merge it for you right after the rebase:',
+  next: 'The merge queue skips a conflicting PR, so your approval alone would not land it. Once the rebased head is green the gate takes it — or have hive merge it for you right after the rebase:',
   options: [{ action: 'decide:merge-now', label: STAGE_TRACKER_REBASE_MERGE_LABEL, enabled: true, consequence: 'hive rebases #14822 onto v5, waits for CI, then merges it with your approval on record' }] };
 const apText = stageTrackerResultText(approvedDirty, pr, { id: 'decide:approve' });
 assert.strictEqual(apText.type, 'success');
 assert.ok(apText.outcome.includes('hive will rebase it next pass (attempt 1/2)'), apText.outcome);
 assert.strictEqual(apText.options.length, 1, 'the approve toast offers the rebase-then-merge button');
 assert.strictEqual(apText.options[0].label, 'Rebase, then merge as maintainer');
-const plainApproved = stageTrackerResultText({ action: 'approved', target: result.target, outcome: '/lgtm + /approve posted.', next: 'The merge gate takes it from here; the dashboard merges nothing.' }, pr, { id: 'decide:approve' });
+const plainApproved = stageTrackerResultText({ action: 'approved', target: result.target, outcome: '/lgtm + /approve posted.', next: 'The merge queue takes it from here; the dashboard merges nothing.' }, pr, { id: 'decide:approve' });
 assert.strictEqual(plainApproved.options.length, 0, 'a plain approval has no buttons');
 assert.notStrictEqual(stageTrackerItemState(pr), stageTrackerItemState({ ...pr, rebase: { attempt: 1, max: 2, text: 'Rebasing · attempt 1/2' } }), 'the fixer attempt moves the row state');
 `)
@@ -1610,8 +1610,8 @@ assert.strictEqual(view.decisions[0].sentence, 'Send #15332 back.');
 
 // 3. Mergeable as-is: the ladder's approve rung offers the merge button.
 const green = { ref: 'o/r#8', number: 8, type: 'pr', title: 'fix typo', would: 'approve', rule: 'mergeable-as-is',
-  summary: 'Approve #8 as it is and let the merge gate merge it.', why: 'Mergeable and green.', consequences: ['Hive approves the current commit.', '#8 merges once CI is green and it has soaked.'],
-  ladder: { decision: 'mergeable-as-is', reason: 'mergeable and green; handed to the merge gate', ruled_out: ['already-fixed: no merged PR has closed this PR\'s issue'] },
+  summary: 'Approve #8 as it is and let the merge queue merge it.', why: 'Mergeable and green.', consequences: ['Hive approves the current commit.', '#8 merges once CI is green and it has soaked.'],
+  ladder: { decision: 'mergeable-as-is', reason: 'mergeable and green; handed to the merge queue', ruled_out: ['already-fixed: no merged PR has closed this PR\'s issue'] },
   mergeable_as_is: true, alternatives: [{ action: 'decide:merge-now', label: 'Approve & merge as-is', enabled: true }] };
 html = stageTrackerDelegatePlanHtml(stageTrackerDelegatePlanView([green], ''));
 assert.deepStrictEqual(buttons(html), ['Cancel', 'Approve & merge as-is', 'Let hive do that']);

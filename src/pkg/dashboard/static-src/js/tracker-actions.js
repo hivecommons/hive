@@ -181,7 +181,7 @@
       return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor: (window._lastStatus && window._lastStatus.governor) || null };
     }
     // Pure: the item a row's "Decide…" acts on. A PR parked at 085 (the
-    // "Needs human decision" pill on the Merge gate column) decides itself;
+    // "Needs human decision" pill on the Merge queue column) decides itself;
     // an issue row decides a nested PR parked at 085 when it has one (its
     // own stage is only mirrored from that PR), else itself when parked at
     // 045. null when nothing on the row is waiting on a person.
@@ -232,7 +232,7 @@
     // Pure: the decision choices for one decision target. On an issue
     // parked at 045 the verbs are /hive approve and /hive decision. On a PR
     // parked at 085, Approve posts the /lgtm + /approve commands as the
-    // operator (the merge gate decides from there — nothing merges here),
+    // operator (the merge queue decides from there — nothing merges here),
     // Close as superseded names the PR that won, and Give direction is the
     // /hive decision fix lane.
     function stageTrackerDecideOptions(item, ctx) {
@@ -1442,7 +1442,7 @@
           return (await stageTrackerAsk(id, 'confirm', { title: 'Close as partially addressed', message: 'Label ' + refs + ' hive/partially-addressed and close ' + (items.length > 1 ? 'them' : 'it') + ' as ' + who + '? The remaining work stays described in the closing comment; nothing is merged.', confirmLabel: 'Close as partial', danger: true })) ? {} : null;
         case 'decide:approve':
           if (prs) {
-            return (await stageTrackerAsk(id, 'confirm', { title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge gate takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
+            return (await stageTrackerAsk(id, 'confirm', { title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge queue takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
           }
           return (await stageTrackerAsk(id, 'confirm', { title: 'Approve direction', message: 'Record "/hive approve" on ' + refs + ' as ' + who + '? The hive un-parks the issue' + (items.length > 1 ? 's' : '') + ' and carries on; nothing is merged.', confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:direction': {

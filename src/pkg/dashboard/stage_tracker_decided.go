@@ -114,7 +114,7 @@ type decidedVerb struct {
 
 var decidedVerbs = map[string]decidedVerb{
 	string(delegatedecision.VerdictAdoptSupersede):  {Word: "Adopted", Text: "Adopted · hive rebases & merges next pass", Acting: "Adopting · opening hive copy…", Plain: "adopted (supersede)", Stage: stagelabels.AwaitingMergeAdmission},
-	string(delegatedecision.VerdictApprove):         {Word: "Approved", Text: "Approved · merge gate takes it", Acting: "Approving…", Plain: "approved", Stage: stagelabels.AwaitingMergeAdmission},
+	string(delegatedecision.VerdictApprove):         {Word: "Approved", Text: "Approved · merge queue takes it", Acting: "Approving…", Plain: "approved", Stage: stagelabels.AwaitingMergeAdmission},
 	string(delegatedecision.VerdictDirection):       {Word: "Sent back", Text: "Sent back · waiting for a new commit", Acting: "Sending back…", Plain: "direction given", Stage: stagelabels.None},
 	string(delegatedecision.VerdictCloseDuplicate):  {Word: "Closing", Text: "Closing · duplicate, leaves the tracker next refresh", Acting: "Closing…", Plain: "closed as duplicate", Stage: stagelabels.None},
 	string(delegatedecision.VerdictCloseSuperseded): {Word: "Closing", Text: "Closing · superseded, leaves the tracker next refresh", Acting: "Closing…", Plain: "closed as superseded", Stage: stagelabels.None},

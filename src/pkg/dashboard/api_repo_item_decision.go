@@ -631,7 +631,7 @@ func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.Resp
 // renderRepoItemDecisionMergeComment is the attributed note left on the PR
 // before the hive's App merges it for the operator.
 func renderRepoItemDecisionMergeComment(user, comment string) string {
-	body := fmt.Sprintf("Merged as maintainer by @%s from the Hive dashboard: the merge gate parked this pull request for a human because its author is not a trusted merger on this repository.", strings.TrimSpace(user))
+	body := fmt.Sprintf("Merged as maintainer by @%s from the Hive dashboard: the merge queue parked this pull request for a human because its author is not a trusted merger on this repository.", strings.TrimSpace(user))
 	if c := strings.TrimSpace(comment); c != "" {
 		body += "\n\n> " + strings.ReplaceAll(c, "\n", "\n> ")
 	}
@@ -792,7 +792,7 @@ func approveNeedsRebaseResult(out *RowActionResult, number int, ms ghpkg.PRMerge
 		out.Next = "Resolve the conflict on the branch yourself, or adopt it into a fresh branch / close it as superseded from the row menu."
 		return
 	}
-	out.Next = "The merge gate skips a conflicting PR, so your approval alone would not land it. Once the rebased head is green the gate takes it — or have hive merge it for you right after the rebase:"
+	out.Next = "The merge queue skips a conflicting PR, so your approval alone would not land it. Once the rebased head is green the gate takes it — or have hive merge it for you right after the rebase:"
 	opt := decisionOption(decisionActionMergeNow, rebaseMergeFollowThroughLabel, true, "")
 	opt.Consequence = rebaseMergeFollowThroughConsequence(number, ms.BaseRef)
 	out.Options = []StageTrackerDecisionOption{opt}
