@@ -3,6 +3,7 @@ package prstage
 import (
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -93,13 +94,21 @@ func TestParseMergeTrainRejectsMalformed(t *testing.T) {
 		t.Fatalf("files capped wrong: %v", m.OverlapFiles)
 	}
 	for state, want := range map[string]string{
-		MergeTrainStateRebasing:        "front of the merge train, conflicting; the hive is rebasing it onto the base (attempt 1/2; 1st of 3)",
-		MergeTrainStateRebaseExhausted: "front of the merge train, still conflicting after 2 rebase attempts; a person decides (1st of 3)",
-		MergeTrainStateFront:           "front of the merge train (1st of 3)",
+		MergeTrainStateRebasing:        "1st in the merge queue, conflicting; the hive is rebasing it onto the base (attempt 1/2; 1st of 3)",
+		MergeTrainStateRebaseExhausted: "1st in the merge queue, still conflicting after 2 rebase attempts; a person decides (1st of 3)",
+		MergeTrainStateFront:           "1st in the merge queue; merges next (1st of 3)",
 		MergeTrainStateQueuedBehind:    "behind #7 in merge train (1st of 3)",
 	} {
-		if got := (MergeTrain{State: state, Front: 7, Position: 1, Size: 3, Attempt: 1, MaxAttempts: 2}).Sentence(); got != want {
+		got := (MergeTrain{State: state, Front: 7, Position: 1, Size: 3, Attempt: 1, MaxAttempts: 2}).Sentence()
+		if got != want {
 			t.Errorf("Sentence(%s) = %q, want %q", state, got, want)
+		}
+		// The owner read "front" / "queued-behind" as noise: no sentence a
+		// person sees carries either word (hivecommons/hive#15395).
+		for _, bad := range []string{"front", "queued-behind"} {
+			if strings.Contains(strings.ToLower(got), bad) {
+				t.Errorf("Sentence(%s) = %q leaks %q", state, got, bad)
+			}
 		}
 	}
 }

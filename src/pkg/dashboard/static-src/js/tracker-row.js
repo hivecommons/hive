@@ -14,6 +14,11 @@
       if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
       const mg = item && item.merge_gate;
       if (mg && (mg.state === 'merging' || mg.state === 'merge-failed') && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
+      // A merge-train member is a Merge queue matter too, 1st included:
+      // the train's facts are mirrored onto its head while the head still
+      // sits at 050/070, and hive's own #15400 ("1st") lit CI / Review
+      // next to its 2nd-place sibling in Merge queue (hivecommons/hive#15395).
+      if (item && item.merge_train && item.merge_train.state && cur > STAGE_TRACKER_PR_COLUMN) return STAGE_TRACKER_MERGE_COLUMN;
       if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
@@ -107,7 +112,9 @@
       30: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="5" r="1.5"/><path d="M4 4.5v7M12 6.5c0 3-8 1-8 4"/>',
       40: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="12" r="1.5"/><path d="M4 4.5v7M4 6c0 3 6 2 6.5 5"/>',
       50: '<path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>',
-      80: '<path d="M8 1l6 2v5c0 3.5-2.5 6-6 7-3.5-1-6-3.5-6-7V3z"/>',
+      // Merge queue: the same railcar as the column header and train chip
+      // (STAGE_TRACKER_TRAIN_ICON_PATH in tracker-words.js; a test keeps them equal).
+      80: '<rect x="2" y="3.5" width="12" height="7" rx="1.5"/><path d="M2 7.5h12M6.5 3.5v4M10.5 3.5v4M4 13.5l-1.5 1.5M12 13.5l1.5 1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="12.5" r="1.5"/>',
       100: '<path d="M3 5h10M3 8h10M3 11h10"/>',
       110: '<path d="M3 8l3 3 7-7"/>',
       history: '<path d="M2 8a6 6 0 1 0 6-6 6.5 6.5 0 0 0-4.5 1.83L2 5.33"/><path d="M2 2v3.33h3.33"/><path d="M8 4.67V8l2.67 1.33"/>',
@@ -283,7 +290,9 @@
       (stages || []).forEach(st => { byNum[st.number] = st; });
       const cols = STAGE_TRACKER_PATH.map(n => {
         const name = n === 0 ? 'Open' : ((byNum[n] || {}).short || (byNum[n] || {}).label || String(n));
-        return `<li class="ham-seg"><span class="ham-seg-t">${esc(name)}</span></li>`;
+        // The Merge queue column wears the same train as the train header chip.
+        const ico = n === 80 && typeof stageTrackerTrainIconHtml === 'function' ? stageTrackerTrainIconHtml('ham-ico ham-train-icon ham-col-ico') : '';
+        return `<li class="ham-seg"><span class="ham-seg-t">${ico}${esc(name)}</span></li>`;
       }).join('');
       return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap ham-history-head" title="History — decisions and actions on this item">${stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — decisions and actions on this item')}</li></ol><span class="ham-since">since</span></div></div>`;
     }

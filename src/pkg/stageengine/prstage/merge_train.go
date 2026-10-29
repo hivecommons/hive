@@ -183,11 +183,11 @@ func (m MergeTrain) Sentence() string {
 	slot := Ordinal(m.Position) + " of " + strconv.Itoa(m.Size)
 	switch m.State {
 	case MergeTrainStateRebasing:
-		return "front of the merge train, conflicting; the hive is rebasing it onto the base (attempt " + strconv.Itoa(m.Attempt) + "/" + strconv.Itoa(m.MaxAttempts) + "; " + slot + files + ")"
+		return "1st in the merge queue, conflicting; the hive is rebasing it onto the base (attempt " + strconv.Itoa(m.Attempt) + "/" + strconv.Itoa(m.MaxAttempts) + "; " + slot + files + ")"
 	case MergeTrainStateRebaseExhausted:
-		return "front of the merge train, still conflicting after " + strconv.Itoa(m.MaxAttempts) + " rebase attempts; a person decides (" + slot + files + ")"
+		return "1st in the merge queue, still conflicting after " + strconv.Itoa(m.MaxAttempts) + " rebase attempts; a person decides (" + slot + files + ")"
 	case MergeTrainStateFront:
-		return "front of the merge train (" + slot + files + ")"
+		return "1st in the merge queue; merges next (" + slot + files + ")"
 	case MergeTrainStateDuplicateOf:
 		issue := ""
 		if m.Position > 0 {

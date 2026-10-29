@@ -14,6 +14,7 @@ import (
 
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Merge train (hivecommons/hive#15117).
@@ -362,6 +363,10 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 		if !mergeTrainCandidate(prefilter(pr)) {
 			continue
 		}
+		if c.mergeTrainReturnedToContributor(owner, repo, pr) {
+			c.mergeTrainSkipLogged(owner, repo, displayRepo, pr.GetNumber(), pr.GetHead().GetSHA(), "returned-to-contributor")
+			continue
+		}
 		base := pr.GetBase().GetRef()
 		perBase[base] = append(perBase[base], pr)
 	}
@@ -423,6 +428,13 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 			m.HeadSHA = live.GetHead().GetSHA()
 		}
 	}
+	for i := range members {
+		m := &members[i]
+		if m.Number > 0 && c.mergeTrainConflictOutsider(owner, repo, m.Base, *m) {
+			c.mergeTrainSkipLogged(owner, repo, displayRepo, m.Number, m.HeadSHA, "conflicting")
+			m.Number = 0
+		}
+	}
 	plan.groups = groupMergeTrains(members)
 	for i := range plan.groups {
 		g := &plan.groups[i]
@@ -432,6 +444,55 @@ func (c *Engine) planMergeTrains(ctx context.Context, lane, displayRepo, owner, 
 		c.logMergeTrainTransition(displayRepo, lane, *g)
 	}
 	return plan
+}
+
+// mergeTrainReturnedToContributor reports a PR at stage 072
+// returned-to-contributor (its label, or the stage store's record): the
+// fix is the contributor's, so it never rides a train — hive's own #15307
+// (conflicting, returned) was counted "4 of 6" and drew the train's stall
+// comments (hivecommons/hive#15395).
+func (c *Engine) mergeTrainReturnedToContributor(owner, repo string, pr *gh.PullRequest) bool {
+	if pr == nil {
+		return false
+	}
+	want := stagelabels.ReturnedToContributor.Label()
+	for _, l := range labelNames(pr.Labels) {
+		if strings.EqualFold(strings.TrimSpace(l), want) {
+			return true
+		}
+	}
+	if store := c.stageStoreOrShared(); store != nil {
+		if rec, ok := store.Get(stagelabels.Key(owner+"/"+repo, pr.GetNumber())); ok && rec.Stage == stagelabels.ReturnedToContributor {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeTrainConflictOutsider reports a conflicting member the train must
+// not carry: a PR GitHub says is dirty is admitted only while the train
+// itself is repairing it — a rebase attempt is on record for it behind
+// this base's last merged front and the loop guard is not spent. A PR
+// that arrived conflicting on its own is the author's to fix, and it
+// neither takes a place in the queue nor counts toward the queue's size.
+func (c *Engine) mergeTrainConflictOutsider(owner, repo, base string, m mergeTrainMember) bool {
+	if !mergeTrainDirty(m.MergeableState) {
+		return false
+	}
+	behind := c.mergeTrainLastFront(owner, repo, base)
+	if behind <= 0 || c.rebaseResolver == nil {
+		return true
+	}
+	attempts := c.mergeTrainAttempts(owner, repo, m.Number, behind)
+	return attempts <= 0 || attempts >= c.mergeTrainPolicyNow().MaxRebaseAttempts
+}
+
+// mergeTrainSkipLogged logs one INFO line per head for a PR kept out of
+// every train.
+func (c *Engine) mergeTrainSkipLogged(owner, repo, displayRepo string, number int, headSHA, why string) {
+	if c.markTerminalHoldLogged(owner, repo, number, headSHA, "merge-train-skip:"+why) {
+		c.info("merge train: PR left out of every train", "repo", displayRepo, "pr", number, "why", why)
+	}
 }
 
 // mergeTrainFiles lists a PR's changed paths, cached by head SHA.

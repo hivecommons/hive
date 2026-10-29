@@ -434,7 +434,7 @@ advanced into the merge path.
 | `auto_merge.require_current_base_default` | `true` | Fleet-wide default of the current-base gate for repos in neither `require_current_base` nor `skip_current_base`. On a default-gated repo a behind head the App cannot update merges as it was tested, with one WARN per PR (`automerge current-base gate: … merging as tested`), so fork-heavy repos are not parked wholesale. Set `false` to return to opt-in only. |
 | `auto_merge.skip_current_base` | unset | Repo list (`owner/repo`) opted **out** of the current-base gate: a green head there merges even if the base has moved (the pre-#15335 behaviour). An explicit `require_current_base` entry wins over this list. |
 | `auto_merge.merge_forward_trusted_human` | unset (off) | Repo list (`owner/repo`) where a `role/trusted` + `author/human` PR on a same-repo branch that GitHub reports as conflicting (`dirty`) gets the base merged into its head as one App-authored, signed-off merge commit via the GitHub merges API (no human commit is rewritten), then merges once CI is green on the new head. A real conflict pushes nothing and posts one `<!-- hive:merge-forward-conflict head=… -->` note naming the files both sides changed. Fork heads are never written. Attempted once per head (#13636). |
-| `auto_merge.merge_train.enabled` | `true` | Conflict-aware merge train in every automerge lane (hive, trusted-author, contributor) ([#15117](https://github.com/hivecommons/hive/issues/15117)). Each sweep groups the open approved / mergeable-pending PRs of one repo+base by overlapping changed files (`GET /pulls/{n}/files`, cached per head SHA) and lets ONE front per group merge — the clean-mergeable PR approved earliest — while the others wait at stage/080 with lane reason `merge-train:queued-behind#<front>:<pos>/<size>:…` (tracker pill "In merge queue · 3 of 4 · ~4m", never a human stage, never `needs-rebase` as a human flag). The moment the front merges, every sibling whose branch is merely `behind` gets `PUT /pulls/{n}/update-branch`; a `dirty` one is handed to the fixer's rebase-resolve episode (`requested_by: merge-train`, the shared two-attempt guard of [#15104](https://github.com/hivecommons/hive/pull/15104); the fixer router still requires a head the hive can push to, so a fork without maintainer edits stays on the plain `conflicting` path for a person). A head the lane last saw blocked on its own (red required check, terminal hold, permanent merge refusal) never fronts, and a group whose best member is blocked imposes no ordering (fail-open) — nobody waits behind a PR that is not moving. One INFO line `merge train` per order change, not per cycle. The queue carries one PR per issue: when two open PRs declare the same `Fixes #N`, the sweep keeps one (green first, then the earlier-opened) and holds the other with lane reason `merge-train:duplicate-of#<winner>:<issue>/0:0/0:` (tracker pill "Duplicate of #15402 · needs a pick"; *Let hive decide* supersedes, [#15395](https://github.com/hivecommons/hive/issues/15395)). `false` restores independent per-PR evaluation. |
+| `auto_merge.merge_train.enabled` | `true` | Conflict-aware merge train in every automerge lane (hive, trusted-author, contributor) ([#15117](https://github.com/hivecommons/hive/issues/15117)). Each sweep groups the open approved / mergeable-pending PRs of one repo+base by overlapping changed files (`GET /pulls/{n}/files`, cached per head SHA) and lets ONE front per group merge — the clean-mergeable PR approved earliest — while the others wait at stage/080 with lane reason `merge-train:queued-behind#<front>:<pos>/<size>:…` (tracker pill "In merge queue · 3 of 4 · ~4m", never a human stage, never `needs-rebase` as a human flag). The moment the front merges, every sibling whose branch is merely `behind` gets `PUT /pulls/{n}/update-branch`; a `dirty` one is handed to the fixer's rebase-resolve episode (`requested_by: merge-train`, the shared two-attempt guard of [#15104](https://github.com/hivecommons/hive/pull/15104); the fixer router still requires a head the hive can push to, so a fork without maintainer edits stays on the plain `conflicting` path for a person). A head the lane last saw blocked on its own (red required check, terminal hold, permanent merge refusal) never fronts, and a group whose best member is blocked imposes no ordering (fail-open) — nobody waits behind a PR that is not moving. One INFO line `merge train` per order change, not per cycle. The queue carries one PR per issue: when two open PRs declare the same `Fixes #N`, the sweep keeps one (green first, then the earlier-opened) and holds the other with lane reason `merge-train:duplicate-of#<winner>:<issue>/0:0/0:` (tracker pill "Duplicate of #15402 · needs a pick"; *Let hive decide* supersedes, [#15395](https://github.com/hivecommons/hive/issues/15395)). `false` restores independent per-PR evaluation. A PR GitHub reports conflicting on its own, or one at stage/072 returned-to-contributor (label or stage record), is never a member nor counted in the train's size and draws no train idle comment; a conflicting PR rides only while the train itself is repairing it (its rebase requested behind a merged front, loop guard not spent) ([#15395](https://github.com/hivecommons/hive/issues/15395)). |
 | `auto_merge.merge_train.max_rebase_attempts` | `2` | Loop guard: how many rebase-resolve requests the train makes for one PR behind one front. Past it the PR moves to stage/085 with the pill "Needs human decision · rebase failed twice" and the decision option "Rebase, then merge as maintainer". |
 | `auto_merge.squash_only` | unset (no repo) | Repo list (`owner/repo`) whose branch policy forbids merge commits. Elsewhere, a `role/trusted` PR whose head mixes the contributor's commits with App-linked, App-signed ones (the hive's own in-place adoption fixes), every commit self-signed, is labelled `merge-method/merge` and merged with a merge commit instead of parking at `stage/085` as `adoption-stalled:hive-signoff-attribution`; a listed repo keeps squash-only policy and re-homes an in-place adoption to an App-authored superseder instead (#13975). |
 | `auto_merge.credit_issue_authors` | `true` | Append `Co-authored-by: <login> <id+login@users.noreply.github.com>` for the human authors of the issues a PR closes (`Fixes|Closes|Resolves #N`) to the squash (or merge) commit message on every hive-performed merge, so reporters land on the contributor graph when an external clanker fixed their issue. Bots, the PR author and logins already credited on the branch are skipped; the logins are recorded as `issue_authors=` on the merge audit entry and in review evidence. One cached `GET /issues/{n}` per newly referenced issue. `false` leaves GitHub's default squash message untouched (#14581). |
@@ -558,7 +558,7 @@ session agent sat `dirty` with nobody kicked to fix it. Now:
   clears as soon as the PR is no longer conflicting. The row payload carries
   `rebase: {attempt, max, exhausted, head, text}`.
 - **Approve on a PR that is behind or conflicting** no longer promises that
-  "the merge gate takes it from here" (the gate skips `conflicting` for
+  "the merge queue takes it from here" (the gate skips `conflicting` for
   good). The approval is recorded, the rebase episode opens in your name
   (`requested_by`, which admits the PR to the fixer router whoever opened it,
   as long as the hive can push to it; a hive-authored PR that is merely
@@ -1056,6 +1056,12 @@ writeback:
     torch-spyre/torch-spyre: { mode: issues-only }   # off | issues-only | labels-only | full
   kinds:
     sentinel: { min_level: 5, require_label: true, unlabeled_min_level: 6 }
+  dedupe:                 # content-aware suppression, see below
+    enabled: true
+    same_item_ttl: 24h
+    burst_items: 2
+    burst_window: 60s
+    hourly_cap: 60
 ```
 
 Everything is editable under **⚙ → Features → Autonomy & ACMM → Write-back
@@ -1073,6 +1079,35 @@ two are never written to unsolicited while `backfill: false`. The sweep logs
 one line — `writeback: skipped N pre-existing items on <repo> (backfill
 off)` — and the dashboard shows "hive can now write to `<repo>`; N existing
 PRs were left untouched — enable backfill to process them".
+
+### Duplicate-write suppression
+
+Policy decides whether a kind may write to an item; the content layer under
+`writeback.dedupe` decides whether *this* write is worth making. It applies
+only to comment kinds whose body the caller handed the gate as the preview
+(`sentinel`, `needs_decision_comment`, `supersession_notice`,
+`duplicate_fix_notice`, `reporter_trust_hold`, `contributor_adopt`,
+`claim_comment`, `gate_comment`, `welcome_comment`); `Allowed()` without a
+preview — labels, closes, hold-gate upkeep, task-list edits — stays
+policy-only. Three checks run after the policy gate allows a write:
+
+| Check | Key | Suppression reason | Default |
+|---|---|---|---|
+| Same item | `(repo, item, kind, hash)` of the body with `<!-- hive:… -->` marker arguments, SHAs, RFC 3339 timestamps, durations and whitespace normalised away | `duplicate` — "identical `<kind>` already written to #N at `<time>`" | `same_item_ttl: 24h` |
+| Burst across items | `(repo, kind, hash)` of the body additionally stripped of `#N` references, `@mentions` and digits | `burst` — "same `<kind>` already sent to #A within 60s; held to avoid a notification burst"; one WARN per burst | `burst_items: 2`, `burst_window: 60s` |
+| Hourly cap | `(repo, kind)` writes in the last hour | `rate-capped` | `hourly_cap: 60` (negative disables) |
+
+Holds are suppressions, not a queue: nothing is replayed later, the next
+sweep simply asks again. Merge-path kinds are exempt from the hourly cap
+(`hold_gate_notice`, `verdict_label`, `needs_decision_comment`,
+`contributor_adopt`, `ci_rerun`, `issue_close`, `supersession_close`,
+`issue_file` and every label kind; `writeback.RateCapExemptKinds`). The
+hash table is persisted beside the repo records in `writeback.json` so a
+restart does not re-fire a notice, pruned by TTL and bounded to 5000
+same-item entries. Suppressions appear in the drill-down with the reasons
+above, and `/api/status` → `writeback.dedupe` carries the settings plus the
+last-hour counters `dedupe_same_item`, `dedupe_burst` and `rate_capped`.
+`enabled: false` turns the layer off.
 
 ## Suspicious-activity alerts (`sentinel`)
 

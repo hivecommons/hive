@@ -23,7 +23,7 @@ const (
 	// closed it (or a merged PR declares it supersedes this one). The PR
 	// is closed as superseded; it is never adopted.
 	RuleAlreadyFixed = "already-fixed"
-	// RuleMergeableAsIs: the head is mergeable and green; the merge gate
+	// RuleMergeableAsIs: the head is mergeable and green; the merge queue
 	// takes it with no adoption.
 	RuleMergeableAsIs = "mergeable-as-is"
 	// RuleRebaseThenMerge: conflicts are the only blocker. The unattended
@@ -173,12 +173,12 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 		return Decision{}, false
 	}
 
-	// Rung 2 — mergeable as-is: the merge gate takes it; no adoption. An
+	// Rung 2 — mergeable as-is: the merge queue takes it; no adoption. An
 	// adoption that already stalled on a lane blocker (changes requested,
 	// attribution) is not one the gate would take on a green head alone.
 	if !in.Conflicting && in.CIGreen && !in.DCOMissing && !in.ReporterTrustHold && !in.AdoptionStalled {
-		d := releasePR(RuleMergeableAsIs, "approve "+ref+": the head is mergeable and green, so it goes to the merge gate as it is", "a mergeable, green head needs no adoption; the merge gate takes it (hivecommons/hive#15289)")
-		return out(d, "mergeable and green; handed to the merge gate")
+		d := releasePR(RuleMergeableAsIs, "approve "+ref+": the head is mergeable and green, so it goes to the merge queue as it is", "a mergeable, green head needs no adoption; the merge queue takes it (hivecommons/hive#15289)")
+		return out(d, "mergeable and green; handed to the merge queue")
 	}
 	skip(RuleMergeableAsIs, mergeBlockers(in))
 
@@ -273,7 +273,7 @@ func decideAlreadyFixed(in Input, ref string, c MergedCloser) (Decision, string)
 	}, text
 }
 
-// mergeBlockers names what keeps a head from the merge gate.
+// mergeBlockers names what keeps a head from the merge queue.
 func mergeBlockers(in Input) string {
 	var b []string
 	if in.Conflicting {

@@ -33,7 +33,7 @@ func TestStageTrackerVocabularyTable(t *testing.T) {
 		stagelabels.NeedsAuthor:            {trackerColumnReview, "waiting for its author"},
 		stagelabels.ReturnedToContributor:  {trackerColumnReview, "returned to the contributor"},
 		stagelabels.AdoptedByHive:          {trackerColumnReview, "adopted by hive"},
-		stagelabels.AwaitingMergeAdmission: {trackerColumnMergeGate, "at the merge gate"},
+		stagelabels.AwaitingMergeAdmission: {trackerColumnMergeGate, "at the merge queue"},
 		stagelabels.NeedsDecision:          {trackerColumnMergeGate, "waiting for a human decision"},
 		stagelabels.ReadyForHumanMerge:     {trackerColumnMergeGate, "ready for human merge"},
 		stagelabels.PreMergeSoak:           {trackerColumnMergeGate, "soaking before merge"},
