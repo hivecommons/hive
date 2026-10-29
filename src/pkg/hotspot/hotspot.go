@@ -11,6 +11,7 @@
 package hotspot
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -97,6 +98,8 @@ type Hotspot struct {
 	IssueNumber int       `json:"issue_number,omitempty"`
 	IssueURL    string    `json:"issue_url,omitempty"`
 	LastUpdated time.Time `json:"last_updated"`
+
+	sourceFiles int
 }
 
 // Options are the thresholds; zero values take the documented defaults.
@@ -112,6 +115,10 @@ type Options struct {
 	MaxUnits int
 	// MinUnitLines is the smallest unit the proposal may create. Default 150.
 	MinUnitLines int
+	// SourceFileCount, when set, returns how many files a generated file's
+	// source tree already holds (0 when unknown). A tree already split into
+	// more than MaxUnits files is not proposed for another split.
+	SourceFileCount func(repo, dir string) int
 }
 
 // Defaults mirror governor.hotspot_* in pkg/config.
@@ -243,6 +250,9 @@ func Analyze(repo string, prs []PRFiles, conflicts []Conflict, read SourceReader
 			h.SymbolGroups = Groups(file, info.Source)
 		}
 		h.Score = score(h)
+		if h.Kind == KindGenerated && h.GeneratedFrom != "" && opts.SourceFileCount != nil {
+			h.sourceFiles = opts.SourceFileCount(repo, h.GeneratedFrom)
+		}
 		h.Recommendation, h.Reason = recommend(h, opts)
 		out = append(out, h)
 	}
@@ -303,6 +313,9 @@ func score(h Hotspot) float64 {
 func recommend(h Hotspot, opts Options) (Recommendation, string) {
 	switch h.Kind {
 	case KindGenerated:
+		if h.GeneratedFrom != "" && h.sourceFiles > opts.MaxUnits {
+			return RecommendReportOnly, fmt.Sprintf("generated file; its source tree %s is already split into %d files — regeneration makes every source change touch this output; nothing to split", h.GeneratedFrom, h.sourceFiles)
+		}
 		if h.GeneratedFrom != "" {
 			return RecommendSplitSource, "generated file; the collisions are in " + h.GeneratedFrom + " — look there, never edit the output by hand"
 		}
