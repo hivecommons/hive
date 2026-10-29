@@ -1,0 +1,1 @@
+- Repeated copilot sniff upstream read timeouts now log one WARN per window instead of one per request, so transient network timeouts no longer trip fleet self-reports ([#15356](https://github.com/hivecommons/hive/issues/15356)).

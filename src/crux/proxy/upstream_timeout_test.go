@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"bytes"
+	"log/slog"
 	"errors"
 	"io"
 	"net"
@@ -144,5 +146,21 @@ func TestIsClientHangup(t *testing.T) {
 	}
 	if isClientHangup(errors.New("tls: failed to verify certificate")) {
 		t.Fatal("certificate errors must stay WARN")
+	}
+}
+
+func TestLogTimeoutBoundsWarnBursts(t *testing.T) {
+	var buf bytes.Buffer
+	p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+	const msg = "copilot sniff: upstream response read timed out"
+	err := &net.OpError{Op: "read", Err: os.ErrDeadlineExceeded}
+	for i := 0; i < 24; i++ {
+		p.logTimeout(msg, err, "agent", "a")
+	}
+	if got := strings.Count(buf.String(), "level=WARN"); got != 1 {
+		t.Fatalf("WARN lines = %d, want 1", got)
+	}
+	if got := strings.Count(buf.String(), msg); got != 24 {
+		t.Fatalf("timeouts must stay observable; lines = %d, want 24", got)
 	}
 }
