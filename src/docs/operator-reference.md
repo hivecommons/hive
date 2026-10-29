@@ -944,6 +944,13 @@ into blocking them. A maintainer who removes the label keeps the PR clear until
 the author pushes again: the sweep reads the clearance back from the alert
 comment it left for that head (alert comment present, label absent), so it
 survives a hub restart or a second replica and nothing else needs to be posted.
+A dashboard **Approve** is the same clearance for the head it names: the hive
+takes the label off as its own account, so the `unlabeled` event alone is not
+read as a human clearance; the `/lgtm` + `/approve` comments the approval
+posted carry a `hive:pr-approval head=<sha>` marker, and the sweep reads that
+as the release for exactly that head (rewriting its alert comment to say so),
+so it does not re-apply the label the owner just released (dibs#510). A later
+push re-arms it.
 
 | Behavior | Fires when |
 |---|---|

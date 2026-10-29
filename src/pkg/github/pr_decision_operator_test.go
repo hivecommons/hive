@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -239,5 +240,52 @@ func TestRecordOperatorPullRequestApprovalWithoutOptionsStaysCommentsOnly(t *tes
 	}
 	if len(rec.removed[liveDecisionPR]) != 0 || len(prDecisionFacts(t, c)) != 0 {
 		t.Fatalf("bare approval touched labels or the stage engine: removed=%v", rec.removed[liveDecisionPR])
+	}
+}
+
+// On a Prow repo where the hive bot is not an approver, the relayed
+// commands only draw "changing LGTM is restricted to collaborators" and
+// "[APPROVALNOTIFIER] This PR is NOT APPROVED" (dibs#510). Once Prow has
+// answered the hive's own commands that way, a later Approve records the
+// decision without posting them again and says so on the event; a Prow
+// reply to someone else's comment, or no reply at all, changes nothing.
+func TestRecordOperatorPullRequestApprovalSkipsCommandsProwRejected(t *testing.T) {
+	ownLGTM := unparkWireComment{ID: 501, Body: renderPRApprovalCommandComment("/lgtm", "clubanderson", liveDecisionHead), User: wireUser{Login: "hive[bot]"}}
+	ownApprove := unparkWireComment{ID: 502, Body: renderPRApprovalCommandComment("/approve", "clubanderson", liveDecisionHead), User: wireUser{Login: "hive[bot]"}}
+	prowReply := func(id int64, text string) unparkWireComment {
+		return unparkWireComment{ID: 600 + id, Body: text + "\n\n<details>\n\nIn response to [this](https://github.com/org/repo/pull/1#issuecomment-" + strconv.FormatInt(id, 10) + "):\n\n>/lgtm\n</details>", User: wireUser{Login: "kubestellar-prow[bot]"}}
+	}
+	for _, tc := range []struct {
+		name     string
+		comments []unparkWireComment
+		skipped  string
+	}{
+		{"lgtm restricted", []unparkWireComment{ownLGTM, prowReply(501, "@hive[bot]: changing LGTM is restricted to collaborators")}, PRApprovalCommandsSkippedProw},
+		{"approve not approved", []unparkWireComment{ownApprove, prowReply(502, "[APPROVALNOTIFIER] This PR is **NOT APPROVED**")}, PRApprovalCommandsSkippedProw},
+		{"prow answered someone else", []unparkWireComment{ownLGTM, prowReply(77, "@eve: changing LGTM is restricted to collaborators")}, ""},
+		{"human quoting the phrase", []unparkWireComment{ownLGTM, {ID: 700, Body: "NOT APPROVED, see #issuecomment-501)", User: wireUser{Login: "eve"}}}, ""},
+		{"no prior commands", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, rec := newUnparkPRClient(t, []unparkWireIssue{hiveParkedPR(tc.comments...)}, map[string]string{"clubanderson": "admin"})
+			store := review.NewHumanChangeRequests("")
+			event, err := c.RecordOperatorPullRequestApprovalWith(context.Background(), "org/repo", liveDecisionPR, "clubanderson", PullRequestApprovalOptions{HumanChangeRequests: store})
+			if err != nil {
+				t.Fatalf("approval: %v", err)
+			}
+			if event.CommandsSkipped != tc.skipped || !event.Recorded {
+				t.Fatalf("event = %+v, want CommandsSkipped %q and the approval recorded", event, tc.skipped)
+			}
+			wantPosted := len(PRApprovalCommands)
+			if tc.skipped != "" {
+				wantPosted = 0
+			}
+			if got := rec.posted[liveDecisionPR]; len(got) != wantPosted {
+				t.Fatalf("posted %d command comments, want %d: %v", len(got), wantPosted, got)
+			}
+			if review.HumanApprovalFor(store, "org/repo", liveDecisionPR, liveDecisionHead) == nil {
+				t.Fatal("the approval must be recorded against the head whether or not the commands were posted")
+			}
+		})
 	}
 }

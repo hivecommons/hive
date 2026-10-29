@@ -79,6 +79,72 @@ type PullRequestApprovalEvent struct {
 	// Stage is the stage label the engine derived when the approval was
 	// submitted to it, or "" when the stage write was deferred to the sweep.
 	Stage string
+	// CommandsSkipped is set when the `/lgtm` + `/approve` comments were
+	// not posted: PRApprovalCommandsSkippedProw when Prow rejected the
+	// hive's own earlier commands on this PR (the bot is not in OWNERS),
+	// so posting again would only draw the same "NOT APPROVED" reply. The
+	// hive's own approval record is unaffected.
+	CommandsSkipped string
+}
+
+// PRApprovalCommandsSkippedProw is the CommandsSkipped reason for a Prow
+// repo where the hive bot is not an approver.
+const PRApprovalCommandsSkippedProw = "prow-rejects-bot-commands"
+
+// prowCommandRejections are the phrases Prow replies with when the hive
+// bot's `/lgtm` or `/approve` carries no weight on the repo.
+var prowCommandRejections = []string{"restricted to collaborators", "NOT APPROVED"}
+
+// prowRejectedHiveCommands reports whether a bot other than the hive has
+// replied to one of the hive's earlier dashboard approval commands on the
+// PR with a Prow rejection (dibs#510: `/lgtm` → "changing LGTM is
+// restricted to collaborators", `/approve` → "[APPROVALNOTIFIER] This PR is
+// NOT APPROVED"). Prow quotes the comment it answers as
+// "In response to [this](…#issuecomment-<id>)", so only replies bound to a
+// hive command comment count.
+func (c *Client) prowRejectedHiveCommands(ctx context.Context, owner, name string, number int) (bool, error) {
+	comments, err := c.listIssueComments(ctx, owner, name, number)
+	if err != nil {
+		return false, err
+	}
+	own := map[int64]bool{}
+	for _, comment := range comments {
+		if comment == nil || !c.markerAuthorTrusted(comment.GetUser()) {
+			continue
+		}
+		if _, _, _, ok := ParsePRApprovalCommandComment(comment.GetBody()); ok {
+			own[comment.GetID()] = true
+		}
+	}
+	if len(own) == 0 {
+		return false, nil
+	}
+	for _, comment := range comments {
+		if comment == nil || c.isHiveAccount(comment.GetUser()) {
+			continue
+		}
+		login := strings.ToLower(comment.GetUser().GetLogin())
+		if !strings.EqualFold(comment.GetUser().GetType(), "Bot") && !strings.HasSuffix(login, "[bot]") {
+			continue
+		}
+		body := comment.GetBody()
+		rejected := false
+		for _, phrase := range prowCommandRejections {
+			if strings.Contains(body, phrase) {
+				rejected = true
+				break
+			}
+		}
+		if !rejected {
+			continue
+		}
+		for id := range own {
+			if strings.Contains(body, fmt.Sprintf("#issuecomment-%d)", id)) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // PullRequestApprovalOptions is what a person's Approve decision releases
@@ -250,14 +316,25 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		return PullRequestApprovalEvent{}, err
 	}
 	full := owner + "/" + name
-	for _, command := range PRApprovalCommands {
-		if err := c.CreateIssueComment(ctx, full, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
-			return PullRequestApprovalEvent{}, fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
-		}
-	}
 	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor, ProwManaged: prowManagedLabels(labels)}
-	if c.logger != nil {
-		c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+	prowRejected, err := c.prowRejectedHiveCommands(ctx, owner, name, number)
+	if err != nil {
+		return PullRequestApprovalEvent{}, fmt.Errorf("reading comments of %s/%s#%d before posting approval commands: %w", owner, name, number, err)
+	}
+	if prowRejected {
+		event.CommandsSkipped = PRApprovalCommandsSkippedProw
+		if c.logger != nil {
+			c.logger.Info("pull request approval commands not posted: Prow rejected the hive's earlier commands on this PR (bot is not an approver); the hive's own approval record stands", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+		}
+	} else {
+		for _, command := range PRApprovalCommands {
+			if err := c.CreateIssueComment(ctx, full, number, renderPRApprovalCommandComment(command, actor, head)); err != nil {
+				return PullRequestApprovalEvent{}, fmt.Errorf("posting %s on %s/%s#%d: %w", command, owner, name, number, err)
+			}
+		}
+		if c.logger != nil {
+			c.logger.Info("pull request approval commands posted by dashboard decision", "repo", event.Repo, "pr", number, "actor", actor, "head", head)
+		}
 	}
 	if opts.HumanChangeRequests != nil && head != "" {
 		req := review.HumanChangeRequest{

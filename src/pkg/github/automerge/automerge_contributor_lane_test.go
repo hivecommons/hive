@@ -21,6 +21,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -778,6 +779,51 @@ func TestTrySweepContributorLaneTrustedHumanApprovalClearsRequiresHuman(t *testi
 			}
 			if reason != tt.wantReason || fx.merges != tt.wantMerges {
 				t.Fatalf("reason=%q merges=%d, want %q/%d", reason, fx.merges, tt.wantReason, tt.wantMerges)
+			}
+		})
+	}
+}
+
+// An owner's dashboard Approve admits the untrusted-author head
+// (hivecommons/hive#15136) once the sentinel it released stays released:
+// the recorded approval by a trusted merger admits the newcomer-tier claim
+// the lane would otherwise refuse, and the PR merges. While the alert label
+// is back on the PR — the sentinel re-applying it undid the approval on
+// dibs#510 — the lane still stands down with sentinel-blocked, so the label
+// memory, not the admission, is what the owner's approval depends on.
+func TestTrySweepContributorLaneOperatorApprovalAdmitsReleasedSentinel(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		labels     []string
+		wantReason string
+		wantMerges int
+	}{
+		{name: "sentinel released", labels: []string{"stage/085-needs-decision"}, wantMerges: 1},
+		{name: "sentinel re-applied", labels: []string{"stage/085-needs-decision", "hive-sentinel"}, wantReason: contributorLaneReasonSentinelBlocked},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.labels = tt.labels
+			fx.issueComments[0]["body"] = contributorClaimMarkerTier(contributorLaneTestAuthor, "contributor", contributorLaneTestHive, " tier=newcomer verified=true")
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+			store := review.NewHumanChangeRequests("")
+			if err := store.Record(review.HumanChangeRequest{Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Actor: "clubanderson", Kind: review.HumanChangeRequestKindApprove, Source: review.HumanChangeRequestSourceDecision, SourceID: 1}); err != nil {
+				t.Fatal(err)
+			}
+			engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock), HumanChangeRequests: store})
+			engine.SetMergerAuthorizer(func(login string) bool { return strings.EqualFold(login, "clubanderson") })
+			event, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason != tt.wantReason || fx.merges != tt.wantMerges {
+				t.Fatalf("reason=%q merges=%d, want %q/%d", reason, fx.merges, tt.wantReason, tt.wantMerges)
+			}
+			if tt.wantMerges == 1 && (!strings.Contains(fx.lastComment, "operator-approval:clubanderson") || event.Number != 7) {
+				t.Fatalf("merge comment must name the admission: %q (event %+v)", fx.lastComment, event)
 			}
 		})
 	}

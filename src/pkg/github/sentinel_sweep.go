@@ -440,13 +440,23 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 		// maintainer's review, and the maintainer removed the label with
 		// this head already in place. The second case is a clearance of
 		// this head, not of the one the marker names (#13602); re-alerting
-		// would make the maintainer remove the same label twice.
+		// would make the maintainer remove the same label twice. A
+		// dashboard Approve bound to this head is the same clearance made
+		// through the hive, which took the label off as itself.
 		cleared, clearedBy, err := c.sentinelClearedAfterLatestPush(ctx, owner, repo, number, head, label)
 		if err != nil {
 			return SentinelSweepEvent{}, false, err
 		}
+		note := fmt.Sprintf(sentinelClearedNote, clearedBy, label)
+		if !cleared {
+			releasedBy, err := c.sentinelReleasedByDashboardApproval(ctx, owner, repo, number, head)
+			if err != nil {
+				return SentinelSweepEvent{}, false, err
+			}
+			cleared, note = releasedBy != "", fmt.Sprintf(sentinelReleasedNote, releasedBy, label)
+		}
 		if cleared {
-			if err := c.recordSentinelClearance(ctx, owner, repo, number, label, clearedBy, SentinelComment(decision, head, author, findings)); err != nil {
+			if err := c.recordSentinelClearance(ctx, owner, repo, number, note, SentinelComment(decision, head, author, findings)); err != nil {
 				return SentinelSweepEvent{}, false, err
 			}
 			return SentinelSweepEvent{}, false, nil

@@ -175,6 +175,11 @@ type repoItemDecisionResponse struct {
 	// contributor lane merges the head as-is and the adoption engine
 	// leaves the PR alone (hivecommons/hive#15136).
 	AdmittedBy string `json:"admitted_by,omitempty"`
+	// CommandsSkipped is set when an Approve did not post the `/lgtm` +
+	// `/approve` comments: "prow-rejects-bot-commands" on a Prow repo where
+	// the hive bot is not an approver, so they would only draw another
+	// "NOT APPROVED" (dibs#510). The approval itself is still recorded.
+	CommandsSkipped string `json:"commands_skipped,omitempty"`
 }
 
 // admitPullRequestHead records user's Approve as the trust override for
@@ -211,6 +216,10 @@ type repoItemApproveFacts struct {
 	// came from the hive's account, which is not in OWNERS, so Prow ignores
 	// it and the toast must not claim the PR is approved for Prow.
 	Prow bool
+	// CommandsSkipped: the `/lgtm` + `/approve` comments were not posted
+	// because Prow already rejected the hive's commands on this PR
+	// (dibs#510); the hive's own approval record is what counts.
+	CommandsSkipped bool
 }
 
 // repoItemDecisionResult reads a recorded human decision into the shared
@@ -587,7 +596,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		err  error
 	)
 	var released []string
-	stage := ""
+	stage, commandsSkipped := "", ""
 	sentinelOpen, prow := false, false
 	if decision == repoItemDecisionApprove {
 		var event ghpkg.PullRequestApprovalEvent
@@ -598,6 +607,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		})
 		head = event.HeadSHA
 		released, stage, sentinelOpen, prow = repoItemApprovalReleased(event), event.Stage, event.SentinelLabelOpen, event.ProwManaged
+		commandsSkipped = event.CommandsSkipped
 	} else {
 		var event ghpkg.PullRequestDecisionEvent
 		event, err = gh.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, comment, repoItemDecisionChangeRequests())
@@ -632,13 +642,13 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 			released = append(released, "admitted")
 		}
 	}
-	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage, "admitted_by", admitted), "", repoFull, number)
+	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage, "admitted_by", admitted, "commands_skipped", commandsSkipped), "", repoFull, number)
 	// The row's park was just answered: serve the re-derived stage on the
 	// next tracker read instead of the cached 085.
 	s.invalidateStageTrackerForWebhook()
-	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head, AdmittedBy: admitted,
+	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head, AdmittedBy: admitted, CommandsSkipped: commandsSkipped,
 		Result: repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
-			User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow,
+			User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "",
 		})})
 }
 
@@ -688,7 +698,11 @@ func repoItemApproveResult(out *RowActionResult, number int, facts repoItemAppro
 		headline += " · sentinel alert still open"
 	}
 	out.Outcome = headline + "."
-	out.Posted = append(out.Posted, "`/lgtm` posted", "`/approve` posted")
+	if facts.CommandsSkipped {
+		out.Posted = append(out.Posted, "`/lgtm` + `/approve` not posted (Prow does not accept the hive bot's commands on this repo)")
+	} else {
+		out.Posted = append(out.Posted, "`/lgtm` posted", "`/approve` posted")
+	}
 	if released["needs-human"] {
 		out.Posted = append(out.Posted, "`needs-human` label removed")
 	}
@@ -706,7 +720,7 @@ func repoItemApproveResult(out *RowActionResult, number int, facts repoItemAppro
 	default:
 		out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked" + repoItemSoakNote(facts.SoakMinutes) + "."
 	}
-	if facts.Prow {
+	if facts.Prow || facts.CommandsSkipped {
 		// Prow reads `/approve` only from OWNERS; the hive's account is not
 		// one, so the relayed command is "NOT APPROVED" there.
 		out.Next = "Prow approval still needs an OWNERS reviewer: the relayed `/approve` came from hive's account, which Prow does not count. " + out.Next

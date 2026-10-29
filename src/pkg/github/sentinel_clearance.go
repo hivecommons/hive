@@ -14,6 +14,10 @@ import (
 // arguments are the login that removed the label and the label name.
 const sentinelClearedNote = "_@%s removed the `%s` label after this head was pushed, so Hive treats this head as reviewed and will not re-apply the label unless new commits are pushed._"
 
+// sentinelReleasedNote is the same closing line for a release made by a
+// dashboard Approve bound to this head.
+const sentinelReleasedNote = "_@%s approved this head from the Hive dashboard, so Hive treats it as reviewed and will not re-apply the `%s` label unless new commits are pushed._"
+
 // sentinelClearedAfterLatestPush reports whether the newest label event for
 // label on the PR is an `unlabeled` by a human who is not one of the hive's
 // own accounts, and whether it happened after head was pushed.
@@ -94,6 +98,39 @@ func (c *Client) sentinelClearedAfterLatestPush(ctx context.Context, owner, repo
 	return true, actor, nil
 }
 
+// sentinelReleasedByDashboardApproval reports the login on whose behalf the
+// hive posted a dashboard approval command bound to head
+// (renderPRApprovalCommandComment), or "" when no such comment exists.
+//
+// A dashboard Approve takes the alert label off as the hive's own account,
+// so sentinelClearedAfterLatestPush rightly refuses to read the `unlabeled`
+// event as a human clearance — and the sweep then re-alerted the head the
+// owner had just approved (dibs#510: approved 00:32Z, re-labelled 00:33Z).
+// The approval comment is the durable, hive-authored record of that
+// release: its marker names the head the person saw, so it is never
+// honoured on a later push. Only comments the hive itself wrote count;
+// anyone can type the marker.
+func (c *Client) sentinelReleasedByDashboardApproval(ctx context.Context, owner, repo string, number int, head string) (string, error) {
+	head = strings.ToLower(strings.TrimSpace(head))
+	if head == "" {
+		return "", nil
+	}
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return "", fmt.Errorf("listing comments of %s/%s#%d for sentinel release: %w", owner, repo, number, err)
+	}
+	for _, comment := range comments {
+		if comment == nil || !c.markerAuthorTrusted(comment.GetUser()) {
+			continue
+		}
+		_, actor, boundHead, ok := ParsePRApprovalCommandComment(comment.GetBody())
+		if ok && boundHead == head && actor != "" {
+			return actor, nil
+		}
+	}
+	return "", nil
+}
+
 // sentinelHeadArrivedAt returns the earliest server-stamped created_at of
 // a check suite or commit status for sha, which GitHub records when the SHA
 // first reaches the repository; zero when the SHA has neither.
@@ -142,13 +179,15 @@ func (c *Client) sentinelHeadArrivedAt(ctx context.Context, owner, repo, sha str
 }
 
 // recordSentinelClearance makes a clearance accepted by
-// sentinelClearedAfterLatestPush durable: the hive's newest marker comment
-// on the PR is rewritten as the alert for the current head, in the form
+// sentinelClearedAfterLatestPush or sentinelReleasedByDashboardApproval
+// durable: the hive's newest marker comment on the PR is rewritten as the
+// alert for the current head followed by note (sentinelClearedNote or
+// sentinelReleasedNote, already formatted), in the form
 // sentinelClearedByMaintainer reads back, so a hub restart (empty
 // sentinelHeads) finds "alert for this head, label absent" and stays quiet.
 // When the hive has no marker comment on the PR one is posted.
-func (c *Client) recordSentinelClearance(ctx context.Context, owner, repo string, number int, label, clearedBy, alert string) error {
-	body := alert + "\n" + fmt.Sprintf(sentinelClearedNote, clearedBy, label) + "\n"
+func (c *Client) recordSentinelClearance(ctx context.Context, owner, repo string, number int, note, alert string) error {
+	body := alert + "\n" + note + "\n"
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
 		return fmt.Errorf("listing comments for sentinel clearance: %w", err)
