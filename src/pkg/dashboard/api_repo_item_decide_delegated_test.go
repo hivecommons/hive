@@ -619,9 +619,10 @@ func TestReparkFromEvents(t *testing.T) {
 	}
 }
 
-// TestDelegatedDecisionStuckIssueWording reproduces hivecommons/hive#15021:
-// the hive approved an ISSUE (`default-approve`), approved-direction landed
-// but stage/045-needs-decision never came off. Past the effect timeout the
+// TestDelegatedDecisionStuckIssueWording covers an approved issue with both
+// approved-direction and stage/045-needs-decision, with no later re-park
+// recorded. Unlike hivecommons/hive#15021, this fixture has no timeline
+// evidence that the park lifted and was added again. Past the effect timeout the
 // toast must not say "approved for merge" (nothing merges on an issue),
 // must name the stuck label, and must offer the lift first.
 func TestDelegatedDecisionStuckIssueWording(t *testing.T) {
