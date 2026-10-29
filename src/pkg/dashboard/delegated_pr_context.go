@@ -92,6 +92,15 @@ func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *
 	// snapshot alone does not; the live tracker reads it the same way.
 	items := s.buildStageTracker(status, s.stageStoreOrShared(), now).Items
 	api := s.deps.GHClient.GoGitHub()
+	// A partial list could miss a workflow path, so an incomplete one fails closed.
+	files, err := github.ListPRChangedFiles(ctx, api, owner, name, pr)
+	if err != nil {
+		return fmt.Errorf("reading changed files for %s#%d: %w", repo, pr.GetNumber(), err)
+	}
+	in.ChangedFiles = make([]string, 0, len(files))
+	for _, f := range files {
+		in.ChangedFiles = append(in.ChangedFiles, f.Filename)
+	}
 	for _, number := range delegatedCompetingNumbers(items, repo, pr) {
 		other, _, err := api.PullRequests.Get(ctx, owner, name, number)
 		if err != nil {
