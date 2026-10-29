@@ -85,4 +85,19 @@ func TestToastCountdownBarWiredToDismissTimer(t *testing.T) {
 	if strings.Contains(html, ".toast-bar { display: none; }") {
 		t.Error("reduced motion must keep the countdown bar: it is information, not decoration")
 	}
+
+	// Stage-tracker action-result toasts: informational ones close after
+	// STAGE_TRACKER_RESULT_TOAST_MS on the same countdown; errors and
+	// toasts offering next actions stay sticky.
+	if !strings.Contains(html, "const STAGE_TRACKER_RESULT_TOAST_MS = 15000;") {
+		t.Error("result toasts need a named 15s lifetime constant")
+	}
+	result := extractJSFunction(t, html, "stageTrackerResultToast")
+	if !strings.Contains(result, "if (stageTrackerResultToastTimed(text)) toastCountdownBar(el, STAGE_TRACKER_RESULT_TOAST_MS, () => dismissToast(el, null, null, true));") {
+		t.Error("stageTrackerResultToast must arm the shared countdown for timed results, dismissing through the sticky guard")
+	}
+	timed := extractJSFunction(t, html, "stageTrackerResultToastTimed")
+	if !strings.Contains(timed, "text.type !== 'error' && !(text.options && text.options.length)") {
+		t.Error("error results and results offering next actions must stay sticky")
+	}
 }
