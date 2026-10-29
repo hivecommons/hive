@@ -160,7 +160,9 @@ func stageTrackerNewState(it StageTrackerItem, hasRec bool, filter *config.Issue
 		}
 	}
 	n.Text = "New · waiting for " + n.NextMoverText
-	if pass != "" && n.NextMover == StageTrackerMoverHive {
+	if triagePending {
+		n.Text = stageTrackerTriageNeededCaption
+	} else if pass != "" && n.NextMover == StageTrackerMoverHive {
 		n.Text += " (" + pass + ")"
 	} else if pass != "" {
 		n.Text += fmt.Sprintf("; the hive's %s", pass)
@@ -214,6 +216,30 @@ func applyStageTrackerNew(it *StageTrackerItem, n *StageTrackerNew) {
 	if n.Since != nil && it.StageSince == nil {
 		it.StageSince = n.Since
 	}
+	// A reporter-trust hold is "Triage needed" whether or not the awaiting
+	// label has landed yet: the gate decided it, the stage-label pass only
+	// writes it down later. The same modifier the `needs-triage` label
+	// yields drives the Open chevron word, the pill and Accept triage.
+	if n.TriagePending() && !slices.Contains(it.Modifiers, modNeedsTriage) {
+		it.Modifiers = append(it.Modifiers, modNeedsTriage)
+		slices.SortFunc(it.Modifiers, func(a, b string) int {
+			return slices.Index(stageTrackerModifierOrder, a) - slices.Index(stageTrackerModifierOrder, b)
+		})
+	}
+}
+
+// TriagePending reports whether the 000-new row waits on a maintainer's
+// triage: the triage gate is the next one.
+func (n *StageTrackerNew) TriagePending() bool {
+	if n == nil || n.NextMover != StageTrackerMoverMaintainer {
+		return false
+	}
+	for _, g := range n.Gates {
+		if g.Name == "triage" && g.State == StageTrackerGateNext {
+			return true
+		}
+	}
+	return false
 }
 
 // issueFilterConfig is the project's issue filter, or nil without deps.

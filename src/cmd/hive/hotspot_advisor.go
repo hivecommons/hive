@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -151,6 +154,77 @@ func hotspotSourceReader(ctx context.Context, cfg *config.Config, ghClient *gith
 	}
 }
 
+// hotspotSourceFileCount counts the files under a generated file's source
+// tree: in the host-local checkout when project.checkouts_dir names one,
+// else via the GitHub git-trees API (recursive) with the contents API
+// directory listing as a last resort, mirroring hotspotSourceReader. 0
+// means unknown.
+func hotspotSourceFileCount(ctx context.Context, cfg *config.Config, ghClient *github.Client) func(repo, dir string) int {
+	cache := map[string]int{}
+	var mu sync.Mutex
+	return func(repo, dir string) int {
+		key := repo + ":" + dir
+		mu.Lock()
+		if n, ok := cache[key]; ok {
+			mu.Unlock()
+			return n
+		}
+		mu.Unlock()
+		n := 0
+		if root := cfg.Project.CheckoutRootFor(repo); root != "" {
+			_ = filepath.WalkDir(filepath.Join(root, filepath.Clean("/"+dir)), func(_ string, d fs.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					n++
+				}
+				return nil
+			})
+		}
+		if n == 0 && ghClient != nil {
+			if api := ghClient.GoGitHub(); api != nil {
+				n = hotspotSourceFileCountGitHub(ctx, api, repo, dir)
+			}
+		}
+		mu.Lock()
+		cache[key] = n
+		mu.Unlock()
+		return n
+	}
+}
+
+// hotspotSourceFileCountGitHub counts blobs under dir on the default branch.
+// The trees endpoint accepts `HEAD:<path>` as the tree reference and lists
+// the subtree recursively; when it fails (or truncates to nothing) the
+// contents API's one-level directory listing is used instead.
+func hotspotSourceFileCountGitHub(ctx context.Context, api *gh.Client, repo, dir string) int {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		return 0
+	}
+	dir = strings.Trim(filepath.ToSlash(filepath.Clean("/"+dir)), "/")
+	if dir == "" {
+		return 0
+	}
+	n := 0
+	if tree, _, err := api.Git.GetTree(ctx, owner, name, "HEAD:"+dir, true); err == nil && tree != nil {
+		for _, e := range tree.Entries {
+			if e.GetType() == "blob" {
+				n++
+			}
+		}
+	}
+	if n > 0 {
+		return n
+	}
+	if _, entries, _, err := api.Repositories.GetContents(ctx, owner, name, dir, nil); err == nil {
+		for _, e := range entries {
+			if e.GetType() == "file" {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // runHotspotAdvisor is the eval-tick half of the advisor: at most once per
 // hotspotAdvisorInterval it closes stale PR intervals, prunes the window,
 // scores every repo the merge train has reported on, publishes the result
@@ -188,10 +262,11 @@ func runHotspotAdvisor(ctx context.Context, cfg *config.Config, ghClient *github
 	refile := time.Duration(g.HotspotRefileDaysOrDefault()) * 24 * time.Hour
 	store.Prune(window, refile)
 	opts := hotspot.Options{
-		Window:      window,
-		MinPRs:      g.HotspotMinPRsOrDefault(),
-		MinOverlaps: g.HotspotMinOverlapsOrDefault(),
-		MinLines:    g.HotspotMinLinesOrDefault(),
+		Window:          window,
+		MinPRs:          g.HotspotMinPRsOrDefault(),
+		MinOverlaps:     g.HotspotMinOverlapsOrDefault(),
+		MinLines:        g.HotspotMinLinesOrDefault(),
+		SourceFileCount: hotspotSourceFileCount(ctx, cfg, ghClient),
 	}
 	read := hotspotSourceReader(ctx, cfg, ghClient)
 	ghAdapter := hotspotGitHub{c: ghClient}
