@@ -263,11 +263,8 @@ func decisionForParked(it StageTrackerItem, held bool) *StageTrackerDecision {
 func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision {
 	base, approver := stagelabels.HumanApprovedReason(it.Reason)
 	base = strings.TrimSpace(base)
-	_, word, tip := stageTrackerHumanMergeReason(it.Reason)
+	_, _, tip := stageTrackerHumanMergeReason(it.Reason)
 	d := &StageTrackerDecision{Since: it.StageSince, AskedBy: decisionAskedByLane, BlockerReason: base}
-	if word == "" {
-		word = "policy"
-	}
 	ref := "#" + strconv.Itoa(it.Number)
 	// First read: one sentence of state, one of why (hivecommons/hive#15394).
 	why := stageTrackerUntrustedAuthorWhy(base, it.Author)
