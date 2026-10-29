@@ -1,0 +1,1 @@
+- A kick ref withheld because the GitHub API budget is critical or the rate-limit caution window is engaged is now logged at INFO instead of WARN, so the designed back-off no longer files an `unclassified_error_repeated` self-report ([#15465](https://github.com/hivecommons/hive/issues/15465)).
