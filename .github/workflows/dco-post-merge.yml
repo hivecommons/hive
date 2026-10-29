@@ -308,15 +308,20 @@ env:
   # disposition. Expect STALE-WAIVER once the contributor's next commit lands
   # under the work address; remove the entry then.
 
-  # 003144299b952e53290088e7637ac12f6d5d20e9, 8eb7267d3302bb3f68e718f4caf57826efb88ae3
-  # and 3fedd0f3cbf5703a306157411a7136ecff738f5c — further v5 squashes with
-  # the same mismatched-signoff shape and the same person as 687c3cb0 above:
-  # author Sachin Naik <91499691+odttlnt@users.noreply.github.com>, sign-off
+  # 003144299b952e53290088e7637ac12f6d5d20e9 — v5 squash with the same
+  # mismatched-signoff shape and the same person as 687c3cb0 above: author
+  # Sachin Naik <91499691+odttlnt@users.noreply.github.com>, sign-off
   # sachin.naik@ibm.com. Reported by the monitor in #15542. Protected v5
   # history cannot be re-signed in place and no sign-off is added on the
-  # contributor's behalf, so these are waived per commit. Accepted by
-  # maintainer disposition in #15542: the maintainer merging the PR that adds
-  # these entries IS that disposition. Reversible: remove the entries.
+  # contributor's behalf, so it is waived per commit. Accepted by maintainer
+  # disposition in #15542: the maintainer merging the PR that adds this entry
+  # IS that disposition. Reversible: remove the entry.
+
+  # 8eb7267d3302bb3f68e718f4caf57826efb88ae3 — same shape, person and
+  # disposition as 003144299b above (#15542). Reversible: remove the entry.
+
+  # 3fedd0f3cbf5703a306157411a7136ecff738f5c — same shape, person and
+  # disposition as 003144299b above (#15542). Reversible: remove the entry.
 
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
