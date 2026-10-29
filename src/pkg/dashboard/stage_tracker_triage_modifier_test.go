@@ -124,3 +124,34 @@ func TestStageTracker_NeedsTriageStaleOnlyPastClaim(t *testing.T) {
 		}
 	}
 }
+
+// A reporter-trust hold the awaiting label has not reached yet
+// (hivecommons/hive#15437: stage 0, bucket reporter_triage, labels null,
+// modifiers []) carries the needs-triage modifier all the same, so the Open
+// chevron reads "Triage needed" rather than "New" and Accept triage leads.
+// The caption keeps the next-pass narration.
+func TestStageTracker_ReporterTrustHoldReadsTriageNeeded(t *testing.T) {
+	now := time.Date(2026, 10, 29, 18, 20, 0, 0, time.UTC)
+	opened := now.Add(-28 * time.Minute)
+	s := newTestServer()
+	store := stagelabels.NewStore("", func() time.Time { return now })
+	s.stageStore = store
+	status := minimalPayload()
+	status.HiveID = "hv-test"
+	status.Governor.NextKickAt = now.Add(4 * time.Minute).UTC().Format(time.RFC3339)
+	status.Repos = []FrontendRepo{{Name: "hive", Full: "hivecommons/hive", NonActionableIssues: []any{
+		github.RepoWorkIssue{Repo: "hivecommons/hive", Number: 15437, Title: "ServiceMonitor component", Author: "onkar717", AuthorIsHuman: true,
+			CreatedAt: opened, UpdatedAt: opened, Bucket: "reporter_triage", Reason: "Awaiting maintainer triage label"},
+	}}}
+	s.UpdateStatus(status)
+	it := trackerItem(t, s.buildStageTracker(s.status, store, now), "issue", 15437)
+	if it.Stage != 0 || it.StageSlug != StageTrackerNewSlug || it.New == nil || !it.New.TriagePending() {
+		t.Fatalf("#15437 = stage %d slug %q new %+v, want 000-new with triage pending", it.Stage, it.StageSlug, it.New)
+	}
+	if !slices.Equal(it.Modifiers, []string{modNeedsTriage}) {
+		t.Fatalf("#15437 modifiers = %v, want [%s] without the label", it.Modifiers, modNeedsTriage)
+	}
+	if it.Actor != StageTrackerMoverMaintainer || !strings.HasPrefix(it.Caption, "New · waiting for a maintainer's triage (add `triage/accepted`)") || !strings.Contains(it.Caption, "next pass in 4m") {
+		t.Fatalf("#15437 caption %q actor %q, want the maintainer's triage with the next pass", it.Caption, it.Actor)
+	}
+}
