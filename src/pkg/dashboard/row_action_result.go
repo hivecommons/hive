@@ -39,6 +39,12 @@ type RowActionResult struct {
 	Posted          []string `json:"posted,omitempty"`
 	SentinelCleared bool     `json:"sentinel_cleared,omitempty"`
 	SentinelOpen    bool     `json:"sentinel_open,omitempty"`
+	// Decision, Reason and RuledOut are the delegate's PR decision-ladder
+	// rung, why it applied, and why each earlier rung did not
+	// (hivecommons/hive#15289). Additive.
+	Decision string   `json:"decision,omitempty"`
+	Reason   string   `json:"reason,omitempty"`
+	RuledOut []string `json:"ruled_out,omitempty"`
 }
 
 // RowActionTarget names the issue or PR a row action acted on.
@@ -104,7 +110,7 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 	if in.Kind == delegatedecision.KindPR {
 		kind = rowActionTargetPR
 	}
-	out := RowActionResult{Target: rowActionTarget(in.Repo, kind, in.Number), Rule: d.Rule}
+	out := RowActionResult{Target: rowActionTarget(in.Repo, kind, in.Number), Rule: d.Rule, Decision: d.Rung, Reason: d.Reason, RuledOut: d.RuledOut}
 	ruleTag := ""
 	if d.Rule != "" {
 		ruleTag = " (" + delegatedecision.RulePlain(d.Rule) + ")"
@@ -146,9 +152,12 @@ func delegatedRowActionResult(in delegatedecision.Input, d delegatedecision.Deci
 		}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate || d.Verdict == delegatedecision.VerdictCloseSuperseded:
 		out.Action = rowActionClosed
-		if actionTarget > 0 {
+		switch {
+		case d.Rule == delegatedecision.RuleAlreadyFixed:
+			out.Outcome = "Closed as superseded: " + strings.TrimSuffix(strings.TrimSpace(d.Text), ".")
+		case actionTarget > 0:
 			out.Outcome = fmt.Sprintf("Closed in favour of #%d%s.", actionTarget, ruleTag)
-		} else {
+		default:
 			out.Outcome = "Closed" + ruleTag + "."
 		}
 		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."

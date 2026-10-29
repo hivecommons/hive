@@ -80,6 +80,12 @@ var glossary = []GlossaryEntry{
 	// Rules — why the delegate chose what it chose.
 	{Slug: "contributor-offline", Kind: GlossaryRule, Plain: "the author's clanker hasn't been connected since the nudge",
 		Detail: "The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting."},
+	{Slug: RuleAlreadyFixed, Kind: GlossaryRule, Plain: "another merged PR already fixed the linked issue",
+		Detail: "The issue this PR fixes was already closed by another pull request that merged, so the work is on the base branch; the hive closes this PR as superseded instead of adopting it."},
+	{Slug: RuleMergeableAsIs, Kind: GlossaryRule, Plain: "the branch is mergeable as-is; the merge gate takes it",
+		Detail: "The branch has no conflicts, CI is green and the sign-off is present, so the hive hands it to the merge gate instead of adopting it."},
+	{Slug: RuleReturnToContributor, Kind: GlossaryRule, Plain: "the author's agent is connected; the hive asked it to fix the PR",
+		Detail: "The author's clanker or hive is connected, so the hive told it exactly what to fix (rebase, sign-off, CI) instead of adopting the work."},
 	{Slug: "dedupe", Kind: GlossaryRule, Plain: "an older issue already tracks this",
 		Detail: "An older issue already tracks the same work; one thread keeps it moving."},
 	{Slug: "fix-then-merge", Kind: GlossaryRule, Plain: "the branch isn't mergeable yet",

@@ -264,3 +264,57 @@ func TestGatherDelegatedPRContextUsesStageStoreClaims(t *testing.T) {
 		t.Fatalf("competing = %+v", in.Competing)
 	}
 }
+
+// "Let hive decide" on #15219 (hivecommons/hive#15289): the issue it fixes,
+// #15202, was already closed by merged PR #15240, so the hive closes the PR
+// as superseded naming #15240 and its commit — it never adopts it, however
+// offline the author's clanker is.
+func TestGatherDelegatedAlreadyFixedClosesSuperseded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		labels := []map[string]string{{"name": "author/clanker"}, {"name": "adoption/supersede"}, {"name": "stage/085-needs-decision"}}
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/graphql"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": []map[string]any{
+				{"number": 15240, "url": "https://github.com/org/repo/pull/15240", "merged": true, "mergedAt": "2026-10-28T22:00:00Z"},
+			}}}}}})
+		case strings.HasSuffix(r.URL.Path, "/issues/15219"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 15219, "state": "open", "pull_request": map[string]any{}, "user": map[string]string{"login": "thatguywob"}, "body": "Fixes #15202", "labels": labels})
+		case strings.HasSuffix(r.URL.Path, "/issues/15202"):
+			_, _ = w.Write([]byte(`{"number":15202,"state":"closed","state_reason":"completed"}`))
+		case strings.HasSuffix(r.URL.Path, "/pulls/15219"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 15219, "state": "open", "user": map[string]string{"login": "thatguywob"}, "body": "Fixes #15202",
+				"labels": labels, "created_at": time.Now().Add(-48 * time.Hour), "mergeable_state": "dirty", "mergeable": false})
+		case strings.HasSuffix(r.URL.Path, "/pulls/15240"):
+			_, _ = w.Write([]byte(`{"number":15240,"state":"closed","merged":true,"merge_commit_sha":"25de3ba24aa0c0ffee"}`))
+		case strings.Contains(r.URL.Path, "/permission"):
+			_, _ = w.Write([]byte(`{"permission":"read"}`))
+		default:
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer server.Close()
+	s := newFullServer(t)
+	s.deps.GHClient = github.NewClient("token", "org", nil, slog.Default(), server.URL)
+	s.status = &StatusPayload{}
+	in, err := s.gatherDelegatedInput(context.Background(), "org/repo", 15219, "pr", delegatedDecisionRequest{Reason: "adoption-stalled:contributor-offline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if in.AlreadyFixedBy != 15240 || in.AlreadyFixedIssue != 15202 || in.AlreadyFixedSHA != "25de3ba24aa0c0ffee" || !in.AuthorClanker || in.ContributorOnline {
+		t.Fatalf("input = %+v", in)
+	}
+	d := delegatedecision.Run(in)
+	if d.Verdict != delegatedecision.VerdictCloseSuperseded || d.Rule != delegatedecision.RuleAlreadyFixed {
+		t.Fatalf("decision = %+v", d)
+	}
+	for _, a := range d.Actions {
+		if a.Kind == delegatedecision.ActionAdoptSupersede {
+			t.Fatalf("already-fixed PR adopted: %+v", d)
+		}
+	}
+	res := delegatedRowActionResult(in, d, nil)
+	if res.Outcome != "Closed as superseded: #15202 already fixed by #15240 (25de3ba)" || res.Decision != delegatedecision.RuleAlreadyFixed || res.Reason == "" {
+		t.Fatalf("result = %+v", res)
+	}
+}

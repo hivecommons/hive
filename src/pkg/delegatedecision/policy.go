@@ -207,11 +207,63 @@ type Input struct {
 	WorkflowPath bool
 	// BlockedOnPRClosed: a review-backlog item whose PR closed unmerged.
 	BlockedOnPRClosed bool
+	// AlreadyFixedBy is another, merged PR that closed the issue this PR
+	// claims to fix (closedByPullRequestsReferences or the closing commit);
+	// AlreadyFixedIssue is that issue and AlreadyFixedSHA the merge commit.
+	// A PR whose work is already merged is closed as superseded, never
+	// adopted (hivecommons/hive#15289).
+	AlreadyFixedBy    int
+	AlreadyFixedIssue int
+	AlreadyFixedSHA   string
+	// RepoPaused: the repository is paused, so a decision that would write
+	// (closing an already-fixed PR) is posted as a recommendation only.
+	RepoPaused bool
+	// AuthorClanker / AuthorHive: the PR's author-kind label says the work
+	// came through a contributor's clanker (author/clanker) or a connected
+	// hive (author/hive); AuthorAgent names it in plain words.
+	AuthorClanker bool
+	AuthorHive    bool
+}
+
+// Labels naming the author kind (the defaults of governor.labels.author).
+const (
+	labelAuthorClanker = "author/clanker"
+	labelAuthorHive    = "author/hive"
+)
+
+// AuthorAgent names what was expected to answer for the PR's author in
+// plain words: "the author's clanker" for a clanker relay, "the author's
+// hive" only when a connected hive is known, "the author" otherwise
+// (hivecommons/hive#15289: the text said "the author's hive" for a
+// contributor whose relay is a clanker).
+func (in Input) AuthorAgent() string {
+	switch {
+	case in.AuthorClanker || hasLabel(in.Labels, labelAuthorClanker):
+		return "the author's clanker"
+	case in.AuthorHive || hasLabel(in.Labels, labelAuthorHive):
+		return "the author's hive"
+	}
+	return "the author"
 }
 
 // RuleAdoptNow is the rule name of the grace-elapsed Adopt now decision;
 // the dashboard runs it as a forced adoption (Adopt now), not a queued one.
 const RuleAdoptNow = "grace-elapsed-adopt-now"
+
+// The PR decision ladder (hivecommons/hive#15289). Before adopting a
+// contributor's PR the delegate tries, in order: already-fixed (another
+// merged PR closed the linked issue → close as superseded),
+// mergeable-as-is (→ the merge gate), rebase-then-merge,
+// return-to-contributor (the author's agent is connected → nudge) and only
+// then adopt-supersede. Decision.Rung names the rung that applied and
+// Decision.RuledOut why each earlier rung did not.
+const (
+	RuleAlreadyFixed        = "already-fixed"
+	RuleMergeableAsIs       = "mergeable-as-is"
+	RungRebaseThenMerge     = "rebase-then-merge"
+	RuleReturnToContributor = "return-to-contributor"
+	RungAdoptSupersede      = "adopt-supersede"
+)
 
 // Decision is what the delegate decided and how to record it.
 type Decision struct {
@@ -225,6 +277,12 @@ type Decision struct {
 	// KeepsPark is true when the item stays at 085/045 (recommend-only,
 	// owner-only, refused).
 	KeepsPark bool `json:"keeps_park"`
+	// Rung is the PR decision-ladder rung that applied, Reason why it did,
+	// and RuledOut why each earlier rung did not (hivecommons/hive#15289).
+	// Empty for decisions the ladder did not reach.
+	Rung     string   `json:"decision,omitempty"`
+	Reason   string   `json:"reason,omitempty"`
+	RuledOut []string `json:"ruled_out,omitempty"`
 }
 
 // Marker is the audit stamp every delegated comment carries.
@@ -447,6 +505,11 @@ func ownerAction(in Input) string {
 
 func decidePR(in Input) Decision {
 	ref := "#" + strconv.Itoa(in.Number)
+	// Rung 1: work already merged by another PR is never re-done, whatever
+	// else the PR's park says (hivecommons/hive#15289).
+	if d, ok := decideAlreadyFixed(in, ref); ok {
+		return d
+	}
 	if HivePolicyChange(in) {
 		return recommendOnly("hive-policy", "this PR changes the hive's own policy or scope; the owner confirms those", "approve "+ref+" as written if the change is intended, else request changes")
 	}
@@ -491,38 +554,14 @@ func decidePR(in Input) Decision {
 		return recommendOnly(RuleCapabilityGap, "the PR edits .github/workflows and the hive's GitHub App lacks the `workflows` permission, so the adoption fence refuses to supersede it; deciding to adopt cannot take effect",
 			"grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge "+ref+" on GitHub, or close it as superseded")
 	}
-	if !in.HiveAuthored && !in.PersonAuthored() && in.Kind == KindPR && in.AdoptionGraceElapsed {
-		text := "adopt now: the offline grace on " + ref + " has already elapsed; adopt in supersede mode at once, preserving the author's commits and sign-off"
-		return Decision{
-			Verdict: VerdictAdoptSupersede, Rule: RuleAdoptNow, Text: text,
-			Rationale: "the contributor's grace window has run out and nothing moved; waiting longer helps no one (hivecommons/hive#15038)",
-			Actions:   []Action{decisionComment(text), {Kind: ActionAdoptSupersede}},
-		}
-	}
-	if !in.HiveAuthored && !in.PersonAuthored() && !in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing) {
-		text := "supersede now: adopt " + ref + " in supersede mode, preserving the author's commits and sign-off; do not wait for the grace deadline"
-		return Decision{
-			Verdict: VerdictAdoptSupersede, Rule: "contributor-offline", Text: text,
-			Rationale: "the contributor is offline; adoption in supersede mode keeps the work moving (hivecommons/hive#13975)",
-			Actions:   []Action{decisionComment(text), {Kind: ActionAdoptSupersede}},
-		}
+	if !in.HiveAuthored && !in.PersonAuthored() && (in.AdoptionGraceElapsed || !in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing)) {
+		return decideAdoptionLadder(in, ref)
 	}
 	if in.ReporterTrustHold && in.CIGreen && !in.Conflicting && !in.DCOMissing {
-		d := releasePR("reporter-trust", "approve "+ref+": the fixing PR is sound, so the reporter-trust hold is cleared", "a reporter-trust hold is cleared when the fixing PR is sound")
-		d.Actions = append(d.Actions, Action{Kind: ActionLabelsAdd, Labels: []string{LabelTriageAccepted}})
-		return d
+		return reporterTrustRelease(ref)
 	}
 	if in.Conflicting || in.DCOMissing || !in.CIGreen {
-		var fix []string
-		if in.Conflicting {
-			fix = append(fix, "rebase onto the base branch")
-		}
-		if in.DCOMissing {
-			fix = append(fix, "add the DCO sign-off")
-		}
-		if !in.CIGreen {
-			fix = append(fix, "make CI green without widening scope")
-		}
+		fix := prFixList(in)
 		text := strings.Join(fix, ", ") + "; keep the smallest reversible change, then it merges"
 		return Decision{
 			Verdict: VerdictDirection, Rule: "fix-then-merge", Text: text,
@@ -534,6 +573,135 @@ func decidePR(in Input) Decision {
 		return releasePR("small-low-risk", "approve "+ref+": small, necessary, low-risk change on a green head", "small low-risk changes (CI pins, read-only RBAC, warning text, workflow hygiene) are approved once checked")
 	}
 	return releasePR("default-release", "approve "+ref+": green head, reviewer question answered with the reversible default — proceed as implemented", "no owner rule holds this back; a merge is reversible and keeps work moving")
+}
+
+func reporterTrustRelease(ref string) Decision {
+	d := releasePR("reporter-trust", "approve "+ref+": the fixing PR is sound, so the reporter-trust hold is cleared", "a reporter-trust hold is cleared when the fixing PR is sound")
+	d.Actions = append(d.Actions, Action{Kind: ActionLabelsAdd, Labels: []string{LabelTriageAccepted}})
+	return d
+}
+
+// decideAlreadyFixed is rung 1 of the ladder: the issue this PR claims to
+// fix was closed by another PR that merged, so the PR is closed as
+// superseded with a comment naming the merging PR and its commit. While the
+// repository is paused the close is only recommended.
+func decideAlreadyFixed(in Input, ref string) (Decision, bool) {
+	by := in.AlreadyFixedBy
+	if by <= 0 || by == in.Number {
+		return Decision{}, false
+	}
+	fixed := fmt.Sprintf("#%d already fixed by #%d", in.AlreadyFixedIssue, by)
+	if in.AlreadyFixedIssue <= 0 {
+		fixed = fmt.Sprintf("the linked issue already fixed by #%d", by)
+	}
+	if sha := shortSHA(in.AlreadyFixedSHA); sha != "" {
+		fixed += " (" + sha + ")"
+	}
+	reason := fmt.Sprintf("the issue %s fixes was closed by merged PR #%d, so its work is already on the base branch; adopting %s would only re-open merged work", ref, by, ref)
+	if in.RepoPaused {
+		d := recommendOnly(RuleAlreadyFixed, reason+"; the repository is paused, so the hive only recommends", "close "+ref+" as superseded: "+fixed)
+		d.Rung, d.Reason = RuleAlreadyFixed, reason
+		return d, true
+	}
+	comment := "Closed as superseded: " + fixed + ", already merged. Thank you for the work on this pull request."
+	if a := strings.TrimSpace(in.Author); a != "" {
+		comment = "Closed as superseded: " + fixed + ", already merged. Thank you @" + strings.TrimPrefix(a, "@") + " for the work on this pull request."
+	}
+	return Decision{
+		Verdict: VerdictCloseSuperseded, Rule: RuleAlreadyFixed, Text: fixed, Rationale: reason,
+		Actions: []Action{{Kind: ActionCloseDuplicate, Target: by, Text: comment}},
+		Rung:    RuleAlreadyFixed, Reason: reason,
+	}, true
+}
+
+func shortSHA(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
+}
+
+// decideAdoptionLadder walks rungs 2–5 for a contributor PR the delegate
+// would otherwise adopt (offline author, or the adoption grace elapsed).
+// Adoption is the last resort: a mergeable head goes to the merge gate, a
+// connected author is nudged, and each rung passed over is recorded.
+func decideAdoptionLadder(in Input, ref string) Decision {
+	ruledOut := []string{RuleAlreadyFixed + ": no other merged PR closed the linked issue"}
+	var blockers []string
+	if in.Conflicting {
+		blockers = append(blockers, "conflicts with the base branch")
+	}
+	if !in.CIGreen {
+		blockers = append(blockers, "CI is not green")
+	}
+	if in.DCOMissing {
+		blockers = append(blockers, "the DCO sign-off is missing")
+	}
+	if len(blockers) == 0 {
+		if in.ReporterTrustHold {
+			d := reporterTrustRelease(ref)
+			d.Rung, d.Reason, d.RuledOut = RuleMergeableAsIs, d.Rationale, ruledOut
+			return d
+		}
+		d := releasePR("mergeable-as-is", "approve "+ref+": the head is mergeable as-is with green CI, so the merge gate merges it; no adoption needed",
+			"a mergeable head with green CI and no DCO hold needs no hive copy; the merge gate lands it")
+		d.Rung, d.Reason, d.RuledOut = RuleMergeableAsIs, d.Rationale, ruledOut
+		return d
+	}
+	ruledOut = append(ruledOut, RuleMergeableAsIs+": "+strings.Join(blockers, ", "))
+	// TODO(hivecommons/hive#15104): a head whose only blocker is a conflict
+	// takes the rebase-then-merge path once it lands; until then it falls
+	// through to the rungs below.
+	if in.Conflicting && in.CIGreen && !in.DCOMissing {
+		ruledOut = append(ruledOut, RungRebaseThenMerge+": the hive has no rebase-then-merge path for a contributor head yet")
+	} else {
+		ruledOut = append(ruledOut, RungRebaseThenMerge+": more than a conflict blocks the head")
+	}
+	who := in.AuthorAgent()
+	if in.ContributorOnline {
+		fix := strings.Join(prFixList(in), ", ")
+		text := who + ": " + fix + " on " + ref + "; then it merges"
+		reason := who + " is connected, so the hive hands the fix back instead of adopting the work"
+		return Decision{
+			Verdict: VerdictDirection, Rule: RuleReturnToContributor, Text: text, Rationale: reason,
+			Actions: []Action{decisionComment(text)},
+			Rung:    RuleReturnToContributor, Reason: reason, RuledOut: ruledOut,
+		}
+	}
+	ruledOut = append(ruledOut, RuleReturnToContributor+": "+who+" hasn't been connected since the nudge")
+	if in.AdoptionGraceElapsed {
+		text := "adopt now: the offline grace on " + ref + " has already elapsed; adopt in supersede mode at once, preserving the author's commits and sign-off"
+		reason := "the contributor's grace window has run out and nothing moved; waiting longer helps no one (hivecommons/hive#15038)"
+		return Decision{
+			Verdict: VerdictAdoptSupersede, Rule: RuleAdoptNow, Text: text, Rationale: reason,
+			Actions: []Action{decisionComment(text), {Kind: ActionAdoptSupersede}},
+			Rung:    RungAdoptSupersede, Reason: reason, RuledOut: ruledOut,
+		}
+	}
+	text := "supersede now: adopt " + ref + " in supersede mode, preserving the author's commits and sign-off; do not wait for the grace deadline"
+	reason := who + " hasn't been connected since the nudge"
+	return Decision{
+		Verdict: VerdictAdoptSupersede, Rule: "contributor-offline", Text: text,
+		Rationale: reason + "; adoption in supersede mode keeps the work moving (hivecommons/hive#13975)",
+		Actions:   []Action{decisionComment(text), {Kind: ActionAdoptSupersede}},
+		Rung:      RungAdoptSupersede, Reason: reason, RuledOut: ruledOut,
+	}
+}
+
+// prFixList names what a PR head still needs before it can merge.
+func prFixList(in Input) []string {
+	var fix []string
+	if in.Conflicting {
+		fix = append(fix, "rebase onto the base branch")
+	}
+	if in.DCOMissing {
+		fix = append(fix, "add the DCO sign-off")
+	}
+	if !in.CIGreen {
+		fix = append(fix, "make CI green without widening scope")
+	}
+	return fix
 }
 
 // decideCompeting applies "prefer an adequate contributor PR over a hive
@@ -581,16 +749,7 @@ func ReturnToAuthor(in Input) (Decision, bool) {
 }
 
 func decideReturnToAuthor(in Input, ref string) (Decision, bool) {
-	var fix []string
-	if in.Conflicting {
-		fix = append(fix, "rebase onto the base branch")
-	}
-	if in.DCOMissing {
-		fix = append(fix, "add the DCO sign-off")
-	}
-	if !in.CIGreen {
-		fix = append(fix, "make CI green without widening scope")
-	}
+	fix := prFixList(in)
 	question := strings.TrimSpace(in.Question)
 	if len(fix) == 0 && question == "" {
 		return Decision{}, false

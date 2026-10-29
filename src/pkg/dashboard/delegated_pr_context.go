@@ -75,6 +75,16 @@ func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *
 	now := time.Now().UTC()
 	in.HumanAuthor = s.delegatedHumanAuthor(in.Labels)
 	in.OwnerAuthor = s.isAuthorizedUserLogin(in.Author)
+	in.AuthorClanker, in.AuthorHive = s.delegatedAuthorAgent(in.Labels)
+	if s.deps.Config != nil {
+		_, in.RepoPaused = s.deps.Config.RepoPauseFor(repo)
+	}
+	// Rung 1 of the ladder: another merged PR already closed the issue this
+	// one fixes (hivecommons/hive#15289). A failed lookup is not evidence
+	// either way, so the later rungs decide as before.
+	if fixed, ok, err := s.deps.GHClient.PRAlreadyFixed(ctx, repo, pr); err == nil && ok {
+		in.AlreadyFixedBy, in.AlreadyFixedIssue, in.AlreadyFixedSHA = fixed.PR, fixed.Issue, fixed.MergeSHA
+	}
 	// A person's PR is never a contributor with an expected connected hive;
 	// "offline" has no meaning for it (hivecommons/hive#15202).
 	if !in.HiveAuthored && !in.PersonAuthored() {
@@ -142,7 +152,24 @@ type delegatedActivity struct {
 // renamed via governor.labels.author) from the PR's labels. hive beats
 // clanker beats human when labels disagree, as in pkg/authorkind.
 func (s *Server) delegatedHumanAuthor(labels []string) bool {
-	human, clanker, hive := authorKindLabelPfx+authorKindHuman, authorKindLabelPfx+authorKindClanker, authorKindLabelPfx+authorKindHive
+	human, clanker, hive := s.delegatedAuthorKindLabels()
+	isHuman := false
+	for _, l := range labels {
+		switch l = strings.TrimSpace(l); {
+		case strings.EqualFold(l, hive), strings.EqualFold(l, clanker):
+			return false
+		case strings.EqualFold(l, human):
+			isHuman = true
+		}
+	}
+	return isHuman
+}
+
+// delegatedAuthorKindLabels resolves the author-kind label names
+// (governor.labels.author, defaulting to author/human, author/clanker,
+// author/hive).
+func (s *Server) delegatedAuthorKindLabels() (human, clanker, hive string) {
+	human, clanker, hive = authorKindLabelPfx+authorKindHuman, authorKindLabelPfx+authorKindClanker, authorKindLabelPfx+authorKindHive
 	if s != nil && s.deps != nil && s.deps.Config != nil {
 		a := s.deps.Config.Governor.Labels.Author
 		if strings.TrimSpace(a.Human) != "" {
@@ -155,16 +182,24 @@ func (s *Server) delegatedHumanAuthor(labels []string) bool {
 			hive = a.Hive
 		}
 	}
-	isHuman := false
+	return human, clanker, hive
+}
+
+// delegatedAuthorAgent reads which agent relays the PR's author from the
+// author-kind labels, so the decision text names it correctly: a clanker
+// relay, a connected hive, or neither (hivecommons/hive#15289). hive beats
+// clanker as in delegatedHumanAuthor.
+func (s *Server) delegatedAuthorAgent(labels []string) (clanker, hive bool) {
+	_, clankerLabel, hiveLabel := s.delegatedAuthorKindLabels()
 	for _, l := range labels {
 		switch l = strings.TrimSpace(l); {
-		case strings.EqualFold(l, hive), strings.EqualFold(l, clanker):
-			return false
-		case strings.EqualFold(l, human):
-			isHuman = true
+		case strings.EqualFold(l, hiveLabel):
+			return false, true
+		case strings.EqualFold(l, clankerLabel):
+			clanker = true
 		}
 	}
-	return isHuman
+	return clanker, false
 }
 
 // isAuthorizedUserLogin: login is one of this hive's dashboard.authorized_users.

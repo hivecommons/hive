@@ -233,8 +233,15 @@ func TestDecidePRRules(t *testing.T) {
 		},
 		{
 			name:    "adoption stalled adopts in supersede mode",
-			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionStalled: true, CIGreen: true},
+			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionStalled: true, Conflicting: true},
 			verdict: VerdictAdoptSupersede, rule: "contributor-offline", kinds: []ActionKind{ActionCommentDecision, ActionAdoptSupersede},
+		},
+		{
+			// hivecommons/hive#15289: a mergeable green head goes to the
+			// merge gate; adoption is the last resort.
+			name:    "adoption stalled but mergeable as-is is released",
+			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionStalled: true, CIGreen: true},
+			verdict: VerdictApprove, rule: RuleMergeableAsIs, kinds: []ActionKind{ActionCommentDecision, ActionApproveReview},
 		},
 		{
 			name:    "offline contributor with red CI adopts",

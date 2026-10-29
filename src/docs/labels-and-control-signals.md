@@ -1456,6 +1456,7 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 
 | Token | Plain words | Detail |
 |---|---|---|
+| `already-fixed` | another merged PR already fixed the linked issue | The issue this PR fixes was already closed by another pull request that merged, so the work is on the base branch; the hive closes this PR as superseded instead of adopting it. |
 | `capability-gap` | the GitHub App lacks a permission; deciding cannot clear it | The blocker is a missing GitHub App permission (for example `workflows`). Approving a direction would only re-apply needs-human, so the park stays until the owner grants the permission or a person applies the change. |
 | `ci-ratchet` | a CI hygiene gate, landed as a ratchet | A new CI hygiene gate lands as a ratchet: it records today's baseline and fails only on increases, so existing work is never blocked. |
 | `contributor-offline` | the author's clanker hasn't been connected since the nudge | The PR's author has been offline since the hive nudged them, so the hive takes the work over instead of waiting. |
@@ -1467,10 +1468,12 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `flaky-test` | a flaky test, quarantined with a retry | The failure is a flaky test: it is quarantined with a retry and a separate deflake task is filed, so it blocks nothing. |
 | `hive-policy` | this changes the hive's own rules | This changes the hive's own settings, governance or security posture; the hive only recommends and the owner confirms. |
 | `llm-delegate` | decided by the hive's model under the owner's rules | No mechanical rule applied, so the hive's model decided under the owner's standing rules; the same safety rails applied. |
+| `mergeable-as-is` | the branch is mergeable as-is; the merge gate takes it | The branch has no conflicts, CI is green and the sign-off is present, so the hive hands it to the merge gate instead of adopting it. |
 | `owner-only`, `owner_only` | only the hive owner can do this | This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you. |
 | `prefer-contributor` | a contributor's PR and a hive PR do the same work | A contributor's PR and a hive-authored PR cover the same work; the hive prefers the contributor's when it is mergeable and current. |
 | `rail-hold` | the item is on hold | The item carries the hold label; the hive never acts on a held item until a person releases the hold. |
 | `reporter-trust` | the hold on an unknown reporter is cleared because the fix is sound | The PR was held until the reporter's trust was known; its fix is green and mergeable, so the hold is cleared. |
+| `return-to-contributor` | the author's agent is connected; the hive asked it to fix the PR | The author's clanker or hive is connected, so the hive told it exactly what to fix (rebase, sign-off, CI) instead of adopting the work. |
 | `review-backlog` | the PR closed without merging, so the issue stays open | The fixing PR closed unmerged; the issue stays open and is re-triaged rather than auto-closed. |
 | `sentinel-trusted` | security-sensitive files changed, but the author is trusted | Security-sensitive files changed; because the author is trusted the hive approved, but a person must still remove the sentinel label before it merges. |
 | `sentinel-untrusted` | security-sensitive files changed; a maintainer must approve | Security-sensitive files changed in a PR from an author without write access; a maintainer must review and approve it. |

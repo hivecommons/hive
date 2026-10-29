@@ -83,8 +83,17 @@ type CommentOptions struct {
 func PlainWords(d Decision, opts CommentOptions) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Hive decided:** %s.", capitalizeFirst(ActionPlain(d)))
-	if why := RulePlain(d.Rule); why != "" {
+	why := RulePlain(d.Rule)
+	if r := strings.TrimSpace(d.Reason); r != "" && d.Rung != "" {
+		// The ladder's reason names the author's agent as it is (clanker,
+		// hive or neither) rather than the glossary's generic words.
+		why = strings.TrimSuffix(r, ".")
+	}
+	if why != "" {
 		fmt.Fprintf(&b, "\n**Why:** %s.", capitalizeFirst(why))
+	}
+	if len(d.RuledOut) > 0 {
+		fmt.Fprintf(&b, "\n**Ruled out first:** %s.", strings.Join(d.RuledOut, "; "))
 	}
 	eff := ExpectedEffect(d, opts.Kind)
 	if eff.Waits {

@@ -382,6 +382,39 @@ func (c *Client) detectSupersessionDetail(ctx context.Context, prRepo string, pr
 	return det, nil
 }
 
+// AlreadyFixed names the merged pull request that closed the issue an open
+// PR claims to fix: Issue is that issue, PR the merged closer and MergeSHA
+// its merge commit (empty when it could not be read).
+type AlreadyFixed struct {
+	Issue    int
+	PR       int
+	MergeSHA string
+}
+
+// PRAlreadyFixed reports whether every issue pr (in repo, owner/name)
+// claims to fix is closed and another merged PR closed one of them — the
+// sweep's supersession detection, for the delegate's already-fixed rung
+// (hivecommons/hive#15289). ok is false when the PR is still live work.
+func (c *Client) PRAlreadyFixed(ctx context.Context, repo string, pr *gh.PullRequest) (AlreadyFixed, bool, error) {
+	if c == nil || c.client == nil || pr == nil {
+		return AlreadyFixed{}, false, nil
+	}
+	identity := c.getHiveIdentity()
+	if identity.AppLogin == "" {
+		identity.AppLogin = c.appBotLogin
+	}
+	det, err := c.detectSupersessionDetail(ctx, repo, pr, identity, time.Now())
+	if err != nil || !det.detected || det.closer.Number == 0 {
+		return AlreadyFixed{}, false, err
+	}
+	out := AlreadyFixed{Issue: det.candidate.Issue, PR: det.closer.Number}
+	owner, name := c.splitRepo(det.closer.Repo)
+	if merged, _, err := c.client.PullRequests.Get(ctx, owner, name, det.closer.Number); err == nil {
+		out.MergeSHA = merged.GetMergeCommitSHA()
+	}
+	return out, true, nil
+}
+
 // supersessionCandidateClaims picks the claims whose closure can supersede
 // the PR. A closing-keyword claim (`Fixes #N`) is the PR's statement of what
 // it delivers, so when any exist only they count: a bare `Part of #N` /

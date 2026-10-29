@@ -171,6 +171,13 @@ func (s *Server) delegatedHumanMergeDecision(in delegatedecision.Input, req dele
 	if in.Kind != delegatedecision.KindPR || !slices.Contains(in.Labels, stagelabels.ReadyForHumanMerge.Label()) {
 		return delegatedecision.Decision{}, nil, false
 	}
+	// Work another merged PR already landed is closed as superseded, never
+	// approved or adopted (hivecommons/hive#15289).
+	if in.AlreadyFixedBy > 0 {
+		if d := delegatedecision.Run(in); d.Rule == delegatedecision.RuleAlreadyFixed {
+			return d, []string{"hive decided: " + d.Text}, true
+		}
+	}
 	if stageengineprstage.HumanMergeReason(delegatedHumanMergeReason(in, req)) != stageengineprstage.HumanMergeReasonUntrustedAuthor {
 		return delegatedecision.Decision{}, nil, false
 	}
