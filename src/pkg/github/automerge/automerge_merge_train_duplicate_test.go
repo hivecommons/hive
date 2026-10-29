@@ -65,7 +65,7 @@ func TestMergeTrainDuplicateHolds(t *testing.T) {
 	if !ok || m.State != prstage.MergeTrainStateDuplicateOf || m.Front != 15402 || m.Position != 15396 {
 		t.Fatalf("parse = %+v ok=%v", m, ok)
 	}
-	if s := m.Sentence(); s != "duplicate of #15402 for issue #15396; the merge queue carries one PR per issue — a person or the delegate picks one" {
+	if s := m.Sentence(); s != "duplicate of #15402 for issue #15396; superseded by #15402 — the merge queue carries one PR per issue; close it or let the delegate decide" {
 		t.Fatalf("sentence = %q", s)
 	}
 }

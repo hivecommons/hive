@@ -259,6 +259,12 @@ const (
 	// could push; the suffix is the lane reason it was stuck on
 	// ("adoption-stalled:reviewer-verdict:changes_requested").
 	LaneReasonAdoptionStalledPrefix = "adoption-stalled:"
+	// LaneReasonRebaseFailedTwice is the 085 reason for the hive's copy of
+	// an adopted PR (hive/adopt-<n>) that opened conflicting and stayed
+	// dirty after the fixer's rebase-resolve episode used both attempts
+	// (hivecommons/hive#15104 guard); the same suffix under
+	// LaneReasonAdoptionStalledPrefix parks a still-open original.
+	LaneReasonRebaseFailedTwice = "rebase-failed-twice"
 )
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
@@ -403,6 +409,18 @@ func RouteHuman(e Evidence) Route {
 			Reasons: []string{e.CauseReason + "; @" + approver + " approved this head, so the only step left is the merge"}}
 		if lane := strings.TrimSpace(e.LaneReason); lane != "" {
 			route.LaneReason = lane + HumanApprovedReasonSuffix + approver
+		}
+		return route
+	}
+	if e.Cause == CauseTrust && e.ManualMergeRule && strings.TrimSpace(e.CauseReason) != "" {
+		// A manual-merge rule that owes no decision — the breaking-change
+		// title or the needs-owner-merge label (hivecommons/hive#15442):
+		// the head is green and reviewed, and the hive still never merges
+		// it; the owner's merge click is the one step left.
+		route := Route{Stage: ReadyForHumanMerge, ManualMerge: true, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict, HumanApprover: approver,
+			Reasons: []string{e.CauseReason}, LaneReason: strings.TrimSpace(e.LaneReason)}
+		if approver != "" && route.LaneReason != "" {
+			route.LaneReason += HumanApprovedReasonSuffix + approver
 		}
 		return route
 	}

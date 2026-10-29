@@ -6,7 +6,9 @@
     function stageTrackerManualMergeWord(item) {
       const approver = String((item && item.human_approver) || '').trim();
       const why = stageTrackerHumanMergeReasonWord(item);
-      return STAGE_TRACKER_MANUAL_MERGE_WORD + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
+      const code = String((item && item.human_merge_reason) || '').trim();
+      const lead = code === STAGE_TRACKER_BREAKING_CHANGE_CODE ? STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD : STAGE_TRACKER_MANUAL_MERGE_WORD;
+      return lead + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
     }
     // The plain 090 word (no manual-merge rule): the stage's short word
     // plus the reason, "Ready for human merge · untrusted author".
@@ -34,6 +36,8 @@
       if (state === 'closed') return 'Adopted → #' + by + ' (closed) · recovering';
       if (state === 'closed-twice') return 'Adopted → #' + by + ' (closed twice) · needs a person';
       if (state === 'copy-failed') return 'Adopted → #' + by + ' (copy failed) · reopened, needs a person';
+      // hivecommons/hive#15307: one label while the fixer works (#15416 rule).
+      if (state === 'resolving-conflicts') return 'Adopting · fixer resolving conflicts';
       return 'Adopted → #' + by;
     }
     const STAGE_TRACKER_UNAUTHORIZED_WORD = 'Awaiting human';
@@ -462,6 +466,7 @@
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
+      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed';
       if (n === 0 && typeof stageTrackerNewState === 'function' && stageTrackerNewState(item)) return 'New';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
