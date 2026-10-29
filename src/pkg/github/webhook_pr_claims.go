@@ -61,6 +61,28 @@ func (d PRClaimDelivery) ClaimedIssues() []int {
 	return out
 }
 
+// CoveringClaims lists the strong (closing-keyword or branch-name) claims an
+// OPEN delivery makes on issues in the PR's own repository: the issues a
+// contributor already dispatched on should stop working, because this PR
+// now covers them. Non-closing references ("Refs #N") are not covers, and
+// a closed or merged PR covers nothing here. One claim per issue, ascending.
+func (d PRClaimDelivery) CoveringClaims() []IssueClaim {
+	if d.State != PRStateOpen || !webhookPRCoverActions[d.Action] {
+		return nil
+	}
+	seen := map[int]bool{}
+	var out []IssueClaim
+	for _, c := range d.Claims {
+		if c.Repo != d.Repo || c.Issue <= 0 || c.Reference || seen[c.Issue] {
+			continue
+		}
+		seen[c.Issue] = true
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Issue < out[j].Issue })
+	return out
+}
+
 // PRClaimsHook is told about every `pull_request` delivery whose action can
 // change which issues the PR claims or whether the PR is still open. The
 // governor registers one that applies the delivery to the duplicate-PR claim

@@ -137,7 +137,7 @@ func (b *boot) applyWebhookItemsFunc() func([]github.WebhookItemSnapshot) {
 		}
 		// A `pull_request` delivery's issue claims land in the ledger and
 		// drop out of this snapshot on the event (hivecommons/hive#14814).
-		github.SetPRClaimsHook(prClaimsHookFor(func() *github.ClaimLedger { return getClaimLedger(b.logger) }, b.snapshotPatch, b.logger, b.closeOnMergeForDelivery))
+		github.SetPRClaimsHook(prClaimsHookFor(func() *github.ClaimLedger { return getClaimLedger(b.logger) }, b.snapshotPatch, b.logger, b.closeOnMergeForDelivery, b.preemptCoveredIssueTasks))
 	}
 	return func(snaps []github.WebhookItemSnapshot) { b.snapshotPatch.apply(snaps) }
 }

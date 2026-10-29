@@ -7,10 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 type dupFixPR struct {
@@ -160,6 +163,8 @@ func TestDecideDuplicateFix(t *testing.T) {
 		{"earlier stale, later green", DuplicateFixFacts{EarlierChecks: DuplicateFixChecksGreen, EarlierStale: true, LaterChecks: DuplicateFixChecksGreen}, DuplicateFixVerdictEscalate},
 		{"human later", DuplicateFixFacts{EarlierChecks: DuplicateFixChecksGreen, LaterChecks: DuplicateFixChecksGreen, LaterHuman: true}, DuplicateFixVerdictCommentOnly},
 		{"human later, earlier red", DuplicateFixFacts{EarlierChecks: DuplicateFixChecksRed, LaterChecks: DuplicateFixChecksGreen, LaterHuman: true}, DuplicateFixVerdictEscalate},
+		{"relay later", DuplicateFixFacts{EarlierChecks: DuplicateFixChecksGreen, LaterChecks: DuplicateFixChecksRed, LaterRelay: true}, DuplicateFixVerdictCommentOnly},
+		{"relay later, earlier red", DuplicateFixFacts{EarlierChecks: DuplicateFixChecksRed, LaterChecks: DuplicateFixChecksGreen, LaterRelay: true}, DuplicateFixVerdictEscalate},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := DecideDuplicateFix(tc.facts); got != tc.want {
@@ -361,5 +366,83 @@ func TestSweepDuplicateFixPRs_ListingErrorSurfaces(t *testing.T) {
 	c, _ := newSupersessionTestClient(t, srv, "o", "r")
 	if _, err := c.SweepDuplicateFixPRs(context.Background(), DuplicateFixSweepOptions{}); err == nil {
 		t.Fatal("want the listing error surfaced")
+	}
+}
+
+// hivecommons/hive#15469: a person filed #15469, hive dispatched its own
+// relay contributor within seconds, and the person's PR (#15470) landed
+// 45 s later; the relay's PR (#15473) followed. The relay's login carries
+// no author/* label, so the sweep read it as a person's and the write-back
+// gate (L4, no opt-in label) refused the notice — both PRs rode the merge
+// train. With the relay registry installed the later PR is the hive's own
+// for the gate, gets exactly one superseded notice, and is left open
+// (parked by the stage engine, never closed by this sweep).
+func TestSweepDuplicateFixPRs_RelayLaterPRCommentedThroughGateNotClosed(t *testing.T) {
+	srv, obs := dupFixServer(t, []dupFixPR{
+		{Number: 15470, Body: "Fixes #15469", Author: "clubanderson", CreatedAt: dupT0, UpdatedAt: dupT0, Checks: "pending"},
+		{Number: 15473, Body: "Fixes #15469", Author: "odttlnt", CreatedAt: dupT0.Add(8 * time.Minute), UpdatedAt: dupT0.Add(8 * time.Minute), Checks: "red"},
+	}, "open")
+	defer srv.Close()
+	c, rec := newSupersessionTestClient(t, srv, "o", "r")
+	c.SetRelayKnownFunc(func(login string) bool { return login == "odttlnt" })
+	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{
+		LevelFor:   func(string) int { return 4 },
+		RepoListed: func(string) bool { return true },
+		Now:        dupNow,
+	}, filepath.Join(t.TempDir(), "writeback.json")))
+
+	run := func() *DuplicateFixSweepResult {
+		t.Helper()
+		res, err := c.SweepDuplicateFixPRs(context.Background(), DuplicateFixSweepOptions{Now: dupNow})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	res := run()
+	if len(res.Commented) != 1 || len(res.Closed) != 0 || len(res.Escalated) != 0 || len(obs.closed) != 0 || len(parkedPRs(rec)) != 0 {
+		t.Fatalf("res=%+v closed=%v parked=%v, want one comment and nothing else", res, obs.closed, parkedPRs(rec))
+	}
+	if res.Commented[0].Number != 15473 || res.Commented[0].KeeperPR != 15470 || res.Commented[0].Reason != "duplicate-of:15470" {
+		t.Fatalf("event = %+v", res.Commented[0])
+	}
+	cs := obs.comments[15473]
+	if len(cs) != 1 || !strings.Contains(cs[0], duplicateFixMarker) || !strings.Contains(cs[0], "Superseded by #15470 (earlier fix for #15469)") || !strings.Contains(cs[0], "held out of it") {
+		t.Fatalf("comments on 15473 = %v", cs)
+	}
+	if len(obs.comments[15470]) != 0 || len(obs.labels[15473]) != 0 {
+		t.Fatalf("keeper comments=%v later labels=%v, want none", obs.comments[15470], obs.labels[15473])
+	}
+	// A second pass finds the marker and writes nothing more.
+	if res := run(); res.Actions() != 0 || len(obs.comments[15473]) != 1 {
+		t.Fatalf("second sweep res=%+v comments=%v, want no further writes", res, obs.comments[15473])
+	}
+}
+
+// The same pair without the relay registry: the later PR reads as a
+// person's and an L4 repo without the opt-in label suppresses the notice —
+// the pre-fix behaviour, pinned so the registry wiring stays load-bearing.
+func TestSweepDuplicateFixPRs_UnknownLoginSuppressedByGate(t *testing.T) {
+	srv, obs := dupFixServer(t, []dupFixPR{
+		{Number: 15470, Body: "Fixes #15469", Author: "clubanderson", CreatedAt: dupT0, UpdatedAt: dupT0, Checks: "pending"},
+		{Number: 15473, Body: "Fixes #15469", Author: "odttlnt", CreatedAt: dupT0.Add(8 * time.Minute), UpdatedAt: dupT0.Add(8 * time.Minute), Checks: "red"},
+	}, "open")
+	defer srv.Close()
+	c, _ := newSupersessionTestClient(t, srv, "o", "r")
+	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{
+		LevelFor:   func(string) int { return 4 },
+		RepoListed: func(string) bool { return true },
+		Now:        dupNow,
+	}, filepath.Join(t.TempDir(), "writeback.json")))
+	var events []DuplicateFixEvent
+	res, err := c.SweepDuplicateFixPRs(context.Background(), DuplicateFixSweepOptions{Now: dupNow, Audit: func(e DuplicateFixEvent) { events = append(events, e) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Actions() != 0 || res.Pairs != 1 || len(obs.comments[15473]) != 0 {
+		t.Fatalf("res=%+v comments=%v, want the pair suppressed", res, obs.comments[15473])
+	}
+	if len(events) != 1 || events[0].Action != DuplicateFixActionSuppressed {
+		t.Fatalf("events = %+v, want one suppressed", events)
 	}
 }

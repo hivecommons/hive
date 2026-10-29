@@ -367,6 +367,13 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		if train.State == prstage.MergeTrainStateRebaseExhausted {
 			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 		}
+		if train.State == prstage.MergeTrainStateDuplicateOf {
+			// Two open PRs fix one issue and the queue kept the other
+			// (hivecommons/hive#15469): this one goes back to its author
+			// — 072 for a relay contributor, 071 for a person, 070 for
+			// the App's own — as superseded, never "waiting its turn".
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
 		return WithHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if rank := stageAdmissionReasons[reason]; rank != stageRankNone {

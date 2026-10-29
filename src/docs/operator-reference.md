@@ -981,6 +981,18 @@ between. Two mechanisms close that gap
   re-lists on its next call. An `issues` closed delivery (or a PR merged
   with a closing keyword, which GitHub delivers as the issue's own close)
   already evicts the issue from the status snapshot the lane offers from.
+  The same open delivery also **preempts a fixer already at work**
+  ([#15469](https://github.com/hivecommons/hive/issues/15469)): the
+  `/contribute` hub releases every in-flight contributor task on the
+  covered issue whose session is not the PR's own author (reason
+  `preempted: open PR #N by @login already covers this issue`) and hands
+  the session other work, exactly as a claim takeover does. Before this
+  the ledger stopped *offering* the issue but never told the contributor
+  it had dispatched nine seconds after the issue was filed, so that
+  fixer finished and opened a second PR
+  ([#15473](https://github.com/hivecommons/hive/pull/15473)) for an issue
+  the owner's PR ([#15470](https://github.com/hivecommons/hive/pull/15470))
+  already covered.
 - **Duplicate-fix sweep.** Every ~15 minutes (an unstick step, alongside the
   supersession sweep) the hive looks for an open issue two or more open PRs
   close and resolves the pair deterministically. The **earlier-created PR
@@ -991,7 +1003,20 @@ between. Two mechanisms close that gap
   audit entry. A later PR a person authored (`author/human`) is never
   closed: it gets the comment, with a request to close it or say why both
   should land, and stays open at its current stage
-  (`duplicate-fix-commented`). Only when the earlier PR is **red or stale**
+  (`duplicate-fix-commented`). A later PR by a **relay contributor
+  registered on this hive** (the login has a contributor profile — the
+  hive's own fixer under its contributor account) is read as the hive's
+  own for the write-back gate, so the notice is never suppressed as
+  unsolicited, but it is likewise left open with one comment
+  (`Superseded by #<keeper> … held out of the merge queue and returned to
+  its author`) rather than closed: the merge train holds it as
+  `duplicate-of#<keeper>` and the stage engine parks it at
+  `stage/072-returned-to-contributor` (071 for a person, 070 for the App's
+  own) with the tracker pill *Duplicate of #keeper · needs a pick* — never
+  "Approved; waiting its turn" — and the 07x pass neither nudges nor adopts
+  it ([#15469](https://github.com/hivecommons/hive/issues/15469): a relay
+  login with no `author/*` label yet read as a person, the L4 gate refused
+  the notice, and both PRs rode the merge train). Only when the earlier PR is **red or stale**
   (no update for 24h) **and** the later PR is green does the hive ask the
   owner: the later PR is parked `needs-human` → `stage/085-needs-decision`
   with a comment naming both PRs and the check states
