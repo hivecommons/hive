@@ -11,36 +11,48 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 )
 
 func main() {
-	src := flag.String("src", "../static-src", "directory holding manifest.txt and the per-area sources")
-	out := flag.String("out", "../static/index.html", "generated document to write")
-	check := flag.Bool("check", false, "compare only; exit 1 if -out is not up to date")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Stderr))
+}
+
+// run is main without the process exit so it can be tested: 0 on success,
+// 1 when -check finds the artifact stale, 2 on any other error.
+func run(args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("concat", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	src := fs.String("src", "../static-src", "directory holding manifest.txt and the per-area sources")
+	out := fs.String("out", "../static/index.html", "generated document to write")
+	check := fs.Bool("check", false, "compare only; exit 1 if -out is not up to date")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	got, err := webstatic.ConcatIndex(os.DirFS(*src))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "concat:", err)
-		os.Exit(2)
+		fmt.Fprintln(stderr, "concat:", err)
+		return 2
 	}
 	if *check {
 		have, err := os.ReadFile(*out)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "concat:", err)
-			os.Exit(2)
+			fmt.Fprintln(stderr, "concat:", err)
+			return 2
 		}
 		if !bytes.Equal(have, got) {
-			fmt.Fprintf(os.Stderr, "%s is out of date with %s; run `make dashboard-gen`\n", *out, *src)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "%s is out of date with %s; run `make dashboard-gen`\n", *out, *src)
+			return 1
 		}
-		return
+		return 0
 	}
 	if err := os.WriteFile(*out, got, 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, "concat:", err)
-		os.Exit(2)
+		fmt.Fprintln(stderr, "concat:", err)
+		return 2
 	}
+	return 0
 }

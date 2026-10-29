@@ -106,3 +106,30 @@ func TestConcatIndexIsByteExact(t *testing.T) {
 		t.Fatal("expected rejection of path escaping the source root")
 	}
 }
+
+func TestParseIndexManifestRejectsUncleanPaths(t *testing.T) {
+	for _, bad := range []string{"/abs/head.html\n", "../escape.html\n", "css//double.css\n", "./dot.css\n", "# only comments\n\n"} {
+		if _, err := ParseIndexManifest([]byte(bad)); err == nil {
+			t.Errorf("ParseIndexManifest(%q) accepted; want error", bad)
+		}
+	}
+	files, err := ParseIndexManifest([]byte("# c\n\n head.html \ncss/a.css\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0] != "head.html" || files[1] != "css/a.css" {
+		t.Fatalf("files = %v", files)
+	}
+}
+
+func TestConcatIndexErrors(t *testing.T) {
+	if _, err := ConcatIndex(fstest.MapFS{}); err == nil {
+		t.Error("missing manifest accepted")
+	}
+	if _, err := ConcatIndex(fstest.MapFS{"manifest.txt": {Data: []byte("../x\n")}}); err == nil {
+		t.Error("unclean manifest path accepted")
+	}
+	if _, err := ConcatIndex(fstest.MapFS{"manifest.txt": {Data: []byte("head.html\n")}}); err == nil {
+		t.Error("manifest naming a missing file accepted")
+	}
+}
