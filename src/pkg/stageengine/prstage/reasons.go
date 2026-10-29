@@ -13,14 +13,19 @@ const ReasonSupersessionPending = "supersession-decision-pending"
 
 // Lane reasons are shared by the producers and the stage classifier.
 const (
-	ReviewGateOutcomeAwaiting              = "awaiting-review-approval"
-	ReviewGateOutcomeChangesRequested      = "changes-requested"
-	ReviewGateOutcomeNoBundle              = "no-review-bundle"
-	AutoMergeReasonBehindBudgetExhausted   = "behind-update-budget-exhausted"
-	AutoMergeReasonForkNotEditable         = "fork-not-editable"
-	AutoMergeReasonHumanChangesRequested   = stagelabels.LaneReasonHumanChangesRequested
-	AutoMergeReasonHumanMergePath          = "human-merge-path"
-	AutoMergeReasonHumanMergePathEvidence  = "human-merge-path-evidence"
+	ReviewGateOutcomeAwaiting             = "awaiting-review-approval"
+	ReviewGateOutcomeChangesRequested     = "changes-requested"
+	ReviewGateOutcomeNoBundle             = "no-review-bundle"
+	AutoMergeReasonBehindBudgetExhausted  = "behind-update-budget-exhausted"
+	AutoMergeReasonForkNotEditable        = "fork-not-editable"
+	AutoMergeReasonHumanChangesRequested  = stagelabels.LaneReasonHumanChangesRequested
+	AutoMergeReasonHumanMergePath         = "human-merge-path"
+	AutoMergeReasonHumanMergePathEvidence = "human-merge-path-evidence"
+	// AutoMergeReasonHumanMergeRequired: the PR's title says breaking
+	// change (⚠️, or an auto_merge.human_merge_title_prefixes prefix) or it
+	// wears an auto_merge.human_merge_labels label; no lane and no merge
+	// train ever merges it — the owner does (hivecommons/hive#15442).
+	AutoMergeReasonHumanMergeRequired      = "human-merge-required"
 	AutoMergeReasonIntentEvidence          = "intent-evidence"
 	AutoMergeReasonIntentUnauthorized      = "intent-unauthorized"
 	AutoMergeReasonMergeQueueRequired      = "merge-queue-required"
@@ -109,6 +114,9 @@ const (
 	// requires_human and a trusted merger approved the head; the hive
 	// leaves the merge itself to a person.
 	HumanMergeReasonReviewerDeferred = "reviewer-deferred"
+	// HumanMergeReasonBreakingChange: the PR's title or label marks it a
+	// breaking change the owner merges by hand (AutoMergeReasonHumanMergeRequired).
+	HumanMergeReasonBreakingChange = "breaking-change"
 	// HumanMergeReasonPolicy: a lane rule no more specific code names.
 	HumanMergeReasonPolicy = "policy"
 )
@@ -138,6 +146,8 @@ func HumanMergeReason(reason string) string {
 		return HumanMergeReasonTestsRemoved
 	case base == AutoMergeReasonHumanMergePath, base == AutoMergeReasonHumanMergePathEvidence:
 		return HumanMergeReasonManualMergePolicy
+	case base == AutoMergeReasonHumanMergeRequired:
+		return HumanMergeReasonBreakingChange
 	case base == AutoMergeReasonMergeRefusedReview, strings.HasPrefix(base, AutoMergeReasonReviewGatePrefix):
 		return HumanMergeReasonBranchProtection
 	case base == AutoMergeReasonMergeRefusedMethod:

@@ -287,6 +287,11 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 		details = append(details, "Approved by @"+approver+".")
 	}
 	admitter := stagelabels.AdmissionLogin(it.AdmittedBy)
+	breaking := strings.EqualFold(base, stageengineprstage.AutoMergeReasonHumanMergeRequired)
+	if breaking {
+		// No approval lets hive merge a breaking change (hivecommons/hive#15442).
+		admitter = ""
+	}
 	if admitter != "" {
 		// A person already took the trust call for this head (#15136):
 		// the lane merges it as-is; nothing is adopted or re-authored.
@@ -305,6 +310,12 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 	queue.Consequence = "Hive merges " + ref + " on its next pass"
 	if admitter != "" && !held {
 		queue.Enabled, queue.ReasonIfDisabled = false, "@"+admitter+" already approved it; hive merges it next pass"
+	}
+	if breaking {
+		// The lanes skip a breaking-titled / needs-owner-merge PR however
+		// it is queued (hivecommons/hive#15442): the merge-now click is the
+		// one path, so queueing is offered greyed with the reason.
+		queue.Enabled, queue.ReasonIfDisabled = false, "Hive never merges a breaking change; merge it as maintainer"
 	}
 	if it.DCOUnsigned > 0 {
 		mergeNow.Consequence += "; " + decisionDCOConsequence(it)
@@ -617,7 +628,7 @@ func decisionLaneRule(base string) bool {
 		stageengineprstage.AutoMergeReasonHumanMergePath, stageengineprstage.AutoMergeReasonHumanMergePathEvidence,
 		stageengineprstage.AutoMergeReasonIntentUnauthorized, stageengineprstage.AutoMergeReasonIntentEvidence,
 		stageengineprstage.AutoMergeReasonMergeRefusedReview, stageengineprstage.AutoMergeReasonMergeRefusedMethod,
-		stageengineprstage.AutoMergeReasonNoAppBotLogin:
+		stageengineprstage.AutoMergeReasonNoAppBotLogin, stageengineprstage.AutoMergeReasonHumanMergeRequired:
 		return true
 	}
 	return false
@@ -641,6 +652,8 @@ func decisionPlainReason(base string) string {
 		return "the hive could not read its changed files"
 	case stageengineprstage.AutoMergeReasonHumanMergePath, stageengineprstage.AutoMergeReasonHumanMergePathEvidence:
 		return "it touches files a person must merge"
+	case stageengineprstage.AutoMergeReasonHumanMergeRequired:
+		return "it is a breaking change (⚠️ title or needs-owner-merge label) — the owner merges it"
 	case stageengineprstage.AutoMergeReasonIntentUnauthorized, stageengineprstage.AutoMergeReasonIntentEvidence:
 		return "the hive could not confirm the author's merge intent"
 	case stageengineprstage.AutoMergeReasonMergeRefusedReview:

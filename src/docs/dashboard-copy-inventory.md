@@ -39,6 +39,7 @@ The new hover, verbatim (title line omitted):
 | `stageTrackerUntrustedAuthorWhy` (all 10 trust reasons, summed) | question, reason text, delegated outcome | 314 | 68 | `TestStageTrackerHumanMergeSaysItOnce` (no config keys, no jargon) |
 | `stageTrackerUntrustedAuthorFix` (new; the how-to-trust line, Details only) | Details | — | 81 | same |
 | `stageTrackerHumanMergeReasonWords` tips (9 codes, summed) | chip hover, 090 chevron tip | 227 | 101 | `TestStageTrackerHumanMergeReason` |
+| `stageTrackerHumanMergeReasonWords[breaking-change]` (new: chip `human merge`, caption *Ready for human merge (breaking change — owner merges)*) | chip, caption, chevron tip, `new.gates[]` | — | 14 | `TestStageTrackerHumanMergeRequiredRow` |
 | `HumanMergeReasonText` composition (090 untrusted author) | chevron tip, row tooltip, feed | 43 + 24 ("Until then a maintainer merges — Approve & merge…") | 11 | `TestStageTrackerHumanMergeSaysItOnce` |
 | `HumanMergeReasonText` admitted prefix | same | 41 | 9 | `TestStageTrackerDecisionForHumanMerge/admitted…` |
 | `stageTrackerCaption` 090 | row caption, feed | 19 | 7 | `TestStageTrackerCaption…` cases in `stage_tracker_test.go` |
@@ -62,6 +63,8 @@ The new hover, verbatim (title line omitted):
 | Confirm: Approve & merge as maintainer | dialog | 76 | 53 | same |
 | Confirm: Approve — let hive merge | dialog | 62 | 49 | same |
 | ⋯ menu hints (`stageTrackerLeadActions` → `ham-menu-hint`) | ⋯ menu | server consequences (11–31 each) | server consequences (≤ 12 each) | Go budget test |
+| `stageTrackerOpenTriageNeeded` → `stageTrackerSegments` / `stageTrackerHeadline` Open word (`tracker-row.js`, `tracker-words.js`) | Open chevron, chevron hover first word, row tooltip headline | *New · since 28m* on a reporter-trust hold; the ask lived only in the caption ([#15437](https://github.com/hivecommons/hive/issues/15437)) | *Triage needed · since 28m* (same word as the `needs-triage` chip / 015) | `TestStageTrackerNewRowRendering`, `TestStageTracker_ReporterTrustHoldReadsTriageNeeded` |
+| `stageTrackerTriageNeededCaption` (`stageTrackerCaption` 015, `stageTrackerNewState` hold text) | row caption, feed | 110 ("Actionable, but no maintainer has looked at it yet; waiting for triage — triage needed: carries needs triage": *triage* ×3 after the chevron word) / 84 ("New · waiting for a maintainer's triage (add `triage/accepted`); the hive's next pass in 7m") | 31 ("Triage needed — accept or close"; the next-mover and next-pass narration stay on the chevron hover) | `TestStageTracker_TriageNeededStage`, `TestStageTracker_ReporterTrustHoldReadsTriageNeeded`, `TestStageTrackerNewState` |
 | `stageTrackerLeadActionHtml` (`tracker-actions.js`) | the row header's inline lead button (chip slot) | — (the lead sat in the ⋯ menu only) | the menu entry's label (1–4), its hint as the hover | `TestStageTrackerLeadActionInline`, `TestStageTrackerMaintainerRowsHaveLeadAction` |
 | Toasts (`STAGE_TRACKER_ACTING_CAPTIONS`, acted labels) | toast | 2–4 each | unchanged | — |
 | `stageTrackerSelectionTriage` (`tracker-actions.js`) | selection bar lead button / bulk ⋯ menu entry, summary toast | — (no bulk Accept triage; one row at a time) | *Accept triage (4 selected)* / *Accept triage (2 of 4)* with the hint *skips the 2 not waiting on triage*; one toast *Accepted 4 issues* | `TestStageTrackerBulkAcceptTriage` |
