@@ -70,4 +70,4 @@ That maintainer now reads every repo. Only run images from `ghcr.io/hivecommons/
 
 ---
 
-Apache-2.0. Hive is a [CNCF](https://www.cncf.io/) sandbox project ([onboarding status](src/docs/cncf-sandbox-onboarding.md)) and follows the [CNCF Code of Conduct](CODE_OF_CONDUCT.md). Copyright The Linux Foundation and Hive contributors. Trademarks follow the [Linux Foundation trademark page](https://www.linuxfoundation.org/legal/trademark-usage).
+Apache-2.0. Hive is a [CNCF](https://www.cncf.io/) sandbox project ([onboarding status](src/docs/cncf-sandbox-onboarding.md)) and follows the [CNCF Code of Conduct](CODE_OF_CONDUCT.md). Copyright The Linux Foundation and Hive contributors. Trademarks follow [Linux Foundation policy](https://www.linuxfoundation.org/legal/trademark-usage).
