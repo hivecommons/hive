@@ -17202,9 +17202,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const breakdown = parts.known ? `${parts.issues} ${parts.issues === 1 ? 'issue' : 'issues'} + ${parts.standalonePRs} ${parts.standalonePRs === 1 ? 'PR' : 'PRs'} on ${parts.standalonePRs === 1 ? 'its' : 'their'} own row` : '';
       return {
         showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
-        header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${rowsWord(page.total)}${breakdown ? ` (${breakdown})` : ''} · ${attn}`,
+        header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${rowsWord(page.total)}${breakdown ? ` (${breakdown})` : ''} · ${attn}` + (note ? ` · ${note}` : ''),
         badge: allCount,
-        badgeTitle: `${allCount} ${rowsWord(allCount)} open` + (breakdown ? `: ${breakdown}` : '') + ` · ${attnAll}` + (note ? ` · ${note}` : ''),
+        badgeTitle: `${allCount} ${rowsWord(allCount)}` + (breakdown ? ` (${breakdown})` : '') + ` · ${attnAll}` + (note ? ` · ${note}` : ''),
         note,
         breakdown,
       };
