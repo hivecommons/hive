@@ -86,6 +86,7 @@ const (
 	ClassLabelProvisioningFailed    = "label_provisioning_failed"
 	ClassAgentCLIRestartLoop        = "agent_cli_restart_loop"
 	ClassTranscriptScanSlow         = "transcript_scan_slow"
+	ClassSharedCIRerunForbidden     = "shared_ci_rerun_forbidden"
 	// A restart or normal stop can invalidate a pending bootstrap without
 	// indicating a restart storm; only repeated interruptions are reportable.
 	ClassStartupKickInterrupted = "startup_kick_interrupted"
@@ -197,6 +198,7 @@ var Classes = map[string]ClassSpec{
 	ClassGitHubFetchTransient:       {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"channel commit date: fetch failed"}},
 	ClassLabelProvisioningFailed:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"issue stage labels: provisioning failed"}},
 	ClassAgentCLIRestartLoop:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"agent cli crashed or stuck on consent screen"}},
+	ClassSharedCIRerunForbidden:     {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"shared-ci rerun forbidden"}},
 	ClassTranscriptScanSlow:         {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"transcript activity scan outlived its interval"}},
 }
 

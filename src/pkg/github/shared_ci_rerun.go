@@ -19,6 +19,10 @@ const (
 	// closes the sweep keeps looking for PRs stamped with its marker.
 	DefaultSharedCIRerunLookback = 72 * time.Hour
 
+	// sharedCIRerunForbiddenTTL is how long a refused rerun suppresses further
+	// rerun attempts (and the warning) for that repo.
+	sharedCIRerunForbiddenTTL = time.Hour
+
 	sharedCIIncidentTitlePrefix = "[shared-ci]"
 	sharedCIRerunMaxIssuePages  = 3
 )
@@ -272,7 +276,19 @@ func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName str
 	event := SharedCIRerunEvent{Repo: repo, Number: pr.GetNumber(), HeadSHA: sha, Incidents: incidents}
 	var rerun []*gh.WorkflowRun
 	for _, run := range runs {
+		if c.sharedCIRerunRefused(repo) {
+			break
+		}
 		if _, err := c.client.Actions.RerunFailedJobsByID(ctx, owner, repoName, run.GetID()); err != nil {
+			if isWriteForbiddenError(err) {
+				// The App installation lacks the Actions write permission for
+				// rerun-failed-jobs: a permanent gap, so stop this pass and
+				// warn once per repo per TTL instead of once per run.
+				if c.markSharedCIRerunForbidden(repo) {
+					c.logger.Warn("shared-ci rerun forbidden: the App installation lacks Actions write permission for rerun-failed-jobs", "repo", repo, "pr", pr.GetNumber(), "run", run.GetID(), "error", err)
+				}
+				break
+			}
 			c.logger.Warn("shared-ci rerun failed", "repo", repo, "pr", pr.GetNumber(), "run", run.GetID(), "error", err)
 			continue
 		}
@@ -294,6 +310,29 @@ func (c *Client) trySharedCIRerun(ctx context.Context, repo, owner, repoName str
 		c.logger.Info("shared-ci rerun", "repo", repo, "pr", pr.GetNumber(), "incident", "#"+strconv.Itoa(incident), "head", sha, "runs", len(event.RunIDs))
 	}
 	return event, true, nil
+}
+
+// sharedCIRerunRefused reports whether a rerun was refused for repo within the TTL.
+func (c *Client) sharedCIRerunRefused(repo string) bool {
+	c.sharedCIRerunMu.Lock()
+	defer c.sharedCIRerunMu.Unlock()
+	at, ok := c.sharedCIRerunForbidden[repo]
+	return ok && time.Since(at) < sharedCIRerunForbiddenTTL
+}
+
+// markSharedCIRerunForbidden records a refusal and reports whether it is the
+// first one in the current TTL window (so the caller logs it once).
+func (c *Client) markSharedCIRerunForbidden(repo string) bool {
+	c.sharedCIRerunMu.Lock()
+	defer c.sharedCIRerunMu.Unlock()
+	if at, ok := c.sharedCIRerunForbidden[repo]; ok && time.Since(at) < sharedCIRerunForbiddenTTL {
+		return false
+	}
+	if c.sharedCIRerunForbidden == nil {
+		c.sharedCIRerunForbidden = map[string]time.Time{}
+	}
+	c.sharedCIRerunForbidden[repo] = time.Now()
+	return true
 }
 
 // latestFailedWorkflowRuns returns, per workflow, the newest run for sha when
