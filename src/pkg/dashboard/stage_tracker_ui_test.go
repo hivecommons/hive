@@ -175,6 +175,7 @@ func stageTrackerRowsPreludeJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
 		jsFunc(t, html, "stageTrackerSinceHtml"),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),
+		jsFunc(t, html, "stageTrackerPRPillsHtml"),
 		jsFunc(t, html, "stageTrackerAgoText"),
 		jsConstBlock(t, html, "STAGE_TRACKER_LINEAGE_REASON_TIP"),
 		jsFunc(t, html, "stageTrackerLineageText"),

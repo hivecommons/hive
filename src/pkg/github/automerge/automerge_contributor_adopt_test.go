@@ -13,6 +13,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -2758,5 +2759,30 @@ func TestDelegatedSupersedeRefusesPersonAuthoredPR(t *testing.T) {
 				t.Fatalf("request label kept after a terminal refusal: removed=%v", h.api.removed)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#15469: a clanker PR the merge queue holds as the
+// duplicate of another open PR for the same issue lands at 072 as
+// superseded — no "fix it" nudge, no adoption after the grace, even though
+// the author is a clanker with a live relay; adopting it would land the
+// issue twice. Its one notice is the duplicate-fix sweep's.
+func TestDuplicateHeldClankerPRParkedAt072WithoutNudgeOrAdoption(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.sink.presence = &ContributorPresence{Registered: true, Online: true}
+	reason := prstage.MergeTrain{State: prstage.MergeTrainStateDuplicateOf, Front: 15470, Position: 15469}.Reason()
+	h.observe(adoptPR(15473, "aaa", "role/contributor", "author/clanker"), reason)
+	if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/072-returned-to-contributor") {
+		t.Fatalf("labels added = %v, want 072", h.api.added)
+	}
+	if len(h.api.comments) != 0 || len(h.sink.nudges) != 0 {
+		t.Fatalf("interrupt fired on a duplicate: comments=%v nudges=%d", h.api.comments, len(h.sink.nudges))
+	}
+	h.api.reset()
+	h.clock.advance(6 * time.Hour)
+	h.observe(adoptPR(15473, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), reason)
+	if len(h.api.comments) != 0 || len(h.adopt.pulls) != 0 || strings.Contains(strings.Join(h.addedLabels(), " "), "stage/074") {
+		t.Fatalf("duplicate adopted: added=%v comments=%v pulls=%d", h.api.added, h.api.comments, len(h.adopt.pulls))
 	}
 }

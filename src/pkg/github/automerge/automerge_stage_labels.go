@@ -1265,7 +1265,16 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				adoptionRetry = true
 			}
 		}
-		if !hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) && (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor || adoptionRetry) && (policy.ContributorNudge || policy.Adoption) {
+		if dup := mergeTrainDuplicateOf(obs.Reason); dup > 0 && (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) {
+			// A duplicate held out of the merge queue
+			// (hivecommons/hive#15469) is parked with its author as
+			// superseded: no "fix your CI" nudge, no adoption — there is
+			// nothing to fix, and adopting it would land the issue twice.
+			// Its one notice is the duplicate-fix sweep's gated comment.
+			if rec, ok := store.Get(key); !ok || rec.NudgeHead != obs.HeadSHA {
+				c.info("stage labels: 07x duplicate held without interrupt", "stage", want.Stage.String(), "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "duplicate_of", dup)
+			}
+		} else if !hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) && (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor || adoptionRetry) && (policy.ContributorNudge || policy.Adoption) {
 			// The 072 interrupt machinery (nudge + adoption) is for
 			// author/clanker only: there is a hive on the other end to
 			// interrupt or stand in for. A human-authored PR simply waits
