@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -151,6 +152,25 @@ func hotspotSourceReader(ctx context.Context, cfg *config.Config, ghClient *gith
 	}
 }
 
+// hotspotSourceFileCount counts the files under a generated file's source
+// tree in the host-local checkout; 0 means unknown.
+func hotspotSourceFileCount(cfg *config.Config) func(repo, dir string) int {
+	return func(repo, dir string) int {
+		root := cfg.Project.CheckoutRootFor(repo)
+		if root == "" {
+			return 0
+		}
+		n := 0
+		_ = filepath.WalkDir(filepath.Join(root, filepath.Clean("/"+dir)), func(_ string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				n++
+			}
+			return nil
+		})
+		return n
+	}
+}
+
 // runHotspotAdvisor is the eval-tick half of the advisor: at most once per
 // hotspotAdvisorInterval it closes stale PR intervals, prunes the window,
 // scores every repo the merge train has reported on, publishes the result
@@ -188,10 +208,11 @@ func runHotspotAdvisor(ctx context.Context, cfg *config.Config, ghClient *github
 	refile := time.Duration(g.HotspotRefileDaysOrDefault()) * 24 * time.Hour
 	store.Prune(window, refile)
 	opts := hotspot.Options{
-		Window:      window,
-		MinPRs:      g.HotspotMinPRsOrDefault(),
-		MinOverlaps: g.HotspotMinOverlapsOrDefault(),
-		MinLines:    g.HotspotMinLinesOrDefault(),
+		Window:          window,
+		MinPRs:          g.HotspotMinPRsOrDefault(),
+		MinOverlaps:     g.HotspotMinOverlapsOrDefault(),
+		MinLines:        g.HotspotMinLinesOrDefault(),
+		SourceFileCount: hotspotSourceFileCount(cfg),
 	}
 	read := hotspotSourceReader(ctx, cfg, ghClient)
 	ghAdapter := hotspotGitHub{c: ghClient}
