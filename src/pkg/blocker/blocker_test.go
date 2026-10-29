@@ -1,6 +1,7 @@
 package blocker
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -203,4 +204,118 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestKindWordsCoverEveryKind(t *testing.T) {
+	for _, k := range Kinds {
+		if k.Short() == "" || k.CantDo() == "" {
+			t.Fatalf("%s has no words", k)
+		}
+		if k.IsCapability() != (k.Permission() != "") {
+			t.Fatalf("%s: IsCapability=%v but Permission=%q", k, k.IsCapability(), k.Permission())
+		}
+	}
+	if CapabilityRepoWrite.Permission() != "contents" || CapabilityBranchProtection.Permission() != "administration" || CapabilitySecret.Permission() != "secrets" {
+		t.Fatal("Permission words")
+	}
+	if !contains(CapabilityRepoWrite.Short(), "push") || !contains(CapabilityBranchProtection.Short(), "branch protection") || !contains(CapabilitySecret.Short(), "secret") || !contains(HumanOnlyCLA.Short(), "CLA") || !contains(HumanOnlyReasked.Short(), "re-asked") {
+		t.Fatal("Short words")
+	}
+	if !contains(CapabilityRepoWrite.CantDo(), "contents: write") || !contains(CapabilityBranchProtection.CantDo(), "administration") || !contains(CapabilitySecret.CantDo(), "secret") || !contains(HumanOnlyCLA.CantDo(), "CLA") || !contains(HumanOnlyReasked.CantDo(), "loop") {
+		t.Fatal("CantDo words")
+	}
+	unknown := Kind("capability:nope")
+	if unknown.Valid() || unknown.Short() != "hive cannot do this" || unknown.CantDo() != "Hive can't do this one." {
+		t.Fatalf("unknown kind words: %q / %q", unknown.Short(), unknown.CantDo())
+	}
+}
+
+func TestReasonSentenceSkipsFootersAndCaps(t *testing.T) {
+	text := "<!-- hive:agent -->\n```\ncode\n```\n🐝 footer\n<sub>meta</sub>\n_This comment was written by a bot_\n- > " + repeat("word ", 80) + "needs-human: too long"
+	got := ReasonSentence(text)
+	if len([]rune(got)) > 280 || got[len(got)-len("…"):] != "…" {
+		t.Fatalf("not capped: %d %q", len([]rune(got)), got)
+	}
+	if got[0] != 'w' {
+		t.Fatalf("list/quote prefix kept: %q", got)
+	}
+	if ReasonSentence("🐝 only footer\n```\n```") != "" {
+		t.Fatal("footer-only text must yield no sentence")
+	}
+}
+
+func repeat(s string, n int) string {
+	out := ""
+	for i := 0; i < n; i++ {
+		out += s
+	}
+	return out
+}
+
+func TestLedgerLoadIgnoresBadFileAndStaleRecords(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(bad, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(NewLedger(bad).Blockers()); n != 0 {
+		t.Fatalf("corrupt file yielded %d entries", n)
+	}
+	// A path whose parent cannot be created makes save fail without
+	// losing the in-memory record.
+	blocked := filepath.Join(bad, "nested", "ledger.json")
+	l := NewLedger(blocked)
+	l.Record("o/r", 1, Blocker{Kind: CapabilitySecret}, "")
+	if _, ok := l.Blocking("o/r", 1); !ok {
+		t.Fatal("unsaveable ledger lost the record")
+	}
+	// Record, RecordReason and Observe refuse reports older than the clear.
+	l2 := NewLedger("")
+	t0 := time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+	l2.SetNow(func() time.Time { return t0.Add(time.Hour) })
+	l2.Observe("o/r", 2, scannerReport, t0)
+	if l2.ClearKind(CapabilityWorkflowsPermission) != 1 {
+		t.Fatal("ClearKind")
+	}
+	if e := l2.Record("o/r", 2, Blocker{Kind: CapabilityWorkflowsPermission, Since: t0}, "r"); e.Blocks() {
+		t.Fatalf("stale Record re-blocked: %+v", e)
+	}
+	if e := l2.RecordReason("o/r", 2, "r", t0); e.Reason == "r" || !e.ReportedAt.Equal(t0) {
+		t.Fatalf("stale RecordReason stored a reason: %+v", e)
+	}
+	// Zero times fall back to the ledger clock.
+	e := l2.Record("o/r", 3, Blocker{Kind: CapabilitySecret}, "")
+	if !e.Blocker.Since.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("Since not defaulted: %+v", e)
+	}
+	e = l2.RecordReason("o/r", 4, "why", time.Time{})
+	if !e.ReportedAt.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("ReportedAt not defaulted: %+v", e)
+	}
+	e = l2.NoteDelegatedUnpark("o/r", 4, time.Time{})
+	if !e.DelegatedUnparkAt.Equal(t0.Add(time.Hour)) || e.ReasonAtUnpark != "why" {
+		t.Fatalf("NoteDelegatedUnpark defaults: %+v", e)
+	}
+	// A needs-human comment with no kind is remembered as a reason only;
+	// a comment on an unknown item that says nothing returns an empty entry.
+	if e, changed := l2.Observe("o/r", 5, "needs-human: which colour?", t0); !changed || e.Blocks() || e.Reason == "" {
+		t.Fatalf("plain reason = %+v, %v", e, changed)
+	}
+	if e, changed := l2.Observe("o/r", 6, "   ", t0); changed || e.Repo != "" {
+		t.Fatalf("blank text = %+v, %v", e, changed)
+	}
+	if e, changed := l2.Observe("o/r", 6, "nothing here", t0); changed || e.Repo != "" {
+		t.Fatalf("silent text = %+v, %v", e, changed)
+	}
+	// Reading back a ledger from a path, then writing it, persists the clear.
+	path := filepath.Join(dir, "ok.json")
+	l3 := NewLedger(path)
+	l3.Record("o/r", 7, Blocker{Kind: CapabilityRepoWrite}, "")
+	caps := NewLedger(path).Capabilities()
+	if caps.BlockedItems != 1 || caps.ByPermission["contents"] != 1 {
+		t.Fatalf("Capabilities = %+v", caps)
+	}
+	if NewLedger(path).ClearKind(CapabilityRepoWrite) != 1 || NewLedger(path).ClearKind(CapabilityRepoWrite) != 0 {
+		t.Fatal("ClearKind persistence")
+	}
 }
