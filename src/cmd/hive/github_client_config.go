@@ -173,6 +173,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	})
 	installReviewBots(client, b.cfg, b.logger)
 	installReviewRelaySettings(client, b.cfg, b.logger)
+	// The duplicate-fix sweep tells a registered relay's PR from a
+	// person's by the same registry the stage engine uses
+	// (hivecommons/hive#15469).
+	client.SetRelayKnownFunc(contributorRelayKnown)
 	syncAutoMergePolicyToGitHubClient(b.cfg, client)
 	// The central stage engine (ADR-0025): built here, once per client, so
 	// both sweeps find the same reconciler (stage_engine.go).
