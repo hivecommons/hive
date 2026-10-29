@@ -461,7 +461,7 @@ func TestStorePersistsAndPrunes(t *testing.T) {
 
 // hivecommons/hive#15443: the per-author trust-promotion record is claimed
 // once, released by a failed post, cleared by a demotion, survives a
-// reload and is never pruned.
+// reload and Prune only drops it after trustPromotionRetention.
 func TestStoreTrustPromotionAnnouncement(t *testing.T) {
 	now := time.Date(2026, 10, 29, 17, 20, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "s.json")
@@ -492,6 +492,14 @@ func TestStoreTrustPromotionAnnouncement(t *testing.T) {
 	}
 	if st2.ClaimTrustPromotionAnnouncement("Norway-02") {
 		t.Fatal("claim after reload should lose")
+	}
+	veryLate := now.Add(trustPromotionRetention + 24*time.Hour)
+	st3 := NewStore(path, func() time.Time { return veryLate })
+	if err := st3.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if n := st3.Prune(14 * 24 * time.Hour); n != 1 || st3.TrustPromotionAnnounced("Norway-02") {
+		t.Fatalf("prune kept a trust record past retention: n=%d keys=%v", n, st3.Keys())
 	}
 	st2.ClearTrustPromotion("Norway-02")
 	if st2.TrustPromotionAnnounced("Norway-02") || !st2.ClaimTrustPromotionAnnouncement("Norway-02") {

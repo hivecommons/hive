@@ -68,6 +68,7 @@ A terminal agent is a power tool: you hold it, aim it, and it stops when you sto
 - [Security model](security-model.md) — agent safety control inventory, threats, enforcement modes, residual gaps and operator audit checklist.
 - [Hive trust levels vs Copilot assisted permissions](copilot-permissions-comparison.md) — what GitHub's per-action permission mode (GA 2026-10-26) does, what Hive's levels, lanes, proxy and gates do, and where each covers ground the other does not.
 - [Data collection and telemetry](telemetry.md)
+- [Monitoring a hive with Prometheus and Grafana](monitoring.md)
 - [Securing your hive: a first-time operator's guide](securing-your-hive.md)
 - [Community and support](community.md)
 - [Documentation map](documentation-map.md)
