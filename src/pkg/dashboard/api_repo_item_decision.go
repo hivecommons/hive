@@ -65,7 +65,11 @@ const (
 	repoItemDecisionDirection       = "direction"
 	repoItemDecisionCloseSuperseded = "close-superseded"
 	repoItemDecisionCloseWontFix    = "close-wontfix"
-	repoItemDecisionAdopt           = "adopt"
+	// close-read closes an advisory issue (triage/advisory, a dedupe
+	// checklist) as completed once a maintainer has read it
+	// (hivecommons/hive#15381): the row's "Close (read)" action.
+	repoItemDecisionCloseRead = "close-read"
+	repoItemDecisionAdopt     = "adopt"
 	// Merge-gate answers on a PR parked at stage/090-ready-for-human-merge
 	// (hivecommons/hive#15078). merge-now merges through the hive's App at
 	// once, attributed to the operator; queue-merge records the operator's
@@ -97,6 +101,7 @@ const (
 	adoptRequestLabelDesc       = "Owner-delegate request: adopt now in supersede mode"
 
 	issueStateReasonNotPlanned = "not_planned"
+	issueStateReasonCompleted  = "completed"
 )
 
 // repoItemDecisionChangeRequests is the store a PR direction is recorded in:
@@ -274,6 +279,10 @@ func repoItemDecisionResultWith(repoFull string, number int, itemType, decision,
 		out.Action = rowActionClosed
 		out.Outcome = "Closed as won't fix (not planned)."
 		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
+	case repoItemDecisionCloseRead:
+		out.Action = rowActionClosed
+		out.Outcome = "Closed as read (advisory acknowledged)."
+		out.Next = "Nothing further to do; the row leaves the tracker on its next refresh."
 	case repoItemDecisionAdopt:
 		out.Action = rowActionAdopted
 		out.Outcome = "Adoption queued: `" + label + "` applied."
@@ -385,9 +394,17 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "decision", event.Decision), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "unparked", Label: ghpkg.HumanAckLabel,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, "", ghpkg.HumanAckLabel, nil)})
-	case repoItemDecisionCloseSuperseded, repoItemDecisionCloseWontFix:
+	case repoItemDecisionCloseSuperseded, repoItemDecisionCloseWontFix, repoItemDecisionCloseRead:
 		verb := "won't fix"
+		stateReason := issueStateReasonNotPlanned
 		supersededBy := ""
+		if decision == repoItemDecisionCloseRead {
+			if itemType != "issue" {
+				jsonError(w, "close-read applies to issues", http.StatusBadRequest)
+				return
+			}
+			verb, stateReason = "read (advisory acknowledged)", issueStateReasonCompleted
+		}
 		if decision == repoItemDecisionCloseSuperseded {
 			verb = "superseded"
 			ref, err := parseRepoItemSupersededBy(body.SupersededBy, repoFull)
@@ -416,7 +433,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 			err := gh.CloseIssue(ctx, repoFull, number, ghpkg.IssueCloseOptions{
 				OverrideReason:          "closed as " + verb + " by @" + user + " from the Hive dashboard",
 				SuppressOverrideComment: true,
-				StateReason:             issueStateReasonNotPlanned,
+				StateReason:             stateReason,
 				// A recorded human decision may close a tracking issue;
 				// only the automated paths are refused.
 				AllowTrackingIssue: true,
@@ -478,7 +495,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		}
 		s.handlePullRequestMergeDecision(ctx, w, repoFull, number, user, decision, comment)
 	default:
-		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
+		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, close-read, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
 	}
 }
 

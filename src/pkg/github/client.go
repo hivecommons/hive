@@ -4633,6 +4633,10 @@ type RepoWorkIssue struct {
 	// RecheckDone is set once the soak triage has stamped
 	// `<!-- hive:recheck-done -->` into the body (hivecommons/hive#13311).
 	RecheckDone bool `json:"recheck_done,omitempty"`
+	// Advisory is the body-derived advisory classification (dedupe
+	// checklist marker, "Decision required: no"), read here because the
+	// body itself is not carried (hivecommons/hive#15381).
+	Advisory *IssueAdvisory `json:"advisory,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
@@ -4657,6 +4661,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		Children:        issue.Children,
 		TrackerProgress: progress,
 		IsTracker:       RendersAsTracker(issue.IsTracker, issue.Labels, progress),
+		Advisory:        IssueAdvisoryFromBody(issue.Body),
 	}
 }
 
@@ -4691,6 +4696,7 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 		TrackerProgress: progress,
 		Bucket:          bucket,
 		Reason:          reason,
+		Advisory:        IssueAdvisoryFromBody(issue.GetBody()),
 	}
 }
 

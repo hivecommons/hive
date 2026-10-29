@@ -36,6 +36,7 @@ const (
 	operatorActionGiveDirection   = "give-direction"
 	operatorActionCloseSuperseded = "close-superseded"
 	operatorActionWontFix         = "wontfix"
+	operatorActionCloseRead       = "close-read"
 	operatorActionLetHiveDecide   = "let-hive-decide"
 	operatorActionHold            = "hold"
 	operatorActionRelease         = "release"
@@ -326,6 +327,8 @@ func operatorActionFromBody(endpoint string, body []byte) (operatorActionRequest
 			out.Target = strings.TrimSpace(raw.SupersededBy)
 		case repoItemDecisionCloseWontFix:
 			out.Action = operatorActionWontFix
+		case repoItemDecisionCloseRead:
+			out.Action = operatorActionCloseRead
 		case repoItemDecisionMergeNow:
 			out.Action = operatorActionMergeNow
 		case repoItemDecisionQueueMerge:

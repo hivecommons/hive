@@ -304,6 +304,10 @@
        it a move but the next pass" (hivecommons/hive#15094). */
     .ham-seg.active.ham-open-new { background: var(--blue); color: var(--surface-0); }
     .ham-seg.active.ham-open-new .ham-seg-t::before { content: '✦'; margin-right: var(--sp-1); }
+    /* Advisory (hivecommons/hive#15381): a note for maintainers, not
+       work — muted, never stale-tinted, read then close. */
+    .ham-seg.active.ham-open-advisory { background: var(--surface-2); color: var(--muted); }
+    .ham-seg.active.ham-open-advisory .ham-seg-t::before { content: 'ⓘ'; margin-right: var(--sp-1); }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }

@@ -67,6 +67,8 @@
     function stageTrackerNeedsAttention(item) {
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const n = Number(item.stage) || 0;
+      // An advisory is a note, not work (hivecommons/hive#15381).
+      if (item && item.advisory) return false;
       if (stageTrackerRegressionHandled(item)) return false;
       return mods.length > 0 || STAGE_TRACKER_ATTENTION_STAGES.indexOf(n) >= 0;
     }
@@ -109,7 +111,7 @@
     // cannot disagree. Stage/modifier based: labels alone (needs-signal,
     // hold, …) never qualify a row. A held row is paused, not waiting.
     function stageTrackerItemNeedsHuman(item) {
-      if (!item || stageTrackerItemOnHold(item)) return false;
+      if (!item || item.advisory || stageTrackerItemOnHold(item)) return false;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       if (mods.some(m => STAGE_TRACKER_NEEDS_HUMAN_MODS.indexOf(m) >= 0)) return true;
       const n = Number(item.stage) || 0;

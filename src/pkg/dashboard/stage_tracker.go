@@ -310,6 +310,11 @@ type StageTrackerItem struct {
 	// does not count them until the PR reaches stage/080 or later. The
 	// labels themselves are untouched; this is presentation only.
 	DeferredModifiers []string `json:"deferred_modifiers,omitempty"`
+	// Advisory is set on an issue that is a note for maintainers, not work
+	// (triage/advisory label, dedupe checklist, "Decision required: no"):
+	// read it, then close it (hivecommons/hive#15381). Its Chip is the
+	// Open chevron's word; the row never counts as stalled or attention.
+	Advisory *StageTrackerAdvisory `json:"advisory,omitempty"`
 	// NeedsHuman is true when a person's decision or action is the ONLY
 	// thing that advances the item (stageTrackerNeedsHuman): stages 015
 	// triage-needed, 045/085 needs-decision, 071/072 needs-author /
@@ -2112,7 +2117,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	prOpen := func(repo string, number int) bool { return prState(repo, number) == blockedOnPRStateOpen }
 	supersedes := stageTrackerSupersedesIndex(store, status.GitHubBaseURL)
 	issueFilter := s.issueFilterConfig()
-	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren) {
+	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren, advisoryHint *github.IssueAdvisory) {
 		// A closed issue has no stage; a stage label it closed wearing is
 		// the closed-issue sweep's to remove, not a row to render
 		// (hivecommons/homebrew-hive#127).
@@ -2162,7 +2167,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		finish(&it, issue.Labels, stage, rec, ok, false)
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
 		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL, prState)
-		applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
+		advisory := stageTrackerAdvisoryFor(issue.Labels, issue.Body, advisoryHint)
+		if advisory == nil {
+			applyStageTrackerNew(&it, stageTrackerNewState(it, ok, issueFilter, status.Governor, now))
+		}
 		if it.Stage == trackerNumberClaimed {
 			it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
 		}
@@ -2180,6 +2188,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, nil, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
+		applyStageTrackerAdvisory(&it, advisory)
 		add(it)
 	}
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
@@ -2269,7 +2278,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		for _, it := range repoOpenItems(repo) {
 			switch {
 			case it.Kind == "issue" && !it.Sidelined:
-				addIssue(repoName, it.Issue, "", "", nil)
+				addIssue(repoName, it.Issue, "", "", nil, nil)
 			case it.Kind == "pr" && !it.Sidelined:
 				addPR(repoName, it.PR.pr, it.PR.verdict, "", "")
 			case it.Kind == "issue":
@@ -2277,7 +2286,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				// bucket, the open items the first tracker never showed.
 				w := it.WorkIssue
 				addIssue(repoName, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Assignees: w.Assignees,
-					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext, IsTracker: w.IsTracker, Children: w.Children}, w.Bucket, w.Reason, w.TrackerProgress)
+					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext, IsTracker: w.IsTracker, Children: w.Children}, w.Bucket, w.Reason, w.TrackerProgress, w.Advisory)
 			default:
 				w := it.WorkPR
 				addPR(repoName, github.PullRequest{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Draft: w.Draft,
@@ -2340,7 +2349,9 @@ var stageTrackerNeedsHumanMods = []string{modNeedsHuman, modNeedsDecision, modUn
 // action is the only thing that advances the item. A hold wins: a held
 // item is paused, not waiting on a person (hivecommons/hive#15008).
 func stageTrackerNeedsHuman(it StageTrackerItem) bool {
-	if stageTrackerOnHold(it) {
+	// An advisory waits on nobody: reading and closing it is a courtesy,
+	// not a decision the pipeline is parked on (hivecommons/hive#15381).
+	if stageTrackerOnHold(it) || it.Advisory != nil {
 		return false
 	}
 	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerNeedsHumanMods, m) }) {
@@ -2397,7 +2408,7 @@ func stageTrackerRegressionHandled(it StageTrackerItem) bool {
 // parked on a person. Only the shown Modifiers count, so a merge-gate pill
 // held back until the gate never promotes a row.
 func stageTrackerNeedsAttention(it StageTrackerItem) bool {
-	if stageTrackerRegressionHandled(it) {
+	if it.Advisory != nil || stageTrackerRegressionHandled(it) {
 		return false
 	}
 	return len(it.Modifiers) > 0 || slices.Contains(stageTrackerAttentionStages, it.Stage)

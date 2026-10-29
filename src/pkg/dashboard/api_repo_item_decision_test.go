@@ -320,6 +320,32 @@ func TestRepoItemDecisionCloseWontFixCommentsAndCloses(t *testing.T) {
 	}
 }
 
+// close-read (hivecommons/hive#15381): an advisory issue is closed as
+// completed through the same comment + close path; a PR is refused.
+func TestRepoItemDecisionCloseReadClosesAsCompleted(t *testing.T) {
+	mock := &repoItemDecisionMock{issueLabels: []string{"triage/advisory"}}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecision(t, srv, 7, "writer", `{"decision":"close-read"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("close-read: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "Closed as read (advisory acknowledged) by @writer") {
+		t.Fatalf("comments = %v", mock.comments)
+	}
+	if len(mock.edits) != 1 || mock.edits[0]["state"] != "closed" || mock.edits[0]["state_reason"] != issueStateReasonCompleted {
+		t.Fatalf("edits = %v", mock.edits)
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != "closed" || resp.Result == nil || resp.Result.Outcome != "Closed as read (advisory acknowledged)." {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"close-read","type":"pr"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("close-read on a PR: code=%d want 400 body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestRepoItemDecisionCloseSupersededPRUsesSweepPath(t *testing.T) {
 	mock := &repoItemDecisionMock{}
 	srv := newRepoItemDecisionServer(t, mock)
