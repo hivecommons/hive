@@ -3,6 +3,9 @@ package automerge
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"net/http"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -12,6 +15,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -674,5 +678,127 @@ func TestHumanHandoffAdmissionSkipPendingChecksWaitOnHive(t *testing.T) {
 				t.Fatalf("admission skip blamed the hive after dwell: %+v", rec)
 			}
 		})
+	}
+}
+
+// stageSupersededCloserSpy is supersededCloserSpy that still supplies the
+// stage writer the label pass needs.
+type stageSupersededCloserSpy struct {
+	*supersededCloserSpy
+	stage stageReconcilerTransport
+}
+
+func (s *stageSupersededCloserSpy) StageReconciler(store *stagelabels.Store, opts *stageengine.Options, logger *slog.Logger) stageengine.Reconciler {
+	return s.stage.StageReconciler(store, opts, logger)
+}
+
+func newStageSupersededCloserSpy(t *testing.T, e *Engine, result hgithub.HiveSupersededClose) *stageSupersededCloserSpy {
+	t.Helper()
+	stage, ok := e.transport.(stageReconcilerTransport)
+	if !ok {
+		t.Fatal("engine transport provides no stage writer")
+	}
+	spy := &stageSupersededCloserSpy{supersededCloserSpy: &supersededCloserSpy{Transport: e.transport, result: result}, stage: stage}
+	e.transport = spy
+	return spy
+}
+
+// TestApplyStageLabelsHivePRSupersededClosesInsteadOfHumanRoute is
+// hivecommons/hive#15208: the reviewer swarm answered requires_human on a
+// hive-authored PR whose issue #15206 had just merged and closed. The pass
+// asks the superseded rule before routing to a person; a close means no
+// 085 label, no record, and the result counts it.
+func TestApplyStageLabelsHivePRSupersededClosesInsteadOfHumanRoute(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	var prReads int
+	api.extra = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/15208" {
+			prReads++
+			_, _ = io.WriteString(w, `{"number":15208,"state":"open","user":{"login":"`+testHiveAppBotLogin+`","type":"Bot"},"head":{"sha":"sha"},"base":{"ref":"v5"},"mergeable_state":"clean"}`)
+			return true
+		}
+		return false
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 21, 2, 41, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	requiresHuman := ContributorLaneVerdict{Configured: true, Verdict: "requires_human", HumanSummaries: []string{"intent-alignment requires human: Solves child (b) of #15188; conflicts with #15206 (owner PR for the same issue)"}}
+	e.contributorLaneVerdict = func(string, int, string) ContributorLaneVerdict { return requiresHuman }
+	spy := newStageSupersededCloserSpy(t, e, hgithub.HiveSupersededClose{Closed: true, Superseded: true, CloserPR: 15206, Issue: 15188, Verdict: "close", Reason: hgithub.SupersessionActionClosedDeclared})
+	ctx := context.Background()
+	observe := func() StageLabelResult {
+		pr := stagePR(15208, "stage/050-review-pending", "role/trusted", "author/hive")
+		pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "reviewer-verdict:requires_human", false, nil)
+		e.noteStageRole("acme", "widget", 15208, stagelabels.RoleTrusted)
+		e.noteStageVerdict("acme", "widget", 15208, requiresHuman)
+		res, err := e.ApplyStageLabels(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	res := observe()
+	if res.ClosedSuperseded != 1 || len(spy.calls) != 1 || spy.calls[0] != 15208 || prReads != 1 {
+		t.Fatalf("result=%+v calls=%v reads=%d, want one close", res, spy.calls, prReads)
+	}
+	if api.writes() != 0 {
+		t.Fatalf("a closed PR gets no 085 label: added=%v removed=%v", api.added, api.removed)
+	}
+	if _, ok := store.Get(stageKey("acme", "widget", 15208)); ok {
+		t.Fatal("closed PR must leave no stage record")
+	}
+
+	// The rule keeps the PR: the reviewer's ask routes to 085 as before,
+	// and within the TTL the same head is not re-read.
+	spy.result = hgithub.HiveSupersededClose{Verdict: "keep", Reason: "not-superseded"}
+	api.reset()
+	res = observe()
+	if res.ClosedSuperseded != 0 || !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) {
+		t.Fatalf("kept PR must reach 085: result=%+v added=%v", res, api.added)
+	}
+	if len(spy.calls) != 1 || prReads != 1 {
+		t.Fatalf("same head within the TTL must not be re-read: calls=%v reads=%d", spy.calls, prReads)
+	}
+	clock.advance(supersededCheckTTL + time.Minute)
+	observe()
+	if len(spy.calls) != 2 {
+		t.Fatalf("past the TTL the check runs again: calls=%v", spy.calls)
+	}
+}
+
+// TestApplyStageLabelsHumanPRNeverAskedSupersededCloser: the short-circuit
+// is for the hive's own PRs only; a person's PR at requires_human is routed
+// to a person without a PR read.
+func TestApplyStageLabelsHumanPRNeverAskedSupersededCloser(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 21, 2, 41, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	requiresHuman := ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	e.contributorLaneVerdict = func(string, int, string) ContributorLaneVerdict { return requiresHuman }
+	spy := newStageSupersededCloserSpy(t, e, hgithub.HiveSupersededClose{Closed: true})
+	pr := stagePR(337, "stage/050-review-pending", "role/contributor", "author/human")
+	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonAuthorAssociation, false, nil)
+	e.noteStageRole("acme", "widget", 337, stagelabels.RoleContributor)
+	e.noteStageVerdict("acme", "widget", 337, requiresHuman)
+	res, err := e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The reviewer's question on a person's own PR goes to the author
+	// (071, hivecommons/hive#15202); the point here is that the closer is
+	// never asked and no PR read happens.
+	if len(spy.calls) != 0 || res.ClosedSuperseded != 0 || !reflect.DeepEqual(api.added, [][]string{{"stage/071-needs-author"}}) {
+		t.Fatalf("calls=%v result=%+v added=%v", spy.calls, res, api.added)
 	}
 }

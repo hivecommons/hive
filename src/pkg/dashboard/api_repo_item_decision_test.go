@@ -48,6 +48,9 @@ type repoItemDecisionMock struct {
 	// bodies (merge-now / queue-merge, hivecommons/hive#15078).
 	merges  []map[string]any
 	reviews []map[string]any
+	// timeline is what GET /issues/N/timeline answers (nil = empty): the
+	// re-park read of hivecommons/hive#15021.
+	timeline []map[string]any
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -126,7 +129,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/commits/feedfacefeedfacefeedfacefeedfacefeedface/check-runs"):
 			_, _ = io.WriteString(w, `{"total_count":0,"check_runs":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(path, "/timeline"):
-			_, _ = io.WriteString(w, `[]`)
+			if m.timeline == nil {
+				_, _ = io.WriteString(w, `[]`)
+			} else {
+				_ = json.NewEncoder(w).Encode(m.timeline)
+			}
 		case r.Method == http.MethodGet && (strings.HasSuffix(path, "/pulls/8/commits") || strings.HasSuffix(path, "/pulls/8/reviews")):
 			// No author activity: the contributor reads as offline.
 			_, _ = io.WriteString(w, `[]`)

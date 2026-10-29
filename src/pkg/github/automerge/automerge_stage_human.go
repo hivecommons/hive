@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/oktotest"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -92,6 +93,74 @@ var humanConflictReasons = map[string]bool{"conflicting": true, "not-mergeable":
 func humanConflict(obs stageObservation) bool {
 	return humanConflictReasons[obs.Reason] || hasLabelFold(obs.Labels, "needs-rebase") ||
 		obs.AuthorKind == authorkind.Human && humanConflictReasons[obs.LaneReason]
+}
+
+// supersededCheckTTL bounds how often the hive-authored superseded check
+// re-reads a PR that stays parked on a person at the same head.
+const supersededCheckTTL = humanChecksTTL
+
+// supersededCheckWarranted says whether the route the pass is about to
+// take is one a merged closer would answer: the reviewer swarm's own
+// requires_human (not an owner's decision question, which stays theirs),
+// or a conflicting head / needs-rebase label. Other hand-offs (trust,
+// policy, a person's hold) are not the rule's to pre-empt.
+func supersededCheckWarranted(verdict stageVerdict, obs stageObservation) bool {
+	if humanConflictReasons[obs.LaneReason] || humanConflictReasons[verdict.Reason] {
+		return true
+	}
+	if !verdict.Human || !obs.Detail.VerdictKnown {
+		return false
+	}
+	v := obs.Detail.Verdict
+	return !v.DecisionRequested && strings.EqualFold(strings.TrimSpace(v.Verdict), "requires_human")
+}
+
+// closeSupersededBeforeHumanRoute runs the hive-authored superseded rule
+// (hgithub.CloseSupersededHivePRIfEligible) on a hive-authored PR about to
+// be routed to a person — a reviewer's requires_human, a conflicting head,
+// a needs-rebase label. The merge that closed its issue (or declared it
+// superseded) is the answer the person would give, so the PR is closed
+// with the `superseded-by-merge` reason instead of parked at 085
+// (hivecommons/hive#15208). It reports whether the PR was closed.
+func (c *Engine) closeSupersededBeforeHumanRoute(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, pass *stageengine.PRPassFacts, now time.Time) bool {
+	hiveAuthored := (pass != nil && pass.AuthorIsApp) || obs.AuthorKind == authorkind.Hive
+	// A person's hold is that person's decision; the rule keeps held PRs,
+	// so it is not asked.
+	if !hiveAuthored || c.gh == nil || obs.Hold != nil {
+		return false
+	}
+	closer, ok := c.transport.(supersededCloserTransport)
+	if !ok {
+		return false
+	}
+	cacheKey := key + "@" + obs.HeadSHA
+	tracker.mu.Lock()
+	last, seen := tracker.superseded[cacheKey]
+	tracker.mu.Unlock()
+	if seen && now.Sub(last) < supersededCheckTTL {
+		return false
+	}
+	tracker.mu.Lock()
+	tracker.superseded[cacheKey] = now
+	tracker.mu.Unlock()
+	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
+	if err != nil {
+		c.warn("stage labels: superseded check could not read the PR", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return false
+	}
+	res, err := closer.CloseSupersededHivePRIfEligible(ctx, obs.Owner+"/"+obs.Repo, pr)
+	if err != nil {
+		c.warn("stage labels: superseded check failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return false
+	}
+	if !res.Closed {
+		c.debug("stage labels: hive PR kept", "repo", obs.Display, "pr", obs.Number, "verdict", res.Verdict, "reason", res.Reason)
+		return false
+	}
+	c.info("stage labels: hive PR closed as superseded instead of a human decision",
+		"repo", obs.Display, "pr", obs.Number, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason,
+		"closer", res.CloserPR, "issue", res.Issue, "lane_reason", obs.LaneReason)
+	return true
 }
 
 // humanEvidence gathers the Evidence for one human-routed observation.

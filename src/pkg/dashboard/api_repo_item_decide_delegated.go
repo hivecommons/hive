@@ -510,7 +510,19 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	// operator asked to re-run it. A re-adoption request older than the
 	// latest adoption marker was carried out and then orphaned again
 	// (hivecommons/hive#15052): it is not a repeat.
-	if prior := s.delegatedPriorDecisionState(ctx, repoFull, number, d.Rule); prior.Found && !req.Force && (orphan.Dead == 0 || prior.At.After(orphan.MarkerAt)) {
+	prior := s.delegatedPriorDecisionState(ctx, repoFull, number, d.Rule)
+	if prior.Found && !req.Force {
+		// A park label put back after the recorded decision is a new ask,
+		// not that decision failing to take effect (hivecommons/hive#15021:
+		// approve at 20:41Z lifted 045; the scanner re-parked at 01:16Z
+		// with its own question; the dedup then called the fresh park
+		// "decided, but it hasn't taken effect" for hours).
+		if repark, ok := s.delegatedReparkedAfter(ctx, repoFull, number, prior.At); ok {
+			deciderNotes = append(deciderNotes, "parked again at "+repark.At.UTC().Truncate(time.Second).Format(time.RFC3339)+" ("+repark.Label+") after the decision recorded at "+prior.At.UTC().Truncate(time.Second).Format(time.RFC3339)+": a new ask, deciding anew")
+			prior = delegatedPriorState{}
+		}
+	}
+	if prior.Found && !req.Force && (orphan.Dead == 0 || prior.At.After(orphan.MarkerAt)) {
 		kind := rowActionTargetIssue
 		if in.Kind == delegatedecision.KindPR {
 			kind = rowActionTargetPR

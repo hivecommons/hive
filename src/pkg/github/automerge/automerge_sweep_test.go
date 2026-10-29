@@ -1914,6 +1914,10 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			}
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{"id": 1, "body": in.Body})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/timeline"):
+			// The superseded rule looks for a merged PR declaring
+			// `Supersedes #N`; none of these fixtures has one.
+			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/update-branch"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/update-branch")
 			if pr := byNumber[number]; pr != nil && pr.updateCount != nil {
@@ -3278,5 +3282,40 @@ func TestSweepSelfAuthoredCleanPRDoesNotAskSupersededCloser(t *testing.T) {
 	}
 	if len(spy.calls) != 0 {
 		t.Fatalf("closer must only be asked on a conflicting head, calls=%v", spy.calls)
+	}
+}
+
+// TestSweepSelfAuthoredNeedsRebaseLabelAsksSupersededCloser: a lane
+// already put needs-rebase on the hive's PR, so later sweeps returned
+// `label:needs-rebase` before the superseded question was asked and
+// #15208 kept wearing it after #15206 merged (hivecommons/hive#15208).
+func TestSweepSelfAuthoredNeedsRebaseLabelAsksSupersededCloser(t *testing.T) {
+	var merged []int
+	var updates int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number:         15208,
+		author:         testHiveAppBotLogin,
+		extraLabels:    []string{"needs-rebase"},
+		mergeableState: "behind",
+		updateCount:    &updates,
+	}}, &merged)
+	defer api.Close()
+
+	c := newAutoMergeSweepClient(api.URL)
+	spy := &supersededCloserSpy{Transport: c.transport, result: hgithub.HiveSupersededClose{Closed: true, Superseded: true, CloserPR: 15206, Issue: 15188}}
+	c.transport = spy
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 15208, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR: %v", err)
+	}
+	if reason != autoMergeReasonClosedSuperseded || len(spy.calls) != 1 || updates != 0 || len(merged) != 0 {
+		t.Fatalf("reason=%q calls=%v updates=%d merged=%v, want closed-superseded", reason, spy.calls, updates, merged)
+	}
+
+	// Kept: the label block still answers.
+	spy.result = hgithub.HiveSupersededClose{Verdict: "keep", Reason: "not-superseded"}
+	_, reason, err = c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 15208, true)
+	if err != nil || reason != autoMergeReasonLabelNeedsRebase {
+		t.Fatalf("reason=%q err=%v, want %s", reason, err, autoMergeReasonLabelNeedsRebase)
 	}
 }

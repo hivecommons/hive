@@ -554,6 +554,71 @@ func TestDelegatedDecisionStuckReportsNoEffect(t *testing.T) {
 	}
 }
 
+// TestDelegatedDecisionReparkedAfterDecisionIsANewAsk is
+// hivecommons/hive#15021: the hive decided at 12:01Z and the park lifted;
+// later the scanner parked the item again with its own question. The
+// repeat click must not read the fresh park as the old decision failing to
+// take effect (no `no-effect`, no stalled follow-up comment): it is a new
+// ask, decided anew.
+func TestDelegatedDecisionReparkedAfterDecisionIsANewAsk(t *testing.T) {
+	pinDelegatedClock(t, "2026-10-28T14:23:00Z")
+	prior := delegatedecision.Decision{Verdict: delegatedecision.VerdictAdoptSupersede, Rule: "contributor-offline", Text: "supersede now: adopt #8 in supersede mode", Rationale: "offline"}
+	mock := &repoItemDecisionMock{prForeign: true, prRedCI: true, prMergeState: "blocked", prLabels: []string{"stage/085-needs-decision", "needs-human"}}
+	mock.priorComments = []string{delegatedecision.CommentBody(prior, "h1", "writer")}
+	mock.timeline = []map[string]any{
+		{"event": "unlabeled", "label": map[string]any{"name": "stage/085-needs-decision"}, "created_at": "2026-10-28T12:01:30Z"},
+		{"event": "labeled", "label": map[string]any{"name": "stage/085-needs-decision"}, "created_at": "2026-10-28T13:16:00Z"},
+	}
+	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(true)
+	body := `{"type":"pr","reason":"contributor-lane:changes-requested","caption":"changes requested"}`
+	w := postDelegated(t, srv, 8, "writer", body, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	job := decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action == rowActionNoEffect || job.Result.Action == rowActionNoop {
+		t.Fatalf("a re-parked item must be decided anew, got %+v notes=%v err=%s", job.Result, job.Notes, job.Error)
+	}
+	if !strings.Contains(strings.Join(job.Notes, "\n"), "parked again at 2026-10-28T13:16:00Z (stage/085-needs-decision) after the decision recorded at 2026-10-28T12:01:00Z") {
+		t.Fatalf("notes = %v, want the re-park named", job.Notes)
+	}
+	for _, c := range mock.comments {
+		if delegatedecision.IsStalledComment(c, "contributor-offline") {
+			t.Fatalf("stalled follow-up posted on a fresh ask:\n%s", c)
+		}
+	}
+
+	// A park label applied before the decision is the one it answered:
+	// the dedup still holds.
+	mock.timeline = []map[string]any{
+		{"event": "labeled", "label": map[string]any{"name": "stage/085-needs-decision"}, "created_at": "2026-10-28T11:00:00Z"},
+	}
+	mock.comments = nil
+	w = postDelegated(t, srv, 8, "writer", body, nil)
+	job = decodeDelegatedJob(t, w)
+	if job.Result == nil || job.Result.Action != rowActionNoEffect {
+		t.Fatalf("park before the decision must still dedup: %+v", job.Result)
+	}
+}
+
+func TestReparkFromEvents(t *testing.T) {
+	t0 := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	events := []github.IssueEvent{
+		{Event: "labeled", Label: "triage/accepted", At: t0.Add(time.Minute)},
+		{Event: "unlabeled", Label: "stage/045-needs-decision", At: t0.Add(2 * time.Minute)},
+		{Event: "labeled", Label: "needs-human", At: t0.Add(time.Hour)},
+		{Event: "labeled", Label: "Stage/045-Needs-Decision", At: t0.Add(2 * time.Hour)},
+	}
+	got, ok := reparkFromEvents(events)
+	if !ok || got.Label != "Stage/045-Needs-Decision" || !got.At.Equal(t0.Add(2*time.Hour)) {
+		t.Fatalf("got %+v ok=%v, want the latest park label", got, ok)
+	}
+	if _, ok := reparkFromEvents(events[:2]); ok {
+		t.Fatal("a triage label and an unlabel are not a re-park")
+	}
+}
+
 // TestDelegatedStuckWhyReadsTheLane covers the why derivation per lane
 // reason and verdict so every stuck decision gets a specific plain reason.
 func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {

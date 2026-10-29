@@ -227,11 +227,15 @@ type StageTracker struct {
 	details map[string]stageDetail                 // key → detail noted by trySweep*
 	ensured map[string]bool                        // repo → labels provisioned this process
 	checks  map[string]humanChecksEntry            // key → head check digest (human routing)
+	// superseded remembers when the hive-authored superseded check last
+	// ran per key+head, so a PR that legitimately sits at 085 is not
+	// re-read every pass.
+	superseded map[string]time.Time
 }
 
 // NewStageTracker returns an empty tracker.
 func NewStageTracker() *StageTracker {
-	return &StageTracker{obs: map[string]map[string]stageObservation{}, details: map[string]stageDetail{}, ensured: map[string]bool{}, checks: map[string]humanChecksEntry{}}
+	return &StageTracker{obs: map[string]map[string]stageObservation{}, details: map[string]stageDetail{}, ensured: map[string]bool{}, checks: map[string]humanChecksEntry{}, superseded: map[string]time.Time{}}
 }
 
 var sharedStageTracker = NewStageTracker()
@@ -823,6 +827,9 @@ type StageLabelResult struct {
 	// count and a warn log per PR, for the reviewer lane to act on
 	// (hivecommons/hive#12534, specimen #12417).
 	HiveHeld int
+	// ClosedSuperseded counts hive-authored PRs the pass closed as
+	// superseded instead of parking them on a person (hivecommons/hive#15208).
+	ClosedSuperseded int
 }
 
 // ApplyStageLabels reconciles the stage/role/author/health labels for every PR
@@ -915,6 +922,19 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 			obs.Hold = prov
+		}
+		// Issue-closed beats the reviewer's verdict: a hive-authored PR
+		// whose work a merged PR already delivered is closed here, not
+		// parked at 085 for a person to say so, and not sent to 070 to
+		// rebase a conflicting head onto it (hivecommons/hive#15208).
+		if !verdict.Terminal && verdict.Reason != prstage.ReasonSupersessionPending &&
+			supersededCheckWarranted(verdict, obs) &&
+			c.closeSupersededBeforeHumanRoute(ctx, tracker, key, obs, pass, now) {
+			store.Forget(key)
+			c.resolveNudge(ctx, prevRec, hadPrev, obs)
+			result.ClosedSuperseded++
+			result.Skipped++
+			continue
 		}
 		var route stagelabels.Route
 		if verdict.Human && !verdict.Terminal && verdict.Reason != prstage.ReasonSupersessionPending {

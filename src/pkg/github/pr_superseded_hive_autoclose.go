@@ -39,6 +39,16 @@ const (
 	// SupersessionActionClosedContained: a hive-authored superseded PR was
 	// closed because every file it touches is in the merged closer.
 	SupersessionActionClosedContained = "closed-contained"
+	// SupersessionActionClosedDeclared: a hive-authored PR was closed
+	// because a merged PR of the same repo declares `Supersedes #N` for it
+	// (hivecommons/hive#15208: #15206 said so and closed the parent issue
+	// while #15208's own child issue was still open; the maintainer's
+	// statement beats the conflict / file-subset measurement).
+	SupersessionActionClosedDeclared = "closed-declared"
+	// SupersessionActionClosedIssueClosed: a hive-authored PR was closed
+	// because every issue it closes was closed as not planned (wontfix):
+	// there is nothing left to deliver and nothing to rebase onto.
+	SupersessionActionClosedIssueClosed = "closed-issue-closed"
 
 	// hiveSupersededReasonDisabled .. hiveSupersededReasonOpenValue are the
 	// keep reasons DecideHiveSupersededAutoClose returns.
@@ -65,8 +75,15 @@ type HiveSupersededAutoCloseFacts struct {
 	// the PR.
 	HiveAuthored bool
 	// Superseded: every issue the PR closes is closed and at least one was
-	// closed by a different merged PR (detectSupersession).
+	// closed by a different merged PR (detectSupersession), a merged PR
+	// declares it supersedes this one (Declared), or every issue it closes
+	// is closed with no merged closer (IssuesClosedNoCloser).
 	Superseded bool
+	// Declared: a merged PR of the same repo says `Supersedes #<this PR>`.
+	Declared bool
+	// IssuesClosedNoCloser: every issue the PR closes was closed as not
+	// planned, so no merged PR closed any of them.
+	IssuesClosedNoCloser bool
 	// Merged / Held / KeptOpen / ParkedByPerson are the guards every sweep
 	// honours: a merged PR, a hold or exemption label, hive/keep-open, or a
 	// needs-human a person placed.
@@ -102,10 +119,14 @@ func DecideHiveSupersededAutoClose(f HiveSupersededAutoCloseFacts) (verdict, rea
 		return hiveSupersededVerdictKeep, hiveSupersededReasonPerson
 	case f.Level < acmmLevelAutonomous:
 		return hiveSupersededVerdictKeep, hiveSupersededReasonLevel
+	case f.Declared:
+		return hiveSupersededVerdictClose, SupersessionActionClosedDeclared
 	case f.Conflicting:
 		return hiveSupersededVerdictClose, SupersessionActionClosedConflicting
 	case f.FilesSubset:
 		return hiveSupersededVerdictClose, SupersessionActionClosedContained
+	case f.IssuesClosedNoCloser:
+		return hiveSupersededVerdictClose, SupersessionActionClosedIssueClosed
 	}
 	return hiveSupersededVerdictKeep, hiveSupersededReasonStillAdds
 }
@@ -190,18 +211,40 @@ func (c *Client) CloseSupersededHivePRIfEligible(ctx context.Context, repo strin
 		return out, nil
 	}
 	now := time.Now()
-	candidate, closer, detected, err := c.detectSupersession(ctx, repo, pr, identity, now)
+	det, err := c.detectSupersessionDetail(ctx, repo, pr, identity, now)
 	if err != nil {
 		return out, err
 	}
-	facts.Superseded = detected
-	if !detected {
-		out.Verdict, out.Reason = DecideHiveSupersededAutoClose(facts)
-		return out, nil
+	candidate, closer := det.candidate, det.closer
+	facts.Superseded = det.detected
+	if !det.detected {
+		// A merged PR that declares `Supersedes #N` for this one, or every
+		// closing claim closed with no merged closer, supersedes it too.
+		declared, declaredBy, err := c.detectDeclaredSupersession(ctx, owner, name, pr)
+		if err != nil {
+			return out, err
+		}
+		switch {
+		case declared:
+			facts.Superseded, facts.Declared = true, true
+			closer = declaredBy
+			candidate = det.closedClaim
+			if candidate.Issue == 0 {
+				// Name the issue the merged PR closed (#15208: `Part of
+				// #15188`, closed by the declaring PR) in the comment.
+				candidate = c.firstClosedClaim(ctx, claimsFromPR(pr, repo, identity, now))
+			}
+		case det.allClosingClosed && det.closingClaims && det.allNotPlanned:
+			facts.Superseded, facts.IssuesClosedNoCloser = true, true
+			candidate = det.closedClaim
+		default:
+			out.Verdict, out.Reason = DecideHiveSupersededAutoClose(facts)
+			return out, nil
+		}
 	}
 	out.Superseded, out.CloserPR, out.Issue = true, closer.Number, candidate.Issue
 	facts.ParkedByPerson = c.supersessionNeedsHumanByPerson(ctx, owner, name, pr)
-	if level >= acmmLevelAutonomous && !facts.ParkedByPerson {
+	if level >= acmmLevelAutonomous && !facts.ParkedByPerson && !facts.Declared && closer.Number > 0 {
 		facts.Conflicting = prMergeableStateDirty(pr)
 		if !facts.Conflicting && strings.TrimSpace(pr.GetMergeableState()) == "" {
 			// List payloads carry no mergeable_state; one GET reads it.
@@ -235,12 +278,7 @@ func (c *Client) CloseSupersededHivePRIfEligible(ctx context.Context, repo strin
 func (c *Client) closeHiveSupersededPR(ctx context.Context, owner, repo string, pr *gh.PullRequest, event SupersessionSweepEvent, closer supersessionCloser, conflicting bool) error {
 	number := pr.GetNumber()
 	head := stagelabels.ShortSHA(strings.TrimSpace(pr.GetHead().GetSHA()))
-	why := fmt.Sprintf("Closing this hive-authored PR as superseded by #%d: every issue it closes is already closed and that merged PR closed #%d. Head %s conflicts with `%s`, so there is nothing of its own left to rebase and measure. Reopen if that's wrong.",
-		closer.Number, event.Issue, head, strings.TrimSpace(pr.GetBase().GetRef()))
-	if !conflicting {
-		why = fmt.Sprintf("Closing this hive-authored PR as superseded by #%d: every issue it closes is already closed, that merged PR closed #%d, and every file head %s touches is in it. Reopen if that's wrong.",
-			closer.Number, event.Issue, head)
-	}
+	why := hiveSupersededCloseReason(event, closer, head, strings.TrimSpace(pr.GetBase().GetRef()), conflicting)
 	if _, err := c.ensureSupersessionComment(ctx, owner, repo, number, renderSupersessionComment(event, closer, why)); err != nil {
 		return err
 	}
@@ -257,6 +295,39 @@ func (c *Client) closeHiveSupersededPR(ctx context.Context, owner, repo string, 
 			slog.String("repo", owner+"/"+repo), slog.Int("pr", number), slog.Int("closer", closer.Number), slog.Int("issue", event.Issue), slog.String("action", event.Action))
 	}
 	return nil
+}
+
+// firstClosedClaim returns the first claim (any tier) whose issue is
+// closed; a read failure or an open issue is skipped. Zero when none.
+func (c *Client) firstClosedClaim(ctx context.Context, claims []IssueClaim) IssueClaim {
+	for _, claim := range claims {
+		owner, name := c.splitRepo(claim.Repo)
+		issue, _, err := c.client.Issues.Get(ctx, owner, name, claim.Issue)
+		if err == nil && strings.EqualFold(issue.GetState(), "closed") {
+			return claim
+		}
+	}
+	return IssueClaim{}
+}
+
+// hiveSupersededCloseReason is the one-line why of the close comment, by
+// the action that closed it.
+func hiveSupersededCloseReason(event SupersessionSweepEvent, closer supersessionCloser, head, base string, conflicting bool) string {
+	switch event.Action {
+	case SupersessionActionClosedDeclared:
+		if event.Issue > 0 {
+			return fmt.Sprintf("Superseded by #%d which closed #%d and declares it supersedes this PR. Closing this hive-authored PR; reopen if that's wrong.", closer.Number, event.Issue)
+		}
+		return fmt.Sprintf("Superseded by #%d, which declares it supersedes this PR. Closing this hive-authored PR; reopen if that's wrong.", closer.Number)
+	case SupersessionActionClosedIssueClosed:
+		return fmt.Sprintf("Closing this hive-authored PR: every issue it closes (#%d) was closed as not planned, so there is nothing left to deliver. Reopen if that's wrong.", event.Issue)
+	}
+	if conflicting {
+		return fmt.Sprintf("Closing this hive-authored PR as superseded by #%d: every issue it closes is already closed and that merged PR closed #%d. Head %s conflicts with `%s`, so there is nothing of its own left to rebase and measure. Reopen if that's wrong.",
+			closer.Number, event.Issue, head, base)
+	}
+	return fmt.Sprintf("Closing this hive-authored PR as superseded by #%d: every issue it closes is already closed, that merged PR closed #%d, and every file head %s touches is in it. Reopen if that's wrong.",
+		closer.Number, event.Issue, head)
 }
 
 // prMergeableStateDirty reads the conflict flag off a PR payload that

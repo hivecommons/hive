@@ -2,11 +2,14 @@ package dashboard
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // Stuck-decision detection for "Let hive decide" (hivecommons/hive#14822).
@@ -79,6 +82,46 @@ func (s *Server) delegatedPriorDecisionState(ctx context.Context, repoFull strin
 		}
 	}
 	return st
+}
+
+// delegatedParkLabelsAsked are the labels whose (re)application after a
+// recorded decision means someone asked a new question: the needs-human
+// ask and the 045 / 085 needs-decision stage labels.
+var delegatedParkLabelsAsked = []string{config.DefaultNeedsHumanLabel, config.DefaultNeedsDecisionLabel, config.PRNeedsDecisionStageLabel}
+
+// delegatedRepark is the latest park label applied after a point in time.
+type delegatedRepark struct {
+	At    time.Time
+	Label string
+}
+
+// delegatedReparkedAfter reads the item's timeline for a park label
+// applied after since. ok is false when none was, or when the timeline
+// cannot be read (the recorded decision then stands as the dedup's
+// answer, the cheaper mistake).
+func (s *Server) delegatedReparkedAfter(ctx context.Context, repoFull string, number int, since time.Time) (delegatedRepark, bool) {
+	if since.IsZero() || s.deps == nil || s.deps.GHClient == nil {
+		return delegatedRepark{}, false
+	}
+	events, err := s.deps.GHClient.IssueTimelineSince(ctx, repoFull, number, since)
+	if err != nil {
+		return delegatedRepark{}, false
+	}
+	return reparkFromEvents(events)
+}
+
+// reparkFromEvents picks the latest "labeled" event naming a park label.
+func reparkFromEvents(events []ghpkg.IssueEvent) (delegatedRepark, bool) {
+	var out delegatedRepark
+	for _, ev := range events {
+		if ev.Event != "labeled" || !slices.ContainsFunc(delegatedParkLabelsAsked, func(l string) bool { return strings.EqualFold(l, ev.Label) }) {
+			continue
+		}
+		if ev.At.After(out.At) {
+			out = delegatedRepark{At: ev.At, Label: ev.Label}
+		}
+	}
+	return out, !out.At.IsZero()
 }
 
 // delegatedEffectTimeout is decisions.delegate.effect_timeout (default 30m).

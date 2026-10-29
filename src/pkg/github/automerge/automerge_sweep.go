@@ -62,6 +62,10 @@ type supersededCloserTransport interface {
 // self-authored PR the lane closed as superseded.
 const autoMergeReasonClosedSuperseded = "closed-superseded"
 
+// autoMergeReasonLabelNeedsRebase is labelBlockReason's answer for the
+// needs-rebase label.
+const autoMergeReasonLabelNeedsRebase = "label:needs-rebase"
+
 // Options carries policy dependencies owned by the caller.
 type Options struct {
 	Logger           *slog.Logger
@@ -1721,22 +1725,27 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "not-app-authored", nil
 	}
 	selfLabels := labelNames(pr.Labels)
-	if blocked := c.labelBlockReason(selfLabels, true); blocked != "" {
-		return AutoMergeSweepEvent{}, blocked, nil
-	}
-	if c.transport.IsExemptLabels(selfLabels) {
-		return AutoMergeSweepEvent{}, "exempt-label", nil
-	}
-	if lane == "self-authored" && prMergeableStateConflicting(pr) {
+	blocked := c.labelBlockReason(selfLabels, true)
+	// A conflicting head — GitHub's mergeable_state or the needs-rebase
+	// label a lane already put on it — is asked the superseded question
+	// before the label block returns: a PR whose issue another merged PR
+	// closed is closed, not left to wear needs-rebase (hivecommons/hive#15208).
+	if lane == "self-authored" && (prMergeableStateConflicting(pr) || blocked == autoMergeReasonLabelNeedsRebase) {
 		if closer, ok := c.transport.(supersededCloserTransport); ok {
 			res, err := closer.CloseSupersededHivePRIfEligible(ctx, owner+"/"+repo, pr)
 			if err != nil {
 				c.warn("self-authored sweep: superseded check failed", "repo", displayRepo, "pr", number, "error", err)
 			} else if res.Closed {
-				c.info("self-authored sweep: conflicting PR closed as superseded", "repo", displayRepo, "pr", number, "closer", res.CloserPR, "issue", res.Issue)
+				c.info("self-authored sweep: conflicting PR closed as superseded", "repo", displayRepo, "pr", number, "closer", res.CloserPR, "issue", res.Issue, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason)
 				return AutoMergeSweepEvent{}, autoMergeReasonClosedSuperseded, nil
 			}
 		}
+	}
+	if blocked != "" {
+		return AutoMergeSweepEvent{}, blocked, nil
+	}
+	if c.transport.IsExemptLabels(selfLabels) {
+		return AutoMergeSweepEvent{}, "exempt-label", nil
 	}
 
 	evaluatedHeadSHA := ""
@@ -2054,7 +2063,7 @@ func (c *Engine) labelBlockReason(labels []string, trusted bool) string {
 				return "sentinel"
 			}
 		case lower == "needs-rebase":
-			return "label:needs-rebase"
+			return autoMergeReasonLabelNeedsRebase
 		case lower == "needs-human":
 			return "label:needs-human"
 		case lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/"):
