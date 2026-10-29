@@ -19,6 +19,7 @@ import (
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -364,9 +365,9 @@ func decisionCause(reason string) string {
 // owner's explicit approval (hivecommons/hive#14664).
 func workflowPathCause(workflowManual bool) string {
 	if workflowManual {
-		return "the PR edits CI workflow / action files, which the lane never merges unattended"
+		return prstage.CauseWorkflowPathManual
 	}
-	return "the PR edits CI workflow / action files: awaiting owner approval — a hive owner / trusted merger's GitHub **Approve** review on the current head (or a dashboard `/hive decision approve`) releases the fence and the hive merges it; approval on an earlier head does not count, so re-approve after a push"
+	return prstage.CauseWorkflowPathAwaitingApproval
 }
 
 // decisionCauseFor is decisionCause with the workflow-path fence's standing
@@ -379,7 +380,7 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 	case reason == contributorLaneReasonWorkflowPath:
 		return workflowPathCause(workflowManual)
 	case reason == contributorLaneReasonTestsRemoved:
-		return "the PR removes tests, which the lane never merges unattended"
+		return prstage.CauseTestsRemoved
 	case strings.HasPrefix(reason, stageReasonForkGuard):
 		// RouteHuman names the fork-guard checks from the evidence.
 		return ""
@@ -387,21 +388,21 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 		// RouteHuman renders the verdict itself from the evidence.
 		return ""
 	case reason == contributorLaneReasonReporterTrustHold:
-		return "the reporter-trust hold is in place"
+		return prstage.CauseReporterTrustHold
 	case reason == autoMergeReasonHumanMergePath, reason == autoMergeReasonHumanMergePathEvidence:
-		return "the PR touches a human-merge path (auto_merge.human_merge_paths)"
+		return prstage.CauseHumanMergePath
 	case reason == autoMergeReasonIntentUnauthorized, reason == autoMergeReasonIntentEvidence:
-		return "the merge intent could not be authorized"
+		return prstage.CauseIntentUnauthorized
 	case strings.HasPrefix(reason, workflowApprovalUntrustedPrefix):
-		return "GitHub Actions is holding the workflow runs for approval and Hive cannot start them: `" + workflowApprovalCommand + "` on this repository belongs to Prow, which does not trust the Hive App. A maintainer must comment `" + workflowApprovalCommand + "` (and `/lgtm` + `/approve` for tide), or install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) so the repository GITHUB_TOKEN approves trusted same-repo bot runs on Hive's command."
+		return prstage.CauseWorkflowApprovalUntrusted()
 	case strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix):
-		return "GitHub Actions is still waiting after Hive posted `" + workflowApprovalCommand + "`. Install the self-contained `" + oktotest.WorkflowPath + "` below (or render it with `hivectl ok-to-test-template`) so the repository GITHUB_TOKEN can approve trusted same-repo bot runs, or manually approve the runs from the PR checks banner."
+		return prstage.CauseWorkflowApprovalWorkflowMissing()
 	case strings.HasPrefix(reason, unauthorizedReasonPrefix):
 		return "the hive's GitHub App is not permitted to " + strings.ReplaceAll(strings.TrimPrefix(reason, unauthorizedReasonPrefix), "-", " ") + " (GitHub answered 403 Resource not accessible by integration); the `" + unauthorizedLabel + "` note above names the permission and the step a maintainer must take"
 	case strings.HasPrefix(reason, workflowApprovalRequiredPrefix):
-		return "GitHub Actions is waiting for workflow approval. Hive posted `" + workflowApprovalCommand + "`; install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) if the runs do not start, or manually approve them from the PR checks banner."
+		return prstage.CauseWorkflowApprovalRequired()
 	case reason == "approval-desk-withheld":
-		return "the approval desk withheld this merge"
+		return prstage.CauseApprovalDeskWithheld
 	case reason == autoMergeReasonMergeRefusedReview:
 		return "GitHub refused the merge: branch protection requires an approving review from someone with write access, and the Hive App cannot give it. A GitHub **Approve** review on this head (or an App bypass in the branch rules) lets the hive merge it; the hive retries once GitHub reports the PR unblocked, or within 30 minutes"
 	case reason == autoMergeReasonMergeRefusedMethod:
@@ -409,7 +410,7 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 	case reason == "":
 		return ""
 	}
-	return "the lane reported `" + reason + "`"
+	return prstage.CauseLaneReported(reason)
 }
 
 // postHumanEntry writes the 085 / 090 entry comment once per stage visit,

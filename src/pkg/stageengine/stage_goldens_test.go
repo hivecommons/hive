@@ -34,7 +34,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
-	"github.com/hivecommons/hive/pkg/oktotest"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -1080,30 +1080,30 @@ func decisionCause(reason string) string {
 		strings.HasPrefix(reason, "excluded-label:"), reason == "sentinel", reason == contributorLaneReasonSentinelBlocked:
 		return ""
 	case reason == contributorLaneReasonWorkflowPath:
-		return "the PR edits CI workflow / action files, which the lane never merges unattended"
+		return prstage.CauseWorkflowPathManual
 	case reason == contributorLaneReasonTestsRemoved:
-		return "the PR removes tests, which the lane never merges unattended"
+		return prstage.CauseTestsRemoved
 	case reason == contributorLaneReasonNoReviewer, reason == StageReasonVerdictRequiresHuman, reason == StageReasonDecisionRequested:
 		// RouteHuman renders the verdict itself from the evidence.
 		return ""
 	case reason == contributorLaneReasonReporterTrustHold:
-		return "the reporter-trust hold is in place"
+		return prstage.CauseReporterTrustHold
 	case reason == autoMergeReasonHumanMergePath, reason == autoMergeReasonHumanMergePathEvidence:
-		return "the PR touches a human-merge path (auto_merge.human_merge_paths)"
+		return prstage.CauseHumanMergePath
 	case reason == autoMergeReasonIntentUnauthorized, reason == autoMergeReasonIntentEvidence:
-		return "the merge intent could not be authorized"
+		return prstage.CauseIntentUnauthorized
 	case strings.HasPrefix(reason, workflowApprovalUntrustedPrefix):
-		return "GitHub Actions is holding the workflow runs for approval and Hive cannot start them: `" + workflowApprovalCommand + "` on this repository belongs to Prow, which does not trust the Hive App. A maintainer must comment `" + workflowApprovalCommand + "` (and `/lgtm` + `/approve` for tide), or install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) so the repository GITHUB_TOKEN approves trusted same-repo bot runs on Hive's command."
+		return prstage.CauseWorkflowApprovalUntrusted()
 	case strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix):
-		return "GitHub Actions is still waiting after Hive posted `" + workflowApprovalCommand + "`. Install the self-contained `" + oktotest.WorkflowPath + "` below (or render it with `hivectl ok-to-test-template`) so the repository GITHUB_TOKEN can approve trusted same-repo bot runs, or manually approve the runs from the PR checks banner."
+		return prstage.CauseWorkflowApprovalWorkflowMissing()
 	case strings.HasPrefix(reason, workflowApprovalRequiredPrefix):
-		return "GitHub Actions is waiting for workflow approval. Hive posted `" + workflowApprovalCommand + "`; install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) if the runs do not start, or manually approve them from the PR checks banner."
+		return prstage.CauseWorkflowApprovalRequired()
 	case reason == "approval-desk-withheld":
-		return "the approval desk withheld this merge"
+		return prstage.CauseApprovalDeskWithheld
 	case reason == "":
 		return ""
 	}
-	return "the lane reported `" + reason + "`"
+	return prstage.CauseLaneReported(reason)
 }
 
 var humanConflictReasons = map[string]bool{"conflicting": true, "not-mergeable": true, "label:needs-rebase": true}
@@ -1131,4 +1131,3 @@ func dcoState(total, unsigned int) stagelabels.DCOState {
 const contributorLaneReasonRegistryTrusted = "contributor-lane:" + "registry-trusted"
 const workflowApprovalUntrustedPrefix = "workflow-approval-required:untrusted-commenter:"
 const workflowApprovalWorkflowMissingPrefix = "workflow-approval-required:missing-workflow:"
-const workflowApprovalCommand = "/ok-to-test"
