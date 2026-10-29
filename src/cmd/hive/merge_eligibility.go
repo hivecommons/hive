@@ -824,6 +824,11 @@ func hiveAuthoredPR(pr github.PullRequest) bool {
 // rebaseAttempts is the conflict loop-guard ledger; tests swap it.
 var rebaseAttempts = rebasemerge.SharedAttempts
 
+// mergeTrainRebaseRequester is the RequestedBy the merge train writes on a
+// rebase episode it opens for a member it could not update-branch
+// (hivecommons/hive#15117 → #15104).
+const mergeTrainRebaseRequester = "merge-train"
+
 // trustedAuthorRebasePR: a PR by a trusted author (auto_merge.trusted_authors
 // would merge it unattended) whose head the hive can push to. Its rebase is
 // the hive's: the trusted-author lane never rebases, and the author is a

@@ -66,13 +66,12 @@ type RebaseRequest struct {
 	Lane string
 }
 
-// RebaseResolver enqueues a rebase-resolve task for a conflicting PR. The
-// rebase-then-merge follow-through (hivecommons/hive#15104, pkg/rebasemerge)
-// is the intended implementation: cmd/hive adapts its store here so the
-// fixer lane rebases the head and the dashboard ticker merges it on green.
-// TODO(hivecommons/hive#15104): wire pkg/rebasemerge.Store as the resolver
-// once it lands; until then a nil resolver leaves a dirty front on its
-// normal `conflicting` path and logs the gap once per PR head.
+// RebaseResolver enqueues a rebase-resolve task for a conflicting PR.
+// cmd/hive adapts pkg/rebasemerge's attempts ledger here (hivecommons/hive#15104):
+// the request opens the fixer's rebase episode and the lane merges the clean
+// head on its next pass. A resolver that returns an error, or a nil
+// resolver, leaves the dirty PR on its normal `conflicting` path, logged
+// once per PR head.
 type RebaseResolver interface {
 	RequestRebase(ctx context.Context, req RebaseRequest) error
 }
