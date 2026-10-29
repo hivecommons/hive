@@ -525,8 +525,35 @@
       // One click for the whole selection: each item is decided on its own
       // (a nested PR sub-row by its own number), summed up in one toast.
       out.push(Object.assign({}, submenu[0], { label: 'Let hive decide (' + items.length + ' selected)', hint: 'per item' }));
+      // Accept triage for every selected issue waiting on a maintainer's
+      // triage, one click (hivecommons/hive#15475: four "Triage needed"
+      // rows selected, no bulk Accept triage). Rows that are not — PRs, issues past 015 —
+      // are skipped, and the count says so ("3 of 4"). It leads the bar
+      // and the menu when the whole selection is triage, as on one row.
+      const triage = stageTrackerSelectionTriage(items, per);
+      if (triage) { if (triage.lead) out.unshift(triage); else out.push(triage); }
       for (const id of STAGE_TRACKER_SEL_ACTIONS) out.push(Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'needs-human' ? '…' : id === 'copy' ? 's' : '') }, judge(id)));
       return out;
+    }
+    // Pure: the selection's Accept triage entry, or null when no selected
+    // row is waiting on triage. `per` is the per-item flat action map
+    // stageTrackerSelectionActions built; enabled when every eligible row
+    // allows it (the first reason otherwise), `lead` when every selected
+    // row is eligible.
+    function stageTrackerSelectionTriage(items, per) {
+      const eligible = per.filter(p => p.flat['accept-triage']);
+      if (!eligible.length) return null;
+      const blocked = eligible.find(p => !p.flat['accept-triage'].enabled);
+      const all = eligible.length === items.length;
+      return {
+        id: 'accept-triage',
+        label: 'Accept triage (' + (all ? items.length + ' selected' : eligible.length + ' of ' + items.length) + ')',
+        hint: all ? 'per issue' : 'skips the ' + (items.length - eligible.length) + ' not waiting on triage',
+        enabled: !blocked,
+        why: blocked ? blocked.flat['accept-triage'].why + ' (' + stageTrackerRefOf(blocked.it) + ')' : '',
+        lead: all,
+        count: eligible.length,
+      };
     }
     function stageTrackerMenuItemHtml(a) {
       const dis = a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`;
@@ -974,9 +1001,11 @@
     }
     // Pure: the selection bar — count, Clear, and the shared actions
     // (disabled ones keep their tooltip, so aria-disabled rather than disabled).
+    // An entry flagged `lead` (Accept triage when every selected row waits
+    // on triage) renders as the row header's lead button, not a chip.
     function stageTrackerSelBarHtml(items, actions) {
       if (!items.length) return '';
-      const btn = a => `<button type="button" class="ham-chip" data-action="hamSelAction" data-arg0="${esc(a.id)}" data-arg-types="s,t"${a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`}>${esc(a.label)}</button>`;
+      const btn = a => `<button type="button" class="${a.lead ? 'ham-lead-act' : 'ham-chip'}" data-action="hamSelAction" data-arg0="${esc(a.id)}" data-arg-types="s,t"${a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`}>${esc(a.label)}</button>`;
       return `<span class="ham-sel-count">${items.length} selected</span><button type="button" class="ham-chip" data-action="hamSelClear">Clear</button>${actions.map(btn).join('')}`;
     }
     function stageTrackerRenderSelBar() {
@@ -1040,12 +1069,14 @@
       }
       return null;
     }
-    // Pure: one line for the result toast.
+    // Pure: one line for the result toast. A bulk Accept triage sums up as
+    // "Accepted 4 issues" (the per-row toasts carry the rest).
     function stageTrackerActionSummary(label, results, id) {
       const n = results.length;
       const fails = results.filter(r => !r.ok);
       const ok = n - fails.length;
       let msg = label + ': ' + (id === 'decide:delegate' || id === 'decide:delegate-all' ? stageTrackerDelegateTally(results) : ok + '/' + n + ' done');
+      if (id === 'accept-triage' && n > 1) msg = 'Accepted ' + ok + (fails.length ? ' of ' + n : '') + ' issue' + (ok === 1 && !fails.length ? '' : 's');
       const debounced = results.some(r => r.ok && r.data && (r.data.status === 'debounced' || r.data.status === 'in-progress'));
       if (debounced) msg += ' (a rescan was already running — the next one is queued by the hive)';
       if (fails.length) {
@@ -1917,6 +1948,12 @@
         // Adopt now / Reroute act on the PR waiting on its contributor (072 / 071).
         items = items.map(stageTrackerTakeoverTarget).filter(Boolean);
         if (!items.length) return { toasts: [], pending: [] };
+      } else if (id === 'accept-triage') {
+        // Accept triage acts on the issues waiting on it; a bulk selection
+        // may carry PRs or issues past 015, which are skipped and counted
+        // out in the menu label ("3 of 4").
+        items = items.filter(stageTrackerTriageNeeded);
+        if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       } else if (id === 'decide:close-read') {
         // Close (read) acts on the advisory row itself: an advisory is not
         // a decision park, so it has no decision target

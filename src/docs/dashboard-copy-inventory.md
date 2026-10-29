@@ -64,6 +64,7 @@ The new hover, verbatim (title line omitted):
 | ⋯ menu hints (`stageTrackerLeadActions` → `ham-menu-hint`) | ⋯ menu | server consequences (11–31 each) | server consequences (≤ 12 each) | Go budget test |
 | `stageTrackerLeadActionHtml` (`tracker-actions.js`) | the row header's inline lead button (chip slot) | — (the lead sat in the ⋯ menu only) | the menu entry's label (1–4), its hint as the hover | `TestStageTrackerLeadActionInline`, `TestStageTrackerMaintainerRowsHaveLeadAction` |
 | Toasts (`STAGE_TRACKER_ACTING_CAPTIONS`, acted labels) | toast | 2–4 each | unchanged | — |
+| `stageTrackerSelectionTriage` (`tracker-actions.js`) | selection bar lead button / bulk ⋯ menu entry, summary toast | — (no bulk Accept triage; one row at a time) | *Accept triage (4 selected)* / *Accept triage (2 of 4)* with the hint *skips the 2 not waiting on triage*; one toast *Accepted 4 issues* | `TestStageTrackerBulkAcceptTriage` |
 | Settings → Features → Auto-merge → "Merge only on current base" help (`renderGovFeatures`, `config-features.js`) and the Repos-tab override row / repo-card `current-base` chip ([#15335](https://github.com/hivecommons/hive/issues/15335)) | settingHelpMark popover, checkbox label, chip hover | — (new) | 56 (help), 5 (row label), 1 (chip) | `TestCurrentBaseSettingsMarkupNodeGuard` |
 
 ## Totals
