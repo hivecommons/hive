@@ -1,0 +1,1 @@
+- Avoid reporting transient GitHub gateway failures embedded in log messages as repeated runtime errors.
