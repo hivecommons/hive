@@ -9004,7 +9004,14 @@ func deliverReEngagement(
 	}
 	if err := kicker.Kick(fixer, redPRFixKick(o, fixer != redPRFixOwner(o.Agent))); err != nil {
 		if logger != nil {
-			logger.Warn("re-engagement kick undeliverable; budget not charged",
+			level := slog.LevelWarn
+			// Pool contention is expected backpressure: retry on a later sweep.
+			// Keep it below WARN so slogfeed does not file a runtime defect
+			// for a healthy shared pool refusing another session (#15350).
+			if strings.Contains(err.Error(), "shared session pool is busy") {
+				level = slog.LevelInfo
+			}
+			logger.Log(context.Background(), level, "re-engagement kick undeliverable; budget not charged",
 				"repo", o.Repo, "pr", o.Number, "agent", fixer, "error", err)
 		}
 		return false

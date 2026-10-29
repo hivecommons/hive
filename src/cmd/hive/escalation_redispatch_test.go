@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/fleetreport/slogfeed"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -66,6 +69,57 @@ func TestReapStuckRedPRs_UndeliverableKickChargesNoBudget(t *testing.T) {
 
 	if got := store.ReEngagements("acme/widgets", 7); got != 0 {
 		t.Fatalf("undeliverable kicks charged %d re-engagements, want 0 — budget must never be spent on kicks nobody got", got)
+	}
+}
+
+// Shared pool contention must remain visible locally without becoming a
+// repeated runtime self-report; actual delivery failures must stay reportable.
+func TestReEngagementSharedPoolBackpressure(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		err         error
+		wantReports int
+		wantLevel   string
+	}{
+		{"busy pool", errors.New("auto-start stopped agent for kick: acquire shared CLI session slot: shared session pool is busy: context deadline exceeded"), 0, "INFO"},
+		{"pool transport failure", errors.New("auto-start stopped agent for kick: acquire shared CLI session slot: connection refused"), 1, "WARN"},
+		{"other delivery failure", errors.New("agent not running"), 1, "WARN"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := newTestEscalationStore(t)
+			cfg := escalationTestConfig()
+			o := escalation.Observation{Repo: "acme/widgets", Number: 7, Agent: "scanner"}
+			kicker := &fakeKicker{err: tc.err}
+			var logs bytes.Buffer
+			reports := 0
+			logger := slog.New(slogfeed.NewWithObserver(slog.NewJSONHandler(&logs, nil),
+				func(_, _, _, _ string) { reports++ }))
+
+			for i := 0; i < 3; i++ {
+				if deliverReEngagement(cfg, store, o, "abc", kicker, nil, logger) {
+					t.Fatal("undeliverable kick reported success")
+				}
+			}
+			if got := store.ReEngagements(o.Repo, o.Number); got != 0 {
+				t.Fatalf("undeliverable kicks charged %d attempts", got)
+			}
+			if reports != 3*tc.wantReports {
+				t.Fatalf("fleet reports = %d, want %d", reports, 3*tc.wantReports)
+			}
+			if !strings.Contains(logs.String(), `"level":"`+tc.wantLevel+`"`) || !strings.Contains(logs.String(), tc.err.Error()) {
+				t.Fatalf("missing local diagnostic at %s: %s", tc.wantLevel, logs.String())
+			}
+
+			// No budget or cooldown was consumed: delivery can succeed as soon
+			// as capacity returns, charging exactly one attempt.
+			kicker.err = nil
+			if !deliverReEngagement(cfg, store, o, "abc", kicker, nil, logger) {
+				t.Fatal("kick was not retried after capacity returned")
+			}
+			if got := store.ReEngagements(o.Repo, o.Number); got != 1 {
+				t.Fatalf("successful retry charged %d attempts, want 1", got)
+			}
+		})
 	}
 }
 
