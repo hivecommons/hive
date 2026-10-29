@@ -532,11 +532,21 @@ func (c *Engine) foldRecordedDecision(list []stageObservation) {
 	}
 	for i := range list {
 		o := &list[i]
-		if o.HeadSHA == "" || (o.Detail.VerdictKnown && o.Detail.Verdict.DecisionAnswered && o.Detail.Verdict.DecisionAnsweredHead == o.HeadSHA) {
+		if o.HeadSHA == "" {
 			continue
 		}
 		req, ok := review.DecisionAnswerFor(c.humanChangeRequests, o.Owner+"/"+o.Repo, o.Number, o.HeadSHA)
 		if !ok {
+			continue
+		}
+		// A standing change request is the person's answer whether or not
+		// a reviewer verdict was read for the head: a lane that skipped
+		// before reviews (the contributor lane on a sentinel park,
+		// hivecommons/hive#15159) carries no verdict to hang it on.
+		if !req.IsApproval() && o.Detail.HumanChangeRequestHead != o.HeadSHA {
+			o.Detail.HumanChangeRequester, o.Detail.HumanChangeRequestHead = strings.TrimSpace(req.Actor), o.HeadSHA
+		}
+		if o.Detail.VerdictKnown && o.Detail.Verdict.DecisionAnswered && o.Detail.Verdict.DecisionAnsweredHead == o.HeadSHA {
 			continue
 		}
 		o.Detail.Verdict = o.Detail.Verdict.WithDecisionAnswer(strings.ToLower(req.Actor), o.HeadSHA, req.Directive())
@@ -844,6 +854,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			continue
 		}
 		result.Items++
+		c.foldHumanReturnLabel(ctx, store, list)
 		c.foldRecordedDecision(list)
 		verdict, role, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)

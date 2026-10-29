@@ -28,6 +28,11 @@ const (
 	// HumanChangeRequestSourceDecision is a trusted human's `/hive decision
 	// <text>` comment on the PR while it sat at stage 085.
 	HumanChangeRequestSourceDecision = "decision"
+	// HumanChangeRequestSourceStageLabel is a trusted human moving the PR
+	// back to its author by hand — adding stage/071-needs-author or
+	// stage/072-returned-to-contributor — while the hive had it parked for
+	// a person (hivecommons/hive#15159). SourceID is the label event.
+	HumanChangeRequestSourceStageLabel = "stage-label"
 )
 
 // Kinds of a HumanChangeRequest.
@@ -53,7 +58,7 @@ type HumanChangeRequest struct {
 	Repo    string `json:"repo"`
 	Number  int    `json:"number"`
 	HeadSHA string `json:"head_sha"`
-	// Source is HumanChangeRequestSourceReview or ...Decision.
+	// Source is HumanChangeRequestSourceReview, ...Decision or ...StageLabel.
 	Source string `json:"source"`
 	// SourceID is the review ID or comment ID: with HeadSHA it is the
 	// dedupe key, so the same review is never recorded (or kicked) twice.

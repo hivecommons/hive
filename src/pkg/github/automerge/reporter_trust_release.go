@@ -93,6 +93,12 @@ func (c *Engine) listAllIssueComments(ctx context.Context, owner, repo string, n
 // latestHoldLabelEvent returns the newest labeled / unlabeled event for the
 // literal `hold` label, nil when there is none.
 func (c *Engine) latestHoldLabelEvent(ctx context.Context, owner, repo string, number int) (*gh.IssueEvent, error) {
+	return c.latestLabelEvent(ctx, owner, repo, number, "hold")
+}
+
+// latestLabelEvent returns the newest labeled / unlabeled event for the
+// named label, nil when there is none.
+func (c *Engine) latestLabelEvent(ctx context.Context, owner, repo string, number int, name string) (*gh.IssueEvent, error) {
 	var latest *gh.IssueEvent
 	opts := &gh.ListOptions{PerPage: 100}
 	for {
@@ -101,7 +107,7 @@ func (c *Engine) latestHoldLabelEvent(ctx context.Context, owner, repo string, n
 			return nil, fmt.Errorf("listing issue events: %w", err)
 		}
 		for _, event := range events {
-			if event == nil || !strings.EqualFold(event.GetLabel().GetName(), "hold") {
+			if event == nil || !strings.EqualFold(event.GetLabel().GetName(), name) {
 				continue
 			}
 			if event.GetEvent() != "labeled" && event.GetEvent() != "unlabeled" {

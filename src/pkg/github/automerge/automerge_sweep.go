@@ -203,7 +203,12 @@ type Engine struct {
 	selfSkipWarned   map[string]struct{}
 
 	mergerAuthzMu sync.RWMutex
-	mergerAuthz   MergerAuthorizer
+	// humanReturnChecked remembers, per PR key, the head whose worn
+	// 071/072 label was already attributed (see foldHumanReturnLabel), so
+	// the label events are read once per head, not every pass.
+	humanReturnCheckedMu sync.Mutex
+	humanReturnChecked   map[string]string
+	mergerAuthz          MergerAuthorizer
 
 	// maintainerPerm caches whether a PR author holds admin or maintain on
 	// the PR's repository (authorMaintainsRepo): adoption never takes over
