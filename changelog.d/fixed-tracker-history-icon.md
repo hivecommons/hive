@@ -1,0 +1,1 @@
+- Activity Monitor: the right-most tracker column no longer shows a ✓ — the column header, the unmerged cap chevron and the "did I act on this?" badge now wear a history mark (clock with a counter-clockwise arrow); the badge is a neutral pill, carries the count of recorded actions and an aria-label, and keeps its hover history. The green ✓ remains only once a PR has merged.

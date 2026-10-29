@@ -1519,13 +1519,22 @@
     /* hive:unauthorized — the App lacks a permission for the next step; muted, never red: a person must take the step. */
     .ham-badge-mod.ham-mod-unauthorized { color: var(--text-muted); border-color: var(--line-subtle); border-style: dashed; }
     .ham-badge-mod.ham-mod-possible-dupe { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 45%, transparent); }
-    /* "Did I act on this?" badge (operator_actions.go): green ✓ once an
-       action is recorded, amber when the row has not moved since, red when
-       the action failed, dotted while the hive is still deciding. It rides
-       the shared .config-info tooltip portal, so the circle recipe is undone
+    /* "Did I act on this?" badge (operator_actions.go): the history mark
+       (clock + counter-clockwise arrow) with the count of recorded actions,
+       a filled neutral pill once an action is recorded — never the green
+       "ok" ✓, which read as "done", nor the brand amber, which is the stuck
+       state — amber when the row has not moved since, red when the action
+       failed, dotted while the hive is still deciding. It rides the
+       shared .config-info tooltip portal, so the circle recipe is undone
        here in favour of the pill. */
-    .config-info.ham-acted { width: auto; height: auto; min-width: 1.6em; border-radius: var(--r-pill); margin-left: 0; padding: 0 var(--sp-2); background: color-mix(in srgb, var(--green) 14%, transparent); border-color: color-mix(in srgb, var(--green) 55%, transparent); color: var(--green); font-size: var(--fs-xs); font-weight: 600; cursor: help; }
-    .config-info.ham-acted:hover, .config-info.ham-acted:focus-visible { background: var(--green); border-color: var(--green); color: var(--bg); }
+    .config-info.ham-acted { width: auto; height: auto; min-width: 1.6em; border-radius: var(--r-pill); margin-left: 0; padding: 0 var(--sp-2); display: inline-flex; align-items: center; gap: var(--sp-1); background: var(--panel-strong); border-color: var(--line-subtle); color: var(--text); font-size: var(--fs-xs); font-weight: 600; cursor: help; }
+    .config-info.ham-acted:hover, .config-info.ham-acted:focus-visible { background: var(--text); border-color: var(--text); color: var(--bg); }
+    .config-info.ham-acted .ham-history-ico { width: 11px; height: 11px; stroke-width: 1.8; }
+    .ham-acted-n { font-variant-numeric: tabular-nums; line-height: 1; }
+    /* Unmerged cap chevron and the column header: the muted outline says
+       "history lives here" without claiming anything passed. */
+    .ham-seg.cap.todo .ham-history-ico { opacity: 0.9; }
+    .ham-history-head { cursor: help; }
     .config-info.ham-acted.ham-acted-stuck { background: color-mix(in srgb, var(--yellow) 16%, transparent); border-color: color-mix(in srgb, var(--yellow) 60%, transparent); color: var(--yellow); }
     .config-info.ham-acted.ham-acted-stuck:hover, .config-info.ham-acted.ham-acted-stuck:focus-visible { background: var(--yellow); border-color: var(--yellow); color: var(--bg); }
     .config-info.ham-acted.ham-acted-failed { background: color-mix(in srgb, var(--red) 14%, transparent); border-color: color-mix(in srgb, var(--red) 55%, transparent); color: var(--red); }
@@ -1751,7 +1760,7 @@
        kinds and no more, so the PRs building on it compose: --cue-state
        (what the row waits on: the state pill, this decision popover),
        --cue-work (the hive is working right now: the chevron spin),
-       --cue-decision (what people and the hive decided: the ✓ badge).
+       --cue-decision (what people and the hive decided: the history badge).
        Nothing else blinks; motion stays in the 150–300ms range. */
     .ham-row, .ham-decision-pop {
       --cue-state: var(--status-attention);
@@ -7305,7 +7314,7 @@
         <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
         <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, held, unauthorized, needs-human, needs-decision, needs-rebase, blocked, on 045 / 071 / 072 / 085 / 090, or regressed while parked on a person. Merge-gate pills (sentinel, needs-human, needs-decision) count only once the PR reaches the merge gate">Needs attention</button>
-        <label class="ham-repo-filter"><span>Decisions</span><select id="activity-monitor-acted" class="ham-select" data-change-action="hamFilter" data-arg0="acted" data-arg-types="s,v" aria-label="Filter by whether you acted on the row" title="Awaiting my decision: parked on a person, no action recorded yet. I acted: an action was recorded from this dashboard (✓ badge). Acted, still stuck: acted, but the item has not moved past that stage (amber ✓)"><option value="any">Any</option><option value="awaiting">Awaiting my decision</option><option value="acted">I acted</option><option value="stuck">Acted, still stuck</option></select></label>
+        <label class="ham-repo-filter"><span>Decisions</span><select id="activity-monitor-acted" class="ham-select" data-change-action="hamFilter" data-arg0="acted" data-arg-types="s,v" aria-label="Filter by whether you acted on the row" title="Awaiting my decision: parked on a person, no action recorded yet. I acted: an action was recorded from this dashboard (history badge). Acted, still stuck: acted, but the item has not moved past that stage (amber history badge)"><option value="any">Any</option><option value="awaiting">Awaiting my decision</option><option value="acted">I acted</option><option value="stuck">Acted, still stuck</option></select></label>
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Attention-first within each column; arrow flips age order">↓</button></label>
         <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
@@ -14805,6 +14814,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // maintainer action is pending, the lanes resume when the author is ready.
     const STAGE_TRACKER_DRAFT_TIP = 'Draft PR — hive review and merge lanes skip drafts until the author marks it ready for review.';
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
+    // History (the right-most column): a clock face with a counter-clockwise
+    // arrow — the row's decisions and actions, never a "done" mark (owner,
+    // 2026-10-28: the ✓ read as passed). One path (`history` below), shared
+    // by the column header, the unmerged cap chevron and the acted badge.
     const STAGE_TRACKER_ICONS = {
       0: '<circle cx="8" cy="8" r="5"/>',
       10: '<path d="M9 1 3 9h4l-1 6 6-8H8z"/>',
@@ -14815,6 +14828,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       80: '<path d="M8 1l6 2v5c0 3.5-2.5 6-6 7-3.5-1-6-3.5-6-7V3z"/>',
       100: '<path d="M3 5h10M3 8h10M3 11h10"/>',
       110: '<path d="M3 8l3 3 7-7"/>',
+      history: '<path d="M2 8a6 6 0 1 0 6-6 6.5 6.5 0 0 0-4.5 1.83L2 5.33"/><path d="M2 2v3.33h3.33"/><path d="M8 4.67V8l2.67 1.33"/>',
       issue: '<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.5"/>',
       human: '<circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/>',
       clanker: '<rect x="3" y="5" width="10" height="8" rx="1.5"/><path d="M8 5V2M5 2h6"/><circle cx="6" cy="9" r="0.9"/><circle cx="10" cy="9" r="0.9"/>',
@@ -14948,7 +14962,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const name = n === 0 ? 'Open' : ((byNum[n] || {}).short || (byNum[n] || {}).label || String(n));
         return `<li class="ham-seg"><span class="ham-seg-t">${esc(name)}</span></li>`;
       }).join('');
-      return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap">${stageTrackerIcon(STAGE_TRACKER_TERMINAL, 'ham-ico')}</li></ol><span class="ham-since">since</span></div></div>`;
+      return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap ham-history-head" title="History — decisions and actions on this item">${stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — decisions and actions on this item')}</li></ol><span class="ham-since">since</span></div></div>`;
     }
 
     // Chevrons for one item. range bounds the columns the item owns (an
@@ -15018,7 +15032,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // it did, so a spinning glyph is never unexplained.
         const workTip = worker && typeof stageTrackerCueLead === 'function' ? stageTrackerCueLead(item, worker, nowMs).replace(/ — $/, '') : '';
         const workIco = workTip ? `<span class="ham-active-ico-wrap" role="img" title="${esc(workTip)}" aria-label="${esc(workTip)}">${stageTrackerIcon(sg.number, 'ham-ico ham-active-ico')}</span>` : stageTrackerIcon(sg.number, 'ham-ico ham-active-ico');
-        if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
+        // The cap chevron is the ✓ only once the PR is merged; until then
+        // the column is the row's history and wears the history mark.
+        if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
         else if (active) inner = gateCue + workIco + (decision ? stageTrackerDecisionTriggerHtml(decision, word, tip) : word) + actorIco;
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : ''}>${inner}</li>`;
@@ -15234,9 +15250,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        newest one per item as `last_operator_action` with a derived state:
        waiting (same stage, recent), addressed (the item moved on, or the
        control asked for is in effect), stuck (same stage past the window),
-       pending (Let hive decide still running), failed. The row wears a ✓
-       badge in the cap cell — green at rest, amber when stuck, red when
-       failed, dotted while pending — whose in-app tooltip names the action,
+       pending (Let hive decide still running), failed. The row wears a
+       history badge (clock + arrow, with the action count) in the cap cell
+       — neutral at rest, amber when stuck, red when failed, dotted while
+       pending — whose in-app tooltip names the action,
        when, the outcome and what hive did next. The in-flight spinner (the
        request still on the wire) is a different thing drawn on the chevron;
        this badge appears once the server has recorded the action. */
@@ -15248,7 +15265,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTED_STATES = ['waiting', 'addressed', 'stuck', 'pending', 'failed'];
     const STAGE_TRACKER_ACTED_FILTERS = ['any', 'awaiting', 'acted', 'stuck'];
     const STAGE_TRACKER_ACTED_STUCK_DEFAULT_S = 30 * 60;
-    const STAGE_TRACKER_ACTED_GLYPH = { waiting: '✓', addressed: '✓', stuck: '✓', pending: '…', failed: '✗' };
+    // Every state wears the same history mark (the clock-and-arrow the
+    // column header uses): the badge is an audit affordance, never a "done"
+    // tick. Colour and border carry the state; the aria-label says it in words.
+    const STAGE_TRACKER_HISTORY_ICON = '<svg class="ham-ico ham-history-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + STAGE_TRACKER_ICONS.history + '</svg>';
+    const STAGE_TRACKER_ACTED_GLYPH = { waiting: STAGE_TRACKER_HISTORY_ICON, addressed: STAGE_TRACKER_HISTORY_ICON, stuck: STAGE_TRACKER_HISTORY_ICON, pending: STAGE_TRACKER_HISTORY_ICON, failed: STAGE_TRACKER_HISTORY_ICON };
     function stageTrackerActedLabel(action) { return STAGE_TRACKER_ACTED_LABELS[action] || String(action || '').replace(/-/g, ' '); }
     // Pure: the record a row's badge reads — the item's own, else (an issue
     // row drawn over its single covering PR) that PR's; null when none.
@@ -15382,7 +15403,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const id = 'ham-acted-tip-' + String((src.item.repo || '') + '-' + (Number(src.item.number) || 0)).replace(/[^A-Za-z0-9_-]/g, '-');
       const tip = stageTrackerActedTip(item, nowMs);
       const short = stageTrackerActedLabel(src.action.action);
-      return `<span class="ham-badge ham-acted ham-acted-${esc(state)} config-info" tabindex="0" role="img" data-action="gh3" data-stop="1" data-ham-acted="${esc(state)}" aria-label="${esc(short + ' — ' + state)}" aria-describedby="${id}">${STAGE_TRACKER_ACTED_GLYPH[state] || '✓'}<span id="${id}" class="config-tooltip ham-acted-tip" role="tooltip">${esc(tip).replace(/\n/g, '<br>')}</span></span>`;
+      const n = Math.max(1, Number(src.count) || 1);
+      const label = 'History: ' + n + ' action' + (n === 1 ? '' : 's') + ' — ' + short + ' — ' + state;
+      return `<span class="ham-badge ham-acted ham-acted-${esc(state)} config-info" tabindex="0" role="img" data-action="gh3" data-stop="1" data-ham-acted="${esc(state)}" data-ham-acted-count="${n}" aria-label="${esc(label)}" aria-describedby="${id}">${STAGE_TRACKER_ACTED_GLYPH[state] || STAGE_TRACKER_HISTORY_ICON}<span class="ham-acted-n" aria-hidden="true">${n}</span><span id="${id}" class="config-tooltip ham-acted-tip" role="tooltip">${esc(tip).replace(/\n/g, '<br>')}</span></span>`;
     }
     // Pure: the Decisions filter. awaiting = parked on a person with no
     // action recorded yet (or the last one failed / was overtaken without

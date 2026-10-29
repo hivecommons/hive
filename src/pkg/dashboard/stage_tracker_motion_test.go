@@ -444,6 +444,7 @@ func TestStageTrackerMotionRowStamp(t *testing.T) {
 		jsFunc(t, html, "stageTrackerChipsHtml"),
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
 		jsFunc(t, html, "stageTrackerSinceHtml"),
+		jsConstBlock(t, html, "STAGE_TRACKER_ICONS"),
 		stageTrackerActedJS(t, html),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),
 		jsFunc(t, html, "stageTrackerLinkedPRItem"),
@@ -469,7 +470,6 @@ func TestStageTrackerMotionRowStamp(t *testing.T) {
 	}, "\n") + `
 const now = Date.parse('2026-01-01T12:00:00Z');
 const stages = [{ number: 10, label: 'Actionable', short: 'Actionable' }, { number: 20, label: 'Claimed', short: 'Claimed' }, { number: 30, label: 'PR in progress', short: 'PR in progress' }, { number: 50, label: 'Review pending', short: 'CI / Review' }, { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' }, { number: 110, label: 'Merged', short: 'Merged' }];
-const STAGE_TRACKER_ICONS = {};
 const prev = [{ kind: 'issue', repo: 'a/b', number: 1, stage: 10 }, { kind: 'issue', repo: 'a/b', number: 2, stage: 20, linked_prs: [{ number: 7, stage: 30 }, { number: 8, stage: 50 }] }, { kind: 'pr', repo: 'a/b', number: 3, stage: 50 }];
 const next = [{ kind: 'issue', repo: 'a/b', number: 1, stage: 20 }, { kind: 'issue', repo: 'a/b', number: 2, stage: 20, linked_prs: [{ number: 7, stage: 30 }, { number: 8, stage: 80 }] }, { kind: 'pr', repo: 'a/b', number: 3, stage: 50 }];
 const ctx = { nowMs: now, stages, moves: stageTrackerColMoves(stageTrackerColMap(prev, stages), stageTrackerColMap(next, stages)) };

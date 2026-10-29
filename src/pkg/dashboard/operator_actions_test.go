@@ -310,7 +310,8 @@ func TestOperatorActionRecordedByDecisionEndpoint(t *testing.T) {
 }
 
 // stageTrackerActedJS lifts the "did I act on this?" badge helpers the row
-// renderer and the filter call (operator_actions.go payload fields).
+// renderer and the filter call (operator_actions.go payload fields). Callers
+// lift STAGE_TRACKER_ICONS themselves: the history badge draws from it.
 func stageTrackerActedJS(t *testing.T, html string) string {
 	t.Helper()
 	return strings.Join([]string{
@@ -318,6 +319,7 @@ func stageTrackerActedJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_STATES"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_FILTERS"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_STUCK_DEFAULT_S"),
+		jsConstLine(t, html, "STAGE_TRACKER_HISTORY_ICON"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_GLYPH"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTED_PLAIN"),
 		jsFunc(t, html, "stageTrackerActedLabel"),
