@@ -271,6 +271,12 @@ type Record struct {
 	// MergeCommitNotedHead is the head the `merge-method/merge` note was
 	// posted for, so the lane explains the merge method once per head.
 	MergeCommitNotedHead string `json:"merge_commit_noted_head,omitempty"`
+	// TrustAnnouncedAt is set on a TrustPromotionKey record when the
+	// contributor lane posted its one "now trusted for contributor-lane
+	// merging in this hive" comment for the author
+	// (hivecommons/hive#15443). Zero while the author is promoted but no
+	// comment has landed yet.
+	TrustAnnouncedAt time.Time `json:"trust_announced_at,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -1735,14 +1741,16 @@ func (s *Store) Forget(key string) {
 }
 
 // Prune drops records not seen for maxAge (closed items the sweep stopped
-// listing). Returns how many were dropped.
+// listing). Returns how many were dropped. Author-wide trust-promotion
+// records (TrustPromotionKey) are kept: they are per contributor, not per
+// item, and dropping one would re-announce a promotion already announced.
 func (s *Store) Prune(maxAge time.Duration) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cutoff := s.now().Add(-maxAge)
 	n := 0
 	for k, r := range s.items {
-		if r.LastSeen.Before(cutoff) {
+		if r.LastSeen.Before(cutoff) && !strings.HasPrefix(k, trustPromotionKeyPrefix) {
 			delete(s.items, k)
 			n++
 		}
@@ -1751,6 +1759,81 @@ func (s *Store) Prune(maxAge time.Duration) int {
 		s.dirty = true
 	}
 	return n
+}
+
+// trustPromotionKeyPrefix prefixes the per-author records that remember
+// whether the contributor lane announced an author's auto-promotion.
+const trustPromotionKeyPrefix = "trust-promoted:"
+
+// TrustPromotionKey is the store key for an author's auto-promotion
+// record. Promotion is a property of the author in the hive, not of a PR
+// (hivecommons/hive#15443), so the key carries the login only.
+func TrustPromotionKey(login string) string {
+	return trustPromotionKeyPrefix + strings.ToLower(strings.TrimSpace(login))
+}
+
+// ClaimTrustPromotionAnnouncement records that login is currently
+// auto-promoted and reports whether the caller should post the one
+// author-wide announcement: true exactly once per promotion, for the first
+// caller after the author gained (or regained) it; false when the comment
+// was already posted or another PR of the author claimed it this cycle. The
+// claim is taken before the comment is posted so concurrent PRs by the
+// author cannot both announce; ReleaseTrustPromotionAnnouncement undoes it
+// when the post fails.
+func (s *Store) ClaimTrustPromotionAnnouncement(login string) bool {
+	if s == nil || strings.TrimSpace(login) == "" {
+		return false
+	}
+	key := TrustPromotionKey(login)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.items[key]
+	claimed := r.TrustAnnouncedAt.IsZero()
+	now := s.now()
+	if claimed {
+		r.TrustAnnouncedAt = now
+	}
+	r.LastSeen = now
+	s.items[key] = r
+	s.dirty = true
+	return claimed
+}
+
+// ReleaseTrustPromotionAnnouncement forgets a claim whose comment did not
+// land, so the next PR by the author announces instead.
+func (s *Store) ReleaseTrustPromotionAnnouncement(login string) {
+	if s == nil {
+		return
+	}
+	key := TrustPromotionKey(login)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.TrustAnnouncedAt.IsZero() {
+		return
+	}
+	r.TrustAnnouncedAt = time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearTrustPromotion forgets the author's promotion (revert or sentinel
+// evidence demoted them) so regaining it is announced once more.
+func (s *Store) ClearTrustPromotion(login string) {
+	if s == nil {
+		return
+	}
+	s.Forget(TrustPromotionKey(login))
+}
+
+// TrustPromotionAnnounced reports whether the author's promotion comment
+// was posted (dashboard and tests).
+func (s *Store) TrustPromotionAnnounced(login string) bool {
+	if s == nil {
+		return false
+	}
+	r, ok := s.Get(TrustPromotionKey(login))
+	return ok && !r.TrustAnnouncedAt.IsZero()
 }
 
 // Keys lists the stored keys, sorted (for tests and the dashboard).
