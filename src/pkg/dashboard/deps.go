@@ -301,6 +301,12 @@ type Dependencies struct {
 	// repo is the configured slug. It must not block the webhook response.
 	// Nil leaves PRs to the sentinel's reconcile cadence.
 	SentinelPREvent func(repo string, number int)
+	// CIFailureKick reacts to one webhook CI-failure signal on a
+	// hive-authored PR: attributes it to the owning agent and, when the
+	// agent is enabled, unpaused, governor-eligible and outside the per-head
+	// cooldown, kicks it now with the fix-before-new section. It must not
+	// block the webhook response. Nil leaves the signal to the sweep.
+	CIFailureKick func(sig ghpkg.CIFailureSignal) CIFailureKickOutcome
 	// ProjectsV2ItemEvent applies a verified `projects_v2_item` delivery to
 	// the GitHub Projects work source cache as a targeted patch (#13379).
 	// These deliveries are organization-scoped and carry no repository. Nil

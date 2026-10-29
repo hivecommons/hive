@@ -171,6 +171,8 @@
     "EvalIntervalWebhookS": 900,
     "WebhookWakeDebounceS": 10,
     "WebhookWakeMinGapS": 30,
+    "CIFailureWebhookKick": null,
+    "CIFailureKickCooldownS": 0,
     "ConserveIntervalMultiplier": 2,
     "OptionalSweepEveryNCycles": 1,
     "ExplainMode": "",

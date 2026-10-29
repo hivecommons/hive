@@ -1600,6 +1600,31 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   `review_requested` deliveries also queue an early review dispatch when
   `review.event_driven` is on; see
   [Event-driven dispatch](review-swarm.md#event-driven-dispatch).
+- **A failed check reacts within seconds, not at the next sweep.** A
+  `check_run` (`completed`, conclusion `failure`/`timed_out`), `check_suite`
+  (`failure`/`timed_out`) or `status` (`failure`/`error`) delivery is
+  resolved to the open PR(s) at that head from the PR detail cache — one
+  cached lookup, no extra `GET /pulls` fan-out; a head no cached PR matches
+  is counted under `/api/status.ci_failure_signals.unmatched` and left to
+  the sweep's dirty mark. Each match becomes a **CI failure signal**
+  `{repo, number, head, check, details_url, at}`, deduplicated per head +
+  check and kept for two hours. A **hive-authored** PR is attributed to the
+  agent whose relay opened it (`agent_pr_created` in the audit log; scanner
+  when unattributed) and that agent is kicked at once with its
+  FIX-BEFORE-NEW section naming the check and the log URL — the same
+  section every regular kick carries, into which the signal is also folded
+  until `ci-failing.json` catches up, so nothing is lost if the kick is
+  gated. A **contributor** PR nudges the automerge lanes for a targeted pass
+  over that PR now (the contributor lane / `stage/072` path), with or
+  without the ForgeState cache. Guards, in this order: `governor.ci_failure_webhook_kick`
+  (default `true`; `false` records signals only), the repo pause
+  (`project.paused_repos`), the agent's config/runtime pause (the fleet
+  breaker pauses every agent), governor kick eligibility, and one
+  webhook-triggered kick or nudge per PR head per
+  `governor.ci_failure_kick_cooldown_s` (default `600`). The activity log
+  records `ci_failure_kick` — "CI failed on #N (check) — kicked agent X" /
+  "nudged contributor lane". **Agents never watch or poll CI themselves**:
+  detection is out-of-band via this webhook path, or the sweep as fallback.
 - **A recorded review verdict also wakes the governor loop.** When the
   relay records a verdict bound to a review dispatch, the head that wrote it
   is free and the PR may be ready for its next head or its decision kick, so

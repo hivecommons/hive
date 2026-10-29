@@ -1481,6 +1481,7 @@ func (b *boot) wireBootClosures() {
 			WebhookDelivery:         b.webhookDeliveryFunc(),
 			EvalLoop:                b.evalLoopStatusFunc(),
 			SentinelPREvent:         b.sentinelPREventFunc(),
+			CIFailureKick:           b.ciFailureKickFunc(),
 			ProjectsV2ItemEvent:     b.projectsV2ItemEventFunc(),
 			GHAppAuth:               b.appAuth,
 			GHTokenScopes:           b.ghAuth.TokenScopes,
