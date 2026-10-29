@@ -331,6 +331,10 @@ type Engine struct {
 	closingLinkMu             sync.Mutex
 	closingNonPRTargets       map[string]time.Time
 	closingCommitRefs         map[string][]int
+	// contributorMergedReposCache keeps contributorMergedRepos' per-author
+	// search result across sweeps (automerge_contributor_lane.go).
+	contributorMergedReposMu    sync.Mutex
+	contributorMergedReposCache map[string]contributorMergedReposEntry
 
 	stageLabelPolicy  func() StageLabelPolicy
 	stageTracker      *StageTracker

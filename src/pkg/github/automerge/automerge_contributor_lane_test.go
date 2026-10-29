@@ -1206,8 +1206,11 @@ func TestTrySweepContributorLanePRAutoPromotionScope(t *testing.T) {
 						t.Fatalf("search query %q missing %q", fx.searchQuery, want)
 					}
 				}
-				if strings.Contains(fx.searchQuery, "repo:acme/widget") {
-					t.Fatalf("search query %q must not include the PR's own repository", fx.searchQuery)
+				// The answer is cached per author for every active repository,
+				// so the PR's own repository is searched too; it is never walked
+				// twice (wantLists below).
+				if !strings.Contains(fx.searchQuery, "repo:acme/widget") {
+					t.Fatalf("search query %q must cover the PR's own repository for the per-author cache", fx.searchQuery)
 				}
 			}
 			if strings.Join(fx.otherLists, ",") != strings.Join(tc.wantLists, ",") {
@@ -1688,32 +1691,143 @@ func TestContributorLaneAssociationTrusted(t *testing.T) {
 	}
 }
 
-func TestContributorPromotionSearchCachePerSweep(t *testing.T) {
-	fx := validContributorFixture()
+// contributorPromotionSearchEngine builds an engine whose hive-wide
+// auto-promotion walk needs other repositories: widget holds one clean merge
+// by each author, hive holds several.
+func contributorPromotionSearchEngine(t *testing.T, fx *contributorLaneFixture) (*Engine, *contributorLaneClock) {
+	t.Helper()
 	fx.issueComments[0]["body"] = contributorClaimMarkerTier(contributorLaneTestAuthor, "contributor", contributorLaneTestHive, " tier=contributor verified=true")
-	api := newContributorLaneAPI(t, &fx)
-	defer api.Close()
+	api := newContributorLaneAPI(t, fx)
+	t.Cleanup(api.Close)
 	policy := defaultContributorLanePolicy()
 	policy.AutoPromoteAfterMergedPR = 5
 	clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
-	engine := newContributorLaneEngineRepos(api.URL, []string{"widget", "hive"}, policy, clock, Options{})
-	ctx := context.WithValue(context.Background(), contributorRepoSearchCacheKey{}, make(map[string][]contributorRepoRef))
-	for _, author := range []string{"alice", "alice", "alice", "bob"} {
-		_, err := engine.contributorCleanMergedHistory(ctx, "acme", "widget", author, 5, true)
+	return newContributorLaneEngineRepos(api.URL, []string{"widget", "hive"}, policy, clock, Options{}), clock
+}
+
+func TestContributorPromotionSearchCachePerSweep(t *testing.T) {
+	fx := validContributorFixture()
+	engine, clock := contributorPromotionSearchEngine(t, &fx)
+	history := func(author string) contributorMergedHistory {
+		t.Helper()
+		h, err := engine.contributorCleanMergedHistory(context.Background(), "acme", "widget", author, 5, true)
 		if err != nil {
 			t.Fatal(err)
 		}
+		return h
+	}
+	for _, author := range []string{"alice", "alice", "alice", "bob"} {
+		history(author)
 	}
 	if fx.searches != 2 {
 		t.Fatalf("searches = %d, want 2", fx.searches)
 	}
-	ctx = context.WithValue(context.Background(), contributorRepoSearchCacheKey{}, make(map[string][]contributorRepoRef))
-	_, err := engine.contributorCleanMergedHistory(ctx, "acme", "widget", "alice", 5, true)
+	// A later sweep inside the TTL reuses alice's answer (#15088).
+	clock.advance(contributorMergedReposTTL - time.Minute)
+	history("alice")
+	if fx.searches != 2 {
+		t.Fatalf("searches inside the TTL = %d, want 2", fx.searches)
+	}
+	clock.advance(time.Minute)
+	history("alice")
+	if fx.searches != 3 {
+		t.Fatalf("searches after the TTL = %d, want 3", fx.searches)
+	}
+}
+
+// TestContributorPromotionSearchCacheWalksListedReposFresh pins the
+// staleness argument: only the list of repositories is cached, so a revert
+// that lands in a listed repository after the search still blocks promotion
+// on the next sweep, without a new search.
+func TestContributorPromotionSearchCacheWalksListedReposFresh(t *testing.T) {
+	fx := validContributorFixture()
+	fx.mergedHistory = nil
+	clean := func(n int) []map[string]any {
+		var out []map[string]any
+		for i := 0; i < n; i++ {
+			out = append(out, mergedHistoryPR(contributorLaneTestAuthor, "fix: clean change"))
+		}
+		return out
+	}
+	fx.otherHistory = map[string][]map[string]any{"hive": clean(5)}
+	engine, clock := contributorPromotionSearchEngine(t, &fx)
+	h, err := engine.contributorCleanMergedHistory(context.Background(), "acme", "widget", contributorLaneTestAuthor, 5, true)
+	if err != nil || !h.Clean {
+		t.Fatalf("first sweep = %+v, %v; want clean", h, err)
+	}
+	fx.otherHistory["hive"] = append([]map[string]any{mergedHistoryPR(contributorLaneTestAuthor, "Revert \"fix: clean change\"")}, clean(5)...)
+	clock.advance(time.Minute)
+	h, err = engine.contributorCleanMergedHistory(context.Background(), "acme", "widget", contributorLaneTestAuthor, 5, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fx.searches != 3 {
-		t.Fatalf("new sweep searches = %d, want 3", fx.searches)
+	if h.Clean || h.Reason != "revert-or-sentinel" {
+		t.Fatalf("second sweep = %+v; want blocked by the new revert", h)
+	}
+	if fx.searches != 1 {
+		t.Fatalf("searches = %d, want 1", fx.searches)
+	}
+}
+
+// TestContributorPromotionSearchCacheIsPerAuthor checks that one search
+// serves the author's PRs in every repository: each PR's own repository is
+// left out of its answer.
+func TestContributorPromotionSearchCacheIsPerAuthor(t *testing.T) {
+	fx := validContributorFixture()
+	fx.otherHistory = map[string][]map[string]any{
+		"widget": {mergedHistoryPR(contributorLaneTestAuthor, "fix: a")},
+		"hive":   {mergedHistoryPR(contributorLaneTestAuthor, "fix: b")},
+	}
+	engine, _ := contributorPromotionSearchEngine(t, &fx)
+	got := func(repo string) string {
+		var names []string
+		for _, ref := range engine.contributorMergedRepos(context.Background(), "acme", repo, contributorLaneTestAuthor) {
+			names = append(names, ref.Repo)
+		}
+		return strings.Join(names, ",")
+	}
+	if g := got("widget"); g != "hive" {
+		t.Fatalf("from widget = %q, want hive", g)
+	}
+	if g := got("hive"); g != "widget" {
+		t.Fatalf("from hive = %q, want widget", g)
+	}
+	if fx.searches != 1 {
+		t.Fatalf("searches = %d, want 1", fx.searches)
+	}
+	// A changed active-repository set is a miss: the cached answer does not
+	// cover the new repository.
+	engine.transport.(*hgithub.Client).SetRepos([]string{"acme/widget", "acme/hive", "acme/docs"})
+	got("widget")
+	if fx.searches != 2 {
+		t.Fatalf("searches after the repo set changed = %d, want 2", fx.searches)
+	}
+}
+
+func TestContributorPromotionSearchFailureCached(t *testing.T) {
+	fx := validContributorFixture()
+	fx.searchStatus = http.StatusForbidden
+	fx.otherHistory = map[string][]map[string]any{"hive": {mergedHistoryPR(contributorLaneTestAuthor, "fix: b")}}
+	engine, clock := contributorPromotionSearchEngine(t, &fx)
+	lookup := func() int {
+		return len(engine.contributorMergedRepos(context.Background(), "acme", "widget", contributorLaneTestAuthor))
+	}
+	if n := lookup(); n != 0 || fx.searches != 1 {
+		t.Fatalf("failing search: %d repos, %d searches; want 0, 1", n, fx.searches)
+	}
+	fx.searchStatus = 0
+	clock.advance(contributorMergedReposFailureTTL - time.Minute)
+	if n := lookup(); n != 0 || fx.searches != 1 {
+		t.Fatalf("inside the failure TTL: %d repos, %d searches; want 0, 1", n, fx.searches)
+	}
+	clock.advance(time.Minute)
+	if n := lookup(); n != 1 || fx.searches != 2 {
+		t.Fatalf("after the failure TTL: %d repos, %d searches; want 1, 2", n, fx.searches)
+	}
+	// The success is now kept for the full TTL, not the failure one.
+	clock.advance(contributorMergedReposFailureTTL)
+	if n := lookup(); n != 1 || fx.searches != 2 {
+		t.Fatalf("success past the failure TTL: %d repos, %d searches; want 1, 2", n, fx.searches)
 	}
 }
 

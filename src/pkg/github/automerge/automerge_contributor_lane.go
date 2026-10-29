@@ -398,7 +398,6 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 	}
 	ctx = contextWithExpectedCheckCache(ctx, newExpectedCheckCache())
 	ctx = contextWithLaneMergedBranches(ctx)
-	ctx = context.WithValue(ctx, contributorRepoSearchCacheKey{}, make(map[string][]contributorRepoRef))
 	for _, displayRepo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
@@ -828,7 +827,35 @@ type contributorRepoRef struct {
 // contributorSearchQueryMaxLen is GitHub's limit on a search `q` parameter.
 const contributorSearchQueryMaxLen = 256
 
-type contributorRepoSearchCacheKey struct{}
+const (
+	// contributorMergedReposTTL is how long contributorMergedRepos trusts an
+	// author's discovered repository list across sweeps. Only the list is
+	// kept: every repository on it, and the PR's own, is still walked fresh
+	// each sweep for clean merges and revert/sentinel evidence, so a stale
+	// list can leave out a repository the author first merged into during
+	// the last hour. That repository's merges, and a revert of them, are
+	// then seen up to an hour late; nothing on the list goes unchecked. The
+	// walk already stops at the first `need` clean merges, so it never read
+	// every repository.
+	contributorMergedReposTTL = time.Hour
+	// contributorMergedReposFailureTTL is how long a failed search is
+	// remembered. The PR's own repository is counted alone meanwhile, as
+	// on the failing sweep, rather than re-tripping a secondary rate limit
+	// on every sweep (#15088).
+	contributorMergedReposFailureTTL = 15 * time.Minute
+	// contributorMergedReposCacheMax bounds the cache; past it the cache
+	// starts over.
+	contributorMergedReposCacheMax = 1024
+)
+
+// contributorMergedReposEntry is one author's search result: the active
+// repositories (the PR's own included) that hold a merge by them. repos is
+// the active-repository set the search covered; a different set is a miss.
+type contributorMergedReposEntry struct {
+	refs    []contributorRepoRef
+	repos   string
+	expires time.Time
+}
 
 // contributorMergedRepos returns the hive's other active repositories that
 // hold at least one merged PR by author, in the order the transport lists
@@ -838,23 +865,28 @@ type contributorRepoSearchCacheKey struct{}
 // calls instead of ten closed-PR listings. A search failure degrades to the
 // PR's own repository with a warning rather than blocking the sweep: the
 // result is then exactly the pre-#14517 per-repo count.
+//
+// The answer covers every active repository and is kept on the Engine per
+// author for contributorMergedReposTTL (a failure for
+// contributorMergedReposFailureTTL), so an author with PRs in several
+// repositories, or the same PR on every sweep, costs one search per TTL
+// rather than one per PR per sweep (#15088).
 func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author string) []contributorRepoRef {
 	if c == nil || c.gh == nil || c.transport == nil {
 		return nil
 	}
 	own := strings.ToLower(owner + "/" + repo)
-	cache, _ := ctx.Value(contributorRepoSearchCacheKey{}).(map[string][]contributorRepoRef)
-	key := strings.ToLower(strings.TrimSpace(author))
-	if refs, ok := cache[key]; ok {
-		var others []contributorRepoRef
+	others := func(refs []contributorRepoRef) []contributorRepoRef {
+		var out []contributorRepoRef
 		for _, ref := range refs {
 			if !strings.EqualFold(ref.Owner+"/"+ref.Repo, own) {
-				others = append(others, ref)
+				out = append(out, ref)
 			}
 		}
-		return others
+		return out
 	}
 	var candidates []contributorRepoRef
+	var names []string
 	seen := map[string]bool{}
 	for _, display := range c.activeRepos() {
 		o, r := c.transport.SplitRepo(display)
@@ -862,14 +894,32 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 			continue
 		}
 		full := strings.ToLower(o + "/" + r)
-		if (cache == nil && full == own) || seen[full] {
+		if seen[full] {
 			continue
 		}
 		seen[full] = true
 		candidates = append(candidates, contributorRepoRef{Owner: o, Repo: r})
+		names = append(names, full)
 	}
-	if len(candidates) == 0 {
+	if len(others(candidates)) == 0 {
 		return nil
+	}
+	key := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(author), "@"))
+	repos := strings.Join(names, ",")
+	now := c.clock()
+	c.contributorMergedReposMu.Lock()
+	entry, ok := c.contributorMergedReposCache[key]
+	c.contributorMergedReposMu.Unlock()
+	if ok && entry.repos == repos && now.Before(entry.expires) {
+		return others(entry.refs)
+	}
+	remember := func(refs []contributorRepoRef, ttl time.Duration) {
+		c.contributorMergedReposMu.Lock()
+		defer c.contributorMergedReposMu.Unlock()
+		if c.contributorMergedReposCache == nil || len(c.contributorMergedReposCache) >= contributorMergedReposCacheMax {
+			c.contributorMergedReposCache = map[string]contributorMergedReposEntry{}
+		}
+		c.contributorMergedReposCache[key] = contributorMergedReposEntry{refs: refs, repos: repos, expires: now.Add(ttl)}
 	}
 	base := "is:pr is:merged author:" + strings.TrimPrefix(strings.TrimSpace(author), "@")
 	found := map[string]bool{}
@@ -893,25 +943,22 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 		}
 		return nil
 	}
+	failed := func(err error) []contributorRepoRef {
+		c.warn("contributor-lane auto-promotion repo search failed; counting the PR's repository only", "repo", owner+"/"+repo, "author", author, "error", err, "retry_after", contributorMergedReposFailureTTL)
+		remember(nil, contributorMergedReposFailureTTL)
+		return nil
+	}
 	for _, ref := range candidates {
 		qualifier := " repo:" + ref.Owner + "/" + ref.Repo
 		if len(query)+len(qualifier) > contributorSearchQueryMaxLen {
 			if err := flush(); err != nil {
-				c.warn("contributor-lane auto-promotion repo search failed; counting the PR's repository only", "repo", owner+"/"+repo, "author", author, "error", err)
-				if cache != nil {
-					cache[key] = nil
-				}
-				return nil
+				return failed(err)
 			}
 		}
 		query += qualifier
 	}
 	if err := flush(); err != nil {
-		c.warn("contributor-lane auto-promotion repo search failed; counting the PR's repository only", "repo", owner+"/"+repo, "author", author, "error", err)
-		if cache != nil {
-			cache[key] = nil
-		}
-		return nil
+		return failed(err)
 	}
 	out := make([]contributorRepoRef, 0, len(found))
 	for _, ref := range candidates {
@@ -919,17 +966,8 @@ func (c *Engine) contributorMergedRepos(ctx context.Context, owner, repo, author
 			out = append(out, ref)
 		}
 	}
-	if cache != nil {
-		cache[key] = out
-		var others []contributorRepoRef
-		for _, ref := range out {
-			if !strings.EqualFold(ref.Owner+"/"+ref.Repo, own) {
-				others = append(others, ref)
-			}
-		}
-		return others
-	}
-	return out
+	remember(out, contributorMergedReposTTL)
+	return others(out)
 }
 
 // repoFromRepositoryURL extracts lower-cased owner/repo from a search

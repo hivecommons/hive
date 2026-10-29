@@ -134,7 +134,7 @@ operator can change it without rebuilding.
 | CI-evidence excerpt per PR | `redPRFixExcerptRunes`, `src/pkg/scheduler/policy_overlays.go:176` | 400 runes | **No** | Truncate with "…" |
 | Skill text injected per kick | `maxSkillsInjectionBytes`, `src/pkg/scheduler/kick_priming.go:138` | 8192 B | **No** | Shed load: skills are **dropped whole**, never truncated mid-body, and the drop is logged |
 | Issues primed into `AGENTS.md` context | `maxIssuesToPrime`, `src/pkg/scheduler/kick_priming.go:13` | 5 | **No** | Truncate |
-| Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge/automerge_sweep.go:375` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
+| Auto-merge sweep merges per pass | `DefaultAutoMergeSweepMaxMerges`, `src/pkg/github/automerge/automerge_sweep.go:505` | 3 | **Yes** (`auto_merge.max_merges`) | Shed load: remaining merges wait for the next pass |
 | Task-list sweep closures per tick | `DefaultTaskListSweepMaxCloses`, `src/pkg/github/task_list_sweep.go:20` | 5 | Partly (`MaxCloses` option) | Shed load: remaining closures wait for the next tick |
 | Prompt-history on disk | `promptHistoryMaxSizeMB` × backups, `src/pkg/dashboard/prompt_history.go:67` | 96 MiB worst case | **No** | Shed oldest: rotate + gzip, oldest prompts age out first |
 | Issue/PR enumeration | `fetchIssues` / `fetchPRs`, `src/pkg/github/client.go:1653`, `src/pkg/github/client.go:1920` | **no cap** | n/a | Pages to completion; cost grows with backlog |
