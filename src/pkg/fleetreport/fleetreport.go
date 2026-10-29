@@ -825,15 +825,17 @@ func IsGitHubRateLimited(s string) bool {
 // upstreamUnavailableSubstrings are lower-case fragments that mark a GitHub
 // gateway-class transient failure (see IsGitHubUpstreamUnavailable). The
 // status codes are anchored to go-github's "<METHOD> <url>: 503 ..." shape so
-// a PR number or page=503 cannot match; 500 is deliberately absent.
+// a PR number or page=503 cannot match; 500 is deliberately absent. The
+// status phrases are anchored to the same ": " separator so prose that merely
+// mentions them does not match.
 var upstreamUnavailableSubstrings = []string{
 	": 502 ",
 	": 503 ",
 	": 504 ",
-	"bad gateway",
-	"service unavailable",
-	"gateway timeout",
-	"gateway time-out",
+	": bad gateway",
+	": service unavailable",
+	": gateway timeout",
+	": gateway time-out",
 }
 
 // IsGitHubUpstreamUnavailable reports whether s (a log message or an error
