@@ -153,6 +153,7 @@ func TestHumanizeStageReason(t *testing.T) {
 		"contributor-lane:workflow-path":                             "workflow path",
 		"contributor-lane:tests-removed":                             "tests removed",
 		"human-merge-path":                                           "human-merge path",
+		"human-merge-required":                                       "human merge",
 		"contributor-lane:workflow-path:human-approved@clubanderson": "workflow path — approved by @clubanderson",
 		"reviewer-verdict:requires_human:human-approved@octocat":     "review verdict requires human — approved by @octocat",
 	}
@@ -189,6 +190,15 @@ func TestStageTrackerManualMergeApproved(t *testing.T) {
 			name: "tests removed, approver unknown", stage: stagelabels.ReadyForHumanMerge, reason: "contributor-lane:tests-removed",
 			wantCaption: "Ready to merge (tests removed) — a person merges it",
 			wantManual:  true, wantActor: "maintainer",
+		},
+		{
+			name: "breaking change parks at 090 for the owner", stage: stagelabels.ReadyForHumanMerge, reason: "human-merge-required",
+			wantCaption: "Ready for human merge (breaking change — owner merges)", wantManual: true, wantActor: "maintainer", wantNoCaption: "Ready to merge",
+		},
+		{
+			name: "breaking change approved still waits for the owner", stage: stagelabels.ReadyForHumanMerge, reason: "human-merge-required:human-approved@clubanderson",
+			wantCaption:  "Ready for human merge (breaking change — owner merges) — approved by @clubanderson",
+			wantApprover: "clubanderson", wantManual: true, wantActor: "maintainer",
 		},
 		{
 			name: "trust-blocked 090 unchanged", stage: stagelabels.ReadyForHumanMerge, reason: "untrusted-author-role",
@@ -263,6 +273,7 @@ func TestStageTrackerHumanMergeReason(t *testing.T) {
 		{"contributor-lane:claim-tier-untrusted", "untrusted-author", "untrusted author", "Hive won't merge it alone"},
 		{"repo-auto-merge-disabled", "auto-merge-off", "auto-merge off", "Auto-merge is off for this repo"},
 		{"reviewer-verdict:requires_human:human-approved@octocat", "reviewer-deferred", "reviewer deferred", "A reviewer asked for a person to merge"},
+		{"human-merge-required", "breaking-change", "human merge", "Breaking change — owner merges"},
 		{"something-brand-new", "policy", "policy", "Hive's merge rules leave this one to a person (`something-brand-new`)"},
 		{"", "", "", ""},
 	}

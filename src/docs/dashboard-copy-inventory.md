@@ -39,6 +39,7 @@ The new hover, verbatim (title line omitted):
 | `stageTrackerUntrustedAuthorWhy` (all 10 trust reasons, summed) | question, reason text, delegated outcome | 314 | 68 | `TestStageTrackerHumanMergeSaysItOnce` (no config keys, no jargon) |
 | `stageTrackerUntrustedAuthorFix` (new; the how-to-trust line, Details only) | Details | — | 81 | same |
 | `stageTrackerHumanMergeReasonWords` tips (9 codes, summed) | chip hover, 090 chevron tip | 227 | 101 | `TestStageTrackerHumanMergeReason` |
+| `stageTrackerHumanMergeReasonWords[breaking-change]` (new: chip `human merge`, caption *Ready for human merge (breaking change — owner merges)*) | chip, caption, chevron tip, `new.gates[]` | — | 14 | `TestStageTrackerHumanMergeRequiredRow` |
 | `HumanMergeReasonText` composition (090 untrusted author) | chevron tip, row tooltip, feed | 43 + 24 ("Until then a maintainer merges — Approve & merge…") | 11 | `TestStageTrackerHumanMergeSaysItOnce` |
 | `HumanMergeReasonText` admitted prefix | same | 41 | 9 | `TestStageTrackerDecisionForHumanMerge/admitted…` |
 | `stageTrackerCaption` 090 | row caption, feed | 19 | 7 | `TestStageTrackerCaption…` cases in `stage_tracker_test.go` |
