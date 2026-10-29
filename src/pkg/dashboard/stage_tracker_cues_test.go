@@ -28,6 +28,7 @@ func stageTrackerCuesJS(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerCueClasses"),
 		jsFunc(t, html, "stageTrackerStateMap"),
 		jsFunc(t, html, "stageTrackerStageFell"),
+		jsConstLine(t, html, "STAGE_TRACKER_EVENT_COVERED_BY_PR"),
 		jsFunc(t, html, "stageTrackerEventText"),
 		jsFunc(t, html, "stageTrackerEventsNext"),
 		jsFunc(t, html, "stageTrackerNoteOwnerEvent"),

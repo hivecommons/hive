@@ -66,10 +66,12 @@
       'needs-rebase': ['needs a rebase', 'rebased'], 'needs-human': ['waiting on a person', 'a person answered'], 'needs-decision': ['waiting on a decision', 'decision made'],
       'needs-triage': ['waiting on triage', 'triage accepted'], draft: ['marked draft', 'ready for review'], unauthorized: ['blocked on permission', 'permission granted'],
     };
+    // The issue's own "covered by PR" stage (stagelabels.CoveredByPR).
+    const STAGE_TRACKER_EVENT_COVERED_BY_PR = 40;
     // Pure: key → the fields the event line watches.
     function stageTrackerStateMap(items) {
       const out = {};
-      const put = (key, it) => { out[key] = { stage: Number(it.stage) || 0, label: it.stage_label || '', caption: it.caption || '', mods: (Array.isArray(it.modifiers) ? it.modifiers : []).slice().sort(), rework: it.rework && it.rework.state ? String(it.rework.state) : '', reworkActor: it.rework && it.rework.actor ? String(it.rework.actor) : '' }; };
+      const put = (key, it) => { out[key] = { stage: Number(it.stage) || 0, label: it.stage_label || '', caption: it.caption || '', kind: it.kind || '', mirrored: !!it.mirrored, mods: (Array.isArray(it.modifiers) ? it.modifiers : []).slice().sort(), rework: it.rework && it.rework.state ? String(it.rework.state) : '', reworkActor: it.rework && it.rework.actor ? String(it.rework.actor) : '' }; };
       for (const it of (Array.isArray(items) ? items : [])) {
         if (!it || !it.kind || !(Number(it.number) > 0)) continue;
         put(stageTrackerItemKey(it), it);
@@ -96,10 +98,16 @@
       if (next.stage !== prev.stage) {
         if (next.stage >= STAGE_TRACKER_TERMINAL) return 'merged';
         const sg = (stages || []).find(x => Number(x.number) === next.stage);
-        // Plain words, never a stage slug ("fell back to stage/060-reviewed").
-        const named = typeof stageTrackerStageName === 'function' ? stageTrackerStageName({ label: next.label, short: '' }) || stageTrackerStageName(sg) : '';
+        // Plain words, never a stage slug ("fell back to stage/060-reviewed");
+        // the stages table's own word first ("Covered by PR"), the lane's
+        // label humanised ("Covered by pr") only without a table.
+        const named = typeof stageTrackerStageName === 'function' ? stageTrackerStageName(sg) || stageTrackerStageName({ label: next.label, short: '' }) : '';
         const name = named || next.label || (sg && (sg.label || sg.short)) || ('stage ' + next.stage);
-        const back = stageTrackerStageFell(prev, next, stages);
+        // An issue that stops mirroring its PR's stage and sits at its own
+        // "covered by PR" did not regress — the hive re-pointed the claim
+        // (an adoption copy took over, hivecommons/hive#15495).
+        const unmirrored = prev.kind === 'issue' && prev.mirrored && !next.mirrored && next.stage === STAGE_TRACKER_EVENT_COVERED_BY_PR;
+        const back = !unmirrored && stageTrackerStageFell(prev, next, stages);
         const why = (back || next.stage < prev.stage) && next.caption ? ' — ' + next.caption : '';
         return (back ? 'fell back to ' : 'moved to ') + name + why;
       }

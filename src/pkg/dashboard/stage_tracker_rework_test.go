@@ -190,6 +190,7 @@ func TestStageTrackerReworkJS(t *testing.T) {
 		jsConstBlock(t, html, "STAGE_TRACKER_EVENT_MOD_WORDS"),
 		jsFunc(t, html, "stageTrackerStateMap"),
 		jsFunc(t, html, "stageTrackerStageFell"),
+		jsConstLine(t, html, "STAGE_TRACKER_EVENT_COVERED_BY_PR"),
 		jsFunc(t, html, "stageTrackerEventText"),
 		jsConstLine(t, html, "STAGE_TRACKER_REWORK_EVENT_WORDS"),
 		jsFunc(t, html, "stageTrackerReworkEventText"),
