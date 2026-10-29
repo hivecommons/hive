@@ -581,9 +581,25 @@ func (s *HubServer) startProviderLogin(w http.ResponseWriter, r *http.Request, p
 		http.Error(w, "login unavailable", http.StatusInternalServerError)
 		return
 	}
+	// GitHub (PKCE): mint the code_verifier up front so its S256 challenge can
+	// be bound to this login's state transaction. The state cookie then carries
+	// "nonce.challenge", and the callback refuses to redeem the code unless the
+	// verifier cookie hashes to exactly that challenge — checked locally, before
+	// any request to GitHub's token endpoint (#14598).
+	stateCookieValue := nonce
+	var verifier string
+	if !p.IsOIDC {
+		verifier, err = oauthPKCEVerifier()
+		if err != nil {
+			s.logger.Warn("OAuth: cannot mint PKCE verifier", "error", err)
+			http.Error(w, "login unavailable", http.StatusInternalServerError)
+			return
+		}
+		stateCookieValue = nonce + oauthStateChallengeSeparator + pkceS256Challenge(verifier)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     oauthStateCookieName,
-		Value:    nonce,
+		Value:    stateCookieValue,
 		Path:     "/",
 		MaxAge:   int(oauthStateTTL.Seconds()),
 		HttpOnly: true,
@@ -608,13 +624,8 @@ func (s *HubServer) startProviderLogin(w http.ResponseWriter, r *http.Request, p
 		// own short-lived host-scoped cookie (mirroring the state cookie), and
 		// send only its S256 challenge. The callback must present the verifier
 		// at token exchange, binding the authorization code to the browser that
-		// started the login as defence-in-depth.
-		verifier, err := oauthPKCEVerifier()
-		if err != nil {
-			s.logger.Warn("OAuth: cannot mint PKCE verifier", "error", err)
-			http.Error(w, "login unavailable", http.StatusInternalServerError)
-			return
-		}
+		// started the login as defence-in-depth. The verifier was minted above
+		// and its challenge is bound into the state cookie.
 		http.SetCookie(w, &http.Cookie{
 			Name:     oauthPKCECookieName,
 			Value:    verifier,
@@ -824,6 +835,16 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		// too and are asked to start again.
 		if !validPKCEVerifier(pkceVerifier) {
 			s.logger.Warn("OAuth: rejected callback with missing or malformed PKCE verifier")
+			http.Error(w, "invalid login state — please start the login again", http.StatusBadRequest)
+			return
+		}
+		// The verifier must also belong to THIS login: its S256 must equal the
+		// challenge bound to the state cookie at login start. A well-formed but
+		// substituted verifier (or a state cookie with no or a different bound
+		// challenge) is rejected here, locally, so the code is never sent to
+		// GitHub. Both cookies were already cleared above.
+		if !pkceVerifierMatchesChallenge(pkceVerifier, s.oauthStateBoundChallenge(r)) {
+			s.logger.Warn("OAuth: rejected callback whose PKCE verifier does not match the login's bound challenge")
 			http.Error(w, "invalid login state — please start the login again", http.StatusBadRequest)
 			return
 		}
@@ -1443,13 +1464,21 @@ const (
 	// oauthStateCookieName holds the per-login nonce that binds an OAuth
 	// callback to the browser that started it (audit F11). Host-scoped
 	// deliberately: unlike hive_hub_user it carries no Domain, so sibling
-	// tenants never receive it.
+	// tenants never receive it. For the GitHub login its value is
+	// "nonce.challenge", binding the PKCE S256 challenge to the transaction.
 	oauthStateCookieName = "hive_oauth_state"
 
 	// oauthStateSeparator splits the nonce from the redirect target inside the
 	// state parameter. ":" cannot appear in a nonce (hex) and any ":" in the
 	// redirect lands in the second half, which strings.Cut keeps intact.
 	oauthStateSeparator = ":"
+
+	// oauthStateChallengeSeparator splits the state nonce from the PKCE S256
+	// challenge bound to it inside the GitHub login's state cookie value
+	// ("nonce.challenge"). "." appears in neither a hex nonce nor a base64url
+	// challenge. Only the cookie carries the challenge; the state parameter
+	// format is unchanged.
+	oauthStateChallengeSeparator = "."
 
 	// oauthStateTTL bounds how long a started login may sit unfinished. Long
 	// enough to authorize on GitHub (including a fresh GitHub login), short
@@ -1462,7 +1491,8 @@ const (
 
 	// oauthPKCECookieName holds the per-login PKCE code_verifier (RFC 7636) for
 	// the GitHub browser login. Separate from the state cookie so the state
-	// nonce format is untouched; host-scoped and single-use like it.
+	// parameter format is untouched; host-scoped and single-use like it. Its
+	// S256 must match the challenge bound into the state cookie.
 	oauthPKCECookieName = "hive_oauth_pkce"
 
 	// oauthPKCEVerifierBytes is the entropy behind the code_verifier. 32 bytes
@@ -1502,6 +1532,35 @@ func validPKCEVerifier(v string) bool {
 		}
 	}
 	return true
+}
+
+// splitOAuthStateCookie splits a state cookie value into the nonce and the
+// PKCE challenge bound to it. An OIDC (or pre-binding) cookie is a bare nonce
+// and yields an empty challenge.
+func splitOAuthStateCookie(value string) (nonce, challenge string) {
+	nonce, challenge, _ = strings.Cut(value, oauthStateChallengeSeparator)
+	return nonce, challenge
+}
+
+// oauthStateBoundChallenge returns the PKCE S256 challenge bound to this
+// browser's login state at login start, or "" if none was bound.
+func (s *HubServer) oauthStateBoundChallenge(r *http.Request) string {
+	c, err := r.Cookie(oauthStateCookieName)
+	if err != nil {
+		return ""
+	}
+	_, challenge := splitOAuthStateCookie(c.Value)
+	return challenge
+}
+
+// pkceVerifierMatchesChallenge reports whether verifier is a well-formed RFC
+// 7636 code_verifier whose S256 challenge equals the bound challenge. Fails
+// closed on an empty challenge; compared in constant time.
+func pkceVerifierMatchesChallenge(verifier, challenge string) bool {
+	if challenge == "" || !validPKCEVerifier(verifier) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(pkceS256Challenge(verifier)), []byte(challenge)) == 1
 }
 
 // oauthPKCEVerifierFromCookie returns the PKCE verifier this browser was issued
@@ -1608,6 +1667,12 @@ func (s *HubServer) matchedCallbackState(r *http.Request) (state string, depth i
 	if err != nil || cookie.Value == "" {
 		return "", 0, false, "no_cookie"
 	}
+	// The GitHub cookie also carries the bound PKCE challenge; only the nonce
+	// half is compared against the state parameter.
+	cookieNonce, _ := splitOAuthStateCookie(cookie.Value)
+	if cookieNonce == "" {
+		return "", 0, false, "no_cookie"
+	}
 	cands := callbackStateCandidates(r)
 	if len(cands) == 0 {
 		return "", 0, false, "no_state"
@@ -1623,7 +1688,7 @@ func (s *HubServer) matchedCallbackState(r *http.Request) (state string, depth i
 		if !found || nonce == "" {
 			continue
 		}
-		if subtle.ConstantTimeCompare([]byte(nonce), []byte(cookie.Value)) == 1 {
+		if subtle.ConstantTimeCompare([]byte(nonce), []byte(cookieNonce)) == 1 {
 			return cands[i], i, true, ""
 		}
 	}

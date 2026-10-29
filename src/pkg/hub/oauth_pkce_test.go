@@ -15,12 +15,22 @@ import (
 )
 
 // addPKCECookie gives a callback request the PKCE verifier cookie a real
-// browser would carry after startProviderLogin, and returns the verifier.
+// browser would carry after startProviderLogin, and returns the verifier. Like
+// startProviderLogin, it binds the verifier's S256 challenge into any state
+// cookie already on the request, so the pair passes the pre-exchange check.
 func addPKCECookie(t *testing.T, req *http.Request) string {
 	t.Helper()
 	v, err := oauthPKCEVerifier()
 	if err != nil {
 		t.Fatalf("mint PKCE verifier: %v", err)
+	}
+	cookies := req.Cookies()
+	req.Header.Del("Cookie")
+	for _, c := range cookies {
+		if c.Name == oauthStateCookieName && c.Value != "" && !strings.Contains(c.Value, oauthStateChallengeSeparator) {
+			c = &http.Cookie{Name: c.Name, Value: c.Value + oauthStateChallengeSeparator + pkceS256Challenge(v)}
+		}
+		req.AddCookie(c)
 	}
 	req.AddCookie(&http.Cookie{Name: oauthPKCECookieName, Value: v})
 	return v

@@ -34,8 +34,10 @@ func TestGitHubBrowserLoginContract(t *testing.T) {
 		{"malformed user", `{"access_token":"` + token + `"}`, `{"login":`, http.StatusBadGateway, 1},
 		{"empty identity", `{"access_token":"` + token + `"}`, `{"login":""}`, http.StatusBadGateway, 1},
 		{"invalid identity", `{"access_token":"` + token + `"}`, `{"login":"bad login!"}`, http.StatusBadGateway, 1},
-		// GitHub rejects a code_verifier that does not hash to the challenge
-		// (a verifier from another login) with an error body and no token.
+		// GitHub's own rejection of the exchange (e.g. an expired code) must
+		// still fail closed. A verifier that does not hash to this login's
+		// challenge never gets this far: TestGitHubBrowserVerifierFailsBeforeExchange
+		// pins that it is rejected locally, before any token request.
 		{"verifier rejected", `{"error":"bad_verification_code","error_description":"The code passed is incorrect or expired."}`, "", http.StatusBadGateway, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,13 +162,15 @@ func beginGitHubBrowserContract(t *testing.T, s *HubServer) (state, verifier str
 		t.Fatal("incorrect authorize endpoint, scopes, client or redirect URI")
 	}
 	cookies = rec.Result().Cookies()
+	var boundChallenge string
 	for _, c := range cookies {
 		switch c.Name {
 		case oauthStateCookieName:
-			if c.Value == "" || !strings.HasPrefix(q.Get("state"), c.Value+oauthStateSeparator) || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.MaxAge <= 0 {
+			nonce, challenge := splitOAuthStateCookie(c.Value)
+			if nonce == "" || !strings.HasPrefix(q.Get("state"), nonce+oauthStateSeparator) || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.MaxAge <= 0 {
 				t.Fatal("authorize state must be bound to a short-lived secure browser cookie")
 			}
-			state = q.Get("state")
+			state, boundChallenge = q.Get("state"), challenge
 		case oauthPKCECookieName:
 			if !validPKCEVerifier(c.Value) || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.MaxAge <= 0 || c.MaxAge > int(oauthStateTTL.Seconds()) {
 				t.Fatal("PKCE verifier must live in a short-lived secure browser cookie")
@@ -182,6 +186,12 @@ func beginGitHubBrowserContract(t *testing.T, s *HubServer) (state, verifier str
 	}
 	if q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") != pkceS256Challenge(verifier) {
 		t.Fatal("authorize must send the S256 challenge of the cookie verifier")
+	}
+	if boundChallenge != q.Get("code_challenge") {
+		t.Fatal("the issued code_challenge must be bound to the login's state cookie")
+	}
+	if strings.Contains(q.Get("state"), boundChallenge) {
+		t.Fatal("the state parameter format must not change; only the cookie carries the challenge")
 	}
 	if strings.Contains(authorize.RawQuery, verifier) {
 		t.Fatal("the PKCE verifier must never appear in the authorize URL")
@@ -240,19 +250,68 @@ func TestGitHubBrowserStateFailsBeforeExchange(t *testing.T) {
 }
 
 // TestGitHubBrowserVerifierFailsBeforeExchange starts a real login, so the state
-// is valid, then presents the callback without a usable PKCE verifier. An
-// expired verifier cookie is dropped by the browser and arrives as "missing".
-// Each case must be rejected before the code is redeemed.
+// nonce is valid, then presents the callback with a verifier that does not
+// belong to that login: missing (an expired cookie is dropped by the browser),
+// malformed, a syntactically valid but substituted verifier, or a state cookie
+// whose bound challenge was replaced or stripped. Each case must be rejected
+// locally — the fake GitHub fails the test if the token or user endpoint is
+// contacted at all.
 func TestGitHubBrowserVerifierFailsBeforeExchange(t *testing.T) {
 	const code = "verifier-rejected-secret-code"
+	substitute := func(t *testing.T) string {
+		t.Helper()
+		v, err := oauthPKCEVerifier()
+		if err != nil {
+			t.Fatalf("mint substitute verifier: %v", err)
+		}
+		return v
+	}
 	for _, tc := range []struct {
-		name     string
-		verifier func(issued string) (string, bool)
+		name string
+		// verifier returns the PKCE cookie to present (present=false omits it).
+		verifier func(t *testing.T, issued string) (string, bool)
+		// stateCookie rewrites the issued state cookie value; nil keeps it.
+		stateCookie func(t *testing.T, issued string) string
 	}{
-		{"missing or expired", func(string) (string, bool) { return "", false }},
-		{"empty", func(string) (string, bool) { return "", true }},
-		{"malformed", func(string) (string, bool) { return "not a verifier", true }},
-		{"truncated", func(v string) (string, bool) { return v[:42], true }},
+		{name: "missing or expired", verifier: func(*testing.T, string) (string, bool) { return "", false }},
+		{name: "empty", verifier: func(*testing.T, string) (string, bool) { return "", true }},
+		{name: "malformed", verifier: func(*testing.T, string) (string, bool) { return "not a verifier", true }},
+		{name: "truncated", verifier: func(_ *testing.T, v string) (string, bool) { return v[:42], true }},
+		{name: "substituted valid verifier", verifier: func(t *testing.T, _ string) (string, bool) { return substitute(t), true }},
+		{name: "substituted max-length verifier", verifier: func(*testing.T, string) (string, bool) {
+			return strings.Repeat("Ab9-._~x", 16), true
+		}},
+		{name: "issued verifier with one character changed", verifier: func(_ *testing.T, v string) (string, bool) {
+			last := byte('A')
+			if v[len(v)-1] == 'A' {
+				last = 'B'
+			}
+			return v[:len(v)-1] + string(last), true
+		}},
+		{
+			name:     "state-bound challenge replaced",
+			verifier: func(_ *testing.T, v string) (string, bool) { return v, true },
+			stateCookie: func(t *testing.T, issued string) string {
+				nonce, _ := splitOAuthStateCookie(issued)
+				return nonce + oauthStateChallengeSeparator + pkceS256Challenge(substitute(t))
+			},
+		},
+		{
+			name:     "state-bound challenge stripped",
+			verifier: func(_ *testing.T, v string) (string, bool) { return v, true },
+			stateCookie: func(_ *testing.T, issued string) string {
+				nonce, _ := splitOAuthStateCookie(issued)
+				return nonce
+			},
+		},
+		{
+			name:     "state-bound challenge emptied",
+			verifier: func(_ *testing.T, v string) (string, bool) { return v, true },
+			stateCookie: func(_ *testing.T, issued string) string {
+				nonce, _ := splitOAuthStateCookie(issued)
+				return nonce + oauthStateChallengeSeparator
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cleanup := helperSetupTempDirs(t)
@@ -260,7 +319,8 @@ func TestGitHubBrowserVerifierFailsBeforeExchange(t *testing.T) {
 			var calls atomic.Int32
 			fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
-				_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "unexpected-token", "login": "octocat"})
+				t.Errorf("GitHub %s contacted for a callback that must be rejected locally", r.URL.Path)
+				http.Error(w, "unexpected", http.StatusInternalServerError)
 			}))
 			defer fake.Close()
 			oldToken, oldUser := defaultGHTokenURL, defaultGHUserURL
@@ -272,27 +332,44 @@ func TestGitHubBrowserVerifierFailsBeforeExchange(t *testing.T) {
 			state, issued, cookies := beginGitHubBrowserContract(t, s)
 			req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?"+url.Values{"code": {code}, "state": {state}}.Encode(), nil)
 			for _, c := range cookies {
-				if c.Name != oauthPKCECookieName {
+				switch {
+				case c.Name == oauthPKCECookieName:
+				case c.Name == oauthStateCookieName && tc.stateCookie != nil:
+					req.AddCookie(&http.Cookie{Name: c.Name, Value: tc.stateCookie(t, c.Value)})
+				default:
 					req.AddCookie(c)
 				}
 			}
-			if v, present := tc.verifier(issued); present {
-				req.AddCookie(&http.Cookie{Name: oauthPKCECookieName, Value: v})
+			presented, present := tc.verifier(t, issued)
+			if present {
+				if presented == issued && tc.stateCookie == nil {
+					t.Fatal("fixture must not present the issued verifier against the issued challenge")
+				}
+				req.AddCookie(&http.Cookie{Name: oauthPKCECookieName, Value: presented})
 			}
 			rec := httptest.NewRecorder()
 			s.handleOAuthCallback(rec, req)
 			if rec.Code != http.StatusBadRequest || calls.Load() != 0 {
-				t.Fatalf("status/calls = %d/%d, want 400/0: invalid verifier must fail before token exchange", rec.Code, calls.Load())
+				t.Fatalf("status/calls = %d/%d, want 400/0: a verifier not bound to this login must fail before token exchange", rec.Code, calls.Load())
 			}
 			assertBrowserContractSession(t, rec, false)
 			if !pkceCookieCleared(rec) {
 				t.Error("rejected callback must still clear the PKCE cookie")
 			}
+			stateCleared := false
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == oauthStateCookieName && c.MaxAge < 0 && c.Value == "" {
+					stateCleared = true
+				}
+			}
+			if !stateCleared {
+				t.Error("rejected callback must clear the state cookie")
+			}
 			if loadSaaSUser("octocat") != nil {
 				t.Error("rejected callback must not write a user record")
 			}
-			for _, value := range []string{code, issued} {
-				if strings.Contains(logs.String(), value) {
+			for _, value := range []string{code, issued, presented} {
+				if value != "" && strings.Contains(logs.String(), value) {
 					t.Error("rejected callback leaked the code or verifier to the logger")
 				}
 			}

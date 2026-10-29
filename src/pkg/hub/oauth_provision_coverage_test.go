@@ -427,7 +427,7 @@ func TestF11_LoginIssuesStateNonceCookieAndParameter(t *testing.T) {
 	var nonce string
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == oauthStateCookieName {
-			nonce = c.Value
+			nonce, _ = splitOAuthStateCookie(c.Value)
 			if !c.HttpOnly || !c.Secure {
 				t.Error("F11: the state cookie must be HttpOnly and Secure")
 			}

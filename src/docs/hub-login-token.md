@@ -12,14 +12,19 @@ unchanged.
    an empty `scope=`, the exact `redirect_uri`, a `state` nonce and an S256
    PKCE `code_challenge` (`src/pkg/hub/oauth.go:627`). The state nonce and the
    PKCE `code_verifier` each go in their own short-lived HttpOnly, Secure,
-   SameSite=Lax cookie (`hive_oauth_state` and `hive_oauth_pkce`).
+   SameSite=Lax cookie (`hive_oauth_state` and `hive_oauth_pkce`). The state
+   cookie also carries the issued `code_challenge` (`nonce.challenge`), binding
+   the verifier to this login transaction; the `state` parameter is unchanged.
 2. `handleOAuthCallback` reads and clears both cookies on every outcome, so
    each login transaction is single-use. A missing or mismatched state, or a
-   missing, malformed or expired verifier, fails closed with `400`. This
-   happens before the code is redeemed or any session or user record is
-   written (`src/pkg/hub/oauth.go:744`, `src/pkg/hub/oauth.go:825`). A verifier
-   that does not match the challenge is rejected by GitHub at exchange time
-   and surfaces as `502` with no session.
+   missing, malformed or expired verifier, fails closed with `400`. So does a
+   well-formed verifier whose S256 does not equal the challenge bound to the
+   state cookie (a substituted verifier, or a replaced or missing bound
+   challenge), compared locally in constant time. All of this happens before
+   the code is sent to GitHub or any session or user record is written
+   (`src/pkg/hub/oauth.go:744`, `src/pkg/hub/oauth.go:825`). GitHub checks the
+   verifier against the challenge again at exchange time; an exchange error
+   surfaces as `502` with no session.
 3. The callback exchanges the code at `defaultGHTokenURL`
    (`src/pkg/hub/oauth.go:49`) in `exchangeGitHubLogin`
    (`src/pkg/hub/oauth.go:975`). `client_id`, `client_secret`, `code`,
