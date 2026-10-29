@@ -1,0 +1,1 @@
+- Dashboard toasts: the countdown bar now drains right-to-left over the toast's real lifetime (`--toast-ttl`), pauses with the dismiss timer while the pointer or keyboard focus is on the toast and resumes on leave, uses the severity colour at 40% so it reads in dark and light mode, and stays visible under reduced motion.
