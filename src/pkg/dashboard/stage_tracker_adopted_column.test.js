@@ -32,7 +32,7 @@ const src = [
   pick(/const STAGE_TRACKER_TERMINAL = \d+;/, 'STAGE_TRACKER_TERMINAL'),
   pick(/const STAGE_TRACKER_ADOPTED_BY_HIVE = \d+;/, 'STAGE_TRACKER_ADOPTED_BY_HIVE'),
   pick(/function stageTrackerAdoptedWord\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAdoptedWord'),
-  pick(/function stageTrackerAnchor\(stage, stages, kind\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAnchor'),
+  pick(/function stageTrackerAnchor\(stage, stages, kind, item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerAnchor'),
 ].join('\n');
 const lifted = new Function(src + '; return { anchor: stageTrackerAnchor, adoptedWord: stageTrackerAdoptedWord, ADOPTED: STAGE_TRACKER_ADOPTED_BY_HIVE };')();
 
