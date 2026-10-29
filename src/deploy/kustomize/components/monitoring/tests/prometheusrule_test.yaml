@@ -30,6 +30,31 @@ tests:
                 down, or HIVE_METRICS_TOKEN may not match the scrape credentials.
               runbook_url: https://github.com/hivecommons/hive/blob/v6/src/deploy/kustomize/components/monitoring/README.md#hivemetricsdown
 
+  # Deployment scaled to 0: no endpoints, so no target and no `up` series at
+  # all. `up == 0` is empty here; the `absent()` branch must fire. It carries
+  # only the job label, so the instance renders empty.
+  - interval: 1m
+    input_series:
+      - series: 'unrelated_metric{job="other"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: HiveMetricsDown
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: HiveMetricsDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: hive
+            exp_annotations:
+              summary: Hive metrics endpoint is down
+              description: >-
+                Prometheus has not been able to scrape the Hive /metrics endpoint
+                (instance ) for 10 minutes. The pod may be
+                down, or HIVE_METRICS_TOKEN may not match the scrape credentials.
+              runbook_url: https://github.com/hivecommons/hive/blob/v6/src/deploy/kustomize/components/monitoring/README.md#hivemetricsdown
+
   - interval: 1m
     input_series:
       # Quiet hive: +1 USD per minute is 60 USD/h only after the first hour, so

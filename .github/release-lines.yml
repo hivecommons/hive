@@ -104,6 +104,10 @@ pinned:
   # line, so its pull_request filter watches v6 alone; v4 is feature-frozen and
   # v5 never carried the panel, hence the explicit exclusions.
   hive-chat-phone-sweep.yml: [v6, -v4, -v5]
+  # promtool check + unit tests for the monitoring component's PrometheusRule
+  # (#15438). The component exists only on the v6 development line; v4 is
+  # feature-frozen and v5 never carried it, hence the explicit exclusions.
+  prometheusrule-check.yml: [v6, -v4, -v5]
   podman-arm64-lane.yml: []
   podman-contract.yml: []
   podman-rootful-lane.yml: []
