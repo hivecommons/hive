@@ -321,7 +321,7 @@ func TestRepoItemDecisionApproveOnDirtyPRQueuesRebase(t *testing.T) {
 	w = postRepoItemDecisionAs(t, srv3, 8, "writer", "merger", `{"decision":"approve","type":"pr"}`)
 	resp = repoItemDecisionResponse{}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if w.Code != http.StatusOK || resp.Rebase != nil || resp.Result == nil || len(resp.Result.Options) != 0 || !strings.Contains(resp.Result.Next, "takes it from here") {
+	if w.Code != http.StatusOK || resp.Rebase != nil || resp.Result == nil || len(resp.Result.Options) != 0 || !strings.Contains(resp.Result.Next, "merge sweep merges it") {
 		t.Fatalf("clean approve: code=%d resp=%+v", w.Code, resp.Result)
 	}
 }
