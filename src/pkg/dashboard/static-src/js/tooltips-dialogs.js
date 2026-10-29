@@ -724,19 +724,66 @@
       el.appendChild(close);
       el.addEventListener('click', () => dismissToast(el, null, null, true));
     }
-    // toastCountdownBar arms a toast's auto-dismiss: one setTimeout that
-    // closes it after `ms`, and a .toast-bar whose drain animation runs for
-    // the same `ms`, so the bar hits zero as the toast leaves. Every timed
-    // toast path (success/info/warning, error-with-deadline, in-flight toast
-    // resolved by dismissToast) goes through here; sticky and persistent
-    // toasts never call it and so show no bar.
+    // toastCountdownBar arms a toast's auto-dismiss: one timer that closes
+    // it after `ms`, and a .toast-bar whose drain animation runs for the
+    // same `ms` (published on the toast as --toast-ttl), so the bar hits
+    // zero as the toast leaves. Every timed toast path (success/info/
+    // warning, error-with-deadline, in-flight toast resolved by
+    // dismissToast) goes through here; sticky and persistent toasts never
+    // call it and so show no bar.
+    //
+    // Hover or keyboard focus inside the toast holds the countdown: the
+    // timer is cleared with its remaining milliseconds banked and the bar's
+    // animation is paused at the same instant, so the two never drift.
+    // Leaving re-arms the timer for exactly the banked remainder and lets
+    // the bar run on from where it stopped. Re-arming (dismissToast
+    // rewriting an in-flight toast) cancels any earlier countdown first.
     function toastCountdownBar(el, ms, onExpire) {
+      toastCountdownCancel(el);
       const bar = document.createElement('span');
       bar.className = 'toast-bar';
       bar.setAttribute('aria-hidden', 'true');
-      bar.style.animationDuration = ms + 'ms';
+      el.style.setProperty('--toast-ttl', ms + 'ms');
       el.appendChild(bar);
-      setTimeout(() => { if (el.parentNode) onExpire(); }, ms);
+      const cd = { bar, remaining: ms, startedAt: 0, timer: 0, hovered: false, focused: false };
+      el._countdown = cd;
+      const fire = () => { cd.timer = 0; el._countdown = null; if (el.parentNode) onExpire(); };
+      cd.resume = () => {
+        if (cd.timer || cd.hovered || cd.focused || el._countdown !== cd) return;
+        cd.startedAt = Date.now();
+        cd.timer = setTimeout(fire, cd.remaining);
+        bar.style.animationPlayState = 'running';
+      };
+      cd.pause = () => {
+        if (!cd.timer) return;
+        clearTimeout(cd.timer);
+        cd.timer = 0;
+        cd.remaining = Math.max(0, cd.remaining - (Date.now() - cd.startedAt));
+        bar.style.animationPlayState = 'paused';
+      };
+      if (!el._countdownWired) {
+        el._countdownWired = true;
+        const c = () => el._countdown;
+        el.addEventListener('mouseenter', () => { const x = c(); if (x) { x.hovered = true; x.pause(); } });
+        el.addEventListener('mouseleave', () => { const x = c(); if (x) { x.hovered = false; x.resume(); } });
+        el.addEventListener('focusin', () => { const x = c(); if (x) { x.focused = true; x.pause(); } });
+        el.addEventListener('focusout', e => { const x = c(); if (x && !el.contains(e.relatedTarget)) { x.focused = false; x.resume(); } });
+      }
+      // A toast re-armed under the pointer stays held until it leaves.
+      if (el.matches(':hover')) cd.hovered = true;
+      if (el.contains(document.activeElement)) cd.focused = true;
+      cd.resume();
+      if (!cd.timer) bar.style.animationPlayState = 'paused';
+    }
+    // toastCountdownCancel drops a toast's pending countdown (timer and
+    // bar) so a rewrite or manual dismissal cannot fire a stale timer.
+    function toastCountdownCancel(el) {
+      const cd = el._countdown;
+      if (!cd) return;
+      if (cd.timer) clearTimeout(cd.timer);
+      cd.timer = 0;
+      if (cd.bar && cd.bar.parentNode) cd.bar.remove();
+      el._countdown = null;
     }
     function showToast(msg, type = 'info', persistent = false, autoDismissMs = 0) {
       const opts = (persistent && typeof persistent === 'object') ? persistent : {};
@@ -795,6 +842,7 @@
     // click/× path, so a sticky error can still be dismissed on demand.
     function dismissToast(el, newMsg, newType, force) {
       if (!el || !el.parentNode) return;
+      toastCountdownCancel(el);
       if (newMsg) {
         el.textContent = newMsg;
         el.className = `toast ${newType || 'success'}`;

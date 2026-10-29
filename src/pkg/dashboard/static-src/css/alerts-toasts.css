@@ -79,18 +79,21 @@
       position: relative; overflow: hidden;
     }
     /* Countdown bar: a timed toast's remaining life, drained along the bottom
-       edge over exactly its auto-dismiss window (animation-duration is set
-       inline by toastCountdownBar from the same ms the dismiss timer uses).
-       Absolutely positioned so it never shifts the toast's layout; clipped
-       to the toast radius by the parent's overflow. Sticky/persistent
-       toasts carry no bar. */
-    .toast-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; pointer-events: none; transform-origin: left center; background: var(--muted); opacity: 0.55; animation: toast-bar-drain linear forwards; }
-    .toast.success .toast-bar { background: var(--green); }
-    .toast.error .toast-bar { background: var(--red); }
-    .toast.info .toast-bar { background: var(--blue); }
-    .toast.warning .toast-bar { background: var(--status-warn); }
+       edge from right to left (origin left, scaleX 1 -> 0) over --toast-ttl,
+       which toastCountdownBar sets on the toast from the same ms the dismiss
+       timer uses; hover or focus-within pauses both together (inline
+       animation-play-state). Absolutely positioned so it never shifts the
+       toast's layout; clipped to the toast radius by the parent's overflow.
+       Subtle: the severity token at 40% over transparent, no track. Sticky/
+       persistent toasts carry no bar. Reduced motion keeps it: a linear
+       countdown is information, not decoration. */
+    .toast-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; pointer-events: none; transform-origin: left center; background: color-mix(in srgb, currentColor 35%, transparent); animation: toast-bar-drain var(--toast-ttl, 3000ms) linear forwards; }
+    .toast.success .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
+    .toast.error .toast-bar { background: color-mix(in srgb, var(--red) 40%, transparent); }
+    .toast.info .toast-bar { background: color-mix(in srgb, var(--blue) 40%, transparent); }
+    .toast.warning .toast-bar { background: color-mix(in srgb, var(--status-warn) 40%, transparent); }
     @keyframes toast-bar-drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-    @media (prefers-reduced-motion: reduce) { .toast-bar { display: none; } }
+    @media (prefers-reduced-motion: reduce) { .toast-bar { animation-timing-function: linear; } }
     .toast.success { background: color-mix(in srgb, var(--green) 14%, var(--panel)); border-color: color-mix(in srgb, var(--green) 35%, var(--line)); border-left-color: var(--green); }
     .toast.error { background: color-mix(in srgb, var(--red) 14%, var(--panel)); border-color: color-mix(in srgb, var(--red) 35%, var(--line)); border-left-color: var(--red); }
     .toast.info { background: color-mix(in srgb, var(--blue) 14%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); border-left-color: var(--blue); }
