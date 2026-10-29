@@ -52,15 +52,20 @@ func readJamLiveUntil(t *testing.T, conn *websocket.Conn, want string, match fun
 // be delivered rather than tripping gorilla's failed-connection panic.
 func TestReadJamLiveUntilWaitsPastShortGaps(t *testing.T) {
 	upgrader := websocket.Upgrader{}
+	readyForSnapshot := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 		defer conn.Close()
-		// Simulate a slow producer: the frame lands well after the 250 ms
-		// per-read poll the helper used to apply.
-		<-time.After(600 * time.Millisecond)
+		// Send an initial message to let the reader know we're connected.
+		_ = conn.WriteJSON(jamLiveMessage{Type: jamLivePresence})
+		// Simulate a slow producer: wait until the reader has consumed the
+		// initial message and is ready for the snapshot, then send it. This
+		// ensures we test that readJamLiveUntil waits across a gap without
+		// relying on a fixed wall-clock delay.
+		<-readyForSnapshot
 		_ = conn.WriteJSON(jamLiveMessage{Type: jamLiveSnapshot})
 		// Keep the socket open until the client is done reading.
 		_, _, _ = conn.ReadMessage()
@@ -72,6 +77,13 @@ func TestReadJamLiveUntilWaitsPastShortGaps(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+
+	// Read the initial presence message, then signal the server to send the snapshot.
+	go func() {
+		var msg jamLiveMessage
+		_ = conn.ReadJSON(&msg)
+		close(readyForSnapshot)
+	}()
 
 	if got := readJamLiveUntil(t, conn, jamLiveSnapshot, nil); got.Type != jamLiveSnapshot {
 		t.Fatalf("message type = %q, want %q", got.Type, jamLiveSnapshot)
