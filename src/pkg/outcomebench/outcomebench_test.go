@@ -227,13 +227,13 @@ func TestReadmeBlockRoundTrip(t *testing.T) {
 		Stories: []Story{{Repo: "hivecommons/hive", Number: 1, Caught: "A test was skipped.", OpenedAt: now.Add(-20 * time.Minute), CaughtAt: now.Add(-15 * time.Minute), FixApprovedAt: now.Add(-10 * time.Minute), MergedAt: now}},
 		RedTeam: &RedTeam{Attacks: 10, Caught: 9, Benign: 5, FalseAlarms: 1, RunAt: now}})
 	block := rep.ReadmeBlock("src/docs/benchmarks")
-	for _, want := range []string{ReadmeStart, ReadmeEnd, "## Accuracy", "## Security", "## Cost", "## Also", "46 pull requests, 2 repositories", "(oct '26)", "Humans still merge", "open PRs only", "src/docs/benchmarks/outcomes-2026-10.md",
-		"card-accuracy-dark.svg", "card-accuracy-light.svg", "card-stories-dark.svg", "card-prompt-injection-light.svg", "card-cost-dark.svg", "card-also-light.svg", "prefers-color-scheme: dark", "How we count"} {
+	for _, want := range []string{ReadmeStart, ReadmeEnd, "## Accuracy", "## Security", "## Cost", "## And the rest", "46 live pull requests in 2 repositories", "(oct '26)", "Humans still merge", "open PRs only", "The review agent sent 15 pull requests back. Three out of four came back fixed and approved, usually within 20 minutes.", "We planted 10 texts", "Hive caught 9 before an agent read a word.", "One harmless text in 5 got flagged by mistake.", "Call it $2 a merge, our estimate (", "Every pull request gets the same one-line review", "src/docs/benchmarks/outcomes-2026-10.md",
+		"card-accuracy-dark.png", "card-accuracy-light.png", "card-stories-dark.png", "card-prompt-injection-light.png", "card-cost-dark.png", "card-also-light.png", "prefers-color-scheme: dark", "How we count"} {
 		if !strings.Contains(block, want) {
 			t.Errorf("block missing %q:\n%s", want, block)
 		}
 	}
-	for _, banned := range []string{"Wilson", "interval", "(n=", " n=", "median", "mediated", "95%", "≈"} {
+	for _, banned := range []string{"Wilson", "interval", "(n=", " n=", "median", "mediated", "95%", "≈", ".svg", ";", "Numbers below"} {
 		if strings.Contains(block, banned) {
 			t.Errorf("block contains %q; statistical vocabulary belongs in the report", banned)
 		}

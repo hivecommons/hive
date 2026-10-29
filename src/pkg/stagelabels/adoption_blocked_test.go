@@ -75,3 +75,27 @@ func TestStoreAdoptionBlocked(t *testing.T) {
 		t.Fatalf("hold not persisted: %+v", r)
 	}
 }
+
+func TestAdoptionRequestConsumedByTerminalRefusal(t *testing.T) {
+	now := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	s := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
+	s.Observe("acme/widget#7", Fixing, "conflicting")
+	if rec, _ := s.Get("acme/widget#7"); rec.AdoptionRequestConsumed("aaa") {
+		t.Fatal("consumed before any refusal")
+	}
+	s.NoteAdoptionBlocked("acme/widget#7", "aaa", AdoptBlockedAuthorMaintainer, now)
+	if rec, _ := s.Get("acme/widget#7"); rec.AdoptionRequestConsumed("aaa") {
+		t.Fatal("a maintainer hold is a deferral, not a consumed request")
+	}
+	for _, reason := range []string{AdoptBlockedSupersedeConflict, AdoptBlockedSelfAuthored} {
+		s.NoteAdoptionBlocked("acme/widget#7", "aaa", reason, now)
+		rec, _ := s.Get("acme/widget#7")
+		if !rec.AdoptionRequestConsumed("aaa") || rec.AdoptionRequestConsumed("bbb") {
+			t.Fatalf("%s: consumed(aaa)=%v consumed(bbb)=%v", reason, rec.AdoptionRequestConsumed("aaa"), rec.AdoptionRequestConsumed("bbb"))
+		}
+	}
+	s.MarkAdopted("acme/widget#7", "aaa", 90, now)
+	if rec, _ := s.Get("acme/widget#7"); rec.AdoptionRequestConsumed("aaa") {
+		t.Fatal("a live adoption is not a refusal")
+	}
+}

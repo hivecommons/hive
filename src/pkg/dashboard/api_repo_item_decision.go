@@ -108,6 +108,12 @@ type repoItemDecisionRequest struct {
 	// SupersededBy names the pull request that replaces a close-superseded
 	// item: "458", "#458", "owner/repo#458" or a GitHub URL. Optional.
 	SupersededBy string `json:"superseded_by"`
+	// Force with decision "adopt" is the operator's Adopt now: adopt at
+	// once, bypassing the author's presence, the grace window and
+	// maintainer_policy (api_repo_item_decision_reroute.go).
+	Force bool `json:"force,omitempty"`
+	// To with decision "reroute" is the target clanker's login, or "any".
+	To string `json:"to,omitempty"`
 }
 
 // parseRepoItemSupersededBy resolves a "superseded by" reference the way an
@@ -189,20 +195,37 @@ func (s *Server) admitPullRequestHead(repoFull string, number int, head, user st
 	return ""
 }
 
+// repoItemApproveFacts is what a PR Approve has to say about itself:
+// who approved, what the approval released (repoItemApprovalReleased plus
+// "admitted"), the stage label the engine derived on the spot ("" when
+// deferred to the sweep), whether the sentinel alert is still open, and
+// how long the merge sweep soaks a head before merging.
+type repoItemApproveFacts struct {
+	User          string
+	Released      []string
+	Stage         string
+	SentinelOpen  bool
+	SentinelLabel string
+	SoakMinutes   int
+	// Prow says the PR is on a Prow-managed repo: the relayed `/approve`
+	// came from the hive's account, which is not in OWNERS, so Prow ignores
+	// it and the toast must not claim the PR is approved for Prow.
+	Prow bool
+}
+
 // repoItemDecisionResult reads a recorded human decision into the shared
 // row-action result.
 func repoItemDecisionResult(repoFull string, number int, itemType, decision, comment, supersededBy, label string, released []string) *RowActionResult {
+	return repoItemDecisionResultWith(repoFull, number, itemType, decision, comment, supersededBy, label, repoItemApproveFacts{Released: released})
+}
+
+func repoItemDecisionResultWith(repoFull string, number int, itemType, decision, comment, supersededBy, label string, facts repoItemApproveFacts) *RowActionResult {
 	out := &RowActionResult{Target: rowActionTarget(repoFull, itemType, number)}
 	switch decision {
 	case repoItemDecisionApprove:
 		out.Action = rowActionApproved
 		if itemType == "pr" {
-			out.Outcome = "`/lgtm` + `/approve` posted"
-			if len(released) > 0 {
-				out.Outcome += " (released: " + strings.Join(released, ", ") + ")"
-			}
-			out.Outcome += "."
-			out.Next = "The merge gate takes it from here; the dashboard merges nothing."
+			repoItemApproveResult(out, number, facts)
 		} else {
 			out.Outcome = "`/hive approve` recorded; parking labels lifted, `" + label + "` applied."
 			out.Next = "The hive un-parks the issue and carries on; nothing is merged."
@@ -242,7 +265,7 @@ func repoItemDecisionResult(repoFull string, number int, itemType, decision, com
 	case repoItemDecisionQueueMerge:
 		out.Action = rowActionQueued
 		out.Outcome = "Your approval is recorded; `" + label + "` applied."
-		out.Next = "Hive's merge sweep merges it on the next tick once CI is green, respecting soak; the dashboard merges nothing itself."
+		out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked."
 	}
 	return out
 }
@@ -382,6 +405,12 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		s.audit.LogRecord(user, auditRepoItemDecisionClose, auditDetail("repo", repoFull, "number", numStr, "type", itemType, "reason", verb, "superseded_by", supersededBy), "", repoFull, number)
 		jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: "closed", Label: label,
 			Result: repoItemDecisionResult(repoFull, number, itemType, decision, comment, supersededBy, label, nil)})
+	case repoItemDecisionReroute:
+		if itemType != "pr" {
+			jsonError(w, "reroute applies to pull requests", http.StatusBadRequest)
+			return
+		}
+		s.handleRepoItemReroute(ctx, w, repoFull, number, user, comment, body.To)
 	case repoItemDecisionAdopt, repoItemDecisionReauthor:
 		if itemType != "pr" {
 			jsonError(w, decision+" applies to pull requests", http.StatusBadRequest)
@@ -389,6 +418,10 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		}
 		if !s.stageAdoptionEnabled() {
 			jsonError(w, "adoption requires governor.labels.stage.adoption to be enabled on this hive", http.StatusConflict)
+			return
+		}
+		if body.Force && decision == repoItemDecisionAdopt {
+			s.handleRepoItemAdoptNow(ctx, w, repoFull, number, user, comment)
 			return
 		}
 		note := renderRepoItemDecisionAdoptComment(user, comment)
@@ -421,7 +454,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 		}
 		s.handlePullRequestMergeDecision(ctx, w, repoFull, number, user, decision, comment)
 	default:
-		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, adopt, re-author, merge-now or queue-merge", http.StatusBadRequest)
+		jsonError(w, "unknown decision; want approve, direction, close-superseded, close-wontfix, adopt, reroute, re-author, merge-now or queue-merge", http.StatusBadRequest)
 	}
 }
 
@@ -555,6 +588,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	)
 	var released []string
 	stage := ""
+	sentinelOpen, prow := false, false
 	if decision == repoItemDecisionApprove {
 		var event ghpkg.PullRequestApprovalEvent
 		event, err = gh.RecordOperatorPullRequestApprovalWith(ctx, repoFull, number, user, ghpkg.PullRequestApprovalOptions{
@@ -563,7 +597,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 			SentinelLabel:       s.sentinelLabel(),
 		})
 		head = event.HeadSHA
-		released, stage = repoItemApprovalReleased(event), event.Stage
+		released, stage, sentinelOpen, prow = repoItemApprovalReleased(event), event.Stage, event.SentinelLabelOpen, event.ProwManaged
 	} else {
 		var event ghpkg.PullRequestDecisionEvent
 		event, err = gh.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, comment, repoItemDecisionChangeRequests())
@@ -603,7 +637,9 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	// next tracker read instead of the cached 085.
 	s.invalidateStageTrackerForWebhook()
 	jsonResponse(w, repoItemDecisionResponse{OK: true, Repo: repoFull, Number: number, Decision: decision, Status: status, Released: released, Stage: stage, Head: head, AdmittedBy: admitted,
-		Result: repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", "", released)})
+		Result: repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
+			User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow,
+		})})
 }
 
 // repoItemApprovalReleased names what a PR approval released, for the
@@ -623,4 +659,86 @@ func repoItemApprovalReleased(event ghpkg.PullRequestApprovalEvent) []string {
 		out = append(out, "sentinel-acknowledged")
 	}
 	return out
+}
+
+// repoItemApproveResult words a PR Approve the way the owner reads it
+// (hivecommons/dibs#510 read "`/lgtm` + `/approve` posted (released:
+// approval-recorded, sentinel-label)" followed by the ⚠ sentinel warning
+// it had just released and "the dashboard merges nothing"): the headline
+// is the outcome in plain words, Next is the concrete next step and who
+// merges, and what was posted rides Posted as the muted secondary line.
+func repoItemApproveResult(out *RowActionResult, number int, facts repoItemApproveFacts) {
+	released := map[string]bool{}
+	for _, r := range facts.Released {
+		released[r] = true
+	}
+	headline := "Approved #" + strconv.Itoa(number)
+	if facts.Prow {
+		headline = "Approval of #" + strconv.Itoa(number) + " recorded in hive"
+	}
+	if u := strings.TrimSpace(facts.User); u != "" {
+		headline += " as @" + u
+	}
+	out.SentinelCleared = released["sentinel-label"]
+	out.SentinelOpen = facts.SentinelOpen && !out.SentinelCleared
+	switch {
+	case out.SentinelCleared:
+		headline += " · sentinel alert cleared by your review"
+	case out.SentinelOpen:
+		headline += " · sentinel alert still open"
+	}
+	out.Outcome = headline + "."
+	out.Posted = append(out.Posted, "`/lgtm` posted", "`/approve` posted")
+	if released["needs-human"] {
+		out.Posted = append(out.Posted, "`needs-human` label removed")
+	}
+	if out.SentinelCleared {
+		out.Posted = append(out.Posted, "`"+repoItemSentinelLabelOrDefault(facts.SentinelLabel)+"` label removed")
+	}
+	if released["admitted"] {
+		out.Posted = append(out.Posted, "head admitted as-is on your approval")
+	}
+	switch {
+	case out.SentinelOpen:
+		out.Next = "The `" + repoItemSentinelLabelOrDefault(facts.SentinelLabel) + "` label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive's merge sweep will touch it."
+	case facts.Stage == stagelabels.ReadyForHumanMerge.Label():
+		out.Next = "Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Approve & merge as maintainer."
+	default:
+		out.Next = "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked" + repoItemSoakNote(facts.SoakMinutes) + "."
+	}
+	if facts.Prow {
+		// Prow reads `/approve` only from OWNERS; the hive's account is not
+		// one, so the relayed command is "NOT APPROVED" there.
+		out.Next = "Prow approval still needs an OWNERS reviewer: the relayed `/approve` came from hive's account, which Prow does not count. " + out.Next
+	}
+}
+
+func repoItemSentinelLabelOrDefault(label string) string {
+	if strings.TrimSpace(label) == "" {
+		return config.DefaultSentinelLabel
+	}
+	return strings.TrimSpace(label)
+}
+
+func repoItemSoakNote(minutes int) string {
+	if minutes <= 0 {
+		return ""
+	}
+	return " (≈" + strconv.Itoa(minutes) + " min)"
+}
+
+// approveSoakMinutes is how long the merge sweep soaks an approved head:
+// the contributor lane's soak when the approval admitted a foreign head,
+// otherwise the sweep's minimum head age.
+func (s *Server) approveSoakMinutes(admitted bool) int {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		if admitted {
+			return config.DefaultContributorLaneSoakMinutes
+		}
+		return int(config.DefaultAutoMergeMinHeadAge / time.Minute)
+	}
+	if admitted {
+		return s.deps.Config.AutoMerge.ContributorLane.EffectiveSoakMinutes()
+	}
+	return int(s.deps.Config.AutoMerge.EffectiveMinHeadAge() / time.Minute)
 }

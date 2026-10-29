@@ -99,12 +99,22 @@ type unparkCommand struct {
 	Text string
 }
 
-// BareApproval reports whether a `/hive decision` carries nothing beyond an
-// approval word — the owner answered "yes" without an instruction to act on.
-func (c unparkCommand) BareApproval() bool {
-	switch strings.ToLower(strings.TrimSpace(c.Text)) {
-	case "approve", "approved", "approve.", "approved.", "lgtm", "yes":
+// Approval reports whether the decision explicitly approves the head: the
+// first word is `approve`, `approved` or `lgtm` (trailing punctuation
+// ignored) and the rest is retained as the approval rationale. A bare `yes`
+// approves too, but `yes, but …` is a conditional answer and stays an
+// instruction for the fix lane (hivecommons/hive#14816).
+func (c unparkCommand) Approval() bool {
+	text := strings.TrimSpace(c.DecisionText())
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimRight(words[0], ".:,;!")) {
+	case "approve", "approved", "lgtm":
 		return true
+	case "yes":
+		return len(words) == 1
 	}
 	return false
 }
@@ -155,7 +165,7 @@ type IssueUnparkSweepOptions struct {
 	LabelApprovalAudit func(IssueLabelApprovalEvent)
 	// HumanChangeRequests receives `/hive decision <text>` left by a trusted
 	// maintainer on a hive-authored PR parked at stage/085-needs-decision
-	// (hivecommons/hive#13041); the review planner turns it into a fix kick.
+	// or stage/070-fixing; the review planner turns instructions into a fix kick.
 	// nil means the sweep answers the PR but cannot route the decision.
 	HumanChangeRequests review.HumanChangeRequestStore
 	// TrustedMerger is the automerge lane's merger trust test. A PR-side
@@ -179,7 +189,7 @@ type PullRequestDecisionEvent struct {
 	Actor    string
 	Decision string
 	// Mode is "changes_requested" (the decision carries an instruction)
-	// or "approve" (a bare `/hive decision approve`).
+	// or "approve" (an approval word followed by optional rationale).
 	Mode       string
 	CommentURL string
 }
@@ -311,9 +321,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 					}
 				}
 				// Otherwise PRs take one command only — `/hive decision`
-				// while parked at 085 (hivecommons/hive#13041) — and never a
+				// while at 085 or 070 — and never a
 				// notice.
-				if !labelPresent(labels, PRNeedsDecisionStageLabel) {
+				if !labelPresent(labels, PRNeedsDecisionStageLabel) && !labelPresent(labels, stagelabels.Fixing.Label()) {
 					continue
 				}
 				result.Seen++

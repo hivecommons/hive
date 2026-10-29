@@ -417,6 +417,9 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			c.info("contributor-lane automerge sweep skipped repo", "repo", displayRepo, "reason", skipReason)
 			continue
 		}
+		train := c.planMergeTrains(ctx, stageLaneContributor, displayRepo, owner, repoName, prs, func(pr *gh.PullRequest) string {
+			return c.prefilterContributorLanePR(pr, policy)
+		})
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
 				break
@@ -429,6 +432,17 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			stage := func(reason string, merged bool, err error) {
 				c.recordStage(stageLaneContributor, displayRepo, owner, repoName, pr, reason, merged, err)
 			}
+			if train.isSibling(number) {
+				result.Skipped++
+				stage(c.mergeTrainSkip(train, number), false, nil)
+				continue
+			}
+			if reason, handled := c.mergeTrainFront(ctx, train, pr); handled {
+				c.recordContributorLaneSkip(displayRepo, number, reason)
+				result.Skipped++
+				stage(reason, false, nil)
+				continue
+			}
 			if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 				c.recordContributorLaneSkip(displayRepo, number, reason)
 				result.Skipped++
@@ -437,6 +451,9 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			}
 			result.Candidates++
 			event, reason, err := c.trySweepContributorLanePR(ctx, displayRepo, owner, repoName, number, policy)
+			if err == nil {
+				c.noteMergeTrainOutcome(owner, repoName, number, pr.GetHead().GetSHA(), reason)
+			}
 			if err != nil {
 				c.warn("contributor-lane automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason, "error", err)
 				result.Skipped++
@@ -453,6 +470,9 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			result.Merged = append(result.Merged, event)
 			if opts.Audit != nil {
 				opts.Audit(event)
+			}
+			if train.isFront(number) {
+				c.mergeTrainAfterFrontMerge(ctx, train, number)
 			}
 		}
 	}
@@ -645,6 +665,30 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 		}
 	}
 	return match, err
+}
+
+// noteRegistryRole records the author's CURRENT registry tier as the PR's
+// role for this cycle without the deep admission pass. The lane short-cuts
+// a parked PR (needs-rebase, hold, excluded label, draft) before
+// admitContributor runs, and without this the stage pass fell back to the
+// role/<tier> label the PR already carried — a tier the operator changed in
+// the registry never reached a parked PR, so two PRs by one author showed
+// different tiers (hivecommons/hive: #14822 vs #14947). The lookup is a
+// local registry read, so it is cheap enough for every sweep; an author
+// with no profile notes nothing and keeps the marker/label evidence.
+func (c *Engine) noteRegistryRole(owner, repo string, number int, author string, policy ContributorLanePolicy) {
+	if c == nil || c.contributorRegistryTier == nil {
+		return
+	}
+	author = strings.TrimSpace(strings.TrimPrefix(author, "@"))
+	if author == "" {
+		return
+	}
+	tier, ok := c.contributorRegistryTier(author)
+	if !ok {
+		return
+	}
+	c.noteStageRole(owner, repo, number, stagelabels.RoleFromTier(tier, policy.RequireTiers))
 }
 
 // observedRegistryTier returns the author's raw registry tier for labelling,
@@ -1196,6 +1240,8 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 		if reason == contributorLaneReasonAppAuthored {
 			c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
+		} else {
+			c.noteRegistryRole(owner, repo, number, hgithub.SafeGetLogin(pr.GetUser()), policy)
 		}
 		return contributorLaneEval{pr: pr}, reason, nil
 	}
@@ -1223,6 +1269,12 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	eval.verdict = verdict
 	approver, humanApproved := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, headSHA, verdict)
 	c.noteStageVerdict(owner, repo, number, verdict)
+	// A trusted head-scoped change request answers the swarm's question
+	// even when admission or a requires_human verdict would return early.
+	if rv, ok := c.latestTrustedHumanChangesRequested(ctx, owner, repo, number, headSHA); ok {
+		c.noteStageHumanChangeRequest(owner, repo, number, headSHA, hgithub.SafeGetLogin(rv.GetUser()))
+		return eval, contributorLaneReasonChangesRequested, nil
+	}
 	if claim.Reason != "" {
 		// Neither this hive's registry nor an App-authored marker vouches
 		// for the author, so GitHub's association is the only evidence left;

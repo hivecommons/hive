@@ -617,6 +617,19 @@ func (c *Engine) noteOwnStageComment(owner, repo string, number int) {
 	c.stageStoreOrShared().CountOwnComments(key, 1)
 }
 
+// stageReasonSkipsContributorReview reports admission failures that stop the
+// contributor lane before it requests a reviewer verdict. A person must clear
+// admission before a missing verdict can mean the hive owes a review.
+func stageReasonSkipsContributorReview(reason string) bool {
+	switch reason {
+	case contributorLaneReasonNoClaim, contributorLaneReasonNoLinkedIssue, contributorLaneReasonClaimUnverified,
+		contributorLaneReasonClaimAuthor, contributorLaneReasonClaimOtherHive, contributorLaneReasonClaimTier,
+		contributorLaneReasonAuthorAssociation:
+		return true
+	}
+	return false
+}
+
 // stageActivity derives this cycle's outside-activity view of a PR.
 func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Activity {
 	a := stagelabels.Activity{Head: obs.HeadSHA, Comments: -1, Reviews: -1}
@@ -642,12 +655,12 @@ func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Ac
 	a.Digest = verdict + "|ci:" + ci.String() + "|" + strings.Join(labels, ",")
 	// Checks still running, or a review-pending head with no reviewer
 	// verdict yet, is waiting on the hive, not on a person. A contributor PR
-	// the lane skipped for want of a linked issue gets no verdict until the
+	// the lane skipped for an admission failure gets no verdict until the
 	// contributor or a maintainer acts, so the missing verdict alone does
 	// not make it wait on the hive (ApplyStageLabels still honours the
 	// head's running checks from the human route's digest).
 	a.WaitingOnHive = ci == ciReasonPending || stageReasonWaitsOnHive(obs.Reason) ||
-		(stage == stagelabels.ReviewPending && obs.Reason != contributorLaneReasonNoLinkedIssue &&
+		(stage == stagelabels.ReviewPending && !stageReasonSkipsContributorReview(obs.Reason) &&
 			!(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
 	return a
 }
@@ -1021,6 +1034,12 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					pass.EscalationReason = esc.Reason
 				}
 			}
+			if hadPrev && !verdict.Terminal && prevRec.AdoptionBlocked(obs.HeadSHA) == stagelabels.AdoptBlockedSupersedeConflict && verdict.Stage == fixingStage(obs) {
+				// A delegated supersede that could not replay onto the base
+				// keeps the PR on its fixing stage with the failure named.
+				obs.Reason = stagelabels.AdoptBlockedSupersedeConflict
+				pass.AdoptionRefusedReason = stagelabels.AdoptBlockedSupersedeConflict
+			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			// hivecommons/hive#12502: remember the author so the dashboard can
 			// list "PRs returned to this contributor" from the store alone.
@@ -1155,7 +1174,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		// regardless of author kind or whether a nudge was ever sent.
 		if policy.Adoption && !obs.Merged && hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) {
 			before, _ := store.Get(key)
-			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, ContributorPresence{}, false, now)
+			// Presence is read so a forced adoption's note can tell an
+			// online author the maintainer took over; the request itself
+			// does not depend on it.
+			presence, hasPresence := c.contributorPresence(ctx, obs.Author)
+			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, presence, hasPresence, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err
@@ -1167,8 +1190,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// label once an attempt was recorded for this head (success or
 			// failure) so a persistent write failure re-parks the PR at 085
 			// instead of retrying every sweep. A deferral (hold label, fence
-			// unreadable) records nothing and keeps the label for a retry.
-			if after, ok := store.Get(key); ok && (after.AdoptedBy > 0 || delegatedAdoptionAttempted(before, after)) {
+			// unreadable) records nothing and keeps the label for a retry. A
+			// terminal refusal that recorded no adoption (the App's own PR,
+			// a replay that conflicted) is consumed too (AdoptionRequestConsumed).
+			if after, ok := store.Get(key); ok && (after.AdoptedBy > 0 || delegatedAdoptionAttempted(before, after) || after.AdoptionRequestConsumed(obs.HeadSHA)) {
 				if err := c.removeNonStageLabel(ctx, obs.Owner, obs.Repo, obs.Number, delegatedecision.LabelAdoptSupersede); err != nil && firstErr == nil {
 					firstErr = err
 				}

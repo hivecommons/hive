@@ -1,6 +1,7 @@
 // "Did I act on this?" badge in the Hive activity monitor: the tracker
 // payload carries `last_operator_action` (operator_actions.go) and the row
-// wears a ✓ badge whose in-app tooltip names the action, when, the outcome
+// wears a history badge (clock + counter-clockwise arrow, never a ✓: the
+// tick read as "done") whose in-app tooltip names the action, when, the outcome
 // and the current stage; amber once the row has sat at the same stage past
 // the window; a Decisions filter narrows to awaiting / acted / stuck. The
 // functions are lifted straight out of index.html so this runs against the
@@ -29,6 +30,8 @@ const src = [
   pick(/const STAGE_TRACKER_ACTED_STATES = [^\n]*\n/, 'STAGE_TRACKER_ACTED_STATES'),
   pick(/const STAGE_TRACKER_ACTED_FILTERS = [^\n]*\n/, 'STAGE_TRACKER_ACTED_FILTERS'),
   pick(/const STAGE_TRACKER_ACTED_STUCK_DEFAULT_S = [^\n]*\n/, 'STAGE_TRACKER_ACTED_STUCK_DEFAULT_S'),
+  pick(/const STAGE_TRACKER_ICONS = \{[\s\S]*?\n    \};\n/, 'STAGE_TRACKER_ICONS'),
+  pick(/const STAGE_TRACKER_HISTORY_ICON = [^\n]*\n/, 'STAGE_TRACKER_HISTORY_ICON'),
   pick(/const STAGE_TRACKER_ACTED_GLYPH = [^\n]*\n/, 'STAGE_TRACKER_ACTED_GLYPH'),
   pick(/function stageTrackerActedLabel\(action\) \{[^\n]*\n/, 'stageTrackerActedLabel'),
   pick(/function stageTrackerActedSource\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerActedSource'),
@@ -64,9 +67,14 @@ test('no recorded action: no badge, acted filters exclude, awaiting includes par
   assert.strictEqual(api.matches({ repo: 'r', number: 2, kind: 'pr', stage: 30 }, 'awaiting', NOW), false);
 });
 
-test('fresh action: green ✓ badge with an in-app tooltip, no native title', () => {
+test('fresh action: history badge (clock + arrow, count 1) with an in-app tooltip, no native title', () => {
   const h = api.badge(row(), NOW);
   assert.match(h, /class="ham-badge ham-acted ham-acted-waiting config-info"/);
+  assert.match(h, /<svg class="ham-ico ham-history-ico"[^>]*aria-hidden="true"><path d="M2 8a6 6 0 1 0 6-6/, 'history glyph');
+  assert.match(h, /data-ham-acted-count="1"/);
+  assert.match(h, /<span class="ham-acted-n" aria-hidden="true">1<\/span>/);
+  assert.match(h, /aria-label="History: 1 action — Approve — waiting"/);
+  assert.doesNotMatch(h, /[✓✔✗]/, 'no check glyph in the history badge');
   assert.match(h, /tabindex="0"/);
   assert.match(h, /data-action="gh3" data-stop="1"/);
   assert.match(h, /aria-describedby="ham-acted-tip-hivecommons-hive-42"/);
@@ -104,10 +112,12 @@ test('stuck: server-derived or aged client-side past the window → amber, "requ
 
 test('pending and failed states', () => {
   const pending = row({ last_operator_action: act({ action: 'let-hive-decide', outcome: 'pending', state: 'pending' }) });
-  assert.match(api.badge(pending, NOW), /ham-acted-pending config-info"[^>]*>…</);
+  assert.match(api.badge(pending, NOW), /ham-acted-pending config-info"[^>]*><svg class="ham-ico ham-history-ico"/);
+  assert.doesNotMatch(api.badge(pending, NOW).split('<span id=')[0], /[✓✗…]/, 'glyph slot carries no text mark');
   assert.match(api.tip(pending, NOW), /^At Merge gate while the hive decides\.\nYou chose Let hive decide · .* · the hive is deciding…\.$/);
   const failed = row({ last_operator_action: act({ outcome: 'failed', detail: 'github 502', state: 'failed' }) });
-  assert.match(api.badge(failed, NOW), /ham-acted-failed config-info"[^>]*>✗</);
+  assert.match(api.badge(failed, NOW), /ham-acted-failed config-info"[^>]*><svg class="ham-ico ham-history-ico"/);
+  assert.doesNotMatch(api.badge(failed, NOW).split('<span id=')[0], /[✓✗]/);
   assert.match(api.tip(failed, NOW), /^Still at Merge gate — try again, or act on GitHub\.\n.* · failed — github 502\./);
   assert.strictEqual(api.matches(Object.assign(failed, { parked: true }), 'awaiting', NOW), true);
 });
@@ -121,6 +131,27 @@ test('target, note and earlier-action count surface in the tooltip; HTML is esca
   const h = api.badge(r, NOW);
   assert.match(h, /Your note: &lt;b&gt;dup&lt;\/b&gt;/);
   assert.match(h, /<br>/);
+  assert.match(h, /data-ham-acted-count="3"/);
+  assert.match(h, /<span class="ham-acted-n" aria-hidden="true">3<\/span>/);
+  assert.match(h, /aria-label="History: 3 actions — Close as superseded — waiting"/);
+});
+
+test('the history column: header and unmerged cap chevron wear the history mark, not a ✓; merged keeps its ✓', () => {
+  // Column header (the "since" row): history icon, labelled, with the hover text.
+  const head = html.match(/<li class="ham-seg cap ham-history-head" title="History — decisions and actions on this item">\$\{stageTrackerIcon\('history', 'ham-ico ham-history-ico', 'History — decisions and actions on this item'\)\}<\/li>/);
+  assert.ok(head, 'column header cap renders the history icon with its hover text');
+  assert.doesNotMatch(html, /<li class="ham-seg cap">\$\{stageTrackerIcon\(STAGE_TRACKER_TERMINAL, 'ham-ico'\)\}<\/li>/, 'no ✓ column header remains');
+  // Row cap chevron: ✓ (icon 110) only once merged (sg.terminal), history otherwise.
+  assert.match(html, /if \(sg\.cap\) inner = sg\.terminal \? stageTrackerIcon\(sg\.number, 'ham-ico'\) : stageTrackerIcon\('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet'\);/);
+  // The icon map carries the shared path and the badge is neutral, not green.
+  assert.match(html, /      history: '<path d="M2 8a6 6 0 1 0 6-6 6\.5 6\.5 0 0 0-4\.5 1\.83L2 5\.33"\/><path d="M2 2v3\.33h3\.33"\/><path d="M8 4\.67V8l2\.67 1\.33"\/>',\n/);
+  // The ✓ (icon 110) is still the merged mark, nowhere else in the column.
+  assert.match(html, /      110: '<path d="M3 8l3 3 7-7"\/>',\n/);
+  assert.match(html, /\.config-info\.ham-acted \{[^}]*color: var\(--text\);/, 'neutral at rest');
+  assert.doesNotMatch(html, /\.config-info\.ham-acted \{[^}]*var\(--green\)/, 'not the green ok colour');
+  assert.doesNotMatch(html, /\.config-info\.ham-acted \{[^}]*var\(--brand\)/, 'not the amber the stuck state uses');
+  const glyphLine = html.match(/const STAGE_TRACKER_ACTED_GLYPH = [^\n]*/)[0];
+  assert.doesNotMatch(glyphLine, /[✓✗…]/, 'no text glyphs left in the acted badge map');
 });
 
 test('issue row drawn over a single covering PR borrows that PR\'s action', () => {

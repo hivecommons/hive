@@ -277,6 +277,11 @@ type Dependencies struct {
 	// reason names the delivery ("pull_request_review org/repo#12"). Nil
 	// leaves invalidated items waiting for the next cadence tick.
 	WebhookWake func(reason string)
+	// SweepNudge asks the automerge lanes for an early pass over one PR
+	// (repo is "owner/name"). The operator row actions that leave a
+	// durable mark for the sweep (Adopt now) call it so the pass runs now
+	// rather than on cadence. Nil leaves the mark for the next sweep.
+	SweepNudge func(repo string, number int)
 	// ApplyWebhookItems hands the targeted re-reads a webhook delivery
 	// caused (webhook_tracker_refresh.go) to the governor so its cached
 	// actionable snapshot is patched for those items only; the wake cycle

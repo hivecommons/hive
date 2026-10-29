@@ -690,3 +690,29 @@ func TestReviewQueueStageFollowsStagePolicy(t *testing.T) {
 		t.Fatalf("require_quiet=false: 2h since entry stalls, quiet 30m is not past dwell; got stalled=%v past_dwell=%v", st.Stalled, st.PastDwell)
 	}
 }
+
+// hivecommons/hive#15229: a head the planner keeps passing over for lack of
+// a reviewer says so, instead of showing no dispatch reason at all.
+func TestReviewQueueExplainsAHeadWaitingForAFreeReviewer(t *testing.T) {
+	opened := reviewQueueTestNow.Add(-2 * time.Hour)
+	prs := []PullRequest{
+		{Repo: "acme/a", Number: 1, Title: "fix: starved", HeadSHA: "h1", CIStatus: "success", CreatedAt: opened},
+		{Repo: "acme/a", Number: 2, Title: "fix: first wait", HeadSHA: "h2", CIStatus: "success", CreatedAt: opened},
+	}
+	q := BuildReviewQueue(prs, ReviewQueueOptions{
+		Org: "acme",
+		Now: reviewQueueTestNow,
+		Dispatch: review.DispatchState{Waits: []review.ReviewWaitRecord{
+			{Repo: "acme/a", Number: 1, HeadSHA: "h1", Reason: review.ReviewWaitNoFreeReviewer, Cycles: review.ReviewWaitStarvationCycles + 2, FirstAt: reviewQueueTestNow.Add(-50 * time.Minute)},
+			{Repo: "acme/a", Number: 2, HeadSHA: "h2", Reason: review.ReviewWaitNoParallelSlot, Cycles: 1, FirstAt: reviewQueueTestNow.Add(-time.Minute)},
+		}},
+	})
+	starved := findEntry(t, q, "acme/a", 1)
+	if !hasReason(starved, "review waiting for a free reviewer: 5 consecutive cycles over 50m (every eligible reviewer busy); promoted ahead of the queue, takes the next free reviewer") {
+		t.Fatalf("starved reasons = %v", starved.Reasons)
+	}
+	first := findEntry(t, q, "acme/a", 2)
+	if !hasReason(first, "review waiting for a free reviewer: 1 consecutive cycle over 1m (max_parallel_reviews spent)") || hasReason(first, "promoted") {
+		t.Fatalf("first-wait reasons = %v", first.Reasons)
+	}
+}

@@ -1586,6 +1586,10 @@ type GovernorConfig struct {
 	// (governor) config surface rather than only through HIVE_BACKUP_KEY.
 	Backup BackupConfig `yaml:"backup,omitempty" json:"backup,omitempty"`
 	Replan ReplanConfig `yaml:"replan"`
+	// Reroute is governor.reroute: the operator's "Reroute to another
+	// clanker" row action (re-dispatching a returned PR's follow-up work to
+	// another online contributor clanker).
+	Reroute RerouteConfig `yaml:"reroute,omitempty" json:"reroute,omitempty"`
 	// AttributionTrailer controls the VISIBLE invocation-attribution line
 	// ("— hive: agent=… backend=… model=…") appended at creation time to the
 	// body of PRs the hive opens for agents (the PR-request watcher) and issues
@@ -2914,6 +2918,22 @@ func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
 // EffectiveAfterUnregistered parses AfterUnregistered (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
 	return parseDurationOr(c.AfterUnregistered, DefaultAdoptAfterUnregistered)
+}
+
+// RerouteConfig is governor.reroute.
+type RerouteConfig struct {
+	// PickupTimeout is how long a rerouted PR's work may sit in the target
+	// clanker's queue before the hive gives up on the reroute and falls
+	// back to Adopt now (default 30m). Go duration syntax ("30m", "1h").
+	PickupTimeout string `yaml:"pickup_timeout,omitempty" json:"pickup_timeout,omitempty"`
+}
+
+// DefaultReroutePickupTimeout is governor.reroute.pickup_timeout's default.
+const DefaultReroutePickupTimeout = 30 * time.Minute
+
+// EffectivePickupTimeout parses PickupTimeout (default 30m).
+func (c RerouteConfig) EffectivePickupTimeout() time.Duration {
+	return parseDurationOr(c.PickupTimeout, DefaultReroutePickupTimeout)
 }
 
 // Default graces before a red contributor PR is adopted (stage 074).
@@ -7938,24 +7958,40 @@ type AutoMergeConfig struct {
 	// open-time attribution. nil/unset means ON; `credit_issue_authors:
 	// false` sends the merge with GitHub's default message as before.
 	CreditIssueAuthors *bool `yaml:"credit_issue_authors,omitempty" json:"credit_issue_authors,omitempty"`
-	// MergeTrain orders approved PRs whose changed files overlap so they
-	// merge one at a time instead of dirtying each other
-	// (hivecommons/hive#15117).
+	// MergeTrain orders approved PRs on the same base whose changed files
+	// overlap: one front merges at a time, the siblings wait as
+	// "queued-behind" (stage 080, never a human stage) and are updated or
+	// rebased right after the front lands instead of each going
+	// `conflicting` with nothing owning the repair
+	// (hivecommons/hive#15117). Default ON.
 	MergeTrain MergeTrainAutoMergeConfig `yaml:"merge_train,omitempty" json:"merge_train,omitempty"`
 }
 
 // MergeTrainAutoMergeConfig is auto_merge.merge_train.*.
 type MergeTrainAutoMergeConfig struct {
-	// Enabled groups each sweep's candidate PRs per repo and base branch by
-	// overlapping changed files and lets only one front per group merge per
-	// pass: the mergeable one first, then the oldest. nil/unset means ON;
-	// an explicit `enabled: false` merges every green PR as before.
+	// Enabled turns the train on. nil/unset means ON; `enabled: false`
+	// restores the independent per-PR evaluation.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// MaxRebaseAttempts bounds how many rebase-resolve tasks the train
+	// asks for on one PR behind one front before it parks the PR for a
+	// person (stage 085). 0/unset means DefaultMergeTrainMaxRebaseAttempts.
+	MaxRebaseAttempts int `yaml:"max_rebase_attempts,omitempty" json:"max_rebase_attempts,omitempty"`
 }
+
+// DefaultMergeTrainMaxRebaseAttempts is the merge train's rebase loop guard.
+const DefaultMergeTrainMaxRebaseAttempts = 2
 
 // IsEnabled reports the auto_merge.merge_train.enabled switch; unset is on.
 func (m MergeTrainAutoMergeConfig) IsEnabled() bool {
 	return m.Enabled == nil || *m.Enabled
+}
+
+// EffectiveMaxRebaseAttempts is max_rebase_attempts with the default applied.
+func (m MergeTrainAutoMergeConfig) EffectiveMaxRebaseAttempts() int {
+	if m.MaxRebaseAttempts <= 0 {
+		return DefaultMergeTrainMaxRebaseAttempts
+	}
+	return m.MaxRebaseAttempts
 }
 
 // CreditIssueAuthorsEnabled reports the auto_merge.credit_issue_authors

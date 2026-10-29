@@ -1,49 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1306" viewBox="0 0 880 653" role="img" aria-label="Before and after: hivecommons/hive #13523 was sent back once and merged 16 minutes after opening" font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
-<title>Before and after: hivecommons/hive #13523 was sent back once and merged 16 minutes after opening</title>
-<defs>
-<linearGradient id="amber" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#9a5f0b"/><stop offset="1" stop-color="#b8741a"/></linearGradient>
-<filter id="glow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="5"/></filter>
-</defs>
-<rect x="0.5" y="0.5" width="879" height="652" rx="16" fill="#fbf8f2" stroke="#ddd6c8"/>
-<text x="40" y="51" fill="#6b6459" font-size="11" font-weight="500" letter-spacing="2.2">BEFORE / AFTER · ONE REAL PULL REQUEST · (oct &#39;26)</text>
-<text x="40" y="91" fill="#1a1612" font-size="32">A coding agent opened a pull request. The</text>
-<text x="40" y="133" fill="#1a1612" font-size="32">review agent sent it back once. It</text>
-<text x="40" y="175" fill="#1a1612" font-size="32">merged, green, 16 minutes after opening.</text>
-<text x="40" y="229" fill="#6b6459" font-size="17" font-weight="700">Without Hive</text>
-<circle cx="44" cy="261" r="4" fill="#d9d2c5"/>
-<text x="58" y="265" fill="#6b6459" font-size="11" font-weight="500" letter-spacing="2.2">ISSUE</text>
-<text x="58" y="287" fill="#2b2620" font-size="15">A failing check or an open issue waits</text>
-<text x="58" y="309" fill="#2b2620" font-size="15">for someone to pick it up.</text>
-<circle cx="44" cy="339" r="4" fill="#d9d2c5"/>
-<text x="58" y="343" fill="#6b6459" font-size="11" font-weight="500" letter-spacing="2.2">PULL REQUEST</text>
-<text x="58" y="365" fill="#2b2620" font-size="15">Someone writes the fix when they have</text>
-<text x="58" y="387" fill="#2b2620" font-size="15">time.</text>
-<circle cx="44" cy="417" r="4" fill="#d9d2c5"/>
-<text x="58" y="421" fill="#6b6459" font-size="11" font-weight="500" letter-spacing="2.2">REVIEW</text>
-<text x="58" y="443" fill="#2b2620" font-size="15">Someone else reads it when they have</text>
-<text x="58" y="465" fill="#2b2620" font-size="15">time.</text>
-<circle cx="44" cy="495" r="4" fill="#d9d2c5"/>
-<text x="58" y="499" fill="#6b6459" font-size="11" font-weight="500" letter-spacing="2.2">MERGE</text>
-<text x="58" y="521" fill="#2b2620" font-size="15">Thursday, maybe.</text>
-<text x="460" y="229" fill="#9a5f0b" font-size="17" font-weight="700">With Hive: hivecommons/hive #13523</text>
-<circle cx="464" cy="261" r="4" fill="#9a5f0b"/>
-<text x="478" y="265" fill="#6b6459" font-size="11" font-weight="500" letter-spacing="2.2">PULL REQUEST</text>
-<text x="478" y="287" fill="#2b2620" font-size="15">A coding agent opened it.</text>
-<circle cx="464" cy="317" r="4" fill="#9a5f0b"/>
-<text x="478" y="321" fill="#6b6459" font-size="11" font-weight="500" letter-spacing="2.2">SENT BACK AT 4 MIN</text>
-<text x="478" y="343" fill="#2b2620" font-size="15">The changelog note was written as a</text>
-<text x="478" y="365" fill="#2b2620" font-size="15">sentence, not a list entry, so the</text>
-<text x="478" y="387" fill="#2b2620" font-size="15">release build would have rejected it; a</text>
-<text x="478" y="409" fill="#2b2620" font-size="15">second, duplicate note was also added.</text>
-<circle cx="464" cy="439" r="4" fill="#1a7f37"/>
-<text x="478" y="443" fill="#6b6459" font-size="11" font-weight="500" letter-spacing="2.2">FIXED AT 8 MIN</text>
-<text x="478" y="465" fill="#2b2620" font-size="15">The coding agent pushed a fix; the</text>
-<text x="478" y="487" fill="#2b2620" font-size="15">review agent approved it.</text>
-<circle cx="464" cy="517" r="4" fill="#1a7f37"/>
-<text x="478" y="521" fill="#6b6459" font-size="11" font-weight="500" letter-spacing="2.2">MERGED AT 16 MIN</text>
-<text x="478" y="543" fill="#2b2620" font-size="15">CI green, a human merged it.</text>
-<a href="https://github.com/hivecommons/hive/pull/13523"><rect x="460" y="209" width="380" height="368" fill="transparent"/></a>
-<line x1="40" y1="577" x2="840" y2="577" stroke="#e8e2d6"/>
-<text x="40" y="599" fill="#6b6459" font-size="12">Same shape: hivecommons/pluk #328, sent back at 6 min, fixed at 16, merged at 23. Times</text>
-<text x="40" y="617" fill="#6b6459" font-size="12">from Hive&#39;s review records.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1760" height="1532" viewBox="0 0 880 766" role="img" aria-label="hivecommons/hive #13523 was sent back once and merged 16 minutes after opening." font-family="'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+<title>hivecommons/hive #13523 was sent back once and merged 16 minutes after opening.</title>
+<rect x="0.5" y="0.5" width="879" height="765" rx="20" fill="#fbf8f2" stroke="#e2dbcd"/>
+<text x="48" y="60" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">BEFORE / AFTER · ONE REAL PULL REQUEST · (oct &#39;26)</text>
+<text x="48" y="108" fill="#1a1612" font-size="28" font-weight="700">A coding agent opened a pull request. The</text>
+<text x="48" y="146" fill="#1a1612" font-size="28" font-weight="700">review agent sent it back once. It merged,</text>
+<text x="48" y="184" fill="#1a1612" font-size="28" font-weight="700">green, 16 minutes after opening.</text>
+<text x="48" y="242" fill="#7a7165" font-size="16" font-weight="700">Without Hive</text>
+<circle cx="52" cy="282" r="4" fill="#d6cfc2"/>
+<text x="68" y="286" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">ISSUE</text>
+<text x="68" y="310" fill="#3b342c" font-size="16">A failing check or an open issue</text>
+<text x="68" y="334" fill="#3b342c" font-size="16">waits for someone to pick it up.</text>
+<circle cx="52" cy="370" r="4" fill="#d6cfc2"/>
+<text x="68" y="374" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">PULL REQUEST</text>
+<text x="68" y="398" fill="#3b342c" font-size="16">Someone writes the fix when they</text>
+<text x="68" y="422" fill="#3b342c" font-size="16">have time.</text>
+<circle cx="52" cy="458" r="4" fill="#d6cfc2"/>
+<text x="68" y="462" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">REVIEW</text>
+<text x="68" y="486" fill="#3b342c" font-size="16">Someone else reads it when they have</text>
+<text x="68" y="510" fill="#3b342c" font-size="16">time.</text>
+<circle cx="52" cy="546" r="4" fill="#d6cfc2"/>
+<text x="68" y="550" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">MERGE</text>
+<text x="68" y="574" fill="#3b342c" font-size="16">Thursday, maybe.</text>
+<text x="464" y="242" fill="#a3640c" font-size="16" font-weight="700">With Hive · hivecommons/hive #13523</text>
+<circle cx="468" cy="282" r="4" fill="#a3640c"/>
+<text x="484" y="286" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">PULL REQUEST</text>
+<text x="484" y="310" fill="#3b342c" font-size="16">A coding agent opened it.</text>
+<circle cx="468" cy="346" r="4" fill="#a3640c"/>
+<text x="484" y="350" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">SENT BACK AT 4 MIN</text>
+<text x="484" y="374" fill="#3b342c" font-size="16">The changelog note was written as a</text>
+<text x="484" y="398" fill="#3b342c" font-size="16">sentence, not a list entry, so the</text>
+<text x="484" y="422" fill="#3b342c" font-size="16">release build would have rejected</text>
+<text x="484" y="446" fill="#3b342c" font-size="16">it. A second, duplicate note was</text>
+<text x="484" y="470" fill="#3b342c" font-size="16">also added.</text>
+<circle cx="468" cy="506" r="4" fill="#1a7f37"/>
+<text x="484" y="510" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">FIXED AT 8 MIN</text>
+<text x="484" y="534" fill="#3b342c" font-size="16">The coding agent pushed a fix and</text>
+<text x="484" y="558" fill="#3b342c" font-size="16">the review agent approved it.</text>
+<circle cx="468" cy="594" r="4" fill="#1a7f37"/>
+<text x="484" y="598" fill="#7a7165" font-size="12" font-weight="500" letter-spacing="2.4">MERGED AT 16 MIN</text>
+<text x="484" y="622" fill="#3b342c" font-size="16">CI was green and a human merged it.</text>
+<a href="https://github.com/hivecommons/hive/pull/13523"><rect x="464" y="222" width="368" height="440" fill="transparent"/></a>
+<line x1="48" y1="670" x2="832" y2="670" stroke="#ebe5d9"/>
+<text x="48" y="698" fill="#7a7165" font-size="13">hivecommons/pluk #328 went the same way, sent back at 6 min, fixed at 16, merged at 23. Times from</text>
+<text x="48" y="718" fill="#7a7165" font-size="13">Hive&#39;s review records.</text>
 </svg>

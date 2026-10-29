@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/hivecommons/hive/pkg/forgestate"
@@ -44,6 +45,22 @@ func (b *boot) webhookDeliveryFunc() func(event, deliveryID string, payload []by
 			return
 		}
 		go applyForgeStateDelivery(b.ctx, view, trigger, b.logger, event, deliveryID, payload, res)
+	}
+}
+
+// sweepNudgeFunc is the dashboard.Dependencies.SweepNudge hook: schedule
+// an automerge pass for one PR. The trigger is resolved per call because
+// it is wired before the App client exists; without the forgestate cache
+// the governor loop is woken instead, whose eval cycle runs the lanes.
+func (b *boot) sweepNudgeFunc() func(repo string, number int) {
+	return func(repo string, number int) {
+		if trigger := b.sweepTrigger; trigger != nil {
+			trigger.NotifyPullRequests(repo, number)
+			return
+		}
+		if wake := b.webhookWakeFunc(); wake != nil {
+			wake(fmt.Sprintf("operator-action %s#%d", repo, number))
+		}
 	}
 }
 

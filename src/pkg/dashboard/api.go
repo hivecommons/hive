@@ -29,6 +29,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	}
 	s.deps = deps
 	s.loadSidebarFromDisk()
+	s.mergedLedger()
 	s.registerContributeRoutes()
 	// Issue claims (hivecommons/hive#8380). Routes register unconditionally;
 	// handlers answer "not enabled" when deps.IssueClaims is nil.

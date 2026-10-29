@@ -75,7 +75,17 @@ type Item struct {
 	// (set by Requeue); NotBefore is when an interrupt may retry it.
 	Attempts  int
 	NotBefore time.Time
+	// RerouteFrom is set when the item is not the queue owner's own PR: an
+	// operator (RerouteBy) rerouted RerouteFrom's returned PR to this
+	// contributor for RerouteReason. The fix prompt says so and tells the
+	// contributor to carry the original commits + sign-off.
+	RerouteFrom   string
+	RerouteBy     string
+	RerouteReason string
 }
+
+// Rerouted reports whether the item is another author's PR rerouted here.
+func (it Item) Rerouted() bool { return it.RerouteFrom != "" }
 
 // Key identifies an item.
 func (it Item) Key() string { return Key(it.Repo, it.Number) }
@@ -419,7 +429,9 @@ func (s *Scheduler) pop(user string, c *contributor, mode Mode) *Dispatch {
 	d := &dispatch{mode: mode, items: map[string]Item{head.Key(): head}}
 	rest := c.queue[:0:0]
 	for _, q := range c.queue[1:] {
-		if head.Cause.coalescable() && q.Cause == head.Cause {
+		// A rerouted PR (another author's) never shares a task with the
+		// owner's own PRs: its prompt differs.
+		if head.Cause.coalescable() && q.Cause == head.Cause && !head.Rerouted() && !q.Rerouted() {
 			d.items[q.Key()] = q
 			continue
 		}

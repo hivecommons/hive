@@ -62,6 +62,9 @@ func TestOperatorActionFromBody(t *testing.T) {
 		{"decision", `{"decision":"merge-now","head":"abc"}`, operatorActionRequest{Action: operatorActionMergeNow, Head: "abc"}, true},
 		{"decision", `{"decision":"queue-merge"}`, operatorActionRequest{Action: operatorActionQueueMerge}, true},
 		{"decision", `{"decision":"re-author"}`, operatorActionRequest{Action: operatorActionReauthor}, true},
+		{"decision", `{"decision":"adopt"}`, operatorActionRequest{Action: operatorActionAdopt}, true},
+		{"decision", `{"decision":"adopt","force":true,"comment":"now"}`, operatorActionRequest{Action: operatorActionAdoptNow, Note: "now"}, true},
+		{"decision", `{"decision":"reroute","to":"@bee2"}`, operatorActionRequest{Action: operatorActionReroute, Target: "bee2"}, true},
 		{"decision", `{"decision":"bogus"}`, operatorActionRequest{}, false},
 		{"decide-delegated", ``, operatorActionRequest{Action: operatorActionLetHiveDecide}, true},
 		{"hold", `{"held":true}`, operatorActionRequest{Action: operatorActionHold}, true},
@@ -310,7 +313,8 @@ func TestOperatorActionRecordedByDecisionEndpoint(t *testing.T) {
 }
 
 // stageTrackerActedJS lifts the "did I act on this?" badge helpers the row
-// renderer and the filter call (operator_actions.go payload fields).
+// renderer and the filter call (operator_actions.go payload fields). Callers
+// lift STAGE_TRACKER_ICONS themselves: the history badge draws from it.
 func stageTrackerActedJS(t *testing.T, html string) string {
 	t.Helper()
 	return strings.Join([]string{
@@ -318,6 +322,7 @@ func stageTrackerActedJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_STATES"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_FILTERS"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_STUCK_DEFAULT_S"),
+		jsConstLine(t, html, "STAGE_TRACKER_HISTORY_ICON"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTED_GLYPH"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTED_PLAIN"),
 		jsFunc(t, html, "stageTrackerActedLabel"),

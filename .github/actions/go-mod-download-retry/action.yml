@@ -1,0 +1,51 @@
+name: Download Go modules with retries
+description: >-
+  Runs `go mod download` with bounded retries and exponential backoff so a
+  transient proxy.golang.org stream reset ("stream error: stream ID N;
+  INTERNAL_ERROR; received from peer", #14976) fills the module cache instead
+  of failing the job. Every later `go build`/`go test`/golangci-lint/
+  govulncheck/gosec step in the job then reads a warm GOMODCACHE and never
+  touches the proxy for the module graph. Mirrors the retry #14990 added to
+  the Docker builder stages (src/Dockerfile*). Go verifies every module
+  against go.sum regardless of how many attempts it took, so a retry can never
+  substitute a different artifact. A still-failing final attempt fails the
+  step exactly like the unguarded download did.
+inputs:
+  working-directory:
+    description: Directory holding go.mod (and go.work, when present).
+    required: false
+    default: src
+  attempts:
+    description: Maximum number of `go mod download` attempts.
+    required: false
+    default: '5'
+runs:
+  using: composite
+  steps:
+    - name: go mod download (retry transient proxy resets)
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        ATTEMPTS: ${{ inputs.attempts }}
+        GOFLAGS: -mod=mod
+      run: |
+        set -uo pipefail
+        case "$ATTEMPTS" in
+          ''|*[!0-9]*|0) echo "::error::attempts must be a positive integer, got '$ATTEMPTS'"; exit 2 ;;
+        esac
+        delay=2
+        for i in $(seq 1 "$ATTEMPTS"); do
+          rc=0
+          go mod download || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "go mod download succeeded on attempt $i/$ATTEMPTS"
+            exit 0
+          fi
+          if [ "$i" -eq "$ATTEMPTS" ]; then
+            echo "::error::go mod download failed after $ATTEMPTS attempts (last rc=$rc)"
+            exit "$rc"
+          fi
+          echo "::warning::go mod download failed (attempt $i/$ATTEMPTS, rc=$rc); retrying in ${delay}s"
+          sleep "$delay"
+          delay=$((delay * 2))
+        done

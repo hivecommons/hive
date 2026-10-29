@@ -3,7 +3,7 @@
     "repo": "hivecommons/hive",
     "number": 13523,
     "review_url": "https://github.com/hivecommons/hive/pull/13523#pullrequestreview-5613922737",
-    "caught": "The changelog note was written as a sentence, not a list entry, so the release build would have rejected it; a second, duplicate note was also added.",
+    "caught": "The changelog note was written as a sentence, not a list entry, so the release build would have rejected it. A second, duplicate note was also added.",
     "opened_at": "2026-10-22T12:07:50Z",
     "caught_at": "2026-10-22T12:12:08Z",
     "fix_approved_at": "2026-10-22T12:16:15Z",

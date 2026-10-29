@@ -88,6 +88,9 @@ tools:
   github:
     toolsets: [repos, issues, search]
 safe-outputs:
+  # Off: the "[aw] Detection Runs" tracker (#14646) and its per-run comments
+  # are noise here; the hive's own sentinel/review covers this workflow.
+  threat-detection: false
   add-comment:
     target: "*"
     max: 1

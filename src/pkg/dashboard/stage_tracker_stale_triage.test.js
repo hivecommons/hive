@@ -19,8 +19,10 @@ function pick(re, what) {
 const src = [
   pick(/const STAGE_TRACKER_TRIAGE_STAGE = \d+;/, 'STAGE_TRACKER_TRIAGE_STAGE'),
   pick(/const STAGE_TRACKER_ACTIONABLE_STAGE = \d+;/, 'STAGE_TRACKER_ACTIONABLE_STAGE'),
+  pick(/const STAGE_TRACKER_NEW_MOVER_MAINTAINER = '[a-z]+';/, 'STAGE_TRACKER_NEW_MOVER_MAINTAINER'),
   pick(/function stageTrackerStaleLabelsText\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerStaleLabelsText'),
   pick(/function stageTrackerTriageNeeded\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerTriageNeeded'),
+  pick(/function stageTrackerTriageNewState\(item\) \{[\s\S]*?\n    \}\n/, 'stageTrackerTriageNewState'),
 ].join('\n');
 const { staleText, triageNeeded } = new Function(src + '; return { staleText: stageTrackerStaleLabelsText, triageNeeded: stageTrackerTriageNeeded };')();
 
@@ -40,4 +42,8 @@ test('a stale needs-triage is not "triage needed" and offers no Accept triage', 
   assert.strictEqual(triageNeeded({ kind: 'issue', stage: 15, modifiers: [] }), true, '015 is triage needed by its stage word');
   assert.strictEqual(triageNeeded({ kind: 'issue', stage: 10, modifiers: ['needs-triage'] }), true, 'the pill before the claim still counts');
   assert.strictEqual(triageNeeded({ kind: 'pr', stage: 50, modifiers: ['needs-triage'] }), false);
+  // The label-less 000-new row the reporter-trust gate holds (hivecommons/hive#15215).
+  assert.strictEqual(triageNeeded({ kind: 'issue', stage: 0, modifiers: [], new: { next_mover: 'maintainer' } }), true, 'a 000-new reporter-trust hold is triage needed');
+  assert.strictEqual(triageNeeded({ kind: 'issue', stage: 0, modifiers: [], new: { next_mover: 'hive' } }), false, 'an admitted reporter\'s new issue is not');
+  assert.strictEqual(triageNeeded({ kind: 'issue', stage: 0, modifiers: [] }), false);
 });

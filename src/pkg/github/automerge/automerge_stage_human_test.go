@@ -543,41 +543,56 @@ func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
 	}
 }
 
-// TestHumanHandoffNoLinkedIssuePendingChecksWaitOnHive: a contributor PR
-// admission skipped for no-linked-issue carries no CI state in its reason,
+// Admission skips carry no CI state in their reasons,
 // so the human route's check digest decides whether the 050 head waits on
-// the hive (hivecommons/hive#15009): running checks do, a settled head with
+// the hive (hivecommons/hive#15009, #15164): running checks do, a settled head with
 // no verdict does not.
-func TestHumanHandoffNoLinkedIssuePendingChecksWaitOnHive(t *testing.T) {
-	api, closeAPI := seededStageAPI(t)
-	defer closeAPI()
-	clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
-	verdict := &ContributorLaneVerdict{Configured: true}
-	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
-	e.checkSummary = func(context.Context, string, string, string) (hgithub.CommitChecksSummary, error) {
-		return hgithub.CommitChecksSummary{Total: 3, Green: 1, Pending: 2, DCO: 1}, nil
-	}
-	sweep := func() {
-		t.Helper()
-		pr := stagePR(11, "role/contributor", "author/human")
-		pr.Head.SHA = ptrString("sha11")
-		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoLinkedIssue, false, nil)
-		e.noteStageRole("acme", "widget", 11, stagelabels.RoleContributor)
-		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	sweep()
-	rec, _ := store.Get(stageKey("acme", "widget", 11))
-	if rec.Stage != stagelabels.ReviewPending || !rec.WaitingOnHive {
-		t.Fatalf("pending checks: stage=%v waiting_on_hive=%v", rec.Stage, rec.WaitingOnHive)
-	}
+func TestHumanHandoffAdmissionSkipPendingChecksWaitOnHive(t *testing.T) {
+	for _, reason := range []string{
+		contributorLaneReasonNoLinkedIssue, contributorLaneReasonNoClaim, contributorLaneReasonClaimUnverified,
+		contributorLaneReasonClaimAuthor, contributorLaneReasonClaimOtherHive, contributorLaneReasonClaimTier,
+		contributorLaneReasonAuthorAssociation,
+	} {
+		t.Run(reason, func(t *testing.T) {
+			api, closeAPI := seededStageAPI(t)
+			defer closeAPI()
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)}
+			verdict := &ContributorLaneVerdict{Configured: true}
+			e, store := humanStageEngine(t, api.url, clock, verdict, 0)
+			e.checkSummary = func(context.Context, string, string, string) (hgithub.CommitChecksSummary, error) {
+				return hgithub.CommitChecksSummary{Total: 3, Green: 1, Pending: 2, DCO: 1}, nil
+			}
+			sweep := func() {
+				t.Helper()
+				pr := stagePR(11, "role/contributor", "author/human")
+				pr.Head.SHA = ptrString("sha11")
+				e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
+				e.noteStageRole("acme", "widget", 11, stagelabels.RoleContributor)
+				if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sweep()
+			rec, _ := store.Get(stageKey("acme", "widget", 11))
+			if rec.Stage != stagelabels.ReviewPending || !rec.WaitingOnHive {
+				t.Fatalf("pending checks: stage=%v waiting_on_hive=%v", rec.Stage, rec.WaitingOnHive)
+			}
 
-	e.checkSummary = greenChecks
-	clock.at = clock.at.Add(humanChecksTTL)
-	sweep()
-	rec, _ = store.Get(stageKey("acme", "widget", 11))
-	if rec.Stage != stagelabels.ReviewPending || rec.WaitingOnHive {
-		t.Fatalf("checks settled, no verdict: stage=%v waiting_on_hive=%v", rec.Stage, rec.WaitingOnHive)
+			e.checkSummary = greenChecks
+			clock.at = clock.at.Add(humanChecksTTL)
+			sweep()
+			rec, _ = store.Get(stageKey("acme", "widget", 11))
+			if rec.Stage != stagelabels.ReviewPending || rec.WaitingOnHive {
+				t.Fatalf("checks settled, no verdict: stage=%v waiting_on_hive=%v", rec.Stage, rec.WaitingOnHive)
+			}
+
+			// Once settled, dwelling without a verdict must not blame the reviewer.
+			clock.at = clock.at.Add(2 * time.Hour)
+			sweep()
+			rec, _ = store.Get(stageKey("acme", "widget", 11))
+			if rec.WaitingOnHive || rec.HiveHeldWarned || stagelabels.HiveHeld(rec, nil, clock.at) {
+				t.Fatalf("admission skip blamed the hive after dwell: %+v", rec)
+			}
+		})
 	}
 }

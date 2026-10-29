@@ -28,6 +28,10 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_WHY_ROLE"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_STAGE"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTIONABLE_STAGE"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_LABEL"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEW_MOVER_MAINTAINER"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEW_MOVER_HIVE"),
+		jsConstLine(t, html, "STAGE_TRACKER_MINUTE_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_POLL_MS"),
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_POLL_MAX"),
 		jsConstLine(t, html, "STAGE_TRACKER_DELEGATE_ALL_MIN"),
@@ -60,14 +64,36 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerSupersederOptions"),
 		jsFunc(t, html, "stageTrackerSupersederValid"),
 		jsFunc(t, html, "stageTrackerTriageNeeded"),
+		jsFunc(t, html, "stageTrackerTriageNewState"),
+		jsFunc(t, html, "stageTrackerTriageLabel"),
+		jsFunc(t, html, "stageTrackerNextPassLeftMs"),
+		jsFunc(t, html, "stageTrackerNextPassWord"),
+		jsFunc(t, html, "stageTrackerTriageHint"),
 		jsFunc(t, html, "stageTrackerTriageAccepted"),
 		jsFunc(t, html, "stageTrackerDecisionOf"),
 		jsFunc(t, html, "stageTrackerActionAllowed"),
 		jsFunc(t, html, "stageTrackerLeadActions"),
+		// Takeover: Adopt now / Reroute (hivecommons/hive#15038).
+		jsConstLine(t, html, "STAGE_TRACKER_ADOPT_NOW_CONSEQUENCE"),
+		jsConstLine(t, html, "STAGE_TRACKER_REROUTE_ANY"),
+		jsConstLine(t, html, "STAGE_TRACKER_REROUTE_PREFIX"),
+		jsFunc(t, html, "stageTrackerTakeoverOf"),
+		jsFunc(t, html, "stageTrackerActionBase"),
+		jsFunc(t, html, "stageTrackerRerouteTargetOf"),
+		jsFunc(t, html, "stageTrackerClankerLabel"),
+		jsFunc(t, html, "stageTrackerRerouteOptions"),
+		jsFunc(t, html, "stageTrackerTakeoverActions"),
+		jsFunc(t, html, "stageTrackerReroutePillHtml"),
+		jsFunc(t, html, "stageTrackerTakeoverTarget"),
+		jsFunc(t, html, "stageTrackerAdoptNowConfirm"),
+		jsFunc(t, html, "stageTrackerRerouteConfirm"),
+		jsFunc(t, html, "stageTrackerRerouteTargetValid"),
 		jsFunc(t, html, "stageTrackerRowActions"),
+		jsFunc(t, html, "stageTrackerMenuTextHtml"),
 		jsFunc(t, html, "stageTrackerFlatActions"),
 		jsFunc(t, html, "stageTrackerSelectionActions"),
 		jsFunc(t, html, "stageTrackerMenuItemHtml"),
+		jsFunc(t, html, "stageTrackerMenuHasHints"),
 		jsFunc(t, html, "stageTrackerMenuHtml"),
 		jsFunc(t, html, "stageTrackerMenuPosition"),
 		jsFunc(t, html, "stageTrackerSelBarHtml"),
@@ -94,6 +120,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerTargetKey"),
 		jsFunc(t, html, "stageTrackerResultOf"),
 		jsFunc(t, html, "stageTrackerErrorResult"),
+		jsFunc(t, html, "stageTrackerResultWarn"),
 		jsFunc(t, html, "stageTrackerResultText"),
 		jsFunc(t, html, "stageTrackerResultToast"),
 		jsFunc(t, html, "stageTrackerResultToastStale"),
@@ -285,7 +312,7 @@ assert.strictEqual(by.open.enabled, true);
 
 // Menu markup.
 const menu = stageTrackerMenuHtml(as, 'o/r#1 · Parked');
-assert.ok(menu.startsWith('<div class="ham-menu" role="menu"'));
+assert.ok(menu.startsWith('<div class="ham-menu ham-menu-hinted" role="menu"'), 'the rescan hint makes it a hinted menu: ' + menu.slice(0, 60));
 assert.ok(menu.includes('<div class="ham-menu-head">o/r#1 · Parked</div>'));
 assert.strictEqual((menu.match(/role="menuitem"/g) || []).length, 11, 'six top-level items + five decide options');
 assert.ok(menu.includes('data-ham-act="hold" tabindex="-1" aria-disabled="true" title="' + STAGE_TRACKER_WHY_WRITE + '"'), 'disabled items carry the reason');
@@ -620,7 +647,7 @@ const one = { ...issue, linked_prs: [issue.linked_prs[1]] };
 assert.strictEqual(stageTrackerDecisionTarget(one).number, 15020, 'one parked PR: the issue row decides it, as before');
 assert.ok(!ids(stageTrackerRowActions(one, ctx)).includes('decide:delegate-all'));
 const menu = stageTrackerMenuHtml(stageTrackerRowActions(issue, ctx), 'x');
-assert.ok(menu.includes('data-ham-act="decide:delegate-all"') && menu.includes('Let hive decide — all 2 PRs<span class="ham-menu-more">per PR</span>'));
+assert.ok(menu.includes('data-ham-act="decide:delegate-all"') && menu.includes('Let hive decide — all 2 PRs<span class="ham-menu-hint">per PR</span>'));
 
 // The selection model runs over sub-rows: keys in document order, painted
 // on the sub nodes; a sub-row click selects the PR, not its parent.
@@ -859,6 +886,59 @@ const plain = { repo: 'o/r', kind: 'pr', number: 4, url: 'u4', stage: 85, modifi
 `)
 }
 
+// TestStageTrackerApproveToastSentinelWording (owner, hivecommons/dibs#510:
+// "approved `/lgtm` + `/approve` posted (released: approval-recorded,
+// sentinel-label). ⚠ … a maintainer must review before merge. The merge
+// gate takes it from here; the dashboard merges nothing" — "that's a
+// confusing response"): the toast leads with the server's plain-words
+// outcome, repeats the row's ⚠ sentinel paragraph only while the alert is
+// still open after the action (sentinel_cleared drops it), renders Next
+// as the concrete step, and lists what was posted on a muted line.
+func TestStageTrackerApproveToastSentinelWording(t *testing.T) {
+	html := indexHTML(t)
+	if !strings.Contains(html, `.ham-result-posted {`) {
+		t.Fatalf("index.html missing the muted ham-result-posted rule")
+	}
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+stageTrackerConfirmOptOutJS(t, html)+`
+const flagged = { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 85, head: '30e94a9ffff', sentinel_alert: true, sentinel_reason: 'possible security override', modifiers: ['needs-decision'] };
+const target = { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510' };
+const posted = ['\u0060/lgtm\u0060 posted', '\u0060/approve\u0060 posted', '\u0060sentinel-alert\u0060 label removed'];
+// Released: the alert the row carried is gone, so no ⚠ paragraph.
+const cleared = { action: 'approved', target, outcome: 'Approved #510 as @clubanderson · sentinel alert cleared by your review.', next: "Hive's merge sweep merges it on its next pass once CI is green and the head has soaked (≈30 min).", posted, sentinel_cleared: true };
+let text = stageTrackerResultText(cleared, flagged, { id: 'decide:approve', rowRef: 'hivecommons/dibs#510' });
+assert.strictEqual(text.head, 'Approve on hivecommons/dibs#510: approved');
+assert.strictEqual(text.outcome, cleared.outcome);
+assert.strictEqual(text.warn, '', 'a released alert is not re-warned: ' + text.warn);
+assert.strictEqual(text.next, cleared.next);
+assert.strictEqual(text.posted, 'Posted: /lgtm posted · /approve posted · sentinel-alert label removed');
+assert.ok(!text.next.includes('merges nothing') && !text.outcome.includes('released:'), 'no "released:" / "merges nothing"');
+let toast = stageTrackerResultToast(cleared, flagged, { id: 'decide:approve' });
+let classes = toast.el.children.map(c => c.className).filter(c => c !== 'toast-close');
+assert.deepStrictEqual(classes, ['ham-result-head', 'ham-result-outcome', 'ham-result-next', 'ham-result-posted', 'ham-result-link'], classes.join(','));
+assert.ok(classes.indexOf('ham-result-next') < classes.indexOf('ham-result-posted'), 'the posted list is the muted trailer, under Next');
+// Still open: the ⚠ paragraph stays and Next says what the person must do.
+const open = { action: 'approved', target, outcome: 'Approved #510 as @clubanderson · sentinel alert still open.', next: 'The \u0060sentinel-alert\u0060 label is still on the PR: a maintainer must review the flagged head and take the label off on GitHub before hive\'s merge sweep will touch it.', posted: posted.slice(0, 2), sentinel_open: true };
+text = stageTrackerResultText(open, flagged, { id: 'decide:approve', rowRef: 'hivecommons/dibs#510' });
+assert.ok(text.warn.startsWith('⚠ hivecommons/dibs#510 — Sentinel flagged security-relevant changes at 30e94a9: possible security override'), text.warn);
+assert.ok(text.next.includes('take the label off on GitHub'), text.next);
+toast = stageTrackerResultToast(open, flagged, { id: 'decide:approve' });
+classes = toast.el.children.map(c => c.className).filter(c => c !== 'toast-close');
+assert.deepStrictEqual(classes, ['ham-result-head', 'ham-result-outcome', 'ham-result-warn', 'ham-result-next', 'ham-result-posted', 'ham-result-link'], classes.join(','));
+// An older hive's result (no flags) keeps the legacy behaviour: warn from the row.
+text = stageTrackerResultText({ action: 'approved', target, outcome: 'x', next: '' }, flagged, { id: 'decide:approve' });
+assert.ok(text.warn.startsWith('⚠ hivecommons/dibs#510'), text.warn);
+assert.strictEqual(text.posted, '');
+// A human-merge lane: Next names who merges.
+text = stageTrackerResultText({ action: 'approved', target, outcome: 'Approved #510 as @clubanderson.', next: 'Hive cannot merge this one (trust or role blocks it): merge it on GitHub yourself, or use Approve & merge as maintainer.', posted: posted.slice(0, 2) }, { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 90 }, { id: 'decide:approve' });
+assert.strictEqual(text.warn, '');
+assert.ok(text.next.startsWith('Hive cannot merge this one'), text.next);
+// A Prow-managed repo: the headline says recorded-in-hive, Next says who still approves.
+text = stageTrackerResultText({ action: 'approved', target, outcome: 'Approval of #510 recorded in hive as @clubanderson.', next: 'Prow approval still needs an OWNERS reviewer: the relayed \u0060/approve\u0060 came from hive\'s account, which Prow does not count. Hive\'s merge sweep merges it on its next pass once CI is green and the head has soaked (≈3 min).', posted: posted.slice(0, 2) }, { repo: 'hivecommons/dibs', kind: 'pr', number: 510, url: 'u510', stage: 85 }, { id: 'decide:approve' });
+assert.ok(text.outcome.startsWith('Approval of #510 recorded in hive'), text.outcome);
+assert.ok(text.next.startsWith('Prow approval still needs an OWNERS reviewer'), text.next);
+`)
+}
+
 // TestStageTrackerRowActionResults (owner request): every row action goes
 // through runRowAction → a persistent result toast built from the server's
 // shared result {action, target, outcome, next, rule} — headline naming the
@@ -1087,7 +1167,13 @@ const at = s => menu.indexOf(s);
 assert.ok(at('data-ham-act="decide:merge-now"') > 0 && at('data-ham-act="decide:merge-now"') < at('data-ham-act="decide:queue-merge"'));
 assert.ok(at('data-ham-act="decide:queue-merge"') < at('data-ham-act="decide"'), 'merge answers above Decide…');
 assert.ok(at('data-ham-act="decide"') < at('data-ham-act="hold"') && at('data-ham-act="hold"') < at('data-ham-act="open"'), 'generic items last');
-assert.ok(menu.includes('<span class="ham-menu-more">merges #317 into main now via hive&#39;s identity, attributed to you</span>') || menu.includes('<span class="ham-menu-more">merges #317 into main now via hive\'s identity, attributed to you</span>'), 'consequence line rendered: ' + menu);
+assert.ok(menu.includes('<span class="ham-menu-hint">merges #317 into main now via hive&#39;s identity, attributed to you</span>') || menu.includes('<span class="ham-menu-hint">merges #317 into main now via hive\'s identity, attributed to you</span>'), 'consequence line rendered: ' + menu);
+// Hints stack under their label and the menu grows for them (#15175).
+assert.ok(menu.startsWith('<div class="ham-menu ham-menu-hinted"'), 'a menu with hints is ham-menu-hinted: ' + menu.slice(0, 80));
+assert.ok(/class="ham-menu-item ham-menu-item-hinted" data-ham-act="decide:merge-now"/.test(menu), 'the hinted item stacks label over hint: ' + menu);
+assert.ok(!/class="ham-menu-item[^"]*ham-menu-item-hinted"[^>]*data-ham-act="open"/.test(menu), 'items without a hint keep the inline layout');
+assert.ok(!stageTrackerMenuHtml([{ id: 'open', label: 'Open', enabled: true }], 'x').includes('ham-menu-hinted'), 'no hints: plain menu width');
+assert.ok(stageTrackerMenuHasHints([{ id: 'decide', label: 'Decide…', enabled: true, submenu: [{ id: 'x', label: 'x', hint: 'per PR' }] }]), 'a submenu hint counts');
 
 // A writer without the merger role sees the merge answers, greyed with the
 // role reason — never silently missing.

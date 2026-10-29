@@ -154,6 +154,10 @@ func TestRepoItemAcceptTriageAuthorizationAndLabels(t *testing.T) {
 		t.Fatal("no audit entry for the accepted triage")
 	}
 
+	if resp.Result == nil || resp.Result.Action != rowActionTriaged || resp.Result.Next != acceptTriageNextText("") {
+		t.Fatalf("result without a governor kick = %+v", resp.Result)
+	}
+
 	// The verified owner role passes without a repo permission lookup.
 	mock.added, mock.removed, mock.created = nil, nil, nil
 	if w := postAcceptTriage(t, srv, "", true); w.Code != http.StatusOK {
@@ -306,5 +310,27 @@ func TestRepoItemAcceptTriagePlanAndStalenessRule(t *testing.T) {
 	}
 	if got := strings.Join(repo.NonActionableIssues[0].(github.RepoWorkIssue).Labels, ","); got != "triage/accepted" {
 		t.Fatalf("non-actionable #7 labels = %q", got)
+	}
+}
+
+// The result's "next" line carries the governor's next pass when one is
+// published, so the toast reads "≈13m" (hivecommons/hive#15215).
+func TestRepoItemAcceptTriageNextPassETA(t *testing.T) {
+	now := time.Date(2026, 10, 28, 20, 0, 0, 0, time.UTC)
+	srv := newAcceptTriageServer(t, &acceptTriageMock{permission: "write"})
+	if got := srv.governorNextPassIn(now); got != "" {
+		t.Fatalf("no status: eta = %q, want none", got)
+	}
+	srv.statusMu.Lock()
+	srv.status = &StatusPayload{Governor: FrontendGovernor{NextKickAt: now.Add(13 * time.Minute).Format(time.RFC3339)}}
+	srv.statusMu.Unlock()
+	if got := srv.governorNextPassIn(now); got != "13m" {
+		t.Fatalf("eta = %q, want 13m", got)
+	}
+	if got := acceptTriageNextText("13m"); !strings.HasPrefix(got, "Hive picks it up on its next scanner pass (≈13m);") {
+		t.Fatalf("next = %q", got)
+	}
+	if got := acceptTriageNextText(""); !strings.HasPrefix(got, "Hive picks it up on its next scanner pass;") {
+		t.Fatalf("next without eta = %q", got)
 	}
 }

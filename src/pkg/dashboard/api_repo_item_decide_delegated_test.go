@@ -599,9 +599,12 @@ func TestDelegatedStuckWhyReadsTheLane(t *testing.T) {
 // (hivecommons/hive#15078): no policy run, no comment, a no-effect result
 // that says in plain words why the hive will not merge it and carries the
 // merge answers as buttons — enabled for a merger, greyed for a writer.
+// The head conflicts and adoption is off on this hive, so the hive can
+// neither approve nor adopt it (hivecommons/hive#15173).
 func TestDelegatedDecisionReadyForHumanMergeAnswersWithMergeOptions(t *testing.T) {
-	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge", "role/newcomer"}}
+	mock := &repoItemDecisionMock{prForeign: true, prMergeState: "dirty", prLabels: []string{"stage/090-ready-for-human-merge", "role/newcomer"}}
 	srv := newDelegatedServer(t, mock)
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = boolPtr(false)
 	body := `{"type":"pr","reason":"contributor-lane:author-association","caption":"Ready for human merge · untrusted author"}`
 	w := postDelegated(t, srv, 8, "writer", body, map[string]string{"X-Hive-Role": "merger"})
 	if w.Code != http.StatusOK {

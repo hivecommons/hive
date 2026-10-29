@@ -145,10 +145,8 @@ func TestSweepIssueUnparkCommandsDecisionOnHivePRRoutesFixKick(t *testing.T) {
 }
 
 // hivecommons/hive#14679, the live case on #14628: `/hive decision approve`
-// followed by numbered instructions is a change request carrying the whole
-// text — recorded verbatim, stage 070 submitted, fix kick quoting every
-// line — while a bare `/hive decision approve` is an approval: recorded as
-// such, no fix kick, the lanes release requires_human from it.
+// followed by a rationale remains an approval. The whole text is recorded,
+// but no fix kick is scheduled.
 func TestSweepIssueUnparkCommandsDecisionApproveModes(t *testing.T) {
 	const instructions = "/hive decision approve\n\nBefore merging:\n\n1. Change `Closes #14605` to `Refs #14605`.\n2. Keep #14605 open.\n3. Merge on green."
 	cases := []struct {
@@ -161,9 +159,9 @@ func TestSweepIssueUnparkCommandsDecisionApproveModes(t *testing.T) {
 		wantInstruct bool
 	}{
 		{
-			name: "approve with instructions → changes_requested", body: instructions,
-			wantMode: "changes_requested", wantKind: review.HumanChangeRequestKindChanges, wantFixKick: true, wantInstruct: true,
-			wantReply: []string{"Decision recorded by @clubanderson", "changes requested", prDecisionHeadMarkerLine(liveDecisionHead, prDecisionChangesRequested)},
+			name: "approve with rationale → approve", body: instructions,
+			wantMode: "approve", wantKind: review.HumanChangeRequestKindApprove,
+			wantReply: []string{"Approval recorded by @clubanderson", "merge path", prDecisionHeadMarkerLine(liveDecisionHead, prDecisionApprove)},
 		},
 		{
 			name: "bare approve → approve", body: "/hive decision approve",
@@ -186,6 +184,10 @@ func TestSweepIssueUnparkCommandsDecisionApproveModes(t *testing.T) {
 			req, ok := store.For("org/repo", liveDecisionPR, liveDecisionHead)
 			if !ok || req.Kind != tc.wantKind || req.Actor != "clubanderson" {
 				t.Fatalf("recorded = %+v, %v", req, ok)
+			}
+			parsed, _ := parseUnparkCommand(tc.body)
+			if req.Body != parsed.DecisionText() {
+				t.Fatalf("recorded text = %q, want %q", req.Body, parsed.DecisionText())
 			}
 			if tc.wantInstruct {
 				for _, want := range []string{"1. Change `Closes #14605` to `Refs #14605`.", "2. Keep #14605 open.", "3. Merge on green."} {
@@ -389,8 +391,8 @@ func TestSweepIssueUnparkCommandsPRIgnoresUntrustedAndUnparked(t *testing.T) {
 			wantSeen:    1,
 		},
 		{
-			name:        "PR not at 085 is not read",
-			issue:       parkedPR(5, "hive[bot]", []string{"stage/070-fixing"}, humanComment(1, "clubanderson", "/hive decision do it")),
+			name:        "PR outside 070 and 085 is not read",
+			issue:       parkedPR(5, "hive[bot]", []string{"stage/060-reviewed"}, humanComment(1, "clubanderson", "/hive decision do it")),
 			permissions: map[string]string{"clubanderson": "admin"},
 			trusted:     trustedMergerSet("clubanderson"),
 		},
@@ -533,5 +535,49 @@ func TestSweepIssueUnparkCommandsIgnoresHiveSelfDecision(t *testing.T) {
 	}
 	if len(result3.PRDecisions) != 1 || result3.PRDecisions[0].Decision != liveDecisionText {
 		t.Fatalf("real maintainer decision not recorded: %+v", result3)
+	}
+}
+
+func TestDecisionApprovalReleasesFixingWithoutNewHead(t *testing.T) {
+	issue := parkedPR(liveDecisionPR, "hive[bot]", []string{"stage/070-fixing", "author/hive"}, humanComment(4243, "clubanderson", "/hive decision approve — the body change is applied"))
+	c, _ := newUnparkPRClient(t, []unparkWireIssue{issue}, map[string]string{"clubanderson": "admin"})
+	store := review.NewHumanChangeRequests("")
+	if err := store.Record(review.HumanChangeRequest{Repo: "org/repo", Number: liveDecisionPR, HeadSHA: liveDecisionHead, Source: review.HumanChangeRequestSourceDecision, SourceID: 4242, Actor: "clubanderson", Body: "change the PR body"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("clubanderson")})
+	if err != nil || len(result.PRDecisions) != 1 || result.PRDecisions[0].Mode != "approve" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if review.HumanChangeRequestFor(store, "org/repo", liveDecisionPR, liveDecisionHead) != nil {
+		t.Fatal("standing change request still schedules a fix")
+	}
+	facts := prDecisionFacts(t, c)
+	if len(facts) != 1 || facts[0].Instruction || facts[0].Head != liveDecisionHead {
+		t.Fatalf("stage facts=%+v", facts)
+	}
+}
+
+func TestDecisionApprovalFirstWord(t *testing.T) {
+	for _, tc := range []struct {
+		text    string
+		approve bool
+	}{
+		{"approve because the metadata fix is applied", true},
+		{"APPROVED: rationale on the next line\nCI is green", true},
+		{"lgtm the decision is satisfied", true},
+		{"yes", true},
+		{"yes.", true},
+		{"approve, the body change is applied", true},
+		{"lgtm; ship it", true},
+		{"yes, but rename the flag to --foo first", false},
+		{"do not approve this", false},
+		{"approve-later", false},
+		{"change the body, then approve", false},
+	} {
+		cmd, ok := parseUnparkCommand("/hive decision " + tc.text)
+		if !ok || cmd.Approval() != tc.approve {
+			t.Errorf("%q: %+v", tc.text, cmd)
+		}
 	}
 }

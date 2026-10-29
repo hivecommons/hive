@@ -21,7 +21,24 @@ func (f *fakeScopeReader) ScopeContractIssue(_ context.Context, id string) (work
 	return f.issue, f.err
 }
 
+// isolateReviewScopeFailures gives each test a fresh failure cache, including
+// repeated runs in the same process. These tests must not run in parallel
+// because reviewScopeFailures is process-global.
+func isolateReviewScopeFailures(t *testing.T) {
+	t.Helper()
+	reviewScopeFailures.mu.Lock()
+	saved := reviewScopeFailures.at
+	reviewScopeFailures.at = nil
+	reviewScopeFailures.mu.Unlock()
+	t.Cleanup(func() {
+		reviewScopeFailures.mu.Lock()
+		reviewScopeFailures.at = saved
+		reviewScopeFailures.mu.Unlock()
+	})
+}
+
 func TestReviewScopeContractForLinear(t *testing.T) {
+	isolateReviewScopeFailures(t)
 	reader := &fakeScopeReader{issue: worksource.LinearScopeIssue{Identifier: "ONB-3872", State: "In Progress", Text: "ONB-3872: Onboarding"}}
 	item := review.PullRequest{Repo: "r", Number: 1, ScopeContract: "linked Linear issue ONB-3872"}
 	reviewScopeContractFor(context.Background(), reader, &item, restoreTestLogger())
@@ -34,6 +51,7 @@ func TestReviewScopeContractForLinear(t *testing.T) {
 }
 
 func TestReviewScopeContractForSkipsAndFailures(t *testing.T) {
+	isolateReviewScopeFailures(t)
 	reader := &fakeScopeReader{issue: worksource.LinearScopeIssue{Text: "x"}}
 	gh := review.PullRequest{ScopeContract: "linked issue o/r#1 from the PR closing keyword"}
 	reviewScopeContractFor(context.Background(), reader, &gh, restoreTestLogger())
@@ -44,6 +62,9 @@ func TestReviewScopeContractForSkipsAndFailures(t *testing.T) {
 	failing := &fakeScopeReader{err: errors.New("boom")}
 	item := review.PullRequest{ScopeContract: "linked Linear issue ONB-3872"}
 	reviewScopeContractFor(context.Background(), failing, &item, restoreTestLogger())
+	if len(failing.asked) != 1 || failing.asked[0] != "ONB-3872" {
+		t.Fatalf("asked = %v, want one failed fetch for ONB-3872", failing.asked)
+	}
 	if item.ScopeContractText != "" {
 		t.Fatalf("failed fetch left text %q", item.ScopeContractText)
 	}
@@ -52,6 +73,7 @@ func TestReviewScopeContractForSkipsAndFailures(t *testing.T) {
 }
 
 func TestReviewScopeContractForCachesFailures(t *testing.T) {
+	isolateReviewScopeFailures(t)
 	failing := &fakeScopeReader{err: errors.New("boom")}
 	item := review.PullRequest{ScopeContract: "linked Linear issue ZZZ-1"}
 	reviewScopeContractFor(context.Background(), failing, &item, restoreTestLogger())

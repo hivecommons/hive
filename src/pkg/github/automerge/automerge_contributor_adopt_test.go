@@ -77,6 +77,14 @@ type adoptAPI struct {
 	// marker scan, hivecommons/hive#15052); commentReads counts the calls.
 	issueComments map[int][]map[string]any
 	commentReads  int
+	// mergeStatus, when non-zero, is the status POST merges answers (the
+	// supersede replay onto the base); merges records base←head pairs;
+	// deletedRefs records DELETE git/refs targets.
+	mergeStatus int
+	merges      []string
+	deletedRefs []string
+	// failComments makes POST issues/n/comments answer 500.
+	failComments bool
 }
 
 type adoptCommit struct {
@@ -150,6 +158,31 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		a.refs[body.Ref] = body.SHA
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ref": body.Ref, "object": map[string]string{"sha": body.SHA}})
+		return true
+	case r.Method == http.MethodPost && a.failComments && strings.HasSuffix(path, "/comments"):
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+		return true
+	case r.Method == http.MethodPost && path == "/repos/acme/widget/merges":
+		var body struct {
+			Base string `json:"base"`
+			Head string `json:"head"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.merges = append(a.merges, body.Base+"<-"+body.Head)
+		if a.mergeStatus != 0 {
+			w.WriteHeader(a.mergeStatus)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Merge conflict"})
+			return true
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": "merged" + body.Base})
+		return true
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/repos/acme/widget/git/refs/"):
+		ref := "refs/" + strings.TrimPrefix(path, "/repos/acme/widget/git/refs/")
+		delete(a.refs, ref)
+		a.deletedRefs = append(a.deletedRefs, ref)
+		w.WriteHeader(http.StatusNoContent)
 		return true
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/git/ref/"):
 		ref := "refs/" + strings.TrimPrefix(path, "/repos/acme/widget/git/ref/")
@@ -419,6 +452,23 @@ func (h *adoptHarness) observe(pr *gh.PullRequest, reason string) StageLabelResu
 	h.adopt.mu.Unlock()
 	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
 	h.e.noteStageRole("acme", "widget", pr.GetNumber(), stagelabels.RoleContributor)
+	res, err := h.e.ApplyStageLabels(context.Background())
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return res
+}
+
+// observeSelf is observe through the self-authored sweep's recordStage:
+// the lane the trusted-bot hand-off (github-actions and friends) and the
+// App's own PRs are observed under.
+func (h *adoptHarness) observeSelf(pr *gh.PullRequest, reason string) StageLabelResult {
+	h.t.Helper()
+	h.adopt.mu.Lock()
+	h.adopt.heads[pr.GetNumber()] = pr.GetHead().GetSHA()
+	h.adopt.mu.Unlock()
+	h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, reason, false, nil)
+	h.e.noteStageRole("acme", "widget", pr.GetNumber(), stagelabels.RoleTrusted)
 	res, err := h.e.ApplyStageLabels(context.Background())
 	if err != nil {
 		h.t.Fatal(err)
@@ -2389,5 +2439,283 @@ func TestAdoptionRestagesNeedsDecisionInSamePass(t *testing.T) {
 	}
 	if len(fake.resolved) != 1 || fake.resolved[0] != 7 {
 		t.Fatalf("nudge queue not resolved in the adopting pass: %v", fake.resolved)
+	}
+}
+
+// botAdoptPR is adoptPR authored by github-actions[bot] on a same-repo
+// bot/ branch — hivecommons/docs#500's shape.
+func botAdoptPR(number int, head string, labels ...string) *gh.PullRequest {
+	pr := adoptPR(number, head, labels...)
+	pr.User = &gh.User{Login: gh.Ptr("github-actions[bot]"), Type: gh.Ptr("Bot")}
+	pr.Head.Ref = gh.Ptr("bot/hive-docs-refresh")
+	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("acme/widget")}
+	pr.Body = gh.Ptr("Automated docs refresh.\n")
+	return pr
+}
+
+// A delegated supersede of a trusted-bot PR (github-actions) is executed:
+// the self-authored sweep observes those PRs, and the executor used to
+// return silently on that lane with nothing logged, no attempt recorded and
+// the request label kept forever (hivecommons/docs#500 waited 15h).
+func TestDelegatedSupersedeExecutesForBotAuthorOnSelfLane(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	labels := []string{"stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede}
+	h.observeSelf(botAdoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 || h.adopt.refs["refs/heads/hive/adopt-7"] != "aaa" {
+		t.Fatalf("supersede not executed for a bot author: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+	if h.adopt.permissionReads != 0 {
+		t.Fatalf("permission of an App installation was read %d times", h.adopt.permissionReads)
+	}
+	key := stageKey("acme", "widget", 7)
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if !rec.Adopted("aaa") || rec.AdoptedBy != 90 || rec.AdoptMode != stagelabels.AdoptModeSupersede {
+		t.Fatalf("adoption not recorded: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept after the supersede: removed=%v", h.api.removed)
+	}
+	if len(adoptionComments(h.api)) != 1 {
+		t.Fatalf("adoption comments = %v", h.api.comments)
+	}
+	h.api.reset()
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/trusted"), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("duplicate supersede: %v", h.adopt.pulls)
+	}
+}
+
+// The request label is the durable decision: a hive restarted after the
+// label was applied (fresh store, record without an attempt) executes on
+// its first sweep.
+func TestDelegatedSupersedeExecutesOnFirstSweepAfterRestart(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	// The record a previous process left: observed, never attempted.
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	store.Observe(key, stagelabels.Fixing, "conflicting")
+	store.NoteAuthor(key, "github-actions[bot]")
+	if rec, _ := store.Get(key); rec.AdoptedHead != "" || !rec.AdoptedAt.IsZero() {
+		t.Fatalf("precondition: %+v", rec)
+	}
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	rec, _ := store.Get(key)
+	if len(h.adopt.pulls) != 1 || !rec.Adopted("aaa") || rec.AdoptedBy != 90 {
+		t.Fatalf("restart sweep did not execute: pulls=%v rec=%+v", h.adopt.pulls, rec)
+	}
+}
+
+// A head red on a conflict is replayed onto the base before the copy opens;
+// when that replay conflicts the hive posts one note naming the failure,
+// records the request as consumed (label cleared, no live adoption) and
+// the PR keeps its fixing stage with reason supersede-conflict instead of a
+// 30-minute promise nothing keeps.
+func TestDelegatedSupersedeConflictingReplayNotesOnceAndStagesFixing(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.adopt.mergeStatus = http.StatusConflict
+	labels := []string{"stage/070-fixing", "role/trusted", "needs-rebase", delegatedecision.LabelAdoptSupersede}
+	h.observeSelf(botAdoptPR(7, "aaa", labels...), "conflicting")
+	if len(h.adopt.merges) != 1 || h.adopt.merges[0] != "hive/adopt-7<-v5" {
+		t.Fatalf("base not replayed onto the hive branch: %v", h.adopt.merges)
+	}
+	if len(h.adopt.pulls) != 0 {
+		t.Fatalf("conflicting copy opened: %v", h.adopt.pulls)
+	}
+	if _, kept := h.adopt.refs["refs/heads/hive/adopt-7"]; kept || !slices.Contains(h.adopt.deletedRefs, "refs/heads/hive/adopt-7") {
+		t.Fatalf("conflicting hive branch left behind: refs=%v deleted=%v", h.adopt.refs, h.adopt.deletedRefs)
+	}
+	var notes []string
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionSupersedeConflictMarker) {
+			notes = append(notes, c)
+		}
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "`v5`") || !strings.Contains(notes[0], stagelabels.AdoptBlockedSupersedeConflict) {
+		t.Fatalf("conflict notes = %v", h.api.comments)
+	}
+	key := stageKey("acme", "widget", 7)
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.AdoptionLive("aaa") || rec.AdoptedBy != 0 || rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedSupersedeConflict {
+		t.Fatalf("conflict not recorded as a consumed request without a live adoption: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept: removed=%v", h.api.removed)
+	}
+
+	// Next sweep: no retry, no second note, fixing stage with the reason.
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", "needs-rebase"), "conflicting")
+	if len(h.adopt.merges) != 1 || len(h.adopt.pulls) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("retried after a conflict: merges=%v pulls=%v comments=%v", h.adopt.merges, h.adopt.pulls, h.api.comments)
+	}
+	rec, _ = h.e.stageStoreOrShared().Get(key)
+	if rec.Stage != stagelabels.Fixing || rec.Reason != stagelabels.AdoptBlockedSupersedeConflict {
+		t.Fatalf("stage after conflict = %s reason %q, want %s/%s", rec.Stage, rec.Reason, stagelabels.Fixing, stagelabels.AdoptBlockedSupersedeConflict)
+	}
+
+	// A new head is a new attempt: the owner may ask again.
+	h.adopt.mergeStatus = 0
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observeSelf(botAdoptPR(7, "bbb", "stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("new head not superseded: %v", h.adopt.pulls)
+	}
+}
+
+// A clean replay (base merges into the hive branch) opens the copy.
+func TestDelegatedSupersedeReplaysBaseBeforeOpeningCopy(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", "needs-rebase", delegatedecision.LabelAdoptSupersede), "conflicting")
+	if len(h.adopt.merges) != 1 || len(h.adopt.pulls) != 1 {
+		t.Fatalf("merges=%v pulls=%v", h.adopt.merges, h.adopt.pulls)
+	}
+	// A green head is not replayed at all.
+	h2, done2 := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done2()
+	h2.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	if len(h2.adopt.merges) != 0 || len(h2.adopt.pulls) != 1 {
+		t.Fatalf("green head replayed: merges=%v pulls=%v", h2.adopt.merges, h2.adopt.pulls)
+	}
+}
+
+// The App's own PR has no contributor branch to re-home: the request is
+// consumed with one note per head and the label cleared, not a silent
+// no-op every sweep.
+func TestDelegatedSupersedeOfAppPRIsRefusedOnce(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	pr := adoptPR(7, "aaa", "stage/070-fixing", delegatedecision.LabelAdoptSupersede)
+	pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+	h.observeSelf(pr, "check-failing:unit")
+	var notes int
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionSelfRefusedMarker) {
+			notes++
+		}
+	}
+	key := stageKey("acme", "widget", 7)
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || notes != 1 || rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedSelfAuthored {
+		t.Fatalf("pulls=%v refs=%v notes=%d rec=%+v", h.adopt.pulls, h.adopt.refs, notes, rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept: removed=%v", h.api.removed)
+	}
+	// The label still on (a slow removal) re-clears without a second note;
+	// once off, the sweep is quiet.
+	h.api.reset()
+	h.observeSelf(pr, "check-failing:unit")
+	if len(h.api.comments) != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("refusal repeated: comments=%v pulls=%v", h.api.comments, h.adopt.pulls)
+	}
+	h.api.reset()
+	pr = adoptPR(7, "aaa", "stage/070-fixing")
+	pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+	h.observeSelf(pr, "check-failing:unit")
+	if len(h.api.comments) != 0 || len(h.api.removed) != 0 {
+		t.Fatalf("not quiet after the request cleared: comments=%v removed=%v", h.api.comments, h.api.removed)
+	}
+}
+
+// Without the request label the self-authored lane stays out of the
+// adoption machinery, and under maintainer_policy: never a bot author is
+// not looked up as a collaborator (the read would 404 and defer forever).
+func TestDelegatedSupersedeSelfLaneGuards(t *testing.T) {
+	policy := adoptPolicy()
+	policy.AdoptionMaintainerPolicy = "never"
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted"), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || len(h.api.comments) != 0 {
+		t.Fatalf("unrequested self-lane PR adopted: pulls=%v comments=%v", h.adopt.pulls, h.api.comments)
+	}
+	h.observeSelf(botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 || h.adopt.permissionReads != 0 {
+		t.Fatalf("pulls=%v permissionReads=%d", h.adopt.pulls, h.adopt.permissionReads)
+	}
+}
+
+// Replay and note failures surface as sweep errors with the attempt
+// recorded, so a broken API neither loops nor hides.
+func TestDelegatedSupersedeReplayFailuresSurface(t *testing.T) {
+	t.Run("replay api error", func(t *testing.T) {
+		h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+		defer done()
+		h.adopt.mergeStatus = http.StatusInternalServerError
+		pr := botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", "needs-rebase", delegatedecision.LabelAdoptSupersede)
+		h.adopt.mu.Lock()
+		h.adopt.heads[7] = "aaa"
+		h.adopt.mu.Unlock()
+		h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "conflicting", false, nil)
+		h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleTrusted)
+		if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+			t.Fatal("replay failure not surfaced")
+		}
+		rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+		if len(h.adopt.pulls) != 0 || !rec.Adopted("aaa") || rec.AdoptedBy != 0 || !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+			t.Fatalf("pulls=%v rec=%+v removed=%v", h.adopt.pulls, rec, h.api.removed)
+		}
+	})
+	t.Run("conflict note error", func(t *testing.T) {
+		h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+		defer done()
+		h.adopt.mergeStatus = http.StatusConflict
+		h.adopt.failComments = true
+		pr := botAdoptPR(7, "aaa", "stage/070-fixing", "role/trusted", "needs-rebase", delegatedecision.LabelAdoptSupersede)
+		h.adopt.mu.Lock()
+		h.adopt.heads[7] = "aaa"
+		h.adopt.mu.Unlock()
+		h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "conflicting", false, nil)
+		h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleTrusted)
+		if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+			t.Fatal("note failure not surfaced")
+		}
+		rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+		if rec.AdoptionBlocked("aaa") != stagelabels.AdoptBlockedSupersedeConflict || len(h.adopt.pulls) != 0 {
+			t.Fatalf("rec=%+v pulls=%v", rec, h.adopt.pulls)
+		}
+	})
+	t.Run("self refusal note error", func(t *testing.T) {
+		h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+		defer done()
+		h.adopt.failComments = true
+		pr := adoptPR(7, "aaa", "stage/070-fixing", delegatedecision.LabelAdoptSupersede)
+		pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+		h.adopt.mu.Lock()
+		h.adopt.heads[7] = "aaa"
+		h.adopt.mu.Unlock()
+		h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "check-failing:unit", false, nil)
+		h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleTrusted)
+		if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+			t.Fatal("note failure not surfaced")
+		}
+		rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+		if rec.AdoptionBlocked("aaa") != "" || slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+			t.Fatalf("refusal recorded without its note: rec=%+v removed=%v", rec, h.api.removed)
+		}
+	})
+}
+
+func TestAdoptionSupersedeConflictCommentListsFiles(t *testing.T) {
+	obs := stageObservation{HeadSHA: "abcdef0123456789", BaseRef: "v5"}
+	body := AdoptionSupersedeConflictComment(obs, "hive/adopt-7", []string{"docs/a.md", "docs/b.md"})
+	for _, want := range []string{AdoptionSupersedeConflictMarker + " head=abcdef0123456789 -->", "`abcdef012345`", "- `docs/a.md`", "- `docs/b.md`", "Files changed on both sides", "`supersede-conflict`"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(AdoptionSupersedeConflictComment(obs, "hive/adopt-7", nil), "both sides") {
+		t.Fatal("empty file list rendered")
 	}
 }

@@ -32,15 +32,21 @@ var ErrRateLimitCaution = errors.New("github rate-limit caution window engaged: 
 // actionable snapshot, so both can be patched without re-enumerating the
 // repository.
 type WebhookItemSnapshot struct {
-	Repo           string    `json:"repo"`
-	Number         int       `json:"number"`
-	IsPR           bool      `json:"is_pr"`
-	Title          string    `json:"title"`
-	Author         string    `json:"author,omitempty"`
-	Labels         []string  `json:"labels"`
-	Draft          bool      `json:"draft,omitempty"`
-	State          string    `json:"state"`
-	Merged         bool      `json:"merged,omitempty"`
+	Repo   string   `json:"repo"`
+	Number int      `json:"number"`
+	IsPR   bool     `json:"is_pr"`
+	Title  string   `json:"title"`
+	Author string   `json:"author,omitempty"`
+	Labels []string `json:"labels"`
+	Draft  bool     `json:"draft,omitempty"`
+	State  string   `json:"state"`
+	Merged bool     `json:"merged,omitempty"`
+	// MergedAt and MergedBy are GitHub's merge instant and merger login for
+	// a merged PR; MergedByHive is true when that login is the hive's own
+	// identity or App bot (the dashboard's merged ledger reads all three).
+	MergedAt       time.Time `json:"merged_at,omitzero"`
+	MergedBy       string    `json:"merged_by,omitempty"`
+	MergedByHive   bool      `json:"merged_by_hive,omitempty"`
 	UpdatedAt      time.Time `json:"updated_at,omitzero"`
 	URL            string    `json:"url,omitempty"`
 	AppAuthored    bool      `json:"app_authored,omitempty"`
@@ -109,6 +115,11 @@ func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, numb
 		snap.Draft = pr.GetDraft()
 		snap.State = pr.GetState()
 		snap.Merged = pr.GetMerged() || !pr.GetMergedAt().IsZero()
+		if snap.Merged {
+			snap.MergedAt = pr.GetMergedAt().Time
+			snap.MergedBy = safeGetLogin(pr.GetMergedBy())
+			snap.MergedByHive = prTerminalMergeAttribution(snap.MergedBy, c.getHiveIdentity(), c.appBotLogin) == PRMergeAttributionHive
+		}
 		snap.UpdatedAt = pr.GetUpdatedAt().Time
 		snap.URL = pr.GetHTMLURL()
 		snap.HeadSHA = prHeadSHA(pr)

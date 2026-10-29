@@ -143,6 +143,11 @@ jobs:
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+      # Fill GOMODCACHE up front with bounded retries so a transient
+      # proxy.golang.org stream reset (INTERNAL_ERROR, #14976) cannot fail the
+      # job's first module-fetching step; see .github/actions/go-mod-download-retry.
+      - name: Download Go modules (retry transient proxy resets)
+        uses: ./.github/actions/go-mod-download-retry
 
       # Warm compile cache (#7480 follow-up): the warm-build-cache job on every
       # v4 push compiles the whole tree (race + norace) and saves GOCACHE keyed

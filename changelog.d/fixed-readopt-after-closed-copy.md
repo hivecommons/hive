@@ -1,0 +1,1 @@
+- When hive closed its own copy of an adopted PR, re-adopting it now opens a fresh copy instead of being mistaken for the earlier adoption and undone, and a recorded copy that is still open is reused ([#15204](https://github.com/hivecommons/hive/issues/15204)).

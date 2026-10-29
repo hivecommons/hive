@@ -1,0 +1,1 @@
+- Inception ignores echoed clarification-question placeholders, including kick-template instructions, and waits for real questions before advancing to clarification ([#15153](https://github.com/hivecommons/hive/issues/15153)).

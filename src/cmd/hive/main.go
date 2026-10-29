@@ -1475,6 +1475,7 @@ func (b *boot) wireBootClosures() {
 			ReviewerAutoscaleStatus: func() autoscale.Status { return reviewerAutoscaler.Status() },
 			ReviewEvents:            b.reviewEvents,
 			WebhookWake:             b.webhookWakeFunc(),
+			SweepNudge:              b.sweepNudgeFunc(),
 			ApplyWebhookItems:       b.applyWebhookItemsFunc(),
 			WebhookDelivery:         b.webhookDeliveryFunc(),
 			EvalLoop:                b.evalLoopStatusFunc(),
@@ -2547,7 +2548,6 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// auto_merge.trusted_bot_authors takes effect without a restart.
 	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
 	autoMergeOpts.BotTakeoverEnabled = func() bool { return b.cfg.AutoMerge.BotTakeover.IsEnabled() }
-	autoMergeOpts.MergeTrainEnabled = func() bool { return b.cfg.AutoMerge.MergeTrain.IsEnabled() }
 	// Intent tier gate (#6258): the human lane only queues PRs that
 	// survive writeMergeEligible's intent check, but this sweep lists
 	// the App's PRs on its own, so it carries the same policy (same
@@ -2570,6 +2570,15 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	autoMergeOpts.MergeForwardTrustedHuman = func(repo string) bool {
 		return b.cfg != nil && b.cfg.AutoMerge.MergeForwardTrustedHumanFor(repo)
+	}
+	// Merge train (#15117): read live so a reload applies. RebaseResolver
+	// stays nil until the rebase-then-merge follow-through (#15104) lands
+	// and is wired here; a conflicting front then keeps its conflicting path.
+	autoMergeOpts.MergeTrain = func() automerge.MergeTrainPolicy {
+		if b.cfg == nil {
+			return automerge.DefaultMergeTrainPolicy
+		}
+		return automerge.MergeTrainPolicy{Enabled: b.cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: b.cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
 	}
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
 		laneGate := relayLanePolicyGate(autoMergeOpts)(client)
@@ -9409,7 +9418,9 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 		opts.MergeForwardTrustedHuman = func(repo string) bool { return cfg.AutoMerge.MergeForwardTrustedHumanFor(repo) }
-		opts.MergeTrainEnabled = func() bool { return cfg.AutoMerge.MergeTrain.IsEnabled() }
+		opts.MergeTrain = func() automerge.MergeTrainPolicy {
+			return automerge.MergeTrainPolicy{Enabled: cfg.AutoMerge.MergeTrain.IsEnabled(), MaxRebaseAttempts: cfg.AutoMerge.MergeTrain.EffectiveMaxRebaseAttempts()}
+		}
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	}
 	audit := func(event automerge.AutoMergeSweepEvent) {
@@ -11026,6 +11037,12 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 	}
 	for _, f := range plan.ForcedFixes {
 		logger.Warn("review fix forced: changes_requested head starved by the revisit path", "repo", f.Repo, "pr", f.Number, "head", f.HeadSHA, "reason", f.Reason, "cycles", f.Cycles, "limit", review.RevisitStarvationCycles)
+	}
+	for _, w := range plan.Promoted {
+		logger.Warn("review dispatch promoted: head starved of a reviewer walked ahead of the queue", "repo", w.Repo, "pr", w.Number, "head", w.HeadSHA, "reason", w.Reason, "cycles", w.Cycles, "since", w.FirstAt, "limit", review.ReviewWaitStarvationCycles)
+	}
+	for _, w := range plan.Waiting {
+		logger.Info("review dispatch waiting: perspectives still owed, no reviewer this cycle", "repo", w.Repo, "pr", w.Number, "head", w.HeadSHA, "reason", w.Reason)
 	}
 	if len(plan.ReviewKicks)+len(plan.FixKicks)+len(plan.FixExclusions) > 0 {
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks), "fix_excluded", len(plan.FixExclusions), "fix_excluded_reasons", fixExclusionReasonSummary(plan.FixExclusions))

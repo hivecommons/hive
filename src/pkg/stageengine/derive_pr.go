@@ -285,6 +285,9 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 			obs.Reason = pass.EscalationReason
 		}
 	}
+	if !verdict.Terminal && pass.AdoptionRefusedReason != "" && verdict.Stage == FixingStage(obs) {
+		obs.Reason = pass.AdoptionRefusedReason
+	}
 	d := Decision{
 		Stage:      verdict.Stage,
 		Role:       role,

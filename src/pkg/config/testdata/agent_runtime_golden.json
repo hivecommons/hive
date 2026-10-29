@@ -383,6 +383,7 @@
       "StallThresholdS": 0,
       "MaxReplans": 0
     },
+    "reroute": {},
     "AttributionTrailer": null,
     "first_timer_welcome": {},
     "advisory": {
