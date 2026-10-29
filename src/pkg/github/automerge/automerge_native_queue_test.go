@@ -16,6 +16,7 @@ type nativeQueueFake struct {
 	Transport
 	state               hgithub.NativeMergeQueueState
 	readErr, enqueueErr error
+	methodErr           error
 	enqueues, dequeues  int
 	methodReads         int
 	expectedHead        string
@@ -246,7 +247,27 @@ func TestNativeQueuePauseWithdrawsOwnEntry(t *testing.T) {
 
 func (f *nativeQueueFake) NativeMergeQueueMethod(context.Context, string, string) (string, error) {
 	f.methodReads++
+	if f.methodErr != nil {
+		return "", f.methodErr
+	}
 	return "SQUASH", nil
+}
+
+// A failure to read the queue's merge method is a read failure, not a
+// merge-method refusal: it must keep the PR at stage/100 and must not be
+// remembered as a refusal for the head.
+func TestNativeQueueMethodReadFailureIsReadReason(t *testing.T) {
+	c, f, pr, claim := nativeQueueEngine()
+	claim.Inputs["method_reason"] = mergeMethodReasonMixedAuthorship
+	f.methodErr = errors.New("graphql: timeout")
+	reason, err := c.tryNativeQueue(context.Background(), pr, claim)
+	if reason != nativeQueueReasonRead || err == nil || f.enqueues != 0 {
+		t.Fatalf("reason=%q error=%v enqueues=%d, want %q with error", reason, err, f.enqueues, nativeQueueReasonRead)
+	}
+	f.methodErr = nil
+	if reason, _ := c.tryNativeQueue(context.Background(), pr, claim); reason != nativeQueueReasonMethod || f.methodReads != 2 {
+		t.Fatalf("after read failure: reason=%q method reads=%d, want a re-read reporting %q", reason, f.methodReads, nativeQueueReasonMethod)
+	}
 }
 
 func TestNativeQueuePreservesMixedAuthorshipGate(t *testing.T) {

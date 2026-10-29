@@ -76,7 +76,9 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 		}
 		method, err := t.NativeMergeQueueMethod(ctx, state.ID, pr.GetBase().GetRef())
 		if err != nil {
-			return nativeQueueReasonMethod, err
+			// A transient read failure is not a merge-method refusal; it
+			// must not park the PR at stage/085.
+			return nativeQueueReasonRead, err
 		}
 		if !strings.EqualFold(method, "MERGE") {
 			c.noteNativeQueueMethodRefusal(claim, state.HeadRefOid)

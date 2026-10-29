@@ -41,7 +41,8 @@ explanation: change the queue's merge method to `MERGE`, or merge it by hand.
 The refusal is remembered for 30 minutes per head, so the queue's method is
 not re-read every sweep; a new head or the recheck window reads it again.
 Read and enqueue failures (`native-merge-queue-read`, `-enqueue`) stay at
-`stage/100-merge-queue`.
+`stage/100-merge-queue`; a failure to read the queue's merge method is a
+read failure too, not a refusal, and is reported as `native-merge-queue-read`.
 
 Required workflows must subscribe to `merge_group` in addition to their PR
 triggers. Workflow-trigger diagnosis is not automatic in this implementation.
