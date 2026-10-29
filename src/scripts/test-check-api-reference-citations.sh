@@ -66,7 +66,7 @@ else
   echo "$output" | sed 's/^/      | /'
 fi
 
-if printf '%s\n' "$output" | grep -qF 'DRIFT doc:5 GET /api/widgets -> pkg/widget/routes.go:2'; then
+if printf '%s\n' "$output" | grep -qF "DRIFT ${DOC}:5 GET /api/widgets -> pkg/widget/routes.go:2"; then
   pass "drifted GET /api/widgets citation is reported"
 else
   bad "expected a DRIFT line for the GET /api/widgets citation"
@@ -127,6 +127,94 @@ if printf '%s\n' "$clean_output" | grep -qF 'all pkg/<file>:<line> references ve
   pass "success message is printed"
 else
   bad "expected the success message on a clean doc"
+fi
+
+# Case 4: the split layout is discovered by default and when the index is
+# explicitly supplied (as check-docs-citations.py --fix does). Keep an
+# unresolved area alphabetically first to exercise failure aggregation and
+# continuing repairs after errors. Also exercise nested directory traversal.
+AREAS="${FIXTURE_SRC}/docs/api-reference"
+mkdir -p "${AREAS}/nested"
+mv "$DOC" "${AREAS}/widgets.md"
+cat > "$DOC" <<'EOF'
+# API reference
+
+## Widgets
+
+[Routes](api-reference/widgets.md).
+EOF
+cat > "${AREAS}/a-unresolved.md" <<'EOF'
+| Method | Path | Auth | Purpose | Source |
+|---|---|---|---|---|
+| `GET` | `/api/missing` | Public | Missing | `pkg/widget/routes.go:99` |
+EOF
+cat > "${AREAS}/nested/drifted.md" <<'EOF'
+| Method | Path | Auth | Purpose | Source |
+|---|---|---|---|---|
+| `GET` | `/api/widgets` | Public | List | `pkg/widget/routes.go:99` |
+EOF
+# Deliberately old timestamps distinguish an untouched file from one that
+# was rewritten with identical contents, which would still cause churn.
+touch -t 200001010000 "$DOC" "${AREAS}/widgets.md"
+cp -p "$DOC" "${TMP}/index-before.md"
+cp -p "${AREAS}/widgets.md" "${TMP}/widgets-before.md"
+
+set +e
+split_output=$("$CHECKER" 2>&1)
+split_rc=$?
+set -e
+if [ "$split_rc" -ne 0 ] && printf '%s\n' "$split_output" | grep -qF 'nested/drifted.md:3 GET /api/widgets'; then
+  pass "default run finds drift in split and nested area files"
+else
+  bad "default run missed split reference drift"
+fi
+
+set +e
+split_fix_output=$("$CHECKER" --fix "$DOC" 2>&1)
+split_fix_rc=$?
+set -e
+if [ "$split_fix_rc" -ne 0 ] && printf '%s\n' "$split_fix_output" | grep -qF 'UNRESOLVED'; then
+  pass "explicit index preserves failures from unresolved areas"
+else
+  bad "explicit index lost unresolved area failures"
+fi
+if grep -qF 'pkg/widget/routes.go:5`' "${AREAS}/nested/drifted.md"; then
+  pass "--fix continues repairing later areas after an unresolved area"
+else
+  bad "--fix failed to repair a later area"
+fi
+if cmp -s "$DOC" "${TMP}/index-before.md" && [ ! "$DOC" -nt "${TMP}/index-before.md" ] &&
+   cmp -s "${AREAS}/widgets.md" "${TMP}/widgets-before.md" && [ ! "${AREAS}/widgets.md" -nt "${TMP}/widgets-before.md" ]; then
+  pass "--fix does not rewrite the index or an unaffected area"
+else
+  bad "--fix rewrote an unaffected file"
+fi
+
+# Explicit area scope ignores drift in unrelated siblings.
+if "$CHECKER" "${AREAS}/widgets.md" >/dev/null 2>&1; then
+  pass "explicit area scope checks only that file"
+else
+  bad "explicit area scope checked unrelated files"
+fi
+rm "${AREAS}/a-unresolved.md"
+if "$CHECKER" "$AREAS" >/dev/null 2>&1; then
+  pass "directory argument checks all remaining repaired areas"
+else
+  bad "directory argument failed on repaired areas"
+fi
+# Default --fix must reach area files too, while retaining the short index.
+sed -i.bak 's#pkg/widget/routes.go:5#pkg/widget/routes.go:99#' "${AREAS}/nested/drifted.md"
+rm -f "${AREAS}/nested/drifted.md.bak"
+if "$CHECKER" --fix >/dev/null 2>&1 && grep -qF 'pkg/widget/routes.go:5`' "${AREAS}/nested/drifted.md"; then
+  pass "default --fix repairs area citations"
+else
+  bad "default --fix missed area citations"
+fi
+mkdir "${TMP}/empty"
+if "$CHECKER" "${TMP}/empty" >/dev/null 2>&1; then
+  bad "empty reference directory must fail rather than silently pass"
+else
+  pass "empty reference directory fails"
 fi
 
 if [ "$fail" -ne 0 ]; then

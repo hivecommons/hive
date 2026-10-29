@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-api-reference-citations.sh — verify every `pkg/<file>:<line>` citation
-# in src/docs/api-reference.md still points at the route registration it
+# in src/docs/api-reference/*.md still points at the route registration it
 # names (hivecommons/hive#6628).
 #
 # The doc's Source column cites route-registration sites as `pkg/<file>:<line>`
@@ -25,7 +25,11 @@
 # `pkg/<file>:<line>` citations are checked or rewritten.
 #
 # Usage:
-#   src/scripts/check-api-reference-citations.sh [--fix] [doc-path]
+#   src/scripts/check-api-reference-citations.sh [--fix] [doc-or-directory-path]
+#
+# Defaults to the index and every Markdown file in its api-reference/ sibling
+# directory. A directory argument walks all Markdown files recursively; an area
+# file argument checks only that file. The legacy monolithic layout still works.
 #
 # Without --fix: prints every drifted citation and exits non-zero if any
 # citation does not verify.
@@ -62,11 +66,26 @@ done
 
 DOC="${DOC:-${SRC_ROOT}/docs/api-reference.md}"
 
-if [ ! -f "$DOC" ]; then
-  echo "cannot find api-reference doc at $DOC" >&2
+# Passing the index explicitly must also reach the split files (the general
+# docs citation repair tool and existing contributor commands do this).
+DOCS=()
+if [ -f "$DOC" ]; then
+  DOCS+=("$DOC")
+  if [ "$(basename -- "$DOC")" = api-reference.md ] && [ -d "${DOC%.md}" ]; then
+    while IFS= read -r -d '' part; do DOCS+=("$part"); done < <(find "${DOC%.md}" -type f -name '*.md' -print0 | sort -z)
+  fi
+elif [ -d "$DOC" ]; then
+  while IFS= read -r -d '' part; do DOCS+=("$part"); done < <(find "$DOC" -type f -name '*.md' -print0 | sort -z)
+fi
+if [ "${#DOCS[@]}" -eq 0 ]; then
+  echo "cannot find api-reference Markdown docs at $DOC" >&2
   exit 2
 fi
 
+# A subshell gives each area independent counters and failure status. Continue
+# after a failed area so --fix can still repair every other affected file.
+check_doc() (
+DOC="$1"
 # Extract one line per `pkg/<file>:<line>` citation found in a table row:
 #   <doc-line-number>\t<METHOD>\t</path>\t<cited-file>\t<cited-line>
 extract_citations() {
@@ -111,7 +130,7 @@ while IFS=$'\t' read -r doc_line method path cited_file cited_line; do
   needle="\"${method} ${path}\""
 
   if [ ! -f "$target" ]; then
-    echo "DRIFT doc:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (file does not exist)" >&2
+    echo "DRIFT ${DOC}:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (file does not exist)" >&2
     drifted=$((drifted + 1))
     unresolved=$((unresolved + 1))
     continue
@@ -151,7 +170,7 @@ while IFS=$'\t' read -r doc_line method path cited_file cited_line; do
   drifted=$((drifted + 1))
 
   if [ "$FIX" -eq 0 ]; then
-    echo "DRIFT doc:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (line does not register it)" >&2
+    echo "DRIFT ${DOC}:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (line does not register it)" >&2
     continue
   fi
 
@@ -159,7 +178,7 @@ while IFS=$'\t' read -r doc_line method path cited_file cited_line; do
   # once in the cited file.
   matches="$(grep -cF -- "$needle" "$target" | tr -d '[:space:]')"
   if [ "$matches" != "1" ]; then
-    echo "UNRESOLVED doc:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (found ${matches} exact matches in ${cited_file}, need exactly 1)" >&2
+    echo "UNRESOLVED ${DOC}:${doc_line} ${method} ${path} -> ${cited_file}:${cited_line} (found ${matches} exact matches in ${cited_file}, need exactly 1)" >&2
     unresolved=$((unresolved + 1))
     continue
   fi
@@ -181,7 +200,7 @@ while IFS=$'\t' read -r doc_line method path cited_file cited_line; do
     { print }
   ' "$DOC" > "${DOC}.tmp" && mv "${DOC}.tmp" "$DOC"
 
-  echo "FIXED doc:${doc_line} ${method} ${path} -> ${old_ref} => ${new_ref}"
+  echo "FIXED ${DOC}:${doc_line} ${method} ${path} -> ${old_ref} => ${new_ref}"
   resolved=$((resolved + 1))
 done < <(extract_citations)
 
@@ -198,3 +217,11 @@ fi
 
 echo "api-reference citations: ${drifted} drifted citation(s). Run with --fix to rewrite resolvable ones." >&2
 exit 1
+
+)
+
+status=0
+for doc in "${DOCS[@]}"; do
+  check_doc "$doc" || status=1
+done
+exit "$status"

@@ -15,8 +15,9 @@ Usage: src/scripts/check-docs-citations.py [--fix] [docs-dir]
 Generic docs citations verify existence/range, plus a lightweight content
 anchor when the citing line names a backticked symbol near the citation.
 
---fix first delegates api-reference.md to check-api-reference-citations.sh
---fix (route-registration aware), then re-anchors drifted generic citations by
+--fix first delegates the api-reference.md index and its api-reference/ areas
+to check-api-reference-citations.sh --fix (route-registration aware), then
+re-anchors drifted generic citations by
 Go declaration (#14713). A drifted citation is rewritten only when all of these
 hold, otherwise it is left untouched and still reported as DRIFT:
   - the cited file is a .go file;
