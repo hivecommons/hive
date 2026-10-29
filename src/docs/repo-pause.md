@@ -105,6 +105,9 @@ depends on an agent reading the kick and choosing to comply.
 | `hive-review` relay | Approvals, change requests and review comments are rejected before any GitHub call, quarantined as `.denied`, with the pause reason in their result files. |
 | Work enumeration | The repo contributes no actionable issues or PRs, so nothing downstream — kicks, claims, advisories, the contribute queue — can hand an agent work on it. |
 | Auto-merge sweeps | Both the queued (`lgtm`) and self-authored sweeps skip the repo. |
+| Advisory digest | The pinned `## 🐝 Advisory Digest` comment is neither edited nor re-created while the repo is paused. The governor logs `advisory digest skipped: repo paused` (with `by` and `reason`) once per `governor.advisory.update_interval_s`, records an `advisory_digest_suppressed` audit entry with `reason=repo-paused`, and does **not** count the cycle as a post. The first due cycle after resume posts normally. |
+| Write-back containment gate | Every periodic writer that asks `pkg/writeback` — sentinel, hold-gate upkeep, stage labels, needs-decision parks, supersession and duplicate-fix notices, reporter-trust holds, claim comments, welcome comments, issue filing — is refused with reason `repo-paused` **regardless of kind, ACMM level, per-repo mode or whether the item is the hive's own**. The refusal is recorded in the suppressed-writes drill-down (`GET /api/writeback/suppressed`) like any other. |
+| Other sweeps over `project.repos` | The duplicate-PR sweep, the closed-issue stage-label sweep and the hard-suppress reconcile iterate the *active* repo set, so a paused repo is never visited. |
 | Kick text | The repo is absent from `AUTHORIZED REPOS` and from `$HIVE_REPOS`, and is named separately as paused so an agent does not read the shorter list as scope loss. |
 
 The proxy and relay gates are both required, and neither is redundant. The proxy
@@ -126,7 +129,13 @@ unpaused repositories continue normally.
   elsewhere can still read the paused repo's issues.
 - **The hive's own control plane.** App-token minting, heartbeats and other
   hive-originated calls are exempt. Stopping them would take the whole spoke
-  down to quiet one repo.
+  down to quiet one repo. (Hive-originated *writes to the repo* — the advisory
+  digest, sweep comments and labels — are not control plane and **are**
+  stopped; see the table above.)
+- **Creating a pinned advisory issue where none exists yet.** A repo paused
+  before its first boot still gets its `🐝 Hive Advisory Report` issue
+  created once, because that lookup doubles as the App-access probe. The
+  digest comment on it is not written until the repo is resumed.
 - **Your own activity.** Pause governs agents. Humans push, review and merge on
   a paused repo exactly as before.
 - **GraphQL writes whose target repo is only in the request body.** Repo

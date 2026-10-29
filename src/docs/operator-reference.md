@@ -932,7 +932,11 @@ on — passes through one gate, `writeback.Allowed(repo, item, kind)` in
 `pkg/writeback`, before it reaches the GitHub client. The gate never blocks
 hive's own PRs and issues, replies to explicit `/hive …` commands, work the
 operator started from the dashboard, or agent kicks on items already
-labelled for hive. Below the gate the sweeps still *scan*: sentinel findings
+labelled for hive — with one exception: a repo under an operator pause
+([repo-pause.md](repo-pause.md)) refuses **every** kind, own items included,
+with reason `repo-paused`. The pause also silences the advisory digest
+(`advisory digest skipped: repo paused`, once per update interval), which is
+not a gate kind but a write all the same. Below the gate the sweeps still *scan*: sentinel findings
 appear in **Security → Suspicious Activity → Sentinel findings** and
 `/api/sentinel`, hold-gate mergeability notices become dashboard-only, and
 PR stage tracking continues from internal state with no `stage/*` label on

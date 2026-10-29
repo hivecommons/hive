@@ -366,6 +366,25 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	}
 	owner, repoName := c.splitRepo(repo)
 
+	// Repo pause (#6203) means NO hive write against the repo, and the digest
+	// is a write: an edit of the pinned comment, or a fresh comment when the
+	// pinned one is out of reach. It is checked before the unchanged-skip
+	// below so a paused repo never reaches the forge at all, and nothing
+	// about the process-memory hash state is touched, so the first cycle
+	// after the pause is lifted posts exactly as the first after boot does.
+	if perr, paused := c.repoPausedError(repo); paused {
+		c.logger.Info("advisory digest skipped: repo paused",
+			slog.String("repo", repo), slog.Int("issue", issueNum),
+			slog.String("by", perr.By), slog.String("reason", perr.Reason))
+		c.recordWriteAudit(AuditActionAdvisoryDigestSuppressed, InvocationMeta{Agent: AttributionAgentGovernor},
+			WriteTarget{Repo: owner + "/" + repoName, Number: issueNum},
+			"reason", "repo-paused",
+			"paused_by", perr.By,
+			"pause_reason", perr.Reason,
+			"flow", "advisory-digest")
+		return perr
+	}
+
 	// Canary-gated like CreateIssue/CreatePR/CreateIssueComment
 	// (kubestellar/hive#4960): the digest aggregates agent-sourced advisory
 	// finding text, so it is a secondary exfiltration channel that must honor

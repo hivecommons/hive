@@ -8103,6 +8103,9 @@ func runEvalCycle(
 					logger.Warn("GitHub App write failed — repository transferred to another owner",
 						"configured", moved.Configured, "current", moved.Current)
 				},
+				recordRepoPaused: func(repo string) {
+					recordAdvisoryPostSuccess(repo, time.Now())
+				},
 				recordWriteForbidden: func(repo string) {
 					backoff := advCfg.PostRetryBackoff()
 					recordAdvisoryPostForbidden(repo, time.Now(), backoff)
