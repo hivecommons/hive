@@ -23,7 +23,7 @@ func TestStageTrackerApplyDuplicateHold(t *testing.T) {
 	if it.MergeGate == nil || it.MergeGate.State != "duplicate-of:15402" || it.MergeGate.DuplicateOf != 15402 || it.MergeGate.DuplicateIssue != 15396 {
 		t.Fatalf("gate = %+v", it.MergeGate)
 	}
-	if it.MergeGate.Reason != "duplicate of #15402 for issue #15396; the merge queue carries one PR per issue — a person or the delegate picks one" {
+	if it.MergeGate.Reason != "duplicate of #15402 for issue #15396; superseded by #15402 — the merge queue carries one PR per issue; close it or let the delegate decide" {
 		t.Fatalf("reason = %q", it.MergeGate.Reason)
 	}
 	if !slices.Contains(it.Modifiers, modNeedsDecision) || !slices.Contains(it.Modifiers, modNeedsRebase) {
