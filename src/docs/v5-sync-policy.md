@@ -219,6 +219,20 @@ only one that can clear a commit that carries no trailer at all. Reach for the
 email allowlist only when the intent really is to accept an identity's alternate
 address going forward.
 
+Before reaching for either, check whether the checker can resolve the commit
+itself. A squash whose author is a GitHub noreply address
+(`<id>+<login>@users.noreply.github.com`) and whose sign-off is the same
+contributor's real address is accepted as `same-person-noreply` when the
+branch's history (last `DCO_SAME_PERSON_WINDOW` commits, default 500) carries
+local evidence of the link — the same name authored under the sign-off
+address before, or both identities appear on one earlier commit. Each
+acceptance is printed with the evidence commit; no GitHub API call is made.
+`DCO_SAME_PERSON_EVIDENCE_REFS` adds refs (for example a fetched
+`refs/pull/N/head`) to that search for a local check. Only a contributor's
+first such squash, which has no prior history, needs a waiver — and that
+waiver is reported `STALE-WAIVER` once their next commit under that address
+lands ([#15401](https://github.com/hivecommons/hive/issues/15401)).
+
 Neither instrument is silent. A waived commit is reported on every run as
 `WAIVED <sha> …` above the failures, the summary line counts waivers, and a
 green run carrying them says `passed (with recorded waivers)` rather than

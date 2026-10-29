@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Check recent protected-branch commits for a DCO trailer whose email matches
 # the commit author. GitHub noreply addresses are accepted only when the
-# GitHub commits API identifies the commit author as that exact login.
+# GitHub commits API identifies the commit author as that exact login. A
+# noreply AUTHOR (the shape GitHub's squash writes for a private-email PR
+# author) signed off under another address is accepted only when the branch's
+# own history supplies local evidence that the two identities are one person;
+# see same_person_noreply_evidence below (#15401).
 # Maintainer override identities can be supplied with DCO_ALLOWLIST_EMAILS, but
 # the default is intentionally empty so normal runs require the squash author's
 # own sign-off.
@@ -44,6 +48,8 @@ ref="${2:-${DCO_REF:-HEAD}}"
 allowlist_raw="${DCO_ALLOWLIST_EMAILS:-}"
 waived_raw="${DCO_WAIVED_COMMITS:-}"
 skip_bots="${DCO_SKIP_BOT_AUTHORS:-true}"
+same_person_window="${DCO_SAME_PERSON_WINDOW:-500}"
+same_person_extra_refs="${DCO_SAME_PERSON_EVIDENCE_REFS:-}"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -67,6 +73,13 @@ Environment:
   DCO_AUTHOR_LOGIN_MAP   Optional comma/space/newline-separated SHA=login map
                          used before the GitHub API, mainly for tests/offline
                          runs. Empty by default.
+  DCO_SAME_PERSON_WINDOW Number of commits of history searched for LOCAL evidence
+                         that a GitHub-noreply author and a differently-addressed
+                         sign-off are the same person (default: 500; 0 disables).
+  DCO_SAME_PERSON_EVIDENCE_REFS
+                         Optional extra refs (space-separated) whose history is
+                         searched for that evidence in addition to the inspected
+                         ref, e.g. a fetched refs/pull/N/head. Empty by default.
 USAGE
 }
 
@@ -78,6 +91,9 @@ if [ "$limit" -eq 0 ]; then
   usage
   exit 2
 fi
+case "$same_person_window" in
+  ''|*[!0-9]*) echo "DCO_SAME_PERSON_WINDOW must be a non-negative integer: $same_person_window" >&2; exit 2 ;;
+esac
 
 # `ref` may be a single commit-ish (the rolling-window form used by the hourly
 # monitor) or a two-dot RANGE like <before>..<after>. The range form exists for
@@ -113,6 +129,23 @@ case "$ref" in
     fi
     ;;
 esac
+
+# The history searched for same-person evidence is the inspected branch
+# itself (the tip of a range, or the ref), plus any refs the operator fetched
+# on purpose. In CI only the protected branch is checked out, so the default
+# is exactly the branch's own history and nothing a PR could smuggle in.
+case "$ref" in
+  *..*) evidence_tip="${ref##*..}" ;;
+  *)    evidence_tip="$ref" ;;
+esac
+evidence_refs="$evidence_tip"
+for extra_ref in $same_person_extra_refs; do
+  if ! git rev-parse --verify --quiet "${extra_ref}^{commit}" >/dev/null; then
+    echo "DCO_SAME_PERSON_EVIDENCE_REFS entry does not resolve to a commit: $extra_ref" >&2
+    exit 2
+  fi
+  evidence_refs="$evidence_refs $extra_ref"
+done
 
 email_allowed() {
   needle=$(printf '%s' "$1" | lower)
@@ -193,7 +226,84 @@ extract_signoff_emails() {
       }'
 }
 
+# same_person_noreply_evidence <sha> <author-name> <author-email-lc> <signoff-email-lc>
+#
+# GitHub's squash merge writes the PR author's GitHub identity on the landing
+# commit. For an account with a private email that is
+# `<id>+<login>@users.noreply.github.com`, while the Signed-off-by carried over
+# from the branch is the contributor's real address — the one the pre-merge DCO
+# app already accepted on the branch commits (#15401, 687c3cb0). The two
+# addresses belong to one person, but the trailer alone cannot show it.
+#
+# This looks for LOCAL evidence of the link, with no GitHub API call, in the
+# last DCO_SAME_PERSON_WINDOW commits reachable from the inspected branch (and
+# any DCO_SAME_PERSON_EVIDENCE_REFS). Accepts when another commit:
+#
+#   authored-under-signoff-email  was authored or committed under the sign-off
+#                                 address by the same name (case-insensitive) as
+#                                 this commit's author — the person has written
+#                                 to this repository under that address before;
+#   login-and-email-cooccur       has the sign-off address as author/committer
+#                                 AND names <login>'s noreply address in its own
+#                                 identities or Signed-off-by lines — the two
+#                                 identities are tied together on a commit that
+#                                 passed in the opposite orientation.
+#
+# A commit of the SAME shape as the one under test (noreply author, foreign
+# sign-off) is deliberately not evidence: repetition of the ambiguity is not a
+# resolution of it. Prints the evidence as `<kind>:<short-sha>` on success.
+same_person_noreply_evidence() {
+  sp_sha="$1"
+  sp_author_name_lc=$(printf '%s' "$2" | lower)
+  sp_author_lc="$3"
+  sp_signoff_lc="$4"
+
+  [ "$same_person_window" -gt 0 ] || return 1
+  sp_login=$(github_noreply_login "$sp_author_lc") || return 1
+  # A noreply sign-off is the login-lookup path's business, not this one's.
+  case "$sp_signoff_lc" in
+    *@users.noreply.github.com) return 1 ;;
+  esac
+  [ -n "$sp_author_name_lc" ] || return 1
+
+  # shellcheck disable=SC2086 # evidence_refs is a deliberate word list
+  while IFS=$'\x1f' read -r ev_sha ev_an ev_ae ev_cn ev_ce; do
+    [ -n "$ev_sha" ] || continue
+    [ "$ev_sha" != "$sp_sha" ] || continue
+    ev_ae_lc=$(printf '%s' "$ev_ae" | lower)
+    ev_ce_lc=$(printf '%s' "$ev_ce" | lower)
+    ev_an_lc=$(printf '%s' "$ev_an" | lower)
+    ev_cn_lc=$(printf '%s' "$ev_cn" | lower)
+
+    if { [ "$ev_ae_lc" = "$sp_signoff_lc" ] && [ "$ev_an_lc" = "$sp_author_name_lc" ]; } ||
+       { [ "$ev_ce_lc" = "$sp_signoff_lc" ] && [ "$ev_cn_lc" = "$sp_author_name_lc" ]; }; then
+      printf 'authored-under-signoff-email:%s' "$(git rev-parse --short "$ev_sha")"
+      return 0
+    fi
+
+    if [ "$ev_ae_lc" = "$sp_signoff_lc" ] || [ "$ev_ce_lc" = "$sp_signoff_lc" ]; then
+      if github_noreply_matches_login "$ev_ae_lc" "$sp_login" ||
+         github_noreply_matches_login "$ev_ce_lc" "$sp_login"; then
+        printf 'login-and-email-cooccur:%s' "$(git rev-parse --short "$ev_sha")"
+        return 0
+      fi
+      while IFS= read -r ev_signoff; do
+        [ -n "$ev_signoff" ] || continue
+        if github_noreply_matches_login "$ev_signoff" "$sp_login"; then
+          printf 'login-and-email-cooccur:%s' "$(git rev-parse --short "$ev_sha")"
+          return 0
+        fi
+      done <<EOF_EV_SIGNOFFS
+$(extract_signoff_emails "$ev_sha")
+EOF_EV_SIGNOFFS
+    fi
+  done < <(git log -n "$same_person_window" --format=$'%H\x1f%an\x1f%ae\x1f%cn\x1f%ce' $evidence_refs --)
+  return 1
+}
+
 failures=""
+same_person_report=""
+same_person_count=0
 waived_report=""
 waived_count=0
 stale_waivers=""
@@ -264,6 +374,20 @@ $signoff_emails
 EOF_SIGNOFFS
 
   if [ "$matched" -ne 1 ]; then
+    while IFS= read -r signoff_email; do
+      [ -n "$signoff_email" ] || continue
+      if evidence=$(same_person_noreply_evidence "$sha" "$author_name" "$author_lc" "$signoff_email"); then
+        matched=1
+        same_person_count=$((same_person_count + 1))
+        same_person_report="${same_person_report}same-person-noreply ${sha} author=${author_name} <${author_email}> signed-off-by=${signoff_email} evidence=${evidence}\n"
+        break
+      fi
+    done <<EOF_SAME_PERSON
+$signoff_emails
+EOF_SAME_PERSON
+  fi
+
+  if [ "$matched" -ne 1 ]; then
     rendered=$(printf '%s' "$signoff_emails" | paste -sd, -)
     record_failure "$sha" "mismatched-signoff author=${author_name} <${author_email}> signed-off-by=${rendered}"
   else
@@ -285,8 +409,8 @@ case "$ref" in
   *..*) scanned_scope='commits in' ;;
   *)    scanned_scope='recent commits on' ;;
 esac
-printf 'DCO trailer check inspected %s %s %s (%s non-merge, non-bot checked; %s merge skipped; %s bot skipped; %s waived).\n' \
-  "$limit" "$scanned_scope" "$ref" "$checked" "$skipped_merges" "$skipped_bots" "$waived_count"
+printf 'DCO trailer check inspected %s %s %s (%s non-merge, non-bot checked; %s merge skipped; %s bot skipped; %s waived; %s same-person-noreply).\n' \
+  "$limit" "$scanned_scope" "$ref" "$checked" "$skipped_merges" "$skipped_bots" "$waived_count" "$same_person_count"
 
 # Waived commits print on every run, above the failures. A disposition that
 # produced no output would be an invisible hole in a compliance check; keeping
@@ -294,6 +418,13 @@ printf 'DCO trailer check inspected %s %s %s (%s non-merge, non-bot checked; %s 
 # accepted and why it had to be.
 if [ -n "$waived_report" ]; then
   printf '%b' "$waived_report"
+fi
+
+# Same-person acceptances are informational, never hidden: each one names the
+# commit in the branch history that supplied the evidence, so a reader can
+# audit the inference rather than take it on trust.
+if [ -n "$same_person_report" ]; then
+  printf '%b' "$same_person_report"
 fi
 
 # Stale waivers are advisory, not fatal: failing the monitor over config
