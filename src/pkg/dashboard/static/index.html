@@ -15639,10 +15639,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // The sentinel chip: drawn in the chip area (beside needs rebase /
     // regressed) on every lane but the one whose word already says it.
-    // Pure: the "supersedes #N" chip on a live PR that replaced a closed
-    // original (`supersedes`: {number, url, closed_at, open} — the hive's
-    // close-first supersession, hivecommons/hive#15135). The closed PR is
-    // never a row; this chip is its only trace. '' without one.
+    // Provenance belongs to the live copy, even when the issue never links
+    // the original. Unknown author/time/reason facts are left out.
+    function stageTrackerLineageClause(item) {
+      const l = item && item.lineage;
+      if (!l || !(Number(l.from_number) > 0)) return '';
+      const verb = l.kind === 'rebased-by-hive' ? 'rebased by hive from' : l.kind === 'superseded' ? 'supersedes' : 'adopted from';
+      return '(' + verb + ' #' + Number(l.from_number) + ')';
+    }
+    function stageTrackerLineageChipHtml(item, nowMs) {
+      if (!stageTrackerLineageClause(item)) return '';
+      const l = item.lineage;
+      const who = l.from_author ? '@' + l.from_author : '';
+      const verb = l.kind === 'rebased-by-hive' ? 'rebased by hive from ' : l.kind === 'superseded' ? 'supersedes ' : 'adopted from ';
+      const ago = stageTrackerAgoText(Date.parse(l.at || ''), nowMs);
+      const text = verb + (who ? who + "'s " : '') + '#' + Number(l.from_number) + (ago ? ' · ' + ago : '');
+      const reason = l.reason || '';
+      const offline = reason === 'contributor-offline' || reason === 'contributor-unavailable';
+      const tip = offline ? 'Hive took this PR over after CI went red and ' + (who ? who + "'s agent" : "the contributor's agent") + " didn't respond. Original commits kept."
+        : 'Hive took this PR over. Original commits kept.' + (reason ? ' Reason: ' + reason + '.' : '');
+      const icon = l.from_author_kind ? stageTrackerIcon(l.from_author_kind, 'ham-author-ico', l.from_author_kind) : '';
+      return `<a class="ham-badge ham-badge-supersedes" href="${esc(l.from_url || '#')}" target="_blank" rel="noopener" title="${esc(tip)}" aria-label="${esc(text + '. ' + tip)}">${icon}${esc(text)}</a>`;
+    }
+    // Legacy supersession trace for replacements without adoption lineage.
     function stageTrackerSupersedesTip(item, nowMs) {
       const sp = item && item.supersedes;
       if (!sp || !(Number(sp.number) > 0)) return '';
@@ -15652,7 +15671,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function stageTrackerSupersedesChipHtml(item, nowMs) {
       const tip = stageTrackerSupersedesTip(item, nowMs);
-      if (!tip) return '';
+      if (!tip || item.lineage) return '';
       const sp = item.supersedes;
       const text = 'supersedes #' + Number(sp.number);
       const attrs = `class="ham-badge ham-badge-supersedes" title="${esc(tip)}" aria-label="${esc(tip)}"`;
@@ -16017,7 +16036,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null,
-        adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
+        adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, lineage: lp.lineage || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null,
         decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
@@ -16034,7 +16053,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // hive's copy of an adopted PR (hivecommons/hive#15126).
     function stageTrackerAdoptedFromChipHtml(pr, nowMs) {
       const af = pr && pr.adopted_from;
-      if (!af || !af.number) return '';
+      if (!af || !af.number || pr.lineage) return '';
       let text = '↳ adopted from #' + af.number;
       if (af.decided_at) {
         const what = af.decided_action === 'let-hive-decide' ? 'you let hive decide' : 'you approved';
@@ -16047,6 +16066,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const pr = stageTrackerLinkedPRItem(issue, lp);
       const superseded = typeof stageTrackerLinkedSupersededText === 'function' ? stageTrackerLinkedSupersededText(lp, issue) : '';
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + (superseded || stageTrackerTooltip(pr, nowMs)) + ' · ' + stageTrackerLinkedTip(issue, pr.number, ctx));
+      ref += typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(pr, nowMs) : '';
       if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
@@ -16272,7 +16292,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           const who = (lp.author_kind || 'hive') + (lp.author ? ' · @' + lp.author : '');
-          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
+          prRefs = [STAGE_TRACKER_LINKED_GLYPH + stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, (lp.title ? lp.title + '\n' : '') + 'Author: ' + who + ' · ' + stageTrackerLinkedTip(item, lp.number, ctx)) + (typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(lp, nowMs) : '') + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '', decision_needed: lp.decision_needed || null, hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, presence: lp.presence || null, rework: lp.rework || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, decided: lp.decided || item.decided || null });
         } else if (linked.length) {
@@ -16309,7 +16329,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           </div>`;
       } else {
         const li = stageTrackerPRIssueSlot(item);
-        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))];
+        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs)) + (typeof stageTrackerLineageChipHtml === 'function' ? stageTrackerLineageChipHtml(item, nowMs) : '')];
         leadHtml = li.number
           ? `<div class="ham-head-main${li.closed ? ' ham-issue-closed' : ''}">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
@@ -19026,7 +19046,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const r = await fetch(req.url + '/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) return { ref: stageTrackerRefOf(item), number: item.number, error: data.error || ('HTTP ' + r.status) };
-        return Object.assign({ ref: stageTrackerRefOf(item) }, data);
+        const lineage = typeof stageTrackerLineageClause === 'function' ? stageTrackerLineageClause(item) : '';
+        return Object.assign({}, data, { ref: (data.ref || stageTrackerRefOf(item)) + (lineage ? ' ' + lineage : '') });
       } catch (e) { return { ref: stageTrackerRefOf(item), number: item.number, error: String(e && e.message || e) }; }
     }
     // The three-button preview: resolves { chosen } for Let hive do that,

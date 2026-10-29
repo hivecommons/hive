@@ -1,0 +1,1 @@
+- Stage tracker rows and decision previews now identify the original contributor PR when Hive takes it over, including when the issue already links directly to the adopted copy ([#15396](https://github.com/hivecommons/hive/issues/15396)).

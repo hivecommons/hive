@@ -460,6 +460,7 @@ type StageTrackerItem struct {
 	// closed, unmerged, and never a tracker row; this is the only trace of
 	// it the tracker draws — a small chip on the live PR.
 	Supersedes *StageTrackerSupersedes `json:"supersedes,omitempty"`
+	Lineage    *StageTrackerLineage    `json:"lineage,omitempty"`
 	// Adoption is, on a nudged PR at stage/072, whether adoption is due,
 	// what holds it, and the author's live presence, with the plain-words
 	// line the row shows instead of a bare "Returned to contributor"
@@ -647,6 +648,7 @@ type StageTrackerLinkedPR struct {
 	Takeover *StageTrackerTakeover `json:"takeover,omitempty"`
 	// Supersedes mirrors the nested PR's own row field.
 	Supersedes *StageTrackerSupersedes `json:"supersedes,omitempty"`
+	Lineage    *StageTrackerLineage    `json:"lineage,omitempty"`
 }
 
 // StageTrackerSupersedes is the closed original a live PR replaced
@@ -2082,6 +2084,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	prState := s.stageTrackerPRStateResolver(status, resp.RecentlyMerged)
 	prOpen := func(repo string, number int) bool { return prState(repo, number) == blockedOnPRStateOpen }
 	supersedes := stageTrackerSupersedesIndex(store, status.GitHubBaseURL)
+	lineage := stageTrackerLineageIndex(store, status.GitHubBaseURL)
+	lineageAuthors := map[string]github.PullRequest{}
 	issueFilter := s.issueFilterConfig()
 	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren) {
 		// A closed issue has no stage; a stage label it closed wearing is
@@ -2155,6 +2159,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
 		pr.Repo = nonEmpty(pr.Repo, repoName)
+		lineageAuthors[stagelabels.Key(repoName, pr.Number)] = pr
 		rec, ok := lookup(repoName, pr.Number)
 		if ok && rec.Superseded() {
 			// hivecommons/hive#14471: the hive's adoption of this PR merged
@@ -2166,6 +2171,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
+		it.Lineage = stageTrackerPRLineage(lineage, repoName, pr, status.GitHubBaseURL)
 		it.BaseRef = pr.BaseRef
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
 		if it.AuthorKindSource == authorKindSrcLabel {
@@ -2227,6 +2233,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.Caption = joinClause(it.Caption, clause)
 			}
 		}
+		if it.Lineage != nil {
+			it.Caption += fmt.Sprintf(" (adopted from #%d)", it.Lineage.FromNumber)
+		}
 		it.DecisionNeeded = stageTrackerDecisionNeededWith(it, agg, sentinelLabel, now, bctx)
 		it.StageActor = stageTrackerStageActor(it, workers, now)
 		add(it)
@@ -2253,6 +2262,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				w := it.WorkPR
 				addPR(repoName, github.PullRequest{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Draft: w.Draft,
 					AppAuthored: w.AppAuthored, HiveAttributed: w.HiveAttributed, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, BaseRef: w.BaseRef, LinkedIssues: w.LinkedIssues, ReferencedIssues: w.ReferencedIssues}, nil, w.Bucket, w.Reason)
+			}
+		}
+	}
+	for i := range resp.Items {
+		it := &resp.Items[i]
+		if l := it.Lineage; l != nil {
+			if original, ok := lineageAuthors[stagelabels.Key(it.Repo, l.FromNumber)]; ok {
+				l.FromAuthor = nonEmpty(original.Author, l.FromAuthor)
+				l.FromAuthorKind, _ = stageTrackerAuthorKind(original.Labels, original.Author, original.AppAuthored, original.HiveAttributed)
 			}
 		}
 	}
@@ -3005,6 +3023,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem, open func(repo strin
 				lp.Rework = pr.Rework
 				lp.Takeover = pr.Takeover
 				lp.Supersedes = pr.Supersedes
+				lp.Lineage = pr.Lineage
 				lp.HumanApprover, lp.ManualMerge = pr.HumanApprover, pr.ManualMerge
 				lp.HumanMergeReason, lp.HumanMergeReasonText = pr.HumanMergeReason, pr.HumanMergeReasonText
 				lp.AdmittedBy, lp.DCOUnsigned, lp.DCOTotal = pr.AdmittedBy, pr.DCOUnsigned, pr.DCOTotal
