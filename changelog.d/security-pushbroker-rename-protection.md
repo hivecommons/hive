@@ -1,0 +1,1 @@
+- Pushbroker now checks both source and destination paths of renamed files, preventing protected workflows, policies, and other guarded files from being moved out of protected paths to bypass the push gate ([#15728](https://github.com/hivecommons/hive/issues/15728)).
