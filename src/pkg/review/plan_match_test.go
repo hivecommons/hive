@@ -161,6 +161,11 @@ func TestPlanMatchScopeFindingHoldsForHuman(t *testing.T) {
 	set := (PerspectiveSet{}).WithPlanMatch()
 	scope := outputschema.Finding{Title: "scope exceeds plan", Severity: outputschema.SeverityHigh, Summary: "adds pkg/billing/invoice.go, which no planned item covers", File: "pkg/billing/invoice.go", Line: 1}
 	reps := append(allApprove(), planMatchReport(VerdictRequiresHuman, scope))
+	// Plans are the hive's own; a contributor's out-of-plan file is a fixer
+	// round, not a human hold (hivecommons/hive#15640).
+	for i := range reps {
+		reps[i].HiveAuthored = true
+	}
 	agg := AggregateReports(reps, AggregateOptions{Perspectives: set})
 	if agg.Verdict != VerdictRequiresHuman || !agg.RequiresHuman {
 		t.Fatalf("scope finding aggregate = %s", agg.Verdict)
