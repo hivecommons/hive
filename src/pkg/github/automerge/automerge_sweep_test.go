@@ -425,7 +425,7 @@ func TestExecuteMergeEffectReconcilesUnknownOpenPRBeforeRetry(t *testing.T) {
 		Actor:  "automerge",
 		Inputs: map[string]string{"method": "squash", "expect_sha": "head", "lane": "self-authored"},
 	}
-	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, func(context.Context) (effects.Result, error) {
+	out, err := engine.executeMergeEffect(context.Background(), claim, "acme", "widget", 7, "", func(context.Context) (effects.Result, error) {
 		return effects.Result{Provenance: "merge-sha"}, nil
 	})
 	if err != nil {
