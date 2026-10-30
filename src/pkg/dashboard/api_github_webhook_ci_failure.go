@@ -46,13 +46,11 @@ func (s *Server) reactToCIFailure(res github.WebhookEventResult) []ciFailureReac
 	store := github.CIFailureSignals()
 	var integrationContext *github.IntegrationFailureContext
 	memberHead := ""
-	if len(f.PRs) == 0 {
-		if owner, context, head := s.integrationFailureOwner(res.Repo, f); owner != nil {
-			copyFailure := *f
-			copyFailure.PRs = []github.CIFailurePR{*owner}
-			f = &copyFailure
-			integrationContext, memberHead = context, head
-		}
+	if owner, context, head := s.integrationFailureOwner(res.Repo, f); owner != nil {
+		copyFailure := *f
+		copyFailure.PRs = []github.CIFailurePR{*owner}
+		f = &copyFailure
+		integrationContext, memberHead = context, head
 	}
 	if len(f.PRs) == 0 {
 		store.RecordUnmatched()

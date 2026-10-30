@@ -96,6 +96,13 @@ func TestCIFailureKickMessage(t *testing.T) {
 	if got := s.CIFailureKickMessage("advisor", sig); got != "" {
 		t.Errorf("advisory agent must not get a CI kick, got:\n%s", got)
 	}
+	sig.Integration = &github.IntegrationFailureContext{CandidateID: "exact-candidate", TestedSHA: "tested", TestedTree: "tree", BaseSHA: "base", Policy: "pinned-policy", Producer: "bound-app", Attempt: 2, Members: []string{"77:author-head", "78:other-head"}}
+	got = s.CIFailureKickMessage("scanner", sig)
+	for _, want := range []string{"exact-candidate", "tree", "pinned-policy", "77:author-head, 78:other-head", "NOT attribution of blame", "FIX-BEFORE-NEW", "Do not copy green statuses", "cancel shared jobs"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("exact candidate kick omitted %q: %s", want, got)
+		}
+	}
 	// The regular kick path carries the same signal until ci-failing.json
 	// catches up, so nothing is lost between the webhook and the sweep.
 	if msg := s.addRedPRFixFirst("scanner", "[agent:scanner]\nWORK\n"); !strings.Contains(msg, "#77 test-org/console") {

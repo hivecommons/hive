@@ -129,6 +129,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		s.deps.WebhookWake(reason)
 		resp["wake"] = reason
 	}
+	if err := s.integrationFailureIdentity(event, body, res.CIFailure); err != nil {
+		s.webhookLogger().Warn("integration failure identity unavailable", "error", err)
+	}
 	if reactions := s.reactToCIFailure(res); len(reactions) > 0 {
 		resp["ci_failure"] = reactions
 	}

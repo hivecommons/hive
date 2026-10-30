@@ -24,7 +24,7 @@ type IntegrationWorkflowProof struct {
 func (c *Client) ReadIntegrationWorkflowProof(ctx context.Context, policy config.IntegrationPolicy, run *gh.WorkflowRun) (IntegrationWorkflowProof, error) {
 	out := IntegrationWorkflowProof{Reason: "workflow evidence incomplete"}
 	parts := strings.SplitN(policy.Repo, "/", 2)
-	if len(parts) != 2 || run == nil || run.GetRunAttempt() < 1 || run.GetID() <= 0 || run.GetCheckSuiteID() <= 0 {
+	if len(parts) != 2 || run == nil || run.GetRunAttempt() < 1 || run.GetID() <= 0 || run.GetCheckSuiteID() <= 0 || run.GetWorkflowID() <= 0 {
 		return out, fmt.Errorf("workflow observation identity incomplete")
 	}
 	out.RunID, out.SuiteID = run.GetID(), run.GetCheckSuiteID()
@@ -32,7 +32,9 @@ func (c *Client) ReadIntegrationWorkflowProof(ctx context.Context, policy config
 	if policy.Engine == "native" {
 		event = "merge_group"
 	}
-	if run.GetEvent() != event || strings.Split(run.GetPath(), "@")[0] != policy.Workflow || !strings.EqualFold(run.GetHeadRepository().GetFullName(), policy.Repo) {
+	if run.GetEvent() != event || strings.Split(run.GetPath(), "@")[0] != policy.Workflow ||
+		!strings.EqualFold(run.GetRepository().GetFullName(), policy.Repo) || run.GetHeadRepository().GetFullName() == "" ||
+		policy.Engine == "native" && !strings.EqualFold(run.GetHeadRepository().GetFullName(), policy.Repo) {
 		return out, fmt.Errorf("workflow event, path or source repository not bound to policy")
 	}
 	content, _, _, err := c.client.Repositories.GetContents(ctx, parts[0], parts[1], policy.Workflow, &gh.RepositoryContentGetOptions{Ref: run.GetHeadSHA()})
@@ -41,6 +43,13 @@ func (c *Client) ReadIntegrationWorkflowProof(ctx context.Context, policy config
 	}
 	if content == nil || content.GetSHA() != policy.Blob {
 		return out, fmt.Errorf("tested workflow does not match pinned policy blob")
+	}
+	trusted, _, _, err := c.client.Repositories.GetContents(ctx, parts[0], parts[1], policy.Workflow, &gh.RepositoryContentGetOptions{Ref: policy.Base})
+	if err != nil {
+		return out, err
+	}
+	if trusted == nil || trusted.GetSHA() != policy.Blob {
+		return out, fmt.Errorf("pinned workflow is not present on the trusted target base")
 	}
 	request, err := c.client.NewRequest("GET", fmt.Sprintf("repos/%s/actions/runs/%d/attempts/%d/jobs?per_page=%d", policy.Repo, run.GetID(), run.GetRunAttempt(), integrationGroupMaxEntries), nil)
 	if err != nil {

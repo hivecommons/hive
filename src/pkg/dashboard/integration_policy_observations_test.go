@@ -39,7 +39,7 @@ func TestIntegrationNativePrefixPromotionRetainsOriginalIdentity(t *testing.T) {
 }
 
 func TestIntegrationRepairUsesExactLiveFrontWithoutBlameOrAuthority(t *testing.T) {
-	for _, scenario := range []string{"valid", "advisory", "superseded", "unknown", "stale", "future", "new-head", "closed", "retargeted", "read-error"} {
+	for _, scenario := range []string{"valid", "direct-bound", "unbound-author-head", "advisory", "superseded", "unknown", "stale", "future", "new-head", "closed", "retargeted", "read-error"} {
 		t.Run(scenario, func(t *testing.T) {
 			now := time.Now().UTC()
 			head, base, tested, tree := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40), strings.Repeat("d", 40)
@@ -90,14 +90,52 @@ func TestIntegrationRepairUsesExactLiveFrontWithoutBlameOrAuthority(t *testing.T
 			if err := store.Append(integration.Event{Version: 1, ID: "receipt", At: now, Evidence: &receipt}); err != nil {
 				t.Fatal(err)
 			}
-			owner, context, exact := server.integrationFailureOwner("o/r", &github.WebhookCIFailure{HeadSHA: tested})
-			if scenario == "valid" {
+			failure := &github.WebhookCIFailure{HeadSHA: tested}
+			if scenario == "direct-bound" || scenario == "unbound-author-head" {
+				receipt.RunID, receipt.SuiteID, receipt.CheckIDs = 10, 20, []int64{30}
+				receipt.Subject.Authority, receipt.Subject.Engine = "pull/7", "direct"
+				receipt.ObservedAt = now.Add(time.Nanosecond)
+				if err := store.Append(integration.Event{Version: 1, ID: "direct-receipt", At: now, Evidence: &receipt}); err != nil {
+					t.Fatal(err)
+				}
+				failure.HeadSHA = head
+				if scenario == "direct-bound" {
+					failure.SuiteID, failure.CheckRunID = 20, 30
+				}
+			}
+			owner, context, exact := server.integrationFailureOwner("o/r", failure)
+			if scenario == "valid" || scenario == "direct-bound" {
 				if owner == nil || owner.Number != 7 || context == nil || context.TestedTree != tree || exact != head || len(context.Members) != 1 {
 					t.Fatalf("%+v %+v %s", owner, context, exact)
 				}
+
 			} else if owner != nil || context != nil || exact != "" {
 				t.Fatalf("stale/unknown repair owner selected: %s %+v", scenario, owner)
 			}
 		})
+	}
+}
+
+func TestIntegrationFailureIdentityOnlyAddsSignedPayloadIDsInEnforce(t *testing.T) {
+	for _, mode := range []string{config.IntegrationOff, config.IntegrationAdvisory, config.IntegrationEnforce} {
+		server := orchestrationServer(t, mode)
+		failure := &github.WebhookCIFailure{}
+		body := []byte(`{"check_run":{"id":30,"check_suite":{"id":20}},"check_suite":{"id":40}}`)
+		if err := server.integrationFailureIdentity("check_run", body, failure); err != nil {
+			t.Fatal(err)
+		}
+		if mode == config.IntegrationEnforce {
+			if failure.SuiteID != 20 || failure.CheckRunID != 30 {
+				t.Fatalf("lost signed check identity: %+v", failure)
+			}
+			if err := server.integrationFailureIdentity("check_suite", body, failure); err != nil || failure.SuiteID != 40 {
+				t.Fatal("lost signed suite")
+			}
+			if err := server.integrationFailureIdentity("check_run", []byte("{"), failure); err == nil {
+				t.Fatal("malformed identity accepted")
+			}
+		} else if failure.SuiteID != 0 || failure.CheckRunID != 0 {
+			t.Fatal("disabled/advisory changed legacy failure")
+		}
 	}
 }

@@ -26,7 +26,7 @@ func TestIntegrationReconciliationRecoversMissedGroupAndBoundWorkflow(t *testing
 		case r.URL.Path == "/repos/o/r/pulls":
 			_, _ = w.Write([]byte("[]"))
 		case r.URL.Path == "/repos/o/r/actions/runs":
-			_, _ = fmt.Fprintf(w, `{"total_count":1,"workflow_runs":[{"id":10,"workflow_id":12,"check_suite_id":20,"run_attempt":1,"event":"merge_group","status":"completed","conclusion":"success","head_sha":%q,"head_branch":"gh-readonly-queue/v5/pr-7","head_repository":{"full_name":"o/r"},"path":%q,"created_at":%q,"updated_at":%q}]}`, tested, policy.Workflow, now.Add(-15*time.Minute).Format(time.RFC3339), now.Format(time.RFC3339))
+			_, _ = fmt.Fprintf(w, `{"total_count":1,"workflow_runs":[{"id":10,"workflow_id":12,"check_suite_id":20,"run_attempt":1,"event":"merge_group","status":"completed","conclusion":"success","head_sha":%q,"head_branch":"gh-readonly-queue/v5/pr-7","head_repository":{"full_name":"o/r"},"repository":{"full_name":"o/r"},"path":%q,"created_at":%q,"updated_at":%q}]}`, tested, policy.Workflow, now.Add(-15*time.Minute).Format(time.RFC3339), now.Format(time.RFC3339))
 		case r.URL.Path == "/graphql":
 			_, _ = fmt.Fprintf(w, `{"data":{"repository":{"mergeQueue":{"entries":{"pageInfo":{"hasNextPage":false},"nodes":[{"id":"entry-7","position":1,"baseCommit":{"oid":%q},"headCommit":{"oid":%q},"pullRequest":{"number":7,"headRefOid":%q,"baseRefName":"v5"}}]}}}}}`, base, tested, head)
 		case strings.Contains(r.URL.Path, "/git/commits/"):

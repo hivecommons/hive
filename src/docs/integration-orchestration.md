@@ -115,7 +115,8 @@ cannot manufacture them.
 A pinned reader contract contains exact `repo`, `base`, `engine`
 (`native` or `direct`), workflow path, full workflow `blob` SHA, producer
 `app_id`, and exact required `jobs`. The reader verifies event/source/path,
-workflow blob, workflow run/attempt, suite, physical job membership and check
+workflow blob on both the tested revision and trusted target base, workflow
+run/attempt, source/target repositories, suite, physical job membership and check
 App/head/suite/name. One receipt is **one workflow**, not all CI/review/trust gates.
 Changing/removing a policy supersedes affected historical receipts durably.
 Destroyed-group and member-change tombstones prevent out-of-order old receipts
@@ -146,7 +147,7 @@ The consumer checks the artifact's run/head/attempt, pinned producer contract,
 GitHub commit/tree and both merge parents (event base plus exact author head).
 Downloads are size-bounded, in memory, without sending GitHub credentials to
 artifact storage. No publisher, workflow, provider or queue activation is installed
-by this feature. Missing/fork-source-unsupported artifacts remain unknown;
+by this feature. Missing or unsupported attestations remain unknown;
 generic author workflow metadata is not actual combined-checkout proof.
 
 Actual GitHub workflow jobs are keyed by repository/job/run attempt, so shared

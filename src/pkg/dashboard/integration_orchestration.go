@@ -553,6 +553,11 @@ func (s *Server) handleIntegrationGet(w http.ResponseWriter, r *http.Request) {
 		scopes = append(scopes, status)
 	}
 	resp["configured_authorities"] = scopes
+	bindings := make([]map[string]any, 0, len(cfg.Policies))
+	for _, policy := range cfg.Policies {
+		bindings = append(bindings, map[string]any{"policy": policy, "fingerprint": policy.Fingerprint()})
+	}
+	resp["policy_bindings"] = bindings
 	store, err := s.integrationStore()
 	if err != nil {
 		resp["state"] = "unknown"

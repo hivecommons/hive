@@ -39,20 +39,21 @@ type Member struct {
 // Subject is immutable. Order, policy, producer, attempt and actual tested
 // result are part of its identity, not mutable annotations on a PR record.
 type Subject struct {
-	Version    int      `json:"version"`
-	Repo       string   `json:"repo"`
-	Base       string   `json:"base"`
-	Engine     string   `json:"engine"`
-	Authority  string   `json:"authority"`
-	Members    []Member `json:"members"`
-	BaseSHA    string   `json:"base_sha"`
-	TestedSHA  string   `json:"tested_sha"`
-	TestedTree string   `json:"tested_tree"`
-	Policy     string   `json:"policy"`
-	Producer   string   `json:"producer"`
-	Workflow   string   `json:"workflow"`
-	Attempt    int      `json:"attempt"`
-	Generation uint64   `json:"generation"`
+	Version            int      `json:"version"`
+	Repo               string   `json:"repo"`
+	Base               string   `json:"base"`
+	Engine             string   `json:"engine"`
+	Authority          string   `json:"authority"`
+	Members            []Member `json:"members"`
+	BaseSHA            string   `json:"base_sha"`
+	TestedSHA          string   `json:"tested_sha"`
+	TestedTree         string   `json:"tested_tree"`
+	Policy             string   `json:"policy"`
+	Producer           string   `json:"producer"`
+	Workflow           string   `json:"workflow"`
+	WorkflowSourceRepo string   `json:"workflow_source_repo,omitempty"`
+	Attempt            int      `json:"attempt"`
+	Generation         uint64   `json:"generation"`
 }
 
 func fullSHA(s string) bool {

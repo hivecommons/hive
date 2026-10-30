@@ -13,17 +13,20 @@ import (
 )
 
 func TestIntegrationWorkflowProducerBinding(t *testing.T) {
-	for _, mode := range []string{"passed", "rejected", "running", "wrong-app", "wrong-suite", "wrong-head", "wrong-blob", "missing-job", "ambiguous-job", "wrong-event", "wrong-repo", "wrong-path", "read-error", "truncated"} {
+	for _, mode := range []string{"passed", "rejected", "running", "wrong-app", "wrong-suite", "wrong-head", "wrong-blob", "untrusted-base", "missing-job", "ambiguous-job", "wrong-event", "wrong-repo", "wrong-target", "wrong-path", "read-error", "truncated"} {
 		t.Run(mode, func(t *testing.T) {
 			sha, blob := strings.Repeat("a", 40), strings.Repeat("b", 40)
 			policy := config.IntegrationPolicy{Repo: "o/r", Base: "v5", Engine: "native", Workflow: ".github/workflows/group.yml", Blob: blob, AppID: 42, Jobs: []string{"policy"}}
-			run := &gh.WorkflowRun{ID: gh.Ptr(int64(1)), CheckSuiteID: gh.Ptr(int64(2)), RunAttempt: gh.Ptr(1), Event: gh.Ptr("merge_group"),
-				Path: gh.Ptr(policy.Workflow), HeadSHA: gh.Ptr(sha), HeadRepository: &gh.Repository{FullName: gh.Ptr("o/r")}, Status: gh.Ptr("completed"), Conclusion: gh.Ptr("success")}
+			run := &gh.WorkflowRun{ID: gh.Ptr(int64(1)), WorkflowID: gh.Ptr(int64(12)), CheckSuiteID: gh.Ptr(int64(2)), RunAttempt: gh.Ptr(1), Event: gh.Ptr("merge_group"),
+				Path: gh.Ptr(policy.Workflow), HeadSHA: gh.Ptr(sha), HeadRepository: &gh.Repository{FullName: gh.Ptr("o/r")}, Repository: &gh.Repository{FullName: gh.Ptr("o/r")}, Status: gh.Ptr("completed"), Conclusion: gh.Ptr("success")}
 			if mode == "wrong-event" {
 				run.Event = gh.Ptr("pull_request_target")
 			}
 			if mode == "wrong-repo" {
 				run.HeadRepository.FullName = gh.Ptr("attacker/r")
+			}
+			if mode == "wrong-target" {
+				run.Repository.FullName = gh.Ptr("attacker/r")
 			}
 			if mode == "wrong-path" {
 				run.Path = gh.Ptr(".github/workflows/other.yml")
@@ -42,7 +45,7 @@ func TestIntegrationWorkflowProducerBinding(t *testing.T) {
 				}
 				switch {
 				case strings.Contains(r.URL.Path, "/contents/"):
-					if mode == "wrong-blob" {
+					if mode == "wrong-blob" || mode == "untrusted-base" && r.URL.Query().Get("ref") == policy.Base {
 						blob = strings.Repeat("f", 40)
 					}
 					_, _ = fmt.Fprintf(w, `{"type":"file","sha":%q}`, blob)

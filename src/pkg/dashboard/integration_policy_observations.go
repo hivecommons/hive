@@ -60,10 +60,11 @@ func (s *Server) observeIntegrationDirectPolicyRun(parent context.Context, run *
 		if attestationErr != nil {
 			return attestationErr
 		}
-		subject := integration.Subject{Version: integration.SchemaVersion, Repo: repo, Base: policy.Base, Engine: "direct", Authority: fmt.Sprintf("workflow-run/%d", run.GetID()),
+		subject := integration.Subject{Version: integration.SchemaVersion, Repo: repo, Base: policy.Base, Engine: "direct", Authority: fmt.Sprintf("pull/%d", run.PullRequests[0].GetNumber()),
 			BaseSHA: attestation.BaseSHA, TestedSHA: attestation.TestedSHA, TestedTree: attestation.TestedTree,
 			Policy: policy.Fingerprint(), Producer: fmt.Sprintf("github-app/%d", policy.AppID), Workflow: fmt.Sprintf("%s@%d", policy.Workflow, run.GetWorkflowID()),
-			Attempt: run.GetRunAttempt(), Generation: uint64(run.GetID())}
+			WorkflowSourceRepo: run.GetHeadRepository().GetFullName(),
+			Attempt:            run.GetRunAttempt(), Generation: uint64(run.GetID())}
 		for _, member := range attestation.Members {
 			subject.Members = append(subject.Members, integration.Member{PR: member.PR, Head: member.Head, Entry: fmt.Sprintf("pull/%d", member.PR), Position: 1})
 		}

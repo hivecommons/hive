@@ -203,10 +203,16 @@ func (s *Server) observeIntegrationRun(run *gh.WorkflowRun, repo, delivery strin
 	}
 	subject := integration.Subject{Version: integration.SchemaVersion, Repo: repo, Base: base, Engine: engine,
 		Authority: fmt.Sprintf("workflow-run/%d", run.GetID()),
-		Policy:    "unverified-policy", Producer: "github-actions-observation", Workflow: run.GetPath(), Attempt: run.GetRunAttempt(), Generation: 1}
+		Policy:    "unverified-policy", Producer: "github-actions-observation", Workflow: run.GetPath(), WorkflowSourceRepo: run.GetHeadRepository().GetFullName(), Attempt: run.GetRunAttempt(), Generation: 1}
 	if pr != nil {
+		if pr.GetNumber() > 0 {
+			subject.Authority = fmt.Sprintf("pull/%d", pr.GetNumber())
+		}
 		subject.BaseSHA = pr.GetBase().GetSHA()
 		subject.Members = []integration.Member{{PR: pr.GetNumber(), Head: pr.GetHead().GetSHA(), Entry: fmt.Sprintf("pull/%d", pr.GetNumber()), Position: 1}}
+	}
+	if run.GetID() > 0 {
+		subject.Generation = uint64(run.GetID())
 	}
 	evidence := integration.Evidence{Subject: subject, State: integration.Unknown, ObservedAt: now, Source: "github-workflow-run-v1", RunID: run.GetID(), SuiteID: run.GetCheckSuiteID(),
 		Reason: "author workflow observed; actual checkout commit/tree and combined-base policy evidence unavailable"}
@@ -222,6 +228,9 @@ func (s *Server) observeIntegrationPolicyRun(parent context.Context, run *gh.Wor
 	cfg := s.integrationConfig()
 	if run == nil || run.GetEvent() != "merge_group" {
 		return nil
+	}
+	if run.GetID() < 1 || run.GetRunAttempt() < 1 {
+		return fmt.Errorf("native workflow generation unavailable")
 	}
 	store, err := s.integrationStore()
 	if err != nil {
@@ -274,6 +283,7 @@ func (s *Server) observeIntegrationPolicyRun(parent context.Context, run *gh.Wor
 		}
 		proof, proofErr := s.deps.GHClient.ReadIntegrationWorkflowProof(ctx, policy, run)
 		subject.Policy, subject.Producer, subject.Workflow = policy.Fingerprint(), fmt.Sprintf("github-app/%d", policy.AppID), fmt.Sprintf("%s@%d", policy.Workflow, run.GetWorkflowID())
+		subject.WorkflowSourceRepo = run.GetHeadRepository().GetFullName()
 		subject.Attempt, subject.Generation = run.GetRunAttempt(), uint64(run.GetID())
 		observedAt := run.GetUpdatedAt().Time
 		if observedAt.IsZero() {

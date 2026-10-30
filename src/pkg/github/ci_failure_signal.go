@@ -26,6 +26,8 @@ type CIFailurePR struct {
 // check_suite / status delivery, carried on WebhookEventResult.CIFailure so
 // the receiver can react now rather than on the next sweep.
 type WebhookCIFailure struct {
+	SuiteID    int64         `json:"suite_id,omitempty"`
+	CheckRunID int64         `json:"check_run_id,omitempty"`
 	HeadSHA    string        `json:"head_sha"`
 	Check      string        `json:"check"`
 	Conclusion string        `json:"conclusion"`
@@ -60,6 +62,9 @@ type IntegrationFailureContext struct {
 	Policy      string   `json:"policy"`
 	Producer    string   `json:"producer"`
 	Attempt     int      `json:"attempt"`
+	RunID       int64    `json:"run_id,omitempty"`
+	SuiteID     int64    `json:"suite_id,omitempty"`
+	Source      string   `json:"source,omitempty"`
 }
 
 // CIFailureSignalsStatus is the /api/status view of the store.

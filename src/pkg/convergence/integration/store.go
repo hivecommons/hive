@@ -101,6 +101,35 @@ func (s *Store) ForTestedHead(repo, head string) []Evidence {
 	return receipts
 }
 
+func (s *Store) ForFailure(repo, head string, suite, check int64) []Evidence {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var receipts []Evidence
+	for _, receipt := range s.evidence {
+		if !strings.EqualFold(receipt.Subject.Repo, repo) {
+			continue
+		}
+		matched := receipt.Subject.TestedSHA == head
+		if !matched && suite > 0 && receipt.SuiteID == suite {
+			checkKnown := check == 0
+			for _, id := range receipt.CheckIDs {
+				if id == check {
+					checkKnown = true
+				}
+			}
+			for _, member := range receipt.Subject.Members {
+				if member.Head == head && checkKnown {
+					matched = true
+				}
+			}
+		}
+		if matched {
+			receipts = append(receipts, cloneEvidence(receipt))
+		}
+	}
+	return receipts
+}
+
 func Open(path string) (*Store, error) {
 	s := &Store{path: path, seen: map[string]string{}, intents: map[string]Intent{},
 		evidence: map[string]Evidence{}, jobs: map[string]Job{}, coverage: map[string]Coverage{},
@@ -198,6 +227,16 @@ func (s *Store) validate(e Event) error {
 		}
 	}
 	if e.Evidence != nil {
+		for _, previous := range s.evidence {
+			next := e.Evidence
+			if (next.Source == "github-actions-bound-v1" || next.Source == "github-actions-attested-v1") && next.State != Unknown && next.RunID > 0 &&
+				previous.State != Unknown && strings.EqualFold(previous.Subject.Repo, next.Subject.Repo) &&
+				previous.Source == next.Source && previous.RunID == next.RunID && previous.Subject.Attempt == next.Subject.Attempt &&
+				previous.Subject.Policy == next.Subject.Policy && previous.Subject.Workflow == next.Subject.Workflow &&
+				previous.Subject.Authority == next.Subject.Authority && previous.Subject.ID() != next.Subject.ID() {
+				return fmt.Errorf("workflow attempt changed immutable tested subject")
+			}
+		}
 		if err := e.Evidence.Subject.Validate(); err != nil && e.Evidence.State != Unknown {
 			return err
 		}
@@ -262,20 +301,29 @@ func (s *Store) apply(e Event) {
 	}
 	if v := e.Evidence; v != nil {
 		k := v.Subject.ID()
+		supersededBy := ""
+		var supersedingGeneration uint64
+		supersedingAttempt := 0
 		for id, prior := range s.evidence {
 			old, next := prior.Subject, v.Subject
-			if id != k && prior.State != Superseded && old.Repo == next.Repo && old.Base == next.Base && old.Engine == next.Engine &&
-				old.Authority == next.Authority && old.TestedSHA == next.TestedSHA && old.Policy == next.Policy &&
-				old.Producer == next.Producer && old.Workflow == next.Workflow &&
-				(next.Generation > old.Generation || next.Generation == old.Generation && next.Attempt > old.Attempt) &&
-				!v.ObservedAt.Before(prior.ObservedAt) {
+			sameProducer := id != k && strings.EqualFold(old.Repo, next.Repo) && old.Base == next.Base && old.Engine == next.Engine &&
+				old.Authority == next.Authority && old.Policy == next.Policy && old.Producer == next.Producer && old.Workflow == next.Workflow
+			if sameProducer && (next.Generation > old.Generation || next.Generation == old.Generation && next.Attempt > old.Attempt) {
 				prior.State, prior.InvalidatedBy, prior.Reason = Superseded, e.ID, "authoritative workflow attempt superseded"
 				s.evidence[id] = prior
+			} else if sameProducer && (old.Generation > next.Generation || old.Generation == next.Generation && old.Attempt > next.Attempt) {
+				if supersededBy == "" || old.Generation > supersedingGeneration || old.Generation == supersedingGeneration &&
+					(old.Attempt > supersedingAttempt || old.Attempt == supersedingAttempt && id < supersededBy) {
+					supersededBy, supersedingGeneration, supersedingAttempt = id, old.Generation, old.Attempt
+				}
 			}
 		}
 		old, found := s.evidence[k]
 		if !found || (old.State != Superseded && v.ObservedAt.After(old.ObservedAt)) {
 			next := cloneEvidence(*v)
+			if supersededBy != "" {
+				next.State, next.InvalidatedBy, next.Reason = Superseded, supersededBy, "newer authoritative workflow attempt already observed"
+			}
 			for _, member := range next.Subject.Members {
 				change, known := s.memberChanges[fmt.Sprintf("%s#%d", strings.ToLower(next.Subject.Repo), member.PR)]
 				if known && !next.ObservedAt.After(change.At) && (change.MemberChange.Head == "" || change.MemberChange.Head != member.Head) {

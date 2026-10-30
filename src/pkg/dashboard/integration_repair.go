@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -18,14 +19,24 @@ func (s *Server) integrationFailureOwner(repo string, failure *github.WebhookCIF
 	if cfg.Mode != config.IntegrationEnforce || failure == nil || s.deps == nil || s.deps.GHClient == nil {
 		return nil, nil, ""
 	}
+	enrolled := false
+	for _, scope := range cfg.Scopes {
+		if strings.EqualFold(scope.Repo, repo) {
+			enrolled = true
+			break
+		}
+	}
+	if !enrolled {
+		return nil, nil, ""
+	}
 	store, err := s.integrationStore()
 	if err != nil {
 		return nil, nil, ""
 	}
 	var selected *integration.Evidence
 	now := time.Now()
-	for _, receipt := range store.ForTestedHead(repo, failure.HeadSHA) {
-		if receipt.Subject.Repo != repo || receipt.Subject.TestedSHA != failure.HeadSHA || !cfg.Allows(repo, receipt.Subject.Base) ||
+	for _, receipt := range store.ForFailure(repo, failure.HeadSHA, failure.SuiteID, failure.CheckRunID) {
+		if !strings.EqualFold(receipt.Subject.Repo, repo) || !cfg.Allows(repo, receipt.Subject.Base) ||
 			receipt.State == integration.Superseded || receipt.State == integration.Unknown || receipt.Subject.Validate() != nil ||
 			receipt.ObservedAt.After(now) || now.Sub(receipt.ObservedAt) > cfg.MaxObservationAge {
 			continue
@@ -53,9 +64,36 @@ func (s *Server) integrationFailureOwner(repo string, failure *github.WebhookCIF
 	ref := &github.CIFailurePR{Number: member.PR, Author: pr.GetUser().GetLogin(), Title: pr.GetTitle(), URL: pr.GetHTMLURL(), BaseRef: subject.Base,
 		HiveAuthored: s.deps.GHClient.IsHiveAuthorLogin(pr.GetUser().GetLogin())}
 	context := &github.IntegrationFailureContext{CandidateID: subject.ID(), TestedSHA: subject.TestedSHA, TestedTree: subject.TestedTree,
-		BaseSHA: subject.BaseSHA, Policy: subject.Policy, Producer: subject.Producer, Attempt: subject.Attempt}
+		BaseSHA: subject.BaseSHA, Policy: subject.Policy, Producer: subject.Producer, Attempt: subject.Attempt, RunID: selected.RunID, SuiteID: selected.SuiteID, Source: selected.Source}
 	for _, m := range subject.Members {
 		context.Members = append(context.Members, fmt.Sprintf("%d:%s", m.PR, m.Head))
 	}
 	return ref, context, member.Head
+}
+
+func (s *Server) integrationFailureIdentity(event string, body []byte, failure *github.WebhookCIFailure) error {
+	if failure == nil || s.integrationConfig().Mode != config.IntegrationEnforce || event != "check_run" && event != "check_suite" {
+		return nil
+	}
+	var payload struct {
+		CheckRun struct {
+			ID         int64 `json:"id"`
+			CheckSuite struct {
+				ID int64 `json:"id"`
+			} `json:"check_suite"`
+		} `json:"check_run"`
+		CheckSuite struct {
+			ID int64 `json:"id"`
+		} `json:"check_suite"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return err
+	}
+	if event == "check_run" {
+		failure.CheckRunID, failure.SuiteID = payload.CheckRun.ID, payload.CheckRun.CheckSuite.ID
+	}
+	if event == "check_suite" {
+		failure.SuiteID = payload.CheckSuite.ID
+	}
+	return nil
 }
