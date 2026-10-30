@@ -190,6 +190,7 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			}
 			if fx.baseRef != "" {
 				p["base"].(map[string]any)["ref"] = fx.baseRef
+				p["base"].(map[string]any)["sha"] = "base1"
 			}
 			if !fx.omitAssociation {
 				p["author_association"] = association
