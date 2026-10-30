@@ -243,6 +243,20 @@ func (s *Store) Issue(repo, file string) (IssueRecord, bool) {
 	return IssueRecord{}, false
 }
 
+// OpenIssues counts the modularize issues filed for repo that are not yet
+// recorded as closed. The Filer compares it against its open-issue cap.
+func (s *Store) OpenIssues(repo string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, r := range s.state.Issues {
+		if r.Repo == repo && r.ClosedAt.IsZero() {
+			n++
+		}
+	}
+	return n
+}
+
 // Prune drops PRs closed and conflicts older than window, and issue
 // records closed longer ago than refile. It keeps the store bounded.
 func (s *Store) Prune(window, refile time.Duration) {

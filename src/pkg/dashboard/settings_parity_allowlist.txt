@@ -523,3 +523,5 @@ governor.hotspot_min_prs # merge-hotspot advisor; yaml-only
 governor.hotspot_min_overlaps # merge-hotspot advisor; yaml-only
 governor.hotspot_min_lines # merge-hotspot advisor; yaml-only
 governor.hotspot_refile_days # merge-hotspot advisor; yaml-only
+governor.hotspot_max_open # merge-hotspot advisor; yaml-only
+governor.hotspot_max_per_pass # merge-hotspot advisor; yaml-only
