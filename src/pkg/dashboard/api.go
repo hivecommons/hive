@@ -1206,7 +1206,7 @@ func (s *Server) handleWidget(w http.ResponseWriter, r *http.Request) {
 
 	throughput := PRThroughput{Hours: 168, Source: "audit"}
 	if s.audit != nil {
-		throughput = buildPRThroughputWindow(prThroughputEntries(s.audit), time.Now().UTC(), 168, "", prThroughputRoleMerged)
+		throughput = buildPRThroughputWindow(qualifyPRThroughputEntries(prThroughputEntries(s.audit), s.mergedRepoQualifier()), time.Now().UTC(), 168, "", prThroughputRoleMerged)
 	}
 
 	breakerEngaged := false

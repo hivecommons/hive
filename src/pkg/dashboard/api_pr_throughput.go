@@ -66,8 +66,10 @@ type PRThroughput struct {
 	PreviousActor *PRThroughputActorPoint  `json:"previous_actor,omitempty"`
 	Metrics       PRThroughputMetrics      `json:"metrics"`
 	MergedByAgent []PRThroughputTop        `json:"merged_by_agent,omitempty"`
-	TopRepos      []PRThroughputTop        `json:"top_repos,omitempty"`
-	ClosedReasons []PRThroughputTop        `json:"closed_reasons,omitempty"`
+	// TopRepos is the five repos with the most merges in the window (the
+	// card's "Merged by repo"); omitted when the card is filtered to a repo.
+	TopRepos      []PRThroughputTop `json:"top_repos,omitempty"`
+	ClosedReasons []PRThroughputTop `json:"closed_reasons,omitempty"`
 }
 
 type PRThroughputBucket struct {
@@ -125,7 +127,7 @@ func (s *Server) handlePRThroughput(w http.ResponseWriter, r *http.Request) {
 	if audit == nil {
 		audit = &AuditLog{}
 	}
-	entries := prThroughputEntries(audit)
+	entries := qualifyPRThroughputEntries(prThroughputEntries(audit), s.mergedRepoQualifier())
 	if hours == 0 {
 		jsonResponse(w, buildPRThroughputAllTime(audit.PRThroughputCounters(), entries, time.Now().UTC(), repo, role))
 		return
@@ -312,22 +314,17 @@ func prThroughputBuckets(entries []AuditEntry, since, until time.Time, bucketSiz
 		tj, _ := prThroughputTime(sorted[j])
 		return ti.Before(tj)
 	})
-	seenTerminal := map[string]bool{}
+	picks := newPRThroughputTerminalPicks(sorted)
 	openedAt := map[string]time.Time{}
 	ttmByBucket := make([][]float64, len(buckets))
-	for _, e := range sorted {
+	for i, e := range sorted {
 		t, ok := prThroughputTime(e)
 		if !ok || t.After(until) || !prThroughputEntryMatchesRepo(e, repo) {
 			continue
 		}
 		key := prThroughputPRKey(e)
-		if prThroughputTerminalAction(e.Action) {
-			if key != "" {
-				if seenTerminal[key] {
-					continue
-				}
-				seenTerminal[key] = true
-			}
+		if !picks.counts(i, e, key) {
+			continue
 		}
 		if e.Action == ghpkg.AuditActionAgentPRCreated && key != "" {
 			openedAt[key] = t
@@ -339,22 +336,22 @@ func prThroughputBuckets(entries []AuditEntry, since, until time.Time, bucketSiz
 		if bt.Before(start) {
 			bt = start
 		}
-		i, ok := idx[bt.Unix()]
+		b, ok := idx[bt.Unix()]
 		if !ok || !prThroughputActions[e.Action] {
 			continue
 		}
 		switch e.Action {
 		case ghpkg.AuditActionAgentPRCreated:
-			buckets[i].Opened++
+			buckets[b].Opened++
 		case ghpkg.AuditActionPRMerged:
-			buckets[i].Merged++
+			buckets[b].Merged++
 			if key != "" {
 				if opened, ok := openedAt[key]; ok && !t.Before(opened) {
-					ttmByBucket[i] = append(ttmByBucket[i], t.Sub(opened).Hours())
+					ttmByBucket[b] = append(ttmByBucket[b], t.Sub(opened).Hours())
 				}
 			}
 		case ghpkg.AuditActionPRClosed:
-			buckets[i].Closed++
+			buckets[b].Closed++
 		}
 	}
 	for i := range buckets {
@@ -384,20 +381,14 @@ func prThroughputActorSeries(entries []AuditEntry, since, until time.Time, bucke
 		tj, _ := prThroughputTime(sorted[j])
 		return ti.Before(tj)
 	})
-	seenTerminal := map[string]bool{}
-	for _, e := range sorted {
+	picks := newPRThroughputTerminalPicks(sorted)
+	for n, e := range sorted {
 		t, ok := prThroughputTime(e)
 		if !ok || t.After(until) || !prThroughputEntryMatchesRepo(e, repo) {
 			continue
 		}
-		if prThroughputTerminalAction(e.Action) {
-			key := prThroughputPRKey(e)
-			if key != "" {
-				if seenTerminal[key] {
-					continue
-				}
-				seenTerminal[key] = true
-			}
+		if !picks.counts(n, e, prThroughputPRKey(e)) {
+			continue
 		}
 		if t.Before(since) {
 			continue
@@ -433,20 +424,14 @@ func prThroughputActorTotals(entries []AuditEntry, since, until time.Time, repo,
 		tj, _ := prThroughputTime(sorted[j])
 		return ti.Before(tj)
 	})
-	seenTerminal := map[string]bool{}
-	for _, e := range sorted {
+	picks := newPRThroughputTerminalPicks(sorted)
+	for i, e := range sorted {
 		t, ok := prThroughputTime(e)
 		if !ok || !t.Before(until) || !prThroughputEntryMatchesRepo(e, repo) {
 			continue
 		}
-		if prThroughputTerminalAction(e.Action) {
-			key := prThroughputPRKey(e)
-			if key != "" {
-				if seenTerminal[key] {
-					continue
-				}
-				seenTerminal[key] = true
-			}
+		if !picks.counts(i, e, prThroughputPRKey(e)) {
+			continue
 		}
 		if t.Before(since) {
 			continue
@@ -488,18 +473,15 @@ func summarizePRThroughput(entries []AuditEntry, since, until time.Time, repo st
 		tj, _ := prThroughputTime(sorted[j])
 		return ti.Before(tj)
 	})
-	seenTerminal := map[string]bool{}
-	for _, e := range sorted {
+	picks := newPRThroughputTerminalPicks(sorted)
+	for i, e := range sorted {
 		t, ok := prThroughputTime(e)
 		if !ok || !prThroughputActions[e.Action] || !prThroughputEntryMatchesRepo(e, repo) {
 			continue
 		}
 		key := prThroughputPRKey(e)
-		if prThroughputTerminalAction(e.Action) && key != "" {
-			if seenTerminal[key] {
-				continue
-			}
-			seenTerminal[key] = true
+		if !picks.counts(i, e, key) {
+			continue
 		}
 		if e.Action == ghpkg.AuditActionAgentPRCreated && key != "" {
 			openedAt[key] = t
@@ -509,13 +491,13 @@ func summarizePRThroughput(entries []AuditEntry, since, until time.Time, repo st
 			continue
 		}
 		counts.add(e)
-		if r, ok := collect.AuditEntryRepo(e); ok {
-			topRepos[r]++
-		}
 		switch e.Action {
 		case ghpkg.AuditActionPRMerged:
 			path := prThroughputMergePath(e.Detail)
 			mergedByPath[path]++
+			if r, ok := collect.AuditEntryRepo(e); ok {
+				topRepos[r]++
+			}
 			if agent := prThroughputAgent(e); agent != "" {
 				mergedByAgent[agent]++
 			}
@@ -625,6 +607,80 @@ func prThroughputPRKey(e AuditEntry) string {
 		return ""
 	}
 	return strings.ToLower(repo) + "#" + strconv.Itoa(n)
+}
+
+// prThroughputTerminalPicks maps each PR's key to the index, in the
+// time-sorted entries, of the one terminal entry (pr_merged or pr_closed)
+// counted for it. A merge the hive makes is recorded twice: once by the merge
+// path itself (path=sweep, queue, relay or forge) and again by the PR poller,
+// which reads merged_by from GitHub and records path=hive at GitHub's
+// merged_at, so it sorts first. The first terminal entry wins, except that
+// the merge path's own entry replaces an observed merge of the same PR: it is
+// the more specific of the two, so the merge is counted once, under the path
+// that made it.
+type prThroughputTerminalPicks map[string]int
+
+func newPRThroughputTerminalPicks(sorted []AuditEntry) prThroughputTerminalPicks {
+	picks := prThroughputTerminalPicks{}
+	for i, e := range sorted {
+		if !prThroughputTerminalAction(e.Action) {
+			continue
+		}
+		if _, ok := prThroughputTime(e); !ok {
+			continue
+		}
+		key := prThroughputPRKey(e)
+		if key == "" {
+			continue
+		}
+		j, seen := picks[key]
+		if !seen || (prThroughputHiveMergePath(e) && sorted[j].Action == ghpkg.AuditActionPRMerged && !prThroughputHiveMergePath(sorted[j])) {
+			picks[key] = i
+		}
+	}
+	return picks
+}
+
+// counts reports whether sorted[i] is counted: every entry that is not a
+// terminal state of a known PR, and the picked terminal entry of each PR.
+func (p prThroughputTerminalPicks) counts(i int, e AuditEntry, key string) bool {
+	if !prThroughputTerminalAction(e.Action) || key == "" {
+		return true
+	}
+	j, ok := p[key]
+	return !ok || j == i
+}
+
+// prThroughputHiveMergePath reports whether e is a pr_merged entry written by
+// one of the hive's own merge paths rather than observed by the PR poller.
+func prThroughputHiveMergePath(e AuditEntry) bool {
+	if e.Action != ghpkg.AuditActionPRMerged {
+		return false
+	}
+	switch prThroughputMergePath(e.Detail) {
+	case prThroughputMergePathSweep, prThroughputMergePathRelay, prThroughputMergePathForge:
+		return true
+	}
+	return false
+}
+
+// qualifyPRThroughputEntries returns entries with each resolvable repo
+// rewritten by qualify (a bare name onto owner/name). The hive's merge paths
+// record owner/name while the PR poller records the repo as configured, often
+// bare, so without this one merge has two PR keys and is counted twice, and a
+// repo filter sees only half of it.
+func qualifyPRThroughputEntries(entries []AuditEntry, qualify func(string) string) []AuditEntry {
+	if qualify == nil {
+		return entries
+	}
+	out := make([]AuditEntry, len(entries))
+	for i, e := range entries {
+		if repo, ok := collect.AuditEntryRepo(e); ok {
+			e.Repo = qualify(repo)
+		}
+		out[i] = e
+	}
+	return out
 }
 
 func prThroughputAgent(e AuditEntry) string {

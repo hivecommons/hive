@@ -444,36 +444,25 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		evictHiveClosedPR(b.dashSrv, rec, time.Now())
 	})
 	client.SetPRTerminalObservedHook(func(obs github.PRTerminalObservation) {
-		ts := obs.ObservedAt.UTC().Format(time.RFC3339)
-		switch obs.State {
-		case github.PRStateMerged:
-			path := obs.Attribution
-			if path == "" {
-				path = "unknown"
-			}
-			b.dashSrv.AuditLogRecordAt(ts, "system", github.AuditActionPRMerged,
-				fmt.Sprintf("repo=%s, number=%d, path=%s, actor=%s", obs.Repo, obs.Number, path, obs.Actor),
-				github.AttributionAgentGovernor, obs.Repo, obs.Number)
-			// #12007: link the PR's Fixes issues first (real created_at /
-			// merged_at), so issues started before issue-side recording
-			// existed close instead of lingering as stale in-progress.
-			backfillMergedPROnIssues(b.dashSrv, b.cfg.Project.Org, obs)
-			reworkCommits, reworkObserved := 0, false
-			// Only PRs the hive already journeys are measured, which keeps
-			// the extra GitHub reads off merges the hive never worked.
-			if store := b.dashSrv.LifecycleTimeline(); store != nil && hasJourney(store, timelineRef(b.cfg.Project.Org, obs.Repo, obs.Number)) {
-				reworkCommits, reworkObserved = client.MergedPRReworkCommits(b.ctx, obs.Repo, obs.Number, obs.ObservedAt)
-			}
-			recordObservedMerge(b.dashSrv, b.cfg.Project.Org, obs.Repo, obs.Number, obs.ObservedAt, obs.Actor, path, reworkCommits, reworkObserved)
-		case github.PRStateClosed:
-			path := obs.Attribution
-			if path == "" {
-				path = "unknown"
-			}
-			b.dashSrv.AuditLogRecordAt(ts, "system", github.AuditActionPRClosed,
-				fmt.Sprintf("repo=%s, number=%d, path=%s, reason=observed_closed, actor=%s", obs.Repo, obs.Number, path, obs.Actor),
-				github.AttributionAgentGovernor, obs.Repo, obs.Number)
+		recordPRTerminalObservedAudit(b.dashSrv, b.cfg.Project.Org, obs)
+		if obs.State != github.PRStateMerged {
+			return
 		}
+		path := obs.Attribution
+		if path == "" {
+			path = "unknown"
+		}
+		// #12007: link the PR's Fixes issues first (real created_at /
+		// merged_at), so issues started before issue-side recording
+		// existed close instead of lingering as stale in-progress.
+		backfillMergedPROnIssues(b.dashSrv, b.cfg.Project.Org, obs)
+		reworkCommits, reworkObserved := 0, false
+		// Only PRs the hive already journeys are measured, which keeps
+		// the extra GitHub reads off merges the hive never worked.
+		if store := b.dashSrv.LifecycleTimeline(); store != nil && hasJourney(store, timelineRef(b.cfg.Project.Org, obs.Repo, obs.Number)) {
+			reworkCommits, reworkObserved = client.MergedPRReworkCommits(b.ctx, obs.Repo, obs.Number, obs.ObservedAt)
+		}
+		recordObservedMerge(b.dashSrv, b.cfg.Project.Org, obs.Repo, obs.Number, obs.ObservedAt, obs.Actor, path, reworkCommits, reworkObserved)
 	})
 	client.SetPROpenedHook(func(agentName, repo string, number int, url string) {
 		b.dashSrv.LinearAgentPROpened(agentName, repo, number, url)
@@ -552,6 +541,35 @@ func holdMigrationFailedAlertMessage(hiveID, reportPath string) string {
 		msg += " Migration report: " + reportPath
 	}
 	return msg
+}
+
+// prTerminalAuditRecorder is the dashboard audit write the PR poller's
+// terminal observations go through.
+type prTerminalAuditRecorder interface {
+	AuditLogRecordAt(timestamp, user, action, detail, agent, repo string, target int)
+}
+
+// recordPRTerminalObservedAudit records a merge or close the PR poller saw.
+// The repo is qualified with the org, the form the hive's own merge paths
+// record (RecordPRMergedAudit), so the PR throughput card counts a merge the
+// hive made and then observed as one PR, not two.
+func recordPRTerminalObservedAudit(audit prTerminalAuditRecorder, org string, obs github.PRTerminalObservation) {
+	ts := obs.ObservedAt.UTC().Format(time.RFC3339)
+	repo := cruxconfig.QualifyRepo(org, obs.Repo)
+	path := obs.Attribution
+	if path == "" {
+		path = "unknown"
+	}
+	switch obs.State {
+	case github.PRStateMerged:
+		audit.AuditLogRecordAt(ts, "system", github.AuditActionPRMerged,
+			fmt.Sprintf("repo=%s, number=%d, path=%s, actor=%s", repo, obs.Number, path, obs.Actor),
+			github.AttributionAgentGovernor, repo, obs.Number)
+	case github.PRStateClosed:
+		audit.AuditLogRecordAt(ts, "system", github.AuditActionPRClosed,
+			fmt.Sprintf("repo=%s, number=%d, path=%s, reason=observed_closed, actor=%s", repo, obs.Number, path, obs.Actor),
+			github.AttributionAgentGovernor, repo, obs.Number)
+	}
 }
 
 // evictHiveClosedPR removes a pull request from the tracker and the cached

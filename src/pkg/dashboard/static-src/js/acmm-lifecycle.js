@@ -1220,7 +1220,7 @@
         <div class="prt-metric" title="Each bucket's merged count compared with the previous bucket."><div class="mval">${prtTrend(m.trend && m.trend.merged_pct, false)}</div><div class="mlbl">merged trend</div>${prtMetricSpark(metricSeries.mergedTrend, metricSeries.times, prtTrendColor(metricSeries.mergedTrend, false), 'merged trend', v => `${prtFmtNumber(v)}%`, 'merged-trend')}</div>
         <div class="prt-metric" title="Each bucket's median time-to-merge compared with the previous bucket that had TTM samples; down is better."><div class="mval">${prtTrend(m.trend && m.trend.median_time_to_merge_pct, true)}</div><div class="mlbl">TTM trend</div>${prtMetricSpark(metricSeries.ttmTrend, metricSeries.times, prtTrendColor(metricSeries.ttmTrend, true), 'TTM trend', v => `${prtFmtNumber(v)}%`, 'ttm-trend')}</div>
       </div>`;
-      const breakdowns = [prtTopList('Merged by agent', dto.merged_by_agent), prtTopList('Top repos', dto.top_repos), prtTopList('Close reasons', dto.closed_reasons)].filter(Boolean).join('');
+      const breakdowns = [prtTopList('Merged by agent', dto.merged_by_agent), prtTopList('Merged by repo', dto.top_repos), prtTopList('Close reasons', dto.closed_reasons)].filter(Boolean).join('');
       const label = prtWindowLabel(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">${escapeHtml(label)}</div><div class="prt-controls collapsed-control" data-collapsed-control>${prtRepoOptions()}<button type="button" class="hv-btn btn-secondary btn-sm" data-action="exportPRThroughputCSV" title="Download bucket series as CSV">CSV</button></div></div>
         <div class="lc-fleet prt-headline sec-headline" data-collapsed-keep>
