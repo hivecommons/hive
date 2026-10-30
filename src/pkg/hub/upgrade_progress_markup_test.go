@@ -31,7 +31,7 @@ func TestDashboardRendersUpgradeProgressPillAndHistory(t *testing.T) {
 	}
 	// Every state the hub can emit has a human label.
 	labels := extractHubJSVar(t, dashboardHTML, "UPGRADE_PROGRESS_LABELS")
-	for _, state := range []string{"scheduled", "draining", "pulling", "rolling", "verifying", "done", "missed"} {
+	for _, state := range []string{"scheduled", "delayed", "draining", "pulling", "rolling", "verifying", "done", "missed"} {
 		if !strings.Contains(labels, state+":") {
 			t.Errorf("UPGRADE_PROGRESS_LABELS lacks %q: %s", state, labels)
 		}
