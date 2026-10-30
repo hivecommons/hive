@@ -93,7 +93,7 @@ type Config struct {
 	// defaults: close issues after their fix PR merges, and backfill hourly.
 	Issues IssuesConfig `yaml:"issues,omitempty" json:"issues,omitempty"`
 	// Dedupe tunes the dedupe lane's follow-through on its checklists.
-	Dedupe     DedupeConfig     `yaml:"dedupe,omitempty" json:"dedupe,omitempty"`
+	Dedupe     DedupeLaneConfig `yaml:"dedupe,omitempty" json:"dedupe,omitempty"`
 	Contribute ContributeConfig `yaml:"contribute,omitempty" json:"contribute,omitempty"`
 	HiveID     string           `yaml:"hive_id"`
 	ACMMLevel  *int             `yaml:"acmm_level,omitempty" json:"acmm_level"`

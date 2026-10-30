@@ -7,7 +7,7 @@ import (
 )
 
 func TestDedupeAdvisoryAutocloseDefaultsOn(t *testing.T) {
-	var d DedupeConfig
+	var d DedupeLaneConfig
 	if !d.AdvisoryAutocloseEnabled() {
 		t.Fatal("advisory_autoclose must default on: the checklist never waits on a person")
 	}

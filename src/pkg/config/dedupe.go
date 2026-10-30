@@ -1,8 +1,8 @@
 package config
 
-// DedupeConfig tunes the dedupe lane's follow-through: what the hive does
+// DedupeLaneConfig tunes the dedupe lane's follow-through: what the hive does
 // with the consolidation checklists the lane files, once it has filed them.
-type DedupeConfig struct {
+type DedupeLaneConfig struct {
 	// AdvisoryAutoclose runs the advisory-checklist sweep: every open
 	// hive-authored advisory checklist has its `- [ ] #N` items ticked as
 	// the referenced issues and PRs close or merge, and is closed as
@@ -13,7 +13,7 @@ type DedupeConfig struct {
 }
 
 // AdvisoryAutocloseEnabled reports whether the advisory-checklist sweep runs.
-func (d DedupeConfig) AdvisoryAutocloseEnabled() bool {
+func (d DedupeLaneConfig) AdvisoryAutocloseEnabled() bool {
 	if d.AdvisoryAutoclose == nil {
 		return true
 	}
