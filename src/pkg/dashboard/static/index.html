@@ -7152,6 +7152,7 @@
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
       <a class="oc-nav-item" href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
       <a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Join our Discord</span></a>
+      <a class="oc-nav-item" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener" title="Live stream of the hosted hive's Activity Monitor"><span class="oc-nav-emoji">📺</span><span class="oc-nav-text">Watch live on Twitch</span></a>
       <a class="oc-nav-item" data-action="openFeedbackModal" data-arg0="bug" data-prevent="1"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an Issue</span></a>
     </div>
     <!-- Pinned label filters (#12172): one entry per pinned saved filter /
@@ -7673,7 +7674,7 @@
         <p class="faq-intro">Short answers to the questions people ask once a hive is running. Everything below describes what this hive
         actually does today — where behaviour is surprising, it is called out rather than smoothed over. Each answer links to the
         source doc, so this panel stays a map, not a second source of truth.</p>
-        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step.</p>
+        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>.</p>
 
         <div class="faq-filter-row">
           <label for="faq-filter" class="faq-filter-label">Filter</label>
@@ -50858,7 +50859,7 @@ function burnAreaChart() {
         <div class="config-field">
           <label>Help &amp; community links ${settingHelpMark('contributor-relay', '', 'Help & community links', `Shown on /contribute Onboarding, Operations, and in relay terminals at connect. One "Label | URL" per line, max 5. Discord channel URLs only work for existing server members; prefer https://hivecommons.dev/discord for new contributors.`)}</label>
           <textarea rows="4" style="width:100%;font-family:var(--font-mono);font-size:0.72rem;resize:vertical" placeholder="Chat with other contributors | https://hivecommons.dev/discord" data-change-action="setContributeHelpLinksFromText" data-arg-types="v">${esc(helpLinksText)}</textarea>
-          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Stored as <code>contribute.help_links[].label</code> and <code>contribute.help_links[].url</code>. Empty restores Hive's default contributor docs and issue links.</span>
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Stored as <code>contribute.help_links[].label</code> and <code>contribute.help_links[].url</code>. Empty restores Hive's default contributor docs, issue tracker, and Twitch live stream links.</span>
         </div>
 
         ${renderFilterWithMode({
@@ -62284,7 +62285,7 @@ function burnAreaChart() {
         _welcomeOpenSteps.add(firstUndone ? firstUndone.id : WELCOME_STEPS[0].id);
       }
       let html = '';
-      html += '<div class="welcome-intro">New to Hive? Start here → <a href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" style="color:var(--accent);font-weight:600">Zero to Automation: Your Getting Started Guide</a> · <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a><br><span style="font-size:0.85em;color:var(--muted)">⏰ Heads up: hosted hives that stay unconfigured or inactive are reaped on a timer. Install the Forge App — the app for your source control system (e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — in your first session (step 2), and if your hive ever disappears or its URL times out, request a new one from the hub and set it up promptly.</span></div>';
+      html += '<div class="welcome-intro">New to Hive? Start here → <a href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" style="color:var(--accent);font-weight:600">Zero to Automation: Your Getting Started Guide</a> · <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a> · <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a><br><span style="font-size:0.85em;color:var(--muted)">⏰ Heads up: hosted hives that stay unconfigured or inactive are reaped on a timer. Install the Forge App — the app for your source control system (e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — in your first session (step 2), and if your hive ever disappears or its URL times out, request a new one from the hub and set it up promptly.</span></div>';
       let n = 0;
       for (const step of WELCOME_STEPS) {
         n++;
