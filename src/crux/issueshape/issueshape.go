@@ -100,8 +100,10 @@ func UnchosenOptionList(text string) (string, bool) {
 }
 
 // agentTitlePrefixRE matches the leading `[<agent>]` tag every hive-filed
-// issue title carries (`[scanner] …`, `[reviewer] …`, `[selfreport] …`).
-var agentTitlePrefixRE = regexp.MustCompile(`^\s*\[([^\]\s]+)\]\s*`)
+// issue title carries (`[scanner] …`, `[reviewer] …`, `[selfreport] …`). A
+// filer-chosen tag with spaces (`[ACMM L0] …`) counts too, so it is kept
+// rather than stacked under a second tag.
+var agentTitlePrefixRE = regexp.MustCompile(`^\s*\[([^\]\n]+)\]\s*`)
 
 // TitleFor returns title carrying a leading `[<agent>]` tag, the convention
 // every issue the hive files follows so a reader can tell which agent or

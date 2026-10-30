@@ -111,6 +111,7 @@ func TestTitleForTagsOnceAndKeepsExistingTag(t *testing.T) {
 		{"Reviewer", "  Review backlog (style): x  ", "[reviewer] Review backlog (style): x"},
 		{"reviewer", "[reviewer] Review backlog (security): token logged", "[reviewer] Review backlog (security): token logged"},
 		{"tester", "[Tests] v5 test failure on 4536f90", "[Tests] v5 test failure on 4536f90"},
+		{"dashboard", "[ACMM L0] Add CI/CD pipeline", "[ACMM L0] Add CI/CD pipeline"},
 		{"selfreport", "[selfreport] unclassified_error_repeated: x", "[selfreport] unclassified_error_repeated: x"},
 		{"governor", "refactor: src/a.go is a merge hotspot — split into 4 units", "[governor] refactor: src/a.go is a merge hotspot — split into 4 units"},
 		{"", "untagged stays untagged", "untagged stays untagged"},
