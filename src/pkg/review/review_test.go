@@ -697,11 +697,11 @@ func TestAggregateReportsKeepsRedundantOfDecisionOnHiveAuthoredPR(t *testing.T) 
 	}
 }
 
-// Owner rule (2026-10-29): no human decision while a contributor PR is in
-// CI/Review unless the review found something. hive's own #15312 (duplicate
-// of #15309), #15410 (workflow pin) and friends sat 3–21h on
-// decision-requested verdicts; the duplicate and trust-surface questions
-// stay a person's, a bare "should this land?" does not.
+// Owner rule (hivecommons/hive#15640): no human decision while a
+// contributor PR is in CI/Review unless the review found something fishy
+// or insecure; everything else keeps moving and the person has the last
+// word at the merge gate. hive's own #15312 (duplicate of #15309), #15410
+// (workflow pin) and friends sat 3–21h on decision-requested verdicts.
 func TestAggregateReportsContributorDecisionNeedsBacking(t *testing.T) {
 	ask := func(q string, findings ...outputschema.Finding) PerspectiveReport {
 		r := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman, findings...)
@@ -712,48 +712,78 @@ func TestAggregateReportsContributorDecisionNeedsBacking(t *testing.T) {
 	tests := []struct {
 		name    string
 		rep     PerspectiveReport
-		parked  bool
+		opts    AggregateOptions
+		want    Verdict
 		finding string
 	}{
-		{name: "bare product question keeps moving", rep: ask("@clubanderson should decide whether this groundwork lands before its consumer."), parked: false},
-		{name: "duplicate of another PR is a finding", rep: ask("@clubanderson should decide whether #15312 is closed in favour of #15309, which clears the same ledger row."), parked: true, finding: "duplicate"},
-		{name: "already landed is a finding", rep: ask("@clubanderson should confirm #15324 can be closed as a no-op — #15301 already landed this exact fix."), parked: true, finding: "duplicate"},
-		{name: "workflow question is a risk class", rep: ask("@clubanderson should decide whether to accept this workflow-trigger change."), parked: true, finding: "sensitive-paths question"},
-		{name: "redundant-of marker is a finding", rep: func() PerspectiveReport {
+		{name: "bare product question keeps moving", rep: ask("@clubanderson should decide whether this groundwork lands before its consumer."), want: VerdictApprove},
+		{name: "duplicate question is a merge-gate call, not a CI/Review one", rep: ask("@clubanderson should decide whether #15312 is closed in favour of #15309, which clears the same ledger row."), want: VerdictApprove},
+		{name: "redundant-of marker likewise", rep: func() PerspectiveReport {
 			r := ask("close as superseded?")
 			r.RedundantOf = 15309
 			return r
-		}(), parked: true, finding: "duplicate: #15309"},
+		}(), want: VerdictApprove},
+		{name: "workflow question is a sensitive-paths finding", rep: ask("@clubanderson should decide whether to accept this workflow-trigger change."), want: VerdictRequiresHuman, finding: "sensitive-paths question"},
+		{name: "credential question is a security finding", rep: ask("should the relay token be read from the environment here?"), want: VerdictRequiresHuman, finding: "permissions-credentials question"},
+		{name: "licensing question is not", rep: ask("@clubanderson is the copyright header acceptable?"), want: VerdictApprove},
 		{name: "high-risk marker is a finding", rep: func() PerspectiveReport {
 			r := ask("should this land?")
 			r.DecisionRiskHigh = true
 			return r
-		}(), parked: true, finding: "high-risk"},
-		{name: "finding at the human threshold is a finding", rep: ask("should this land?", outputschema.Finding{Title: "Clears the wrong ledger key", Severity: outputschema.SeverityHigh, ReviewScope: "in-scope"}), parked: true, finding: `finding "Clears the wrong ledger key" is high`},
-		{name: "finding below the human threshold is not", rep: ask("should this land?", outputschema.Finding{Title: "Get-before-Clear is redundant", Severity: outputschema.SeverityLow, ReviewScope: "in-scope"}), parked: false},
+		}(), want: VerdictRequiresHuman, finding: "high-risk"},
+		{name: "finding on a default sensitive path is a finding", rep: ask("should this land?", outputschema.Finding{Title: "new job runs on pull_request_target", Severity: outputschema.SeverityMedium, ReviewScope: "in-scope", File: ".github/workflows/ci.yml"}), want: VerdictRequiresHuman, finding: "sensitive path .github/workflows/ci.yml"},
+		{name: "finding on an operator sensitive path is a finding", rep: ask("should this land?", outputschema.Finding{Title: "changes the proxy allowlist", Severity: outputschema.SeverityLow, ReviewScope: "in-scope", File: "internal/proxy/allow.go"}), opts: AggregateOptions{SensitivePaths: []string{"internal/proxy/**"}}, want: VerdictRequiresHuman, finding: "sensitive path internal/proxy/allow.go"},
+		{name: "finding flagging insecure behaviour is a finding", rep: ask("should this land?", outputschema.Finding{Title: "Shells out with user input", Severity: outputschema.SeverityMedium, Summary: "command injection via the branch name", ReviewScope: "in-scope"}), want: VerdictRequiresHuman, finding: "flags insecure behaviour"},
+		{name: "ordinary high finding goes back to the clanker", rep: ask("should this land?", outputschema.Finding{Title: "Clears the wrong ledger key", Severity: outputschema.SeverityHigh, ReviewScope: "in-scope"}), want: VerdictChangesRequested},
+		{name: "ordinary low finding goes back to the clanker", rep: ask("should this land?", outputschema.Finding{Title: "Get-before-Clear is redundant", Severity: outputschema.SeverityLow, ReviewScope: "in-scope"}), want: VerdictChangesRequested},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := AggregateReports([]PerspectiveReport{tt.rep}, AggregateOptions{})
-			if tt.parked {
-				if got.Verdict != VerdictRequiresHuman || !got.DecisionRequested || got.DecisionQuestion != tt.rep.DecisionQuestion {
+			got := AggregateReports([]PerspectiveReport{tt.rep}, tt.opts)
+			if got.Verdict != tt.want {
+				t.Fatalf("aggregate = %+v, want %s", got, tt.want)
+			}
+			switch tt.want {
+			case VerdictRequiresHuman:
+				if !got.DecisionRequested || got.DecisionQuestion != tt.rep.DecisionQuestion {
 					t.Fatalf("aggregate = %+v, want decision request kept", got)
 				}
 				if !strings.Contains(got.DecisionFinding, tt.finding) {
 					t.Fatalf("DecisionFinding = %q, want it to name %q", got.DecisionFinding, tt.finding)
 				}
-				return
-			}
-			if got.Verdict != VerdictApprove || !got.MergeEligible || got.RequiresHuman || got.DecisionRequested || got.DecisionQuestion != "" || got.DecisionFinding != "" {
-				t.Fatalf("aggregate = %+v, want advisory approve", got)
-			}
-			if got.Perspectives[PerspectiveIntentAlignment] != VerdictApprove {
-				t.Fatalf("perspectives = %v, want the forced requires_human read as approve", got.Perspectives)
-			}
-			if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "not backed by a finding") || !strings.Contains(got.Reasons[0], tt.rep.DecisionQuestion) {
-				t.Fatalf("Reasons = %v, want one advisory carrying the question", got.Reasons)
+			case VerdictApprove:
+				if !got.MergeEligible || got.RequiresHuman || got.DecisionRequested || got.DecisionQuestion != "" || got.DecisionFinding != "" {
+					t.Fatalf("aggregate = %+v, want advisory approve", got)
+				}
+				if got.Perspectives[PerspectiveIntentAlignment] != VerdictApprove {
+					t.Fatalf("perspectives = %v, want the forced requires_human read as approve", got.Perspectives)
+				}
+				if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "no security finding") || !strings.Contains(got.Reasons[0], tt.rep.DecisionQuestion) {
+					t.Fatalf("Reasons = %v, want one advisory carrying the question", got.Reasons)
+				}
+			case VerdictChangesRequested:
+				if !got.FixCycle || got.RequiresHuman || got.DecisionRequested || got.DecisionFinding != "" {
+					t.Fatalf("aggregate = %+v, want the fixer lane", got)
+				}
 			}
 		})
+	}
+}
+
+// A bare requires_human (no decision marker) on a contributor PR follows
+// the same rule: only a security finding parks it.
+func TestAggregateReportsContributorRequiresHumanNeedsSecurityFinding(t *testing.T) {
+	plain := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman)
+	plain.Summary = "Unclear whether the groundwork should land before its consumer."
+	got := AggregateReports([]PerspectiveReport{plain}, AggregateOptions{})
+	if got.Verdict != VerdictApprove || got.RequiresHuman || !got.MergeEligible {
+		t.Fatalf("aggregate = %+v, want advisory approve", got)
+	}
+	sec := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	sec.Summary = "Trust-surface file by location; a relay owner should confirm before merge."
+	got = AggregateReports([]PerspectiveReport{sec}, AggregateOptions{})
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !strings.Contains(got.DecisionFinding, "security review withheld approval") {
+		t.Fatalf("aggregate = %+v, want the security perspective's hold kept with its finding", got)
 	}
 }
 

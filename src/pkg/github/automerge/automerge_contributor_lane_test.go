@@ -24,6 +24,8 @@ import (
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/review"
 	hreview "github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -2021,4 +2023,32 @@ func storedChangeRequest(t *testing.T, head string) *hreview.HumanChangeRequests
 		t.Fatal(err)
 	}
 	return store
+}
+
+// Owner invariant (hivecommons/hive#15640), verbatim: "i always have the
+// last word when it comes to merge of untrusted". A green, approved,
+// soaked PR from a contributor the lane cannot vouch for (self-registered
+// newcomer, untrusted tier) is never auto-merged: the lane refuses with
+// claim-tier-untrusted and the stage engine parks it at 090
+// ready-for-human-merge — the merge gate, not an 085 decision in review.
+func TestContributorLaneUntrustedGreenApprovedParksForHumanMerge(t *testing.T) {
+	fx := validContributorFixture()
+	fx.issueComments[0]["body"] = contributorClaimMarkerTier(contributorLaneTestAuthor, "contributor", contributorLaneTestHive, " tier=newcomer verified=false")
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+
+	_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+	if err != nil || reason != contributorLaneReasonClaimTier {
+		t.Fatalf("reason = %q err = %v, want %q", reason, err, contributorLaneReasonClaimTier)
+	}
+	if fx.merges != 0 {
+		t.Fatalf("untrusted author auto-merged (%d merges)", fx.merges)
+	}
+	v := stageengine.ClassifyStage(prstage.Observation{Lane: stageLaneContributor, Reason: reason, HeadSHA: "sha7", Detail: prstage.Detail{VerdictKnown: true, Verdict: approvedVerdict("acme/widget", 7, "sha7")}})
+	if v.Stage != stagelabels.ReadyForHumanMerge || !v.Human {
+		t.Fatalf("stage = %+v, want 090 ready-for-human-merge awaiting the operator", v)
+	}
 }

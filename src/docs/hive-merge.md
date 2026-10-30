@@ -614,18 +614,23 @@ unattended (for example `mrbobbytables`):
 A claim keeps the tier the contributor held when it was taken, so grant the
 tier before the issue is leased.
 
-**No decision during CI/Review.** A contributor PR is not parked at
+**No decision during CI/Review; the operator has the last word on
+untrusted merges.** A contributor PR is not parked at
 `stage/085-needs-decision` on a reviewer decision marker alone. While it is
-in CI/Review the hive runs CI and the review swarm to completion; the
-aggregate honours a `decision_requested` verdict only when the review
-*found* something (duplicate, trust-surface / risk-class question, high-risk
-marker, finding at the human threshold) and records that finding as
-`decision_finding`, which the 085 comment prints as `the review found: …`.
-A question with nothing behind it is advisory and the PR keeps moving; a
-contributor whose tier the lane cannot vouch for then waits at
-`stage/090-ready-for-human-merge` under the human-merge rule — a merge-gate
-state, not a review decision. See
-[review-swarm.md](review-swarm.md) ("Contributor and human-authored PRs: no decision in CI/Review").
+in CI/Review the hive runs CI and the review swarm to completion and the
+row always names its mover; the only early exit is a concrete security /
+trust finding (`review.IsSecuritySensitiveFinding`: high-risk marker,
+security perspective hold, security-class question, finding on a sensitive
+path — `sentinel.sensitive_paths` plus `security.sensitive_paths` — or
+insecure behaviour flagged), recorded as `decision_finding` and printed as
+`the review found: …`. Anything else goes back to the clanker or is
+advisory and the PR keeps moving. At the merge gate a contributor the lane
+cannot vouch for parks at `stage/090-ready-for-human-merge`
+(`contributor-lane:claim-tier-untrusted`, `untrusted-author-role`, the
+human-merge rule) and waits for the operator's merge — the hive never
+auto-merges an untrusted author's PR, however green, approved and soaked.
+See [review-swarm.md](review-swarm.md) ("Contributor and human-authored
+PRs: no decision in CI/Review").
 
 ### Issue-author credit at merge time
 
