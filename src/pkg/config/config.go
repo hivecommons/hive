@@ -4974,6 +4974,13 @@ type DashboardStageTrackerConfig struct {
 	// ToastErrorS is the same for error toasts. 0 means the default (30);
 	// values are clamped to 3..120.
 	ToastErrorS int `yaml:"toast_error_s,omitempty" json:"toast_error_s,omitempty"`
+	// MergedHoldS is how many seconds the activity monitor keeps a row at
+	// "Merging · merge landed" after the payload dropped it, bridging the
+	// gap until the SPA has the merged fact (hivecommons/hive#15808). The
+	// celebration launches as soon as that fact arrives, so this is a
+	// ceiling, not a delay. 0 means the default (8); values under 3 read
+	// as 3.
+	MergedHoldS int `yaml:"merged_hold_s,omitempty" json:"merged_hold_s,omitempty"`
 }
 
 // Defaults and bounds for dashboard.stage_tracker.toast_info_s and
@@ -5011,6 +5018,26 @@ func (c *Config) StageTrackerToastError() time.Duration {
 		return DefaultStageTrackerToastErrorS * time.Second
 	}
 	return time.Duration(stageTrackerToastSeconds(c.Dashboard.StageTracker.ToastErrorS, DefaultStageTrackerToastErrorS)) * time.Second
+}
+
+// defaultStageTrackerMergedHold is the default
+// dashboard.stage_tracker.merged_hold_s; minStageTrackerMergedHold its floor.
+const (
+	defaultStageTrackerMergedHold = 8 * time.Second
+	minStageTrackerMergedHold     = 3 * time.Second
+)
+
+// StageTrackerMergedHold is the effective dashboard.stage_tracker.merged_hold_s
+// as a duration: the default when unset, never under the floor.
+func (c *Config) StageTrackerMergedHold() time.Duration {
+	if c == nil || c.Dashboard.StageTracker.MergedHoldS == 0 {
+		return defaultStageTrackerMergedHold
+	}
+	d := time.Duration(c.Dashboard.StageTracker.MergedHoldS) * time.Second
+	if d < minStageTrackerMergedHold {
+		return minStageTrackerMergedHold
+	}
+	return d
 }
 
 // defaultStageTrackerWaitingPushStale is the default
