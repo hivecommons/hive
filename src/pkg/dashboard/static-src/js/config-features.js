@@ -143,6 +143,7 @@
       am = am || {};
       rv = rv || {};
       const cv = (_configState.data || {}).convergence || {};
+      const io = (_configState.data || {}).integration_orchestration || { mode: 'off', scopes: [] };
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
@@ -1144,6 +1145,25 @@
           <div class="config-help">Checkpoint, triage and recheck settings are applied live; no restart is needed.</div>
         </div>
         <div class="settings-subsection">
+          <div class="settings-subsection-title">Integration orchestration</div>
+          <div class="config-help">Default OFF. Coordinates authoring admission above existing preparation and native queues; never replaces CI, review, holds or current-base guards. Advisory cannot block. Enforce requires explicit repository/base scopes and complete runner telemetry. No native queue jumping or GitHub build-window control. 5,000/day is a capacity target, not a measured result.</div>
+          <div class="config-field"><label>Mode ${yamlHint('integration_orchestration.mode')}</label>
+            <select data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="mode" data-arg-types="s,s,v">
+              ${['off','advisory','enforce'].map(m => `<option value="${esc(m)}" ${io.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field"><label>Exact scopes (one owner/repo#base per line)</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="scope_lines" data-arg-types="s,s,v">${esc((io.scopes || []).map(s => s.repo + '#' + s.base).join('\n'))}</textarea>
+          </div>
+          <div class="config-field-row">
+            ${[['max_active','Active admissions',2],['max_jobs','Executed jobs per window',20],['max_runner_minutes','Runner minutes per window',60],['max_attempts','Attempt bound',2]].map(([key,label,def]) =>
+              `<div class="config-field"><label>${esc(label)}</label><input type="number" min="1" value="${esc(String(io[key] || def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-help">Window, lease TTL and telemetry age are bounded in hive.yaml/API. Disabling releases only orchestration reservations; existing claims and native entries remain. Missing group membership, policy or producer proof stays unknown.</div>
+          <button class="hv-btn btn-secondary btn" data-action="loadIntegrationOrchestration">Inspect intents, reservations and CI evidence</button>
+          <pre id="integration-orchestration-summary" class="config-help" aria-live="polite"></pre>
+        </div>
+        <div class="settings-subsection">
           <div class="settings-subsection-title">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
           <div class="config-field">
             <label>Mode ${settingHelpMark('settings', 'features', 'Mode', `Shadow (default) evaluates every internal kick decision and records what it WOULD have withheld, without enforcing anything &mdash; dispatch is identical to off, and it costs no tokens and no extra GitHub calls. Enforce withholds blocked/unknown work from internal scheduled/cached kicks. Off is the rollback control arm, and the one posture that records no evidence. Workflow: leave it in shadow, load the soak summary, and if the would-withhold cases look genuine, switch to enforce. Live &mdash; no restart needed.`)}</label>
@@ -1159,4 +1179,3 @@
         </div>
         `)}`;
     }
-

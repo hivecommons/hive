@@ -82,6 +82,9 @@ const autoMergeReasonLabelNeedsRebase = "label:needs-rebase"
 
 // Options carries policy dependencies owned by the caller.
 type Options struct {
+	// IntegrationAdmission may withhold a NEW native enqueue for a scoped CI
+	// budget. It never replaces any gate, cancels work, or reorders the queue.
+	IntegrationAdmission func(context.Context, string, *gh.PullRequest) (string, error)
 	// BasePreparation persists front-only final preparation across all lanes.
 	// nil uses the shared durable store.
 	BasePreparation  *BasePreparationStore
@@ -258,6 +261,7 @@ type Engine struct {
 	claimants   map[string][]*gh.PullRequest
 
 	nativeMergeQueuePolicy func() NativeMergeQueuePolicy
+	integrationAdmission   func(context.Context, string, *gh.PullRequest) (string, error)
 	nativeQueueProbeMu     sync.Mutex
 	nativeQueueProbes      map[string]nativeQueueProbe
 
@@ -442,6 +446,7 @@ func New(transport Transport, opts Options) *Engine {
 		sweepTrigger:                      opts.SweepTrigger,
 		mergeTrainPolicy:                  mergeTrainPolicyOption(opts),
 		nativeMergeQueuePolicy:            opts.NativeMergeQueue,
+		integrationAdmission:              opts.IntegrationAdmission,
 		rebaseResolver:                    opts.RebaseResolver,
 		rebaseEpisode:                     opts.RebaseEpisode,
 		hotspotRecorder:                   opts.HotspotRecorder,

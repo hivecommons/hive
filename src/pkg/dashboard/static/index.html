@@ -43722,6 +43722,7 @@ function burnAreaChart() {
         case 'wsWavefrontSetEnabled': wsWavefrontSetEnabled(el); break;
         case 'toggleAgentEnabled': setAgentEnabled(el.dataset.agent, el.dataset.enabled !== 'true'); break;
         case 'loadConvergenceSoak': loadConvergenceSoak(); break;
+        case 'loadIntegrationOrchestration': loadIntegrationOrchestration(); break;
         case 'loadReviewOutcomes': loadReviewOutcomes(); break;
         case 'loadLinearAgentStatus': loadLinearAgentStatus(); break;
         case 'loadUpstreamWatch': loadUpstreamWatch(); break;
@@ -44570,7 +44571,6 @@ function burnAreaChart() {
         el.disabled = false;
       }
     }
-
     // ── Plan review view (#7537) ─────────────────────────────────────────
     // The governor PLANNING tile links here: openPlanList() enumerates every
     // plan (GET /api/plans, drafts first) and openPlanReview(epicID) shows one
@@ -57356,6 +57356,7 @@ function burnAreaChart() {
       am = am || {};
       rv = rv || {};
       const cv = (_configState.data || {}).convergence || {};
+      const io = (_configState.data || {}).integration_orchestration || { mode: 'off', scopes: [] };
       const planOn = f.planFromLabel === true;
       const formalAvailable = f.formalAvailable === true;
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
@@ -58357,6 +58358,25 @@ function burnAreaChart() {
           <div class="config-help">Checkpoint, triage and recheck settings are applied live; no restart is needed.</div>
         </div>
         <div class="settings-subsection">
+          <div class="settings-subsection-title">Integration orchestration</div>
+          <div class="config-help">Default OFF. Coordinates authoring admission above existing preparation and native queues; never replaces CI, review, holds or current-base guards. Advisory cannot block. Enforce requires explicit repository/base scopes and complete runner telemetry. No native queue jumping or GitHub build-window control. 5,000/day is a capacity target, not a measured result.</div>
+          <div class="config-field"><label>Mode ${yamlHint('integration_orchestration.mode')}</label>
+            <select data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="mode" data-arg-types="s,s,v">
+              ${['off','advisory','enforce'].map(m => `<option value="${esc(m)}" ${io.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="config-field"><label>Exact scopes (one owner/repo#base per line)</label>
+            <textarea data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="scope_lines" data-arg-types="s,s,v">${esc((io.scopes || []).map(s => s.repo + '#' + s.base).join('\n'))}</textarea>
+          </div>
+          <div class="config-field-row">
+            ${[['max_active','Active admissions',2],['max_jobs','Executed jobs per window',20],['max_runner_minutes','Runner minutes per window',60],['max_attempts','Attempt bound',2]].map(([key,label,def]) =>
+              `<div class="config-field"><label>${esc(label)}</label><input type="number" min="1" value="${esc(String(io[key] || def))}" data-change-action="markDirty" data-arg0="integration_orchestration" data-arg1="${esc(key)}" data-arg-types="s,s,N"></div>`).join('')}
+          </div>
+          <div class="config-help">Window, lease TTL and telemetry age are bounded in hive.yaml/API. Disabling releases only orchestration reservations; existing claims and native entries remain. Missing group membership, policy or producer proof stays unknown.</div>
+          <button class="hv-btn btn-secondary btn" data-action="loadIntegrationOrchestration">Inspect intents, reservations and CI evidence</button>
+          <pre id="integration-orchestration-summary" class="config-help" aria-live="polite"></pre>
+        </div>
+        <div class="settings-subsection">
           <div class="settings-subsection-title">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
           <div class="config-field">
             <label>Mode ${settingHelpMark('settings', 'features', 'Mode', `Shadow (default) evaluates every internal kick decision and records what it WOULD have withheld, without enforcing anything &mdash; dispatch is identical to off, and it costs no tokens and no extra GitHub calls. Enforce withholds blocked/unknown work from internal scheduled/cached kicks. Off is the rollback control arm, and the one posture that records no evidence. Workflow: leave it in shadow, load the soak summary, and if the would-withhold cases look genuine, switch to enforce. Live &mdash; no restart needed.`)}</label>
@@ -58372,7 +58392,6 @@ function burnAreaChart() {
         </div>
         `)}`;
     }
-
     function markReleaseSentinelList(key, value) {
       markDirty('release-sentinel', key, splitConfigLines(value));
     }
@@ -60265,6 +60284,7 @@ function burnAreaChart() {
             : 'No soak telemetry recorded yet — it accumulates one row per eval cycle, so give it a few cycles.';
           return;
         }
+
         const groups = {};
         for (const e of entries) {
           const k = `${e.commit || '?'} / ${e.mode || '?'} (gen ${e.generation || 0})`;
@@ -60297,6 +60317,20 @@ function burnAreaChart() {
         out.innerHTML = rows.join('');
       } catch (err) {
         out.textContent = `Failed to load soak telemetry: ${err.message}`;
+      }
+    }
+
+    async function loadIntegrationOrchestration() {
+      const out = document.getElementById('integration-orchestration-summary');
+      if (!out) return;
+      out.textContent = 'Loading authoritative observations…';
+      try {
+        const res = await fetch('/api/integration-orchestration', { headers: _inceptionAuthHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        out.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        out.textContent = `Integration observations unknown: ${e.message}`;
       }
     }
 
@@ -60463,7 +60497,6 @@ function burnAreaChart() {
       if (!await hiveConfirm({ title: `Stop watching ${repo}?`, message: 'The watch stops polling its upstream. Recorded state and issues already filed are kept.', confirmLabel: 'Stop watching', danger: true })) return;
       putUpstreamWatch({ repos: { [repo]: null } }, `Stopped watching ${repo}`);
     }
-
     // ── Linear agent (RFC #4492 Part 2) ─────────────────────────────────────
     // loadLinearAgentStatus paints install/workspace/session state from the
     // owner-only status endpoint into the Features tab's Linear Agent panel.
@@ -61234,6 +61267,21 @@ function burnAreaChart() {
             });
             if (!slaRes.ok) throw new Error(await saveErrorMessage(slaRes));
             _configState.data.sla = await slaRes.json().catch(() => _configState.data.sla);
+          } else if (_configState.type === 'governor' && section === 'integration_orchestration') {
+            const body = Object.assign({}, (_configState.data || {}).integration_orchestration || {}, values);
+            if (Object.prototype.hasOwnProperty.call(body, 'scope_lines')) {
+              body.scopes = String(body.scope_lines).split('\n').map(s => s.trim()).filter(Boolean).map(s => {
+                const at = s.indexOf('#');
+                if (at < 1 || at === s.length - 1) throw new Error('Each integration scope must be owner/repo#base');
+                return { repo: s.slice(0, at), base: s.slice(at + 1) };
+              });
+              delete body.scope_lines;
+            }
+            const ioRes = await fetch('/api/config/integration-orchestration', {
+              method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify(body)
+            });
+            if (!ioRes.ok) throw new Error(await saveErrorMessage(ioRes));
+            _configState.data.integration_orchestration = await ioRes.json();
           } else if (_configState.type === 'governor' && section === 'convergence') {
             // convergence is a TOP-LEVEL config block, not under governor —
             // it saves through its own owner-only /api/config/convergence
@@ -61397,7 +61445,6 @@ function burnAreaChart() {
         })
         .catch(() => {});
     }
-
     // --- Chat rich formatting ---
     function sanitizeChatText(raw) {
       return String(raw || '')

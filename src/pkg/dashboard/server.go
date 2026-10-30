@@ -100,6 +100,7 @@ var proxyProofRequired = true
 const staleDropStarvationThreshold = 5
 
 type Server struct {
+	integration         integrationRuntime
 	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
 
 	feedbackRefreshBackoff feedbackBackoff

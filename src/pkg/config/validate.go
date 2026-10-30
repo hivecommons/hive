@@ -82,6 +82,9 @@ func hostAllowedByHTTPList(host string, allowlist []string) bool {
 }
 
 func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
+	if err := c.IntegrationOrchestration.Validate(); err != nil {
+		return err
+	}
 	if c.Project.Org == "" {
 		return fmt.Errorf("project.org is required")
 	}

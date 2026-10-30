@@ -476,6 +476,7 @@
             : 'No soak telemetry recorded yet — it accumulates one row per eval cycle, so give it a few cycles.';
           return;
         }
+
         const groups = {};
         for (const e of entries) {
           const k = `${e.commit || '?'} / ${e.mode || '?'} (gen ${e.generation || 0})`;
@@ -508,6 +509,20 @@
         out.innerHTML = rows.join('');
       } catch (err) {
         out.textContent = `Failed to load soak telemetry: ${err.message}`;
+      }
+    }
+
+    async function loadIntegrationOrchestration() {
+      const out = document.getElementById('integration-orchestration-summary');
+      if (!out) return;
+      out.textContent = 'Loading authoritative observations…';
+      try {
+        const res = await fetch('/api/integration-orchestration', { headers: _inceptionAuthHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        out.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        out.textContent = `Integration observations unknown: ${e.message}`;
       }
     }
 
@@ -674,4 +689,3 @@
       if (!await hiveConfirm({ title: `Stop watching ${repo}?`, message: 'The watch stops polling its upstream. Recorded state and issues already filed are kept.', confirmLabel: 'Stop watching', danger: true })) return;
       putUpstreamWatch({ repos: { [repo]: null } }, `Stopped watching ${repo}`);
     }
-
