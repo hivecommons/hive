@@ -1,5 +1,21 @@
 # Dashboard REST API reference — Health, status, events
 
+## Contributor pool counters
+
+`GET /api/status` includes `contributorPool.abandoned`, the sum of persisted
+abandoned-PR counters across all registered profiles, and
+`contributorPool.abandoned_by_login`, an object keyed by lowercase GitHub login.
+Offline and revoked contributors remain included; zero-count logins are present.
+An empty registry returns `abandoned: 0` and `abandoned_by_login: {}`. These are
+historical adoption counts, not failed tasks or disconnected task runs.
+`GET /api/contributors` provides each profile's `abandoned` and `abandoned_prs`
+records (`repo`, `pr`, `adopted_into_pr`, `reason`, `at`). The Contributors tile
+shows a nonzero count with the five most recent records in its tooltip.
+See [Abandoned contributor PRs](../operator-reference.md#abandoned-contributor-prs)
+for counting semantics.
+
+## Endpoints
+
 Part of the [Dashboard REST API reference](../api-reference.md); see that page for how auth levels and `pkg/<file>:<line>` source citations are read and checked. Edit this file for routes in this area and run `src/scripts/check-api-reference-citations.sh --fix` to resync citations.
 
 

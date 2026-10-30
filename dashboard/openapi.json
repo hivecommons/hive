@@ -1323,6 +1323,30 @@
                     "hiveId": {
                       "type": "string"
                     },
+                    "contributorPool": {
+                      "type": "object",
+                      "description": "Registered contributor pool; historical counts include offline and revoked profiles.",
+                      "properties": {
+                        "active": { "type": "integer" },
+                        "online": { "type": "integer" },
+                        "registered": { "type": "integer" },
+                        "presence_window": { "type": "string" },
+                        "by_role": {
+                          "type": "object",
+                          "additionalProperties": { "type": "integer" }
+                        },
+                        "abandoned": {
+                          "type": "integer",
+                          "description": "Sum of persisted per-profile abandoned PR counters, deduped per PR by the adoption recorder."
+                        },
+                        "abandoned_by_login": {
+                          "type": "object",
+                          "description": "Abandoned counts keyed by lowercase GitHub login, including zero counts; empty object for an empty registry.",
+                          "additionalProperties": { "type": "integer" }
+                        }
+                      },
+                      "required": ["active", "online", "registered", "presence_window", "abandoned", "abandoned_by_login"]
+                    },
                     "governor": {
                       "type": "object",
                       "description": "dashboard.FrontendGovernor (src/pkg/dashboard/server.go), built by buildGovernor (status_builder.go).",
