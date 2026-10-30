@@ -64,6 +64,7 @@ const (
 	FailTimeout      = "rebase-timeout"
 	FailClosed       = "pr-closed"
 	FailNotReachable = "head-not-pushable"
+	FailWorkflowPush = "workflow-push-unavailable"
 	// FailForeignHead: the head moved after the approval, but not by the
 	// hive — a person pushed new content. The approval was bound to the
 	// head the operator read, so the follow-through stops instead of
@@ -203,6 +204,10 @@ func (f *FollowThrough) fail(now time.Time, reason string, files []string) {
 	f.FailReason = reason
 	f.ConflictFiles = slices.Clone(files)
 	f.Options = []string{OptionAdoptFresh, OptionCloseSuperseded}
+	if reason == FailWorkflowPush {
+		// Workflow-path supersession is also fenced by the adoption lane.
+		f.Options = nil
+	}
 	if reason == FailForeignHead {
 		f.Options = []string{OptionReapprove, OptionCloseSuperseded}
 	}
@@ -338,6 +343,8 @@ func (f FollowThrough) FailureText() string {
 		return fmt.Sprintf("#%d was closed before the hive could merge it.", f.Number)
 	case FailNotReachable:
 		return fmt.Sprintf("The hive cannot push to #%d's head (fork without maintainer edits).", f.Number)
+	case FailWorkflowPush:
+		return fmt.Sprintf("The hive cannot rebase #%d's fork branch with workflow changes (%s). A person with workflow push access must rebase the branch, then approve and merge it again.", f.Number, strings.Join(f.ConflictFiles, ", "))
 	case FailForeignHead:
 		return fmt.Sprintf("#%d's head moved after your approval, and not by the hive's rebase: someone pushed %s. Your approval was for %s, so nothing merged; read the new head and approve it again.", f.Number, nonEmpty(short(f.ForeignHead), "a new head"), nonEmpty(short(f.ApprovedHead), "the head you saw"))
 	}

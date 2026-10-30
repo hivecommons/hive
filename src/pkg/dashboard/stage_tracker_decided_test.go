@@ -80,7 +80,7 @@ func TestStageTrackerDecidedProjection(t *testing.T) {
 		if o.Decided == nil || o.Decided.Effect != decidedEffectLanded || o.Decided.SupersededBy != 15123 || o.Stage != stagelabels.AdoptedByHive.Number() {
 			t.Fatalf("original: %+v", o.Decided)
 		}
-		if !strings.HasPrefix(o.Decided.Text, "Adopted → #15123 · superseded") {
+		if o.Decided.Text != "superseded · hive adopted → #15123" {
 			t.Fatalf("original text %q", o.Decided.Text)
 		}
 		if c.AdoptedFrom == nil || c.AdoptedFrom.Number != 15029 || c.AdoptedFrom.DecidedBy != "clubanderson" || c.AdoptedFrom.Text != "↳ adopted from #15029 · you let hive decide 17:51 UTC" {
@@ -113,7 +113,7 @@ func TestStageTrackerDecidedProjection(t *testing.T) {
 			t.Fatalf("linked_prs = %+v", is.LinkedPRs)
 		}
 		orig := is.LinkedPRs[0]
-		if orig.Number != 15029 || orig.State != "closed" || orig.SupersededBy != 15123 || orig.Title != "fix: decided state" || orig.Caption != "closed · superseded by #15123" {
+		if orig.Number != 15029 || orig.State != "closed" || orig.SupersededBy != 15123 || orig.Title != "fix: decided state" || orig.Caption != "superseded · closed · hive adopted → #15123" {
 			t.Fatalf("closed original = %+v", orig)
 		}
 		if c.AdoptedFrom == nil || c.AdoptedFrom.Number != 15029 {

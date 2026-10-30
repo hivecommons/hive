@@ -22,8 +22,13 @@ type PullRequest struct {
 	// Unknown means no downgrade.
 	ChangedFiles      []string
 	ChangedFilesKnown bool
-	HeadSHA           string
-	UpdatedAt         time.Time
+	// BaseDiffEmpty is true when GitHub reports the PR's diff against its
+	// base as zero files: there is nothing to review at any head, so a
+	// prior verdict is re-stamped instead of asked again on every
+	// merge-from-base (hivecommons/hive#15499).
+	BaseDiffEmpty bool
+	HeadSHA       string
+	UpdatedAt     time.Time
 	// BodyDigest fingerprints the PR title/body that the reviewer judged.
 	// The body itself deliberately stays out of review.PullRequest (see
 	// grounding tests); this opaque digest lets a body-only remediation make

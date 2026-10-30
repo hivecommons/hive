@@ -396,6 +396,13 @@ type PendingReview struct {
 	// reconciling the heads' reports for this perspective.
 	Decision    bool   `json:"decision,omitempty"`
 	AuthorAgent string `json:"author_agent,omitempty"`
+	// HiveAuthored is the planner's hiveAuthored answer for the PR at
+	// dispatch: App login, attributed agent, attribution trailer, or an
+	// adoption the stage reconciler owns. The relay stamps it on the
+	// verdict; before hivecommons/hive#15499 it derived the flag from
+	// AuthorAgent alone, so an adoption with no agent attribution read as
+	// a person's PR and its decision questions were never self-resolved.
+	HiveAuthored bool `json:"hive_authored,omitempty"`
 	// AuthorModel/ReviewModel are what the planner knew when it dispatched:
 	// the PR's attribution-trailer model, and the model the kick told the
 	// reviewer to run with (empty when no pool applied). Collect uses them
@@ -419,6 +426,7 @@ type RecentReview struct {
 	Head              string      `json:"head,omitempty"`
 	Decision          bool        `json:"decision,omitempty"`
 	AuthorAgent       string      `json:"author_agent,omitempty"`
+	HiveAuthored      bool        `json:"hive_authored,omitempty"`
 	AuthorModel       string      `json:"author_model,omitempty"`
 	ReviewModel       string      `json:"review_model,omitempty"`
 	DeltaPreviousHead string      `json:"delta_previous_head,omitempty"`
@@ -463,6 +471,9 @@ type DispatchKick struct {
 	BodyDigest  string
 	Perspective Perspective
 	AuthorAgent string
+	// HiveAuthored mirrors PendingReview.HiveAuthored for the confirmed
+	// (Recent) record.
+	HiveAuthored bool
 	// Head is the review head key for a head kick (hivecommons/hive#13542).
 	Head string
 	// Decision marks the decision kick that reconciles the heads' reports.
@@ -893,9 +904,9 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewModel:           choice.Model,
 				Delta:                 delta,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
 			for _, p := range missing {
-				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
+				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 			}
 			availableSlots--
 			continue
@@ -963,8 +974,8 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewModel:           choice.Model,
 				Delta:                 delta,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
-			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback, BotAuthorRouted: botRouted, DeltaPreviousHead: deltaPreviousHead(delta)})
+			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, HiveAuthored: hiveAuthored(pr, opts), AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), DeltaPreviousHead: deltaPreviousHead(delta), Dispatched: now})
 			availableSlots--
 		}
 	}
@@ -1638,6 +1649,17 @@ func selectFixerAgent(pr PullRequest, opts DispatchOptions) string {
 	return ""
 }
 
+// ConfirmDeliveredInProgress is ConfirmDelivered for a kick pass that is still
+// delivering: it records the kicks delivered so far and drops nothing for the
+// planned kicks not yet delivered. A kick still being sent may already have
+// reached its agent, and the verdict relay binds that agent's verdict to the
+// pending rows on disk; dropping them at an intermediate persist bound a
+// decision verdict as advisory (hivecommons/hive#15559). The end-of-pass
+// persist uses ConfirmDelivered to release the kicks that never landed.
+func ConfirmDeliveredInProgress(state DispatchState, delivered []DispatchKick) DispatchState {
+	return ConfirmDelivered(state, delivered, delivered)
+}
+
 func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) DispatchState {
 	now := time.Now().UTC()
 	deliveredSet := map[string]bool{}
@@ -1650,7 +1672,7 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 			// first perspective alone would leave every other verdict in the
 			// array with nothing to bind to once its pending entry is gone.
 			for _, p := range kickPerspectives(k) {
-				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, DeltaPreviousHead: k.DeltaPreviousHead, Confirmed: now})
+				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, Head: k.Head, Decision: k.Decision, AuthorAgent: k.AuthorAgent, HiveAuthored: k.HiveAuthored, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, DeltaPreviousHead: k.DeltaPreviousHead, Confirmed: now})
 			}
 		}
 	}

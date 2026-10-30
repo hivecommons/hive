@@ -142,6 +142,12 @@ type Record struct {
 	// alert cleared, workflow-path fence now the blocker — gets each distinct
 	// cause explained once, not a byte-identical repost and not silence.
 	EntryCommentedCauses []string `json:"entry_commented_causes,omitempty"`
+	// EntryCommentedDecisionKey is the writeback.DecisionKey of the last 085
+	// entry comment: the superseding PR the reviewer named, or the
+	// normalised question. It survives heads and stage flaps, so the same
+	// question re-asked on a merge-from-base head is not re-posted
+	// (hivecommons/hive#15499).
+	EntryCommentedDecisionKey string `json:"entry_commented_decision_key,omitempty"`
 	// History is the item's recent stage transitions, oldest first, capped
 	// at HistoryLimit: each entry is the stage entered, when, and the reason
 	// at entry. The dashboard's Hive activity monitor renders it as the
@@ -311,6 +317,12 @@ type Record struct {
 	// HiveHeldWarned is set once the hive-side alert for an item held by
 	// the hive past its dwell has been logged; activity resets it.
 	HiveHeldWarned bool `json:"hive_held_warned,omitempty"`
+	// LabelsSuppressed is set when the write-back gate kept the stage
+	// labels off the item on GitHub (a contributor PR without the opt-in
+	// label): the stage lives in this record only, so a label-less item
+	// is not evidence that a park lifted (hivecommons/hive#15541 rows read
+	// "PR in progress" while the record said 085).
+	LabelsSuppressed bool `json:"labels_suppressed,omitempty"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -868,6 +880,28 @@ func EntryCause(reasons []string) string {
 	}
 	sum := sha256.Sum256([]byte(strings.Join(reasons, "\n")))
 	return hex.EncodeToString(sum[:8])
+}
+
+// MarkEntryCommentedDecisionKey records the decision identity of the 085
+// entry comment just posted (or found already explained).
+func (s *Store) MarkEntryCommentedDecisionKey(key, decisionKey string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.EntryCommentedDecisionKey == decisionKey {
+		return
+	}
+	r.EntryCommentedDecisionKey = decisionKey
+	s.items[key] = r
+	s.dirty = true
+}
+
+// EntryCommentRepeatsDecision reports whether an 085 entry comment with
+// this decision identity was already posted on this PR — on any head: a
+// reviewer re-asking the same question on a new head (one that only
+// merged the base) is not a new decision (hivecommons/hive#15499).
+func (r Record) EntryCommentRepeatsDecision(decisionKey string) bool {
+	return decisionKey != "" && r.EntryCommentedStage == NeedsDecision && r.EntryCommentedDecisionKey == decisionKey
 }
 
 // EntryCommentExplains reports whether an entry comment already posted for
@@ -2063,6 +2097,21 @@ func HiveHeld(r Record, overrides map[string]time.Duration, now time.Time) bool 
 	}
 	d := Dwell(r.Stage, overrides)
 	return d > 0 && r.QuietFor(now) >= d
+}
+
+// NoteLabelsSuppressed records whether the last stage-label write for key
+// was kept off GitHub by the write-back gate. A missing record is left
+// missing.
+func (s *Store) NoteLabelsSuppressed(key string, suppressed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.LabelsSuppressed == suppressed {
+		return
+	}
+	r.LabelsSuppressed = suppressed
+	s.items[key] = r
+	s.dirty = true
 }
 
 // MarkHiveHeldWarned records that the hive-held alert was logged for key.

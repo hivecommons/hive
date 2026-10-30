@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // Revising a review, rather than posting another one, is the difference between
@@ -145,4 +147,67 @@ func (c *Client) reviseReview(ctx context.Context, req ReviewRequest, body strin
 		slog.String("was", reviseBodyDigest(existing.GetBody())),
 		slog.String("now", reviseBodyDigest(body)))
 	return updated, true, nil
+}
+
+// decisionDedupedNote is the result note when a decision question was
+// refreshed in place instead of posted again.
+const decisionDedupedNote = "decision question already standing on this PR: existing review refreshed in place"
+
+// findOwnOpenDecisionReview returns the hive's newest COMMENTED review on the
+// PR that asks the same decision question as reqBody — the same
+// writeback.DecisionKey (the `hive-redundant-of` PR, or the normalised
+// question) — or nil when reqBody asks no decision or none stands. A
+// reviewer re-asking on every merge-from-base head (hivecommons/hive#15499)
+// finds its own earlier question here and refreshes it instead of posting
+// a fifteenth copy.
+func (c *Client) findOwnOpenDecisionReview(ctx context.Context, owner, repoName string, number int, reqBody string) *gh.PullRequestReview {
+	key, ok := writeback.DecisionKeyFromBody(reqBody)
+	if !ok || key == "" || c == nil || c.client == nil {
+		return nil
+	}
+	login := strings.TrimSpace(c.appBotLogin)
+	if login == "" {
+		return nil
+	}
+	opts := &gh.ListOptions{PerPage: 100}
+	var latest *gh.PullRequestReview
+	for {
+		reviews, resp, err := c.client.PullRequests.ListReviews(WithRESTCaller(ctx, "hive:review_decision_dedupe"), owner, repoName, number, opts)
+		if err != nil {
+			return nil
+		}
+		for _, r := range reviews {
+			if !strings.EqualFold(safeGetLogin(r.GetUser()), login) || !strings.EqualFold(r.GetState(), "COMMENTED") {
+				continue
+			}
+			if existingKey, ok := writeback.DecisionKeyFromBody(r.GetBody()); !ok || existingKey != key {
+				continue
+			}
+			if latest == nil || r.GetSubmittedAt().Time.After(latest.GetSubmittedAt().Time) {
+				latest = r
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return latest
+}
+
+// refreshDecisionReview rewrites the standing decision review's body with
+// the new head's wording. The edit is the hive's own COMMENTED review, the
+// same thing --revise edits; an unchanged body is left alone.
+func (c *Client) refreshDecisionReview(ctx context.Context, owner, repoName string, number int, existing *gh.PullRequestReview, body string) (*gh.PullRequestReview, error) {
+	if reviseBodyDigest(existing.GetBody()) == reviseBodyDigest(body) {
+		return existing, nil
+	}
+	updated, _, err := c.client.PullRequests.UpdateReview(ctx, owner, repoName, number, existing.GetID(), body)
+	if err != nil {
+		return nil, fmt.Errorf("refresh decision review %d: %w", existing.GetID(), err)
+	}
+	c.logger.Info("review-request watcher: decision question refreshed in place instead of re-posted",
+		slog.String("repo", owner+"/"+repoName), slog.Int("number", number),
+		slog.Int64("review_id", existing.GetID()))
+	return updated, nil
 }

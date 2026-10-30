@@ -123,6 +123,12 @@ var (
 // between two posts of the same message: HTML-comment marker arguments
 // (keeping the marker name), SHAs, timestamps, durations and whitespace.
 func normalizeSameItem(body string) string {
+	if key, ok := DecisionKeyFromBody(body); ok && key != "" {
+		// A decision question is the same question however a model
+		// reworded it (hivecommons/hive#15499): its identity is the PR it
+		// names as redundant, or its normalised words.
+		return "decision:" + key
+	}
 	s := reMarkerArgs.ReplaceAllString(body, "<!-- $1 -->")
 	s = reRFC3339.ReplaceAllString(s, "<ts>")
 	s = reSHA.ReplaceAllString(s, "<sha>")

@@ -953,6 +953,7 @@ func TestStageTrackerStaleDecisionRecord(t *testing.T) {
 		{"045 record backed by needs-human", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"Needs-Human"}, false},
 		{"045 record backed by retired spelling", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"needs-decision"}, false},
 		{"085 record backed by 085 label", stagelabels.Record{Stage: stagelabels.NeedsDecision}, []string{"stage/085-needs-decision"}, false},
+		{"085 record whose labels the write-back gate held off GitHub", stagelabels.Record{Stage: stagelabels.NeedsDecision, LabelsSuppressed: true}, []string{"dco-signoff: yes", "size/M"}, false},
 		{"other stage, no labels", stagelabels.Record{Stage: stagelabels.Claimed}, nil, false},
 	}
 	for _, tc := range cases {

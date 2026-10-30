@@ -2570,3 +2570,18 @@ func TestApplyStageLabelsHonoursStageEngineOptions(t *testing.T) {
 		t.Fatalf("store %+v", rec)
 	}
 }
+
+// hivecommons/hive#15499: a decision question that names the PR already
+// carrying the change is the superseded question itself and warrants the
+// closer; any other decision question stays a person's.
+func TestSupersededCheckWarrantedForRedundantOfDecision(t *testing.T) {
+	human := stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: stageReasonVerdictRequiresHuman, Human: true}
+	redundant := stageObservation{Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "close as a no-op?", RedundantOf: 15427}}}
+	other := stageObservation{Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", DecisionRequested: true, DecisionQuestion: "rename the flag?"}}}
+	if !supersededCheckWarranted(human, redundant) {
+		t.Fatal("redundant-of decision must run the superseded/empty-diff closer")
+	}
+	if supersededCheckWarranted(human, other) {
+		t.Fatal("an ordinary decision question is not a supersession check")
+	}
+}

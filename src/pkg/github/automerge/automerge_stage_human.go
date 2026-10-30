@@ -114,7 +114,13 @@ func supersededCheckWarranted(verdict stageVerdict, obs stageObservation) bool {
 		return false
 	}
 	v := obs.Detail.Verdict
-	return !v.DecisionRequested && strings.EqualFold(strings.TrimSpace(v.Verdict), "requires_human")
+	if v.DecisionRequested {
+		// A decision question that names the PR already carrying this
+		// change ("close as a no-op?") is the superseded question itself
+		// (hivecommons/hive#15499); any other decision stays a person's.
+		return v.RedundantOf > 0
+	}
+	return strings.EqualFold(strings.TrimSpace(v.Verdict), "requires_human")
 }
 
 // closeSupersededBeforeHumanRoute runs the hive-authored superseded rule
@@ -156,12 +162,49 @@ func (c *Engine) closeSupersededBeforeHumanRoute(ctx context.Context, tracker *S
 		return false
 	}
 	if !res.Closed {
+		if c.closeEmptyDiffBeforeHumanRoute(ctx, obs, pr) {
+			return true
+		}
 		c.debug("stage labels: hive PR kept", "repo", obs.Display, "pr", obs.Number, "verdict", res.Verdict, "reason", res.Reason)
 		return false
 	}
 	c.info("stage labels: hive PR closed as superseded instead of a human decision",
 		"repo", obs.Display, "pr", obs.Number, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason,
 		"closer", res.CloserPR, "issue", res.Issue, "lane_reason", obs.LaneReason)
+	return true
+}
+
+// closeEmptyDiffBeforeHumanRoute runs the hive-authored empty-diff rule
+// (hgithub.CloseEmptyDiffHivePRIfEligible) on a hive-authored PR about to
+// be routed to a person: a head whose compare against the base lists no
+// files has nothing to merge, so the hive closes it as superseded (by the
+// PR the reviewer's `hive-redundant-of` marker named, when it did) instead
+// of asking the owner to say so on every head (hivecommons/hive#15499). The
+// diff is measured by the closer; the reviewer's text only names the
+// superseding PR.
+func (c *Engine) closeEmptyDiffBeforeHumanRoute(ctx context.Context, obs stageObservation, pr *gh.PullRequest) bool {
+	closer, ok := c.transport.(emptyDiffCloserTransport)
+	if !ok {
+		return false
+	}
+	redundantOf := 0
+	if obs.Detail.VerdictKnown {
+		redundantOf = obs.Detail.Verdict.RedundantOf
+	}
+	res, err := closer.CloseEmptyDiffHivePRIfEligible(ctx, obs.Owner+"/"+obs.Repo, pr, redundantOf)
+	if err != nil {
+		c.warn("stage labels: empty-diff check failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return false
+	}
+	if !res.Closed {
+		if res.Empty {
+			c.info("stage labels: empty-diff PR kept", "repo", obs.Display, "pr", obs.Number, "verdict", res.Verdict, "reason", res.Reason)
+		}
+		return false
+	}
+	c.info("stage labels: hive PR with an empty diff closed as superseded instead of a human decision",
+		"repo", obs.Display, "pr", obs.Number, "reason", stagelabels.LaneReasonSupersededByMerge, "action", res.Reason,
+		"redundant_of", res.RedundantOf, "lane_reason", obs.LaneReason)
 	return true
 }
 
@@ -428,6 +471,16 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 		return 0, nil
 	}
 	cause := stagelabels.EntryCause(route.Reasons)
+	decisionKey := ""
+	if route.Stage == stagelabels.NeedsDecision && obs.Detail.VerdictKnown && obs.Detail.Verdict.DecisionRequested {
+		decisionKey = writeback.DecisionKey(obs.Detail.Verdict.RedundantOf, obs.Detail.Verdict.DecisionQuestion)
+	}
+	if rec.EntryCommentRepeatsDecision(decisionKey) {
+		// Same question, new head (hivecommons/hive#15499): the person
+		// has it already; the tracker shows the current wording.
+		store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
+		return 0, nil
+	}
 	if rec.EntryCommented {
 		if route.Stage != stagelabels.NeedsDecision || obs.HeadSHA == "" || cause == "" || rec.EntryCommentedHead != obs.HeadSHA {
 			return 0, nil
@@ -467,6 +520,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 		return 0, err
 	}
 	store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
+	store.MarkEntryCommentedDecisionKey(key, decisionKey)
 	c.info("stage labels: entry comment posted", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
 	return 1, nil
 }
