@@ -226,6 +226,9 @@ func stageTrackerDecisionNeededWith(it StageTrackerItem, verdict *review.Aggrega
 		return decisionForUnauthorized(it, held)
 	case it.Kind == "pr" && it.Adoption != nil && it.Adoption.Action == decisionActionAdopt:
 		return decisionForAdoption(it, held, now)
+	case it.Kind == "pr" && it.Adoption != nil && it.Adoption.QueuedBy != "":
+		// Adopt now already pressed: nothing is asked until the sweep lands.
+		return nil
 	case it.Kind == "pr" && it.Takeover != nil && it.Takeover.GraceElapsed && it.Adoption != nil && it.Adoption.BlockedBy != stagelabels.AdoptBlockedAuthorMaintainer:
 		// The nudge grace ran out and the engine has not adopted (ask is
 		// the case above; never stays the policy's word): the wait is a
