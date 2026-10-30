@@ -53,6 +53,9 @@ func TestPlanReviewDispatch_PromotionWarnsOncePerPR(t *testing.T) {
 	t.Cleanup(func() { reviewPromotedWarn.retain(map[string]struct{}{}) })
 
 	const otherPR = 4322
+	// fillerPR has no wait record: promotion only reorders a list of two or
+	// more heads, so it keeps a pass with a single starved head promotable.
+	const fillerPR = 4399
 	pass := func(numbers ...int) string {
 		t.Helper()
 		var waits []review.ReviewWaitRecord
@@ -61,6 +64,7 @@ func TestPlanReviewDispatch_PromotionWarnsOncePerPR(t *testing.T) {
 			waits = append(waits, review.ReviewWaitRecord{Repo: "hivecommons/hive", Number: n, HeadSHA: reviewTestSHA, Reason: review.ReviewWaitNoFreeReviewer, Cycles: review.ReviewWaitStarvationCycles, FirstAt: time.Now().Add(-time.Hour)})
 			actionable.PRs.Items = append(actionable.PRs.Items, github.PullRequest{Repo: "hivecommons/hive", Number: n, Title: "test: add coverage", Author: "hive-bot", HeadSHA: reviewTestSHA})
 		}
+		actionable.PRs.Items = append(actionable.PRs.Items, github.PullRequest{Repo: "hivecommons/hive", Number: fillerPR, Title: "test: add coverage", Author: "hive-bot", HeadSHA: reviewTestSHA})
 		if err := review.WriteDispatchState("", review.DispatchState{Waits: waits}); err != nil {
 			t.Fatal(err)
 		}
