@@ -671,6 +671,7 @@
   "quality": {},
   "intent": {},
   "sentinel": {},
+  "security": {},
   "evidence": {
     "complexity": {}
   },

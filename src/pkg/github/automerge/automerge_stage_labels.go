@@ -1149,7 +1149,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		if obs.Detail.VerdictKnown {
 			rawVerdict := obs.Detail.Verdict
 			normalizedVerdict := normalizeContributorLaneVerdict(rawVerdict)
-			c.info("stage labels: reviewer verdict route", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "lane", obs.Lane, "raw_verdict", rawVerdict.Verdict, "normalized_verdict", normalizedVerdict.Verdict, "decision_requested", normalizedVerdict.DecisionRequested, "decision_answered", normalizedVerdict.DecisionAnswered && normalizedVerdict.DecisionAnsweredHead == obs.HeadSHA, "decision_by", normalizedVerdict.DecisionAnsweredBy, "decision_directive", normalizedVerdict.DecisionDirective, "stage", verdict.Stage.String(), "reason", obs.Reason)
+			c.info("stage labels: reviewer verdict route", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "lane", obs.Lane, "raw_verdict", rawVerdict.Verdict, "normalized_verdict", normalizedVerdict.Verdict, "decision_requested", normalizedVerdict.DecisionRequested, "decision_answered", normalizedVerdict.DecisionAnswered && normalizedVerdict.DecisionAnsweredHead == obs.HeadSHA, "decision_by", normalizedVerdict.DecisionAnsweredBy, "decision_directive", normalizedVerdict.DecisionDirective, "decision_finding", normalizedVerdict.DecisionFinding, "stage", verdict.Stage.String(), "reason", obs.Reason)
 		}
 		add, remove := stagelabels.Plan(obs.Labels, want)
 		if len(add)+len(remove) > 0 {
