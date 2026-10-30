@@ -259,18 +259,21 @@
     // phrases are rendered into the same grid cell so the tile is always as
     // wide as its widest phrase and never shifts or wraps. The rotation
     // index is module state so a status repaint keeps the current phrase.
+    // The hour window keeps cents (it is small and moves fast); the longer
+    // windows round to whole dollars (fmtUSDWhole) so the figure stays short.
+    // Labels are short so the phrase fits the 140px gov-grid column.
     const FLEET_COST_WINDOWS = [
-      { key: 'hour', label: 'this hour', usd: 'hourUSD', priced: 'hourPriced' },
-      { key: 'day', label: 'today', usd: 'dayUSD', priced: 'windowsPriced' },
-      { key: 'week', label: 'this week', usd: 'weekUSD', priced: 'windowsPriced' },
-      { key: 'month', label: 'this month', usd: 'monthUSD', priced: 'windowsPriced' },
+      { key: 'hour', label: 'this hr', usd: 'hourUSD', priced: 'hourPriced', fmt: fmtUSD },
+      { key: 'day', label: 'today', usd: 'dayUSD', priced: 'windowsPriced', fmt: fmtUSDWhole },
+      { key: 'week', label: 'this wk', usd: 'weekUSD', priced: 'windowsPriced', fmt: fmtUSDWhole },
+      { key: 'month', label: 'this mo', usd: 'monthUSD', priced: 'windowsPriced', fmt: fmtUSDWhole },
     ];
     const FLEET_COST_DWELL_MS = 4000;
     const FLEET_COST_WINDOWS_HELP = 'today / this week / this month are the cost ledger summed from 00:00 UTC today, Monday 00:00 UTC (ISO week) and the 1st 00:00 UTC, plus the rise since its last reading.';
     const _fleetCost = { idx: 0, started: false, hover: false, lastAdvance: -Infinity, clock: () => Date.now() };
     function fleetCostPhrases(f) {
       return FLEET_COST_WINDOWS.map(w => {
-        const amount = f && f[w.priced] ? fmtUSD(f[w.usd] || 0) : '$–';
+        const amount = f && f[w.priced] ? w.fmt(f[w.usd] || 0) : '$–';
         return { key: w.key, label: w.label, amount, text: `${amount} ${w.label}` };
       });
     }
