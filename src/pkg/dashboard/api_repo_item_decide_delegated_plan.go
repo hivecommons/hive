@@ -214,6 +214,12 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 		return "Close " + ref + " as superseded by #" + strconv.Itoa(target) + ".", []string{ref + " is closed with a comment pointing at #" + strconv.Itoa(target) + "."}
 	case d.Verdict == delegatedecision.VerdictCloseDuplicate, d.Verdict == delegatedecision.VerdictCloseSuperseded:
 		return "Close " + ref + ".", []string{ref + " is closed with a comment saying why."}
+	case d.Verdict == delegatedecision.VerdictDirection && in.AdoptedByHive:
+		// The hive adopted the PR in place: it is the author now, so the
+		// instruction is its own fixer's, not the contributor's
+		// (hivecommons/hive#15722).
+		return "Have hive's fixer " + delegatedPlanInstruction(in, delegatedecision.Decision{}) + " on " + ref + "; no action needed from you.",
+			[]string{"Hive records that instruction on " + ref + " for its fixer — the hive owns this branch now, not the contributor.", "The fixer pushes; the row updates when the swarm re-reviews."}
 	case d.Verdict == delegatedecision.VerdictDirection:
 		return "Send " + ref + " back to its author with one instruction: " + delegatedPlanInstruction(in, d) + ".",
 			[]string{"Hive posts that instruction on " + ref + ".", "The author pushes a fix; the row updates when it lands."}
@@ -237,17 +243,27 @@ func delegatedPlanWording(in delegatedecision.Input, d delegatedecision.Decision
 }
 
 // delegatedPlanInstruction is the direction in the author's terms: the
-// fix list from the head's facts ("make CI green, nothing else"), or the
-// decision's own text when the direction is a reviewer's question.
+// fix list from the head's facts ("make CI green, nothing else"), the
+// reviewer's finding when that is what parked it, or the decision's own
+// text when the direction is a reviewer's question. "make CI green" is
+// said only of a head with a failing check: pending checks are not red
+// (hivecommons/hive#15722).
 func delegatedPlanInstruction(in delegatedecision.Input, d delegatedecision.Decision) string {
 	var fix []string
+	if in.ReviewerRequiresHuman {
+		item := "address the reviewer's finding"
+		if f := strings.TrimSpace(in.ReviewerFinding); f != "" {
+			item += " (" + f + ")"
+		}
+		fix = append(fix, item)
+	}
 	if in.Conflicting {
 		fix = append(fix, "rebase onto the base branch")
 	}
 	if in.DCOMissing {
 		fix = append(fix, "add the sign-off")
 	}
-	if !in.CIGreen {
+	if in.CIRed() {
 		fix = append(fix, "make CI green")
 	}
 	if len(fix) == 0 || strings.TrimSpace(in.Question) != "" {
@@ -257,6 +273,9 @@ func delegatedPlanInstruction(in delegatedecision.Input, d delegatedecision.Deci
 	}
 	if len(fix) == 0 {
 		return "address the review"
+	}
+	if in.ReviewerRequiresHuman {
+		return strings.Join(fix, ", ")
 	}
 	return strings.Join(fix, ", ") + ", nothing else"
 }
@@ -282,7 +301,7 @@ func delegatedPlanWhy(in delegatedecision.Input, d delegatedecision.Decision) st
 	}
 	why := strings.Join(parts, " and ")
 	if why == "" && d.Verdict == delegatedecision.VerdictDirection {
-		why = delegatedPlanBlockers(in)
+		why = delegatedPlanParkReason(in)
 	}
 	if why == "" {
 		why = delegatedPlanPlain(d.Rationale)
@@ -313,12 +332,34 @@ func delegatedPlanLandedWhy(in delegatedecision.Input, d delegatedecision.Decisi
 	return strings.ToUpper(landed[:1]) + landed[1:] + "."
 }
 
+// delegatedPlanParkReason is WHY a direction is owed, from the same facts
+// the stage engine recorded when it parked the PR: the reviewer's verdict
+// first — "the reviewer returned requires_human: the reviewer marked this
+// change high-risk" — then the head's blockers. hivecommons/hive#15722's
+// preview said "CI is red" of a PR parked on requires_human with every
+// check green.
+func delegatedPlanParkReason(in delegatedecision.Input) string {
+	var parts []string
+	if in.ReviewerRequiresHuman {
+		why := "the reviewer returned requires_human"
+		if f := strings.TrimSpace(in.ReviewerFinding); f != "" {
+			why += ": " + f
+		}
+		parts = append(parts, why)
+	}
+	if b := delegatedPlanBlockers(in); b != "" {
+		parts = append(parts, b)
+	}
+	return strings.Join(parts, "; ")
+}
+
 // delegatedPlanBlockers names what keeps a head from merging, in plain
 // words: "CI is red", "it conflicts with the base branch", "the sign-off
-// is missing".
+// is missing". A head whose checks are still running is not red and is
+// not a blocker a direction can name.
 func delegatedPlanBlockers(in delegatedecision.Input) string {
 	var b []string
-	if !in.CIGreen {
+	if in.CIRed() {
 		b = append(b, "CI is red")
 	}
 	if in.Conflicting {
