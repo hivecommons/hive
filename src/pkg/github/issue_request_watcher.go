@@ -1235,7 +1235,15 @@ func (r CreateIssueRequest) TitleFiler() string {
 	if lane != "" {
 		return lane
 	}
-	return config.OriginSourceOf(r.OriginLabel())
+	if source := config.OriginSourceOf(r.OriginLabel()); source != "" {
+		return source
+	}
+	for _, l := range r.Labels {
+		if source := config.OriginSourceOf(l); source != "" {
+			return source
+		}
+	}
+	return ""
 }
 
 // ErrOriginRequired is returned when a create carries no provenance label and
