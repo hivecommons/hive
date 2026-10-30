@@ -472,20 +472,16 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	agent.AwaitingCI = false
 
 	previewBody := kickPreviewBody(message)
-	snippet := previewBody
 	const maxSnippetLen = 120
-	snippet = truncateStr(snippet, maxSnippetLen)
+	snippet := truncateStr(previewBody, maxSnippetLen)
 	record := KickRecord{Timestamp: now, Agent: agent.Name, Snippet: snippet}
 	if len(agent.KickHistory) >= kickHistoryCapacity {
 		agent.KickHistory = agent.KickHistory[1:]
 	}
 	agent.KickHistory = append(agent.KickHistory, record)
 
-	kickPreview := previewBody
 	const maxKickPreviewLen = 200
-	if len(kickPreview) > maxKickPreviewLen {
-		kickPreview = truncateStr(kickPreview, maxKickPreviewLen)
-	}
+	kickPreview := truncateStr(previewBody, maxKickPreviewLen)
 	m.logger.Info("audit: agent kicked",
 		"name", agent.Name,
 		"message_len", len(message),
