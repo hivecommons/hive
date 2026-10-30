@@ -55,14 +55,66 @@ func preparationKey(owner, repo, base string) string {
 	return strings.ToLower(strings.TrimSpace(owner)+"/"+strings.TrimSpace(repo)) + ":" + strings.TrimSpace(base)
 }
 
-func (s *BasePreparationStore) change(key string, fn func(*basePreparation) error) error {
+func (s *BasePreparationStore) statePath(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return filepath.Join(s.dir, hex.EncodeToString(sum[:]))
+}
+
+func (s *BasePreparationStore) destinationLock(key string) *sync.Mutex {
 	s.mu.Lock()
-	lockMu := s.locks[key]
-	if lockMu == nil {
-		lockMu = &sync.Mutex{}
-		s.locks[key] = lockMu
+	defer s.mu.Unlock()
+	lock := s.locks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.locks[key] = lock
 	}
-	s.mu.Unlock()
+	return lock
+}
+
+type preparationOwnerSnapshot struct {
+	Present      bool
+	Owner        preparationCandidate
+	Attempt      preparationAttempt
+	Waiting      int
+	WaitingSince time.Time
+	Waiters      []preparationCandidate
+}
+
+// ownerSnapshot reads the existing atomic snapshot without creating or
+// rewriting state. Only values escape the lock; no remote reads run here.
+func (s *BasePreparationStore) ownerSnapshot(key string) (preparationOwnerSnapshot, error) {
+	var st basePreparation
+	present := false
+	if s.dir == "" {
+		lock := s.destinationLock(key)
+		lock.Lock()
+		defer lock.Unlock()
+		s.mu.Lock()
+		st, present = s.items[key]
+		s.mu.Unlock()
+	} else {
+		data, err := os.ReadFile(s.statePath(key) + ".json")
+		if errors.Is(err, os.ErrNotExist) {
+			return preparationOwnerSnapshot{}, nil
+		}
+		if err != nil {
+			return preparationOwnerSnapshot{}, err
+		}
+		if err := json.Unmarshal(data, &st); err != nil {
+			return preparationOwnerSnapshot{}, err
+		}
+		present = true
+	}
+	out := preparationOwnerSnapshot{Present: present, Owner: st.Owner, Attempt: st.Attempts[st.Owner.Number], Waiting: len(st.Waiting),
+		Waiters: append([]preparationCandidate(nil), st.Waiting...)}
+	if len(st.Waiting) > 0 {
+		out.WaitingSince = st.Waiting[0].Since
+	}
+	return out, nil
+}
+
+func (s *BasePreparationStore) change(key string, fn func(*basePreparation) error) error {
+	lockMu := s.destinationLock(key)
 	lockMu.Lock()
 	defer lockMu.Unlock()
 	if s.dir == "" {
@@ -82,8 +134,7 @@ func (s *BasePreparationStore) change(key string, fn func(*basePreparation) erro
 	if err := os.MkdirAll(s.dir, directoryMode); err != nil {
 		return err
 	}
-	sum := sha256.Sum256([]byte(key))
-	path := filepath.Join(s.dir, hex.EncodeToString(sum[:]))
+	path := s.statePath(key)
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, fileMode)
 	if err != nil {
 		return err
