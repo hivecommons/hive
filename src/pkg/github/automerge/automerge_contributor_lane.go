@@ -1387,7 +1387,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	// See trySweepSelfAuthoredPR: the queue bypass is an explicit opt-in. A
 	// relay evaluation never enqueues, so it keeps the current-base gates.
 	queueSkipsBase := sync.OnceValue(func() bool { return !relay && c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr) })
-	if mergeableState == "behind" && !queueSkipsBase() {
+	if mergeableState == "behind" && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) {
 		if relay {
 			return eval, "behind", nil
 		}
@@ -1463,7 +1463,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	// approved head is worth an update-branch commit; a relay evaluation
 	// never updates the branch.
 	if c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
-		if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr)); stop {
+		if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr), stageLaneContributor); stop {
 			return eval, reason, err
 		}
 	}

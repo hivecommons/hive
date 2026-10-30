@@ -467,14 +467,27 @@ func TestNativeQueueCurrentBaseGateIsExplicit(t *testing.T) {
 						author = "alice"
 					}
 					updates := 0
-					api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, mergeableState: state, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
+					api := newAutoMergeSweepAPI(t, "", []sweepPR{{number: 7, nodeID: "PR_7", author: author, baseRef: "main", baseSHA: "base1", mergeableState: state, statusState: "success", checkStatus: "completed", checkConclusion: "success"}}, &merged, func(w http.ResponseWriter, r *http.Request) {
 						switch {
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
+							_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "commit": map[string]string{"sha": "base1"}})
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/base1/status":
+							_ = json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []any{}})
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
+							w.WriteHeader(http.StatusNotFound)
+							_ = json.NewEncoder(w).Encode(map[string]string{"message": "Branch not protected"})
+						case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/rules/branches/main":
+							_ = json.NewEncoder(w).Encode([]any{})
 						case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/update-branch"):
 							updates++
 							w.WriteHeader(http.StatusAccepted)
 							_, _ = w.Write([]byte(`{"message":"Updating pull request branch."}`))
 						case strings.Contains(r.URL.Path, "/compare/"):
-							_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": 2, "ahead_by": 1})
+							behind := 0
+							if state == "behind" {
+								behind = 2
+							}
+							_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": behind, "ahead_by": 1})
 						default:
 							t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 							w.WriteHeader(http.StatusNotFound)
@@ -496,14 +509,11 @@ func TestNativeQueueCurrentBaseGateIsExplicit(t *testing.T) {
 						c.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"} }
 						_, err = c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{})
 					}
-					// The fixture has no base ref, so a clean head with the
-					// gate kept parks at current-base-check instead of
-					// updating; either way it is not enqueued.
 					wantUpdates, wantEnqueues := 0, 0
 					if !skip && state == "behind" {
 						wantUpdates = 1
 					}
-					if skip {
+					if skip || state == "clean" {
 						wantEnqueues = 1
 					}
 					if err != nil || updates != wantUpdates || f.enqueues != wantEnqueues || len(merged) != 0 {
