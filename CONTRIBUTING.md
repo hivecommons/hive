@@ -258,6 +258,15 @@ rewritten; their failures are resolved by maintainer disposition, not by you.
   blast radius — are documented in
   [`src/docs/v5-sync-policy.md`](src/docs/v5-sync-policy.md#inherited-dco-failures-from-v4).
 
+  **Note on waivers:** Per-SHA waivers in `DCO_WAIVED_COMMITS` are for commits
+  that landed before the "Sign-off survives the squash" pre-merge check
+  existed. That check (`.github/workflows/dco-squash-attribution.yml`, running
+  `src/scripts/check-squash-signoff-attribution.sh`) now prevents mismatched
+  sign-offs from reaching the protected branch; new mismatches are caught and
+  rejected at PR time. If your PR fails that check, fix your sign-off by
+  re-signing your branch commits (`git commit --amend -s`), not by seeking a
+  waiver. A waiver should never be needed for new squashes.
+
   One identity shape the post-merge check resolves on its own: GitHub's squash
   writes the pull-request author's GitHub identity on the landing commit, so a
   contributor with a private email lands as
