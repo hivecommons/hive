@@ -160,6 +160,7 @@
     .ham-issue-closed .ham-closed-not-planned { color: var(--text-faint); font-style: italic; }
     /* Issue slot naming an issue the PR only refers to (`Refs #N`, a `(#N, part 1)` title): a muted "refs" chip tells it from a closing link. */
     .ham-issue-refs-chip { flex: 0 0 auto; margin-left: var(--sp-1); font-style: italic; }
+    .ham-title-tag { flex: 0 0 auto; font-family: var(--font-mono); }
     /* Repo chip before the number: monospace, tinted per repo from the
        --ham-repo-tint-N palette (slot = string hash), muted for the primary
        repo; a button that sets the Repo filter. Owner/repo rides its title. */
