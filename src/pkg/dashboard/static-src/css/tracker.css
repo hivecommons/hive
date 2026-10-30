@@ -625,6 +625,7 @@
     .ham-decision-pop p { margin: var(--sp-1) 0 0; overflow-wrap: anywhere; }
     .ham-decision-head { font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-decision-q { font-weight: var(--fw-semibold); color: var(--text); }
+    .ham-decision-redundant { margin: 0; }
     .ham-decision-blocker { font-size: var(--fs-xs); color: var(--text-muted); }
     .ham-capability-gap { color: var(--amber); }
     .ham-decision-meta { font-size: var(--fs-xs); color: var(--text-faint); }
