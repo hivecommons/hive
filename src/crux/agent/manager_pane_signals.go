@@ -113,10 +113,21 @@ func paneHasCLIMarker(output string) bool {
 // present in the mid-task Claude Fable 5 capture in #7085, alongside a fully
 // rendered "❯" input box. paneShowsBusyFooter covers newer escape-action
 // footers such as "esc stop agents" while waiting on background agents.
+//
+// bobBusyMarker is bob 2.x's equivalent: while a response streams it renders
+// "⠇ Processing… (Enter to steer, Tab to queue)" above a still-painted "❯"
+// input box, and none of the other markers match it. Without it a kicked
+// bob turn was classified ended ~30s after delivery and its turn-end kick log
+// archive was a mid-run snapshot (#15864).
 var agentWorkingMarkers = []string{
 	"esc interrupt",
 	"◉ Working",
+	bobBusyMarker,
 }
+
+// bobBusyMarker is the steer hint bob 2.x shows only while it is processing a
+// request. Verified live on Bob-Shell 2.0.5 (#15864).
+const bobBusyMarker = "Enter to steer"
 
 // paneShowsAgentWorking reports whether the pane is showing an actively-working
 // agent rather than a ready CLI input prompt. Modern TUI backends keep the "❯"
