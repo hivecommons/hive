@@ -14,12 +14,13 @@ func TestLeaderboardAPIAbandoned(t *testing.T) {
 	s := newDossierTestServer(t)
 	// Seed persisted profiles, as written by adoption accounting. Keep this
 	// reader test independent of the accounting writer's reconciliation rules.
+	// Include contributor IDs so listContributorProfiles accepts both records.
 	if err := os.MkdirAll(getContributorsDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for name, profile := range map[string]string{
-		"alice": `{"github_username":"alice","trust_tier":"contributor","total_tasks_completed":10,"abandoned":7}`,
-		"bob":   `{"github_username":"bob","trust_tier":"contributor","total_tasks_completed":5}`,
+		"alice": `{"github_username":"alice","contributor_id":"c-alice","trust_tier":"contributor","total_tasks_completed":10,"abandoned":7}`,
+		"bob":   `{"github_username":"bob","contributor_id":"c-bob","trust_tier":"contributor","total_tasks_completed":5}`,
 	} {
 		if err := os.WriteFile(filepath.Join(getContributorsDir(), name+".json"), []byte(profile), 0o600); err != nil {
 			t.Fatal(err)
