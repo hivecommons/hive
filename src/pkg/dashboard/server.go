@@ -670,9 +670,15 @@ type StatusPayload struct {
 	// banner; omitted when every watched repo accepts issues.
 	IssuesDisabledRepos []IssuesDisabledRepo `json:"issuesDisabledRepos,omitempty"`
 	GitHubBaseURL       string               `json:"githubBaseURL,omitempty"`
-	InferenceBackends   []InferenceBackend   `json:"inferenceBackends,omitempty"`
-	SystemAlerts        []SystemAlert        `json:"systemAlerts,omitempty"`
-	HubBanner           *HubBannerState      `json:"hubBanner,omitempty"`
+	// OnboardingIssues lists the setup problems in force that the Getting
+	// Started guide has a step for (GitHub App not installed / wrong org /
+	// permissions / credentials, repo target, no projects, no agents). The
+	// SPA appends an "open the 🧭 Guide → step …" tip wherever these are
+	// rendered and keeps the Guide chip visible while any is active.
+	OnboardingIssues  []OnboardingIssue  `json:"onboardingIssues,omitempty"`
+	InferenceBackends []InferenceBackend `json:"inferenceBackends,omitempty"`
+	SystemAlerts      []SystemAlert      `json:"systemAlerts,omitempty"`
+	HubBanner         *HubBannerState    `json:"hubBanner,omitempty"`
 	// Platform surfaces the v4 spoke capabilities — the configured forge, the
 	// mint token service state, and the skills registry. It is additive and
 	// nil-safe: a github-only, mint-off hive with no skills dir still gets a
@@ -784,6 +790,11 @@ type SystemAlert struct {
 	ID       string `json:"id"`
 	Severity string `json:"severity"`
 	Message  string `json:"message"`
+	// Onboarding/GuideStep are set (ClassifyOnboardingMessage) when the
+	// message is a setup problem the Getting Started guide has a step for,
+	// so the alert row can offer "open the 🧭 Guide → step …".
+	Onboarding bool   `json:"onboarding,omitempty"`
+	GuideStep  string `json:"guideStep,omitempty"`
 }
 
 // InferenceBackend describes a live inference endpoint and its available models.
@@ -2687,6 +2698,13 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 			status.GitHubAppInstallURL = g.AppInstallURL()
 		}
 	}
+	// Derived AFTER the GitHub App / repo-target fields are final so the
+	// classification never disagrees with the banners rendered from them.
+	var onboardingCfg *config.Config
+	if s.deps != nil {
+		onboardingCfg = s.deps.Config
+	}
+	status.OnboardingIssues = onboardingIssuesFor(status, onboardingCfg)
 
 	status.InferenceBackends = s.buildInferenceBackends()
 	if runs, err := s.activeRuns(false); err == nil {
@@ -2801,14 +2819,17 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 func (s *Server) AddSystemAlert(id, severity, message string) {
 	s.systemAlertsMu.Lock()
 	defer s.systemAlertsMu.Unlock()
+	_, guideStep, onboarding := ClassifyOnboardingMessage(message)
 	for i, a := range s.systemAlerts {
 		if a.ID == id {
 			s.systemAlerts[i].Message = message
 			s.systemAlerts[i].Severity = severity
+			s.systemAlerts[i].Onboarding = onboarding
+			s.systemAlerts[i].GuideStep = guideStep
 			return
 		}
 	}
-	s.systemAlerts = append(s.systemAlerts, SystemAlert{ID: id, Severity: severity, Message: message})
+	s.systemAlerts = append(s.systemAlerts, SystemAlert{ID: id, Severity: severity, Message: message, Onboarding: onboarding, GuideStep: guideStep})
 }
 
 // ClearSystemAlert removes an alert by ID.
@@ -3345,11 +3366,11 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
 	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
-		checks["github_auth"] = map[string]any{"status": "fail", "detail": "GitHub App not installed — no installation for this org"}
+		checks["github_auth"] = map[string]any{"status": "fail", "detail": "GitHub App not installed — no installation for this org", "onboarding": true, "guideStep": GuideStepGitHubApp}
 		overall = "degraded"
 		failCount++
 	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
-		checks["github_auth"] = map[string]any{"status": "fail", "detail": detail}
+		checks["github_auth"] = map[string]any{"status": "fail", "detail": detail, "onboarding": true, "guideStep": GuideStepGitHubApp}
 		overall = "degraded"
 		failCount++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
@@ -4654,6 +4675,10 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		Name   string `json:"name"`
 		Status string `json:"status"`
 		Detail string `json:"detail,omitempty"`
+		// Onboarding/GuideStep mark setup problems the Getting Started guide
+		// has a step for (see OnboardingIssue); the SPA renders a guide tip.
+		Onboarding bool   `json:"onboarding,omitempty"`
+		GuideStep  string `json:"guideStep,omitempty"`
 	}
 	checks := []check{}
 	fails := 0
@@ -4670,10 +4695,10 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 	// 2. GitHub auth — config truth first (see githubAppNotInstalled and
 	// githubAppCredsUndelivered).
 	if s.githubAppNotInstalled() {
-		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "GitHub App not installed — no installation for this org"})
+		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "GitHub App not installed — no installation for this org", Onboarding: true, GuideStep: GuideStepGitHubApp})
 		fails++
 	} else if detail := s.githubAppCredsUndelivered(); detail != "" {
-		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: detail})
+		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: detail, Onboarding: true, GuideStep: GuideStepGitHubApp})
 		fails++
 	} else if s.deps != nil && s.deps.GHAppAuth != nil {
 		if _, err := s.deps.GHAppAuth.Token(s.deps.Ctx); err != nil {
@@ -4701,7 +4726,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 	}
 
 	if status != nil && status.RepoTargetMisconfigured {
-		checks = append(checks, check{Name: "repo_target", Status: "warn", Detail: status.RepoTargetIssue})
+		checks = append(checks, check{Name: "repo_target", Status: "warn", Detail: status.RepoTargetIssue, Onboarding: true, GuideStep: GuideStepRepos})
 		warns++
 	}
 
