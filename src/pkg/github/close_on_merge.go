@@ -60,10 +60,13 @@ type CloseOnMergeOptions struct {
 	// matched by bare repository name; empty matches any.
 	OnlyPRRepo   string
 	OnlyPRNumber int
-	// LabelDriven reports a repo that opted in to label-driven triage; the
-	// backfill posts no "What to reply" notice there when it reclassifies a
-	// dedupe checklist as needs-decision. nil means no repo opts in.
+	// LabelDriven reports a repo that opted in to label-driven triage. nil
+	// means no repo opts in.
 	LabelDriven func(repo string) bool
+	// AdvisoryAutocloseOff disables the advisory-checklist sweep
+	// (dedupe.advisory_autoclose: false): checklists are then neither
+	// ticked nor closed by the backfill (hivecommons/hive#15754).
+	AdvisoryAutocloseOff bool
 	// RepoOnGitHub reports whether a repo lives on GitHub (its forge.Kind, via
 	// config.RepoOnGitHub). Both sweeps read and close through the GitHub API,
 	// so a claim or repo on GitLab or Gitea is skipped rather than looked up on
@@ -148,6 +151,9 @@ type CloseOnMergeResult struct {
 	Reason      string
 	WrongRefs   bool
 	MergeCommit string
+	// Ticked is how many advisory-checklist items this sweep marked
+	// resolved in the issue body (hivecommons/hive#15754).
+	Ticked int
 }
 
 // closeOnMergeTransientReasons are the result reasons that describe a failed
@@ -159,6 +165,7 @@ var closeOnMergeTransientReasons = map[string]bool{
 	"awaiting_comment_failed": true,
 	"close_comment_failed":    true,
 	"close_failed":            true,
+	"body_edit_failed":        true,
 }
 
 // Settles reports whether the result is a final verdict for its PR/issue

@@ -10,6 +10,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 
+	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
@@ -243,4 +244,53 @@ func (c *Engine) rememberMergeRefusal(key string, r mergeRefusal) {
 		}
 	}
 	c.mergeRefusals[key] = r
+}
+
+func nativeQueueMethodRefusalKey(claim effects.Claim) string {
+	return "queue-method|" + strings.ToLower(claim.Repo) + "#" + claim.Target
+}
+
+// knownNativeQueueMethodRefusal reports whether this PR's head was already
+// refused by a queue whose merge method cannot keep mixed authorship, so the
+// sweep does not re-read the queue's method every pass. Like a remembered
+// merge-method 405 it re-arms after mergeRefusalRecheck, and on a new head.
+func (c *Engine) knownNativeQueueMethodRefusal(claim effects.Claim, head string) bool {
+	if c == nil {
+		return false
+	}
+	key := nativeQueueMethodRefusalKey(claim)
+	now := c.clock()
+	c.mergeRefusalsMu.Lock()
+	defer c.mergeRefusalsMu.Unlock()
+	r, ok := c.mergeRefusals[key]
+	if !ok {
+		return false
+	}
+	if now.Sub(r.at) >= mergeRefusalRecheck || !strings.EqualFold(r.head, strings.TrimSpace(head)) {
+		delete(c.mergeRefusals, key)
+		return false
+	}
+	return true
+}
+
+// noteNativeQueueMethodRefusal remembers a queue-method refusal for
+// knownNativeQueueMethodRefusal.
+func (c *Engine) noteNativeQueueMethodRefusal(claim effects.Claim, head string) {
+	if c == nil {
+		return
+	}
+	r := mergeRefusal{head: strings.TrimSpace(head), at: c.clock()}
+	c.mergeRefusalsMu.Lock()
+	defer c.mergeRefusalsMu.Unlock()
+	if c.mergeRefusals == nil {
+		c.mergeRefusals = make(map[string]mergeRefusal)
+	}
+	if len(c.mergeRefusals) >= mergeRefusalPruneAt {
+		for k, old := range c.mergeRefusals {
+			if r.at.Sub(old.at) >= mergeRefusalRecheck {
+				delete(c.mergeRefusals, k)
+			}
+		}
+	}
+	c.mergeRefusals[nativeQueueMethodRefusalKey(claim)] = r
 }
