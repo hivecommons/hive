@@ -1,18 +1,22 @@
 package integration
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
-const maxJournalRecordBytes = 1 << 20
+const (
+	maxJournalRecordBytes = 1 << 20
+	maxJournalBytes       = 256 << 20
+	maxJournalRecords     = 100000
+)
 
 // Store serializes local durable state only. Callers must do all forge/claim
 // reads before entering it; no remote I/O belongs under this mutex.
@@ -26,7 +30,11 @@ type Store struct {
 	coverage      map[string]Coverage
 	reservations  map[string]Reservation
 	memberChanges map[string]Event
+	groupChanges  map[string]Event
+	policies      *PolicySet
+	integrated    map[string]IntegrationReceipt
 	poison        error
+	offset        int64
 }
 
 func (s *Store) HasEvent(id string) bool {
@@ -39,50 +47,75 @@ func (s *Store) HasEvent(id string) bool {
 func (s *Store) EnsureIntent(i Intent) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.intents[i.Key]; ok {
+	unlock, err := s.writerLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if previous, ok := s.intents[i.Key]; ok {
+		if previous.Provenance == "dispatch-enumerator" && i.Provenance == previous.Provenance && !previous.ScopeKnown &&
+			(previous.Plan != i.Plan || previous.PlanNode != i.PlanNode || previous.PlanRevision != i.PlanRevision) {
+			now := i.ObservedAt
+			i.Generation, i.ObservedAt = previous.Generation+1, previous.ObservedAt
+			return s.appendLocked(Event{Version: SchemaVersion, ID: fmt.Sprintf("dispatch-intent/%s/%d", i.Key, i.Generation), At: now, Intent: &i})
+		}
 		return nil
 	}
 	return s.appendLocked(Event{Version: SchemaVersion, ID: "dispatch-intent/" + i.Key, At: i.ObservedAt, Intent: &i})
 }
 
+func (s *Store) Intent(key string) (Intent, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	intent, found := s.intents[key]
+	return cloneIntent(intent), found
+}
+
+func (s *Store) Intents() []Intent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	intents := make([]Intent, 0, len(s.intents))
+	for _, intent := range s.intents {
+		intents = append(intents, cloneIntent(intent))
+	}
+	return intents
+}
+
+func (s *Store) Reservation(key string, now time.Time) (Reservation, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reservation, found := s.reservations[key]
+	return reservation, found && reservation.ExpiresAt.After(now)
+}
+
+func (s *Store) ForTestedHead(repo, head string) []Evidence {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var receipts []Evidence
+	for _, receipt := range s.evidence {
+		if strings.EqualFold(receipt.Subject.Repo, repo) && receipt.Subject.TestedSHA == head {
+			receipts = append(receipts, cloneEvidence(receipt))
+		}
+	}
+	return receipts
+}
+
 func Open(path string) (*Store, error) {
 	s := &Store{path: path, seen: map[string]string{}, intents: map[string]Intent{},
 		evidence: map[string]Evidence{}, jobs: map[string]Job{}, coverage: map[string]Coverage{},
-		reservations: map[string]Reservation{}, memberChanges: map[string]Event{}}
-	f, err := os.Open(path)
+		reservations: map[string]Reservation{}, memberChanges: map[string]Event{}, groupChanges: map[string]Event{}, integrated: map[string]IntegrationReceipt{}}
+	_, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return s, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 4096), maxJournalRecordBytes)
-	for line := 1; scanner.Scan(); line++ {
-		var e Event
-		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
-			return nil, fmt.Errorf("integration journal line %d: %w", line, err)
-		}
-		if err := s.validate(e); err != nil {
-			return nil, fmt.Errorf("integration journal line %d: %w", line, err)
-		}
-		s.apply(e)
-	}
-	if err := scanner.Err(); err != nil {
+	unlock, err := s.writerLock()
+	if err != nil {
 		return nil, err
 	}
-	if stat, err := f.Stat(); err != nil {
-		return nil, err
-	} else if stat.Size() > 0 {
-		var last [1]byte
-		if _, err := f.ReadAt(last[:], stat.Size()-1); err != nil {
-			return nil, err
-		}
-		if last[0] != '\n' {
-			return nil, fmt.Errorf("integration journal has an incomplete trailing record")
-		}
-	}
+	unlock()
 	return s, nil
 }
 
@@ -92,7 +125,7 @@ func eventDigest(e Event) string {
 	return hex.EncodeToString(h[:])
 }
 
-func scopeKey(repo, base string) string { return repo + "#" + base }
+func scopeKey(repo, base string) string { return strings.ToLower(repo) + "#" + base }
 
 func (s *Store) validate(e Event) error {
 	if e.Version != SchemaVersion || e.ID == "" || e.At.IsZero() {
@@ -102,7 +135,7 @@ func (s *Store) validate(e Event) error {
 		return fmt.Errorf("event identity reused with different content")
 	}
 	n := 0
-	for _, yes := range []bool{e.Intent != nil, e.Evidence != nil, e.Job != nil, e.Coverage != nil, e.Reservation != nil, e.Release != "", e.Invalidate != "", e.MemberChange != nil} {
+	for _, yes := range []bool{e.Intent != nil, e.Evidence != nil, e.Job != nil, e.Coverage != nil, e.Reservation != nil, e.Release != "", e.Invalidate != "", e.MemberChange != nil, e.Integrated != nil, e.GroupChange != nil, e.PolicySet != nil} {
 		if yes {
 			n++
 		}
@@ -112,6 +145,19 @@ func (s *Store) validate(e Event) error {
 	}
 	if change := e.MemberChange; change != nil && (change.Repo == "" || change.PR <= 0) {
 		return fmt.Errorf("invalid member change")
+	}
+	if change := e.GroupChange; change != nil && (change.Repo == "" || change.Authority == "" || !fullSHA(change.Head)) {
+		return fmt.Errorf("invalid group invalidation")
+	}
+	if set := e.PolicySet; set != nil {
+		for _, binding := range set.Active {
+			if binding.Repo == "" || binding.Base == "" || binding.Fingerprint == "" {
+				return fmt.Errorf("invalid policy binding")
+			}
+		}
+	}
+	if receipt := e.Integrated; receipt != nil && (receipt.Repo == "" || receipt.PR < 1 || !fullSHA(receipt.Head) || !fullSHA(receipt.MergeSHA) || receipt.MergedAt.IsZero() || receipt.Source == "") {
+		return fmt.Errorf("invalid integrated receipt")
 	}
 	if e.Intent != nil {
 		if err := e.Intent.Validate(); err != nil {
@@ -192,6 +238,9 @@ func (s *Store) apply(e Event) {
 		return
 	}
 	s.seen[e.ID] = eventDigest(e)
+	if receipt := e.Integrated; receipt != nil {
+		s.integrated[fmt.Sprintf("%s#%d", receipt.Repo, receipt.PR)] = *receipt
+	}
 	if i := e.Intent; i != nil {
 		old, found := s.intents[i.Key]
 		if !found || i.Generation > old.Generation {
@@ -201,6 +250,17 @@ func (s *Store) apply(e Event) {
 	}
 	if v := e.Evidence; v != nil {
 		k := v.Subject.ID()
+		for id, prior := range s.evidence {
+			old, next := prior.Subject, v.Subject
+			if id != k && prior.State != Superseded && old.Repo == next.Repo && old.Base == next.Base && old.Engine == next.Engine &&
+				old.Authority == next.Authority && old.TestedSHA == next.TestedSHA && old.Policy == next.Policy &&
+				old.Producer == next.Producer && old.Workflow == next.Workflow &&
+				(next.Generation > old.Generation || next.Generation == old.Generation && next.Attempt > old.Attempt) &&
+				!v.ObservedAt.Before(prior.ObservedAt) {
+				prior.State, prior.InvalidatedBy, prior.Reason = Superseded, e.ID, "authoritative workflow attempt superseded"
+				s.evidence[id] = prior
+			}
+		}
 		old, found := s.evidence[k]
 		if !found || (old.State != Superseded && v.ObservedAt.After(old.ObservedAt)) {
 			next := cloneEvidence(*v)
@@ -210,17 +270,52 @@ func (s *Store) apply(e Event) {
 					next.State, next.InvalidatedBy, next.Reason = Superseded, change.ID, change.Reason
 				}
 			}
+			if change, found := s.groupChanges[groupChangeKey(next.Subject.Repo, next.Subject.Authority, next.Subject.TestedSHA)]; found {
+				next.State, next.InvalidatedBy, next.Reason = Superseded, change.ID, change.Reason
+			}
+			if s.policies != nil && strings.HasPrefix(next.Subject.Policy, "workflow-policy-v1/") && !s.policyActive(next.Subject) {
+				next.State, next.InvalidatedBy, next.Reason = Superseded, "active-policy-set", "producer policy no longer configured"
+			}
 			s.evidence[k] = next
+		}
+		for key, job := range s.jobs {
+			if strings.EqualFold(job.Repo, v.Subject.Repo) && job.RunID == v.RunID && job.Attempt == v.Subject.Attempt {
+				job.Candidates = appendCandidate(job.Candidates, k)
+				s.jobs[key] = job
+			}
+		}
+	}
+	if change := e.GroupChange; change != nil {
+		copyChange := *change
+		e.GroupChange = &copyChange
+		key := groupChangeKey(change.Repo, change.Authority, change.Head)
+		s.groupChanges[key] = e
+		for id, receipt := range s.evidence {
+			if groupChangeKey(receipt.Subject.Repo, receipt.Subject.Authority, receipt.Subject.TestedSHA) == key {
+				receipt.State, receipt.InvalidatedBy, receipt.Reason = Superseded, e.ID, e.Reason
+				s.evidence[id] = receipt
+			}
+		}
+	}
+	if set := e.PolicySet; set != nil {
+		s.policies = &PolicySet{Active: append([]PolicyBinding(nil), set.Active...)}
+		for id, receipt := range s.evidence {
+			if strings.HasPrefix(receipt.Subject.Policy, "workflow-policy-v1/") && !s.policyActive(receipt.Subject) {
+				receipt.State, receipt.InvalidatedBy, receipt.Reason = Superseded, e.ID, "producer policy changed or removed"
+				s.evidence[id] = receipt
+			}
 		}
 	}
 	if change := e.MemberChange; change != nil {
+		copyChange := *change
+		e.MemberChange = &copyChange
 		key := fmt.Sprintf("%s#%d", change.Repo, change.PR)
 		if previous, found := s.memberChanges[key]; !found || e.At.After(previous.At) {
 			s.memberChanges[key] = e
 		}
 		for id, receipt := range s.evidence {
 			for _, member := range receipt.Subject.Members {
-				if receipt.Subject.Repo == change.Repo && member.PR == change.PR && (change.Head == "" || member.Head != change.Head) {
+				if receipt.Subject.Repo == change.Repo && member.PR == change.PR && !receipt.ObservedAt.After(e.At) && (change.Head == "" || member.Head != change.Head) {
 					receipt.State, receipt.InvalidatedBy, receipt.Reason = Superseded, e.ID, e.Reason
 					s.evidence[id] = receipt
 				}
@@ -230,7 +325,16 @@ func (s *Store) apply(e Event) {
 	if j := e.Job; j != nil {
 		old, found := s.jobs[j.Key()]
 		if !found || (!j.ObservedAt.Before(old.ObservedAt) && (old.Status != "completed" || j.Status == "completed")) {
-			s.jobs[j.Key()] = cloneJob(*j)
+			next := cloneJob(*j)
+			for _, id := range old.Candidates {
+				next.Candidates = appendCandidate(next.Candidates, id)
+			}
+			for id, receipt := range s.evidence {
+				if strings.EqualFold(receipt.Subject.Repo, j.Repo) && receipt.RunID == j.RunID && receipt.Subject.Attempt == j.Attempt {
+					next.Candidates = appendCandidate(next.Candidates, id)
+				}
+			}
+			s.jobs[j.Key()] = next
 		}
 	}
 	if c := e.Coverage; c != nil {
@@ -271,12 +375,18 @@ func (s *Store) appendLocked(e Event) error {
 	if _, ok := s.seen[e.ID]; ok {
 		return nil
 	}
+	if len(s.seen) >= maxJournalRecords && e.Release != "*" {
+		return fmt.Errorf("integration journal index bound reached; observations unavailable, retain audit and disable enforcement")
+	}
 	b, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}
 	if len(b) >= maxJournalRecordBytes {
 		return fmt.Errorf("integration event exceeds journal record bound")
+	}
+	if s.offset+int64(len(b)+1) > maxJournalBytes {
+		return fmt.Errorf("integration journal byte bound reached; observations unavailable, retain audit and disable enforcement")
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 		return err
@@ -299,35 +409,43 @@ func (s *Store) appendLocked(e Event) error {
 		return closeErr
 	}
 	s.apply(e)
+	s.offset += int64(len(b) + 1)
 	return nil
 }
 
 func (s *Store) InvalidateGroup(repo, authority, head, delivery, reason string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for id, v := range s.evidence {
-		if v.Subject.Repo == repo && v.Subject.Authority == authority && v.Subject.TestedSHA == head && v.State != Superseded {
-			if err := s.appendLocked(Event{Version: SchemaVersion, ID: delivery + "/" + id, At: now, Invalidate: id, Reason: reason}); err != nil {
-				return err
-			}
-		}
+	unlock, err := s.writerLock()
+	if err != nil {
+		return err
 	}
-	return nil
+	defer unlock()
+	if _, exists := s.seen["group/"+delivery]; exists {
+		return nil
+	}
+	return s.appendLocked(Event{Version: SchemaVersion, ID: "group/" + delivery, At: now, Reason: reason, GroupChange: &GroupChange{Repo: repo, Authority: authority, Head: head}})
 }
 
 func (s *Store) Append(e Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.writerLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return s.appendLocked(e)
 }
 
 type Snapshot struct {
-	Version      int           `json:"version"`
-	Intents      []Intent      `json:"intents"`
-	Evidence     []Evidence    `json:"evidence"`
-	Jobs         []Job         `json:"jobs"`
-	Coverage     []Coverage    `json:"coverage"`
-	Reservations []Reservation `json:"reservations"`
+	Version      int                  `json:"version"`
+	Intents      []Intent             `json:"intents"`
+	Evidence     []Evidence           `json:"evidence"`
+	Jobs         []Job                `json:"jobs"`
+	Coverage     []Coverage           `json:"coverage"`
+	Reservations []Reservation        `json:"reservations"`
+	Integrated   []IntegrationReceipt `json:"integrated"`
 }
 
 func (s *Store) Snapshot(now time.Time) Snapshot {
@@ -351,12 +469,27 @@ func (s *Store) Snapshot(now time.Time) Snapshot {
 			out.Reservations = append(out.Reservations, v)
 		}
 	}
+	for _, v := range s.integrated {
+		out.Integrated = append(out.Integrated, v)
+	}
 	return out
+}
+
+func (s *Store) Integrated(repo string, pr int) (IntegrationReceipt, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	receipt, ok := s.integrated[fmt.Sprintf("%s#%d", repo, pr)]
+	return receipt, ok
 }
 
 func (s *Store) InvalidateMember(repo string, pr int, head, reason, delivery string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.writerLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if _, seen := s.seen["member/"+delivery]; seen {
 		return nil
 	}

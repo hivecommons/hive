@@ -98,7 +98,8 @@ type Evidence struct {
 type Prerequisite struct {
 	Key string `json:"key"`
 	// PlanNode is the existing approved DAG node, never an inferred text edge.
-	PlanNode string `json:"plan_node"`
+	PlanNode  string `json:"plan_node"`
+	Condition string `json:"condition,omitempty"`
 }
 
 type Intent struct {
@@ -129,10 +130,18 @@ func (i Intent) Validate() error {
 		i.Provenance == "" || i.ObservedAt.IsZero() || (i.Head != "" && !fullSHA(i.Head)) {
 		return fmt.Errorf("intent requires canonical work, plan, generation and provenance")
 	}
+	keys, nodes := map[string]bool{}, map[string]bool{}
 	for _, p := range i.Prerequisites {
 		if _, ok := worksource.ParseKey(p.Key); !ok || p.PlanNode == "" || p.Key == i.Key {
 			return fmt.Errorf("invalid prerequisite %q", p.Key)
 		}
+		if p.Condition != "" && p.Condition != "developed" && p.Condition != "integrated" && p.Condition != "deployed" {
+			return fmt.Errorf("invalid prerequisite lifecycle %q", p.Condition)
+		}
+		if keys[p.Key] || nodes[p.PlanNode] {
+			return fmt.Errorf("duplicate prerequisite ownership")
+		}
+		keys[p.Key], nodes[p.PlanNode] = true, true
 	}
 	return nil
 }
@@ -178,24 +187,52 @@ type Coverage struct {
 }
 
 type Event struct {
-	Version           int           `json:"version"`
-	ID                string        `json:"id"`
-	At                time.Time     `json:"at"`
-	Intent            *Intent       `json:"intent,omitempty"`
-	Evidence          *Evidence     `json:"evidence,omitempty"`
-	Job               *Job          `json:"job,omitempty"`
-	Coverage          *Coverage     `json:"coverage,omitempty"`
-	Reservation       *Reservation  `json:"reservation,omitempty"`
-	Release           string        `json:"release,omitempty"`
-	ReleaseClaim      string        `json:"release_claim,omitempty"`
-	ReleaseGeneration uint64        `json:"release_generation,omitempty"`
-	Invalidate        string        `json:"invalidate,omitempty"`
-	Reason            string        `json:"reason,omitempty"`
-	MemberChange      *MemberChange `json:"member_change,omitempty"`
+	Version           int                 `json:"version"`
+	ID                string              `json:"id"`
+	At                time.Time           `json:"at"`
+	Intent            *Intent             `json:"intent,omitempty"`
+	Evidence          *Evidence           `json:"evidence,omitempty"`
+	Job               *Job                `json:"job,omitempty"`
+	Coverage          *Coverage           `json:"coverage,omitempty"`
+	Reservation       *Reservation        `json:"reservation,omitempty"`
+	Release           string              `json:"release,omitempty"`
+	ReleaseClaim      string              `json:"release_claim,omitempty"`
+	ReleaseGeneration uint64              `json:"release_generation,omitempty"`
+	Invalidate        string              `json:"invalidate,omitempty"`
+	Reason            string              `json:"reason,omitempty"`
+	MemberChange      *MemberChange       `json:"member_change,omitempty"`
+	Integrated        *IntegrationReceipt `json:"integrated,omitempty"`
+	GroupChange       *GroupChange        `json:"group_change,omitempty"`
+	PolicySet         *PolicySet          `json:"policy_set,omitempty"`
+}
+
+type GroupChange struct {
+	Repo      string `json:"repo"`
+	Authority string `json:"authority"`
+	Head      string `json:"head"`
+}
+
+type PolicyBinding struct {
+	Repo        string `json:"repo"`
+	Base        string `json:"base"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+type PolicySet struct {
+	Active []PolicyBinding `json:"active"`
 }
 
 type MemberChange struct {
 	Repo string `json:"repo"`
 	PR   int    `json:"pr"`
 	Head string `json:"head,omitempty"`
+}
+
+type IntegrationReceipt struct {
+	Repo     string    `json:"repo"`
+	PR       int       `json:"pr"`
+	Head     string    `json:"head"`
+	MergeSHA string    `json:"merge_sha"`
+	MergedAt time.Time `json:"merged_at"`
+	Source   string    `json:"source"`
 }

@@ -139,7 +139,9 @@ func (s *Server) observeIntegrationWebhook(event, delivery string, body []byte, 
 			// A merged predecessor is NOT member removal: GitHub can retain a
 			// documented prefix. Only an unmerged close invalidates it here.
 			if pr.GetMerged() {
-				return nil
+				receipt := integration.IntegrationReceipt{Repo: repo, PR: pr.GetNumber(), Head: pr.GetHead().GetSHA(), MergeSHA: pr.GetMergeCommitSHA(),
+					MergedAt: pr.GetMergedAt().Time, Source: "github-signed-merged-webhook-v1"}
+				return store.Append(integration.Event{Version: integration.SchemaVersion, ID: "github/" + delivery, At: now, Integrated: &receipt})
 			}
 			return store.InvalidateMember(repo, pr.GetNumber(), head, reason, delivery, now)
 		}
@@ -216,7 +218,7 @@ func (s *Server) observeIntegrationPolicyRun(parent context.Context, run *gh.Wor
 			continue
 		}
 		var subject *integration.Subject
-		for _, evidence := range store.Snapshot(now).Evidence {
+		for _, evidence := range store.ForTestedHead(repo, run.GetHeadSHA()) {
 			candidate := evidence.Subject
 			if candidate.Repo == repo && candidate.Base == policy.Base && candidate.Engine == "native" &&
 				candidate.TestedSHA == run.GetHeadSHA() && evidence.State != integration.Superseded && len(candidate.Members) > 0 {
@@ -243,7 +245,7 @@ func (s *Server) observeIntegrationPolicyRun(parent context.Context, run *gh.Wor
 			}
 		}
 		proof, proofErr := s.deps.GHClient.ReadIntegrationWorkflowProof(ctx, policy, run)
-		subject.Policy, subject.Producer, subject.Workflow = policy.Blob, fmt.Sprintf("github-app/%d", policy.AppID), policy.Workflow
+		subject.Policy, subject.Producer, subject.Workflow = policy.Fingerprint(), fmt.Sprintf("github-app/%d", policy.AppID), fmt.Sprintf("%s@%d", policy.Workflow, run.GetWorkflowID())
 		subject.Attempt, subject.Generation = run.GetRunAttempt(), uint64(run.GetID())
 		observedAt := run.GetUpdatedAt().Time
 		if observedAt.IsZero() {

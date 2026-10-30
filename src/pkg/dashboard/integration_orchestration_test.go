@@ -3,13 +3,17 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/convergence/integration"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -125,10 +129,10 @@ func TestIntegrationLeaseAtomicAdmissionAndExpiry(t *testing.T) {
 	if err := store.Append(integration.Event{Version: 1, ID: "coverage", At: now, Coverage: &c}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.integrationLease("o/r#1", "o/r", "alice", 1, now.Add(time.Hour), now); err != nil {
+	if err := s.integrationLease("o/r#1", "o/r", "alice", 1, now.Add(time.Hour), now, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.integrationLease("o/r#1", "o/r", "bob", 1, now.Add(time.Hour), now); err == nil {
+	if err := s.integrationLease("o/r#1", "o/r", "bob", 1, now.Add(time.Hour), now, false); err == nil {
 		t.Fatal("competing lease acquired active reservation")
 	}
 	if len(store.Snapshot(now.Add(16*time.Minute)).Reservations) != 0 {
@@ -146,5 +150,88 @@ func TestIntegrationScopeAmbiguityAndUnavailableLedger(t *testing.T) {
 	d := s.integrationDispatchDecision(worksource.Ref{Repo: "o/r", Number: 1})
 	if d.Allowed || !strings.Contains(d.Reason, "base unknown") {
 		t.Fatalf("%+v", d)
+	}
+}
+
+func TestIntegrationRealClaimCommitSerializesCapacity(t *testing.T) {
+	_, server, ledger := claimsHub(t)
+	server.deps.Config.IntegrationOrchestration = config.IntegrationOrchestrationConfig{Mode: config.IntegrationEnforce, MaxActive: 1, Scopes: []config.IntegrationScope{{Repo: "myorg/repo1", Base: "v5"}}}
+	server.integration.path = filepath.Join(t.TempDir(), "journal")
+	store, err := server.integrationStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, number := range []int{1, 2} {
+		intent := integration.Intent{Version: 1, Key: fmt.Sprintf("myorg/repo1#%d", number), Repo: "myorg/repo1", Base: "v5", Generation: 1, Plan: "unresolved", PlanNode: "owner-enrolled", ScopeKnown: true, Provenance: "owner", ObservedAt: now}
+		if err := store.EnsureIntent(intent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	coverage := integration.Coverage{Repo: "myorg/repo1", Base: "v5", From: now.Add(-2 * time.Hour), Through: now, Complete: true, Source: "github-actions"}
+	if err := store.Append(integration.Event{Version: 1, ID: "coverage", At: now, Coverage: &coverage}); err != nil {
+		t.Fatal(err)
+	}
+	var workers sync.WaitGroup
+	changed := make(chan bool, 2)
+	for _, number := range []int{1, 2} {
+		workers.Add(1)
+		go func(number int) {
+			defer workers.Done()
+			result, err := ledger.Claim(claims.Request{Repo: "myorg/repo1", Issue: number, Holder: "agent", Kind: claims.KindAgent})
+			if err != nil {
+				t.Error(err)
+			}
+			changed <- result.Outcome == claims.OutcomeClaimed
+		}(number)
+	}
+	workers.Wait()
+	close(changed)
+	count := 0
+	for granted := range changed {
+		if granted {
+			count++
+		}
+	}
+	if count != 1 || len(store.Snapshot(now).Reservations) != 1 {
+		t.Fatalf("claims=%d reservations=%d", count, len(store.Snapshot(now).Reservations))
+	}
+}
+
+func TestIntegrationActualContributorSelectionModes(t *testing.T) {
+	for _, mode := range []string{config.IntegrationOff, config.IntegrationAdvisory, config.IntegrationEnforce} {
+		t.Run(mode, func(t *testing.T) {
+			hub, server, _ := claimsHub(t)
+			server.deps.Config.IntegrationOrchestration = config.IntegrationOrchestrationConfig{Mode: mode, Scopes: []config.IntegrationScope{{Repo: "myorg/repo1", Base: "v5"}}}
+			server.integration.path = filepath.Join(t.TempDir(), "journal")
+			setStatusIssues(server, intgIssue(1, "independent work", "someone", nil))
+			connection := &ContributorConnection{profile: &ContributorProfile{GitHubUsername: "worker", ContributorID: "c-worker", TrustTier: "contributor"}, lastPong: time.Now()}
+			hub.mu.Lock()
+			hub.connections["conn-worker"] = connection
+			hub.mu.Unlock()
+			message := hub.selectTask(connection)
+			admitted := message != nil && message.Type == "task_assign"
+			if admitted != (mode != config.IntegrationEnforce) {
+				t.Fatalf("mode=%s message=%+v", mode, message)
+			}
+		})
+	}
+}
+
+func TestIntegrationFailedLedgerCannotPreventDisabling(t *testing.T) {
+	server := orchestrationServer(t, config.IntegrationEnforce)
+	if err := os.WriteFile(server.integration.path, []byte("corrupt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := server.integrationStore(); err == nil {
+		t.Fatal("invalid journal accepted")
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/config/integration-orchestration", strings.NewReader(`{"mode":"off"}`))
+	request.Header.Set("X-Hive-Role", "owner")
+	request.Header.Set(ownerRoleVerifiedHeader, "true")
+	response := httptest.NewRecorder()
+	server.handleIntegrationConfigPut(response, request)
+	if response.Code != http.StatusOK || server.integrationConfig().Mode != config.IntegrationOff {
+		t.Fatalf("%d %s", response.Code, response.Body)
 	}
 }

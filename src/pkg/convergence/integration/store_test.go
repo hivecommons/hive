@@ -220,7 +220,7 @@ func TestReservationsRaceRenewExpiryRollbackAndHints(t *testing.T) {
 		putIntent(t, s, i)
 	}
 	cfg := configFor(config.IntegrationEnforce)
-	input := Input{Key: a.Key, Repo: "o/r", Base: "v5", Now: now, Reserve: true, Claim: "owner", ClaimGeneration: 1, ClaimExpiresAt: now.Add(time.Hour)}
+	input := Input{Key: a.Key, Repo: "o/r", Base: "v5", Now: now, Reserve: true, Claim: "owner", ClaimGeneration: 1, ClaimExpiresAt: now.Add(time.Hour), PlanApproved: true, PlanRevision: 1}
 	d, err := s.Decide(cfg, input)
 	if err != nil || !d.Allowed {
 		t.Fatalf("%+v %v", d, err)

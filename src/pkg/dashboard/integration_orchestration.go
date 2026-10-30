@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,7 +43,35 @@ func (s *Server) IntegrationNativeAdmission(_ context.Context, repo string, pr *
 		}
 		return "", nil
 	}
-	d, err := store.Decide(cfg, integration.Input{Key: fmt.Sprintf("native/%s/%d", repo, pr.GetNumber()), Repo: repo, Base: pr.GetBase().GetRef(), Now: time.Now()})
+	key := ""
+	for _, intent := range store.Intents() {
+		if strings.EqualFold(intent.Repo, repo) && intent.Base == pr.GetBase().GetRef() && intent.Head == pr.GetHead().GetSHA() {
+			if key != "" && key != intent.Key {
+				if cfg.Mode == config.IntegrationEnforce {
+					return "native candidate has ambiguous canonical work intent", nil
+				}
+				return "", nil
+			}
+			key = intent.Key
+		}
+	}
+	in := s.integrationInput(key, repo, pr.GetBase().GetRef(), time.Now())
+	in.Head = pr.GetHead().GetSHA()
+	if cfg.Mode == config.IntegrationEnforce && key != "" {
+		in.Reserve = true
+		in.Claim, in.ClaimGeneration, in.ClaimExpiresAt = "native-candidate/"+pr.GetNodeID()+"/"+in.Head, 1, in.Now.Add(cfg.LeaseTTL)
+		if ref, valid := worksource.ParseKey(key); valid {
+			if ledger := s.claimsLedger(); ledger != nil {
+				if claim, live := ledger.Lookup(ref.Repo, ref.Number); live {
+					in.Claim, in.ClaimGeneration, in.ClaimExpiresAt = claim.Holder, uint64(claim.ClaimedAt.UnixNano()), claim.ExpiresAt
+				}
+			}
+			if reservation, exists := store.Reservation(key, in.Now); exists {
+				in.Claim, in.ClaimGeneration, in.ClaimExpiresAt = reservation.Claim, reservation.ClaimGeneration, reservation.ExpiresAt
+			}
+		}
+	}
+	d, err := store.Decide(cfg, in)
 	if err != nil && cfg.Mode == config.IntegrationEnforce {
 		return "admission evaluation unavailable", err
 	}
@@ -67,8 +97,73 @@ func (s *Server) integrationStore() (*integration.Store, error) {
 			path = filepath.Join(filepath.Dir(taskLeasesFile), "integration-orchestration.jsonl")
 		}
 		s.integration.store, s.integration.err = integration.Open(path)
+		if s.integration.err == nil && s.integrationConfig().Mode != config.IntegrationOff {
+			s.integration.err = s.integration.store.SetPolicies(s.integrationConfig().Policies, time.Now())
+		}
 	})
 	return s.integration.store, s.integration.err
+}
+
+func integrationBeadWorkKey(b *beads.Bead) string {
+	if b == nil {
+		return ""
+	}
+	key := b.Meta(planning.MetaIssueRepo) + "#" + b.Meta(planning.MetaIssueNumber)
+	if _, valid := worksource.ParseKey(key); valid {
+		return key
+	}
+	key = strings.TrimPrefix(b.ExternalRef, "gh-")
+	if _, valid := worksource.ParseKey(key); valid {
+		return key
+	}
+	return ""
+}
+
+func (s *Server) integrationDispatchIntent(ref worksource.Ref, base string, now time.Time) integration.Intent {
+	intent := integration.Intent{Version: integration.SchemaVersion, Key: ref.Key(), Repo: ref.Repo, Base: base, Generation: 1,
+		Plan: "unresolved", PlanNode: ref.Key(), ScopeKnown: false, Confidence: "unknown", Provenance: "dispatch-enumerator", ObservedAt: now}
+	if s.deps == nil {
+		return intent
+	}
+	for _, store := range s.deps.BeadStores {
+		if store == nil {
+			continue
+		}
+		bead := store.FindByExternalRef("gh-" + ref.Key())
+		if bead == nil {
+			bead = store.FindByExternalRef(ref.Key())
+		}
+		if bead == nil || integrationBeadWorkKey(bead) != ref.Key() {
+			continue
+		}
+		parent := bead.Meta(planning.MetaParentEpic)
+		tree, found := planning.FindPlanTree(s.deps.BeadStores, parent)
+		if !found || !tree.Approved {
+			continue
+		}
+		if intent.Plan != "unresolved" && (intent.Plan != tree.EpicID || intent.PlanNode != bead.ID) {
+			intent.Plan, intent.PlanNode, intent.Confidence = "unresolved", ref.Key(), "ambiguous-approved-plan"
+			intent.Prerequisites = nil
+			return intent
+		}
+		intent.Plan, intent.PlanNode, intent.PlanRevision = tree.EpicID, bead.ID, tree.DesignRevision
+		intent.Confidence = "approved-dag-linked-scope-unknown"
+		for _, node := range tree.Children {
+			if node.ID != bead.ID {
+				continue
+			}
+			for _, dependencyID := range node.DependsOn {
+				dependency, err := store.Get(dependencyID)
+				if err != nil {
+					continue
+				}
+				if key := integrationBeadWorkKey(dependency); key != "" {
+					intent.Prerequisites = append(intent.Prerequisites, integration.Prerequisite{Key: key, PlanNode: dependencyID, Condition: "integrated"})
+				}
+			}
+		}
+	}
+	return intent
 }
 
 // integrationPlan verifies the existing approved DAG on every use. Neither a
@@ -102,7 +197,7 @@ func (s *Server) integrationPlan(i integration.Intent) (bool, map[string]integra
 			continue
 		}
 		b, err := store.Get(i.PlanNode)
-		if err == nil && b.Meta(planning.MetaIssueRepo)+"#"+b.Meta(planning.MetaIssueNumber) == i.Key {
+		if err == nil && integrationBeadWorkKey(b) == i.Key {
 			bound = true
 			break
 		}
@@ -113,6 +208,9 @@ func (s *Server) integrationPlan(i integration.Intent) (bool, map[string]integra
 	edges := map[string]bool{}
 	for _, id := range node.DependsOn {
 		edges[id] = true
+	}
+	if len(edges) != len(i.Prerequisites) {
+		return false, deps
 	}
 	for _, p := range i.Prerequisites {
 		child, found := nodes[p.PlanNode]
@@ -125,13 +223,32 @@ func (s *Server) integrationPlan(i integration.Intent) (bool, map[string]integra
 				continue
 			}
 			b, err := store.Get(p.PlanNode)
-			if err == nil && b.Meta(planning.MetaIssueRepo)+"#"+b.Meta(planning.MetaIssueNumber) == p.Key {
+			if err == nil && integrationBeadWorkKey(b) == p.Key {
 				keyBound = true
 				break
 			}
 		}
 		if keyBound {
-			deps[p.Key] = integration.Dependency{Known: true, Satisfied: child.Status == beads.StatusClosed || child.Status == beads.StatusDone}
+			dependency := integration.Dependency{}
+			switch p.Condition {
+			case "developed":
+				dependency = integration.Dependency{Known: true, Satisfied: child.Status == beads.StatusDone || child.Status == beads.StatusClosed}
+			case "", "integrated":
+				link, err := url.Parse(child.PRURL)
+				if err == nil && link.Host == "github.com" {
+					parts := strings.Split(strings.Trim(link.Path, "/"), "/")
+					if len(parts) == 4 && parts[2] == "pull" {
+						number, parseErr := strconv.Atoi(parts[3])
+						ledger, ledgerErr := s.integrationStore()
+						if parseErr == nil && ledgerErr == nil {
+							_, merged := ledger.Integrated(parts[0]+"/"+parts[1], number)
+							dependency = integration.Dependency{Known: merged, Satisfied: merged}
+						}
+					}
+				}
+			case "deployed": // No deployment producer is configured: closure is not deployment.
+			}
+			deps[p.Key] = dependency
 		}
 	}
 	return true, deps
@@ -143,11 +260,16 @@ func (s *Server) integrationInput(key, repo, base string, now time.Time) integra
 	if err != nil {
 		return in
 	}
-	for _, i := range store.Snapshot(now).Intents {
-		if i.Key == key {
-			in.PlanApproved, in.Dependencies = s.integrationPlan(i)
-			in.PlanRevision = i.PlanRevision
-			break
+	if i, exists := store.Intent(key); exists {
+		in.IntentGeneration = i.Generation
+		in.PlanApproved, in.Dependencies = s.integrationPlan(i)
+		in.PlanRevision = i.PlanRevision
+		if ref, valid := worksource.ParseKey(key); valid {
+			actual := s.integrationDispatchIntent(ref, base, now)
+			in.PlanRequired = actual.Plan != "unresolved"
+			if in.PlanRequired && (actual.Plan != i.Plan || actual.PlanNode != i.PlanNode || actual.PlanRevision != i.PlanRevision) {
+				in.PlanApproved = false
+			}
 		}
 	}
 	return in
@@ -186,8 +308,7 @@ func (s *Server) integrationDispatchDecision(ref worksource.Ref) integration.Dec
 	}
 	if ref.Key() != "" {
 		now := time.Now()
-		intent := integration.Intent{Version: integration.SchemaVersion, Key: ref.Key(), Repo: ref.Repo, Base: base, Generation: 1,
-			Plan: "unresolved", PlanNode: ref.Key(), ScopeKnown: false, Confidence: "unknown", Provenance: "dispatch-enumerator", ObservedAt: now}
+		intent := s.integrationDispatchIntent(ref, base, now)
 		if err := store.EnsureIntent(intent); err != nil {
 			return integration.Decision{Allowed: cfg.Mode != config.IntegrationEnforce, WouldBlock: true, Reason: "intent persistence unavailable: " + err.Error()}
 		}
@@ -290,6 +411,7 @@ func (s *Server) integrationClaimObserved(c claims.Claim) {
 		}
 		in := s.integrationInput(c.Key(), c.Repo, scope.Base, time.Now())
 		in.Claim, in.ClaimGeneration, in.ClaimExpiresAt, in.Reserve = c.Holder, uint64(c.ClaimedAt.UnixNano()), c.ExpiresAt, true
+		in.RenewOnly = true
 		d, err := store.Decide(cfg, in)
 		if err != nil || !d.Allowed {
 			s.webhookLogger().Warn("integration reservation not acquired; existing claim retained", "key", c.Key(), "reason", d.Reason, "error", err)
@@ -321,7 +443,7 @@ func (s *Server) integrationClaimCommit(c claims.Claim) (string, error) {
 	return "", nil
 }
 
-func (s *Server) integrationLease(key, repo, identity string, gen uint64, expires, now time.Time) error {
+func (s *Server) integrationLease(key, repo, identity string, gen uint64, expires, now time.Time, renewal bool) error {
 	cfg := s.integrationConfig()
 	if cfg.Mode != config.IntegrationEnforce {
 		return nil
@@ -336,6 +458,7 @@ func (s *Server) integrationLease(key, repo, identity string, gen uint64, expire
 		}
 		in := s.integrationInput(key, repo, scope.Base, now)
 		in.Reserve, in.Claim, in.ClaimGeneration, in.ClaimExpiresAt = true, "contributor/"+identity, gen, expires
+		in.RenewOnly = renewal
 		d, err := store.Decide(cfg, in)
 		if err != nil {
 			return err
@@ -414,6 +537,9 @@ func (s *Server) handleIntegrationConfigPut(w http.ResponseWriter, r *http.Reque
 	if ledgerErr == nil {
 		ledgerErr = store.Append(integration.Event{Version: integration.SchemaVersion, ID: fmt.Sprintf("rollback/%d", time.Now().UnixNano()), At: time.Now(), Release: "*", Reason: "operator changed orchestration configuration"})
 	}
+	if ledgerErr == nil {
+		ledgerErr = store.SetPolicies(next.Policies, time.Now())
+	}
 	if ledgerErr != nil && next.Effective().Mode == config.IntegrationEnforce {
 		jsonError(w, ledgerErr.Error(), http.StatusServiceUnavailable)
 		return
@@ -421,6 +547,11 @@ func (s *Server) handleIntegrationConfigPut(w http.ResponseWriter, r *http.Reque
 	s.deps.Config.IntegrationOrchestration = next
 	if err := s.saveConfig(); err != nil {
 		s.deps.Config.IntegrationOrchestration = previous
+		if ledgerErr == nil {
+			if restoreErr := store.SetPolicies(previous.Policies, time.Now()); restoreErr != nil {
+				s.webhookLogger().Error("integration producer policy rollback unavailable", "error", restoreErr)
+			}
+		}
 		jsonError(w, "integration configuration persistence failed", http.StatusInternalServerError)
 		return
 	}

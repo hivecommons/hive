@@ -520,6 +520,18 @@
         const res = await fetch('/api/integration-orchestration', { headers: _inceptionAuthHeaders() });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+        const preparation = await fetch('/api/stage-tracker', { headers: _inceptionAuthHeaders() });
+        if (preparation.ok) {
+          const tracker = await preparation.json();
+          data.preparation = {
+            source: '/api/stage-tracker.base_preparation',
+            state: Array.isArray(tracker.base_preparation) ? 'observed' : 'unavailable',
+            queues: Array.isArray(tracker.base_preparation) ? tracker.base_preparation : null,
+            meaning: 'Preparation ownership/backlog only; not green or approved train seats, and not native queue membership.'
+          };
+        } else {
+          data.preparation = { state: 'unavailable', reason: `Tracker HTTP ${preparation.status}` };
+        }
         out.textContent = JSON.stringify(data, null, 2);
       } catch (e) {
         out.textContent = `Integration observations unknown: ${e.message}`;

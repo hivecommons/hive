@@ -3,6 +3,7 @@ package integration
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -20,7 +21,7 @@ func cost(jobs map[string]Job, coverage Coverage, repo, base string, from, throu
 	out := Cost{Complete: coverage.Complete && !coverage.From.After(from) && !coverage.Through.Before(through), Reason: coverage.Reason}
 	minutes := 0.0
 	for _, j := range jobs {
-		if j.Repo != repo || j.Base != base || j.RunnerID == 0 || j.StartedAt.IsZero() {
+		if !strings.EqualFold(j.Repo, repo) || j.Base != base || j.RunnerID == 0 || j.StartedAt.IsZero() {
 			continue
 		}
 		end := j.CompletedAt
@@ -69,18 +70,21 @@ type Dependency struct {
 // The approved DAG and live lease, not an intent author's assertion, authorize
 // the corresponding constraints.
 type Input struct {
-	Key             string
-	Repo            string
-	Base            string
-	PlanApproved    bool
-	PlanRevision    int
-	Dependencies    map[string]Dependency
-	Claim           string
-	ClaimGeneration uint64
-	ClaimExpiresAt  time.Time
-	Reserve         bool
-	Head            string
-	Now             time.Time
+	Key              string
+	Repo             string
+	Base             string
+	PlanApproved     bool
+	PlanRequired     bool
+	PlanRevision     int
+	IntentGeneration uint64
+	Dependencies     map[string]Dependency
+	Claim            string
+	ClaimGeneration  uint64
+	ClaimExpiresAt   time.Time
+	Reserve          bool
+	RenewOnly        bool
+	Head             string
+	Now              time.Time
 }
 
 type Decision struct {
@@ -110,6 +114,11 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := s.writerLock()
+	if err != nil {
+		return Decision{Allowed: cfg.Mode != config.IntegrationEnforce, WouldBlock: true, Reason: "durable admission fencing unavailable"}, err
+	}
+	defer unlock()
 	intent, found := s.intents[in.Key]
 	block := func(reason string) {
 		if !out.WouldBlock {
@@ -120,9 +129,18 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 		out.Hints = append(out.Hints, "scope unknown: no versioned intent; independence not established")
 		block("qualified change intent unavailable")
 	} else {
+		if in.IntentGeneration != 0 && in.IntentGeneration != intent.Generation {
+			block("intent generation changed while gathering prerequisites")
+		}
+		if (in.PlanRequired || intent.Plan != "unresolved") && (!in.PlanApproved || in.PlanRevision != intent.PlanRevision) {
+			block("approved plan generation unavailable or changed")
+		}
 		if !intent.ScopeKnown {
 			out.Hints = append(out.Hints, "anticipated scope unknown; not evidence of independence")
 			block("anticipated scope unknown; qualified cohort unavailable")
+		}
+		if in.Head != "" && intent.Head != "" && in.Head != intent.Head {
+			block("exact candidate head differs from current intent")
 		}
 		if len(intent.Prerequisites) > 0 {
 			if !in.PlanApproved || in.PlanRevision != intent.PlanRevision {
@@ -142,7 +160,7 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 				continue
 			}
 			other, ok := s.intents[key]
-			if !ok || other.Repo != intent.Repo || other.Base != intent.Base {
+			if !ok || !strings.EqualFold(other.Repo, intent.Repo) || other.Base != intent.Base {
 				continue
 			}
 			if intersects(intent.Contracts, other.Contracts) || intersects(intent.Components, other.Components) || intersects(intent.Generated, other.Generated) {
@@ -167,7 +185,7 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 	reservedMinutes, reservedJobs := 0.0, 0
 	for key, r := range s.reservations {
 		i := s.intents[key]
-		if key != in.Key && i.Repo == in.Repo && i.Base == in.Base && r.ExpiresAt.After(in.Now) {
+		if key != in.Key && strings.EqualFold(i.Repo, in.Repo) && i.Base == in.Base && r.ExpiresAt.After(in.Now) {
 			active++
 			reservedMinutes += r.RunnerMinutes
 			reservedJobs += r.Jobs
@@ -182,9 +200,19 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 		head = intent.Head
 	}
 	for _, job := range s.jobs {
-		if head != "" && job.Repo == in.Repo && job.Base == in.Base && job.Head == head && job.Attempt >= cfg.MaxAttempts && job.Status == "completed" &&
+		if head != "" && strings.EqualFold(job.Repo, in.Repo) && job.Base == in.Base && job.Head == head && job.Attempt >= cfg.MaxAttempts && job.Status == "completed" &&
 			(job.Conclusion == "failure" || job.Conclusion == "cancelled" || job.Conclusion == "timed_out") {
 			block("bounded CI attempts exhausted for exact head; owner repair required")
+		}
+	}
+	for _, receipt := range s.evidence {
+		if !strings.EqualFold(receipt.Subject.Repo, in.Repo) || receipt.Subject.Base != in.Base || receipt.State != Rejected || receipt.Subject.Attempt < cfg.MaxAttempts {
+			continue
+		}
+		for _, member := range receipt.Subject.Members {
+			if head != "" && member.Head == head {
+				block("bounded integration candidate attempts exhausted; owner-first repair required")
+			}
 		}
 	}
 	if active >= cfg.MaxActive {
@@ -193,6 +221,13 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 	if existing, ok := s.reservations[in.Key]; ok && existing.ExpiresAt.After(in.Now) &&
 		(existing.Claim != in.Claim || existing.ClaimGeneration != in.ClaimGeneration) && in.Reserve {
 		block("work already reserved by another live claim")
+	}
+	// A live holder's heartbeat is not new admission. Preserve accounting of
+	// already-running work even while missing telemetry freezes growth.
+	if existing, ok := s.reservations[in.Key]; ok && in.Reserve && in.RenewOnly && existing.Claim == in.Claim &&
+		existing.ClaimGeneration == in.ClaimGeneration && existing.IntentGeneration == intent.Generation &&
+		existing.ExpiresAt.After(in.Now) && in.ClaimExpiresAt.After(in.Now) {
+		out.WouldBlock, out.Reason = false, "existing exact lease renewed; no new work admitted"
 	}
 	if cfg.Mode == config.IntegrationEnforce && out.WouldBlock {
 		out.Allowed = false
@@ -209,7 +244,7 @@ func (s *Store) Decide(raw config.IntegrationOrchestrationConfig, in Input) (Dec
 	}
 	r := Reservation{Key: in.Key, Claim: in.Claim, ClaimGeneration: in.ClaimGeneration, IntentGeneration: intent.Generation, ExpiresAt: expires,
 		RunnerMinutes: cfg.AdmissionRunnerMinutes, Jobs: cfg.AdmissionJobs}
-	err := s.appendLocked(Event{Version: SchemaVersion, ID: fmt.Sprintf("reserve/%s/%s/%d/%d", in.Key, in.Claim, in.ClaimGeneration, in.Now.UnixNano()), At: in.Now, Reservation: &r})
+	err = s.appendLocked(Event{Version: SchemaVersion, ID: fmt.Sprintf("reserve/%s/%s/%d/%d", in.Key, in.Claim, in.ClaimGeneration, in.Now.UnixNano()), At: in.Now, Reservation: &r})
 	return out, err
 }
 

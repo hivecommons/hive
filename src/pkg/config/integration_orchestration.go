@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -50,6 +53,13 @@ type IntegrationPolicy struct {
 	Blob     string   `yaml:"blob" json:"blob"`
 	AppID    int64    `yaml:"app_id" json:"app_id"`
 	Jobs     []string `yaml:"jobs" json:"jobs"`
+}
+
+func (p IntegrationPolicy) Fingerprint() string {
+	p.Repo = strings.ToLower(p.Repo)
+	data, _ := json.Marshal(p)
+	sum := sha256.Sum256(data)
+	return "workflow-policy-v1/" + hex.EncodeToString(sum[:])
 }
 
 type IntegrationScope struct {

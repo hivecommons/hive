@@ -258,7 +258,7 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 	}
 	// #5681: a lease the hub issued must outlive the process that issued it.
 	if h.server != nil {
-		if err := h.server.integrationLease(key, repo, identity, gen, now.Add(leaseTTL), now); err != nil {
+		if err := h.server.integrationLease(key, repo, identity, gen, now.Add(leaseTTL), now, false); err != nil {
 			if prev != nil {
 				h.leases[k] = prev
 			} else {
@@ -620,7 +620,7 @@ func (h *ContributeWSHub) renewLease(identity, taskID string, now time.Time) err
 	}
 	h.leaseMu.Unlock()
 	if renewed != nil && h.server != nil {
-		if err := h.server.integrationLease(renewed.key, renewed.repo, identity, renewed.gen, renewed.expiresAt, now); err != nil {
+		if err := h.server.integrationLease(renewed.key, renewed.repo, identity, renewed.gen, renewed.expiresAt, now, true); err != nil {
 			h.logger.Warn("integration reservation renewal failed; existing lease retained", "task", taskID, "error", err)
 		}
 	}

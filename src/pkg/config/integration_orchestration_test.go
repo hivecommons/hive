@@ -2,6 +2,7 @@ package config
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -10,6 +11,7 @@ func TestIntegrationConfigDefaultOffAndBounds(t *testing.T) {
 	if (IntegrationOrchestrationConfig{}).Effective().Mode != IntegrationOff {
 		t.Fatal("default enabled")
 	}
+
 	if err := (IntegrationOrchestrationConfig{}).Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -34,5 +36,40 @@ func TestIntegrationConfigDefaultOffAndBounds(t *testing.T) {
 		if bad.Validate() == nil || bad.Allows("o/r", "v5") {
 			t.Fatalf("invalid config admitted: %+v", bad)
 		}
+	}
+}
+
+func TestIntegrationPinnedPolicyValidationAndIdentity(t *testing.T) {
+	policy := IntegrationPolicy{Repo: "o/r", Base: "v5", Engine: "native", Workflow: ".github/workflows/group.yml", Blob: strings.Repeat("a", 40), AppID: 42, Jobs: []string{"policy"}}
+	good := IntegrationOrchestrationConfig{Mode: IntegrationAdvisory, Scopes: []IntegrationScope{{Repo: "o/r", Base: "v5"}}, Policies: []IntegrationPolicy{policy}}
+	if err := good.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*IntegrationPolicy){
+		func(p *IntegrationPolicy) { p.AppID = 0 }, func(p *IntegrationPolicy) { p.Repo = "other/r" },
+		func(p *IntegrationPolicy) { p.Engine = "invented" }, func(p *IntegrationPolicy) { p.Workflow = "../../escape.yml" },
+		func(p *IntegrationPolicy) { p.Blob = "not-a-full-blob" }, func(p *IntegrationPolicy) { p.Jobs = nil },
+		func(p *IntegrationPolicy) { p.Jobs = []string{"policy", "policy"} }, func(p *IntegrationPolicy) { p.Jobs = []string{""} },
+	} {
+		bad := good
+		bad.Policies = []IntegrationPolicy{policy}
+		change(&bad.Policies[0])
+		if bad.Validate() == nil {
+			t.Fatalf("unbound policy accepted: %+v", bad)
+		}
+	}
+	changed := policy
+	changed.Jobs = []string{"policy", "required-extra"}
+	if changed.Fingerprint() == policy.Fingerprint() {
+		t.Fatal("policy requirements did not change evidence identity")
+	}
+	changed = policy
+	changed.Repo = "O/R"
+	if changed.Fingerprint() != policy.Fingerprint() {
+		t.Fatal("repository case changed policy identity")
+	}
+	good.Policies = append(good.Policies, policy)
+	if good.Validate() == nil {
+		t.Fatal("duplicate policies accepted")
 	}
 }

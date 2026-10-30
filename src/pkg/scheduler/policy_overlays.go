@@ -188,6 +188,11 @@ func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
 		return message
 	}
 	section := s.redPRFixSection(agentName)
+	if context := sig.Integration; context != nil && context.CandidateID != "" {
+		return fmt.Sprintf("Integration CI failed on candidate %s, tested commit %s tree %s, base %s, workflow policy %s, producer %s, attempt %d. Ordered PR:head members: %s. Existing ownership routes %s#%d at exact head %s to you first; this is NOT attribution of blame. Inspect the failed job %s (%s), coordinate shared prerequisite repair once, and retain every normal CI/review/trust/hold/current-base gate. Do not copy green statuses, cancel shared jobs, poll CI, or modify other members without their owner.\n%s",
+			context.CandidateID, context.TestedSHA, context.TestedTree, context.BaseSHA, context.Policy, context.Producer, context.Attempt,
+			strings.Join(context.Members, ", "), sig.Repo, sig.Number, sig.HeadSHA, sig.Check, sig.DetailsURL, section)
+	}
 	if section == "" {
 		return message
 	}
