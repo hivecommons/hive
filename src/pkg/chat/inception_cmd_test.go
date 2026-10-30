@@ -291,3 +291,48 @@ func TestDiffInceptionClearsInactiveOrComplete(t *testing.T) {
 		t.Fatal("complete inception should clear pending interviews")
 	}
 }
+
+func TestCmdInceptionAnswerRepliesPlainTextOnRejection(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/inception/state":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":     true,
+				"active": true,
+				"state": map[string]any{
+					"phase":     "scaffold",
+					"questions": []map[string]string{{"id": "q1", "text": "First?"}, {"id": "q2", "text": "Second?"}},
+					"answers":   map[string]string{"q1": "Go"},
+				},
+			})
+		case "/api/inception/answer":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"cannot submit answers in phase scaffold","ok":false}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	s := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL, DashboardToken: "dash-token", AllowedUsers: []string{"uid:owner"}}, discardLogger())
+	s.client = ts.Client()
+	ctx := context.WithValue(context.Background(), commandRoleContextKey{}, "owner")
+	got, err := s.cmdInception(ctx, "answer 2 Second")
+	if err != nil {
+		t.Fatalf("cmdInception returned error: %v", err)
+	}
+	if strings.Contains(got, "HTTP 400") || strings.Contains(got, `{"error"`) {
+		t.Fatalf("reply leaks raw HTTP body: %q", got)
+	}
+	if !strings.Contains(got, "cannot submit answers in phase scaffold") || !strings.Contains(got, "remaining questions use their defaults") {
+		t.Fatalf("reply = %q", got)
+	}
+
+	state, err := s.cmdInception(ctx, "state")
+	if err != nil {
+		t.Fatalf("cmdInception state returned error: %v", err)
+	}
+	if !strings.Contains(state, "Moving on with 1 of 2 answers") || strings.Contains(state, "Second?") {
+		t.Fatalf("state = %q", state)
+	}
+}

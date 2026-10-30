@@ -163,7 +163,11 @@ func (s *Service) cmdInceptionState(ctx context.Context) (string, error) {
 		lines = append(lines, "❌ "+state.State.KickError)
 	}
 	if len(state.State.Questions) > 0 {
-		lines = append(lines, formatInceptionQuestions(state.State.Questions, state.State.Answers))
+		if inceptionAcceptsAnswers(state.State.Phase) {
+			lines = append(lines, formatInceptionQuestions(state.State.Questions, state.State.Answers))
+		} else {
+			lines = append(lines, formatInceptionAnswerSummary(state.State.Questions, state.State.Answers))
+		}
 	}
 	if len(state.State.FactSlugs) > 0 {
 		lines = append(lines, fmt.Sprintf("Facts recorded: %d", len(state.State.FactSlugs)))
@@ -193,7 +197,7 @@ func (s *Service) cmdInceptionAnswer(ctx context.Context, args string) (string, 
 	answer := strings.TrimSpace(parts[1])
 	body, _ := json.Marshal(map[string]map[string]string{"answers": map[string]string{state.State.Questions[n-1].ID: answer}})
 	if err := s.dashboardPost(ctx, "/api/inception/answer", body); err != nil {
-		return fmt.Sprintf("❌ Failed to submit answer: %s", err), nil
+		return fmt.Sprintf("❌ Failed to submit answer: %s", inceptionErrorText(err)), nil
 	}
 	s.markPendingAnsweredForRole(state.State.Questions[n-1].ID)
 	return fmt.Sprintf("✅ Answered question %d.", n), nil
@@ -260,7 +264,7 @@ func (s *Service) handlePendingInterviewReply(ctx context.Context, msg Message, 
 	body, _ := json.Marshal(map[string]map[string]string{"answers": map[string]string{q.ID: content}})
 	reply := fmt.Sprintf("✅ Answered question %s.", q.ID)
 	if err := s.dashboardPost(ctx, "/api/inception/answer", body); err != nil {
-		reply = fmt.Sprintf("❌ Failed to submit inception answer: %s", err)
+		reply = fmt.Sprintf("❌ Failed to submit inception answer: %s", inceptionErrorText(err))
 	} else {
 		s.mu.Lock()
 		if pending := s.pendingInterviews[key]; pending != nil {
@@ -407,6 +411,52 @@ func formatInceptionProposals(facts []inceptionFact) string {
 	}
 	lines = append(lines, "Confirm selected items with `!inception facts` JSON including `confirmed:true`; unconfirmed proposals are discarded on approve.")
 	return strings.Join(lines, "\n")
+}
+
+func inceptionAcceptsAnswers(phase string) bool {
+	return phase == "clarify" || phase == "structure"
+}
+
+// formatInceptionAnswerSummary reports the answers recorded once inception has
+// moved past the phases that accept answers, instead of listing the
+// unanswered questions as open.
+func formatInceptionAnswerSummary(questions []inceptionQuestion, answers map[string]string) string {
+	answered := 0
+	for _, q := range questions {
+		if strings.TrimSpace(answers[q.ID]) != "" {
+			answered++
+		}
+	}
+	line := fmt.Sprintf("Moving on with %d of %d answers", answered, len(questions))
+	if answered < len(questions) {
+		line += "; remaining questions use their defaults"
+	}
+	return line + "."
+}
+
+// inceptionErrorText reduces a dashboard error of the form
+// "HTTP <code>: <json with an error field>" to the plain error message,
+// falling back to the original text.
+func inceptionErrorText(err error) string {
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "HTTP ") {
+		return msg
+	}
+	_, body, ok := strings.Cut(msg, ": ")
+	if !ok {
+		return msg
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(body), &payload) != nil || strings.TrimSpace(payload.Error) == "" {
+		return msg
+	}
+	text := payload.Error
+	if strings.HasPrefix(text, "cannot submit answers in phase ") {
+		text += "; remaining questions use their defaults"
+	}
+	return text
 }
 
 func formatInceptionQuestions(questions []inceptionQuestion, answers map[string]string) string {
