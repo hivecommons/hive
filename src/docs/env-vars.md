@@ -566,7 +566,7 @@ With two or more providers configured, `/login` renders a provider picker; with 
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `HIVE_QUESTION_AUTOCLOSE` | No | unset (config `governor.question_autoclose.enabled`, default `false`) | Turns question auto-close on or off, overriding the config value when set to a boolean (`true`/`false`/`1`/`0`). See [labels-and-control-signals.md](labels-and-control-signals.md#question-auto-close) ([#9584](https://github.com/hivecommons/hive/issues/9584)). |
+| `HIVE_QUESTION_AUTOCLOSE` | No | unset (config `governor.question_autoclose.enabled`, default `false`) | Turns question auto-close on or off, overriding the config value when set to a boolean (`true`/`false`/`1`/`0`). See [labels-and-control-signals.md](labels-and-control-signals/glossary-and-operations.md#question-auto-close) ([#9584](https://github.com/hivecommons/hive/issues/9584)). |
 | `HIVE_QUESTION_AUTOCLOSE_HOURS` | No | `4` (config `governor.question_autoclose.hours`) | Hours an answered question stays open for the author to react 👎 before Hive closes it as completed. Non-positive or non-numeric values are ignored. |
 
 ## Credly badge integration (proposed — not implemented)

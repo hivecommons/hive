@@ -734,7 +734,7 @@ the planned set differs from the labels already on the PR, under the
 `governor.labels.stage.enabled`. The mapping table, numbering rules, dwell
 thresholds, the mermaid state machine and the off-happy-path flow
 (072 → nudge → 074 → takeover) are in
-[labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine);
+[labels-and-control-signals.md](labels-and-control-signals/stage-labels.md#stage-labels-stagennn--the-pipeline-state-machine);
 the code is `src/pkg/stagelabels` and
 `src/pkg/github/automerge/automerge_stage_labels.go`. Adoption
 (`stage/074-adopted-by-hive`, `automerge_contributor_adopt.go`) reuses this
