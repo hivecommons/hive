@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-var settingHelpCallRE = regexp.MustCompile(`settingHelpMark\('([\w-]+)', '([\w-]*)', `)
+var settingHelpCallRE = regexp.MustCompile(`settingHelpMark\('([\w/-]+)', '([\w-]*)', `)
 
 // TestSettingHelpMarksAreDocsLinks keeps every Settings help mark on the same
 // "?" docs-link convention as the dashboard card marks (#11213).
@@ -65,5 +65,18 @@ func TestSettingHelpMarksAreDocsLinks(t *testing.T) {
 		if !found {
 			t.Errorf("settings help link %s points at a heading that does not exist", m[0])
 		}
+	}
+}
+
+// TestSettingHelpMarksSkipOperatorReferenceStub keeps help marks on the
+// operator-reference section sub-pages instead of the stub index (#15540).
+func TestSettingHelpMarksSkipOperatorReferenceStub(t *testing.T) {
+	html := indexHTML(t)
+	if strings.Contains(html, "settingHelpMark('operator-reference',") {
+		t.Error("a settingHelpMark still targets the operator-reference stub page; point it at operator-reference/<section>")
+	}
+	fn := jsFunctionBody(t, html, "function dashboardDocsHrefFromPath(path)")
+	if !strings.Contains(fn, `(?:\/[\w-]+)*`) {
+		t.Error("dashboardDocsHrefFromPath must accept section sub-page paths such as /docs/operator-reference/README.md")
 	}
 }

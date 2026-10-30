@@ -157,7 +157,7 @@
       return `https://github.com/hivecommons/hive/blob/${line}/src/docs/${page}.md${anchor ? '#' + anchor : ''}`;
     }
     function dashboardDocsHrefFromPath(path) {
-      const m = /^\/docs\/([\w-]+)\.md(?:#([\w-]+))?$/.exec(String(path || ''));
+      const m = /^\/docs\/([\w-]+(?:\/[\w-]+)*)\.md(?:#([\w-]+))?$/.exec(String(path || ''));
       return m ? dashboardDocsHref(m[1], m[2] || '') : String(path || '');
     }
     function setDashboardDocsLine(branch) {
