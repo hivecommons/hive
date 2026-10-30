@@ -14,6 +14,6 @@ spec:
             - name: HIVE_METRICS_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: hive-secrets
+                  name: hive-metrics-token
                   key: HIVE_METRICS_TOKEN
                   optional: true

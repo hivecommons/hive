@@ -28,7 +28,7 @@ Use it indirectly through the dashboard terminal link. If a terminal pane says i
 
 ## Other directories
 
-- `kustomize/components/`: opt-in Kustomize components such as `monitoring` (Prometheus Operator `ServiceMonitor` for `/metrics` plus a `PrometheusRule` with `HiveMetricsDown`, `HiveCostBurnHigh` and `HiveStageTransitionAnomalies` alerts). See [its README](kustomize/components/monitoring/README.md).
+- `kustomize/components/`: opt-in Kustomize components such as `monitoring` (Prometheus Operator `ServiceMonitor` for `/metrics` plus a `PrometheusRule` with `HiveMetricsDown`, `HiveCostBurnHigh` and `HiveStageTransitionAnomalies` alerts; the scrape token lives in its own `hive-metrics-token` Secret). See [its README](kustomize/components/monitoring/README.md).
 - `kustomize/overlays/`: the `standalone` (self-hosted, hub-less), `openshift`, `openshift-netadmin` and `backup-exec-restriction` overlays on top of `k8s/` and `inference/`. See the [standalone overlay README](kustomize/overlays/standalone/README.md).
 - `ci-runners/`: manifests for the self-hosted GitHub Actions runners that serve this repository. See [its README](ci-runners/README.md).
 - `legacy-redirect/`: the hub legacy-host redirect that keeps the request path and query (#6430). See [its README](legacy-redirect/README.md).

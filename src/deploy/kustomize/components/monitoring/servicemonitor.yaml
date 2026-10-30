@@ -14,5 +14,5 @@ spec:
       path: /metrics
       authorization:
         credentials:
-          name: hive-secrets
+          name: hive-metrics-token
           key: HIVE_METRICS_TOKEN

@@ -7,10 +7,12 @@ It provides:
 - A `ServiceMonitor` (`monitoring.coreos.com/v1`) targeting Hive's `/metrics`
   endpoint on the `dashboard` port (3002).
 - A Deployment patch enabling metrics collection via `HIVE_METRICS_ENABLED=true`
-  and wiring `HIVE_METRICS_TOKEN` from the `hive-secrets` Secret (marked
-  optional so a missing token fails closed with 403 rather than crashing the pod).
+  and wiring `HIVE_METRICS_TOKEN` from the dedicated `hive-metrics-token` Secret
+  (marked optional so a missing token fails closed with 403 rather than crashing the pod).
 - Bearer token authentication for the scraper via `authorization.credentials`
-  referencing `HIVE_METRICS_TOKEN` in `hive-secrets`.
+  referencing `HIVE_METRICS_TOKEN` in `hive-metrics-token`, so the Prometheus
+  Operator can be granted read access to that Secret alone and never needs
+  `hive-secrets` (GitHub token, App key).
 
 ## Prerequisites
 
@@ -20,15 +22,27 @@ It provides:
   labelled `release: <your-helm-release>`; add that label (e.g. via a `labels:`
   patch in your overlay) or set
   `prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false`.
-- **Metrics Token**: Add `HIVE_METRICS_TOKEN` to your existing `hive-secrets`
-  Secret (template: `src/deploy/k8s/secret.yaml`). Do **not** recreate the
-  Secret: `kubectl apply` of a single-key Secret removes the other keys, which
-  also hold your GitHub and dashboard credentials.
+- **Metrics Token**: Create a dedicated `hive-metrics-token` Secret in the
+  `hive` namespace with a `HIVE_METRICS_TOKEN` key (template:
+  `src/deploy/k8s/secret.yaml`). The ServiceMonitor and the Hive Deployment
+  both read the token from it, so scraper and server always agree.
 
 ```bash
-kubectl -n hive patch secret hive-secrets --type merge \
-  -p "{\"stringData\":{\"HIVE_METRICS_TOKEN\":\"$(openssl rand -hex 32)\"}}"
+kubectl -n hive create secret generic hive-metrics-token \
+  --from-literal=HIVE_METRICS_TOKEN="$(openssl rand -hex 32)"
 ```
+
+**Migrating from `hive-secrets`**: earlier versions of this component read
+`HIVE_METRICS_TOKEN` from `hive-secrets`. Copy the existing value into the new
+Secret before upgrading, otherwise `/metrics` answers 403 until you do:
+
+```bash
+kubectl -n hive create secret generic hive-metrics-token \
+  --from-literal=HIVE_METRICS_TOKEN="$(kubectl -n hive get secret hive-secrets \
+    -o jsonpath='{.data.HIVE_METRICS_TOKEN}' | base64 -d)"
+```
+
+Afterwards the `HIVE_METRICS_TOKEN` key can be removed from `hive-secrets`.
 
 ## Usage
 
@@ -54,7 +68,7 @@ kubectl kustomize src/deploy/kustomize/overlays/standalone
 
 Hive's `/metrics` endpoint exposes sensitive operational and financial metrics,
 including estimated AI model costs and token usage totals. Access is guarded by
-a mandatory bearer token (`HIVE_METRICS_TOKEN`). If metrics are enabled without
+a mandatory bearer token (`HIVE_METRICS_TOKEN`, stored in the `hive-metrics-token` Secret). If metrics are enabled without
 a token, Hive fails closed and returns HTTP 403 Forbidden to any scraper.
 
 ## Alerts
@@ -77,7 +91,7 @@ manifests.
 
 Prometheus cannot scrape `/metrics`. Check that the pod is running
 (`kubectl -n hive get pods`), then that `HIVE_METRICS_TOKEN` is set in
-`hive-secrets` and that the `ServiceMonitor` credentials point at it. A wrong
+`hive-metrics-token` and that the `ServiceMonitor` credentials point at it. A wrong
 or missing token makes Hive answer 403, which also sets `up` to 0.
 
 ### HiveCostBurnHigh

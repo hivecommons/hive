@@ -1,0 +1,1 @@
+- The opt-in Prometheus monitoring component now reads `HIVE_METRICS_TOKEN` from a dedicated `hive-metrics-token` Secret instead of `hive-secrets`; create that Secret (copy the existing value) before upgrading, see the component README.
