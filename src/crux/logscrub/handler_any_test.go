@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -132,5 +133,68 @@ func TestScrubAttrPreservesNonTextValues(t *testing.T) {
 		if got := scrubAttr(attr); !got.Equal(attr) {
 			t.Errorf("scrubAttr(%v) = %v", attr, got)
 		}
+	}
+}
+
+// Pointer-receiver implementations that dereference without a nil guard, as
+// many real types do; slog renders a nil pointer of these as <nil> rather
+// than panicking, and the scrubber must not regress that.
+type scrubTestPtrTextAppender struct{ text string }
+
+func (v *scrubTestPtrTextAppender) AppendText(b []byte) ([]byte, error) {
+	return append(b, v.text...), nil
+}
+
+type scrubTestPtrTextMarshaler struct{ text string }
+
+func (v *scrubTestPtrTextMarshaler) MarshalText() ([]byte, error) {
+	return []byte(v.text), nil
+}
+
+type scrubTestPtrStringer struct{ text string }
+
+func (v *scrubTestPtrStringer) String() string { return v.text }
+
+type scrubTestPanickingMarshaler struct{}
+
+func (scrubTestPanickingMarshaler) MarshalText() ([]byte, error) { panic("boom") }
+
+func TestScrubAttrRecoversLikeSlog(t *testing.T) {
+	cases := []struct {
+		name string
+		attr slog.Attr
+		want string
+	}{
+		{"nil-text-appender", slog.Any("value", (*scrubTestPtrTextAppender)(nil)), "<nil>"},
+		{"nil-text-marshaler", slog.Any("value", (*scrubTestPtrTextMarshaler)(nil)), "<nil>"},
+		{"nil-stringer", slog.Any("value", (*scrubTestPtrStringer)(nil)), "<nil>"},
+		{"panicking-marshaler", slog.Any("value", scrubTestPanickingMarshaler{}), "!PANIC: boom"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scrubAttr(tc.attr)
+			if got.Value.Kind() != slog.KindString || got.Value.String() != tc.want {
+				t.Fatalf("scrubAttr(%v) = %v, want %q", tc.attr, got.Value, tc.want)
+			}
+			// The logging path (record and With) must not panic either, and
+			// slog.TextHandler must agree on the rendered text.
+			for _, bind := range []bool{false, true} {
+				var buf bytes.Buffer
+				logger := slog.New(NewHandler(slog.NewTextHandler(&buf, nil)))
+				if bind {
+					logger.With(tc.attr).Info("x")
+				} else {
+					logger.LogAttrs(context.Background(), slog.LevelInfo, "x", tc.attr)
+				}
+				if !strings.Contains(buf.String(), "value="+strconv.Quote(tc.want)) && !strings.Contains(buf.String(), "value="+tc.want) {
+					t.Fatalf("bind=%v: rendered %q, want value %q", bind, buf.String(), tc.want)
+				}
+				buf.Reset()
+				slog.New(slog.NewTextHandler(&buf, nil)).Info("x", tc.attr)
+				if !strings.Contains(buf.String(), tc.want) {
+					t.Fatalf("slog.TextHandler rendered %q, expected %q", buf.String(), tc.want)
+				}
+			}
+		})
 	}
 }

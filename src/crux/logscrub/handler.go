@@ -5,6 +5,7 @@ import (
 	"encoding"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"regexp"
 )
 
@@ -127,25 +128,8 @@ func scrubAttr(a slog.Attr) slog.Attr {
 	// strings or groups after the scrubbing boundary.
 	a.Value = a.Value.Resolve()
 	if a.Value.Kind() == slog.KindAny {
-		// Match slog.TextHandler's precedence (TextAppender, then TextMarshaler,
-		// then fmt for error/Stringer) so the scrubbed text is the same text the
-		// inner handler would otherwise have rendered.
-		switch v := a.Value.Any().(type) {
-		case encoding.TextAppender:
-			text, err := v.AppendText(nil)
-			if err != nil {
-				// Do not let the inner handler render an unsanitized error.
-				return slog.String(a.Key, scrub("!ERROR:"+err.Error()))
-			}
-			return slog.String(a.Key, scrub(string(text)))
-		case encoding.TextMarshaler:
-			text, err := v.MarshalText()
-			if err != nil {
-				return slog.String(a.Key, scrub("!ERROR:"+err.Error()))
-			}
-			return slog.String(a.Key, scrub(string(text)))
-		case error, fmt.Stringer:
-			return slog.String(a.Key, scrub(fmt.Sprint(v)))
+		if text, ok := renderAny(a.Value.Any()); ok {
+			return slog.String(a.Key, scrub(text))
 		}
 	}
 	if a.Value.Kind() == slog.KindString {
@@ -160,4 +144,41 @@ func scrubAttr(a slog.Attr) slog.Attr {
 		return slog.Attr{Key: a.Key, Value: slog.GroupValue(out...)}
 	}
 	return a
+}
+
+// renderAny returns the text slog.TextHandler would render for a KindAny
+// value that implements a text interface, matching its precedence
+// (TextAppender, then TextMarshaler, then fmt for error/Stringer). ok is
+// false when the value has no text form and should pass through unchanged.
+func renderAny(v any) (text string, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Mirror slog's appendValue: a nil pointer receiver that does not
+			// guard itself renders as <nil>; anything else reports the panic
+			// instead of crashing the caller.
+			if rv := reflect.ValueOf(v); rv.Kind() == reflect.Pointer && rv.IsNil() {
+				text, ok = "<nil>", true
+				return
+			}
+			text, ok = fmt.Sprintf("!PANIC: %v", r), true
+		}
+	}()
+	switch v := v.(type) {
+	case encoding.TextAppender:
+		b, err := v.AppendText(nil)
+		if err != nil {
+			// Do not let the inner handler render an unsanitized error.
+			return "!ERROR:" + err.Error(), true
+		}
+		return string(b), true
+	case encoding.TextMarshaler:
+		b, err := v.MarshalText()
+		if err != nil {
+			return "!ERROR:" + err.Error(), true
+		}
+		return string(b), true
+	case error, fmt.Stringer:
+		return fmt.Sprint(v), true
+	}
+	return "", false
 }
