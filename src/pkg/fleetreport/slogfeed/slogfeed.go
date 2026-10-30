@@ -114,7 +114,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) {
+	if expectedKickHold(r) || rateLimitedError(r) || upstreamUnavailableError(r) || failClosedStatus500(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -188,6 +188,30 @@ func upstreamUnavailableError(r slog.Record) bool {
 		return true
 	})
 	return unavailable
+}
+
+// failClosedStatus500 reports whether r is one of the two gates that fail
+// closed when GitHub answers the combined-status read with a 500: the
+// merge-eligible lane gate and the trusted-author automerge sweep skip. The PR
+// is retried next tick, so the transient 5xx is expected behaviour
+// (hivecommons/hive#15785, #15786). A 500 elsewhere stays reportable.
+func failClosedStatus500(r slog.Record) bool {
+	switch strings.TrimSpace(r.Message) {
+	case "merge-eligible lane gate could not evaluate PR; leaving it listed",
+		"trusted-author automerge sweep skipped PR":
+	default:
+		return false
+	}
+	match := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" {
+			e := a.Value.String() + " "
+			match = strings.Contains(e, "/status") && strings.Contains(e, ": 500 ")
+			return false
+		}
+		return true
+	})
+	return match
 }
 
 // Classifier errors stay in local logs only: transport errors can expose the

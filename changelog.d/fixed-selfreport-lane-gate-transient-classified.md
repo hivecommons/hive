@@ -1,0 +1,1 @@
+- Repeated lane-gate and trusted-author sweep warnings caused by a transient GitHub 500 on the status read are no longer filed as selfreport issues (#15785, #15786)

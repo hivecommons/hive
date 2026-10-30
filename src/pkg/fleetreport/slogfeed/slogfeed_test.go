@@ -643,6 +643,38 @@ func TestGitHubUpstreamUnavailableLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #15785, #15786: fail-closed gates hitting a GitHub 500 on the status read
+// are expected and retried, so they are not reported as unclassified.
+func TestFailClosedStatus500LogsWithoutFleetReport(t *testing.T) {
+	const statusErr = "GET https://api.github.com/repos/o/r/commits/abc/status?per_page=100: 500  []"
+	cases := []struct {
+		msg  string
+		args []any
+	}{
+		{"merge-eligible lane gate could not evaluate PR; leaving it listed", []any{"repo", "o/r", "number", 3929, "error", "o/r#3929 lane evidence unavailable (status-check; fail closed): " + statusErr}},
+		{"trusted-author automerge sweep skipped PR", []any{"repo", "hive", "pr", 15763, "reason", "release-hold-check", "error", statusErr}},
+	}
+	for _, tc := range cases {
+		logger, seen, out := newFeed(t)
+		for i := 0; i < 8; i++ {
+			logger.Warn(tc.msg, tc.args...)
+		}
+		if len(*seen) != 0 {
+			t.Errorf("%q: produced observations: %+v", tc.msg, *seen)
+		}
+		if n := strings.Count(out.String(), "\n"); n != 8 {
+			t.Errorf("%q: wrapped handler saw %d records, want 8", tc.msg, n)
+		}
+	}
+
+	logger, seen, _ := newFeed(t)
+	logger.Warn("trusted-author automerge sweep skipped PR", "error", "GET https://api.github.com/repos/o/r/pulls/1: 404 Not Found")
+	logger.Warn("merge-eligible lane gate could not evaluate PR; leaving it listed", "error", "boom")
+	if len(*seen) != 2 {
+		t.Fatalf("other failures must remain reportable: %+v", *seen)
+	}
+}
+
 // #15333: keep repeated translator identity refusals visible under their own
 // gateway class, without treating them as backend credential failures.
 func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
