@@ -58,6 +58,12 @@ type Record struct {
 	// read as a fresh note (hivecommons/hive#15729). Zero on records
 	// written before it existed; NoteChangedAt falls back to EnteredAt.
 	ReasonChangedAt time.Time `json:"reason_changed_at,omitempty"`
+	// UnblockedAt is when the blocked sweep last lifted the item's block
+	// (hivecommons/hive#15779). A blocked issue has no stage, so the lift
+	// leaves a stage-less record carrying only this time until the next
+	// stage-label pass stages the issue; the dashboard ages the row from
+	// StageSinceAt so "since" restarts at the lift, not at issue creation.
+	UnblockedAt time.Time `json:"unblocked_at,omitempty"`
 	// Author is the item's author login, lower-cased, as the lane saw it
 	// (hivecommons/hive#12502). It lets the dashboard answer "which of this
 	// contributor's PRs are returned to them" from the store alone, with no
@@ -344,6 +350,15 @@ type Record struct {
 	// is not evidence that a park lifted (hivecommons/hive#15541 rows read
 	// "PR in progress" while the record said 085).
 	LabelsSuppressed bool `json:"labels_suppressed,omitempty"`
+	// TrainEjectedWhy / TrainEjectedHead / TrainEjectedAt record the merge
+	// train's last ejection of this PR (hivecommons/hive#15825): the head
+	// it was ejected at, why (head-moved, ci-pending, ci-red,
+	// verdict-owed, conflicting, …) and when. The tracker's gray pill
+	// carries the lineage ("left merge train · pushed 3m ago") while the
+	// row sits back in the CI / Review column; re-admission clears it.
+	TrainEjectedWhy  string    `json:"train_ejected_why,omitempty"`
+	TrainEjectedHead string    `json:"train_ejected_head,omitempty"`
+	TrainEjectedAt   time.Time `json:"train_ejected_at,omitempty"`
 }
 
 // Activity is what the reconciler observed this cycle that a person (or
@@ -649,8 +664,7 @@ func (s *Store) ObserveProgress(key string, stage Stage, reason string, progress
 	tr := Transition{Prev: prev.Stage, Next: stage}
 	if stage == None {
 		if had {
-			delete(s.items, key)
-			s.dirty = true
+			s.forgetStageLocked(key, prev)
 			tr.Changed = prev.Stage != None
 		}
 		return tr
@@ -744,6 +758,33 @@ func (r Record) NoteChangedAt() time.Time {
 		return r.ReasonChangedAt
 	}
 	return r.EnteredAt
+}
+
+// StageSinceAt is when the row's since-time starts: stage entry, or the
+// later block lift when the sweep unblocked the item after it entered the
+// stage (or before any stage was recorded).
+func (r Record) StageSinceAt() time.Time {
+	if r.UnblockedAt.After(r.EnteredAt) {
+		return r.UnblockedAt
+	}
+	return r.EnteredAt
+}
+
+// NoteUnblocked records that the blocked sweep lifted key's block at now.
+// A blocked issue carries no stage record (its stage is None), so a
+// stage-less record is created to hold the time; the next ObserveProgress
+// keeps UnblockedAt while it stages the issue, and a None observation
+// drops the record as usual.
+func (s *Store) NoteUnblocked(key string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.items[key]
+	r.UnblockedAt = now
+	if r.LastSeen.IsZero() {
+		r.LastSeen = now
+	}
+	s.items[key] = r
+	s.dirty = true
 }
 
 // NoteActivity folds this cycle's activity inputs into key's record and
@@ -862,6 +903,55 @@ func (s *Store) NotePush(key, sha string, at time.Time) bool {
 	s.items[key] = r
 	s.dirty = true
 	return true
+}
+
+// NoteTrainEjected records that the merge train ejected an existing
+// record's PR at head for why (hivecommons/hive#15825). A zero or future
+// instant reads as now.
+func (s *Store) NoteTrainEjected(key, head, why string, now time.Time) {
+	why = strings.TrimSpace(why)
+	if why == "" {
+		s.ClearTrainEjected(key)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	at := now
+	if clock := s.now(); at.IsZero() || at.After(clock) {
+		at = clock
+	}
+	if r.TrainEjectedWhy == why && r.TrainEjectedHead == head {
+		return
+	}
+	r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt = why, strings.TrimSpace(head), at
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearTrainEjected forgets a record's merge-train ejection: the PR rides
+// a train again, or merged.
+func (s *Store) ClearTrainEjected(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.TrainEjectedWhy == "" && r.TrainEjectedHead == "" && r.TrainEjectedAt.IsZero()) {
+		return
+	}
+	r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt = "", "", time.Time{}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// TrainEjected reports the recorded merge-train ejection.
+func (r Record) TrainEjected() (why, head string, at time.Time, ok bool) {
+	if r.TrainEjectedWhy == "" {
+		return "", "", time.Time{}, false
+	}
+	return r.TrainEjectedWhy, r.TrainEjectedHead, r.TrainEjectedAt, true
 }
 
 // PushedSinceWaiting reports whether a push landed after the current
@@ -1949,7 +2039,7 @@ func (s *Store) SetCoveringPR(key, prKey string) {
 	s.dirty = true
 }
 
-// Forget drops key (closed/merged item).
+// Forget drops key (closed/merged item), lift record included.
 func (s *Store) Forget(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1957,6 +2047,29 @@ func (s *Store) Forget(key string) {
 		delete(s.items, key)
 		s.dirty = true
 	}
+}
+
+// ForgetStage drops key's stage for an item that is still open but has no
+// stage (a blocked issue, or one outside the hive's buckets). Unlike
+// Forget it keeps the blocked sweep's lift, so the stage-label pass that
+// runs right after an unblock does not reset the row's since-time back to
+// creation (hivecommons/hive#15779).
+func (s *Store) ForgetStage(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r, ok := s.items[key]; ok {
+		s.forgetStageLocked(key, r)
+	}
+}
+
+// forgetStageLocked is ForgetStage with s.mu held and the record in hand.
+func (s *Store) forgetStageLocked(key string, r Record) {
+	if r.UnblockedAt.IsZero() {
+		delete(s.items, key)
+	} else {
+		s.items[key] = Record{UnblockedAt: r.UnblockedAt, LastSeen: s.now()}
+	}
+	s.dirty = true
 }
 
 // Prune drops records not seen for maxAge (closed items the sweep stopped

@@ -15014,6 +15014,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerOverlapBadgeText(item) {
       const o = stageTrackerOverlap(item);
       if (!o) return '';
+      // The server may pin the words (an admitted candidate reads "joins
+      // behind #N next pass" — it is green already, hive#15825).
+      if (o.badge) return String(o.badge);
       if (Number(o.behind) > 0) return STAGE_TRACKER_OVERLAP_CHIP_LEAD + 'joins behind #' + Number(o.behind) + ' when green';
       return STAGE_TRACKER_OVERLAP_CHIP_LEAD + '1st once green';
     }
@@ -15029,10 +15032,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const withPRs = (Array.isArray(o.with) ? o.with : []).map(Number).filter(n => n > 0);
       return 'overlaps ' + withPRs.map(n => '#' + n).join(', ') + paren + ' — no member of the train is merge-ready yet; provisionally 1st, merges ahead of ' + (withPRs.length > 1 ? 'them' : 'it') + ' if it is green first';
     }
+    // Pure: the gray lineage pill for a PR the merge train ejected
+    // (hive#15825): `left_train.badge` ("left merge train · pushed 3m
+    // ago"); the hover carries the why ("left the merge train — new push,
+    // CI re-running after push"). '' when the row rides a train or the
+    // server sent no lineage.
+    function stageTrackerLeftTrainBadgeText(item) {
+      const lt = item && item.left_train;
+      if (!lt || typeof lt !== 'object' || stageTrackerTrain(item)) return '';
+      return String(lt.badge || '');
+    }
     // Pure: the muted badge beside the row's chips; '' without a hint.
     function stageTrackerOverlapBadgeHtml(item) {
       const text = stageTrackerOverlapBadgeText(item);
-      if (!text) return '';
+      if (!text) {
+        const left = stageTrackerLeftTrainBadgeText(item);
+        if (!left) return '';
+        const leftTip = 'Merge train: ' + stageTrackerLeftTrainNote(item);
+        return `<span class="ham-badge ham-badge-overlap" title="${esc(leftTip)}" aria-label="${esc(leftTip)}">${esc(left)}</span>`;
+      }
       const tip = 'Not in the merge queue yet: ' + stageTrackerOverlapTip(item);
       return `<span class="ham-badge ham-badge-overlap" title="${esc(tip)}" aria-label="${esc(tip)}">${esc(text)}</span>`;
     }
@@ -16519,6 +16537,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         // A merge-train member's word is its place in the train (#15117).
         if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item, trains); if (tw) word = tw; }
+        // A PR the hive is rebasing (the train's or the fixer's episode)
+        // reads "Rebasing · attempt 1/2" in the CI / Review column it sits
+        // in (hive#15825) — its head has no CI yet, so no merge-queue word.
+        if (state === 'active' && !detour && n > 0 && n < 80 && item.rebase && item.rebase.text && !(typeof stageTrackerTrain === 'function' && stageTrackerTrain(item))) word = String(item.rebase.text);
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
         const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.
