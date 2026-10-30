@@ -115,7 +115,7 @@ func TestStageTrackerMergeTrainPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`"merge_gate":{"state":"queued-behind","reason":"behind #15074 in merge train (2nd of 4, overlapping files: stage_tracker.go, index.html)"`,
-		`"merge_train":{"id":"v5#15074","state":"queued-behind","front":15074,"position":2,"size":4,"overlap_files":["stage_tracker.go","index.html"],"ahead":[15074],"members":[15074,15085,15087,15097],"length":4,"head_number":15074,"head_state":"ready","head_reason":"approved and green; merges on hive's next sweep","head_since":"2026-10-27T14:00:00Z","eta_s":300,"eta_at":"2026-10-27T14:05:00Z","eta_basis":"1 ahead"}`} {
+		`"merge_train":{"id":"v5#15074","state":"queued-behind","front":15074,"position":2,"size":4,"overlap_files":["stage_tracker.go","index.html"],"ahead":[15074],"members":[15074,15085,15087,15097],"length":4,"head_number":15074,"head_state":"ready","head_reason":"approved and green; merges on hive's next pass","head_since":"2026-10-27T14:00:00Z","eta_s":300,"eta_at":"2026-10-27T14:05:00Z","eta_basis":"1 ahead"}`} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("payload lacks %s:\n%s", want, raw)
 		}

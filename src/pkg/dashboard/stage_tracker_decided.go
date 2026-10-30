@@ -119,7 +119,7 @@ var decidedVerbs = map[string]decidedVerb{
 	string(delegatedecision.VerdictCloseDuplicate):  {Word: "Closing", Text: "Closing · duplicate, leaves the tracker next refresh", Acting: "Closing…", Plain: "closed as duplicate", Stage: stagelabels.None},
 	string(delegatedecision.VerdictCloseSuperseded): {Word: "Closing", Text: "Closing · superseded, leaves the tracker next refresh", Acting: "Closing…", Plain: "closed as superseded", Stage: stagelabels.None},
 	string(delegatedecision.VerdictNotNow):          {Word: "Closing", Text: "Closing · declined for now, leaves the tracker next refresh", Acting: "Closing…", Plain: "declined for now", Stage: stagelabels.None},
-	operatorActionQueueMerge:                        {Word: "Approved", Text: "Approved · hive merges on its next sweep", Acting: "Queuing for merge…", Plain: "approved — hive merges", Stage: stagelabels.AwaitingMergeAdmission},
+	operatorActionQueueMerge:                        {Word: "Approved", Text: "Approved · hive merges on its next pass", Acting: "Queuing for merge…", Plain: "approved — hive merges", Stage: stagelabels.AwaitingMergeAdmission},
 	operatorActionMergeNow:                          {Word: "Merging", Text: "Merging · as maintainer", Acting: "Merging…", Plain: "merged as maintainer", Stage: stagelabels.MergeQueue},
 }
 

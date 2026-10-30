@@ -503,7 +503,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if pr102.Stage != 95 || pr102.Lane != laneHive || pr102.AuthorKind != authorKindHive || pr102.AuthorKindSource != authorKindSrcLabel || pr102.Tier != "trusted" {
 		t.Fatalf("pr102 = %+v", pr102)
 	}
-	if pr102.Caption != "Admitted by the automerge lane; the pre-merge soak window is running — soaking, 12m0s left at the last sweep" || pr102.Actor != "automerge lane" || len(pr102.Modifiers) != 0 {
+	if pr102.Caption != "Admitted by the automerge lane; soaking — 7m left" || pr102.Actor != "automerge lane" || len(pr102.Modifiers) != 0 {
 		t.Fatalf("pr102 caption=%q actor=%q mods=%v", pr102.Caption, pr102.Actor, pr102.Modifiers)
 	}
 	// 12m left when the sweep wrote it 5m ago → 7m now; the 40m-old entry

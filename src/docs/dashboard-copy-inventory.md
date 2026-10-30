@@ -81,10 +81,10 @@ The new hover, verbatim (title line omitted):
 
 ## Left as-is (follow-up)
 
-- Merge-gate (080/095/100) chip tips in `stageTrackerMergeGateInfo` still say
-  *sweep* and *soak* ("next sweep in 42s", "soak 12m left"); they are live
-  clocks, short already, and a rename touches the gate's own tests. Tracked
-  under the same issue.
+- Merge-gate (080/095/100) chip details in `stageTrackerMergeGateInfo` are
+  live clocks ("next pass in 42s", "soak 12m left"), short already. The
+  word *sweep* left them in hivecommons/hive#15575 (see *Soaking rows*
+  below); *soak* stays — it is the state, not the mechanism.
 - The stage descriptions in `stagelabels.Table` are shared with the labels
   and the docs and were not shortened; the 090 chevron tip simply stopped
   appending them.
@@ -112,3 +112,34 @@ old name).
 | `stageTrackerHeaderHtml` | column header | *Merge gate* | 🚆 *Merge queue* (same icon as the chip and the 080 chevron) | `TestStageTrackerHeader…` |
 | Go: `prstage.MergeTrain.Sentence`, `stageTrackerMergeTrainFrontCaption`, `eta_basis` | gate reason, caption, hover | *front of the merge train (1st of 3)*, *Front of a merge train of N PRs* | *1st in the merge queue; merges next (1st of 3)*, *1st in a merge queue of N PRs* | `TestParseMergeTrainRejectsMalformed` |
 | "merge gate" in decision copy (`delegatedecision` glossary, ladder, dashboard decided/new/vocabulary) | glossary, ⋯ hints, PR comments | *the merge gate merges it once every check passes* | *the merge queue merges it …* | `TestStageTrackerDecisionGlossaryMirrorsGo` |
+
+## Soaking rows (hivecommons/hive#15575)
+
+The owner read a soaking row as **🕓 Soaking · ready — merge sweep…**
+(truncated) with the caption *…the pre-merge soak window is running —
+soaking, 0s left at the last sweep*. "Merge sweep" is the lane's internal
+name for its pass, not a state the reader cares about, and "0s left" on a
+row still called *soaking* was the lane's last read, not the time now. The
+three states, in the owner's words:
+
+| State | Chevron | Hover / caption |
+|---|---|---|
+| soak running | **Soaking · 4m left** (counts down in place) | *Head abc1234 must sit 30 minutes without new commits before the hive merges it · 4m 10s left · soak ends 8:42 PM* / caption *Admitted by the automerge lane; soaking — 4m left* |
+| soak elapsed, waiting for the lane's next pass | **Soaking · complete** | *… soaked since 8:42 PM. Soak complete — merges on the next pass (next pass in 3m).* / caption *Admitted by the automerge lane; soak complete — merges on the next pass* |
+| soak elapsed and the lane's pass is on it | **Mergeable · merging now** (⟳ spins) | *… Mergeable — merging now.* |
+
+| Builder | Reaches | Before | After | Held by |
+|---|---|---|---|---|
+| `stageTrackerSoakWords` (`tracker-words.js`) | 095 chevron label + hover, 060/080 detail | *Soaking · ready — next sweep in 3m* / *ready — merge sweep running* / *ready — sweep due now*; 060/080 *soaked — next sweep in 42s* | *Soaking · complete* / **Mergeable · merging now**; 060/080 *soak complete* / *soaked — merging now* | `TestStageTrackerSoakNode` |
+| `stageTrackerSoakTick` | the same label between polls | detail only | detail and, at 095, the word (*Soaking* → *Mergeable* when the pass was already on it) | same |
+| `stageTrackerNextPassWords` (new) + `stageTrackerGateCountdownSync` | 080 detail, soaking-without-clock detail, hovers | *next sweep in 42s* / *sweep due now* / *soak window complete* | *next pass in 42s* / *pass due now* / *complete* | `TestStageTrackerMergeGatePillNode` |
+| `stageTrackerMergeGateInfoFor` (pass on a pre-admission row) | 060 detail + hover | *merge sweep running* / *hive's merge sweep is running on this PR now.* | *checking now* / *hive is checking this PR now.* | same |
+| `stageTrackerTrainEtaDetail`, `STAGE_TRACKER_TRAIN_HEAD_STALL_WORD.ready` | queue chip, stalled train | *any sweep now*, *waiting for a merge sweep* | *any moment now*, *waiting for the next merge pass* | `TestStageTrackerMergeTrainQueueChip` |
+| Go `stageTrackerSoakCaption` (new), `humanizeStageReason` | 095 caption | *…soak window is running — soaking, 0s left at the last sweep* (the lane's last read, never aged) | *…soaking — 7m left* aged from the last read, *…soak complete — merges on the next pass* once it runs out | `TestStageTrackerSnapshot…` (pr102) |
+| Go `mergeTrainHead…` reasons, `eta_basis`, `stageTrackerMergingCaption`, decided *Approved* text | gate reason, hover, caption | *merges on hive's next sweep*, *next sweep in 40s*, *the automerge sweep's merge call* | *merges on hive's next pass*, *next pass in 40s*, *the automerge lane's merge call* | `TestStageTrackerMergeTrainQueue…` |
+
+Left for a follow-up under the same issue: the ⋯ decision consequences and
+`Next` sentences (*Hive's merge sweep merges it on its next pass…* in
+`api_repo_item_decision.go`, `row_action_result.go`,
+`delegated_decision_human_merge.go`) and `STAGE_TRACKER_MERGE_PATH_WORDS.sweep`
+(*automerge sweep* as a merge **path** name on merged rows).
