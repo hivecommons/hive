@@ -37,6 +37,12 @@ contributor_cpu_limit := "2"
 default:
     @just --list
 
+# Explicitly verifies streaming tool calls against an already-running local
+# MLX-LM server, then persists only Pi's mlx provider. Never downloads weights.
+[positional-arguments]
+contribute-mlx-setup model verify:
+    node bin/mlx-backend.js configure "$1" "$2"
+
 # Run the live run-level acceptance test (#8466 layer 2). Requires HIVE_URL and
 # HIVE_TOKEN like the rest of src/test, plus HIVE_RUNS_E2E_KEY or
 # HIVE_RUNS_E2E_REPO/HIVE_RUNS_E2E_ISSUE for the pinned run/spec issue.
@@ -178,6 +184,9 @@ contribute-check-backend backend="claude":
             exit 1
           fi
           echo "HIVE_BACKEND_READINESS=${PI_READINESS}"
+          if [[ "${AGENT_MODEL}" == mlx/* ]]; then
+            node bin/mlx-backend.js check "${AGENT_MODEL}"
+          fi
           echo "  Credential presence is reported as configured_unverified, never as proof of authentication."
         else
           echo "ERROR: Pi CLI not found. Install: curl -fsSL https://pi.dev/install.sh | sh"
@@ -972,6 +981,9 @@ contribute-hive backend="" mode="docker": check-version
         exit 1
       fi
       echo "HIVE_BACKEND_READINESS=${PI_READINESS}"
+      if [[ "${AGENT_MODEL}" == mlx/* ]]; then
+        node bin/mlx-backend.js check "${AGENT_MODEL}"
+      fi
       # This recipe runs in its own shell, so narrowing the environment does not
       # alter the contributor's login shell. It does ensure both local relay/CLI
       # launches and the container path can see only the selected provider's
@@ -1276,6 +1288,9 @@ contribute-hive backend="" mode="docker": check-version
         # Same canonical selection used by the container entrypoint and every
         # relay restart. %q keeps model IDs with shell metacharacters one argv.
         PERM_FLAG="${PERM_FLAG:+${PERM_FLAG} }--model $(printf %q "$AGENT_MODEL")"
+        if [[ "$AGENT_MODEL" == mlx/* ]]; then
+          PERM_FLAG+=" --extension $(printf %q "{{justfile_directory()}}/bin/mlx-pi-extension.js")"
+        fi
       fi
 
       # Create tmux session with the CLI.
@@ -1683,6 +1698,11 @@ contribute-hive backend="" mode="docker": check-version
           fi
           ;;
         pi)
+          if [[ "${AGENT_MODEL:-}" == mlx/* && "$(uname -s)" == "Darwin" && "$RUNTIME" != "docker" ]]; then
+            echo "ERROR: MLX container mode on macOS requires Docker Desktop 4.34+ with host networking enabled."
+            echo "  Podman machine host networking reaches its Linux VM, not the Mac's loopback MLX server."
+            exit 1
+          fi
           if [ -d "${HOME}/.pi" ]; then
             stage_copy "${HOME}/.pi" ".pi"
             # Keep only the selected provider's official auth/custom-provider

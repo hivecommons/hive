@@ -1682,6 +1682,9 @@ select.admin-act{min-width:0;max-width:100%%}
 <div id="omp-confinement-note" style="display:none;margin-bottom:var(--sp-5);background:var(--surface-2);border:1px solid var(--line-strong);border-left:3px solid #d29922;border-radius:var(--r);padding:var(--sp-5) 14px;font-size:.85rem;color:var(--text);line-height:1.5">
 <strong style="color:var(--text)">Oh My Pi (omp) has no verified local sandbox.</strong> <strong>Container</strong> mode (the default) is the supported boundary and runs the pinned <code>omp</code> binary from the contributor image. <strong>Host</strong> mode launches the CLI directly on your machine and refuses to run unless you intentionally opt out with <code>HIVE_OMP_DANGEROUSLY_RUN_UNCONFINED=1</code>; use it only if you understand that trade-off.
 </div>
+<div id="pi-mlx-note" style="display:none;margin-bottom:var(--sp-5);font-size:.85rem;color:var(--text-muted)">
+<strong>Apple MLX local inference:</strong> choose Pi and enter <code>mlx/&lt;model-id-or-absolute-path&gt;</code> after completing the <a href="https://github.com/hivecommons/hive/blob/{{HIVE_BRANCH}}/src/docs/contributor-relay.md#apple-mlx-local-inference" target="_blank" rel="noopener">MLX setup and explicit tool-call check</a>. Requires Apple Silicon, native Python ≥3.10, macOS ≥14, and a tool-capable model. MLX-LM runs on your Mac; Pi runs the coding tools in the contributor container. Docker Desktop host networking is required; Kubernetes and Podman machine are not supported for this loopback-only route. Host Pi has no sandbox and retains its existing explicit opt-in requirement.
+</div>
 <div id="multi-hub-note" style="margin-bottom:var(--sp-5);background:var(--surface-2);border:1px solid var(--line-strong);border-left:3px solid #58a6ff;border-radius:var(--r);padding:var(--sp-5) 14px;font-size:.85rem;color:var(--text);line-height:1.5">
 <strong style="color:var(--text)">Contribute to multiple hives:</strong> after registering with each hive, set <code>HIVE_HUB</code> to comma-separated WebSocket URLs and <code>HIVE_REGISTRATION_TOKEN</code> to the matching comma-separated tokens in the same order. One relay shares one CLI/tmux session, works on one task at a time, keeps each hub connected with its own heartbeat, and rotates only when the active hub says no task is available. Added by <a href="https://github.com/hanthor" target="_blank" rel="noopener" style="color:var(--cc-accent)">@hanthor</a> in <a href="https://github.com/hivecommons/hive/pull/2846" target="_blank" rel="noopener" style="color:var(--cc-accent)">#2846</a>.
 </div>
@@ -1808,6 +1811,8 @@ var agyNote=document.getElementById('agy-confinement-note');
 if(agyNote)agyNote.style.display=(cli==='agy')?'block':'none';
 var ompNote=document.getElementById('omp-confinement-note');
 if(ompNote)ompNote.style.display=(cli==='omp')?'block':'none';
+var mlxNote=document.getElementById('pi-mlx-note');
+if(mlxNote)mlxNote.style.display=(cli==='pi')?'block':'none';
 modelRow.style.display=(modelFlag||cli==='goose')?'flex':'none';
 var modelLine='';
 if(model){

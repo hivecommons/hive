@@ -1,0 +1,1 @@
+- ClankeR contributors can opt in to user-managed Apple MLX-LM inference through Pi on supported Apple Silicon Macs, with loopback-only configuration, explicit streaming tool-call verification, and fail-closed model/endpoint checks.
