@@ -1,0 +1,1 @@
+Activity Monitor "#N merged" banners now arm their auto-dismiss through `toastCountdownBar`, so they drain the same countdown bar every other timed toast shows, pause on hover/focus, and the × button clears the pending timer (#15878).
